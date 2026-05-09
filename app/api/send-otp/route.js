@@ -1,8 +1,8 @@
 import { Resend } from "resend";
 
 // Inisialisasi Resend di luar handler untuk efisiensi
-const resend = new Resend(process.env.RESEND_API_KEY);
-
+//const resend = new Resend(process.env.RESEND_API_KEY);
+const resendApiKey = process.env.RESEND_API_KEY;
 export async function POST(req) {
   try {
     const { email, otp } = await req.json();
@@ -21,6 +21,11 @@ export async function POST(req) {
 
     console.log(`📤 [API] Mengirim OTP ke: ${email} menggunakan domain spmsumatera.site`);
 
+    if (!resendApiKey) {
+  throw new Error("RESEND_API_KEY belum dikonfigurasi");
+}
+
+const resend = new Resend(resendApiKey);
     // 2. Proses Pengiriman Email
     const { data, error } = await resend.emails.send({
       // Menggunakan domain kustom yang sudah Anda verifikasi
