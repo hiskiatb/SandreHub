@@ -1,6 +1,13 @@
-/** @type {import('next').NextConfig} */
+/** @type {import('next').Next.jsConfig} */
 const nextConfig = {
-  /* config options here */
+  // Turbopack alias support
+  experimental: {
+    turbo: {
+      resolveAlias: {
+        '@/lib/supabase': './lib/supabase.js',
+      },
+    },
+  },
 };
 
 export default nextConfig;
