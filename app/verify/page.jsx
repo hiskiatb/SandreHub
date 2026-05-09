@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import supabase from "../../lib/supabase";
@@ -14,8 +14,8 @@ import {
 // CATATAN: AlertCircle dihapus dari import lucide-react di atas 
 // agar tidak bentrok dengan fungsi di bawah.
 
-export default function VerifyPage() {
-  const router = useRouter();
+function VerifyContent() {
+    const router = useRouter();
   const searchParams = useSearchParams();
   const emailParam = searchParams.get("email");
 
@@ -227,6 +227,13 @@ export default function VerifyPage() {
   );
 }
 
+export default function VerifyPage() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <VerifyContent />
+    </Suspense>
+  );
+}
 // FUNGSI INI YANG MENYEBABKAN ERROR TADI (KARENA NAMANYA SAMA DENGAN IMPORT)
 function AlertCircle({ size }) {
   return (
