@@ -1,6 +1,4 @@
-/** @type {import('next').Next.jsConfig} */
-const nextConfig = {
-  turbopack: {},
-};
+/** @type {import('next').NextConfig} */
+const nextConfig = {}
 
-export default nextConfig;
+export default nextConfig
