@@ -153,7 +153,8 @@ function FilterSelect({ label, value, onChange, children, t, d, disabled, icon }
   height: 38,
   overflow: "hidden",
   maxWidth: "100%",   
-  flexShrink: 1,      
+  flexShrink: 1,
+  position: "relative",
 }}>
         {/* Native select fills entire box — clickable everywhere */}
         <select
@@ -316,6 +317,21 @@ const [activeYear, setActiveYear] = useState(getCurrentYear);
   }, [router]);
 
   // ── Derived data ─────────────────────────────────────────────────────────
+useEffect(() => {
+  if (!activePartner) return;
+
+  const partnerData = masterData.find(
+    i => i.partner_name === activePartner
+  );
+
+  if (partnerData?.region) {
+    setActiveRegion(partnerData.region);
+  }
+
+  setActiveType("ALL");
+  setActiveBranch("");
+}, [activePartner, masterData]);
+  
   const filteredPartners = useMemo(() => {
     let list = masterData;
     if (activeRegion !== "SUMATERA") list = list.filter(i => i.region === activeRegion);
