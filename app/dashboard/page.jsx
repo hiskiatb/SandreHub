@@ -945,7 +945,7 @@ export default function DashboardPage() {
                     <AnimatePresence mode="wait">
                       {view === "summary" && (
                         <motion.div key="sv" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.13 }}>
-                          <FormSummary theme={theme} activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner }} />
+                          <FormSummary theme={theme} activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }} />
                         </motion.div>
                       )}
                       {view === "pendapatan" && (

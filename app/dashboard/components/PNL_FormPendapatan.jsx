@@ -422,7 +422,7 @@ const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSave
   const hasPengeluaranFinal = notes.includes('pengeluaran:final');
 
   return (
-    <div style={{ maxWidth:960, margin:'0 auto', paddingBottom:108, fontFamily:"-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',system-ui,sans-serif", WebkitFontSmoothing:'antialiased', color:t.hi }}>
+    <div style={{   width: '100%', margin:'0 auto', paddingBottom:108, fontFamily:"-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',system-ui,sans-serif", WebkitFontSmoothing:'antialiased', color:t.hi }}>
       <G d={d} t={t} />
 
       {/* ── HEADER ── */}
@@ -710,17 +710,8 @@ const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSave
 
       {/* ── FOOTER NAV ── */}
       <div style={{ position:'fixed', bottom:0, left:0, right:0, borderTop:`1px solid ${t.line}`, background:d?'rgba(7,9,13,0.94)':'rgba(255,255,255,0.94)', backdropFilter:'blur(24px)', WebkitBackdropFilter:'blur(24px)', zIndex:60, padding:'11px 20px' }}>
-        <div style={{ maxWidth:960, margin:'0 auto', display:'flex', alignItems:'center', justifyContent:'space-between', gap:10 }}>
-          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-            <div style={{ width:36, height:36, borderRadius:9, background:t.blueBg, border:`1px solid ${t.blueBd}`, display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
-              <Calculator size={16} style={{ color:t.blue }}/>
-            </div>
-            <div>
-              <div style={{ fontSize:9, fontWeight:700, letterSpacing:'0.09em', textTransform:'uppercase', color:t.lo }}>Total Income</div>
-              <div style={{ fontSize:17, fontWeight:800, letterSpacing:'-0.03em', color:stats.revenue<0?t.red:t.blue, fontVariantNumeric:'tabular-nums' }}>{formatIDR(stats.revenue)}</div>
-            </div>
-          </div>
-          <div style={{ display:'flex', gap:7, alignItems:'center', flexShrink:0 }}>
+        <div style={{ width: '100%', margin:'0 auto', display:'flex', alignItems:'center', justifyContent:'space-between', gap:10 }}>
+<div style={{ display:'flex', alignItems:'center', gap:10, marginLeft:'auto' }}>              
             {/* Draft */}
             <button onClick={handleSaveDraft} disabled={isSaving} style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 13px', borderRadius:9, border:`1px solid ${t.line}`, background:t.pill, cursor:isSaving?'not-allowed':'pointer', fontSize:12, fontWeight:700, letterSpacing:'0.05em', textTransform:'uppercase', color:t.mid, opacity:isSaving?0.58:1, transition:'all 0.13s' }}>
               {isSaving?<><Loader2 size={13} style={{ animation:'fpspin 1s linear infinite' }}/>Simpan...</>:<><Save size={13}/>Draft</>}
