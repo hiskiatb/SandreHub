@@ -91,7 +91,7 @@ function calcR(data) {
     hsp,hvc,sd,vd,g};
 }
 
-// ── PDF Generator — ZERO external color lib, pure hex strings ─────────────────
+// ── PDF Generator — ULTRA COMPACT 3 halaman max ──────────────────────────────
 async function makePDF(data, r, ctx) {
   // Load jsPDF
   if (!window.jspdf) {
@@ -112,157 +112,159 @@ async function makePDF(data, r, ctx) {
   const {jsPDF} = window.jspdf;
   const doc = new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
 
-  // ── Dimensions ────────────────────────────────────────────────────────────
-  const W=210, H=297, ML=14, MR=14, UW=W-ML-MR;
+  // ── Dimensions — margin minimal ────────────────────────────────────────────
+  const W=210, H=297, ML=12, MR=12, UW=W-ML-MR;
 
-  // ── Palette — PURE HEX STRINGS only, no external color lib ──────────────
+  // ── Palette ────────────────────────────────────────────────────────────────
   const C = {
     ink:    '#111111', steel:  '#374151', slate:  '#6B7280',
     silver: '#9CA3AF', rule:   '#E5E7EB', tint:   '#F9FAFB',
     white:  '#FFFFFF', navy:   '#1E3A5F', blue:   '#0A84FF',
     blue_lt:'#EBF4FF', grn:    '#14532D', grn_lt: '#F0FDF4',
     red:    '#991B1B', red_lt: '#FEF2F2', amb_lt: '#FFFBEB',
-    teal:   '#0F766E', teal_lt:'#F0FDFA',
   };
 
-  // ── Formatters ────────────────────────────────────────────────────────────
+  // ── Formatters ─────────────────────────────────────────────────────────────
   const fR = v => { v=parseFloat(v)||0; const s='Rp '+Math.abs(v).toLocaleString('id-ID',{maximumFractionDigits:0}); return v<0?`(${s})`:s; };
   const fN = v => { v=parseFloat(v)||0; if(!v)return'-'; const s=Math.abs(v).toLocaleString('id-ID',{maximumFractionDigits:0}); return v<0?`(${s})`:s; };
   const fP = v => { v=parseFloat(v)||0; return v?v.toFixed(1).replace('.',',')+' %':'-'; };
+
+  // ── Product name mapping — nama asli produk, bukan key database ───────────
+  const pNames = {
+    qty_sp_3gb_im3: 'SP 3GB IM3', qty_sp_0_im3: 'SP 0 IM3',
+    qty_sp_kpk_3id: 'SP KPK 3ID', qty_sp_3gb_3id: 'SP 3GB 3ID',
+    qty_vc_0_im3: 'VC 0 IM3', qty_vc_2_5gb: 'VC 2.5GB', qty_vc_3gb_30: 'VC 3GB/30',
+    qty_vc_3_5gb_5d: 'VC 3.5GB/5D', qty_vc_5gb_5d: 'VC 5GB/5D', qty_vc_7gb_7d: 'VC 7GB/7D',
+    qty_vc_fi_4gb: 'VC FI 4GB', qty_vc_fi_1_5gb_1d: 'VC FI 1.5GB/1D', qty_vc_fi_3gb_1d: 'VC FI 3GB/1D',
+    qty_vc_fi_5gb_2d: 'VC FI 5GB/2D', qty_vc_fi_3gb_3d: 'VC FI 3GB/3D', qty_vc_fi_5gb_3d: 'VC FI 5GB/3D',
+    qty_vc_fi_15gb_7d: 'VC FI 15GB/7D', qty_vc_0_3id: 'VC 0 3ID',
+  };
 
   const partner = data.partner_name||'—', branch = data.branch||'—';
   const month = ctx.month||'—', year = String(ctx.year||'');
   const mpc = data.mpc_mp3||'—';
   const subLine = `${mpc} | ${partner} | ${branch} | ${month} ${year}`;
-  const pgLbl = {1:'Financial Structure — Laporan Laba Rugi', 2:'Struktur Pendapatan — Detail', 3:'Struktur Pengeluaran — Detail'};
+  const pgLbl = {1:'Financial Summary', 2:'Pendapatan Detail', 3:'Pengeluaran Detail'};
   let Y = 0;
   const gd = k => parseFloat(data[k])||0;
 
-  // ── Page header/footer ────────────────────────────────────────────────────
+  // ── Page header/footer — minimal ───────────────────────────────────────────
   function hdrFtr(pg) {
-    doc.setFillColor(C.navy); doc.rect(0,0,W,10,'F');
-    doc.setTextColor(C.white); doc.setFontSize(9); doc.setFont('helvetica','bold');
-    doc.text(pgLbl[pg]||'Laporan', ML, 7);
-    doc.setFontSize(6.5); doc.setFont('helvetica','normal');
-    doc.setTextColor('#CBD5E1'); doc.text(subLine, W-MR, 7, {align:'right'});
-    doc.setDrawColor(C.rule); doc.setLineWidth(0.3);
-    doc.line(ML, H-9, W-MR, H-9);
-    doc.setTextColor(C.silver); doc.setFontSize(6);
-    doc.text('SandraHub SPM Sumatera  ·  Laporan Keuangan Internal  ·  Confidential', ML, H-5);
-    doc.text(`Hal. ${pg}`, W-MR, H-5, {align:'right'});
-  }
-
-  // ── Section bar (navy) ───────────────────────────────────────────────────
-  function secBar(lbl) {
-    doc.setFillColor(C.navy); doc.rect(ML, Y, UW, 7.5, 'F');
-    doc.setTextColor(C.white); doc.setFontSize(9); doc.setFont('helvetica','bold');
-    doc.text(lbl, ML+4, Y+5.2); Y += 9;
-  }
-
-  // ── Sub-section bar ───────────────────────────────────────────────────────
-  function subBar(lbl, clr='#164E63') {
-    doc.setFillColor(clr); doc.rect(ML, Y, UW, 6.5, 'F');
+    doc.setFillColor(C.navy); doc.rect(0,0,W,9,'F');
     doc.setTextColor(C.white); doc.setFontSize(8.5); doc.setFont('helvetica','bold');
-    doc.text(lbl, ML+4, Y+4.5); Y += 8;
+    doc.text(pgLbl[pg]||'Laporan', ML, 6.5);
+    doc.setFontSize(6); doc.setFont('helvetica','normal');
+    doc.setTextColor('#CBD5E1'); doc.text(subLine, W-MR, 6.5, {align:'right'});
+    doc.setDrawColor(C.rule); doc.setLineWidth(0.3);
+    doc.line(ML, H-8, W-MR, H-8);
+    doc.setTextColor(C.silver); doc.setFontSize(5.5);
+    doc.text('SandraHub SPM Sumatera  ·  Confidential', ML, H-4.5);
+    doc.text(`Hal. ${pg}`, W-MR, H-4.5, {align:'right'});
   }
 
-  // ── autoTable wrapper ─────────────────────────────────────────────────────
+  // ── Section bar — compact ──────────────────────────────────────────────────
+  function secBar(lbl) {
+    doc.setFillColor(C.navy); doc.rect(ML, Y, UW, 6, 'F');
+    doc.setTextColor(C.white); doc.setFontSize(8); doc.setFont('helvetica','bold');
+    doc.text(lbl, ML+3, Y+4.2); Y += 7;
+  }
+
+  // ── Sub-section bar ────────────────────────────────────────────────────────
+  function subBar(lbl, clr='#164E63') {
+    doc.setFillColor(clr); doc.rect(ML, Y, UW, 5.5, 'F');
+    doc.setTextColor(C.white); doc.setFontSize(7.5); doc.setFont('helvetica','bold');
+    doc.text(lbl, ML+3, Y+3.8); Y += 6.5;
+  }
+
+  // ── autoTable — ULTRA COMPACT padding ──────────────────────────────────────
   function aT(head, body, cws, totalIdx, clrTotal) {
     doc.autoTable({
       startY:Y, margin:{left:ML,right:MR},
       head:[head], body,
       columnStyles: Object.fromEntries(cws.map(([i,w,a])=>[i,{cellWidth:w,halign:a||'left'}])),
-      headStyles:{ fillColor:C.tint, textColor:C.slate, fontStyle:'bold', fontSize:6.5,
-        lineWidth:0.2, lineColor:C.rule, cellPadding:{top:4,bottom:4,left:5,right:5} },
-      bodyStyles:{ fontSize:7.5, textColor:C.ink, lineWidth:0.2, lineColor:C.rule,
-        cellPadding:{top:4,bottom:4,left:5,right:5} },
+      headStyles:{ fillColor:C.tint, textColor:C.slate, fontStyle:'bold', fontSize:6,
+        lineWidth:0.15, lineColor:C.rule, cellPadding:{top:2.5,bottom:2.5,left:3,right:3} },
+      bodyStyles:{ fontSize:6.5, textColor:C.ink, lineWidth:0.15, lineColor:C.rule,
+        cellPadding:{top:2.5,bottom:2.5,left:3,right:3} },
       alternateRowStyles:{ fillColor:C.tint },
-      tableLineColor:C.rule, tableLineWidth:0.3,
+      tableLineColor:C.rule, tableLineWidth:0.2,
       didParseCell:(hook)=>{
         if(totalIdx != null && hook.row.index === totalIdx) {
-          hook.cell.styles.fillColor = clrTotal||C.teal_lt;
-          hook.cell.styles.textColor = C.teal;
+          hook.cell.styles.fillColor = clrTotal||C.blue_lt;
+          hook.cell.styles.textColor = C.navy;
           hook.cell.styles.fontStyle = 'bold';
-          hook.cell.styles.fontSize  = 8;
-          hook.cell.styles.cellPadding = {top:6,bottom:6,left:5,right:5};
+          hook.cell.styles.fontSize  = 7;
+          hook.cell.styles.cellPadding = {top:3.5,bottom:3.5,left:3,right:3};
         }
       },
     });
-    Y = doc.lastAutoTable.finalY + 4;
+    Y = doc.lastAutoTable.finalY + 2.5;
   }
 
   // ── Space check ────────────────────────────────────────────────────────────
-  function spk(n=30) { if(Y+n>H-16){ doc.addPage(); hdrFtr(doc.getNumberOfPages()); Y=14; } }
+  function spk(n=25) { if(Y+n>H-14){ doc.addPage(); hdrFtr(doc.getNumberOfPages()); Y=12; } }
 
-  // ────────────────────────────────────────────────────────────────────────────
-  // PAGE 1 — SUMMARY (Financial Structure)
-  // ────────────────────────────────────────────────────────────────────────────
-  hdrFtr(1); Y=13;
+  // ════════════════════════════════════════════════════════════════════════════
+  // PAGE 1 — SUMMARY
+  // ════════════════════════════════════════════════════════════════════════════
+  hdrFtr(1); Y=11;
 
-  // Cover
-  doc.setFontSize(7); doc.setFont('helvetica','bold'); doc.setTextColor(C.navy);
-  doc.text('LAPORAN KEUANGAN INTERNAL', ML, Y); Y+=4.5;
-  doc.setFontSize(16); doc.setTextColor(C.ink); doc.text(partner, ML, Y); Y+=5.5;
-  doc.setFontSize(8.5); doc.setFont('helvetica','normal'); doc.setTextColor(C.steel);
-  doc.text(`${mpc}  ·  ${branch}  ·  Periode ${month} ${year}`, ML, Y); Y+=4.5;
-  doc.setDrawColor(C.navy); doc.setLineWidth(0.8); doc.line(ML,Y,ML+UW,Y); Y+=10;
+  // Cover — ultra compact
+  doc.setFontSize(6.5); doc.setFont('helvetica','bold'); doc.setTextColor(C.navy);
+  doc.text('LAPORAN KEUANGAN INTERNAL', ML, Y); Y+=3.5;
+  doc.setFontSize(14); doc.setTextColor(C.ink); doc.text(partner, ML, Y); Y+=4.5;
+  doc.setFontSize(7.5); doc.setFont('helvetica','normal'); doc.setTextColor(C.steel);
+  doc.text(`${mpc}  ·  ${branch}  ·  ${month} ${year}`, ML, Y); Y+=3.5;
+  doc.setDrawColor(C.navy); doc.setLineWidth(0.6); doc.line(ML,Y,ML+UW,Y); Y+=7;
 
-  // 3 summary cards — compact
-  const cw3=(UW-3)/3, ch=17;
+  // 3 summary cards — minimalis
+  const cw3=(UW-2)/3, ch=14;
   [{l:'TOTAL OMSET',v:r.tom,s:'SP + VC + MOBO'},
-   {l:'TOTAL PENDAPATAN',v:r.tpd,s:'Margin + Komisi + Hadiah'},
-   {l:'TOTAL PENGELUARAN',v:r.tpg,s:'OPEX + SDM + Mkt + COM'}
+   {l:'PENDAPATAN',v:r.tpd,s:'Margin + Komisi'},
+   {l:'PENGELUARAN',v:r.tpg,s:'OPEX + SDM + Mkt'}
   ].forEach((c,i)=>{
-    const X=ML+i*(cw3+1.5);
-    doc.setFillColor(C.white); doc.setDrawColor(C.rule); doc.setLineWidth(0.4); doc.rect(X,Y,cw3,ch,'FD');
-    doc.setFillColor(C.navy); doc.rect(X,Y,2,ch,'F');
-    doc.setFontSize(6); doc.setFont('helvetica','bold'); doc.setTextColor(C.slate); doc.text(c.l,X+4.5,Y+5);
-    doc.setFontSize(9.5); doc.setFont('helvetica','bold'); doc.setTextColor(C.ink); doc.text(fR(c.v),X+4.5,Y+11.5);
-    doc.setFontSize(6.5); doc.setFont('helvetica','normal'); doc.setTextColor(C.slate); doc.text(c.s,X+4.5,Y+15.5);
+    const X=ML+i*(cw3+1);
+    doc.setFillColor(C.white); doc.setDrawColor(C.rule); doc.setLineWidth(0.3); doc.rect(X,Y,cw3,ch,'FD');
+    doc.setFillColor(C.navy); doc.rect(X,Y,1.5,ch,'F');
+    doc.setFontSize(5.5); doc.setFont('helvetica','bold'); doc.setTextColor(C.slate); doc.text(c.l,X+3.5,Y+4);
+    doc.setFontSize(8); doc.setFont('helvetica','bold'); doc.setTextColor(C.ink); doc.text(fR(c.v),X+3.5,Y+9.5);
+    doc.setFontSize(5.5); doc.setFont('helvetica','normal'); doc.setTextColor(C.slate); doc.text(c.s,X+3.5,Y+12.5);
   });
-  Y+=ch+8;
+  Y+=ch+5;
+
 
   // Main P&L table
   secBar(`FINANCIAL STRUCTURE  ·  ${month} ${year}`);
 
-  // Build P&L rows with custom styles via didParseCell
   const pnlRows = [
     {k:'secA', l:'A. OMSET PENJUALAN'},
-    {k:'sub',  l:'  TOTAL OMSET PENJUALAN', a:r.tom,  p:100},
-    {k:'data', l:'    - SP Regular',        a:r.osp,  p:r.p(r.osp)},
-    {k:'data', l:'    - Voucher Fisik',      a:r.ovc,  p:r.p(r.ovc)},
-    {k:'data', l:'    - Saldo MOBO',         a:r.mj,   p:r.p(r.mj)},
-    {k:'gap'},
-    {k:'secB', l:'B. STRUKTUR PENDAPATAN'},
-    {k:'sub',  l:'  TOTAL MARGIN PRODUCT',  a:r.tmg,  p:r.p(r.tmg)},
-    {k:'data', l:'    - SP Regular',         a:r.msp,  p:r.p(r.msp)},
-    {k:'data', l:'    - Voucher Fisik',       a:r.mvc,  p:r.p(r.mvc)},
-    {k:'data', l:'    - Saldo MOBO',          a:r.mmb,  p:r.p(r.mmb)},
-    {k:'gap'},
-    {k:'sub',  l:'  TOTAL KOMISI DAN INSENTIF', a:r.tko, p:r.p(r.tko)},
-    {k:'data', l:'    - Upfront Discount',   a:r.up,   p:r.p(r.up)},
-    {k:'data', l:'    - Sales Margin',        a:r.smg,  p:r.p(r.smg)},
-    {k:'data', l:'    - Monthly Fee SLA',     a:r.sla,  p:r.p(r.sla)},
-    {k:'data', l:'    - Special Program',     a:r.spc,  p:r.p(r.spc)},
-    {k:'gap'},
-    {k:'sub',  l:'  TOTAL HADIAH/REWARD & LAINNYA', a:r.thd, p:r.p(r.thd)},
-    {k:'data', l:'    - Hadiah Champions Club', a:r.rwc, p:r.p(r.rwc)},
-    {k:'data', l:'    - Hadiah Lain',         a:r.rwl,  p:r.p(r.rwl)},
-    {k:'gap'},
-    {k:'totB', l:'TOTAL STRUKTUR PENDAPATAN', a:r.tpd,  p:r.p(r.tpd)},
-    {k:'gap'},
-    {k:'secC', l:'C. STRUKTUR PENGELUARAN'},
-    {k:'data', l:'  OPEX BRANCH',              a:r.tox,  p:r.p(r.tox)},
-    {k:'data', l:'  SDM BRANCH',               a:r.tsd,  p:r.p(r.tsd)},
-    {k:'data', l:'  MARKETING & CLUSTER DEV',  a:r.tmk,  p:r.p(r.tmk)},
-    {k:'data', l:'  COST OF MONEY',             a:r.tcm,  p:r.p(r.tcm)},
-    {k:'totR', l:'TOTAL STRUKTUR PENGELUARAN', a:r.tpg,  p:r.p(r.tpg)},
-    {k:'gap'},
-    {k:'net',  l:'NET PROFIT BEFORE TAX',      a:r.net,  p:r.p(r.net)},
+    {k:'sub',  l:'  TOTAL OMSET', a:r.tom,  p:100},
+    {k:'data', l:'    - SP Regular',     a:r.osp,  p:r.p(r.osp)},
+    {k:'data', l:'    - Voucher',        a:r.ovc,  p:r.p(r.ovc)},
+    {k:'data', l:'    - MOBO',           a:r.mj,   p:r.p(r.mj)},
+    {k:'secB', l:'B. PENDAPATAN'},
+    {k:'sub',  l:'  Total Margin',       a:r.tmg,  p:r.p(r.tmg)},
+    {k:'data', l:'    - SP',             a:r.msp,  p:r.p(r.msp)},
+    {k:'data', l:'    - Voucher',        a:r.mvc,  p:r.p(r.mvc)},
+    {k:'data', l:'    - MOBO',           a:r.mmb,  p:r.p(r.mmb)},
+    {k:'sub',  l:'  Total Komisi',       a:r.tko,  p:r.p(r.tko)},
+    {k:'data', l:'    - Upfront',        a:r.up,   p:r.p(r.up)},
+    {k:'data', l:'    - Sales Margin',   a:r.smg,  p:r.p(r.smg)},
+    {k:'data', l:'    - SLA',            a:r.sla,  p:r.p(r.sla)},
+    {k:'sub',  l:'  Total Hadiah',       a:r.thd,  p:r.p(r.thd)},
+    {k:'data', l:'    - Champions',      a:r.rwc,  p:r.p(r.rwc)},
+    {k:'data', l:'    - Lainnya',        a:r.rwl,  p:r.p(r.rwl)},
+    {k:'totB', l:'TOTAL PENDAPATAN',     a:r.tpd,  p:r.p(r.tpd)},
+    {k:'secC', l:'C. PENGELUARAN'},
+    {k:'data', l:'  OPEX',               a:r.tox,  p:r.p(r.tox)},
+    {k:'data', l:'  SDM',                a:r.tsd,  p:r.p(r.tsd)},
+    {k:'data', l:'  Marketing',          a:r.tmk,  p:r.p(r.tmk)},
+    {k:'data', l:'  Cost of Money',      a:r.tcm,  p:r.p(r.tcm)},
+    {k:'totR', l:'TOTAL PENGELUARAN',    a:r.tpg,  p:r.p(r.tpg)},
+    {k:'net',  l:'NET PROFIT/(LOSS)',    a:r.net,  p:r.p(r.net)},
   ];
 
   const bodyData = pnlRows.map(row => {
-    if(row.k==='gap') return ['','',''];
     if(row.k==='secA'||row.k==='secB'||row.k==='secC') return [row.l,'',''];
     return [row.l, fR(row.a), fP(row.p)];
   });
@@ -271,219 +273,223 @@ async function makePDF(data, r, ctx) {
     startY:Y, margin:{left:ML,right:MR},
     head:[['FINANCIAL STRUCTURE','ABSOLUT','RATIO']],
     body: bodyData,
-    columnStyles:{0:{cellWidth:UW*0.60},1:{cellWidth:UW*0.27,halign:'right'},2:{cellWidth:UW*0.13,halign:'center'}},
-    headStyles:{fillColor:C.navy, textColor:C.white, fontStyle:'bold', fontSize:8,
-      lineWidth:0, cellPadding:{top:6,bottom:6,left:5,right:5}},
-    bodyStyles:{fontSize:8, textColor:C.ink, lineWidth:0.2, lineColor:C.rule,
-      cellPadding:{top:6,bottom:6,left:5,right:5}},
-    tableLineColor:C.rule, tableLineWidth:0.3,
+    columnStyles:{0:{cellWidth:UW*0.62},1:{cellWidth:UW*0.25,halign:'right'},2:{cellWidth:UW*0.13,halign:'center'}},
+    headStyles:{fillColor:C.navy, textColor:C.white, fontStyle:'bold', fontSize:7,
+      lineWidth:0, cellPadding:{top:3,bottom:3,left:3,right:3}},
+    bodyStyles:{fontSize:6.5, textColor:C.ink, lineWidth:0.15, lineColor:C.rule,
+      cellPadding:{top:2,bottom:2,left:3,right:3}},
+    tableLineColor:C.rule, tableLineWidth:0.2,
     didParseCell:(hook)=>{
       const row = pnlRows[hook.row.index]; if(!row) return;
       const k=row.k;
-      if(k==='gap'){hook.cell.styles.cellPadding={top:2,bottom:2,left:5,right:5};hook.cell.styles.fillColor=C.white;}
-      else if(k==='secA'||k==='secB'||k==='secC'){
-        hook.cell.styles.fontStyle='bold';hook.cell.styles.fontSize=8.5;
+      if(k==='secA'||k==='secB'||k==='secC'){
+        hook.cell.styles.fontStyle='bold';hook.cell.styles.fontSize=7;
         hook.cell.styles.fillColor=C.white;hook.cell.styles.textColor=C.ink;
-        hook.cell.styles.cellPadding={top:9,bottom:4,left:5,right:5};
+        hook.cell.styles.cellPadding={top:4,bottom:2,left:3,right:3};
       }
       else if(k==='sub'){
         hook.cell.styles.fontStyle='bold';hook.cell.styles.fillColor=C.blue_lt;
-        hook.cell.styles.textColor=C.navy;hook.cell.styles.fontSize=8;
+        hook.cell.styles.textColor=C.navy;hook.cell.styles.fontSize=6.5;
+        hook.cell.styles.cellPadding={top:2.5,bottom:2.5,left:3,right:3};
       }
       else if(k==='totB'){
         hook.cell.styles.fontStyle='bold';hook.cell.styles.fillColor=C.grn_lt;
-        hook.cell.styles.textColor=C.grn;hook.cell.styles.fontSize=9;
-        hook.cell.styles.cellPadding={top:8,bottom:8,left:5,right:5};
+        hook.cell.styles.textColor=C.grn;hook.cell.styles.fontSize=7.5;
+        hook.cell.styles.cellPadding={top:4,bottom:4,left:3,right:3};
       }
       else if(k==='totR'){
         hook.cell.styles.fontStyle='bold';hook.cell.styles.fillColor=C.red_lt;
-        hook.cell.styles.textColor=C.red;hook.cell.styles.fontSize=9;
-        hook.cell.styles.cellPadding={top:8,bottom:8,left:5,right:5};
+        hook.cell.styles.textColor=C.red;hook.cell.styles.fontSize=7.5;
+        hook.cell.styles.cellPadding={top:4,bottom:4,left:3,right:3};
       }
       else if(k==='net'){
         const pos=(row.a||0)>=0;
-        hook.cell.styles.fontStyle='bold';hook.cell.styles.fontSize=10;
+        hook.cell.styles.fontStyle='bold';hook.cell.styles.fontSize=8;
         hook.cell.styles.fillColor=pos?C.grn_lt:C.red_lt;
         hook.cell.styles.textColor=pos?C.grn:C.red;
-        hook.cell.styles.cellPadding={top:11,bottom:11,left:5,right:5};
+        hook.cell.styles.cellPadding={top:5,bottom:5,left:3,right:3};
       }
       else if(k==='data' && hook.column.index===1 && (row.a||0)<0){
         hook.cell.styles.textColor=C.red;
       }
     },
   });
-  Y = doc.lastAutoTable.finalY + 8;
+  Y = doc.lastAutoTable.finalY + 4;
 
   // Status badge
   const fin=data.is_finalized;
-  const sc=fin?C.grn:C.steel, sb=fin?C.grn_lt:C.amb_lt, sbd=fin?'#86EFAC':'#FCD34D';
-  doc.setFillColor(sb); doc.setDrawColor(sbd); doc.setLineWidth(0.5); doc.rect(ML,Y,UW,9,'FD');
-  doc.setFontSize(8); doc.setFont('helvetica','bold'); doc.setTextColor(sc);
-  doc.text(fin?'✓  Laporan telah divalidasi dan difinalisasi':'○  Status: Draft — Belum Difinalisasi', ML+5, Y+6);
-  doc.setFontSize(7); doc.setFont('helvetica','normal'); doc.setTextColor(C.slate);
-  doc.text(`Updated: ${data.updated_at||'—'}`, W-MR-4, Y+6, {align:'right'});
+  const sc=fin?C.grn:C.steel, sb=fin?C.grn_lt:C.amb_lt;
+  doc.setFillColor(sb); doc.setDrawColor(C.rule); doc.setLineWidth(0.3); doc.rect(ML,Y,UW,7,'FD');
+  doc.setFontSize(6.5); doc.setFont('helvetica','bold'); doc.setTextColor(sc);
+  doc.text(fin?'✓  Divalidasi & Final':'○  Draft', ML+4, Y+4.5);
+  doc.setFontSize(5.5); doc.setFont('helvetica','normal'); doc.setTextColor(C.slate);
+  doc.text(`${data.updated_at||'—'}`, W-MR-3, Y+4.5, {align:'right'});
 
-  // ────────────────────────────────────────────────────────────────────────────
+
+  // ════════════════════════════════════════════════════════════════════════════
   // PAGE 2 — DETAIL PENDAPATAN
-  // ────────────────────────────────────────────────────────────────────────────
-  doc.addPage(); hdrFtr(2); Y=13;
-  doc.setFontSize(7); doc.setFont('helvetica','bold'); doc.setTextColor(C.navy); doc.text('STRUKTUR PENDAPATAN — DETAIL', ML, Y); Y+=4.5;
-  doc.setFontSize(13); doc.setTextColor(C.ink); doc.text(partner, ML, Y); Y+=4.5;
-  doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(C.steel);
-  doc.text(`${mpc} · ${branch} · ${month} ${year}`, ML, Y); Y+=4;
-  doc.setDrawColor(C.navy); doc.setLineWidth(0.7); doc.line(ML,Y,ML+UW,Y); Y+=9;
+  // ════════════════════════════════════════════════════════════════════════════
+  doc.addPage(); hdrFtr(2); Y=11;
+  doc.setFontSize(6.5); doc.setFont('helvetica','bold'); doc.setTextColor(C.navy); doc.text('STRUKTUR PENDAPATAN — DETAIL', ML, Y); Y+=3.5;
+  doc.setFontSize(11); doc.setTextColor(C.ink); doc.text(partner, ML, Y); Y+=3.5;
+  doc.setFontSize(7); doc.setFont('helvetica','normal'); doc.setTextColor(C.steel);
+  doc.text(`${mpc} · ${branch} · ${month} ${year}`, ML, Y); Y+=3;
+  doc.setDrawColor(C.navy); doc.setLineWidth(0.6); doc.line(ML,Y,ML+UW,Y); Y+=6;
 
   // A. Omset
-  secBar('A. STRUKTUR OMSET PENJUALAN');
-  aT(['Keterangan','Nominal (Rp)','Ratio'],
-    [['A.1. Penjualan Kartu Perdana Regular',fR(r.osp),fP(r.p(r.osp))],
-     ['A.2. Penjualan Voucher',fR(r.ovc),fP(r.p(r.ovc))],
-     ['A.3. Penjualan Saldo (MOBO)',fR(r.mj),fP(r.p(r.mj))],
-     ['TOTAL STRUKTUR OMSET',fR(r.tom),'100,0 %']],
-    [[0,UW*0.56,'left'],[1,UW*0.28,'right'],[2,UW*0.16,'center']],3,C.blue_lt);
-  Y+=5;
+  secBar('A. OMSET PENJUALAN');
+  aT(['Keterangan','Nominal','%'],
+    [['SP Regular',fR(r.osp),fP(r.p(r.osp))],
+     ['Voucher',fR(r.ovc),fP(r.p(r.ovc))],
+     ['MOBO',fR(r.mj),fP(r.p(r.mj))],
+     ['TOTAL',fR(r.tom),'100,0 %']],
+    [[0,UW*0.58,'left'],[1,UW*0.26,'right'],[2,UW*0.16,'center']],3,C.blue_lt);
+  Y+=3;
 
   // B. Pendapatan
-  secBar('B. STRUKTUR PENDAPATAN');
+  secBar('B. MARGIN PRODUCT');
+  const mgHead=['Produk','Qty','H.Retail','Margin','%'];
+  const mgCws=[[0,UW*0.30,'left'],[1,UW*0.12,'right'],[2,UW*0.18,'right'],[3,UW*0.22,'right'],[4,UW*0.18,'center']];
 
-  // B1 Margin Product — compact 6-col: Produk|Qty|H.Retail|Total Penjualan|Margin|Komposisi
-  subBar('1  MARGIN PRODUCT');
-  const mgHead=['Produk','Qty','H.Retail','T.Penjualan','Margin Penj.','% Komposisi'];
-  const mgCws=[[0,UW*0.22,'left'],[1,UW*0.08,'right'],[2,UW*0.13,'right'],[3,UW*0.18,'right'],[4,UW*0.18,'right'],[5,UW*0.21,'center']];
-
-  // SP
+  // SP — gunakan pNames untuk nama produk asli
   subBar('a. Starter Pack (SP) Regular','#1E4D7B');
-  let spB=[],tSpP=0,tSpMg=0;
-  r.sd.forEach(([nm,qk,rk])=>{const qty=gd(qk),hpp=r.hsp[qk]||0,ret=gd(rk),penj=ret*qty,mg=penj-hpp*qty;tSpP+=penj;tSpMg+=mg;spB.push([nm,fN(qty),fN(ret),fN(penj),fN(mg),fP(r.osp?penj/r.osp*100:0)]);});
-  spB.push(['Sub. Total','','',fN(tSpP),fN(tSpMg),fP(100)]);
+  let spB=[],tSpMg=0;
+  r.sd.forEach(([_,qk,rk])=>{
+    const qty=gd(qk),hpp=r.hsp[qk]||0,ret=gd(rk),penj=ret*qty,mg=penj-hpp*qty;
+    tSpMg+=mg;
+    spB.push([pNames[qk]||qk, fN(qty), fN(ret), fN(mg), fP(r.osp?penj/r.osp*100:0)]);
+  });
+  spB.push(['Sub. Total','','',fN(tSpMg),fP(100)]);
   aT(mgHead,spB,mgCws,spB.length-1,C.blue_lt);
 
-  // VC
+  // VC — gunakan pNames untuk nama produk asli
   subBar('b. Voucher Regular','#1E4D7B');
-  let vcB=[],tVcP=0,tVcMg=0;
-  r.vd.forEach(([nm,qk,rk])=>{const qty=gd(qk),hpp=r.hvc[qk]||0,ret=gd(rk),penj=ret*qty,mg=penj-hpp*qty;tVcP+=penj;tVcMg+=mg;vcB.push([nm,fN(qty),fN(ret),fN(penj),fN(mg),fP(r.ovc?penj/r.ovc*100:0)]);});
-  vcB.push(['Sub. Total','','',fN(tVcP),fN(tVcMg),fP(100)]);
+  let vcB=[],tVcMg=0;
+  r.vd.forEach(([_,qk,rk])=>{
+    const qty=gd(qk),hpp=r.hvc[qk]||0,ret=gd(rk),penj=ret*qty,mg=penj-hpp*qty;
+    tVcMg+=mg;
+    vcB.push([pNames[qk]||qk, fN(qty), fN(ret), fN(mg), fP(r.ovc?penj/r.ovc*100:0)]);
+  });
+  vcB.push(['Sub. Total','','',fN(tVcMg),fP(100)]);
   aT(mgHead,vcB,mgCws,vcB.length-1,C.blue_lt);
 
   // MOBO
   subBar('c. Penjualan Saldo 3SAKTI','#1E4D7B');
   const moboMg=r.mj-r.mm;
-  aT(mgHead,[
-    ['Saldo 3Sakti','-',fN(r.mj),fN(r.mj),fN(moboMg),'100,0 %'],
-    ['Sub. Total','','',fN(r.mj),fN(moboMg),'100,0 %']],
-    mgCws,1,C.blue_lt);
+  aT(mgHead,[['Saldo 3Sakti','-',fN(r.mj),fN(moboMg),'100,0 %'],
+             ['Sub. Total','','',fN(moboMg),'100,0 %']],mgCws,1,C.blue_lt);
 
   // Total Margin strip
-  doc.setFillColor(C.navy); doc.rect(ML,Y,UW,8,'F');
-  doc.setTextColor(C.white); doc.setFontSize(9); doc.setFont('helvetica','bold');
-  doc.text('TOTAL MARGIN', ML+4, Y+5.5);
-  doc.text(fR(r.tmg), ML+UW*0.88, Y+5.5, {align:'right'});
-  doc.text(fP(r.p(r.tmg)), ML+UW-2, Y+5.5, {align:'center'});
-  Y+=11;
+  doc.setFillColor(C.navy); doc.rect(ML,Y,UW,6,'F');
+  doc.setTextColor(C.white); doc.setFontSize(7.5); doc.setFont('helvetica','bold');
+  doc.text('TOTAL MARGIN', ML+3, Y+4.2);
+  doc.text(fR(r.tmg), W-MR-3, Y+4.2, {align:'right'});
+  Y+=8;
 
   // B2 Sales Fee
-  spk(40); subBar('2  SALES FEE');
-  aT(['Keterangan','Nominal','Komposisi'],
-    [['a. Upfront Discount (1,5% Modal MOBO)',fR(r.up),fP(r.tko?r.up/r.tko*100:0)],
-     ['b. Sales Margin (Realtime + Back)',fR(r.smg),fP(r.tko?r.smg/r.tko*100:0)],
-     ['c. SLA Monthly Fee',fR(r.sla),fP(r.tko?r.sla/r.tko*100:0)],
-     ['d. Special Program',fR(r.spc),fP(r.tko?r.spc/r.tko*100:0)],
-     ['TOTAL SALES FEE',fR(r.tko),'100,0 %']],
-    [[0,UW*0.62,'left'],[1,UW*0.24,'right'],[2,UW*0.14,'center']],4,C.blue_lt);
-  Y+=4;
+  spk(30); secBar('C. SALES FEE');
+  aT(['Keterangan','Nominal','%'],
+    [['Upfront (1,5% Modal MOBO)',fR(r.up),fP(r.tko?r.up/r.tko*100:0)],
+     ['Sales Margin',fR(r.smg),fP(r.tko?r.smg/r.tko*100:0)],
+     ['SLA Monthly Fee',fR(r.sla),fP(r.tko?r.sla/r.tko*100:0)],
+     ['Special Program',fR(r.spc),fP(r.tko?r.spc/r.tko*100:0)],
+     ['TOTAL',fR(r.tko),'100,0 %']],
+    [[0,UW*0.58,'left'],[1,UW*0.26,'right'],[2,UW*0.16,'center']],4,C.blue_lt);
+  Y+=3;
 
   // B3 Hadiah
-  spk(35); subBar('3  HADIAH/REWARD & PENDAPATAN LAIN');
-  aT(['Keterangan','Nominal','Komposisi'],
-    [['a. Hadiah Champions Club',fR(r.rwc),fP(r.thd?r.rwc/r.thd*100:0)],
-     ['b. Hadiah Lainnya',fR(r.rwl),fP(r.thd?r.rwl/r.thd*100:0)],
-     ['c. Partner Income',fR(r.pic),fP(r.thd?r.pic/r.thd*100:0)],
-     ['TOTAL HADIAH & LAINNYA',fR(r.thd),'100,0 %']],
-    [[0,UW*0.62,'left'],[1,UW*0.24,'right'],[2,UW*0.14,'center']],3,C.blue_lt);
-  Y+=4;
+  spk(25); secBar('D. HADIAH & LAINNYA');
+  aT(['Keterangan','Nominal','%'],
+    [['Champions Club',fR(r.rwc),fP(r.thd?r.rwc/r.thd*100:0)],
+     ['Lainnya',fR(r.rwl),fP(r.thd?r.rwl/r.thd*100:0)],
+     ['Partner Income',fR(r.pic),fP(r.thd?r.pic/r.thd*100:0)],
+     ['TOTAL',fR(r.thd),'100,0 %']],
+    [[0,UW*0.58,'left'],[1,UW*0.26,'right'],[2,UW*0.16,'center']],3,C.blue_lt);
+  Y+=3;
 
   // Total Pendapatan bar
   const posP=r.tpd>=0;
-  doc.setFillColor(posP?C.grn_lt:C.red_lt); doc.setDrawColor(posP?C.grn:C.red); doc.setLineWidth(1.5);
-  doc.rect(ML,Y,UW,12,'FD');
-  doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(posP?C.grn:C.red);
-  doc.text('TOTAL STRUKTUR PENDAPATAN', ML+5, Y+8);
-  doc.text(fR(r.tpd), W-MR-4, Y+8, {align:'right'});
+  doc.setFillColor(posP?C.grn_lt:C.red_lt); doc.setDrawColor(posP?C.grn:C.red); doc.setLineWidth(1);
+  doc.rect(ML,Y,UW,8,'FD');
+  doc.setFontSize(8); doc.setFont('helvetica','bold'); doc.setTextColor(posP?C.grn:C.red);
+  doc.text('TOTAL PENDAPATAN', ML+3, Y+5.5);
+  doc.text(fR(r.tpd), W-MR-3, Y+5.5, {align:'right'});
 
-  // ────────────────────────────────────────────────────────────────────────────
+
+  // ════════════════════════════════════════════════════════════════════════════
   // PAGE 3 — DETAIL PENGELUARAN
-  // ────────────────────────────────────────────────────────────────────────────
-  doc.addPage(); hdrFtr(3); Y=13;
-  doc.setFontSize(7); doc.setFont('helvetica','bold'); doc.setTextColor(C.navy); doc.text('STRUKTUR PENGELUARAN — DETAIL', ML, Y); Y+=4.5;
-  doc.setFontSize(13); doc.setTextColor(C.ink); doc.text(partner, ML, Y); Y+=4.5;
-  doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(C.steel);
-  doc.text(`${mpc} · ${branch} · ${month} ${year}`, ML, Y); Y+=4;
-  doc.setDrawColor(C.navy); doc.setLineWidth(0.7); doc.line(ML,Y,ML+UW,Y); Y+=9;
+  // ════════════════════════════════════════════════════════════════════════════
+  doc.addPage(); hdrFtr(3); Y=11;
+  doc.setFontSize(6.5); doc.setFont('helvetica','bold'); doc.setTextColor(C.navy); doc.text('STRUKTUR PENGELUARAN — DETAIL', ML, Y); Y+=3.5;
+  doc.setFontSize(11); doc.setTextColor(C.ink); doc.text(partner, ML, Y); Y+=3.5;
+  doc.setFontSize(7); doc.setFont('helvetica','normal'); doc.setTextColor(C.steel);
+  doc.text(`${mpc} · ${branch} · ${month} ${year}`, ML, Y); Y+=3;
+  doc.setDrawColor(C.navy); doc.setLineWidth(0.6); doc.line(ML,Y,ML+UW,Y); Y+=6;
 
   secBar('A. STRUKTUR PENGELUARAN');
-  const peCws=[[0,UW*0.47,'left'],[1,UW*0.12,'right'],[2,UW*0.18,'right'],[3,UW*0.23,'right']];
-  const peHead=['Keterangan','Jumlah','Nominal/Satuan','Nominal Total'];
+  const peCws=[[0,UW*0.50,'left'],[1,UW*0.12,'right'],[2,UW*0.16,'right'],[3,UW*0.22,'right']];
+  const peHead=['Keterangan','Qty','Satuan','Total'];
 
   const secs=[
-    ['1  OPEX BRANCH',
-     [['Infrastruktur Gedung',gd('qty_opex_gedung'),gd('price_opex_gedung')],
-      ['Penyewaan Kendaraan',gd('qty_opex_kendaraan'),gd('price_opex_kendaraan')],
+    ['1  OPEX',
+     [['Gedung',gd('qty_opex_gedung'),gd('price_opex_gedung')],
+      ['Kendaraan',gd('qty_opex_kendaraan'),gd('price_opex_kendaraan')],
       ['Listrik',gd('qty_opex_listrik'),gd('price_opex_listrik')],
       ['Air',gd('qty_opex_air'),gd('price_opex_air')],
-      ['Telekomunikasi & IT',gd('qty_opex_it'),gd('price_opex_it')],
-      ['Logistik (Gudang)',gd('qty_opex_logistik'),gd('price_opex_logistik')],
-      ['Asuransi Aset',gd('qty_opex_asuransi'),gd('price_opex_asuransi')],
-      ['Lain-lain Internal',gd('qty_opex_lain'),gd('price_opex_lain')]],
-     'TOTAL OPEX BRANCH', r.tox],
-    ['2  SDM BRANCH',
-     [['Benefit BM',gd('qty_sdm_bm'),gd('price_sdm_bm')],
-      ['Benefit Admin & WH',gd('qty_sdm_admin'),gd('price_sdm_admin')],
-      ['Benefit Finance',gd('qty_sdm_finance'),gd('price_sdm_finance')],
-      ['Benefit MD',gd('qty_sdm_md'),gd('price_sdm_md')],
-      ['Benefit Sales Support',gd('qty_sdm_ss'),gd('price_sdm_ss')],
-      ['Operasional Staff',gd('qty_sdm_ops'),gd('price_sdm_ops')],
-      ['Perjalanan Dinas',gd('qty_sdm_dinas'),gd('price_sdm_dinas')]],
-     'TOTAL SDM BRANCH', r.tsd],
-    ['3  MARKETING & CLUSTER DEVELOPMENT',
-     [['Program Wholeseller',gd('qty_mkt_ws'),gd('price_mkt_ws')],
-      ['Program Retail',gd('qty_mkt_retail'),gd('price_mkt_retail')],
-      ['Program Event',gd('qty_mkt_event'),gd('price_mkt_event')],
-      ['Program Lain',gd('qty_mkt_lain'),gd('price_mkt_lain')]],
-     'TOTAL MARKETING & CLUSTER DEV', r.tmk],
+      ['IT',gd('qty_opex_it'),gd('price_opex_it')],
+      ['Logistik',gd('qty_opex_logistik'),gd('price_opex_logistik')],
+      ['Asuransi',gd('qty_opex_asuransi'),gd('price_opex_asuransi')],
+      ['Lain-lain',gd('qty_opex_lain'),gd('price_opex_lain')]],
+     'TOTAL OPEX', r.tox],
+    ['2  SDM',
+     [['BM',gd('qty_sdm_bm'),gd('price_sdm_bm')],
+      ['Admin & WH',gd('qty_sdm_admin'),gd('price_sdm_admin')],
+      ['Finance',gd('qty_sdm_finance'),gd('price_sdm_finance')],
+      ['MD',gd('qty_sdm_md'),gd('price_sdm_md')],
+      ['Sales Support',gd('qty_sdm_ss'),gd('price_sdm_ss')],
+      ['Staff Ops',gd('qty_sdm_ops'),gd('price_sdm_ops')],
+      ['Perj. Dinas',gd('qty_sdm_dinas'),gd('price_sdm_dinas')]],
+     'TOTAL SDM', r.tsd],
+    ['3  MARKETING',
+     [['Wholeseller',gd('qty_mkt_ws'),gd('price_mkt_ws')],
+      ['Retail',gd('qty_mkt_retail'),gd('price_mkt_retail')],
+      ['Event',gd('qty_mkt_event'),gd('price_mkt_event')],
+      ['Lainnya',gd('qty_mkt_lain'),gd('price_mkt_lain')]],
+     'TOTAL MARKETING', r.tmk],
     ['4  COST OF MONEY',
-     [['Biaya Administrasi',gd('qty_com_admin'),gd('price_com_admin')],
-      ['Bunga Pinjaman Bank',gd('qty_com_bunga'),gd('price_com_bunga')]],
-     'TOTAL COST OF MONEY', r.tcm],
+     [['Adm. Bank',gd('qty_com_admin'),gd('price_com_admin')],
+      ['Bunga',gd('qty_com_bunga'),gd('price_com_bunga')]],
+     'TOTAL COM', r.tcm],
   ];
 
   secs.forEach(([lbl,items,totLbl,totVal])=>{
-    spk(items.length*10+25);
-    subBar(lbl);
+    spk(items.length*6+18);
+    subBar(lbl,'#1E4D7B');
     const rows=items.map(([nm,qty,ps])=>[nm, fN(qty)||'-', fN(ps)||'-', fN(ps*qty)]);
     rows.push([totLbl,'','',fN(totVal)]);
     aT(peHead,rows,peCws,rows.length-1,C.blue_lt);
-    Y+=5;
+    Y+=3;
   });
 
   // Total Pengeluaran
-  spk(20);
-  doc.setFillColor(C.red_lt); doc.setDrawColor(C.red); doc.setLineWidth(1.5);
-  doc.rect(ML,Y,UW,12,'FD');
-  doc.setFontSize(10); doc.setFont('helvetica','bold'); doc.setTextColor(C.red);
-  doc.text('TOTAL STRUKTUR PENGELUARAN', ML+5, Y+8);
-  doc.text(fR(r.tpg), W-MR-4, Y+8, {align:'right'});
-  Y+=16;
+  spk(15);
+  doc.setFillColor(C.red_lt); doc.setDrawColor(C.red); doc.setLineWidth(1);
+  doc.rect(ML,Y,UW,8,'FD');
+  doc.setFontSize(8); doc.setFont('helvetica','bold'); doc.setTextColor(C.red);
+  doc.text('TOTAL PENGELUARAN', ML+3, Y+5.5);
+  doc.text(fR(r.tpg), W-MR-3, Y+5.5, {align:'right'});
+  Y+=11;
 
   // Net Profit
-  spk(18);
+  spk(13);
   const posN=r.net>=0;
-  doc.setFillColor(posN?C.grn_lt:C.red_lt); doc.setDrawColor(posN?C.grn:C.red); doc.setLineWidth(2);
-  doc.rect(ML,Y,UW,16,'FD');
-  doc.setFontSize(10.5); doc.setFont('helvetica','bold'); doc.setTextColor(posN?C.grn:C.red);
-  doc.text(posN?'NET PROFIT BEFORE TAX':'NET LOSS BEFORE TAX', ML+5, Y+9);
-  doc.setFontSize(13); doc.text(fR(r.net), W-MR-5, Y+10, {align:'right'});
-  doc.setFontSize(7.5); doc.setFont('helvetica','normal'); doc.setTextColor(C.slate);
-  doc.text(`Rasio: ${fP(r.p(r.net))}`, W-MR-5, Y+14.5, {align:'right'});
+  doc.setFillColor(posN?C.grn_lt:C.red_lt); doc.setDrawColor(posN?C.grn:C.red); doc.setLineWidth(1.5);
+  doc.rect(ML,Y,UW,12,'FD');
+  doc.setFontSize(9); doc.setFont('helvetica','bold'); doc.setTextColor(posN?C.grn:C.red);
+  doc.text(posN?'NET PROFIT':'NET LOSS', ML+3, Y+6);
+  doc.setFontSize(11); doc.text(fR(r.net), W-MR-3, Y+7, {align:'right'});
+  doc.setFontSize(6.5); doc.setFont('helvetica','normal'); doc.setTextColor(C.slate);
+  doc.text(`${fP(r.p(r.net))} dari Omset`, W-MR-3, Y+10.5, {align:'right'});
 
   doc.save(`Laporan_PNL_${partner}_${branch}_${month}_${year}.pdf`);
 }

@@ -327,9 +327,6 @@ useEffect(() => {
   if (partnerData?.region) {
     setActiveRegion(partnerData.region);
   }
-
-  setActiveType("ALL");
-  setActiveBranch("");
 }, [activePartner, masterData]);
   
   const filteredPartners = useMemo(() => {
