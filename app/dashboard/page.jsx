@@ -28,7 +28,7 @@ const tk = (d) => ({
 
   hi:         d ? "#F0F0F5"                      : "#18181B",
   mid:        d ? "#8A8A90"                      : "#636368",
-  lo:         d ? "#38383E"                      : "#C4C4C8",
+  lo:         d ? "#AAB0C0"                      : "#4B5563",
 
   blue:       "#0A84FF",
   blueBg:     d ? "rgba(10,132,255,0.13)"        : "rgba(10,132,255,0.09)",
@@ -123,10 +123,7 @@ const buildGlobalCSS = (d, t) => `
   .icon-btn:hover { border-color: ${t.blueBd}; color: ${t.blue}; }
 `;
 
-// ─── Primitives ───────────────────────────────────────────────────────────────
-const Hairline = ({ t }) => (
-  <div style={{ height: "1px", background: t.line, flexShrink: 0 }} />
-);
+
 
 // FilterSelect: label OUTSIDE the box (above), icon + select inside, chevron at far right
 // The select fills the entire clickable area so it works natively
@@ -147,14 +144,17 @@ function FilterSelect({ label, value, onChange, children, t, d, disabled, icon }
       </div>
 
       {/* Input row */}
-      <div style={{
-        position: "relative", display: "flex", alignItems: "center",
-        background: t.inputBg,
-        border: `1px solid ${focused ? t.blue : t.inputBd}`,
-        borderRadius: 9, height: 44,
-        transition: "border-color 0.15s",
-        overflow: "hidden",
-      }}>
+<div style={{
+  display: "flex",
+  alignItems: "center",
+  border: `1px solid ${t.line}`,
+  borderRadius: 9,
+  background: t.inputBg,
+  height: 38,
+  overflow: "hidden",
+  maxWidth: "100%",   
+  flexShrink: 1,      
+}}>
         {/* Native select fills entire box — clickable everywhere */}
         <select
           value={value}
@@ -257,6 +257,14 @@ function DashCard({ icon, title, desc, tag, active, onClick, t, d }) {
   );
 }
 
+ const MONTHS = [
+    "Januari","Februari","Maret","April","Mei","Juni",
+    "Juli","Agustus","September","Oktober","November","Desember",
+  ];
+
+const getCurrentMonth = () => MONTHS[new Date().getMonth()];
+const getCurrentYear = () => new Date().getFullYear().toString();
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const router = useRouter();
@@ -273,8 +281,8 @@ export default function DashboardPage() {
   const [activePartner, setActivePartner] = useState("");
   const [activeType,    setActiveType]    = useState("ALL");
   const [activeBranch,  setActiveBranch]  = useState("");
-  const [activeMonth,   setActiveMonth]   = useState("Januari");
-  const [activeYear,    setActiveYear]    = useState("2026");
+const [activeMonth, setActiveMonth] = useState(getCurrentMonth);
+const [activeYear, setActiveYear] = useState(getCurrentYear);
   const [formDirty,     setFormDirty]     = useState(false);
   const [exitConfirm,   setExitConfirm]   = useState(false);
   const [pendingView,   setPendingView]   = useState(null);
@@ -283,10 +291,7 @@ export default function DashboardPage() {
   const d = theme === "dark";
   const t = tk(d);
 
-  const MONTHS = [
-    "Januari","Februari","Maret","April","Mei","Juni",
-    "Juli","Agustus","September","Oktober","November","Desember",
-  ];
+ 
 
   const toggleTheme = () => {
     const next = d ? "light" : "dark";
@@ -323,16 +328,36 @@ export default function DashboardPage() {
   }, [masterData, activePartner]);
 
   const availableBranches = useMemo(() => {
-    if (!activePartner) return [];
-    let list = masterData.filter(i => i.partner_name === activePartner);
-    if (activeType !== "ALL") list = list.filter(i => i.mpc_mp3 === activeType);
-    return [...new Set(list.map(i => i.branch_name))];
-  }, [masterData, activePartner, activeType]);
+  if (!activePartner) return [];
 
-  // Auto-select when only one type available
-  useEffect(() => {
-    if (availableTypes.length === 1) setActiveType(availableTypes[0]);
-  }, [availableTypes]);
+  return [
+    ...new Set(
+      masterData
+        .filter(i =>
+          i.partner_name === activePartner &&
+          (activeType === "ALL" || i.mpc_mp3 === activeType)
+        )
+        .map(i => i.branch_name)
+    )
+  ];
+}, [masterData, activePartner, activeType]);
+
+// Auto-select type jika hanya ada 1
+useEffect(() => {
+  if (availableTypes.length === 1) {
+    setActiveType(availableTypes[0]);
+  } else if (!availableTypes.includes(activeType)) {
+    setActiveType("ALL");
+  }
+}, [availableBranches, activeBranch]);
+// Auto-select branch jika hanya ada 1
+useEffect(() => {
+  if (availableBranches.length === 1) {
+    setActiveBranch(availableBranches[0]);
+  } else if (!availableBranches.includes(activeBranch)) {
+    setActiveBranch("");
+  }
+}, [availableBranches]);
 
   const isSPM   = profile?.role === "spm_sumatera";
   const canPnl  = !!activePartner && !!activeBranch;
@@ -364,12 +389,15 @@ export default function DashboardPage() {
     }}>
 
       {/* ── Brand zone — same height as header ── */}
-      <div style={{
-        height: HEADER_H,
-        display: "flex", alignItems: "center",
-        paddingLeft: 24, paddingRight: 24,
-        flexShrink: 0,
-      }}>
+<div style={{
+  height: HEADER_H,
+  display: "flex",
+  alignItems: "center",
+  paddingLeft: 24,
+  paddingRight: 24,
+  flexShrink: 0,
+  borderBottom: `1px solid ${t.line}`, // ⬅️ ini kunci alignment
+}}>
         {/* Logo box */}
         <div style={{
           width: 34, height: 34, borderRadius: 8,
@@ -381,25 +409,25 @@ export default function DashboardPage() {
           <Box size={17} strokeWidth={2.2} />
         </div>
 
-        {/* Text */}
-        <div style={{ marginLeft: 12, display: "flex", flexDirection: "column", gap: 3 }}>
-          <span style={{
-            fontSize: 19, fontWeight: 800, letterSpacing: "-0.035em",
-            color: t.hi, lineHeight: 1,
-          }}>
-            Sandra<span style={{ color: t.blue }}>Hub</span>
-          </span>
-          <span style={{
-            fontSize: 9, fontWeight: 700, letterSpacing: "0.18em",
-            textTransform: "uppercase", color: t.lo, lineHeight: 1,
-          }}>
-            SPM Sumatera
-          </span>
-        </div>
+{/* Text */}
+<div style={{
+  marginLeft: 12,
+  display: "flex",
+  alignItems: "center",
+}}>
+  <span style={{
+    fontSize: 24,
+    fontWeight: 800,
+    letterSpacing: "-0.04em",
+    color: t.hi,
+    lineHeight: 1,
+  }}>
+    Sandra<span style={{ color: t.blue }}>Hub</span>
+  </span>
+</div>
       </div>
 
       {/* ── This hairline aligns with the header bottom border ── */}
-      <Hairline t={t} />
 
       {/* ── Scrollable body ── */}
       <div style={{
@@ -623,7 +651,7 @@ export default function DashboardPage() {
           height: HEADER_H,
           flexShrink: 0,
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          paddingLeft: 28, paddingRight: 28,
+          paddingLeft: 28, paddingRight: 28, gap: 12, 
           background: d ? "rgba(12,14,20,0.9)" : "rgba(255,255,255,0.9)",
           borderBottom: `1px solid ${t.line}`,
           backdropFilter: "blur(28px)",
@@ -700,8 +728,13 @@ export default function DashboardPage() {
           </div>
 
           {/* Right: theme toggle + profile */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-
+<div style={{
+  display: "flex",
+  alignItems: "center",
+  gap: 10,
+  flexShrink: 0,
+  minWidth: 0,
+}}>
             {/* Theme */}
             <button
               className="icon-btn"
