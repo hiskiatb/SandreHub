@@ -316,9 +316,16 @@ function VerifyContent() {
             {!done && (
               <>
                 <div
-                  style={{ display: "flex", gap: 8, marginBottom: 24 }}
-                  onPaste={handlePaste}
-                >
+  onPaste={handlePaste}
+  style={{
+    display: "grid",
+    gridTemplateColumns: "repeat(6, minmax(0, 1fr))",
+    gap: 8,
+    marginBottom: 24,
+    width: "100%",
+    maxWidth: "100%",
+  }}
+>
                   {otp.map((val, i) => (
                     <input
                       key={i}
@@ -331,17 +338,19 @@ function VerifyContent() {
                       onKeyDown={(e) => handleKeyDown(e, i)}
                       className={`otp-cell${isErr ? " otp-cell-error" : ""}`}
                       style={{
-                        flex: 1,
-                        height: 60,
-                        borderRadius: 14,
-                        border: `1.5px solid ${isErr ? t.red : t.line}`,
-                        background: d ? "rgba(255,255,255,0.045)" : t.sub,
-                        color: t.hi,
-                        fontSize: 24,
-                        fontWeight: 800,
-                        letterSpacing: 0,
-                        fontFamily: "inherit",
-                      }}
+  width: "100%",
+  minWidth: 0,
+  height: 60,
+  borderRadius: 14,
+  border: `1.5px solid ${isErr ? t.red : t.line}`,
+  background: d ? "rgba(255,255,255,0.045)" : t.sub,
+  color: t.hi,
+  fontSize: 24,
+  fontWeight: 800,
+  textAlign: "center",
+  fontFamily: "inherit",
+  boxSizing: "border-box",
+}}
                     />
                   ))}
                 </div>

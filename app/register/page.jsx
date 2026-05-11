@@ -34,34 +34,108 @@ const mk = (d) => ({
   ring:    d ? "0 0 0 1px rgba(255,255,255,0.045)" : "0 0 0 1px rgba(0,0,0,0.055)",
 });
 
-// ─── Global CSS ───────────────────────────────────────────────────────────────
 const GlobalStyle = ({ d }) => (
   <style>{`
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html { -webkit-text-size-adjust: 100%; }
-    body { margin: 0; }
-    /* 16px prevents iOS auto-zoom; manual pinch-zoom still works */
-    input, select, textarea { font-size: 16px !important; }
-    ::-webkit-scrollbar { width: 4px; }
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      -webkit-text-size-adjust: 100%;
+      font-size: 16px;
+    }
+
+    body {
+      margin: 0;
+      overflow-x: hidden;
+    }
+
+    /* ─── INPUT TYPOGRAPHY FIX (INI INTI FIX MU) ─── */
+    input, select, textarea {
+      font-size: 15px !important;
+      line-height: 1.4;
+    }
+
+    input::placeholder,
+    textarea::placeholder {
+      font-size: 13px;
+      line-height: 1.4;
+      color: ${d ? "rgba(136,146,164,0.7)" : "rgba(107,114,128,0.7)"};
+    }
+
+    /* ─── SCROLLBAR ─── */
+    ::-webkit-scrollbar {
+      width: 4px;
+    }
+
     ::-webkit-scrollbar-thumb {
       background: ${d ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.12)"};
       border-radius: 99px;
     }
-    @keyframes sh-spin { to { transform: rotate(360deg); } }
-    .sh-spin { animation: sh-spin 0.9s linear infinite; }
-    .sh-btn { transition: transform 0.12s ease, opacity 0.12s ease; cursor: pointer; }
-    .sh-btn:hover:not(:disabled) { opacity: 0.88; }
-    .sh-btn:active:not(:disabled) { transform: scale(0.97); }
-    /* Field focus ring */
-    .sh-field { transition: border-color 0.15s, box-shadow 0.15s; }
+
+    /* ─── ANIMATION ─── */
+    @keyframes sh-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .sh-spin {
+      animation: sh-spin 0.9s linear infinite;
+    }
+
+    /* ─── BUTTON ─── */
+    .sh-btn {
+      transition: transform 0.12s ease, opacity 0.12s ease;
+      cursor: pointer;
+    }
+
+    .sh-btn:hover:not(:disabled) {
+      opacity: 0.88;
+    }
+
+    .sh-btn:active:not(:disabled) {
+      transform: scale(0.97);
+    }
+
+    /* ─── FIELD FOCUS ─── */
+    .sh-field {
+      transition: border-color 0.15s, box-shadow 0.15s;
+      min-width: 0;
+    }
+
     .sh-field:focus-within {
       border-color: #0A84FF !important;
       box-shadow: 0 0 0 3px rgba(10,132,255,0.16) !important;
     }
-    .sh-field-error { border-color: #FF453A !important; box-shadow: 0 0 0 3px rgba(255,69,58,0.14) !important; }
-    .sh-field-error:focus-within { border-color: #FF453A !important; box-shadow: 0 0 0 3px rgba(255,69,58,0.18) !important; }
-    /* Make native <select> seamless — removes default arrow styling differences */
-    select { -webkit-appearance: none; appearance: none; }
+
+    .sh-field-error {
+      border-color: #FF453A !important;
+      box-shadow: 0 0 0 3px rgba(255,69,58,0.14) !important;
+    }
+
+    .sh-field-error:focus-within {
+      border-color: #FF453A !important;
+      box-shadow: 0 0 0 3px rgba(255,69,58,0.18) !important;
+    }
+
+    /* ─── SELECT CLEAN UI ─── */
+    select {
+      -webkit-appearance: none;
+      appearance: none;
+    }
+
+    /* ─── RESPONSIVE FIX (IMPORTANT) ─── */
+    @media (max-width: 640px) {
+      input, select, textarea {
+        font-size: 14px !important;
+      }
+
+      input::placeholder,
+      textarea::placeholder {
+        font-size: 12px;
+      }
+    }
   `}</style>
 );
 
@@ -211,13 +285,45 @@ export default function RegisterPage() {
     setErrMsg("");
   };
 
-  const checkAvail = async (field, value) => {
-    if (!value) return;
-    setChecking((p) => ({ ...p, [field]: true }));
-    const { data } = await supabase.from("profiles").select(field).eq(field, value).maybeSingle();
-    setExists((p) => ({ ...p, [field]: !!data }));
+const debounceRef = useRef({});
+
+const checkAvail = (field, value) => {
+  if (!value) return;
+  
+  if (debounceRef.current[field]) {
+    clearTimeout(debounceRef.current[field]);
+  }
+  
+  setChecking((p) => ({ ...p, [field]: true }));
+  
+  debounceRef.current[field] = setTimeout(async () => {
+    const normalized =
+      field === "email" || field === "username"
+        ? value.toLowerCase().trim()
+        : value;
+
+    // KITA GANTI .select() MENJADI .rpc()
+    const { data, error } = await supabase.rpc("check_user_exists", {
+      p_field: field,
+      p_value: normalized,
+    });
+
+    if (error) {
+      console.error("Error mengecek ketersediaan:", error);
+      setChecking((p) => ({ ...p, [field]: false }));
+      return;
+    }
+
+    // data sekarang langsung berupa nilai boolean (true / false)
+    setExists((p) => ({
+      ...p,
+      [field]: data, 
+    }));
+    
     setChecking((p) => ({ ...p, [field]: false }));
-  };
+  }, 400);
+};
+
 
   const pass = {
     length:  form.password.length >= 8,
@@ -237,9 +343,40 @@ export default function RegisterPage() {
     try {
       const email = form.email.trim().toLowerCase();
       const { password, full_name, username, role, access_code, partner_name } = form;
-      const { data: dup } = await supabase.from("profiles").select("id")
-        .or(`email.eq.${email},username.eq.${username}`).maybeSingle();
-      if (dup) { setErrMsg("Email atau Username sudah terdaftar."); return; }
+     
+      if (exists.email) {
+  setErrMsg("Email sudah terdaftar.");
+  setLoading(false);
+  return;
+}
+
+if (exists.username) {
+  setErrMsg("Username sudah terdaftar.");
+  setLoading(false);
+  return;
+}
+
+    const { data: dupEmail } = await supabase
+  .from("profiles")
+  .select("id")
+  .eq("email", email)
+  .maybeSingle();
+
+if (dupEmail) {
+  setErrMsg("Email sudah terdaftar.");
+  return;
+}
+
+const { data: dupUsername } = await supabase
+  .from("profiles")
+  .select("id")
+  .eq("username", username)
+  .maybeSingle();
+
+if (dupUsername) {
+  setErrMsg("Username sudah terdaftar.");
+  return;
+}
       const { data: code } = await supabase.from("access_codes").select("id")
         .eq("code", access_code.toUpperCase()).eq("type", role).eq("is_active", true).maybeSingle();
       if (!code) { setErrMsg("Kode otoritas tidak valid."); return; }
@@ -388,7 +525,10 @@ export default function RegisterPage() {
                     t={t} d={d}
                   >
                     <TInput placeholder="tanpa spasi" value={form.username}
-                      onChange={(v) => { up("username", v.toLowerCase().replace(/\s+/g, "")); setExists((p) => ({ ...p, username: false })); }}
+                    onChange={(v) => {
+  up("username", v.toLowerCase().replace(/\s+/g, ""));
+  setExists((p) => ({ ...p, username: false }));
+}}
                       onBlur={() => checkAvail("username", form.username)} t={t} />
                   </Field>
                   {exists.username && (
@@ -408,8 +548,11 @@ export default function RegisterPage() {
                     t={t} d={d}
                   >
                     <TInput type="email" placeholder="nama@gmail.com" value={form.email}
-                      onChange={(v) => { up("email", v); setExists((p) => ({ ...p, email: false })); }}
-                      onBlur={() => checkAvail("email", form.email)} t={t} />
+onChange={(v) => {
+  up("email", v);
+  setExists((p) => ({ ...p, email: false }));
+}}
+onBlur={() => checkAvail("email", form.email)} t={t} />
                   </Field>
                   {exists.email && (
                     <div style={{ marginTop: 6, display: "flex", alignItems: "center", justifyContent: "space-between", paddingLeft: 2 }}>

@@ -300,21 +300,32 @@ const [activeYear, setActiveYear] = useState(getCurrentYear);
     localStorage.setItem("sh-theme", next);
   };
 
-  // ── Init ─────────────────────────────────────────────────────────────────
   useEffect(() => {
-    setTheme(localStorage.getItem("sh-theme") || "dark");
-    (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return router.push("/login");
-      const { data: prof }    = await supabase.from("profiles").select("*").eq("id", user.id).single();
-      const { data: mapData } = await supabase.from("partner_branches").select("*").order("partner_name", { ascending: true });
-      setProfile(prof);
-      setMasterData(mapData || []);
-      setRegions([...new Set(mapData?.map(i => i.region))].sort());
-      if (prof?.role !== "spm_sumatera") setActivePartner(prof?.partner_name || "");
-      setLoading(false);
-    })();
-  }, [router]);
+  setTheme(localStorage.getItem("sh-theme") || "dark");
+  (async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return router.push("/login");
+
+    const { data: prof } = await supabase.from("profiles").select("*").eq("id", user.id).single();
+    
+    // PERBAIKAN DI SINI: Filter data berdasarkan role
+    let query = supabase.from("partner_branches").select("*").order("partner_name", { ascending: true });
+    
+    if (prof?.role !== "spm_sumatera") {
+      // Jika bukan admin, hanya ambil data partner yang sesuai dengan profilnya
+      query = query.eq("partner_name", prof?.partner_name);
+    }
+
+    const { data: mapData } = await query;
+    
+    setProfile(prof);
+    setMasterData(mapData || []);
+    setRegions([...new Set(mapData?.map(i => i.region))].sort());
+    
+    if (prof?.role !== "spm_sumatera") setActivePartner(prof?.partner_name || "");
+    setLoading(false);
+  })();
+}, [router]);
 
   // ── Derived data ─────────────────────────────────────────────────────────
 useEffect(() => {
@@ -348,6 +359,7 @@ useEffect(() => {
       masterData
         .filter(i =>
           i.partner_name === activePartner &&
+          // Logika filter: Jika 'ALL' tampilkan semua, jika tidak tampilkan sesuai pilihan
           (activeType === "ALL" || i.mpc_mp3 === activeType)
         )
         .map(i => i.branch_name)
@@ -355,14 +367,16 @@ useEffect(() => {
   ];
 }, [masterData, activePartner, activeType]);
 
-// Auto-select type jika hanya ada 1
+
 useEffect(() => {
   if (availableTypes.length === 1) {
     setActiveType(availableTypes[0]);
-  } else if (!availableTypes.includes(activeType)) {
+  }
+  // Jika tipe yang dipilih sebelumnya tiba-tiba tidak ada di partner baru
+  else if (activeType !== "ALL" && !availableTypes.includes(activeType)) {
     setActiveType("ALL");
   }
-}, [availableBranches, activeBranch]);
+}, [availableTypes, activePartner]);
 // Auto-select branch jika hanya ada 1
 useEffect(() => {
   if (availableBranches.length === 1) {
@@ -373,10 +387,14 @@ useEffect(() => {
 }, [availableBranches]);
 
   const isSPM   = profile?.role === "spm_sumatera";
-  const canPnl  = !!activePartner && !!activeBranch;
-  const mpxType = activeType === "ALL"
-    ? masterData.find(i => i.partner_name === activePartner && i.branch_name === activeBranch)?.mpc_mp3
-    : activeType;
+  
+  const canPnl = isSPM 
+  ? (!!activePartner && !!activeBranch) // Admin bebas pilih
+  : (activePartner === profile?.partner_name && !!activeBranch); // Partner harus cocok dengan profil
+
+const mpxType = activeType !== "ALL" 
+  ? activeType 
+  : masterData.find(i => i.partner_name === activePartner && i.branch_name === activeBranch)?.mpc_mp3;
 
   const clearFilters = () => {
     setActiveRegion("SUMATERA");
@@ -507,18 +525,18 @@ useEffect(() => {
               {filteredPartners.map(p => <option key={p} value={p}>{p}</option>)}
             </FilterSelect>
 
-            {isSPM && activePartner && (
-              <FilterSelect
-                label="Tipe (MPC / MP3)"
-                icon={<SlidersHorizontal size={13} />}
-                value={activeType}
-                onChange={v => { setActiveType(v); setActiveBranch(""); }}
-                t={t} d={d}
-              >
-                <option value="ALL">Semua Tipe</option>
-                {availableTypes.map(tp => <option key={tp} value={tp}>{tp}</option>)}
-              </FilterSelect>
-            )}
+            {activePartner && ( // Hapus isSPM agar semua role bisa melihat filter ini
+  <FilterSelect
+    label="Tipe (MPC / MP3)"
+    icon={<SlidersHorizontal size={13} />}
+    value={activeType}
+    onChange={v => { setActiveType(v); setActiveBranch(""); }} // Reset cabang jika tipe ganti
+    t={t} d={d}
+  >
+    <option value="ALL">Semua Tipe</option>
+    {availableTypes.map(tp => <option key={tp} value={tp}>{tp}</option>)}
+  </FilterSelect>
+)}
 
             <FilterSelect
               label="Kantor Cabang"
