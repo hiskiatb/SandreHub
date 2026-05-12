@@ -1,316 +1,515 @@
 "use client";
 
-import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
+/* ──────────────────────────────────────────────────────────────────────────────
+   PNL_PivotSummary — redesigned
+   - No freeze panes (no sticky left columns)
+   - Each month = 1 column (P/L primary; REV · EXP small below)
+   - Partner = full-width band row, expand/collapse
+   - Chip-style filters, single accent, restrained palette
+   - Light / dark via `theme` prop
+
+   Recommended (optional): add Geist + Geist Mono via next/font in your layout
+   for the typography to match the design. Falls back to system fonts.
+────────────────────────────────────────────────────────────────────────────── */
+
+import React, { useState, useMemo, useEffect, useRef, useCallback, useLayoutEffect, Fragment } from "react";
 import { createPortal } from "react-dom";
 import supabase from "../../../lib/supabase";
 import {
-  Search, Check, Filter, SortAsc, SortDesc, X,
-  Eye, EyeOff, RotateCcw, Download, ChevronRight,
-  ChevronDown, BarChart3, TrendingUp, TrendingDown,
-  Minus, AlertCircle
+  Search, Check, ChevronDown, ChevronRight, X,
+  RotateCcw, Download, Calendar, BarChart3, AlertCircle,
+  Sun, Moon, Rows3,
 } from "lucide-react";
 
-// ─── formatters ───────────────────────────────────────────────────────────────
-const fIDR = (v, compact = true) => {
-  if (v === null || v === undefined || isNaN(v)) return "—";
+// ─── Constants ────────────────────────────────────────────────────────────────
+const MONTHS_FULL  = ["JANUARI","FEBRUARI","MARET","APRIL","MEI","JUNI",
+                      "JULI","AGUSTUS","SEPTEMBER","OKTOBER","NOVEMBER","DESEMBER"];
+const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
+
+const FONT_SANS = `-apple-system, BlinkMacSystemFont, "Segoe UI", "SF Pro Text", system-ui, sans-serif`;
+const FONT_MONO = `ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace`;
+
+// ─── Formatters ───────────────────────────────────────────────────────────────
+const fNum = (v) => {
+  if (v === null || v === undefined || isNaN(v) || v === 0) return "—";
   const abs = Math.abs(v);
-  const neg = v < 0;
-  let str;
-  if (compact) {
-    if (abs >= 1_000_000_000) str = `${(abs / 1_000_000_000).toFixed(1)}M`;
-    else if (abs >= 1_000_000) str = `${(abs / 1_000_000).toFixed(1)}Jt`;
-    else if (abs >= 1_000) str = `${(abs / 1_000).toFixed(0)}rb`;
-    else str = abs.toFixed(0);
-  } else {
-    str = new Intl.NumberFormat("id-ID").format(abs);
-  }
-  return neg ? `(${str})` : str;
+  let s;
+  if (abs >= 1_000_000_000)      s = (abs / 1_000_000_000).toFixed(2) + "M";
+  else if (abs >= 1_000_000)     s = (abs / 1_000_000).toFixed(0) + "Jt";
+  else if (abs >= 1_000)         s = (abs / 1_000).toFixed(0) + "rb";
+  else                           s = abs.toFixed(0);
+  return v < 0 ? "−" + s : s;
 };
+const fFull = (v) =>
+  v === null || v === undefined ? "—"
+    : `Rp ${new Intl.NumberFormat("id-ID").format(Math.abs(v))}${v < 0 ? "  (rugi)" : ""}`;
 
-const MONTHS = ["JANUARI","FEBRUARI","MARET","APRIL","MEI","JUNI",
-                "JULI","AGUSTUS","SEPTEMBER","OKTOBER","NOVEMBER","DESEMBER"];
-const MONTH_SHORT = ["JAN","FEB","MAR","APR","MEI","JUN","JUL","AGU","SEP","OKT","NOV","DES"];
+// ─── Design tokens ───────────────────────────────────────────────────────────
+const tokens = (d) => ({
+  bg:        d ? "#0A0C12" : "#F7F8FA",
+  surface:   d ? "#11141C" : "#FFFFFF",
+  surface2:  d ? "#181C26" : "#F2F4F8",
+  line:      d ? "#242937" : "#E4E7EE",
+  line2:     d ? "#1C2030" : "#EDEFF4",
+  ink:       d ? "#F1F5F9" : "#0F172A",
+  ink2:      d ? "#CBD5E1" : "#334155",
+  mute:      d ? "#94A3B8" : "#64748B",
+  mute2:     d ? "#64748B" : "#94A3B8",
+  faint:     d ? "#475569" : "#CBD5E1",
+  blue:      "#0A84FF",
+  blueBg:    d ? "#0E223F" : "#E8F1FF",
+  blueBd:    d ? "#1B3A6E" : "#BFD9FF",
+  blueSoft:  d ? "#122B52" : "#F0F6FF",
+  pos:       d ? "#34D399" : "#16A34A",
+  neg:       d ? "#F87171" : "#DC2626",
+  hover:     d ? "#171B26" : "#F4F6FB",
+  partner:   d ? "#161A24" : "#EEF2F8",
+  partner2:  d ? "#1F2433" : "#E1E7F1",
+  ytd:       d ? "#0F2238" : "#EFF5FF",
+});
 
-// ─── Excel-style Filter Popover ───────────────────────────────────────────────
-function ExcelFilter({ options = [], selected = [], onApply, onClear, sortDir, onSort, t, d }) {
-  const [isOpen, setIsOpen]     = useState(false);
-  const [searchTerm, setSearch] = useState("");
-  const [tempSel, setTempSel]   = useState(selected);
-  const [pos, setPos]           = useState({ x: 0, y: 0 });
-  const [size, setSize]         = useState({ w: 220, h: 320 });
-  const [drag, setDrag]         = useState(null);
-  const startRef = useRef(null);
-  const btnRef   = useRef(null);
+// ─── Popover (click-outside + portal) ────────────────────────────────────────
+function Pop({ anchor, open, onClose, children, w = 280, t, d }) {
+  const ref = useRef(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+
+  useLayoutEffect(() => {
+    if (!open || !anchor?.current) return;
+    const r = anchor.current.getBoundingClientRect();
+    let left = r.left;
+    left = Math.max(8, Math.min(left, window.innerWidth - w - 8));
+    setPos({ top: r.bottom + 6, left });
+  }, [open, anchor, w]);
 
   useEffect(() => {
-    if (isOpen) {
-      const valid = selected.filter(v => options.some(o => o.value === v));
-      setTempSel(valid);
-    }
-  }, [isOpen, options, selected]);
-
-  const toggleOpen = () => {
-    if (!isOpen && btnRef.current) {
-      const r = btnRef.current.getBoundingClientRect();
-      let x = r.left, y = r.bottom + 5;
-      if (x + size.w > window.innerWidth) x = window.innerWidth - size.w - 8;
-      if (y + size.h > window.innerHeight) y = r.top - size.h - 5;
-      setPos({ x, y });
-    }
-    setIsOpen(o => !o);
-  };
-
-  const startInteract = (e, type, dir = null) => {
-    e.stopPropagation();
-    setDrag({ type, dir });
-    startRef.current = { mx: e.clientX, my: e.clientY, pos: { ...pos }, size: { ...size } };
-  };
-
-  useEffect(() => {
-    if (!drag) return;
-    const mm = (e) => {
-      if (!startRef.current) return;
-      const { mx, my, pos: sp, size: ss } = startRef.current;
-      const dx = e.clientX - mx, dy = e.clientY - my;
-      if (drag.type === "drag") { setPos({ x: sp.x + dx, y: sp.y + dy }); return; }
-      let nW = ss.w, nH = ss.h, nX = sp.x, nY = sp.y;
-      if (drag.dir?.includes("e")) nW = Math.max(180, ss.w + dx);
-      if (drag.dir?.includes("s")) nH = Math.max(220, ss.h + dy);
-      if (drag.dir?.includes("w")) { const d2 = Math.min(ss.w - 180, dx); nW = ss.w - d2; nX = sp.x + d2; }
-      if (drag.dir?.includes("n")) { const d2 = Math.min(ss.h - 220, dy); nH = ss.h - d2; nY = sp.y + d2; }
-      setPos({ x: nX, y: nY }); setSize({ w: nW, h: nH });
+    if (!open) return;
+    const h = (e) => {
+      if (ref.current?.contains(e.target)) return;
+      if (anchor?.current?.contains(e.target)) return;
+      onClose();
     };
-    const mu = () => setDrag(null);
-    window.addEventListener("mousemove", mm);
-    window.addEventListener("mouseup", mu);
-    return () => { window.removeEventListener("mousemove", mm); window.removeEventListener("mouseup", mu); };
-  }, [drag]);
+    const k = (e) => e.key === "Escape" && onClose();
+    const id = setTimeout(() => document.addEventListener("mousedown", h), 0);
+    document.addEventListener("keydown", k);
+    return () => {
+      clearTimeout(id);
+      document.removeEventListener("mousedown", h);
+      document.removeEventListener("keydown", k);
+    };
+  }, [open, onClose, anchor]);
 
-  const filtered = useMemo(() =>
-    options.filter(o => o.label.toLowerCase().includes(searchTerm.toLowerCase())), [options, searchTerm]);
-  const allSel = filtered.length > 0 && filtered.every(o => tempSel.includes(o.value));
-  const toggleAll = () => {
-    const vals = filtered.map(o => o.value);
-    setTempSel(prev => allSel ? prev.filter(v => !vals.includes(v)) : [...new Set([...prev, ...vals])]);
-  };
+  if (!open || typeof document === "undefined") return null;
 
-  const dp = isOpen ? (
-    <div style={{
-      position: "fixed", top: pos.y, left: pos.x, width: size.w, height: size.h,
-      background: d ? "rgba(28,30,36,0.95)" : "rgba(255,255,255,0.96)",
-      backdropFilter: "blur(32px)", WebkitBackdropFilter: "blur(32px)",
-      border: `1px solid ${d ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.11)"}`,
-      borderRadius: 10, boxShadow: "0 20px 60px rgba(0,0,0,0.35)",
-      zIndex: 2147483647, display: "flex", flexDirection: "column", overflow: "hidden",
-      userSelect: drag ? "none" : "auto",
-      fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif",
-    }}>
-      {/* Title bar */}
-      <div onMouseDown={e => startInteract(e, "drag")} style={{
-        padding: "8px 10px", display: "flex", alignItems: "center", justifyContent: "space-between",
-        cursor: drag?.type === "drag" ? "grabbing" : "grab",
-        borderBottom: `1px solid ${d ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.07)"}`,
-        flexShrink: 0,
+  return createPortal(
+    <div ref={ref} style={{
+      position: "fixed", top: pos.top, left: pos.left, width: w,
+      background: t.surface, border: `1px solid ${t.line}`,
+      borderRadius: 10,
+      boxShadow: d
+        ? "0 12px 32px rgba(0,0,0,0.45), 0 2px 6px rgba(0,0,0,0.25)"
+        : "0 12px 32px rgba(0,0,0,0.10), 0 2px 6px rgba(0,0,0,0.04)",
+      zIndex: 2147483646, overflow: "hidden",
+      fontFamily: FONT_SANS, color: t.ink,
+    }}>{children}</div>,
+    document.body
+  );
+}
+
+// ─── Filter chip dropdown ────────────────────────────────────────────────────
+function FilterChip({ label, options, selected, onChange, sortDir, onSort, t, d }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const btn = useRef(null);
+  const active = selected.length > 0 || !!sortDir;
+
+  const filtered = useMemo(
+    () => options.filter(o => o.toLowerCase().includes(q.toLowerCase())),
+    [options, q]
+  );
+  const allSel = filtered.length > 0 && filtered.every(o => selected.includes(o));
+  const toggleAll = () => onChange(
+    allSel ? selected.filter(s => !filtered.includes(s)) : [...new Set([...selected, ...filtered])]
+  );
+  const toggle = (v) => onChange(selected.includes(v) ? selected.filter(s => s !== v) : [...selected, v]);
+
+  return (
+    <>
+      <button ref={btn} onClick={() => setOpen(o => !o)} style={{
+        display: "inline-flex", alignItems: "center", gap: 7,
+        height: 30, padding: "0 11px", borderRadius: 7,
+        border: `1px solid ${active ? t.blue : t.line}`,
+        background: active ? t.blue : t.surface,
+        color: active ? "#FFFFFF" : t.ink2,
+        fontSize: 12.5, fontWeight: 500, cursor: "pointer",
+        fontFamily: FONT_SANS,
+        transition: "background .12s, color .12s, border-color .12s",
       }}>
-        <button onClick={() => setIsOpen(false)} style={{
-          width: 11, height: 11, borderRadius: "50%", background: "#FF5F57",
-          border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
-        }}><X size={7} color="rgba(0,0,0,0.5)" /></button>
-        <span style={{ fontSize: 10, fontWeight: 700, color: t.lo, letterSpacing: "0.06em" }}>FILTER</span>
-        <div style={{ width: 11 }} />
-      </div>
+        <span style={{ color: active ? "rgba(255,255,255,0.7)" : t.mute, fontSize: 11.5 }}>{label}</span>
+        {selected.length > 0
+          ? <span style={{ fontWeight: 600 }}>{selected.length === 1 ? selected[0] : `${selected.length} dipilih`}</span>
+          : <span style={{ color: t.mute2 }}>Semua</span>}
+        <ChevronDown size={12} strokeWidth={1.8} />
+      </button>
 
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, padding: 10, overflow: "hidden" }}>
-        {/* Sort */}
-        <div style={{ display: "flex", gap: 5 }}>
-          {[["asc", <SortAsc size={11}/>], ["desc", <SortDesc size={11}/>]].map(([dir, icon]) => (
-            <button key={dir} onClick={() => onSort(dir)} style={{
-              flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
-              padding: "6px 0", borderRadius: 6, border: "none", fontSize: 10, fontWeight: 700,
-              cursor: "pointer",
-              background: sortDir === dir ? t.blue : d ? "rgba(255,255,255,0.08)" : "#E9E9EB",
-              color: sortDir === dir ? "#fff" : t.hi,
-            }}>
-              {icon} {dir.toUpperCase()}
-            </button>
-          ))}
-        </div>
-
-        {/* Search */}
-        <div style={{
-          display: "flex", alignItems: "center", gap: 5, padding: "0 7px",
-          height: 26, borderRadius: 5, background: d ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.05)",
-          border: `1px solid ${d ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)"}`,
-          flexShrink: 0,
-        }}>
-          <Search size={11} style={{ color: t.lo }} />
-          <input placeholder="Cari..." value={searchTerm} onChange={e => setSearch(e.target.value)}
-            style={{ flex: 1, background: "transparent", border: "none", outline: "none", fontSize: 11, color: t.hi }} />
-        </div>
-
-        {/* List */}
-        <div style={{ flex: 1, overflowY: "auto" }}>
-          {/* Select all */}
-          <label style={{ display: "flex", alignItems: "center", gap: 7, padding: "4px 6px",
-            borderRadius: 4, cursor: "pointer", borderBottom: `1px solid ${d ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)"}`, marginBottom: 3 }}>
-            <input type="checkbox" checked={allSel} onChange={toggleAll} style={{ display: "none" }} />
-            <div style={{ width: 13, height: 13, borderRadius: 3, flexShrink: 0,
-              border: `1.5px solid ${allSel ? t.blue : d ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.2)"}`,
-              background: allSel ? t.blue : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              {allSel && <Check size={9} color="#fff" strokeWidth={3} />}
-            </div>
-            <span style={{ fontSize: 11, fontWeight: 700, color: t.hi }}>Semua</span>
-          </label>
-          {filtered.map(opt => {
-            const sel = tempSel.includes(opt.value);
+      <Pop anchor={btn} open={open} onClose={() => setOpen(false)} w={280} t={t} d={d}>
+        {/* Sort header */}
+        <div style={{ display: "flex", borderBottom: `1px solid ${t.line2}` }}>
+          {[["asc", "A → Z"], ["desc", "Z → A"]].map(([dir, lbl]) => {
+            const on = sortDir === dir;
             return (
-              <label key={opt.value} style={{ display: "flex", alignItems: "center", gap: 7, padding: "4px 6px",
-                borderRadius: 4, cursor: "pointer" }}>
-                <input type="checkbox" checked={sel}
-                  onChange={() => setTempSel(p => sel ? p.filter(v => v !== opt.value) : [...p, opt.value])}
-                  style={{ display: "none" }} />
-                <div style={{ width: 13, height: 13, borderRadius: 3, flexShrink: 0,
-                  border: `1.5px solid ${sel ? t.blue : d ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.2)"}`,
-                  background: sel ? t.blue : "transparent", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  {sel && <Check size={9} color="#fff" strokeWidth={3} />}
-                </div>
-                <span style={{ fontSize: 11, color: t.hi }}>{opt.label}</span>
-              </label>
+              <button key={dir} onClick={() => onSort(on ? null : dir)} style={{
+                flex: 1, height: 34, border: "none",
+                background: on ? t.surface2 : "transparent",
+                color: on ? t.ink : t.mute,
+                fontSize: 12, fontWeight: 500, cursor: "pointer",
+                fontFamily: FONT_SANS,
+                borderRight: dir === "asc" ? `1px solid ${t.line2}` : "none",
+              }}>{lbl}</button>
             );
           })}
         </div>
 
-        {/* Buttons */}
-        <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-          <button onClick={() => { onClear(); setIsOpen(false); }} style={{
-            flex: 1, padding: "6px 0", borderRadius: 6, border: "none",
-            background: d ? "rgba(255,255,255,0.09)" : "#E5E5EA", color: t.hi, fontSize: 11, fontWeight: 600, cursor: "pointer",
-          }}>Reset</button>
-          <button onClick={() => { onApply(tempSel); setIsOpen(false); }} style={{
-            flex: 2, padding: "6px 0", borderRadius: 6, border: "none",
-            background: t.blue, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer",
-          }}>Apply</button>
-        </div>
-      </div>
-
-      {/* Resize handles */}
-      {[
-        { s: { bottom: 0, left: 0, right: 0, height: 5 }, c: "s-resize", d: "s" },
-        { s: { top: 0, bottom: 0, right: 0, width: 5 }, c: "e-resize", d: "e" },
-        { s: { bottom: 0, right: 0, width: 10, height: 10 }, c: "se-resize", d: "se" },
-      ].map(({ s, c, d: dir }) => (
-        <div key={dir} onMouseDown={e => startInteract(e, "resize", dir)}
-          style={{ position: "absolute", cursor: c, ...s }} />
-      ))}
-    </div>
-  ) : null;
-
-  return (
-    <>
-      <button ref={btnRef} onClick={toggleOpen} style={{
-        display: "inline-flex", alignItems: "center", justifyContent: "center",
-        width: 20, height: 20, borderRadius: 4, border: "none",
-        background: selected.length > 0 ? t.blueBg : "transparent",
-        color: selected.length > 0 ? t.blue : t.lo,
-        cursor: "pointer", flexShrink: 0,
-      }}>
-        <Filter size={11} strokeWidth={2.5} />
-        {selected.length > 0 && (
+        {/* Search */}
+        <div style={{ padding: "8px 10px", borderBottom: `1px solid ${t.line2}` }}>
           <div style={{
-            position: "absolute", top: -3, right: -3,
-            width: 11, height: 11, borderRadius: 10,
-            background: t.blue, color: "#fff",
-            fontSize: 7, fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center",
-          }}>{selected.length}</div>
-        )}
-      </button>
-      {typeof document !== "undefined" && createPortal(dp, document.body)}
+            display: "flex", alignItems: "center", gap: 7, height: 30, padding: "0 10px",
+            background: t.surface2, border: `1px solid ${t.line}`, borderRadius: 7,
+          }}>
+            <Search size={13} color={t.mute2} />
+            <input value={q} onChange={e => setQ(e.target.value)}
+              placeholder={`Cari ${label.toLowerCase()}…`}
+              style={{
+                flex: 1, border: "none", background: "none", outline: "none",
+                color: t.ink, fontSize: 12.5, fontFamily: FONT_SANS,
+              }} />
+          </div>
+        </div>
+
+        {/* List */}
+        <div style={{ maxHeight: 260, overflowY: "auto", padding: "4px 0" }}>
+          <ChipRow label="Semua" sel={allSel} onClick={toggleAll} emphasize count={filtered.length} t={t} />
+          {filtered.map(o => (
+            <ChipRow key={o} label={o} sel={selected.includes(o)} onClick={() => toggle(o)} t={t} />
+          ))}
+          {filtered.length === 0 && (
+            <div style={{ padding: "22px 14px", textAlign: "center", color: t.mute2, fontSize: 12 }}>Tidak ada hasil</div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div style={{
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+          padding: "8px 10px", borderTop: `1px solid ${t.line2}`, background: t.surface2,
+        }}>
+          <button onClick={() => { onChange([]); onSort(null); }} style={{
+            border: "none", background: "none", color: t.mute, fontSize: 12,
+            cursor: "pointer", padding: "4px 6px", fontFamily: FONT_SANS,
+          }}>Reset</button>
+          <button onClick={() => setOpen(false)} style={{
+            height: 28, padding: "0 12px", border: `1px solid ${t.line}`,
+            background: t.surface, borderRadius: 6, color: t.ink2,
+            fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: FONT_SANS,
+          }}>Tutup</button>
+        </div>
+      </Pop>
     </>
   );
 }
 
-// ─── Column Header with filter ────────────────────────────────────────────────
-function ColHeader({ label, colKey, filters, sorts, allOptions, onFilter, onSort, onToggleHide, t, d }) {
-  const sel = filters[colKey] || [];
-  const sortDir = sorts[colKey];
+function ChipRow({ label, sel, onClick, emphasize, count, t }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 4, userSelect: "none" }}>
-      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase",
-        color: t.mid, whiteSpace: "nowrap" }}>{label}</span>
-      <div style={{ position: "relative" }}>
-        <ExcelFilter
-          options={allOptions[colKey] || []}
-          selected={sel}
-          onApply={v => onFilter(colKey, v)}
-          onClear={() => onFilter(colKey, [])}
-          sortDir={sortDir}
-          onSort={dir => onSort(colKey, dir)}
-          t={t} d={d}
-        />
-      </div>
-      <button onClick={() => onToggleHide(colKey)} title="Sembunyikan kolom" style={{
-        background: "none", border: "none", cursor: "pointer", color: t.lo, display: "flex",
-        padding: 0, flexShrink: 0,
+    <button onClick={onClick} style={{
+      display: "flex", alignItems: "center", gap: 9, width: "100%",
+      padding: "7px 12px", border: "none", background: "transparent", cursor: "pointer",
+      color: emphasize ? t.ink : t.ink2,
+      fontWeight: emphasize ? 600 : 400,
+      textAlign: "left", fontSize: 12.5, fontFamily: FONT_SANS,
+    }}
+    onMouseEnter={e => e.currentTarget.style.background = t.hover}
+    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+      <div style={{
+        width: 15, height: 15, borderRadius: 4, flexShrink: 0,
+        background: sel ? t.blue : "transparent",
+        border: `1px solid ${sel ? t.blue : t.faint}`,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        color: "#FFFFFF",
+      }}>{sel && <Check size={11} strokeWidth={2.5} />}</div>
+      <span style={{ flex: 1 }}>{label}</span>
+      {count !== undefined && <span style={{ color: t.mute2, fontSize: 11 }}>{count}</span>}
+    </button>
+  );
+}
+
+// ─── Month range picker ──────────────────────────────────────────────────────
+function MonthRange({ available, selected, onChange, t, d }) {
+  const [open, setOpen] = useState(false);
+  const btn = useRef(null);
+  const all = selected.length === available.length;
+
+  const toggle = (m) => onChange(
+    selected.includes(m) ? selected.filter(v => v !== m) : [...selected, m]
+  );
+  const setRange = (from, to) => onChange(available.slice(from, to + 1));
+
+  return (
+    <>
+      <button ref={btn} onClick={() => setOpen(o => !o)} style={{
+        display: "inline-flex", alignItems: "center", gap: 7,
+        height: 30, padding: "0 11px", borderRadius: 7,
+        border: `1px solid ${!all ? t.blue : t.line}`,
+        background: !all ? t.blue : t.surface,
+        color: !all ? "#FFFFFF" : t.ink2,
+        fontSize: 12.5, fontWeight: 500, cursor: "pointer", fontFamily: FONT_SANS,
       }}>
-        <EyeOff size={10} />
+        <Calendar size={13} strokeWidth={1.8} />
+        {all
+          ? <span>{available.length} bulan</span>
+          : <span style={{ fontWeight: 600 }}>{selected.length} dari {available.length} bulan</span>}
+        <ChevronDown size={12} strokeWidth={1.8} />
       </button>
+
+      <Pop anchor={btn} open={open} onClose={() => setOpen(false)} w={310} t={t} d={d}>
+        <div style={{
+          padding: "10px 12px 6px", borderBottom: `1px solid ${t.line2}`,
+          display: "flex", justifyContent: "space-between", alignItems: "center",
+        }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: t.ink }}>Pilih bulan</span>
+          <div style={{ display: "flex", gap: 4 }}>
+            <Quick label="YTD" onClick={() => setRange(0, available.length - 1)} t={t} />
+            <Quick label="Q1"  onClick={() => setRange(0, Math.min(2, available.length - 1))} t={t} />
+            <Quick label="Q2"  onClick={() => available.length >= 4 && setRange(3, Math.min(5, available.length - 1))} t={t} />
+            <Quick label="H1"  onClick={() => setRange(0, Math.min(5, available.length - 1))} t={t} />
+          </div>
+        </div>
+        <div style={{ padding: "10px 12px", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 5 }}>
+          {available.map(m => {
+            const sel = selected.includes(m);
+            const short = MONTHS_SHORT[MONTHS_FULL.indexOf(m)];
+            return (
+              <button key={m} onClick={() => toggle(m)} style={{
+                height: 32,
+                border: `1px solid ${sel ? t.blue : t.line}`,
+                background: sel ? t.blue : t.surface,
+                color: sel ? "#FFFFFF" : t.ink2,
+                borderRadius: 6, fontSize: 12, fontWeight: 500,
+                cursor: "pointer", fontFamily: FONT_SANS,
+              }}>{short}</button>
+            );
+          })}
+        </div>
+        <div style={{ padding: "6px 10px 10px", display: "flex", justifyContent: "space-between" }}>
+          <button onClick={() => onChange(available)} style={{
+            border: "none", background: "none", color: t.mute, fontSize: 12,
+            cursor: "pointer", padding: "4px 6px", fontFamily: FONT_SANS,
+          }}>Semua</button>
+          <button onClick={() => setOpen(false)} style={{
+            height: 28, padding: "0 14px", border: "none",
+            background: t.blue, color: "#FFFFFF", borderRadius: 6,
+            fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: FONT_SANS,
+          }}>Selesai</button>
+        </div>
+      </Pop>
+    </>
+  );
+}
+
+function Quick({ label, onClick, t }) {
+  return (
+    <button onClick={onClick} style={{
+      height: 22, padding: "0 8px", border: `1px solid ${t.line}`,
+      background: t.surface, borderRadius: 5,
+      fontSize: 11, fontWeight: 500, color: t.mute,
+      cursor: "pointer", fontFamily: FONT_SANS,
+    }}>{label}</button>
+  );
+}
+
+// ─── Subcomponents ──────────────────────────────────────────────────────────
+function Crumb({ children, active, t }) {
+  return (
+    <span style={{
+      fontSize: 12, color: active ? t.ink : t.mute,
+      fontWeight: active ? 500 : 400, letterSpacing: "-0.005em",
+    }}>{children}</span>
+  );
+}
+
+function Seg({ children, active, onClick, t }) {
+  return (
+    <button onClick={onClick} style={{
+      height: 28, padding: "0 12px", border: "none",
+      background: active ? t.blue : t.surface,
+      color: active ? "#FFFFFF" : t.mute,
+      fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: FONT_SANS,
+    }}>{children}</button>
+  );
+}
+
+function LegItem({ dot, label, t }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+      <span style={{ width: 8, height: 8, borderRadius: 99, background: dot }} />{label}
+    </span>
+  );
+}
+
+function Kpi({ label, value, tone, primary, t }) {
+  const color = tone === "pos" ? t.pos : tone === "neg" ? t.neg : t.ink;
+  return (
+    <div style={{ padding: "18px 20px", background: t.surface }}>
+      <div style={{ fontSize: 11.5, color: t.mute, letterSpacing: "0.01em", marginBottom: 8 }}>{label}</div>
+      <div style={{
+        fontFamily: FONT_MONO, fontVariantNumeric: "tabular-nums",
+        fontSize: primary ? 26 : 22, fontWeight: 500, color,
+        letterSpacing: "-0.02em", lineHeight: 1.1,
+      }}>{value}</div>
     </div>
   );
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
+function TypePill({ mpc, t }) {
+  const isMpc = mpc === "MPC";
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", height: 20, padding: "0 7px",
+      fontSize: 10.5, fontWeight: 600, letterSpacing: "0.04em",
+      color: isMpc ? t.ink : t.mute,
+      background: isMpc ? t.surface2 : "transparent",
+      border: `1px solid ${isMpc ? t.line : t.line2}`,
+      borderRadius: 4,
+    }}>{mpc}</span>
+  );
+}
+
+function Kv({ label, value, tone, t }) {
+  const color = tone === "pos" ? t.pos : tone === "neg" ? t.neg : t.ink;
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 14, padding: "2px 0" }}>
+      <span style={{ fontSize: 12, color: t.mute }}>{label}</span>
+      <span style={{
+        fontFamily: FONT_MONO, fontVariantNumeric: "tabular-nums",
+        fontSize: 12.5, color, fontWeight: tone ? 600 : 500,
+      }}>{value}</span>
+    </div>
+  );
+}
+
+// Cell renderers — month and YTD share a stacked layout: P/L primary, REV·EXP secondary
+function MonthCell({ md, label, setTooltip, t, partner, grand }) {
+  const empty = !md || (md.rev === 0 && md.exp === 0);
+  if (empty && !partner && !grand) {
+    return (
+      <td style={{ padding: "10px 12px", textAlign: "right" }}>
+        <span style={{ fontFamily: FONT_MONO, color: t.mute2, fontSize: 13 }}>—</span>
+      </td>
+    );
+  }
+  const rev = md?.rev ?? 0;
+  const exp = md?.exp ?? 0;
+  const pl  = rev - exp;
+  const bg  = grand ? "transparent" : partner ? t.partner : undefined;
+  return (
+    <td style={{
+      padding: "10px 12px", textAlign: "right", background: bg,
+      borderTop: grand ? `1px solid ${t.line}` : undefined,
+      borderBottom: partner ? `1px solid ${t.line}` : undefined,
+      cursor: "help",
+    }}
+      onMouseEnter={e => setTooltip({ x: e.clientX, y: e.clientY, rev, exp, label })}
+      onMouseMove={e => setTooltip(tt => tt ? { ...tt, x: e.clientX, y: e.clientY } : null)}
+      onMouseLeave={() => setTooltip(null)}>
+      <div style={{
+        fontFamily: FONT_MONO, fontVariantNumeric: "tabular-nums",
+        fontSize: grand ? 14 : 13.5, fontWeight: partner || grand ? 600 : 500, lineHeight: 1.15,
+        color: pl > 0 ? t.ink : pl < 0 ? t.neg : t.mute2,
+      }}>{fNum(pl)}</div>
+      <div style={{
+        fontFamily: FONT_MONO, fontVariantNumeric: "tabular-nums",
+        fontSize: 10.5, color: partner ? t.mute : t.mute2,
+        marginTop: 2, lineHeight: 1.1, letterSpacing: "0.01em",
+        fontWeight: partner || grand ? 500 : 400,
+      }}>{fNum(rev)} · {fNum(exp)}</div>
+    </td>
+  );
+}
+
+function YTDCell({ rev, exp, label, setTooltip, t, partner, grand }) {
+  const pl = rev - exp;
+  return (
+    <td style={{
+      padding: "10px 18px", textAlign: "right",
+      background: t.ytd,
+      borderLeft: `1px solid ${t.line}`,
+      borderTop: grand ? `1px solid ${t.line}` : undefined,
+      borderBottom: partner ? `1px solid ${t.line}` : undefined,
+      cursor: "help",
+    }}
+      onMouseEnter={e => setTooltip({ x: e.clientX, y: e.clientY, rev, exp, label })}
+      onMouseMove={e => setTooltip(tt => tt ? { ...tt, x: e.clientX, y: e.clientY } : null)}
+      onMouseLeave={() => setTooltip(null)}>
+      <div style={{
+        fontFamily: FONT_MONO, fontVariantNumeric: "tabular-nums",
+        fontSize: grand ? 15 : 14, fontWeight: 600, lineHeight: 1.15,
+        color: pl > 0 ? t.ink : pl < 0 ? t.neg : t.mute2,
+      }}>{fNum(pl)}</div>
+      <div style={{
+        fontFamily: FONT_MONO, fontVariantNumeric: "tabular-nums",
+        fontSize: 10.5, color: t.mute, marginTop: 2,
+        lineHeight: 1.1, letterSpacing: "0.01em", fontWeight: 500,
+      }}>{fNum(rev)} · {fNum(exp)}</div>
+    </td>
+  );
+}
+
+function Th({ children, align = "left", style, t }) {
+  return (
+    <th style={{
+      padding: "11px 12px", textAlign: align,
+      fontSize: 10.5, fontWeight: 500, letterSpacing: "0.08em",
+      color: t.mute, textTransform: "uppercase",
+      borderBottom: `1px solid ${t.line}`, background: t.surface,
+      position: "sticky", top: 0, zIndex: 1,
+      ...style,
+    }}>{children}</th>
+  );
+}
+
+// ─── Main ───────────────────────────────────────────────────────────────────
 export default function PNL_PivotSummary({ theme, activeYear }) {
   const d = theme === "dark";
+  const t = tokens(d);
 
-  const t = {
-    bg:      d ? "#07090D" : "#F2F2F7",
-    card:    d ? "#0D1019" : "#FFFFFF",
-    sub:     d ? "#131826" : "#F5F5F8",
-    header:  d ? "#0A0D16" : "#EAEAF0",
-    line:    d ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.09)",
-    lineH:   d ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.05)",
-    hi:      d ? "#EEF0F5" : "#1A1A1E",
-    mid:     d ? "#8892A4" : "#4B5563",
-    lo:      d ? "#424D60" : "#9CA3AF",
-    blue:    "#0A84FF",
-    blueBg:  d ? "rgba(10,132,255,0.11)" : "rgba(10,132,255,0.07)",
-    blueBd:  d ? "rgba(10,132,255,0.26)" : "rgba(10,132,255,0.18)",
-    green:   d ? "#2ED158" : "#16A34A",
-    greenBg: d ? "rgba(46,209,88,0.08)" : "rgba(22,163,74,0.06)",
-    red:     d ? "#FF453A" : "#DC2626",
-    redBg:   d ? "rgba(255,69,58,0.08)" : "rgba(220,38,38,0.06)",
-    amber:   d ? "#FFD60A" : "#D97706",
-    inputBg: d ? "rgba(255,255,255,0.05)" : "#FFFFFF",
-    inputBd: d ? "rgba(255,255,255,0.09)" : "rgba(0,0,0,0.13)",
-  };
+  const now      = new Date();
+  const curYear  = now.getFullYear().toString();
+  const curMIdx  = now.getMonth();
 
-  const [raw, setRaw]           = useState([]);
-  const [loading, setLoading]   = useState(true);
-  const [error, setError]       = useState(null);
+  // Months available (capped at current month for current year)
+  const availMonths = useMemo(
+    () => activeYear === curYear ? MONTHS_FULL.slice(0, curMIdx + 1) : MONTHS_FULL,
+    [activeYear, curYear, curMIdx]
+  );
 
-  // Column filter state: { region: [], partner: [], mpc: [], branch: [] }
-  const [filters, setFilters]   = useState({});
-  const [sorts, setSorts]       = useState({});
-  const [hiddenCols, setHidden] = useState(new Set());
-  const [expandedRows, setExpanded] = useState(new Set()); // "partnerKey" → all branches shown
-  const [collapsedGroups, setCollapsed] = useState(new Set()); // collapse partner group
-  const [tooltipVal, setTooltip] = useState(null); // { x, y, value, label }
+  const [raw,       setRaw]       = useState([]);
+  const [loading,   setLoading]   = useState(true);
+  const [error,     setError]     = useState(null);
+  const [filters,   setFilters]   = useState({ partner: [], branch: [], mpc: [] });
+  const [sorts,     setSorts]     = useState({ partner: null, branch: null, mpc: null });
+  const [selMonths, setSelMonths] = useState(availMonths);
+  const [collapsed, setCollapsed] = useState(new Set());
+  const [search,    setSearch]    = useState("");
+  const [tooltip,   setTooltip]   = useState(null);
 
-  // Which months to show (based on data + year)
-  const [visibleMonths, setVisibleMonths] = useState(new Set(MONTHS));
+  useEffect(() => { setSelMonths(availMonths); }, [availMonths]);
 
-  // ── Fetch all pnl_reports for the year ───────────────────────────────────
+  // ── Fetch (unchanged from original) ──
   useEffect(() => {
     if (!activeYear) return;
-    setLoading(true);
-    setError(null);
+    setLoading(true); setError(null);
     (async () => {
       try {
         const { data, error: err } = await supabase
           .from("pnl_reports")
-          .select(`partner_name, branch, mpc_mp3, month, year,
-                   grand_total_revenue, grand_total_pengeluaran,
-                   is_finalized, validation_notes`)
+          .select("partner_name, branch, mpc_mp3, month, year, grand_total_revenue, grand_total_pengeluaran, is_finalized")
           .eq("year", activeYear);
         if (err) throw err;
         setRaw(data || []);
@@ -319,70 +518,60 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
     })();
   }, [activeYear]);
 
-  // ── Build pivot data ──────────────────────────────────────────────────────
-  // Structure: rows keyed by (partner_name + branch + mpc_mp3)
-  // Each row has REV / EXP / P/L per month + YTD
-  const { rows, regionMap } = useMemo(() => {
-    const map = {}; // key → { partner, branch, mpc, months: {MON: {rev, exp}} }
-    const regionMap = {}; // partner → region (if available in masterData)
-
+  // Build rows: one per (partner, branch, mpc) with months keyed
+  const rows = useMemo(() => {
+    const map = {};
     raw.forEach(r => {
       const key = `${r.partner_name}|||${r.branch}|||${r.mpc_mp3}`;
       if (!map[key]) map[key] = { partner: r.partner_name, branch: r.branch, mpc: r.mpc_mp3, months: {} };
       map[key].months[r.month.toUpperCase()] = {
-        rev: Number(r.grand_total_revenue) || 0,
+        rev: Number(r.grand_total_revenue)     || 0,
         exp: Number(r.grand_total_pengeluaran) || 0,
-        finalized: r.is_finalized,
       };
     });
-
-    return { rows: Object.values(map), regionMap };
+    return Object.values(map);
   }, [raw]);
 
-  // ── Faceted filter options ────────────────────────────────────────────────
-  // Options for each column based on the OTHER columns' current filters
-  const filterOptions = useMemo(() => {
-    const applyExcept = (skipCol) => rows.filter(r => {
-      return Object.entries(filters).every(([col, sel]) => {
-        if (col === skipCol || !sel.length) return true;
-        if (col === "partner") return sel.includes(r.partner);
-        if (col === "branch")  return sel.includes(r.branch);
-        if (col === "mpc")     return sel.includes(r.mpc);
-        return true;
-      });
-    });
-
-    const uniq = (arr, fn) => [...new Set(arr.map(fn))].sort().map(v => ({ value: v, label: v }));
+  // Faceted options
+  const opts = useMemo(() => {
+    const ex = (skip) => rows.filter(r => Object.entries(filters).every(([col, sel]) => {
+      if (col === skip || !sel.length) return true;
+      const v = col === "partner" ? r.partner : col === "branch" ? r.branch : r.mpc;
+      return sel.includes(v);
+    }));
+    const uniq = (arr, fn) => [...new Set(arr.map(fn))].sort();
     return {
-      partner: uniq(applyExcept("partner"), r => r.partner),
-      branch:  uniq(applyExcept("branch"),  r => r.branch),
-      mpc:     uniq(applyExcept("mpc"),     r => r.mpc),
+      partner: uniq(ex("partner"), r => r.partner),
+      branch:  uniq(ex("branch"),  r => r.branch),
+      mpc:     uniq(ex("mpc"),     r => r.mpc),
     };
   }, [rows, filters]);
 
-  // ── Apply filters + sort ──────────────────────────────────────────────────
+  // Filtered + sorted rows
   const filteredRows = useMemo(() => {
     let list = rows.filter(r => {
-      if (filters.partner?.length && !filters.partner.includes(r.partner)) return false;
-      if (filters.branch?.length  && !filters.branch.includes(r.branch))   return false;
-      if (filters.mpc?.length     && !filters.mpc.includes(r.mpc))         return false;
+      if (filters.partner.length && !filters.partner.includes(r.partner)) return false;
+      if (filters.branch.length  && !filters.branch.includes(r.branch))   return false;
+      if (filters.mpc.length     && !filters.mpc.includes(r.mpc))         return false;
+      if (search) {
+        const q = search.toLowerCase();
+        if (!(r.partner.toLowerCase().includes(q) || r.branch.toLowerCase().includes(q))) return false;
+      }
       return true;
     });
-
-    // Sort
-    const sortEntries = Object.entries(sorts).filter(([, d]) => d);
-    if (sortEntries.length) {
-      const [col, dir] = sortEntries[0];
+    const se = Object.entries(sorts).find(([, dir]) => dir);
+    if (se) {
+      const [col, dir] = se;
       list = [...list].sort((a, b) => {
-        let va = a[col === "partner" ? "partner" : col === "branch" ? "branch" : "mpc"] || "";
-        let vb = b[col === "partner" ? "partner" : col === "branch" ? "branch" : "mpc"] || "";
+        const va = col === "partner" ? a.partner : col === "branch" ? a.branch : a.mpc;
+        const vb = col === "partner" ? b.partner : col === "branch" ? b.branch : b.mpc;
         return dir === "asc" ? va.localeCompare(vb) : vb.localeCompare(va);
       });
     }
     return list;
-  }, [rows, filters, sorts]);
+  }, [rows, filters, sorts, search]);
 
-  // ── Group by partner ──────────────────────────────────────────────────────
+  // Group by partner
   const grouped = useMemo(() => {
     const g = {};
     filteredRows.forEach(r => {
@@ -392,654 +581,405 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
     return Object.values(g);
   }, [filteredRows]);
 
-  // ── Month columns to render ───────────────────────────────────────────────
-  const activeMths = useMemo(() =>
-    MONTHS.filter(m => visibleMonths.has(m)), [visibleMonths]);
+  // Active months
+  const activeMths = useMemo(
+    () => availMonths.filter(m => selMonths.includes(m)),
+    [availMonths, selMonths]
+  );
 
-  // ── YTD calc ─────────────────────────────────────────────────────────────
-  const ytd = (monthsData) => {
+  const ytdOf = useCallback((mData) => {
     let rev = 0, exp = 0;
-    activeMths.forEach(m => {
-      const md = monthsData[m];
-      if (md) { rev += md.rev; exp += md.exp; }
-    });
+    activeMths.forEach(m => { const md = mData[m]; if (md) { rev += md.rev; exp += md.exp; } });
     return { rev, exp, pl: rev - exp };
-  };
+  }, [activeMths]);
 
-  // ── handlers ─────────────────────────────────────────────────────────────
-  const onFilter = useCallback((col, vals) => {
-    setFilters(f => ({ ...f, [col]: vals }));
-  }, []);
-  const onSort = useCallback((col, dir) => {
-    setSorts(s => ({ ...s, [col]: s[col] === dir ? null : dir }));
-  }, []);
-  const onToggleHide = useCallback(col => {
-    setHidden(h => { const n = new Set(h); n.has(col) ? n.delete(col) : n.add(col); return n; });
-  }, []);
-  const clearAll = () => {
-    setFilters({}); setSorts({}); setHidden(new Set()); setCollapsed(new Set());
-    setVisibleMonths(new Set(MONTHS));
-  };
-  const togglePartner = (partner) => {
-    setCollapsed(s => { const n = new Set(s); n.has(partner) ? n.delete(partner) : n.add(partner); return n; });
-  };
-
-  // ── Column visibility ─────────────────────────────────────────────────────
-  const FIXED_COLS = ["partner", "mpc", "branch"]; // always visible metadata cols
-  const colVisible = (col) => !hiddenCols.has(col);
-  const activeFilterCount = Object.values(filters).filter(v => v.length).length
-    + Object.values(sorts).filter(Boolean).length;
-
-  // ── Cell renderer ─────────────────────────────────────────────────────────
-  const CellPL = ({ val, compact = true, showSign = false }) => {
-    if (val === null || val === undefined) return <span style={{ color: t.lo }}>—</span>;
-    const pos = val >= 0;
-    const isZero = val === 0;
-    return (
-      <span style={{
-        color: isZero ? t.lo : pos ? t.green : t.red,
-        fontVariantNumeric: "tabular-nums", fontWeight: 700, fontSize: 12,
-      }}>
-        {showSign && !isZero && (pos ? "+" : "")}
-        {fIDR(val, compact)}
-      </span>
-    );
-  };
-
-  const CellREV = ({ val }) => (
-    <span style={{ color: t.hi, fontVariantNumeric: "tabular-nums", fontSize: 12 }}>
-      {val ? fIDR(val) : "—"}
-    </span>
-  );
-  const CellEXP = ({ val }) => (
-    <span style={{ color: val > 0 ? t.amber : t.lo, fontVariantNumeric: "tabular-nums", fontSize: 12 }}>
-      {val ? `(${fIDR(val)})` : "—"}
-    </span>
-  );
-
-  // ── Export CSV ────────────────────────────────────────────────────────────
-  const exportCSV = () => {
-    const hdr = ["Partner", "MPC/MP3", "Branch", "Metric",
-      ...activeMths.map(m => MONTH_SHORT[MONTHS.indexOf(m)]), "YTD"].join(",");
-    const lines = [hdr];
-    grouped.forEach(g => {
-      g.branches.forEach(b => {
-        const yt = ytd(b.months);
-        ["REV","EXP","P/L"].forEach(metric => {
-          const vals = activeMths.map(m => {
-            const md = b.months[m];
-            if (!md) return "";
-            if (metric === "REV") return md.rev;
-            if (metric === "EXP") return md.exp;
-            return md.rev - md.exp;
-          });
-          const ytVal = metric === "REV" ? yt.rev : metric === "EXP" ? yt.exp : yt.pl;
-          lines.push([b.partner, b.mpc, b.branch, metric, ...vals, ytVal].join(","));
-        });
-      });
+  // Grand totals
+  const { gtMth, gtRev, gtExp } = useMemo(() => {
+    const gtMth = {};
+    let gtRev = 0, gtExp = 0;
+    activeMths.forEach(m => {
+      let rev = 0, exp = 0;
+      filteredRows.forEach(r => { const md = r.months[m]; if (md) { rev += md.rev; exp += md.exp; } });
+      gtMth[m] = { rev, exp };
+      gtRev += rev; gtExp += exp;
     });
-    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
-    const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-    a.download = `PNL_Summary_${activeYear}.csv`; a.click();
+    return { gtMth, gtRev, gtExp };
+  }, [filteredRows, activeMths]);
+  const gtPL = gtRev - gtExp;
+
+  // Handlers
+  const togglePartner = (p) => setCollapsed(s => { const n = new Set(s); n.has(p) ? n.delete(p) : n.add(p); return n; });
+  const expandAll   = () => setCollapsed(new Set());
+  const collapseAll = () => setCollapsed(new Set(grouped.map(g => g.partner)));
+  const clearAll    = () => {
+    setFilters({ partner: [], branch: [], mpc: [] });
+    setSorts({ partner: null, branch: null, mpc: null });
+    setSelMonths(availMonths);
+    setSearch("");
   };
 
-  // ── Tooltip ───────────────────────────────────────────────────────────────
-  const Tooltip = () => tooltipVal ? (
-    <div style={{
-      position: "fixed", top: tooltipVal.y + 14, left: tooltipVal.x,
-      background: d ? "#1A1D26" : "#fff",
-      border: `1px solid ${t.line}`, borderRadius: 8,
-      padding: "8px 12px", zIndex: 9999, boxShadow: "0 8px 24px rgba(0,0,0,0.3)",
-      pointerEvents: "none",
-    }}>
-      <div style={{ fontSize: 11, color: t.mid, marginBottom: 3 }}>{tooltipVal.label}</div>
-      <div style={{ fontSize: 14, fontWeight: 700, color: t.hi, fontVariantNumeric: "tabular-nums" }}>
-        Rp {new Intl.NumberFormat("id-ID").format(Math.abs(tooltipVal.value))}
-        {tooltipVal.value < 0 && <span style={{ color: t.red }}> (Rugi)</span>}
+  const activeFilterCount =
+    filters.partner.length + filters.branch.length + filters.mpc.length
+    + (selMonths.length < availMonths.length ? 1 : 0)
+    + (search ? 1 : 0);
+
+  // CSV export
+  const exportCSV = () => {
+    const hdr = ["Partner", "Tipe", "Branch",
+      ...activeMths.flatMap(m => {
+        const s = MONTHS_SHORT[MONTHS_FULL.indexOf(m)];
+        return [`${s}_REV`, `${s}_EXP`, `${s}_PL`];
+      }),
+      "YTD_REV", "YTD_EXP", "YTD_PL",
+    ].join(",");
+    const lines = [hdr];
+    grouped.forEach(g => g.branches.forEach(b => {
+      const yt = ytdOf(b.months);
+      const cells = activeMths.flatMap(m => {
+        const md = b.months[m];
+        return md ? [md.rev, md.exp, md.rev - md.exp] : ["", "", ""];
+      });
+      lines.push([b.partner, b.mpc, b.branch, ...cells, yt.rev, yt.exp, yt.pl].join(","));
+    }));
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+    a.download = `PNL_${activeYear}.csv`;
+    a.click();
+  };
+
+  // Loading
+  if (loading) {
+    return (
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        minHeight: 380, gap: 16, background: t.surface,
+        borderRadius: 12, border: `1px solid ${t.line}`,
+        fontFamily: FONT_SANS, color: t.ink,
+      }}>
+        <style>{`@keyframes pulseBeat{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.55;transform:scale(.9)}}`}</style>
+        <div style={{
+          width: 48, height: 48, borderRadius: 12, background: t.blue,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          animation: "pulseBeat 1.6s ease-in-out infinite",
+        }}>
+          <BarChart3 size={22} color="#FFFFFF" />
+        </div>
+        <span style={{ fontSize: 13.5, fontWeight: 500, color: t.mute, letterSpacing: "0.01em" }}>
+          Memuat data pivot…
+        </span>
       </div>
-    </div>
-  ) : null;
+    );
+  }
 
-  // ── Column header cell style ──────────────────────────────────────────────
-  const TH = ({ children, width, align = "right", sticky = false, stickyLeft }) => (
-    <th style={{
-      padding: "10px 10px", textAlign: align,
-      background: d ? "#0A0D16" : "#EAEAF0",
-      position: sticky ? "sticky" : "static",
-      left: stickyLeft,
-      zIndex: sticky ? 10 : "auto",
-      width, minWidth: width,
-      whiteSpace: "nowrap",
-      borderBottom: `1.5px solid ${t.blue}`,
-      borderRight: `1px solid ${t.line}`,
-    }}>
-      {children}
-    </th>
-  );
-
-  // ── Row cell ──────────────────────────────────────────────────────────────
-  const TD = ({ children, bg, align = "right", width, sticky = false, stickyLeft, border = true }) => (
-    <td style={{
-      padding: "7px 10px", textAlign: align,
-    background: bg || (d ? "#0D1019" : "#FFFFFF"),
-      position: sticky ? "sticky" : "static",
-      left: stickyLeft,
-      zIndex: sticky ? 5 : "auto",
-      width, minWidth: width,
-      borderBottom: `1px solid ${t.lineH}`,
-      borderRight: border ? `1px solid ${t.lineH}` : "none",
-      verticalAlign: "middle",
-    }}>
-      {children}
-    </td>
-  );
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  if (loading) return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 360, gap: 14 }}>
-      <div style={{ width: 46, height: 46, borderRadius: 12, background: t.blue, display: "flex", alignItems: "center", justifyContent: "center", animation: "pivot-breathe 1.8s ease-in-out infinite" }}>
-        <BarChart3 size={22} color="#fff" />
+  // Error
+  if (error) {
+    return (
+      <div style={{
+        display: "flex", alignItems: "center", gap: 14, padding: "16px 20px",
+        borderRadius: 10, background: t.surface,
+        border: `1px solid ${t.neg}`, fontFamily: FONT_SANS,
+      }}>
+        <AlertCircle size={20} color={t.neg} style={{ flexShrink: 0 }} />
+        <div>
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: t.neg }}>Gagal memuat data</div>
+          <div style={{ fontSize: 12, color: t.mute, marginTop: 3 }}>{error}</div>
+        </div>
       </div>
-      <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: t.mid }}>Memuat data pivot...</span>
-      <style>{`@keyframes pivot-breathe { 0%,100%{opacity:1;transform:scale(1);}50%{opacity:.36;transform:scale(.9);} }`}</style>
-    </div>
-  );
-
-  if (error) return (
-    <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "20px 24px", borderRadius: 12, background: t.redBg, border: `1px solid ${t.red}20` }}>
-      <AlertCircle size={20} style={{ color: t.red }} />
-      <span style={{ fontSize: 14, color: t.red }}>{error}</span>
-    </div>
-  );
-
-  const stickyPartnerW = 200;
-  const stickyMpcW     = 60;
-  const stickyBranchW  = 160;
+    );
+  }
 
   return (
     <div style={{
-      fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif",
-      WebkitFontSmoothing: "antialiased", color: t.hi,
+      fontFamily: FONT_SANS, WebkitFontSmoothing: "antialiased", color: t.ink,
     }}>
-      <Tooltip />
-
-      {/* ── Toolbar ── */}
-      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 18 }}>
-        {/* Title */}
-        <div style={{ flex: 1, minWidth: 180 }}>
-          <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: t.hi }}>
-            Pivot P&L Summary
+      {/* Header */}
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 24, gap: 16, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+            <Crumb t={t}>Laporan</Crumb>
+            <span style={{ color: t.mute2 }}>/</span>
+            <Crumb active t={t}>Pivot P&L</Crumb>
           </div>
-          <div style={{ fontSize: 12, color: t.mid, marginTop: 3 }}>
-            {filteredRows.length} branch · {grouped.length} partner · {activeYear}
-          </div>
-        </div>
-
-        {/* Active filters badge */}
-        {activeFilterCount > 0 && (
-          <div style={{ display: "flex", alignItems: "center", gap: 5, padding: "5px 10px",
-            borderRadius: 99, background: t.blueBg, border: `1px solid ${t.blueBd}`,
-            fontSize: 11, fontWeight: 700, color: t.blue }}>
-            <Filter size={11} /> {activeFilterCount} filter aktif
-          </div>
-        )}
-
-        {/* Month toggle */}
-        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          {MONTH_SHORT.map((ms, i) => {
-            const mFull = MONTHS[i];
-            const on = visibleMonths.has(mFull);
-            const hasData = raw.some(r => r.month.toUpperCase() === mFull);
-            return (
-              <button key={ms} onClick={() => {
-                setVisibleMonths(prev => { const n = new Set(prev); n.has(mFull) ? n.delete(mFull) : n.add(mFull); return n; });
-              }} style={{
-                padding: "4px 7px", borderRadius: 5, border: "none",
-                fontSize: 10, fontWeight: 700, cursor: "pointer",
-                background: on ? (hasData ? t.blue : t.blueBg) : (d ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)"),
-                color: on ? (hasData ? "#fff" : t.blue) : t.lo,
-                opacity: hasData ? 1 : 0.45,
-              }}>{ms}</button>
-            );
-          })}
-        </div>
-
-        {/* Hidden cols indicator */}
-        {hiddenCols.size > 0 && (
-          <button onClick={() => setHidden(new Set())} style={{
-            display: "flex", alignItems: "center", gap: 5,
-            padding: "6px 11px", borderRadius: 7, border: `1px solid ${t.line}`,
-            background: t.sub, color: t.mid, cursor: "pointer",
-            fontSize: 11, fontWeight: 600,
+          <h1 style={{
+            margin: 0, fontSize: 28, fontWeight: 600,
+            letterSpacing: "-0.025em", lineHeight: 1.1, color: t.ink,
           }}>
-            <Eye size={12} /> Tampilkan semua ({hiddenCols.size})
+            Pivot P&L <span style={{ color: t.mute, fontWeight: 400 }}>· {activeYear}</span>
+          </h1>
+          <div style={{ marginTop: 6, fontSize: 13, color: t.mute }}>
+            {filteredRows.length} branch · {grouped.length} partner · diperbarui {MONTHS_SHORT[curMIdx]} {curYear}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button onClick={exportCSV} style={{
+            display: "inline-flex", alignItems: "center", gap: 7,
+            height: 32, padding: "0 14px",
+            border: `1px solid ${t.blue}`, background: t.blue, color: "#FFFFFF",
+            borderRadius: 7, fontSize: 13, fontWeight: 500,
+            cursor: "pointer", fontFamily: FONT_SANS,
+            boxShadow: `0 2px 8px ${d ? "rgba(10,132,255,0.35)" : "rgba(10,132,255,0.20)"}`,
+          }}>
+            <Download size={13} strokeWidth={1.8} /> Export CSV
           </button>
-        )}
+        </div>
+      </header>
 
-        {/* Clear all */}
-        <button onClick={clearAll} style={{
-          display: "flex", alignItems: "center", gap: 5,
-          padding: "6px 11px", borderRadius: 7, border: `1px solid ${t.line}`,
-          background: t.sub, color: t.mid, cursor: "pointer",
-          fontSize: 11, fontWeight: 600,
-        }}>
-          <RotateCcw size={12} /> Clear
-        </button>
-
-        {/* Export */}
-        <button onClick={exportCSV} style={{
-          display: "flex", alignItems: "center", gap: 5,
-          padding: "6px 12px", borderRadius: 7, border: "none",
-          background: t.blue, color: "#fff", cursor: "pointer",
-          fontSize: 11, fontWeight: 700,
-          boxShadow: `0 2px 8px rgba(10,132,255,${d ? 0.36 : 0.22})`,
-        }}>
-          <Download size={12} /> Export CSV
-        </button>
+      {/* KPI strip */}
+      <div style={{
+        display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 1,
+        marginBottom: 22, background: t.line,
+        border: `1px solid ${t.line}`, borderRadius: 10, overflow: "hidden",
+      }}>
+        <Kpi label="Total Pendapatan" value={fFull(gtRev)} tone="neutral" t={t} />
+        <Kpi label="Total Pengeluaran" value={fFull(gtExp)} tone="neutral" t={t} />
+        <Kpi label="Laba Bersih" value={fFull(gtPL)} tone={gtPL >= 0 ? "pos" : "neg"} primary t={t} />
+        <Kpi label="Margin"
+             value={gtRev ? ((gtPL / gtRev) * 100).toFixed(1) + "%" : "—"}
+             tone={gtPL >= 0 ? "pos" : "neg"} t={t} />
       </div>
 
-      {/* ── Legend ── */}
-      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 14 }}>
-        {[
-          { color: t.hi,    label: "REV — Pendapatan" },
-          { color: t.amber, label: "EXP — Pengeluaran" },
-          { color: t.green, label: "P/L Positif" },
-          { color: t.red,   label: "P/L Negatif" },
-        ].map(l => (
-          <div key={l.label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <div style={{ width: 8, height: 8, borderRadius: 2, background: l.color }} />
-            <span style={{ fontSize: 10, color: t.lo }}>{l.label}</span>
-          </div>
-        ))}
-        <div style={{ marginLeft: "auto", fontSize: 10, color: t.lo }}>
-          Hover sel untuk nilai penuh · Klik ▶ untuk expand/collapse
+      {/* Toolbar */}
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 14 }}>
+        {/* Search */}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 7, height: 30, padding: "0 11px",
+          border: `1px solid ${t.line}`, background: t.surface,
+          borderRadius: 7, minWidth: 230,
+        }}>
+          <Search size={13} color={t.mute2} />
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Cari partner atau branch…"
+            style={{
+              flex: 1, border: "none", background: "none", outline: "none",
+              color: t.ink, fontSize: 12.5, fontFamily: FONT_SANS,
+            }} />
+          {search && (
+            <button onClick={() => setSearch("")} style={{
+              border: "none", background: "none", cursor: "pointer",
+              color: t.mute, padding: 0, display: "flex",
+            }}><X size={13} /></button>
+          )}
+        </div>
+
+        <FilterChip label="Partner" options={opts.partner} selected={filters.partner}
+          onChange={v => setFilters(f => ({ ...f, partner: v }))}
+          sortDir={sorts.partner} onSort={v => setSorts(s => ({ ...s, partner: v }))}
+          t={t} d={d} />
+        <FilterChip label="Branch" options={opts.branch} selected={filters.branch}
+          onChange={v => setFilters(f => ({ ...f, branch: v }))}
+          sortDir={sorts.branch} onSort={v => setSorts(s => ({ ...s, branch: v }))}
+          t={t} d={d} />
+        <FilterChip label="Tipe" options={opts.mpc} selected={filters.mpc}
+          onChange={v => setFilters(f => ({ ...f, mpc: v }))}
+          sortDir={sorts.mpc} onSort={v => setSorts(s => ({ ...s, mpc: v }))}
+          t={t} d={d} />
+        <MonthRange available={availMonths} selected={selMonths} onChange={setSelMonths} t={t} d={d} />
+
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+          {grouped.length > 0 && (
+            <div style={{ display: "flex", border: `1px solid ${t.line}`, borderRadius: 7, overflow: "hidden", height: 30 }}>
+              <Seg active={collapsed.size === 0} onClick={expandAll} t={t}>Buka semua</Seg>
+              <Seg active={collapsed.size === grouped.length && grouped.length > 0} onClick={collapseAll} t={t}>Tutup semua</Seg>
+            </div>
+          )}
+          {activeFilterCount > 0 && (
+            <button onClick={clearAll} style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              height: 30, padding: "0 11px",
+              border: `1px solid ${t.line}`, background: t.surface, color: t.mute,
+              borderRadius: 7, fontSize: 12.5, cursor: "pointer", fontFamily: FONT_SANS,
+            }}>
+              <RotateCcw size={13} strokeWidth={1.8} /> Reset <span style={{ color: t.mute2 }}>({activeFilterCount})</span>
+            </button>
+          )}
         </div>
       </div>
 
-      {/* ── Table ── */}
+      {/* Legend */}
+      <div style={{ display: "flex", gap: 18, marginBottom: 12, fontSize: 11.5, color: t.mute, flexWrap: "wrap" }}>
+        <LegItem dot={t.blue} label="Laba positif" t={t} />
+        <LegItem dot={t.neg} label="Rugi" t={t} />
+        <span style={{ marginLeft: "auto", color: t.mute2 }}>
+          Klik baris partner untuk lipat · arahkan kursor untuk nilai penuh
+        </span>
+      </div>
+
+      {/* Table */}
       <div style={{
-        borderRadius: 12, border: `1px solid ${t.line}`,
-        background: t.card, boxShadow: `0 1px 3px rgba(0,0,0,${d ? 0.5 : 0.07})`,
-        overflow: "auto", maxHeight: "calc(100vh - 340px)",
+        border: `1px solid ${t.line}`, borderRadius: 10,
+        background: t.surface, overflow: "hidden",
       }}>
-        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: stickyPartnerW + stickyMpcW + stickyBranchW + activeMths.length * 3 * 80 + 240 }}>
-          <thead style={{ position: "sticky", top: 0, zIndex: 20 }}>
-            {/* Month row */}
-            <tr>
-              <TH width={stickyPartnerW} sticky stickyLeft={0} align="left">
-                {!hiddenCols.has("partner") && (
-                  <ColHeader label="Partner" colKey="partner" filters={filters} sorts={sorts}
-                    allOptions={filterOptions} onFilter={onFilter} onSort={onSort}
-                    onToggleHide={onToggleHide} t={t} d={d} />
-                )}
-                {hiddenCols.has("partner") && <span style={{ fontSize: 9, color: t.lo }}>—</span>}
-              </TH>
-              {!hiddenCols.has("mpc") && (
-                <TH width={stickyMpcW} sticky stickyLeft={stickyPartnerW} align="left">
-                  <ColHeader label="Tipe" colKey="mpc" filters={filters} sorts={sorts}
-                    allOptions={filterOptions} onFilter={onFilter} onSort={onSort}
-                    onToggleHide={onToggleHide} t={t} d={d} />
-                </TH>
-              )}
-              {!hiddenCols.has("branch") && (
-                <TH width={stickyBranchW} sticky stickyLeft={stickyPartnerW + (hiddenCols.has("mpc") ? 0 : stickyMpcW)} align="left">
-                  <ColHeader label="Branch" colKey="branch" filters={filters} sorts={sorts}
-                    allOptions={filterOptions} onFilter={onFilter} onSort={onSort}
-                    onToggleHide={onToggleHide} t={t} d={d} />
-                </TH>
+        <div style={{ overflowX: "auto", overflowY: "visible" }}>
+          <table style={{
+            borderCollapse: "collapse", width: "100%",
+            minWidth: 280 + 70 + activeMths.length * 96 + 120,
+          }}>
+            <colgroup>
+              <col style={{ width: 280 }} />
+              <col style={{ width: 70 }} />
+              {activeMths.map(m => <col key={m} style={{ width: 96 }} />)}
+              <col style={{ width: 120, background: t.ytd }} />
+            </colgroup>
+
+            <thead>
+              <tr>
+                <Th align="left"  style={{ paddingLeft: 18 }} t={t}>Branch</Th>
+                <Th align="left" t={t}>Tipe</Th>
+                {activeMths.map(m => {
+                  const s = MONTHS_SHORT[MONTHS_FULL.indexOf(m)];
+                  return <Th key={m} align="right" t={t}>{s.toUpperCase()}</Th>;
+                })}
+                <Th align="right" style={{ paddingRight: 18, color: t.blue, fontWeight: 700 }} t={t}>YTD</Th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {grouped.length === 0 && (
+                <tr>
+                  <td colSpan={2 + activeMths.length + 1} style={{
+                    padding: "72px 0", textAlign: "center", color: t.mute2, fontSize: 13.5,
+                  }}>Tidak ada data untuk filter yang dipilih.</td>
+                </tr>
               )}
 
-              {/* Month group headers */}
-              {activeMths.map(m => {
-                const ms = MONTH_SHORT[MONTHS.indexOf(m)];
-                const hasData = raw.some(r => r.month.toUpperCase() === m);
+              {grouped.map((g, gi) => {
+                const isC = collapsed.has(g.partner);
+                const pMth = {};
+                activeMths.forEach(m => {
+                  let rev = 0, exp = 0;
+                  g.branches.forEach(b => { const md = b.months[m]; if (md) { rev += md.rev; exp += md.exp; } });
+                  pMth[m] = { rev, exp };
+                });
+                const pYTD = ytdOf(Object.fromEntries(activeMths.map(m => [m, pMth[m]])));
+
                 return (
-                  <th key={m} colSpan={3} style={{
-                    padding: "10px 8px", textAlign: "center",
-                    background: d ? "#0A0D16" : "#EAEAF0",
-                    borderBottom: `1.5px solid ${t.blue}`,
-                    borderLeft: `1px solid ${t.line}`,
-                    borderRight: `1px solid ${t.line}`,
-                  }}>
-                    <span style={{
-                      fontSize: 11, fontWeight: 800, letterSpacing: "0.10em",
-                      color: hasData ? t.blue : t.lo,
-                    }}>{ms}</span>
-                  </th>
-                );
-              })}
-
-              {/* YTD header */}
-              <th colSpan={3} style={{
-                padding: "10px 8px", textAlign: "center",
-                background: d ? "#0D1226" : "#E0E4F0",
-                borderBottom: `1.5px solid ${t.blue}`,
-                borderLeft: `2px solid ${t.blue}`,
-              }}>
-                <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.10em", color: t.blue }}>YTD</span>
-              </th>
-            </tr>
-
-            {/* Sub-header: REV / EXP / P/L per month */}
-            <tr>
-              <th style={{ background: d ? "#0A0D16" : "#EAEAF0", position: "sticky", left: 0, zIndex: 11, borderBottom: `1px solid ${t.line}` }} />
-              {!hiddenCols.has("mpc") && <th style={{ background: d ? "#0A0D16" : "#EAEAF0", position: "sticky", left: stickyPartnerW, zIndex: 11, borderBottom: `1px solid ${t.line}` }} />}
-              {!hiddenCols.has("branch") && <th style={{ background: d ? "#0A0D16" : "#EAEAF0", position: "sticky", left: stickyPartnerW + (hiddenCols.has("mpc") ? 0 : stickyMpcW), zIndex: 11, borderBottom: `1px solid ${t.line}` }} />}
-
-              {activeMths.map(m => (
-                <React.Fragment key={m}>
-                  {["REV","EXP","P/L"].map((sub, si) => (
-                    <th key={sub} style={{
-                      padding: "5px 8px", textAlign: "right",
-                      background: d ? "#0A0D16" : "#EAEAF0",
-                      fontSize: 9, fontWeight: 700, letterSpacing: "0.07em",
-                      color: si === 0 ? t.mid : si === 1 ? t.amber : t.green,
-                      borderBottom: `1px solid ${t.line}`,
-                      borderLeft: si === 0 ? `1px solid ${t.line}` : "none",
-                      borderRight: si === 2 ? `1px solid ${t.line}` : "none",
-                      minWidth: 74, width: 74,
-                    }}>{sub}</th>
-                  ))}
-                </React.Fragment>
-              ))}
-              {["REV","EXP","P/L"].map((sub, si) => (
-                <th key={sub} style={{
-                  padding: "5px 8px", textAlign: "right",
-                  background: d ? "#0D1226" : "#E0E4F0",
-                  fontSize: 9, fontWeight: 700, letterSpacing: "0.07em",
-                  color: si === 0 ? t.mid : si === 1 ? t.amber : t.green,
-                  borderBottom: `1px solid ${t.line}`,
-                  borderLeft: si === 0 ? `2px solid ${t.blue}` : "none",
-                  minWidth: 82, width: 82,
-                }}>{sub}</th>
-              ))}
-            </tr>
-          </thead>
-
-          <tbody>
-            {grouped.length === 0 && (
-              <tr><td colSpan={99} style={{ padding: "48px 0", textAlign: "center", color: t.lo, fontSize: 14 }}>
-                Tidak ada data untuk filter yang dipilih.
-              </td></tr>
-            )}
-
-            {grouped.map((g, gi) => {
-              const collapsed = collapsedGroups.has(g.partner);
-              // Partner YTD aggregated
-              const partnerYTD = { rev: 0, exp: 0 };
-              g.branches.forEach(b => {
-                const yt = ytd(b.months);
-                partnerYTD.rev += yt.rev; partnerYTD.exp += yt.exp;
-              });
-              const partnerPL = partnerYTD.rev - partnerYTD.exp;
-              // Per-month partner totals
-              const partnerMth = {};
-              activeMths.forEach(m => {
-                let rev = 0, exp = 0;
-                g.branches.forEach(b => { const md = b.months[m]; if (md) { rev += md.rev; exp += md.exp; } });
-                partnerMth[m] = { rev, exp };
-              });
-
-           const rowBg = gi % 2 === 0
-  ? (d ? "#0F1220" : "#F8F8FB")
-  : (d ? "#0D1019" : "#FFFFFF");
-
-              return (
-                <React.Fragment key={g.partner}>
-                  {/* Partner group header row */}
-<tr style={{ background: d ? "#091428" : "#E8F0FF" }}>                    <TD sticky stickyLeft={0} align="left" bg={d ? "rgba(10,132,255,0.10)" : "rgba(10,132,255,0.07)"}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <Fragment key={g.partner}>
+                    {/* Partner band row */}
+                    <tr style={{ background: t.partner }}>
+                      <td colSpan={2} style={{
+                        padding: "14px 18px",
+                        borderTop: gi === 0 ? "none" : `1px solid ${t.line}`,
+                        borderBottom: `1px solid ${t.line}`,
+                      }}>
                         <button onClick={() => togglePartner(g.partner)} style={{
-                          background: "none", border: "none", cursor: "pointer", color: t.blue, padding: 0,
-                          display: "flex", alignItems: "center",
+                          display: "inline-flex", alignItems: "center", gap: 10,
+                          border: "none", background: "none", cursor: "pointer",
+                          color: t.ink, padding: 0, fontFamily: FONT_SANS, textAlign: "left",
                         }}>
-                          {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                          <span style={{
+                            display: "inline-flex", alignItems: "center", justifyContent: "center",
+                            width: 18, height: 18, color: t.mute,
+                          }}>
+                            {isC ? <ChevronRight size={14} strokeWidth={2} /> : <ChevronDown size={14} strokeWidth={2} />}
+                          </span>
+                          <span style={{ fontSize: 14, fontWeight: 600, letterSpacing: "-0.005em" }}>
+                            {g.partner}
+                          </span>
+                          <span style={{
+                            display: "inline-block", padding: "1px 7px", borderRadius: 99,
+                            background: t.partner2, fontSize: 11, fontWeight: 500, color: t.mute,
+                          }}>{g.branches.length} branch</span>
                         </button>
-                        <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: "-0.02em", color: t.hi }}>
-                          {g.partner}
-                        </span>
-                        <span style={{ fontSize: 10, color: t.lo }}>({g.branches.length} branch)</span>
-                      </div>
-                    </TD>
-                    {!hiddenCols.has("mpc") && <TD sticky stickyLeft={stickyPartnerW} bg={d ? "rgba(10,132,255,0.10)" : "rgba(10,132,255,0.07)"}>
-                      <span style={{ fontSize: 10, color: t.lo }}>—</span>
-                    </TD>}
-                    {!hiddenCols.has("branch") && <TD sticky stickyLeft={stickyPartnerW + (hiddenCols.has("mpc") ? 0 : stickyMpcW)} bg={d ? "rgba(10,132,255,0.10)" : "rgba(10,132,255,0.07)"}>
-                      <span style={{ fontSize: 10, color: t.lo }}>Subtotal</span>
-                    </TD>}
+                      </td>
+                      {activeMths.map(m => (
+                        <MonthCell key={m} md={pMth[m]} label={`${g.partner} · ${m}`}
+                          setTooltip={setTooltip} t={t} partner />
+                      ))}
+                      <YTDCell rev={pYTD.rev} exp={pYTD.exp} label={`${g.partner} · YTD`}
+                        setTooltip={setTooltip} t={t} partner />
+                    </tr>
 
-                    {activeMths.map(m => {
-                      const md = partnerMth[m];
-                      const pl = md.rev - md.exp;
+                    {/* Branch rows */}
+                    {!isC && g.branches.map((b, bi) => {
+                      const yt = ytdOf(b.months);
                       return (
-                        <React.Fragment key={m}>
-                          <TD><CellREV val={md.rev} /></TD>
-                          <TD><CellEXP val={md.exp} /></TD>
-                          <TD border><CellPL val={pl} /></TD>
-                        </React.Fragment>
+                        <tr key={b.branch + b.mpc} style={{
+                          borderBottom: bi === g.branches.length - 1 ? "none" : `1px solid ${t.line2}`,
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = t.hover}
+                        onMouseLeave={e => e.currentTarget.style.background = ""}>
+                          <td style={{ padding: "10px 18px", fontSize: 13.5, color: t.ink, fontWeight: 500 }}>
+                            {b.branch}
+                          </td>
+                          <td style={{ padding: "10px 12px" }}>
+                            <TypePill mpc={b.mpc} t={t} />
+                          </td>
+                          {activeMths.map(m => (
+                            <MonthCell key={m} md={b.months[m]} label={`${b.branch} · ${m}`}
+                              setTooltip={setTooltip} t={t} />
+                          ))}
+                          <YTDCell rev={yt.rev} exp={yt.exp} label={`${b.branch} · YTD`}
+                            setTooltip={setTooltip} t={t} />
+                        </tr>
                       );
                     })}
-                    <TD bg={d ? "rgba(10,132,255,0.14)" : "rgba(10,132,255,0.09)"}
-                      style={{ borderLeft: "2px solid " + t.blue }}>
-                      <CellREV val={partnerYTD.rev} />
-                    </TD>
-                    <TD bg={d ? "rgba(10,132,255,0.14)" : "rgba(10,132,255,0.09)"}>
-                      <CellEXP val={partnerYTD.exp} />
-                    </TD>
-                    <TD bg={d ? "#0C1B32" : "#D0E4FF"}border={false}>
-                      <CellPL val={partnerPL} />
-                    </TD>
-                  </tr>
-
-                  {/* Branch rows */}
-                  {!collapsed && g.branches.map((b, bi) => {
-                    const yt = ytd(b.months);
-                    const rows3 = [
-                      { label: "REV", key: "rev", color: t.hi },
-                      { label: "EXP", key: "exp", color: t.amber },
-                      { label: "P/L", key: "pl", color: null }, // dynamic
-                    ];
-                    return (
-                      <React.Fragment key={b.branch + b.mpc}>
-                        {rows3.map((row, ri) => {
-                          const isFirst = ri === 0;
-                          const isLast  = ri === 2;
-                          const subBg = isLast
-                            ? (d ? "rgba(0,0,0,0.15)" : "rgba(0,0,0,0.02)")
-                            : rowBg;
-                          return (
-                            <tr key={row.label} style={{ background: subBg }}>
-                              {/* Partner cell — only on first sub-row of first branch */}
-                              {isFirst ? (
-                                <TD align="left" bg={rowBg} sticky stickyLeft={0}>
-                                  {bi === 0 && <span style={{ fontSize: 10, color: t.lo, fontStyle: "italic" }}>{g.partner}</span>}
-                                </TD>
-                              ) : (
-                                <TD align="left" bg={rowBg} sticky stickyLeft={0} />
-                              )}
-
-                              {/* MPC */}
-                              {!hiddenCols.has("mpc") && (
-                                isFirst ? (
-                                  <TD align="left" bg={rowBg} sticky stickyLeft={stickyPartnerW}>
-                                    <span style={{
-                                      fontSize: 10, fontWeight: 700, letterSpacing: "0.05em",
-                                      color: b.mpc === "MPC" ? t.blue : t.green,
-                                      padding: "2px 6px", borderRadius: 4,
-                                      background: b.mpc === "MPC" ? t.blueBg : t.greenBg,
-                                    }}>{b.mpc}</span>
-                                  </TD>
-                                ) : (
-                                  <TD bg={rowBg} sticky stickyLeft={stickyPartnerW} />
-                                )
-                              )}
-
-                              {/* Branch */}
-                              {!hiddenCols.has("branch") && (
-                                isFirst ? (
-                                  <TD align="left" bg={rowBg} sticky stickyLeft={stickyPartnerW + (hiddenCols.has("mpc") ? 0 : stickyMpcW)}>
-                                    <span style={{ fontSize: 12, fontWeight: 600, color: t.hi }}>{b.branch}</span>
-                                  </TD>
-                                ) : (
-                                  <TD bg={rowBg} sticky stickyLeft={stickyPartnerW + (hiddenCols.has("mpc") ? 0 : stickyMpcW)}>
-                                    <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.07em", color: row.color || t.mid }}>{row.label}</span>
-                                  </TD>
-                                )
-                              )}
-
-                              {/* Month cells */}
-                              {activeMths.map(m => {
-                                const md = b.months[m];
-                                let cellVal = null;
-                                if (md) {
-                                  if (row.key === "rev") cellVal = md.rev;
-                                  else if (row.key === "exp") cellVal = md.exp;
-                                  else cellVal = md.rev - md.exp;
-                                }
-                                return (
-                                  <React.Fragment key={m}>
-                                    {row.key === "rev" && bi === 0 && ri === 0 && (
-                                      // only render for first branch's first row
-                                      <></>
-                                    )}
-                                    <td
-                                      colSpan={isFirst ? 1 : 1}
-                                      onMouseEnter={e => cellVal !== null && setTooltip({
-                                        x: e.clientX, y: e.clientY,
-                                        value: cellVal,
-                                        label: `${b.partner} · ${b.branch} · ${m} · ${row.label}`,
-                                      })}
-                                      onMouseLeave={() => setTooltip(null)}
-                                      style={{
-                                        padding: "6px 10px", textAlign: "right",
-                                        borderBottom: isLast ? `1px solid ${t.line}` : `1px solid ${t.lineH}`,
-                                        borderLeft: "none",
-                                        borderRight: `1px solid ${t.lineH}`,
-                                        width: 74, minWidth: 74,
-                                        cursor: cellVal !== null ? "help" : "default",
-                                        background: "transparent",
-                                      }}
-                                    >
-                                      {cellVal === null ? <span style={{ color: t.lo, fontSize: 10 }}>—</span>
-                                        : row.key === "rev" ? <CellREV val={cellVal} />
-                                        : row.key === "exp" ? <CellEXP val={cellVal} />
-                                        : <CellPL val={cellVal} />}
-                                    </td>
-                                  </React.Fragment>
-                                );
-                              })}
-
-                              {/* YTD cells */}
-                              {(() => {
-                                let ytdVal;
-                                if (row.key === "rev") ytdVal = yt.rev;
-                                else if (row.key === "exp") ytdVal = yt.exp;
-                                else ytdVal = yt.pl;
-                                return (
-                                  <td
-                                    onMouseEnter={e => setTooltip({
-                                      x: e.clientX, y: e.clientY,
-                                      value: ytdVal,
-                                      label: `${b.partner} · ${b.branch} · YTD · ${row.label}`,
-                                    })}
-                                    onMouseLeave={() => setTooltip(null)}
-                                    style={{
-                                      padding: "6px 10px", textAlign: "right",
-                                      background: d ? "rgba(10,132,255,0.055)" : "rgba(10,132,255,0.035)",
-                                      borderBottom: isLast ? `1px solid ${t.blue}20` : `1px solid ${t.lineH}`,
-                                      borderLeft: `2px solid ${t.blue}`,
-                                      width: 82, minWidth: 82,
-                                      cursor: "help",
-                                    }}
-                                  >
-                                    {row.key === "rev" ? <CellREV val={ytdVal} />
-                                      : row.key === "exp" ? <CellEXP val={ytdVal} />
-                                      : <CellPL val={ytdVal} />}
-                                  </td>
-                                );
-                              })()}
-                              {/* Pad remaining 2 YTD cols on non-first sub-rows via empty tds */}
-                              {ri === 0 && <td style={{ background: d ? "rgba(10,132,255,0.055)" : "rgba(10,132,255,0.035)", width: 82 }} />}
-                              {ri === 0 && <td style={{ background: d ? "rgba(10,132,255,0.055)" : "rgba(10,132,255,0.035)", width: 82 }} />}
-                              {ri === 1 && <td style={{ background: d ? "rgba(10,132,255,0.055)" : "rgba(10,132,255,0.035)", width: 82 }} />}
-                              {ri === 1 && <td style={{ background: d ? "rgba(10,132,255,0.055)" : "rgba(10,132,255,0.035)", width: 82 }} />}
-                            </tr>
-                          );
-                        })}
-                      </React.Fragment>
-                    );
-                  })}
-                </React.Fragment>
-              );
-            })}
-          </tbody>
-
-          {/* Footer totals */}
-          {filteredRows.length > 0 && (
-            <tfoot style={{ position: "sticky", bottom: 0, zIndex: 15 }}>
-              {["REV","EXP","P/L"].map((metric, mi) => {
-                return (
-                  <tr key={metric} style={{background: d ? "#0A1628" : "#D6E8FF"
- }}>
-                    {mi === 0 ? (
-                      <td style={{ padding: "8px 12px", position: "sticky", left: 0, zIndex: 16, background: d ? "#0A1628" : "#D6E8FF"   // untuk 0.16
- }}>
-                        <span style={{ fontSize: 12, fontWeight: 800, color: t.blue, letterSpacing: "0.04em" }}>GRAND TOTAL</span>
-                      </td>
-                    ) : (
-                      <td style={{ position: "sticky", left: 0, zIndex: 16, background: d ? "#0C1830" : "#DDE9FF"   // untuk 0.13
-}}>
-                        <span style={{ fontSize: 10, fontWeight: 700, color: t.mid, paddingLeft: 12 }}>{metric}</span>
-                      </td>
-                    )}
-                    {!hiddenCols.has("mpc") && <td style={{ background: d ? "rgba(10,132,255,0.13)" : "rgba(10,132,255,0.09)", position: "sticky", left: stickyPartnerW, zIndex: 16 }} />}
-                    {!hiddenCols.has("branch") && <td style={{ background: d ? "rgba(10,132,255,0.13)" : "rgba(10,132,255,0.09)", position: "sticky", left: stickyPartnerW + (hiddenCols.has("mpc") ? 0 : stickyMpcW), zIndex: 16 }} />}
-
-                    {activeMths.map(m => {
-                      let total = 0;
-                      filteredRows.forEach(r => {
-                        const md = r.months[m];
-                        if (md) {
-                          if (metric === "REV") total += md.rev;
-                          else if (metric === "EXP") total += md.exp;
-                          else total += md.rev - md.exp;
-                        }
-                      });
-                      return (
-                        <React.Fragment key={m}>
-                          {metric === "REV" ? <><td style={{ padding: "7px 10px", textAlign: "right", borderLeft: `1px solid ${t.blueBd}` }}><CellREV val={total} /></td><td /><td style={{ borderRight: `1px solid ${t.blueBd}` }} /></>
-                          : metric === "EXP" ? <><td style={{ padding: "7px 10px", textAlign: "right", borderLeft: `1px solid ${t.blueBd}` }} /><td style={{ padding: "7px 10px", textAlign: "right" }}><CellEXP val={total} /></td><td style={{ borderRight: `1px solid ${t.blueBd}` }} /></>
-                          : <><td style={{ borderLeft: `1px solid ${t.blueBd}` }} /><td /><td style={{ padding: "7px 10px", textAlign: "right", borderRight: `1px solid ${t.blueBd}` }}><CellPL val={total} /></td></>}
-                        </React.Fragment>
-                      );
-                    })}
-                    {/* YTD grand total */}
-                    {(() => {
-                      let totRev = 0, totExp = 0;
-                      filteredRows.forEach(r => { activeMths.forEach(m => { const md = r.months[m]; if (md) { totRev += md.rev; totExp += md.exp; } }); });
-                      const totPl = totRev - totExp;
-                      return metric === "REV" ? (
-                        <><td style={{ padding: "7px 10px", textAlign: "right", borderLeft: `2px solid ${t.blue}`, background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }}><CellREV val={totRev} /></td><td style={{ background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }} /><td style={{ background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }} /></>
-                      ) : metric === "EXP" ? (
-                        <><td style={{ borderLeft: `2px solid ${t.blue}`,background: d ? "#0D1F3C" : "#C8DCFF"   // untuk 0.2
- }} /><td style={{ padding: "7px 10px", textAlign: "right", background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }}><CellEXP val={totExp} /></td><td style={{ background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }} /></>
-                      ) : (
-                        <><td style={{ borderLeft: `2px solid ${t.blue}`, background: d ? "#0A1628" : "#D6E8FF"   }} /><td style={{ background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }} /><td style={{ padding: "7px 10px", textAlign: "right", background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }}><CellPL val={totPl} /></td></>
-                      );
-                    })()}
-                  </tr>
+                  </Fragment>
                 );
               })}
-            </tfoot>
-          )}
-        </table>
+            </tbody>
+
+            {/* Grand total */}
+            {filteredRows.length > 0 && (
+              <tfoot>
+                <tr style={{ borderTop: `2px solid ${t.blue}`, background: t.surface2 }}>
+                  <td colSpan={2} style={{ padding: "14px 18px" }}>
+                    <div style={{
+                      fontSize: 13, fontWeight: 600, color: t.ink,
+                      letterSpacing: "0.02em", textTransform: "uppercase",
+                    }}>Grand Total</div>
+                    <div style={{ fontSize: 11.5, color: t.mute, marginTop: 2 }}>
+                      {filteredRows.length} branch · {grouped.length} partner
+                    </div>
+                  </td>
+                  {activeMths.map(m => (
+                    <MonthCell key={m} md={gtMth[m]} label={`Grand Total · ${m}`}
+                      setTooltip={setTooltip} t={t} grand />
+                  ))}
+                  <YTDCell rev={gtRev} exp={gtExp} label="Grand Total · YTD"
+                    setTooltip={setTooltip} t={t} grand />
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
       </div>
 
       {/* Footnote */}
-      <div style={{ marginTop: 12, fontSize: 11, color: t.lo, display: "flex", alignItems: "center", gap: 16 }}>
-        <span>Data dari <strong style={{ color: t.mid }}>pnl_reports</strong> · Nilai dalam Rupiah, disingkat untuk keterbacaan</span>
-        <span>YTD = Year-to-Date berdasarkan bulan yang ditampilkan</span>
+      <div style={{
+        marginTop: 14, fontSize: 11.5, color: t.mute2,
+        display: "flex", flexWrap: "wrap", gap: 14,
+      }}>
+        <span>Sumber: <span style={{ color: t.mute }}>pnl_reports</span></span>
+        <span>Tahun {activeYear}</span>
+        <span>YTD dari bulan terpilih{activeYear === curYear ? ` · sampai ${MONTHS_SHORT[curMIdx]} ${curYear}` : ""}</span>
+        <span>Nilai disingkat (rb, Jt, M) · arahkan kursor untuk nilai penuh</span>
       </div>
+
+      {/* Tooltip */}
+      {tooltip && typeof document !== "undefined" && createPortal(
+        <div style={{
+          position: "fixed",
+          top: tooltip.y + 18,
+          left: Math.min(tooltip.x + 14, window.innerWidth - 260),
+          background: t.surface, border: `1px solid ${t.line}`, borderRadius: 8,
+          padding: "10px 14px", zIndex: 2147483647, pointerEvents: "none",
+          boxShadow: d
+            ? "0 8px 24px rgba(0,0,0,0.45)"
+            : "0 8px 24px rgba(0,0,0,0.10)",
+          minWidth: 220, fontFamily: FONT_SANS,
+        }}>
+          <div style={{ fontSize: 11, color: t.mute, marginBottom: 8, fontWeight: 500 }}>
+            {tooltip.label}
+          </div>
+          <Kv label="Pendapatan" value={fFull(tooltip.rev)} t={t} />
+          <Kv label="Pengeluaran" value={fFull(tooltip.exp)} t={t} />
+          <div style={{ height: 1, background: t.line2, margin: "6px 0" }} />
+          <Kv label="Laba bersih" value={fFull(tooltip.rev - tooltip.exp)}
+              tone={tooltip.rev - tooltip.exp >= 0 ? "pos" : "neg"} t={t} />
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

@@ -473,13 +473,13 @@ const TH = ({ colIdx, sortKey, children, align = "left", filterConfig }) => {
           {
             label: "Finalized",
             value: finalCells,
-            sub: "laporan telah dikunci",
+            sub: "laporan telah difinalisasi",
             color: t.green, bg: t.greenBg,
           },
           {
             label: "Draft",
             value: draftCells,
-            sub: "laporan belum dikunci",
+            sub: "laporan belum difinalisasi",
             color: t.amber, bg: t.amberBg,
           },
           {
