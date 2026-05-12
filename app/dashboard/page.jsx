@@ -258,16 +258,23 @@ function DashCard({ icon, title, desc, tag, active, onClick, t, d }) {
   );
 }
 
- const MONTHS = [
-    "Januari","Februari","Maret","April","Mei","Juni",
-    "Juli","Agustus","September","Oktober","November","Desember",
-  ];
+const MONTHS = [
+  "Januari","Februari","Maret","April","Mei","Juni",
+  "Juli","Agustus","September","Oktober","November","Desember",
+];
 
-const getCurrentMonth = () => MONTHS[new Date().getMonth()];
-const getCurrentYear = () => new Date().getFullYear().toString();
+const CURRENT_DATE = new Date();
+const CURRENT_MONTH_INDEX = CURRENT_DATE.getMonth();
+const CURRENT_YEAR = CURRENT_DATE.getFullYear();
+
+const getCurrentMonth = () => MONTHS[CURRENT_MONTH_INDEX];
+const getCurrentYear = () => CURRENT_YEAR.toString();
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function DashboardPage() {
+
+
+
   const router = useRouter();
 
   const [loading,       setLoading]       = useState(true);
@@ -288,6 +295,26 @@ const [activeYear, setActiveYear] = useState(getCurrentYear);
   const [exitConfirm,   setExitConfirm]   = useState(false);
   const [pendingView,   setPendingView]   = useState(null);
   const [mobileOpen,    setMobileOpen]    = useState(false);
+
+const availableYears = useMemo(() => {
+  return Array.from(
+    { length: CURRENT_YEAR - 2026 + 1 },
+    (_, i) => (2026 + i).toString()
+  ).reverse();
+}, []);
+
+const availableMonths = useMemo(() => {
+  // Jika tahun yang dipilih adalah tahun sekarang,
+  // tampilkan hanya sampai bulan berjalan
+  if (Number(activeYear) === CURRENT_YEAR) {
+    return MONTHS.slice(0, CURRENT_MONTH_INDEX + 1);
+  }
+
+  // Tahun lama -> semua bulan
+  return MONTHS;
+}, [activeYear]);
+
+
 
   const d = theme === "dark";
   const t = tk(d);
@@ -385,6 +412,12 @@ useEffect(() => {
     setActiveBranch("");
   }
 }, [availableBranches]);
+
+useEffect(() => {
+  if (!availableMonths.includes(activeMonth)) {
+    setActiveMonth(availableMonths[availableMonths.length - 1]);
+  }
+}, [activeYear, availableMonths, activeMonth]);
 
   const isSPM   = profile?.role === "spm_sumatera";
   
@@ -728,8 +761,9 @@ const mpxType = activeType !== "ALL"
                       paddingLeft: 8, paddingRight: 28, height: 38,
                     }}
                   >
-                    {MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
+{availableMonths.map(m => (
+  <option key={m} value={m}>{m}</option>
+))}                  </select>
                   <ChevronDown size={13} style={{
                     position: "absolute", right: 8, pointerEvents: "none", color: t.lo,
                   }} />
@@ -749,8 +783,11 @@ const mpxType = activeType !== "ALL"
                     paddingLeft: 14, paddingRight: 32, height: 38,
                   }}
                 >
-                  <option value="2026">2026</option>
-                </select>
+{availableYears.map(year => (
+  <option key={year} value={year}>
+    {year}
+  </option>
+))}                </select>
                 <ChevronDown size={13} style={{
                   position: "absolute", right: 10, pointerEvents: "none", color: t.lo,
                 }} />

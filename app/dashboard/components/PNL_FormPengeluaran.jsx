@@ -284,20 +284,35 @@ const FormPengeluaran = ({ onUpdate, theme, setIsFormDirty, activeContext, onSav
       { id:'o8', dbQty:'qty_opex_lain',      dbPrice:'price_opex_lain',      name:'Lain-lain Internal',    qty:0, price:0 },
     ],
     sdm: [
-      { id:'s1', dbQty:'qty_sdm_bm',      dbPrice:'price_sdm_bm',      name:'Benefit BM',            qty:0, price:0 },
-      { id:'s2', dbQty:'qty_sdm_admin',   dbPrice:'price_sdm_admin',   name:'Benefit Admin & WH',    qty:0, price:0 },
-      { id:'s3', dbQty:'qty_sdm_finance', dbPrice:'price_sdm_finance', name:'Benefit Finance',       qty:0, price:0 },
-      { id:'s4', dbQty:'qty_sdm_md',      dbPrice:'price_sdm_md',      name:'Benefit MD',            qty:0, price:0 },
-      { id:'s5', dbQty:'qty_sdm_ss',      dbPrice:'price_sdm_ss',      name:'Benefit Sales Support', qty:0, price:0 },
-      { id:'s6', dbQty:'qty_sdm_ops',     dbPrice:'price_sdm_ops',     name:'Operasional Staff',     qty:0, price:0 },
-      { id:'s7', dbQty:'qty_sdm_dinas',   dbPrice:'price_sdm_dinas',   name:'Perjalanan Dinas',      qty:0, price:0 },
-    ],
-    marketing: [
-      { id:'m1', dbQty:'qty_mkt_ws',     dbPrice:'price_mkt_ws',     name:'Program Wholeseller', qty:0, price:0 },
-      { id:'m2', dbQty:'qty_mkt_retail', dbPrice:'price_mkt_retail', name:'Program Retail',      qty:0, price:0 },
-      { id:'m3', dbQty:'qty_mkt_event',  dbPrice:'price_mkt_event',  name:'Program Event',       qty:0, price:0 },
-      { id:'m4', dbQty:'qty_mkt_lain',   dbPrice:'price_mkt_lain',   name:'Program Lain',        qty:0, price:0 },
-    ],
+  { id:'s1',  dbQty:'qty_sdm_bm',             dbPrice:'price_sdm_bm',             name:'Benefit BM',                  qty:0, price:0 },
+  { id:'s2',  dbQty:'qty_sdm_tm',             dbPrice:'price_sdm_tm',             name:'Benefit TM',                  qty:0, price:0 },
+  { id:'s3',  dbQty:'qty_sdm_om',             dbPrice:'price_sdm_om',             name:'Benefit Operational Manager', qty:0, price:0 },
+  { id:'s4',  dbQty:'qty_sdm_gm',             dbPrice:'price_sdm_gm',             name:'Benefit GM',                  qty:0, price:0 },
+  { id:'s5',  dbQty:'qty_sdm_hrd',            dbPrice:'price_sdm_hrd',            name:'Benefit HRD',                 qty:0, price:0 },
+  { id:'s6',  dbQty:'qty_sdm_mis',            dbPrice:'price_sdm_mis',            name:'Benefit MIS',                 qty:0, price:0 },
+  { id:'s7',  dbQty:'qty_sdm_som',            dbPrice:'price_sdm_som',            name:'Benefit SOM',                 qty:0, price:0 },
+  { id:'s8',  dbQty:'qty_sdm_finance_spv',    dbPrice:'price_sdm_finance_spv',    name:'Benefit Finance SPV',         qty:0, price:0 },
+  { id:'s9',  dbQty:'qty_sdm_finance_staff',  dbPrice:'price_sdm_finance_staff',  name:'Benefit Finance Staff',       qty:0, price:0 },
+  { id:'s10', dbQty:'qty_sdm_ob',             dbPrice:'price_sdm_ob',             name:'Benefit OB',                  qty:0, price:0 },
+  { id:'s11', dbQty:'qty_sdm_tss',            dbPrice:'price_sdm_tss',            name:'Territory Sales SPV',         qty:0, price:0 },
+
+  { id:'s12', dbQty:'qty_sdm_admin',          dbPrice:'price_sdm_admin',          name:'Benefit Admin & WH',          qty:0, price:0 },
+  { id:'s13', dbQty:'qty_sdm_finance',        dbPrice:'price_sdm_finance',        name:'Benefit Finance',             qty:0, price:0 },
+  { id:'s14', dbQty:'qty_sdm_md',             dbPrice:'price_sdm_md',             name:'Benefit MD',                  qty:0, price:0 },
+  { id:'s15', dbQty:'qty_sdm_ss',             dbPrice:'price_sdm_ss',             name:'Benefit Sales Support',       qty:0, price:0 },
+  { id:'s16', dbQty:'qty_sdm_ops',            dbPrice:'price_sdm_ops',            name:'Operasional Staff',           qty:0, price:0 },
+  { id:'s17', dbQty:'qty_sdm_dinas',          dbPrice:'price_sdm_dinas',          name:'Perjalanan Dinas',            qty:0, price:0 },
+],
+   marketing: [
+  { id:'m1', dbQty:'qty_mkt_ws',        dbPrice:'price_mkt_ws',        name:'Program Wholeseller',              qty:0, price:0 },
+  { id:'m2', dbQty:'qty_mkt_retail',    dbPrice:'price_mkt_retail',    name:'Program Retail',                   qty:0, price:0 },
+
+  // TAMBAHAN BARU
+  { id:'m25', dbQty:'qty_mkt_starter',  dbPrice:'price_mkt_starter',   name:'Diskon / Subsidi Starter Pack',    qty:0, price:0 },
+
+  { id:'m3', dbQty:'qty_mkt_event',     dbPrice:'price_mkt_event',     name:'Program Event',                    qty:0, price:0 },
+  { id:'m4', dbQty:'qty_mkt_lain',      dbPrice:'price_mkt_lain',      name:'Program Lain',                     qty:0, price:0 },
+],
     com: [
       { id:'c1', dbQty:'qty_com_admin', dbPrice:'price_com_admin', name:'Biaya Administrasi',  qty:0, price:0 },
       { id:'c2', dbQty:'qty_com_bunga', dbPrice:'price_com_bunga', name:'Bunga Pinjaman Bank', qty:0, price:0 },
@@ -440,13 +455,36 @@ const FormPengeluaran = ({ onUpdate, theme, setIsFormDirty, activeContext, onSav
     finally { setIsSaving(false); }
   };
 
-  const updateVal = useCallback((section, id, field, val) => {
-    setData(prev => {
-      if (section === 'partnerExpense') return { ...prev, partnerExpense: val };
-      return { ...prev, [section]: prev[section].map(i => i.id === id ? { ...i, [field]: val } : i) };
-    });
-    setIsFormDirty?.(true);
-  }, [setIsFormDirty]);
+const updateVal = useCallback((section, id, field, val) => {
+  setData(prev => {
+    if (section === 'partnerExpense') {
+      return { ...prev, partnerExpense: val };
+    }
+
+    return {
+      ...prev,
+      [section]: prev[section].map(i => {
+        if (i.id !== id) return i;
+
+        const updated = { ...i, [field]: val };
+
+        // Jika user isi harga satuan duluan
+        // dan qty masih 0/kosong → otomatis qty jadi 1
+        if (
+          field === 'price' &&
+          val > 0 &&
+          (!updated.qty || updated.qty === 0)
+        ) {
+          updated.qty = 1;
+        }
+
+        return updated;
+      }),
+    };
+  });
+
+  setIsFormDirty?.(true);
+}, [setIsFormDirty]);
 
   // ── Upload helper ─────────────────────────────────────────────────────────
   const UploadZone = ({ fileState, setFileState, dragState, setDragState, inputId, t }) => (
