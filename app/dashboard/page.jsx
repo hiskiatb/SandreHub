@@ -939,7 +939,7 @@ export default function DashboardPage() {
                     <DashCard
                       icon={<Table2 size={23} />} title="Pivot P&L Summary"
                       desc="Ringkasan REV, EXP, dan P/L seluruh MPX per bulan dalam format pivot table Excel-style."
-                      tag="Analytics" active={true}
+                      tag="ADMIN" active={true}
                       onClick={() => navigate("pivot-summary")} t={t} d={d}
                     />
                   )}
