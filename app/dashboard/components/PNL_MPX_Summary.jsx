@@ -1,12 +1,5 @@
 "use client";
 
-/* ──────────────────────────────────────────────────────────────────────────────
-   PNL_MPX_Summary — redesigned
-   - Visual: cool-slate + blue accent, system fonts (consistent with the rest)
-   - Database / Supabase fetch logic preserved 1:1
-   - PDF: 3 pages → (1) Summary, (2) Detail Pendapatan, (3) Detail Pengeluaran
-────────────────────────────────────────────────────────────────────────────── */
-
 import React, { useState, useMemo, useEffect } from "react";
 import supabase from "../../../lib/supabase";
 import { motion, AnimatePresence } from "framer-motion";
@@ -1104,7 +1097,7 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 13, minWidth: 0, flex: 1 }}>
           <div style={{
-            width: 50, height: 50, borderRadius: 10, flexShrink: 0,
+            width: 46, height: 46, borderRadius: 10, flexShrink: 0,
             display: "flex", alignItems: "center", justifyContent: "center",
             background: t.blueBg, color: t.blue, border: `1px solid ${t.blueBd}`,
           }}>
@@ -1114,7 +1107,7 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
             <div style={{
               fontSize: "clamp(18px, 2.6vw, 22px)", fontWeight: 700,
               letterSpacing: "-0.025em", color: t.hi, lineHeight: 1.2,
-            }}>MPX Financial Summary</div>
+            }}>PnL Financial Summary</div>
             <div style={{
               fontSize: 12.5, fontWeight: 500, color: t.mid, marginTop: 3,
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",

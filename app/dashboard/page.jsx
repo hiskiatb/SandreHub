@@ -533,7 +533,7 @@ export default function DashboardPage() {
             )}
 
             <FilterSelect
-              label="Kantor Cabang"
+              label="Branch"
               icon={<Store size={12} />}
               value={activeBranch}
               onChange={v => setActiveBranch(v)}
@@ -562,7 +562,7 @@ export default function DashboardPage() {
             style={{ marginBottom: 2 }}
           >
             <span style={{ display: "flex", opacity: 0.7 }}><LayoutGrid size={15} /></span>
-            <span style={{ flex: 1 }}>Daftar Laporan</span>
+            <span style={{ flex: 1 }}>Overview</span>
             <span style={{
               display: "flex", opacity: 0.5,
               transform: navOpen ? "rotate(180deg)" : "rotate(0deg)",

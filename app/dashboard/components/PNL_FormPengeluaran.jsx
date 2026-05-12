@@ -4,11 +4,12 @@ import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import supabase from "../../../lib/supabase";
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  AlertCircle, CheckCircle2, Send, Upload, ShieldCheck,
+  ArrowUpRight, ArrowDownLeft, AlertCircle, CheckCircle2, Send, Upload, ShieldCheck,
   TrendingUp, Calculator, Banknote,
   Building2, Users, Megaphone, Coins,
   FileText, Loader2, X, FileCheck,
-  ArrowRight, ArrowLeft, Save, Clock
+  ArrowRight, ArrowLeft, Save, Clock,
+  ArrowUpDown
 } from 'lucide-react';
 
 // ─── UTILITIES ────────────────────────────────────────────────────────────────
@@ -530,7 +531,7 @@ const updateVal = useCallback((section, id, field, val) => {
       <G d={d} t={t} />
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 340, gap: 14 }}>
         <div style={{ width: 46, height: 46, borderRadius: 12, background: t.blue, display: 'flex', alignItems: 'center', justifyContent: 'center', animation: 'fpbreathe 1.8s ease-in-out infinite' }}>
-          <TrendingUp size={22} color="#fff" style={{ transform: 'rotate(180deg)' }} />
+          <ArrowUpRight size={22} color="#fff" style={{ transform: 'rotate(180deg)' }} />
         </div>
         <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.09em', textTransform: 'uppercase', color: t.mid }}>Memuat data...</span>
       </div>
@@ -553,8 +554,8 @@ const updateVal = useCallback((section, id, field, val) => {
 
       {/* ── HEADER ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 28 }}>
-        <div style={{ width: 42, height: 42, borderRadius: 10, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: t.blueBg, color: t.blue, border: `1px solid ${t.blueBd}` }}>
-          <TrendingUp size={20} style={{ transform: 'rotate(180deg)' }} />
+        <div style={{ width: 46, height: 46, borderRadius: 10, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: t.blueBg, color: t.blue, border: `1px solid ${t.blueBd}` }}>
+          <ArrowUpRight size={25} style={{ transform: 'rotate(180deg)' }} />
         </div>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.035em', color: t.hi, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{titleLine}</div>

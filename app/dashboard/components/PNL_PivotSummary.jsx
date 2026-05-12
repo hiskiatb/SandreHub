@@ -696,7 +696,7 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 24, gap: 16, flexWrap: "wrap" }}>
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-            <Crumb t={t}>Laporan</Crumb>
+            <Crumb t={t}>Overview</Crumb>
             <span style={{ color: t.mute2 }}>/</span>
             <Crumb active t={t}>Pivot P&L</Crumb>
           </div>
