@@ -8,14 +8,16 @@ import {
   ArrowUpRight, ArrowDownLeft, LayoutGrid, PieChart, Sun, Moon,
   Menu, X, ChevronLeft, AlertTriangle, MapPin, ChevronDown,
   LogOut, ChevronRight, Calendar, Box, Layers,
-  Shield, Globe, Building2, Store, SlidersHorizontal
+  Shield, Globe, Building2, Store, SlidersHorizontal,
+  Table2
 } from "lucide-react";
-
+ 
 import FormPendapatan   from "./components/PNL_FormPendapatan";
 import FormPengeluaran  from "./components/PNL_FormPengeluaran";
 import FormSummary      from "./components/PNL_MPX_Summary";
 import PNLControlCenter from "./components/PNL_ControlCenter.jsx";
-
+import PNLPivotSummary  from "./components/PNL_PivotSummary";
+ 
 // ─── Design Tokens ────────────────────────────────────────────────────────────
 const tk = (d) => ({
   appBg:      d ? "#080A0F"                      : "#F0F0F5",
@@ -23,32 +25,32 @@ const tk = (d) => ({
   surface:    d ? "#0C0E14"                      : "#FFFFFF",
   card:       d ? "#111520"                      : "#FFFFFF",
   hover:      d ? "rgba(255,255,255,0.05)"       : "rgba(0,0,0,0.04)",
-
+ 
   line:       d ? "rgba(255,255,255,0.08)"       : "rgba(0,0,0,0.09)",
-
+ 
   hi:         d ? "#F0F0F5"                      : "#18181B",
   mid:        d ? "#8A8A90"                      : "#636368",
   lo:         d ? "#AAB0C0"                      : "#4B5563",
-
+ 
   blue:       "#0A84FF",
   blueBg:     d ? "rgba(10,132,255,0.13)"        : "rgba(10,132,255,0.09)",
   blueBd:     d ? "rgba(10,132,255,0.32)"        : "rgba(10,132,255,0.22)",
-
+ 
   green:      d ? "#30D158"                      : "#25A244",
   greenBg:    d ? "rgba(48,209,88,0.11)"         : "rgba(37,162,68,0.09)",
   greenBd:    d ? "rgba(48,209,88,0.24)"         : "rgba(37,162,68,0.20)",
-
+ 
   red:        d ? "#FF453A"                      : "#FF3B30",
   redBg:      d ? "rgba(255,69,58,0.11)"         : "rgba(255,59,48,0.08)",
-
+ 
   inputBg:    d ? "rgba(255,255,255,0.055)"      : "#FFFFFF",
   inputBd:    d ? "rgba(255,255,255,0.11)"       : "rgba(0,0,0,0.13)",
-
+ 
   shadowSm:   d ? "0 1px 3px rgba(0,0,0,0.55)"  : "0 1px 3px rgba(0,0,0,0.07)",
   shadowMd:   d ? "0 8px 24px rgba(0,0,0,0.55)" : "0 8px 24px rgba(0,0,0,0.10)",
   shadowLg:   d ? "0 24px 64px rgba(0,0,0,0.72)": "0 24px 64px rgba(0,0,0,0.16)",
 });
-
+ 
 // ─── Global Styles ────────────────────────────────────────────────────────────
 const buildGlobalCSS = (d, t) => `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -56,17 +58,16 @@ const buildGlobalCSS = (d, t) => `
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: ${d ? "rgba(255,255,255,0.11)" : "rgba(0,0,0,0.13)"}; border-radius: 99px; }
   select option { background: ${d ? "#111520" : "#fff"}; color: ${d ? "#F0F0F5" : "#18181B"}; }
-
+ 
   @media (min-width: 1024px) { .lg-flex { display: flex !important; } }
   @media (max-width: 1023px) { .lg-only { display: none !important; } .mob-flex { display: flex !important; } }
   @media (max-width: 540px)  { .tab-label { display: none !important; } }
-
+ 
   @keyframes spin-breathe {
     0%, 100% { opacity: 1; transform: scale(1); }
     50%       { opacity: 0.4; transform: scale(0.92); }
   }
-
-  /* ─ Sidebar nav item ─ */
+ 
   .snav {
     width: 100%; display: flex; align-items: center; gap: 11px;
     padding: 10px 12px; border-radius: 8px; border: none;
@@ -78,8 +79,7 @@ const buildGlobalCSS = (d, t) => `
   .snav:hover  { background: ${t.hover}; color: ${t.hi}; }
   .snav.active { background: ${t.blueBg}; color: ${t.blue}; }
   .snav:disabled { opacity: 0.32; cursor: not-allowed; pointer-events: none; }
-
-  /* ─ Back button ─ */
+ 
   .back-btn {
     display: inline-flex; align-items: center; gap: 6px;
     background: none; border: none; cursor: pointer;
@@ -87,8 +87,7 @@ const buildGlobalCSS = (d, t) => `
     color: ${t.mid}; transition: color 0.13s; outline: none; padding: 0;
   }
   .back-btn:hover { color: ${t.blue}; }
-
-  /* ─ Tab pill ─ */
+ 
   .tab-pill {
     display: flex; align-items: center; gap: 8px;
     padding: 9px 20px; border-radius: 8px; border: none;
@@ -102,8 +101,7 @@ const buildGlobalCSS = (d, t) => `
     background: ${t.blue}; color: #fff;
     box-shadow: 0 2px 10px rgba(10,132,255,${d ? 0.4 : 0.22});
   }
-
-  /* ─ Danger btn ─ */
+ 
   .danger-btn {
     width: 100%; display: flex; align-items: center; gap: 11px;
     padding: 11px 14px; border-radius: 8px; border: none;
@@ -112,8 +110,7 @@ const buildGlobalCSS = (d, t) => `
     transition: background 0.13s; outline: none;
   }
   .danger-btn:hover { background: ${t.redBg}; }
-
-  /* ─ Icon btn ─ */
+ 
   .icon-btn {
     display: flex; align-items: center; justify-content: center;
     border: 1px solid ${t.line}; background: ${t.inputBg};
@@ -122,16 +119,12 @@ const buildGlobalCSS = (d, t) => `
   }
   .icon-btn:hover { border-color: ${t.blueBd}; color: ${t.blue}; }
 `;
-
-
-
+ 
 // FilterSelect: label OUTSIDE the box (above), icon + select inside, chevron at far right
-// The select fills the entire clickable area so it works natively
 function FilterSelect({ label, value, onChange, children, t, d, disabled, icon }) {
   const [focused, setFocused] = useState(false);
   return (
     <div style={{ opacity: disabled ? 0.36 : 1, pointerEvents: disabled ? "none" : "auto" }}>
-      {/* Label above */}
       <div style={{
         display: "flex", alignItems: "center", gap: 6,
         marginBottom: 7, paddingLeft: 2,
@@ -142,21 +135,19 @@ function FilterSelect({ label, value, onChange, children, t, d, disabled, icon }
           textTransform: "uppercase", color: t.mid,
         }}>{label}</span>
       </div>
-
-      {/* Input row */}
-<div style={{
-  display: "flex",
-  alignItems: "center",
-  border: `1px solid ${t.line}`,
-  borderRadius: 9,
-  background: t.inputBg,
-  height: 38,
-  overflow: "hidden",
-  maxWidth: "100%",   
-  flexShrink: 1,
-  position: "relative",
-}}>
-        {/* Native select fills entire box — clickable everywhere */}
+ 
+      <div style={{
+        display: "flex",
+        alignItems: "center",
+        border: `1px solid ${t.line}`,
+        borderRadius: 9,
+        background: t.inputBg,
+        height: 38,
+        overflow: "hidden",
+        maxWidth: "100%",
+        flexShrink: 1,
+        position: "relative",
+      }}>
         <select
           value={value}
           onChange={e => onChange(e.target.value)}
@@ -174,8 +165,7 @@ function FilterSelect({ label, value, onChange, children, t, d, disabled, icon }
         >
           {children}
         </select>
-
-        {/* Chevron — decorative, pointer-events none so select still gets clicks */}
+ 
         <div style={{
           position: "absolute", right: 13, top: "50%", transform: "translateY(-50%)",
           color: t.lo, pointerEvents: "none", display: "flex", zIndex: 2,
@@ -186,7 +176,7 @@ function FilterSelect({ label, value, onChange, children, t, d, disabled, icon }
     </div>
   );
 }
-
+ 
 function SNavItem({ icon, label, active, onClick, t, disabled }) {
   return (
     <button
@@ -203,7 +193,7 @@ function SNavItem({ icon, label, active, onClick, t, disabled }) {
     </button>
   );
 }
-
+ 
 function DashCard({ icon, title, desc, tag, active, onClick, t, d }) {
   const [hov, setHov] = useState(false);
   return (
@@ -257,26 +247,24 @@ function DashCard({ icon, title, desc, tag, active, onClick, t, d }) {
     </div>
   );
 }
-
+ 
 const MONTHS = [
   "Januari","Februari","Maret","April","Mei","Juni",
   "Juli","Agustus","September","Oktober","November","Desember",
 ];
-
+ 
 const CURRENT_DATE = new Date();
 const CURRENT_MONTH_INDEX = CURRENT_DATE.getMonth();
 const CURRENT_YEAR = CURRENT_DATE.getFullYear();
-
+ 
 const getCurrentMonth = () => MONTHS[CURRENT_MONTH_INDEX];
 const getCurrentYear = () => CURRENT_YEAR.toString();
-
+ 
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function DashboardPage() {
-
-
-
+ 
   const router = useRouter();
-
+ 
   const [loading,       setLoading]       = useState(true);
   const [profile,       setProfile]       = useState(null);
   const [view,          setView]          = useState("overview");
@@ -289,179 +277,160 @@ export default function DashboardPage() {
   const [activePartner, setActivePartner] = useState("");
   const [activeType,    setActiveType]    = useState("ALL");
   const [activeBranch,  setActiveBranch]  = useState("");
-const [activeMonth, setActiveMonth] = useState(getCurrentMonth);
-const [activeYear, setActiveYear] = useState(getCurrentYear);
+  const [activeMonth,   setActiveMonth]   = useState(getCurrentMonth);
+  const [activeYear,    setActiveYear]    = useState(getCurrentYear);
   const [formDirty,     setFormDirty]     = useState(false);
   const [exitConfirm,   setExitConfirm]   = useState(false);
   const [pendingView,   setPendingView]   = useState(null);
   const [mobileOpen,    setMobileOpen]    = useState(false);
-
-const availableYears = useMemo(() => {
-  return Array.from(
-    { length: CURRENT_YEAR - 2026 + 1 },
-    (_, i) => (2026 + i).toString()
-  ).reverse();
-}, []);
-
-const availableMonths = useMemo(() => {
-  // Jika tahun yang dipilih adalah tahun sekarang,
-  // tampilkan hanya sampai bulan berjalan
-  if (Number(activeYear) === CURRENT_YEAR) {
-    return MONTHS.slice(0, CURRENT_MONTH_INDEX + 1);
-  }
-
-  // Tahun lama -> semua bulan
-  return MONTHS;
-}, [activeYear]);
-
-
-
+ 
+  const availableYears = useMemo(() => {
+    return Array.from(
+      { length: CURRENT_YEAR - 2026 + 1 },
+      (_, i) => (2026 + i).toString()
+    ).reverse();
+  }, []);
+ 
+  const availableMonths = useMemo(() => {
+    if (Number(activeYear) === CURRENT_YEAR) {
+      return MONTHS.slice(0, CURRENT_MONTH_INDEX + 1);
+    }
+    return MONTHS;
+  }, [activeYear]);
+ 
   const d = theme === "dark";
   const t = tk(d);
-
  
-
   const toggleTheme = () => {
     const next = d ? "light" : "dark";
     setTheme(next);
     localStorage.setItem("sh-theme", next);
   };
-
+ 
   useEffect(() => {
-  setTheme(localStorage.getItem("sh-theme") || "dark");
-  (async () => {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return router.push("/login");
-
-    const { data: prof } = await supabase.from("profiles").select("*").eq("id", user.id).single();
-    
-    // PERBAIKAN DI SINI: Filter data berdasarkan role
-    let query = supabase.from("partner_branches").select("*").order("partner_name", { ascending: true });
-    
-    if (prof?.role !== "spm_sumatera") {
-      // Jika bukan admin, hanya ambil data partner yang sesuai dengan profilnya
-      query = query.eq("partner_name", prof?.partner_name);
-    }
-
-    const { data: mapData } = await query;
-    
-    setProfile(prof);
-    setMasterData(mapData || []);
-    setRegions([...new Set(mapData?.map(i => i.region))].sort());
-    
-    if (prof?.role !== "spm_sumatera") setActivePartner(prof?.partner_name || "");
-    setLoading(false);
-  })();
-}, [router]);
-
+    setTheme(localStorage.getItem("sh-theme") || "dark");
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return router.push("/login");
+ 
+      const { data: prof } = await supabase.from("profiles").select("*").eq("id", user.id).single();
+ 
+      let query = supabase.from("partner_branches").select("*").order("partner_name", { ascending: true });
+ 
+      if (prof?.role !== "spm_sumatera") {
+        query = query.eq("partner_name", prof?.partner_name);
+      }
+ 
+      const { data: mapData } = await query;
+ 
+      setProfile(prof);
+      setMasterData(mapData || []);
+      setRegions([...new Set(mapData?.map(i => i.region))].sort());
+ 
+      if (prof?.role !== "spm_sumatera") setActivePartner(prof?.partner_name || "");
+      setLoading(false);
+    })();
+  }, [router]);
+ 
   // ── Derived data ─────────────────────────────────────────────────────────
-useEffect(() => {
-  if (!activePartner) return;
-
-  const partnerData = masterData.find(
-    i => i.partner_name === activePartner
-  );
-
-  if (partnerData?.region) {
-    setActiveRegion(partnerData.region);
-  }
-}, [activePartner, masterData]);
-  
+  useEffect(() => {
+    if (!activePartner) return;
+ 
+    const partnerData = masterData.find(
+      i => i.partner_name === activePartner
+    );
+ 
+    if (partnerData?.region) {
+      setActiveRegion(partnerData.region);
+    }
+  }, [activePartner, masterData]);
+ 
   const filteredPartners = useMemo(() => {
     let list = masterData;
     if (activeRegion !== "SUMATERA") list = list.filter(i => i.region === activeRegion);
     return [...new Set(list.map(i => i.partner_name))];
   }, [masterData, activeRegion]);
-
+ 
   const availableTypes = useMemo(() => {
     if (!activePartner) return [];
     return [...new Set(masterData.filter(i => i.partner_name === activePartner).map(i => i.mpc_mp3))];
   }, [masterData, activePartner]);
-
+ 
   const availableBranches = useMemo(() => {
-  if (!activePartner) return [];
-
-  return [
-    ...new Set(
-      masterData
-        .filter(i =>
-          i.partner_name === activePartner &&
-          // Logika filter: Jika 'ALL' tampilkan semua, jika tidak tampilkan sesuai pilihan
-          (activeType === "ALL" || i.mpc_mp3 === activeType)
-        )
-        .map(i => i.branch_name)
-    )
-  ];
-}, [masterData, activePartner, activeType]);
-
-
-useEffect(() => {
-  if (availableTypes.length === 1) {
-    setActiveType(availableTypes[0]);
-  }
-  // Jika tipe yang dipilih sebelumnya tiba-tiba tidak ada di partner baru
-  else if (activeType !== "ALL" && !availableTypes.includes(activeType)) {
-    setActiveType("ALL");
-  }
-}, [availableTypes, activePartner]);
-// Auto-select branch jika hanya ada 1
-useEffect(() => {
-  if (availableBranches.length === 1) {
-    setActiveBranch(availableBranches[0]);
-  } else if (!availableBranches.includes(activeBranch)) {
-    setActiveBranch("");
-  }
-}, [availableBranches]);
-
-useEffect(() => {
-  if (!availableMonths.includes(activeMonth)) {
-    setActiveMonth(availableMonths[availableMonths.length - 1]);
-  }
-}, [activeYear, availableMonths, activeMonth]);
-
-  const isSPM   = profile?.role === "spm_sumatera";
-  
-  const canPnl = isSPM 
-  ? (!!activePartner && !!activeBranch) // Admin bebas pilih
-  : (activePartner === profile?.partner_name && !!activeBranch); // Partner harus cocok dengan profil
-
-const mpxType = activeType !== "ALL" 
-  ? activeType 
-  : masterData.find(i => i.partner_name === activePartner && i.branch_name === activeBranch)?.mpc_mp3;
-
+    if (!activePartner) return [];
+ 
+    return [
+      ...new Set(
+        masterData
+          .filter(i =>
+            i.partner_name === activePartner &&
+            (activeType === "ALL" || i.mpc_mp3 === activeType)
+          )
+          .map(i => i.branch_name)
+      )
+    ];
+  }, [masterData, activePartner, activeType]);
+ 
+  useEffect(() => {
+    if (availableTypes.length === 1) {
+      setActiveType(availableTypes[0]);
+    } else if (activeType !== "ALL" && !availableTypes.includes(activeType)) {
+      setActiveType("ALL");
+    }
+  }, [availableTypes, activePartner]);
+ 
+  useEffect(() => {
+    if (availableBranches.length === 1) {
+      setActiveBranch(availableBranches[0]);
+    } else if (!availableBranches.includes(activeBranch)) {
+      setActiveBranch("");
+    }
+  }, [availableBranches]);
+ 
+  useEffect(() => {
+    if (!availableMonths.includes(activeMonth)) {
+      setActiveMonth(availableMonths[availableMonths.length - 1]);
+    }
+  }, [activeYear, availableMonths, activeMonth]);
+ 
+  const isSPM = profile?.role === "spm_sumatera";
+ 
+  const canPnl = isSPM
+    ? (!!activePartner && !!activeBranch)
+    : (activePartner === profile?.partner_name && !!activeBranch);
+ 
+  const mpxType = activeType !== "ALL"
+    ? activeType
+    : masterData.find(i => i.partner_name === activePartner && i.branch_name === activeBranch)?.mpc_mp3;
+ 
   const clearFilters = () => {
     setActiveRegion("SUMATERA");
     if (isSPM) { setActivePartner(""); setActiveBranch(""); setActiveType("ALL"); }
   };
-
+ 
   const navigate = (viewId) => {
     if (formDirty) { setPendingView(viewId); setExitConfirm(true); }
     else { setView(viewId); setMobileOpen(false); }
   };
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // SIDEBAR
-  // Height: 100vh. Header zone = exactly HEADER_H px.
-  // We use paddingTop on the brand zone to align its bottom border with header.
-  // ─────────────────────────────────────────────────────────────────────────
-  const HEADER_H = 66; // px — single source of truth
-
+ 
+  const HEADER_H = 66;
+ 
   const SidebarInner = () => (
     <div style={{
       display: "flex", flexDirection: "column",
       height: "100%", userSelect: "none",
     }}>
-
+ 
       {/* ── Brand zone — same height as header ── */}
-<div style={{
-  height: HEADER_H,
-  display: "flex",
-  alignItems: "center",
-  paddingLeft: 24,
-  paddingRight: 24,
-  flexShrink: 0,
-  borderBottom: `1px solid ${t.line}`, // ⬅️ ini kunci alignment
-}}>
+      <div style={{
+        height: HEADER_H,
+        display: "flex",
+        alignItems: "center",
+        paddingLeft: 24,
+        paddingRight: 24,
+        flexShrink: 0,
+        borderBottom: `1px solid ${t.line}`,
+      }}>
         {/* Logo box */}
         <div style={{
           width: 34, height: 34, borderRadius: 8,
@@ -472,37 +441,33 @@ const mpxType = activeType !== "ALL"
         }}>
           <Box size={17} strokeWidth={2.2} />
         </div>
-
-{/* Text */}
-<div style={{
-  marginLeft: 12,
-  display: "flex",
-  alignItems: "center",
-}}>
-  <span style={{
-    fontSize: 24,
-    fontWeight: 800,
-    letterSpacing: "-0.04em",
-    color: t.hi,
-    lineHeight: 1,
-  }}>
-    Sandra<span style={{ color: t.blue }}>Hub</span>
-  </span>
-</div>
+ 
+        <div style={{
+          marginLeft: 12,
+          display: "flex",
+          alignItems: "center",
+        }}>
+          <span style={{
+            fontSize: 24,
+            fontWeight: 800,
+            letterSpacing: "-0.04em",
+            color: t.hi,
+            lineHeight: 1,
+          }}>
+            Sandra<span style={{ color: t.blue }}>Hub</span>
+          </span>
+        </div>
       </div>
-
-      {/* ── This hairline aligns with the header bottom border ── */}
-
+ 
       {/* ── Scrollable body ── */}
       <div style={{
         flex: 1, overflowY: "auto",
         padding: "28px 16px",
         display: "flex", flexDirection: "column", gap: 36,
       }}>
-
+ 
         {/* FILTERS */}
         <div>
-          {/* Section header */}
           <div style={{
             display: "flex", alignItems: "center", justifyContent: "space-between",
             paddingLeft: 2, paddingRight: 2, marginBottom: 18,
@@ -530,8 +495,7 @@ const mpxType = activeType !== "ALL"
               <X size={11} />Reset
             </button>
           </div>
-
-          {/* Filter rows */}
+ 
           <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
             {isSPM && (
               <FilterSelect
@@ -545,7 +509,7 @@ const mpxType = activeType !== "ALL"
                 {regions.map(r => <option key={r} value={r}>{r}</option>)}
               </FilterSelect>
             )}
-
+ 
             <FilterSelect
               label="Nama Partner"
               icon={<Building2 size={13} />}
@@ -557,20 +521,20 @@ const mpxType = activeType !== "ALL"
               <option value="" disabled>Pilih Partner</option>
               {filteredPartners.map(p => <option key={p} value={p}>{p}</option>)}
             </FilterSelect>
-
-            {activePartner && ( // Hapus isSPM agar semua role bisa melihat filter ini
-  <FilterSelect
-    label="Tipe (MPC / MP3)"
-    icon={<SlidersHorizontal size={13} />}
-    value={activeType}
-    onChange={v => { setActiveType(v); setActiveBranch(""); }} // Reset cabang jika tipe ganti
-    t={t} d={d}
-  >
-    <option value="ALL">Semua Tipe</option>
-    {availableTypes.map(tp => <option key={tp} value={tp}>{tp}</option>)}
-  </FilterSelect>
-)}
-
+ 
+            {activePartner && (
+              <FilterSelect
+                label="Tipe (MPC / MP3)"
+                icon={<SlidersHorizontal size={13} />}
+                value={activeType}
+                onChange={v => { setActiveType(v); setActiveBranch(""); }}
+                t={t} d={d}
+              >
+                <option value="ALL">Semua Tipe</option>
+                {availableTypes.map(tp => <option key={tp} value={tp}>{tp}</option>)}
+              </FilterSelect>
+            )}
+ 
             <FilterSelect
               label="Kantor Cabang"
               icon={<Store size={13} />}
@@ -584,7 +548,7 @@ const mpxType = activeType !== "ALL"
             </FilterSelect>
           </div>
         </div>
-
+ 
         {/* NAVIGATION */}
         <div>
           <div style={{
@@ -594,8 +558,7 @@ const mpxType = activeType !== "ALL"
           }}>
             Navigasi
           </div>
-
-          {/* Parent toggle */}
+ 
           <button
             onClick={() => setNavOpen(!navOpen)}
             className="snav"
@@ -611,7 +574,7 @@ const mpxType = activeType !== "ALL"
               <ChevronDown size={14} />
             </span>
           </button>
-
+ 
           <AnimatePresence>
             {navOpen && (
               <motion.div
@@ -634,6 +597,14 @@ const mpxType = activeType !== "ALL"
                       onClick={() => navigate("control-center")} t={t}
                     />
                   )}
+                  {/* ── TAMBAHAN: Pivot P&L Summary ── */}
+                  {isSPM && (
+                    <SNavItem
+                      icon={<Table2 size={15} />} label="Pivot P&L Summary"
+                      active={view === "pivot-summary"}
+                      onClick={() => navigate("pivot-summary")} t={t}
+                    />
+                  )}
                   <SNavItem
                     icon={<PieChart size={15} />} label="Laporan P&L"
                     active={["summary", "pendapatan", "pengeluaran"].includes(view)}
@@ -648,7 +619,7 @@ const mpxType = activeType !== "ALL"
       </div>
     </div>
   );
-
+ 
   // ─────────────────────────────────────────────────────────────────────────
   // LOADING SCREEN
   // ─────────────────────────────────────────────────────────────────────────
@@ -673,7 +644,7 @@ const mpxType = activeType !== "ALL"
       <style>{`@keyframes spin-breathe { 0%,100%{opacity:1;transform:scale(1);}50%{opacity:.38;transform:scale(.9);} }`}</style>
     </div>
   );
-
+ 
   // ─────────────────────────────────────────────────────────────────────────
   // ROOT RENDER
   // ─────────────────────────────────────────────────────────────────────────
@@ -687,7 +658,7 @@ const mpxType = activeType !== "ALL"
       transition: "background 0.3s, color 0.3s",
     }}>
       <style>{buildGlobalCSS(d, t)}</style>
-
+ 
       {/* ════════════════════ DESKTOP SIDEBAR ════════════════════ */}
       <aside
         className="lg-flex"
@@ -703,30 +674,29 @@ const mpxType = activeType !== "ALL"
       >
         <SidebarInner />
       </aside>
-
+ 
       {/* ════════════════════ MAIN COLUMN ════════════════════ */}
       <main style={{
         flex: 1, display: "flex", flexDirection: "column",
         height: "100vh", overflow: "hidden", minWidth: 0,
       }}>
-
-        {/* ── HEADER ── exact height = HEADER_H ── */}
+ 
+        {/* ── HEADER ── */}
         <header style={{
           height: HEADER_H,
           flexShrink: 0,
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          paddingLeft: 28, paddingRight: 28, gap: 12, 
+          paddingLeft: 28, paddingRight: 28, gap: 12,
           background: d ? "rgba(12,14,20,0.9)" : "rgba(255,255,255,0.9)",
           borderBottom: `1px solid ${t.line}`,
           backdropFilter: "blur(28px)",
           WebkitBackdropFilter: "blur(28px)",
           zIndex: 40,
         }}>
-
+ 
           {/* Left: hamburger + period picker */}
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-
-            {/* Hamburger (mobile only) */}
+ 
             <button
               className="mob-flex icon-btn lg-only"
               onClick={() => setMobileOpen(true)}
@@ -734,8 +704,7 @@ const mpxType = activeType !== "ALL"
             >
               <Menu size={19} />
             </button>
-
-            {/* Period picker — two selects in one pill */}
+ 
             <div style={{
               display: "flex", alignItems: "center",
               border: `1px solid ${t.line}`,
@@ -761,15 +730,16 @@ const mpxType = activeType !== "ALL"
                       paddingLeft: 8, paddingRight: 28, height: 38,
                     }}
                   >
-{availableMonths.map(m => (
-  <option key={m} value={m}>{m}</option>
-))}                  </select>
+                    {availableMonths.map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
                   <ChevronDown size={13} style={{
                     position: "absolute", right: 8, pointerEvents: "none", color: t.lo,
                   }} />
                 </div>
               </div>
-
+ 
               {/* Year */}
               <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
                 <select
@@ -783,27 +753,25 @@ const mpxType = activeType !== "ALL"
                     paddingLeft: 14, paddingRight: 32, height: 38,
                   }}
                 >
-{availableYears.map(year => (
-  <option key={year} value={year}>
-    {year}
-  </option>
-))}                </select>
+                  {availableYears.map(year => (
+                    <option key={year} value={year}>{year}</option>
+                  ))}
+                </select>
                 <ChevronDown size={13} style={{
                   position: "absolute", right: 10, pointerEvents: "none", color: t.lo,
                 }} />
               </div>
             </div>
           </div>
-
+ 
           {/* Right: theme toggle + profile */}
-<div style={{
-  display: "flex",
-  alignItems: "center",
-  gap: 10,
-  flexShrink: 0,
-  minWidth: 0,
-}}>
-            {/* Theme */}
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            flexShrink: 0,
+            minWidth: 0,
+          }}>
             <button
               className="icon-btn"
               onClick={toggleTheme}
@@ -811,8 +779,7 @@ const mpxType = activeType !== "ALL"
             >
               {d ? <Sun size={16} /> : <Moon size={16} />}
             </button>
-
-            {/* Profile button */}
+ 
             <div style={{ position: "relative" }}>
               <button
                 onClick={() => setProfileOpen(!profileOpen)}
@@ -825,7 +792,6 @@ const mpxType = activeType !== "ALL"
                   cursor: "pointer", transition: "all 0.13s", outline: "none",
                 }}
               >
-                {/* Avatar */}
                 <div style={{
                   width: 28, height: 28, borderRadius: 7, background: t.blue, flexShrink: 0,
                   display: "flex", alignItems: "center", justifyContent: "center",
@@ -845,8 +811,7 @@ const mpxType = activeType !== "ALL"
                   transition: "transform 0.2s",
                 }} />
               </button>
-
-              {/* Profile dropdown */}
+ 
               <AnimatePresence>
                 {profileOpen && (
                   <motion.div
@@ -908,11 +873,11 @@ const mpxType = activeType !== "ALL"
             </div>
           </div>
         </header>
-
+ 
         {/* ── CONTENT AREA ── */}
         <div style={{ flex: 1, overflowY: "auto", padding: "36px 32px" }}>
           <AnimatePresence mode="wait">
-
+ 
             {/* OVERVIEW */}
             {view === "overview" && (
               <motion.div
@@ -934,7 +899,7 @@ const mpxType = activeType !== "ALL"
                     Pilih modul laporan yang ingin Anda kelola.
                   </p>
                 </div>
-
+ 
                 {/* Context banner */}
                 <div style={{
                   display: "flex", alignItems: "center", gap: 11,
@@ -949,7 +914,7 @@ const mpxType = activeType !== "ALL"
                       : "Tentukan filter di sidebar untuk mengaktifkan modul laporan."}
                   </span>
                 </div>
-
+ 
                 <div style={{
                   display: "grid",
                   gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
@@ -969,10 +934,19 @@ const mpxType = activeType !== "ALL"
                       onClick={() => navigate("control-center")} t={t} d={d}
                     />
                   )}
+                  {/* ── TAMBAHAN: Pivot P&L Summary card ── */}
+                  {isSPM && (
+                    <DashCard
+                      icon={<Table2 size={23} />} title="Pivot P&L Summary"
+                      desc="Ringkasan REV, EXP, dan P/L seluruh MPX per bulan dalam format pivot table Excel-style."
+                      tag="Analytics" active={true}
+                      onClick={() => navigate("pivot-summary")} t={t} d={d}
+                    />
+                  )}
                 </div>
               </motion.div>
             )}
-
+ 
             {/* CONTROL CENTER */}
             {view === "control-center" && (
               <motion.div
@@ -998,7 +972,23 @@ const mpxType = activeType !== "ALL"
                 />
               </motion.div>
             )}
-
+ 
+            {/* ── TAMBAHAN: PIVOT SUMMARY ── */}
+            {view === "pivot-summary" && (
+              <motion.div
+                key="ps"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18 }}
+              >
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 28 }}>
+                  <ChevronLeft size={16} /> Kembali ke Overview
+                </button>
+                <PNLPivotSummary theme={theme} activeYear={activeYear} />
+              </motion.div>
+            )}
+ 
             {/* FORM VIEWS */}
             {["summary", "pendapatan", "pengeluaran"].includes(view) && (
               <motion.div
@@ -1012,7 +1002,7 @@ const mpxType = activeType !== "ALL"
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 24 }}>
                   <ChevronLeft size={16} /> Kembali ke Overview
                 </button>
-
+ 
                 {/* Tab bar */}
                 <div style={{ display: "flex", justifyContent: "center", marginBottom: 28 }}>
                   <div style={{
@@ -1036,7 +1026,7 @@ const mpxType = activeType !== "ALL"
                     ))}
                   </div>
                 </div>
-
+ 
                 {/* Form container */}
                 <div style={{
                   borderRadius: 14, border: `1px solid ${t.line}`,
@@ -1066,11 +1056,11 @@ const mpxType = activeType !== "ALL"
                 </div>
               </motion.div>
             )}
-
+ 
           </AnimatePresence>
         </div>
       </main>
-
+ 
       {/* ════════════════════ MOBILE OVERLAY ════════════════════ */}
       <AnimatePresence>
         {mobileOpen && (
@@ -1108,7 +1098,7 @@ const mpxType = activeType !== "ALL"
           </div>
         )}
       </AnimatePresence>
-
+ 
       {/* ════════════════════ EXIT CONFIRM MODAL ════════════════════ */}
       <AnimatePresence>
         {exitConfirm && (

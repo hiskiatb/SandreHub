@@ -2,7 +2,7 @@
 
 import React, { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import supabase from "../../lib/supabase";
+import supabase from "../../../lib/supabase";
 import {
   Search, Check, Filter, SortAsc, SortDesc, X,
   Eye, EyeOff, RotateCcw, Download, ChevronRight,
@@ -521,7 +521,7 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
   const TD = ({ children, bg, align = "right", width, sticky = false, stickyLeft, border = true }) => (
     <td style={{
       padding: "7px 10px", textAlign: align,
-      background: bg || "transparent",
+    background: bg || (d ? "#0D1019" : "#FFFFFF"),
       position: sticky ? "sticky" : "static",
       left: stickyLeft,
       zIndex: sticky ? 5 : "auto",
@@ -780,15 +780,14 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
                 partnerMth[m] = { rev, exp };
               });
 
-              const rowBg = gi % 2 === 0
-                ? (d ? "rgba(255,255,255,0.012)" : "rgba(0,0,0,0.012)")
-                : "transparent";
+           const rowBg = gi % 2 === 0
+  ? (d ? "#0F1220" : "#F8F8FB")
+  : (d ? "#0D1019" : "#FFFFFF");
 
               return (
                 <React.Fragment key={g.partner}>
                   {/* Partner group header row */}
-                  <tr style={{ background: d ? "rgba(10,132,255,0.07)" : "rgba(10,132,255,0.05)" }}>
-                    <TD sticky stickyLeft={0} align="left" bg={d ? "rgba(10,132,255,0.10)" : "rgba(10,132,255,0.07)"}>
+<tr style={{ background: d ? "#091428" : "#E8F0FF" }}>                    <TD sticky stickyLeft={0} align="left" bg={d ? "rgba(10,132,255,0.10)" : "rgba(10,132,255,0.07)"}>
                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                         <button onClick={() => togglePartner(g.partner)} style={{
                           background: "none", border: "none", cursor: "pointer", color: t.blue, padding: 0,
@@ -827,7 +826,7 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
                     <TD bg={d ? "rgba(10,132,255,0.14)" : "rgba(10,132,255,0.09)"}>
                       <CellEXP val={partnerYTD.exp} />
                     </TD>
-                    <TD bg={d ? "rgba(10,132,255,0.14)" : "rgba(10,132,255,0.09)"} border={false}>
+                    <TD bg={d ? "#0C1B32" : "#D0E4FF"}border={false}>
                       <CellPL val={partnerPL} />
                     </TD>
                   </tr>
@@ -980,13 +979,16 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
             <tfoot style={{ position: "sticky", bottom: 0, zIndex: 15 }}>
               {["REV","EXP","P/L"].map((metric, mi) => {
                 return (
-                  <tr key={metric} style={{ background: d ? "rgba(10,132,255,0.13)" : "rgba(10,132,255,0.09)" }}>
+                  <tr key={metric} style={{background: d ? "#0A1628" : "#D6E8FF"
+ }}>
                     {mi === 0 ? (
-                      <td style={{ padding: "8px 12px", position: "sticky", left: 0, zIndex: 16, background: d ? "rgba(10,132,255,0.16)" : "rgba(10,132,255,0.12)" }}>
+                      <td style={{ padding: "8px 12px", position: "sticky", left: 0, zIndex: 16, background: d ? "#0A1628" : "#D6E8FF"   // untuk 0.16
+ }}>
                         <span style={{ fontSize: 12, fontWeight: 800, color: t.blue, letterSpacing: "0.04em" }}>GRAND TOTAL</span>
                       </td>
                     ) : (
-                      <td style={{ position: "sticky", left: 0, zIndex: 16, background: d ? "rgba(10,132,255,0.16)" : "rgba(10,132,255,0.12)" }}>
+                      <td style={{ position: "sticky", left: 0, zIndex: 16, background: d ? "#0C1830" : "#DDE9FF"   // untuk 0.13
+}}>
                         <span style={{ fontSize: 10, fontWeight: 700, color: t.mid, paddingLeft: 12 }}>{metric}</span>
                       </td>
                     )}
@@ -1019,9 +1021,10 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
                       return metric === "REV" ? (
                         <><td style={{ padding: "7px 10px", textAlign: "right", borderLeft: `2px solid ${t.blue}`, background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }}><CellREV val={totRev} /></td><td style={{ background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }} /><td style={{ background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }} /></>
                       ) : metric === "EXP" ? (
-                        <><td style={{ borderLeft: `2px solid ${t.blue}`, background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }} /><td style={{ padding: "7px 10px", textAlign: "right", background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }}><CellEXP val={totExp} /></td><td style={{ background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }} /></>
+                        <><td style={{ borderLeft: `2px solid ${t.blue}`,background: d ? "#0D1F3C" : "#C8DCFF"   // untuk 0.2
+ }} /><td style={{ padding: "7px 10px", textAlign: "right", background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }}><CellEXP val={totExp} /></td><td style={{ background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }} /></>
                       ) : (
-                        <><td style={{ borderLeft: `2px solid ${t.blue}`, background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }} /><td style={{ background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }} /><td style={{ padding: "7px 10px", textAlign: "right", background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }}><CellPL val={totPl} /></td></>
+                        <><td style={{ borderLeft: `2px solid ${t.blue}`, background: d ? "#0A1628" : "#D6E8FF"   }} /><td style={{ background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }} /><td style={{ padding: "7px 10px", textAlign: "right", background: d ? "rgba(10,132,255,0.2)" : "rgba(10,132,255,0.12)" }}><CellPL val={totPl} /></td></>
                       );
                     })()}
                   </tr>
