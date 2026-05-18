@@ -176,6 +176,58 @@ function heatClr(p) {
   return C.grey;
 }
 
+/* ── Partner name normalization ────────────────────────────────────────────
+   DB profile format : "PT ADI CIPTA SURYA TEKNIK"   (prefix)
+   xlsx file format  : "ADI CIPTA SURYA TEKNIK, PT"  (suffix + koma)
+   Both → "ADI CIPTA SURYA TEKNIK"
+── */
+function normalizeName(s) {
+  if (!s) return "";
+  let n = s.toString().trim().toUpperCase();
+  // Strip suffix: ", PT" / ", CV" / ", TBK" (xlsx format)
+  for (const sf of [", PT.", ", CV.", ", TBK.", ", PT", ", CV", ", TBK"]) {
+    if (n.endsWith(sf)) { n = n.slice(0, -sf.length).trimEnd().replace(/,\s*$/, "").trim(); break; }
+  }
+  // Strip prefix: "PT " / "CV " / "TBK " (DB format)
+  for (const pf of ["PT. ", "CV. ", "TBK. ", "PT ", "CV ", "TBK "]) {
+    if (n.startsWith(pf)) { n = n.slice(pf.length).trim(); break; }
+  }
+  return n;
+}
+
+/* ── Get partner name from a raw row ── */
+function getPartnerNameFromRow(r) {
+  return (
+    r["Partner Name"] || r["partner name"] || r["PARTNER NAME"] ||
+    r["partner_name"] || r["partnerName"] || ""
+  ).toString();
+}
+
+/* ── Get partner type (MPC/MP3) from a raw row ── */
+function getMpxTypeFromRow(r) {
+  return (
+    r["Partner Type"] || r["partner type"] || r["partnertype"] ||
+    r["partner_type"] || r["PartnerType"] || r["Entity"] || r["entity"] || ""
+  ).toString().toUpperCase().trim();
+}
+
+/* ── Apply sidebar filters to raw rows ── */
+// Agency Prepaid: abaikan filterPartner (nama agency ≠ nama partner)
+// Partner Prepaid: terapkan filterPartner + filterMpxType
+function applySidebarFilter(rows, filterPartner, filterMpxType, src) {
+  let result = rows;
+  // Filter partner name HANYA untuk data partner, bukan agency
+  if (filterPartner && src !== "agency") {
+    const needle = normalizeName(filterPartner);
+    if (needle) result = result.filter(r => normalizeName(getPartnerNameFromRow(r)) === needle);
+  }
+  if (filterMpxType) {
+    const t = filterMpxType.toUpperCase().trim();
+    result = result.filter(r => getMpxTypeFromRow(r) === t);
+  }
+  return result;
+}
+
 /* ════════════════════════════════════════════════════════════════════
    SUPABASE
 ════════════════════════════════════════════════════════════════════ */
@@ -666,8 +718,11 @@ function BarChart({ series, t }) {
 /* ════════════════════════════════════════════════════════════════════
    MAIN COMPONENT
 ════════════════════════════════════════════════════════════════════ */
-export default function PayoutTracker({ profile = null, theme = null }) {
+export default function PayoutTracker({ profile = null, theme = null, partnerName = null, filterType = null }) {
   const isSPM = profile?.role === "spm_sumatera";
+  // Props dari sidebar — reaktif, bisa berubah kapan saja
+  const filterPartner = partnerName || null;
+  const filterMpxType = filterType  || null;
 
   const [screen, setScreen]         = useState("loading");
   const [src, setSrc]               = useState("partner");
@@ -677,13 +732,30 @@ export default function PayoutTracker({ profile = null, theme = null }) {
   const [loadText, setLoadText]     = useState("Memuat…");
   const [toast, setToast]           = useState({ msg:"", type:"", show:false });
 
-  const [partnerRaw, setPartnerRaw] = useState([]);
-  const [agencyRaw, setAgencyRaw]   = useState([]);
-  const [partnerAgg, setPartnerAgg] = useState([]);
-  const [agencyAgg, setAgencyAgg]   = useState([]);
-  const [partnerFile, setPartnerFile]= useState("");
-  const [agencyFile, setAgencyFile] = useState("");
+  // ── SEMUA raw data dari cloud — TIDAK difilter di sini ───────────────────
+  // Filter sidebar diterapkan reaktif via useMemo di bawah
+  const [allRaw, setAllRaw]         = useState([]);
   const [pubMeta, setPubMeta]       = useState(null);
+
+  // ── Upload state khusus Admin (SPM) — terpisah dari allRaw ───────────────
+  const [adminPartnerRaw, setAdminPartnerRaw] = useState([]);
+  const [adminAgencyRaw,  setAdminAgencyRaw]  = useState([]);
+  const [partnerFile, setPartnerFile]= useState("");
+  const [agencyFile,  setAgencyFile] = useState("");
+
+  // ── Derived data: filter sidebar diterapkan setiap kali filterPartner/filterMpxType berubah ──
+  const { partnerRaw, agencyRaw, partnerAgg, agencyAgg } = useMemo(() => {
+    const pAll = allRaw.filter(r => r._source === "partner" || !r._source);
+    const aAll = allRaw.filter(r => r._source === "agency");
+    // Partner: terapkan filter partner name + mpx type dari sidebar
+    const pR = applySidebarFilter(pAll, filterPartner, filterMpxType, "partner");
+    // Agency: ABAIKAN semua filter sidebar — tampilkan semua agency data untuk SPM
+    // non-SPM tidak akan pernah lihat tab agency, jadi aR tidak perlu difilter
+    const aR = aAll;
+    const { agg: pAgg } = parseRows(pR, "partner");
+    const { agg: aAgg } = parseRows(aR, "agency");
+    return { partnerRaw: pR, agencyRaw: aR, partnerAgg: pAgg, agencyAgg: aAgg };
+  }, [allRaw, filterPartner, filterMpxType]);
 
   const [filters, setFilters]       = useState({ month:"", entity:"", ptype:"", prog:"", status:"", q:"" });
   const [searchInput, setSearchInput]= useState("");
@@ -704,10 +776,10 @@ export default function PayoutTracker({ profile = null, theme = null }) {
   const realtimeCh = useRef(null);
   const toastTmr   = useRef(null);
 
-  const isAg    = src==="agency";
-  const curRaw  = isAg ? agencyRaw  : partnerRaw;
-  const curAgg  = isAg ? agencyAgg  : partnerAgg;
-  const slaSet  = isAg ? SLA_A : SLA_P;
+  const isAg   = src === "agency";
+  const curRaw = isAg ? agencyRaw  : partnerRaw;
+  const curAgg = isAg ? agencyAgg  : partnerAgg;
+  const slaSet = isAg ? SLA_A : SLA_P;
 
   const showToast = useCallback((msg,type="")=>{
     clearTimeout(toastTmr.current);
@@ -715,19 +787,14 @@ export default function PayoutTracker({ profile = null, theme = null }) {
     toastTmr.current = setTimeout(()=>setToast(x=>({...x,show:false})),3500);
   },[]);
 
-  const startLoad = (t="Memuat…") => { setLoadText(t); setLoading(true); };
-  const stopLoad  = ()             => setLoading(false);
+  const startLoad = (lbl="Memuat…") => { setLoadText(lbl); setLoading(true); };
+  const stopLoad  = ()               => setLoading(false);
 
+  /* ingestCloud — hanya simpan data mentah ke allRaw, filter via useMemo */
   function ingestCloud(saved) {
-    const all = Array.isArray(saved.rows)?saved.rows:[];
-    const pR  = all.filter(r=>r._source==="partner"||!r._source);
-    const aR  = all.filter(r=>r._source==="agency");
-    setPartnerRaw(pR); setAgencyRaw(aR);
-    const { agg:pAgg } = parseRows(pR,"partner");
-    const { agg:aAgg } = parseRows(aR,"agency");
-    setPartnerAgg(pAgg); setAgencyAgg(aAgg);
-    setSrc(pR.length?"partner":"agency");
-    setPubMeta({ fileName:saved.fileName, rowCount:saved.rowCount, publishedAt:saved.publishedAt });
+    const all = Array.isArray(saved.rows) ? saved.rows : [];
+    setAllRaw(all);
+    setPubMeta({ fileName: saved.fileName, rowCount: saved.rowCount, publishedAt: saved.publishedAt });
   }
 
   useEffect(()=>{
@@ -735,7 +802,7 @@ export default function PayoutTracker({ profile = null, theme = null }) {
       const cached = getCache();
       if (cached?.rows?.length) {
         ingestCloud(cached);
-        setScreen(isSPM?"admin":"dashboard");
+        setScreen(isSPM ? "admin" : "dashboard");
         setLoading(false);
       } else {
         startLoad("Memuat data…");
@@ -767,22 +834,26 @@ export default function PayoutTracker({ profile = null, theme = null }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
 
+  /* handleFile — untuk Admin upload, simpan ke adminPartnerRaw/adminAgencyRaw */
   async function handleFile(file, s) {
     if (!file) return;
     try {
       const rows = await readXLSX(file, s);
       const { agg } = parseRows(rows, s);
-      if (s==="partner") { setPartnerRaw(rows); setPartnerAgg(agg); setPartnerFile(file.name); }
-      else               { setAgencyRaw(rows);  setAgencyAgg(agg);  setAgencyFile(file.name); }
+      if (s==="partner") { setAdminPartnerRaw(rows); setPartnerFile(file.name); }
+      else               { setAdminAgencyRaw(rows);  setAgencyFile(file.name); }
       showToast(`${s==="partner"?"Partner":"Agency"} dibaca: ${rows.length.toLocaleString()} baris`,"success");
     } catch(e) { showToast("Gagal baca file: "+e.message,"error"); }
   }
 
   async function publish() {
-    const total = partnerRaw.length + agencyRaw.length;
+    const total = adminPartnerRaw.length + adminAgencyRaw.length;
     if (!total) { showToast("Upload file dulu","error"); return; }
-    const merged = [...partnerRaw.map(r=>({...r,_source:"partner"})), ...agencyRaw.map(r=>({...r,_source:"agency"}))];
-    const ts = new Date().toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});
+    const merged = [
+      ...adminPartnerRaw.map(r=>({...r,_source:"partner"})),
+      ...adminAgencyRaw.map(r=>({...r,_source:"agency"})),
+    ];
+    const ts     = new Date().toLocaleDateString("id-ID",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});
     const fnames = [partnerFile,agencyFile].filter(Boolean).join(", ")||"Data";
     startLoad("Mengupload ke cloud…");
     const ok = await dbSave({ fileName:fnames, rowCount:merged.length, publishedAt:ts, rows:merged });
@@ -790,6 +861,7 @@ export default function PayoutTracker({ profile = null, theme = null }) {
     if (ok) {
       const meta = { fileName:fnames, rowCount:merged.length, publishedAt:ts };
       setPubMeta(meta); setCache({ ...meta, rows:merged });
+      setAllRaw(merged);  // update live tanpa reload
       showToast("✓ Dipublish — semua viewer auto-update","success");
     } else showToast("Gagal simpan ke cloud","error");
   }
@@ -797,14 +869,14 @@ export default function PayoutTracker({ profile = null, theme = null }) {
   async function viewDash() {
     startLoad("Memuat…"); const saved=await dbLoad(); stopLoad();
     if (saved?.rows?.length) { setCache(saved); ingestCloud(saved); setScreen("dashboard"); }
-    else if (partnerRaw.length||agencyRaw.length) { setScreen("dashboard"); }
+    else if (allRaw.length) { setScreen("dashboard"); }
     else showToast("Tidak ada data","error");
   }
 
   async function clearData() {
     if (!confirm("Hapus semua data cloud? Viewer akan kehilangan akses.")) return;
     startLoad("Menghapus…"); const ok=await dbDelete(); stopLoad();
-    if (ok) { setPubMeta(null); clearCache(); showToast("Data dihapus","success"); }
+    if (ok) { setPubMeta(null); setAllRaw([]); clearCache(); showToast("Data dihapus","success"); }
     else showToast("Gagal hapus","error");
   }
 
@@ -976,6 +1048,11 @@ export default function PayoutTracker({ profile = null, theme = null }) {
 
   useEffect(()=>{ if(filters.q==="") setSearchInput(""); },[filters.q]);
 
+  // Non-SPM tidak boleh melihat Agency tab — paksa ke partner jika perlu
+  useEffect(()=>{
+    if (!isSPM && src === "agency") setSrc("partner");
+  }, [isSPM, src]);
+
   const rawKeys = useMemo(()=>{
     if (!curRaw.length) return [];
     return Object.keys(curRaw[0]).filter(k=>k!=="_source");
@@ -1016,11 +1093,11 @@ export default function PayoutTracker({ profile = null, theme = null }) {
 
   /* ─── pass all state to ThemeWrapper ─── */
   return (
-    <ThemeWrapper themeProp={theme} isSPM={isSPM} screen={screen} setScreen={setScreen}
+    <ThemeWrapper themeProp={theme} isSPM={isSPM} filterPartner={filterPartner} filterMpxType={filterMpxType} screen={screen} setScreen={setScreen}
       loading={loading} loadText={loadText} toast={toast}
-      partnerRaw={partnerRaw} agencyRaw={agencyRaw} partnerAgg={partnerAgg} agencyAgg={agencyAgg}
+      partnerRaw={adminPartnerRaw} agencyRaw={adminAgencyRaw}
       partnerFile={partnerFile} agencyFile={agencyFile}
-      setPartnerRaw={setPartnerRaw} setAgencyRaw={setAgencyRaw}
+      setPartnerRaw={setAdminPartnerRaw} setAgencyRaw={setAdminAgencyRaw}
       setPartnerFile={setPartnerFile} setAgencyFile={setAgencyFile}
       pubMeta={pubMeta}
       filters={filters} setFilters={setFilters} opts={opts}
@@ -1598,6 +1675,7 @@ function FunnelRowItem({s,drop,isExp,filtRaw,grand,onToggle,t}) {
 function DashScreen(props) {
   const w = useWidth();
   const { t, src, setSrc, activeTab, setActiveTab,
+    isSPM, filterPartner, filterMpxType,
     partnerRaw, agencyRaw, pubMeta, filters, setFilters, opts,
     curRaw, filtAgg, filtRaw, grand,
     tblSort, setTblSort, rawSort, setRawSort, rawPage, setRawPage,
@@ -1630,6 +1708,24 @@ function DashScreen(props) {
           <p style={{color:t.muted,fontSize:14,margin:0,lineHeight:1.6}}>
             Milestone PO → Invoice → CLV → Cleared Bank · Partner &amp; Agency Prepaid
           </p>
+          {/* Banner scope filter aktif */}
+          {(filterPartner || filterMpxType) && (
+            <div style={{display:"inline-flex",alignItems:"center",gap:8,marginTop:10,
+              padding:"5px 12px",borderRadius:8,
+              background:t.surf2, border:`1px solid ${t.line}`,
+              fontSize:12, color:t.muted, flexWrap:"wrap"}}>
+              <span style={{width:7,height:7,borderRadius:"50%",background:C.teal,flexShrink:0}}/>
+              {filterPartner && (
+                <span>Partner: <strong style={{color:t.ink}}>{filterPartner}</strong></span>
+              )}
+              {filterPartner && filterMpxType && (
+                <span style={{color:t.line2}}>·</span>
+              )}
+              {filterMpxType && (
+                <span>Tipe: <strong style={{color:t.ink}}>{filterMpxType}</strong></span>
+              )}
+            </div>
+          )}
         </div>
         {/* Summary strip */}
         <div style={{background:t.surf,border:`1px solid ${t.line}`,borderRadius:16,padding:"16px 22px",display:"flex",alignItems:"center",gap:20,boxShadow:t.shadow1,flexShrink:0,flexWrap:"wrap"}}>
@@ -1649,10 +1745,12 @@ function DashScreen(props) {
         </div>
       </div>
 
-      {/* Source segment */}
+      {/* Source segment — Agency HANYA untuk spm_sumatera */}
       <div style={{display:"inline-flex",gap:4,background:t.surf,border:`1px solid ${t.line}`,borderRadius:14,padding:4,marginBottom:18,boxShadow:t.shadow1,overflowX:"auto"}}>
-        {["partner","agency"].map(s=>{
-          const dis=(s==="partner"&&!partnerRaw.length)||(s==="agency"&&!agencyRaw.length);
+        {(isSPM ? ["partner","agency"] : ["partner"]).map(s=>{
+          // Untuk SPM: tidak pernah disabled — biarkan switch bebas meski data kosong
+          // Untuk non-SPM: partner saja, tidak pernah ada agency
+          const dis = isSPM ? false : (s==="partner" && !partnerRaw.length);
           return (
             <SegBtn key={s} s={s} active={src===s} disabled={dis}
               count={(s==="partner"?partnerRaw:agencyRaw).length.toLocaleString()}

@@ -1,15 +1,14 @@
 "use client";
 
 /* ──────────────────────────────────────────────────────────────────────────────
-   PNL_PivotSummary — redesigned
-   - No freeze panes (no sticky left columns)
-   - Each month = 1 column (P/L primary; REV · EXP small below)
-   - Partner = full-width band row, expand/collapse
-   - Chip-style filters, single accent, restrained palette
-   - Light / dark via `theme` prop
-
-   Recommended (optional): add Geist + Geist Mono via next/font in your layout
-   for the typography to match the design. Falls back to system fonts.
+   PNL_PivotSummary — refined
+   - Consistent typography scale (no mixed mono sizes)
+   - Formal, system-native font stack (SF Pro / Inter / system-ui)
+   - Neutral graphite palette + single calm accent (no branded gradients)
+   - Branch rows now show "ABBR - BRANCH" using PT initials
+   - Loss labelled as "Loss" (English) instead of "rugi"
+   - Dark mode tuned for legibility (contrast on muted text, soft tints)
+   - Responsive: KPI grid auto-fits, toolbar wraps, header scales
 ────────────────────────────────────────────────────────────────────────────── */
 
 import React, { useState, useMemo, useEffect, useRef, useCallback, useLayoutEffect, Fragment } from "react";
@@ -18,7 +17,6 @@ import supabase from "../../../lib/supabase";
 import {
   Search, Check, ChevronDown, ChevronRight, X,
   RotateCcw, Download, Calendar, BarChart3, AlertCircle,
-  Sun, Moon, Rows3,
 } from "lucide-react";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -26,8 +24,22 @@ const MONTHS_FULL  = ["JANUARI","FEBRUARI","MARET","APRIL","MEI","JUNI",
                       "JULI","AGUSTUS","SEPTEMBER","OKTOBER","NOVEMBER","DESEMBER"];
 const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
 
-const FONT_SANS = `"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "SF Pro Text", system-ui, sans-serif`;
+// Formal, system-native — easy on the eyes, no Google font load.
+const FONT_SANS = `-apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, system-ui, sans-serif`;
 const FONT_MONO = `ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace`;
+
+// One consistent type scale used across the table body.
+const SIZE = {
+  num:     13,    // every numeric primary cell
+  numSub:  11,    // rev · exp secondary line
+  body:    13,    // text cells
+  th:      11,    // table header
+  chip:    12.5,
+  crumb:   12,
+  kpiVal:  22,
+  kpiLbl:  11.5,
+  h1:      24,
+};
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
 const fNum = (v) => {
@@ -42,49 +54,70 @@ const fNum = (v) => {
 };
 const fFull = (v) =>
   v === null || v === undefined ? "—"
-    : `Rp ${new Intl.NumberFormat("id-ID").format(Math.abs(v))}${v < 0 ? "  (rugi)" : ""}`;
+    : `Rp ${new Intl.NumberFormat("id-ID").format(Math.abs(v))}${v < 0 ? "  (Loss)" : ""}`;
 
-// ─── Design tokens — Indosat Ooredoo Hutchison ───────────────────────────────
-// Red #ED1C24 · Yellow #FFCB05 · Teal #32BCAD · Magenta #C6168D · Gray #4D4D4F
+// Extract abbreviation from a partner name.
+// "PT ADI CIPTA SURYA TEKNIK" → "ACST"
+// "PT. Maju Jaya Sentosa, Tbk" → "MJS"
+// "Mitra Nusantara"            → "MN"
+// Falls back to first 4 chars uppercased if no usable words.
+const STOPWORDS = new Set([
+  "PT", "CV", "TBK", "PERSERO", "DAN", "AND", "THE", "OF",
+  "INDONESIA", "INTERNATIONAL", "GROUP",
+]);
+const abbreviatePartner = (name) => {
+  if (!name) return "—";
+  const cleaned = name
+    .replace(/[().,]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+  const words = cleaned.split(" ").filter(w => w && !STOPWORDS.has(w));
+  if (!words.length) return cleaned.slice(0, 4);
+  const letters = words.map(w => w[0]).join("");
+  // Keep abbreviations readable: cap at 5 letters.
+  return letters.length > 5 ? letters.slice(0, 5) : letters;
+};
+
+// ─── Design tokens — neutral graphite + calm blue accent ─────────────────────
 const tokens = (d) => ({
-  bg:        d ? "#0D0D0E" : "#F5F5F6",
-  surface:   d ? "#1A1A1D" : "#FFFFFF",
-  surface2:  d ? "#202024" : "#F2F2F4",
-  line:      d ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.09)",
-  line2:     d ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)",
-  ink:       d ? "#F2F2F3" : "#18181B",
-  ink2:      d ? "#D4D4D8" : "#3F3F46",
-  mute:      d ? "#8A8A96" : "#71717A",
-  mute2:     d ? "#5A5A68" : "#A1A1AA",
-  faint:     d ? "#3A3A42" : "#D4D4D8",
+  bg:        d ? "#0A0A0B" : "#F7F7F8",
+  surface:   d ? "#161618" : "#FFFFFF",
+  surface2:  d ? "#1E1E21" : "#F2F2F4",
+  line:      d ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.10)",
+  line2:     d ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)",
 
-  // Primary — Indosat Red
-  blue:      "#ED1C24",
-  blueBg:    d ? "rgba(237,28,36,0.12)"  : "rgba(237,28,36,0.07)",
-  blueBd:    d ? "rgba(237,28,36,0.28)"  : "rgba(237,28,36,0.20)",
-  blueSoft:  d ? "rgba(237,28,36,0.06)"  : "rgba(237,28,36,0.04)",
+  ink:       d ? "#F5F5F7" : "#1D1D1F",
+  ink2:      d ? "#D2D2D7" : "#3A3A3C",
+  mute:      d ? "#A1A1A6" : "#6E6E73",   // brighter in dark for legibility
+  mute2:     d ? "#7C7C82" : "#8E8E93",
+  faint:     d ? "#3A3A3F" : "#D2D2D7",
 
-  // Profit/loss
-  pos:       d ? "#32BCAD" : "#1A9E90",   // Indosat Teal — profit
-  neg:       d ? "#FF6B6B" : "#DC2626",   // Red — loss
+  // Single calm accent — Apple link blue
+  accent:    d ? "#2997FF" : "#0066CC",
+  accentBg:  d ? "rgba(41,151,255,0.14)" : "rgba(0,102,204,0.08)",
+  accentBd:  d ? "rgba(41,151,255,0.32)" : "rgba(0,102,204,0.22)",
+  accentInk: "#FFFFFF",
+
+  // Profit / Loss (muted, accessible)
+  pos:       d ? "#30D158" : "#1A7F37",
+  posBg:     d ? "rgba(48,209,88,0.10)"  : "rgba(26,127,55,0.06)",
+  neg:       d ? "#FF6961" : "#C92A2A",
+  negBg:     d ? "rgba(255,105,97,0.10)" : "rgba(201,42,42,0.06)",
 
   hover:     d ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)",
 
-  // Partner band rows
-  partner:   d ? "rgba(237,28,36,0.04)"  : "rgba(237,28,36,0.025)",
-  partner2:  d ? "rgba(237,28,36,0.08)"  : "rgba(237,28,36,0.05)",
+  partner:   d ? "rgba(255,255,255,0.025)" : "rgba(0,0,0,0.02)",
+  ytd:       d ? "rgba(41,151,255,0.06)"   : "rgba(0,102,204,0.035)",
+  ytdBd:     d ? "rgba(41,151,255,0.22)"   : "rgba(0,102,204,0.18)",
 
-  // YTD column accent — Indosat Teal wash
-  ytd:       d ? "rgba(50,188,173,0.07)" : "rgba(50,188,173,0.06)",
-
-  // Magenta accent
-  magenta:   "#C6168D",
-  magentaBg: d ? "rgba(198,22,141,0.12)" : "rgba(198,22,141,0.07)",
-  magentaBd: d ? "rgba(198,22,141,0.28)" : "rgba(198,22,141,0.18)",
-
-  // Yellow accent
-  yellow:    "#FFCB05",
-  yellowBg:  d ? "rgba(255,203,5,0.12)"  : "rgba(255,203,5,0.08)",
+  // MPC / MP3 chips — both neutral, differ by subtle hue only
+  pillA:     d ? "#A1A1A6" : "#3A3A3C",
+  pillABg:   d ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)",
+  pillABd:   d ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.10)",
+  pillB:     d ? "#2997FF" : "#0066CC",
+  pillBBg:   d ? "rgba(41,151,255,0.10)"  : "rgba(0,102,204,0.06)",
+  pillBBd:   d ? "rgba(41,151,255,0.28)"  : "rgba(0,102,204,0.20)",
 });
 
 // ─── Popover (click-outside + portal) ────────────────────────────────────────
@@ -125,7 +158,7 @@ function Pop({ anchor, open, onClose, children, w = 280, t, d }) {
       background: t.surface, border: `1px solid ${t.line}`,
       borderRadius: 10,
       boxShadow: d
-        ? "0 12px 32px rgba(0,0,0,0.45), 0 2px 6px rgba(0,0,0,0.25)"
+        ? "0 12px 32px rgba(0,0,0,0.55), 0 2px 6px rgba(0,0,0,0.30)"
         : "0 12px 32px rgba(0,0,0,0.10), 0 2px 6px rgba(0,0,0,0.04)",
       zIndex: 2147483646, overflow: "hidden",
       fontFamily: FONT_SANS, color: t.ink,
@@ -155,22 +188,21 @@ function FilterChip({ label, options, selected, onChange, sortDir, onSort, t, d 
     <>
       <button ref={btn} onClick={() => setOpen(o => !o)} style={{
         display: "inline-flex", alignItems: "center", gap: 7,
-        height: 30, padding: "0 11px", borderRadius: 7,
-        border: `1px solid ${active ? "#ED1C24" : t.line}`,
-        background: active
-          ? "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)"
-          : t.surface,
-        color: active ? "#FFFFFF" : t.ink2,
-        fontSize: 12.5, fontWeight: 500, cursor: "pointer",
-        fontFamily: FONT_SANS,
+        height: 32, padding: "0 12px", borderRadius: 8,
+        border: `1px solid ${active ? t.accentBd : t.line}`,
+        background: active ? t.accentBg : t.surface,
+        color: active ? t.accent : t.ink2,
+        fontSize: SIZE.chip, fontWeight: 500, cursor: "pointer",
+        fontFamily: FONT_SANS, letterSpacing: "-0.005em",
         transition: "background .14s, color .14s, border-color .14s",
-        boxShadow: active ? "0 2px 8px rgba(237,28,36,0.25)" : "none",
       }}>
-        <span style={{ color: active ? "rgba(255,255,255,0.7)" : t.mute, fontSize: 11.5 }}>{label}</span>
+        <span style={{ color: active ? t.accent : t.mute, fontWeight: 500 }}>{label}</span>
         {selected.length > 0
-          ? <span style={{ fontWeight: 600 }}>{selected.length === 1 ? selected[0] : `${selected.length} dipilih`}</span>
+          ? <span style={{ fontWeight: 600 }}>
+              {selected.length === 1 ? selected[0] : `${selected.length} dipilih`}
+            </span>
           : <span style={{ color: t.mute2 }}>Semua</span>}
-        <ChevronDown size={12} strokeWidth={1.8} />
+        <ChevronDown size={12} strokeWidth={2} />
       </button>
 
       <Pop anchor={btn} open={open} onClose={() => setOpen(false)} w={280} t={t} d={d}>
@@ -251,13 +283,10 @@ function ChipRow({ label, sel, onClick, emphasize, count, t }) {
     onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
       <div style={{
         width: 15, height: 15, borderRadius: 4, flexShrink: 0,
-        background: sel
-          ? "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)"
-          : "transparent",
-        border: `1px solid ${sel ? "#ED1C24" : t.faint}`,
+        background: sel ? t.accent : "transparent",
+        border: `1px solid ${sel ? t.accent : t.faint}`,
         display: "flex", alignItems: "center", justifyContent: "center",
         color: "#FFFFFF",
-        boxShadow: sel ? "0 1px 4px rgba(237,28,36,0.3)" : "none",
       }}>{sel && <Check size={11} strokeWidth={2.5} />}</div>
       <span style={{ flex: 1 }}>{label}</span>
       {count !== undefined && <span style={{ color: t.mute2, fontSize: 11 }}>{count}</span>}
@@ -280,21 +309,19 @@ function MonthRange({ available, selected, onChange, t, d }) {
     <>
       <button ref={btn} onClick={() => setOpen(o => !o)} style={{
         display: "inline-flex", alignItems: "center", gap: 7,
-        height: 30, padding: "0 11px", borderRadius: 7,
-        border: `1px solid ${!all ? "#ED1C24" : t.line}`,
-        background: !all
-          ? "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)"
-          : t.surface,
-        color: !all ? "#FFFFFF" : t.ink2,
-        fontSize: 12.5, fontWeight: 500, cursor: "pointer", fontFamily: FONT_SANS,
-        boxShadow: !all ? "0 2px 8px rgba(237,28,36,0.25)" : "none",
+        height: 32, padding: "0 12px", borderRadius: 8,
+        border: `1px solid ${!all ? t.accentBd : t.line}`,
+        background: !all ? t.accentBg : t.surface,
+        color: !all ? t.accent : t.ink2,
+        fontSize: SIZE.chip, fontWeight: 500, cursor: "pointer",
+        fontFamily: FONT_SANS, letterSpacing: "-0.005em",
         transition: "all .14s",
       }}>
-        <Calendar size={13} strokeWidth={1.8} />
+        <Calendar size={13} strokeWidth={2} />
         {all
           ? <span>{available.length} bulan</span>
           : <span style={{ fontWeight: 600 }}>{selected.length} dari {available.length} bulan</span>}
-        <ChevronDown size={12} strokeWidth={1.8} />
+        <ChevronDown size={12} strokeWidth={2} />
       </button>
 
       <Pop anchor={btn} open={open} onClose={() => setOpen(false)} w={310} t={t} d={d}>
@@ -317,14 +344,11 @@ function MonthRange({ available, selected, onChange, t, d }) {
             return (
               <button key={m} onClick={() => toggle(m)} style={{
                 height: 32,
-                border: `1px solid ${sel ? "#ED1C24" : t.line}`,
-                background: sel
-                  ? "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)"
-                  : t.surface,
+                border: `1px solid ${sel ? t.accent : t.line}`,
+                background: sel ? t.accent : t.surface,
                 color: sel ? "#FFFFFF" : t.ink2,
                 borderRadius: 6, fontSize: 12, fontWeight: sel ? 600 : 500,
                 cursor: "pointer", fontFamily: FONT_SANS,
-                boxShadow: sel ? "0 2px 6px rgba(237,28,36,0.25)" : "none",
                 transition: "all .12s",
               }}>{short}</button>
             );
@@ -337,10 +361,8 @@ function MonthRange({ available, selected, onChange, t, d }) {
           }}>Semua</button>
           <button onClick={() => setOpen(false)} style={{
             height: 28, padding: "0 14px", border: "none",
-            background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)",
-            color: "#FFFFFF", borderRadius: 6,
+            background: t.accent, color: "#FFFFFF", borderRadius: 6,
             fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: FONT_SANS,
-            boxShadow: "0 2px 8px rgba(237,28,36,0.28)",
           }}>Selesai</button>
         </div>
       </Pop>
@@ -363,7 +385,7 @@ function Quick({ label, onClick, t }) {
 function Crumb({ children, active, t }) {
   return (
     <span style={{
-      fontSize: 12, color: active ? t.ink : t.mute,
+      fontSize: SIZE.crumb, color: active ? t.ink : t.mute,
       fontWeight: active ? 500 : 400, letterSpacing: "-0.005em",
     }}>{children}</span>
   );
@@ -372,11 +394,9 @@ function Crumb({ children, active, t }) {
 function Seg({ children, active, onClick, t }) {
   return (
     <button onClick={onClick} style={{
-      height: 28, padding: "0 12px", border: "none",
-      background: active
-        ? "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)"
-        : t.surface,
-      color: active ? "#FFFFFF" : t.mute,
+      height: 30, padding: "0 12px", border: "none",
+      background: active ? t.accentBg : t.surface,
+      color: active ? t.accent : t.mute,
       fontSize: 12, fontWeight: active ? 600 : 500, cursor: "pointer", fontFamily: FONT_SANS,
       transition: "all .12s",
     }}>{children}</button>
@@ -391,15 +411,18 @@ function LegItem({ dot, label, t }) {
   );
 }
 
-function Kpi({ label, value, tone, primary, t }) {
+function Kpi({ label, value, tone, t }) {
   const color = tone === "pos" ? t.pos : tone === "neg" ? t.neg : t.ink;
   return (
     <div style={{ padding: "18px 20px", background: t.surface }}>
-      <div style={{ fontSize: 11.5, color: t.mute, letterSpacing: "0.01em", marginBottom: 8 }}>{label}</div>
+      <div style={{
+        fontSize: SIZE.kpiLbl, color: t.mute, letterSpacing: "0.01em", marginBottom: 8,
+        fontWeight: 500,
+      }}>{label}</div>
       <div style={{
         fontFamily: FONT_MONO, fontVariantNumeric: "tabular-nums",
-        fontSize: primary ? 26 : 22, fontWeight: 500, color,
-        letterSpacing: "-0.02em", lineHeight: 1.1,
+        fontSize: SIZE.kpiVal, fontWeight: 500, color,
+        letterSpacing: "-0.02em", lineHeight: 1.15,
       }}>{value}</div>
     </div>
   );
@@ -409,14 +432,13 @@ function TypePill({ mpc, t }) {
   const isMpc = mpc === "MPC";
   return (
     <span style={{
-      display: "inline-flex", alignItems: "center", height: 20, padding: "0 7px",
-      fontSize: 10.5, fontWeight: 700, letterSpacing: "0.05em",
-      color: isMpc ? "#C6168D" : "#32BCAD",
-      background: isMpc
-        ? "rgba(198,22,141,0.10)"
-        : "rgba(50,188,173,0.10)",
-      border: `1px solid ${isMpc ? "rgba(198,22,141,0.25)" : "rgba(50,188,173,0.25)"}`,
+      display: "inline-flex", alignItems: "center", height: 20, padding: "0 8px",
+      fontSize: 10.5, fontWeight: 600, letterSpacing: "0.06em",
+      color: isMpc ? t.pillB : t.pillA,
+      background: isMpc ? t.pillBBg : t.pillABg,
+      border: `1px solid ${isMpc ? t.pillBBd : t.pillABd}`,
       borderRadius: 4,
+      fontFamily: FONT_SANS,
     }}>{mpc}</span>
   );
 }
@@ -434,13 +456,13 @@ function Kv({ label, value, tone, t }) {
   );
 }
 
-// Cell renderers — month and YTD share a stacked layout: P/L primary, REV·EXP secondary
+// Cell renderers — uniform sizes everywhere.
 function MonthCell({ md, label, setTooltip, t, partner, grand }) {
   const empty = !md || (md.rev === 0 && md.exp === 0);
   if (empty && !partner && !grand) {
     return (
       <td style={{ padding: "10px 12px", textAlign: "right" }}>
-        <span style={{ fontFamily: FONT_MONO, color: t.mute2, fontSize: 13 }}>—</span>
+        <span style={{ fontFamily: FONT_MONO, color: t.mute2, fontSize: SIZE.num }}>—</span>
       </td>
     );
   }
@@ -460,14 +482,14 @@ function MonthCell({ md, label, setTooltip, t, partner, grand }) {
       onMouseLeave={() => setTooltip(null)}>
       <div style={{
         fontFamily: FONT_MONO, fontVariantNumeric: "tabular-nums",
-        fontSize: grand ? 14 : 13.5, fontWeight: partner || grand ? 600 : 500, lineHeight: 1.15,
-        color: pl > 0 ? "#32BCAD" : pl < 0 ? t.neg : t.mute2,
+        fontSize: SIZE.num, fontWeight: partner || grand ? 600 : 500, lineHeight: 1.2,
+        color: pl > 0 ? t.pos : pl < 0 ? t.neg : t.mute2,
       }}>{fNum(pl)}</div>
       <div style={{
         fontFamily: FONT_MONO, fontVariantNumeric: "tabular-nums",
-        fontSize: 10.5, color: partner ? t.mute : t.mute2,
+        fontSize: SIZE.numSub, color: partner ? t.mute : t.mute2,
         marginTop: 2, lineHeight: 1.1, letterSpacing: "0.01em",
-        fontWeight: partner || grand ? 500 : 400,
+        fontWeight: 400,
       }}>{fNum(rev)} · {fNum(exp)}</div>
     </td>
   );
@@ -479,7 +501,7 @@ function YTDCell({ rev, exp, label, setTooltip, t, partner, grand }) {
     <td style={{
       padding: "10px 18px", textAlign: "right",
       background: t.ytd,
-      borderLeft: `1px solid rgba(50,188,173,0.20)`,
+      borderLeft: `1px solid ${t.ytdBd}`,
       borderTop: grand ? `1px solid ${t.line}` : undefined,
       borderBottom: partner ? `1px solid ${t.line}` : undefined,
       cursor: "help",
@@ -489,12 +511,12 @@ function YTDCell({ rev, exp, label, setTooltip, t, partner, grand }) {
       onMouseLeave={() => setTooltip(null)}>
       <div style={{
         fontFamily: FONT_MONO, fontVariantNumeric: "tabular-nums",
-        fontSize: grand ? 15 : 14, fontWeight: 600, lineHeight: 1.15,
-        color: pl > 0 ? "#32BCAD" : pl < 0 ? t.neg : t.mute2,
+        fontSize: SIZE.num, fontWeight: 600, lineHeight: 1.2,
+        color: pl > 0 ? t.pos : pl < 0 ? t.neg : t.mute2,
       }}>{fNum(pl)}</div>
       <div style={{
         fontFamily: FONT_MONO, fontVariantNumeric: "tabular-nums",
-        fontSize: 10.5, color: t.mute, marginTop: 2,
+        fontSize: SIZE.numSub, color: t.mute, marginTop: 2,
         lineHeight: 1.1, letterSpacing: "0.01em", fontWeight: 500,
       }}>{fNum(rev)} · {fNum(exp)}</div>
     </td>
@@ -505,7 +527,7 @@ function Th({ children, align = "left", style, t }) {
   return (
     <th style={{
       padding: "11px 12px", textAlign: align,
-      fontSize: 10.5, fontWeight: 500, letterSpacing: "0.08em",
+      fontSize: SIZE.th, fontWeight: 600, letterSpacing: "0.08em",
       color: t.mute, textTransform: "uppercase",
       borderBottom: `1px solid ${t.line}`, background: t.surface,
       position: "sticky", top: 0, zIndex: 1,
@@ -523,7 +545,6 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
   const curYear  = now.getFullYear().toString();
   const curMIdx  = now.getMonth();
 
-  // Months available (capped at current month for current year)
   const availMonths = useMemo(
     () => activeYear === curYear ? MONTHS_FULL.slice(0, curMIdx + 1) : MONTHS_FULL,
     [activeYear, curYear, curMIdx]
@@ -541,7 +562,7 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
 
   useEffect(() => { setSelMonths(availMonths); }, [availMonths]);
 
-  // ── Fetch (unchanged from original) ──
+  // ── Fetch ──
   useEffect(() => {
     if (!activeYear) return;
     setLoading(true); setError(null);
@@ -558,7 +579,7 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
     })();
   }, [activeYear]);
 
-  // Build rows: one per (partner, branch, mpc) with months keyed
+  // Build rows — one per (partner, branch, mpc)
   const rows = useMemo(() => {
     const map = {};
     raw.forEach(r => {
@@ -615,7 +636,7 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
   const grouped = useMemo(() => {
     const g = {};
     filteredRows.forEach(r => {
-      if (!g[r.partner]) g[r.partner] = { partner: r.partner, branches: [] };
+      if (!g[r.partner]) g[r.partner] = { partner: r.partner, abbr: abbreviatePartner(r.partner), branches: [] };
       g[r.partner].branches.push(r);
     });
     return Object.values(g);
@@ -697,29 +718,28 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
         fontFamily: FONT_SANS, color: t.ink,
       }}>
         <style>{`
-          @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
           @keyframes pivotSpin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
-          @keyframes pivotBeat{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.55;transform:scale(.9)}}
+          @keyframes pivotBeat{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(.92)}}
         `}</style>
-        <div style={{ position: "relative", width: 52, height: 52 }}>
+        <div style={{ position: "relative", width: 48, height: 48 }}>
           <div style={{
             position: "absolute", inset: 0, borderRadius: "50%",
-            border: "2.5px solid transparent",
-            borderTopColor: "#ED1C24",
-            borderRightColor: "#C6168D",
+            border: "2px solid transparent",
+            borderTopColor: t.accent,
+            borderRightColor: t.accent,
             animation: "pivotSpin 0.9s linear infinite",
+            opacity: 0.9,
           }} />
           <div style={{
             position: "absolute", inset: 8, borderRadius: 10,
-            background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)",
+            background: t.accentBg,
             display: "flex", alignItems: "center", justifyContent: "center",
             animation: "pivotBeat 1.8s ease-in-out infinite",
-            boxShadow: "0 4px 16px rgba(237,28,36,0.4)",
           }}>
-            <BarChart3 size={18} color="#FFFFFF" />
+            <BarChart3 size={16} color={t.accent} strokeWidth={2.2} />
           </div>
         </div>
-        <span style={{ fontSize: 13.5, fontWeight: 500, color: t.mute, letterSpacing: "0.01em" }}>
+        <span style={{ fontSize: 13, fontWeight: 500, color: t.mute, letterSpacing: "0.01em" }}>
           Memuat data pivot…
         </span>
       </div>
@@ -745,29 +765,27 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
 
   return (
     <div style={{
-      fontFamily: FONT_SANS, WebkitFontSmoothing: "antialiased", color: t.ink,
+      fontFamily: FONT_SANS, WebkitFontSmoothing: "antialiased",
+      MozOsxFontSmoothing: "grayscale", color: t.ink,
     }}>
       {/* Header */}
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 24, gap: 16, flexWrap: "wrap" }}>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+      <header style={{
+        display: "flex", justifyContent: "space-between", alignItems: "flex-end",
+        marginBottom: 22, gap: 16, flexWrap: "wrap",
+      }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
             <Crumb t={t}>Overview</Crumb>
             <span style={{ color: t.mute2 }}>/</span>
-            <Crumb active t={t}>Pivot P&L</Crumb>
+            <Crumb active t={t}>Pivot P&amp;L</Crumb>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 5 }}>
-            <div style={{
-              width: 4, height: 32, borderRadius: 2, flexShrink: 0,
-              background: "linear-gradient(180deg, #ED1C24 0%, #C6168D 100%)",
-            }} />
-            <h1 style={{
-              margin: 0, fontSize: 28, fontWeight: 700,
-              letterSpacing: "-0.03em", lineHeight: 1.1, color: t.ink,
-            }}>
-              Pivot P&L <span style={{ color: t.mute, fontWeight: 400 }}>· {activeYear}</span>
-            </h1>
-          </div>
-          <div style={{ marginTop: 6, fontSize: 13, color: t.mute, paddingLeft: 16 }}>
+          <h1 style={{
+            margin: 0, fontSize: `clamp(20px, 3vw, ${SIZE.h1}px)`, fontWeight: 600,
+            letterSpacing: "-0.02em", lineHeight: 1.15, color: t.ink,
+          }}>
+            Pivot P&amp;L <span style={{ color: t.mute, fontWeight: 400 }}>· {activeYear}</span>
+          </h1>
+          <div style={{ marginTop: 6, fontSize: 12.5, color: t.mute }}>
             {filteredRows.length} branch · {grouped.length} partner · diperbarui {MONTHS_SHORT[curMIdx]} {curYear}
           </div>
         </div>
@@ -775,58 +793,51 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button onClick={exportCSV} style={{
             display: "inline-flex", alignItems: "center", gap: 7,
-            height: 34, padding: "0 16px",
-            border: "none",
-            background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)",
-            color: "#FFFFFF",
+            height: 34, padding: "0 14px",
+            border: `1px solid ${t.accentBd}`,
+            background: t.accent, color: "#FFFFFF",
             borderRadius: 8, fontSize: 13, fontWeight: 600,
-            cursor: "pointer", fontFamily: FONT_SANS,
-            boxShadow: "0 2px 10px rgba(237,28,36,0.30)",
+            cursor: "pointer", fontFamily: FONT_SANS, letterSpacing: "-0.005em",
             transition: "opacity .12s",
           }}
-          onMouseEnter={e => e.currentTarget.style.opacity = "0.88"}
-          onMouseLeave={e => e.currentTarget.style.opacity = "1"}
-          >
+          onMouseEnter={e => e.currentTarget.style.opacity = "0.9"}
+          onMouseLeave={e => e.currentTarget.style.opacity = "1"}>
             <Download size={13} strokeWidth={2} /> Export CSV
           </button>
         </div>
       </header>
 
-      {/* Font import + KPI strip */}
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');`}</style>
+      {/* KPI strip — auto-fit grid for responsiveness */}
       <div style={{
-        display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 1,
-        marginBottom: 22, background: t.line,
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+        gap: 1, marginBottom: 20, background: t.line,
         border: `1px solid ${t.line}`, borderRadius: 10, overflow: "hidden",
-        position: "relative",
       }}>
-        {/* Top accent stripe */}
-        <div style={{
-          position: "absolute", top: 0, left: 0, right: 0, height: 2, zIndex: 1,
-          background: "linear-gradient(90deg, #ED1C24 0%, #FFCB05 33%, #32BCAD 66%, #C6168D 100%)",
-        }} />
         <Kpi label="Total Pendapatan" value={fFull(gtRev)} tone="neutral" t={t} />
         <Kpi label="Total Pengeluaran" value={fFull(gtExp)} tone="neutral" t={t} />
-        <Kpi label="Laba Bersih" value={fFull(gtPL)} tone={gtPL >= 0 ? "pos" : "neg"} primary t={t} />
+        <Kpi label="Net P&L" value={fFull(gtPL)} tone={gtPL >= 0 ? "pos" : "neg"} t={t} />
         <Kpi label="Margin"
              value={gtRev ? ((gtPL / gtRev) * 100).toFixed(1) + "%" : "—"}
              tone={gtPL >= 0 ? "pos" : "neg"} t={t} />
       </div>
 
       {/* Toolbar */}
-      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 14 }}>
-        {/* Search */}
+      <div style={{
+        display: "flex", flexWrap: "wrap", alignItems: "center",
+        gap: 8, marginBottom: 14,
+      }}>
         <div style={{
-          display: "flex", alignItems: "center", gap: 7, height: 30, padding: "0 11px",
+          display: "flex", alignItems: "center", gap: 7, height: 32, padding: "0 12px",
           border: `1px solid ${t.line}`, background: t.surface,
-          borderRadius: 7, minWidth: 230,
+          borderRadius: 8, flex: "1 1 220px", minWidth: 200, maxWidth: 280,
         }}>
           <Search size={13} color={t.mute2} />
           <input value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Cari partner atau branch…"
             style={{
               flex: 1, border: "none", background: "none", outline: "none",
-              color: t.ink, fontSize: 12.5, fontFamily: FONT_SANS,
+              color: t.ink, fontSize: SIZE.chip, fontFamily: FONT_SANS, minWidth: 0,
             }} />
           {search && (
             <button onClick={() => setSearch("")} style={{
@@ -850,9 +861,9 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
           t={t} d={d} />
         <MonthRange available={availMonths} selected={selMonths} onChange={setSelMonths} t={t} d={d} />
 
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {grouped.length > 0 && (
-            <div style={{ display: "flex", border: `1px solid ${t.line}`, borderRadius: 7, overflow: "hidden", height: 30 }}>
+            <div style={{ display: "flex", border: `1px solid ${t.line}`, borderRadius: 8, overflow: "hidden", height: 32 }}>
               <Seg active={collapsed.size === 0} onClick={expandAll} t={t}>Buka semua</Seg>
               <Seg active={collapsed.size === grouped.length && grouped.length > 0} onClick={collapseAll} t={t}>Tutup semua</Seg>
             </div>
@@ -860,9 +871,9 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
           {activeFilterCount > 0 && (
             <button onClick={clearAll} style={{
               display: "inline-flex", alignItems: "center", gap: 6,
-              height: 30, padding: "0 11px",
+              height: 32, padding: "0 12px",
               border: `1px solid ${t.line}`, background: t.surface, color: t.mute,
-              borderRadius: 7, fontSize: 12.5, cursor: "pointer", fontFamily: FONT_SANS,
+              borderRadius: 8, fontSize: SIZE.chip, cursor: "pointer", fontFamily: FONT_SANS,
             }}>
               <RotateCcw size={13} strokeWidth={1.8} /> Reset <span style={{ color: t.mute2 }}>({activeFilterCount})</span>
             </button>
@@ -871,14 +882,16 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
       </div>
 
       {/* Legend */}
-      <div style={{ display: "flex", gap: 18, marginBottom: 12, fontSize: 11.5, color: t.mute, flexWrap: "wrap", alignItems: "center" }}>
-        <LegItem dot="#32BCAD" label="Laba positif" t={t} />
-        <LegItem dot={t.neg}   label="Rugi"         t={t} />
+      <div style={{
+        display: "flex", gap: 18, marginBottom: 12, fontSize: 11.5,
+        color: t.mute, flexWrap: "wrap", alignItems: "center",
+      }}>
+        <LegItem dot={t.pos} label="Profit" t={t} />
+        <LegItem dot={t.neg} label="Loss"   t={t} />
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <div style={{
             width: 8, height: 8, borderRadius: 2,
-            background: "linear-gradient(90deg, rgba(50,188,173,0.5), rgba(50,188,173,0.2))",
-            border: "1px solid rgba(50,188,173,0.3)",
+            background: t.ytd, border: `1px solid ${t.ytdBd}`,
           }} />
           <span>Kolom YTD</span>
         </div>
@@ -892,16 +905,16 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
         border: `1px solid ${t.line}`, borderRadius: 10,
         background: t.surface, overflow: "hidden",
       }}>
-        <div style={{ overflowX: "auto", overflowY: "visible" }}>
+        <div style={{ overflowX: "auto", overflowY: "visible", WebkitOverflowScrolling: "touch" }}>
           <table style={{
             borderCollapse: "collapse", width: "100%",
-            minWidth: 280 + 70 + activeMths.length * 96 + 120,
+            minWidth: 280 + 64 + activeMths.length * 96 + 120,
           }}>
             <colgroup>
               <col style={{ width: 280 }} />
-              <col style={{ width: 70 }} />
+              <col style={{ width: 64 }} />
               {activeMths.map(m => <col key={m} style={{ width: 96 }} />)}
-              <col style={{ width: 120, background: t.ytd }} />
+              <col style={{ width: 120 }} />
             </colgroup>
 
             <thead>
@@ -912,7 +925,7 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
                   const s = MONTHS_SHORT[MONTHS_FULL.indexOf(m)];
                   return <Th key={m} align="right" t={t}>{s.toUpperCase()}</Th>;
                 })}
-                <Th align="right" style={{ paddingRight: 18, color: "#32BCAD", fontWeight: 700 }} t={t}>YTD</Th>
+                <Th align="right" style={{ paddingRight: 18, color: t.accent, background: t.ytd, borderLeft: `1px solid ${t.ytdBd}` }} t={t}>YTD</Th>
               </tr>
             </thead>
 
@@ -940,7 +953,7 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
                     {/* Partner band row */}
                     <tr style={{ background: t.partner }}>
                       <td colSpan={2} style={{
-                        padding: "14px 18px",
+                        padding: "13px 18px",
                         borderTop: gi === 0 ? "none" : `1px solid ${t.line}`,
                         borderBottom: `1px solid ${t.line}`,
                       }}>
@@ -955,15 +968,24 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
                           }}>
                             {isC ? <ChevronRight size={14} strokeWidth={2} /> : <ChevronDown size={14} strokeWidth={2} />}
                           </span>
-                          <span style={{ fontSize: 14, fontWeight: 600, letterSpacing: "-0.005em" }}>
+                          {/* Partner abbreviation badge */}
+                          <span style={{
+                            display: "inline-flex", alignItems: "center", justifyContent: "center",
+                            minWidth: 38, height: 22, padding: "0 7px",
+                            fontFamily: FONT_MONO,
+                            fontSize: 11, fontWeight: 700, letterSpacing: "0.04em",
+                            color: t.accent, background: t.accentBg,
+                            border: `1px solid ${t.accentBd}`, borderRadius: 5,
+                          }}>{g.abbr}</span>
+                          <span style={{ fontSize: 13.5, fontWeight: 600, letterSpacing: "-0.005em", color: t.ink }}>
                             {g.partner}
                           </span>
                           <span style={{
                             display: "inline-block", padding: "1px 7px", borderRadius: 99,
-                            background: "rgba(237,28,36,0.08)",
-                            fontSize: 11, fontWeight: 600,
-                            color: "#ED1C24",
-                            border: "1px solid rgba(237,28,36,0.18)",
+                            background: t.surface2,
+                            fontSize: 11, fontWeight: 500,
+                            color: t.mute,
+                            border: `1px solid ${t.line}`,
                           }}>{g.branches.length} branch</span>
                         </button>
                       </td>
@@ -981,11 +1003,17 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
                       return (
                         <tr key={b.branch + b.mpc} style={{
                           borderBottom: bi === g.branches.length - 1 ? "none" : `1px solid ${t.line2}`,
+                          transition: "background .1s",
                         }}
                         onMouseEnter={e => e.currentTarget.style.background = t.hover}
                         onMouseLeave={e => e.currentTarget.style.background = ""}>
-                          <td style={{ padding: "10px 18px", fontSize: 13.5, color: t.ink, fontWeight: 500 }}>
-                            {b.branch}
+                          <td style={{ padding: "10px 18px 10px 28px", fontSize: SIZE.body, color: t.ink2, fontWeight: 500 }}>
+                            <span style={{
+                              fontFamily: FONT_MONO, fontSize: 11.5, color: t.mute,
+                              fontWeight: 600, letterSpacing: "0.04em", marginRight: 6,
+                            }}>{g.abbr}</span>
+                            <span style={{ color: t.mute2, marginRight: 6 }}>—</span>
+                            <span>{b.branch}</span>
                           </td>
                           <td style={{ padding: "10px 12px" }}>
                             <TypePill mpc={b.mpc} t={t} />
@@ -1007,11 +1035,11 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
             {/* Grand total */}
             {filteredRows.length > 0 && (
               <tfoot>
-                <tr style={{ borderTop: `2px solid #ED1C24`, background: t.surface2 }}>
-                  <td colSpan={2} style={{ padding: "14px 18px" }}>
+                <tr style={{ borderTop: `2px solid ${t.accent}`, background: t.surface2 }}>
+                  <td colSpan={2} style={{ padding: "13px 18px" }}>
                     <div style={{
-                      fontSize: 13, fontWeight: 600, color: t.ink,
-                      letterSpacing: "0.02em", textTransform: "uppercase",
+                      fontSize: 12, fontWeight: 700, color: t.ink,
+                      letterSpacing: "0.06em", textTransform: "uppercase",
                     }}>Grand Total</div>
                     <div style={{ fontSize: 11.5, color: t.mute, marginTop: 2 }}>
                       {filteredRows.length} branch · {grouped.length} partner
@@ -1050,7 +1078,7 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
           background: t.surface, border: `1px solid ${t.line}`, borderRadius: 8,
           padding: "10px 14px", zIndex: 2147483647, pointerEvents: "none",
           boxShadow: d
-            ? "0 8px 24px rgba(0,0,0,0.45)"
+            ? "0 8px 24px rgba(0,0,0,0.55)"
             : "0 8px 24px rgba(0,0,0,0.10)",
           minWidth: 220, fontFamily: FONT_SANS,
         }}>
@@ -1060,7 +1088,7 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
           <Kv label="Pendapatan" value={fFull(tooltip.rev)} t={t} />
           <Kv label="Pengeluaran" value={fFull(tooltip.exp)} t={t} />
           <div style={{ height: 1, background: t.line2, margin: "6px 0" }} />
-          <Kv label="Laba bersih" value={fFull(tooltip.rev - tooltip.exp)}
+          <Kv label="Net P&L" value={fFull(tooltip.rev - tooltip.exp)}
               tone={tooltip.rev - tooltip.exp >= 0 ? "pos" : "neg"} t={t} />
         </div>,
         document.body

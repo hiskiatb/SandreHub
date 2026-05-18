@@ -831,7 +831,12 @@ export default function DashboardPage() {
             {view === "payout-tracker" && (
               <motion.div key="pt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
-                <PayoutTracker theme={theme} profile={profile} />
+                <PayoutTracker
+                  theme={theme}
+                  profile={profile}
+                  partnerName={isSPM ? (activePartner || null) : (profile?.partner_name || null)}
+                  filterType={activeType !== "ALL" ? activeType : null}
+                />
               </motion.div>
             )}
 
