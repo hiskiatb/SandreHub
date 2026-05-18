@@ -26,7 +26,7 @@ const MONTHS_FULL  = ["JANUARI","FEBRUARI","MARET","APRIL","MEI","JUNI",
                       "JULI","AGUSTUS","SEPTEMBER","OKTOBER","NOVEMBER","DESEMBER"];
 const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
 
-const FONT_SANS = `-apple-system, BlinkMacSystemFont, "Segoe UI", "SF Pro Text", system-ui, sans-serif`;
+const FONT_SANS = `"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "SF Pro Text", system-ui, sans-serif`;
 const FONT_MONO = `ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace`;
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
@@ -44,28 +44,47 @@ const fFull = (v) =>
   v === null || v === undefined ? "—"
     : `Rp ${new Intl.NumberFormat("id-ID").format(Math.abs(v))}${v < 0 ? "  (rugi)" : ""}`;
 
-// ─── Design tokens ───────────────────────────────────────────────────────────
+// ─── Design tokens — Indosat Ooredoo Hutchison ───────────────────────────────
+// Red #ED1C24 · Yellow #FFCB05 · Teal #32BCAD · Magenta #C6168D · Gray #4D4D4F
 const tokens = (d) => ({
-  bg:        d ? "#0A0C12" : "#F7F8FA",
-  surface:   d ? "#11141C" : "#FFFFFF",
-  surface2:  d ? "#181C26" : "#F2F4F8",
-  line:      d ? "#242937" : "#E4E7EE",
-  line2:     d ? "#1C2030" : "#EDEFF4",
-  ink:       d ? "#F1F5F9" : "#0F172A",
-  ink2:      d ? "#CBD5E1" : "#334155",
-  mute:      d ? "#94A3B8" : "#64748B",
-  mute2:     d ? "#64748B" : "#94A3B8",
-  faint:     d ? "#475569" : "#CBD5E1",
-  blue:      "#0A84FF",
-  blueBg:    d ? "#0E223F" : "#E8F1FF",
-  blueBd:    d ? "#1B3A6E" : "#BFD9FF",
-  blueSoft:  d ? "#122B52" : "#F0F6FF",
-  pos:       d ? "#34D399" : "#16A34A",
-  neg:       d ? "#F87171" : "#DC2626",
-  hover:     d ? "#171B26" : "#F4F6FB",
-  partner:   d ? "#161A24" : "#EEF2F8",
-  partner2:  d ? "#1F2433" : "#E1E7F1",
-  ytd:       d ? "#0F2238" : "#EFF5FF",
+  bg:        d ? "#0D0D0E" : "#F5F5F6",
+  surface:   d ? "#1A1A1D" : "#FFFFFF",
+  surface2:  d ? "#202024" : "#F2F2F4",
+  line:      d ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.09)",
+  line2:     d ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)",
+  ink:       d ? "#F2F2F3" : "#18181B",
+  ink2:      d ? "#D4D4D8" : "#3F3F46",
+  mute:      d ? "#8A8A96" : "#71717A",
+  mute2:     d ? "#5A5A68" : "#A1A1AA",
+  faint:     d ? "#3A3A42" : "#D4D4D8",
+
+  // Primary — Indosat Red
+  blue:      "#ED1C24",
+  blueBg:    d ? "rgba(237,28,36,0.12)"  : "rgba(237,28,36,0.07)",
+  blueBd:    d ? "rgba(237,28,36,0.28)"  : "rgba(237,28,36,0.20)",
+  blueSoft:  d ? "rgba(237,28,36,0.06)"  : "rgba(237,28,36,0.04)",
+
+  // Profit/loss
+  pos:       d ? "#32BCAD" : "#1A9E90",   // Indosat Teal — profit
+  neg:       d ? "#FF6B6B" : "#DC2626",   // Red — loss
+
+  hover:     d ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)",
+
+  // Partner band rows
+  partner:   d ? "rgba(237,28,36,0.04)"  : "rgba(237,28,36,0.025)",
+  partner2:  d ? "rgba(237,28,36,0.08)"  : "rgba(237,28,36,0.05)",
+
+  // YTD column accent — Indosat Teal wash
+  ytd:       d ? "rgba(50,188,173,0.07)" : "rgba(50,188,173,0.06)",
+
+  // Magenta accent
+  magenta:   "#C6168D",
+  magentaBg: d ? "rgba(198,22,141,0.12)" : "rgba(198,22,141,0.07)",
+  magentaBd: d ? "rgba(198,22,141,0.28)" : "rgba(198,22,141,0.18)",
+
+  // Yellow accent
+  yellow:    "#FFCB05",
+  yellowBg:  d ? "rgba(255,203,5,0.12)"  : "rgba(255,203,5,0.08)",
 });
 
 // ─── Popover (click-outside + portal) ────────────────────────────────────────
@@ -137,12 +156,15 @@ function FilterChip({ label, options, selected, onChange, sortDir, onSort, t, d 
       <button ref={btn} onClick={() => setOpen(o => !o)} style={{
         display: "inline-flex", alignItems: "center", gap: 7,
         height: 30, padding: "0 11px", borderRadius: 7,
-        border: `1px solid ${active ? t.blue : t.line}`,
-        background: active ? t.blue : t.surface,
+        border: `1px solid ${active ? "#ED1C24" : t.line}`,
+        background: active
+          ? "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)"
+          : t.surface,
         color: active ? "#FFFFFF" : t.ink2,
         fontSize: 12.5, fontWeight: 500, cursor: "pointer",
         fontFamily: FONT_SANS,
-        transition: "background .12s, color .12s, border-color .12s",
+        transition: "background .14s, color .14s, border-color .14s",
+        boxShadow: active ? "0 2px 8px rgba(237,28,36,0.25)" : "none",
       }}>
         <span style={{ color: active ? "rgba(255,255,255,0.7)" : t.mute, fontSize: 11.5 }}>{label}</span>
         {selected.length > 0
@@ -229,10 +251,13 @@ function ChipRow({ label, sel, onClick, emphasize, count, t }) {
     onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
       <div style={{
         width: 15, height: 15, borderRadius: 4, flexShrink: 0,
-        background: sel ? t.blue : "transparent",
-        border: `1px solid ${sel ? t.blue : t.faint}`,
+        background: sel
+          ? "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)"
+          : "transparent",
+        border: `1px solid ${sel ? "#ED1C24" : t.faint}`,
         display: "flex", alignItems: "center", justifyContent: "center",
         color: "#FFFFFF",
+        boxShadow: sel ? "0 1px 4px rgba(237,28,36,0.3)" : "none",
       }}>{sel && <Check size={11} strokeWidth={2.5} />}</div>
       <span style={{ flex: 1 }}>{label}</span>
       {count !== undefined && <span style={{ color: t.mute2, fontSize: 11 }}>{count}</span>}
@@ -256,10 +281,14 @@ function MonthRange({ available, selected, onChange, t, d }) {
       <button ref={btn} onClick={() => setOpen(o => !o)} style={{
         display: "inline-flex", alignItems: "center", gap: 7,
         height: 30, padding: "0 11px", borderRadius: 7,
-        border: `1px solid ${!all ? t.blue : t.line}`,
-        background: !all ? t.blue : t.surface,
+        border: `1px solid ${!all ? "#ED1C24" : t.line}`,
+        background: !all
+          ? "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)"
+          : t.surface,
         color: !all ? "#FFFFFF" : t.ink2,
         fontSize: 12.5, fontWeight: 500, cursor: "pointer", fontFamily: FONT_SANS,
+        boxShadow: !all ? "0 2px 8px rgba(237,28,36,0.25)" : "none",
+        transition: "all .14s",
       }}>
         <Calendar size={13} strokeWidth={1.8} />
         {all
@@ -288,11 +317,15 @@ function MonthRange({ available, selected, onChange, t, d }) {
             return (
               <button key={m} onClick={() => toggle(m)} style={{
                 height: 32,
-                border: `1px solid ${sel ? t.blue : t.line}`,
-                background: sel ? t.blue : t.surface,
+                border: `1px solid ${sel ? "#ED1C24" : t.line}`,
+                background: sel
+                  ? "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)"
+                  : t.surface,
                 color: sel ? "#FFFFFF" : t.ink2,
-                borderRadius: 6, fontSize: 12, fontWeight: 500,
+                borderRadius: 6, fontSize: 12, fontWeight: sel ? 600 : 500,
                 cursor: "pointer", fontFamily: FONT_SANS,
+                boxShadow: sel ? "0 2px 6px rgba(237,28,36,0.25)" : "none",
+                transition: "all .12s",
               }}>{short}</button>
             );
           })}
@@ -304,8 +337,10 @@ function MonthRange({ available, selected, onChange, t, d }) {
           }}>Semua</button>
           <button onClick={() => setOpen(false)} style={{
             height: 28, padding: "0 14px", border: "none",
-            background: t.blue, color: "#FFFFFF", borderRadius: 6,
-            fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: FONT_SANS,
+            background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)",
+            color: "#FFFFFF", borderRadius: 6,
+            fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: FONT_SANS,
+            boxShadow: "0 2px 8px rgba(237,28,36,0.28)",
           }}>Selesai</button>
         </div>
       </Pop>
@@ -338,9 +373,12 @@ function Seg({ children, active, onClick, t }) {
   return (
     <button onClick={onClick} style={{
       height: 28, padding: "0 12px", border: "none",
-      background: active ? t.blue : t.surface,
+      background: active
+        ? "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)"
+        : t.surface,
       color: active ? "#FFFFFF" : t.mute,
-      fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: FONT_SANS,
+      fontSize: 12, fontWeight: active ? 600 : 500, cursor: "pointer", fontFamily: FONT_SANS,
+      transition: "all .12s",
     }}>{children}</button>
   );
 }
@@ -372,10 +410,12 @@ function TypePill({ mpc, t }) {
   return (
     <span style={{
       display: "inline-flex", alignItems: "center", height: 20, padding: "0 7px",
-      fontSize: 10.5, fontWeight: 600, letterSpacing: "0.04em",
-      color: isMpc ? t.ink : t.mute,
-      background: isMpc ? t.surface2 : "transparent",
-      border: `1px solid ${isMpc ? t.line : t.line2}`,
+      fontSize: 10.5, fontWeight: 700, letterSpacing: "0.05em",
+      color: isMpc ? "#C6168D" : "#32BCAD",
+      background: isMpc
+        ? "rgba(198,22,141,0.10)"
+        : "rgba(50,188,173,0.10)",
+      border: `1px solid ${isMpc ? "rgba(198,22,141,0.25)" : "rgba(50,188,173,0.25)"}`,
       borderRadius: 4,
     }}>{mpc}</span>
   );
@@ -421,7 +461,7 @@ function MonthCell({ md, label, setTooltip, t, partner, grand }) {
       <div style={{
         fontFamily: FONT_MONO, fontVariantNumeric: "tabular-nums",
         fontSize: grand ? 14 : 13.5, fontWeight: partner || grand ? 600 : 500, lineHeight: 1.15,
-        color: pl > 0 ? t.ink : pl < 0 ? t.neg : t.mute2,
+        color: pl > 0 ? "#32BCAD" : pl < 0 ? t.neg : t.mute2,
       }}>{fNum(pl)}</div>
       <div style={{
         fontFamily: FONT_MONO, fontVariantNumeric: "tabular-nums",
@@ -439,7 +479,7 @@ function YTDCell({ rev, exp, label, setTooltip, t, partner, grand }) {
     <td style={{
       padding: "10px 18px", textAlign: "right",
       background: t.ytd,
-      borderLeft: `1px solid ${t.line}`,
+      borderLeft: `1px solid rgba(50,188,173,0.20)`,
       borderTop: grand ? `1px solid ${t.line}` : undefined,
       borderBottom: partner ? `1px solid ${t.line}` : undefined,
       cursor: "help",
@@ -450,7 +490,7 @@ function YTDCell({ rev, exp, label, setTooltip, t, partner, grand }) {
       <div style={{
         fontFamily: FONT_MONO, fontVariantNumeric: "tabular-nums",
         fontSize: grand ? 15 : 14, fontWeight: 600, lineHeight: 1.15,
-        color: pl > 0 ? t.ink : pl < 0 ? t.neg : t.mute2,
+        color: pl > 0 ? "#32BCAD" : pl < 0 ? t.neg : t.mute2,
       }}>{fNum(pl)}</div>
       <div style={{
         fontFamily: FONT_MONO, fontVariantNumeric: "tabular-nums",
@@ -656,13 +696,28 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
         borderRadius: 12, border: `1px solid ${t.line}`,
         fontFamily: FONT_SANS, color: t.ink,
       }}>
-        <style>{`@keyframes pulseBeat{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.55;transform:scale(.9)}}`}</style>
-        <div style={{
-          width: 48, height: 48, borderRadius: 12, background: t.blue,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          animation: "pulseBeat 1.6s ease-in-out infinite",
-        }}>
-          <BarChart3 size={22} color="#FFFFFF" />
+        <style>{`
+          @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
+          @keyframes pivotSpin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+          @keyframes pivotBeat{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.55;transform:scale(.9)}}
+        `}</style>
+        <div style={{ position: "relative", width: 52, height: 52 }}>
+          <div style={{
+            position: "absolute", inset: 0, borderRadius: "50%",
+            border: "2.5px solid transparent",
+            borderTopColor: "#ED1C24",
+            borderRightColor: "#C6168D",
+            animation: "pivotSpin 0.9s linear infinite",
+          }} />
+          <div style={{
+            position: "absolute", inset: 8, borderRadius: 10,
+            background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            animation: "pivotBeat 1.8s ease-in-out infinite",
+            boxShadow: "0 4px 16px rgba(237,28,36,0.4)",
+          }}>
+            <BarChart3 size={18} color="#FFFFFF" />
+          </div>
         </div>
         <span style={{ fontSize: 13.5, fontWeight: 500, color: t.mute, letterSpacing: "0.01em" }}>
           Memuat data pivot…
@@ -700,13 +755,19 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
             <span style={{ color: t.mute2 }}>/</span>
             <Crumb active t={t}>Pivot P&L</Crumb>
           </div>
-          <h1 style={{
-            margin: 0, fontSize: 28, fontWeight: 600,
-            letterSpacing: "-0.025em", lineHeight: 1.1, color: t.ink,
-          }}>
-            Pivot P&L <span style={{ color: t.mute, fontWeight: 400 }}>· {activeYear}</span>
-          </h1>
-          <div style={{ marginTop: 6, fontSize: 13, color: t.mute }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 5 }}>
+            <div style={{
+              width: 4, height: 32, borderRadius: 2, flexShrink: 0,
+              background: "linear-gradient(180deg, #ED1C24 0%, #C6168D 100%)",
+            }} />
+            <h1 style={{
+              margin: 0, fontSize: 28, fontWeight: 700,
+              letterSpacing: "-0.03em", lineHeight: 1.1, color: t.ink,
+            }}>
+              Pivot P&L <span style={{ color: t.mute, fontWeight: 400 }}>· {activeYear}</span>
+            </h1>
+          </div>
+          <div style={{ marginTop: 6, fontSize: 13, color: t.mute, paddingLeft: 16 }}>
             {filteredRows.length} branch · {grouped.length} partner · diperbarui {MONTHS_SHORT[curMIdx]} {curYear}
           </div>
         </div>
@@ -714,23 +775,36 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button onClick={exportCSV} style={{
             display: "inline-flex", alignItems: "center", gap: 7,
-            height: 32, padding: "0 14px",
-            border: `1px solid ${t.blue}`, background: t.blue, color: "#FFFFFF",
-            borderRadius: 7, fontSize: 13, fontWeight: 500,
+            height: 34, padding: "0 16px",
+            border: "none",
+            background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)",
+            color: "#FFFFFF",
+            borderRadius: 8, fontSize: 13, fontWeight: 600,
             cursor: "pointer", fontFamily: FONT_SANS,
-            boxShadow: `0 2px 8px ${d ? "rgba(10,132,255,0.35)" : "rgba(10,132,255,0.20)"}`,
-          }}>
-            <Download size={13} strokeWidth={1.8} /> Export CSV
+            boxShadow: "0 2px 10px rgba(237,28,36,0.30)",
+            transition: "opacity .12s",
+          }}
+          onMouseEnter={e => e.currentTarget.style.opacity = "0.88"}
+          onMouseLeave={e => e.currentTarget.style.opacity = "1"}
+          >
+            <Download size={13} strokeWidth={2} /> Export CSV
           </button>
         </div>
       </header>
 
-      {/* KPI strip */}
+      {/* Font import + KPI strip */}
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');`}</style>
       <div style={{
         display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 1,
         marginBottom: 22, background: t.line,
         border: `1px solid ${t.line}`, borderRadius: 10, overflow: "hidden",
+        position: "relative",
       }}>
+        {/* Top accent stripe */}
+        <div style={{
+          position: "absolute", top: 0, left: 0, right: 0, height: 2, zIndex: 1,
+          background: "linear-gradient(90deg, #ED1C24 0%, #FFCB05 33%, #32BCAD 66%, #C6168D 100%)",
+        }} />
         <Kpi label="Total Pendapatan" value={fFull(gtRev)} tone="neutral" t={t} />
         <Kpi label="Total Pengeluaran" value={fFull(gtExp)} tone="neutral" t={t} />
         <Kpi label="Laba Bersih" value={fFull(gtPL)} tone={gtPL >= 0 ? "pos" : "neg"} primary t={t} />
@@ -797,9 +871,17 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
       </div>
 
       {/* Legend */}
-      <div style={{ display: "flex", gap: 18, marginBottom: 12, fontSize: 11.5, color: t.mute, flexWrap: "wrap" }}>
-        <LegItem dot={t.blue} label="Laba positif" t={t} />
-        <LegItem dot={t.neg} label="Rugi" t={t} />
+      <div style={{ display: "flex", gap: 18, marginBottom: 12, fontSize: 11.5, color: t.mute, flexWrap: "wrap", alignItems: "center" }}>
+        <LegItem dot="#32BCAD" label="Laba positif" t={t} />
+        <LegItem dot={t.neg}   label="Rugi"         t={t} />
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{
+            width: 8, height: 8, borderRadius: 2,
+            background: "linear-gradient(90deg, rgba(50,188,173,0.5), rgba(50,188,173,0.2))",
+            border: "1px solid rgba(50,188,173,0.3)",
+          }} />
+          <span>Kolom YTD</span>
+        </div>
         <span style={{ marginLeft: "auto", color: t.mute2 }}>
           Klik baris partner untuk lipat · arahkan kursor untuk nilai penuh
         </span>
@@ -830,7 +912,7 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
                   const s = MONTHS_SHORT[MONTHS_FULL.indexOf(m)];
                   return <Th key={m} align="right" t={t}>{s.toUpperCase()}</Th>;
                 })}
-                <Th align="right" style={{ paddingRight: 18, color: t.blue, fontWeight: 700 }} t={t}>YTD</Th>
+                <Th align="right" style={{ paddingRight: 18, color: "#32BCAD", fontWeight: 700 }} t={t}>YTD</Th>
               </tr>
             </thead>
 
@@ -878,7 +960,10 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
                           </span>
                           <span style={{
                             display: "inline-block", padding: "1px 7px", borderRadius: 99,
-                            background: t.partner2, fontSize: 11, fontWeight: 500, color: t.mute,
+                            background: "rgba(237,28,36,0.08)",
+                            fontSize: 11, fontWeight: 600,
+                            color: "#ED1C24",
+                            border: "1px solid rgba(237,28,36,0.18)",
                           }}>{g.branches.length} branch</span>
                         </button>
                       </td>
@@ -922,7 +1007,7 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
             {/* Grand total */}
             {filteredRows.length > 0 && (
               <tfoot>
-                <tr style={{ borderTop: `2px solid ${t.blue}`, background: t.surface2 }}>
+                <tr style={{ borderTop: `2px solid #ED1C24`, background: t.surface2 }}>
                   <td colSpan={2} style={{ padding: "14px 18px" }}>
                     <div style={{
                       fontSize: 13, fontWeight: 600, color: t.ink,

@@ -25,56 +25,66 @@ const dtf = (iso) => iso
     })
   : null;
 
-const FONT_STACK = `-apple-system, BlinkMacSystemFont, "Segoe UI", "SF Pro Text", Roboto, system-ui, sans-serif`;
+const FONT_STACK = `"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "SF Pro Text", Roboto, system-ui, sans-serif`;
 
-// ─── Design tokens — slate + blue, consistent with the shell ─────────────────
+// ─── Design tokens — Indosat Ooredoo Hutchison ────────────────────────────────
+// Red #ED1C24 · Yellow #FFCB05 · Teal #32BCAD · Magenta #C6168D · Gray #4D4D4F
 const mk = (d) => ({
-  bg:        d ? "#0A0C12" : "#F7F8FA",
-  card:      d ? "#11141C" : "#FFFFFF",
-  sub:       d ? "#171B26" : "#F2F4F8",
-  hover:     d ? "#171B26" : "#F4F6FB",
+  bg:        d ? "#0D0D0E" : "#F5F5F6",
+  card:      d ? "#1A1A1D" : "#FFFFFF",
+  sub:       d ? "#202024" : "#F2F2F4",
+  hover:     d ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.02)",
 
-  line:      d ? "#242937" : "#E4E7EE",
-  lineSoft:  d ? "#1C2030" : "#EDEFF4",
+  line:      d ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.09)",
+  lineSoft:  d ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)",
 
-  hi:        d ? "#F1F5F9" : "#0F172A",
-  mid:       d ? "#94A3B8" : "#64748B",
-  lo:        d ? "#64748B" : "#94A3B8",
-  faint:     d ? "#475569" : "#CBD5E1",
+  hi:        d ? "#F2F2F3" : "#18181B",
+  mid:       d ? "#8A8A96" : "#52525B",
+  lo:        d ? "#4D4D58" : "#A1A1AA",
+  faint:     d ? "#3A3A42" : "#D4D4D8",
 
-  blue:      "#0A84FF",
-  blueBg:    d ? "#0E223F" : "#E8F1FF",
-  blueBd:    d ? "#1B3A6E" : "#BFD9FF",
-  blueSoft:  d ? "#122B52" : "#F0F6FF",
+  // Primary — Indosat Red
+  blue:      "#ED1C24",
+  blueBg:    d ? "rgba(237,28,36,0.12)"  : "rgba(237,28,36,0.07)",
+  blueBd:    d ? "rgba(237,28,36,0.28)"  : "rgba(237,28,36,0.20)",
+  blueSoft:  d ? "rgba(237,28,36,0.06)"  : "rgba(237,28,36,0.04)",
 
-  green:     d ? "#34D399" : "#16A34A",
-  greenBg:   d ? "#0F2A1F" : "#E8F7EE",
-  greenBd:   d ? "#1F4A33" : "#BFE5CC",
+  // Success — Indosat Teal
+  green:     d ? "#32BCAD" : "#1A9E90",
+  greenBg:   d ? "rgba(50,188,173,0.13)" : "rgba(50,188,173,0.09)",
+  greenBd:   d ? "rgba(50,188,173,0.30)" : "rgba(50,188,173,0.22)",
 
-  amber:     d ? "#FBBF24" : "#D97706",
-  amberBg:   d ? "#251D08" : "#FFF7E5",
-  amberBd:   d ? "#4A3914" : "#F5DDA8",
+  // Draft — Indosat Yellow
+  amber:     d ? "#FFCB05" : "#C49A00",
+  amberBg:   d ? "rgba(255,203,5,0.12)"  : "rgba(255,203,5,0.09)",
+  amberBd:   d ? "rgba(255,203,5,0.28)"  : "rgba(255,203,5,0.22)",
 
-  red:       d ? "#F87171" : "#DC2626",
-  redBg:     d ? "#2A1414" : "#FEEDEC",
-  redBd:     d ? "#4A1F1F" : "#F5C8C5",
+  // Danger red (loss)
+  red:       d ? "#FF6B6B" : "#DC2626",
+  redBg:     d ? "rgba(255,107,107,0.12)": "rgba(220,38,38,0.07)",
+  redBd:     d ? "rgba(255,107,107,0.28)": "rgba(220,38,38,0.20)",
 
-  sm: d ? "0 1px 2px rgba(0,0,0,0.45)"  : "0 1px 2px rgba(15,23,42,0.05)",
-  md: d ? "0 6px 18px rgba(0,0,0,0.40)" : "0 6px 18px rgba(15,23,42,0.08)",
-  lg: d ? "0 20px 48px rgba(0,0,0,0.55)": "0 20px 48px rgba(15,23,42,0.14)",
+  // Magenta accent
+  magenta:   "#C6168D",
+  magentaBg: d ? "rgba(198,22,141,0.12)" : "rgba(198,22,141,0.07)",
+  magentaBd: d ? "rgba(198,22,141,0.28)" : "rgba(198,22,141,0.18)",
+
+  sm: d ? "0 1px 2px rgba(0,0,0,0.55)"   : "0 1px 2px rgba(26,26,29,0.06)",
+  md: d ? "0 6px 18px rgba(0,0,0,0.50)"  : "0 6px 18px rgba(26,26,29,0.09)",
+  lg: d ? "0 20px 48px rgba(0,0,0,0.65)" : "0 20px 48px rgba(26,26,29,0.14)",
 });
 
 // ─── Global CSS ──────────────────────────────────────────────────────────────
 const G = ({ d, t }) => (
   <style>{`
-    *{box-sizing:border-box}
-    ::-webkit-scrollbar{width:8px;height:8px}
+    ::-webkit-scrollbar{width:6px;height:6px}
     ::-webkit-scrollbar-track{background:transparent}
-    ::-webkit-scrollbar-thumb{background:${d ? "#2A3144" : "#D1D6E0"};border-radius:99px}
-    ::-webkit-scrollbar-thumb:hover{background:${d ? "#3A4258" : "#B6BDCC"}}
-    .fin-tr:hover td{background:${d ? "#141826" : "#F4F6FB"}!important}
+    ::-webkit-scrollbar-thumb{background:${d ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.12)"};border-radius:99px}
+    ::-webkit-scrollbar-thumb:hover{background:${d ? "rgba(255,255,255,0.16)" : "rgba(0,0,0,0.18)"}}
+    .fin-tr:hover td{background:${d ? "rgba(237,28,36,0.04)" : "rgba(237,28,36,0.025)"}!important}
     @keyframes breathe{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.92)}}
     @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
     @media(max-width:760px){
       .grid-3{grid-template-columns:1fr 1fr!important}
       .grid-2{grid-template-columns:1fr!important}
@@ -796,12 +806,12 @@ const TR = ({ label, amount, ratio, indent = 0, kind = "data", t }) => {
   if (isBlank) return <tr><td colSpan={3} style={{ padding: "3px 0" }}></td></tr>;
 
   const bg =
-    isSub ? t.blueBg :
+    isSub ? "rgba(50,188,173,0.10)" :
     isTot || isNet ? (neg ? t.redBg : t.greenBg) :
     "transparent";
 
   const tc =
-    isSub ? t.blue :
+    isSub ? "#32BCAD" :
     isTot || isNet ? (neg ? t.red : t.green) :
     neg && !isSec ? t.red :
     isSec ? t.hi : t.hi;
@@ -906,12 +916,23 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
         display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
         minHeight: 400, gap: 14, fontFamily: FONT_STACK,
       }}>
-        <div style={{
-          width: 46, height: 46, borderRadius: 12, background: t.blue,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          animation: "breathe 1.6s ease-in-out infinite",
-        }}>
-          <BarChart3 size={22} color="#FFFFFF" />
+        <div style={{ position: "relative", width: 52, height: 52 }}>
+          <div style={{
+            position: "absolute", inset: 0, borderRadius: "50%",
+            border: "2.5px solid transparent",
+            borderTopColor: "#ED1C24",
+            borderRightColor: "#C6168D",
+            animation: "spin 0.9s linear infinite",
+          }} />
+          <div style={{
+            position: "absolute", inset: 8, borderRadius: 10,
+            background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            animation: "breathe 1.8s ease-in-out infinite",
+            boxShadow: "0 4px 14px rgba(237,28,36,0.4)",
+          }}>
+            <BarChart3 size={18} color="#FFFFFF" />
+          </div>
         </div>
         <span style={{
           fontSize: 11, fontWeight: 600, letterSpacing: "0.10em",
@@ -1099,9 +1120,11 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
           <div style={{
             width: 46, height: 46, borderRadius: 10, flexShrink: 0,
             display: "flex", alignItems: "center", justifyContent: "center",
-            background: t.blueBg, color: t.blue, border: `1px solid ${t.blueBd}`,
+            background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)",
+            color: "#FFFFFF",
+            boxShadow: "0 2px 10px rgba(237,28,36,0.30)",
           }}>
-            <BarChart3 size={25} strokeWidth={2} />
+            <BarChart3 size={22} strokeWidth={2} />
           </div>
           <div style={{ minWidth: 0 }}>
             <div style={{
@@ -1123,10 +1146,11 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
           style={{
             display: "inline-flex", alignItems: "center", gap: 7,
             padding: "9px 16px", borderRadius: 8,
-            background: t.blue, color: "#FFFFFF", border: "none",
+            background: genPdf ? t.sub : "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)",
+            color: "#FFFFFF", border: "none",
             cursor: genPdf ? "not-allowed" : "pointer",
             fontSize: 13, fontWeight: 600,
-            boxShadow: `0 2px 8px rgba(10,132,255,${d ? 0.32 : 0.18})`,
+            boxShadow: genPdf ? "none" : "0 2px 10px rgba(237,28,36,0.30)",
             opacity: genPdf ? 0.7 : 1, transition: "all .14s",
             flexShrink: 0, fontFamily: "inherit",
           }}
@@ -1167,7 +1191,7 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {hasPend && <Pill icon={<CheckCircle2 size={11} />} text="Pendapatan final" color={t.green} bg={t.greenBg} bd={t.greenBd} />}
-          {hasPeng && <Pill icon={<CheckCircle2 size={11} />} text="Pengeluaran final" color={t.blue} bg={t.blueBg} bd={t.blueBd} />}
+          {hasPeng && <Pill icon={<CheckCircle2 size={11} />} text="Pengeluaran final" color={t.magenta} bg={t.magentaBg} bd={t.magentaBd} />}
         </div>
       </div>
 
@@ -1175,8 +1199,8 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
       <div className="grid-3" style={{
         display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 22,
       }}>
-        <MetCard label="Total Omset"       value={idr(report.tom)} sub="SP + Voucher + MOBO"      accent={t.blue}  t={t} />
-        <MetCard label="Total Pendapatan"  value={idr(report.tpd)} sub="Margin + Komisi + Hadiah" accent={t.green} t={t} />
+        <MetCard label="Total Omset"       value={idr(report.tom)} sub="SP + Voucher + MOBO"      accent="#ED1C24"  t={t} />
+        <MetCard label="Total Pendapatan"  value={idr(report.tpd)} sub="Margin + Komisi + Hadiah" accent="#32BCAD" t={t} />
         <MetCard label="Total Pengeluaran" value={idr(report.tpg)} sub="OPEX + SDM + Mkt + COM"   accent={t.red}   t={t} />
       </div>
 
@@ -1287,14 +1311,14 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
             ))}
             <div style={{
               display: "flex", justifyContent: "space-between", alignItems: "center",
-              paddingTop: 14, marginTop: 4, borderTop: `1.5px solid ${t.blueBd}`,
+              paddingTop: 14, marginTop: 4, borderTop: `1.5px solid rgba(50,188,173,0.35)`,
             }}>
               <span style={{
                 fontSize: 11, fontWeight: 600, textTransform: "uppercase",
-                letterSpacing: "0.08em", color: t.blue,
+                letterSpacing: "0.08em", color: "#32BCAD",
               }}>Total Pendapatan</span>
               <span style={{
-                fontSize: 18, fontWeight: 700, color: t.blue,
+                fontSize: 18, fontWeight: 700, color: "#32BCAD",
                 fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em",
               }}>{idr(report.tpd)}</span>
             </div>

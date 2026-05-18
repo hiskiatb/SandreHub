@@ -33,29 +33,35 @@ const fmtDate = (iso) => {
   return new Date(iso).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
 
-// ─── DESIGN TOKENS ────────────────────────────────────────────────────────────
+// ─── DESIGN TOKENS — Indosat Ooredoo Hutchison ───────────────────────────────
 const mk = (d) => ({
-  bg:       d ? '#07090D' : '#F2F2F7',
-  card:     d ? '#0D1019' : '#FFFFFF',
-  sub:      d ? '#131826' : '#F5F5F8',
-  pill:     d ? '#1A2030' : '#EEEEF3',
-  line:     d ? 'rgba(255,255,255,0.07)'  : 'rgba(0,0,0,0.09)',
-  lineH:    d ? 'rgba(255,255,255,0.045)' : 'rgba(0,0,0,0.05)',
-  hi:       d ? '#EEF0F5' : '#1A1A1E',
-  mid:      d ? '#8892A4' : '#4B5563',
-  lo:       d ? '#424D60' : '#9CA3AF',
-  blue:     '#0A84FF',
-  blueBg:   d ? 'rgba(10,132,255,0.11)' : 'rgba(10,132,255,0.07)',
-  blueBd:   d ? 'rgba(10,132,255,0.26)' : 'rgba(10,132,255,0.18)',
-  green:    d ? '#2ED158' : '#16A34A',
-  greenBg:  d ? 'rgba(46,209,88,0.10)' : 'rgba(22,163,74,0.08)',
-  greenBd:  d ? 'rgba(46,209,88,0.20)' : 'rgba(22,163,74,0.16)',
-  red:      d ? '#FF453A' : '#DC2626',
-  inputBg:  d ? 'rgba(255,255,255,0.05)' : '#FFFFFF',
-  inputBd:  d ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.13)',
-  sm:       d ? '0 1px 3px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.045)' : '0 1px 3px rgba(0,0,0,0.07),0 0 0 1px rgba(0,0,0,0.055)',
-  md:       d ? '0 6px 20px rgba(0,0,0,0.45)' : '0 6px 20px rgba(0,0,0,0.08)',
-  lg:       d ? '0 24px 60px rgba(0,0,0,0.65)' : '0 24px 60px rgba(0,0,0,0.12)',
+  bg:       d ? "#0D0D0E"                       : "#F5F5F6",
+  card:     d ? "#1A1A1D"                       : "#FFFFFF",
+  sub:      d ? "#202024"                       : "#F2F2F4",
+  pill:     d ? "#2A2A2F"                       : "#EBEBEF",
+  line:     d ? "rgba(255,255,255,0.07)"        : "rgba(0,0,0,0.09)",
+  lineH:    d ? "rgba(255,255,255,0.045)"       : "rgba(0,0,0,0.05)",
+  hi:       d ? "#F2F2F3"                       : "#18181B",
+  mid:      d ? "#8A8A96"                       : "#52525B",
+  lo:       d ? "#4D4D58"                       : "#A1A1AA",
+  // Primary — Indosat Red
+  blue:     "#ED1C24",
+  blueBg:   d ? "rgba(237,28,36,0.12)"          : "rgba(237,28,36,0.07)",
+  blueBd:   d ? "rgba(237,28,36,0.28)"          : "rgba(237,28,36,0.20)",
+  // Success — Indosat Teal
+  green:    d ? "#32BCAD"                       : "#1A9E90",
+  greenBg:  d ? "rgba(50,188,173,0.13)"         : "rgba(50,188,173,0.09)",
+  greenBd:  d ? "rgba(50,188,173,0.30)"         : "rgba(50,188,173,0.22)",
+  // Danger
+  red:      d ? "#FF6B6B"                       : "#DC2626",
+  // Magenta
+  magenta:  "#C6168D",
+  inputBg:  d ? "rgba(255,255,255,0.05)"        : "#FFFFFF",
+  inputBd:  d ? "rgba(255,255,255,0.09)"        : "rgba(0,0,0,0.13)",
+  sm:       d ? "0 1px 3px rgba(0,0,0,0.5),0 0 0 1px rgba(255,255,255,0.045)"
+              : "0 1px 3px rgba(0,0,0,0.07),0 0 0 1px rgba(0,0,0,0.055)",
+  md:       d ? "0 6px 20px rgba(0,0,0,0.45)"  : "0 6px 20px rgba(0,0,0,0.08)",
+  lg:       d ? "0 24px 60px rgba(0,0,0,0.65)" : "0 24px 60px rgba(0,0,0,0.12)",
 });
 
 // ─── LOCAL INPUT ──────────────────────────────────────────────────────────────
@@ -77,8 +83,9 @@ LocalInput.displayName = 'LocalInput';
 // ─── GLOBAL CSS ───────────────────────────────────────────────────────────────
 const G = ({ d, t }) => (
   <style>{`
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
     ::-webkit-scrollbar { width: 4px; height: 4px; }
-    ::-webkit-scrollbar-thumb { background: ${d ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.12)'}; border-radius: 99px; }
+    ::-webkit-scrollbar-thumb { background: ${d ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.12)"}; border-radius: 99px; }
     input { font-size: 16px !important; }
     .fpi {
       width: 100%; background: ${t.inputBg}; border: 1px solid ${t.inputBd};
@@ -86,7 +93,7 @@ const G = ({ d, t }) => (
       outline: none; transition: border-color 0.14s; font-family: inherit;
       letter-spacing: -0.01em; -webkit-font-smoothing: antialiased; box-sizing: border-box;
     }
-    .fpi:focus { border-color: #0A84FF; box-shadow: 0 0 0 3px rgba(10,132,255,0.14); }
+    .fpi:focus { border-color: #ED1C24; box-shadow: 0 0 0 3px rgba(237,28,36,0.12); }
     .fpi::placeholder { color: ${t.lo}; font-weight: 400; }
     .fpi-c { text-align: center; }
     .fpi-sm { padding: 8px 6px; min-width: 65px;}
@@ -110,14 +117,14 @@ const G = ({ d, t }) => (
       font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
       transition: all 0.14s;
     }
-    .vc-add-btn:hover { background: ${t.blue}; color: #fff; border-color: ${t.blue}; border-style: solid; }
+    .vc-add-btn:hover { background: #ED1C24; color: #fff; border-color: #ED1C24; border-style: solid; }
     .vc-rm-btn {
       display: inline-flex; align-items: center; justify-content: center;
       width: 26px; height: 26px; border-radius: 7px; border: 1px solid ${t.line};
       background: transparent; color: ${t.red}; cursor: pointer;
       transition: all 0.14s; flex-shrink: 0;
     }
-    .vc-rm-btn:hover { background: ${d ? 'rgba(255,69,58,0.10)' : 'rgba(220,38,38,0.08)'}; border-color: ${t.red}; }
+    .vc-rm-btn:hover { background: ${d ? "rgba(255,107,107,0.10)" : "rgba(220,38,38,0.08)"}; border-color: ${t.red}; }
     .vc-entry-tag {
       display: inline-flex; align-items: center; gap: 4px;
       padding: 2px 7px; border-radius: 99px;
@@ -136,7 +143,7 @@ const Body = ({ children, style = {} }) => (
 );
 const SecLabel = ({ children, t }) => (
   <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 16 }}>
-    <div style={{ width: 3, height: 13, borderRadius: 99, background: t.blue, flexShrink: 0 }} />
+    <div style={{ width: 3, height: 13, borderRadius: 99, background: 'linear-gradient(180deg, #ED1C24, #C6168D)', flexShrink: 0 }} />
     <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: t.mid }}>{children}</span>
   </div>
 );
@@ -149,15 +156,15 @@ function Stepper({ step, setStep, t, d }) {
     <div style={{ paddingBottom: 36, paddingTop: 4 }}>
       <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div style={{ position: 'absolute', top: R/2, left: R/2, right: R/2, height: 1, background: t.line, transform: 'translateY(-50%)', zIndex: 0 }} />
-        <div style={{ position: 'absolute', top: R/2, left: R/2, height: 2, background: t.blue, width: `calc((100% - ${R}px) * ${pct/100})`, transform: 'translateY(-50%)', borderRadius: 99, transition: 'width 0.3s ease', zIndex: 1 }} />
+        <div style={{ position: 'absolute', top: R/2, left: R/2, height: 2, background: 'linear-gradient(90deg, #ED1C24, #C6168D)', width: `calc((100% - ${R}px) * ${pct/100})`, transform: 'translateY(-50%)', borderRadius: 99, transition: 'width 0.3s ease', zIndex: 1 }} />
         {ITEMS.map(item => {
           const isActive = step === item.s, isPast = step > item.s;
           return (
             <div key={item.s} style={{ position: 'relative', zIndex: 2, display: 'flex', flexDirection: 'column', alignItems: 'center', width: R }}>
-              <button onClick={() => setStep(item.s)} style={{ width:R, height:R, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700, fontSize:12, border:`2px solid ${(isActive||isPast)?t.blue:t.line}`, background:(isActive||isPast)?t.blue:(d?'#0D1019':'#FFFFFF'), color:(isActive||isPast)?'#fff':t.lo, cursor:'pointer', outline:'none', transition:'all 0.2s', transform:isActive?'scale(1.10)':'scale(1)', boxShadow:isActive?`0 0 0 4px ${t.blueBg},0 3px 10px rgba(10,132,255,0.28)`:'none', flexShrink:0 }}>
+              <button onClick={() => setStep(item.s)} style={{ width:R, height:R, borderRadius:'50%', display:'flex', alignItems:'center', justifyContent:'center', fontWeight:700, fontSize:12, border:`2px solid ${(isActive||isPast)?"#ED1C24":t.line}`, background:(isActive||isPast)?"linear-gradient(135deg,#ED1C24,#C6168D)":(d?"#1A1A1D":"#FFFFFF"), color:(isActive||isPast)?'#fff':t.lo, cursor:'pointer', outline:'none', transition:'all 0.2s', transform:isActive?'scale(1.10)':'scale(1)', boxShadow:isActive?`0 0 0 4px rgba(237,28,36,0.12),0 3px 10px rgba(237,28,36,0.28)`:'none', flexShrink:0 }}>
                 {isPast ? <CheckCircle2 size={15} strokeWidth={2.5} /> : item.s}
               </button>
-              <span style={{ marginTop:9, fontSize:10, fontWeight:700, letterSpacing:'0.08em', textTransform:'uppercase', color:isActive?t.blue:t.lo, whiteSpace:'nowrap', transition:'color 0.2s' }}>{item.label}</span>
+              <span style={{ marginTop:9, fontSize:10, fontWeight:700, letterSpacing:'0.08em', textTransform:'uppercase', color:isActive?"#ED1C24":t.lo, whiteSpace:'nowrap', transition:'color 0.2s' }}>{item.label}</span>
             </div>
           );
         })}
@@ -169,7 +176,7 @@ function Stepper({ step, setStep, t, d }) {
 function SecHero({ icon: Icon, step, title, t }) {
   return (
     <div style={{ display:'flex', alignItems:'center', gap:14, padding:'14px 18px', borderRadius:10, border:`1px solid ${t.line}`, background:t.card, marginBottom:18, boxShadow:t.sm }}>
-      <div style={{ width:38, height:38, borderRadius:9, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', background:t.blueBg, color:t.blue, border:`1px solid ${t.blueBd}` }}><Icon size={18} /></div>
+      <div style={{ width:38, height:38, borderRadius:9, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', background:'linear-gradient(135deg,#ED1C24,#C6168D)', color:'#FFFFFF', boxShadow:'0 2px 8px rgba(237,28,36,0.28)' }}><Icon size={18} /></div>
       <div>
         <div style={{ fontSize:10, fontWeight:700, letterSpacing:'0.10em', textTransform:'uppercase', color:t.mid, marginBottom:3 }}>Langkah {step} dari 4</div>
         <div style={{ fontSize:17, fontWeight:800, letterSpacing:'-0.03em', color:t.hi, lineHeight:1.2 }}>{title}</div>
@@ -195,7 +202,7 @@ function SPCard({ item, onUpdate, t }) {
           {[{ l:'Margin',v:formatIDR(item.margin),neg:item.margin<0 },{ l:'% Margin',v:formatPct(item.pctMargin),neg:item.pctMargin<0 },{ l:'Modal',v:formatIDR(item.totalModal) },{ l:'Komposisi',v:formatPct(item.komposisi) }].map(s=>(
             <div key={s.l}>
               <div style={{ fontSize:9, fontWeight:600, letterSpacing:'0.07em', textTransform:'uppercase', color:t.lo, marginBottom:2 }}>{s.l}</div>
-              <div style={{ fontSize:12, fontWeight:700, color:s.neg?t.red:t.blue, fontVariantNumeric:'tabular-nums' }}>{s.v}</div>
+              <div style={{ fontSize:12, fontWeight:700, color:s.neg?t.red:"#32BCAD", fontVariantNumeric:'tabular-nums' }}>{s.v}</div>
             </div>
           ))}
         </div>
@@ -619,7 +626,7 @@ const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSave
     <>
       <G d={d} t={t} />
       <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:340, gap:14 }}>
-        <div style={{ width:46, height:46, borderRadius:12, background:t.blue, display:'flex', alignItems:'center', justifyContent:'center', animation:'fpbreathe 1.8s ease-in-out infinite' }}>
+        <div style={{ width:46, height:46, borderRadius:12, background:"linear-gradient(135deg,#ED1C24,#C6168D)", display:'flex', alignItems:'center', justifyContent:'center', animation:'fpbreathe 1.8s ease-in-out infinite' }}>
           <ArrowUpRight size={22} color="#fff" />
         </div>
         <span style={{ fontSize:11, fontWeight:600, letterSpacing:'0.09em', textTransform:'uppercase', color:t.mid }}>Memuat data...</span>
@@ -759,7 +766,7 @@ const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSave
               </div>
             </Body></Card>
 
-            <div style={{ padding:'18px 22px', borderRadius:12, background:t.blue, color:'#fff', display:'flex', flexWrap:'wrap', gap:14, justifyContent:'space-between', alignItems:'center' }}>
+            <div style={{ padding:'18px 22px', borderRadius:12, background:"linear-gradient(135deg,#ED1C24,#C6168D)", color:'#fff', display:'flex', flexWrap:'wrap', gap:14, justifyContent:'space-between', alignItems:'center' }}>
               <div>
                 <div style={{ fontSize:10, fontWeight:700, letterSpacing:'0.10em', textTransform:'uppercase', opacity:0.76, marginBottom:5 }}>Subtotal Margin Produk</div>
                 <div style={{ fontSize:26, fontWeight:800, letterSpacing:'-0.04em', fontVariantNumeric:'tabular-nums' }}>{formatIDR(stats.gtMg)}</div>
@@ -780,7 +787,7 @@ const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSave
 
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12, padding:'15px 18px', borderRadius:10, border:`1px solid ${t.blueBd}`, background:t.blueBg }}>
               <div style={{ display:'flex', alignItems:'center', gap:11 }}>
-                <div style={{ width:34, height:34, borderRadius:8, background:t.blue, display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', flexShrink:0 }}><TrendingUp size={16}/></div>
+                <div style={{ width:34, height:34, borderRadius:8, background:"linear-gradient(135deg,#ED1C24,#C6168D)", display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', flexShrink:0 }}><TrendingUp size={16}/></div>
                 <div>
                   <div style={{ fontSize:13, fontWeight:700, color:t.blue, letterSpacing:'-0.01em' }}>A. Upfront Discount</div>
                   <div style={{ fontSize:11, color:t.mid, marginTop:2 }}>1.5% dari Modal Mobo</div>
@@ -804,7 +811,7 @@ const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSave
 
             <div style={{ padding:'15px 20px', borderRadius:12, background:t.blueBg, border:`1px solid ${t.blueBd}`, display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12 }}>
               <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-                <div style={{ width:34, height:34, borderRadius:8, background:t.blue, display:'flex', alignItems:'center', justifyContent:'center', color:'#fff' }}><Zap size={16}/></div>
+                <div style={{ width:34, height:34, borderRadius:8, background:"linear-gradient(135deg,#ED1C24,#C6168D)", display:'flex', alignItems:'center', justifyContent:'center', color:'#fff' }}><Zap size={16}/></div>
                 <span style={{ fontSize:12, fontWeight:700, letterSpacing:'0.07em', textTransform:'uppercase', color:t.blue }}>Total Sales Fee</span>
               </div>
               <span style={{ fontSize:26, fontWeight:800, letterSpacing:'-0.04em', color:t.blue, fontVariantNumeric:'tabular-nums' }}>{formatIDR(stats.sfTotal)}</span>
@@ -832,7 +839,7 @@ const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSave
                 ))}
                 <div style={{ padding:'14px 18px', borderRadius:10, background:t.blueBg, border:`1px solid ${t.blueBd}`, display:'flex', justifyContent:'space-between', alignItems:'center' }}>
                   <div style={{ display:'flex', alignItems:'center', gap:9 }}>
-                    <div style={{ width:32, height:32, borderRadius:7, background:t.blue, display:'flex', alignItems:'center', justifyContent:'center', color:'#fff' }}><Gift size={15}/></div>
+                    <div style={{ width:32, height:32, borderRadius:7, background:"linear-gradient(135deg,#ED1C24,#C6168D)", display:'flex', alignItems:'center', justifyContent:'center', color:'#fff' }}><Gift size={15}/></div>
                     <span style={{ fontSize:12, fontWeight:700, letterSpacing:'0.06em', textTransform:'uppercase', color:t.blue }}>Total Rewards</span>
                   </div>
                   <span style={{ fontSize:22, fontWeight:800, letterSpacing:'-0.04em', color:t.blue, fontVariantNumeric:'tabular-nums' }}>{formatIDR(stats.rwTotal)}</span>
@@ -913,7 +920,7 @@ const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSave
                   </div>
                 ) : (
                   <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:8 }}>
-                    <div style={{ display:'inline-flex', alignItems:'center', gap:7, padding:'8px 18px', borderRadius:99, background:t.blue+'20', border:`1px solid ${t.blueBd}`, color:t.blue, fontSize:12, fontWeight:700, letterSpacing:'0.04em' }}>
+                    <div style={{ display:'inline-flex', alignItems:'center', gap:7, padding:'8px 18px', borderRadius:99, background:"linear-gradient(135deg,#ED1C24,#C6168D)"+'20', border:`1px solid ${t.blueBd}`, color:t.blue, fontSize:12, fontWeight:700, letterSpacing:'0.04em' }}>
                       <Clock size={14}/>Belum Difinalisasi
                     </div>
                     {reportStatus.updatedAt && (
@@ -942,11 +949,11 @@ const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSave
               </button>
             )}
             {step < 4 ? (
-              <button onClick={()=>setStep(s=>s+1)} style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 18px', borderRadius:9, background:t.blue, color:'#fff', border:'none', cursor:'pointer', fontSize:12, fontWeight:700, letterSpacing:'0.05em', textTransform:'uppercase', boxShadow:`0 2px 10px rgba(10,132,255,${d?0.36:0.20})` }}>
+              <button onClick={()=>setStep(s=>s+1)} style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 18px', borderRadius:9, background:"linear-gradient(135deg,#ED1C24,#C6168D)", color:'#fff', border:'none', cursor:'pointer', fontSize:12, fontWeight:700, letterSpacing:'0.05em', textTransform:'uppercase', boxShadow:`0 2px 10px rgba(237,28,36,${d?0.36:0.20})` }}>
                 Lanjut <ArrowRight size={13}/>
               </button>
             ) : (
-              <button onClick={()=>setShowSubmit(true)} disabled={isSaving} style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 18px', borderRadius:9, background:t.blue, color:'#fff', border:'none', cursor:isSaving?'not-allowed':'pointer', fontSize:12, fontWeight:700, letterSpacing:'0.05em', textTransform:'uppercase', boxShadow:`0 2px 10px rgba(10,132,255,${d?0.36:0.20})` }}>
+              <button onClick={()=>setShowSubmit(true)} disabled={isSaving} style={{ display:'flex', alignItems:'center', gap:6, padding:'8px 18px', borderRadius:9, background:"linear-gradient(135deg,#ED1C24,#C6168D)", color:'#fff', border:'none', cursor:isSaving?'not-allowed':'pointer', fontSize:12, fontWeight:700, letterSpacing:'0.05em', textTransform:'uppercase', boxShadow:`0 2px 10px rgba(237,28,36,${d?0.36:0.20})` }}>
                 <Send size={13}/>Kirim
               </button>
             )}
@@ -966,7 +973,7 @@ const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSave
                   Total <strong style={{ color:t.blue, fontWeight:700 }}>{formatIDR(stats.revenue)}</strong> akan dikirim untuk proses audit.
                 </div>
                 <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-                  <button onClick={handleSave} disabled={isSaving} style={{ width:'100%', padding:12, background:t.blue, color:'#fff', border:'none', borderRadius:9, fontSize:13, fontWeight:700, cursor:isSaving?'not-allowed':'pointer', opacity:isSaving?0.7:1 }}>
+                  <button onClick={handleSave} disabled={isSaving} style={{ width:'100%', padding:12, background:"linear-gradient(135deg,#ED1C24,#C6168D)", color:'#fff', border:'none', borderRadius:9, fontSize:13, fontWeight:700, cursor:isSaving?'not-allowed':'pointer', opacity:isSaving?0.7:1 }}>
                     {isSaving?'Menyimpan...':'Konfirmasi'}
                   </button>
                   <button onClick={()=>setShowSubmit(false)} style={{ width:'100%', padding:12, background:'transparent', color:t.mid, border:`1px solid ${t.line}`, borderRadius:9, fontSize:13, fontWeight:600, cursor:'pointer' }}>Batal</button>

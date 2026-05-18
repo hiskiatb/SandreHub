@@ -15,42 +15,52 @@ const MONTHS = [
 ];
 const MONTH_SHORT = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
 
-// ─── Design Tokens ────────────────────────────────────────────────────────────
+// ─── Design Tokens — Indosat Ooredoo Hutchison ───────────────────────────────
+// Red #ED1C24 · Yellow #FFCB05 · Teal #32BCAD · Magenta #C6168D · Gray #4D4D4F
 const tk = (d) => ({
-  appBg:    d ? "#080A0F"                        : "#EEEEF3",
-  surface:  d ? "#0C0E14"                        : "#F8F8FA",
-  card:     d ? "#111520"                        : "#FFFFFF",
-  thead:    d ? "#111520"                        : "#F2F2F5",
-  row:      d ? "#0C0E14"                        : "#FFFFFF",
-  rowAlt:   d ? "#0F1117"                        : "#F9F9FB",
-  rowHov:   d ? "rgba(10,132,255,0.08)"          : "rgba(10,132,255,0.06)",
+  appBg:    d ? "#0D0D0E"                              : "#F5F5F6",
+  surface:  d ? "#111113"                              : "#F8F8FA",
+  card:     d ? "#1A1A1D"                              : "#FFFFFF",
+  thead:    d ? "#161618"                              : "#F2F2F4",
+  row:      d ? "#111113"                              : "#FFFFFF",
+  rowAlt:   d ? "#141416"                              : "#FAFAFA",
+  rowHov:   d ? "rgba(237,28,36,0.07)"                : "rgba(237,28,36,0.04)",
 
-  line:     d ? "rgba(255,255,255,0.08)"         : "rgba(0,0,0,0.10)",
-  lineH:    d ? "rgba(255,255,255,0.05)"         : "rgba(0,0,0,0.06)",
+  line:     d ? "rgba(255,255,255,0.07)"               : "rgba(0,0,0,0.09)",
+  lineH:    d ? "rgba(255,255,255,0.04)"               : "rgba(0,0,0,0.05)",
 
-  hi:       d ? "#EDEDF2"                        : "#18181B",
-  mid:      d ? "#7C7C84"                        : "#52525B",
-  lo:       d ? "#3A3A42"                        : "#A1A1AA",
+  hi:       d ? "#F2F2F3"                              : "#18181B",
+  mid:      d ? "#8A8A96"                              : "#52525B",
+  lo:       d ? "#4D4D58"                              : "#A1A1AA",
 
-  blue:     "#0A84FF",
-  blueBg:   d ? "rgba(10,132,255,0.13)"          : "rgba(10,132,255,0.09)",
-  blueBd:   d ? "rgba(10,132,255,0.30)"          : "rgba(10,132,255,0.22)",
+  // Primary — Red
+  blue:     "#ED1C24",
+  blueBg:   d ? "rgba(237,28,36,0.12)"                : "rgba(237,28,36,0.07)",
+  blueBd:   d ? "rgba(237,28,36,0.28)"                : "rgba(237,28,36,0.20)",
 
-  green:    d ? "#30D158"                        : "#16A34A",
-  greenBg:  d ? "rgba(48,209,88,0.12)"           : "rgba(22,163,74,0.10)",
+  // Success — Teal
+  green:    d ? "#32BCAD"                              : "#1A9E90",
+  greenBg:  d ? "rgba(50,188,173,0.13)"               : "rgba(50,188,173,0.09)",
 
-  amber:    d ? "#FFD60A"                        : "#D97706",
-  amberBg:  d ? "rgba(255,214,10,0.12)"          : "rgba(217,119,6,0.10)",
+  // Draft — Yellow (Indosat brand yellow)
+  amber:    d ? "#FFCB05"                              : "#C49A00",
+  amberBg:  d ? "rgba(255,203,5,0.12)"                : "rgba(255,203,5,0.10)",
 
-  red:      d ? "#FF453A"                        : "#DC2626",
-  redBg:    d ? "rgba(255,69,58,0.11)"           : "rgba(220,38,38,0.08)",
+  // Danger red (same hue, darker bg)
+  red:      d ? "#FF6B6B"                              : "#DC2626",
+  redBg:    d ? "rgba(255,107,107,0.11)"              : "rgba(220,38,38,0.07)",
 
-  inputBg:  d ? "rgba(255,255,255,0.06)"         : "#FFFFFF",
-  inputBd:  d ? "rgba(255,255,255,0.10)"         : "rgba(0,0,0,0.14)",
+  // Magenta — for SPM/admin accents
+  magenta:  "#C6168D",
+  magentaBg:d ? "rgba(198,22,141,0.12)"               : "rgba(198,22,141,0.07)",
+  magentaBd:d ? "rgba(198,22,141,0.28)"               : "rgba(198,22,141,0.18)",
 
-  shadow:   d ? "0 1px 3px rgba(0,0,0,0.6),0 0 0 1px rgba(255,255,255,0.05)"
-              : "0 1px 3px rgba(0,0,0,0.08),0 0 0 1px rgba(0,0,0,0.06)",
-  shadowLg: d ? "0 16px 48px rgba(0,0,0,0.7)"   : "0 16px 48px rgba(0,0,0,0.14)",
+  inputBg:  d ? "rgba(255,255,255,0.05)"              : "#FFFFFF",
+  inputBd:  d ? "rgba(255,255,255,0.09)"              : "rgba(0,0,0,0.12)",
+
+  shadow:   d ? "0 1px 3px rgba(0,0,0,0.6),0 0 0 1px rgba(255,255,255,0.04)"
+              : "0 1px 3px rgba(0,0,0,0.07),0 0 0 1px rgba(0,0,0,0.05)",
+  shadowLg: d ? "0 16px 48px rgba(0,0,0,0.7)"         : "0 16px 48px rgba(0,0,0,0.13)",
 });
 
 // ─── Resizable column hook ────────────────────────────────────────────────────
@@ -211,27 +221,155 @@ function ResizeHandle({ onMouseDown, t }) {
 }
 
 // ─── Status Cell ─────────────────────────────────────────────────────────────
-function StatusCell({ status, t, onClick }) {
+function StatusCell({ statusInfo, t, d, onClick }) {
+  const { status, notes, updatedAt } = statusInfo || { status: "EMPTY", notes: null, updatedAt: null };
+  const [showTip, setShowTip] = useState(false);
+  const tipRef = useRef(null);
+
+  const fmt = (iso) => {
+    if (!iso) return null;
+    try {
+      return new Date(iso).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+    } catch { return null; }
+  };
+
   const cfg = {
-    FINALIZED: { bg: t.greenBg, icon: <CheckCircle2 size={17} style={{ color: t.green }} />, tip: "Finalized" },
-    DRAFT:     { bg: t.amberBg, icon: <div style={{ width: 9, height: 9, borderRadius: "50%", background: t.amber }} />, tip: "Draft" },
-    EMPTY:     { bg: "transparent", icon: <Circle size={15} style={{ color: t.lo, opacity: 0.45 }} />, tip: "Kosong" },
+    FINALIZED: {
+      bg: `rgba(50,188,173,${d ? 0.15 : 0.10})`,
+      icon: <CheckCircle2 size={17} style={{ color: "#32BCAD" }} />,
+      label: "Finalized",
+      borderColor: `rgba(50,188,173,${d ? 0.35 : 0.25})`,
+    },
+    DRAFT: {
+      bg: `rgba(255,203,5,${d ? 0.14 : 0.10})`,
+      icon: <div style={{ width: 9, height: 9, borderRadius: "50%", background: "#FFCB05", boxShadow: `0 0 5px rgba(255,203,5,0.6)` }} />,
+      label: "Draft",
+      borderColor: `rgba(255,203,5,${d ? 0.35 : 0.25})`,
+    },
+    EMPTY: {
+      bg: "transparent",
+      icon: <Circle size={15} style={{ color: t.lo, opacity: 0.4 }} />,
+      label: "Kosong",
+      borderColor: "transparent",
+    },
   };
   const c = cfg[status] || cfg.EMPTY;
+  const hasNotes = Boolean(notes && notes.trim());
+
   return (
-    <button
-      onClick={onClick} title={c.tip}
-      style={{
-        width: 34, height: 34, borderRadius: 8, flexShrink: 0,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        background: c.bg, border: "none", cursor: "pointer",
-        transition: "filter 0.12s",
-      }}
-      onMouseEnter={e => e.currentTarget.style.filter = "brightness(1.18)"}
-      onMouseLeave={e => e.currentTarget.style.filter = "brightness(1)"}
+    <div style={{ position: "relative", display: "inline-flex" }}
+      onMouseEnter={() => setShowTip(true)}
+      onMouseLeave={() => setShowTip(false)}
     >
-      {c.icon}
-    </button>
+      <button
+        onClick={onClick}
+        title={c.label}
+        style={{
+          width: 34, height: 34, borderRadius: 8, flexShrink: 0,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: c.bg,
+          border: `1px solid ${c.borderColor}`,
+          cursor: "pointer",
+          transition: "filter 0.12s, transform 0.1s",
+          position: "relative",
+        }}
+        onMouseEnter={e => { e.currentTarget.style.filter = "brightness(1.18)"; e.currentTarget.style.transform = "scale(1.08)"; }}
+        onMouseLeave={e => { e.currentTarget.style.filter = "brightness(1)"; e.currentTarget.style.transform = "scale(1)"; }}
+      >
+        {c.icon}
+        {/* Notes indicator dot */}
+        {hasNotes && status !== "EMPTY" && (
+          <div style={{
+            position: "absolute", top: 3, right: 3,
+            width: 6, height: 6, borderRadius: "50%",
+            background: status === "FINALIZED" ? "#32BCAD" : "#FFCB05",
+            border: `1.5px solid ${d ? "#1A1A1D" : "#FFFFFF"}`,
+            boxShadow: `0 0 4px ${status === "FINALIZED" ? "rgba(50,188,173,0.7)" : "rgba(255,203,5,0.7)"}`,
+          }} />
+        )}
+      </button>
+
+      {/* Rich tooltip with notes */}
+      {showTip && status !== "EMPTY" && (
+        <div
+          ref={tipRef}
+          style={{
+            position: "absolute", bottom: "calc(100% + 8px)", left: "50%",
+            transform: "translateX(-50%)",
+            background: d ? "#1A1A1D" : "#FFFFFF",
+            border: `1px solid ${status === "FINALIZED"
+              ? `rgba(50,188,173,0.35)`
+              : `rgba(255,203,5,0.35)`}`,
+            borderRadius: 10,
+            boxShadow: d
+              ? "0 8px 28px rgba(0,0,0,0.7)"
+              : "0 8px 28px rgba(0,0,0,0.15)",
+            padding: "10px 13px",
+            zIndex: 500, minWidth: 180, maxWidth: 240,
+            pointerEvents: "none",
+          }}
+        >
+          {/* Arrow */}
+          <div style={{
+            position: "absolute", top: "100%", left: "50%",
+            transform: "translateX(-50%)",
+            width: 0, height: 0,
+            borderLeft: "6px solid transparent",
+            borderRight: "6px solid transparent",
+            borderTop: `6px solid ${d ? "#1A1A1D" : "#FFFFFF"}`,
+          }} />
+
+          {/* Status badge */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: hasNotes ? 8 : 0 }}>
+            <div style={{
+              display: "inline-flex", alignItems: "center", gap: 5,
+              padding: "2px 8px", borderRadius: 5,
+              background: status === "FINALIZED" ? `rgba(50,188,173,0.15)` : `rgba(255,203,5,0.15)`,
+              border: `1px solid ${status === "FINALIZED" ? `rgba(50,188,173,0.35)` : `rgba(255,203,5,0.35)`}`,
+            }}>
+              {status === "FINALIZED"
+                ? <CheckCircle2 size={10} style={{ color: "#32BCAD" }} />
+                : <div style={{ width: 6, height: 6, borderRadius: "50%", background: "#FFCB05" }} />
+              }
+              <span style={{
+                fontSize: 10, fontWeight: 700, letterSpacing: "0.06em",
+                textTransform: "uppercase",
+                color: status === "FINALIZED" ? "#32BCAD" : "#C49A00",
+              }}>
+                {c.label}
+              </span>
+            </div>
+            {updatedAt && (
+              <span style={{ fontSize: 10, color: t.lo, marginLeft: "auto" }}>
+                {fmt(updatedAt)}
+              </span>
+            )}
+          </div>
+
+          {/* Validation notes */}
+          {hasNotes && (
+            <div style={{
+              fontSize: 11.5, color: t.hi, lineHeight: 1.5,
+              fontWeight: 400,
+              borderTop: `1px solid ${d ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.08)"}`,
+              paddingTop: 7,
+            }}>
+              <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", color: t.mid, display: "block", marginBottom: 4 }}>
+                Keterangan
+              </span>
+              {notes}
+            </div>
+          )}
+
+          {/* If no notes */}
+          {!hasNotes && (
+            <div style={{ fontSize: 10.5, color: t.lo, fontStyle: "italic" }}>
+              Tidak ada keterangan tambahan
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -268,7 +406,7 @@ const colWidths = COL_INIT;
       setLoading(true);
       const { data, error } = await supabase
         .from("pnl_reports")
-        .select("partner_name,branch,mpc_mp3,month,year,is_finalized")
+        .select("partner_name,branch,mpc_mp3,month,year,is_finalized,validation_notes,finalized_at,updated_at")
         .eq("year", activeYear);
       if (!error) {
         const map = {};
@@ -283,12 +421,19 @@ const colWidths = COL_INIT;
   }, [activeYear]);
 
   // ── Helpers ──────────────────────────────────────────────────────────────
-  const getStatus = (row, month) => {
+  const getStatusInfo = (row, month) => {
     const key  = [row.partner_name, row.branch_name, row.mpc_mp3, month, activeYear].join("|");
     const item = statusMap[key];
-    if (!item) return "EMPTY";
-    return item.is_finalized ? "FINALIZED" : "DRAFT";
+    if (!item) return { status: "EMPTY", notes: null, updatedAt: null };
+    return {
+      status: item.is_finalized ? "FINALIZED" : "DRAFT",
+      notes: item.validation_notes || null,
+      updatedAt: item.finalized_at || item.updated_at || null,
+    };
   };
+
+  // Keep backward-compat helper for filter/sort logic
+  const getStatus = (row, month) => getStatusInfo(row, month).status;
 
   const toggle = (setter) => (val) =>
     setter(prev => prev.includes(val) ? prev.filter(v => v !== val) : [...prev, val]);
@@ -300,11 +445,12 @@ const colWidths = COL_INIT;
 
 const clearAll = () => { setSearch(""); setFType([]); setFRegion([]); setFPartner([]); setFBranch([]); setFDoneCount([]); };  
 // UBAH MENJADI:
-const hasFilter = Boolean(search || fType.length || fRegion.length || fPartner.length || fBranch.length || fDoneCount.length);  // ── Build rows with visible-month statuses ────────────────────────────────
+const hasFilter = Boolean(search || fType.length || fRegion.length || fPartner.length || fBranch.length || fDoneCount.length);  // ── Build rows with visible-month statusInfo ──────────────────────────────
   const allRows = useMemo(() =>
     masterData.map(row => ({
       ...row,
-      statuses: visibleMonths.map(m => getStatus(row, m)),
+      statusInfos: visibleMonths.map(m => getStatusInfo(row, m)),
+      statuses:    visibleMonths.map(m => getStatusInfo(row, m).status),
     })),
   [masterData, statusMap, visibleMonths]);
 
@@ -450,8 +596,16 @@ const TH = ({ colIdx, sortKey, children, align = "left", filterConfig }) => {
 
       {/* Title */}
       <div>
-        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: t.blue, marginBottom: 6 }}>
-          Laporan Tahun {activeYear}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8, marginBottom: 8,
+        }}>
+          <div style={{
+            height: 20, width: 3, borderRadius: 2,
+            background: "linear-gradient(180deg, #ED1C24 0%, #C6168D 100%)",
+          }} />
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.16em", textTransform: "uppercase", color: "#ED1C24" }}>
+            Laporan Tahun {activeYear}
+          </div>
         </div>
         <h1 style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.04em", color: t.hi, marginBottom: 5 }}>
           PNL Control Center
@@ -519,8 +673,13 @@ const TH = ({ colIdx, sortKey, children, align = "left", filterConfig }) => {
           </span>
           <span style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>{pct}%</span>
         </div>
-        <div style={{ height: 6, borderRadius: 99, background: t.line, overflow: "hidden" }}>
-          <div style={{ height: "100%", borderRadius: 99, background: t.green, width: `${pct}%`, transition: "width 0.6s ease" }} />
+        <div style={{ height: 8, borderRadius: 99, background: t.line, overflow: "hidden" }}>
+          <div style={{
+            height: "100%", borderRadius: 99,
+            background: "linear-gradient(90deg, #32BCAD 0%, #1A9E90 100%)",
+            width: `${pct}%`, transition: "width 0.6s ease",
+            boxShadow: pct > 0 ? "0 0 8px rgba(50,188,173,0.4)" : "none",
+          }} />
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8 }}>
           <span style={{ fontSize: 11, color: d ? "#9CA3AF" : "#6B7280" }}>
@@ -591,23 +750,53 @@ const TH = ({ colIdx, sortKey, children, align = "left", filterConfig }) => {
           background: t.thead,
         }}>
           {[
-            { label: "Finalized", color: t.green, dot: <CheckCircle2 size={12} /> },
-            { label: "Draft",     color: t.amber, dot: <div style={{ width: 8, height: 8, borderRadius: "50%", background: t.amber }} /> },
-            { label: "Kosong",    color: t.lo,    dot: <Circle size={12} style={{ opacity: 0.5 }} /> },
+            {
+              label: "Finalized",
+              color: "#32BCAD",
+              dot: <CheckCircle2 size={12} style={{ color: "#32BCAD" }} />,
+            },
+            {
+              label: "Draft",
+              color: "#C49A00",
+              dot: <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#FFCB05", boxShadow: "0 0 4px rgba(255,203,5,0.6)" }} />,
+            },
+            {
+              label: "Kosong",
+              color: t.lo,
+              dot: <Circle size={12} style={{ opacity: 0.5, color: t.lo }} />,
+            },
           ].map(l => (
             <div key={l.label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
               <span style={{ color: l.color, display: "flex" }}>{l.dot}</span>
               <span style={{ fontSize: 11, fontWeight: 600, color: t.mid }}>{l.label}</span>
             </div>
           ))}
-          <div style={{ marginLeft: "auto", fontSize: 11, color: d ? "#9CA3AF" : "#6B7280" }}>
-            Klik sel bulan untuk membuka laporan
+          {/* Notes indicator legend */}
+          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <div style={{
+              width: 8, height: 8, borderRadius: "50%",
+              background: "linear-gradient(135deg, #32BCAD, #FFCB05)",
+              boxShadow: "0 0 4px rgba(50,188,173,0.5)",
+            }} />
+            <span style={{ fontSize: 11, fontWeight: 600, color: t.mid }}>Ada keterangan</span>
+          </div>
+          <div style={{ marginLeft: "auto", fontSize: 11, color: t.lo }}>
+            Hover sel untuk melihat keterangan · Klik untuk buka laporan
           </div>
         </div>
 
         {loading ? (
-          <div style={{ height: 280, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Loader2 size={26} style={{ color: t.blue, animation: "cc-spin 1s linear infinite" }} />
+          <div style={{ height: 280, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12 }}>
+            <div style={{ position: "relative", width: 40, height: 40 }}>
+              <div style={{
+                position: "absolute", inset: 0, borderRadius: "50%",
+                border: "2px solid transparent",
+                borderTopColor: "#ED1C24",
+                borderRightColor: "#C6168D",
+                animation: "cc-spin 0.9s linear infinite",
+              }} />
+            </div>
+            <span style={{ fontSize: 12, color: t.mid, fontWeight: 500 }}>Memuat data…</span>
             <style>{`@keyframes cc-spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
           </div>
         ) : rows.length === 0 ? (
@@ -702,10 +891,10 @@ const TH = ({ colIdx, sortKey, children, align = "left", filterConfig }) => {
       
       // PERBAIKAN: Gunakan background solid (t.thead atau warna khusus)
       background: isActive 
-        ? (d ? "#1E2533" : "#F3F4F6") // Warna solid pembeda bulan aktif
+        ? (d ? "#200506" : "#FFF5F5") // Indosat red-tinted bulan aktif
         : t.thead,                  // Warna solid standard header
         
-      borderBottom: isActive ? `2px solid ${t.blue}` : `1px solid ${t.line}`,
+      borderBottom: isActive ? `2px solid #ED1C24` : `1px solid ${t.line}`,
       borderRight: `1px solid ${t.lineH}`,
       whiteSpace: "nowrap", userSelect: "none", overflow: "hidden",
     }}>
@@ -738,7 +927,7 @@ const TH = ({ colIdx, sortKey, children, align = "left", filterConfig }) => {
                         <span style={{
                           display: "inline-block", padding: "3px 8px", borderRadius: 5,
                           fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase",
-                          background: t.blueBg, color: t.blue, border: `1px solid ${t.blueBd}`,
+                          background: t.magentaBg, color: t.magenta, border: `1px solid ${t.magentaBd}`,
                           whiteSpace: "nowrap",
                         }}>
                           {row.mpc_mp3}
@@ -769,10 +958,10 @@ const TH = ({ colIdx, sortKey, children, align = "left", filterConfig }) => {
                       <td style={{ padding: "9px 14px", textAlign: "center", borderRight: `1px solid ${t.lineH}` }}>
                         <span style={{
                           fontSize: 13, fontWeight: 700,
-                          color: finCount === visibleMonthCount ? t.green : finCount > 0 ? t.amber : t.lo,
+                          color: finCount === visibleMonthCount ? "#32BCAD" : finCount > 0 ? "#C49A00" : t.lo,
                         }}>
                           {finCount}
-                          <span style={{ fontSize: 11, fontWeight: 500, color: d ? "#6B7280" : "#9CA3AF" }}>
+                          <span style={{ fontSize: 11, fontWeight: 500, color: t.lo }}>
                             /{visibleMonthCount}
                           </span>
                         </span>
@@ -784,13 +973,14 @@ const TH = ({ colIdx, sortKey, children, align = "left", filterConfig }) => {
                           padding: "5px 3px", textAlign: "center",
                           borderRight: `1px solid ${t.lineH}`,
                           background: month === activeMonth
-                            ? (d ? "rgba(10,132,255,0.05)" : "rgba(10,132,255,0.04)")
+                            ? (d ? "rgba(237,28,36,0.04)" : "rgba(237,28,36,0.03)")
                             : undefined,
                         }}>
                           <div style={{ display: "flex", justifyContent: "center" }}>
                             <StatusCell
-                              status={row.statuses[mi]}
+                              statusInfo={row.statusInfos[mi]}
                               t={t}
+                              d={d}
                               onClick={e => {
                                 e.stopPropagation();
                                 onOpenBranch({
