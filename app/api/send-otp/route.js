@@ -6,240 +6,222 @@ export async function POST(req) {
   try {
     const { email, otp } = await req.json();
 
-    if (!email || !otp) {
-      return Response.json(
-        { success: false, error: "Email dan OTP wajib diisi" },
-        { status: 400 }
-      );
-    }
-
-    if (!resendApiKey) {
+    if (!email || !otp)
+      return Response.json({ success: false, error: "Email dan OTP wajib diisi" }, { status: 400 });
+    if (!resendApiKey)
       throw new Error("RESEND_API_KEY belum dikonfigurasi di environment");
-    }
 
     console.log(`📤 [API] Mengirim OTP ke: ${email}`);
-
     const resend = new Resend(resendApiKey);
-
-    // Split OTP digits for individual boxes
     const digits = String(otp).split("");
 
-    const digitBox = (d) => `
-      <td style="padding: 0 5px;">
-        <div style="
-          width: 44px;
-          height: 52px;
-          background: #ffffff;
-          border: 2px solid #ED1C24;
-          border-radius: 10px;
-          display: inline-flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 26px;
-          font-weight: 800;
-          color: #ED1C24;
-          letter-spacing: 0;
-          line-height: 1;
-          text-align: center;
-          vertical-align: middle;
-          font-family: 'SF Mono', 'Courier New', monospace;
-        ">${d}</div>
-      </td>
-    `;
+    const cell = (digit) => `
+      <td class="otp-td" align="center" valign="middle" width="60"
+          style="width:60px;padding:0 5px;font-size:0;line-height:0;mso-line-height-rule:exactly;">
+        <div class="otp-cell"
+             style="width:60px;height:70px;line-height:70px;
+                    background:#FFFFFF;border:2px solid #ED1C24;border-radius:14px;
+                    box-sizing:border-box;
+                    font-family:'SF Mono',ui-monospace,Menlo,Consolas,'Courier New',monospace;
+                    font-size:30px;font-weight:800;color:#111113;
+                    text-align:center;letter-spacing:0;
+                    mso-line-height-rule:exactly;">${digit}</div>
+      </td>`;
+
+    const html = `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="id">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="x-apple-disable-message-reformatting"/>
+  <meta name="color-scheme" content="light dark"/>
+  <meta name="supported-color-schemes" content="light dark"/>
+  <title>Kode OTP SandraHub</title>
+  <style type="text/css">
+    body,table,td,p,a,h1,div{-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;}
+    table,td{mso-table-lspace:0pt;mso-table-rspace:0pt;border-collapse:collapse;}
+    img{border:0;line-height:100%;outline:none;text-decoration:none;display:block;}
+    body{margin:0!important;padding:0!important;width:100%!important;}
+    :root{color-scheme:light dark;supported-color-schemes:light dark;}
+
+    @supports (-webkit-background-clip: text) {
+      .wm-hub {
+        background: linear-gradient(90deg, #ED1C24, #C6168D) !important;
+        -webkit-background-clip: text !important;
+        -webkit-text-fill-color: transparent !important;
+      }
+    }
+
+    @media only screen and (max-width:600px){
+      .container{width:100%!important;max-width:100%!important;}
+      .px{padding-left:20px!important;padding-right:20px!important;}
+      .otp-cell{width:44px!important;height:56px!important;line-height:56px!important;font-size:22px!important;border-radius:10px!important;}
+      .otp-td{width:44px!important;padding:0 3px!important;}
+      .wordmark{font-size:26px!important;}
+      .h1{font-size:20px!important;}
+    }
+
+    @media (prefers-color-scheme:dark){
+      .bg-page {background:#0D0D0E!important;}
+      .card    {background:#1A1A1D!important;border-color:#2A2A2F!important;}
+      .hdr     {background:#111113!important;}
+      .body-bg {background:#1A1A1D!important;}
+      .ftr-bg  {background:#111113!important;}
+      .ink     {color:#F2F2F3!important;}
+      .mute    {color:#8A8A96!important;}
+      .mute2   {color:#5A5A68!important;}
+      .divider {background:#2A2A2F!important;}
+      .wm-sandra{color:#F2F2F3!important;}
+      .wm-hub   {color:#FF6BC8!important;} 
+      .otp-cell {background:#202024!important;color:#F2F2F3!important;border-color:#ED1C24!important;}
+      .warn-box {background:rgba(255,255,255,0.03)!important;border-color:#2A2A2F!important;border-left-color:#ED1C24!important;}
+      .warn-txt {color:#8A8A96!important;}
+      .warn-strong{color:#F2F2F3!important;}
+    }
+  </style>
+</head>
+
+<body class="bg-page"
+      style="margin:0;padding:0;background:#F5F5F6;
+             font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Arial,sans-serif;
+             color:#111113;">
+
+  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;font-size:1px;color:#F5F5F6;opacity:0;">
+    Kode OTP Anda: ${otp} — Jangan bagikan ke siapapun.
+  </div>
+
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+         class="bg-page" bgcolor="#F5F5F6" style="background:#F5F5F6;">
+    <tr><td align="center" style="padding:48px 16px;">
+
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+             width="560" class="container card"
+             style="width:560px;max-width:560px;background:#FFFFFF;
+                    border:1px solid #E2E2E6;border-radius:18px;overflow:hidden;">
+
+        <tr>
+          <td height="3" bgcolor="#ED1C24"
+              style="height:3px;line-height:3px;font-size:0;mso-line-height-rule:exactly;
+                     background:linear-gradient(90deg,#ED1C24 0%,#FFCB05 33%,#32BCAD 66%,#C6168D 100%);">&nbsp;</td>
+        </tr>
+
+        <tr>
+          <td class="hdr px" align="center" bgcolor="#FFFFFF"
+              style="background:#FFFFFF;padding:40px 32px 20px;">
+
+            <div class="wordmark"
+                 style="font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Arial,sans-serif;
+                        font-size:32px;font-weight:800;letter-spacing:-0.04em;line-height:1;">
+              <span class="wm-sandra" style="color:#1A1A1D;">Sandra</span><span class="wm-hub" style="color:#C6168D;">Hub</span>
+            </div>
+            <div class="mute2"
+                 style="margin-top:8px;font-size:10px;font-weight:600;
+                        letter-spacing:0.22em;color:#8A8A96;text-transform:uppercase;">
+              SPM Sumatera
+            </div>
+          </td>
+        </tr>
+
+        <tr>
+          <td class="body-bg px" align="center" bgcolor="#FFFFFF"
+              style="background:#FFFFFF;padding:24px 32px 40px;">
+
+            <h1 class="h1 ink"
+                style="margin:0 0 10px;
+                       font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display','Segoe UI',Arial,sans-serif;
+                       font-size:22px;font-weight:700;letter-spacing:-0.02em;
+                       color:#1A1A1D;line-height:1.25;">
+              Verifikasi Akun Anda
+            </h1>
+            <p class="mute"
+               style="margin:0 0 28px;font-size:14px;line-height:1.65;
+                      color:#5A5A68;max-width:440px;">
+              Masukkan kode OTP di bawah untuk menyelesaikan pendaftaran akun
+              <strong class="ink" style="color:#1A1A1D;font-weight:600;">SandraHub</strong>.
+              Kode berlaku selama <strong style="font-weight:600;">10 menit</strong>.
+            </p>
+
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+                   align="center" style="margin:0 auto 28px;">
+              <tr>${digits.map(cell).join("")}</tr>
+            </table>
+
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+              <tr>
+                <td class="warn-box"
+                    style="background:#F5F5F6;border:1px solid #E2E2E6;
+                           border-left:3px solid #ED1C24;border-radius:12px;
+                           padding:14px 16px;font-size:12.5px;line-height:1.6;
+                           color:#5A5A68;text-align:left;">
+                  <strong class="warn-strong ink" style="color:#1A1A1D;font-weight:600;">
+                    Jangan bagikan kode ini
+                  </strong>
+                  <span class="warn-txt" style="color:#5A5A68;">
+                    &nbsp;kepada siapapun, termasuk tim SandraHub.
+                    Jika Anda tidak merasa mendaftar, abaikan email ini.
+                  </span>
+                </td>
+              </tr>
+            </table>
+          </td>
+        </tr>
+
+        <tr>
+          <td class="divider" height="1"
+              style="height:1px;background:#E2E2E6;font-size:0;
+                     line-height:0;mso-line-height-rule:exactly;">&nbsp;</td>
+        </tr>
+
+        <tr>
+          <td class="ftr-bg" align="center"
+              style="background:#F5F5F6;padding:20px 32px 24px;">
+            <div class="mute" style="font-size:11.5px;font-weight:500;color:#5A5A68;line-height:1.5;">
+              © 2026 SandraHub · SPM Sumatera
+            </div>
+            <div class="mute2" style="font-size:11px;color:#8A8A96;margin-top:3px;">
+              spmsumatera.site
+            </div>
+            <div class="mute2" style="font-size:10.5px;color:#8A8A96;margin-top:12px;line-height:1.5;">
+              Email ini dikirim secara otomatis. Mohon tidak membalas email ini.
+            </div>
+          </td>
+        </tr>
+      </table>
+
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0"
+             width="560" class="container" style="width:560px;max-width:560px;">
+        <tr>
+          <td align="center" style="padding:14px 16px 0;">
+            <div class="mute2" style="font-size:10.5px;color:#8A8A96;line-height:1.5;">
+              Tidak melihat tampilan dengan baik?
+              Kode OTP Anda: <strong style="color:inherit;">${otp}</strong>
+            </div>
+          </td>
+        </tr>
+      </table>
+
+    </td></tr>
+  </table>
+</body>
+</html>`;
 
     const { data, error } = await resend.emails.send({
       from: "SandraHub <no-reply@spmsumatera.site>",
       to: email,
       subject: "Kode OTP Verifikasi Akun SandraHub",
-      html: `
-<!DOCTYPE html>
-<html lang="id">
-<head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Kode OTP SandraHub</title>
-</head>
-<body style="margin:0;padding:0;background:#F0F0F3;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Helvetica Neue',Arial,sans-serif;">
-
-  <!-- Preheader (hidden preview text) -->
-  <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">
-    Kode OTP Anda: ${otp} — berlaku 10 menit. Jangan bagikan ke siapapun.
-  </div>
-
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#F0F0F3;padding:40px 16px;">
-    <tr>
-      <td align="center">
-
-        <!-- Card -->
-        <table width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;background:#ffffff;border-radius:20px;overflow:hidden;border:1px solid rgba(0,0,0,0.08);box-shadow:0 8px 40px rgba(0,0,0,0.10);">
-
-          <!-- Top stripe: Indosat 4-colour bar -->
-          <tr>
-            <td style="height:4px;background:linear-gradient(90deg,#ED1C24 0%,#FFCB05 33%,#32BCAD 66%,#C6168D 100%);font-size:0;line-height:0;">&nbsp;</td>
-          </tr>
-
-          <!-- Header -->
-          <tr>
-            <td style="background:linear-gradient(135deg,#1A0506 0%,#111113 100%);padding:28px 32px;text-align:center;">
-
-              <!-- Logo row -->
-              <table width="100%" cellpadding="0" cellspacing="0" border="0">
-                <tr>
-                  <td align="center">
-                    <!-- Icon box -->
-                    <div style="
-                      width:48px;height:48px;
-                      background:linear-gradient(135deg,#ED1C24,#C6168D);
-                      border-radius:12px;
-                      display:inline-flex;align-items:center;justify-content:center;
-                      margin-bottom:12px;
-                    ">
-                      <!-- Simple box icon (SVG) -->
-                      <img src="https://spmsumatera.site/icon-box.png" width="24" height="24" alt="" style="display:block;" onerror="this.style.display='none'"/>
-                    </div>
-                    <div style="font-size:22px;font-weight:800;letter-spacing:-0.04em;color:#F2F2F3;line-height:1;">
-                      Sandra<span style="background:linear-gradient(90deg,#ED1C24,#C6168D);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;">Hub</span>
-                    </div>
-                    <div style="margin-top:6px;font-size:10px;font-weight:600;letter-spacing:0.28em;text-transform:uppercase;color:rgba(255,255,255,0.40);">
-                      SPM SUMATERA
-                    </div>
-                  </td>
-                </tr>
-              </table>
-
-            </td>
-          </tr>
-
-          <!-- Body -->
-          <tr>
-            <td style="padding:36px 32px 28px;text-align:center;">
-
-              <!-- Shield icon area -->
-              <div style="
-                width:56px;height:56px;
-                background:rgba(237,28,36,0.08);
-                border:1px solid rgba(237,28,36,0.20);
-                border-radius:14px;
-                display:inline-flex;align-items:center;justify-content:center;
-                margin-bottom:20px;
-              ">
-                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M12 2L3 6v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V6L12 2z" fill="#ED1C24" opacity="0.15"/>
-                  <path d="M12 2L3 6v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V6L12 2z" stroke="#ED1C24" stroke-width="1.5" stroke-linejoin="round"/>
-                  <polyline points="9 12 11 14 15 10" stroke="#ED1C24" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-              </div>
-
-              <h1 style="margin:0 0 8px;font-size:22px;font-weight:800;letter-spacing:-0.03em;color:#111113;">
-                Verifikasi Akun Anda
-              </h1>
-              <p style="margin:0 0 28px;font-size:14px;color:#5A5A68;line-height:1.65;max-width:400px;margin-left:auto;margin-right:auto;">
-                Gunakan kode OTP di bawah untuk menyelesaikan pendaftaran akun <strong style="color:#111113;">SandraHub</strong>. Kode ini bersifat rahasia.
-              </p>
-
-              <!-- OTP digit boxes -->
-              <table cellpadding="0" cellspacing="0" border="0" style="margin:0 auto 28px;">
-                <tr>
-                  ${digits.map(d => digitBox(d)).join("")}
-                </tr>
-              </table>
-
-              <!-- Expiry pill -->
-              <div style="
-                display:inline-block;
-                padding:8px 18px;
-                border-radius:99px;
-                background:rgba(255,203,5,0.10);
-                border:1px solid rgba(255,203,5,0.35);
-                font-size:12.5px;
-                font-weight:600;
-                color:#8a6a00;
-                margin-bottom:24px;
-              ">
-                ⏱ Berlaku selama <strong>10 menit</strong>
-              </div>
-
-              <!-- Warning -->
-              <div style="
-                background:#FFF5F5;
-                border:1px solid rgba(237,28,36,0.18);
-                border-left:3px solid #ED1C24;
-                border-radius:10px;
-                padding:12px 16px;
-                text-align:left;
-                font-size:12.5px;
-                color:#5A5A68;
-                line-height:1.6;
-              ">
-                <strong style="color:#111113;">⚠️ Jangan bagikan kode ini</strong> kepada siapapun, termasuk tim SandraHub.
-                Jika Anda tidak merasa mendaftar, abaikan email ini.
-              </div>
-
-            </td>
-          </tr>
-
-          <!-- Divider -->
-          <tr>
-            <td style="height:1px;background:rgba(0,0,0,0.07);font-size:0;line-height:0;">&nbsp;</td>
-          </tr>
-
-          <!-- Footer -->
-          <tr>
-            <td style="padding:20px 32px;text-align:center;background:#F8F8FA;">
-
-              <!-- Brand dots -->
-              <table cellpadding="0" cellspacing="0" border="0" style="margin:0 auto 12px;">
-                <tr>
-                  <td><div style="width:8px;height:8px;border-radius:50%;background:#ED1C24;margin:0 3px;display:inline-block;"></div></td>
-                  <td><div style="width:8px;height:8px;border-radius:50%;background:#FFCB05;margin:0 3px;display:inline-block;"></div></td>
-                  <td><div style="width:8px;height:8px;border-radius:50%;background:#32BCAD;margin:0 3px;display:inline-block;"></div></td>
-                  <td><div style="width:8px;height:8px;border-radius:50%;background:#C6168D;margin:0 3px;display:inline-block;"></div></td>
-                </tr>
-              </table>
-
-              <div style="font-size:11.5px;font-weight:600;color:#4D4D4F;margin-bottom:4px;">
-                © 2026 SandraHub · PT Indosat Ooredoo Hutchison
-              </div>
-              <div style="font-size:11px;color:#9A9AAA;">
-                SPM Sumatera · spmsumatera.site
-              </div>
-              <div style="margin-top:10px;font-size:10.5px;color:#AEAEBC;">
-                Email ini dikirim otomatis. Mohon tidak membalas email ini.
-              </div>
-            </td>
-          </tr>
-
-        </table>
-        <!-- End card -->
-
-      </td>
-    </tr>
-  </table>
-
-</body>
-</html>
-      `,
+      html,
+      text: `Verifikasi Akun SandraHub\n\nKode OTP Anda: ${otp}\n\nJangan bagikan kode ini kepada siapapun, termasuk tim SandraHub.\nKode berlaku selama 10 menit.\n\nJika Anda tidak merasa mendaftar, abaikan email ini.\n\n— SandraHub · SPM Sumatera\nspmsumatera.site`,
     });
 
     if (error) {
       console.error("❌ [RESEND ERROR]", error);
-      return Response.json(
-        { success: false, error: error.message },
-        { status: 400 }
-      );
+      return Response.json({ success: false, error: error.message }, { status: 400 });
     }
 
-    return Response.json({
-      success: true,
-      message: "OTP berhasil terkirim ke " + email,
-      id: data?.id,
-    });
-
+    return Response.json({ success: true, message: "OTP berhasil terkirim ke " + email, id: data?.id });
   } catch (err) {
     console.error("[CRITICAL SEND ERROR]", err);
-    return Response.json(
-      { success: false, error: "Gagal mengirim email: " + err.message },
-      { status: 500 }
-    );
+    return Response.json({ success: false, error: "Gagal mengirim email: " + err.message }, { status: 500 });
   }
 }

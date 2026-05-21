@@ -53,14 +53,14 @@ export async function POST(req) {
       user_metadata: { full_name, username, role, partner_name }
     });
 
-    if (authError) {
-      return NextResponse.json({ 
-        success: false, 
-        message: authError.message.includes("already registered") 
-          ? "Akun ini sudah aktif, silakan login." 
-          : "Gagal membuat akun autentikasi." 
-      }, { status: 400 });
-    }
+if (authError) {
+  console.error("❌ AUTH ERROR:", authError);
+
+  return NextResponse.json({
+    success: false,
+    message: authError.message
+  }, { status: 400 });
+}
 
 const { error: profileError } = await supabaseAdmin
   .from("profiles")

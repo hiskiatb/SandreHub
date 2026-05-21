@@ -646,7 +646,7 @@ const Mono = ({children,style={}})=>(
 function DonutChart({ pieces, t, size=144 }) {
   if (!pieces.length) return null;
   const total = pieces.reduce((a,b)=>a+b.v,0);
-  const cx=size/2, cy=size/2, R=size/2-7, r2=R*0.56;
+const cx=size/2, cy=size/2, R=size/2-7, r2=R*0.75;
   let ang = -Math.PI/2;
   const paths = pieces.map((p,i)=>{
     const sh=p.v/total, nx=ang+sh*2*Math.PI, lg=sh>0.5?1:0;
@@ -666,9 +666,9 @@ function DonutChart({ pieces, t, size=144 }) {
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{display:"block",margin:"0 auto",flexShrink:0}}>
       {paths}
-      <text x={cx} y={cy-5} textAnchor="middle" fontSize={size*0.16} fontWeight="800"
+      <text x={cx} y={cy+2} textAnchor="middle" fontSize={size*0.16} fontWeight="800"
         fill={t.ink} fontFamily="inherit">{total.toLocaleString()}</text>
-      <text x={cx} y={cy+12} textAnchor="middle" fontSize={9}
+      <text x={cx} y={cy+18} textAnchor="middle" fontSize={9}
         fill={t.muted} fontFamily="'SF Mono','Fira Code','DM Mono',monospace">TOTAL</text>
     </svg>
   );
@@ -1049,9 +1049,11 @@ export default function PayoutTracker({ profile = null, theme = null, partnerNam
   useEffect(()=>{ if(filters.q==="") setSearchInput(""); },[filters.q]);
 
   // Non-SPM tidak boleh melihat Agency tab — paksa ke partner jika perlu
-  useEffect(()=>{
-    if (!isSPM && src === "agency") setSrc("partner");
-  }, [isSPM, src]);
+useEffect(()=>{
+    if (!isSPM && profile?.role !== "internal_ioh" && src === "agency") {
+      setSrc("partner");
+    }
+  }, [isSPM, profile, src]);
 
   const rawKeys = useMemo(()=>{
     if (!curRaw.length) return [];
@@ -1093,7 +1095,7 @@ export default function PayoutTracker({ profile = null, theme = null, partnerNam
 
   /* ─── pass all state to ThemeWrapper ─── */
   return (
-    <ThemeWrapper themeProp={theme} isSPM={isSPM} filterPartner={filterPartner} filterMpxType={filterMpxType} screen={screen} setScreen={setScreen}
+    <ThemeWrapper themeProp={theme} isSPM={isSPM} profile={profile} filterPartner={filterPartner} filterMpxType={filterMpxType} screen={screen} setScreen={setScreen}
       loading={loading} loadText={loadText} toast={toast}
       partnerRaw={adminPartnerRaw} agencyRaw={adminAgencyRaw}
       partnerFile={partnerFile} agencyFile={agencyFile}
@@ -1675,7 +1677,7 @@ function FunnelRowItem({s,drop,isExp,filtRaw,grand,onToggle,t}) {
 function DashScreen(props) {
   const w = useWidth();
   const { t, src, setSrc, activeTab, setActiveTab,
-    isSPM, filterPartner, filterMpxType,
+    isSPM, profile, filterPartner, filterMpxType,
     partnerRaw, agencyRaw, pubMeta, filters, setFilters, opts,
     curRaw, filtAgg, filtRaw, grand,
     tblSort, setTblSort, rawSort, setRawSort, rawPage, setRawPage,
@@ -1746,11 +1748,11 @@ function DashScreen(props) {
       </div>
 
       {/* Source segment — Agency HANYA untuk spm_sumatera */}
+{/* Source segment — Agency HANYA untuk spm_sumatera atau internal_ioh */}
+{/* Source segment — Agency HANYA untuk spm_sumatera atau internal_ioh */}
       <div style={{display:"inline-flex",gap:4,background:t.surf,border:`1px solid ${t.line}`,borderRadius:14,padding:4,marginBottom:18,boxShadow:t.shadow1,overflowX:"auto"}}>
-        {(isSPM ? ["partner","agency"] : ["partner"]).map(s=>{
-          // Untuk SPM: tidak pernah disabled — biarkan switch bebas meski data kosong
-          // Untuk non-SPM: partner saja, tidak pernah ada agency
-          const dis = isSPM ? false : (s==="partner" && !partnerRaw.length);
+        {((isSPM || profile?.role === "internal_ioh") ? ["partner","agency"] : ["partner"]).map(s=>{
+          const dis = (isSPM || profile?.role === "internal_ioh") ? false : (s==="partner" && !partnerRaw.length);
           return (
             <SegBtn key={s} s={s} active={src===s} disabled={dis}
               count={(s==="partner"?partnerRaw:agencyRaw).length.toLocaleString()}
