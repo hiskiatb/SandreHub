@@ -564,7 +564,6 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
   const clearAll      = () => { setFilters({ partner: [], branch: [], mpc: [] }); setSorts({ partner: null, branch: null, mpc: null }); setSelMonths(availMonths); setSearch(""); };
 
   const activeFilterCount = filters.partner.length + filters.branch.length + filters.mpc.length
-    + (selMonths.length < availMonths.length ? 1 : 0)
     + (search ? 1 : 0);
 
   const exportCSV = () => {
@@ -677,8 +676,6 @@ export default function PNL_PivotSummary({ theme, activeYear }) {
         <FilterChip label="Partner" options={opts.partner} selected={filters.partner} onChange={v => setFilters(f => ({ ...f, partner: v }))} sortDir={sorts.partner} onSort={v => setSorts(s => ({ ...s, partner: v }))} t={t} d={d} />
         <FilterChip label="Branch"  options={opts.branch}  selected={filters.branch}  onChange={v => setFilters(f => ({ ...f, branch: v }))}  sortDir={sorts.branch}  onSort={v => setSorts(s => ({ ...s, branch: v }))}  t={t} d={d} />
         <FilterChip label="Tipe"    options={opts.mpc}     selected={filters.mpc}     onChange={v => setFilters(f => ({ ...f, mpc: v }))}     sortDir={sorts.mpc}     onSort={v => setSorts(s => ({ ...s, mpc: v }))}     t={t} d={d} />
-        <MonthRange available={availMonths} selected={selMonths} onChange={setSelMonths} t={t} d={d} />
-
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
           {grouped.length > 0 && (
             <div style={{ display: "flex", border: `1px solid ${t.line}`, borderRadius: 8, overflow: "hidden", height: 32 }}>

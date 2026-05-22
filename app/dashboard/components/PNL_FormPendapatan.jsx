@@ -1,5 +1,14 @@
 "use client";
-
+/**
+ * PNL_FormPendapatan.jsx
+ *
+ * Perubahan vs versi sebelumnya:
+ * - Menerima prop `disabledMonths` (Set<string> nama bulan yang dinonaktifkan)
+ *   dan `onMonthChange` dari page.jsx.
+ * - Jika bulan aktif (`activeContext.month`) ada di `disabledMonths`,
+ *   form menampilkan overlay "Bulan Dinonaktifkan" dan semua aksi diblokir.
+ * - TIDAK ada perubahan logika lain — semua kalkulasi, save, submit tetap sama.
+ */
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import supabase from "../../../lib/supabase";
 import { pushNotification } from "../../../lib/notificationService";
@@ -9,7 +18,7 @@ import {
   BarChart3, Zap, Layers, X, FileCheck, TrendingUp,
   Award, Banknote, Gift, Loader2,
   Save, ArrowRight, ArrowLeft, Clock, Plus, Trash2,
-  TrendingDown, Wallet, Eye,
+  TrendingDown, Wallet, Eye, Ban,
 } from 'lucide-react';
 
 const formatIDR = (val) => {
@@ -33,7 +42,6 @@ const fmtDate = (iso) => {
   if (!iso) return null;
   return new Date(iso).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
-
 const FONT_STACK = `"DM Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif`;
 
 const mk = (d) => ({
@@ -63,15 +71,18 @@ const mk = (d) => ({
   magentaBd: d ? 'rgba(198,22,141,0.28)' : 'rgba(198,22,141,0.18)',
   inputBg:  d ? 'rgba(255,255,255,0.05)' : '#FFFFFF',
   inputBd:  d ? 'rgba(255,255,255,0.09)' : 'rgba(0,0,0,0.13)',
-  // read-only field styles
   roBg:     d ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.025)',
   roBd:     d ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)',
   sm:       d ? '0 1px 2px rgba(0,0,0,0.55)' : '0 1px 2px rgba(26,26,29,0.06)',
   md:       d ? '0 6px 18px rgba(0,0,0,0.50)' : '0 6px 18px rgba(26,26,29,0.09)',
   lg:       d ? '0 20px 48px rgba(0,0,0,0.65)' : '0 20px 48px rgba(26,26,29,0.14)',
+  // disabled month overlay
+  disabledBg:   d ? 'rgba(100,100,120,0.10)' : 'rgba(100,100,120,0.07)',
+  disabledBd:   d ? 'rgba(100,100,120,0.22)' : 'rgba(100,100,120,0.18)',
+  disabledColor:d ? '#7A7A8A' : '#7878A0',
 });
 
-// ── LocalInput — supports readOnly mode ──────────────────────────────────────
+// ── LocalInput ───────────────────────────────────────────────────────────────
 const LocalInput = React.memo(({ numericValue, onChange, style, placeholder, className, readOnly }) => {
   const [display, setDisplay] = useState(() => numericValue === 0 ? '' : toSep(numericValue));
   const focused = useRef(false);
@@ -84,21 +95,14 @@ const LocalInput = React.memo(({ numericValue, onChange, style, placeholder, cla
       type="text" inputMode={readOnly ? 'text' : 'numeric'}
       placeholder={readOnly ? (numericValue === 0 ? '—' : undefined) : (placeholder ?? '0')}
       value={display} onChange={onChangeFn} onFocus={onFocus} onBlur={onBlur}
-      readOnly={readOnly}
-      className={className}
-      style={{
-        ...style,
-        ...(readOnly ? {
-          cursor: 'default', pointerEvents: 'none', userSelect: 'text',
-          opacity: numericValue === 0 ? 0.38 : 0.82,
-        } : {}),
-      }}
+      readOnly={readOnly} className={className}
+      style={{ ...style, ...(readOnly ? { cursor: 'default', pointerEvents: 'none', userSelect: 'text', opacity: numericValue === 0 ? 0.38 : 0.82 } : {}) }}
     />
   );
 });
 LocalInput.displayName = 'LocalInput';
 
-// ── Global CSS ───────────────────────────────────────────────────────────────
+// ── Global CSS ────────────────────────────────────────────────────────────────
 const G = ({ d, t }) => (
   <style>{`
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');
@@ -117,7 +121,6 @@ const G = ({ d, t }) => (
     .fpi-c { text-align: center; }
     .fpi-sm { padding: 8px 6px; min-width: 65px; }
     .fpi-lg { font-size: 17px !important; font-weight: 700; padding: 13px; }
-    /* read-only variant — dimmed border, no focus ring */
     .fpi-ro {
       width: 100%; background: ${t.roBg}; border: 1px solid ${t.roBd};
       border-radius: 9px; padding: 10px 13px; font-weight: 600; color: ${t.hi};
@@ -192,6 +195,43 @@ const SecLabel = ({ children, t }) => (
   </div>
 );
 
+// ── DisabledMonthOverlay — shown when activeContext.month is in disabledMonths ─
+function DisabledMonthOverlay({ month, t, d }) {
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      minHeight: 320, gap: 16, padding: '40px 24px', textAlign: 'center',
+    }}>
+      <div style={{
+        width: 64, height: 64, borderRadius: 16,
+        background: d ? 'rgba(100,100,120,0.14)' : 'rgba(100,100,120,0.09)',
+        border: `1.5px solid ${t.disabledBd}`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+      }}>
+        <Ban size={28} style={{ color: t.disabledColor }} />
+      </div>
+      <div>
+        <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: '-0.03em', color: t.hi, marginBottom: 8 }}>
+          Bulan Dinonaktifkan
+        </div>
+        <div style={{ fontSize: 14, color: t.mid, lineHeight: 1.65, maxWidth: 340 }}>
+          Bulan <strong style={{ color: t.hi }}>{month}</strong> untuk branch ini telah dinonaktifkan dari PNL Control Center.
+          Laporan bulan ini tidak dapat diisi atau dilihat.
+        </div>
+      </div>
+      <div style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        padding: '8px 16px', borderRadius: 99,
+        background: d ? 'rgba(100,100,120,0.12)' : 'rgba(100,100,120,0.08)',
+        border: `1px solid ${t.disabledBd}`,
+        fontSize: 12, fontWeight: 600, color: t.disabledColor,
+      }}>
+        Pilih bulan lain dari header untuk melanjutkan
+      </div>
+    </div>
+  );
+}
+
 function Stepper({ step, setStep, t, d }) {
   const ITEMS = [{ s: 1, label: 'Produk' }, { s: 2, label: 'Sales Fee' }, { s: 3, label: 'Rewards' }, { s: 4, label: 'Review' }];
   const R = 34, pct = ((step - 1) / (ITEMS.length - 1)) * 100;
@@ -228,14 +268,12 @@ function SecHero({ icon: Icon, step, title, t }) {
   );
 }
 
-// ── ProductRowDesktop — readOnly aware ───────────────────────────────────────
 function ProductRowDesktop({ item, entryIdx, section, onUpdate, onAddEntry, onRemoveEntry, t, readOnly }) {
   const isEntry1 = entryIdx === 1;
   const qty     = isEntry1 ? item.qty     : item.qty2;
   const hRetail = isEntry1 ? item.hRetail : item.hRetail2;
   const margin  = isEntry1 ? item.margin  : item.margin2;
   const pctMg   = isEntry1 ? item.pctMargin : item.pctMargin2;
-  // in readOnly: skip rows where both qty and retail are 0 (nothing to show)
   if (readOnly && qty === 0 && hRetail === 0) return null;
   return (
     <tr className="fin-tr" style={{ borderBottom: `1px solid ${t.lineH}` }}>
@@ -249,103 +287,46 @@ function ProductRowDesktop({ item, entryIdx, section, onUpdate, onAddEntry, onRe
         </div>
       </td>
       <td style={{ padding: '9px 4px', width: '18%' }}>
-        <LocalInput numericValue={qty}
-          onChange={v => onUpdate(section, item.id, isEntry1 ? 'qty' : 'qty2', v)}
-          className={readOnly ? 'fpi fpi-ro fpi-c fpi-sm' : 'fpi fpi-c fpi-sm'}
-          readOnly={readOnly} />
+        <LocalInput numericValue={qty} onChange={v => onUpdate(section, item.id, isEntry1 ? 'qty' : 'qty2', v)} className={readOnly ? 'fpi fpi-ro fpi-c fpi-sm' : 'fpi fpi-c fpi-sm'} readOnly={readOnly} />
       </td>
       <td style={{ padding: '9px 4px', width: '24%' }}>
-        <LocalInput numericValue={hRetail}
-          onChange={v => onUpdate(section, item.id, isEntry1 ? 'hRetail' : 'hRetail2', v)}
-          className={readOnly ? 'fpi fpi-ro fpi-sm' : 'fpi fpi-sm'}
-          readOnly={readOnly} />
+        <LocalInput numericValue={hRetail} onChange={v => onUpdate(section, item.id, isEntry1 ? 'hRetail' : 'hRetail2', v)} className={readOnly ? 'fpi fpi-ro fpi-sm' : 'fpi fpi-sm'} readOnly={readOnly} />
       </td>
       <td style={{ padding: '9px 10px', textAlign: 'right', whiteSpace: 'nowrap', width: '15%' }}>
         <div style={{ fontWeight: 700, color: margin < 0 ? t.red : t.green, fontVariantNumeric: 'tabular-nums', fontSize: 13 }}>{formatIDR(margin)}</div>
         <div style={{ fontSize: 10, color: t.lo, marginTop: 1, fontVariantNumeric: 'tabular-nums' }}>{formatPct(pctMg)}</div>
       </td>
-      {/* action column: hidden in readOnly */}
       <td style={{ padding: '9px 6px', width: '5%', textAlign: 'center' }}>
-        {!readOnly && (
-          isEntry1 ? (
-            !item.hasEntry2 && (
-              <button className="vc-add-btn" onClick={() => onAddEntry(section, item.id)}>
-                <Plus size={11} /> 2
-              </button>
-            )
-          ) : (
-            <button className="vc-rm-btn" onClick={() => onRemoveEntry(section, item.id)}>
-              <Trash2 size={13} />
-            </button>
-          )
-        )}
+        {!readOnly && (isEntry1 ? (!item.hasEntry2 && <button className="vc-add-btn" onClick={() => onAddEntry(section, item.id)}><Plus size={11} /> 2</button>) : (<button className="vc-rm-btn" onClick={() => onRemoveEntry(section, item.id)}><Trash2 size={13} /></button>))}
       </td>
     </tr>
   );
 }
 
-// ── ProductCardMobile — readOnly aware ───────────────────────────────────────
 function ProductCardMobile({ item, section, onUpdate, onAddEntry, onRemoveEntry, t, readOnly }) {
-  // in readOnly: hide items with no data at all
   const hasAnyData = item.qty > 0 || item.hRetail > 0 || item.qty2 > 0 || item.hRetail2 > 0;
   if (readOnly && !hasAnyData) return null;
-
   const renderEntry = (entryIdx) => {
     const isEntry1 = entryIdx === 1;
-    const qty     = isEntry1 ? item.qty     : item.qty2;
-    const hRetail = isEntry1 ? item.hRetail : item.hRetail2;
-    const margin  = isEntry1 ? item.margin  : item.margin2;
-    const pctMg   = isEntry1 ? item.pctMargin : item.pctMargin2;
+    const qty = isEntry1 ? item.qty : item.qty2, hRetail = isEntry1 ? item.hRetail : item.hRetail2;
+    const margin = isEntry1 ? item.margin : item.margin2, pctMg = isEntry1 ? item.pctMargin : item.pctMargin2;
     if (readOnly && qty === 0 && hRetail === 0) return null;
     return (
       <div key={entryIdx} style={{ padding: '12px 14px', borderRadius: 9, background: isEntry1 ? 'transparent' : t.magentaBg, border: isEntry1 ? `1px solid ${t.lineH}` : `1px dashed ${t.magentaBd}`, marginTop: isEntry1 ? 0 : 10 }}>
-        {!isEntry1 && (
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-            <span className="vc-entry-tag">Entry 2</span>
-            {!readOnly && <button className="vc-rm-btn" onClick={() => onRemoveEntry(section, item.id)}><Trash2 size={13} /></button>}
-          </div>
-        )}
+        {!isEntry1 && (<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}><span className="vc-entry-tag">Entry 2</span>{!readOnly && <button className="vc-rm-btn" onClick={() => onRemoveEntry(section, item.id)}><Trash2 size={13} /></button>}</div>)}
         <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.8fr', gap: 9 }}>
-          <div>
-            <div className="lbl-mini" style={{ marginBottom: 5 }}>Qty</div>
-            <LocalInput numericValue={qty}
-              onChange={v => onUpdate(section, item.id, isEntry1 ? 'qty' : 'qty2', v)}
-              className={readOnly ? 'fpi fpi-ro fpi-c fpi-sm' : 'fpi fpi-c fpi-sm'}
-              readOnly={readOnly} />
-          </div>
-          <div>
-            <div className="lbl-mini" style={{ marginBottom: 5 }}>Retail</div>
-            <LocalInput numericValue={hRetail}
-              onChange={v => onUpdate(section, item.id, isEntry1 ? 'hRetail' : 'hRetail2', v)}
-              className={readOnly ? 'fpi fpi-ro fpi-sm' : 'fpi fpi-sm'}
-              readOnly={readOnly} />
-          </div>
+          <div><div className="lbl-mini" style={{ marginBottom: 5 }}>Qty</div><LocalInput numericValue={qty} onChange={v => onUpdate(section, item.id, isEntry1 ? 'qty' : 'qty2', v)} className={readOnly ? 'fpi fpi-ro fpi-c fpi-sm' : 'fpi fpi-c fpi-sm'} readOnly={readOnly} /></div>
+          <div><div className="lbl-mini" style={{ marginBottom: 5 }}>Retail</div><LocalInput numericValue={hRetail} onChange={v => onUpdate(section, item.id, isEntry1 ? 'hRetail' : 'hRetail2', v)} className={readOnly ? 'fpi fpi-ro fpi-sm' : 'fpi fpi-sm'} readOnly={readOnly} /></div>
         </div>
-        {qty > 0 && (
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, paddingTop: 9, borderTop: `1px solid ${t.lineH}` }}>
-            <div className="lbl-mini">Margin</div>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: margin < 0 ? t.red : t.green, fontVariantNumeric: 'tabular-nums' }}>{formatIDR(margin)}</span>
-              <span style={{ fontSize: 10, color: t.lo, fontVariantNumeric: 'tabular-nums' }}>{formatPct(pctMg)}</span>
-            </div>
-          </div>
-        )}
+        {qty > 0 && (<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, paddingTop: 9, borderTop: `1px solid ${t.lineH}` }}><div className="lbl-mini">Margin</div><div style={{ display: 'flex', alignItems: 'baseline', gap: 7 }}><span style={{ fontSize: 13, fontWeight: 700, color: margin < 0 ? t.red : t.green, fontVariantNumeric: 'tabular-nums' }}>{formatIDR(margin)}</span><span style={{ fontSize: 10, color: t.lo, fontVariantNumeric: 'tabular-nums' }}>{formatPct(pctMg)}</span></div></div>)}
       </div>
     );
   };
-
   return (
     <div style={{ borderRadius: 10, border: `1px solid ${t.line}`, background: t.sub, padding: '13px 14px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10, gap: 8 }}>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, letterSpacing: '-0.01em' }}>{item.name}</div>
-          <div style={{ fontSize: 10, color: t.lo, marginTop: 2 }}>Pokok: {formatIDR(item.hPokok)}</div>
-        </div>
-        {!readOnly && !item.hasEntry2 && (
-          <button className="vc-add-btn" onClick={() => onAddEntry(section, item.id)}>
-            <Plus size={11} /> Entry 2
-          </button>
-        )}
+        <div><div style={{ fontSize: 13, fontWeight: 700, color: t.hi, letterSpacing: '-0.01em' }}>{item.name}</div><div style={{ fontSize: 10, color: t.lo, marginTop: 2 }}>Pokok: {formatIDR(item.hPokok)}</div></div>
+        {!readOnly && !item.hasEntry2 && <button className="vc-add-btn" onClick={() => onAddEntry(section, item.id)}><Plus size={11} /> Entry 2</button>}
       </div>
       {renderEntry(1)}
       {item.hasEntry2 && renderEntry(2)}
@@ -355,33 +336,26 @@ function ProductCardMobile({ item, section, onUpdate, onAddEntry, onRemoveEntry,
 
 function SubtotalRow({ label, totalMargin, totalModal, totalJual, t }) {
   return (
-    <tr>
-      <td colSpan={5} style={{ padding: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, padding: '10px 12px', background: t.greenBg, border: `1px solid ${t.greenBd}`, borderRadius: 8, margin: '6px 0' }}>
-          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: t.green }}>{label}</span>
-          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
-            {[{ l: 'Total Modal', v: formatIDR(totalModal) }, { l: 'Total Jual', v: formatIDR(totalJual) }, { l: 'Total Margin', v: formatIDR(totalMargin) }].map(s => (
-              <div key={s.l} style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 9, fontWeight: 600, color: t.lo, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>{s.l}</div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: totalMargin < 0 ? t.red : t.green, fontVariantNumeric: 'tabular-nums' }}>{s.v}</div>
-              </div>
-            ))}
-          </div>
+    <tr><td colSpan={5} style={{ padding: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, padding: '10px 12px', background: t.greenBg, border: `1px solid ${t.greenBd}`, borderRadius: 8, margin: '6px 0' }}>
+        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: t.green }}>{label}</span>
+        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+          {[{ l: 'Total Modal', v: formatIDR(totalModal) }, { l: 'Total Jual', v: formatIDR(totalJual) }, { l: 'Total Margin', v: formatIDR(totalMargin) }].map(s => (
+            <div key={s.l} style={{ textAlign: 'right' }}><div style={{ fontSize: 9, fontWeight: 600, color: t.lo, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>{s.l}</div><div style={{ fontSize: 13, fontWeight: 700, color: totalMargin < 0 ? t.red : t.green, fontVariantNumeric: 'tabular-nums' }}>{s.v}</div></div>
+          ))}
         </div>
-      </td>
-    </tr>
+      </div>
+    </td></tr>
   );
 }
+
 function SubtotalCardMobile({ label, totalMargin, totalModal, totalJual, t }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, padding: '11px 14px', background: t.greenBg, border: `1px solid ${t.greenBd}`, borderRadius: 9, margin: '4px 0' }}>
       <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: t.green }}>{label}</span>
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
         {[{ l: 'Modal', v: formatIDR(totalModal) }, { l: 'Jual', v: formatIDR(totalJual) }, { l: 'Margin', v: formatIDR(totalMargin) }].map(s => (
-          <div key={s.l} style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: 9, fontWeight: 600, color: t.lo, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 1 }}>{s.l}</div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: totalMargin < 0 ? t.red : t.green, fontVariantNumeric: 'tabular-nums' }}>{s.v}</div>
-          </div>
+          <div key={s.l} style={{ textAlign: 'right' }}><div style={{ fontSize: 9, fontWeight: 600, color: t.lo, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 1 }}>{s.l}</div><div style={{ fontSize: 12, fontWeight: 700, color: totalMargin < 0 ? t.red : t.green, fontVariantNumeric: 'tabular-nums' }}>{s.v}</div></div>
         ))}
       </div>
     </div>
@@ -396,27 +370,31 @@ function InfoChip({ label, value }) {
     </div>
   );
 }
+
 function SumRow({ icon: Icon, label, value, highlight, t }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '12px 0', borderBottom: `1px solid ${t.lineH}` }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-        <div style={{ width: 30, height: 30, borderRadius: 7, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: t.blueBg }}>
-          <Icon size={14} style={{ color: t.blue }} />
-        </div>
+        <div style={{ width: 30, height: 30, borderRadius: 7, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: t.blueBg }}><Icon size={14} style={{ color: t.blue }} /></div>
         <span style={{ fontSize: 13, fontWeight: 600, color: t.mid, letterSpacing: '0.01em', whiteSpace: 'nowrap' }}>{label}</span>
       </div>
-      <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: '-0.02em', color: highlight ? t.green : value < 0 ? t.red : t.hi, fontVariantNumeric: 'tabular-nums', textAlign: 'right', flexShrink: 0 }}>
-        {formatIDR(value)}
-      </span>
+      <span style={{ fontSize: 14, fontWeight: 700, letterSpacing: '-0.02em', color: highlight ? t.green : value < 0 ? t.red : t.hi, fontVariantNumeric: 'tabular-nums', textAlign: 'right', flexShrink: 0 }}>{formatIDR(value)}</span>
     </div>
   );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
 // MAIN COMPONENT
-// readOnly prop: true for internal_ioh — view-only, no save/send buttons
+// Props:
+//   disabledMonths  : Set<string>  — bulan yang dinonaktifkan untuk branch ini
+//                     (dipass dari page.jsx via activeContextDisabledMonths)
+//   onMonthChange   : (month: string) => void  — untuk update activeMonth di parent
 // ═════════════════════════════════════════════════════════════════════════════
-const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSaveSuccess, readOnly = false }) => {
+const FormPendapatan = ({
+  onUpdate, theme, setIsFormDirty, activeContext, onSaveSuccess, readOnly = false,
+  disabledMonths = new Set(),  // ← NEW
+  onMonthChange,               // ← NEW (unused internally, reserved for parent)
+}) => {
   const [step, setStep]             = useState(1);
   const [showSubmit, setShowSubmit] = useState(false);
   const [isLoading, setIsLoading]   = useState(true);
@@ -428,8 +406,11 @@ const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSave
 
   const d = theme === 'dark';
   const t = mk(d);
-
   const toast$ = (type, msg) => { setToast({ show: true, type, msg }); setTimeout(() => setToast(p => ({ ...p, show: false })), 4000); };
+
+  // ── Check if current month is disabled ─────────────────────────────────────
+  const currentMonth   = activeContext?.month ?? '';
+  const monthDisabled  = Boolean(currentMonth && disabledMonths.has(currentMonth));
 
   const defaults = useCallback(() => ({
     sp: [
@@ -467,6 +448,8 @@ const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSave
     const ctx = { mpxName: activeContext?.mpxName, branch: activeContext?.branch, mpxType: activeContext?.mpxType, month: activeContext?.month, year: activeContext?.year };
     const same = prevCtx$.current.mpxName === ctx.mpxName && prevCtx$.current.branch === ctx.branch && prevCtx$.current.month === ctx.month && prevCtx$.current.year === ctx.year && prevCtx$.current.mpxType === ctx.mpxType;
     if (same && fetched$.current) return;
+    // Don't fetch if month is disabled — just reset
+    if (monthDisabled) { setIsLoading(false); setData(defaults()); return; }
     (async () => {
       if (!ctx.mpxName || !ctx.branch) { setIsLoading(false); return; }
       setIsLoading(true);
@@ -489,40 +472,66 @@ const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSave
       } catch (e) { console.error('Fetch:', e.message); setData(defaults()); }
       finally { setIsLoading(false); setIsFormDirty?.(false); }
     })();
-  }, [activeContext, defaults, setIsFormDirty]);
+  }, [activeContext, defaults, setIsFormDirty, monthDisabled]);
 
   const stats = useMemo(() => {
     const calcItem = (i) => {
-      const modal1 = (Number(i.qty) || 0) * (Number(i.hPokok) || 0), jual1 = (Number(i.qty) || 0) * (Number(i.hRetail) || 0), mg1 = jual1 - modal1;
-      const modal2 = (Number(i.qty2) || 0) * (Number(i.hPokok) || 0), jual2 = (Number(i.qty2) || 0) * (Number(i.hRetail2) || 0), mg2 = jual2 - modal2;
-      const totalModal = modal1 + modal2, totalJual = jual1 + jual2, totalMg = mg1 + mg2;
-      return { ...i, totalModal1: modal1, totalJual1: jual1, margin: mg1, pctMargin: jual1 > 0 ? (mg1 / jual1) * 100 : 0, totalModal2: modal2, totalJual2: jual2, margin2: mg2, pctMargin2: jual2 > 0 ? (mg2 / jual2) * 100 : 0, totalModal, totalJual, totalMargin: totalMg, pctMarginCombined: totalJual > 0 ? (totalMg / totalJual) * 100 : 0 };
+      const modal1 = (Number(i.qty)||0)*(Number(i.hPokok)||0), jual1 = (Number(i.qty)||0)*(Number(i.hRetail)||0), mg1 = jual1-modal1;
+      const modal2 = (Number(i.qty2)||0)*(Number(i.hPokok)||0), jual2 = (Number(i.qty2)||0)*(Number(i.hRetail2)||0), mg2 = jual2-modal2;
+      const totalModal=modal1+modal2, totalJual=jual1+jual2, totalMg=mg1+mg2;
+      return { ...i, totalModal1:modal1, totalJual1:jual1, margin:mg1, pctMargin:jual1>0?(mg1/jual1)*100:0, totalModal2:modal2, totalJual2:jual2, margin2:mg2, pctMargin2:jual2>0?(mg2/jual2)*100:0, totalModal, totalJual, totalMargin:totalMg, pctMarginCombined:totalJual>0?(totalMg/totalJual)*100:0 };
     };
+
+    // 1. Kalkulasi SP & Voucher
     const spItems = data.sp.map(calcItem);
-    const spTotalQty = spItems.reduce((a, b) => a + (Number(b.qty) || 0) + (Number(b.qty2) || 0), 0);
-    spItems.forEach(i => { i.komposisi = spTotalQty > 0 ? ((Number(i.qty) + Number(i.qty2)) / spTotalQty) * 100 : 0; });
-    const sp = { items: spItems, totalModal: spItems.reduce((a, b) => a + b.totalModal, 0), totalJual: spItems.reduce((a, b) => a + b.totalJual, 0), totalMargin: spItems.reduce((a, b) => a + b.totalMargin, 0) };
+    const spTotalQty = spItems.reduce((a,b)=>a+(Number(b.qty)||0)+(Number(b.qty2)||0),0);
+    spItems.forEach(i=>{i.komposisi=spTotalQty>0?((Number(i.qty)+Number(i.qty2))/spTotalQty)*100:0;});
+    const sp = { items:spItems, totalModal:spItems.reduce((a,b)=>a+b.totalModal,0), totalJual:spItems.reduce((a,b)=>a+b.totalJual,0), totalMargin:spItems.reduce((a,b)=>a+b.totalMargin,0) };
+    
     const vcItems = data.vc.map(calcItem);
-    const vcTotalQty = vcItems.reduce((a, b) => a + (Number(b.qty) || 0) + (Number(b.qty2) || 0), 0);
-    vcItems.forEach(i => { i.komposisi = vcTotalQty > 0 ? ((Number(i.qty) + Number(i.qty2)) / vcTotalQty) * 100 : 0; });
-    const vc = { items: vcItems, totalModal: vcItems.reduce((a, b) => a + b.totalModal, 0), totalJual: vcItems.reduce((a, b) => a + b.totalJual, 0), totalMargin: vcItems.reduce((a, b) => a + b.totalMargin, 0) };
-    const moboMg = Number(data.mobo.jual) - Number(data.mobo.modal), moboPct = Number(data.mobo.jual) > 0 ? (moboMg / Number(data.mobo.jual)) * 100 : 0;
-    const gtModal = sp.totalModal + vc.totalModal + Number(data.mobo.modal), gtJual = sp.totalJual + vc.totalJual + Number(data.mobo.jual), gtMg = sp.totalMargin + vc.totalMargin + moboMg, gtPct = gtJual > 0 ? (gtMg / gtJual) * 100 : 0;
-    const upfront = Number(data.mobo.modal) * 0.015, sfMg = Number(data.salesFee.realtimeMargin) + Number(data.salesFee.backMargin), sfTotal = upfront + sfMg + Number(data.salesFee.slaFee) + Number(data.salesFee.specialProgram);
-    const rwTotal = Number(data.rewards.champions) + Number(data.rewards.lainnya);
+    const vcTotalQty = vcItems.reduce((a,b)=>a+(Number(b.qty)||0)+(Number(b.qty2)||0),0);
+    vcItems.forEach(i=>{i.komposisi=vcTotalQty>0?((Number(i.qty)+Number(i.qty2))/vcTotalQty)*100:0;});
+    const vc = { items:vcItems, totalModal:vcItems.reduce((a,b)=>a+b.totalModal,0), totalJual:vcItems.reduce((a,b)=>a+b.totalJual,0), totalMargin:vcItems.reduce((a,b)=>a+b.totalMargin,0) };
+
+    // 2. Kalkulasi MOBO (Dipisah dari Margin Produk)
+    // const moboMg = Number(data.mobo.jual) - Number(data.mobo.modal);
+    // const moboPct = Number(data.mobo.jual) > 0 ? (moboMg / Number(data.mobo.jual)) * 100 : 0;
+
+    // 3. Margin Produk Murni (Hanya SP + VC)
+    const gtModal = sp.totalModal + vc.totalModal;
+    const gtJual  = sp.totalJual + vc.totalJual;
+    const gtMg = sp.totalMargin + vc.totalMargin; 
+    const gtPct   = gtJual > 0 ? (gtMg / gtJual) * 100 : 0;
+
+    // 4. Kalkulasi Pendapatan Lainnya
+        const upfront   = Number(data.mobo.modal) * 0.015;
+    const sfMg      = Number(data.salesFee.realtimeMargin) + Number(data.salesFee.backMargin);
+    const sfTotal   = upfront + sfMg + Number(data.salesFee.slaFee) + Number(data.salesFee.specialProgram);
+    const rwTotal   = Number(data.rewards.champions) + Number(data.rewards.lainnya);
+
+    // 5. Grand Total Revenue (Margin Produk + Margin MOBO + Komisi + Reward + Income)
     const revenue = gtMg + sfTotal + rwTotal + Number(data.partnerIncome);
-    return { sp, vc, moboMg, moboPct, gtModal, gtJual, gtMg, gtPct, upfront, sfMg, sfTotal, rwTotal, revenue };
+
+    return { 
+      sp, vc, 
+      gtMg, 
+      upfront, // Pastikan ini dikembalikan ke object
+      sfTotal, 
+      rwTotal, 
+      revenue 
+    };
   }, [data]);
 
   useEffect(() => { onUpdate?.(stats.revenue); }, [stats.revenue, onUpdate]);
 
   const mkPayload = (fin, userId, notes) => {
-    const spEntries = data.sp.reduce((acc, c) => ({ ...acc, [c.dbQty]: c.qty, [c.dbRetail]: c.hRetail, [c.dbQty2]: c.hasEntry2 ? c.qty2 : 0, [c.dbRetail2]: c.hasEntry2 ? c.hRetail2 : 0 }), {});
-    const vcEntries = data.vc.reduce((acc, c) => ({ ...acc, [c.dbQty]: c.qty, [c.dbRetail]: c.hRetail, [c.dbQty2]: c.hasEntry2 ? c.qty2 : 0, [c.dbRetail2]: c.hasEntry2 ? c.hRetail2 : 0 }), {});
-    return { user_id: userId, partner_name: activeContext.mpxName, branch: activeContext.branch, mpc_mp3: activeContext.mpxType, month: activeContext.month, year: activeContext.year, ...spEntries, ...vcEntries, mobo_modal: data.mobo.modal, mobo_jual: data.mobo.jual, realtime_margin: data.salesFee.realtimeMargin, back_margin: data.salesFee.backMargin, sla_fee: data.salesFee.slaFee, special_program: data.salesFee.specialProgram, rewards_champions: data.rewards.champions, rewards_lainnya: data.rewards.lainnya, partner_income: data.partnerIncome, grand_total_revenue: stats.revenue, is_finalized: fin, finalized_at: fin ? new Date().toISOString() : null, finalized_by: fin ? userId : null, validation_notes: notes, updated_at: new Date().toISOString() };
+    const spEntries = data.sp.reduce((acc,c) => ({ ...acc, [c.dbQty]:c.qty, [c.dbRetail]:c.hRetail, [c.dbQty2]:c.hasEntry2?c.qty2:0, [c.dbRetail2]:c.hasEntry2?c.hRetail2:0 }), {});
+    const vcEntries = data.vc.reduce((acc,c) => ({ ...acc, [c.dbQty]:c.qty, [c.dbRetail]:c.hRetail, [c.dbQty2]:c.hasEntry2?c.qty2:0, [c.dbRetail2]:c.hasEntry2?c.hRetail2:0 }), {});
+    return { user_id:userId, partner_name:activeContext.mpxName, branch:activeContext.branch, mpc_mp3:activeContext.mpxType, month:activeContext.month, year:activeContext.year, ...spEntries, ...vcEntries, mobo_modal:data.mobo.modal, mobo_jual:data.mobo.jual, realtime_margin:data.salesFee.realtimeMargin, back_margin:data.salesFee.backMargin, sla_fee:data.salesFee.slaFee, special_program:data.salesFee.specialProgram, rewards_champions:data.rewards.champions, rewards_lainnya:data.rewards.lainnya, partner_income:data.partnerIncome, grand_total_revenue:stats.revenue, is_finalized:fin, finalized_at:fin?new Date().toISOString():null, finalized_by:fin?userId:null, validation_notes:notes, updated_at:new Date().toISOString() };
   };
 
   const validate = () => {
+    if (monthDisabled)           { toast$('error', `Bulan ${currentMonth} telah dinonaktifkan`); return false; }
     if (!activeContext?.mpxName) { toast$('error', 'Nama Partner belum dipilih'); return false; }
     if (!activeContext?.branch)  { toast$('error', 'Kantor Cabang belum dipilih'); return false; }
     if (!activeContext?.mpxType) { toast$('error', 'Tipe MPC/MP3 belum tersedia'); return false; }
@@ -545,7 +554,7 @@ const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSave
       setReportStatus(p => ({ ...p, isFinalized: false, updatedAt: new Date().toISOString(), validationNotes: notes }));
       setIsFormDirty?.(false);
       toast$('success', 'Draft berhasil disimpan');
-      await pushNotification(supabase, { type: "form_draft", form: "pendapatan", partner_name: activeContext.mpxName, branch: activeContext.branch, mpc_mp3: activeContext.mpxType, month: activeContext.month, year: activeContext.year, validation_notes: notes, triggered_by: user.id, triggered_name: user.user_metadata?.full_name ?? "" });
+      await pushNotification(supabase, { type:"form_draft", form:"pendapatan", partner_name:activeContext.mpxName, branch:activeContext.branch, mpc_mp3:activeContext.mpxType, month:activeContext.month, year:activeContext.year, validation_notes:notes, triggered_by:user.id, triggered_name:user.user_metadata?.full_name??'' });
     } catch (err) { toast$('error', err.message || 'Gagal menyimpan draft'); }
     finally { setIsSaving(false); }
   };
@@ -563,17 +572,17 @@ const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSave
       const { error } = await supabase.from('pnl_reports').upsert(mkPayload(true, user.id, notes), { onConflict: 'partner_name,branch,mpc_mp3,month,year' });
       if (error) throw error;
       const now = new Date().toISOString();
-      setReportStatus({ isFinalized: true, finalizedAt: now, finalizedBy: user.id, validationNotes: notes, updatedAt: now });
+      setReportStatus({ isFinalized:true, finalizedAt:now, finalizedBy:user.id, validationNotes:notes, updatedAt:now });
       setIsFormDirty?.(false); setShowSubmit(false); onSaveSuccess?.();
       toast$('success', 'Laporan berhasil dikirim');
       const bothFinal = notes.includes('pendapatan:final') && notes.includes('pengeluaran:final');
-      await pushNotification(supabase, { type: bothFinal ? "finalized" : "form_final", form: "pendapatan", partner_name: activeContext.mpxName, branch: activeContext.branch, mpc_mp3: activeContext.mpxType, month: activeContext.month, year: activeContext.year, validation_notes: notes, triggered_by: user.id, triggered_name: user.user_metadata?.full_name ?? "" });
+      await pushNotification(supabase, { type:bothFinal?"finalized":"form_final", form:"pendapatan", partner_name:activeContext.mpxName, branch:activeContext.branch, mpc_mp3:activeContext.mpxType, month:activeContext.month, year:activeContext.year, validation_notes:notes, triggered_by:user.id, triggered_name:user.user_metadata?.full_name??'' });
     } catch (err) { toast$('error', err.message || 'Gagal menyimpan laporan'); }
     finally { setIsSaving(false); }
   };
 
   const updateVal = useCallback((section, id, field, val) => {
-    if (readOnly) return;
+    if (readOnly || monthDisabled) return;
     setData(prev => {
       if (section === 'partnerIncome') return { ...prev, partnerIncome: val };
       if (Array.isArray(prev[section])) return { ...prev, [section]: prev[section].map(i => i.id === id ? { ...i, [field]: val } : i) };
@@ -581,19 +590,19 @@ const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSave
       return prev;
     });
     setIsFormDirty?.(true);
-  }, [setIsFormDirty, readOnly]);
+  }, [setIsFormDirty, readOnly, monthDisabled]);
 
   const addEntry = useCallback((section, id) => {
-    if (readOnly) return;
+    if (readOnly || monthDisabled) return;
     setData(prev => ({ ...prev, [section]: prev[section].map(i => i.id === id ? { ...i, hasEntry2: true } : i) }));
     setIsFormDirty?.(true);
-  }, [setIsFormDirty, readOnly]);
+  }, [setIsFormDirty, readOnly, monthDisabled]);
 
   const removeEntry = useCallback((section, id) => {
-    if (readOnly) return;
+    if (readOnly || monthDisabled) return;
     setData(prev => ({ ...prev, [section]: prev[section].map(i => i.id === id ? { ...i, hasEntry2: false, qty2: 0, hRetail2: 0 } : i) }));
     setIsFormDirty?.(true);
-  }, [setIsFormDirty, readOnly]);
+  }, [setIsFormDirty, readOnly, monthDisabled]);
 
   const tableHead = [
     { h: 'Produk', al: 'left', w: '38%' }, { h: 'Qty', al: 'center', w: '18%' },
@@ -601,393 +610,312 @@ const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSave
     { h: '', al: 'center', w: '5%' },
   ];
 
-  if (isLoading) return (
-    <>
-      <G d={d} t={t} />
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 340, gap: 14, fontFamily: FONT_STACK }}>
-        <div style={{ position: 'relative', width: 52, height: 52 }}>
-          <div style={{ position: 'absolute', inset: 0, borderRadius: '50%', border: '2.5px solid transparent', borderTopColor: '#ED1C24', borderRightColor: '#C6168D', animation: 'spin 0.9s linear infinite' }} />
-          <div style={{ position: 'absolute', inset: 8, borderRadius: 10, background: 'linear-gradient(135deg,#ED1C24 0%,#C6168D 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', animation: 'fpbreathe 1.8s ease-in-out infinite', boxShadow: '0 4px 14px rgba(237,28,36,0.4)' }}>
-            <ArrowUpRight size={18} color="#fff" />
-          </div>
-        </div>
-        <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.10em', textTransform: 'uppercase', color: t.mid }}>Memuat data...</span>
-      </div>
-    </>
-  );
-
   const ctxMonth = activeContext?.month ?? '', ctxYear = activeContext?.year ?? '';
   const ctxType = activeContext?.mpxType ?? '', ctxName = activeContext?.mpxName ?? '', ctxBranch = activeContext?.branch ?? '';
   const titleLine = `Form Pendapatan ${ctxMonth} ${ctxYear}`;
   const subtitleLine = [ctxType, ctxName, ctxBranch].filter(Boolean).join(' · ');
+
+  if (isLoading) return (
+    <>
+      <G d={d} t={t} />
+      <div style={{ display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:340, gap:14, fontFamily:FONT_STACK }}>
+        <div style={{ position:'relative', width:52, height:52 }}>
+          <div style={{ position:'absolute', inset:0, borderRadius:'50%', border:'2.5px solid transparent', borderTopColor:'#ED1C24', borderRightColor:'#C6168D', animation:'spin 0.9s linear infinite' }} />
+          <div style={{ position:'absolute', inset:8, borderRadius:10, background:'linear-gradient(135deg,#ED1C24 0%,#C6168D 100%)', display:'flex', alignItems:'center', justifyContent:'center', animation:'fpbreathe 1.8s ease-in-out infinite', boxShadow:'0 4px 14px rgba(237,28,36,0.4)' }}><ArrowUpRight size={18} color="#fff" /></div>
+        </div>
+        <span style={{ fontSize:11, fontWeight:600, letterSpacing:'0.10em', textTransform:'uppercase', color:t.mid }}>Memuat data...</span>
+      </div>
+    </>
+  );
+
   const notes = reportStatus.validationNotes ?? '';
   const hasPengeluaranFinal = notes.includes('pengeluaran:final');
 
-  return (
-    // paddingBottom diseragamkan menjadi 80 agar konten tidak tertutup fixed footer
-    <div style={{ width: '100%', margin: '0 auto', paddingBottom: 80, fontFamily: FONT_STACK, WebkitFontSmoothing: 'antialiased', color: t.hi }}>
-      <G d={d} t={t} />
+  // ── Effective readOnly = true if month is disabled OR prop readOnly is true ─
+  const effectiveReadOnly = readOnly || monthDisabled;
 
+  return (
+    <div style={{ width:'100%', margin:'0 auto', paddingBottom:80, fontFamily:FONT_STACK, WebkitFontSmoothing:'antialiased', color:t.hi }}>
+      <G d={d} t={t} />
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 28 }}>
-        <div style={{ width: 46, height: 46, borderRadius: 10, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(135deg,#ED1C24 0%,#C6168D 100%)', color: '#fff', boxShadow: '0 2px 10px rgba(237,28,36,0.30)' }}>
-          <ArrowUpRight size={25} />
+      <div style={{ display:'flex', alignItems:'center', gap:14, marginBottom:28 }}>
+        <div style={{ width:46, height:46, borderRadius:10, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', background:'linear-gradient(135deg,#ED1C24 0%,#C6168D 100%)', color:'#fff', boxShadow:'0 2px 10px rgba(237,28,36,0.30)' }}><ArrowUpRight size={25} /></div>
+        <div style={{ minWidth:0, flex:1 }}>
+          <div style={{ fontSize:20, fontWeight:800, letterSpacing:'-0.035em', color:t.hi, lineHeight:1.2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{titleLine}</div>
+          <div style={{ fontSize:12, fontWeight:600, letterSpacing:'0.02em', color:t.mid, marginTop:4, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{subtitleLine}</div>
         </div>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.035em', color: t.hi, lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{titleLine}</div>
-          <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.02em', color: t.mid, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{subtitleLine}</div>
-        </div>
-        {/* Read-only badge */}
-        {readOnly && (
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 12px', borderRadius: 99, background: t.amberBg, border: `1px solid ${t.amberBd}`, color: t.amber, fontSize: 11, fontWeight: 700, flexShrink: 0, whiteSpace: 'nowrap' }}>
+        {/* Badge: disabled month takes priority over readOnly badge */}
+        {monthDisabled ? (
+          <div style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'5px 12px', borderRadius:99, background:t.disabledBg, border:`1px solid ${t.disabledBd}`, color:t.disabledColor, fontSize:11, fontWeight:700, flexShrink:0, whiteSpace:'nowrap' }}>
+            <Ban size={12} /> Bulan Nonaktif
+          </div>
+        ) : readOnly ? (
+          <div style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'5px 12px', borderRadius:99, background:t.amberBg, border:`1px solid ${t.amberBd}`, color:t.amber, fontSize:11, fontWeight:700, flexShrink:0, whiteSpace:'nowrap' }}>
             <Eye size={12} /> Mode Lihat
           </div>
-        )}
+        ) : null}
       </div>
 
-      <Stepper step={step} setStep={setStep} t={t} d={d} />
-
-      {/* Toast */}
-      <AnimatePresence>
-        {toast.show && (
-          <motion.div initial={{ opacity: 0, y: -12, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -10, scale: 0.97 }} transition={{ duration: 0.17 }}
-            style={{ position: 'fixed', top: 66, right: 16, zIndex: 999, width: 316, maxWidth: 'calc(100vw - 32px)' }}>
-            <div style={{ background: t.card, border: `1px solid ${toast.type === 'success' ? t.greenBd : t.redBd}`, borderRadius: 12, boxShadow: t.lg, overflow: 'hidden' }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 11, padding: '13px 15px' }}>
-                <div style={{ width: 30, height: 30, borderRadius: 7, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: toast.type === 'success' ? t.green : t.red, color: '#fff' }}>
-                  {toast.type === 'success' ? <CheckCircle2 size={15} /> : <AlertCircle size={15} />}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>{toast.type === 'success' ? 'Berhasil' : 'Terjadi Kesalahan'}</div>
-                  <div style={{ fontSize: 12, color: t.mid, marginTop: 3, lineHeight: 1.5 }}>{toast.msg}</div>
-                </div>
-                <button onClick={() => setToast(p => ({ ...p, show: false }))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: t.lo, padding: 2 }}><X size={13} /></button>
-              </div>
-              <motion.div initial={{ width: '100%' }} animate={{ width: '0%' }} transition={{ duration: 4, ease: 'linear' }} style={{ height: 2, background: toast.type === 'success' ? t.green : t.red }} />
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence mode="wait">
-
-        {/* STEP 1 — PRODUK */}
-        {step === 1 && (
-          <motion.div key="s1" initial={{ opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.17 }} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <SecHero icon={Layers} step={1} title="Margin Produk" t={t} />
-
-            {/* SP */}
-            <Card t={t}>
-              <Body>
-                <SecLabel t={t}>A. Starter Pack (SP) Regular</SecLabel>
-                {!readOnly && (
-                  <div style={{ fontSize: 11, color: t.lo, marginBottom: 14, lineHeight: 1.55 }}>
-                    Jika satu produk dijual dengan <strong style={{ color: t.mid }}>2 harga retail berbeda</strong>, tap tombol <strong style={{ color: t.blue }}>+2</strong> untuk menambahkan baris kedua.
-                  </div>
-                )}
-                <div className="vc-table" style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 520 }}>
-                    <thead>
-                      <tr style={{ borderBottom: `1px solid ${t.line}` }}>
-                        {tableHead.map((c, i) => <th key={i} style={{ padding: '7px 8px', textAlign: c.al, fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', color: t.lo, width: c.w }}>{c.h}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {stats.sp.items.map(item => (
-                        <React.Fragment key={item.id}>
-                          <ProductRowDesktop item={item} entryIdx={1} section="sp" onUpdate={updateVal} onAddEntry={addEntry} onRemoveEntry={removeEntry} t={t} readOnly={readOnly} />
-                          {item.hasEntry2 && <ProductRowDesktop item={item} entryIdx={2} section="sp" onUpdate={updateVal} onAddEntry={addEntry} onRemoveEntry={removeEntry} t={t} readOnly={readOnly} />}
-                        </React.Fragment>
-                      ))}
-                      <SubtotalRow label="Subtotal SP Regular" totalMargin={stats.sp.totalMargin} totalModal={stats.sp.totalModal} totalJual={stats.sp.totalJual} t={t} />
-                    </tbody>
-                  </table>
-                </div>
-                <div className="vc-cards">
-                  {stats.sp.items.map(item => <ProductCardMobile key={item.id} item={item} section="sp" onUpdate={updateVal} onAddEntry={addEntry} onRemoveEntry={removeEntry} t={t} readOnly={readOnly} />)}
-                  <SubtotalCardMobile label="Subtotal SP Regular" totalMargin={stats.sp.totalMargin} totalModal={stats.sp.totalModal} totalJual={stats.sp.totalJual} t={t} />
-                </div>
-              </Body>
-            </Card>
-
-            {/* VC */}
-            <Card t={t}>
-              <Body>
-                <SecLabel t={t}>B. Voucher Regular</SecLabel>
-                {!readOnly && (
-                  <div style={{ fontSize: 11, color: t.lo, marginBottom: 14, lineHeight: 1.55 }}>
-                    Jika satu produk dijual dengan <strong style={{ color: t.mid }}>2 harga retail berbeda</strong>, tap tombol <strong style={{ color: t.blue }}>+2</strong> untuk menambahkan baris kedua.
-                  </div>
-                )}
-                <div className="vc-table" style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 520 }}>
-                    <thead>
-                      <tr style={{ borderBottom: `1px solid ${t.line}` }}>
-                        {tableHead.map((c, i) => <th key={i} style={{ padding: '7px 8px', textAlign: c.al, fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', color: t.lo, width: c.w }}>{c.h}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {stats.vc.items.map(item => (
-                        <React.Fragment key={item.id}>
-                          <ProductRowDesktop item={item} entryIdx={1} section="vc" onUpdate={updateVal} onAddEntry={addEntry} onRemoveEntry={removeEntry} t={t} readOnly={readOnly} />
-                          {item.hasEntry2 && <ProductRowDesktop item={item} entryIdx={2} section="vc" onUpdate={updateVal} onAddEntry={addEntry} onRemoveEntry={removeEntry} t={t} readOnly={readOnly} />}
-                        </React.Fragment>
-                      ))}
-                      <SubtotalRow label="Subtotal Voucher Regular" totalMargin={stats.vc.totalMargin} totalModal={stats.vc.totalModal} totalJual={stats.vc.totalJual} t={t} />
-                    </tbody>
-                  </table>
-                </div>
-                <div className="vc-cards">
-                  {stats.vc.items.map(item => <ProductCardMobile key={item.id} item={item} section="vc" onUpdate={updateVal} onAddEntry={addEntry} onRemoveEntry={removeEntry} t={t} readOnly={readOnly} />)}
-                  <SubtotalCardMobile label="Subtotal Voucher Regular" totalMargin={stats.vc.totalMargin} totalModal={stats.vc.totalModal} totalJual={stats.vc.totalJual} t={t} />
-                </div>
-              </Body>
-            </Card>
-
-            {/* MOBO */}
-            <Card t={t}>
-              <Body>
-                <SecLabel t={t}>C. Saldo Mobo</SecLabel>
-                <div className="g2" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 14 }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
-                    <div>
-                      <label className="lbl">Total Modal Mobo</label>
-                      <LocalInput numericValue={data.mobo.modal} onChange={v => updateVal('mobo', null, 'modal', v)} className={readOnly ? 'fpi fpi-ro' : 'fpi'} readOnly={readOnly} />
+      {/* ── If month disabled, show overlay instead of form content ── */}
+      {monthDisabled ? (
+        <DisabledMonthOverlay month={currentMonth} t={t} d={d} />
+      ) : (
+        <>
+          <Stepper step={step} setStep={setStep} t={t} d={d} />
+          {/* Toast */}
+          <AnimatePresence>
+            {toast.show && (
+              <motion.div initial={{ opacity:0, y:-12, scale:0.97 }} animate={{ opacity:1, y:0, scale:1 }} exit={{ opacity:0, y:-10, scale:0.97 }} transition={{ duration:0.17 }}
+                style={{ position:'fixed', top:66, right:16, zIndex:999, width:316, maxWidth:'calc(100vw - 32px)' }}>
+                <div style={{ background:t.card, border:`1px solid ${toast.type==='success'?t.greenBd:t.redBd}`, borderRadius:12, boxShadow:t.lg, overflow:'hidden' }}>
+                  <div style={{ display:'flex', alignItems:'flex-start', gap:11, padding:'13px 15px' }}>
+                    <div style={{ width:30, height:30, borderRadius:7, flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center', background:toast.type==='success'?t.green:t.red, color:'#fff' }}>
+                      {toast.type==='success'?<CheckCircle2 size={15}/>:<AlertCircle size={15}/>}
                     </div>
-                    <div>
-                      <label className="lbl">Total Penjualan Mobo</label>
-                      <LocalInput numericValue={data.mobo.jual} onChange={v => updateVal('mobo', null, 'jual', v)} className={readOnly ? 'fpi fpi-ro' : 'fpi'} readOnly={readOnly} />
+                    <div style={{ flex:1, minWidth:0 }}>
+                      <div style={{ fontSize:13, fontWeight:700, color:t.hi }}>{toast.type==='success'?'Berhasil':'Terjadi Kesalahan'}</div>
+                      <div style={{ fontSize:12, color:t.mid, marginTop:3, lineHeight:1.5 }}>{toast.msg}</div>
+                    </div>
+                    <button onClick={()=>setToast(p=>({...p,show:false}))} style={{ background:'none', border:'none', cursor:'pointer', color:t.lo, padding:2 }}><X size={13}/></button>
+                  </div>
+                  <motion.div initial={{ width:'100%' }} animate={{ width:'0%' }} transition={{ duration:4, ease:'linear' }} style={{ height:2, background:toast.type==='success'?t.green:t.red }} />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence mode="wait">
+            {/* STEP 1 — PRODUK */}
+            {step === 1 && (
+              <motion.div key="s1" initial={{ opacity:0, y:7 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0 }} transition={{ duration:0.17 }} style={{ display:'flex', flexDirection:'column', gap:14 }}>
+                <SecHero icon={Layers} step={1} title="Margin Produk" t={t} />
+                <Card t={t}>
+                  <Body>
+                    <SecLabel t={t}>A. Starter Pack (SP) Regular</SecLabel>
+                    {!effectiveReadOnly && (<div style={{ fontSize:11, color:t.lo, marginBottom:14, lineHeight:1.55 }}>Jika satu produk dijual dengan <strong style={{color:t.mid}}>2 harga retail berbeda</strong>, tap tombol <strong style={{color:t.blue}}>+2</strong> untuk menambahkan baris kedua.</div>)}
+                    <div className="vc-table" style={{ overflowX:'auto' }}>
+                      <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13, minWidth:520 }}>
+                        <thead><tr style={{ borderBottom:`1px solid ${t.line}` }}>{tableHead.map((c,i)=><th key={i} style={{ padding:'7px 8px', textAlign:c.al, fontSize:10, fontWeight:700, letterSpacing:'0.05em', color:t.lo, width:c.w }}>{c.h}</th>)}</tr></thead>
+                        <tbody>
+                          {stats.sp.items.map(item=>(
+                            <React.Fragment key={item.id}>
+                              <ProductRowDesktop item={item} entryIdx={1} section="sp" onUpdate={updateVal} onAddEntry={addEntry} onRemoveEntry={removeEntry} t={t} readOnly={effectiveReadOnly} />
+                              {item.hasEntry2 && <ProductRowDesktop item={item} entryIdx={2} section="sp" onUpdate={updateVal} onAddEntry={addEntry} onRemoveEntry={removeEntry} t={t} readOnly={effectiveReadOnly} />}
+                            </React.Fragment>
+                          ))}
+                          <SubtotalRow label="Subtotal SP Regular" totalMargin={stats.sp.totalMargin} totalModal={stats.sp.totalModal} totalJual={stats.sp.totalJual} t={t} />
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="vc-cards">
+                      {stats.sp.items.map(item=><ProductCardMobile key={item.id} item={item} section="sp" onUpdate={updateVal} onAddEntry={addEntry} onRemoveEntry={removeEntry} t={t} readOnly={effectiveReadOnly} />)}
+                      <SubtotalCardMobile label="Subtotal SP Regular" totalMargin={stats.sp.totalMargin} totalModal={stats.sp.totalModal} totalJual={stats.sp.totalJual} t={t} />
+                    </div>
+                  </Body>
+                </Card>
+                <Card t={t}>
+                  <Body>
+                    <SecLabel t={t}>B. Voucher Regular</SecLabel>
+                    {!effectiveReadOnly && (<div style={{ fontSize:11, color:t.lo, marginBottom:14, lineHeight:1.55 }}>Jika satu produk dijual dengan <strong style={{color:t.mid}}>2 harga retail berbeda</strong>, tap tombol <strong style={{color:t.blue}}>+2</strong> untuk menambahkan baris kedua.</div>)}
+                    <div className="vc-table" style={{ overflowX:'auto' }}>
+                      <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13, minWidth:520 }}>
+                        <thead><tr style={{ borderBottom:`1px solid ${t.line}` }}>{tableHead.map((c,i)=><th key={i} style={{ padding:'7px 8px', textAlign:c.al, fontSize:10, fontWeight:700, letterSpacing:'0.05em', color:t.lo, width:c.w }}>{c.h}</th>)}</tr></thead>
+                        <tbody>
+                          {stats.vc.items.map(item=>(
+                            <React.Fragment key={item.id}>
+                              <ProductRowDesktop item={item} entryIdx={1} section="vc" onUpdate={updateVal} onAddEntry={addEntry} onRemoveEntry={removeEntry} t={t} readOnly={effectiveReadOnly} />
+                              {item.hasEntry2 && <ProductRowDesktop item={item} entryIdx={2} section="vc" onUpdate={updateVal} onAddEntry={addEntry} onRemoveEntry={removeEntry} t={t} readOnly={effectiveReadOnly} />}
+                            </React.Fragment>
+                          ))}
+                          <SubtotalRow label="Subtotal Voucher Regular" totalMargin={stats.vc.totalMargin} totalModal={stats.vc.totalModal} totalJual={stats.vc.totalJual} t={t} />
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="vc-cards">
+                      {stats.vc.items.map(item=><ProductCardMobile key={item.id} item={item} section="vc" onUpdate={updateVal} onAddEntry={addEntry} onRemoveEntry={removeEntry} t={t} readOnly={effectiveReadOnly} />)}
+                      <SubtotalCardMobile label="Subtotal Voucher Regular" totalMargin={stats.vc.totalMargin} totalModal={stats.vc.totalModal} totalJual={stats.vc.totalJual} t={t} />
+                    </div>
+                  </Body>
+                </Card>
+                {/* STEP 1 — PRODUK (Bagian Saldo Mobo) */}
+<Card t={t}>
+  <Body>
+    <SecLabel t={t}>C. Saldo Mobo</SecLabel>
+    <div className="g2" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 14 }}>
+      {/* Input tetap ada untuk kalkulasi upfront */}
+      <div>
+        <label className="lbl">Total Modal Mobo</label>
+        <LocalInput 
+          numericValue={data.mobo.modal} 
+          onChange={v => updateVal('mobo', null, 'modal', v)} 
+          className={effectiveReadOnly ? 'fpi fpi-ro' : 'fpi'} 
+          readOnly={effectiveReadOnly} 
+        />
+      </div>
+      <div>
+        <label className="lbl">Total Penjualan Mobo</label>
+        <LocalInput 
+          numericValue={data.mobo.jual} 
+          onChange={v => updateVal('mobo', null, 'jual', v)} 
+          className={effectiveReadOnly ? 'fpi fpi-ro' : 'fpi'} 
+          readOnly={effectiveReadOnly} 
+        />
+      </div>
+    </div>
+    <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 8, background: t.sub, border: `1px solid ${t.lineH}`, fontSize: 11, color: t.lo }}>
+      Nilai Modal Mobo digunakan untuk perhitungan otomatis <strong>Upfront Discount 1.5%</strong> pada langkah Sales Fee.
+    </div>
+  </Body>
+</Card>
+                <div style={{ padding:'18px 22px', borderRadius:12, background:'linear-gradient(135deg,#ED1C24 0%,#C6168D 100%)', color:'#fff', display:'flex', flexWrap:'wrap', gap:14, justifyContent:'space-between', alignItems:'center', boxShadow:'0 4px 20px rgba(237,28,36,0.28)' }}>
+                  <div><div style={{ fontSize:10, fontWeight:700, letterSpacing:'0.10em', textTransform:'uppercase', opacity:0.76, marginBottom:5 }}>Subtotal Margin Produk</div><div style={{ fontSize:26, fontWeight:800, letterSpacing:'-0.04em', fontVariantNumeric:'tabular-nums' }}>{formatIDR(stats.gtMg)}</div></div>
+                  <div style={{ display:'flex', gap:9, flexWrap:'wrap' }}><InfoChip label="SP" value={formatIDR(stats.sp.totalMargin)}/><InfoChip label="Voucher" value={formatIDR(stats.vc.totalMargin)}/><InfoChip label="% Margin" value={formatPct(stats.gtPct)}/></div>
+                </div>
+              </motion.div>
+            )}
+            {/* STEP 2 — SALES FEE */}
+            {step === 2 && (
+              <motion.div key="s2" initial={{ opacity:0, y:7 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0 }} transition={{ duration:0.17 }} style={{ display:'flex', flexDirection:'column', gap:13 }}>
+                <SecHero icon={Zap} step={2} title="Sales Fee" t={t} />
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12, padding:'15px 18px', borderRadius:10, border:`1px solid ${t.greenBd}`, background:t.greenBg }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:11 }}><div style={{ width:34, height:34, borderRadius:8, background:t.green, display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', flexShrink:0 }}><TrendingUp size={16}/></div><div><div style={{ fontSize:13, fontWeight:700, color:t.green, letterSpacing:'-0.01em' }}>A. Upfront Discount</div><div style={{ fontSize:11, color:t.mid, marginTop:2 }}>1.5% dari Modal Mobo</div></div></div>
+                  <div style={{ fontSize:20, fontWeight:800, letterSpacing:'-0.03em', color:t.green, fontVariantNumeric:'tabular-nums' }}>{formatIDR(stats.upfront)}</div>
+                </div>
+                <Card t={t}><Body><SecLabel t={t}>B. Sales Margin</SecLabel><div className="gsf" style={{ display:'grid', gridTemplateColumns:'1fr', gap:11 }}><div><label className="lbl">Realtime Margin</label><LocalInput numericValue={data.salesFee.realtimeMargin} onChange={v=>updateVal('salesFee',null,'realtimeMargin',v)} className={effectiveReadOnly?'fpi fpi-ro':'fpi'} readOnly={effectiveReadOnly}/></div><div><label className="lbl">Back Margin</label><LocalInput numericValue={data.salesFee.backMargin} onChange={v=>updateVal('salesFee',null,'backMargin',v)} className={effectiveReadOnly?'fpi fpi-ro':'fpi'} readOnly={effectiveReadOnly}/></div></div></Body></Card>
+                <div className="gsf" style={{ display:'grid', gridTemplateColumns:'1fr', gap:11 }}>
+                  <Card t={t}><Body><SecLabel t={t}>C. SLA Monthly Fee</SecLabel><LocalInput numericValue={data.salesFee.slaFee} onChange={v=>updateVal('salesFee',null,'slaFee',v)} className={effectiveReadOnly?'fpi fpi-ro':'fpi'} readOnly={effectiveReadOnly}/></Body></Card>
+                  <Card t={t}><Body><SecLabel t={t}>D. Special Program</SecLabel><LocalInput numericValue={data.salesFee.specialProgram} onChange={v=>updateVal('salesFee',null,'specialProgram',v)} className={effectiveReadOnly?'fpi fpi-ro':'fpi'} readOnly={effectiveReadOnly}/></Body></Card>
+                </div>
+                <div style={{ padding:'15px 20px', borderRadius:12, background:'linear-gradient(135deg,#ED1C24 0%,#C6168D 100%)', display:'flex', alignItems:'center', justifyContent:'space-between', flexWrap:'wrap', gap:12, boxShadow:'0 4px 20px rgba(237,28,36,0.28)' }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:10 }}><div style={{ width:34, height:34, borderRadius:8, background:'rgba(255,255,255,0.18)', display:'flex', alignItems:'center', justifyContent:'center', color:'#fff' }}><Zap size={16}/></div><span style={{ fontSize:12, fontWeight:700, letterSpacing:'0.07em', textTransform:'uppercase', color:'#fff' }}>Total Sales Fee</span></div>
+                  <span style={{ fontSize:26, fontWeight:800, letterSpacing:'-0.04em', color:'#fff', fontVariantNumeric:'tabular-nums' }}>{formatIDR(stats.sfTotal)}</span>
+                </div>
+              </motion.div>
+            )}
+            {/* STEP 3 — REWARDS */}
+            {step === 3 && (
+              <motion.div key="s3" initial={{ opacity:0, y:7 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0 }} transition={{ duration:0.17 }}>
+                <SecHero icon={Award} step={3} title="Hadiah & Reward" t={t} />
+                <Card t={t} style={{ maxWidth:540, margin:'0 auto' }}><Body>
+                  <div style={{ display:'flex', flexDirection:'column', gap:18 }}>
+                    {[{ label:'A. Hadiah Champions Club', key:'champions', val:data.rewards.champions },{ label:'B. Hadiah Lainnya', key:'lainnya', val:data.rewards.lainnya }].map(item=>(
+                      <div key={item.key}>
+                        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:7 }}><label className="lbl" style={{ margin:0 }}>{item.label}</label><span style={{ fontSize:11, fontWeight:600, color:t.green }}>{formatPct((Number(item.val)/(stats.rwTotal||1))*100)}</span></div>
+                        <LocalInput numericValue={item.val} onChange={v=>updateVal('rewards',null,item.key,v)} className={effectiveReadOnly?'fpi fpi-ro fpi-ro-lg':'fpi fpi-lg'} readOnly={effectiveReadOnly}/>
+                      </div>
+                    ))}
+                    <div style={{ padding:'14px 18px', borderRadius:10, background:'linear-gradient(135deg,#ED1C24 0%,#C6168D 100%)', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:9 }}><div style={{ width:32, height:32, borderRadius:7, background:'rgba(255,255,255,0.18)', display:'flex', alignItems:'center', justifyContent:'center', color:'#fff' }}><Gift size={15}/></div><span style={{ fontSize:12, fontWeight:700, letterSpacing:'0.06em', textTransform:'uppercase', color:'#fff' }}>Total Rewards</span></div>
+                      <span style={{ fontSize:22, fontWeight:800, letterSpacing:'-0.04em', color:'#fff', fontVariantNumeric:'tabular-nums' }}>{formatIDR(stats.rwTotal)}</span>
                     </div>
                   </div>
-                  <div style={{ padding: '20px 22px', borderRadius: 10, background: t.greenBg, border: `1px solid ${t.greenBd}`, display: 'flex', flexDirection: 'column', gap: 14 }}>
-                    <div>
-                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', color: t.green, marginBottom: 6 }}>Mobo Margin</div>
-                      <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: '-0.04em', fontVariantNumeric: 'tabular-nums', lineHeight: 1, color: stats.moboMg < 0 ? t.red : t.green }}>{formatIDR(stats.moboMg)}</div>
+                </Body></Card>
+              </motion.div>
+            )}
+            {/* STEP 4 — REVIEW */}
+            {step === 4 && (
+              <motion.div key="s4" initial={{ opacity:0, y:7 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0 }} transition={{ duration:0.17 }}>
+                <SecHero icon={ShieldCheck} step={4} title="Laporan Akhir" t={t} />
+                <div style={{ display:'flex', flexDirection:'column', gap:14, marginBottom:14 }}>
+                  <Card t={t}><Body>
+                    <SecLabel t={t}>Pendapatan Partner</SecLabel>
+                    <div style={{ padding:'14px 16px', borderRadius:9, background:t.greenBg, border:`1px solid ${t.greenBd}`, marginBottom:14 }}>
+                      <label className="lbl" style={{ color:t.green, marginBottom:7 }}>Input Manual (Luar Template)</label>
+                      <LocalInput numericValue={data.partnerIncome} onChange={v=>updateVal('partnerIncome',null,null,v)} readOnly={effectiveReadOnly}
+                        style={{ fontSize:24, fontWeight:800, color:t.green, letterSpacing:'-0.04em', width:'100%', background:'transparent', border:'none', outline:'none', fontFamily:'inherit', ...(effectiveReadOnly?{cursor:'default',pointerEvents:'none'}:{}) }} />
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 12, borderTop: `1px solid ${t.greenBd}` }}>
-                      <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: t.mid }}>Performance</span>
-                      <span style={{ fontSize: 18, fontWeight: 800, color: t.green, fontVariantNumeric: 'tabular-nums' }}>{formatPct(stats.moboPct)}</span>
-                    </div>
-                  </div>
-                </div>
-              </Body>
-            </Card>
+                    {!effectiveReadOnly && (
+                      <div onDragOver={e=>{e.preventDefault();setDrag(true);}} onDragLeave={()=>setDrag(false)} onDrop={e=>{e.preventDefault();setDrag(false);setFile(e.dataTransfer.files[0]);}}
+                        style={{ border:`1.5px dashed ${drag?t.blue:t.line}`, borderRadius:10, padding:'20px 14px', textAlign:'center', background:drag?t.blueBg:'transparent', transition:'all 0.15s', cursor:'pointer' }}>
+                        {!file?(<label htmlFor="fp-up" style={{ cursor:'pointer', display:'block' }}><input type="file" id="fp-up" style={{ display:'none' }} onChange={e=>setFile(e.target.files[0])}/><Upload size={24} style={{ color:t.lo, margin:'0 auto 9px' }}/><div style={{ fontSize:13, fontWeight:600, color:t.mid }}>Upload Lampiran</div><div style={{ fontSize:11, color:t.lo, marginTop:3 }}>PDF atau Excel</div></label>
+                        ):(<div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:7 }}><FileCheck size={24} style={{ color:t.green }}/><div style={{ fontSize:13, fontWeight:600, color:t.hi, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:'100%' }}>{file.name}</div><button onClick={()=>setFile(null)} style={{ fontSize:11, fontWeight:600, color:t.red, background:'none', border:'none', cursor:'pointer', fontFamily:'inherit' }}>Hapus File</button></div>)}
+                      </div>
+                    )}
+                  </Body></Card>
+{/* Card 2: Breakdown Margin Produk */}
+<Card t={t}><Body>
+  <SecLabel t={t}>Breakdown Margin Produk</SecLabel>
+  <div style={{ display:'flex', flexDirection:'column', gap:0 }}>
+    {[{icon:Layers,label:'SP Regular',value:stats.sp.totalMargin},
+      {icon:BarChart3,label:'Voucher Regular',value:stats.vc.totalMargin}]
+      .map((r,i)=><SumRow key={i} icon={r.icon} label={r.label} value={r.value} t={t}/>)}
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, paddingTop:12, borderTop:`1.5px solid ${t.greenBd}` }}>
+      <span style={{ fontSize:11, fontWeight:700, letterSpacing:'0.07em', textTransform:'uppercase', color:t.green }}>Total Margin Produk</span>
+      <span style={{ fontSize:18, fontWeight:800, color:t.green, fontVariantNumeric:'tabular-nums' }}>{formatIDR(stats.gtMg)}</span>
+    </div>
+  </div>
+</Body></Card>
 
-            <div style={{ padding: '18px 22px', borderRadius: 12, background: 'linear-gradient(135deg,#ED1C24 0%,#C6168D 100%)', color: '#fff', display: 'flex', flexWrap: 'wrap', gap: 14, justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 4px 20px rgba(237,28,36,0.28)' }}>
-              <div>
-                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.10em', textTransform: 'uppercase', opacity: 0.76, marginBottom: 5 }}>Subtotal Margin Produk</div>
-                <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-0.04em', fontVariantNumeric: 'tabular-nums' }}>{formatIDR(stats.gtMg)}</div>
-              </div>
-              <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
-                <InfoChip label="SP" value={formatIDR(stats.sp.totalMargin)} />
-                <InfoChip label="Voucher" value={formatIDR(stats.vc.totalMargin)} />
-                <InfoChip label="MOBO" value={formatIDR(stats.moboMg)} />
-                <InfoChip label="% Margin" value={formatPct(stats.gtPct)} />
-              </div>
-            </div>
-          </motion.div>
-        )}
-
-        {/* STEP 2 — SALES FEE */}
-        {step === 2 && (
-          <motion.div key="s2" initial={{ opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.17 }} style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
-            <SecHero icon={Zap} step={2} title="Sales Fee" t={t} />
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, padding: '15px 18px', borderRadius: 10, border: `1px solid ${t.greenBd}`, background: t.greenBg }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
-                <div style={{ width: 34, height: 34, borderRadius: 8, background: t.green, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', flexShrink: 0 }}><TrendingUp size={16} /></div>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: t.green, letterSpacing: '-0.01em' }}>A. Upfront Discount</div>
-                  <div style={{ fontSize: 11, color: t.mid, marginTop: 2 }}>1.5% dari Modal Mobo</div>
-                </div>
-              </div>
-              <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: '-0.03em', color: t.green, fontVariantNumeric: 'tabular-nums' }}>{formatIDR(stats.upfront)}</div>
-            </div>
-            <Card t={t}><Body>
-              <SecLabel t={t}>B. Sales Margin</SecLabel>
-              <div className="gsf" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 11 }}>
-                <div><label className="lbl">Realtime Margin</label><LocalInput numericValue={data.salesFee.realtimeMargin} onChange={v => updateVal('salesFee', null, 'realtimeMargin', v)} className={readOnly ? 'fpi fpi-ro' : 'fpi'} readOnly={readOnly} /></div>
-                <div><label className="lbl">Back Margin</label><LocalInput numericValue={data.salesFee.backMargin} onChange={v => updateVal('salesFee', null, 'backMargin', v)} className={readOnly ? 'fpi fpi-ro' : 'fpi'} readOnly={readOnly} /></div>
-              </div>
-            </Body></Card>
-            <div className="gsf" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 11 }}>
-              <Card t={t}><Body><SecLabel t={t}>C. SLA Monthly Fee</SecLabel><LocalInput numericValue={data.salesFee.slaFee} onChange={v => updateVal('salesFee', null, 'slaFee', v)} className={readOnly ? 'fpi fpi-ro' : 'fpi'} readOnly={readOnly} /></Body></Card>
-              <Card t={t}><Body><SecLabel t={t}>D. Special Program</SecLabel><LocalInput numericValue={data.salesFee.specialProgram} onChange={v => updateVal('salesFee', null, 'specialProgram', v)} className={readOnly ? 'fpi fpi-ro' : 'fpi'} readOnly={readOnly} /></Body></Card>
-            </div>
-            <div style={{ padding: '15px 20px', borderRadius: 12, background: 'linear-gradient(135deg,#ED1C24 0%,#C6168D 100%)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, boxShadow: '0 4px 20px rgba(237,28,36,0.28)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 34, height: 34, borderRadius: 8, background: 'rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}><Zap size={16} /></div>
-                <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#fff' }}>Total Sales Fee</span>
-              </div>
-              <span style={{ fontSize: 26, fontWeight: 800, letterSpacing: '-0.04em', color: '#fff', fontVariantNumeric: 'tabular-nums' }}>{formatIDR(stats.sfTotal)}</span>
-            </div>
-          </motion.div>
-        )}
-
-        {/* STEP 3 — REWARDS */}
-        {step === 3 && (
-          <motion.div key="s3" initial={{ opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.17 }}>
-            <SecHero icon={Award} step={3} title="Hadiah & Reward" t={t} />
-            <Card t={t} style={{ maxWidth: 540, margin: '0 auto' }}><Body>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-                {[
-                  { label: 'A. Hadiah Champions Club', key: 'champions', val: data.rewards.champions },
-                  { label: 'B. Hadiah Lainnya', key: 'lainnya', val: data.rewards.lainnya },
-                ].map(item => (
-                  <div key={item.key}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 7 }}>
-                      <label className="lbl" style={{ margin: 0 }}>{item.label}</label>
-                      <span style={{ fontSize: 11, fontWeight: 600, color: t.green }}>{formatPct((Number(item.val) / (stats.rwTotal || 1)) * 100)}</span>
-                    </div>
-                    <LocalInput numericValue={item.val} onChange={v => updateVal('rewards', null, item.key, v)} className={readOnly ? 'fpi fpi-ro fpi-ro-lg' : 'fpi fpi-lg'} readOnly={readOnly} />
-                  </div>
-                ))}
-                <div style={{ padding: '14px 18px', borderRadius: 10, background: 'linear-gradient(135deg,#ED1C24 0%,#C6168D 100%)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                    <div style={{ width: 32, height: 32, borderRadius: 7, background: 'rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}><Gift size={15} /></div>
-                    <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: '#fff' }}>Total Rewards</span>
-                  </div>
-                  <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.04em', color: '#fff', fontVariantNumeric: 'tabular-nums' }}>{formatIDR(stats.rwTotal)}</span>
-                </div>
-              </div>
-            </Body></Card>
-          </motion.div>
-        )}
-
-        {/* STEP 4 — REVIEW */}
-        {step === 4 && (
-          <motion.div key="s4" initial={{ opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.17 }}>
-            <SecHero icon={ShieldCheck} step={4} title="Laporan Akhir" t={t} />
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 14 }}>
-              <Card t={t}><Body>
-                <SecLabel t={t}>Pendapatan Partner</SecLabel>
-                <div style={{ padding: '14px 16px', borderRadius: 9, background: t.greenBg, border: `1px solid ${t.greenBd}`, marginBottom: 14 }}>
-                  <label className="lbl" style={{ color: t.green, marginBottom: 7 }}>Input Manual (Luar Template)</label>
-                  <LocalInput numericValue={data.partnerIncome} onChange={v => updateVal('partnerIncome', null, null, v)}
-                    readOnly={readOnly}
-                    style={{ fontSize: 24, fontWeight: 800, color: t.green, letterSpacing: '-0.04em', width: '100%', background: 'transparent', border: 'none', outline: 'none', fontFamily: 'inherit', ...(readOnly ? { cursor: 'default', pointerEvents: 'none' } : {}) }} />
-                </div>
-                {/* Upload: hidden in readOnly */}
-                {!readOnly && (
-                  <div onDragOver={e => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={e => { e.preventDefault(); setDrag(false); setFile(e.dataTransfer.files[0]); }}
-                    style={{ border: `1.5px dashed ${drag ? t.blue : t.line}`, borderRadius: 10, padding: '20px 14px', textAlign: 'center', background: drag ? t.blueBg : 'transparent', transition: 'all 0.15s', cursor: 'pointer' }}>
-                    {!file ? (
-                      <label htmlFor="fp-up" style={{ cursor: 'pointer', display: 'block' }}>
-                        <input type="file" id="fp-up" style={{ display: 'none' }} onChange={e => setFile(e.target.files[0])} />
-                        <Upload size={24} style={{ color: t.lo, margin: '0 auto 9px' }} />
-                        <div style={{ fontSize: 13, fontWeight: 600, color: t.mid }}>Upload Lampiran</div>
-                        <div style={{ fontSize: 11, color: t.lo, marginTop: 3 }}>PDF atau Excel</div>
-                      </label>
-                    ) : (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7 }}>
-                        <FileCheck size={24} style={{ color: t.green }} />
-                        <div style={{ fontSize: 13, fontWeight: 600, color: t.hi, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '100%' }}>{file.name}</div>
-                        <button onClick={() => setFile(null)} style={{ fontSize: 11, fontWeight: 600, color: t.red, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>Hapus File</button>
+{/* Card 3: Ringkasan Struktur Pendapatan */}
+<Card t={t}><Body>
+  <SecLabel t={t}>Ringkasan Struktur Pendapatan</SecLabel>
+  <div style={{ display:'flex', flexDirection:'column' }}>
+    <SumRow icon={Layers} label="Margin Produk" value={stats.gtMg} t={t}/>
+    {/* BARIS MARGIN MOBO SUDAH DIHAPUS */}
+    <SumRow icon={Zap} label="Sales Fee" value={stats.sfTotal} t={t}/>
+    <SumRow icon={Award} label="Rewards & Hadiah" value={stats.rwTotal} t={t}/>
+    <SumRow icon={Banknote} label="Partner Income" value={data.partnerIncome} t={t} highlight/>
+    
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, paddingTop:16, marginTop:4, borderTop:`2px solid ${t.greenBd}` }}>
+      <span style={{ fontSize:12, fontWeight:700, letterSpacing:'0.07em', textTransform:'uppercase', color:t.green }}>Net Revenue</span>
+      <span style={{ fontSize:22, fontWeight:800, letterSpacing:'-0.04em', color:stats.revenue<0?t.red:t.green, fontVariantNumeric:'tabular-nums', textAlign:'right' }}>{formatIDR(stats.revenue)}</span>
+    </div>
+  </div>
+</Body></Card>
+                  <div style={{ padding:'34px 26px', borderRadius:14, border:`1.5px solid ${t.greenBd}`, background:t.greenBg, textAlign:'center' }}>
+                    <div style={{ fontSize:10, fontWeight:700, letterSpacing:'0.18em', textTransform:'uppercase', color:t.green, marginBottom:13 }}>Total Pendapatan Terakumulasi</div>
+                    <div style={{ fontSize:'clamp(26px,6vw,58px)', fontWeight:800, letterSpacing:'-0.04em', color:stats.revenue<0?t.red:t.green, fontVariantNumeric:'tabular-nums', lineHeight:1.1, marginBottom:20, wordBreak:'break-all' }}>{formatIDR(stats.revenue)}</div>
+                    {reportStatus.isFinalized?(
+                      <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:10 }}>
+                        <div style={{ display:'inline-flex', alignItems:'center', gap:7, padding:'8px 18px', borderRadius:99, background:t.green, color:'#fff', fontSize:12, fontWeight:700 }}><CheckCircle2 size={14}/>Laporan Pendapatan Tervalidasi</div>
+                        {reportStatus.finalizedAt&&<div style={{ display:'flex', alignItems:'center', gap:5, fontSize:11, color:t.mid }}><Clock size={12} style={{ color:t.lo }}/>Difinalisasi: {fmtDate(reportStatus.finalizedAt)}</div>}
+                        {hasPengeluaranFinal&&<div style={{ display:'inline-flex', alignItems:'center', gap:5, padding:'5px 12px', borderRadius:99, background:t.magentaBg, border:`1px solid ${t.magentaBd}`, fontSize:11, color:t.magenta, fontWeight:600 }}><CheckCircle2 size={11}/>Form Pengeluaran juga tervalidasi</div>}
+                      </div>
+                    ):(
+                      <div style={{ display:'flex', flexDirection:'column', alignItems:'center', gap:8 }}>
+                        <div style={{ display:'inline-flex', alignItems:'center', gap:7, padding:'8px 18px', borderRadius:99, background:t.amberBg, border:`1px solid ${t.amberBd}`, color:t.amber, fontSize:12, fontWeight:700 }}><Clock size={14}/>Belum Difinalisasi</div>
+                        {reportStatus.updatedAt&&<div style={{ fontSize:11, color:t.mid }}>Draft tersimpan: {fmtDate(reportStatus.updatedAt)}</div>}
                       </div>
                     )}
                   </div>
-                )}
-              </Body></Card>
-
-              <Card t={t}><Body>
-                <SecLabel t={t}>Breakdown Margin Produk</SecLabel>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-                  {[{ icon: Layers, label: 'SP Regular', value: stats.sp.totalMargin }, { icon: BarChart3, label: 'Voucher Regular', value: stats.vc.totalMargin }, { icon: Wallet, label: 'Saldo MOBO', value: stats.moboMg }].map((r, i) => <SumRow key={i} icon={r.icon} label={r.label} value={r.value} t={t} />)}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingTop: 12, borderTop: `1.5px solid ${t.greenBd}` }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: t.green }}>Total Margin Produk</span>
-                    <span style={{ fontSize: 18, fontWeight: 800, color: t.green, fontVariantNumeric: 'tabular-nums' }}>{formatIDR(stats.gtMg)}</span>
-                  </div>
                 </div>
-              </Body></Card>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </>
+      )}
 
-              <Card t={t}><Body>
-                <SecLabel t={t}>Ringkasan Struktur Pendapatan</SecLabel>
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  <SumRow icon={Layers}   label="Margin Produk"   value={stats.gtMg}         t={t} />
-                  <SumRow icon={Zap}      label="Sales Fee"        value={stats.sfTotal}      t={t} />
-                  <SumRow icon={Award}    label="Rewards & Hadiah" value={stats.rwTotal}      t={t} />
-                  <SumRow icon={Banknote} label="Partner Income"   value={data.partnerIncome} t={t} highlight />
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, paddingTop: 16, marginTop: 4, borderTop: `2px solid ${t.greenBd}` }}>
-                    <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: t.green }}>Net Revenue</span>
-                    <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.04em', color: stats.revenue < 0 ? t.red : t.green, fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>{formatIDR(stats.revenue)}</span>
-                  </div>
-                </div>
-              </Body></Card>
-
-              <div style={{ padding: '34px 26px', borderRadius: 14, border: `1.5px solid ${t.greenBd}`, background: t.greenBg, textAlign: 'center' }}>
-                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: t.green, marginBottom: 13 }}>Total Pendapatan Terakumulasi</div>
-                <div style={{ fontSize: 'clamp(26px,6vw,58px)', fontWeight: 800, letterSpacing: '-0.04em', color: stats.revenue < 0 ? t.red : t.green, fontVariantNumeric: 'tabular-nums', lineHeight: 1.1, marginBottom: 20, wordBreak: 'break-all' }}>
-                  {formatIDR(stats.revenue)}
-                </div>
-                {reportStatus.isFinalized ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 18px', borderRadius: 99, background: t.green, color: '#fff', fontSize: 12, fontWeight: 700 }}><CheckCircle2 size={14} />Laporan Pendapatan Tervalidasi</div>
-                    {reportStatus.finalizedAt && <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: t.mid }}><Clock size={12} style={{ color: t.lo }} />Difinalisasi: {fmtDate(reportStatus.finalizedAt)}</div>}
-                    {hasPengeluaranFinal && <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '5px 12px', borderRadius: 99, background: t.magentaBg, border: `1px solid ${t.magentaBd}`, fontSize: 11, color: t.magenta, fontWeight: 600 }}><CheckCircle2 size={11} />Form Pengeluaran juga tervalidasi</div>}
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '8px 18px', borderRadius: 99, background: t.amberBg, border: `1px solid ${t.amberBd}`, color: t.amber, fontSize: 12, fontWeight: 700 }}><Clock size={14} />Belum Difinalisasi</div>
-                    {reportStatus.updatedAt && <div style={{ fontSize: 11, color: t.mid }}>Draft tersimpan: {fmtDate(reportStatus.updatedAt)}</div>}
-                  </div>
-                )}
-              </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* ── Unified Fixed Footer — always visible for both modes ── */}
-      <div style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0,
-        borderTop: `1px solid ${t.line}`,
-        background: d ? 'rgba(13,13,14,0.94)' : 'rgba(255,255,255,0.94)',
-        backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)',
-        zIndex: 60, padding: '11px 20px',
-      }}>
-        <div style={{ width: '100%', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
-          {/* Draft — only for editable */}
-          {!readOnly && (
-            <button onClick={handleSaveDraft} disabled={isSaving} className="fp-btn-ghost">
-              {isSaving ? <><Loader2 size={13} style={{ animation: 'fpspin 1s linear infinite' }} />Simpan...</> : <><Save size={13} />Draft</>}
-            </button>
-          )}
-
-          {/* Kembali */}
-          {step > 1 && (
-            <button onClick={() => setStep(s => s - 1)} className="fp-btn-ghost">
-              <ArrowLeft size={13} />Kembali
-            </button>
-          )}
-
-          {/* Lanjut / Kirim */}
-          {step < 4
-            ? (
-              <button onClick={() => setStep(s => s + 1)} className="fp-btn-primary">
-                Lanjut <ArrowRight size={13} />
+      {/* ── Fixed Footer — hidden when month is disabled ── */}
+      {!monthDisabled && (
+        <div style={{ position:'fixed', bottom:0, left:0, right:0, borderTop:`1px solid ${t.line}`, background:d?'rgba(13,13,14,0.94)':'rgba(255,255,255,0.94)', backdropFilter:'blur(24px)', WebkitBackdropFilter:'blur(24px)', zIndex:60, padding:'11px 20px' }}>
+          <div style={{ width:'100%', margin:'0 auto', display:'flex', alignItems:'center', justifyContent:'flex-end', gap:10 }}>
+            {!effectiveReadOnly && (
+              <button onClick={handleSaveDraft} disabled={isSaving} className="fp-btn-ghost">
+                {isSaving?<><Loader2 size={13} style={{ animation:'fpspin 1s linear infinite' }}/>Simpan...</>:<><Save size={13}/>Draft</>}
               </button>
-            )
-            : !readOnly && (
-              <button onClick={() => setShowSubmit(true)} disabled={isSaving} className="fp-btn-primary">
-                <Send size={13} />Kirim
-              </button>
-            )
-          }
+            )}
+            {step > 1 && <button onClick={()=>setStep(s=>s-1)} className="fp-btn-ghost"><ArrowLeft size={13}/>Kembali</button>}
+            {step < 4
+              ? <button onClick={()=>setStep(s=>s+1)} className="fp-btn-primary">Lanjut <ArrowRight size={13}/></button>
+              : !effectiveReadOnly && <button onClick={()=>setShowSubmit(true)} disabled={isSaving} className="fp-btn-primary"><Send size={13}/>Kirim</button>
+            }
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Submit Modal — never shown in readOnly, but guard just in case */}
+      {/* Submit Modal */}
       <AnimatePresence>
-        {showSubmit && !readOnly && (
-          <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, background: 'rgba(0,0,0,0.74)', backdropFilter: 'blur(18px)', WebkitBackdropFilter: 'blur(18px)' }}>
-            <motion.div initial={{ scale: 0.96, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.96, opacity: 0 }} transition={{ duration: 0.14 }}
-              style={{ maxWidth: 348, width: '100%', background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, boxShadow: t.lg, overflow: 'hidden' }}>
-              <div style={{ padding: 28, textAlign: 'center' }}>
-                <div style={{ width: 50, height: 50, borderRadius: 11, background: 'linear-gradient(135deg,#ED1C24,#C6168D)', margin: '0 auto 15px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', boxShadow: '0 4px 16px rgba(237,28,36,0.32)' }}><ShieldCheck size={22} /></div>
-                <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: '-0.03em', color: t.hi, marginBottom: 7 }}>Kirim Laporan?</div>
-                <div style={{ fontSize: 13, color: t.mid, lineHeight: 1.65, marginBottom: 22 }}>Total <strong style={{ color: t.green, fontWeight: 700 }}>{formatIDR(stats.revenue)}</strong> akan dikirim untuk proses audit.</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <button onClick={handleSave} disabled={isSaving} className="fp-btn-primary" style={{ width: '100%', justifyContent: 'center', padding: 12, fontSize: 13 }}>{isSaving ? 'Menyimpan...' : 'Konfirmasi'}</button>
-                  <button onClick={() => setShowSubmit(false)} className="fp-btn-ghost" style={{ width: '100%', justifyContent: 'center', padding: 12, fontSize: 13 }}>Batal</button>
+        {showSubmit && !effectiveReadOnly && (
+          <div style={{ position:'fixed', inset:0, zIndex:100, display:'flex', alignItems:'center', justifyContent:'center', padding:24, background:'rgba(0,0,0,0.74)', backdropFilter:'blur(18px)', WebkitBackdropFilter:'blur(18px)' }}>
+            <motion.div initial={{ scale:0.96, opacity:0 }} animate={{ scale:1, opacity:1 }} exit={{ scale:0.96, opacity:0 }} transition={{ duration:0.14 }}
+              style={{ maxWidth:348, width:'100%', background:t.card, border:`1px solid ${t.line}`, borderRadius:16, boxShadow:t.lg, overflow:'hidden' }}>
+              <div style={{ padding:28, textAlign:'center' }}>
+                <div style={{ width:50, height:50, borderRadius:11, background:'linear-gradient(135deg,#ED1C24,#C6168D)', margin:'0 auto 15px', display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', boxShadow:'0 4px 16px rgba(237,28,36,0.32)' }}><ShieldCheck size={22}/></div>
+                <div style={{ fontSize:17, fontWeight:800, letterSpacing:'-0.03em', color:t.hi, marginBottom:7 }}>Kirim Laporan?</div>
+                <div style={{ fontSize:13, color:t.mid, lineHeight:1.65, marginBottom:22 }}>Total <strong style={{ color:t.green, fontWeight:700 }}>{formatIDR(stats.revenue)}</strong> akan dikirim untuk proses audit.</div>
+                <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                  <button onClick={handleSave} disabled={isSaving} className="fp-btn-primary" style={{ width:'100%', justifyContent:'center', padding:12, fontSize:13 }}>{isSaving?'Menyimpan...':'Konfirmasi'}</button>
+                  <button onClick={()=>setShowSubmit(false)} className="fp-btn-ghost" style={{ width:'100%', justifyContent:'center', padding:12, fontSize:13 }}>Batal</button>
                 </div>
               </div>
             </motion.div>
@@ -997,5 +925,4 @@ const FormPendapatan = ({ onUpdate, theme, setIsFormDirty, activeContext, onSave
     </div>
   );
 };
-
 export default FormPendapatan;

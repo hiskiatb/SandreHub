@@ -4,7 +4,7 @@ import { useEffect, useState, useRef, useMemo, useCallback } from "react";
 import supabase from "../../../lib/supabase";
 import {
   Bell, X, CheckCircle2, Clock, ChevronDown, ChevronUp,
-  RefreshCw, FileCheck, FilePen, Trash2,
+  RefreshCw, FileCheck, FilePen, Trash2, Circle
 } from "lucide-react";
 
 const MONTHS_ID = [
@@ -36,7 +36,8 @@ function fmtTime(ts) {
   });
 }
 
-export default function NotificationBell({ t, d, isSPM, activeYear }) {
+// Tambahkan masterData dan disabledMonthsMap di props
+export default function NotificationBell({ t, d, isSPM, activeYear, masterData = [], disabledMonthsMap = new Map() }) {
   const [open,           setOpen]          = useState(false);
   const [tab,            setTab]           = useState("feed");
   const [notifs,         setNotifs]        = useState([]);
@@ -92,9 +93,6 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
   }, [isSPM, activeYear, fetchNotifs, fetchReports]);
 
   // ── Realtime subscription ─────────────────────────────────────────────────
-  // FIX: .on() MUST be called BEFORE .subscribe().
-  // Using a unique channel name per activeYear prevents stale-channel errors
-  // on hot-reload or year changes.
   useEffect(() => {
     if (!isSPM) return;
 
@@ -106,7 +104,6 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "pnl_notifications" },
         (payload) => {
-          // Only surface notifications for the current year
           if (String(payload.new?.year) !== String(activeYear)) return;
           setNotifs(prev => [payload.new, ...prev].slice(0, 100));
           fetchReports();
@@ -136,7 +133,6 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
       .filter(n => !(n.read_by || []).includes(userId))
       .map(n => n.id);
     if (!unreadIds.length) return;
-    // Optimistic update first
     setNotifs(prev =>
       prev.map(n =>
         unreadIds.includes(n.id)
@@ -144,7 +140,6 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
           : n
       )
     );
-    // Persist
     await Promise.allSettled(
       unreadIds.map(id =>
         supabase.rpc("notif_mark_read", { notif_id: id, uid: userId })
@@ -174,58 +169,96 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
     );
   }, [notifs, userId]);
 
-  // ── Monthly summary — FIXED LOGIC ─────────────────────────────────────────
-  // Each unique (partner_name, branch, mpc_mp3) combination = 1 branch entry.
-  // A branch is "finalized" when is_finalized === true.
-  // total  = number of distinct branch entries for that month
-  // finalized = branches where is_finalized === true
-  // draft  = branches where is_finalized === false
+  // ── Monthly summary — DIURUTKAN DARI TOTAL BRANCH AKTIF ──────────────────
   const monthlySummary = useMemo(() => {
-    if (!reports.length) return [];
+    if (!masterData.length) return [];
 
-    const byMonth = {};
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonthIdx = now.getMonth();
 
+    // Tentukan bulan apa saja yang tersedia (Maksimal sampai bulan berjalan jika tahun ini)
+    const maxMonthIdx = Number(activeYear) === currentYear ? currentMonthIdx : 11;
+    const availableMonths = MONTHS_ID.slice(0, maxMonthIdx + 1);
+
+    // Buat lookup cepat untuk laporan
+    const reportMap = new Map();
     reports.forEach(r => {
-      const month = r.month;
-      if (!byMonth[month]) byMonth[month] = {};
-
-      // Unique branch key within this month
-      const branchKey = `${r.partner_name}||${r.branch}||${r.mpc_mp3}`;
-
-      // Keep only the most-recent record per branch per month
-      // (in case of duplicates, prefer is_finalized=true)
-      if (!byMonth[month][branchKey] || r.is_finalized) {
-        byMonth[month][branchKey] = r;
+      const key = `${r.partner_name}|${r.branch}|${r.mpc_mp3}|${r.month}`;
+      if (!reportMap.has(key) || r.is_finalized) {
+        reportMap.set(key, r);
       }
     });
 
-    return Object.entries(byMonth)
-      .sort(([a], [b]) => monthOrder(b) - monthOrder(a))
-      .map(([month, branchMap]) => {
-        const rows = Object.values(branchMap);
+    return availableMonths.map(month => {
+      const byType = {};
+      let totalActive = 0;
+      let totalFinalized = 0;
+      let totalDraft = 0;
+      let totalEmpty = 0;
 
-        // Group by type (mpc_mp3)
-        const byType = {};
-        rows.forEach(r => {
-          const tp = r.mpc_mp3 || "?";
-          if (!byType[tp]) byType[tp] = { total: 0, finalized: 0, draft: 0, rows: [] };
-          byType[tp].total++;
-          r.is_finalized ? byType[tp].finalized++ : byType[tp].draft++;
-          byType[tp].rows.push(r);
+      masterData.forEach(branch => {
+        const bType = branch.mpc_mp3 || "?";
+        if (!byType[bType]) byType[bType] = { total: 0, finalized: 0, draft: 0, empty: 0, rows: [] };
+
+        // 1. Cek apakah branch ini di-disable pada bulan ini
+        const disableKey = `${branch.partner_name}|${branch.branch_name}|${branch.mpc_mp3}|${activeYear}`;
+        const disabledSet = disabledMonthsMap.get(disableKey);
+        if (disabledSet && disabledSet.has(month)) {
+          return; // Skip, tidak dihitung dalam total aktif
+        }
+
+        totalActive++;
+        byType[bType].total++;
+
+        // 2. Cek status laporan
+        const repKey = `${branch.partner_name}|${branch.branch_name}|${branch.mpc_mp3}|${month}`;
+        const rep = reportMap.get(repKey);
+
+        let status = "EMPTY";
+        if (rep) {
+          status = rep.is_finalized ? "FINALIZED" : "DRAFT";
+        }
+
+        if (status === "FINALIZED") {
+          totalFinalized++;
+          byType[bType].finalized++;
+        } else if (status === "DRAFT") {
+          totalDraft++;
+          byType[bType].draft++;
+        } else {
+          totalEmpty++;
+          byType[bType].empty++;
+        }
+
+        // Simpan baris untuk ditampikan di rincian
+        byType[bType].rows.push({
+          partner_name: branch.partner_name,
+          branch: branch.branch_name,
+          mpc_mp3: branch.mpc_mp3,
+          is_finalized: status === "FINALIZED",
+          is_draft: status === "DRAFT",
+          is_empty: status === "EMPTY",
+          updated_at: rep?.updated_at || null,
+          validation_notes: rep?.validation_notes || null
         });
-
-        const total     = rows.length;
-        const finalized = rows.filter(r => r.is_finalized).length;
-        const draft     = total - finalized;
-
-        return { month, total, finalized, draft, byType };
       });
-  }, [reports]);
 
-  const totalDraft = useMemo(
-    () => reports.filter(r => !r.is_finalized).length,
-    [reports]
-  );
+      return {
+        month,
+        total: totalActive,
+        finalized: totalFinalized,
+        draft: totalDraft,
+        empty: totalEmpty,
+        byType
+      };
+    }).reverse(); // Descending (bulan paling baru di atas)
+  }, [masterData, reports, activeYear, disabledMonthsMap]);
+
+  // Dapatkan total seluruh draft untuk badge header
+  const totalDraft = useMemo(() => {
+    return monthlySummary.reduce((acc, curr) => acc + curr.draft, 0);
+  }, [monthlySummary]);
 
   if (!isSPM) return null;
 
@@ -301,7 +334,7 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
       {open && (
         <div style={{
           position: "absolute", top: "calc(100% + 8px)", right: 0,
-          width: 390, maxWidth: "calc(100vw - 24px)",
+          width: 410, maxWidth: "calc(100vw - 24px)",
           background: d ? "#161618" : "#FFFFFF",
           border: `1px solid ${t.line}`, borderRadius: 16,
           boxShadow: t.shadowLg, zIndex: 500, overflow: "hidden",
@@ -521,14 +554,14 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
 
             {/* ══ SUMMARY TAB ══ */}
             {tab === "summary" && (
-              reports.length === 0 ? (
+              monthlySummary.length === 0 ? (
                 <div style={{ padding: 32, textAlign: "center", color: t.mid, fontSize: 13 }}>
-                  {loading ? "Memuat…" : `Belum ada data laporan untuk ${activeYear}.`}
+                  {loading ? "Memuat…" : `Belum ada master data terdaftar.`}
                 </div>
-              ) : monthlySummary.map(({ month, total, finalized, draft, byType }) => {
+              ) : monthlySummary.map(({ month, total, finalized, draft, empty, byType }) => {
                 const pct    = total ? Math.round((finalized / total) * 100) : 0;
                 const isExpM = !!expandedMonth[month];
-                const allDone = draft === 0 && total > 0;
+                const allDone = (draft === 0 && empty === 0) && total > 0;
 
                 return (
                   <div key={month} style={{ borderBottom: `1px solid ${t.line}` }}>
@@ -548,7 +581,7 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
                       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <span style={{
                           width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
-                          background: allDone ? "#32BCAD" : "#ED1C24",
+                          background: allDone ? "#32BCAD" : (empty === total ? t.line : "#FFCB05"),
                         }} />
                         <span style={{ fontWeight: 700, fontSize: 13, color: t.hi }}>
                           {month} {activeYear}
@@ -559,7 +592,7 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
                             background: "rgba(50,188,173,0.12)", color: "#32BCAD",
                             border: "1px solid rgba(50,188,173,0.25)",
                           }}>
-                            Semua Selesai ✓
+                            Selesai ✓
                           </span>
                         )}
                       </div>
@@ -571,7 +604,7 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
                         }}>
                           <div style={{
                             height: "100%", width: `${pct}%`, borderRadius: 3,
-                            background: allDone ? "#32BCAD" : "#ED1C24",
+                            background: allDone ? "#32BCAD" : "#32BCAD",
                             transition: "width .4s",
                           }} />
                         </div>
@@ -589,15 +622,6 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
                             branch
                           </span>
                         </span>
-                        {draft > 0 && (
-                          <span style={{
-                            fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 99,
-                            background: "rgba(237,28,36,0.10)", color: "#ED1C24",
-                            border: "1px solid rgba(237,28,36,0.20)",
-                          }}>
-                            {draft} draft
-                          </span>
-                        )}
                         {isExpM
                           ? <ChevronUp   size={13} style={{ color: t.lo }} />
                           : <ChevronDown size={13} style={{ color: t.lo }} />}
@@ -616,7 +640,7 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
                               ? Math.round((tdata.finalized / tdata.total) * 100)
                               : 0;
                             const ac     = type === "MPC" ? "#32BCAD" : "#C6168D";
-                            const tAllDone = tdata.draft === 0 && tdata.total > 0;
+                            const tAllDone = (tdata.draft === 0 && tdata.empty === 0) && tdata.total > 0;
 
                             return (
                               <div key={type}>
@@ -700,11 +724,12 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
                                 {isExpT && (
                                   <div>
                                     {tdata.rows
-                                      .sort((a, b) =>
-                                        a.is_finalized === b.is_finalized
-                                          ? a.partner_name.localeCompare(b.partner_name)
-                                          : a.is_finalized ? 1 : -1
-                                      )
+                                      .sort((a, b) => {
+                                        // Urutkan: Draft (0) -> Kosong (1) -> Final (2)
+                                        const score = (r) => r.is_draft ? 0 : r.is_empty ? 1 : 2;
+                                        if (score(a) !== score(b)) return score(a) - score(b);
+                                        return a.partner_name.localeCompare(b.partner_name);
+                                      })
                                       .map((row, ri) => {
                                         const notes = parseNotes(row.validation_notes);
                                         return (
@@ -717,9 +742,9 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
                                               justifyContent: "space-between", gap: 12,
                                               background: row.is_finalized
                                                 ? "transparent"
-                                                : (d
-                                                  ? "rgba(255,203,5,0.04)"
-                                                  : "rgba(255,203,5,0.03)"),
+                                                : row.is_draft
+                                                  ? (d ? "rgba(255,203,5,0.04)" : "rgba(255,203,5,0.03)")
+                                                  : (d ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)"),
                                             }}
                                           >
                                             <div style={{ minWidth: 0, flex: 1 }}>
@@ -727,6 +752,7 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
                                                 fontSize: 12, fontWeight: 600, color: t.hi,
                                                 overflow: "hidden", textOverflow: "ellipsis",
                                                 whiteSpace: "nowrap",
+                                                opacity: row.is_empty ? 0.6 : 1,
                                               }}>
                                                 {row.partner_name}
                                               </div>
@@ -734,39 +760,39 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
                                                 fontSize: 11, color: t.mid, marginTop: 2,
                                                 display: "flex", alignItems: "center", gap: 4,
                                               }}>
-                                                <Clock size={9} style={{ flexShrink: 0 }} />
+                                                <StoreIcon size={9} style={{ flexShrink: 0 }} />
                                                 {row.branch}
                                               </div>
                                               {/* Validation note pills */}
-                                              <div style={{
-                                                display: "flex", gap: 5, marginTop: 5, flexWrap: "wrap",
-                                              }}>
-                                                {["pendapatan", "pengeluaran"].map(form => {
-                                                  const st = notes[form];
-                                                  if (!st) return null;
-                                                  const fin = st === "final";
-                                                  return (
-                                                    <span
-                                                      key={form}
-                                                      style={{
-                                                        fontSize: 9.5, fontWeight: 600,
-                                                        padding: "1px 7px", borderRadius: 5,
-                                                        background: fin
-                                                          ? "rgba(50,188,173,0.12)"
-                                                          : "rgba(255,203,5,0.12)",
-                                                        color: fin
-                                                          ? "#32BCAD"
-                                                          : (d ? "#ffe066" : "#8a6a00"),
-                                                        border: `1px solid ${fin
-                                                          ? "rgba(50,188,173,0.28)"
-                                                          : "rgba(255,203,5,0.28)"}`,
-                                                      }}
-                                                    >
-                                                      {form.charAt(0).toUpperCase() + form.slice(1)}: {st}
-                                                    </span>
-                                                  );
-                                                })}
-                                              </div>
+                                              {row.is_empty ? null : (
+                                                <div style={{ display: "flex", gap: 5, marginTop: 5, flexWrap: "wrap" }}>
+                                                  {["pendapatan", "pengeluaran"].map(form => {
+                                                    const st = notes[form];
+                                                    if (!st) return null;
+                                                    const fin = st === "final";
+                                                    return (
+                                                      <span
+                                                        key={form}
+                                                        style={{
+                                                          fontSize: 9.5, fontWeight: 600,
+                                                          padding: "1px 7px", borderRadius: 5,
+                                                          background: fin
+                                                            ? "rgba(50,188,173,0.12)"
+                                                            : "rgba(255,203,5,0.12)",
+                                                          color: fin
+                                                            ? "#32BCAD"
+                                                            : (d ? "#ffe066" : "#8a6a00"),
+                                                          border: `1px solid ${fin
+                                                            ? "rgba(50,188,173,0.28)"
+                                                            : "rgba(255,203,5,0.28)"}`,
+                                                        }}
+                                                      >
+                                                        {form.charAt(0).toUpperCase() + form.slice(1)}: {st}
+                                                      </span>
+                                                    );
+                                                  })}
+                                                </div>
+                                              )}
                                             </div>
                                             <div style={{ flexShrink: 0, textAlign: "right" }}>
                                               {row.is_finalized ? (
@@ -780,7 +806,7 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
                                                 }}>
                                                   <CheckCircle2 size={9} />Final
                                                 </span>
-                                              ) : (
+                                              ) : row.is_draft ? (
                                                 <span style={{
                                                   fontSize: 9.5, fontWeight: 700, padding: "2px 8px",
                                                   borderRadius: 99,
@@ -790,6 +816,17 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
                                                   color: d ? "#ffe066" : "#8a6a00",
                                                   border: "1px solid rgba(255,203,5,0.28)",
                                                 }}>Draft</span>
+                                              ) : (
+                                                <span style={{
+                                                  fontSize: 9.5, fontWeight: 700, padding: "2px 8px",
+                                                  borderRadius: 99,
+                                                  background: "transparent",
+                                                  color: t.lo,
+                                                  border: `1px solid ${t.line}`,
+                                                  display: "flex", alignItems: "center", gap: 4,
+                                                }}>
+                                                  <Circle size={9} />Kosong
+                                                </span>
                                               )}
                                               {row.updated_at && (
                                                 <div style={{ fontSize: 9.5, color: t.lo, marginTop: 3 }}>
@@ -822,10 +859,10 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
             justifyContent: "space-between", flexShrink: 0,
           }}>
             <span style={{ fontSize: 10.5, color: t.lo }}>
-              {loading ? "Memperbarui…" : `${reports.length} laporan · ${activeYear}`}
+              {loading ? "Memperbarui…" : `${reports.length} laporan di database`}
             </span>
             <span style={{ fontSize: 10.5, color: t.lo }}>
-              {notifs.length} notifikasi tersimpan
+              {notifs.length} aktivitas
             </span>
           </div>
         </div>
@@ -839,5 +876,15 @@ export default function NotificationBell({ t, d, isSPM, activeYear }) {
         }
       `}</style>
     </div>
+  );
+}
+
+// Komponen ikon Store untuk Branch
+function StoreIcon(props) {
+  return (
+    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+      <polyline points="9 22 9 12 15 12 15 22"></polyline>
+    </svg>
   );
 }

@@ -1,5 +1,11 @@
 "use client";
-
+/**
+ * page.jsx — perbaikan:
+ * 1. Header month/year picker disembunyikan saat view = control-center | pivot-summary | payout-tracker
+ * 2. disabledMonthsMap (partner+branch -> Set<month>) di-load di sini dan dipass ke Form*
+ *    agar FormPendapatan & FormPengeluaran bisa grey-out / blokir bulan yang disabled
+ * 3. activeMonth di-clamp supaya tidak masuk ke bulan disabled saat user navigasi
+ */
 import { useEffect, useState, useMemo } from "react";
 import supabase from "../../lib/supabase";
 import { useRouter } from "next/navigation";
@@ -191,6 +197,9 @@ const CURRENT_YEAR        = CURRENT_DATE.getFullYear();
 const getCurrentMonth     = () => MONTHS[CURRENT_MONTH_INDEX];
 const getCurrentYear      = () => CURRENT_YEAR.toString();
 
+// Views where month/year picker in header should be hidden
+const HIDE_DATE_PICKER_VIEWS = new Set(["control-center", "pivot-summary", "payout-tracker"]);
+
 function LoadingScreen() {
   return (
     <div style={{ width: "100%", height: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 0, background: "#0D0D0E", fontFamily: FONT_STACK, position: "relative", overflow: "hidden" }}>
@@ -251,7 +260,6 @@ function SidebarToggleBtn({ collapsed, onToggle, t }) {
 
 export default function DashboardPage() {
   const router = useRouter();
-
   const [loading,          setLoading]          = useState(true);
   const [profile,          setProfile]          = useState(null);
   const [view,             setView]             = useState("overview");
@@ -272,6 +280,11 @@ export default function DashboardPage() {
   const [pendingView,      setPendingView]      = useState(null);
   const [mobileOpen,       setMobileOpen]       = useState(false);
 
+  // ── Disabled months map: loaded from DB + realtime ─────────────────────────
+  // Structure: Map< "partner_name|branch_name|mpc_mp3|year" , Set<monthName> >
+  // Used by: PNL_ControlCenter (display) + Form* (block month selection)
+  const [disabledMonthsMap, setDisabledMonthsMap] = useState(new Map());
+
   const availableYears = useMemo(() => {
     return Array.from({ length: CURRENT_YEAR - 2026 + 1 }, (_, i) => (2026 + i).toString()).reverse();
   }, []);
@@ -280,6 +293,27 @@ export default function DashboardPage() {
     if (Number(activeYear) === CURRENT_YEAR) return MONTHS.slice(0, CURRENT_MONTH_INDEX + 1);
     return MONTHS;
   }, [activeYear]);
+
+  // Months disabled specifically for current partner+branch+type context
+  // Passed to Form* so they can block/grey those months in their own month picker
+  const activeContextDisabledMonths = useMemo(() => {
+    if (!activePartner || !activeBranch) return new Set();
+    // Resolve mpc_mp3: if activeType is "ALL", look up from masterData
+    const resolvedType = (activeType && activeType !== "ALL")
+      ? activeType
+      : masterData.find(i => i.partner_name === activePartner && i.branch_name === activeBranch)?.mpc_mp3;
+    if (!resolvedType) return new Set();
+    const key = `${activePartner}|${activeBranch}|${resolvedType}|${activeYear}`;
+    return disabledMonthsMap.get(key) || new Set();
+  }, [disabledMonthsMap, activePartner, activeBranch, activeType, activeYear, masterData]);
+
+  // If current activeMonth is disabled, auto-advance to a non-disabled month
+  useEffect(() => {
+    if (activeContextDisabledMonths.has(activeMonth)) {
+      const fallback = availableMonths.find(m => !activeContextDisabledMonths.has(m));
+      if (fallback) setActiveMonth(fallback);
+    }
+  }, [activeContextDisabledMonths, activeMonth, availableMonths]);
 
   const d = theme === "dark";
   const t = tk(d);
@@ -290,6 +324,7 @@ export default function DashboardPage() {
     localStorage.setItem("sh-theme", next);
   };
 
+  // ── Initial load ───────────────────────────────────────────────────────────
   useEffect(() => {
     setTheme(localStorage.getItem("sh-theme") || "dark");
     const sc = localStorage.getItem("sh-sidebar-collapsed");
@@ -308,6 +343,80 @@ export default function DashboardPage() {
       setLoading(false);
     })();
   }, [router]);
+
+  // ── Load disabled months from DB (scoped to activeYear) ──────────────────
+  // NOTE: Requires table `pnl_disabled_months` — see SQL schema in PNL_ControlCenter.jsx
+  useEffect(() => {
+    if (!activeYear) return;
+    (async () => {
+      try {
+        const { data, error } = await supabase
+          .from("pnl_disabled_months")
+          .select("partner_name,branch_name,mpc_mp3,month,year");
+        // Load ALL years — activeContextDisabledMonths key includes year for filtering
+        if (error) {
+          // 42P01 = table does not exist yet → silently skip, feature inactive
+          if (error.code === "42P01" || error.message?.includes("does not exist")) {
+            console.warn("[pnl_disabled_months] Tabel belum dibuat — jalankan SQL schema di Supabase. Fitur disable bulan dinonaktifkan sementara.");
+          } else {
+            console.error("[pnl_disabled_months] Gagal memuat:", error.message ?? error);
+          }
+          setDisabledMonthsMap(new Map());
+          return;
+        }
+        const map = new Map();
+        (data || []).forEach(r => {
+          // Stringify year for consistent key comparison with activeYear (string)
+          const key = `${r.partner_name}|${r.branch_name}|${r.mpc_mp3}|${String(r.year)}`;
+          if (!map.has(key)) map.set(key, new Set());
+          map.get(key).add(r.month);
+        });
+        setDisabledMonthsMap(map);
+      } catch (e) {
+        console.error("[pnl_disabled_months] Exception:", e?.message ?? e);
+        setDisabledMonthsMap(new Map());
+      }
+    })();
+  }, [activeYear]);
+
+  // ── Realtime subscription for disabled months ──────────────────────────────
+  // Keeps all sessions (including other devices / other accounts with same role) in sync
+  useEffect(() => {
+    if (!activeYear) return;
+    const channel = supabase
+      .channel(`page_disabled_months_${activeYear}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "pnl_disabled_months", filter: `year=eq.${activeYear}` },
+        (payload) => {
+          const { eventType, new: n, old: o } = payload;
+          setDisabledMonthsMap(prev => {
+            const next = new Map(prev);
+            if (eventType === "INSERT" && n) {
+              const key = `${n.partner_name}|${n.branch_name}|${n.mpc_mp3}|${String(n.year)}`;
+              if (!next.has(key)) next.set(key, new Set());
+              next.get(key).add(n.month);
+            } else if (eventType === "DELETE" && o) {
+              const key = `${o.partner_name}|${o.branch_name}|${o.mpc_mp3}|${String(o.year)}`;
+              if (next.has(key)) {
+                const s = new Set(next.get(key));
+                s.delete(o.month);
+                if (s.size === 0) next.delete(key);
+                else next.set(key, s);
+              }
+            }
+            return next;
+          });
+        }
+      )
+      .subscribe((status, err) => {
+        if (err) {
+          // Silently ignore if table not yet created
+          console.warn("[pnl_disabled_months] Realtime subscription:", err?.message ?? err);
+        }
+      });
+    return () => supabase.removeChannel(channel);
+  }, [activeYear]);
 
   const handleToggleSidebar = () => {
     const next = !sidebarCollapsed;
@@ -354,13 +463,10 @@ export default function DashboardPage() {
   const isSPM    = profile?.role === "spm_sumatera";
   const isIOH    = profile?.role === "internal_ioh";
   const isMPX    = profile?.role === "finance_mpx";
-
   const canPnl   = (isSPM || isIOH)
     ? (!!activePartner && !!activeBranch)
     : (activePartner === profile?.partner_name && !!activeBranch);
-
   const isReadOnly = isIOH;
-
   const mpxType = activeType !== "ALL" ? activeType : masterData.find(i => i.partner_name === activePartner && i.branch_name === activeBranch)?.mpc_mp3;
 
   const clearFilters = () => {
@@ -368,25 +474,25 @@ export default function DashboardPage() {
     if (isSPM || isIOH) { setActivePartner(""); setActiveBranch(""); setActiveType("ALL"); }
   };
 
-  // ── navigate: used for sidebar/back-btn navigation (already had dirty guard)
   const navigate = (viewId) => {
     if (formDirty) { setPendingView(viewId); setExitConfirm(true); }
     else { setView(viewId); setMobileOpen(false); }
   };
 
-  // ── navigateTab: same guard but for in-form tab switching (Summary/Pendapatan/Pengeluaran)
   const navigateTab = (tabId) => {
     if (tabId === view) return;
-    if (formDirty) {
-      setPendingView(tabId);
-      setExitConfirm(true);
-    } else {
-      setView(tabId);
-    }
+    if (formDirty) { setPendingView(tabId); setExitConfirm(true); }
+    else { setView(tabId); }
   };
+
+  // Months available in the header picker — exclude disabled months for current context
+  const availableMonthsForPicker = useMemo(() => {
+    return availableMonths.filter(m => !activeContextDisabledMonths.has(m));
+  }, [availableMonths, activeContextDisabledMonths]);
 
   const HEADER_H  = 60;
   const SIDEBAR_W = 252;
+  const hideDatePicker = HIDE_DATE_PICKER_VIEWS.has(view);
 
   if (loading) return <LoadingScreen />;
 
@@ -469,15 +575,12 @@ export default function DashboardPage() {
   return (
     <div style={{ display: "flex", height: "100vh", background: t.appBg, color: t.hi, fontFamily: FONT_STACK, WebkitFontSmoothing: "antialiased", MozOsxFontSmoothing: "grayscale", overflow: "hidden", transition: "background .25s, color .25s" }}>
       <style>{buildGlobalCSS(d, t)}</style>
-
       {/* Desktop sidebar */}
       <aside className="lg-sidebar" style={{ width: sidebarCollapsed ? 0 : SIDEBAR_W, flexShrink: 0, background: t.sidebar, borderRight: sidebarCollapsed ? "none" : `1px solid ${t.line}`, flexDirection: "column", height: "100vh", position: "sticky", top: 0, zIndex: 50, overflow: "hidden", transition: "width .22s cubic-bezier(0.4,0,0.2,1), border-right .22s", display: "none" }}>
         <div style={{ width: SIDEBAR_W, height: "100%", flexShrink: 0 }}><SidebarInner /></div>
       </aside>
-
       {/* Main column */}
       <main style={{ flex: 1, display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", minWidth: 0 }}>
-
         {/* Header */}
         <header className="header-pad" style={{ height: HEADER_H, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", gap: 12, background: d ? "rgba(17,17,19,0.92)" : "rgba(255,255,255,0.92)", borderBottom: `1px solid ${t.line}`, backdropFilter: "blur(24px)", WebkitBackdropFilter: "blur(24px)", zIndex: 40, position: "relative" }}>
           <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: "linear-gradient(90deg, #ED1C24 0%, #FFCB05 33%, #32BCAD 66%, #C6168D 100%)" }} />
@@ -489,30 +592,56 @@ export default function DashboardPage() {
               <Menu size={17} />
             </button>
             <div className="lg-sidebar-toggle" style={{ display: "none", width: 1, height: 22, background: t.line }} />
-            <div style={{ display: "flex", alignItems: "center", border: `1px solid ${t.inputBd}`, borderRadius: 8, background: t.inputBg, height: 36, overflow: "hidden", flexShrink: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", borderRight: `1px solid ${t.inputBd}`, height: "100%", position: "relative" }}>
-                <Calendar size={13} style={{ color: t.blue, marginLeft: 11 }} />
+
+            {/* ── Date picker: hidden for control-center / pivot-summary / payout-tracker ── */}
+            {!hideDatePicker && (
+              <div style={{ display: "flex", alignItems: "center", border: `1px solid ${t.inputBd}`, borderRadius: 8, background: t.inputBg, height: 36, overflow: "hidden", flexShrink: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", borderRight: `1px solid ${t.inputBd}`, height: "100%", position: "relative" }}>
+                  <Calendar size={13} style={{ color: t.blue, marginLeft: 11 }} />
+                  <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+                    <select
+                      value={activeMonth}
+                      onChange={e => setActiveMonth(e.target.value)}
+                      style={{ appearance: "none", WebkitAppearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, cursor: "pointer", outline: "none", paddingLeft: 7, paddingRight: 24, height: 36, fontFamily: "inherit" }}
+                    >
+                      {availableMonths.map(m => (
+                        <option
+                          key={m}
+                          value={m}
+                          disabled={activeContextDisabledMonths.has(m)}
+                          style={{
+                            color: activeContextDisabledMonths.has(m) ? (d ? "#4A4A58" : "#B0B0C0") : undefined,
+                            fontStyle: activeContextDisabledMonths.has(m) ? "italic" : undefined,
+                          }}
+                        >
+                          {m}{activeContextDisabledMonths.has(m) ? " (nonaktif)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown size={12} style={{ position: "absolute", right: 6, pointerEvents: "none", color: t.lo }} />
+                  </div>
+                </div>
                 <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-                  <select value={activeMonth} onChange={e => setActiveMonth(e.target.value)} style={{ appearance: "none", WebkitAppearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, cursor: "pointer", outline: "none", paddingLeft: 7, paddingRight: 24, height: 36, fontFamily: "inherit" }}>
-                    {availableMonths.map(m => <option key={m} value={m}>{m}</option>)}
+                  <select value={activeYear} onChange={e => setActiveYear(e.target.value)} style={{ appearance: "none", WebkitAppearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, cursor: "pointer", outline: "none", paddingLeft: 12, paddingRight: 28, height: 36, fontFamily: "inherit" }}>
+                    {availableYears.map(year => <option key={year} value={year}>{year}</option>)}
                   </select>
-                  <ChevronDown size={12} style={{ position: "absolute", right: 6, pointerEvents: "none", color: t.lo }} />
+                  <ChevronDown size={12} style={{ position: "absolute", right: 9, pointerEvents: "none", color: t.lo }} />
                 </div>
               </div>
-              <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-                <select value={activeYear} onChange={e => setActiveYear(e.target.value)} style={{ appearance: "none", WebkitAppearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, cursor: "pointer", outline: "none", paddingLeft: 12, paddingRight: 28, height: 36, fontFamily: "inherit" }}>
-                  {availableYears.map(year => <option key={year} value={year}>{year}</option>)}
-                </select>
-                <ChevronDown size={12} style={{ position: "absolute", right: 9, pointerEvents: "none", color: t.lo }} />
-              </div>
-            </div>
+            )}
           </div>
+
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             <button className="icon-btn" onClick={toggleTheme} style={{ width: 36, height: 36 }} aria-label="Ganti tema">
               {d ? <Sun size={15} /> : <Moon size={15} />}
             </button>
-            <NotificationBell t={t} d={d} isSPM={isSPM || isIOH} activeYear={activeYear} />
-            <div style={{ position: "relative" }}>
+<NotificationBell 
+  t={t} d={d} 
+  isSPM={isSPM || isIOH} 
+  activeYear={activeYear} 
+  masterData={masterData}             // <--- Tambahkan ini
+  disabledMonthsMap={disabledMonthsMap} // <--- Tambahkan ini
+/>            <div style={{ position: "relative" }}>
               <button onClick={() => setProfileOpen(!profileOpen)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 10px 0 4px", height: 36, borderRadius: 8, border: `1px solid ${profileOpen ? t.blueBd : t.line}`, background: profileOpen ? t.blueSoft : t.inputBg, cursor: "pointer", transition: "all .12s", outline: "none", fontFamily: "inherit" }}>
                 <div style={{ width: 26, height: 26, borderRadius: 6, background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#FFFFFF", fontSize: 12, fontWeight: 700, letterSpacing: "-0.02em" }}>
                   {profile?.full_name?.charAt(0) || "U"}
@@ -555,7 +684,6 @@ export default function DashboardPage() {
         {/* Content */}
         <div className="content-pad" style={{ flex: 1, overflowY: "auto", padding: "28px 28px 48px" }}>
           <AnimatePresence mode="wait">
-
             {view === "overview" && (
               <motion.div key="ov" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} style={{ maxWidth: 980, margin: "0 auto" }}>
                 <div style={{ marginBottom: 24 }}>
@@ -591,8 +719,21 @@ export default function DashboardPage() {
             {view === "control-center" && (
               <motion.div key="cc" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
-                <PNLControlCenter theme={theme} masterData={masterData} activeYear={activeYear} activeMonth={activeMonth}
-                  onOpenBranch={p => { setActivePartner(p.partner_name); setActiveBranch(p.branch_name); setActiveType(p.mpc_mp3); setActiveMonth(p.month); setView("summary"); }} />
+                <PNLControlCenter
+                  theme={theme}
+                  masterData={masterData}
+                  activeYear={activeYear}
+                  activeMonth={activeMonth}
+                  disabledMonthsMap={disabledMonthsMap}
+                  userRole={profile?.role} // <--- TAMBAHKAN BARIS INI
+                  onOpenBranch={p => {
+                    setActivePartner(p.partner_name);
+                    setActiveBranch(p.branch_name);
+                    setActiveType(p.mpc_mp3);
+                    setActiveMonth(p.month);
+                    setView("summary");
+                  }}
+                />
               </motion.div>
             )}
 
@@ -610,7 +751,6 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
-            {/* ── FORM VIEWS — tab switching uses navigateTab() for dirty guard ── */}
             {["summary","pendapatan","pengeluaran"].includes(view) && (
               <motion.div key="fv" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} style={{ maxWidth: 920, margin: "0 auto" }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 20 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
@@ -621,11 +761,7 @@ export default function DashboardPage() {
                       { id: "pendapatan",  label: "Pendapatan",  icon: <ArrowUpRight size={14} /> },
                       { id: "pengeluaran", label: "Pengeluaran", icon: <ArrowDownLeft size={14} /> },
                     ].map(tab => (
-                      <button
-                        key={tab.id}
-                        onClick={() => navigateTab(tab.id)}
-                        className={`tab-pill ${view === tab.id ? "on" : "off"}`}
-                      >
+                      <button key={tab.id} onClick={() => navigateTab(tab.id)} className={`tab-pill ${view === tab.id ? "on" : "off"}`}>
                         {tab.icon}<span className="tab-label">{tab.label}</span>
                       </button>
                     ))}
@@ -634,15 +770,40 @@ export default function DashboardPage() {
                 <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
                   <div style={{ padding: "28px 32px" }}>
                     <AnimatePresence mode="wait">
-                      {view === "summary"     && <motion.div key="sv" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.13 }}><FormSummary theme={theme} activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }} /></motion.div>}
-                      {view === "pendapatan"  && <motion.div key="pv" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.13 }}><FormPendapatan  theme={theme} setIsFormDirty={isReadOnly ? undefined : setFormDirty} readOnly={isReadOnly} activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }} /></motion.div>}
-                      {view === "pengeluaran" && <motion.div key="ev" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.13 }}><FormPengeluaran theme={theme} setIsFormDirty={isReadOnly ? undefined : setFormDirty} readOnly={isReadOnly} activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }} /></motion.div>}
+                      {view === "summary" && (
+                        <motion.div key="sv" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.13 }}>
+                          <FormSummary theme={theme} activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }} />
+                        </motion.div>
+                      )}
+                      {view === "pendapatan" && (
+                        <motion.div key="pv" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.13 }}>
+                          <FormPendapatan
+                            theme={theme}
+                            setIsFormDirty={isReadOnly ? undefined : setFormDirty}
+                            readOnly={isReadOnly}
+                            activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }}
+                            disabledMonths={activeContextDisabledMonths}
+                            onMonthChange={setActiveMonth}
+                          />
+                        </motion.div>
+                      )}
+                      {view === "pengeluaran" && (
+                        <motion.div key="ev" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.13 }}>
+                          <FormPengeluaran
+                            theme={theme}
+                            setIsFormDirty={isReadOnly ? undefined : setFormDirty}
+                            readOnly={isReadOnly}
+                            activeContext={{ branch: activeBranch, month: activeMonth, year: activeYear, mpxName: activePartner, mpxType }}
+                            disabledMonths={activeContextDisabledMonths}
+                            onMonthChange={setActiveMonth}
+                          />
+                        </motion.div>
+                      )}
                     </AnimatePresence>
                   </div>
                 </div>
               </motion.div>
             )}
-
           </AnimatePresence>
         </div>
       </main>
@@ -664,7 +825,7 @@ export default function DashboardPage() {
         )}
       </AnimatePresence>
 
-      {/* ── Exit confirm modal — used for BOTH back-to-overview AND tab switching ── */}
+      {/* Exit confirm modal */}
       <AnimatePresence>
         {exitConfirm && (
           <div style={{ position: "fixed", inset: 0, zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, background: "rgba(10,12,18,0.62)", backdropFilter: "blur(14px)", WebkitBackdropFilter: "blur(14px)" }}>
@@ -677,18 +838,16 @@ export default function DashboardPage() {
                 <h3 style={{ fontSize: 17, fontWeight: 700, letterSpacing: "-0.02em", color: t.hi, marginBottom: 7 }}>Batalkan Progress?</h3>
                 <p style={{ fontSize: 13.5, color: t.mid, lineHeight: 1.55, marginBottom: 22 }}>Data yang belum disimpan akan terhapus dan tidak dapat dipulihkan.</p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-                  <button
-                    onClick={() => { setFormDirty(false); setView(pendingView); setExitConfirm(false); setPendingView(null); }}
-                    style={{ width: "100%", padding: 11, background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", color: "#FFFFFF", border: "none", borderRadius: 8, fontSize: 13.5, fontWeight: 600, letterSpacing: "-0.005em", cursor: "pointer", transition: "opacity .12s", fontFamily: "inherit" }}
-                    onMouseEnter={e => e.currentTarget.style.opacity = "0.88"}
-                    onMouseLeave={e => e.currentTarget.style.opacity = "1"}
-                  >Hapus & Lanjutkan</button>
-                  <button
-                    onClick={() => { setExitConfirm(false); setPendingView(null); }}
-                    style={{ width: "100%", padding: 11, background: "transparent", color: t.mid, border: `1px solid ${t.line}`, borderRadius: 8, fontSize: 13.5, fontWeight: 500, cursor: "pointer", transition: "all .12s", fontFamily: "inherit" }}
+                  <button onClick={() => { setFormDirty(false); setView(pendingView); setExitConfirm(false); setPendingView(null); }}
+                    style={{ width: "100%", padding: 11, background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", color: "#FFFFFF", border: "none", borderRadius: 8, fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                    Hapus & Lanjutkan
+                  </button>
+                  <button onClick={() => { setExitConfirm(false); setPendingView(null); }}
+                    style={{ width: "100%", padding: 11, background: "transparent", color: t.mid, border: `1px solid ${t.line}`, borderRadius: 8, fontSize: 13.5, fontWeight: 500, cursor: "pointer", fontFamily: "inherit" }}
                     onMouseEnter={e => { e.currentTarget.style.background = t.hover; e.currentTarget.style.color = t.hi; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = t.mid; }}
-                  >Kembali ke Form</button>
+                    onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = t.mid; }}>
+                    Kembali ke Form
+                  </button>
                 </div>
               </div>
             </motion.div>
