@@ -1,10 +1,14 @@
 "use client";
 /**
- * page.jsx — perbaikan:
- * 1. Header month/year picker disembunyikan saat view = control-center | pivot-summary | payout-tracker
- * 2. disabledMonthsMap (partner+branch -> Set<month>) di-load di sini dan dipass ke Form*
- *    agar FormPendapatan & FormPengeluaran bisa grey-out / blokir bulan yang disabled
- * 3. activeMonth di-clamp supaya tidak masuk ke bulan disabled saat user navigasi
+ * page.jsx — pembaruan:
+ * 1. Role internal_ioh dipecah menjadi 4:
+ *    - internal_ioh         (seluruh Sumatera, read-only)
+ *    - ioh_north_sumatera   (hanya region NORTH SUMATERA)
+ *    - ioh_central_sumatera (hanya region CENTRAL SUMATERA)
+ *    - ioh_south_sumatera   (hanya region SOUTH SUMATERA)
+ * 2. IOH regional: region picker di-lock, masterData di-filter otomatis
+ * 3. Admin Panel (SPM only): kelola role, kode otoritas, partner branches
+ * 4. Header month/year picker disembunyikan saat view = control-center | pivot-summary | payout-tracker | admin-panel
  */
 import { useEffect, useState, useMemo } from "react";
 import supabase from "../../lib/supabase";
@@ -25,6 +29,29 @@ import PNLControlCenter from "./components/PNL_ControlCenter.jsx";
 import PNLPivotSummary  from "./components/PNL_PivotSummary";
 import PayoutTracker    from "./components/PayoutTracker";
 import NotificationBell from "./components/NotificationBell";
+import AdminPanel       from "./components/PNL_AdminPanel";
+
+// ─── Role helpers ─────────────────────────────────────────────────────────────
+// Map role → locked region (null = akses semua region)
+const IOH_ROLE_REGION_MAP = {
+  "internal_ioh":         null,
+  "ioh_north_sumatera":   "NORTH SUMATERA",
+  "ioh_central_sumatera": "CENTRAL SUMATERA",
+  "ioh_south_sumatera":   "SOUTH SUMATERA",
+};
+
+// Semua role IOH (read-only, tidak bisa edit form)
+const IOH_ROLES = new Set(Object.keys(IOH_ROLE_REGION_MAP));
+
+// Role badge config untuk profile dropdown
+const ROLE_BADGE = {
+  "spm_sumatera":         { bg: "magentaBg", bd: "magentaBd", color: "magenta" },
+  "finance_mpx":          { bg: "greenBg",   bd: "greenBd",   color: "green"   },
+  "internal_ioh":         { bg: "yellowBg",  bd: "yellowBd",  color: "yellow"  },
+  "ioh_north_sumatera":   { bg: "yellowBg",  bd: "yellowBd",  color: "yellow"  },
+  "ioh_central_sumatera": { bg: "yellowBg",  bd: "yellowBd",  color: "yellow"  },
+  "ioh_south_sumatera":   { bg: "yellowBg",  bd: "yellowBd",  color: "yellow"  },
+};
 
 const tk = (d) => ({
   appBg:     d ? "#0D0D0E" : "#F5F5F6",
@@ -171,12 +198,38 @@ function DashCard({ icon, title, desc, tag, active, onClick, t, d, accent = {} }
     shadow: accent.shadow || "rgba(237,28,36,0.18)",
   };
   return (
-    <div onClick={active ? onClick : undefined} onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
-      style={{ padding: 24, borderRadius: 12, border: `1px solid ${hov && active ? ac.bd : t.line}`, background: t.card, cursor: active ? "pointer" : "not-allowed", opacity: active ? 1 : 0.5, transition: "border-color .15s, box-shadow .15s, transform .15s", boxShadow: hov && active ? `0 8px 24px ${ac.shadow}, ${t.shadowSm}` : t.shadowSm, transform: hov && active ? "translateY(-2px)" : "translateY(0)", display: "flex", flexDirection: "column", gap: 18 }}>
+    <div
+      onClick={active ? onClick : undefined}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        padding: 24, borderRadius: 12,
+        border: `1px solid ${hov && active ? ac.bd : t.line}`,
+        background: t.card, cursor: active ? "pointer" : "not-allowed",
+        opacity: active ? 1 : 0.5,
+        transition: "border-color .15s, box-shadow .15s, transform .15s",
+        boxShadow: hov && active ? `0 8px 24px ${ac.shadow}, ${t.shadowSm}` : t.shadowSm,
+        transform: hov && active ? "translateY(-2px)" : "translateY(0)",
+        display: "flex", flexDirection: "column", gap: 18,
+      }}
+    >
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-        <div style={{ width: 42, height: 42, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: hov && active ? ac.color : ac.bg, color: hov && active ? "#FFFFFF" : ac.color, border: `1px solid ${hov && active ? ac.color : ac.bd}`, transition: "background .15s, color .15s, border-color .15s" }}>{icon}</div>
+        <div style={{
+          width: 42, height: 42, borderRadius: 10, flexShrink: 0,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: hov && active ? ac.color : ac.bg,
+          color: hov && active ? "#FFFFFF" : ac.color,
+          border: `1px solid ${hov && active ? ac.color : ac.bd}`,
+          transition: "background .15s, color .15s, border-color .15s",
+        }}>{icon}</div>
         {tag && (
-          <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", padding: "3px 8px", borderRadius: 4, background: tag === "Admin" ? t.magentaBg : t.greenBg, color: tag === "Admin" ? t.magenta : t.green, border: `1px solid ${tag === "Admin" ? t.magentaBd : t.greenBd}` }}>{tag}</span>
+          <span style={{
+            fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase",
+            padding: "3px 8px", borderRadius: 4,
+            background: tag === "Admin" ? t.magentaBg : t.greenBg,
+            color: tag === "Admin" ? t.magenta : t.green,
+            border: `1px solid ${tag === "Admin" ? t.magentaBd : t.greenBd}`,
+          }}>{tag}</span>
         )}
       </div>
       <div>
@@ -190,15 +243,15 @@ function DashCard({ icon, title, desc, tag, active, onClick, t, d, accent = {} }
   );
 }
 
-const MONTHS = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
-const CURRENT_DATE        = new Date();
+const MONTHS             = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+const CURRENT_DATE       = new Date();
 const CURRENT_MONTH_INDEX = CURRENT_DATE.getMonth();
-const CURRENT_YEAR        = CURRENT_DATE.getFullYear();
-const getCurrentMonth     = () => MONTHS[CURRENT_MONTH_INDEX];
-const getCurrentYear      = () => CURRENT_YEAR.toString();
+const CURRENT_YEAR       = CURRENT_DATE.getFullYear();
+const getCurrentMonth    = () => MONTHS[CURRENT_MONTH_INDEX];
+const getCurrentYear     = () => CURRENT_YEAR.toString();
 
 // Views where month/year picker in header should be hidden
-const HIDE_DATE_PICKER_VIEWS = new Set(["control-center", "pivot-summary", "payout-tracker"]);
+const HIDE_DATE_PICKER_VIEWS = new Set(["control-center", "pivot-summary", "payout-tracker", "admin-panel"]);
 
 function LoadingScreen() {
   return (
@@ -250,11 +303,30 @@ function LoadingScreen() {
 function SidebarToggleBtn({ collapsed, onToggle, t }) {
   const [hov, setHov] = useState(false);
   return (
-    <button onClick={onToggle} onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
+    <button
+      onClick={onToggle}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
       title={collapsed ? "Tampilkan sidebar" : "Sembunyikan sidebar"}
-      style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 32, height: 32, borderRadius: 8, border: `1px solid ${hov ? t.blueBd : t.line}`, background: hov ? t.blueSoft : t.inputBg, cursor: "pointer", outline: "none", flexShrink: 0, color: hov ? t.blue : t.mid, transition: "all .15s" }}>
+      style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 32, height: 32, borderRadius: 8, border: `1px solid ${hov ? t.blueBd : t.line}`, background: hov ? t.blueSoft : t.inputBg, cursor: "pointer", outline: "none", flexShrink: 0, color: hov ? t.blue : t.mid, transition: "all .15s" }}
+    >
       {collapsed ? <PanelLeftOpen size={15} strokeWidth={1.8} /> : <PanelLeftClose size={15} strokeWidth={1.8} />}
     </button>
+  );
+}
+
+// ─── Role badge helper ────────────────────────────────────────────────────────
+function RoleBadge({ role, t }) {
+  const cfg = ROLE_BADGE[role] || ROLE_BADGE["finance_mpx"];
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 4,
+      fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase",
+      padding: "2px 7px", borderRadius: 4,
+      background: t[cfg.bg], color: t[cfg.color], border: `1px solid ${t[cfg.bd]}`,
+    }}>
+      <Shield size={9} />{role?.replace(/_/g, " ")}
+    </span>
   );
 }
 
@@ -280,11 +352,25 @@ export default function DashboardPage() {
   const [pendingView,      setPendingView]      = useState(null);
   const [mobileOpen,       setMobileOpen]       = useState(false);
 
-  // ── Disabled months map: loaded from DB + realtime ─────────────────────────
-  // Structure: Map< "partner_name|branch_name|mpc_mp3|year" , Set<monthName> >
-  // Used by: PNL_ControlCenter (display) + Form* (block month selection)
+  // Disabled months map: Map< "partner|branch|mpc|year" , Set<month> >
   const [disabledMonthsMap, setDisabledMonthsMap] = useState(new Map());
 
+  // ── Computed role flags ──────────────────────────────────────────────────────
+  const isSPM     = profile?.role === "spm_sumatera";
+  const isMPX     = profile?.role === "finance_mpx";
+  const isIOHAny  = IOH_ROLES.has(profile?.role);  // semua varian IOH
+
+  // Region yang dikunci untuk IOH regional (null = bebas pilih)
+  const iohLockedRegion = IOH_ROLE_REGION_MAP[profile?.role] ?? null;
+
+  // IOH bisa akses modul monitor tapi tidak bisa edit form
+  const isReadOnly = isIOHAny;
+
+  const canPnl = (isSPM || isIOHAny)
+    ? (!!activePartner && !!activeBranch)
+    : (activePartner === profile?.partner_name && !!activeBranch);
+
+  // ── Available years ──────────────────────────────────────────────────────────
   const availableYears = useMemo(() => {
     return Array.from({ length: CURRENT_YEAR - 2026 + 1 }, (_, i) => (2026 + i).toString()).reverse();
   }, []);
@@ -294,11 +380,9 @@ export default function DashboardPage() {
     return MONTHS;
   }, [activeYear]);
 
-  // Months disabled specifically for current partner+branch+type context
-  // Passed to Form* so they can block/grey those months in their own month picker
+  // ── Disabled months untuk konteks aktif ─────────────────────────────────────
   const activeContextDisabledMonths = useMemo(() => {
     if (!activePartner || !activeBranch) return new Set();
-    // Resolve mpc_mp3: if activeType is "ALL", look up from masterData
     const resolvedType = (activeType && activeType !== "ALL")
       ? activeType
       : masterData.find(i => i.partner_name === activePartner && i.branch_name === activeBranch)?.mpc_mp3;
@@ -307,7 +391,7 @@ export default function DashboardPage() {
     return disabledMonthsMap.get(key) || new Set();
   }, [disabledMonthsMap, activePartner, activeBranch, activeType, activeYear, masterData]);
 
-  // If current activeMonth is disabled, auto-advance to a non-disabled month
+  // Auto-advance month jika bulan aktif di-disable
   useEffect(() => {
     if (activeContextDisabledMonths.has(activeMonth)) {
       const fallback = availableMonths.find(m => !activeContextDisabledMonths.has(m));
@@ -324,28 +408,50 @@ export default function DashboardPage() {
     localStorage.setItem("sh-theme", next);
   };
 
-  // ── Initial load ───────────────────────────────────────────────────────────
+  // ── Initial load ─────────────────────────────────────────────────────────────
   useEffect(() => {
     setTheme(localStorage.getItem("sh-theme") || "dark");
     const sc = localStorage.getItem("sh-sidebar-collapsed");
     if (sc) setSidebarCollapsed(sc === "true");
+
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return router.push("/login");
+
       const { data: prof } = await supabase.from("profiles").select("*").eq("id", user.id).single();
+
+      // Filter masterData sesuai role
       let query = supabase.from("partner_branches").select("*").order("partner_name", { ascending: true });
-      if (prof?.role === "finance_mpx") query = query.eq("partner_name", prof?.partner_name);
+      if (prof?.role === "finance_mpx") {
+        query = query.eq("partner_name", prof?.partner_name);
+      }
+      // IOH regional: filter langsung di query untuk efisiensi
+      const lockedRegion = IOH_ROLE_REGION_MAP[prof?.role];
+      if (lockedRegion) {
+        query = query.eq("region", lockedRegion);
+      }
+
       const { data: mapData } = await query;
+
       setProfile(prof);
       setMasterData(mapData || []);
       setRegions([...new Set(mapData?.map(i => i.region))].sort());
-      if (prof?.role === "finance_mpx") setActivePartner(prof?.partner_name || "");
+
+      // Finance MPX: auto-set partner
+      if (prof?.role === "finance_mpx") {
+        setActivePartner(prof?.partner_name || "");
+      }
+
+      // IOH regional: lock region dari awal
+      if (lockedRegion) {
+        setActiveRegion(lockedRegion);
+      }
+
       setLoading(false);
     })();
   }, [router]);
 
-  // ── Load disabled months from DB (scoped to activeYear) ──────────────────
-  // NOTE: Requires table `pnl_disabled_months` — see SQL schema in PNL_ControlCenter.jsx
+  // ── Load disabled months ─────────────────────────────────────────────────────
   useEffect(() => {
     if (!activeYear) return;
     (async () => {
@@ -353,11 +459,9 @@ export default function DashboardPage() {
         const { data, error } = await supabase
           .from("pnl_disabled_months")
           .select("partner_name,branch_name,mpc_mp3,month,year");
-        // Load ALL years — activeContextDisabledMonths key includes year for filtering
         if (error) {
-          // 42P01 = table does not exist yet → silently skip, feature inactive
           if (error.code === "42P01" || error.message?.includes("does not exist")) {
-            console.warn("[pnl_disabled_months] Tabel belum dibuat — jalankan SQL schema di Supabase. Fitur disable bulan dinonaktifkan sementara.");
+            console.warn("[pnl_disabled_months] Tabel belum dibuat.");
           } else {
             console.error("[pnl_disabled_months] Gagal memuat:", error.message ?? error);
           }
@@ -366,7 +470,6 @@ export default function DashboardPage() {
         }
         const map = new Map();
         (data || []).forEach(r => {
-          // Stringify year for consistent key comparison with activeYear (string)
           const key = `${r.partner_name}|${r.branch_name}|${r.mpc_mp3}|${String(r.year)}`;
           if (!map.has(key)) map.set(key, new Set());
           map.get(key).add(r.month);
@@ -379,14 +482,12 @@ export default function DashboardPage() {
     })();
   }, [activeYear]);
 
-  // ── Realtime subscription for disabled months ──────────────────────────────
-  // Keeps all sessions (including other devices / other accounts with same role) in sync
+  // ── Realtime: disabled months ────────────────────────────────────────────────
   useEffect(() => {
     if (!activeYear) return;
     const channel = supabase
       .channel(`page_disabled_months_${activeYear}`)
-      .on(
-        "postgres_changes",
+      .on("postgres_changes",
         { event: "*", schema: "public", table: "pnl_disabled_months", filter: `year=eq.${activeYear}` },
         (payload) => {
           const { eventType, new: n, old: o } = payload;
@@ -410,31 +511,36 @@ export default function DashboardPage() {
         }
       )
       .subscribe((status, err) => {
-        if (err) {
-          // Silently ignore if table not yet created
-          console.warn("[pnl_disabled_months] Realtime subscription:", err?.message ?? err);
-        }
+        if (err) console.warn("[pnl_disabled_months] Realtime:", err?.message ?? err);
       });
     return () => supabase.removeChannel(channel);
   }, [activeYear]);
 
+  // ── Sidebar toggle ───────────────────────────────────────────────────────────
   const handleToggleSidebar = () => {
     const next = !sidebarCollapsed;
     setSidebarCollapsed(next);
     localStorage.setItem("sh-sidebar-collapsed", String(next));
   };
 
+  // Sync region saat partner berubah (kecuali IOH regional yang region-nya dikunci)
   useEffect(() => {
-    if (!activePartner) return;
+    if (!activePartner || iohLockedRegion) return;
     const partnerData = masterData.find(i => i.partner_name === activePartner);
     if (partnerData?.region) setActiveRegion(partnerData.region);
-  }, [activePartner, masterData]);
+  }, [activePartner, masterData, iohLockedRegion]);
 
+  // ── Filtered options ─────────────────────────────────────────────────────────
   const filteredPartners = useMemo(() => {
     let list = masterData;
-    if (activeRegion !== "SUMATERA") list = list.filter(i => i.region === activeRegion);
+    // IOH regional: masterData sudah di-filter saat query, tapi tetap filter di sini untuk safety
+    if (iohLockedRegion) {
+      list = list.filter(i => i.region === iohLockedRegion);
+    } else if (activeRegion !== "SUMATERA") {
+      list = list.filter(i => i.region === activeRegion);
+    }
     return [...new Set(list.map(i => i.partner_name))];
-  }, [masterData, activeRegion]);
+  }, [masterData, activeRegion, iohLockedRegion]);
 
   const availableTypes = useMemo(() => {
     if (!activePartner) return [];
@@ -443,7 +549,9 @@ export default function DashboardPage() {
 
   const availableBranches = useMemo(() => {
     if (!activePartner) return [];
-    return [...new Set(masterData.filter(i => i.partner_name === activePartner && (activeType === "ALL" || i.mpc_mp3 === activeType)).map(i => i.branch_name))];
+    return [...new Set(masterData
+      .filter(i => i.partner_name === activePartner && (activeType === "ALL" || i.mpc_mp3 === activeType))
+      .map(i => i.branch_name))];
   }, [masterData, activePartner, activeType]);
 
   useEffect(() => {
@@ -460,18 +568,14 @@ export default function DashboardPage() {
     if (!availableMonths.includes(activeMonth)) setActiveMonth(availableMonths[availableMonths.length - 1]);
   }, [activeYear, availableMonths, activeMonth]);
 
-  const isSPM    = profile?.role === "spm_sumatera";
-  const isIOH    = profile?.role === "internal_ioh";
-  const isMPX    = profile?.role === "finance_mpx";
-  const canPnl   = (isSPM || isIOH)
-    ? (!!activePartner && !!activeBranch)
-    : (activePartner === profile?.partner_name && !!activeBranch);
-  const isReadOnly = isIOH;
-  const mpxType = activeType !== "ALL" ? activeType : masterData.find(i => i.partner_name === activePartner && i.branch_name === activeBranch)?.mpc_mp3;
+  const mpxType = activeType !== "ALL"
+    ? activeType
+    : masterData.find(i => i.partner_name === activePartner && i.branch_name === activeBranch)?.mpc_mp3;
 
   const clearFilters = () => {
-    setActiveRegion("SUMATERA");
-    if (isSPM || isIOH) { setActivePartner(""); setActiveBranch(""); setActiveType("ALL"); }
+    // IOH regional tidak bisa reset region
+    if (!iohLockedRegion) setActiveRegion("SUMATERA");
+    if (isSPM || isIOHAny) { setActivePartner(""); setActiveBranch(""); setActiveType("ALL"); }
   };
 
   const navigate = (viewId) => {
@@ -485,19 +589,16 @@ export default function DashboardPage() {
     else { setView(tabId); }
   };
 
-  // Months available in the header picker — exclude disabled months for current context
-  const availableMonthsForPicker = useMemo(() => {
-    return availableMonths.filter(m => !activeContextDisabledMonths.has(m));
-  }, [availableMonths, activeContextDisabledMonths]);
-
   const HEADER_H  = 60;
   const SIDEBAR_W = 252;
   const hideDatePicker = HIDE_DATE_PICKER_VIEWS.has(view);
 
   if (loading) return <LoadingScreen />;
 
+  // ─── Sidebar inner ──────────────────────────────────────────────────────────
   const SidebarInner = () => (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", userSelect: "none" }}>
+      {/* Logo */}
       <div style={{ height: HEADER_H, display: "flex", alignItems: "center", padding: "0 20px", flexShrink: 0, borderBottom: `1px solid ${t.line}`, background: d ? "linear-gradient(135deg, #1A0506 0%, #111113 100%)" : "linear-gradient(135deg, #FFF5F5 0%, #FFFFFF 100%)" }}>
         <div style={{ width: 32, height: 32, borderRadius: 8, flexShrink: 0, background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", display: "flex", alignItems: "center", justifyContent: "center", color: "#FFFFFF" }}>
           <Box size={15} strokeWidth={2.4} />
@@ -508,46 +609,97 @@ export default function DashboardPage() {
           </span>
         </div>
       </div>
+
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 14px 24px", display: "flex", flexDirection: "column", gap: 26 }}>
+        {/* Filters */}
         <div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 2px", marginBottom: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
               <SlidersHorizontal size={12} style={{ color: t.lo }} />
               <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: "0.10em", textTransform: "uppercase", color: t.mid }}>Filter</span>
             </div>
-            <button onClick={clearFilters}
+            <button
+              onClick={clearFilters}
               style={{ display: "inline-flex", alignItems: "center", gap: 4, background: "transparent", border: `1px solid ${t.line}`, cursor: "pointer", fontSize: 10.5, fontWeight: 500, color: t.mid, padding: "3px 8px", borderRadius: 5, transition: "all .12s", fontFamily: "inherit" }}
               onMouseEnter={e => { e.currentTarget.style.borderColor = t.blueBd; e.currentTarget.style.color = t.blue; }}
               onMouseLeave={e => { e.currentTarget.style.borderColor = t.line; e.currentTarget.style.color = t.mid; }}
             ><X size={10} />Reset</button>
           </div>
+
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {(isSPM || isIOH) && (
-              <FilterSelect label="Region" icon={<Globe size={12} />} value={activeRegion}
-                onChange={v => { setActiveRegion(v); setActivePartner(""); setActiveBranch(""); }} t={t} d={d}>
+            {/* Region picker — tampil untuk SPM dan semua IOH, tapi di-lock untuk IOH regional */}
+            {(isSPM || isIOHAny) && (
+              <FilterSelect
+                label={iohLockedRegion ? `Region (terkunci)` : "Region"}
+                icon={<Globe size={12} />}
+                value={activeRegion}
+                onChange={v => {
+                  if (iohLockedRegion) return; // IOH regional tidak bisa ganti
+                  setActiveRegion(v);
+                  setActivePartner("");
+                  setActiveBranch("");
+                }}
+                t={t} d={d}
+                disabled={!!iohLockedRegion}
+              >
                 <option value="SUMATERA">Seluruh Sumatera</option>
                 {regions.map(r => <option key={r} value={r}>{r}</option>)}
               </FilterSelect>
             )}
-            <FilterSelect label="Nama Partner" icon={<Building2 size={12} />} value={activePartner}
-              onChange={v => { setActivePartner(v); setActiveBranch(""); setActiveType("ALL"); }} t={t} d={d} disabled={isMPX}>
+
+            {/* IOH regional: tampilkan info region yang dikunci */}
+            {iohLockedRegion && (
+              <div style={{
+                padding: "8px 11px", borderRadius: 7, fontSize: 11.5, fontWeight: 600,
+                background: d ? "rgba(255,203,5,0.10)" : "rgba(255,203,5,0.09)",
+                border: `1px solid ${t.yellowBd}`, color: t.yellow,
+                display: "flex", alignItems: "center", gap: 7,
+              }}>
+                <Globe size={12} style={{ flexShrink: 0 }} />
+                Akses dibatasi: {iohLockedRegion}
+              </div>
+            )}
+
+            <FilterSelect
+              label="Nama Partner"
+              icon={<Building2 size={12} />}
+              value={activePartner}
+              onChange={v => { setActivePartner(v); setActiveBranch(""); setActiveType("ALL"); }}
+              t={t} d={d}
+              disabled={isMPX}
+            >
               <option value="" disabled>Pilih Partner</option>
               {filteredPartners.map(p => <option key={p} value={p}>{p}</option>)}
             </FilterSelect>
+
             {activePartner && (
-              <FilterSelect label="Tipe (MPC / MP3)" icon={<SlidersHorizontal size={12} />} value={activeType}
-                onChange={v => { setActiveType(v); setActiveBranch(""); }} t={t} d={d}>
+              <FilterSelect
+                label="Tipe (MPC / MP3)"
+                icon={<SlidersHorizontal size={12} />}
+                value={activeType}
+                onChange={v => { setActiveType(v); setActiveBranch(""); }}
+                t={t} d={d}
+              >
                 <option value="ALL">Semua Tipe</option>
                 {availableTypes.map(tp => <option key={tp} value={tp}>{tp}</option>)}
               </FilterSelect>
             )}
-            <FilterSelect label="Branch" icon={<Store size={12} />} value={activeBranch}
-              onChange={v => setActiveBranch(v)} t={t} d={d} disabled={!activePartner}>
+
+            <FilterSelect
+              label="Branch"
+              icon={<Store size={12} />}
+              value={activeBranch}
+              onChange={v => setActiveBranch(v)}
+              t={t} d={d}
+              disabled={!activePartner}
+            >
               <option value="" disabled>Pilih Cabang</option>
               {availableBranches.map(b => <option key={b} value={b}>{b}</option>)}
             </FilterSelect>
           </div>
         </div>
+
+        {/* Navigation */}
         <div>
           <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: "0.10em", textTransform: "uppercase", color: t.mid, paddingLeft: 2, marginBottom: 8 }}>Navigasi</div>
           <button onClick={() => setNavOpen(!navOpen)} className="snav" style={{ marginBottom: 2 }}>
@@ -559,10 +711,19 @@ export default function DashboardPage() {
             {navOpen && (
               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.17 }} style={{ overflow: "hidden" }}>
                 <div style={{ marginLeft: 14, paddingLeft: 10, borderLeft: `1px solid ${t.line}`, paddingTop: 4, paddingBottom: 4, display: "flex", flexDirection: "column", gap: 2 }}>
-                  {(isSPM || isIOH) && <SNavItem icon={<Layers size={14} />} label="PNL Control Center" active={view === "control-center"} onClick={() => navigate("control-center")} />}
-                  {(isSPM || isIOH) && <SNavItem icon={<Table2 size={14} />} label="Pivot P&L Summary" active={view === "pivot-summary"} onClick={() => navigate("pivot-summary")} />}
+                  {/* Control Center & Pivot: semua IOH + SPM */}
+                  {(isSPM || isIOHAny) && (
+                    <SNavItem icon={<Layers size={14} />} label="PNL Control Center" active={view === "control-center"} onClick={() => navigate("control-center")} />
+                  )}
+                  {(isSPM || isIOHAny) && (
+                    <SNavItem icon={<Table2 size={14} />} label="Pivot P&L Summary" active={view === "pivot-summary"} onClick={() => navigate("pivot-summary")} />
+                  )}
                   <SNavItem icon={<Wallet size={14} />} label="Payout Tracker" active={view === "payout-tracker"} onClick={() => navigate("payout-tracker")} />
                   <SNavItem icon={<PieChart size={14} />} label="Laporan P&L" active={["summary","pendapatan","pengeluaran"].includes(view)} onClick={() => { if (canPnl) navigate("summary"); }} disabled={!canPnl} />
+                  {/* Admin Panel: SPM only */}
+                  {isSPM && (
+                    <SNavItem icon={<Shield size={14} />} label="Admin Panel" active={view === "admin-panel"} onClick={() => navigate("admin-panel")} />
+                  )}
                 </div>
               </motion.div>
             )}
@@ -572,13 +733,16 @@ export default function DashboardPage() {
     </div>
   );
 
+  // ─── Main render ────────────────────────────────────────────────────────────
   return (
     <div style={{ display: "flex", height: "100vh", background: t.appBg, color: t.hi, fontFamily: FONT_STACK, WebkitFontSmoothing: "antialiased", MozOsxFontSmoothing: "grayscale", overflow: "hidden", transition: "background .25s, color .25s" }}>
       <style>{buildGlobalCSS(d, t)}</style>
+
       {/* Desktop sidebar */}
       <aside className="lg-sidebar" style={{ width: sidebarCollapsed ? 0 : SIDEBAR_W, flexShrink: 0, background: t.sidebar, borderRight: sidebarCollapsed ? "none" : `1px solid ${t.line}`, flexDirection: "column", height: "100vh", position: "sticky", top: 0, zIndex: 50, overflow: "hidden", transition: "width .22s cubic-bezier(0.4,0,0.2,1), border-right .22s", display: "none" }}>
         <div style={{ width: SIDEBAR_W, height: "100%", flexShrink: 0 }}><SidebarInner /></div>
       </aside>
+
       {/* Main column */}
       <main style={{ flex: 1, display: "flex", flexDirection: "column", height: "100vh", overflow: "hidden", minWidth: 0 }}>
         {/* Header */}
@@ -593,7 +757,7 @@ export default function DashboardPage() {
             </button>
             <div className="lg-sidebar-toggle" style={{ display: "none", width: 1, height: 22, background: t.line }} />
 
-            {/* ── Date picker: hidden for control-center / pivot-summary / payout-tracker ── */}
+            {/* Date picker */}
             {!hideDatePicker && (
               <div style={{ display: "flex", alignItems: "center", border: `1px solid ${t.inputBd}`, borderRadius: 8, background: t.inputBg, height: 36, overflow: "hidden", flexShrink: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", borderRight: `1px solid ${t.inputBd}`, height: "100%", position: "relative" }}>
@@ -631,17 +795,19 @@ export default function DashboardPage() {
             )}
           </div>
 
+          {/* Right: theme, notifications, profile */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             <button className="icon-btn" onClick={toggleTheme} style={{ width: 36, height: 36 }} aria-label="Ganti tema">
               {d ? <Sun size={15} /> : <Moon size={15} />}
             </button>
-<NotificationBell 
-  t={t} d={d} 
-  isSPM={isSPM || isIOH} 
-  activeYear={activeYear} 
-  masterData={masterData}             // <--- Tambahkan ini
-  disabledMonthsMap={disabledMonthsMap} // <--- Tambahkan ini
-/>            <div style={{ position: "relative" }}>
+            <NotificationBell
+              t={t} d={d}
+              isSPM={isSPM || isIOHAny}
+              activeYear={activeYear}
+              masterData={masterData}
+              disabledMonthsMap={disabledMonthsMap}
+            />
+            <div style={{ position: "relative" }}>
               <button onClick={() => setProfileOpen(!profileOpen)} style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 10px 0 4px", height: 36, borderRadius: 8, border: `1px solid ${profileOpen ? t.blueBd : t.line}`, background: profileOpen ? t.blueSoft : t.inputBg, cursor: "pointer", transition: "all .12s", outline: "none", fontFamily: "inherit" }}>
                 <div style={{ width: 26, height: 26, borderRadius: 6, background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#FFFFFF", fontSize: 12, fontWeight: 700, letterSpacing: "-0.02em" }}>
                   {profile?.full_name?.charAt(0) || "U"}
@@ -665,9 +831,7 @@ export default function DashboardPage() {
                           <div style={{ fontSize: 11.5, color: t.mid, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{profile?.email}</div>
                         </div>
                       </div>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", padding: "2px 7px", borderRadius: 4, background: profile?.role === "spm_sumatera" ? t.magentaBg : profile?.role === "internal_ioh" ? t.yellowBg : t.greenBg, color: profile?.role === "spm_sumatera" ? t.magenta : profile?.role === "internal_ioh" ? t.yellow : t.green, border: `1px solid ${profile?.role === "spm_sumatera" ? t.magentaBd : profile?.role === "internal_ioh" ? t.yellowBd : t.greenBd}` }}>
-                        <Shield size={9} />{profile?.role?.replace(/_/g, " ")}
-                      </span>
+                      <RoleBadge role={profile?.role} t={t} />
                     </div>
                     <div style={{ padding: 6 }}>
                       <button className="danger-btn" onClick={async () => { await supabase.auth.signOut(); router.replace("/login"); }}>
@@ -681,9 +845,11 @@ export default function DashboardPage() {
           </div>
         </header>
 
-        {/* Content */}
+        {/* Content area */}
         <div className="content-pad" style={{ flex: 1, overflowY: "auto", padding: "28px 28px 48px" }}>
           <AnimatePresence mode="wait">
+
+            {/* ── Overview ── */}
             {view === "overview" && (
               <motion.div key="ov" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} style={{ maxWidth: 980, margin: "0 auto" }}>
                 <div style={{ marginBottom: 24 }}>
@@ -691,31 +857,64 @@ export default function DashboardPage() {
                   <p style={{ fontSize: 14, color: t.mid, fontWeight: 400, lineHeight: 1.5 }}>Pilih modul laporan yang ingin Anda kelola.</p>
                   <div style={{ width: 40, height: 3, borderRadius: 2, marginTop: 12, background: "linear-gradient(90deg, #ED1C24, #C6168D)" }} />
                 </div>
+
+                {/* Konteks aktif */}
                 <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", marginBottom: 24, borderRadius: 9, border: `1px solid ${activePartner ? t.blueBd : t.line}`, background: activePartner ? t.blueSoft : t.card }}>
                   <MapPin size={14} style={{ color: activePartner ? t.blue : t.lo, flexShrink: 0 }} />
                   <span style={{ fontSize: 13, color: activePartner ? t.hi : t.mid, fontWeight: 400, lineHeight: 1.5, minWidth: 0 }}>
                     {activePartner
-                      ? <><strong style={{ fontWeight: 600 }}>{activePartner}</strong>{activeBranch && <> &middot; <strong style={{ fontWeight: 600 }}>{activeBranch}</strong></>}</>
-                      : "Tentukan filter di sidebar untuk mengaktifkan modul laporan."}
+                      ? <><strong style={{ fontWeight: 600 }}>{activePartner}</strong>{activeBranch && <> &middot; <strong style={{ fontWeight: 600 }}>{activeBranch}</strong></>}{iohLockedRegion && <span style={{ color: t.yellow, fontSize: 12, marginLeft: 8 }}>({iohLockedRegion})</span>}</>
+                      : iohLockedRegion
+                        ? `Pilih partner di region ${iohLockedRegion} dari sidebar.`
+                        : "Tentukan filter di sidebar untuk mengaktifkan modul laporan."}
                   </span>
                 </div>
+
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
-                  <DashCard icon={<PieChart size={20} />} title="Laporan P&L" desc="Analisis pendapatan harian, margin produk, dan pengeluaran operasional partner." tag="Profit & Loss" active={canPnl} onClick={() => navigate("summary")} t={t} d={d}
-                    accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.12)" : "rgba(50,188,173,0.08)", bd: d ? "rgba(50,188,173,0.30)" : "rgba(50,188,173,0.20)", shadow: "rgba(50,188,173,0.20)" }} />
-                  {(isSPM || isIOH) && (
-                    <DashCard icon={<Layers size={20} />} title="PNL Control Center" desc="Monitoring progres pengisian laporan seluruh branch di wilayah Sumatera." tag="Admin" active={true} onClick={() => navigate("control-center")} t={t} d={d}
-                      accent={{ color: "#ED1C24", bg: d ? "rgba(237,28,36,0.10)" : "rgba(237,28,36,0.06)", bd: d ? "rgba(237,28,36,0.26)" : "rgba(237,28,36,0.16)", shadow: "rgba(237,28,36,0.16)" }} />
+                  <DashCard
+                    icon={<PieChart size={20} />} title="Laporan P&L"
+                    desc="Analisis pendapatan harian, margin produk, dan pengeluaran operasional partner."
+                    tag="Profit & Loss" active={canPnl} onClick={() => navigate("summary")} t={t} d={d}
+                    accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.12)" : "rgba(50,188,173,0.08)", bd: d ? "rgba(50,188,173,0.30)" : "rgba(50,188,173,0.20)", shadow: "rgba(50,188,173,0.20)" }}
+                  />
+                  {/* Control Center: SPM + semua IOH */}
+                  {(isSPM || isIOHAny) && (
+                    <DashCard
+                      icon={<Layers size={20} />} title="PNL Control Center"
+                      desc="Monitoring progres pengisian laporan seluruh branch di wilayah Sumatera."
+                      tag="Admin" active={true} onClick={() => navigate("control-center")} t={t} d={d}
+                      accent={{ color: "#ED1C24", bg: d ? "rgba(237,28,36,0.10)" : "rgba(237,28,36,0.06)", bd: d ? "rgba(237,28,36,0.26)" : "rgba(237,28,36,0.16)", shadow: "rgba(237,28,36,0.16)" }}
+                    />
                   )}
-                  {(isSPM || isIOH) && (
-                    <DashCard icon={<Table2 size={20} />} title="Pivot P&L Summary" desc="Ringkasan REV, EXP, dan P/L seluruh MPX per bulan dalam format pivot table." tag="Admin" active={true} onClick={() => navigate("pivot-summary")} t={t} d={d}
-                      accent={{ color: d ? "#C49A00" : "#9A7400", bg: d ? "rgba(255,203,5,0.11)" : "rgba(255,203,5,0.09)", bd: d ? "rgba(255,203,5,0.28)" : "rgba(255,203,5,0.20)", shadow: "rgba(255,203,5,0.18)" }} />
+                  {/* Pivot Summary: SPM + semua IOH */}
+                  {(isSPM || isIOHAny) && (
+                    <DashCard
+                      icon={<Table2 size={20} />} title="Pivot P&L Summary"
+                      desc="Ringkasan REV, EXP, dan P/L seluruh MPX per bulan dalam format pivot table."
+                      tag="Admin" active={true} onClick={() => navigate("pivot-summary")} t={t} d={d}
+                      accent={{ color: d ? "#C49A00" : "#9A7400", bg: d ? "rgba(255,203,5,0.11)" : "rgba(255,203,5,0.09)", bd: d ? "rgba(255,203,5,0.28)" : "rgba(255,203,5,0.20)", shadow: "rgba(255,203,5,0.18)" }}
+                    />
                   )}
-                  <DashCard icon={<Wallet size={20} />} title="Payout Tracker" desc="Monitoring pembayaran Partner & Agency Prepaid — SLA, funnel, heatmap, dan raw data terintegrasi." tag="Admin" active={true} onClick={() => navigate("payout-tracker")} t={t} d={d}
-                    accent={{ color: "#C6168D", bg: d ? "rgba(198,22,141,0.11)" : "rgba(198,22,141,0.07)", bd: d ? "rgba(198,22,141,0.28)" : "rgba(198,22,141,0.16)", shadow: "rgba(198,22,141,0.16)" }} />
+                  <DashCard
+                    icon={<Wallet size={20} />} title="Payout Tracker"
+                    desc="Monitoring pembayaran Partner & Agency Prepaid — SLA, funnel, heatmap, dan raw data terintegrasi."
+                    tag="Admin" active={true} onClick={() => navigate("payout-tracker")} t={t} d={d}
+                    accent={{ color: "#C6168D", bg: d ? "rgba(198,22,141,0.11)" : "rgba(198,22,141,0.07)", bd: d ? "rgba(198,22,141,0.28)" : "rgba(198,22,141,0.16)", shadow: "rgba(198,22,141,0.16)" }}
+                  />
+                  {/* Admin Panel: SPM only */}
+                  {isSPM && (
+                    <DashCard
+                      icon={<Shield size={20} />} title="Admin Panel"
+                      desc="Kelola role, permission, kode otoritas, dan daftar partner branches seluruh Sumatera."
+                      tag="Admin" active={true} onClick={() => navigate("admin-panel")} t={t} d={d}
+                      accent={{ color: d ? "#A78BFA" : "#7C3AED", bg: d ? "rgba(167,139,250,0.11)" : "rgba(124,58,237,0.07)", bd: d ? "rgba(167,139,250,0.28)" : "rgba(124,58,237,0.18)", shadow: "rgba(124,58,237,0.18)" }}
+                    />
+                  )}
                 </div>
               </motion.div>
             )}
 
+            {/* ── PNL Control Center ── */}
             {view === "control-center" && (
               <motion.div key="cc" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
@@ -725,7 +924,7 @@ export default function DashboardPage() {
                   activeYear={activeYear}
                   activeMonth={activeMonth}
                   disabledMonthsMap={disabledMonthsMap}
-                  userRole={profile?.role} // <--- TAMBAHKAN BARIS INI
+                  userRole={profile?.role}
                   onOpenBranch={p => {
                     setActivePartner(p.partner_name);
                     setActiveBranch(p.branch_name);
@@ -737,6 +936,7 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
+            {/* ── Pivot Summary ── */}
             {view === "pivot-summary" && (
               <motion.div key="ps" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
@@ -744,13 +944,29 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
+            {/* ── Payout Tracker ── */}
             {view === "payout-tracker" && (
               <motion.div key="pt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
-                <PayoutTracker theme={theme} profile={profile} partnerName={isMPX ? (profile?.partner_name || null) : (activePartner || null)} filterType={activeType !== "ALL" ? activeType : null} readOnly={isReadOnly} />
+                <PayoutTracker
+                  theme={theme}
+                  profile={profile}
+                  partnerName={isMPX ? (profile?.partner_name || null) : (activePartner || null)}
+                  filterType={activeType !== "ALL" ? activeType : null}
+                  readOnly={isReadOnly}
+                />
               </motion.div>
             )}
 
+            {/* ── Admin Panel (SPM only) ── */}
+            {view === "admin-panel" && isSPM && (
+              <motion.div key="ap" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <AdminPanel theme={theme} profile={profile} />
+              </motion.div>
+            )}
+
+            {/* ── Laporan P&L (summary / pendapatan / pengeluaran) ── */}
             {["summary","pendapatan","pengeluaran"].includes(view) && (
               <motion.div key="fv" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} style={{ maxWidth: 920, margin: "0 auto" }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 20 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
@@ -838,14 +1054,18 @@ export default function DashboardPage() {
                 <h3 style={{ fontSize: 17, fontWeight: 700, letterSpacing: "-0.02em", color: t.hi, marginBottom: 7 }}>Batalkan Progress?</h3>
                 <p style={{ fontSize: 13.5, color: t.mid, lineHeight: 1.55, marginBottom: 22 }}>Data yang belum disimpan akan terhapus dan tidak dapat dipulihkan.</p>
                 <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-                  <button onClick={() => { setFormDirty(false); setView(pendingView); setExitConfirm(false); setPendingView(null); }}
-                    style={{ width: "100%", padding: 11, background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", color: "#FFFFFF", border: "none", borderRadius: 8, fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                  <button
+                    onClick={() => { setFormDirty(false); setView(pendingView); setExitConfirm(false); setPendingView(null); }}
+                    style={{ width: "100%", padding: 11, background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", color: "#FFFFFF", border: "none", borderRadius: 8, fontSize: 13.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}
+                  >
                     Hapus & Lanjutkan
                   </button>
-                  <button onClick={() => { setExitConfirm(false); setPendingView(null); }}
+                  <button
+                    onClick={() => { setExitConfirm(false); setPendingView(null); }}
                     style={{ width: "100%", padding: 11, background: "transparent", color: t.mid, border: `1px solid ${t.line}`, borderRadius: 8, fontSize: 13.5, fontWeight: 500, cursor: "pointer", fontFamily: "inherit" }}
                     onMouseEnter={e => { e.currentTarget.style.background = t.hover; e.currentTarget.style.color = t.hi; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = t.mid; }}>
+                    onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = t.mid; }}
+                  >
                     Kembali ke Form
                   </button>
                 </div>

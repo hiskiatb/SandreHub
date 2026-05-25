@@ -322,12 +322,27 @@ function StatusCell({ statusInfo, t, d, dbDisabled, saving, onClick, onToggleDis
         : <XCircle size={16} style={{ color: DISABLED_COLOR }} />,  // ← merah X
       label: "Dinonaktifkan",
     };
-    if (status === "FINALIZED") return {
-      bg:          `rgba(50,188,173,${d?0.15:0.10})`,
-      borderColor: `rgba(50,188,173,${d?0.35:0.25})`,
-      icon:        <CheckCircle2 size={17} style={{ color:"#32BCAD" }}/>,
-      label:       "Finalized",
-    };
+if (status === "FINALIZED") {
+  const hasPendapatan = notes?.includes("pendapatan:final");
+  const hasPengeluaran = notes?.includes("pengeluaran:final");
+  const bothFinal = hasPendapatan && hasPengeluaran;
+  return {
+    bg:          `rgba(50,188,173,${d?0.15:0.10})`,
+    borderColor: `rgba(50,188,173,${d?0.35:0.25})`,
+    icon: bothFinal
+      ? <CheckCircle2 size={17} style={{ color:"#32BCAD" }}/>
+      : (
+        <div style={{
+          width: 17, height: 17, borderRadius: "50%",
+          background: "#32BCAD",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: 10, fontWeight: 800, color: "#fff", lineHeight: 1,
+          flexShrink: 0,
+        }}>1</div>
+      ),
+    label: "Finalized",
+  };
+}
     if (status === "DRAFT") return {
       bg:          `rgba(255,203,5,${d?0.14:0.10})`,
       borderColor: `rgba(255,203,5,${d?0.35:0.25})`,

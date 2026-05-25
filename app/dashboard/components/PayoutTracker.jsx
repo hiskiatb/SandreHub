@@ -9,6 +9,11 @@
   • Data: Supabase cloud sync + realtime subscription
   • Role: spm_sumatera → Admin · others → Viewer
   • Responsive: mobile-first, 320px → 1440px
+  • v2 update: regionFilter prop untuk IOH regional
+    - ioh_north_sumatera   → hanya partner di NORTH SUMATERA
+    - ioh_central_sumatera → hanya partner di CENTRAL SUMATERA
+    - ioh_south_sumatera   → hanya partner di SOUTH SUMATERA
+    - internal_ioh         → semua region (tidak difilter)
   ─────────────────────────────────────────────────────────────────────
 */
 
@@ -184,18 +189,15 @@ function heatClr(p) {
 function normalizeName(s) {
   if (!s) return "";
   let n = s.toString().trim().toUpperCase();
-  // Strip suffix: ", PT" / ", CV" / ", TBK" (xlsx format)
   for (const sf of [", PT.", ", CV.", ", TBK.", ", PT", ", CV", ", TBK"]) {
     if (n.endsWith(sf)) { n = n.slice(0, -sf.length).trimEnd().replace(/,\s*$/, "").trim(); break; }
   }
-  // Strip prefix: "PT " / "CV " / "TBK " (DB format)
   for (const pf of ["PT. ", "CV. ", "TBK. ", "PT ", "CV ", "TBK "]) {
     if (n.startsWith(pf)) { n = n.slice(pf.length).trim(); break; }
   }
   return n;
 }
 
-/* ── Get partner name from a raw row ── */
 function getPartnerNameFromRow(r) {
   return (
     r["Partner Name"] || r["partner name"] || r["PARTNER NAME"] ||
@@ -203,7 +205,6 @@ function getPartnerNameFromRow(r) {
   ).toString();
 }
 
-/* ── Get partner type (MPC/MP3) from a raw row ── */
 function getMpxTypeFromRow(r) {
   return (
     r["Partner Type"] || r["partner type"] || r["partnertype"] ||
@@ -211,20 +212,60 @@ function getMpxTypeFromRow(r) {
   ).toString().toUpperCase().trim();
 }
 
-/* ── Apply sidebar filters to raw rows ── */
-// Agency Prepaid: abaikan filterPartner (nama agency ≠ nama partner)
-// Partner Prepaid: terapkan filterPartner + filterMpxType
-function applySidebarFilter(rows, filterPartner, filterMpxType, src) {
+// ── Get region from a raw row ─────────────────────────────────────────────
+// Region tersimpan di xlsx di kolom "Region", "region", atau "REGION"
+// Jika tidak ada kolom region di xlsx, fallback ke masterData lookup
+function getRegionFromRow(r) {
+  return (
+    r["Region"] || r["region"] || r["REGION"] || r["regional"] || r["Regional"] || ""
+  ).toString().trim().toUpperCase();
+}
+
+/* ── Apply ALL sidebar filters to raw rows ──────────────────────────────
+   - filterPartner  : nama partner dari sidebar (hanya untuk Partner Prepaid)
+   - filterMpxType  : MPC/MP3 dari sidebar
+   - regionFilter   : region yang dikunci untuk IOH regional
+                      null = tidak difilter (SPM / internal_ioh biasa)
+   - masterData     : digunakan untuk lookup region jika kolom region tidak ada di xlsx
+   - src            : "partner" | "agency"
+── */
+function applySidebarFilter(rows, filterPartner, filterMpxType, regionFilter, masterData, src) {
   let result = rows;
+
   // Filter partner name HANYA untuk data partner, bukan agency
   if (filterPartner && src !== "agency") {
     const needle = normalizeName(filterPartner);
     if (needle) result = result.filter(r => normalizeName(getPartnerNameFromRow(r)) === needle);
   }
+
+  // Filter tipe (MPC/MP3)
   if (filterMpxType) {
-    const t = filterMpxType.toUpperCase().trim();
-    result = result.filter(r => getMpxTypeFromRow(r) === t);
+    const tp = filterMpxType.toUpperCase().trim();
+    result = result.filter(r => getMpxTypeFromRow(r) === tp);
   }
+
+  // ── Filter region untuk IOH regional ──────────────────────────────────
+  // Prioritas: kolom region di xlsx → lookup dari masterData berdasarkan partner name
+  if (regionFilter && src !== "agency") {
+    const targetRegion = regionFilter.toUpperCase().trim();
+    result = result.filter(r => {
+      // 1. Cek kolom region di xlsx
+      const rowRegion = getRegionFromRow(r);
+      if (rowRegion) return rowRegion === targetRegion;
+
+      // 2. Fallback: lookup dari masterData berdasarkan partner name
+      if (masterData && masterData.length > 0) {
+        const partnerName = getPartnerNameFromRow(r);
+        const normalizedRowPartner = normalizeName(partnerName);
+        const match = masterData.find(m => normalizeName(m.partner_name) === normalizedRowPartner);
+        if (match) return match.region?.toUpperCase().trim() === targetRegion;
+      }
+
+      // 3. Jika tidak ada info region → exclude (aman untuk IOH regional)
+      return false;
+    });
+  }
+
   return result;
 }
 
@@ -308,135 +349,58 @@ async function readXLSX(file, src) {
    DESIGN TOKENS — full dark & light, Indosat palette
 ════════════════════════════════════════════════════════════════════ */
 const LIGHT = {
-  bg:       "#F0F0F3",
-  surf:     "#FFFFFF",
-  surf2:    "#F2F2F6",
-  surf3:    "#E8E8EE",
-  surf4:    "#D8D8E0",
-  ink:      "#111113",
-  ink2:     "#2A2A30",
-  muted:    "#52525B",
-  muted2:   "#8A8A96",
-  line:     "rgba(0,0,0,0.09)",
-  line2:    "rgba(0,0,0,0.14)",
-  accent:   C.teal,
-  accentD:  C.tealD,
-  red:      C.red,
-  yellow:   C.yellow,
-  yellowD:  C.yellowD,
-  magenta:  C.magenta,
-  pink:     C.pink,
-  // semantic
-  good:     C.teal,
-  goodDark: C.tealDp,
-  goodBg:   "rgba(50,188,173,0.10)",
-  goodBd:   "rgba(50,188,173,0.25)",
-  warn:     C.yellow,
-  warnDark: "#8a6a00",
-  warnBg:   "rgba(255,203,5,0.12)",
-  warnBd:   "rgba(255,203,5,0.30)",
-  bad:      C.red,
-  badDark:  "#aa1018",
-  badBg:    "rgba(237,28,36,0.09)",
-  badBd:    "rgba(237,28,36,0.22)",
-  info:     "#0060CC",
-  infoBg:   "rgba(0,96,204,0.08)",
-  infoBd:   "rgba(0,96,204,0.20)",
-  // special rows
-  spotBg:   "#111113",
-  grandBg:  "#111113",
-  spotInk:  "#FFFFFF",
-  rowHover: "rgba(50,188,173,0.06)",
-  rowStripe:"rgba(0,0,0,0.025)",
-  monthBg:  "rgba(50,188,173,0.07)",
-  // shadows
-  shadow1:  "0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05)",
-  shadow2:  "0 4px 16px rgba(0,0,0,0.09), 0 1px 4px rgba(0,0,0,0.05)",
-  shadow3:  "0 12px 40px rgba(0,0,0,0.14), 0 4px 12px rgba(0,0,0,0.06)",
+  bg:"#F0F0F3",surf:"#FFFFFF",surf2:"#F2F2F6",surf3:"#E8E8EE",surf4:"#D8D8E0",
+  ink:"#111113",ink2:"#2A2A30",muted:"#52525B",muted2:"#8A8A96",
+  line:"rgba(0,0,0,0.09)",line2:"rgba(0,0,0,0.14)",
+  accent:C.teal,accentD:C.tealD,red:C.red,yellow:C.yellow,yellowD:C.yellowD,magenta:C.magenta,pink:C.pink,
+  good:C.teal,goodDark:C.tealDp,goodBg:"rgba(50,188,173,0.10)",goodBd:"rgba(50,188,173,0.25)",
+  warn:C.yellow,warnDark:"#8a6a00",warnBg:"rgba(255,203,5,0.12)",warnBd:"rgba(255,203,5,0.30)",
+  bad:C.red,badDark:"#aa1018",badBg:"rgba(237,28,36,0.09)",badBd:"rgba(237,28,36,0.22)",
+  info:"#0060CC",infoBg:"rgba(0,96,204,0.08)",infoBd:"rgba(0,96,204,0.20)",
+  spotBg:"#111113",grandBg:"#111113",spotInk:"#FFFFFF",
+  rowHover:"rgba(50,188,173,0.06)",rowStripe:"rgba(0,0,0,0.025)",monthBg:"rgba(50,188,173,0.07)",
+  shadow1:"0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05)",
+  shadow2:"0 4px 16px rgba(0,0,0,0.09), 0 1px 4px rgba(0,0,0,0.05)",
+  shadow3:"0 12px 40px rgba(0,0,0,0.14), 0 4px 12px rgba(0,0,0,0.06)",
 };
 
 const DARK = {
-  bg:       "#0D0D0E",
-  surf:     "#13161F",   // matches parent dashboard card color
-  surf2:    "#1A1D28",
-  surf3:    "#222535",
-  surf4:    "#2A2E3E",
-  ink:      "#F1F5F9",   // matches parent hi color
-  ink2:     "#CBD5E1",
-  muted:    "#94A3B8",   // matches parent mid color
-  muted2:   "#64748B",
-  line:     "#242937",   // matches parent line color
-  line2:    "#2E3347",
-  accent:   C.teal,
-  accentD:  C.tealD,
-  red:      "#FF5A5F",
-  yellow:   "#FFCB05",
-  yellowD:  "#c49b00",
-  magenta:  "#D420A0",
-  pink:     "#FF3399",
-  // semantic
-  good:     C.teal,
-  goodDark: "#7ee8e0",
-  goodBg:   "rgba(50,188,173,0.13)",
-  goodBd:   "rgba(50,188,173,0.30)",
-  warn:     "#FFCB05",
-  warnDark: "#ffe066",
-  warnBg:   "rgba(255,203,5,0.13)",
-  warnBd:   "rgba(255,203,5,0.30)",
-  bad:      "#FF5A5F",
-  badDark:  "#ff8a8d",
-  badBg:    "rgba(255,90,95,0.13)",
-  badBd:    "rgba(255,90,95,0.30)",
-  info:     "#4D9FFF",
-  infoBg:   "rgba(77,159,255,0.12)",
-  infoBd:   "rgba(77,159,255,0.28)",
-  // special rows
-  spotBg:   "#0A0C12",   // matches parent appBg
-  grandBg:  "#0A0C12",
-  spotInk:  "#F1F5F9",
-  rowHover: "rgba(50,188,173,0.09)",
-  rowStripe:"rgba(255,255,255,0.025)",
-  monthBg:  "rgba(50,188,173,0.09)",
-  // shadows
-  shadow1:  "0 1px 2px rgba(0,0,0,0.45), 0 1px 2px rgba(0,0,0,0.30)",
-  shadow2:  "0 6px 18px rgba(0,0,0,0.55), 0 1px 4px rgba(0,0,0,0.35)",
-  shadow3:  "0 20px 48px rgba(0,0,0,0.65), 0 4px 12px rgba(0,0,0,0.45)",
+  bg:"#0D0D0E",surf:"#13161F",surf2:"#1A1D28",surf3:"#222535",surf4:"#2A2E3E",
+  ink:"#F1F5F9",ink2:"#CBD5E1",muted:"#94A3B8",muted2:"#64748B",
+  line:"#242937",line2:"#2E3347",
+  accent:C.teal,accentD:C.tealD,red:"#FF5A5F",yellow:"#FFCB05",yellowD:"#c49b00",magenta:"#D420A0",pink:"#FF3399",
+  good:C.teal,goodDark:"#7ee8e0",goodBg:"rgba(50,188,173,0.13)",goodBd:"rgba(50,188,173,0.30)",
+  warn:"#FFCB05",warnDark:"#ffe066",warnBg:"rgba(255,203,5,0.13)",warnBd:"rgba(255,203,5,0.30)",
+  bad:"#FF5A5F",badDark:"#ff8a8d",badBg:"rgba(255,90,95,0.13)",badBd:"rgba(255,90,95,0.30)",
+  info:"#4D9FFF",infoBg:"rgba(77,159,255,0.12)",infoBd:"rgba(77,159,255,0.28)",
+  spotBg:"#0A0C12",grandBg:"#0A0C12",spotInk:"#F1F5F9",
+  rowHover:"rgba(50,188,173,0.09)",rowStripe:"rgba(255,255,255,0.025)",monthBg:"rgba(50,188,173,0.09)",
+  shadow1:"0 1px 2px rgba(0,0,0,0.45), 0 1px 2px rgba(0,0,0,0.30)",
+  shadow2:"0 6px 18px rgba(0,0,0,0.55), 0 1px 4px rgba(0,0,0,0.35)",
+  shadow3:"0 20px 48px rgba(0,0,0,0.65), 0 4px 12px rgba(0,0,0,0.45)",
 };
 
-/* ── theme: prop → localStorage → DOM → default dark ────────────────────────
-   PayoutTracker receives theme="dark"|"light" from parent (page.jsx).
-   ThemeWrapper forwards it here. If no prop, falls back to localStorage/DOM.
-── */
 function resolveTheme(themeProp) {
-  // 1. Explicit prop from parent
   if (themeProp === "dark")  return true;
   if (themeProp === "light") return false;
-  // 2. localStorage (set by login page / theme toggle)
   if (typeof window !== "undefined") {
     const stored = localStorage.getItem("sh-theme");
     if (stored === "dark")  return true;
     if (stored === "light") return false;
-    // 3. DOM attribute
     const el   = document.documentElement;
     const attr = el.getAttribute("data-theme") || el.getAttribute("data-color-scheme") || "";
     if (attr === "dark")  return true;
     if (attr === "light") return false;
     if (el.classList.contains("dark") || document.body.classList.contains("dark")) return true;
   }
-  return true; // default dark
+  return true;
 }
 
 function useTheme(themeProp) {
   const [dark, setDark] = useState(() => resolveTheme(themeProp));
-
-  // When prop changes (parent toggles), react immediately
+  useEffect(() => { setDark(resolveTheme(themeProp)); }, [themeProp]);
   useEffect(() => {
-    setDark(resolveTheme(themeProp));
-  }, [themeProp]);
-
-  // Also watch localStorage & DOM in case changed externally
-  useEffect(() => {
-    if (themeProp) return; // prop takes priority, no need to watch
+    if (themeProp) return;
     const checkAll = () => setDark(resolveTheme(null));
     window.addEventListener("storage", checkAll);
     const obs = new MutationObserver(checkAll);
@@ -444,11 +408,9 @@ function useTheme(themeProp) {
     obs.observe(document.body, { attributes: true, attributeFilter: ["class"] });
     return () => { obs.disconnect(); window.removeEventListener("storage", checkAll); };
   }, [themeProp]);
-
   return dark ? DARK : LIGHT;
 }
 
-/* ── responsive width ── */
 function useWidth() {
   const [w, setW] = useState(typeof window!=="undefined"?window.innerWidth:1200);
   useEffect(()=>{
@@ -459,13 +421,11 @@ function useWidth() {
   return w;
 }
 
-/* ── hover ── */
 function useHover() {
   const [hov, setHov] = useState(false);
   return [hov, { onMouseEnter:()=>setHov(true), onMouseLeave:()=>setHov(false) }];
 }
 
-/* ── keyframe injection ── */
 let _kfInjected = false;
 function useKeyframes() {
   useEffect(()=>{
@@ -482,7 +442,6 @@ function useKeyframes() {
   },[]);
 }
 
-/* ── Spinner ── */
 function Spinner({ size=24, color }) {
   useKeyframes();
   return (
@@ -495,11 +454,9 @@ function Spinner({ size=24, color }) {
   );
 }
 
-/* ── Loading bar (top of screen) ── */
 function LoadingBar({t}) {
   return (
-    <div style={{position:"fixed",top:0,left:0,right:0,height:2.5,zIndex:9999,overflow:"hidden",
-      background:"rgba(50,188,173,0.12)"}}>
+    <div style={{position:"fixed",top:0,left:0,right:0,height:2.5,zIndex:9999,overflow:"hidden",background:"rgba(50,188,173,0.12)"}}>
       <div style={{position:"absolute",top:0,height:"100%",borderRadius:99,
         background:`linear-gradient(90deg,transparent,${C.red} 30%,${C.yellow} 55%,${C.teal} 75%,${C.magenta},transparent)`,
         animation:"_pt_sweep 1.4s cubic-bezier(0.4,0,0.2,1) infinite"}}/>
@@ -507,18 +464,15 @@ function LoadingBar({t}) {
   );
 }
 
-/* ── useHover row wrapper ── */
 function HRow({ children, style={}, hoverBg, ...rest }) {
   const [hov,hE]=useHover();
   return (
-    <div style={{...style, background:hov?(hoverBg||style.background):style.background,
-      transition:"background .12s"}} {...hE} {...rest}>
+    <div style={{...style, background:hov?(hoverBg||style.background):style.background, transition:"background .12s"}} {...hE} {...rest}>
       {children}
     </div>
   );
 }
 
-/* ── Btn ── */
 function Btn({ children, variant="outline", sm=false, style={}, t, ...rest }) {
   const [hov,hE] = useHover();
   const base = {
@@ -542,40 +496,30 @@ function Btn({ children, variant="outline", sm=false, style={}, t, ...rest }) {
   );
 }
 
-/* ── Card ── */
 function Card({ children, style={}, t, pad=true }) {
   return (
-    <div style={{background:t.surf, border:`1px solid ${t.line}`, borderRadius:18,
-      overflow:"hidden", boxShadow:t.shadow1, ...style}}>
+    <div style={{background:t.surf, border:`1px solid ${t.line}`, borderRadius:18, overflow:"hidden", boxShadow:t.shadow1, ...style}}>
       {pad ? <div style={{padding:20}}>{children}</div> : children}
     </div>
   );
 }
 
-/* ── Card Head ── */
 function CardHead({ title, sub, accent, right, t }) {
   const ac = accent || C.teal;
   return (
-    <div style={{
-      padding:"14px 20px", borderBottom:`1px solid ${t.line}`,
-      display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12, flexWrap:"wrap",
-      background:t.surf2,
-    }}>
+    <div style={{padding:"14px 20px", borderBottom:`1px solid ${t.line}`, display:"flex", alignItems:"flex-start", justifyContent:"space-between", gap:12, flexWrap:"wrap", background:t.surf2}}>
       <div>
         <div style={{display:"flex", alignItems:"center", gap:10}}>
           <span style={{width:4, height:18, borderRadius:2, background:ac, display:"block", flexShrink:0}}/>
           <span style={{fontWeight:700, fontSize:14, letterSpacing:"-0.02em", color:t.ink}}>{title}</span>
         </div>
-        {sub&&<div style={{marginTop:4, marginLeft:14,
-          fontFamily:"'SF Mono','Fira Code','DM Mono',monospace",
-          fontSize:10.5, color:t.muted}}>{sub}</div>}
+        {sub&&<div style={{marginTop:4, marginLeft:14, fontFamily:"'SF Mono','Fira Code','DM Mono',monospace", fontSize:10.5, color:t.muted}}>{sub}</div>}
       </div>
       {right&&<div style={{flexShrink:0}}>{right}</div>}
     </div>
   );
 }
 
-/* ── Sel ── */
 function Sel({ value, onChange, children, t, style={} }) {
   const [hov,hE] = useHover();
   return (
@@ -595,7 +539,6 @@ function Sel({ value, onChange, children, t, style={} }) {
   );
 }
 
-/* ── PctBadge — fully themed ── */
 function PctBadge({ val, t }) {
   const ok=val>=80, mid=val>=50;
   const bg = ok?t.goodBg : mid?t.warnBg : t.badBg;
@@ -603,20 +546,13 @@ function PctBadge({ val, t }) {
   const clr= ok?t.goodDark : mid?t.warnDark : t.badDark;
   const dot= ok?t.good : mid?t.warn : t.bad;
   return (
-    <span style={{
-      display:"inline-flex", alignItems:"center", gap:5,
-      padding:"3px 9px", borderRadius:99,
-      fontFamily:"'SF Mono','Fira Code','DM Mono',monospace",
-      fontSize:11, fontWeight:700,
-      background:bg, color:clr, border:`1px solid ${bd}`,
-    }}>
+    <span style={{display:"inline-flex", alignItems:"center", gap:5, padding:"3px 9px", borderRadius:99, fontFamily:"'SF Mono','Fira Code','DM Mono',monospace", fontSize:11, fontWeight:700, background:bg, color:clr, border:`1px solid ${bd}`}}>
       <span style={{width:7,height:7,borderRadius:"50%",background:dot,flexShrink:0}}/>
       {val}%
     </span>
   );
 }
 
-/* ── StatusBadge — fully themed ── */
 function StatusBadge({ val, t }) {
   const s = String(val||"").toLowerCase();
   let bg=t.surf3, c=t.muted, bd=t.line;
@@ -624,16 +560,10 @@ function StatusBadge({ val, t }) {
   else if (s.includes("process")) { bg=t.infoBg; c=t.info; bd=t.infoBd; }
   else if (s.includes("not")||s.includes("pending")||s.includes("awaiting")||s.includes("unpaid")) { bg=t.warnBg; c=t.warnDark; bd=t.warnBd; }
   return (
-    <span style={{
-      display:"inline-flex", padding:"2px 8px", borderRadius:6,
-      fontFamily:"'SF Mono','Fira Code','DM Mono',monospace",
-      fontSize:10, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em",
-      background:bg, color:c, border:`1px solid ${bd}`,
-    }}>{val}</span>
+    <span style={{display:"inline-flex", padding:"2px 8px", borderRadius:6, fontFamily:"'SF Mono','Fira Code','DM Mono',monospace", fontSize:10, fontWeight:600, textTransform:"uppercase", letterSpacing:"0.05em", background:bg, color:c, border:`1px solid ${bd}`}}>{val}</span>
   );
 }
 
-/* ── MonoSpan ── */
 const Mono = ({children,style={}})=>(
   <span style={{fontFamily:"'SF Mono','Fira Code','DM Mono',monospace",fontSize:"inherit",...style}}>
     {children}
@@ -646,7 +576,7 @@ const Mono = ({children,style={}})=>(
 function DonutChart({ pieces, t, size=144 }) {
   if (!pieces.length) return null;
   const total = pieces.reduce((a,b)=>a+b.v,0);
-const cx=size/2, cy=size/2, R=size/2-7, r2=R*0.75;
+  const cx=size/2, cy=size/2, R=size/2-7, r2=R*0.75;
   let ang = -Math.PI/2;
   const paths = pieces.map((p,i)=>{
     const sh=p.v/total, nx=ang+sh*2*Math.PI, lg=sh>0.5?1:0;
@@ -666,10 +596,8 @@ const cx=size/2, cy=size/2, R=size/2-7, r2=R*0.75;
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{display:"block",margin:"0 auto",flexShrink:0}}>
       {paths}
-      <text x={cx} y={cy+2} textAnchor="middle" fontSize={size*0.16} fontWeight="800"
-        fill={t.ink} fontFamily="inherit">{total.toLocaleString()}</text>
-      <text x={cx} y={cy+18} textAnchor="middle" fontSize={9}
-        fill={t.muted} fontFamily="'SF Mono','Fira Code','DM Mono',monospace">TOTAL</text>
+      <text x={cx} y={cy+2} textAnchor="middle" fontSize={size*0.16} fontWeight="800" fill={t.ink} fontFamily="inherit">{total.toLocaleString()}</text>
+      <text x={cx} y={cy+18} textAnchor="middle" fontSize={9} fill={t.muted} fontFamily="'SF Mono','Fira Code','DM Mono',monospace">TOTAL</text>
     </svg>
   );
 }
@@ -689,8 +617,7 @@ function BarChart({ series, t }) {
         return (
           <g key={v}>
             <line x1={pL} y1={y} x2={W-pR} y2={y} stroke={t.line} strokeWidth={v?1:1.5} strokeDasharray={v?"4 3":"0"}/>
-            <text x={pL-4} y={y+3.5} textAnchor="end" fontSize={9} fill={t.muted}
-              fontFamily="'SF Mono','Fira Code','DM Mono',monospace">{v}%</text>
+            <text x={pL-4} y={y+3.5} textAnchor="end" fontSize={9} fill={t.muted} fontFamily="'SF Mono','Fira Code','DM Mono',monospace">{v}%</text>
           </g>
         );
       })}
@@ -717,10 +644,24 @@ function BarChart({ series, t }) {
 
 /* ════════════════════════════════════════════════════════════════════
    MAIN COMPONENT
+   Props baru: regionFilter (string|null) — dipass dari page.jsx
 ════════════════════════════════════════════════════════════════════ */
-export default function PayoutTracker({ profile = null, theme = null, partnerName = null, filterType = null }) {
+export default function PayoutTracker({
+  profile     = null,
+  theme       = null,
+  partnerName = null,
+  filterType  = null,
+  readOnly    = false,
+  // ── BARU: region yang dikunci untuk IOH regional ──────────────────
+  // Diisi dari page.jsx: iohLockedRegion (null untuk SPM/internal_ioh/MPX)
+  regionFilter = null,
+  // ── masterData untuk fallback region lookup ───────────────────────
+  masterData   = [],
+}) {
   const isSPM = profile?.role === "spm_sumatera";
-  // Props dari sidebar — reaktif, bisa berubah kapan saja
+  // Semua varian IOH termasuk internal_ioh bisa lihat Agency tab
+  const isIOHAny = ["internal_ioh","ioh_north_sumatera","ioh_central_sumatera","ioh_south_sumatera"].includes(profile?.role);
+
   const filterPartner = partnerName || null;
   const filterMpxType = filterType  || null;
 
@@ -732,30 +673,33 @@ export default function PayoutTracker({ profile = null, theme = null, partnerNam
   const [loadText, setLoadText]     = useState("Memuat…");
   const [toast, setToast]           = useState({ msg:"", type:"", show:false });
 
-  // ── SEMUA raw data dari cloud — TIDAK difilter di sini ───────────────────
-  // Filter sidebar diterapkan reaktif via useMemo di bawah
+  // Semua raw data dari cloud — TIDAK difilter di sini
   const [allRaw, setAllRaw]         = useState([]);
   const [pubMeta, setPubMeta]       = useState(null);
 
-  // ── Upload state khusus Admin (SPM) — terpisah dari allRaw ───────────────
+  // Upload state khusus Admin (SPM)
   const [adminPartnerRaw, setAdminPartnerRaw] = useState([]);
   const [adminAgencyRaw,  setAdminAgencyRaw]  = useState([]);
   const [partnerFile, setPartnerFile]= useState("");
   const [agencyFile,  setAgencyFile] = useState("");
 
-  // ── Derived data: filter sidebar diterapkan setiap kali filterPartner/filterMpxType berubah ──
+  // ── Derived data: semua filter diterapkan via useMemo ─────────────
+  // regionFilter diteruskan ke applySidebarFilter
   const { partnerRaw, agencyRaw, partnerAgg, agencyAgg } = useMemo(() => {
     const pAll = allRaw.filter(r => r._source === "partner" || !r._source);
     const aAll = allRaw.filter(r => r._source === "agency");
-    // Partner: terapkan filter partner name + mpx type dari sidebar
-    const pR = applySidebarFilter(pAll, filterPartner, filterMpxType, "partner");
-    // Agency: ABAIKAN semua filter sidebar — tampilkan semua agency data untuk SPM
-    // non-SPM tidak akan pernah lihat tab agency, jadi aR tidak perlu difilter
-    const aR = aAll;
+
+    // Partner: terapkan filter partner name + mpx type + REGION dari sidebar/role
+    const pR = applySidebarFilter(pAll, filterPartner, filterMpxType, regionFilter, masterData, "partner");
+
+    // Agency: ABAIKAN filter partner & region — agency tidak memiliki kolom partner/region yang sama
+    // (agency data ditampilkan aggregate per program, bukan per partner)
+    const aR = applySidebarFilter(aAll, null, null, null, null, "agency");
+
     const { agg: pAgg } = parseRows(pR, "partner");
     const { agg: aAgg } = parseRows(aR, "agency");
     return { partnerRaw: pR, agencyRaw: aR, partnerAgg: pAgg, agencyAgg: aAgg };
-  }, [allRaw, filterPartner, filterMpxType]);
+  }, [allRaw, filterPartner, filterMpxType, regionFilter, masterData]);
 
   const [filters, setFilters]       = useState({ month:"", entity:"", ptype:"", prog:"", status:"", q:"" });
   const [searchInput, setSearchInput]= useState("");
@@ -790,7 +734,6 @@ export default function PayoutTracker({ profile = null, theme = null, partnerNam
   const startLoad = (lbl="Memuat…") => { setLoadText(lbl); setLoading(true); };
   const stopLoad  = ()               => setLoading(false);
 
-  /* ingestCloud — hanya simpan data mentah ke allRaw, filter via useMemo */
   function ingestCloud(saved) {
     const all = Array.isArray(saved.rows) ? saved.rows : [];
     setAllRaw(all);
@@ -834,12 +777,10 @@ export default function PayoutTracker({ profile = null, theme = null, partnerNam
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[]);
 
-  /* handleFile — untuk Admin upload, simpan ke adminPartnerRaw/adminAgencyRaw */
   async function handleFile(file, s) {
     if (!file) return;
     try {
       const rows = await readXLSX(file, s);
-      const { agg } = parseRows(rows, s);
       if (s==="partner") { setAdminPartnerRaw(rows); setPartnerFile(file.name); }
       else               { setAdminAgencyRaw(rows);  setAgencyFile(file.name); }
       showToast(`${s==="partner"?"Partner":"Agency"} dibaca: ${rows.length.toLocaleString()} baris`,"success");
@@ -861,7 +802,7 @@ export default function PayoutTracker({ profile = null, theme = null, partnerNam
     if (ok) {
       const meta = { fileName:fnames, rowCount:merged.length, publishedAt:ts };
       setPubMeta(meta); setCache({ ...meta, rows:merged });
-      setAllRaw(merged);  // update live tanpa reload
+      setAllRaw(merged);
       showToast("✓ Dipublish — semua viewer auto-update","success");
     } else showToast("Gagal simpan ke cloud","error");
   }
@@ -1027,7 +968,18 @@ export default function PayoutTracker({ profile = null, theme = null, partnerNam
     showToast("Raw data diunduh","success");
   }
 
-  /* search suggestions */
+  // IOH regional tidak boleh melihat Agency tab
+  useEffect(()=>{
+    const isIOHRegional = ["ioh_north_sumatera","ioh_central_sumatera","ioh_south_sumatera"].includes(profile?.role);
+    if (isIOHRegional && src === "agency") {
+      setSrc("partner");
+    }
+    // Untuk non-SPM non-IOH juga tidak bisa lihat agency
+    if (!isSPM && !isIOHAny && src === "agency") {
+      setSrc("partner");
+    }
+  }, [isSPM, isIOHAny, profile, src]);
+
   const searchSuggestions = useMemo(()=>{
     const q=(searchInput||"").toLowerCase().trim();
     if (!q||q.length<2||!curRaw.length) return {partners:[],pos:[],projects:[]};
@@ -1045,15 +997,7 @@ export default function PayoutTracker({ profile = null, theme = null, partnerNam
   },[searchInput,curRaw]);
 
   const allSuggestions = useMemo(()=>[...searchSuggestions.partners,...searchSuggestions.pos,...searchSuggestions.projects],[searchSuggestions]);
-
   useEffect(()=>{ if(filters.q==="") setSearchInput(""); },[filters.q]);
-
-  // Non-SPM tidak boleh melihat Agency tab — paksa ke partner jika perlu
-useEffect(()=>{
-    if (!isSPM && profile?.role !== "internal_ioh" && src === "agency") {
-      setSrc("partner");
-    }
-  }, [isSPM, profile, src]);
 
   const rawKeys = useMemo(()=>{
     if (!curRaw.length) return [];
@@ -1093,9 +1037,10 @@ useEffect(()=>{
     return String(val);
   };
 
-  /* ─── pass all state to ThemeWrapper ─── */
   return (
-    <ThemeWrapper themeProp={theme} isSPM={isSPM} profile={profile} filterPartner={filterPartner} filterMpxType={filterMpxType} screen={screen} setScreen={setScreen}
+    <ThemeWrapper themeProp={theme} isSPM={isSPM} isIOHAny={isIOHAny} profile={profile}
+      filterPartner={filterPartner} filterMpxType={filterMpxType} regionFilter={regionFilter}
+      screen={screen} setScreen={setScreen}
       loading={loading} loadText={loadText} toast={toast}
       partnerRaw={adminPartnerRaw} agencyRaw={adminAgencyRaw}
       partnerFile={partnerFile} agencyFile={agencyFile}
@@ -1142,55 +1087,27 @@ function ThemeWrapper(props) {
   const toastBd    = toast.type==="success" ? t.goodBd  : toast.type==="error" ? t.badBd  : t.line;
 
   return (
-    <div style={{
-      fontFamily:"-apple-system,'DM Sans','Plus Jakarta Sans',BlinkMacSystemFont,'SF Pro Text',sans-serif",
-      fontSize:14, lineHeight:1.45, color:t.ink, WebkitFontSmoothing:"antialiased",
-      minHeight:"100%", background:"transparent",
-    }}>
-      {/* Loading bar */}
+    <div style={{fontFamily:"-apple-system,'DM Sans','Plus Jakarta Sans',BlinkMacSystemFont,'SF Pro Text',sans-serif",fontSize:14,lineHeight:1.45,color:t.ink,WebkitFontSmoothing:"antialiased",minHeight:"100%",background:"transparent"}}>
       {loading && <LoadingBar t={t}/>}
-
-      {/* Loading overlay */}
       {loading && (
-        <div style={{
-          position:"fixed", inset:0, background:"rgba(0,0,0,0.55)", zIndex:9998,
-          display:"flex", alignItems:"center", justifyContent:"center",
-          backdropFilter:"blur(8px)",
-        }}>
-          <div style={{
-            background:t.surf, border:`1px solid ${t.line}`,
-            borderRadius:20, padding:"28px 40px",
-            display:"flex", alignItems:"center", gap:16, boxShadow:t.shadow3,
-          }}>
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",zIndex:9998,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(8px)"}}>
+          <div style={{background:t.surf,border:`1px solid ${t.line}`,borderRadius:20,padding:"28px 40px",display:"flex",alignItems:"center",gap:16,boxShadow:t.shadow3}}>
             <Spinner size={28} color={C.teal}/>
             <span style={{fontFamily:"'SF Mono','Fira Code','DM Mono',monospace",fontSize:13,color:t.muted}}>{loadText}</span>
           </div>
         </div>
       )}
-
-      {/* Toast */}
-      <div style={{
-        position:"fixed", bottom:28, right:28, zIndex:9997,
-        padding:"13px 20px", borderRadius:14,
-        background:toastBg, color:toastColor, border:`1px solid ${toastBd}`,
-        boxShadow:t.shadow3, fontWeight:600, fontSize:13,
-        transition:"opacity .25s, transform .25s",
-        opacity:toast.show?1:0,
-        transform:toast.show?"translateY(0)":"translateY(16px)",
-        pointerEvents:"none", maxWidth:340,
-      }}>
+      <div style={{position:"fixed",bottom:28,right:28,zIndex:9997,padding:"13px 20px",borderRadius:14,background:toastBg,color:toastColor,border:`1px solid ${toastBd}`,boxShadow:t.shadow3,fontWeight:600,fontSize:13,transition:"opacity .25s, transform .25s",opacity:toast.show?1:0,transform:toast.show?"translateY(0)":"translateY(16px)",pointerEvents:"none",maxWidth:340}}>
         {toast.msg}
       </div>
-
-      {screen==="loading"  && <LoadingScreen t={t}/>}
-      {screen==="empty"    && <EmptyScreen t={t}/>}
-      {screen==="admin"    && <AdminScreen {...props} t={t}/>}
-      {screen==="dashboard"&& <DashScreen  {...props} t={t}/>}
+      {screen==="loading"   && <LoadingScreen t={t}/>}
+      {screen==="empty"     && <EmptyScreen t={t}/>}
+      {screen==="admin"     && <AdminScreen {...props} t={t}/>}
+      {screen==="dashboard" && <DashScreen  {...props} t={t}/>}
     </div>
   );
 }
 
-/* ── Loading screen ── */
 function LoadingScreen({t}) {
   return (
     <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:300,gap:12,color:t.muted,flexDirection:"column"}}>
@@ -1200,7 +1117,6 @@ function LoadingScreen({t}) {
   );
 }
 
-/* ── Empty screen ── */
 function EmptyScreen({t}) {
   return (
     <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:320,gap:16,textAlign:"center",padding:"0 24px"}}>
@@ -1219,16 +1135,13 @@ function AdminScreen({ t, pubMeta, partnerFile, agencyFile, partnerRaw, agencyRa
   dragOver, setDragOver, handleFile, publish, viewDash, clearData }) {
   return (
     <div style={{maxWidth:1200,margin:"0 auto",padding:"24px 20px 56px"}}>
-      {/* Header */}
       <div style={{marginBottom:28}}>
         <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
           <span style={{fontFamily:"'SF Mono','Fira Code','DM Mono',monospace",fontSize:10,letterSpacing:"0.18em",textTransform:"uppercase",color:t.muted}}>Admin · Payout Tracker</span>
           <span style={{width:5,height:5,borderRadius:"50%",background:C.teal,display:"inline-block"}}/>
           <span style={{fontFamily:"'SF Mono','Fira Code','DM Mono',monospace",fontSize:10,color:C.teal,letterSpacing:"0.1em"}}>Realtime</span>
         </div>
-        <h1 style={{fontWeight:800,fontSize:"clamp(1.8rem,4vw,2.8rem)",letterSpacing:"-0.03em",color:t.ink,margin:"0 0 8px",lineHeight:1.05}}>
-          Upload &amp; Publish Data
-        </h1>
+        <h1 style={{fontWeight:800,fontSize:"clamp(1.8rem,4vw,2.8rem)",letterSpacing:"-0.03em",color:t.ink,margin:"0 0 8px",lineHeight:1.05}}>Upload &amp; Publish Data</h1>
         <p style={{color:t.muted,fontSize:14,maxWidth:"52ch",lineHeight:1.65,margin:0}}>Upload Partner Prepaid &amp; Agency Prepaid, lalu publish. Semua viewer auto-update via realtime.</p>
         <div style={{display:"flex",gap:8,marginTop:14,flexWrap:"wrap"}}>
           {[{l:"Partner SLA 2/1/2/2/3 HK",c:C.teal},{l:"Agency SLA 2/2/2/3 HK",c:C.magenta}].map((b,i)=>(
@@ -1236,8 +1149,6 @@ function AdminScreen({ t, pubMeta, partnerFile, agencyFile, partnerRaw, agencyRa
           ))}
         </div>
       </div>
-
-      {/* Published bar */}
       {pubMeta&&(
         <div style={{background:t.goodBg,border:`1px solid ${t.goodBd}`,borderRadius:16,padding:"14px 20px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:14,marginBottom:22,flexWrap:"wrap",boxShadow:t.shadow1}}>
           <div style={{display:"flex",alignItems:"center",gap:12}}>
@@ -1255,8 +1166,6 @@ function AdminScreen({ t, pubMeta, partnerFile, agencyFile, partnerRaw, agencyRa
           </div>
         </div>
       )}
-
-      {/* Upload zones */}
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:14,marginBottom:16}}>
         {["partner","agency"].map(s=>{
           const fname = s==="partner"?partnerFile:agencyFile;
@@ -1265,12 +1174,7 @@ function AdminScreen({ t, pubMeta, partnerFile, agencyFile, partnerRaw, agencyRa
           const drag  = dragOver[s];
           return (
             <div key={s}
-              style={{
-                background:drag?`${ac}12`:fname?t.goodBg:t.surf,
-                border:`2px dashed ${drag?ac:fname?t.goodBd:t.line2}`,
-                borderRadius:18, padding:"32px 24px 26px", textAlign:"center", cursor:"pointer",
-                position:"relative", transition:"all .18s", boxShadow:t.shadow1,
-              }}
+              style={{background:drag?`${ac}12`:fname?t.goodBg:t.surf,border:`2px dashed ${drag?ac:fname?t.goodBd:t.line2}`,borderRadius:18,padding:"32px 24px 26px",textAlign:"center",cursor:"pointer",position:"relative",transition:"all .18s",boxShadow:t.shadow1}}
               onDrop={e=>{e.preventDefault();setDragOver(d=>({...d,[s]:false}));handleFile(e.dataTransfer.files[0],s);}}
               onDragOver={e=>{e.preventDefault();setDragOver(d=>({...d,[s]:true}));}}
               onDragLeave={()=>setDragOver(d=>({...d,[s]:false}))}
@@ -1292,8 +1196,6 @@ function AdminScreen({ t, pubMeta, partnerFile, agencyFile, partnerRaw, agencyRa
           );
         })}
       </div>
-
-      {/* Actions */}
       <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
         <Btn t={t} variant="primary" onClick={publish}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -1312,24 +1214,15 @@ function AdminScreen({ t, pubMeta, partnerFile, agencyFile, partnerRaw, agencyRa
 }
 
 /* ════════════════════════════════════════════════════════════════════
-   LEAF COMPONENTS — hooks never inside .map()
+   LEAF COMPONENTS
 ════════════════════════════════════════════════════════════════════ */
-
 function KpiCard({k,t}) {
   const [hov,hE]=useHover();
   const ok=k.v!=null?(k.v>=80?"good":k.v>=50?"warn":"bad"):null;
   const accent=ok==="good"?t.good:ok==="warn"?t.warn:ok==="bad"?t.bad:C.teal;
   const valColor=ok==="good"?t.goodDark:ok==="warn"?t.warnDark:ok==="bad"?t.badDark:t.ink;
   return (
-    <div {...hE} title={k.sub} style={{
-      background:t.surf, borderWidth:"1px", borderStyle:"solid",
-      borderColor:hov?(ok==="good"?t.goodBd:ok==="warn"?t.warnBd:ok==="bad"?t.badBd:t.line2):t.line,
-      borderRadius:18, padding:18, position:"relative",
-      display:"flex", flexDirection:"column", gap:5, minHeight:112,
-      boxShadow:hov?t.shadow2:t.shadow1, overflow:"hidden",
-      transition:"all .18s", cursor:"default",
-      transform:hov?"translateY(-2px)":"none",
-    }}>
+    <div {...hE} title={k.sub} style={{background:t.surf,borderWidth:"1px",borderStyle:"solid",borderColor:hov?(ok==="good"?t.goodBd:ok==="warn"?t.warnBd:ok==="bad"?t.badBd:t.line2):t.line,borderRadius:18,padding:18,position:"relative",display:"flex",flexDirection:"column",gap:5,minHeight:112,boxShadow:hov?t.shadow2:t.shadow1,overflow:"hidden",transition:"all .18s",cursor:"default",transform:hov?"translateY(-2px)":"none"}}>
       <div style={{position:"absolute",top:0,left:0,right:0,height:3,background:accent,borderRadius:"3px 3px 0 0"}}/>
       <div style={{fontFamily:"'SF Mono','Fira Code','DM Mono',monospace",fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:t.muted,marginTop:4}}>{k.l}</div>
       <div style={{fontWeight:700,fontSize:28,letterSpacing:"-0.025em",marginTop:6,wordBreak:"break-word",color:valColor}}>
@@ -1346,15 +1239,7 @@ function KpiCard({k,t}) {
 function NoteCard({n,t}) {
   const [hov,hE]=useHover();
   return (
-    <div {...hE} style={{
-      padding:"10px 14px", borderRadius:12,
-      background:hov?t.surf3:t.surf2,
-      borderTop:`1px solid ${hov?t.line2:t.line}`,
-      borderRight:`1px solid ${hov?t.line2:t.line}`,
-      borderBottom:`1px solid ${hov?t.line2:t.line}`,
-      borderLeft:`3px solid ${n.c}`,
-      transition:"all .15s",
-    }}>
+    <div {...hE} style={{padding:"10px 14px",borderRadius:12,background:hov?t.surf3:t.surf2,borderTop:`1px solid ${hov?t.line2:t.line}`,borderRight:`1px solid ${hov?t.line2:t.line}`,borderBottom:`1px solid ${hov?t.line2:t.line}`,borderLeft:`3px solid ${n.c}`,transition:"all .15s"}}>
       <div style={{fontFamily:"'SF Mono','Fira Code','DM Mono',monospace",fontSize:9.5,letterSpacing:"0.12em",textTransform:"uppercase",color:t.muted,marginBottom:4}}>{n.l}</div>
       <div style={{fontSize:12,color:t.ink2,lineHeight:1.45}}>{n.txt}</div>
     </div>
@@ -1366,15 +1251,7 @@ function SegBtn({s,active,disabled,count,label,onClick,t}) {
   const ac = s==="partner"?C.teal:C.magenta;
   return (
     <button {...hE} onClick={onClick} disabled={disabled}
-      style={{
-        fontWeight:600, fontSize:12.5, padding:"8px 18px", borderRadius:10, border:0,
-        background:active?ac:hov?t.surf3:"transparent",
-        color:active?"#fff":hov?t.ink:t.muted,
-        cursor:disabled?"default":"pointer",
-        display:"inline-flex", alignItems:"center", gap:8,
-        transition:"all .15s", whiteSpace:"nowrap",
-        opacity:disabled?.38:1, pointerEvents:disabled?"none":"auto",
-      }}>
+      style={{fontWeight:600,fontSize:12.5,padding:"8px 18px",borderRadius:10,border:0,background:active?ac:hov?t.surf3:"transparent",color:active?"#fff":hov?t.ink:t.muted,cursor:disabled?"default":"pointer",display:"inline-flex",alignItems:"center",gap:8,transition:"all .15s",whiteSpace:"nowrap",opacity:disabled?.38:1,pointerEvents:disabled?"none":"auto"}}>
       {label}
       <span style={{fontFamily:"'SF Mono','Fira Code','DM Mono',monospace",fontSize:10,padding:"2px 7px",borderRadius:99,background:active?"rgba(255,255,255,.22)":t.surf4,color:active?"#fff":t.ink2}}>{count}</span>
     </button>
@@ -1385,13 +1262,7 @@ function TabBtn({id,label,count,active,onClick,t}) {
   const [hov,hE]=useHover();
   return (
     <button {...hE} onClick={onClick}
-      style={{
-        background:"transparent", border:0, fontWeight:600, fontSize:13,
-        padding:"10px 0 14px", color:active?t.ink:hov?t.ink2:t.muted,
-        cursor:"pointer", position:"relative",
-        display:"inline-flex", alignItems:"center", gap:8,
-        whiteSpace:"nowrap", flexShrink:0, transition:"color .15s",
-      }}>
+      style={{background:"transparent",border:0,fontWeight:600,fontSize:13,padding:"10px 0 14px",color:active?t.ink:hov?t.ink2:t.muted,cursor:"pointer",position:"relative",display:"inline-flex",alignItems:"center",gap:8,whiteSpace:"nowrap",flexShrink:0,transition:"color .15s"}}>
       {label}
       {count!==undefined&&(
         <span style={{fontFamily:"'SF Mono','Fira Code','DM Mono',monospace",fontSize:10,padding:"2px 7px",borderRadius:99,background:active?`${C.magenta}18`:t.surf3,color:active?C.magenta:t.muted,border:`1px solid ${active?`${C.magenta}30`:t.line}`}}>
@@ -1677,7 +1548,7 @@ function FunnelRowItem({s,drop,isExp,filtRaw,grand,onToggle,t}) {
 function DashScreen(props) {
   const w = useWidth();
   const { t, src, setSrc, activeTab, setActiveTab,
-    isSPM, profile, filterPartner, filterMpxType,
+    isSPM, isIOHAny, profile, filterPartner, filterMpxType, regionFilter,
     partnerRaw, agencyRaw, pubMeta, filters, setFilters, opts,
     curRaw, filtAgg, filtRaw, grand,
     tblSort, setTblSort, rawSort, setRawSort, rawPage, setRawPage,
@@ -1693,10 +1564,10 @@ function DashScreen(props) {
     rawKeys, pageRaw, curRawPage, totalRawPages,
     fmtCellT, isLeftCol, exportSummary, exportRaw } = props;
   const isAg = src === "agency";
+  const isIOHRegional = ["ioh_north_sumatera","ioh_central_sumatera","ioh_south_sumatera"].includes(profile?.role);
 
   return (
     <div style={{maxWidth:1400,margin:"0 auto",padding:"20px 20px 56px"}}>
-
       {/* Page header */}
       <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:20,marginBottom:20,flexWrap:"wrap"}}>
         <div>
@@ -1710,21 +1581,19 @@ function DashScreen(props) {
           <p style={{color:t.muted,fontSize:14,margin:0,lineHeight:1.6}}>
             Milestone PO → Invoice → CLV → Cleared Bank · Partner &amp; Agency Prepaid
           </p>
-          {/* Banner scope filter aktif */}
-          {(filterPartner || filterMpxType) && (
-            <div style={{display:"inline-flex",alignItems:"center",gap:8,marginTop:10,
-              padding:"5px 12px",borderRadius:8,
-              background:t.surf2, border:`1px solid ${t.line}`,
-              fontSize:12, color:t.muted, flexWrap:"wrap"}}>
+          {/* Banner: filter aktif (partner/type/region) */}
+          {(filterPartner || filterMpxType || regionFilter) && (
+            <div style={{display:"inline-flex",alignItems:"center",gap:8,marginTop:10,padding:"5px 12px",borderRadius:8,background:t.surf2,border:`1px solid ${t.line}`,fontSize:12,color:t.muted,flexWrap:"wrap"}}>
               <span style={{width:7,height:7,borderRadius:"50%",background:C.teal,flexShrink:0}}/>
+              {regionFilter && (
+                <span>Region: <strong style={{color:t.yellow}}>{regionFilter}</strong></span>
+              )}
+              {regionFilter && filterPartner && <span style={{color:t.line2}}>·</span>}
               {filterPartner && (
                 <span>Partner: <strong style={{color:t.ink}}>{filterPartner}</strong></span>
               )}
-              {filterPartner && filterMpxType && (
-                <span style={{color:t.line2}}>·</span>
-              )}
               {filterMpxType && (
-                <span>Tipe: <strong style={{color:t.ink}}>{filterMpxType}</strong></span>
+                <><span style={{color:t.line2}}>·</span><span>Tipe: <strong style={{color:t.ink}}>{filterMpxType}</strong></span></>
               )}
             </div>
           )}
@@ -1747,12 +1616,10 @@ function DashScreen(props) {
         </div>
       </div>
 
-      {/* Source segment — Agency HANYA untuk spm_sumatera */}
-{/* Source segment — Agency HANYA untuk spm_sumatera atau internal_ioh */}
-{/* Source segment — Agency HANYA untuk spm_sumatera atau internal_ioh */}
+      {/* Source segment — Agency: SPM dan internal_ioh (semua region). IOH Regional: partner only */}
       <div style={{display:"inline-flex",gap:4,background:t.surf,border:`1px solid ${t.line}`,borderRadius:14,padding:4,marginBottom:18,boxShadow:t.shadow1,overflowX:"auto"}}>
-        {((isSPM || profile?.role === "internal_ioh") ? ["partner","agency"] : ["partner"]).map(s=>{
-          const dis = (isSPM || profile?.role === "internal_ioh") ? false : (s==="partner" && !partnerRaw.length);
+        {((isSPM || (isIOHAny && !isIOHRegional)) ? ["partner","agency"] : ["partner"]).map(s=>{
+          const dis = false;
           return (
             <SegBtn key={s} s={s} active={src===s} disabled={dis}
               count={(s==="partner"?partnerRaw:agencyRaw).length.toLocaleString()}
@@ -1848,11 +1715,12 @@ function DashScreen(props) {
         </div>
       )}
 
-      {activeTab==="dash" && <DashTab {...props} t={t} w={w}/>}
+      {activeTab==="dash" && <DashTab {...props} t={t} w={w} isIOHRegional={isIOHRegional}/>}
       {activeTab==="raw"  && <RawTab  {...props} t={t}/>}
 
       <div style={{marginTop:28,paddingTop:18,borderTop:`1px solid ${t.line}`,textAlign:"center",fontFamily:"'SF Mono','Fira Code','DM Mono',monospace",fontSize:10,letterSpacing:"0.12em",textTransform:"uppercase",color:t.muted}}>
         Partner &amp; Agency Payout Tracker · Sumatera · SAP &amp; Web Coupa · SLA {isAg?"2/2/2/3":"2/1/2/2/3"} HK
+        {regionFilter && <span style={{marginLeft:12,color:t.yellow}}>· {regionFilter}</span>}
       </div>
     </div>
   );
@@ -1887,16 +1755,10 @@ function DashTab(props) {
     <>
       {/* KPI Grid */}
       <div style={{display:"grid",gridTemplateColumns:w>=1200?"1.2fr repeat(4,1fr)":w>=780?"repeat(3,1fr)":w>=480?"repeat(2,1fr)":"1fr",gap:12,marginBottom:18}}>
-        {/* Spotlight card */}
-        <div style={{
-          background:`linear-gradient(135deg,${C.red} 0%,${C.magenta} 100%)`,
-          border:"none", borderRadius:18, padding:20, position:"relative", overflow:"hidden",
-          display:"flex", flexDirection:"column", gap:5, minHeight:112,
-        }}>
+        <div style={{background:`linear-gradient(135deg,${C.red} 0%,${C.magenta} 100%)`,border:"none",borderRadius:18,padding:20,position:"relative",overflow:"hidden",display:"flex",flexDirection:"column",gap:5,minHeight:112}}>
           <div style={{fontFamily:"'SF Mono','Fira Code','DM Mono',monospace",fontSize:10,letterSpacing:"0.16em",textTransform:"uppercase",color:"rgba(255,255,255,0.65)"}}>{isAg?"Agency":"Partner"} Aktif · {unique(filtAgg.map(r=>r.month)).length} Bulan</div>
           <div style={{fontWeight:900,fontSize:36,letterSpacing:"-0.03em",lineHeight:1,color:"#FFFFFF",marginTop:6}}>{grand.n.toLocaleString()}</div>
           <div style={{fontFamily:"'SF Mono','Fira Code','DM Mono',monospace",fontSize:10.5,color:"rgba(255,255,255,0.50)",marginTop:4}}>{filtAgg.length} grup · {fmtMoney(grand.amt)}</div>
-          {/* Decorative stripe */}
           <div style={{position:"absolute",right:16,top:12,bottom:12,width:4,borderRadius:3,background:"rgba(255,255,255,0.25)"}}/>
           <div style={{position:"absolute",right:22,top:24,bottom:24,width:4,borderRadius:3,background:"rgba(255,255,255,0.15)"}}/>
         </div>
@@ -1930,9 +1792,7 @@ function DashTab(props) {
 
       {/* Notes */}
       <Card t={t} pad={false} style={{marginBottom:14}}>
-        <div style={{padding:"13px 20px",fontWeight:700,fontSize:13.5,letterSpacing:"-0.01em",borderBottom:`1px solid ${t.line}`,color:t.ink,background:t.surf2}}>
-          Data Reference &amp; Keterangan
-        </div>
+        <div style={{padding:"13px 20px",fontWeight:700,fontSize:13.5,letterSpacing:"-0.01em",borderBottom:`1px solid ${t.line}`,color:t.ink,background:t.surf2}}>Data Reference &amp; Keterangan</div>
         <div style={{display:"grid",gridTemplateColumns:w>=900?"repeat(4,1fr)":w>=600?"repeat(2,1fr)":"1fr",gap:12,padding:16}}>
           {noteItems.map((n,i)=><NoteCard key={i} n={n} t={t}/>)}
         </div>
@@ -1970,7 +1830,6 @@ function FunnelCard({t,grand,funnelStages,filtRaw,funnelExp,setFunnelExp,isAg}) 
           })()}
         </div>
         <div style={{flex:1,minWidth:0}}>
-          {/* Total row */}
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:`linear-gradient(90deg,${C.red},${C.magenta})`,color:"#fff",borderRadius:10,padding:"9px 14px",marginBottom:10,fontSize:13,fontWeight:700}}>
             <span>Total Records</span>
             <span style={{fontFamily:"'SF Mono','Fira Code','DM Mono',monospace",fontSize:16,fontWeight:600}}>{grand.n.toLocaleString()}</span>
@@ -2155,7 +2014,6 @@ function SummaryTable({t,filtAgg,grand,sortedMonths,collapsed,setCollapsed,tblSo
             })}
           </tbody>
           <tfoot>
-            {/* Grand Total row — always uses dark background for contrast */}
             <tr style={{position:"sticky",bottom:0,zIndex:1,background:t.grandBg}}>
               <td colSpan={4} style={{padding:"12px 9px",textAlign:"left",fontWeight:900,fontSize:13.5,color:t.spotInk}}>
                 <span style={{color:C.yellow,marginRight:8}}>◼</span>GRAND TOTAL

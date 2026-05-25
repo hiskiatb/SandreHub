@@ -26,6 +26,7 @@ const dtf = (iso) => iso
   : null;
 
 const FONT_STACK = `"DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "SF Pro Text", Roboto, system-ui, sans-serif`;
+const MAX_LAIN = 10;
 
 // ─── Design tokens — Indosat Ooredoo Hutchison ────────────────────────────────
 const mk = (d) => ({
@@ -82,12 +83,12 @@ const G = ({ d, t }) => (
   `}</style>
 );
 
-// ─── Calculations — includes _2 suffix items for omset & margin ──────────────
+// ─── FIXED: calcR now mirrors ALL fields from FormPengeluaran ─────────────────
 function calcR(data) {
   if (!data) return null;
   const g = (k) => Number(data[k]) || 0;
 
-  // HardPP (HPP) per unit
+  // ── Starter Pack HPP per unit ──
   const hsp = {
     qty_sp_3gb_im3: 29000, qty_sp_0_im3: 10000,
     qty_sp_kpk_3id: 10000, qty_sp_3gb_3id: 29000,
@@ -156,6 +157,7 @@ function calcR(data) {
     ["qty_vc_0_3id_2",       "retail_vc_0_3id_2"],
   ];
 
+  // ── Omset & Margin produk fisik ──
   const osp1 = sd.reduce((a, [q, r]) => a + g(q) * g(r), 0);
   const osp2 = sd2.reduce((a, [q, r]) => a + g(q) * g(r), 0);
   const osp  = osp1 + osp2;
@@ -175,7 +177,7 @@ function calcR(data) {
   const mvc  = mvc1 + mvc2;
 
   const mmb = mj - mm;
-  const tmg = msp + mvc; // Margin Produk Fisik (SP + VC)
+  const tmg = msp + mvc;
 
   const up  = mm * 0.015;
   const smg = g("realtime_margin") + g("back_margin");
@@ -186,9 +188,11 @@ function calcR(data) {
   const rwc = g("rewards_champions"), rwl = g("rewards_lainnya"), pic = g("partner_income");
   const thd = rwc + rwl + pic;
 
-  const srv = g("grand_total_revenue");
-const tpd = tmg + tko + thd; 
+  const tpd = tmg + tko + thd;
+
+  // ── FIXED: OPEX — sama persis dengan FormPengeluaran ──
   const cs = (ps) => ps.reduce((a, [p, q]) => a + g(p) * g(q), 0);
+
   const tox = cs([
     ["price_opex_gedung",    "qty_opex_gedung"],
     ["price_opex_kendaraan", "qty_opex_kendaraan"],
@@ -199,37 +203,62 @@ const tpd = tmg + tko + thd;
     ["price_opex_asuransi",  "qty_opex_asuransi"],
     ["price_opex_lain",      "qty_opex_lain"],
   ]);
+
+  // ── FIXED: SDM — ditambahkan benefit_sales & benefit_nonsales ──
   const tsd = cs([
-    ["price_sdm_bm",           "qty_sdm_bm"],
-    ["price_sdm_admin",        "qty_sdm_admin"],
-    ["price_sdm_finance",      "qty_sdm_finance"],
-    ["price_sdm_md",           "qty_sdm_md"],
-    ["price_sdm_ss",           "qty_sdm_ss"],
-    ["price_sdm_ops",          "qty_sdm_ops"],
-    ["price_sdm_dinas",        "qty_sdm_dinas"],
-    ["price_sdm_tm",           "qty_sdm_tm"],
-    ["price_sdm_om",           "qty_sdm_om"],
-    ["price_sdm_gm",           "qty_sdm_gm"],
-    ["price_sdm_hrd",          "qty_sdm_hrd"],
-    ["price_sdm_mis",          "qty_sdm_mis"],
-    ["price_sdm_som",          "qty_sdm_som"],
-    ["price_sdm_finance_spv",  "qty_sdm_finance_spv"],
-    ["price_sdm_finance_staff","qty_sdm_finance_staff"],
-    ["price_sdm_ob",           "qty_sdm_ob"],
-    ["price_sdm_tss",          "qty_sdm_tss"],
+    ["price_sdm_bm",              "qty_sdm_bm"],
+    ["price_sdm_admin",           "qty_sdm_admin"],
+    ["price_sdm_finance",         "qty_sdm_finance"],
+    ["price_sdm_md",              "qty_sdm_md"],
+    ["price_sdm_ss",              "qty_sdm_ss"],
+    ["price_sdm_ops",             "qty_sdm_ops"],
+    ["price_sdm_dinas",           "qty_sdm_dinas"],
+    ["price_sdm_tm",              "qty_sdm_tm"],
+    ["price_sdm_om",              "qty_sdm_om"],
+    ["price_sdm_gm",              "qty_sdm_gm"],
+    ["price_sdm_hrd",             "qty_sdm_hrd"],
+    ["price_sdm_mis",             "qty_sdm_mis"],
+    ["price_sdm_som",             "qty_sdm_som"],
+    ["price_sdm_finance_spv",     "qty_sdm_finance_spv"],
+    ["price_sdm_finance_staff",   "qty_sdm_finance_staff"],
+    ["price_sdm_ob",              "qty_sdm_ob"],
+    ["price_sdm_tss",             "qty_sdm_tss"],
+    // FIXED: tambahan field baru dari FormPengeluaran
+    ["price_sdm_benefit_sales",   "qty_sdm_benefit_sales"],
+    ["price_sdm_benefit_nonsales","qty_sdm_benefit_nonsales"],
   ]);
-  const tmk = cs([
+
+  // ── FIXED: Marketing — static fields ──
+  const tmkStatic = cs([
     ["price_mkt_ws",      "qty_mkt_ws"],
     ["price_mkt_retail",  "qty_mkt_retail"],
     ["price_mkt_event",   "qty_mkt_event"],
-    ["price_mkt_lain",    "qty_mkt_lain"],
     ["price_mkt_starter", "qty_mkt_starter"],
   ]);
+
+  // ── FIXED: Marketing dynamic lain_1 s/d lain_10 ──
+  let tmkLain = 0;
+  const mktLainDetail = [];
+  for (let n = 1; n <= MAX_LAIN; n++) {
+    const qty   = g(`qty_mkt_lain_${n}`);
+    const price = g(`price_mkt_lain_${n}`);
+    const label = data[`label_mkt_lain_${n}`] || `Program Lain ${n}`;
+    const total = qty * price;
+    if (total > 0 || qty > 0) {
+      tmkLain += total;
+      mktLainDetail.push({ n, label, qty, price, total });
+    }
+  }
+  const tmk = tmkStatic + tmkLain;
+
   const tcm = cs([
     ["price_com_admin", "qty_com_admin"],
     ["price_com_bunga", "qty_com_bunga"],
   ]);
+
   const pex = g("partner_expense");
+
+  // ── FIXED: grand total pengeluaran sekarang balance ──
   const tpg = tox + tsd + tmk + tcm + pex;
   const net = tpd - tpg;
   const p = (v) => tom ? (v / tom * 100) : 0;
@@ -239,7 +268,7 @@ const tpd = tmg + tko + thd;
     msp, msp1, msp2, mvc, mvc1, mvc2, mmb, tmg,
     up, smg, sla, spc, tko,
     rwc, rwl, pic, thd, tpd,
-    tox, tsd, tmk, tcm, pex, tpg,
+    tox, tsd, tmk, tmkStatic, tmkLain, mktLainDetail, tcm, pex, tpg,
     net, p,
     hsp, hsp2, hvc, hvc2, sd, sd2, vd, vd2, g,
   };
@@ -264,7 +293,7 @@ const PROD_NAMES = {
   qty_vc_fi_15gb_7d_2: "VC FI 15GB/7D (B)", qty_vc_0_3id_2: "VC 0 3ID (B)",
 };
 
-// ─── PDF Generator — A4 Portrait, Formal Corporate Grade (No Wrap) ───────────
+// ─── PDF Generator ────────────────────────────────────────────────────────────
 async function makePDF(data, r, ctx) {
   if (!window.jspdf) {
     await new Promise((res, rej) => {
@@ -281,32 +310,34 @@ async function makePDF(data, r, ctx) {
     });
   }
   const { jsPDF } = window.jspdf;
-  
-  // Orientasi Portrait
   const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
 
   const PW = 210, PH = 297;
   const ML = 16, MR = 16;
-  const CW = PW - ML - MR; // 178 mm (Lebar konten presisi)
+  const CW = PW - ML - MR;
 
-  // Palet Warna Formal Laporan Keuangan
   const C = {
-    TEXT: [40, 40, 40],        
-    PRIMARY: [20, 35, 60],     
-    LINE: [200, 205, 210],     
-    HEAVY: [100, 105, 110],    
-    HEADBG: [244, 246, 248],   
-    STRIPE: [250, 251, 252],   
+    TEXT:    [40,  40,  40],
+    PRIMARY: [20,  35,  60],
+    LINE:    [200, 205, 210],
+    HEAVY:   [100, 105, 110],
+    HEADBG:  [244, 246, 248],
+    STRIPE:  [250, 251, 252],
+    GREEN:   [26,  158, 144],
+    RED:     [220, 38,  38],
+    TEAL:    [50,  188, 173],
+    BRAND:   [237, 28,  36],
   };
 
-  const fRp = (v) => v ? Math.abs(v).toLocaleString("id-ID") : "—";
+  const fRp     = (v) => v ? Math.abs(v).toLocaleString("id-ID") : "—";
   const fRpFull = (v) => {
     if (!v) return "—";
     const s = Math.abs(v).toLocaleString("id-ID", { maximumFractionDigits: 0 });
     return v < 0 ? `(Rp ${s})` : `Rp ${s}`;
   };
-  const fQty = (v) => v ? Number(v).toLocaleString("id-ID") : "—";
-  const fPct = (v) => v ? Number(v).toFixed(2).replace(".", ",") + "%" : "—";
+  const fQty  = (v) => v ? Number(v).toLocaleString("id-ID") : "—";
+  const fPct  = (v) => v ? Number(v).toFixed(2).replace(".", ",") + "%" : "—";
+  const fPctR = (v) => (!isFinite(v) || !v) ? "—" : `${Number(v).toFixed(1).replace(".", ",")}%`;
 
   const partner = data.partner_name || "—";
   const branch  = data.branch       || "—";
@@ -318,57 +349,51 @@ async function makePDF(data, r, ctx) {
   let Y = 0;
   let pageNum = 0;
 
-  // Header Laporan Formal
   function drawHeader(title) {
     pageNum++;
-    doc.setFillColor(...C.PRIMARY);
+    doc.setFillColor(...C.BRAND);
     doc.rect(0, 0, PW, 4, "F");
 
     doc.setFont("helvetica", "bold"); doc.setFontSize(14); doc.setTextColor(...C.PRIMARY);
     doc.text(title, ML, 18);
-    
+
     doc.setFont("helvetica", "normal"); doc.setFontSize(8); doc.setTextColor(...C.TEXT);
-    doc.text(`Partner: ${partner} | Branch: ${branch} | MPX: ${mpc}`, ML, 23); // MPX FIXED
+    doc.text(`Partner: ${partner} | Branch: ${branch} | MPX: ${mpc}`, ML, 23);
     doc.text(`Periode: ${month} ${year}`, ML, 27);
-    
+
     doc.setFont("helvetica", "italic"); doc.setFontSize(7);
-    doc.text(`Dicetak pada: ${new Date().toLocaleString('id-ID')}`, PW - MR, 23, { align: "right" });
-    doc.text(`Halaman ${pageNum}`, PW - MR, 27, { align: "right" });
+    doc.text(`Dicetak: ${new Date().toLocaleString("id-ID")}`, PW - MR, 23, { align: "right" });
+    doc.text(`Hal. ${pageNum}`, PW - MR, 27, { align: "right" });
 
     doc.setDrawColor(...C.HEAVY); doc.setLineWidth(0.5);
     doc.line(ML, 30, PW - MR, 30);
     Y = 36;
   }
 
-  // Wrapper Tabel Formal (No Wrap, Single Line)
   let _currentTitle = "";
   function tbl(title, head, rows, cols, opts = {}) {
     if (!rows.length) return;
-    
     if (Y > PH - 40) { doc.addPage(); drawHeader(_currentTitle || "LANJUTAN"); }
-
     if (title) {
       doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(...C.PRIMARY);
       doc.text(title, ML, Y);
       Y += 3.5;
     }
-
     doc.autoTable({
       startY: Y,
       margin: { left: ML, right: MR, top: 35, bottom: 20 },
       head: [head],
       body: rows,
-      // Mapping presisi lebar kolom agar pas 178mm
       columnStyles: Object.fromEntries(cols.map(([i, w, a]) => [i, { cellWidth: w, halign: a || "left" }])),
       styles: {
-        font: "helvetica", fontSize: 6.5, textColor: C.TEXT, // Font dikecilkan
-        cellPadding: { top: 2.5, bottom: 2.5, left: 2.5, right: 2.5 }, // Padding dipadatkan
-        lineColor: C.LINE, lineWidth: 0.1, 
-        overflow: 'ellipsize' // INI PENTING: Mencegah wrap/turun baris
+        font: "helvetica", fontSize: 6.5, textColor: C.TEXT,
+        cellPadding: { top: 2.5, bottom: 2.5, left: 2.5, right: 2.5 },
+        lineColor: C.LINE, lineWidth: 0.1,
+        overflow: "ellipsize",
       },
       headStyles: {
         fillColor: C.HEADBG, textColor: C.PRIMARY, fontStyle: "bold",
-        lineWidth: { top: 0.5, bottom: 0.5, left: 0.1, right: 0.1 }, lineColor: C.HEAVY
+        lineWidth: { top: 0.5, bottom: 0.5, left: 0.1, right: 0.1 }, lineColor: C.HEAVY,
       },
       bodyStyles: { fillColor: [255, 255, 255] },
       alternateRowStyles: { fillColor: C.STRIPE },
@@ -376,7 +401,6 @@ async function makePDF(data, r, ctx) {
         const ri = h.row.index;
         const isSubtotal = Array.isArray(opts.subtotalRow) ? opts.subtotalRow.includes(ri) : ri === opts.subtotalRow;
         const isLast = opts.boldLast && ri === rows.length - 1;
-        
         if (isSubtotal || isLast) {
           h.cell.styles.fontStyle = "bold";
           h.cell.styles.textColor = C.PRIMARY;
@@ -389,112 +413,220 @@ async function makePDF(data, r, ctx) {
         if (data.pageNumber > 1 && data.cursor.y < 50) {
           drawHeader(_currentTitle || "LANJUTAN");
         }
-      }
+      },
     });
     Y = doc.lastAutoTable.finalY + 8;
   }
 
-  // ==========================================================================
-  // HALAMAN 1: RINCIAN PENDAPATAN (Langsung Halaman 1)
-  // ==========================================================================
+  // ══════════════════════════════════════════════════════════════════
+  // HALAMAN 1: SUMMARY PNL (BARU) — harus balance dengan rincian
+  // ══════════════════════════════════════════════════════════════════
+  _currentTitle = "RINGKASAN LAPORAN LABA RUGI";
+  drawHeader(_currentTitle);
+
+  // Sub-header info kotak
+  const infoY = Y;
+  doc.setFillColor(...C.HEADBG);
+  doc.roundedRect(ML, infoY, CW, 18, 2, 2, "F");
+  doc.setDrawColor(...C.LINE);
+  doc.setLineWidth(0.3);
+  doc.roundedRect(ML, infoY, CW, 18, 2, 2, "S");
+
+  const infoCols = [
+    ["Partner", partner],
+    ["Branch", branch],
+    ["MPX", mpc],
+    ["Periode", `${month} ${year}`],
+  ];
+  const iColW = CW / 4;
+  infoCols.forEach(([lbl, val], i) => {
+    const x = ML + i * iColW + 4;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(...C.HEAVY);
+    doc.text(lbl, x, infoY + 6);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(7.5); doc.setTextColor(...C.PRIMARY);
+    doc.text(val, x, infoY + 13);
+  });
+  Y = infoY + 24;
+
+  // ── Tabel Summary Pendapatan ──
+  tbl("A. RINGKASAN STRUKTUR PENDAPATAN",
+    ["Komponen Pendapatan", "Jumlah (IDR)", "% Omset"],
+    [
+      ...(r.tmg  ? [["Margin Produk Fisik (SP + VC)",   fRpFull(r.tmg),  fPctR(r.p(r.tmg))]]  : []),
+      ...(r.msp  ? [["  — Margin Starter Pack",         fRpFull(r.msp),  fPctR(r.p(r.msp))]]  : []),
+      ...(r.mvc  ? [["  — Margin Voucher Fisik",        fRpFull(r.mvc),  fPctR(r.p(r.mvc))]]  : []),
+      ...(r.tko  ? [["Komisi & Insentif",               fRpFull(r.tko),  fPctR(r.p(r.tko))]]  : []),
+      ...(r.up   ? [["  — Upfront Discount (1,5% MOBO)",fRpFull(r.up),   fPctR(r.p(r.up))]]   : []),
+      ...(r.smg  ? [["  — Sales Margin (RT + Back)",    fRpFull(r.smg),  fPctR(r.p(r.smg))]]  : []),
+      ...(r.sla  ? [["  — Monthly Fee SLA",             fRpFull(r.sla),  fPctR(r.p(r.sla))]]  : []),
+      ...(r.spc  ? [["  — Special Program",             fRpFull(r.spc),  fPctR(r.p(r.spc))]]  : []),
+      ...(r.thd  ? [["Hadiah & Lainnya",                fRpFull(r.thd),  fPctR(r.p(r.thd))]]  : []),
+      ...(r.rwc  ? [["  — Rewards Champions Club",      fRpFull(r.rwc),  fPctR(r.p(r.rwc))]]  : []),
+      ...(r.rwl  ? [["  — Rewards Lainnya",             fRpFull(r.rwl),  fPctR(r.p(r.rwl))]]  : []),
+      ...(r.pic  ? [["  — Partner Income",              fRpFull(r.pic),  fPctR(r.p(r.pic))]]  : []),
+      ["TOTAL PENDAPATAN",                              fRpFull(r.tpd),  fPctR(r.p(r.tpd))],
+    ],
+    [[0, 100, "left"], [1, 48, "right"], [2, 30, "right"]],
+    { boldLast: true }
+  );
+
+  // ── Tabel Summary Pengeluaran ──
+  tbl("B. RINGKASAN STRUKTUR PENGELUARAN",
+    ["Komponen Pengeluaran", "Jumlah (IDR)", "% Omset"],
+    [
+      ...(r.tox ? [["OPEX Branch",               fRpFull(r.tox), fPctR(r.p(r.tox))]] : []),
+      ...(r.tsd ? [["SDM Branch",                fRpFull(r.tsd), fPctR(r.p(r.tsd))]] : []),
+      ...(r.tmk ? [["Marketing & Cluster Dev",   fRpFull(r.tmk), fPctR(r.p(r.tmk))]] : []),
+      ...(r.tmkStatic ? [["  — Program Reguler", fRpFull(r.tmkStatic), fPctR(r.p(r.tmkStatic))]] : []),
+      ...(r.tmkLain   ? [["  — Program Lain",    fRpFull(r.tmkLain),   fPctR(r.p(r.tmkLain))]]   : []),
+      ...(r.tcm ? [["Cost of Money",             fRpFull(r.tcm), fPctR(r.p(r.tcm))]] : []),
+      ...(r.pex ? [["Partner Expense",           fRpFull(r.pex), fPctR(r.p(r.pex))]] : []),
+      ["TOTAL PENGELUARAN",                      fRpFull(r.tpg), fPctR(r.p(r.tpg))],
+    ],
+    [[0, 100, "left"], [1, 48, "right"], [2, 30, "right"]],
+    { boldLast: true }
+  );
+
+  // ── Tabel Summary Omset ──
+  tbl("C. RINGKASAN OMSET PENJUALAN",
+    ["Komponen Omset", "Jumlah (IDR)", "% Total"],
+    [
+      ...(r.osp ? [["SP Regular",    fRpFull(r.osp), fPctR(r.tom ? r.osp / r.tom * 100 : 0)]] : []),
+      ...(r.ovc ? [["Voucher Fisik", fRpFull(r.ovc), fPctR(r.tom ? r.ovc / r.tom * 100 : 0)]] : []),
+      ...(r.mj  ? [["Saldo MOBO",   fRpFull(r.mj),  fPctR(r.tom ? r.mj  / r.tom * 100 : 0)]] : []),
+      ["TOTAL OMSET",                fRpFull(r.tom), "100,0%"],
+    ],
+    [[0, 100, "left"], [1, 48, "right"], [2, 30, "right"]],
+    { boldLast: true }
+  );
+
+  // ── Net Profit Box ──
+  if (Y > PH - 52) { doc.addPage(); drawHeader(_currentTitle); }
+  const netPos = r.net >= 0;
+  const netBoxY = Y;
+  const netFill = netPos ? C.TEAL : C.RED;
+  doc.setFillColor(...netFill);
+  doc.roundedRect(ML, netBoxY, CW, 36, 3, 3, "F");
+
+  doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(255, 255, 255);
+  doc.text("NET PROFIT BEFORE TAX", ML + 6, netBoxY + 8);
+  doc.text(`(Total Pendapatan − Total Pengeluaran)`, ML + 6, netBoxY + 13.5);
+
+  doc.setFontSize(20);
+  doc.text(
+    (r.net >= 0 ? "" : "(") + "Rp " + Math.abs(r.net).toLocaleString("id-ID") + (r.net < 0 ? ")" : ""),
+    ML + 6, netBoxY + 26
+  );
+
+  const pctStr = fPctR(r.p(r.net));
+  doc.setFontSize(10);
+  doc.text(pctStr + " dari Omset", PW - MR - 4, netBoxY + 20, { align: "right" });
+  doc.setFontSize(8);
+  doc.text(netPos ? "PROFIT ▲" : "LOSS ▼", PW - MR - 4, netBoxY + 28, { align: "right" });
+  Y = netBoxY + 44;
+
+  // ══════════════════════════════════════════════════════════════════
+  // HALAMAN 2+: RINCIAN PRODUK & PENDAPATAN
+  // ══════════════════════════════════════════════════════════════════
+  doc.addPage();
   _currentTitle = "RINCIAN PRODUK & PENDAPATAN";
   drawHeader(_currentTitle);
 
-  // 9 Kolom dipaskan untuk 178mm (Total harus persis 178)
   const prdHead = ["Produk", "Qty", "HPP", "Retail", "Modal (Rp)", "Jual (Rp)", "Margin (Rp)", "% Mgn", "Komp"];
   const prdCols = [
     [0, 40, "left"], [1, 12, "right"], [2, 16, "right"], [3, 16, "right"],
-    [4, 22, "right"], [5, 22, "right"], [6, 22, "right"], [7, 14, "right"], [8, 14, "right"]
+    [4, 22, "right"], [5, 22, "right"], [6, 22, "right"], [7, 14, "right"], [8, 14, "right"],
   ];
 
   function buildPrdRows(pairs, hppMap, totalOmset) {
     const rows = [];
     pairs.forEach(([qk, rk]) => {
       const qty = gd(qk); if (!qty) return;
-      const hpp = hppMap[qk] || 0, ret = gd(rk), tMod = hpp * qty, tPenj = ret * qty, marg = tPenj - tMod;
-      const pctM = tPenj ? marg / tPenj * 100 : 0, komp = totalOmset ? tPenj / totalOmset * 100 : 0;
+      const hpp = hppMap[qk] || 0, ret = gd(rk);
+      const tMod = hpp * qty, tPenj = ret * qty, marg = tPenj - tMod;
+      const pctM = tPenj ? marg / tPenj * 100 : 0;
+      const komp = totalOmset ? tPenj / totalOmset * 100 : 0;
       rows.push([PROD_NAMES[qk] || qk, fQty(qty), fRp(hpp), fRp(ret), fRp(tMod), fRp(tPenj), fRp(marg), fPct(pctM), fPct(komp)]);
     });
     return rows;
   }
 
-  // Tabel SP
+  // SP
   let spRows = buildPrdRows(r.sd, r.hsp, r.osp);
   if (spRows.length) {
-    const tMod = r.sd.reduce((a,[q])=>a+gd(q)*(r.hsp[q]||0),0);
-    spRows.push(["Sub-total SP Harga 1", "", "", "", fRp(tMod), fRp(r.osp1), fRp(r.msp1), fPct(r.osp1?r.msp1/r.osp1*100:0), ""]);
+    const tMod = r.sd.reduce((a, [q]) => a + gd(q) * (r.hsp[q] || 0), 0);
+    spRows.push(["Sub-total SP Harga 1", "", "", "", fRp(tMod), fRp(r.osp1), fRp(r.msp1), fPct(r.osp1 ? r.msp1 / r.osp1 * 100 : 0), ""]);
   }
   let spRows2 = buildPrdRows(r.sd2, r.hsp2, r.osp);
   if (spRows2.length) {
-    const tMod = r.sd2.reduce((a,[q])=>a+gd(q)*(r.hsp2[q]||0),0);
-    spRows2.push(["Sub-total SP Harga 2", "", "", "", fRp(tMod), fRp(r.osp2), fRp(r.msp2), fPct(r.osp2?r.msp2/r.osp2*100:0), ""]);
+    const tMod = r.sd2.reduce((a, [q]) => a + gd(q) * (r.hsp2[q] || 0), 0);
+    spRows2.push(["Sub-total SP Harga 2", "", "", "", fRp(tMod), fRp(r.osp2), fRp(r.msp2), fPct(r.osp2 ? r.msp2 / r.osp2 * 100 : 0), ""]);
   }
   const allSpRows = [...spRows, ...spRows2];
   if (allSpRows.length) {
-    allSpRows.push(["TOTAL SP REGULAR", "", "", "", "", fRp(r.osp), fRp(r.msp), fPct(r.osp?r.msp/r.osp*100:0), "100%"]);
-    const subIdx = allSpRows.map((x,i) => x[0].includes("Sub-total") ? i : -1).filter(i => i >= 0);
+    allSpRows.push(["TOTAL SP REGULAR", "", "", "", "", fRp(r.osp), fRp(r.msp), fPct(r.osp ? r.msp / r.osp * 100 : 0), "100%"]);
+    const subIdx = allSpRows.map((x, i) => x[0].includes("Sub-total") ? i : -1).filter(i => i >= 0);
     tbl("1. RINCIAN STARTER PACK (SP)", prdHead, allSpRows, prdCols, { subtotalRow: subIdx, boldLast: true });
   }
 
-  // Tabel VC
+  // VC
   let vcRows = buildPrdRows(r.vd, r.hvc, r.ovc);
   if (vcRows.length) {
-    const tMod = r.vd.reduce((a,[q])=>a+gd(q)*(r.hvc[q]||0),0);
-    vcRows.push(["Sub-total VC Harga 1", "", "", "", fRp(tMod), fRp(r.ovc1), fRp(r.mvc1), fPct(r.ovc1?r.mvc1/r.ovc1*100:0), ""]);
+    const tMod = r.vd.reduce((a, [q]) => a + gd(q) * (r.hvc[q] || 0), 0);
+    vcRows.push(["Sub-total VC Harga 1", "", "", "", fRp(tMod), fRp(r.ovc1), fRp(r.mvc1), fPct(r.ovc1 ? r.mvc1 / r.ovc1 * 100 : 0), ""]);
   }
   let vcRows2 = buildPrdRows(r.vd2, r.hvc2, r.ovc);
   if (vcRows2.length) {
-    const tMod = r.vd2.reduce((a,[q])=>a+gd(q)*(r.hvc2[q]||0),0);
-    vcRows2.push(["Sub-total VC Harga 2", "", "", "", fRp(tMod), fRp(r.ovc2), fRp(r.mvc2), fPct(r.ovc2?r.mvc2/r.ovc2*100:0), ""]);
+    const tMod = r.vd2.reduce((a, [q]) => a + gd(q) * (r.hvc2[q] || 0), 0);
+    vcRows2.push(["Sub-total VC Harga 2", "", "", "", fRp(tMod), fRp(r.ovc2), fRp(r.mvc2), fPct(r.ovc2 ? r.mvc2 / r.ovc2 * 100 : 0), ""]);
   }
   const allVcRows = [...vcRows, ...vcRows2];
   if (allVcRows.length) {
-    allVcRows.push(["TOTAL VOUCHER FISIK", "", "", "", "", fRp(r.ovc), fRp(r.mvc), fPct(r.ovc?r.mvc/r.ovc*100:0), "100%"]);
-    const subIdx = allVcRows.map((x,i) => x[0].includes("Sub-total") ? i : -1).filter(i => i >= 0);
+    allVcRows.push(["TOTAL VOUCHER FISIK", "", "", "", "", fRp(r.ovc), fRp(r.mvc), fPct(r.ovc ? r.mvc / r.ovc * 100 : 0), "100%"]);
+    const subIdx = allVcRows.map((x, i) => x[0].includes("Sub-total") ? i : -1).filter(i => i >= 0);
     tbl("2. RINCIAN VOUCHER FISIK", prdHead, allVcRows, prdCols, { subtotalRow: subIdx, boldLast: true });
   }
 
-  // Tabel MOBO
+  // MOBO
   if (r.mj) {
-    tbl("3. SALDO MOBO", 
-      ["Keterangan", "Modal (Rp)", "Penjualan (Rp)", "Komp"],
+    tbl("3. SALDO MOBO",
+      ["Keterangan", "Modal (Rp)", "Penjualan (Rp)", "Komposisi"],
       [["Saldo MOBO", fRpFull(r.mm), fRpFull(r.mj), fPct(r.p(r.mj))]],
       [[0, 88, "left"], [1, 40, "right"], [2, 35, "right"], [3, 15, "right"]]
     );
   }
 
-  // Tabel Komisi & Insentif
+  // Komisi & Insentif
   const komRows = [];
-  if (r.up)  komRows.push(["Upfront Discount (1,5% Modal MOBO)", fRpFull(r.up),  fPct(r.tko?r.up/r.tko*100:0)]);
-  if (r.smg) komRows.push(["Sales Margin (Realtime + Back Margin)", fRpFull(r.smg), fPct(r.tko?r.smg/r.tko*100:0)]);
-  if (r.sla) komRows.push(["Monthly Fee SLA", fRpFull(r.sla), fPct(r.tko?r.sla/r.tko*100:0)]);
-  if (r.spc) komRows.push(["Special Program", fRpFull(r.spc), fPct(r.tko?r.spc/r.tko*100:0)]);
+  if (r.up)  komRows.push(["Upfront Discount (1,5% Modal MOBO)", fRpFull(r.up),  fPct(r.tko ? r.up  / r.tko * 100 : 0)]);
+  if (r.smg) komRows.push(["Sales Margin (Realtime + Back Margin)", fRpFull(r.smg), fPct(r.tko ? r.smg / r.tko * 100 : 0)]);
+  if (r.sla) komRows.push(["Monthly Fee SLA", fRpFull(r.sla), fPct(r.tko ? r.sla / r.tko * 100 : 0)]);
+  if (r.spc) komRows.push(["Special Program", fRpFull(r.spc), fPct(r.tko ? r.spc / r.tko * 100 : 0)]);
   if (komRows.length) {
     komRows.push(["TOTAL KOMISI & INSENTIF", fRpFull(r.tko), "100,00%"]);
     tbl("4. KOMISI & INSENTIF", ["Keterangan", "Jumlah (IDR)", "% dari Total"], komRows,
       [[0, 108, "left"], [1, 40, "right"], [2, 30, "right"]], { boldLast: true });
   }
 
-  // Tabel Hadiah
+  // Hadiah & Lainnya
   const hdRows = [];
-  if (r.rwc) hdRows.push(["Rewards Champions Club", fRpFull(r.rwc), fPct(r.thd?r.rwc/r.thd*100:0)]);
-  if (r.rwl) hdRows.push(["Rewards Lainnya", fRpFull(r.rwl), fPct(r.thd?r.rwl/r.thd*100:0)]);
-  if (r.pic) hdRows.push(["Partner Income", fRpFull(r.pic), fPct(r.thd?r.pic/r.thd*100:0)]);
+  if (r.rwc) hdRows.push(["Rewards Champions Club", fRpFull(r.rwc), fPct(r.thd ? r.rwc / r.thd * 100 : 0)]);
+  if (r.rwl) hdRows.push(["Rewards Lainnya",         fRpFull(r.rwl), fPct(r.thd ? r.rwl / r.thd * 100 : 0)]);
+  if (r.pic) hdRows.push(["Partner Income",           fRpFull(r.pic), fPct(r.thd ? r.pic / r.thd * 100 : 0)]);
   if (hdRows.length) {
     hdRows.push(["TOTAL HADIAH & LAINNYA", fRpFull(r.thd), "100,00%"]);
     tbl("5. HADIAH & LAINNYA", ["Keterangan", "Jumlah (IDR)", "% dari Total"], hdRows,
       [[0, 108, "left"], [1, 40, "right"], [2, 30, "right"]], { boldLast: true });
   }
 
-  // ==========================================================================
-  // HALAMAN 2/3: RINCIAN BEBAN USAHA
-  // ==========================================================================
+  // ══════════════════════════════════════════════════════════════════
+  // HALAMAN BEBAN USAHA
+  // ══════════════════════════════════════════════════════════════════
   doc.addPage();
   _currentTitle = "RINCIAN BEBAN USAHA";
   drawHeader(_currentTitle);
 
   const exHead = ["Keterangan Beban", "Qty", "Harga Satuan (Rp)", "Total Biaya (Rp)", "Komposisi"];
-  // Lebar kolom dipaskan 178mm
   const exCols = [[0, 60, "left"], [1, 18, "right"], [2, 30, "right"], [3, 40, "right"], [4, 30, "right"]];
 
   function buildExRows(defs, totalGroup) {
@@ -502,66 +634,124 @@ async function makePDF(data, r, ctx) {
     defs.forEach(([nm, qk, pk]) => {
       const qty = gd(qk), prc = gd(pk); if (!qty && !prc) return;
       const tot = qty * prc;
-      rows.push([nm, fQty(qty), fRp(prc), fRp(tot), fPct(totalGroup ? tot/totalGroup*100 : 0)]);
+      rows.push([nm, fQty(qty), fRp(prc), fRp(tot), fPct(totalGroup ? tot / totalGroup * 100 : 0)]);
     });
     return rows;
   }
 
   // OPEX
   const opexRows = buildExRows([
-    ["Gedung / Sewa Kantor", "qty_opex_gedung", "price_opex_gedung"], ["Kendaraan", "qty_opex_kendaraan", "price_opex_kendaraan"],
-    ["Listrik", "qty_opex_listrik", "price_opex_listrik"], ["Air", "qty_opex_air", "price_opex_air"],
-    ["Perangkat IT", "qty_opex_it", "price_opex_it"], ["Logistik / Pengiriman", "qty_opex_logistik", "price_opex_logistik"],
-    ["Asuransi", "qty_opex_asuransi", "price_opex_asuransi"], ["Lain-lain", "qty_opex_lain", "price_opex_lain"],
+    ["Gedung / Sewa Kantor",  "qty_opex_gedung",    "price_opex_gedung"],
+    ["Kendaraan",             "qty_opex_kendaraan", "price_opex_kendaraan"],
+    ["Listrik",               "qty_opex_listrik",   "price_opex_listrik"],
+    ["Air",                   "qty_opex_air",       "price_opex_air"],
+    ["Perangkat IT",          "qty_opex_it",        "price_opex_it"],
+    ["Logistik / Pengiriman", "qty_opex_logistik",  "price_opex_logistik"],
+    ["Asuransi",              "qty_opex_asuransi",  "price_opex_asuransi"],
+    ["Lain-lain",             "qty_opex_lain",      "price_opex_lain"],
   ], r.tox);
   if (opexRows.length) {
     opexRows.push(["TOTAL OPEX", "", "", fRp(r.tox), "100%"]);
     tbl("1. OPERASIONAL BRANCH (OPEX)", exHead, opexRows, exCols, { boldLast: true });
   }
 
-  // SDM
+  // SDM — FIXED: termasuk benefit_sales & benefit_nonsales
   const sdmRows = buildExRows([
-    ["Branch Manager", "qty_sdm_bm", "price_sdm_bm"], ["Admin & Warehouse", "qty_sdm_admin", "price_sdm_admin"],
-    ["Finance", "qty_sdm_finance", "price_sdm_finance"], ["Finance Supervisor", "qty_sdm_finance_spv", "price_sdm_finance_spv"],
-    ["Finance Staff", "qty_sdm_finance_staff", "price_sdm_finance_staff"], ["Merchandising", "qty_sdm_md", "price_sdm_md"],
-    ["Sales Support", "qty_sdm_ss", "price_sdm_ss"], ["Staff Operasional", "qty_sdm_ops", "price_sdm_ops"],
-    ["Perjalanan Dinas", "qty_sdm_dinas", "price_sdm_dinas"], ["Territory Manager", "qty_sdm_tm", "price_sdm_tm"],
-    ["Operation Manager", "qty_sdm_om", "price_sdm_om"], ["General Manager", "qty_sdm_gm", "price_sdm_gm"],
-    ["HRD", "qty_sdm_hrd", "price_sdm_hrd"], ["MIS / IT Support", "qty_sdm_mis", "price_sdm_mis"],
-    ["Senior Operation Manager", "qty_sdm_som", "price_sdm_som"], ["Office Boy", "qty_sdm_ob", "price_sdm_ob"],
-    ["Technical Sales Support", "qty_sdm_tss", "price_sdm_tss"]
+    ["Branch Manager",           "qty_sdm_bm",              "price_sdm_bm"],
+    ["Admin & Warehouse",        "qty_sdm_admin",           "price_sdm_admin"],
+    ["Finance",                  "qty_sdm_finance",         "price_sdm_finance"],
+    ["Finance Supervisor",       "qty_sdm_finance_spv",     "price_sdm_finance_spv"],
+    ["Finance Staff",            "qty_sdm_finance_staff",   "price_sdm_finance_staff"],
+    ["Merchandising",            "qty_sdm_md",              "price_sdm_md"],
+    ["Sales Support",            "qty_sdm_ss",              "price_sdm_ss"],
+    ["Staff Operasional",        "qty_sdm_ops",             "price_sdm_ops"],
+    ["Perjalanan Dinas",         "qty_sdm_dinas",           "price_sdm_dinas"],
+    ["Territory Manager",        "qty_sdm_tm",              "price_sdm_tm"],
+    ["Operation Manager",        "qty_sdm_om",              "price_sdm_om"],
+    ["General Manager",          "qty_sdm_gm",              "price_sdm_gm"],
+    ["HRD",                      "qty_sdm_hrd",             "price_sdm_hrd"],
+    ["MIS / IT Support",         "qty_sdm_mis",             "price_sdm_mis"],
+    ["Senior Operation Manager", "qty_sdm_som",             "price_sdm_som"],
+    ["Office Boy",               "qty_sdm_ob",              "price_sdm_ob"],
+    ["Technical Sales Support",  "qty_sdm_tss",             "price_sdm_tss"],
+    // FIXED: tambahan dua field baru
+    ["Benefit Sales",            "qty_sdm_benefit_sales",   "price_sdm_benefit_sales"],
+    ["Benefit Non-Sales",        "qty_sdm_benefit_nonsales","price_sdm_benefit_nonsales"],
   ], r.tsd);
   if (sdmRows.length) {
     sdmRows.push(["TOTAL SDM", "", "", fRp(r.tsd), "100%"]);
     tbl("2. SUMBER DAYA MANUSIA (SDM)", exHead, sdmRows, exCols, { boldLast: true });
   }
 
-  // MKT
-  const mktRows = buildExRows([
-    ["Wholeseller / Distributor", "qty_mkt_ws", "price_mkt_ws"], ["Retail / Outlet", "qty_mkt_retail", "price_mkt_retail"],
-    ["Event / Promosi", "qty_mkt_event", "price_mkt_event"], ["Program Starter Pack", "qty_mkt_starter", "price_mkt_starter"],
-    ["Lainnya", "qty_mkt_lain", "price_mkt_lain"]
+  // Marketing — static
+  const mktStaticRows = buildExRows([
+    ["Wholeseller / Distributor",    "qty_mkt_ws",      "price_mkt_ws"],
+    ["Retail / Outlet",              "qty_mkt_retail",  "price_mkt_retail"],
+    ["Event / Promosi",              "qty_mkt_event",   "price_mkt_event"],
+    ["Program Starter Pack",         "qty_mkt_starter", "price_mkt_starter"],
   ], r.tmk);
-  if (mktRows.length) {
-    mktRows.push(["TOTAL MARKETING", "", "", fRp(r.tmk), "100%"]);
-    tbl("3. MARKETING & CLUSTER DEV", exHead, mktRows, exCols, { boldLast: true });
+
+  // Marketing — FIXED: dynamic lain_1 s/d lain_10
+  const mktLainRows = [];
+  r.mktLainDetail.forEach(({ label, qty, price, total }) => {
+    mktLainRows.push([
+      label || "Program Lain",
+      fQty(qty),
+      fRp(price),
+      fRp(total),
+      fPct(r.tmk ? total / r.tmk * 100 : 0),
+    ]);
+  });
+
+  const allMktRows = [...mktStaticRows, ...mktLainRows];
+  if (allMktRows.length) {
+    allMktRows.push(["TOTAL MARKETING", "", "", fRp(r.tmk), "100%"]);
+    // mark subtotal rows where static ends (before lain separator)
+    const subIdx = mktStaticRows.length > 0 && mktLainRows.length > 0
+      ? [mktStaticRows.length - 1]
+      : [];
+    tbl("3. MARKETING & CLUSTER DEV", exHead, allMktRows, exCols, { boldLast: true });
   }
 
-  // COM
+  // Cost of Money
   const comRows = buildExRows([
-    ["Administrasi Bank", "qty_com_admin", "price_com_admin"], ["Bunga Pinjaman", "qty_com_bunga", "price_com_bunga"]
+    ["Administrasi Bank",  "qty_com_admin", "price_com_admin"],
+    ["Bunga Pinjaman",     "qty_com_bunga", "price_com_bunga"],
   ], r.tcm);
   if (comRows.length) {
     comRows.push(["TOTAL COST OF MONEY", "", "", fRp(r.tcm), "100%"]);
     tbl("4. COST OF MONEY", exHead, comRows, exCols, { boldLast: true });
   }
 
-  // PEX
+  // Partner Expense
   if (r.pex) {
-    tbl("5. PARTNER EXPENSE", exHead, [["Partner Expense", "—", "—", fRp(r.pex), "100%"]], exCols, { boldLast: true });
+    tbl("5. PARTNER EXPENSE", exHead,
+      [["Partner Expense (Luar Template)", "—", "—", fRp(r.pex), "100%"]],
+      exCols, { boldLast: true });
   }
 
-  doc.save(`Rincian_Laba_Rugi_${partner}_${branch}_${month}_${year}.pdf`.replace(/\s+/g, "_"));
+  // ── Balance check footer di halaman terakhir ──
+  if (Y > PH - 52) { doc.addPage(); drawHeader(_currentTitle); }
+  const balY = Y;
+  doc.setFillColor(...C.HEADBG);
+  doc.roundedRect(ML, balY, CW, 28, 2, 2, "F");
+  doc.setDrawColor(...C.HEAVY); doc.setLineWidth(0.3);
+  doc.roundedRect(ML, balY, CW, 28, 2, 2, "S");
+
+  const colW3 = CW / 3;
+  [
+    ["TOTAL PENDAPATAN", fRpFull(r.tpd), C.TEAL],
+    ["TOTAL PENGELUARAN", fRpFull(r.tpg), C.RED],
+    ["NET PROFIT", fRpFull(r.net), netPos ? C.TEAL : C.RED],
+  ].forEach(([label, val, color], i) => {
+    const x = ML + i * colW3 + 4;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(6.5); doc.setTextColor(...C.HEAVY);
+    doc.text(label, x, balY + 8);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(8); doc.setTextColor(...color);
+    doc.text(val, x, balY + 18);
+  });
+
+  doc.save(`PnL_${partner}_${branch}_${month}_${year}.pdf`.replace(/\s+/g, "_"));
 }
 
 // ─── UI primitives ───────────────────────────────────────────────────────────
@@ -627,7 +817,11 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
     setLoading(true); setError(null);
     (async () => {
       try {
-        const bq = () => supabase.from("pnl_reports").select("*").eq("partner_name", activeContext.mpxName).eq("branch", activeContext.branch).eq("month", activeContext.month).eq("year", String(activeContext.year));
+        const bq = () => supabase.from("pnl_reports").select("*")
+          .eq("partner_name", activeContext.mpxName)
+          .eq("branch", activeContext.branch)
+          .eq("month", activeContext.month)
+          .eq("year", String(activeContext.year));
         let db = null;
         if (activeContext.mpxType) {
           const { data: r1, error: e1 } = await bq().eq("mpc_mp3", activeContext.mpxType).maybeSingle();
@@ -677,8 +871,13 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
     </div></>
   );
 
-  const notes = data.validation_notes || "", hasPend = notes.includes("pendapatan:final"), hasPeng = notes.includes("pengeluaran:final"), mpcType = data.mpc_mp3 || activeContext?.mpxType || "", netPos = report.net >= 0;
+  const notes = data.validation_notes || "";
+  const hasPend = notes.includes("pendapatan:final");
+  const hasPeng = notes.includes("pengeluaran:final");
+  const mpcType = data.mpc_mp3 || activeContext?.mpxType || "";
+  const netPos  = report.net >= 0;
 
+  // ── FIXED: pnlRows sekarang mencerminkan semua komponen pengeluaran ──
   const pnlRows = [
     { label: "A.  Omset Penjualan",        amount: report.tom,  ratio: 100,                   kind: "section" },
     ...(report.osp ? [{ label: "SP Regular",      amount: report.osp, ratio: report.p(report.osp), indent: 1 }] : []),
@@ -690,25 +889,31 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
     { label: "Total Margin Produk",        amount: report.tmg,  ratio: report.p(report.tmg),  indent: 1, kind: "subtot" },
     ...(report.msp ? [{ label: "— SP Regular",    amount: report.msp, ratio: report.p(report.msp), indent: 2 }] : []),
     ...(report.mvc ? [{ label: "— Voucher Fisik", amount: report.mvc, ratio: report.p(report.mvc), indent: 2 }] : []),
-    
+
     { label: "Total Komisi & Insentif",    amount: report.tko,  ratio: report.p(report.tko),  indent: 1, kind: "subtot" },
     ...(report.up  ? [{ label: "— Upfront Discount",  amount: report.up,  ratio: report.p(report.up),  indent: 2 }] : []),
     ...(report.smg ? [{ label: "— Sales Margin",       amount: report.smg, ratio: report.p(report.smg), indent: 2 }] : []),
     ...(report.sla ? [{ label: "— Monthly Fee SLA",    amount: report.sla, ratio: report.p(report.sla), indent: 2 }] : []),
     ...(report.spc ? [{ label: "— Special Program",    amount: report.spc, ratio: report.p(report.spc), indent: 2 }] : []),
-    
+
     { label: "Total Hadiah & Lainnya",     amount: report.thd,  ratio: report.p(report.thd),  indent: 1, kind: "subtot" },
     ...(report.rwc ? [{ label: "— Champions Club",     amount: report.rwc, ratio: report.p(report.rwc), indent: 2 }] : []),
     ...(report.rwl ? [{ label: "— Hadiah Lainnya",     amount: report.rwl, ratio: report.p(report.rwl), indent: 2 }] : []),
     ...(report.pic ? [{ label: "— Partner Income",     amount: report.pic, ratio: report.p(report.pic), indent: 2 }] : []),
-    
+
     { label: "TOTAL PENDAPATAN",           amount: report.tpd,  ratio: report.p(report.tpd),  kind: "total" },
     { kind: "blank" },
 
     { label: "C.  Struktur Pengeluaran",   amount: report.tpg,  ratio: report.p(report.tpg),  kind: "section" },
     ...(report.tox ? [{ label: "OPEX Branch",             amount: report.tox, ratio: report.p(report.tox), indent: 1 }] : []),
     ...(report.tsd ? [{ label: "SDM Branch",              amount: report.tsd, ratio: report.p(report.tsd), indent: 1 }] : []),
-    ...(report.tmk ? [{ label: "Marketing & Cluster Dev", amount: report.tmk, ratio: report.p(report.tmk), indent: 1 }] : []),
+    // FIXED: Marketing ditampilkan dengan breakdown jika ada lain
+    ...(report.tmk ? [{
+      label: report.tmkLain > 0 ? "Marketing (Reguler + Program Lain)" : "Marketing & Cluster Dev",
+      amount: report.tmk, ratio: report.p(report.tmk), indent: 1
+    }] : []),
+    ...(report.tmkStatic && report.tmkLain > 0 ? [{ label: "— Program Reguler",   amount: report.tmkStatic, ratio: report.p(report.tmkStatic), indent: 2 }] : []),
+    ...(report.tmkLain   > 0                   ? [{ label: "— Program Lain",       amount: report.tmkLain,   ratio: report.p(report.tmkLain),   indent: 2 }] : []),
     ...(report.tcm ? [{ label: "Cost of Money",           amount: report.tcm, ratio: report.p(report.tcm), indent: 1 }] : []),
     ...(report.pex ? [{ label: "Partner Expense",         amount: report.pex, ratio: report.p(report.pex), indent: 1 }] : []),
     { label: "TOTAL PENGELUARAN",          amount: report.tpg,  ratio: report.p(report.tpg),  kind: "total" },
@@ -732,6 +937,7 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
         )}
       </AnimatePresence>
 
+      {/* ── Header ── */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14, marginBottom: 20, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 13, minWidth: 0, flex: 1 }}>
           <div style={{ width: 46, height: 46, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", color: "#FFFFFF", boxShadow: "0 2px 10px rgba(237,28,36,0.30)" }}><BarChart3 size={22} strokeWidth={2} /></div>
@@ -745,6 +951,7 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
         </button>
       </div>
 
+      {/* ── Status banner ── */}
       <div style={{ padding: "12px 14px", borderRadius: 10, marginBottom: 20, border: `1px solid ${data.is_finalized ? t.greenBd : t.amberBd}`, background: data.is_finalized ? t.greenBg : t.amberBg, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
           {data.is_finalized ? <CheckCircle2 size={17} style={{ color: t.green, flexShrink: 0 }} /> : <Clock size={17} style={{ color: t.amber, flexShrink: 0 }} />}
@@ -754,17 +961,19 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {hasPend && <Pill icon={<CheckCircle2 size={11} />} text="Pendapatan final" color={t.green} bg={t.greenBg} bd={t.greenBd} />}
+          {hasPend && <Pill icon={<CheckCircle2 size={11} />} text="Pendapatan final" color={t.green}   bg={t.greenBg}   bd={t.greenBd} />}
           {hasPeng && <Pill icon={<CheckCircle2 size={11} />} text="Pengeluaran final" color={t.magenta} bg={t.magentaBg} bd={t.magentaBd} />}
         </div>
       </div>
 
+      {/* ── Metric cards ── */}
       <div className="grid-3" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 22 }}>
         <MetCard label="Total Omset"       value={idr(report.tom)} sub="SP + Voucher + MOBO"      accent="#ED1C24"  t={t} />
-        <MetCard label="Total Pendapatan"  value={idr(report.tpd)} sub={'Margin + Komisi + Hadiah'} accent="#32BCAD" t={t} />
-        <MetCard label="Total Pengeluaran" value={idr(report.tpg)} sub="OPEX + SDM + MKT + COM"   accent={t.red}   t={t} />
+        <MetCard label="Total Pendapatan"  value={idr(report.tpd)} sub="Margin + Komisi + Hadiah" accent="#32BCAD"  t={t} />
+        <MetCard label="Total Pengeluaran" value={idr(report.tpg)} sub="OPEX + SDM + MKT + COM + Partner" accent={t.red} t={t} />
       </div>
 
+      {/* ── Financial Structure table ── */}
       <Card t={t} style={{ marginBottom: 22, overflow: "hidden" }}>
         <div style={{ padding: "13px 18px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
           <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", color: t.hi }}>Financial Structure</div>
@@ -773,11 +982,17 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
         <div className="tbl">
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 540 }}>
             <thead>
-              <tr style={{ background: t.sub }}>{[["Financial Structure", "left", "55%"], ["Jumlah (IDR)", "right", "30%"], ["Rasio", "right", "15%"]].map(([h, a, w]) => (<th key={h} style={{ padding: "10px 16px", textAlign: a, width: w, fontSize: 10, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: t.mid, borderBottom: `1px solid ${t.line}` }}>{h}</th>))}</tr>
+              <tr style={{ background: t.sub }}>
+                {[["Financial Structure", "left", "55%"], ["Jumlah (IDR)", "right", "30%"], ["Rasio", "right", "15%"]].map(([h, a, w]) => (
+                  <th key={h} style={{ padding: "10px 16px", textAlign: a, width: w, fontSize: 10, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: t.mid, borderBottom: `1px solid ${t.line}` }}>{h}</th>
+                ))}
+              </tr>
             </thead>
             <tbody>{pnlRows.map((row, i) => <TR key={i} {...row} t={t} />)}</tbody>
           </table>
         </div>
+
+        {/* ── Net Profit footer ── */}
         <div style={{ padding: "18px 22px", background: netPos ? t.greenBg : t.redBg, borderTop: `1.5px solid ${netPos ? t.greenBd : t.redBd}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
           <div>
             <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: "0.10em", textTransform: "uppercase", color: netPos ? t.green : t.red, marginBottom: 6 }}>NET PROFIT BEFORE TAX</div>
@@ -791,34 +1006,60 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
         </div>
       </Card>
 
+      {/* ── Pendapatan / Pengeluaran cards ── */}
       <div className="grid-2" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <Card t={t}>
           <div style={{ padding: "20px 22px" }}>
             <SLabel icon={<ArrowUpRight size={13} />} t={t}>Struktur Pendapatan</SLabel>
             {[
-              { label: "Margin Produk", val: report.tmg, note: `Margin SP + Margin VC` },
+              { label: "Margin Produk",     val: report.tmg, note: "Margin SP + Margin VC" },
               { label: "Komisi & Insentif", val: report.tko, note: "Upfront + Sales Margin + SLA + Special" },
               { label: "Hadiah & Lainnya",  val: report.thd, note: "Champions + Lainnya + Partner Income" },
             ].map((row, i) => (
               <div key={i} style={{ padding: "11px 0", borderBottom: `1px solid ${t.lineSoft}` }}>
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}><div style={{ fontSize: 13, fontWeight: 500, color: t.hi, lineHeight: 1.3 }}>{row.label}</div><div style={{ fontSize: 13.5, fontWeight: 600, color: t.hi, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{idr(row.val)}</div></div>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                  <div style={{ fontSize: 13, fontWeight: 500, color: t.hi, lineHeight: 1.3 }}>{row.label}</div>
+                  <div style={{ fontSize: 13.5, fontWeight: 600, color: t.hi, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{idr(row.val)}</div>
+                </div>
                 <div style={{ fontSize: 11, color: t.lo, marginTop: 3, lineHeight: 1.4 }}>{row.note}</div>
               </div>
             ))}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 14, marginTop: 4, borderTop: `1.5px solid rgba(50,188,173,0.35)` }}><span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "#32BCAD" }}>Total Pendapatan</span><span style={{ fontSize: 18, fontWeight: 700, color: "#32BCAD", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>{idr(report.tpd)}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 14, marginTop: 4, borderTop: `1.5px solid rgba(50,188,173,0.35)` }}>
+              <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "#32BCAD" }}>Total Pendapatan</span>
+              <span style={{ fontSize: 18, fontWeight: 700, color: "#32BCAD", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>{idr(report.tpd)}</span>
+            </div>
           </div>
         </Card>
+
+        {/* FIXED: Pengeluaran card sekarang lengkap 5 baris + breakdown marketing jika ada lain */}
         <Card t={t}>
           <div style={{ padding: "20px 22px" }}>
             <SLabel icon={<ArrowDownLeft size={13} />} t={t}>Struktur Pengeluaran</SLabel>
             {[
-              { label: "OPEX Branch",         val: report.tox }, { label: "SDM Branch",          val: report.tsd },
-              { label: "Marketing & Cluster", val: report.tmk }, { label: "Cost of Money",       val: report.tcm },
+              { label: "OPEX Branch",         val: report.tox },
+              { label: "SDM Branch",          val: report.tsd },
+              {
+                label: report.tmkLain > 0 ? "Marketing (Reg. + Lain)" : "Marketing & Cluster Dev",
+                val: report.tmk,
+                note: report.tmkLain > 0
+                  ? `Reguler: ${idr(report.tmkStatic)} · Lain: ${idr(report.tmkLain)}`
+                  : null
+              },
+              { label: "Cost of Money",       val: report.tcm },
               { label: "Partner Expense",     val: report.pex },
             ].map((row, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "11px 0", borderBottom: `1px solid ${t.lineSoft}` }}><span style={{ fontSize: 13, fontWeight: 500, color: t.hi }}>{row.label}</span><span style={{ fontSize: 13.5, fontWeight: 600, color: t.hi, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{idr(row.val)}</span></div>
+              <div key={i} style={{ padding: "11px 0", borderBottom: `1px solid ${t.lineSoft}` }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                  <span style={{ fontSize: 13, fontWeight: 500, color: t.hi }}>{row.label}</span>
+                  <span style={{ fontSize: 13.5, fontWeight: 600, color: t.hi, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{idr(row.val)}</span>
+                </div>
+                {row.note && <div style={{ fontSize: 11, color: t.lo, marginTop: 3 }}>{row.note}</div>}
+              </div>
             ))}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 14, marginTop: 4, borderTop: `1.5px solid ${t.redBd}` }}><span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: t.red }}>Total Pengeluaran</span><span style={{ fontSize: 18, fontWeight: 700, color: t.red, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>{idr(report.tpg)}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 14, marginTop: 4, borderTop: `1.5px solid ${t.redBd}` }}>
+              <span style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: t.red }}>Total Pengeluaran</span>
+              <span style={{ fontSize: 18, fontWeight: 700, color: t.red, fontVariantNumeric: "tabular-nums", letterSpacing: "-0.02em" }}>{idr(report.tpg)}</span>
+            </div>
           </div>
         </Card>
       </div>
@@ -827,7 +1068,11 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
 };
 
 function Pill({ icon, text, color, bg, bd }) {
-  return <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 99, background: bg, border: `1px solid ${bd}`, fontSize: 11.5, color, fontWeight: 600, fontFamily: "inherit" }}>{icon}{text}</span>;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 10px", borderRadius: 99, background: bg, border: `1px solid ${bd}`, fontSize: 11.5, color, fontWeight: 600, fontFamily: "inherit" }}>
+      {icon}{text}
+    </span>
+  );
 }
 
 export default MPX_Summary_PNL;

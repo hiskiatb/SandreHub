@@ -35,9 +35,12 @@ const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI","SF Pro Text
 // ─── Role definitions ─────────────────────────────────────────────────────────
 // internal_ioh = same view as spm_sumatera but read-only on forms & payout upload
 const ROLES = [
-  { value: "spm_sumatera", label: "SPM Sumatera",   desc: "Akses penuh semua fitur" },
-  { value: "finance_mpx",  label: "Finance MPX",    desc: "Akses laporan partner sendiri" },
-  { value: "internal_ioh", label: "Internal IOH",   desc: "Akses lihat semua, tanpa edit" },
+  { value: "spm_sumatera",         label: "SPM Sumatera",              desc: "Akses penuh semua fitur" },
+  { value: "finance_mpx",          label: "Finance MPX",               desc: "Akses laporan partner sendiri" },
+  { value: "internal_ioh",         label: "Internal IOH (Seluruh Sum.)",desc: "Akses lihat semua region, tanpa edit" },
+  { value: "ioh_north_sumatera",   label: "IOH North Sumatera",        desc: "Akses lihat region North Sumatera" },
+  { value: "ioh_central_sumatera", label: "IOH Central Sumatera",      desc: "Akses lihat region Central Sumatera" },
+  { value: "ioh_south_sumatera",   label: "IOH South Sumatera",        desc: "Akses lihat region South Sumatera" },
 ];
 
 // Roles that require partner_name
