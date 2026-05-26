@@ -2,25 +2,33 @@
 /**
  * PNL_FormPendapatan.jsx
  *
- * Perubahan vs versi sebelumnya:
- * - Fitur TAMBAH PRODUK SP CUSTOM: user bisa menambah produk SP baru
- *   dengan nama, harga pokok, qty, dan harga retail bebas.
- * - Data custom SP disimpan di kolom `revenue_data` (JSONB) — tidak
- *   memerlukan ALTER TABLE apapun karena kolom sudah ada di schema.
- * - Auto-kalkulasi margin real-time untuk setiap baris custom.
- * - Mendukung entry 2 (harga kedua) sama seperti produk SP bawaan.
- * - Summary & payload menyertakan custom SP secara akurat.
+ * - Lampiran PDF tersimpan di Supabase Storage (bucket: pnl-attachments)
+ *   metadata-nya disimpan di kolom `attachments_pendapatan` (jsonb).
+ * - Hanya menerima PDF, maksimal 20 MB per file, multiple.
+ * - Custom SP & Voucher tersimpan di kolom `revenue_data` (jsonb).
+ *
+ * FIXES:
+ * - Breakpoint tabel naik 720→860px agar mobile-cards muncul di half-window
+ * - Hapus minWidth:620 dari kedua tabel (biang overflow)
+ * - Kolom action naik 5%→8%, redistribusi lebar kolom lain
+ * - .vc-add-btn tambah white-space:nowrap + flex-shrink:0
+ * - Footer flex-wrap agar tombol tidak keluar box
+ * - Breakpoint .gsf naik 900→960px
  */
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import supabase from "../../../lib/supabase";
 import { pushNotification } from "../../../lib/notificationService";
+import {
+  uploadMany, removeOne, signedUrl, validatePdf,
+  ACCEPTED_EXT, fmtSize,
+} from '../../../lib/pnlAttachments';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowUpRight, AlertCircle, CheckCircle2, Send, Upload, ShieldCheck,
   BarChart3, Zap, Layers, X, FileCheck, TrendingUp,
   Award, Banknote, Gift, Loader2,
   Save, ArrowRight, ArrowLeft, Clock, Plus, Trash2,
-  Wallet, Eye, Ban, Package, Sparkles,
+  Eye, Ban, Package, Sparkles,
 } from 'lucide-react';
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
@@ -148,7 +156,6 @@ const G = ({ d, t }) => (
     }
     .fpi-ro-sm { padding: 8px 6px; text-align: center; }
     .fpi-ro-lg { font-size: 17px !important; font-weight: 700; padding: 13px; }
-    /* HPP editable */
     .fpi-hpp {
       width: 100%; background: ${t.inputBg}; border: 1px solid ${t.inputBd};
       border-radius: 9px; padding: 8px 8px; font-weight: 600; color: ${t.hi};
@@ -163,7 +170,6 @@ const G = ({ d, t }) => (
       font-family: inherit; font-size: 13px !important; box-sizing: border-box;
       pointer-events: none; user-select: text; outline: none; text-align: right;
     }
-    /* fpi-name: nama produk custom — identik dengan nama produk bawaan */
     .fpi-name {
       width: 100%; background: ${t.inputBg}; border: 1px solid ${t.inputBd};
       border-radius: 9px; padding: 8px 8px; font-weight: 700; color: ${t.hi};
@@ -172,31 +178,34 @@ const G = ({ d, t }) => (
     }
     .fpi-name:focus { border-color: #ED1C24; box-shadow: 0 0 0 3px rgba(237,28,36,0.14); }
     .fpi-name::placeholder { color: ${t.lo}; font-weight: 400; font-size: 11px !important; }
-    .fpi-name-ro {
-      width: 100%; background: ${t.roBg}; border: 1px solid ${t.roBd};
-      border-radius: 9px; padding: 8px 8px; font-weight: 600; color: ${t.hi};
-      font-family: inherit; font-size: 13px !important; box-sizing: border-box;
-      pointer-events: none; user-select: text; outline: none;
-    }
     .custom-row-highlight:hover td { background: ${d ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.018)'} !important; }
     .lbl { display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: ${t.mid}; margin-bottom: 6px; }
-    .lbl-mini { font-size: 9px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: ${t.lo}; }
+
+    /* ── TABLE / CARDS BREAKPOINT: 860px (naik dari 720px) ── */
     .vc-table { display: none; }
     .vc-cards { display: flex; flex-direction: column; gap: 8px; }
-    @media (min-width: 720px) { .vc-table { display: block; } .vc-cards { display: none !important; } }
+    @media (min-width: 860px) { .vc-table { display: block; } .vc-cards { display: none !important; } }
+
     @media (min-width: 580px) { .g2 { grid-template-columns: 1fr 1fr !important; } }
-    @media (min-width: 900px) { .g4sp { grid-template-columns: 1fr 1fr !important; } .gsf { grid-template-columns: 1fr 1fr !important; } }
+
+    /* ── .gsf breakpoint: 960px (naik dari 900px) ── */
+    @media (min-width: 960px) { .g4sp { grid-template-columns: 1fr 1fr !important; } .gsf { grid-template-columns: 1fr 1fr !important; } }
+
     @keyframes fpbreathe { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:0.38; transform:scale(0.9); } }
     @keyframes fpspin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
     @keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+
+    /* ── FIX: tombol +2 tidak keluar box ── */
     .vc-add-btn {
       display: inline-flex; align-items: center; gap: 4px;
       padding: 4px 9px; border-radius: 7px; border: 1px dashed ${t.blueBd};
       background: ${t.blueBg}; color: ${t.blue}; cursor: pointer;
       font-size: 10px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
       transition: all 0.14s; font-family: inherit;
+      white-space: nowrap; flex-shrink: 0; min-width: 38px;
     }
     .vc-add-btn:hover { background: ${t.blue}; color: #fff; border-color: ${t.blue}; border-style: solid; }
+
     .vc-rm-btn {
       display: inline-flex; align-items: center; justify-content: center;
       width: 26px; height: 26px; border-radius: 7px; border: 1px solid ${t.line};
@@ -225,6 +234,7 @@ const G = ({ d, t }) => (
       color: #fff; border: none; cursor: pointer; font-size: 12px;
       font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
       box-shadow: 0 2px 10px rgba(237,28,36,0.30); font-family: inherit; transition: all 0.14s;
+      white-space: nowrap; flex-shrink: 0;
     }
     .fp-btn-primary:hover { box-shadow: 0 4px 18px rgba(237,28,36,0.42); transform: translateY(-1px); }
     .fp-btn-primary:disabled { opacity: 0.6; cursor: not-allowed; transform: none; box-shadow: none; }
@@ -234,6 +244,7 @@ const G = ({ d, t }) => (
       background: ${t.sub}; cursor: pointer; font-size: 12px;
       font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase;
       color: ${t.mid}; transition: all 0.13s; font-family: inherit;
+      white-space: nowrap; flex-shrink: 0;
     }
     .fp-btn-ghost:hover { border-color: ${t.blue}; color: ${t.blue}; }
     .btn-add-custom {
@@ -246,8 +257,6 @@ const G = ({ d, t }) => (
     }
     .btn-add-custom:hover { background: ${t.violet}; color: #fff; border-style: solid; transform: translateY(-1px); }
     .btn-add-custom:disabled { opacity: 0.38; cursor: not-allowed; transform: none; }
-    .custom-row { transition: background 0.12s; }
-    .custom-row:hover td { background: ${d ? 'rgba(124,58,237,0.05)' : 'rgba(124,58,237,0.03)'} !important; }
     .fin-tr:hover td { background: rgba(237,28,36,0.03) !important; }
   `}</style>
 );
@@ -321,6 +330,16 @@ function SecHero({ icon: Icon, step, title, t }) {
   );
 }
 
+// ─── TABLE HEAD CONFIG (kolom action naik 5%→8%) ─────────────────────────────
+const TABLE_HEAD = [
+  { h: 'Produk',     al: 'left',   w: '24%' },
+  { h: 'HPP / unit', al: 'right',  w: '16%' },
+  { h: 'Qty',        al: 'center', w: '13%' },
+  { h: 'Retail',     al: 'right',  w: '16%' },
+  { h: 'Margin',     al: 'right',  w: '23%' },
+  { h: '',           al: 'center', w: '8%'  },
+];
+
 // ─── Standard Product Row (Desktop) ──────────────────────────────────────────
 function ProductRowDesktop({ item, entryIdx, section, onUpdate, onAddEntry, onRemoveEntry, t, readOnly }) {
   const isE1 = entryIdx === 1;
@@ -337,14 +356,8 @@ function ProductRowDesktop({ item, entryIdx, section, onUpdate, onAddEntry, onRe
           {!isE1 && <span className="vc-entry-tag" style={{ marginLeft: 8 }}>Entry 2</span>}
         </div>
       </td>
-      {/* HPP read-only */}
       <td style={{ padding: '11px 6px', verticalAlign: 'middle' }}>
-        <input
-          readOnly tabIndex={-1}
-          value={new Intl.NumberFormat('id-ID').format(item.hPokok)}
-          className="fpi-hpp-ro"
-          style={{ fontFamily: 'inherit' }}
-        />
+        <input readOnly tabIndex={-1} value={new Intl.NumberFormat('id-ID').format(item.hPokok)} className="fpi-hpp-ro" style={{ fontFamily: 'inherit' }} />
       </td>
       <td style={{ padding: '11px 6px', verticalAlign: 'middle' }}>
         <LocalInput numericValue={qty} onChange={v => onUpdate(section, item.id, isE1 ? 'qty' : 'qty2', v)} className={readOnly ? 'fpi fpi-ro fpi-c fpi-sm' : 'fpi fpi-c fpi-sm'} readOnly={readOnly} />
@@ -358,7 +371,8 @@ function ProductRowDesktop({ item, entryIdx, section, onUpdate, onAddEntry, onRe
         </div>
         {qty > 0 && pctMg !== 0 && <div style={{ fontSize: 10, color: t.lo, marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>{formatPct(pctMg)}</div>}
       </td>
-      <td style={{ padding: '11px 6px', textAlign: 'center', verticalAlign: 'middle' }}>
+      {/* FIX: kolom action dengan overflow:hidden agar tombol tidak keluar */}
+      <td style={{ padding: '11px 4px', textAlign: 'center', verticalAlign: 'middle', overflow: 'hidden' }}>
         {!readOnly && (isE1 ? (!item.hasEntry2 && <button className="vc-add-btn" onClick={() => onAddEntry(section, item.id)}><Plus size={11} /> 2</button>) : (<button className="vc-rm-btn" onClick={() => onRemoveEntry(section, item.id)}><Trash2 size={13} /></button>))}
       </td>
     </tr>
@@ -397,14 +411,14 @@ function CustomSPRowDesktop({ item, onUpdate, onRemove, t, readOnly }) {
         </div>
         {item.qty > 0 && pct !== 0 && <div style={{ fontSize: 10, color: t.lo, marginTop: 2 }}>{formatPct(pct)}</div>}
       </td>
-      <td style={{ padding: '11px 6px', textAlign: 'center', verticalAlign: 'middle' }}>
+      <td style={{ padding: '11px 4px', textAlign: 'center', verticalAlign: 'middle', overflow: 'hidden' }}>
         {!readOnly && <button className="vc-rm-btn" onClick={() => onRemove(item.id)}><Trash2 size={12} /></button>}
       </td>
     </tr>
   );
 }
 
-// ─── Custom SP Card (Mobile) — 2×2, no entry2 ───────────────────────────────
+// ─── Custom SP Card (Mobile) ─────────────────────────────────────────────────
 function CustomSPCardMobile({ item, onUpdate, onRemove, t, readOnly }) {
   const margin = (item.qty || 0) * ((item.hRetail || 0) - (item.hPokok || 0));
   if (readOnly && !item.qty && !item.hRetail && !item.name) return null;
@@ -445,14 +459,11 @@ function CustomSPCardMobile({ item, onUpdate, onRemove, t, readOnly }) {
   );
 }
 
-
-// ─── Standard Product Card (Mobile) + Shared helpers ────────────────────────
-// ── Shared 2×2 field label ─────────────────────────────────────────────────
+// ─── Shared mobile helpers ──────────────────────────────────────────────────
 const MobLabel = ({ children }) => (
   <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#8A8A96', marginBottom: 4 }}>{children}</div>
 );
 
-// ── Shared margin footer row ───────────────────────────────────────────────
 const MobMarginRow = ({ margin, qty, t, inline }) => (
   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flex: 1, ...(inline ? {} : { padding: '6px 0', borderTop: `0.5px solid ${t.lineH}`, marginTop: 4 }) }}>
     <span style={{ fontSize: 11, color: t.lo }}>Margin</span>
@@ -462,7 +473,6 @@ const MobMarginRow = ({ margin, qty, t, inline }) => (
   </div>
 );
 
-// ── ProductCardMobile: 2×2 grid (Produk locked | HPP locked / Qty | Retail) ─
 function ProductCardMobile({ item, section, onUpdate, onAddEntry, onRemoveEntry, t, readOnly }) {
   const hasAnyData = item.qty > 0 || item.hRetail > 0 || item.qty2 > 0 || item.hRetail2 > 0;
   if (readOnly && !hasAnyData) return null;
@@ -484,7 +494,6 @@ function ProductCardMobile({ item, section, onUpdate, onAddEntry, onRemoveEntry,
           </div>
         )}
         <div style={{ ...grid, padding: '10px 12px' }}>
-          {/* Row 1: Produk (locked) | HPP (locked) */}
           <div>
             <MobLabel>Produk</MobLabel>
             <input readOnly tabIndex={-1} value={item.name}
@@ -495,7 +504,6 @@ function ProductCardMobile({ item, section, onUpdate, onAddEntry, onRemoveEntry,
             <input readOnly tabIndex={-1} value={new Intl.NumberFormat('id-ID').format(item.hPokok)}
               style={{ width: '100%', height: 32, padding: '0 8px', border: `0.5px solid ${t.roBd}`, borderRadius: 8, background: t.roBg, color: t.lo, fontSize: 12, fontWeight: 500, fontFamily: 'inherit', textAlign: 'right', outline: 'none' }} />
           </div>
-          {/* Row 2: Qty | Retail */}
           <div>
             <MobLabel>Qty</MobLabel>
             <LocalInput numericValue={qty} onChange={v => onUpdate(section, item.id, isE1 ? 'qty' : 'qty2', v)}
@@ -587,7 +595,8 @@ const FormPendapatan = ({
   const [showSubmit, setShowSubmit] = useState(false);
   const [isLoading, setIsLoading]   = useState(true);
   const [isSaving, setIsSaving]     = useState(false);
-  const [file, setFile]             = useState(null);
+  const [attachments, setAttachments] = useState([]);
+  const [uploadingAtt, setUploadingAtt] = useState(false);
   const [drag, setDrag]             = useState(false);
   const [toast, setToast]           = useState({ show: false, type: 'success', msg: '' });
   const [reportStatus, setReportStatus] = useState({ isFinalized: false, finalizedAt: null, finalizedBy: null, validationNotes: null, updatedAt: null });
@@ -598,6 +607,7 @@ const FormPendapatan = ({
 
   const currentMonth  = activeContext?.month ?? '';
   const monthDisabled = Boolean(currentMonth && disabledMonths.has(currentMonth));
+  const effectiveReadOnly = readOnly || monthDisabled;
 
   // ── Default state factory ─────────────────────────────────────────────────
   const defaults = useCallback(() => ({
@@ -607,22 +617,22 @@ const FormPendapatan = ({
       { id: 'sp3', dbQty: 'qty_sp_kpk_3id', dbRetail: 'retail_sp_kpk_3id', dbQty2: 'qty_sp_kpk_3id_2', dbRetail2: 'retail_sp_kpk_3id_2', name: 'SP KPK 3ID', hPokok: 10000, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
       { id: 'sp4', dbQty: 'qty_sp_3gb_3id', dbRetail: 'retail_sp_3gb_3id', dbQty2: 'qty_sp_3gb_3id_2', dbRetail2: 'retail_sp_3gb_3id_2', name: 'SP 3GB 3ID', hPokok: 29000, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
     ],
-    spCustom: [], // ← NEW: array of { id, name, hPokok, qty, hRetail, qty2, hRetail2, hasEntry2 }
+    spCustom: [],
     vc: [
       { id: 'v1',  dbQty: 'qty_vc_0_im3',       dbRetail: 'retail_vc_0_im3',       dbQty2: 'qty_vc_0_im3_2',       dbRetail2: 'retail_vc_0_im3_2',       name: 'VC 0 IM3',       hPokok: 300,   hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
-      { id: 'v2',  dbQty: 'qty_vc_2_5gb',        dbRetail: 'retail_vc_2_5gb',        dbQty2: 'qty_vc_2_5gb_2',        dbRetail2: 'retail_vc_2_5gb_2',        name: 'VC 2.5GB',       hPokok: 12600, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
-      { id: 'v3',  dbQty: 'qty_vc_3gb_30',       dbRetail: 'retail_vc_3gb_30',       dbQty2: 'qty_vc_3gb_30_2',       dbRetail2: 'retail_vc_3gb_30_2',       name: 'VC 3GB/30',      hPokok: 19500, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
-      { id: 'v4',  dbQty: 'qty_vc_3_5gb_5d',     dbRetail: 'retail_vc_3_5gb_5d',     dbQty2: 'qty_vc_3_5gb_5d_2',     dbRetail2: 'retail_vc_3_5gb_5d_2',     name: 'VC 3.5GB/5D',    hPokok: 13750, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
-      { id: 'v5',  dbQty: 'qty_vc_5gb_5d',       dbRetail: 'retail_vc_5gb_5d',       dbQty2: 'qty_vc_5gb_5d_2',       dbRetail2: 'retail_vc_5gb_5d_2',       name: 'VC 5GB/5D',      hPokok: 16800, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
-      { id: 'v6',  dbQty: 'qty_vc_7gb_7d',       dbRetail: 'retail_vc_7gb_7d',       dbQty2: 'qty_vc_7gb_7d_2',       dbRetail2: 'retail_vc_7gb_7d_2',       name: 'VC 7GB/7D',      hPokok: 22400, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
-      { id: 'v7',  dbQty: 'qty_vc_fi_4gb',       dbRetail: 'retail_vc_fi_4gb',       dbQty2: 'qty_vc_fi_4gb_2',       dbRetail2: 'retail_vc_fi_4gb_2',       name: 'VC FI 4GB',      hPokok: 24500, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
-      { id: 'v8',  dbQty: 'qty_vc_fi_1_5gb_1d',  dbRetail: 'retail_vc_fi_1_5gb_1d',  dbQty2: 'qty_vc_fi_1_5gb_1d_2',  dbRetail2: 'retail_vc_fi_1_5gb_1d_2',  name: 'VC FI 1.5GB/1D', hPokok: 4500,  hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
-      { id: 'v9',  dbQty: 'qty_vc_fi_3gb_1d',    dbRetail: 'retail_vc_fi_3gb_1d',    dbQty2: 'qty_vc_fi_3gb_1d_2',    dbRetail2: 'retail_vc_fi_3gb_1d_2',    name: 'VC FI 3GB/1D',   hPokok: 6600,  hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
-      { id: 'v10', dbQty: 'qty_vc_fi_5gb_2d',    dbRetail: 'retail_vc_fi_5gb_2d',    dbQty2: 'qty_vc_fi_5gb_2d_2',    dbRetail2: 'retail_vc_fi_5gb_2d_2',    name: 'VC FI 5GB/2D',   hPokok: 8300,  hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
-      { id: 'v11', dbQty: 'qty_vc_fi_3gb_3d',    dbRetail: 'retail_vc_fi_3gb_3d',    dbQty2: 'qty_vc_fi_3gb_3d_2',    dbRetail2: 'retail_vc_fi_3gb_3d_2',    name: 'VC FI 3GB/3D',   hPokok: 11600, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
-      { id: 'v12', dbQty: 'qty_vc_fi_5gb_3d',    dbRetail: 'retail_vc_fi_5gb_3d',    dbQty2: 'qty_vc_fi_5gb_3d_2',    dbRetail2: 'retail_vc_fi_5gb_3d_2',    name: 'VC FI 5GB/3D',   hPokok: 12800, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
-      { id: 'v13', dbQty: 'qty_vc_fi_15gb_7d',   dbRetail: 'retail_vc_fi_15gb_7d',   dbQty2: 'qty_vc_fi_15gb_7d_2',   dbRetail2: 'retail_vc_fi_15gb_7d_2',   name: 'VC FI 15GB/7D',  hPokok: 27900, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
-      { id: 'v14', dbQty: 'qty_vc_0_3id',        dbRetail: 'retail_vc_0_3id',        dbQty2: 'qty_vc_0_3id_2',        dbRetail2: 'retail_vc_0_3id_2',        name: 'VC 0 3ID',       hPokok: 500,   hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
+      { id: 'v2',  dbQty: 'qty_vc_2_5gb',       dbRetail: 'retail_vc_2_5gb',       dbQty2: 'qty_vc_2_5gb_2',       dbRetail2: 'retail_vc_2_5gb_2',       name: 'VC 2.5GB',       hPokok: 12600, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
+      { id: 'v3',  dbQty: 'qty_vc_3gb_30',      dbRetail: 'retail_vc_3gb_30',      dbQty2: 'qty_vc_3gb_30_2',      dbRetail2: 'retail_vc_3gb_30_2',      name: 'VC 3GB/30',      hPokok: 19500, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
+      { id: 'v4',  dbQty: 'qty_vc_3_5gb_5d',    dbRetail: 'retail_vc_3_5gb_5d',    dbQty2: 'qty_vc_3_5gb_5d_2',    dbRetail2: 'retail_vc_3_5gb_5d_2',    name: 'VC 3.5GB/5D',    hPokok: 13750, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
+      { id: 'v5',  dbQty: 'qty_vc_5gb_5d',      dbRetail: 'retail_vc_5gb_5d',      dbQty2: 'qty_vc_5gb_5d_2',      dbRetail2: 'retail_vc_5gb_5d_2',      name: 'VC 5GB/5D',      hPokok: 16800, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
+      { id: 'v6',  dbQty: 'qty_vc_7gb_7d',      dbRetail: 'retail_vc_7gb_7d',      dbQty2: 'qty_vc_7gb_7d_2',      dbRetail2: 'retail_vc_7gb_7d_2',      name: 'VC 7GB/7D',      hPokok: 22400, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
+      { id: 'v7',  dbQty: 'qty_vc_fi_4gb',      dbRetail: 'retail_vc_fi_4gb',      dbQty2: 'qty_vc_fi_4gb_2',      dbRetail2: 'retail_vc_fi_4gb_2',      name: 'VC FI 4GB',      hPokok: 24500, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
+      { id: 'v8',  dbQty: 'qty_vc_fi_1_5gb_1d', dbRetail: 'retail_vc_fi_1_5gb_1d', dbQty2: 'qty_vc_fi_1_5gb_1d_2', dbRetail2: 'retail_vc_fi_1_5gb_1d_2', name: 'VC FI 1.5GB/1D', hPokok: 4500,  hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
+      { id: 'v9',  dbQty: 'qty_vc_fi_3gb_1d',   dbRetail: 'retail_vc_fi_3gb_1d',   dbQty2: 'qty_vc_fi_3gb_1d_2',   dbRetail2: 'retail_vc_fi_3gb_1d_2',   name: 'VC FI 3GB/1D',   hPokok: 6600,  hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
+      { id: 'v10', dbQty: 'qty_vc_fi_5gb_2d',   dbRetail: 'retail_vc_fi_5gb_2d',   dbQty2: 'qty_vc_fi_5gb_2d_2',   dbRetail2: 'retail_vc_fi_5gb_2d_2',   name: 'VC FI 5GB/2D',   hPokok: 8300,  hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
+      { id: 'v11', dbQty: 'qty_vc_fi_3gb_3d',   dbRetail: 'retail_vc_fi_3gb_3d',   dbQty2: 'qty_vc_fi_3gb_3d_2',   dbRetail2: 'retail_vc_fi_3gb_3d_2',   name: 'VC FI 3GB/3D',   hPokok: 11600, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
+      { id: 'v12', dbQty: 'qty_vc_fi_5gb_3d',   dbRetail: 'retail_vc_fi_5gb_3d',   dbQty2: 'qty_vc_fi_5gb_3d_2',   dbRetail2: 'retail_vc_fi_5gb_3d_2',   name: 'VC FI 5GB/3D',   hPokok: 12800, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
+      { id: 'v13', dbQty: 'qty_vc_fi_15gb_7d',  dbRetail: 'retail_vc_fi_15gb_7d',  dbQty2: 'qty_vc_fi_15gb_7d_2',  dbRetail2: 'retail_vc_fi_15gb_7d_2',  name: 'VC FI 15GB/7D',  hPokok: 27900, hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
+      { id: 'v14', dbQty: 'qty_vc_0_3id',       dbRetail: 'retail_vc_0_3id',       dbQty2: 'qty_vc_0_3id_2',       dbRetail2: 'retail_vc_0_3id_2',       name: 'VC 0 3ID',       hPokok: 500,   hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
     ],
     vcCustom: [],
     mobo:          { modal: 0, jual: 0 },
@@ -639,10 +649,11 @@ const FormPendapatan = ({
     const ctx = { mpxName: activeContext?.mpxName, branch: activeContext?.branch, mpxType: activeContext?.mpxType, month: activeContext?.month, year: activeContext?.year };
     const same = Object.keys(ctx).every(k => prevCtx$.current[k] === ctx[k]);
     if (same && fetched$.current) return;
-    if (monthDisabled) { setIsLoading(false); setData(defaults()); return; }
+    if (monthDisabled) { setIsLoading(false); setData(defaults()); setAttachments([]); return; }
     (async () => {
       if (!ctx.mpxName || !ctx.branch) { setIsLoading(false); return; }
       setIsLoading(true);
+      setAttachments([]);
       try {
         const { data: db, error } = await supabase.from('pnl_reports').select('*')
           .eq('partner_name', ctx.mpxName).eq('branch', ctx.branch)
@@ -650,8 +661,7 @@ const FormPendapatan = ({
         if (error) throw error;
         const s = defaults();
         if (db) {
-          s.sp = s.sp.map(i => { const qty2 = db[i.dbQty2] ?? 0, hr2 = db[i.dbRetail2] ?? 0; return { ...i, qty: db[i.dbQty] ?? 0, hRetail: db[i.dbRetail] ?? 0, qty2: hr2, hRetail2: hr2, hasEntry2: qty2 > 0 || hr2 > 0 }; });
-          // ── Load custom SP from revenue_data JSONB ──
+          s.sp = s.sp.map(i => { const qty2 = db[i.dbQty2] ?? 0, hr2 = db[i.dbRetail2] ?? 0; return { ...i, qty: db[i.dbQty] ?? 0, hRetail: db[i.dbRetail] ?? 0, qty2, hRetail2: hr2, hasEntry2: qty2 > 0 || hr2 > 0 }; });
           const rd = db.revenue_data ?? {};
           if (Array.isArray(rd.sp_custom)) {
             s.spCustom = rd.sp_custom
@@ -668,6 +678,7 @@ const FormPendapatan = ({
           s.salesFee      = { realtimeMargin: db.realtime_margin ?? 0, backMargin: db.back_margin ?? 0, slaFee: db.sla_fee ?? 0, specialProgram: db.special_program ?? 0 };
           s.rewards       = { champions: db.rewards_champions ?? 0, lainnya: db.rewards_lainnya ?? 0 };
           s.partnerIncome = db.partner_income ?? 0;
+          setAttachments(Array.isArray(db.attachments_pendapatan) ? db.attachments_pendapatan : []);
           setReportStatus({ isFinalized: db.is_finalized ?? false, finalizedAt: db.finalized_at ?? null, finalizedBy: db.finalized_by ?? null, validationNotes: db.validation_notes ?? null, updatedAt: db.updated_at ?? null });
         }
         setData(s); prevCtx$.current = ctx; fetched$.current = true;
@@ -688,7 +699,6 @@ const FormPendapatan = ({
     const spItems   = data.sp.map(calcItem);
     const sp = { items: spItems, totalModal: spItems.reduce((a,b)=>a+b.totalModal,0), totalJual: spItems.reduce((a,b)=>a+b.totalJual,0), totalMargin: spItems.reduce((a,b)=>a+b.totalMargin,0) };
 
-    // ── Custom SP calculation ──
     const customItems = data.spCustom.map(c => {
       const m1 = (c.qty||0)*((c.hRetail||0)-(c.hPokok||0));
       const m2 = (c.qty2||0)*((c.hRetail2||0)-(c.hPokok||0));
@@ -698,7 +708,6 @@ const FormPendapatan = ({
     });
     const spCustomTotal = { totalModal: customItems.reduce((a,b)=>a+b.totalModal,0), totalJual: customItems.reduce((a,b)=>a+b.totalJual,0), totalMargin: customItems.reduce((a,b)=>a+b.totalMargin,0) };
 
-    // ── SP grand total (standard + custom) ──
     const spAllModal  = sp.totalModal  + spCustomTotal.totalModal;
     const spAllJual   = sp.totalJual   + spCustomTotal.totalJual;
     const spAllMargin = sp.totalMargin + spCustomTotal.totalMargin;
@@ -717,10 +726,9 @@ const FormPendapatan = ({
     const vcAllJual   = vc.totalJual   + vcCustomTotal.totalJual;
     const vcAllMargin = vc.totalMargin + vcCustomTotal.totalMargin;
 
-    const gtModal  = spAllModal  + vcAllModal;
-    const gtJual   = spAllJual   + vcAllJual;
-    const gtMg     = spAllMargin + vcAllMargin;
-    const gtPct    = gtJual > 0 ? (gtMg / gtJual) * 100 : 0;
+    const gtJual = spAllJual + vcAllJual;
+    const gtMg   = spAllMargin + vcAllMargin;
+    const gtPct  = gtJual > 0 ? (gtMg / gtJual) * 100 : 0;
 
     const upfront  = Number(data.mobo.modal) * 0.015;
     const sfMg     = Number(data.salesFee.realtimeMargin) + Number(data.salesFee.backMargin);
@@ -737,7 +745,6 @@ const FormPendapatan = ({
   const mkPayload = (fin, userId, notes) => {
     const spEntries = data.sp.reduce((acc,c) => ({ ...acc, [c.dbQty]:c.qty, [c.dbRetail]:c.hRetail, [c.dbQty2]:c.hasEntry2?c.qty2:0, [c.dbRetail2]:c.hasEntry2?c.hRetail2:0 }), {});
     const vcEntries = data.vc.reduce((acc,c) => ({ ...acc, [c.dbQty]:c.qty, [c.dbRetail]:c.hRetail, [c.dbQty2]:c.hasEntry2?c.qty2:0, [c.dbRetail2]:c.hasEntry2?c.hRetail2:0 }), {});
-    // Custom SP disimpan di revenue_data JSONB
     const revenueData = {
       sp_custom: data.spCustom.filter(c => c.name || c.qty > 0 || c.hRetail > 0).map(c => ({ id: c.id, name: c.name, hPokok: c.hPokok, qty: c.qty, hRetail: c.hRetail, qty2: c.hasEntry2 ? c.qty2 : 0, hRetail2: c.hasEntry2 ? c.hRetail2 : 0, hasEntry2: c.hasEntry2 })),
       vc_custom: data.vcCustom.filter(c => c.name || c.qty > 0 || c.hRetail > 0).map(c => ({ id: c.id, name: c.name, hPokok: c.hPokok, qty: c.qty, hRetail: c.hRetail })),
@@ -752,6 +759,7 @@ const FormPendapatan = ({
       rewards_champions: data.rewards.champions, rewards_lainnya: data.rewards.lainnya,
       partner_income: data.partnerIncome, grand_total_revenue: stats.revenue,
       revenue_data: revenueData,
+      attachments_pendapatan: attachments,
       is_finalized: fin, finalized_at: fin ? new Date().toISOString() : null, finalized_by: fin ? userId : null,
       validation_notes: notes, updated_at: new Date().toISOString(),
     };
@@ -810,7 +818,7 @@ const FormPendapatan = ({
 
   // ── Standard product update handlers ─────────────────────────────────────
   const updateVal = useCallback((section, id, field, val) => {
-    if (readOnly || monthDisabled) return;
+    if (effectiveReadOnly) return;
     setData(prev => {
       if (section === 'partnerIncome') return { ...prev, partnerIncome: val };
       if (Array.isArray(prev[section])) return { ...prev, [section]: prev[section].map(i => i.id === id ? { ...i, [field]: val } : i) };
@@ -818,85 +826,151 @@ const FormPendapatan = ({
       return prev;
     });
     setIsFormDirty?.(true);
-  }, [setIsFormDirty, readOnly, monthDisabled]);
+  }, [setIsFormDirty, effectiveReadOnly]);
 
   const addEntry = useCallback((section, id) => {
-    if (readOnly || monthDisabled) return;
+    if (effectiveReadOnly) return;
     setData(prev => ({ ...prev, [section]: prev[section].map(i => i.id === id ? { ...i, hasEntry2: true } : i) }));
     setIsFormDirty?.(true);
-  }, [setIsFormDirty, readOnly, monthDisabled]);
+  }, [setIsFormDirty, effectiveReadOnly]);
 
   const removeEntry = useCallback((section, id) => {
-    if (readOnly || monthDisabled) return;
+    if (effectiveReadOnly) return;
     setData(prev => ({ ...prev, [section]: prev[section].map(i => i.id === id ? { ...i, hasEntry2: false, qty2: 0, hRetail2: 0 } : i) }));
     setIsFormDirty?.(true);
-  }, [setIsFormDirty, readOnly, monthDisabled]);
+  }, [setIsFormDirty, effectiveReadOnly]);
+
+  // ─── Lampiran (PDF only) ─────────────────────────────────────────────────
+  const handlePickFiles = useCallback(async (fileList) => {
+    if (effectiveReadOnly) return;
+    if (!activeContext?.mpxName || !activeContext?.branch || !activeContext?.month || !activeContext?.year) {
+      toast$('error', 'Lengkapi konteks partner/bulan dulu sebelum upload');
+      return;
+    }
+    const arr = Array.from(fileList || []);
+    if (!arr.length) return;
+
+    const accepted = [], rejected = [];
+    for (const f of arr) {
+      const err = validatePdf(f);
+      if (err) rejected.push(err); else accepted.push(f);
+    }
+    if (rejected.length) toast$('error', rejected.join(' · '));
+    if (!accepted.length) return;
+
+    setUploadingAtt(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Sesi berakhir');
+      const { ok, errors } = await uploadMany({
+        files: accepted,
+        partner:  activeContext.mpxName,
+        branch:   activeContext.branch,
+        year:     activeContext.year,
+        month:    activeContext.month,
+        category: 'pendapatan',
+      });
+      if (ok.length) {
+        setAttachments(prev => [...prev, ...ok]);
+        setIsFormDirty?.(true);
+        toast$('success', `${ok.length} lampiran berhasil diunggah`);
+      }
+      if (errors.length) toast$('error', `${errors.length} file gagal: ${errors[0].message}`);
+    } catch (e) {
+      toast$('error', e.message);
+    } finally {
+      setUploadingAtt(false);
+    }
+  }, [effectiveReadOnly, activeContext, setIsFormDirty]);
+
+  const handleRemoveAttachment = useCallback(async (path) => {
+    if (effectiveReadOnly) return;
+    try {
+      await removeOne(path);
+      setAttachments(prev => prev.filter(a => a.path !== path));
+      setIsFormDirty?.(true);
+      toast$('success', 'Lampiran dihapus');
+    } catch (e) {
+      toast$('error', 'Gagal menghapus: ' + e.message);
+    }
+  }, [effectiveReadOnly, setIsFormDirty]);
+
+  const handleDownloadAttachment = useCallback(async (att) => {
+    try {
+      const url = await signedUrl(att.path, 60);
+      window.open(url, '_blank', 'noopener');
+    } catch (e) {
+      toast$('error', 'Gagal membuka file: ' + e.message);
+    }
+  }, []);
 
   // ── Custom SP handlers ────────────────────────────────────────────────────
   const addCustomSP = useCallback(() => {
-    if (readOnly || monthDisabled) return;
+    if (effectiveReadOnly) return;
     if (data.spCustom.length >= MAX_CUSTOM_SP) { toast$('error', `Maksimal ${MAX_CUSTOM_SP} produk custom`); return; }
     const newItem = { id: `csp_${Date.now()}`, name: '', hPokok: 0, qty: 0, hRetail: 0, qty2: 0, hRetail2: 0, hasEntry2: false };
     setData(prev => ({ ...prev, spCustom: [...prev.spCustom, newItem] }));
     setIsFormDirty?.(true);
-  }, [data.spCustom.length, readOnly, monthDisabled, setIsFormDirty]);
+  }, [data.spCustom.length, effectiveReadOnly, setIsFormDirty]);
 
   const removeCustomSP = useCallback((id) => {
-    if (readOnly || monthDisabled) return;
+    if (effectiveReadOnly) return;
     setData(prev => ({ ...prev, spCustom: prev.spCustom.filter(c => c.id !== id) }));
     setIsFormDirty?.(true);
-  }, [readOnly, monthDisabled, setIsFormDirty]);
+  }, [effectiveReadOnly, setIsFormDirty]);
 
   const updateCustomSP = useCallback((id, field, val) => {
-    if (readOnly || monthDisabled) return;
+    if (effectiveReadOnly) return;
     setData(prev => ({ ...prev, spCustom: prev.spCustom.map(c => c.id === id ? { ...c, [field]: val } : c) }));
     setIsFormDirty?.(true);
-  }, [readOnly, monthDisabled, setIsFormDirty]);
+  }, [effectiveReadOnly, setIsFormDirty]);
 
   const addCustomVC = useCallback(() => {
-    if (readOnly || monthDisabled) return;
+    if (effectiveReadOnly) return;
     if (data.vcCustom.length >= MAX_CUSTOM_VC) { toast$('error', `Maksimal ${MAX_CUSTOM_VC} produk custom`); return; }
     const newItem = { id: `cvc_${Date.now()}`, name: '', hPokok: 0, qty: 0, hRetail: 0 };
     setData(prev => ({ ...prev, vcCustom: [...prev.vcCustom, newItem] }));
     setIsFormDirty?.(true);
-  }, [data.vcCustom.length, readOnly, monthDisabled, setIsFormDirty]);
+  }, [data.vcCustom.length, effectiveReadOnly, setIsFormDirty]);
 
   const removeCustomVC = useCallback((id) => {
-    if (readOnly || monthDisabled) return;
+    if (effectiveReadOnly) return;
     setData(prev => ({ ...prev, vcCustom: prev.vcCustom.filter(c => c.id !== id) }));
     setIsFormDirty?.(true);
-  }, [readOnly, monthDisabled, setIsFormDirty]);
+  }, [effectiveReadOnly, setIsFormDirty]);
 
   const updateCustomVC = useCallback((id, field, val) => {
-    if (readOnly || monthDisabled) return;
+    if (effectiveReadOnly) return;
     setData(prev => ({ ...prev, vcCustom: prev.vcCustom.map(c => c.id === id ? { ...c, [field]: val } : c) }));
     setIsFormDirty?.(true);
-  }, [readOnly, monthDisabled, setIsFormDirty]);
+  }, [effectiveReadOnly, setIsFormDirty]);
 
-  const addCustomEntry2 = useCallback((id) => {
-    if (readOnly || monthDisabled) return;
-    setData(prev => ({ ...prev, spCustom: prev.spCustom.map(c => c.id === id ? { ...c, hasEntry2: true } : c) }));
-    setIsFormDirty?.(true);
-  }, [readOnly, monthDisabled, setIsFormDirty]);
+  // ── Reusable table colgroup + thead ───────────────────────────────────────
+  const TableColHead = () => (
+    <>
+      <colgroup>
+        {TABLE_HEAD.map((c, i) => <col key={i} style={{ width: c.w }} />)}
+      </colgroup>
+      <thead>
+        <tr style={{ borderBottom: `1px solid ${t.line}`, background: t.sub }}>
+          {TABLE_HEAD.map((c, i) => (
+            <th key={i} style={{ padding: '8px 10px', textAlign: c.al, fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: t.mid }}>{c.h}</th>
+          ))}
+        </tr>
+      </thead>
+    </>
+  );
 
-  const removeCustomEntry2 = useCallback((id) => {
-    if (readOnly || monthDisabled) return;
-    setData(prev => ({ ...prev, spCustom: prev.spCustom.map(c => c.id === id ? { ...c, hasEntry2: false, qty2: 0, hRetail2: 0 } : c) }));
-    setIsFormDirty?.(true);
-  }, [readOnly, monthDisabled, setIsFormDirty]);
-
-  const tableHead = [
-    { h: 'Produk', al: 'left',   w: '25%' },
-    { h: 'HPP / unit', al: 'right', w: '17%' },
-    { h: 'Qty',    al: 'center', w: '14%' },
-    { h: 'Retail', al: 'right',  w: '17%' },
-    { h: 'Margin', al: 'right',  w: '22%' },
-    { h: '',       al: 'center', w: '5%'  },
-  ];
+  const TableSubHead = () => (
+    <tr style={{ background: t.sub, borderTop: `0.5px solid ${t.line}`, borderBottom: `0.5px solid ${t.line}` }}>
+      {TABLE_HEAD.map((c, i) => (
+        <th key={i} style={{ padding: '6px 10px', textAlign: c.al, fontSize: 10, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: t.lo }}>{c.h}</th>
+      ))}
+    </tr>
+  );
 
   const ctxMonth = activeContext?.month ?? '', ctxYear = activeContext?.year ?? '';
   const ctxType = activeContext?.mpxType ?? '', ctxName = activeContext?.mpxName ?? '', ctxBranch = activeContext?.branch ?? '';
-  const effectiveReadOnly = readOnly || monthDisabled;
   const notes = reportStatus.validationNotes ?? '';
   const hasPengeluaranFinal = notes.includes('pengeluaran:final');
 
@@ -972,26 +1046,11 @@ const FormPendapatan = ({
                       </div>
                     )}
 
-                    {/* Desktop table */}
+                    {/* Desktop table — minWidth dihapus, table-layout:fixed yang handle */}
                     <div className="vc-table">
-                      <table style={{ width: '100%', minWidth: 620, borderCollapse: 'collapse', fontSize: 13, tableLayout: 'fixed' }}>
-                        <colgroup>
-                          <col style={{ width: '25%' }} />
-                          <col style={{ width: '17%' }} />
-                          <col style={{ width: '14%' }} />
-                          <col style={{ width: '17%' }} />
-                          <col style={{ width: '22%' }} />
-                          <col style={{ width: '5%'  }} />
-                        </colgroup>
-                        <thead>
-                          <tr style={{ borderBottom: `1px solid ${t.line}`, background: t.sub }}>
-                            {tableHead.map((c, i) => (
-                              <th key={i} style={{ padding: '8px 10px', textAlign: c.al, fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: t.mid }}>{c.h}</th>
-                            ))}
-                          </tr>
-                        </thead>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, tableLayout: 'fixed' }}>
+                        <TableColHead />
                         <tbody>
-                          {/* Standard SP rows */}
                           {stats.sp.items.map(item => (
                             <React.Fragment key={item.id}>
                               <ProductRowDesktop item={item} entryIdx={1} section="sp" onUpdate={updateVal} onAddEntry={addEntry} onRemoveEntry={removeEntry} t={t} readOnly={effectiveReadOnly} />
@@ -999,16 +1058,10 @@ const FormPendapatan = ({
                             </React.Fragment>
                           ))}
 
-                          {/* Custom SP section — divider + ulang header */}
                           {stats.spCustom.length > 0 && (
                             <>
                               <tr><td colSpan={6} style={{ padding: '4px 0 0', background: 'transparent' }} /></tr>
-                              {/* Sub-header identik dengan thead */}
-                              <tr style={{ background: t.sub, borderTop: `0.5px solid ${t.line}`, borderBottom: `0.5px solid ${t.line}` }}>
-                                {tableHead.map((c, i) => (
-                                  <th key={i} style={{ padding: '6px 10px', textAlign: c.al, fontSize: 10, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: t.lo }}>{c.h}</th>
-                                ))}
-                              </tr>
+                              <TableSubHead />
                             </>
                           )}
                           <AnimatePresence>
@@ -1017,7 +1070,6 @@ const FormPendapatan = ({
                             ))}
                           </AnimatePresence>
 
-                          {/* Subtotal row */}
                           <SubtotalRow
                             label={`Subtotal SP${stats.spCustom.length > 0 ? ` (${stats.sp.items.length} bawaan + ${stats.spCustom.length} custom)` : ''}`}
                             totalMargin={stats.spAllMargin}
@@ -1049,7 +1101,6 @@ const FormPendapatan = ({
                       />
                     </div>
 
-                    {/* ── Tombol Tambah Produk Custom ── */}
                     {!effectiveReadOnly && (
                       <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px dashed ${t.violetBd}` }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
@@ -1077,23 +1128,11 @@ const FormPendapatan = ({
                   <Body>
                     <SecLabel t={t}>B. Voucher Regular</SecLabel>
                     {!effectiveReadOnly && (<div style={{ fontSize: 11, color: t.lo, marginBottom: 14, lineHeight: 1.55 }}>Jika satu produk dijual dengan <strong style={{ color: t.mid }}>2 harga retail berbeda</strong>, tap tombol <strong style={{ color: t.blue }}>+2</strong>.</div>)}
+
+                    {/* Desktop table — minWidth dihapus */}
                     <div className="vc-table">
-                      <table style={{ width: '100%', minWidth: 620, borderCollapse: 'collapse', fontSize: 13, tableLayout: 'fixed' }}>
-                        <colgroup>
-                          <col style={{ width: '25%' }} />
-                          <col style={{ width: '17%' }} />
-                          <col style={{ width: '14%' }} />
-                          <col style={{ width: '17%' }} />
-                          <col style={{ width: '22%' }} />
-                          <col style={{ width: '5%'  }} />
-                        </colgroup>
-                        <thead>
-                          <tr style={{ borderBottom: `1px solid ${t.line}`, background: t.sub }}>
-                            {tableHead.map((c, i) => (
-                              <th key={i} style={{ padding: '8px 10px', textAlign: c.al, fontSize: 10, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: t.mid }}>{c.h}</th>
-                            ))}
-                          </tr>
-                        </thead>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, tableLayout: 'fixed' }}>
+                        <TableColHead />
                         <tbody>
                           {stats.vc.items.map(item => (
                             <React.Fragment key={item.id}>
@@ -1104,11 +1143,7 @@ const FormPendapatan = ({
                           {stats.vcCustom.length > 0 && (
                             <>
                               <tr><td colSpan={6} style={{ padding: '4px 0 0', background: 'transparent' }} /></tr>
-                              <tr style={{ background: t.sub, borderTop: `0.5px solid ${t.line}`, borderBottom: `0.5px solid ${t.line}` }}>
-                                {tableHead.map((c, i) => (
-                                  <th key={i} style={{ padding: '6px 10px', textAlign: c.al, fontSize: 10, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: t.lo }}>{c.h}</th>
-                                ))}
-                              </tr>
+                              <TableSubHead />
                             </>
                           )}
                           <AnimatePresence>
@@ -1126,6 +1161,7 @@ const FormPendapatan = ({
                         </tbody>
                       </table>
                     </div>
+
                     <div className="vc-cards">
                       {stats.vc.items.map(item => (
                         <ProductCardMobile key={item.id} item={item} section="vc" onUpdate={updateVal} onAddEntry={addEntry} onRemoveEntry={removeEntry} t={t} readOnly={effectiveReadOnly} />
@@ -1144,7 +1180,7 @@ const FormPendapatan = ({
                         t={t}
                       />
                     </div>
-                    {/* ── Tombol Tambah Produk Custom VC ── */}
+
                     {!effectiveReadOnly && (
                       <div style={{ marginTop: 16, paddingTop: 16, borderTop: `1px dashed ${t.violetBd}` }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
@@ -1258,18 +1294,74 @@ const FormPendapatan = ({
                       <LocalInput numericValue={data.partnerIncome} onChange={v => updateVal('partnerIncome', null, null, v)} readOnly={effectiveReadOnly}
                         style={{ fontSize: 24, fontWeight: 800, color: t.green, letterSpacing: '-0.04em', width: '100%', background: 'transparent', border: 'none', outline: 'none', fontFamily: 'inherit', ...(effectiveReadOnly ? { cursor: 'default', pointerEvents: 'none' } : {}) }} />
                     </div>
-                    {!effectiveReadOnly && (
-                      <div onDragOver={e => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={e => { e.preventDefault(); setDrag(false); setFile(e.dataTransfer.files[0]); }}
-                        style={{ border: `1.5px dashed ${drag ? t.blue : t.line}`, borderRadius: 10, padding: '20px 14px', textAlign: 'center', background: drag ? t.blueBg : 'transparent', transition: 'all 0.15s', cursor: 'pointer' }}>
-                        {!file
-                          ? <label htmlFor="fp-up" style={{ cursor: 'pointer', display: 'block' }}><input type="file" id="fp-up" style={{ display: 'none' }} onChange={e => setFile(e.target.files[0])} /><Upload size={24} style={{ color: t.lo, margin: '0 auto 9px' }} /><div style={{ fontSize: 13, fontWeight: 600, color: t.mid }}>Upload Lampiran</div><div style={{ fontSize: 11, color: t.lo, marginTop: 3 }}>PDF atau Excel</div></label>
-                          : <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7 }}><FileCheck size={24} style={{ color: t.green }} /><div style={{ fontSize: 13, fontWeight: 600, color: t.hi }}>{file.name}</div><button onClick={() => setFile(null)} style={{ fontSize: 11, fontWeight: 600, color: t.red, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>Hapus File</button></div>
-                        }
+
+                    {/* Upload PDF */}
+                    <div
+                      onDragOver={e => { e.preventDefault(); if (!effectiveReadOnly) setDrag(true); }}
+                      onDragLeave={() => setDrag(false)}
+                      onDrop={e => { e.preventDefault(); setDrag(false); if (!effectiveReadOnly) handlePickFiles(e.dataTransfer.files); }}
+                      style={{ border: `1.5px dashed ${drag ? t.blue : t.line}`, borderRadius: 10, padding: '18px 14px', textAlign: 'center', background: drag ? t.blueBg : 'transparent', transition: 'all .15s', cursor: effectiveReadOnly ? 'default' : 'pointer', opacity: uploadingAtt ? 0.7 : 1 }}
+                    >
+                      {!effectiveReadOnly && (
+                        <label htmlFor="fp-up" style={{ cursor: 'pointer', display: 'block' }}>
+                          <input
+                            type="file" id="fp-up"
+                            multiple
+                            accept={ACCEPTED_EXT + ',application/pdf'}
+                            style={{ display: 'none' }}
+                            onChange={e => { handlePickFiles(e.target.files); e.target.value = ''; }}
+                            disabled={uploadingAtt}
+                          />
+                          {uploadingAtt
+                            ? <><Loader2 size={22} style={{ color: t.blue, animation: 'fpspin 1s linear infinite', margin: '0 auto 8px' }} /><div style={{ fontSize: 12, color: t.mid }}>Mengunggah lampiran…</div></>
+                            : <><Upload size={22} style={{ color: t.lo, margin: '0 auto 8px' }} /><div style={{ fontSize: 13, fontWeight: 700, color: t.mid }}>Upload Lampiran (PDF)</div><div style={{ fontSize: 11, color: t.lo, marginTop: 3 }}>Drag & drop atau klik · Maks 20 MB per file · Multiple</div></>
+                          }
+                        </label>
+                      )}
+                      {effectiveReadOnly && attachments.length === 0 && (
+                        <div style={{ fontSize: 12, color: t.lo }}>Tidak ada lampiran</div>
+                      )}
+                    </div>
+
+                    {/* Daftar lampiran tersimpan */}
+                    {attachments.length > 0 && (
+                      <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: t.mid }}>
+                          {attachments.length} Lampiran Tersimpan
+                        </div>
+                        <AnimatePresence>
+                          {attachments.map(att => (
+                            <motion.div
+                              key={att.path}
+                              initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: -8 }}
+                              transition={{ duration: 0.14 }}
+                              style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, border: `1px solid ${t.line}`, background: t.sub }}
+                            >
+                              <FileCheck size={16} style={{ color: t.green, flexShrink: 0 }} />
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 12, fontWeight: 600, color: t.hi, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{att.name}</div>
+                                <div style={{ fontSize: 10, color: t.lo, marginTop: 1 }}>{fmtSize(att.size)}{att.uploaded_at ? ` · ${fmtDate(att.uploaded_at)}` : ''}</div>
+                              </div>
+                              <button
+                                onClick={() => handleDownloadAttachment(att)}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: t.blue, fontSize: 11, fontWeight: 700, padding: '4px 8px', borderRadius: 6, fontFamily: 'inherit', flexShrink: 0 }}
+                                title="Buka PDF"
+                              >Lihat</button>
+                              {!effectiveReadOnly && (
+                                <button
+                                  onClick={() => handleRemoveAttachment(att.path)}
+                                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: t.lo, padding: 4, display: 'flex', flexShrink: 0 }}
+                                  title="Hapus"
+                                ><X size={14} /></button>
+                              )}
+                            </motion.div>
+                          ))}
+                        </AnimatePresence>
                       </div>
                     )}
                   </Body></Card>
 
-                  {/* Breakdown SP Custom (jika ada) */}
+                  {/* Breakdown SP Custom */}
                   {stats.spCustom.length > 0 && (
                     <Card t={t}><Body>
                       <SecLabel t={t}>Produk SP Custom ({stats.spCustom.length} item)</SecLabel>
@@ -1282,7 +1374,7 @@ const FormPendapatan = ({
                               <div style={{ fontSize: 10, color: t.lo }}>Pokok: {formatIDR(c.hPokok)} · {c.qty + (c.hasEntry2 ? c.qty2 : 0)} unit</div>
                             </div>
                           </div>
-                          <div style={{ textAlign: 'right' }}>
+                          <div style={{ textAlign: 'right', flexShrink: 0 }}>
                             <div style={{ fontSize: 13, fontWeight: 700, color: c.totalMargin < 0 ? t.red : t.green, fontVariantNumeric: 'tabular-nums' }}>{formatIDR(c.totalMargin)}</div>
                             <div style={{ fontSize: 10, color: t.lo }}>dari {formatIDR(c.totalJual)}</div>
                           </div>
@@ -1308,7 +1400,7 @@ const FormPendapatan = ({
                               <div style={{ fontSize: 10, color: t.lo }}>Pokok: {formatIDR(c2.hPokok)} · {c2.qty} unit</div>
                             </div>
                           </div>
-                          <div style={{ textAlign: 'right' }}>
+                          <div style={{ textAlign: 'right', flexShrink: 0 }}>
                             <div style={{ fontSize: 13, fontWeight: 700, color: c2.totalMargin < 0 ? t.red : t.green, fontVariantNumeric: 'tabular-nums' }}>{formatIDR(c2.totalMargin)}</div>
                             <div style={{ fontSize: 10, color: t.lo }}>dari {formatIDR(c2.totalJual)}</div>
                           </div>
@@ -1381,10 +1473,10 @@ const FormPendapatan = ({
         </>
       )}
 
-      {/* Fixed Footer */}
+      {/* ── Fixed Footer — FIX: flex-wrap + gap kecil agar tidak overflow ── */}
       {!monthDisabled && (
-        <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, borderTop: `1px solid ${t.line}`, background: d ? 'rgba(13,13,14,0.94)' : 'rgba(255,255,255,0.94)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', zIndex: 60, padding: '11px 20px' }}>
-          <div style={{ width: '100%', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10 }}>
+        <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, borderTop: `1px solid ${t.line}`, background: d ? 'rgba(13,13,14,0.94)' : 'rgba(255,255,255,0.94)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', zIndex: 60, padding: '11px 16px' }}>
+          <div style={{ width: '100%', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>
             {!effectiveReadOnly && (
               <button onClick={handleSaveDraft} disabled={isSaving} className="fp-btn-ghost">
                 {isSaving ? <><Loader2 size={13} style={{ animation: 'fpspin 1s linear infinite' }} />Simpan...</> : <><Save size={13} />Draft</>}
@@ -1410,8 +1502,13 @@ const FormPendapatan = ({
                 <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: '-0.03em', color: t.hi, marginBottom: 7 }}>Kirim Laporan?</div>
                 <div style={{ fontSize: 13, color: t.mid, lineHeight: 1.65, marginBottom: 14 }}>Total <strong style={{ color: t.green }}>{formatIDR(stats.revenue)}</strong> akan dikirim untuk proses audit.</div>
                 {(stats.spCustom.length > 0 || stats.vcCustom.length > 0) && (
-                  <div style={{ padding: '8px 12px', borderRadius: 8, background: t.violetBg, border: `1px solid ${t.violetBd}`, marginBottom: 14, fontSize: 11, color: t.violet, fontWeight: 600 }}>
+                  <div style={{ padding: '8px 12px', borderRadius: 8, background: t.violetBg, border: `1px solid ${t.violetBd}`, marginBottom: 8, fontSize: 11, color: t.violet, fontWeight: 600 }}>
                     <Sparkles size={10} style={{ display: 'inline', marginRight: 4 }} />{stats.spCustom.length} SP + {stats.vcCustom.length} VC custom disertakan
+                  </div>
+                )}
+                {attachments.length > 0 && (
+                  <div style={{ padding: '8px 12px', borderRadius: 8, background: t.blueBg, border: `1px solid ${t.blueBd}`, marginBottom: 14, fontSize: 11, color: t.blue, fontWeight: 600 }}>
+                    <FileCheck size={10} style={{ display: 'inline', marginRight: 4 }} />{attachments.length} lampiran PDF tersimpan
                   </div>
                 )}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

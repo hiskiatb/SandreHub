@@ -3,9 +3,10 @@
 import React, { useState, useMemo, useEffect } from "react";
 import supabase from "../../../lib/supabase";
 import { motion, AnimatePresence } from "framer-motion";
+import { downloadAsArrayBuffer } from '../../../lib/pnlAttachments';
 import {
   BarChart3, TrendingUp, TrendingDown, Download, Loader2,
-  AlertCircle, Search, CheckCircle2, Clock, X,
+  AlertCircle, Search, CheckCircle2, Clock, X, Paperclip,
   ArrowUpRight, ArrowDownLeft,
 } from "lucide-react";
 
@@ -83,16 +84,13 @@ const G = ({ d, t }) => (
   `}</style>
 );
 
-// ─── FIXED: calcR now mirrors ALL fields from FormPengeluaran ─────────────────
+// ─── calcR — mirror semua field FormPendapatan + FormPengeluaran ─────────────
 function calcR(data) {
   if (!data) return null;
   const g = (k) => Number(data[k]) || 0;
 
-  // ── Starter Pack HPP per unit ──
-  const hsp = {
-    qty_sp_3gb_im3: 29000, qty_sp_0_im3: 10000,
-    qty_sp_kpk_3id: 10000, qty_sp_3gb_3id: 29000,
-  };
+  // HPP map
+  const hsp = { qty_sp_3gb_im3: 29000, qty_sp_0_im3: 10000, qty_sp_kpk_3id: 10000, qty_sp_3gb_3id: 29000 };
   const hvc = {
     qty_vc_0_im3: 300, qty_vc_2_5gb: 12600, qty_vc_3gb_30: 19500,
     qty_vc_3_5gb_5d: 13750, qty_vc_5gb_5d: 16800, qty_vc_7gb_7d: 22400,
@@ -100,10 +98,7 @@ function calcR(data) {
     qty_vc_fi_5gb_2d: 8300, qty_vc_fi_3gb_3d: 11600, qty_vc_fi_5gb_3d: 12800,
     qty_vc_fi_15gb_7d: 27900, qty_vc_0_3id: 500,
   };
-  const hsp2 = {
-    qty_sp_3gb_im3_2: 29000, qty_sp_0_im3_2: 10000,
-    qty_sp_kpk_3id_2: 10000, qty_sp_3gb_3id_2: 29000,
-  };
+  const hsp2 = { qty_sp_3gb_im3_2: 29000, qty_sp_0_im3_2: 10000, qty_sp_kpk_3id_2: 10000, qty_sp_3gb_3id_2: 29000 };
   const hvc2 = {
     qty_vc_0_im3_2: 300, qty_vc_2_5gb_2: 12600, qty_vc_3gb_30_2: 19500,
     qty_vc_3_5gb_5d_2: 13750, qty_vc_5gb_5d_2: 16800, qty_vc_7gb_7d_2: 22400,
@@ -157,7 +152,6 @@ function calcR(data) {
     ["qty_vc_0_3id_2",       "retail_vc_0_3id_2"],
   ];
 
-  // ── Omset & Margin produk fisik ──
   const osp1 = sd.reduce((a, [q, r]) => a + g(q) * g(r), 0);
   const osp2 = sd2.reduce((a, [q, r]) => a + g(q) * g(r), 0);
   const osp  = osp1 + osp2;
@@ -190,7 +184,6 @@ function calcR(data) {
 
   const tpd = tmg + tko + thd;
 
-  // ── FIXED: OPEX — sama persis dengan FormPengeluaran ──
   const cs = (ps) => ps.reduce((a, [p, q]) => a + g(p) * g(q), 0);
 
   const tox = cs([
@@ -204,7 +197,6 @@ function calcR(data) {
     ["price_opex_lain",      "qty_opex_lain"],
   ]);
 
-  // ── FIXED: SDM — ditambahkan benefit_sales & benefit_nonsales ──
   const tsd = cs([
     ["price_sdm_bm",              "qty_sdm_bm"],
     ["price_sdm_admin",           "qty_sdm_admin"],
@@ -223,12 +215,10 @@ function calcR(data) {
     ["price_sdm_finance_staff",   "qty_sdm_finance_staff"],
     ["price_sdm_ob",              "qty_sdm_ob"],
     ["price_sdm_tss",             "qty_sdm_tss"],
-    // FIXED: tambahan field baru dari FormPengeluaran
     ["price_sdm_benefit_sales",   "qty_sdm_benefit_sales"],
     ["price_sdm_benefit_nonsales","qty_sdm_benefit_nonsales"],
   ]);
 
-  // ── FIXED: Marketing — static fields ──
   const tmkStatic = cs([
     ["price_mkt_ws",      "qty_mkt_ws"],
     ["price_mkt_retail",  "qty_mkt_retail"],
@@ -236,7 +226,6 @@ function calcR(data) {
     ["price_mkt_starter", "qty_mkt_starter"],
   ]);
 
-  // ── FIXED: Marketing dynamic lain_1 s/d lain_10 ──
   let tmkLain = 0;
   const mktLainDetail = [];
   for (let n = 1; n <= MAX_LAIN; n++) {
@@ -258,7 +247,6 @@ function calcR(data) {
 
   const pex = g("partner_expense");
 
-  // ── FIXED: grand total pengeluaran sekarang balance ──
   const tpg = tox + tsd + tmk + tcm + pex;
   const net = tpd - tpg;
   const p = (v) => tom ? (v / tom * 100) : 0;
@@ -293,8 +281,22 @@ const PROD_NAMES = {
   qty_vc_fi_15gb_7d_2: "VC FI 15GB/7D (B)", qty_vc_0_3id_2: "VC 0 3ID (B)",
 };
 
+// ─── pdf-lib loader (untuk merge lampiran) ───────────────────────────────────
+async function ensurePdfLib() {
+  if (window.PDFLib) return window.PDFLib;
+  await new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js';
+    s.onload = res;
+    s.onerror = () => rej(new Error('Gagal memuat pdf-lib'));
+    document.head.appendChild(s);
+  });
+  return window.PDFLib;
+}
+
 // ─── PDF Generator ────────────────────────────────────────────────────────────
-async function makePDF(data, r, ctx) {
+// FIX: signature sekarang menerima `attachments` sebagai parameter ke-4.
+async function makePDF(data, r, ctx, attachments = []) {
   if (!window.jspdf) {
     await new Promise((res, rej) => {
       const s = document.createElement("script");
@@ -418,13 +420,10 @@ async function makePDF(data, r, ctx) {
     Y = doc.lastAutoTable.finalY + 8;
   }
 
-  // ══════════════════════════════════════════════════════════════════
-  // HALAMAN 1: SUMMARY PNL (BARU) — harus balance dengan rincian
-  // ══════════════════════════════════════════════════════════════════
+  // ── HALAMAN 1: SUMMARY ──
   _currentTitle = "RINGKASAN LAPORAN LABA RUGI";
   drawHeader(_currentTitle);
 
-  // Sub-header info kotak
   const infoY = Y;
   doc.setFillColor(...C.HEADBG);
   doc.roundedRect(ML, infoY, CW, 18, 2, 2, "F");
@@ -448,7 +447,6 @@ async function makePDF(data, r, ctx) {
   });
   Y = infoY + 24;
 
-  // ── Tabel Summary Pendapatan ──
   tbl("A. RINGKASAN STRUKTUR PENDAPATAN",
     ["Komponen Pendapatan", "Jumlah (IDR)", "% Omset"],
     [
@@ -470,7 +468,6 @@ async function makePDF(data, r, ctx) {
     { boldLast: true }
   );
 
-  // ── Tabel Summary Pengeluaran ──
   tbl("B. RINGKASAN STRUKTUR PENGELUARAN",
     ["Komponen Pengeluaran", "Jumlah (IDR)", "% Omset"],
     [
@@ -487,20 +484,18 @@ async function makePDF(data, r, ctx) {
     { boldLast: true }
   );
 
-  // ── Tabel Summary Omset ──
   tbl("C. RINGKASAN OMSET PENJUALAN",
     ["Komponen Omset", "Jumlah (IDR)", "% Total"],
     [
       ...(r.osp ? [["SP Regular",    fRpFull(r.osp), fPctR(r.tom ? r.osp / r.tom * 100 : 0)]] : []),
       ...(r.ovc ? [["Voucher Fisik", fRpFull(r.ovc), fPctR(r.tom ? r.ovc / r.tom * 100 : 0)]] : []),
-      ...(r.mj  ? [["Saldo MOBO",   fRpFull(r.mj),  fPctR(r.tom ? r.mj  / r.tom * 100 : 0)]] : []),
+      ...(r.mj  ? [["Saldo MOBO",    fRpFull(r.mj),  fPctR(r.tom ? r.mj  / r.tom * 100 : 0)]] : []),
       ["TOTAL OMSET",                fRpFull(r.tom), "100,0%"],
     ],
     [[0, 100, "left"], [1, 48, "right"], [2, 30, "right"]],
     { boldLast: true }
   );
 
-  // ── Net Profit Box ──
   if (Y > PH - 52) { doc.addPage(); drawHeader(_currentTitle); }
   const netPos = r.net >= 0;
   const netBoxY = Y;
@@ -525,9 +520,7 @@ async function makePDF(data, r, ctx) {
   doc.text(netPos ? "PROFIT ▲" : "LOSS ▼", PW - MR - 4, netBoxY + 28, { align: "right" });
   Y = netBoxY + 44;
 
-  // ══════════════════════════════════════════════════════════════════
-  // HALAMAN 2+: RINCIAN PRODUK & PENDAPATAN
-  // ══════════════════════════════════════════════════════════════════
+  // ── HALAMAN PRODUK & PENDAPATAN ──
   doc.addPage();
   _currentTitle = "RINCIAN PRODUK & PENDAPATAN";
   drawHeader(_currentTitle);
@@ -587,7 +580,6 @@ async function makePDF(data, r, ctx) {
     tbl("2. RINCIAN VOUCHER FISIK", prdHead, allVcRows, prdCols, { subtotalRow: subIdx, boldLast: true });
   }
 
-  // MOBO
   if (r.mj) {
     tbl("3. SALDO MOBO",
       ["Keterangan", "Modal (Rp)", "Penjualan (Rp)", "Komposisi"],
@@ -596,7 +588,6 @@ async function makePDF(data, r, ctx) {
     );
   }
 
-  // Komisi & Insentif
   const komRows = [];
   if (r.up)  komRows.push(["Upfront Discount (1,5% Modal MOBO)", fRpFull(r.up),  fPct(r.tko ? r.up  / r.tko * 100 : 0)]);
   if (r.smg) komRows.push(["Sales Margin (Realtime + Back Margin)", fRpFull(r.smg), fPct(r.tko ? r.smg / r.tko * 100 : 0)]);
@@ -608,7 +599,6 @@ async function makePDF(data, r, ctx) {
       [[0, 108, "left"], [1, 40, "right"], [2, 30, "right"]], { boldLast: true });
   }
 
-  // Hadiah & Lainnya
   const hdRows = [];
   if (r.rwc) hdRows.push(["Rewards Champions Club", fRpFull(r.rwc), fPct(r.thd ? r.rwc / r.thd * 100 : 0)]);
   if (r.rwl) hdRows.push(["Rewards Lainnya",         fRpFull(r.rwl), fPct(r.thd ? r.rwl / r.thd * 100 : 0)]);
@@ -619,9 +609,7 @@ async function makePDF(data, r, ctx) {
       [[0, 108, "left"], [1, 40, "right"], [2, 30, "right"]], { boldLast: true });
   }
 
-  // ══════════════════════════════════════════════════════════════════
-  // HALAMAN BEBAN USAHA
-  // ══════════════════════════════════════════════════════════════════
+  // ── HALAMAN BEBAN USAHA ──
   doc.addPage();
   _currentTitle = "RINCIAN BEBAN USAHA";
   drawHeader(_currentTitle);
@@ -639,7 +627,6 @@ async function makePDF(data, r, ctx) {
     return rows;
   }
 
-  // OPEX
   const opexRows = buildExRows([
     ["Gedung / Sewa Kantor",  "qty_opex_gedung",    "price_opex_gedung"],
     ["Kendaraan",             "qty_opex_kendaraan", "price_opex_kendaraan"],
@@ -655,7 +642,6 @@ async function makePDF(data, r, ctx) {
     tbl("1. OPERASIONAL BRANCH (OPEX)", exHead, opexRows, exCols, { boldLast: true });
   }
 
-  // SDM — FIXED: termasuk benefit_sales & benefit_nonsales
   const sdmRows = buildExRows([
     ["Branch Manager",           "qty_sdm_bm",              "price_sdm_bm"],
     ["Admin & Warehouse",        "qty_sdm_admin",           "price_sdm_admin"],
@@ -674,7 +660,6 @@ async function makePDF(data, r, ctx) {
     ["Senior Operation Manager", "qty_sdm_som",             "price_sdm_som"],
     ["Office Boy",               "qty_sdm_ob",              "price_sdm_ob"],
     ["Technical Sales Support",  "qty_sdm_tss",             "price_sdm_tss"],
-    // FIXED: tambahan dua field baru
     ["Benefit Sales",            "qty_sdm_benefit_sales",   "price_sdm_benefit_sales"],
     ["Benefit Non-Sales",        "qty_sdm_benefit_nonsales","price_sdm_benefit_nonsales"],
   ], r.tsd);
@@ -683,7 +668,6 @@ async function makePDF(data, r, ctx) {
     tbl("2. SUMBER DAYA MANUSIA (SDM)", exHead, sdmRows, exCols, { boldLast: true });
   }
 
-  // Marketing — static
   const mktStaticRows = buildExRows([
     ["Wholeseller / Distributor",    "qty_mkt_ws",      "price_mkt_ws"],
     ["Retail / Outlet",              "qty_mkt_retail",  "price_mkt_retail"],
@@ -691,7 +675,6 @@ async function makePDF(data, r, ctx) {
     ["Program Starter Pack",         "qty_mkt_starter", "price_mkt_starter"],
   ], r.tmk);
 
-  // Marketing — FIXED: dynamic lain_1 s/d lain_10
   const mktLainRows = [];
   r.mktLainDetail.forEach(({ label, qty, price, total }) => {
     mktLainRows.push([
@@ -706,14 +689,9 @@ async function makePDF(data, r, ctx) {
   const allMktRows = [...mktStaticRows, ...mktLainRows];
   if (allMktRows.length) {
     allMktRows.push(["TOTAL MARKETING", "", "", fRp(r.tmk), "100%"]);
-    // mark subtotal rows where static ends (before lain separator)
-    const subIdx = mktStaticRows.length > 0 && mktLainRows.length > 0
-      ? [mktStaticRows.length - 1]
-      : [];
     tbl("3. MARKETING & CLUSTER DEV", exHead, allMktRows, exCols, { boldLast: true });
   }
 
-  // Cost of Money
   const comRows = buildExRows([
     ["Administrasi Bank",  "qty_com_admin", "price_com_admin"],
     ["Bunga Pinjaman",     "qty_com_bunga", "price_com_bunga"],
@@ -723,14 +701,13 @@ async function makePDF(data, r, ctx) {
     tbl("4. COST OF MONEY", exHead, comRows, exCols, { boldLast: true });
   }
 
-  // Partner Expense
   if (r.pex) {
     tbl("5. PARTNER EXPENSE", exHead,
       [["Partner Expense (Luar Template)", "—", "—", fRp(r.pex), "100%"]],
       exCols, { boldLast: true });
   }
 
-  // ── Balance check footer di halaman terakhir ──
+  // ── Balance check footer ──
   if (Y > PH - 52) { doc.addPage(); drawHeader(_currentTitle); }
   const balY = Y;
   doc.setFillColor(...C.HEADBG);
@@ -751,7 +728,73 @@ async function makePDF(data, r, ctx) {
     doc.text(val, x, balY + 18);
   });
 
-  doc.save(`PnL_${partner}_${branch}_${month}_${year}.pdf`.replace(/\s+/g, "_"));
+  // ══════════════════════════════════════════════════════════════════════════
+  // FINALIZE: simpan base PDF, lalu (kalau ada lampiran) merge dengan pdf-lib
+  // ══════════════════════════════════════════════════════════════════════════
+  const fileName = `PnL_${partner}_${branch}_${month}_${year}.pdf`.replace(/\s+/g, '_');
+  const baseBytes = doc.output('arraybuffer');
+
+  // Tanpa lampiran → langsung download
+  if (!attachments || attachments.length === 0) {
+    const blob = new Blob([baseBytes], { type: 'application/pdf' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = fileName;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    return { merged: 0, failed: 0, failedNames: [] };
+  }
+
+  // ── Merge lampiran dengan pdf-lib ──
+  const PDFLib = await ensurePdfLib();
+  const { PDFDocument, StandardFonts, rgb } = PDFLib;
+
+  const mergedDoc = await PDFDocument.load(baseBytes);
+  const helv      = await mergedDoc.embedFont(StandardFonts.HelveticaBold);
+  const helvR     = await mergedDoc.embedFont(StandardFonts.Helvetica);
+
+  let merged = 0, failed = 0;
+  const failedNames = [];
+
+  for (let i = 0; i < attachments.length; i++) {
+    const att = attachments[i];
+    try {
+      // Halaman pemisah
+      const sep = mergedDoc.addPage([595.28, 841.89]);
+      sep.drawRectangle({ x: 0, y: 821.89, width: 595.28, height: 20, color: rgb(0.93, 0.11, 0.14) });
+      sep.drawText('LAMPIRAN', { x: 40, y: 760, size: 9, font: helvR, color: rgb(0.4, 0.4, 0.45) });
+      sep.drawText(`${i + 1}. ${att.name}`, {
+        x: 40, y: 730, size: 18, font: helv, color: rgb(0.08, 0.14, 0.24), maxWidth: 515,
+      });
+      if (att.category) sep.drawText(`Kategori: ${att.category}`, { x: 40, y: 705, size: 10, font: helvR, color: rgb(0.3, 0.3, 0.35) });
+      if (att.size)     sep.drawText(`Ukuran: ${(att.size / 1024).toFixed(1)} KB`, { x: 40, y: 690, size: 10, font: helvR, color: rgb(0.3, 0.3, 0.35) });
+
+      // Embed isi PDF
+      const bytes  = await downloadAsArrayBuffer(att.path);
+      const attDoc = await PDFDocument.load(bytes, { ignoreEncryption: true });
+      const pages  = await mergedDoc.copyPages(attDoc, attDoc.getPageIndices());
+      pages.forEach(p => mergedDoc.addPage(p));
+      merged++;
+    } catch (e) {
+      failed++;
+      failedNames.push(att.name);
+      console.error('Merge fail', att.name, e);
+      const err = mergedDoc.addPage([595.28, 841.89]);
+      err.drawText('LAMPIRAN GAGAL DIMUAT', { x: 40, y: 760, size: 14, font: helv, color: rgb(0.86, 0.15, 0.15) });
+      err.drawText(att.name, { x: 40, y: 735, size: 11, font: helvR, color: rgb(0.2, 0.2, 0.25), maxWidth: 515 });
+      err.drawText(String(e.message || e), { x: 40, y: 715, size: 9, font: helvR, color: rgb(0.5, 0.5, 0.55), maxWidth: 515 });
+    }
+  }
+
+  const finalBytes = await mergedDoc.save();
+  const blob = new Blob([finalBytes], { type: 'application/pdf' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = fileName;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  return { merged, failed, failedNames };
 }
 
 // ─── UI primitives ───────────────────────────────────────────────────────────
@@ -839,11 +882,27 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
 
   const report = useMemo(() => calcR(data), [data]);
 
+  // FIX: kumpulkan attachments dari 3 kolom dan kirim ke makePDF
   const handlePDF = async () => {
-    if (!data || !report) return; setGenPdf(true);
-    try { await makePDF(data, report, activeContext); toast$("success", "PDF berhasil diunduh"); }
-    catch (e) { toast$("error", "Gagal membuat PDF: " + e.message); }
-    finally { setGenPdf(false); }
+    if (!data || !report) return;
+    setGenPdf(true);
+    try {
+      const att = [
+        ...(Array.isArray(data.attachments_pendapatan)  ? data.attachments_pendapatan  : []).map(a => ({ ...a, category: 'Pendapatan' })),
+        ...(Array.isArray(data.attachments_pengeluaran) ? data.attachments_pengeluaran : []).map(a => ({ ...a, category: 'Pengeluaran' })),
+        ...(Array.isArray(data.attachments_marketing)   ? data.attachments_marketing   : []).map(a => ({ ...a, category: 'Marketing' })),
+      ];
+      const res = await makePDF(data, report, activeContext, att);
+      if (res?.merged > 0 && res?.failed === 0)      toast$('success', `PDF berhasil diunduh dengan ${res.merged} lampiran terlampir`);
+      else if (res?.merged > 0 && res?.failed > 0)   toast$('success', `PDF diunduh: ${res.merged} berhasil, ${res.failed} gagal dilampirkan`);
+      else if (res?.failed > 0)                      toast$('error',   `PDF utama diunduh tapi ${res.failed} lampiran gagal`);
+      else                                            toast$('success', 'PDF berhasil diunduh');
+    } catch (e) {
+      console.error(e);
+      toast$('error', 'Gagal membuat PDF: ' + e.message);
+    } finally {
+      setGenPdf(false);
+    }
   };
 
   if (loading) return (
@@ -877,7 +936,11 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
   const mpcType = data.mpc_mp3 || activeContext?.mpxType || "";
   const netPos  = report.net >= 0;
 
-  // ── FIXED: pnlRows sekarang mencerminkan semua komponen pengeluaran ──
+  const totalAtt =
+    (data.attachments_pendapatan?.length || 0) +
+    (data.attachments_pengeluaran?.length || 0) +
+    (data.attachments_marketing?.length || 0);
+
   const pnlRows = [
     { label: "A.  Omset Penjualan",        amount: report.tom,  ratio: 100,                   kind: "section" },
     ...(report.osp ? [{ label: "SP Regular",      amount: report.osp, ratio: report.p(report.osp), indent: 1 }] : []),
@@ -907,7 +970,6 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
     { label: "C.  Struktur Pengeluaran",   amount: report.tpg,  ratio: report.p(report.tpg),  kind: "section" },
     ...(report.tox ? [{ label: "OPEX Branch",             amount: report.tox, ratio: report.p(report.tox), indent: 1 }] : []),
     ...(report.tsd ? [{ label: "SDM Branch",              amount: report.tsd, ratio: report.p(report.tsd), indent: 1 }] : []),
-    // FIXED: Marketing ditampilkan dengan breakdown jika ada lain
     ...(report.tmk ? [{
       label: report.tmkLain > 0 ? "Marketing (Reguler + Program Lain)" : "Marketing & Cluster Dev",
       amount: report.tmk, ratio: report.p(report.tmk), indent: 1
@@ -952,7 +1014,7 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
       </div>
 
       {/* ── Status banner ── */}
-      <div style={{ padding: "12px 14px", borderRadius: 10, marginBottom: 20, border: `1px solid ${data.is_finalized ? t.greenBd : t.amberBd}`, background: data.is_finalized ? t.greenBg : t.amberBg, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+      <div style={{ padding: "12px 14px", borderRadius: 10, marginBottom: 16, border: `1px solid ${data.is_finalized ? t.greenBd : t.amberBd}`, background: data.is_finalized ? t.greenBg : t.amberBg, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
           {data.is_finalized ? <CheckCircle2 size={17} style={{ color: t.green, flexShrink: 0 }} /> : <Clock size={17} style={{ color: t.amber, flexShrink: 0 }} />}
           <div style={{ minWidth: 0 }}>
@@ -965,6 +1027,16 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
           {hasPeng && <Pill icon={<CheckCircle2 size={11} />} text="Pengeluaran final" color={t.magenta} bg={t.magentaBg} bd={t.magentaBd} />}
         </div>
       </div>
+
+      {/* ── Lampiran info banner (di LUAR grid metric) ── */}
+      {totalAtt > 0 && (
+        <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 9, border: `1px solid ${t.blueBd}`, background: t.blueBg, display: "flex", alignItems: "center", gap: 8 }}>
+          <Paperclip size={14} style={{ color: t.blue, flexShrink: 0 }} />
+          <span style={{ fontSize: 12, color: t.blue, fontWeight: 600 }}>
+            {totalAtt} lampiran PDF akan disertakan otomatis di halaman akhir saat download
+          </span>
+        </div>
+      )}
 
       {/* ── Metric cards ── */}
       <div className="grid-3" style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 22 }}>
@@ -1031,7 +1103,6 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
           </div>
         </Card>
 
-        {/* FIXED: Pengeluaran card sekarang lengkap 5 baris + breakdown marketing jika ada lain */}
         <Card t={t}>
           <div style={{ padding: "20px 22px" }}>
             <SLabel icon={<ArrowDownLeft size={13} />} t={t}>Struktur Pengeluaran</SLabel>

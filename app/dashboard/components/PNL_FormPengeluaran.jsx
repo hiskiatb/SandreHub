@@ -1,24 +1,28 @@
 "use client";
 /**
  * PNL_FormPengeluaran.jsx
- * Perubahan:
+ *
+ * Fitur:
  * - Marketing "Program Lain" DYNAMIC (slot 1–10).
- *   slot 1 = kolom lama qty_mkt_lain_1/price_mkt_lain_1/label_mkt_lain_1 (data existing tetap)
- * - TAMPILAN DIPERBAIKI: badge "Tipe" ada di kolom tersendiri paling kiri,
- *   sehingga kolom Nama / Qty / Harga tetap rata untuk semua baris (statis & dinamis).
- * - Upload lampiran Marketing mendukung MULTIPLE FILES.
- * - Badge finalisasi: angka 1 jika hanya satu form final, centang jika keduanya.
+ * - TAMBAH ROLE SDM CUSTOM: user bisa menambah role SDM baru (nama, qty, harga).
+ *   Data custom SDM disimpan di kolom `expense_data` (jsonb) — tidak butuh ALTER TABLE.
+ * - Lampiran PDF tersimpan di Supabase Storage (bucket: pnl-attachments),
+ *   metadata di kolom `attachments_pengeluaran` / `attachments_marketing` (jsonb).
  */
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import supabase from "../../../lib/supabase";
 import { pushNotification } from "../../../lib/notificationService";
 import { motion, AnimatePresence } from 'framer-motion';
 import {
+  uploadMany, removeOne, signedUrl, validatePdf,
+  ACCEPTED_EXT, fmtSize as fmtSize2,
+} from '../../../lib/pnlAttachments';
+import {
   ArrowDownLeft, AlertCircle, CheckCircle2, Send, Upload, ShieldCheck,
   Calculator, Banknote, Building2, Users, Megaphone, Coins,
   FileText, Loader2, X, FileCheck,
   ArrowRight, ArrowLeft, Save, Clock, Eye, History, Sparkles, RotateCcw, Ban,
-  Plus, Trash2, Paperclip,
+  Plus, Trash2, Paperclip, UserPlus,
 } from 'lucide-react';
 
 const formatIDR = (val) => { const v=val||0,neg=v<0; const s=new Intl.NumberFormat('id-ID',{style:'currency',currency:'IDR',maximumFractionDigits:0}).format(Math.abs(v)); return neg?`(${s})`:s; };
@@ -26,10 +30,10 @@ const formatPct = (val) => (isFinite(val)&&val!==0)?`${val.toFixed(2)}%`:'0.00%'
 const toSep = (val) => { if(val===undefined||val===null||val==='')return''; if(val===0||val==='0')return'0'; return val.toString().replace(/\D/g,'').replace(/\B(?=(\d{3})+(?!\d))/g,'.'); };
 const parseNum = (val) => { if(typeof val==='number')return val; if(!val)return 0; const n=Number(val.toString().replace(/\./g,'')); return isNaN(n)?0:n; };
 const fmtDate = (iso) => { if(!iso)return null; return new Date(iso).toLocaleString('id-ID',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}); };
-const fmtSize = (b) => b<1024?`${b} B`:b<1048576?`${(b/1024).toFixed(1)} KB`:`${(b/1048576).toFixed(1)} MB`;
 const getPrevMY = (month,year) => { const M=['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember']; const i=M.indexOf(month); if(i===-1)return{prevMonth:null,prevYear:null}; if(i===0)return{prevMonth:M[11],prevYear:String(Number(year)-1)}; return{prevMonth:M[i-1],prevYear:String(year)}; };
 const FONT = `"DM Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif`;
 const MAX_LAIN = 10;
+const MAX_CUSTOM_SDM = 20;
 const lainDbQty   = (n) => `qty_mkt_lain_${n}`;
 const lainDbPrice = (n) => `price_mkt_lain_${n}`;
 const lainDbLabel = (n) => `label_mkt_lain_${n}`;
@@ -80,13 +84,13 @@ const G = ({ d, t }) => (
     .fpi-c{text-align:center} .fpi-sm{padding:8px 6px}
     .fpi-ro{width:100%;background:${t.roBg};border:1px solid ${t.roBd};border-radius:9px;padding:10px 13px;font-weight:600;color:${t.hi};font-family:inherit;letter-spacing:-0.01em;box-sizing:border-box;pointer-events:none;user-select:text;outline:none}
     .fpi-ro-sm{padding:8px 6px;text-align:center}
-    /* input nama program lain — tinggi sama dengan fpi-sm */
     .fname{width:100%;background:${t.inputBg};border:1px solid ${t.inputBd};border-radius:8px;padding:8px 10px;font-weight:600;color:${t.hi};outline:none;transition:border-color 0.14s;font-family:inherit;font-size:13px;box-sizing:border-box}
     .fname:focus{border-color:#ED1C24;box-shadow:0 0 0 3px rgba(237,28,36,0.14)} .fname::placeholder{color:${t.lo};font-weight:400}
     .lbl{display:block;font-size:10px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;color:${t.mid};margin-bottom:6px}
     .erow:hover td{background:rgba(237,28,36,0.03)!important}
     .erow-pf td{background:${d?'rgba(167,139,250,0.04)':'rgba(124,58,237,0.03)'}!important} .erow-pf:hover td{background:${d?'rgba(167,139,250,0.08)':'rgba(124,58,237,0.06)'}!important}
     .erow-lain td{background:${d?'rgba(237,28,36,0.025)':'rgba(237,28,36,0.015)'}!important} .erow-lain:hover td{background:${d?'rgba(237,28,36,0.06)':'rgba(237,28,36,0.04)'}!important}
+    .erow-cust td{background:${d?'rgba(167,139,250,0.04)':'rgba(124,58,237,0.025)'}!important} .erow-cust:hover td{background:${d?'rgba(167,139,250,0.10)':'rgba(124,58,237,0.06)'}!important}
     @keyframes fpbreathe{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.38;transform:scale(0.9)}}
     @keyframes fpspin{from{transform:rotate(0)}to{transform:rotate(360deg)}} @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
     .btn-p{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;border-radius:9px;background:linear-gradient(135deg,#ED1C24 0%,#C6168D 100%);color:#fff;border:none;cursor:pointer;font-size:12px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;box-shadow:0 2px 10px rgba(237,28,36,0.30);font-family:inherit;transition:all 0.14s}
@@ -98,8 +102,11 @@ const G = ({ d, t }) => (
     .btn-rs{display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:7px;border:1px solid ${t.amberBd};background:${t.amberBg};color:${t.amber};cursor:pointer;font-size:10px;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;font-family:inherit;transition:all 0.13s}
     .btn-rs:hover{background:${d?'rgba(255,203,5,0.20)':'rgba(255,203,5,0.16)'}}
     .pf-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:99px;background:${t.violetBg};border:1px solid ${t.violetBd};color:${t.violet};font-size:9px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase}
+    .cust-badge{display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:99px;background:${d?'rgba(167,139,250,0.15)':'#EDE9FE'};color:${d?'#A78BFA':'#5B21B6'};border:0.5px solid ${d?'rgba(167,139,250,0.35)':'#C4B5FD'};font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase}
     .btn-add-lain{display:inline-flex;align-items:center;gap:5px;padding:6px 13px;border-radius:8px;border:1px dashed ${t.blueBd};background:${t.blueBg};color:${t.blue};cursor:pointer;font-size:11px;font-weight:700;letter-spacing:0.05em;text-transform:uppercase;font-family:inherit;transition:all 0.14s}
     .btn-add-lain:hover{background:${t.blue};color:#fff;border-style:solid} .btn-add-lain:disabled{opacity:0.38;cursor:not-allowed}
+    .btn-add-cust{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:9px;border:1.5px dashed ${t.violetBd};background:${t.violetBg};color:${t.violet};cursor:pointer;font-size:11px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;transition:all 0.15s;font-family:inherit}
+    .btn-add-cust:hover{background:${t.violet};color:#fff;border-style:solid;transform:translateY(-1px)} .btn-add-cust:disabled{opacity:0.38;cursor:not-allowed;transform:none}
     .btn-rm{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:7px;border:1px solid ${t.line};background:transparent;color:${t.red};cursor:pointer;transition:all 0.13s;flex-shrink:0}
     .btn-rm:hover{background:${d?'rgba(255,107,107,0.12)':'rgba(220,38,38,0.08)'};border-color:${t.red}}
     .f-item{display:flex;align-items:center;gap:9px;padding:8px 12px;border-radius:8px;border:1px solid ${t.line};background:${t.sub};transition:border-color 0.13s}
@@ -196,7 +203,7 @@ function SecHero({ icon:Icon, step, title, t, children }) {
   );
 }
 
-// ExpenseTable — statis (OPEX / SDM / COM) tanpa kolom Tipe
+// ─── ExpenseTable — statis (OPEX / COM) ──────────────────────────────────────
 function ExpenseTable({ items, sectionKey, onUpdate, t, readOnly, prefillKeys }) {
   const vis = readOnly ? items.filter(i=>i.total>0) : items;
   return (
@@ -242,14 +249,140 @@ function ExpenseTable({ items, sectionKey, onUpdate, t, readOnly, prefillKeys })
   );
 }
 
-// MarketingTable — ada kolom "Tipe" (56px) di kiri sebagai penanda
-// Kolom: [Tipe 56px][Sub-Kategori/Nama flex][Qty 72px][Harga 148px][Total 120px][Aksi 36px]
-// Badge ada di kolom Tipe, BUKAN di bawah nama → semua kolom lain RATA
+// ─── SDMTable — statis + custom roles + tombol "Tambah Role" ────────────────
+function SDMTable({
+  staticItems, customItems,
+  onUpdate, onUpdateCustom, onAddCustom, onRemoveCustom,
+  t, d, readOnly, prefillKeys, totalGroup,
+}) {
+  const visS = readOnly ? staticItems.filter(i=>i.total>0) : staticItems;
+  const visC = readOnly ? customItems.filter(c=>c.total>0||c.name) : customItems;
+  return (
+    <Card t={t}><Body>
+      <div style={{ overflowX:'auto' }}>
+        <table style={{ width:'100%',borderCollapse:'collapse',fontSize:13,minWidth:520 }}>
+          <thead>
+            <tr style={{ borderBottom:`1px solid ${t.line}` }}>
+              <th style={{ padding:'7px 10px',textAlign:'left',fontSize:10,fontWeight:700,letterSpacing:'0.08em',textTransform:'uppercase',color:t.lo }}>Sub-Kategori / Role</th>
+              <th style={{ padding:'7px 6px',width:72,textAlign:'center',fontSize:10,fontWeight:700,letterSpacing:'0.08em',textTransform:'uppercase',color:t.lo }}>Qty</th>
+              <th style={{ padding:'7px 6px',width:148,textAlign:'left',fontSize:10,fontWeight:700,letterSpacing:'0.08em',textTransform:'uppercase',color:t.lo }}>Harga Satuan</th>
+              <th style={{ padding:'7px 10px',width:120,textAlign:'right',fontSize:10,fontWeight:700,letterSpacing:'0.08em',textTransform:'uppercase',color:t.lo }}>Total</th>
+              <th style={{ width:36 }}/>
+            </tr>
+          </thead>
+          <tbody>
+            {/* Static SDM rows */}
+            {visS.length===0 && visC.length===0
+              ? <tr><td colSpan={5} style={{ padding:'18px 10px',textAlign:'center',color:t.lo,fontSize:12 }}>Tidak ada data untuk periode ini</td></tr>
+              : null}
+            {visS.map(item => {
+              const isPF = prefillKeys?.has(item.id);
+              return (
+                <tr key={item.id} className={`erow${isPF?' erow-pf':''}`} style={{ borderBottom:`1px solid ${t.lineH}` }}>
+                  <td style={{ padding:'9px 10px',verticalAlign:'middle' }}>
+                    <div style={{ fontWeight:700,color:t.hi,fontSize:13 }}>{item.name}</div>
+                    {isPF&&<div style={{ marginTop:3 }}><span className="pf-badge"><Sparkles size={7}/>Diisi otomatis</span></div>}
+                  </td>
+                  <td style={{ padding:'9px 6px',width:72,verticalAlign:'middle' }}>
+                    <LocalInput numericValue={item.qty} onChange={v=>onUpdate('sdm',item.id,'qty',v)} className={readOnly?'fpi fpi-ro fpi-ro-sm':'fpi fpi-c fpi-sm'} readOnly={readOnly}/>
+                  </td>
+                  <td style={{ padding:'9px 6px',width:148,verticalAlign:'middle' }}>
+                    <LocalInput numericValue={item.price} onChange={v=>onUpdate('sdm',item.id,'price',v)} className={readOnly?'fpi fpi-ro fpi-sm':'fpi fpi-sm'} readOnly={readOnly}/>
+                  </td>
+                  <td style={{ padding:'9px 10px',textAlign:'right',whiteSpace:'nowrap',verticalAlign:'middle' }}>
+                    <div style={{ fontWeight:700,fontSize:13,color:item.total>0?t.green:t.lo,fontVariantNumeric:'tabular-nums' }}>{formatIDR(item.total)}</div>
+                    {item.total>0&&totalGroup>0&&<div style={{ fontSize:10,color:t.lo,marginTop:1,fontVariantNumeric:'tabular-nums' }}>{formatPct(item.total/totalGroup*100)}</div>}
+                  </td>
+                  <td/>
+                </tr>
+              );
+            })}
+
+            {/* Divider sebelum custom — hanya jika ada custom atau bisa edit */}
+            {(visC.length>0 || !readOnly) && (
+              <tr>
+                <td colSpan={5} style={{ padding:'10px 10px 4px' }}>
+                  <div style={{ display:'flex',alignItems:'center',gap:8 }}>
+                    <div style={{ flex:1,height:1,background:t.line }}/>
+                    <span style={{ fontSize:10,fontWeight:700,letterSpacing:'0.09em',textTransform:'uppercase',color:d?'#A78BFA':'#7C3AED',opacity:0.85,whiteSpace:'nowrap' }}>Role SDM Custom</span>
+                    <div style={{ flex:1,height:1,background:t.line }}/>
+                  </div>
+                </td>
+              </tr>
+            )}
+
+            {/* Custom SDM rows */}
+            <AnimatePresence>
+              {visC.map((c, idx) => {
+                const total = (Number(c.qty)||0)*(Number(c.price)||0);
+                const composition = totalGroup>0 ? total/totalGroup*100 : 0;
+                return (
+                  <tr key={c.id} className="erow erow-cust" style={{ borderBottom:`1px solid ${t.lineH}` }}>
+                    <td style={{ padding:'9px 10px',verticalAlign:'middle' }}>
+                      <div style={{ display:'flex',alignItems:'center',gap:8 }}>
+                        <span className="cust-badge" style={{ flexShrink:0 }}><Sparkles size={7}/>C{idx+1}</span>
+                        <div style={{ flex:1,minWidth:0 }}>
+                          {readOnly
+                            ? <div style={{ fontWeight:700,color:t.hi,fontSize:13 }}>{c.name||`Custom Role ${idx+1}`}</div>
+                            : <input className="fname" type="text" value={c.name||''}
+                                placeholder={`Nama role custom ${idx+1}…`}
+                                onChange={e=>onUpdateCustom(c.id,'name',e.target.value)}/>
+                          }
+                        </div>
+                      </div>
+                    </td>
+                    <td style={{ padding:'9px 6px',width:72,verticalAlign:'middle' }}>
+                      <LocalInput numericValue={c.qty} onChange={v=>onUpdateCustom(c.id,'qty',v)} className={readOnly?'fpi fpi-ro fpi-ro-sm':'fpi fpi-c fpi-sm'} readOnly={readOnly}/>
+                    </td>
+                    <td style={{ padding:'9px 6px',width:148,verticalAlign:'middle' }}>
+                      <LocalInput numericValue={c.price} onChange={v=>onUpdateCustom(c.id,'price',v)} className={readOnly?'fpi fpi-ro fpi-sm':'fpi fpi-sm'} readOnly={readOnly}/>
+                    </td>
+                    <td style={{ padding:'9px 10px',textAlign:'right',whiteSpace:'nowrap',verticalAlign:'middle' }}>
+                      <div style={{ fontWeight:700,fontSize:13,color:total>0?t.green:t.lo,fontVariantNumeric:'tabular-nums' }}>{formatIDR(total)}</div>
+                      {total>0&&composition>0&&<div style={{ fontSize:10,color:t.lo,marginTop:1,fontVariantNumeric:'tabular-nums' }}>{formatPct(composition)}</div>}
+                    </td>
+                    <td style={{ padding:'9px 6px',textAlign:'center',verticalAlign:'middle' }}>
+                      {!readOnly && <button className="btn-rm" onClick={()=>onRemoveCustom(c.id)}><Trash2 size={13}/></button>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </AnimatePresence>
+
+            {/* Tombol Tambah Role */}
+            {!readOnly && (
+              <tr>
+                <td colSpan={5} style={{ padding:'12px 10px 6px' }}>
+                  <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:10 }}>
+                    <div style={{ display:'flex',alignItems:'center',gap:8 }}>
+                      <div style={{ width:28,height:28,borderRadius:7,background:t.violetBg,border:`1px solid ${t.violetBd}`,display:'flex',alignItems:'center',justifyContent:'center' }}>
+                        <UserPlus size={13} style={{ color:t.violet }}/>
+                      </div>
+                      <div>
+                        <div style={{ fontSize:12,fontWeight:700,color:t.hi }}>Role SDM Tambahan</div>
+                        <div style={{ fontSize:10,color:t.lo }}>Tambahkan role di luar template bawaan · maks {MAX_CUSTOM_SDM}</div>
+                      </div>
+                    </div>
+                    <button className="btn-add-cust" onClick={onAddCustom} disabled={customItems.length>=MAX_CUSTOM_SDM}>
+                      <Plus size={13}/> Tambah Role
+                      {customItems.length>0&&<span style={{ opacity:0.65,fontWeight:400,textTransform:'none',letterSpacing:0 }}>({customItems.length}/{MAX_CUSTOM_SDM})</span>}
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </Body></Card>
+  );
+}
+
+// ─── MarketingTable ──────────────────────────────────────────────────────────
 function MarketingTable({ staticItems, lainItems, sectionKey, onUpdate, onUpdateLain, onAddLain, onRemoveLain, t, readOnly }) {
   const visS = readOnly ? staticItems.filter(i=>i.total>0) : staticItems;
   const visL = readOnly ? lainItems.filter(i=>i.total>0)   : lainItems;
 
-  // Badge kecil di kolom Tipe
   const Badge = ({ label, color, bg, bd }) => (
     <div style={{ display:'inline-flex',alignItems:'center',justifyContent:'center',padding:'3px 6px',borderRadius:6,background:bg,border:`1px solid ${bd}`,fontSize:9,fontWeight:800,letterSpacing:'0.06em',textTransform:'uppercase',color,lineHeight:1.2,whiteSpace:'nowrap' }}>
       {label}
@@ -278,7 +411,6 @@ function MarketingTable({ staticItems, lainItems, sectionKey, onUpdate, onUpdate
             </tr>
           </thead>
           <tbody>
-            {/* Baris statis */}
             {visS.map(item => (
               <tr key={item.id} className="erow" style={{ borderBottom:`1px solid ${t.lineH}` }}>
                 <td style={{ padding:'9px 6px',textAlign:'center',verticalAlign:'middle' }}>
@@ -298,7 +430,6 @@ function MarketingTable({ staticItems, lainItems, sectionKey, onUpdate, onUpdate
               </tr>
             ))}
 
-            {/* Divider */}
             {(visL.length>0||!readOnly) && (
               <tr>
                 <td colSpan={6} style={{ padding:'10px 10px 4px' }}>
@@ -311,14 +442,11 @@ function MarketingTable({ staticItems, lainItems, sectionKey, onUpdate, onUpdate
               </tr>
             )}
 
-            {/* Baris dinamis Program Lain */}
             {visL.map((item, idx) => (
               <tr key={item.id} className="erow erow-lain" style={{ borderBottom:`1px solid ${t.lineH}` }}>
-                {/* Kolom Tipe: badge L1, L2, dst */}
                 <td style={{ padding:'9px 6px',textAlign:'center',verticalAlign:'middle' }}>
                   <Badge label={`L${idx+1}`} color={t.blue} bg={t.blueBg} bd={t.blueBd}/>
                 </td>
-                {/* Kolom Nama: input atau text — TIDAK ada elemen tambahan di bawahnya */}
                 <td style={{ padding:'9px 10px',verticalAlign:'middle' }}>
                   {readOnly
                     ? <div style={{ fontWeight:700,color:t.hi,fontSize:13 }}>{item.label||`Program Lain ${idx+1}`}</div>
@@ -340,7 +468,6 @@ function MarketingTable({ staticItems, lainItems, sectionKey, onUpdate, onUpdate
               </tr>
             ))}
 
-            {/* Tombol tambah */}
             {!readOnly&&(
               <tr>
                 <td colSpan={6} style={{ padding:'8px 10px 10px' }}>
@@ -358,34 +485,50 @@ function MarketingTable({ staticItems, lainItems, sectionKey, onUpdate, onUpdate
   );
 }
 
-// MultiFileUpload
-function MultiFileUpload({ files, setFiles, dragState, setDragState, inputId, t }) {
-  const handleDrop = (e) => { e.preventDefault(); setDragState(false); const f=Array.from(e.dataTransfer.files); setFiles(p=>{const ex=new Set(p.map(f=>f.name+f.size)); return [...p,...f.filter(f=>!ex.has(f.name+f.size))]}); };
-  const handleChange = (e) => { const f=Array.from(e.target.files); setFiles(p=>{const ex=new Set(p.map(f=>f.name+f.size)); return [...p,...f.filter(f=>!ex.has(f.name+f.size))]}); e.target.value=''; };
-  const icon = (f) => f.type.includes('pdf')?'📄':f.type.includes('sheet')||f.name.endsWith('.xlsx')||f.name.endsWith('.xls')?'📊':f.type.includes('image')?'🖼️':'📎';
+// ─── MultiFileUpload ─────────────────────────────────────────────────────────
+function MultiFileUpload({ attachments, onAdd, onRemove, onView, inputId, t, dragState, setDragState, uploading, readOnly }) {
+  const handleFiles = (fileList) => {
+    const arr = Array.from(fileList || []);
+    if (arr.length) onAdd(arr);
+  };
   return (
-    <div style={{ display:'flex',flexDirection:'column',gap:10 }}>
-      <div onDragOver={e=>{e.preventDefault();setDragState(true)}} onDragLeave={()=>setDragState(false)} onDrop={handleDrop}
-        style={{ border:`1.5px dashed ${dragState?t.blue:t.line}`,borderRadius:10,padding:'14px',textAlign:'center',background:dragState?t.blueBg:'transparent',transition:'all 0.15s',cursor:'pointer' }}>
-        <label htmlFor={inputId} style={{ cursor:'pointer',display:'block' }}>
-          <input type="file" id={inputId} multiple accept=".pdf,.xlsx,.xls,.jpg,.jpeg,.png" style={{ display:'none' }} onChange={handleChange}/>
-          <Upload size={20} style={{ color:t.lo,margin:'0 auto 7px' }}/>
-          <div style={{ fontSize:13,fontWeight:600,color:t.mid }}>{files.length>0?'Tambah File Lagi':'Upload Lampiran'}</div>
-          <div style={{ fontSize:11,color:t.lo,marginTop:2 }}>PDF, Excel, Gambar · Bisa multiple · Drag & drop</div>
-        </label>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div
+        onDragOver={e => { e.preventDefault(); if (!readOnly) setDragState(true); }}
+        onDragLeave={() => setDragState(false)}
+        onDrop={e => { e.preventDefault(); setDragState(false); if (!readOnly) handleFiles(e.dataTransfer.files); }}
+        style={{ border: `1.5px dashed ${dragState ? t.blue : t.line}`, borderRadius: 10, padding: '14px', textAlign: 'center', background: dragState ? t.blueBg : 'transparent', transition: 'all .15s', cursor: readOnly ? 'default' : 'pointer', opacity: uploading ? 0.7 : 1 }}
+      >
+        {!readOnly && (
+          <label htmlFor={inputId} style={{ cursor: 'pointer', display: 'block' }}>
+            <input
+              type="file" id={inputId}
+              multiple
+              accept={ACCEPTED_EXT + ',application/pdf'}
+              style={{ display: 'none' }}
+              onChange={e => { handleFiles(e.target.files); e.target.value = ''; }}
+              disabled={uploading}
+            />
+            {uploading
+              ? <><Loader2 size={20} style={{ color: t.blue, animation: 'fpspin 1s linear infinite', margin: '0 auto 7px' }} /><div style={{ fontSize: 12, color: t.mid }}>Mengunggah…</div></>
+              : <><Upload size={20} style={{ color: t.lo, margin: '0 auto 7px' }} /><div style={{ fontSize: 13, fontWeight: 600, color: t.mid }}>{attachments.length > 0 ? 'Tambah PDF Lagi' : 'Upload Lampiran (PDF)'}</div><div style={{ fontSize: 11, color: t.lo, marginTop: 2 }}>PDF saja · Maks 20 MB per file · Bisa multiple</div></>
+            }
+          </label>
+        )}
       </div>
-      {files.length>0&&(
-        <div style={{ display:'flex',flexDirection:'column',gap:5 }}>
-          <div style={{ fontSize:10,fontWeight:700,letterSpacing:'0.08em',textTransform:'uppercase',color:t.mid }}>{files.length} File Terlampir</div>
+      {attachments.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: t.mid }}>{attachments.length} Lampiran Tersimpan</div>
           <AnimatePresence>
-            {files.map((file,idx)=>(
-              <motion.div key={file.name+file.size+idx} initial={{ opacity:0,y:-5 }} animate={{ opacity:1,y:0 }} exit={{ opacity:0,x:-8 }} transition={{ duration:0.14 }} className="f-item">
-                <span style={{ fontSize:15,flexShrink:0 }}>{icon(file)}</span>
-                <div style={{ flex:1,minWidth:0 }}>
-                  <div style={{ fontSize:12,fontWeight:600,color:t.hi,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap' }}>{file.name}</div>
-                  <div style={{ fontSize:10,color:t.lo,marginTop:1 }}>{fmtSize(file.size)}</div>
+            {attachments.map(att => (
+              <motion.div key={att.path} initial={{ opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: -8 }} transition={{ duration: 0.14 }} className="f-item">
+                <FileCheck size={15} style={{ color: t.green, flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: t.hi, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{att.name}</div>
+                  <div style={{ fontSize: 10, color: t.lo, marginTop: 1 }}>{fmtSize2(att.size)}</div>
                 </div>
-                <button className="f-rm" onClick={()=>setFiles(p=>p.filter((_,i)=>i!==idx))}><X size={13}/></button>
+                <button onClick={() => onView(att)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: t.blue, fontSize: 11, fontWeight: 700, padding: '4px 8px', borderRadius: 6, fontFamily: 'inherit' }}>Lihat</button>
+                {!readOnly && <button className="f-rm" onClick={() => onRemove(att.path)}><X size={13} /></button>}
               </motion.div>
             ))}
           </AnimatePresence>
@@ -442,11 +585,13 @@ const FormPengeluaran = ({
   const [showSubmit,setShowSubmit] = useState(false);
   const [isLoading,setIsLoading]   = useState(true);
   const [isSaving,setIsSaving]     = useState(false);
-  const [files,setFiles]           = useState([]);
-  const [mktFiles,setMktFiles]     = useState([]);
-  const [drag,setDrag]             = useState(false);
-  const [mktDrag,setMktDrag]       = useState(false);
-  const [toast,setToast]           = useState({show:false,type:'success',msg:''});
+  const [attExp,setAttExp]   = useState([]);
+  const [attMkt,setAttMkt]   = useState([]);
+  const [upExp,setUpExp]     = useState(false);
+  const [upMkt,setUpMkt]     = useState(false);
+  const [drag,setDrag]       = useState(false);
+  const [mktDrag,setMktDrag] = useState(false);
+  const [toast,setToast]     = useState({show:false,type:'success',msg:''});
   const [reportStatus,setReportStatus] = useState({isFinalized:false,finalizedAt:null,finalizedBy:null,validationNotes:null,updatedAt:null});
   const [prefillState,setPrefillState] = useState({
     opex:{loading:false,done:false,keys:new Set()},sdm:{loading:false,done:false,keys:new Set()},
@@ -491,6 +636,7 @@ const FormPengeluaran = ({
       {id:'s18',dbQty:'qty_sdm_benefit_sales',   dbPrice:'price_sdm_benefit_sales',   name:'Benefit Sales',              qty:0,price:0},
       {id:'s19',dbQty:'qty_sdm_benefit_nonsales',dbPrice:'price_sdm_benefit_nonsales',name:'Benefit Non-Sales',          qty:0,price:0},
     ],
+    sdmCustom: [],   // ← NEW: [{ id, name, qty, price }]
     marketing:[
       {id:'m1', dbQty:'qty_mkt_ws',     dbPrice:'price_mkt_ws',     name:'Program Wholeseller',          qty:0,price:0},
       {id:'m2', dbQty:'qty_mkt_retail', dbPrice:'price_mkt_retail', name:'Program Retail',               qty:0,price:0},
@@ -508,16 +654,65 @@ const FormPengeluaran = ({
   const [data,setData] = useState(defaults);
   const fetched$ = useRef(false), prevCtx$ = useRef({});
 
+  // ── Lampiran handlers ──
+  const ctxAtt = useMemo(() => ({
+    partner: activeContext?.mpxName,
+    branch:  activeContext?.branch,
+    year:    activeContext?.year,
+    month:   activeContext?.month,
+  }), [activeContext]);
+
+  const handleAddAtt = useCallback(async (filesArr, category) => {
+    if (effRO) return;
+    const accepted = [], rejected = [];
+    for (const f of filesArr) { const err = validatePdf(f); if (err) rejected.push(err); else accepted.push(f); }
+    if (rejected.length) toast$('error', rejected.join(' · '));
+    if (!accepted.length) return;
+    const setUp = category === 'marketing' ? setUpMkt : setUpExp;
+    setUp(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error('Sesi berakhir');
+      const { ok, errors } = await uploadMany({ files: accepted, ...ctxAtt, category });
+      if (ok.length) {
+        if (category === 'marketing') setAttMkt(p => [...p, ...ok]);
+        else                          setAttExp(p => [...p, ...ok]);
+        setIsFormDirty?.(true);
+        toast$('success', `${ok.length} lampiran berhasil diunggah`);
+      }
+      if (errors.length) toast$('error', `${errors.length} file gagal: ${errors[0].message}`);
+    } catch (e) { toast$('error', e.message); }
+    finally { setUp(false); }
+  }, [effRO, ctxAtt, setIsFormDirty]);
+
+  const handleRemoveAtt = useCallback(async (path, category) => {
+    if (effRO) return;
+    try {
+      await removeOne(path);
+      if (category === 'marketing') setAttMkt(p => p.filter(a => a.path !== path));
+      else                          setAttExp(p => p.filter(a => a.path !== path));
+      setIsFormDirty?.(true);
+      toast$('success', 'Lampiran dihapus');
+    } catch (e) { toast$('error', 'Gagal menghapus: ' + e.message); }
+  }, [effRO, setIsFormDirty]);
+
+  const handleViewAtt = useCallback(async (att) => {
+    try { const url = await signedUrl(att.path, 60); window.open(url, '_blank', 'noopener'); }
+    catch (e) { toast$('error', 'Gagal membuka: ' + e.message); }
+  }, []);
+
+  // ── Fetch from DB ──
   useEffect(()=>{
     const ctx={mpxName:activeContext?.mpxName,branch:activeContext?.branch,mpxType:activeContext?.mpxType,month:activeContext?.month,year:activeContext?.year};
     const same=prevCtx$.current.mpxName===ctx.mpxName&&prevCtx$.current.branch===ctx.branch&&prevCtx$.current.month===ctx.month&&prevCtx$.current.year===ctx.year;
     if(same&&fetched$.current)return;
     setPrefillState({opex:{loading:false,done:false,keys:new Set()},sdm:{loading:false,done:false,keys:new Set()},marketing:{loading:false,done:false,keys:new Set()},com:{loading:false,done:false,keys:new Set()}});
     snap.current={};
-    if(monthDisabled){setIsLoading(false);setData(defaults());return;}
+    if(monthDisabled){setIsLoading(false);setData(defaults());setAttExp([]);setAttMkt([]);return;}
     (async()=>{
       if(!ctx.mpxName||!ctx.branch){setIsLoading(false);return;}
       setIsLoading(true);
+      setAttExp([]); setAttMkt([]);
       try{
         const{data:db,error}=await supabase.from('pnl_reports').select('*')
           .eq('partner_name',ctx.mpxName).eq('branch',ctx.branch)
@@ -527,13 +722,29 @@ const FormPengeluaran = ({
         if(db){
           s.opex=s.opex.map(i=>({...i,qty:db[i.dbQty]??0,price:db[i.dbPrice]??0}));
           s.sdm=s.sdm.map(i=>({...i,qty:db[i.dbQty]??0,price:db[i.dbPrice]??0}));
+          // ── Load custom SDM dari expense_data JSONB ──
+          const ed = db.expense_data ?? {};
+          if (Array.isArray(ed.sdm_custom)) {
+            s.sdmCustom = ed.sdm_custom
+              .filter(c => c.name || c.qty > 0 || c.price > 0)
+              .map(c => ({
+                id: c.id ?? `csdm_${Date.now()}_${Math.random()}`,
+                name: c.name ?? '',
+                qty: Number(c.qty) || 0,
+                price: Number(c.price) || 0,
+              }));
+          }
           s.marketing=s.marketing.map(i=>({...i,qty:db[i.dbQty]??0,price:db[i.dbPrice]??0}));
           s.com=s.com.map(i=>({...i,qty:db[i.dbQty]??0,price:db[i.dbPrice]??0}));
           s.partnerExpense=db.partner_expense??0;
+          setAttExp(Array.isArray(db.attachments_pengeluaran) ? db.attachments_pengeluaran : []);
+          setAttMkt(Array.isArray(db.attachments_marketing)   ? db.attachments_marketing   : []);
           const rows=[];
           for(let n=1;n<=MAX_LAIN;n++){
             const qty=db[lainDbQty(n)]??0, price=db[lainDbPrice(n)]??0, label=db[lainDbLabel(n)]??'';
-            if(qty>0||price>0||label) rows.push({id:`lain_${n}`,slotN:n,label,qty,price});
+            // Skip default empty slot 1 label
+            const meaningfulLabel = label && label !== 'Program Lain';
+            if(qty>0||price>0||meaningfulLabel) rows.push({id:`lain_${n}`,slotN:n,label:label||'',qty,price});
           }
           s.mktLain=rows;
           setReportStatus({isFinalized:db.is_finalized??false,finalizedAt:db.finalized_at??null,finalizedBy:db.finalized_by??null,validationNotes:db.validation_notes??null,updatedAt:db.updated_at??null});
@@ -544,6 +755,7 @@ const FormPengeluaran = ({
     })();
   },[activeContext,defaults,setIsFormDirty,monthDisabled]);
 
+  // ── Auto-fill from previous month ──
   const handleAutoFill = useCallback(async(sk)=>{
     if(effRO)return;
     const ctx=activeContext;
@@ -563,9 +775,28 @@ const FormPengeluaran = ({
           const fk=new Set();
           const us=prev.marketing.map(i=>{const nq=db[i.dbQty]??0,np=db[i.dbPrice]??0;if(nq||np)fk.add(i.id);return{...i,qty:nq,price:np};});
           const lr=[];
-          for(let n=1;n<=MAX_LAIN;n++){const qty=db[lainDbQty(n)]??0,price=db[lainDbPrice(n)]??0,label=db[lainDbLabel(n)]??'';if(qty>0||price>0||label)lr.push({id:`lain_${n}`,slotN:n,label,qty,price});}
+          for(let n=1;n<=MAX_LAIN;n++){const qty=db[lainDbQty(n)]??0,price=db[lainDbPrice(n)]??0,label=db[lainDbLabel(n)]??'';const ml=label&&label!=='Program Lain';if(qty>0||price>0||ml)lr.push({id:`lain_${n}`,slotN:n,label:label||'',qty,price});}
           setPrefillState(p2=>({...p2,marketing:{loading:false,done:true,keys:fk}}));
           return{...prev,marketing:us,mktLain:lr};
+        }
+        if(sk==='sdm'){
+          // Snapshot includes both static + custom for proper reset
+          snap.current[sk]={static:prev.sdm.map(i=>({...i})),custom:prev.sdmCustom.map(c=>({...c}))};
+          const fk=new Set();
+          const us=prev.sdm.map(i=>{const nq=db[i.dbQty]??0,np=db[i.dbPrice]??0;if(nq||np)fk.add(i.id);return{...i,qty:nq,price:np};});
+          // Load custom SDM from previous expense_data
+          const ed = db.expense_data ?? {};
+          const cust = Array.isArray(ed.sdm_custom)
+            ? ed.sdm_custom.filter(c => c.name || c.qty > 0 || c.price > 0)
+                .map(c => ({
+                  id: `csdm_${Date.now()}_${Math.random()}`,
+                  name: c.name ?? '',
+                  qty: Number(c.qty) || 0,
+                  price: Number(c.price) || 0,
+                }))
+            : [];
+          setPrefillState(p2=>({...p2,sdm:{loading:false,done:true,keys:fk}}));
+          return{...prev,sdm:us,sdmCustom:cust};
         }
         snap.current[sk]=prev[sk].map(i=>({...i}));
         const fk=new Set();
@@ -580,33 +811,62 @@ const FormPengeluaran = ({
 
   const handleReset = useCallback((sk)=>{
     const s=snap.current[sk]; if(!s)return;
-    if(sk==='marketing')setData(p=>({...p,marketing:s.static,mktLain:s.lain}));
-    else setData(p=>({...p,[sk]:s}));
+    if(sk==='marketing')   setData(p=>({...p,marketing:s.static,mktLain:s.lain}));
+    else if(sk==='sdm')    setData(p=>({...p,sdm:s.static,sdmCustom:s.custom}));
+    else                   setData(p=>({...p,[sk]:s}));
     setPrefillState(p=>({...p,[sk]:{loading:false,done:false,keys:new Set()}}));
     snap.current[sk]=undefined; setIsFormDirty?.(true);
   },[setIsFormDirty]);
 
+  // ── Stats ──
   const stats = useMemo(()=>{
-    const calc=(list)=>{const items=list.map(i=>({...i,total:(Number(i.qty)||0)*(Number(i.price)||0)}));const tot=items.reduce((a,b)=>a+b.total,0);return{items:items.map(i=>({...i,composition:tot>0?(i.total/tot)*100:0})),total:tot};};
-    const opex=calc(data.opex),sdm=calc(data.sdm),mktS=calc(data.marketing),mktL=calc(data.mktLain),com=calc(data.com);
-    const mktT=mktS.total+mktL.total;
-    const grandTotal=opex.total+sdm.total+mktT+com.total+Number(data.partnerExpense||0);
-    return{opex,sdm,mktStatic:mktS,mktLain:mktL,mktTotal:mktT,com,grandTotal};
+    const calc=(list)=>{
+      const items=list.map(i=>({...i,total:(Number(i.qty)||0)*(Number(i.price)||0)}));
+      const tot=items.reduce((a,b)=>a+b.total,0);
+      return{items:items.map(i=>({...i,composition:tot>0?(i.total/tot)*100:0})),total:tot};
+    };
+    const opex   = calc(data.opex);
+    const sdmStd = calc(data.sdm);
+    const sdmCus = calc(data.sdmCustom);
+    const sdmTotal = sdmStd.total + sdmCus.total;
+    const mktS   = calc(data.marketing);
+    const mktL   = calc(data.mktLain);
+    const mktT   = mktS.total + mktL.total;
+    const com    = calc(data.com);
+    const grandTotal = opex.total + sdmTotal + mktT + com.total + Number(data.partnerExpense||0);
+    return {
+      opex, sdmStd, sdmCus, sdmTotal,
+      mktStatic:mktS, mktLain:mktL, mktTotal:mktT,
+      com, grandTotal,
+    };
   },[data]);
 
   useEffect(()=>{onUpdate?.(stats.grandTotal);},[stats.grandTotal,onUpdate]);
 
+  // ── Payload ──
   const mkPayload=(fin,uid,notes)=>{
     const lp={};
     for(let n=1;n<=MAX_LAIN;n++){lp[lainDbQty(n)]=0;lp[lainDbPrice(n)]=0;lp[lainDbLabel(n)]='';}
     data.mktLain.forEach((item,idx)=>{const n=idx+1;if(n>MAX_LAIN)return;lp[lainDbQty(n)]=item.qty;lp[lainDbPrice(n)]=item.price;lp[lainDbLabel(n)]=item.label;});
-    return{
+
+    // expense_data JSONB: sdm_custom
+    const expenseData = {
+      sdm_custom: data.sdmCustom
+        .filter(c => c.name || c.qty > 0 || c.price > 0)
+        .map(c => ({ id: c.id, name: c.name, qty: c.qty, price: c.price })),
+    };
+
+    return {
       user_id:uid,partner_name:activeContext.mpxName,branch:activeContext.branch,mpc_mp3:activeContext.mpxType,month:activeContext.month,year:activeContext.year,
       ...data.opex.reduce((a,c)=>({...a,[c.dbQty]:c.qty,[c.dbPrice]:c.price}),{}),
       ...data.sdm.reduce((a,c)=>({...a,[c.dbQty]:c.qty,[c.dbPrice]:c.price}),{}),
       ...data.marketing.reduce((a,c)=>({...a,[c.dbQty]:c.qty,[c.dbPrice]:c.price}),{}),
       ...lp,...data.com.reduce((a,c)=>({...a,[c.dbQty]:c.qty,[c.dbPrice]:c.price}),{}),
-      partner_expense:data.partnerExpense,grand_total_pengeluaran:stats.grandTotal,
+      partner_expense: data.partnerExpense,
+      grand_total_pengeluaran: stats.grandTotal,
+      expense_data: expenseData,
+      attachments_pengeluaran: attExp,
+      attachments_marketing:   attMkt,
       is_finalized:fin,finalized_at:fin?new Date().toISOString():null,finalized_by:fin?uid:null,
       validation_notes:notes,updated_at:new Date().toISOString(),
     };
@@ -655,6 +915,7 @@ const FormPengeluaran = ({
     finally{setIsSaving(false);}
   };
 
+  // ── Update handlers ──
   const updateVal=useCallback((sec,id,field,val)=>{
     if(effRO)return;
     setData(p=>{if(sec==='partnerExpense')return{...p,partnerExpense:val};return{...p,[sec]:p[sec].map(i=>{if(i.id!==id)return i;const u={...i,[field]:val};if(field==='price'&&val>0&&(!u.qty||u.qty===0))u.qty=1;return u;})};});
@@ -678,6 +939,35 @@ const FormPengeluaran = ({
     setData(p=>({...p,mktLain:p.mktLain.filter(i=>i.id!==id)}));
     setIsFormDirty?.(true);
   },[setIsFormDirty,effRO]);
+
+  // ── Custom SDM handlers ──
+  const addCustomSDM = useCallback(() => {
+    if (effRO) return;
+    if (data.sdmCustom.length >= MAX_CUSTOM_SDM) { toast$('error', `Maksimal ${MAX_CUSTOM_SDM} role custom`); return; }
+    const newItem = { id: `csdm_${Date.now()}_${Math.random().toString(36).slice(2,7)}`, name: '', qty: 0, price: 0 };
+    setData(p => ({ ...p, sdmCustom: [...p.sdmCustom, newItem] }));
+    setIsFormDirty?.(true);
+  }, [data.sdmCustom.length, effRO, setIsFormDirty]);
+
+  const removeCustomSDM = useCallback((id) => {
+    if (effRO) return;
+    setData(p => ({ ...p, sdmCustom: p.sdmCustom.filter(c => c.id !== id) }));
+    setIsFormDirty?.(true);
+  }, [effRO, setIsFormDirty]);
+
+  const updateCustomSDM = useCallback((id, field, val) => {
+    if (effRO) return;
+    setData(p => ({
+      ...p,
+      sdmCustom: p.sdmCustom.map(c => {
+        if (c.id !== id) return c;
+        const u = { ...c, [field]: val };
+        if (field === 'price' && val > 0 && (!u.qty || u.qty === 0)) u.qty = 1;
+        return u;
+      }),
+    }));
+    setIsFormDirty?.(true);
+  }, [effRO, setIsFormDirty]);
 
   if(isLoading)return(
     <><G d={d} t={t}/>
@@ -743,8 +1033,23 @@ const FormPengeluaran = ({
             {step===2&&<motion.div key="s2" initial={{ opacity:0,y:7 }} animate={{ opacity:1,y:0 }} exit={{ opacity:0 }} transition={{ duration:0.17 }} style={{ display:'flex',flexDirection:'column',gap:14 }}>
               <SecHero icon={Users} step={2} title="SDM Branch" t={t}>{!effRO&&<AutoFillButton isLoading={prefillState.sdm.loading} isPrefilled={prefillState.sdm.done} onClick={()=>handleAutoFill('sdm')}/>}</SecHero>
               <AnimatePresence>{prefillState.sdm.done&&!effRO&&<PrefillBanner prevMonth={prevMonth} prevYear={prevYear} onReset={()=>handleReset('sdm')} t={t}/>}</AnimatePresence>
-              <ExpenseTable items={stats.sdm.items} sectionKey="sdm" onUpdate={updateVal} t={t} readOnly={effRO} prefillKeys={prefillState.sdm.done?prefillState.sdm.keys:null}/>
-              <SubtotalBanner label="Subtotal SDM" value={stats.sdm.total} t={t}/>
+              <SDMTable
+                staticItems={stats.sdmStd.items}
+                customItems={stats.sdmCus.items}
+                onUpdate={updateVal}
+                onUpdateCustom={updateCustomSDM}
+                onAddCustom={addCustomSDM}
+                onRemoveCustom={removeCustomSDM}
+                t={t} d={d} readOnly={effRO}
+                prefillKeys={prefillState.sdm.done?prefillState.sdm.keys:null}
+                totalGroup={stats.sdmTotal}
+              />
+              <SubtotalBanner
+                label={stats.sdmCus.items.length>0
+                  ? `Subtotal SDM (${stats.sdmStd.items.filter(i=>i.total>0).length} bawaan + ${stats.sdmCus.items.filter(c=>c.total>0).length} custom)`
+                  : "Subtotal SDM"}
+                value={stats.sdmTotal}
+                t={t}/>
             </motion.div>}
 
             {step===3&&<motion.div key="s3" initial={{ opacity:0,y:7 }} animate={{ opacity:1,y:0 }} exit={{ opacity:0 }} transition={{ duration:0.17 }} style={{ display:'flex',flexDirection:'column',gap:14 }}>
@@ -754,7 +1059,12 @@ const FormPengeluaran = ({
               {!effRO&&<Card t={t}><Body>
                 <SecLabel t={t}>Lampiran Program Lain</SecLabel>
                 <p style={{ fontSize:12,color:t.mid,marginBottom:14,lineHeight:1.6 }}>Upload dokumen pendukung. Bisa upload <strong style={{ color:t.hi }}>beberapa file sekaligus</strong>.</p>
-                <MultiFileUpload files={mktFiles} setFiles={setMktFiles} dragState={mktDrag} setDragState={setMktDrag} inputId="mkt-up" t={t}/>
+                <MultiFileUpload
+                  attachments={attMkt} onAdd={(f) => handleAddAtt(f, 'marketing')}
+                  onRemove={(p) => handleRemoveAtt(p, 'marketing')} onView={handleViewAtt}
+                  inputId="mkt-up" t={t} dragState={mktDrag} setDragState={setMktDrag}
+                  uploading={upMkt} readOnly={effRO}
+                />
               </Body></Card>}
               <SubtotalBanner label="Subtotal Marketing" value={stats.mktTotal} t={t}/>
             </motion.div>}
@@ -776,13 +1086,42 @@ const FormPengeluaran = ({
                     <LocalInput numericValue={data.partnerExpense} onChange={v=>updateVal('partnerExpense',null,null,v)} readOnly={effRO}
                       style={{ fontSize:24,fontWeight:800,color:t.green,letterSpacing:'-0.04em',width:'100%',background:'transparent',border:'none',outline:'none',fontFamily:'inherit',...(effRO?{cursor:'default',pointerEvents:'none'}:{}) }}/>
                   </div>
-                  {!effRO&&<MultiFileUpload files={files} setFiles={setFiles} dragState={drag} setDragState={setDrag} inputId="fp-exp-up" t={t}/>}
+                  {!effRO&&<MultiFileUpload
+                    attachments={attExp} onAdd={(f) => handleAddAtt(f, 'pengeluaran')}
+                    onRemove={(p) => handleRemoveAtt(p, 'pengeluaran')} onView={handleViewAtt}
+                    inputId="fp-exp-up" t={t} dragState={drag} setDragState={setDrag}
+                    uploading={upExp} readOnly={effRO}
+                  />}
                 </Body></Card>
+
+                {/* Breakdown SDM Custom (jika ada) */}
+                {stats.sdmCus.items.length > 0 && (
+                  <Card t={t}><Body>
+                    <SecLabel t={t}>Role SDM Custom ({stats.sdmCus.items.length} item)</SecLabel>
+                    {stats.sdmCus.items.map((c, i) => (
+                      <div key={c.id} style={{ display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,padding:'10px 0',borderBottom:`1px solid ${t.lineH}` }}>
+                        <div style={{ display:'flex',alignItems:'center',gap:8 }}>
+                          <span className="cust-badge" style={{ flexShrink:0 }}><Sparkles size={7}/>C{i+1}</span>
+                          <div>
+                            <div style={{ fontSize:12,fontWeight:700,color:t.hi }}>{c.name||`Custom Role ${i+1}`}</div>
+                            <div style={{ fontSize:10,color:t.lo }}>{c.qty} orang × {formatIDR(c.price)}</div>
+                          </div>
+                        </div>
+                        <div style={{ fontSize:13,fontWeight:700,color:c.total>0?t.green:t.lo,fontVariantNumeric:'tabular-nums' }}>{formatIDR(c.total)}</div>
+                      </div>
+                    ))}
+                    <div style={{ display:'flex',justifyContent:'space-between',paddingTop:12,marginTop:4,borderTop:`1px solid ${t.violetBd}` }}>
+                      <span style={{ fontSize:11,fontWeight:700,color:t.violet }}>Total Role Custom</span>
+                      <span style={{ fontSize:14,fontWeight:700,color:t.violet,fontVariantNumeric:'tabular-nums' }}>{formatIDR(stats.sdmCus.total)}</span>
+                    </div>
+                  </Body></Card>
+                )}
+
                 <Card t={t}><Body>
                   <SecLabel t={t}>Ringkasan Struktur</SecLabel>
                   <div style={{ display:'flex',flexDirection:'column' }}>
                     <SumRow icon={Building2} label="OPEX Branch"     value={stats.opex.total}    t={t}/>
-                    <SumRow icon={Users}     label="SDM Branch"      value={stats.sdm.total}     t={t}/>
+                    <SumRow icon={Users}     label={stats.sdmCus.items.length>0?`SDM Branch (+${stats.sdmCus.items.length} custom)`:"SDM Branch"} value={stats.sdmTotal} t={t}/>
                     <SumRow icon={Megaphone} label="Marketing"       value={stats.mktTotal}      t={t}/>
                     <SumRow icon={Coins}     label="Cost of Money"   value={stats.com.total}     t={t}/>
                     <SumRow icon={Banknote}  label="Partner Expense" value={data.partnerExpense} t={t} highlight/>
@@ -846,10 +1185,16 @@ const FormPengeluaran = ({
                     <span style={{ fontSize:12,fontWeight:700,color:t.green }}>Total Expense</span>
                     <span style={{ fontSize:14,fontWeight:800,color:t.green,fontVariantNumeric:'tabular-nums' }}>{formatIDR(stats.grandTotal)}</span>
                   </div>
-                  {(files.length+mktFiles.length)>0&&(
+                  {stats.sdmCus.items.length > 0 && (
+                    <div style={{ borderTop:`1px solid ${t.lineH}`,paddingTop:8,display:'flex',alignItems:'center',gap:6 }}>
+                      <Sparkles size={11} style={{ color:t.violet,flexShrink:0 }}/>
+                      <span style={{ fontSize:11,color:t.violet,fontWeight:600 }}>{stats.sdmCus.items.length} role SDM custom disertakan</span>
+                    </div>
+                  )}
+                  {(attExp.length+attMkt.length)>0&&(
                     <div style={{ borderTop:`1px solid ${t.lineH}`,paddingTop:8,display:'flex',alignItems:'center',gap:6 }}>
                       <Paperclip size={11} style={{ color:t.lo,flexShrink:0 }}/>
-                      <span style={{ fontSize:11,color:t.mid }}>{files.length+mktFiles.length} file terlampir</span>
+                      <span style={{ fontSize:11,color:t.mid }}>{attExp.length+attMkt.length} file PDF tersimpan</span>
                     </div>
                   )}
                 </div>

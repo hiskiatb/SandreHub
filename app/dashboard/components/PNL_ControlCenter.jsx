@@ -13,13 +13,12 @@ import {
 // ─── Constants ────────────────────────────────────────────────────────────────
 const MONTHS      = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const MONTH_SHORT = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
-const START_YEAR  = 2026; // bulan tersedia mulai Januari 2026
+const START_YEAR  = 2026;
 
-// ─── Generate semua bulan tersedia dari Jan 2026 s.d. sekarang ───────────────
 function getAvailableMonths() {
   const now    = new Date();
   const curY   = now.getFullYear();
-  const curM   = now.getMonth(); // 0-based
+  const curM   = now.getMonth();
   const result = [];
   for (let y = START_YEAR; y <= curY; y++) {
     const maxM = y === curY ? curM : 11;
@@ -30,7 +29,6 @@ function getAvailableMonths() {
   return result;
 }
 
-// ─── Design Tokens ────────────────────────────────────────────────────────────
 const tk = (d) => ({
   card:         d ? "#1A1A1D"                  : "#FFFFFF",
   thead:        d ? "#161618"                  : "#F2F2F4",
@@ -66,27 +64,19 @@ const tk = (d) => ({
                   : "0 8px 32px rgba(0,0,0,0.16),0 0 0 1px rgba(0,0,0,0.06)",
 });
 
-// disabled cell — merah X
 const DISABLED_COLOR  = "#DC2626";
 const DISABLED_BG     = (d) => d ? "rgba(220,38,38,0.10)" : "rgba(220,38,38,0.07)";
 const DISABLED_BD     = (d) => d ? "rgba(220,38,38,0.28)" : "rgba(220,38,38,0.20)";
 
-// ─── Key helpers ──────────────────────────────────────────────────────────────
-// Local optimistic key: "partner|branch|mpc|month|year"
 const makeLocalKey = (row, month, year) =>
   `${row.partner_name}|${row.branch_name}|${row.mpc_mp3}|${month}|${year}`;
 
-// ─── MonthPicker — independent dari parent activeMonth ────────────────────────
-// available = semua bulan Jan 2026 s.d. sekarang
-// default   = semua bulan ter-check
-// UI        = dropdown grid dengan checkbox per-bulan + tombol select-all / reset
 function MonthPicker({ selected, onChange, t, d }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const panelRef = useRef(null);
   const available = useMemo(() => getAvailableMonths(), []);
 
-  // Close on outside click
   useEffect(() => {
     const h = (e) => {
       if (!ref.current?.contains(e.target) && !panelRef.current?.contains(e.target)) {
@@ -103,7 +93,7 @@ function MonthPicker({ selected, onChange, t, d }) {
 
   const toggle = (key) => {
     if (selected.includes(key)) {
-      if (selected.length <= 1) return; // min 1
+      if (selected.length <= 1) return;
       onChange(selected.filter(k => k !== key));
     } else {
       onChange([...selected, key]);
@@ -111,9 +101,7 @@ function MonthPicker({ selected, onChange, t, d }) {
   };
 
   const selectAll   = () => onChange(allKeys);
-  const clearAll_fn = () => onChange([allKeys[allKeys.length - 1]]); // keep last
 
-  // Display label
   const dispLabel = () => {
     if (isAll) return "Semua Bulan";
     if (selected.length === 1) {
@@ -123,7 +111,6 @@ function MonthPicker({ selected, onChange, t, d }) {
     return `${selected.length} bulan dipilih`;
   };
 
-  // Group by year for display
   const byYear = useMemo(() => {
     const map = {};
     available.forEach(a => {
@@ -182,7 +169,6 @@ function MonthPicker({ selected, onChange, t, d }) {
                 maxHeight: 480, overflowY: "auto",
               }}
             >
-              {/* Header */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
                 <span style={{ fontSize: 12, fontWeight: 700, color: t.hi }}>Filter Bulan Ditampilkan</span>
                 <div style={{ display: "flex", gap: 6 }}>
@@ -204,10 +190,8 @@ function MonthPicker({ selected, onChange, t, d }) {
                 </div>
               </div>
 
-              {/* Months grouped by year */}
               {Object.entries(byYear).map(([year, months]) => (
                 <div key={year} style={{ marginBottom: 14 }}>
-                  {/* Year header */}
                   <div style={{
                     fontSize: 10, fontWeight: 700, letterSpacing: "0.10em",
                     textTransform: "uppercase", color: t.mid,
@@ -221,11 +205,9 @@ function MonthPicker({ selected, onChange, t, d }) {
                         const yearKeys = months.map(m => `${m.month}|${m.year}`);
                         const allYearSel = yearKeys.every(k => selected.includes(k));
                         if (allYearSel) {
-                          // deselect all this year (keep at least 1 total)
                           const remaining = selected.filter(k => !yearKeys.includes(k));
                           if (remaining.length > 0) onChange(remaining);
                         } else {
-                          // select all this year
                           const merged = [...new Set([...selected, ...yearKeys])];
                           onChange(merged);
                         }
@@ -239,7 +221,6 @@ function MonthPicker({ selected, onChange, t, d }) {
                       {months.every(m => selected.includes(`${m.month}|${m.year}`)) ? "Hapus" : "Pilih"} semua
                     </button>
                   </div>
-                  {/* 4-col grid */}
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 5 }}>
                     {months.map(({ month, year: y }) => {
                       const key   = `${month}|${y}`;
@@ -270,7 +251,6 @@ function MonthPicker({ selected, onChange, t, d }) {
                 </div>
               ))}
 
-              {/* Footer */}
               <div style={{
                 paddingTop: 9, borderTop: `1px solid ${t.line}`,
                 display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -295,13 +275,11 @@ function MonthPicker({ selected, onChange, t, d }) {
     </div>
   );
 }
-// ─── StatusCell ───────────────────────────────────────────────────────────────
+
 function StatusCell({ statusInfo, t, d, dbDisabled, saving, onClick, onToggleDisabled, userRole }) {
   const { status, notes, updatedAt } = statusInfo || { status: "EMPTY", notes: null, updatedAt: null };
   const [tip, setTip] = useState(null);
   const btnRef        = useRef(null);
-  
-  // Pengecekan role ditarik ke dalam variabel
   const canDisable = userRole === "spm_sumatera";
 
   const fmt = (iso) => {
@@ -312,37 +290,36 @@ function StatusCell({ statusInfo, t, d, dbDisabled, saving, onClick, onToggleDis
 
   const hasNotes = Boolean(notes?.trim());
 
-  // ── Visual config per status ──────────────────────────────────────────────
   const getConfig = () => {
     if (dbDisabled) return {
       bg:          DISABLED_BG(d),
       borderColor: DISABLED_BD(d),
       icon: saving
         ? <div style={{ width:12,height:12,borderRadius:"50%",border:"2px solid transparent",borderTopColor:DISABLED_COLOR,animation:"cc-spin 0.8s linear infinite" }}/>
-        : <XCircle size={16} style={{ color: DISABLED_COLOR }} />,  // ← merah X
+        : <XCircle size={16} style={{ color: DISABLED_COLOR }} />,
       label: "Dinonaktifkan",
     };
-if (status === "FINALIZED") {
-  const hasPendapatan = notes?.includes("pendapatan:final");
-  const hasPengeluaran = notes?.includes("pengeluaran:final");
-  const bothFinal = hasPendapatan && hasPengeluaran;
-  return {
-    bg:          `rgba(50,188,173,${d?0.15:0.10})`,
-    borderColor: `rgba(50,188,173,${d?0.35:0.25})`,
-    icon: bothFinal
-      ? <CheckCircle2 size={17} style={{ color:"#32BCAD" }}/>
-      : (
-        <div style={{
-          width: 17, height: 17, borderRadius: "50%",
-          background: "#32BCAD",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 10, fontWeight: 800, color: "#fff", lineHeight: 1,
-          flexShrink: 0,
-        }}>1</div>
-      ),
-    label: "Finalized",
-  };
-}
+    if (status === "FINALIZED") {
+      const hasPendapatan = notes?.includes("pendapatan:final");
+      const hasPengeluaran = notes?.includes("pengeluaran:final");
+      const bothFinal = hasPendapatan && hasPengeluaran;
+      return {
+        bg:          `rgba(50,188,173,${d?0.15:0.10})`,
+        borderColor: `rgba(50,188,173,${d?0.35:0.25})`,
+        icon: bothFinal
+          ? <CheckCircle2 size={17} style={{ color:"#32BCAD" }}/>
+          : (
+            <div style={{
+              width: 17, height: 17, borderRadius: "50%",
+              background: "#32BCAD",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 10, fontWeight: 800, color: "#fff", lineHeight: 1,
+              flexShrink: 0,
+            }}>1</div>
+          ),
+        label: "Finalized",
+      };
+    }
     if (status === "DRAFT") return {
       bg:          `rgba(255,203,5,${d?0.14:0.10})`,
       borderColor: `rgba(255,203,5,${d?0.35:0.25})`,
@@ -437,13 +414,12 @@ if (status === "FINALIZED") {
       <button
         ref={btnRef}
         onClick={e => { if (!dbDisabled && !saving) { e.stopPropagation(); onClick(e); } }}
-        onContextMenu={e => { 
-          e.preventDefault(); 
-          e.stopPropagation(); 
-          hideTip(); 
-          // Cek permission sebelum memanggil fungsi induknya
+        onContextMenu={e => {
+          e.preventDefault();
+          e.stopPropagation();
+          hideTip();
           if (canDisable && !saving) {
-            onToggleDisabled(); 
+            onToggleDisabled();
           }
         }}
         onMouseEnter={showTip}
@@ -478,46 +454,42 @@ if (status === "FINALIZED") {
 function ConfirmDisableModal({ payload, onConfirm, onCancel, t, d }) {
   if (!payload) return null;
   const { row, month, year, isCurrentlyDisabled } = payload;
-  
   const isDark = d;
   const accentColor = isCurrentlyDisabled ? "#32BCAD" : "#DC2626";
   const accentBg = isCurrentlyDisabled ? t.greenBg : "rgba(220,38,38,0.08)";
 
   return createPortal(
     <div
-      style={{ 
-        position:"fixed", inset:0, zIndex: 999999, 
-        background: isDark ? "rgba(0,0,0,0.8)" : "rgba(15, 23, 42, 0.45)", 
-        display:"flex", alignItems:"center", justifyContent:"center", 
+      style={{
+        position:"fixed", inset:0, zIndex: 999999,
+        background: isDark ? "rgba(0,0,0,0.8)" : "rgba(15, 23, 42, 0.45)",
+        display:"flex", alignItems:"center", justifyContent:"center",
         backdropFilter:"blur(8px)", transition: "all 0.2s"
       }}
       onClick={onCancel}
     >
       <div
         onClick={e => e.stopPropagation()}
-        style={{ 
-          background: isDark ? "#1E1E22" : "#FFFFFF", 
+        style={{
+          background: isDark ? "#1E1E22" : "#FFFFFF",
           border: `1px solid ${isDark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.05)"}`,
-          borderRadius: 20, boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.5)", 
-          padding: 0, maxWidth: 420, width: "95%", overflow: "hidden" 
+          borderRadius: 20, boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.5)",
+          padding: 0, maxWidth: 420, width: "95%", overflow: "hidden"
         }}
       >
-        {/* Header Visual */}
         <div style={{ height: 6, background: accentColor }} />
-        
         <div style={{ padding: "32px 32px 24px 32px" }}>
-          <div style={{ 
-            width: 56, height: 56, borderRadius: 16, 
-            background: accentBg, display: "flex", 
-            alignItems: "center", justifyContent: "center", 
+          <div style={{
+            width: 56, height: 56, borderRadius: 16,
+            background: accentBg, display: "flex",
+            alignItems: "center", justifyContent: "center",
             marginBottom: 20, margin: "0 auto 20px auto"
           }}>
-            {isCurrentlyDisabled 
-              ? <RotateCcw size={28} style={{ color: accentColor }} /> 
+            {isCurrentlyDisabled
+              ? <RotateCcw size={28} style={{ color: accentColor }} />
               : <XCircle size={28} style={{ color: accentColor }} />
             }
           </div>
-
           <div style={{ textAlign: "center" }}>
             <h3 style={{ fontSize: 20, fontWeight: 800, color: t.hi, marginBottom: 8, letterSpacing: "-0.02em" }}>
               {isCurrentlyDisabled ? "Aktifkan Laporan?" : "Nonaktifkan Laporan?"}
@@ -525,10 +497,8 @@ function ConfirmDisableModal({ payload, onConfirm, onCancel, t, d }) {
             <p style={{ fontSize: 14, color: t.mid, lineHeight: 1.5 }}>
               Anda akan mengubah status operasional untuk branch:
             </p>
-            
-            {/* Info Badge */}
-            <div style={{ 
-              marginTop: 16, padding: "12px", borderRadius: 12, 
+            <div style={{
+              marginTop: 16, padding: "12px", borderRadius: 12,
               background: isDark ? "rgba(255,255,255,0.03)" : "#F8FAFC",
               border: `1px solid ${t.line}`
             }}>
@@ -538,37 +508,34 @@ function ConfirmDisableModal({ payload, onConfirm, onCancel, t, d }) {
               </div>
             </div>
           </div>
-
-          <div style={{ 
-            marginTop: 24, fontSize: 13, color: t.mid, 
-            textAlign: "center", lineHeight: 1.6, padding: "0 10px" 
+          <div style={{
+            marginTop: 24, fontSize: 13, color: t.mid,
+            textAlign: "center", lineHeight: 1.6, padding: "0 10px"
           }}>
-            {isCurrentlyDisabled 
+            {isCurrentlyDisabled
               ? "Data akan kembali dihitung dalam akumulasi progress pencapaian tahunan."
               : "Branch ini akan diabaikan (X) dari perhitungan progress karena sedang tidak beroperasi pada periode ini."
             }
           </div>
         </div>
-
-        {/* Action Buttons */}
-        <div style={{ 
-          padding: "0 32px 32px 32px", display: "grid", 
-          gridTemplateColumns: "1fr 1fr", gap: 12 
+        <div style={{
+          padding: "0 32px 32px 32px", display: "grid",
+          gridTemplateColumns: "1fr 1fr", gap: 12
         }}>
-          <button 
-            onClick={onCancel} 
-            style={{ 
-              padding: "12px", borderRadius: 12, fontSize: 14, fontWeight: 600, 
-              border: `1px solid ${t.line}`, background: "transparent", 
+          <button
+            onClick={onCancel}
+            style={{
+              padding: "12px", borderRadius: 12, fontSize: 14, fontWeight: 600,
+              border: `1px solid ${t.line}`, background: "transparent",
               color: t.mid, cursor: "pointer", transition: "all 0.2s"
             }}
           >
             Batal
           </button>
-          <button 
-            onClick={onConfirm} 
-            style={{ 
-              padding: "12px", borderRadius: 12, fontSize: 14, fontWeight: 700, 
+          <button
+            onClick={onConfirm}
+            style={{
+              padding: "12px", borderRadius: 12, fontSize: 14, fontWeight: 700,
               border: "none", cursor: "pointer", color: "#FFFFFF",
               background: accentColor,
               boxShadow: `0 4px 12px ${isCurrentlyDisabled ? "rgba(50,188,173,0.3)" : "rgba(220,38,38,0.3)"}`
@@ -583,44 +550,34 @@ function ConfirmDisableModal({ payload, onConfirm, onCancel, t, d }) {
   );
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
 export default function PNLControlCenter({
   theme, masterData, activeYear, activeMonth,
-  onOpenBranch, userRole, // Tambahkan userRole di sini
+  onOpenBranch, userRole,
 }) {
   const d = theme === "dark";
   const t = tk(d);
 
-  // ── Available months (internal, tidak dari prop) ───────────────────────────
   const availableMonths = useMemo(() => getAvailableMonths(), []);
   const allKeys         = useMemo(() => availableMonths.map(a => `${a.month}|${a.year}`), [availableMonths]);
 
-  // selectedKeys = Set of "month|year" strings yang ditampilkan sebagai kolom
-  // DEFAULT = semua bulan (tidak bergantung pada activeMonth dari parent)
   const [selectedKeys, setSelectedKeys] = useState(() => allKeys);
 
-  // Sync jika availableMonths berubah (tahun berganti tengah jalan)
   useEffect(() => {
     setSelectedKeys(allKeys);
   }, [allKeys.join(",")]);
 
-  // visibleCols = kolom yang benar-benar ditampilkan, sorted chronologically
   const visibleCols = useMemo(() => {
     return availableMonths.filter(a => selectedKeys.includes(`${a.month}|${a.year}`));
   }, [availableMonths, selectedKeys]);
 
-  // ── Disabled months — dikelola LOKAL di komponen ini ─────────────────────
-  // Format localDisabled: Set<"partner|branch|mpc|month|year">
-  // Format dbDisabledMap: Map<"partner|branch|mpc|month|year", true>
   const [dbDisabledMap,  setDbDisabledMap]  = useState(new Map());
-  const [localDisabled,  setLocalDisabled]  = useState(new Set()); // optimistic
+  const [localDisabled,  setLocalDisabled]  = useState(new Set());
   const [savingKeys,     setSavingKeys]     = useState(new Set());
   const [confirmModal,   setConfirmModal]   = useState(null);
 
   const [statusMap, setStatusMap] = useState({});
   const [loading,   setLoading]   = useState(true);
 
-  // Filters
   const [search,     setSearch]     = useState("");
   const [sortCol,    setSortCol]    = useState("partner");
   const [sortDir,    setSortDir]    = useState("asc");
@@ -630,7 +587,6 @@ export default function PNLControlCenter({
   const [fRegion,    setFRegion]    = useState([]);
   const [fDoneCount, setFDoneCount] = useState([]);
 
-  // ── Load PNL reports ───────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
       setLoading(true);
@@ -650,8 +606,6 @@ export default function PNLControlCenter({
     })();
   }, [activeYear]);
 
-  // ── Load disabled months dari DB ───────────────────────────────────────────
-  // Query ALL years sekaligus karena availableMonths bisa multi-year
   useEffect(() => {
     (async () => {
       try {
@@ -676,9 +630,8 @@ export default function PNLControlCenter({
         console.error("[pnl_disabled_months] Exception:", e?.message);
       }
     })();
-  }, []); // load sekali saat mount; realtime subscription handle perubahan
+  }, []);
 
-  // ── Realtime subscription ─────────────────────────────────────────────────
   useEffect(() => {
     let channel;
     try {
@@ -693,7 +646,6 @@ export default function PNLControlCenter({
               if (eventType === "INSERT" && n) {
                 const key = `${n.partner_name}|${n.branch_name}|${n.mpc_mp3}|${n.month}|${n.year}`;
                 next.set(key, true);
-                // Remove from localDisabled — DB confirmed
                 setLocalDisabled(p => { const s = new Set(p); s.delete(key); return s; });
               } else if (eventType === "DELETE" && o) {
                 const key = `${o.partner_name}|${o.branch_name}|${o.mpc_mp3}|${o.month}|${o.year}`;
@@ -713,7 +665,6 @@ export default function PNLControlCenter({
     return () => { if (channel) supabase.removeChannel(channel); };
   }, []);
 
-  // ── isDbDisabled ──────────────────────────────────────────────────────────
   const isDbDisabled = useCallback((row, month, year) => {
     const key = `${row.partner_name}|${row.branch_name}|${row.mpc_mp3}|${month}|${year}`;
     return localDisabled.has(key) || dbDisabledMap.has(key);
@@ -724,29 +675,18 @@ export default function PNLControlCenter({
     return savingKeys.has(key);
   }, [savingKeys]);
 
-// Hapus baris "const userRole = '';" di sini
-
-// Modifikasi fungsi handleToggleDisabled
-const handleToggleDisabled = useCallback((row, month, year) => {
-  // Cegah akses jika bukan spm_sumatera
-  if (userRole !== "spm_sumatera") {
-    // Opsional: tampilkan toast/alert bahwa mereka tidak memiliki akses
-    return; 
-  }
-  
-  const key = `${row.partner_name}|${row.branch_name}|${row.mpc_mp3}|${month}|${year}`;
-  const isCurrentlyDisabled = localDisabled.has(key) || dbDisabledMap.has(key);
-  setConfirmModal({ row, month, year, isCurrentlyDisabled, key });
-}, [userRole, localDisabled, dbDisabledMap]);
+  const handleToggleDisabled = useCallback((row, month, year) => {
+    if (userRole !== "spm_sumatera") return;
+    const key = `${row.partner_name}|${row.branch_name}|${row.mpc_mp3}|${month}|${year}`;
+    const isCurrentlyDisabled = localDisabled.has(key) || dbDisabledMap.has(key);
+    setConfirmModal({ row, month, year, isCurrentlyDisabled, key });
+  }, [userRole, localDisabled, dbDisabledMap]);
 
   const handleConfirmDisable = useCallback(async () => {
     if (!confirmModal) return;
     const { row, month, year, isCurrentlyDisabled, key } = confirmModal;
     setConfirmModal(null);
-
     const yearNum = Number(year);
-
-    // Optimistic update first
     setSavingKeys(prev => new Set([...prev, key]));
     if (isCurrentlyDisabled) {
       setLocalDisabled(prev => { const n = new Set(prev); n.delete(key); return n; });
@@ -754,7 +694,6 @@ const handleToggleDisabled = useCallback((row, month, year) => {
     } else {
       setLocalDisabled(prev => new Set([...prev, key]));
     }
-
     if (isCurrentlyDisabled) {
       const { error } = await supabase
         .from("pnl_disabled_months")
@@ -764,10 +703,8 @@ const handleToggleDisabled = useCallback((row, month, year) => {
         .eq("mpc_mp3",      row.mpc_mp3)
         .eq("month",        month)
         .eq("year",         yearNum);
-
       if (error) {
         console.error("Re-enable failed:", error);
-        // Rollback
         setDbDisabledMap(prev => { const n = new Map(prev); n.set(key, true); return n; });
         setLocalDisabled(prev => { const n = new Set(prev); n.delete(key); return n; });
       }
@@ -782,22 +719,17 @@ const handleToggleDisabled = useCallback((row, month, year) => {
           year:         yearNum,
         }, { onConflict: "partner_name,branch_name,mpc_mp3,month,year" })
         .select();
-
       if (error) {
         console.error("Disable failed:", error);
-        // Rollback
         setLocalDisabled(prev => { const n = new Set(prev); n.delete(key); return n; });
       } else {
-        // Move from local to DB map
         setLocalDisabled(prev => { const n = new Set(prev); n.delete(key); return n; });
         setDbDisabledMap(prev => { const n = new Map(prev); n.set(key, true); return n; });
       }
     }
-
     setSavingKeys(prev => { const n = new Set(prev); n.delete(key); return n; });
   }, [confirmModal]);
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
   const getStatusInfo = useCallback((row, month, year) => {
     const key  = `${row.partner_name}|${row.branch_name}|${row.mpc_mp3}|${month}|${year}`;
     const item = statusMap[key];
@@ -812,20 +744,24 @@ const handleToggleDisabled = useCallback((row, month, year) => {
   const clearFilters = () => { setSearch(""); setFType([]); setFRegion([]); setFPartner([]); setFBranch([]); setFDoneCount([]); };
   const hasFilter = Boolean(search || fType.length || fRegion.length || fPartner.length || fBranch.length || fDoneCount.length);
 
-  // ── Build rows ─────────────────────────────────────────────────────────────
-  // Stats dihitung dari SEMUA availableMonths (bukan hanya visible)
+  // ── allRows: rangeStatuses/rangeDisabledMask dari availableMonths (semua bulan)
+  //            visRange* dari visibleCols (bulan yang dipilih MonthPicker) ─────
   const allRows = useMemo(() =>
     masterData.map(row => {
+      // rangeStatuses/rangeDisabledMask → semua availableMonths (untuk filter fDoneCount)
       const rangeStatuses     = availableMonths.map(a => getStatusInfo(row, a.month, a.year).status);
       const rangeDisabledMask = availableMonths.map(a => isDbDisabled(row, a.month, a.year));
+      // vis* → hanya visibleCols (kolom tabel yang ditampilkan)
       const visStatusInfos    = visibleCols.map(a => getStatusInfo(row, a.month, a.year));
       const visDisabledMask   = visibleCols.map(a => isDbDisabled(row, a.month, a.year));
       const visSavingMask     = visibleCols.map(a => isSaving(row, a.month, a.year));
-      return { ...row, rangeStatuses, rangeDisabledMask, visStatusInfos, visDisabledMask, visSavingMask };
+      // visRange* → STATUS di visibleCols → dipakai summary cards, progress bar, kolom Selesai
+      const visRangeStatuses     = visibleCols.map(a => getStatusInfo(row, a.month, a.year).status);
+      const visRangeDisabledMask = visibleCols.map(a => isDbDisabled(row, a.month, a.year));
+      return { ...row, rangeStatuses, rangeDisabledMask, visStatusInfos, visDisabledMask, visSavingMask, visRangeStatuses, visRangeDisabledMask };
     }),
   [masterData, statusMap, dbDisabledMap, localDisabled, savingKeys, visibleCols, availableMonths, getStatusInfo, isDbDisabled, isSaving]);
 
-  // Filter options
   const typeOptions    = useMemo(() => [...new Set(masterData.map(r => r.mpc_mp3).filter(Boolean))].sort().map(v => ({ value:v, label:v })), [masterData]);
   const partnerOptions = useMemo(() => {
     let l = fType.length ? masterData.filter(r => fType.includes(r.mpc_mp3)) : masterData;
@@ -870,8 +806,9 @@ const handleToggleDisabled = useCallback((row, month, year) => {
       if (sortCol === "partner") return dir * (a.partner_name ||"").localeCompare(b.partner_name ||"");
       if (sortCol === "branch")  return dir * (a.branch_name  ||"").localeCompare(b.branch_name  ||"");
       if (sortCol === "done") {
-        const av = a.rangeStatuses.filter((s,i) => s==="FINALIZED" && !a.rangeDisabledMask[i]).length;
-        const bv = b.rangeStatuses.filter((s,i) => s==="FINALIZED" && !b.rangeDisabledMask[i]).length;
+        // Sort kolom Selesai juga pakai visRange agar konsisten
+        const av = a.visRangeStatuses.filter((s,i) => s==="FINALIZED" && !a.visRangeDisabledMask[i]).length;
+        const bv = b.visRangeStatuses.filter((s,i) => s==="FINALIZED" && !b.visRangeDisabledMask[i]).length;
         return dir * (av - bv);
       }
       return 0;
@@ -879,15 +816,15 @@ const handleToggleDisabled = useCallback((row, month, year) => {
     return list;
   }, [allRows, search, fType, fPartner, fBranch, fRegion, fDoneCount, sortCol, sortDir]);
 
-  // Stats
-  const totalCells    = rows.reduce((a,r) => a + r.rangeDisabledMask.filter(v=>!v).length, 0);
-  const finalCells    = rows.reduce((a,r) => a + r.rangeStatuses.filter((s,i)=>s==="FINALIZED"&&!r.rangeDisabledMask[i]).length, 0);
-  const draftCells    = rows.reduce((a,r) => a + r.rangeStatuses.filter((s,i)=>s==="DRAFT"&&!r.rangeDisabledMask[i]).length, 0);
+  // ── Stats: dihitung dari visRangeStatuses/visRangeDisabledMask
+  //           → mengikuti range bulan yang dipilih di MonthPicker ────────────
+  const totalCells    = rows.reduce((a,r) => a + r.visRangeDisabledMask.filter(v=>!v).length, 0);
+  const finalCells    = rows.reduce((a,r) => a + r.visRangeStatuses.filter((s,i)=>s==="FINALIZED"&&!r.visRangeDisabledMask[i]).length, 0);
+  const draftCells    = rows.reduce((a,r) => a + r.visRangeStatuses.filter((s,i)=>s==="DRAFT"&&!r.visRangeDisabledMask[i]).length, 0);
   const emptyCells    = totalCells - finalCells - draftCells;
-  const totalDisabled = rows.reduce((a,r) => a + r.rangeDisabledMask.filter(Boolean).length, 0);
+  const totalDisabled = rows.reduce((a,r) => a + r.visRangeDisabledMask.filter(Boolean).length, 0);
   const pct           = totalCells > 0 ? Math.round((finalCells/totalCells)*100) : 0;
 
-  // Column widths
   const COL_FIXED = [72, 110, 190, 190, 72];
   const colWidths = [...COL_FIXED, ...visibleCols.map(() => 54)];
 
@@ -918,6 +855,11 @@ const handleToggleDisabled = useCallback((row, month, year) => {
           Data s.d. <strong style={{ color:t.hi,fontWeight:600 }}>{activeMonth} {activeYear}</strong>
           {" · "}{rows.length} branch aktif
           {totalDisabled>0 && <span style={{ marginLeft:8,color:DISABLED_COLOR,fontSize:12 }}>· {totalDisabled} sel dinonaktifkan</span>}
+          {visibleCols.length < availableMonths.length && (
+            <span style={{ marginLeft:8,color:t.amber,fontSize:12 }}>
+              · menampilkan {visibleCols.length} dari {availableMonths.length} bulan
+            </span>
+          )}
         </p>
       </div>
 
@@ -940,7 +882,9 @@ const handleToggleDisabled = useCallback((row, month, year) => {
       {/* Progress bar */}
       <div style={{ borderRadius:12,border:`1px solid ${t.line}`,background:t.card,padding:"16px 20px",boxShadow:t.shadow }}>
         <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10 }}>
-          <span style={{ fontSize:13,fontWeight:600,color:t.mid }}>Progress keseluruhan {activeYear}</span>
+          <span style={{ fontSize:13,fontWeight:600,color:t.mid }}>
+            Progress {visibleCols.length < availableMonths.length ? `(${visibleCols.length} bulan dipilih)` : `keseluruhan ${activeYear}`}
+          </span>
           <span style={{ fontSize:13,fontWeight:700,color:t.hi }}>{pct}%</span>
         </div>
         <div style={{ height:8,borderRadius:99,background:t.line,overflow:"hidden" }}>
@@ -965,7 +909,6 @@ const handleToggleDisabled = useCallback((row, month, year) => {
             style={{ flex:1,background:"transparent",border:"none",fontSize:13,fontWeight:500,color:t.hi,outline:"none",minWidth:0 }}
           />
         </div>
-        {/* Month picker — internal state, tidak ikut activeMonth dari parent */}
         <MonthPicker selected={selectedKeys} onChange={setSelectedKeys} t={t} d={d}/>
         {hasFilter && (
           <button onClick={clearFilters} style={{ display:"flex",alignItems:"center",gap:6,padding:"0 16px",height:40,borderRadius:10,background:d?"rgba(255,69,58,0.1)":"#FEE2E2",border:`1px solid ${d?"rgba(255,69,58,0.2)":"#FECACA"}`,cursor:"pointer",color:t.red,fontSize:13,fontWeight:600 }}>
@@ -977,7 +920,6 @@ const handleToggleDisabled = useCallback((row, month, year) => {
 
       {/* Table */}
       <div style={{ borderRadius:12,border:`1px solid ${t.line}`,background:t.card,overflow:"hidden",boxShadow:t.shadow }}>
-        {/* Legend */}
         <div style={{ display:"flex",alignItems:"center",gap:16,flexWrap:"wrap",padding:"10px 18px",borderBottom:`1px solid ${t.line}`,background:t.thead }}>
           {[
             { label:"Finalized",     color:"#32BCAD",      dot:<CheckCircle2 size={12} style={{ color:"#32BCAD" }}/> },
@@ -1018,7 +960,6 @@ const handleToggleDisabled = useCallback((row, month, year) => {
                   <TH colIdx={2} sortKey="branch"  filterConfig={{ label:"Kantor Cabang",  options:branchOptions,  selected:fBranch,  onApply:setFBranch,  onClear:()=>setFBranch([]),  sortDir:sortCol==="branch"?sortDir:null,  onSort:dir=>{setSortCol("branch");setSortDir(dir);} }}>Kantor Cabang</TH>
                   <TH colIdx={3} sortKey="region"  filterConfig={{ label:"Region",         options:regionOptions,  selected:fRegion,  onApply:setFRegion,  onClear:()=>setFRegion([]),  sortDir:sortCol==="region"?sortDir:null,  onSort:dir=>{setSortCol("region");setSortDir(dir);} }}>Region</TH>
                   <TH colIdx={4} sortKey="done"    filterConfig={{ label:"Jumlah Selesai", options:doneCountOptions,selected:fDoneCount,onApply:setFDoneCount,onClear:()=>setFDoneCount([]),sortDir:sortCol==="done"?sortDir:null, onSort:dir=>{setSortCol("done");setSortDir(dir);} }}>Selesai</TH>
-                  {/* Month column headers */}
                   {visibleCols.map((col) => {
                     const isActive = col.month === activeMonth && String(col.year) === String(activeYear);
                     return (
@@ -1043,8 +984,9 @@ const handleToggleDisabled = useCallback((row, month, year) => {
               </thead>
               <tbody>
                 {rows.map((row, idx) => {
-                  const finCount      = row.rangeStatuses.filter((s,i)=>s==="FINALIZED"&&!row.rangeDisabledMask[i]).length;
-                  const activeMonthCt = row.rangeDisabledMask.filter(v=>!v).length;
+                  // finCount dan activeMonthCt menggunakan visRange agar konsisten dengan summary cards
+                  const finCount      = row.visRangeStatuses.filter((s,i)=>s==="FINALIZED"&&!row.visRangeDisabledMask[i]).length;
+                  const activeMonthCt = row.visRangeDisabledMask.filter(v=>!v).length;
                   const isEven        = idx%2===0;
                   const rowBg         = isEven ? t.row : t.rowAlt;
                   return (
@@ -1091,7 +1033,7 @@ const handleToggleDisabled = useCallback((row, month, year) => {
                                 t={t} d={d}
                                 dbDisabled={cellDisabled}
                                 saving={cellSaving}
-                                userRole={userRole} // Tambahkan baris ini
+                                userRole={userRole}
                                 onClick={e => {
                                   e.stopPropagation();
                                   onOpenBranch({ partner_name:row.partner_name,branch_name:row.branch_name,mpc_mp3:row.mpc_mp3,month:col.month,year:col.year });
