@@ -7,13 +7,11 @@
  * - Hanya menerima PDF, maksimal 20 MB per file, multiple.
  * - Custom SP & Voucher tersimpan di kolom `revenue_data` (jsonb).
  *
- * FIXES:
- * - Breakpoint tabel naik 720→860px agar mobile-cards muncul di half-window
- * - Hapus minWidth:620 dari kedua tabel (biang overflow)
- * - Kolom action naik 5%→8%, redistribusi lebar kolom lain
- * - .vc-add-btn tambah white-space:nowrap + flex-shrink:0
- * - Footer flex-wrap agar tombol tidak keluar box
- * - Breakpoint .gsf naik 900→960px
+ * CHANGES:
+ * - C. Saldo MOBO: "Total Modal Mobo" → "Total Alokasi Mobo"
+ *   + field baru "Total Penjualan Saldo ke Outlet" (= mobo.jual, sebelumnya "Total Penjualan Mobo")
+ * - Step 2 Sales Fee: Upfront Discount (masuk total) = 1.5% × mobo.jual
+ *   + Info card baru "Potensi Upfront Discount" = 1.5% × mobo.modal (hanya informatif, tidak masuk total)
  */
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import supabase from "../../../lib/supabase";
@@ -28,7 +26,7 @@ import {
   BarChart3, Zap, Layers, X, FileCheck, TrendingUp,
   Award, Banknote, Gift, Loader2,
   Save, ArrowRight, ArrowLeft, Clock, Plus, Trash2,
-  Eye, Ban, Package, Sparkles,
+  Eye, Ban, Package, Sparkles, Info,
 } from 'lucide-react';
 
 // ─── Formatters ───────────────────────────────────────────────────────────────
@@ -96,6 +94,10 @@ const mk = (d) => ({
   disabledBg:    d ? 'rgba(100,100,120,0.10)' : 'rgba(100,100,120,0.07)',
   disabledBd:    d ? 'rgba(100,100,120,0.22)' : 'rgba(100,100,120,0.18)',
   disabledColor: d ? '#7A7A8A' : '#7878A0',
+  // info (teal-ish, distinct dari green & amber)
+  info:     d ? '#60C8F0' : '#0284C7',
+  infoBg:   d ? 'rgba(96,200,240,0.10)' : 'rgba(2,132,199,0.07)',
+  infoBd:   d ? 'rgba(96,200,240,0.25)' : 'rgba(2,132,199,0.18)',
 });
 
 // ─── LocalInput ───────────────────────────────────────────────────────────────
@@ -181,21 +183,20 @@ const G = ({ d, t }) => (
     .custom-row-highlight:hover td { background: ${d ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.018)'} !important; }
     .lbl { display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: ${t.mid}; margin-bottom: 6px; }
 
-    /* ── TABLE / CARDS BREAKPOINT: 860px (naik dari 720px) ── */
+    /* ── TABLE / CARDS BREAKPOINT: 860px ── */
     .vc-table { display: none; }
     .vc-cards { display: flex; flex-direction: column; gap: 8px; }
     @media (min-width: 860px) { .vc-table { display: block; } .vc-cards { display: none !important; } }
 
     @media (min-width: 580px) { .g2 { grid-template-columns: 1fr 1fr !important; } }
 
-    /* ── .gsf breakpoint: 960px (naik dari 900px) ── */
+    /* ── .gsf breakpoint: 960px ── */
     @media (min-width: 960px) { .g4sp { grid-template-columns: 1fr 1fr !important; } .gsf { grid-template-columns: 1fr 1fr !important; } }
 
     @keyframes fpbreathe { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:0.38; transform:scale(0.9); } }
     @keyframes fpspin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
     @keyframes spin { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
 
-    /* ── FIX: tombol +2 tidak keluar box ── */
     .vc-add-btn {
       display: inline-flex; align-items: center; gap: 4px;
       padding: 4px 9px; border-radius: 7px; border: 1px dashed ${t.blueBd};
@@ -330,7 +331,7 @@ function SecHero({ icon: Icon, step, title, t }) {
   );
 }
 
-// ─── TABLE HEAD CONFIG (kolom action naik 5%→8%) ─────────────────────────────
+// ─── TABLE HEAD CONFIG ────────────────────────────────────────────────────────
 const TABLE_HEAD = [
   { h: 'Produk',     al: 'left',   w: '24%' },
   { h: 'HPP / unit', al: 'right',  w: '16%' },
@@ -371,7 +372,6 @@ function ProductRowDesktop({ item, entryIdx, section, onUpdate, onAddEntry, onRe
         </div>
         {qty > 0 && pctMg !== 0 && <div style={{ fontSize: 10, color: t.lo, marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>{formatPct(pctMg)}</div>}
       </td>
-      {/* FIX: kolom action dengan overflow:hidden agar tombol tidak keluar */}
       <td style={{ padding: '11px 4px', textAlign: 'center', verticalAlign: 'middle', overflow: 'hidden' }}>
         {!readOnly && (isE1 ? (!item.hasEntry2 && <button className="vc-add-btn" onClick={() => onAddEntry(section, item.id)}><Plus size={11} /> 2</button>) : (<button className="vc-rm-btn" onClick={() => onRemoveEntry(section, item.id)}><Trash2 size={13} /></button>))}
       </td>
@@ -635,6 +635,8 @@ const FormPendapatan = ({
       { id: 'v14', dbQty: 'qty_vc_0_3id',       dbRetail: 'retail_vc_0_3id',       dbQty2: 'qty_vc_0_3id_2',       dbRetail2: 'retail_vc_0_3id_2',       name: 'VC 0 3ID',       hPokok: 500,   hRetail: 0, qty: 0, hRetail2: 0, qty2: 0, hasEntry2: false },
     ],
     vcCustom: [],
+    // mobo.modal = Total Alokasi Mobo
+    // mobo.jual  = Total Penjualan Saldo ke Outlet
     mobo:          { modal: 0, jual: 0 },
     salesFee:      { realtimeMargin: 0, backMargin: 0, slaFee: 0, specialProgram: 0 },
     rewards:       { champions: 0, lainnya: 0 },
@@ -730,13 +732,18 @@ const FormPendapatan = ({
     const gtMg   = spAllMargin + vcAllMargin;
     const gtPct  = gtJual > 0 ? (gtMg / gtJual) * 100 : 0;
 
-    const upfront  = Number(data.mobo.modal) * 0.015;
+    // ── Upfront calculations ──────────────────────────────────────────────
+    // Potensi: 1.5% × Total Alokasi Mobo (mobo.modal) — info saja, tidak masuk total
+    const upfrontPotensi = Number(data.mobo.modal) * 0.015;
+    // Realisasi: 1.5% × Total Penjualan Saldo ke Outlet (mobo.jual) — MASUK total sales fee
+    const upfront  = Number(data.mobo.jual) * 0.015;
+
     const sfMg     = Number(data.salesFee.realtimeMargin) + Number(data.salesFee.backMargin);
     const sfTotal  = upfront + sfMg + Number(data.salesFee.slaFee) + Number(data.salesFee.specialProgram);
     const rwTotal  = Number(data.rewards.champions) + Number(data.rewards.lainnya);
     const revenue  = gtMg + sfTotal + rwTotal + Number(data.partnerIncome);
 
-    return { sp, spCustom: customItems, spCustomTotal, spAllModal, spAllJual, spAllMargin, vc, vcCustom: vcCustomItems, vcCustomTotal, vcAllModal, vcAllJual, vcAllMargin, gtMg, gtJual, gtPct, upfront, sfTotal, rwTotal, revenue };
+    return { sp, spCustom: customItems, spCustomTotal, spAllModal, spAllJual, spAllMargin, vc, vcCustom: vcCustomItems, vcCustomTotal, vcAllModal, vcAllJual, vcAllMargin, gtMg, gtJual, gtPct, upfront, upfrontPotensi, sfTotal, rwTotal, revenue };
   }, [data]);
 
   useEffect(() => { onUpdate?.(stats.revenue); }, [stats.revenue, onUpdate]);
@@ -1046,7 +1053,6 @@ const FormPendapatan = ({
                       </div>
                     )}
 
-                    {/* Desktop table — minWidth dihapus, table-layout:fixed yang handle */}
                     <div className="vc-table">
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, tableLayout: 'fixed' }}>
                         <TableColHead />
@@ -1081,7 +1087,6 @@ const FormPendapatan = ({
                       </table>
                     </div>
 
-                    {/* Mobile cards */}
                     <div className="vc-cards">
                       {stats.sp.items.map(item => (
                         <ProductCardMobile key={item.id} item={item} section="sp" onUpdate={updateVal} onAddEntry={addEntry} onRemoveEntry={removeEntry} t={t} readOnly={effectiveReadOnly} />
@@ -1129,7 +1134,6 @@ const FormPendapatan = ({
                     <SecLabel t={t}>B. Voucher Regular</SecLabel>
                     {!effectiveReadOnly && (<div style={{ fontSize: 11, color: t.lo, marginBottom: 14, lineHeight: 1.55 }}>Jika satu produk dijual dengan <strong style={{ color: t.mid }}>2 harga retail berbeda</strong>, tap tombol <strong style={{ color: t.blue }}>+2</strong>.</div>)}
 
-                    {/* Desktop table — minWidth dihapus */}
                     <div className="vc-table">
                       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, tableLayout: 'fixed' }}>
                         <TableColHead />
@@ -1207,18 +1211,45 @@ const FormPendapatan = ({
                 <Card t={t}>
                   <Body>
                     <SecLabel t={t}>C. Saldo Mobo</SecLabel>
+
                     <div className="g2" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 14 }}>
+                      {/* Field 1: Total Alokasi Mobo */}
                       <div>
-                        <label className="lbl">Total Modal Mobo</label>
-                        <LocalInput numericValue={data.mobo.modal} onChange={v => updateVal('mobo', null, 'modal', v)} className={effectiveReadOnly ? 'fpi fpi-ro' : 'fpi'} readOnly={effectiveReadOnly} />
+                        <label className="lbl">Total Alokasi Mobo</label>
+                        <LocalInput
+                          numericValue={data.mobo.modal}
+                          onChange={v => updateVal('mobo', null, 'modal', v)}
+                          className={effectiveReadOnly ? 'fpi fpi-ro' : 'fpi'}
+                          readOnly={effectiveReadOnly}
+                        />
+                        <div style={{ marginTop: 5, fontSize: 10, color: t.lo, lineHeight: 1.5 }}>
+                          Jumlah saldo mobo yang dialokasikan/diterima dari distributor.
+                        </div>
                       </div>
+
+                      {/* Field 2: Total Penjualan Saldo ke Outlet */}
                       <div>
-                        <label className="lbl">Total Penjualan Mobo</label>
-                        <LocalInput numericValue={data.mobo.jual} onChange={v => updateVal('mobo', null, 'jual', v)} className={effectiveReadOnly ? 'fpi fpi-ro' : 'fpi'} readOnly={effectiveReadOnly} />
+                        <label className="lbl">Total Penjualan Saldo ke Outlet</label>
+                        <LocalInput
+                          numericValue={data.mobo.jual}
+                          onChange={v => updateVal('mobo', null, 'jual', v)}
+                          className={effectiveReadOnly ? 'fpi fpi-ro' : 'fpi'}
+                          readOnly={effectiveReadOnly}
+                        />
+                        <div style={{ marginTop: 5, fontSize: 10, color: t.lo, lineHeight: 1.5 }}>
+                          Jumlah saldo mobo yang terjual ke outlet. Nilai ini menjadi dasar perhitungan <strong style={{ color: t.green }}>Upfront Discount 1.5%</strong> pada Sales Fee.
+                        </div>
                       </div>
                     </div>
-                    <div style={{ marginTop: 12, padding: '10px 14px', borderRadius: 8, background: t.sub, border: `1px solid ${t.lineH}`, fontSize: 11, color: t.lo }}>
-                      Nilai Modal Mobo digunakan untuk perhitungan otomatis <strong>Upfront Discount 1.5%</strong> pada langkah Sales Fee.
+
+                    {/* Info: Potensi vs Realisasi Upfront */}
+                    <div style={{ marginTop: 14, padding: '12px 14px', borderRadius: 9, background: t.infoBg, border: `1px solid ${t.infoBd}`, display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+                      <Info size={14} style={{ color: t.info, flexShrink: 0, marginTop: 1 }} />
+                      <div style={{ fontSize: 11, color: t.mid, lineHeight: 1.6 }}>
+                        <strong style={{ color: t.info }}>Cara kerja Upfront Discount:</strong><br />
+                        Nilai yang masuk ke Sales Fee dihitung dari <strong style={{ color: t.hi }}>Penjualan Saldo ke Outlet × 1.5%</strong>.
+                        Lihat estimasi potensi berdasarkan total alokasi di halaman <strong style={{ color: t.hi }}>Sales Fee</strong>.
+                      </div>
                     </div>
                   </Body>
                 </Card>
@@ -1243,17 +1274,65 @@ const FormPendapatan = ({
             {step === 2 && (
               <motion.div key="s2" initial={{ opacity: 0, y: 7 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.17 }} style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
                 <SecHero icon={Zap} step={2} title="Sales Fee" t={t} />
+
+                {/* ── POTENSI Upfront (info, tidak masuk total) ── */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, padding: '14px 16px', borderRadius: 10, border: `1px solid ${t.infoBd}`, background: t.infoBg }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+                    <div style={{ width: 34, height: 34, borderRadius: 8, background: t.info, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', flexShrink: 0 }}>
+                      <Info size={16} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: t.info }}>Potensi Upfront Discount</div>
+                      <div style={{ fontSize: 11, color: t.mid, marginTop: 2, lineHeight: 1.5 }}>
+                        1.5% × Total Alokasi Mobo ({formatIDR(data.mobo.modal)})
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 8, padding: '1px 7px', borderRadius: 99, background: t.infoBg, border: `1px solid ${t.infoBd}`, fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: t.info }}>
+                          Info saja · tidak masuk total
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: t.info, fontVariantNumeric: 'tabular-nums' }}>{formatIDR(stats.upfrontPotensi)}</div>
+                    <div style={{ fontSize: 10, color: t.mid, marginTop: 2 }}>estimasi maksimal jika semua terjual</div>
+                  </div>
+                </div>
+
+                {/* ── REALISASI Upfront (masuk total) ── */}
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, padding: '15px 18px', borderRadius: 10, border: `1px solid ${t.greenBd}`, background: t.greenBg }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}><div style={{ width: 34, height: 34, borderRadius: 8, background: t.green, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', flexShrink: 0 }}><TrendingUp size={16} /></div><div><div style={{ fontSize: 13, fontWeight: 700, color: t.green }}>A. Upfront Discount</div><div style={{ fontSize: 11, color: t.mid, marginTop: 2 }}>1.5% dari Modal Mobo</div></div></div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+                    <div style={{ width: 34, height: 34, borderRadius: 8, background: t.green, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', flexShrink: 0 }}>
+                      <TrendingUp size={16} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: t.green }}>A. Upfront Discount</div>
+                      <div style={{ fontSize: 11, color: t.mid, marginTop: 2, lineHeight: 1.5 }}>
+                        1.5% × Penjualan Saldo ke Outlet ({formatIDR(data.mobo.jual)})
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, marginLeft: 8, padding: '1px 7px', borderRadius: 99, background: t.greenBg, border: `1px solid ${t.greenBd}`, fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: t.green }}>
+                          Masuk total
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                   <div style={{ fontSize: 20, fontWeight: 800, color: t.green, fontVariantNumeric: 'tabular-nums' }}>{formatIDR(stats.upfront)}</div>
                 </div>
+
                 <Card t={t}><Body><SecLabel t={t}>B. Sales Margin</SecLabel><div className="gsf" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 11 }}><div><label className="lbl">Realtime Margin</label><LocalInput numericValue={data.salesFee.realtimeMargin} onChange={v => updateVal('salesFee', null, 'realtimeMargin', v)} className={effectiveReadOnly ? 'fpi fpi-ro' : 'fpi'} readOnly={effectiveReadOnly} /></div><div><label className="lbl">Back Margin</label><LocalInput numericValue={data.salesFee.backMargin} onChange={v => updateVal('salesFee', null, 'backMargin', v)} className={effectiveReadOnly ? 'fpi fpi-ro' : 'fpi'} readOnly={effectiveReadOnly} /></div></div></Body></Card>
                 <div className="gsf" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 11 }}>
                   <Card t={t}><Body><SecLabel t={t}>C. SLA Monthly Fee</SecLabel><LocalInput numericValue={data.salesFee.slaFee} onChange={v => updateVal('salesFee', null, 'slaFee', v)} className={effectiveReadOnly ? 'fpi fpi-ro' : 'fpi'} readOnly={effectiveReadOnly} /></Body></Card>
                   <Card t={t}><Body><SecLabel t={t}>D. Special Program</SecLabel><LocalInput numericValue={data.salesFee.specialProgram} onChange={v => updateVal('salesFee', null, 'specialProgram', v)} className={effectiveReadOnly ? 'fpi fpi-ro' : 'fpi'} readOnly={effectiveReadOnly} /></Body></Card>
                 </div>
+
+                {/* Total Sales Fee */}
                 <div style={{ padding: '15px 20px', borderRadius: 12, background: 'linear-gradient(135deg,#ED1C24 0%,#C6168D 100%)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, boxShadow: '0 4px 20px rgba(237,28,36,0.28)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}><div style={{ width: 34, height: 34, borderRadius: 8, background: 'rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}><Zap size={16} /></div><span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#fff' }}>Total Sales Fee</span></div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ width: 34, height: 34, borderRadius: 8, background: 'rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}><Zap size={16} /></div>
+                      <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#fff' }}>Total Sales Fee</span>
+                    </div>
+                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.65)', paddingLeft: 44 }}>
+                      Upfront Discount + Sales Margin + SLA Fee + Special Program
+                    </div>
+                  </div>
                   <span style={{ fontSize: 26, fontWeight: 800, color: '#fff', fontVariantNumeric: 'tabular-nums' }}>{formatIDR(stats.sfTotal)}</span>
                 </div>
               </motion.div>
@@ -1473,7 +1552,7 @@ const FormPendapatan = ({
         </>
       )}
 
-      {/* ── Fixed Footer — FIX: flex-wrap + gap kecil agar tidak overflow ── */}
+      {/* ── Fixed Footer ── */}
       {!monthDisabled && (
         <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, borderTop: `1px solid ${t.line}`, background: d ? 'rgba(13,13,14,0.94)' : 'rgba(255,255,255,0.94)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)', zIndex: 60, padding: '11px 16px' }}>
           <div style={{ width: '100%', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8, flexWrap: 'wrap' }}>

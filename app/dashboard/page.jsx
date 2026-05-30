@@ -2,6 +2,9 @@
 /**
  * page.jsx — finance_mpx kini bisa akses Control Center & Pivot Summary,
  * tapi dikunci ke partner-nya sendiri (masterData dan partnerName diteruskan ke modul).
+ *
+ * CHANGES:
+ * - Tambah Import Data Otomatis (PNL_ImportWizard) untuk role spm_sumatera
  */
 import { useEffect, useState, useMemo } from "react";
 import supabase from "../../lib/supabase";
@@ -13,6 +16,7 @@ import {
   LogOut, ChevronRight, Calendar, Box, Layers,
   Shield, Globe, Building2, Store, SlidersHorizontal,
   Table2, Wallet, PanelLeftClose, PanelLeftOpen,
+  FileSpreadsheet,
 } from "lucide-react";
 
 import FormPendapatan   from "./components/PNL_FormPendapatan";
@@ -23,6 +27,7 @@ import PNLPivotSummary  from "./components/PNL_PivotSummary";
 import PayoutTracker    from "./components/PayoutTracker";
 import NotificationBell from "./components/NotificationBell";
 import AdminPanel       from "./components/PNL_AdminPanel";
+import PNL_ImportWizard from "./components/PNL_ImportWizard";
 
 const IOH_ROLE_REGION_MAP = {
   "internal_ioh":         null,
@@ -219,15 +224,16 @@ function DashCard({ icon, title, desc, tag, active, onClick, t, d, accent = {} }
   );
 }
 
-const MONTHS             = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
-const CURRENT_DATE       = new Date();
+const MONTHS              = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+const CURRENT_DATE        = new Date();
 const CURRENT_MONTH_INDEX = CURRENT_DATE.getMonth();
-const CURRENT_YEAR       = CURRENT_DATE.getFullYear();
-const getCurrentMonth    = () => MONTHS[CURRENT_MONTH_INDEX];
-const getCurrentYear     = () => CURRENT_YEAR.toString();
+const CURRENT_YEAR        = CURRENT_DATE.getFullYear();
+const getCurrentMonth     = () => MONTHS[CURRENT_MONTH_INDEX];
+const getCurrentYear      = () => CURRENT_YEAR.toString();
 
-const HIDE_DATE_PICKER_VIEWS    = new Set(["control-center", "pivot-summary", "payout-tracker", "admin-panel"]);
-const HIDE_SIDEBAR_FILTER_VIEWS = new Set(["control-center", "pivot-summary", "payout-tracker", "admin-panel"]);
+// ── Views yang menyembunyikan date picker & sidebar filter ───────────────────
+const HIDE_DATE_PICKER_VIEWS    = new Set(["control-center", "pivot-summary", "payout-tracker", "admin-panel", "import-wizard"]);
+const HIDE_SIDEBAR_FILTER_VIEWS = new Set(["control-center", "pivot-summary", "payout-tracker", "admin-panel", "import-wizard"]);
 const PNL_VIEWS = new Set(["summary", "pendapatan", "pengeluaran"]);
 
 function LoadingScreen() {
@@ -278,8 +284,8 @@ function PnlPickerPrompt({
   activeRegion, setActiveRegion, activePartner, setActivePartner,
   activeType, setActiveType, activeBranch, setActiveBranch, onBack,
 }) {
-  const hasPartner   = !!activePartner;
-  const hasBranch    = !!activeBranch;
+  const hasPartner    = !!activePartner;
+  const hasBranch     = !!activeBranch;
   const typeAmbiguous = hasPartner && availableTypes.length > 1 && activeType === "ALL";
 
   const headline = !hasPartner
@@ -342,32 +348,32 @@ function PnlPickerPrompt({
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [loading,          setLoading]          = useState(true);
-  const [profile,          setProfile]          = useState(null);
-  const [view,             setView]             = useState("overview");
-  const [theme,            setTheme]            = useState("dark");
-  const [profileOpen,      setProfileOpen]      = useState(false);
-  const [navOpen,          setNavOpen]          = useState(true);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [masterData,       setMasterData]       = useState([]);
-  const [regions,          setRegions]          = useState([]);
-  const [activeRegion,     setActiveRegion]     = useState("SUMATERA");
-  const [activePartner,    setActivePartner]    = useState("");
-  const [activeType,       setActiveType]       = useState("ALL");
-  const [activeBranch,     setActiveBranch]     = useState("");
-  const [activeMonth,      setActiveMonth]      = useState(getCurrentMonth);
-  const [activeYear,       setActiveYear]       = useState(getCurrentYear);
-  const [formDirty,        setFormDirty]        = useState(false);
-  const [exitConfirm,      setExitConfirm]      = useState(false);
-  const [pendingView,      setPendingView]      = useState(null);
-  const [mobileOpen,       setMobileOpen]       = useState(false);
+  const [loading,           setLoading]          = useState(true);
+  const [profile,           setProfile]          = useState(null);
+  const [view,              setView]             = useState("overview");
+  const [theme,             setTheme]            = useState("dark");
+  const [profileOpen,       setProfileOpen]      = useState(false);
+  const [navOpen,           setNavOpen]          = useState(true);
+  const [sidebarCollapsed,  setSidebarCollapsed] = useState(false);
+  const [masterData,        setMasterData]       = useState([]);
+  const [regions,           setRegions]          = useState([]);
+  const [activeRegion,      setActiveRegion]     = useState("SUMATERA");
+  const [activePartner,     setActivePartner]    = useState("");
+  const [activeType,        setActiveType]       = useState("ALL");
+  const [activeBranch,      setActiveBranch]     = useState("");
+  const [activeMonth,       setActiveMonth]      = useState(getCurrentMonth);
+  const [activeYear,        setActiveYear]       = useState(getCurrentYear);
+  const [formDirty,         setFormDirty]        = useState(false);
+  const [exitConfirm,       setExitConfirm]      = useState(false);
+  const [pendingView,       setPendingView]      = useState(null);
+  const [mobileOpen,        setMobileOpen]       = useState(false);
   const [disabledMonthsMap, setDisabledMonthsMap] = useState(new Map());
 
-  const isSPM     = profile?.role === "spm_sumatera";
-  const isMPX     = profile?.role === "finance_mpx";
-  const isIOHAny  = IOH_ROLES.has(profile?.role);
+  const isSPM           = profile?.role === "spm_sumatera";
+  const isMPX           = profile?.role === "finance_mpx";
+  const isIOHAny        = IOH_ROLES.has(profile?.role);
   const iohLockedRegion = IOH_ROLE_REGION_MAP[profile?.role] ?? null;
-  const isReadOnly = isIOHAny;
+  const isReadOnly      = isIOHAny;
 
   // Modul monitor (Control Center & Pivot) sekarang juga terbuka untuk MPX.
   const canMonitor = isSPM || isIOHAny || isMPX;
@@ -380,7 +386,7 @@ export default function DashboardPage() {
     return true;
   }, [activePartner, activeBranch, activeType, isMPX, profile?.partner_name, masterData]);
 
-  const availableYears = useMemo(() => Array.from({ length: CURRENT_YEAR - 2026 + 1 }, (_, i) => (2026 + i).toString()).reverse(), []);
+  const availableYears  = useMemo(() => Array.from({ length: CURRENT_YEAR - 2026 + 1 }, (_, i) => (2026 + i).toString()).reverse(), []);
   const availableMonths = useMemo(() => Number(activeYear) === CURRENT_YEAR ? MONTHS.slice(0, CURRENT_MONTH_INDEX + 1) : MONTHS, [activeYear]);
 
   const activeContextDisabledMonths = useMemo(() => {
@@ -625,6 +631,7 @@ export default function DashboardPage() {
                   <SNavItem icon={<Wallet size={14} />} label="Payout Tracker" active={view === "payout-tracker"} onClick={() => navigate("payout-tracker")} />
                   <SNavItem icon={<PieChart size={14} />} label="Laporan P&L" active={PNL_VIEWS.has(view)} onClick={() => navigate("summary")} />
                   {isSPM && <SNavItem icon={<Shield size={14} />} label="Admin Panel" active={view === "admin-panel"} onClick={() => navigate("admin-panel")} />}
+                  {isSPM && <SNavItem icon={<FileSpreadsheet size={14} />} label="Import Data" active={view === "import-wizard"} onClick={() => navigate("import-wizard")} />}
                 </div>
               </motion.div>
             )}
@@ -715,6 +722,8 @@ export default function DashboardPage() {
 
         <div className="content-pad" style={{ flex: 1, overflowY: "auto", padding: "28px 28px 48px" }}>
           <AnimatePresence mode="wait">
+
+            {/* ── Overview ── */}
             {view === "overview" && (
               <motion.div key="ov" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} style={{ maxWidth: 980, margin: "0 auto" }}>
                 <div style={{ marginBottom: 24 }}>
@@ -738,32 +747,45 @@ export default function DashboardPage() {
                     desc="Analisis pendapatan harian, margin produk, dan pengeluaran operasional partner."
                     tag="Profit & Loss" active={true} onClick={() => navigate("summary")} t={t} d={d}
                     accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.12)" : "rgba(50,188,173,0.08)", bd: d ? "rgba(50,188,173,0.30)" : "rgba(50,188,173,0.20)", shadow: "rgba(50,188,173,0.20)" }} />
+
                   {canMonitor && (
                     <DashCard icon={<Layers size={20} />} title="PNL Control Center"
                       desc={isMPX ? "Monitoring progres pengisian laporan branch-branch di partner Anda." : "Monitoring progres pengisian laporan seluruh branch di wilayah Sumatera."}
                       tag="Admin" active={true} onClick={() => navigate("control-center")} t={t} d={d}
                       accent={{ color: "#ED1C24", bg: d ? "rgba(237,28,36,0.10)" : "rgba(237,28,36,0.06)", bd: d ? "rgba(237,28,36,0.26)" : "rgba(237,28,36,0.16)", shadow: "rgba(237,28,36,0.16)" }} />
                   )}
+
                   {canMonitor && (
                     <DashCard icon={<Table2 size={20} />} title="Pivot P&L Summary"
                       desc={isMPX ? "Ringkasan REV, EXP, dan P/L branch-branch partner Anda dalam pivot table." : "Ringkasan REV, EXP, dan P/L seluruh MPX per bulan dalam format pivot table."}
                       tag="Admin" active={true} onClick={() => navigate("pivot-summary")} t={t} d={d}
                       accent={{ color: d ? "#C49A00" : "#9A7400", bg: d ? "rgba(255,203,5,0.11)" : "rgba(255,203,5,0.09)", bd: d ? "rgba(255,203,5,0.28)" : "rgba(255,203,5,0.20)", shadow: "rgba(255,203,5,0.18)" }} />
                   )}
+
                   <DashCard icon={<Wallet size={20} />} title="Payout Tracker"
                     desc="Monitoring pembayaran Partner & Agency Prepaid — SLA, funnel, heatmap, dan raw data."
                     tag="Admin" active={true} onClick={() => navigate("payout-tracker")} t={t} d={d}
                     accent={{ color: "#C6168D", bg: d ? "rgba(198,22,141,0.11)" : "rgba(198,22,141,0.07)", bd: d ? "rgba(198,22,141,0.28)" : "rgba(198,22,141,0.16)", shadow: "rgba(198,22,141,0.16)" }} />
+
                   {isSPM && (
                     <DashCard icon={<Shield size={20} />} title="Admin Panel"
                       desc="Kelola role, permission, kode otoritas, dan daftar partner branches seluruh Sumatera."
                       tag="Admin" active={true} onClick={() => navigate("admin-panel")} t={t} d={d}
                       accent={{ color: d ? "#A78BFA" : "#7C3AED", bg: d ? "rgba(167,139,250,0.11)" : "rgba(124,58,237,0.07)", bd: d ? "rgba(167,139,250,0.28)" : "rgba(124,58,237,0.18)", shadow: "rgba(124,58,237,0.18)" }} />
                   )}
+
+                  {/* ── Import Data Otomatis — hanya spm_sumatera ── */}
+                  {isSPM && (
+                    <DashCard icon={<FileSpreadsheet size={20} />} title="Import Data Otomatis"
+                      desc="Upload Excel/CSV, mapping kolom drag-and-drop, lalu import massal ke database laporan."
+                      tag="Admin" active={true} onClick={() => navigate("import-wizard")} t={t} d={d}
+                      accent={{ color: d ? "#60C8F0" : "#0284C7", bg: d ? "rgba(96,200,240,0.11)" : "rgba(2,132,199,0.07)", bd: d ? "rgba(96,200,240,0.28)" : "rgba(2,132,199,0.18)", shadow: "rgba(2,132,199,0.16)" }} />
+                  )}
                 </div>
               </motion.div>
             )}
 
+            {/* ── PNL Control Center ── */}
             {view === "control-center" && canMonitor && (
               <motion.div key="cc" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
@@ -786,6 +808,7 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
+            {/* ── Pivot P&L Summary ── */}
             {view === "pivot-summary" && canMonitor && (
               <motion.div key="ps" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
@@ -798,6 +821,7 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
+            {/* ── Payout Tracker ── */}
             {view === "payout-tracker" && (
               <motion.div key="pt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
@@ -805,6 +829,7 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
+            {/* ── Admin Panel ── */}
             {view === "admin-panel" && isSPM && (
               <motion.div key="ap" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
@@ -812,6 +837,21 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
+            {/* ── Import Data Otomatis ── */}
+            {view === "import-wizard" && isSPM && (
+              <motion.div key="iw" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}>
+                  <ChevronLeft size={15} /> Kembali ke Overview
+                </button>
+                <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
+                  <div style={{ padding: "28px 32px" }}>
+                    <PNL_ImportWizard theme={theme} supabase={supabase} />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* ── Laporan P&L (Summary / Pendapatan / Pengeluaran) ── */}
             {PNL_VIEWS.has(view) && (
               <motion.div key="fv" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} style={{ maxWidth: 920, margin: "0 auto" }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 20 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
@@ -867,10 +907,12 @@ export default function DashboardPage() {
                 )}
               </motion.div>
             )}
+
           </AnimatePresence>
         </div>
       </main>
 
+      {/* ── Mobile Sidebar Drawer ── */}
       <AnimatePresence>
         {mobileOpen && (
           <div style={{ position: "fixed", inset: 0, zIndex: 100 }}>
@@ -887,6 +929,7 @@ export default function DashboardPage() {
         )}
       </AnimatePresence>
 
+      {/* ── Exit Confirm Modal ── */}
       <AnimatePresence>
         {exitConfirm && (
           <div style={{ position: "fixed", inset: 0, zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 20, background: "rgba(10,12,18,0.62)", backdropFilter: "blur(14px)" }}>
