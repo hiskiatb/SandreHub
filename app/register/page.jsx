@@ -298,10 +298,10 @@ export default function RegisterPage() {
   const [form, setForm] = useState({
     email: "", password: "", confirm_password: "",
     full_name: "", username: "",
-    role: "spm_sumatera", access_code: "",
-    partner_name: "",   // finance_mpx
-    cluster: "",        // cse_leader
-    sdp_id: "",         // sdp_user
+    role: "", access_code: "",          // ← default kosong, user wajib pilih
+    partner_name: "",
+    cluster: "",
+    sdp_id: "",
   });
 
   const [partnersList, setPartnersList] = useState([]);
@@ -310,7 +310,7 @@ export default function RegisterPage() {
   const [loadingP,     setLoadingP]     = useState(false);
   const [loadingC,     setLoadingC]     = useState(false);
   const [loadingS,     setLoadingS]     = useState(false);
-  const [sdpTaken,     setSdpTaken]     = useState(false); // sdp_id already registered
+  const [sdpTaken,     setSdpTaken]     = useState(false);
   const [errMsg,       setErrMsg]       = useState("");
   const [errors,       setErrors]       = useState([]);
   const [loading,      setLoading]      = useState(false);
@@ -328,7 +328,7 @@ export default function RegisterPage() {
       setForm(f => ({
         ...f,
         email: p.email || "", full_name: p.full_name || "",
-        username: p.username || "", role: p.role || "spm_sumatera",
+        username: p.username || "", role: p.role || "",   // ← fallback "" bukan "spm_sumatera"
         access_code: p.access_code || "", partner_name: p.partner_name || "",
         cluster: p.cluster || "", sdp_id: p.sdp_id || "",
       }));
@@ -422,6 +422,12 @@ export default function RegisterPage() {
   const handleRegister = async () => {
     setErrMsg(""); setErrors([]);
 
+    // ── Validasi role wajib dipilih ──────────────────────────────────────
+    if (!form.role) {
+      setErrMsg("Harap pilih role pengguna terlebih dahulu.");
+      return;
+    }
+
     // Validate required fields
     const requiredFields = ["email","password","confirm_password","full_name","username","access_code"];
     if (needsPartner) requiredFields.push("partner_name");
@@ -461,7 +467,6 @@ export default function RegisterPage() {
         .eq("type", role)
         .eq("is_active", true);
 
-      // finance_mpx: code must match the selected partner
       if (CODE_PER_PARTNER.includes(role)) {
         codeQuery = codeQuery.eq("partner_name", partner_name);
       }
@@ -489,7 +494,7 @@ export default function RegisterPage() {
       const res = await sendOTPEmail(email, otp);
       if (!res.success) throw new Error(res.error);
 
-      // Save to sessionStorage — includes all role-specific fields
+      // Save to sessionStorage
       sessionStorage.setItem("pending_reg", JSON.stringify({
         email, password, full_name, username, role,
         partner_name: needsPartner ? partner_name : "",
@@ -590,7 +595,7 @@ export default function RegisterPage() {
                   {exists.email && (
                     <div style={{ marginTop: 4, display: "flex", alignItems: "center", justifyContent: "space-between", paddingLeft: 2 }}>
                       <span style={{ fontSize: 11, fontWeight: 600, color: t.red }}>Email sudah terdaftar</span>
-                      <button className="sh-btn" onClick={() => router.push("/login")} style={{ fontSize: 11, fontWeight: 700, color: B.teal, background: "none", border: "none", padding: 0, cursor: "pointer", fontFamily: FONT }}>Login sekarang →</button>
+                      <button className="sh-btn" onClick={() => router.push("/login")} style={{ fontSize: 11, fontWeight: 700, border: "none", padding: 0, cursor: "pointer", background: "none", color: B.teal, fontFamily: FONT }}>Login sekarang →</button>
                     </div>
                   )}
                 </div>
@@ -616,11 +621,14 @@ export default function RegisterPage() {
                         style={{
                           width: "100%", height: "100%", background: "transparent",
                           border: "none", outline: "none",
-                          fontSize: 14, fontWeight: 500, color: t.hi,
+                          fontSize: 14, fontWeight: form.role ? 500 : 400,
+                          color: form.role ? t.hi : t.lo,
                           fontFamily: FONT, cursor: "pointer",
                           paddingRight: 24,
                         }}
                       >
+                        {/* ← Placeholder wajib pilih */}
+                        <option value="" disabled>— Pilih Role —</option>
                         {ROLE_GROUPS.map(g => (
                           <optgroup key={g.label} label={g.label}>
                             {g.roles.map(r => (
@@ -632,7 +640,7 @@ export default function RegisterPage() {
                       <ChevronDown size={13} style={{ position: "absolute", right: 0, pointerEvents: "none", color: t.lo }} />
                     </div>
                   </Field>
-                  {/* Role description */}
+                  {/* Role description — hanya tampil setelah role dipilih */}
                   {selectedRole && (
                     <div style={{ marginTop: 7, display: "flex", alignItems: "center", gap: 8, padding: "7px 11px", borderRadius: 8, background: t.sub, border: `1px solid ${t.line}` }}>
                       <div style={{ width: 24, height: 24, borderRadius: 6, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: selectedRole.color + (d ? "22" : "18"), border: `1px solid ${selectedRole.color}44` }}>
@@ -674,7 +682,6 @@ export default function RegisterPage() {
                         <select value={form.cluster} onChange={e => up("cluster", e.target.value)}
                           style={{ flex: 1, minWidth: 0, height: "100%", background: "transparent", border: "none", outline: "none", fontSize: 14, fontWeight: 500, color: t.hi, fontFamily: FONT, cursor: "pointer" }}>
                           <option value="" disabled>{loadingC ? "Memuat cluster..." : "— Pilih Micro Cluster —"}</option>
-                          {/* Group by area */}
                           {["NORTH SUMATERA","CENTRAL SUMATERA","SOUTH SUMATERA"].map(area => {
                             const areaItems = clustersList.filter(c => c.area === area);
                             if (areaItems.length === 0) return null;
