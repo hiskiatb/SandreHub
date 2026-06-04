@@ -207,7 +207,7 @@ export async function POST(req) {
 </html>`;
 
     const { data, error } = await resend.emails.send({
-      from: "SandraHub <no-reply@spmsumatera.site>",
+      from: "SandraHub <sandra@spmsumatera.site>",
       to: email,
       subject: "Kode OTP Verifikasi Akun SandraHub",
       html,

@@ -1,7 +1,11 @@
 "use client";
 import { useState, useEffect, useRef } from "react";
 import supabase from "../../lib/supabase";
-import { Mail, Lock, LockKeyhole, User, Shield, Building2, Info, CheckCircle2, XCircle, AlertCircle, ChevronLeft, Send, Loader2, Sun, Moon, Box } from "lucide-react";
+import {
+  ChevronDown, Mail, Lock, LockKeyhole, User, Shield, Building2, Info,
+  CheckCircle2, XCircle, AlertCircle, ChevronLeft, Send,
+  Loader2, Sun, Moon, Box, Users, MapPin, Hash, Search, X,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { generateOTP } from "../../lib/email/otp";
@@ -14,6 +18,7 @@ const mk = (d) => ({
   card:    d ? "#1A1A1D" : "#FFFFFF",
   sub:     d ? "#202024" : "#F2F2F4",
   line:    d ? "#2A2A2F" : "#E2E2E6",
+  lineS:   d ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.05)",
   hi:      d ? "#F2F2F3" : "#1A1A1D",
   mid:     d ? "#8A8A96" : "#5A5A68",
   lo:      d ? "#5A5A68" : "#8A8A96",
@@ -25,29 +30,77 @@ const mk = (d) => ({
   redBg:   d ? "rgba(248,113,113,0.12)" : "rgba(220,38,38,0.07)",
   redBd:   d ? "rgba(248,113,113,0.28)" : "rgba(220,38,38,0.20)",
   amber:   d ? "#FFCB05" : "#C49A00",
-  amberBg: d ? "rgba(255,203,5,0.12)"  : "rgba(255,203,5,0.09)",
-  amberBd: d ? "rgba(255,203,5,0.28)"  : "rgba(255,203,5,0.22)",
+  amberBg: d ? "rgba(255,203,5,0.12)"   : "rgba(255,203,5,0.09)",
+  amberBd: d ? "rgba(255,203,5,0.28)"   : "rgba(255,203,5,0.22)",
+  blue:    d ? "#0A84FF" : "#0066CC",
+  blueBg:  d ? "rgba(10,132,255,0.12)"  : "rgba(0,102,204,0.08)",
+  blueBd:  d ? "rgba(10,132,255,0.28)"  : "rgba(0,102,204,0.20)",
+  green:   d ? "#30D158" : "#1A9E5A",
+  greenBg: d ? "rgba(48,209,88,0.12)"   : "rgba(26,158,90,0.08)",
+  greenBd: d ? "rgba(48,209,88,0.28)"   : "rgba(26,158,90,0.22)",
   card$:   d ? "0 24px 60px rgba(0,0,0,0.65)" : "0 24px 60px rgba(26,26,29,0.16)",
 });
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI","SF Pro Text",Roboto,system-ui,sans-serif`;
 
 // ─── Role definitions ─────────────────────────────────────────────────────────
-// internal_ioh = same view as spm_sumatera but read-only on forms & payout upload
 const ROLES = [
-  { value: "spm_sumatera",         label: "SPM Sumatera",              desc: "Akses penuh semua fitur" },
-  { value: "finance_mpx",          label: "Finance MPX",               desc: "Akses laporan partner sendiri" },
-  { value: "internal_ioh",         label: "Internal IOH (Seluruh Sum.)",desc: "Akses lihat semua region, tanpa edit" },
-  { value: "ioh_north_sumatera",   label: "IOH North Sumatera",        desc: "Akses lihat region North Sumatera" },
-  { value: "ioh_central_sumatera", label: "IOH Central Sumatera",      desc: "Akses lihat region Central Sumatera" },
-  { value: "ioh_south_sumatera",   label: "IOH South Sumatera",        desc: "Akses lihat region South Sumatera" },
+  {
+    value: "spm_sumatera",
+    label: "SPM Sumatera",
+    desc: "Akses penuh semua fitur & modul",
+    icon: Shield, color: "#C6168D",
+  },
+  {
+    value: "finance_mpx",
+    label: "Finance MPX",
+    desc: "Akses laporan P&L partner sendiri",
+    icon: Building2, color: "#32BCAD",
+  },
+  {
+    value: "cse_leader",
+    label: "Cluster Sales Executives (CSE)",
+    desc: "Update & verifikasi data SDP di micro cluster Anda",
+    icon: Users, color: "#0A84FF",
+  },
+  {
+    value: "sdp_user",
+    label: "SDP User",
+    desc: "Isi dan submit data badan usaha/individual SDP Anda",
+    icon: User, color: "#30D158",
+  },
+  {
+    value: "internal_ioh",
+    label: "IOH All Sumatera",
+    desc: "Akses lihat seluruh region Sumatera, tanpa edit",
+    icon: Shield, color: "#FFCB05",
+  },
+  {
+    value: "ioh_north_sumatera",
+    label: "IOH North Sumatera",
+    desc: "Akses lihat region North Sumatera",
+    icon: Shield, color: "#FFCB05",
+  },
+  {
+    value: "ioh_central_sumatera",
+    label: "IOH Central Sumatera",
+    desc: "Akses lihat region Central Sumatera",
+    icon: Shield, color: "#FFCB05",
+  },
+  {
+    value: "ioh_south_sumatera",
+    label: "IOH South Sumatera",
+    desc: "Akses lihat region South Sumatera",
+    icon: Shield, color: "#FFCB05",
+  },
 ];
 
-// Roles that require partner_name
-const NEEDS_PARTNER = ["finance_mpx"];
-// Roles that require access_code to match a specific partner_name in DB
+const NEEDS_PARTNER  = ["finance_mpx"];
+const NEEDS_CLUSTER  = ["cse_leader"];
+const NEEDS_SDP_ID   = ["sdp_user"];
 const CODE_PER_PARTNER = ["finance_mpx"];
 
+// ─── Components ───────────────────────────────────────────────────────────────
 function SandraHubLogo({ d }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
@@ -74,7 +127,7 @@ const GlobalCSS = ({ d }) => (
     input::placeholder, textarea::placeholder { font-weight: 400; opacity: 0.45 }
     select { -webkit-appearance: none; appearance: none }
     select option { background: ${d ? "#1A1A1D" : "#fff"}; color: ${d ? "#F2F2F3" : "#1A1A1D"} }
-    ::-webkit-scrollbar { width: 6px }
+    ::-webkit-scrollbar { width: 5px }
     ::-webkit-scrollbar-track { background: transparent }
     ::-webkit-scrollbar-thumb { background: ${d ? "#3A3A40" : "#C8C8D0"}; border-radius: 99px }
     @keyframes load-sweep { 0%{left:-45%;width:42%}50%{left:28%;width:58%}100%{left:110%;width:42%} }
@@ -94,6 +147,10 @@ const GlobalCSS = ({ d }) => (
     .sh-field:focus-within { border-color: #32BCAD !important; box-shadow: 0 0 0 3px rgba(50,188,173,0.14) !important; }
     .sh-field-err { border-color: rgba(220,38,38,0.40) !important }
     .sh-field-err:focus-within { border-color: #DC2626 !important; box-shadow: 0 0 0 3px rgba(220,38,38,0.13) !important; }
+    .sh-field-ok { border-color: rgba(48,209,88,0.40) !important }
+    .sdp-drop { position: absolute; top: 100%; left: 0; right: 0; z-index: 80; margin-top: 4px; border-radius: 10px; overflow: hidden; box-shadow: 0 8px 24px rgba(0,0,0,0.22); max-height: 220px; overflow-y: auto; }
+    .sdp-opt { padding: 9px 13px; cursor: pointer; font-size: 13px; font-weight: 500; transition: background .1s; }
+    .sdp-opt:hover { background: ${d ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.045)"}; }
     @media (max-width: 540px) { .reg-grid { grid-template-columns: 1fr !important } input, select, textarea { font-size: 16px !important } }
   `}</style>
 );
@@ -104,22 +161,27 @@ const LoadingBar = () => (
   </div>
 );
 
-function Field({ label, icon, trailing, hasError, children, t }) {
+function Field({ label, icon, trailing, hasError, isOk, children, t }) {
   return (
     <div>
       {label && <label style={{ display: "block", marginBottom: 6, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: t.lo }}>{label}</label>}
-      <div className={`sh-field${hasError ? " sh-field-err" : ""}`} style={{ display: "flex", alignItems: "center", gap: 10, height: 46, padding: "0 13px", borderRadius: 10, background: t.fieldBg, border: `1.5px solid ${hasError ? "rgba(220,38,38,0.40)" : t.line}` }}>
-        <span style={{ color: hasError ? t.red : t.lo, display: "flex", flexShrink: 0 }}>{icon}</span>
-        {children}{trailing}
+      <div className={`sh-field${hasError ? " sh-field-err" : isOk ? " sh-field-ok" : ""}`}
+        style={{ display: "flex", alignItems: "center", gap: 10, height: 46, padding: "0 13px", borderRadius: 10, background: t.fieldBg, border: `1.5px solid ${hasError ? "rgba(220,38,38,0.40)" : t.line}` }}>
+        <span style={{ color: hasError ? t.red : isOk ? t.green : t.lo, display: "flex", flexShrink: 0 }}>{icon}</span>
+        {children}
+        {trailing}
       </div>
     </div>
   );
 }
-function TInput({ type = "text", placeholder, value, onChange, onBlur, t }) {
-  return <input type={type} placeholder={placeholder} value={value} onChange={e => onChange(e.target.value)} onBlur={onBlur} style={{ flex: 1, minWidth: 0, height: "100%", background: "transparent", border: "none", outline: "none", fontSize: 14, fontWeight: 500, color: t.hi, fontFamily: FONT }} />;
+function TInput({ type = "text", placeholder, value, onChange, onBlur, t, readOnly }) {
+  return <input type={type} placeholder={placeholder} value={value} readOnly={readOnly}
+    onChange={e => onChange(e.target.value)} onBlur={onBlur}
+    style={{ flex: 1, minWidth: 0, height: "100%", background: "transparent", border: "none", outline: "none", fontSize: 14, fontWeight: 500, color: t.hi, fontFamily: FONT, cursor: readOnly ? "default" : "text" }} />;
 }
 function TSelect({ value, onChange, children, t }) {
-  return <select value={value} onChange={e => onChange(e.target.value)} style={{ flex: 1, minWidth: 0, height: "100%", background: "transparent", border: "none", outline: "none", fontSize: 14, fontWeight: 500, color: t.hi, fontFamily: FONT, cursor: "pointer" }}>{children}</select>;
+  return <select value={value} onChange={e => onChange(e.target.value)}
+    style={{ flex: 1, minWidth: 0, height: "100%", background: "transparent", border: "none", outline: "none", fontSize: 14, fontWeight: 500, color: t.hi, fontFamily: FONT, cursor: "pointer" }}>{children}</select>;
 }
 function CheckItem({ label, ok, t }) {
   return (
@@ -130,26 +192,136 @@ function CheckItem({ label, ok, t }) {
   );
 }
 
+// ── Role Groups (for <optgroup> in dropdown) ─────────────────────────────────
+const ROLE_GROUPS = [
+  {
+    label: "Tim Internal",
+    roles: ROLES.filter(r => ["spm_sumatera", "finance_mpx"].includes(r.value)),
+  },
+  {
+    label: "CSE & SDP",
+    roles: ROLES.filter(r => ["cse_leader", "sdp_user"].includes(r.value)),
+  },
+  {
+    label: "IOH (Read-only)",
+    roles: ROLES.filter(r => r.value === "internal_ioh" || r.value.startsWith("ioh_")),
+  },
+];
+
+// ── SDP Search Dropdown ──────────────────────────────────────────────────────
+function SdpSearchInput({ value, onChange, sdpList, loading: ldg, hasError, t, d }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState(value || "");
+  const ref = useRef(null);
+
+  const filtered = sdpList.filter(s =>
+    s.sdp_id.toLowerCase().includes(q.toLowerCase()) ||
+    s.name.toLowerCase().includes(q.toLowerCase()) ||
+    (s.cluster_key || "").toLowerCase().includes(q.toLowerCase())
+  ).slice(0, 40);
+
+  useEffect(() => {
+    const fn = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", fn);
+    return () => document.removeEventListener("mousedown", fn);
+  }, []);
+
+  const selected = sdpList.find(s => s.sdp_id === value);
+
+  const pick = (sdp) => {
+    onChange(sdp.sdp_id);
+    setQ(sdp.sdp_id + " — " + sdp.name);
+    setOpen(false);
+  };
+
+  const clear = (e) => {
+    e.stopPropagation();
+    onChange("");
+    setQ("");
+    setOpen(true);
+  };
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <div className={`sh-field${hasError ? " sh-field-err" : value ? " sh-field-ok" : ""}`}
+        style={{ display: "flex", alignItems: "center", gap: 10, height: 46, padding: "0 13px", borderRadius: 10, background: t.fieldBg, border: `1.5px solid ${hasError ? "rgba(220,38,38,0.40)" : t.line}`, cursor: "pointer" }}
+        onClick={() => { if (!ldg) setOpen(o => !o); }}>
+        <Hash size={14} style={{ color: hasError ? t.red : value ? t.green : t.lo, flexShrink: 0 }} />
+        <input value={q} placeholder={ldg ? "Memuat daftar SDP..." : "Ketik ID atau nama SDP..."}
+          onChange={e => { setQ(e.target.value); setOpen(true); onChange(""); }}
+          onFocus={() => setOpen(true)}
+          style={{ flex: 1, minWidth: 0, height: "100%", background: "transparent", border: "none", outline: "none", fontSize: 14, fontWeight: 500, color: t.hi, fontFamily: FONT }}
+        />
+        {ldg && <Loader2 size={13} style={{ color: t.teal, flexShrink: 0, animation: "sh-spin .85s linear infinite" }} />}
+        {!ldg && value && <button onClick={clear} style={{ background: "none", border: "none", cursor: "pointer", color: t.lo, display: "flex", padding: 0 }}><X size={13} /></button>}
+        {!ldg && !value && <Search size={13} style={{ color: t.lo, flexShrink: 0 }} />}
+      </div>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.14 }}
+            className="sdp-drop" style={{ background: t.card, border: `1px solid ${t.line}` }}>
+            {filtered.length === 0 ? (
+              <div style={{ padding: "12px 13px", fontSize: 13, color: t.lo, textAlign: "center" }}>
+                {q.length > 0 ? "SDP tidak ditemukan" : "Ketik untuk mencari..."}
+              </div>
+            ) : filtered.map(s => (
+              <div key={s.sdp_id} className="sdp-opt" style={{ color: s.sdp_id === value ? t.teal : t.hi, background: s.sdp_id === value ? t.tealBg : "transparent" }}
+                onClick={() => pick(s)}>
+                <div style={{ fontWeight: 700, fontSize: 12.5 }}>{s.sdp_id}</div>
+                <div style={{ fontSize: 11, color: t.lo, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {s.name} · {s.cluster_key || s.cluster} · {s.area?.replace(" SUMATERA", "")}
+                </div>
+              </div>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {selected && (
+        <div style={{ marginTop: 6, paddingLeft: 2, fontSize: 11.5, color: t.lo, lineHeight: 1.5 }}>
+          <span style={{ color: t.green, fontWeight: 700 }}>✓</span>{" "}
+          <strong style={{ color: t.hi }}>{selected.name}</strong> · {selected.cluster_key || selected.cluster} · {selected.area?.replace(" SUMATERA", "")} · <span style={{ color: selected.status_usaha === "BADAN USAHA" ? t.blue : t.green, fontWeight: 600 }}>{selected.status_usaha}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// MAIN
+// ═════════════════════════════════════════════════════════════════════════════
 export default function RegisterPage() {
   const router = useRouter();
   const infoRef = useRef(null), infoBtnRef = useRef(null);
+
   const [form, setForm] = useState({
     email: "", password: "", confirm_password: "",
     full_name: "", username: "",
-    role: "spm_sumatera", access_code: "", partner_name: "",
+    role: "spm_sumatera", access_code: "",
+    partner_name: "",   // finance_mpx
+    cluster: "",        // cse_leader
+    sdp_id: "",         // sdp_user
   });
+
   const [partnersList, setPartnersList] = useState([]);
-  const [loadingP, setLoadingP]   = useState(false);
-  const [errMsg, setErrMsg]       = useState("");
-  const [errors, setErrors]       = useState([]);
-  const [loading, setLoading]     = useState(false);
-  const [d, setD]                 = useState(true);
-  const [showInfo, setShowInfo]   = useState(false);
-  const [checking, setChecking]   = useState({ email: false, username: false });
-  const [exists, setExists]       = useState({ email: false, username: false });
+  const [clustersList, setClustersList] = useState([]);
+  const [sdpList,      setSdpList]      = useState([]);
+  const [loadingP,     setLoadingP]     = useState(false);
+  const [loadingC,     setLoadingC]     = useState(false);
+  const [loadingS,     setLoadingS]     = useState(false);
+  const [sdpTaken,     setSdpTaken]     = useState(false); // sdp_id already registered
+  const [errMsg,       setErrMsg]       = useState("");
+  const [errors,       setErrors]       = useState([]);
+  const [loading,      setLoading]      = useState(false);
+  const [d,            setD]            = useState(true);
+  const [showInfo,     setShowInfo]     = useState(false);
+  const [checking,     setChecking]     = useState({ email: false, username: false });
+  const [exists,       setExists]       = useState({ email: false, username: false });
 
   useEffect(() => {
     setD(localStorage.getItem("sh-theme") !== "light");
+    // Restore from sessionStorage
     const raw = sessionStorage.getItem("pending_reg");
     if (raw) {
       const p = JSON.parse(raw);
@@ -158,16 +330,17 @@ export default function RegisterPage() {
         email: p.email || "", full_name: p.full_name || "",
         username: p.username || "", role: p.role || "spm_sumatera",
         access_code: p.access_code || "", partner_name: p.partner_name || "",
+        cluster: p.cluster || "", sdp_id: p.sdp_id || "",
       }));
     }
+    // Load partners
     (async () => {
       setLoadingP(true);
-      try {
-        const { data } = await supabase.from("partner_branches").select("partner_name");
-        if (data) setPartnersList([...new Set(data.map(x => x.partner_name))].sort());
-      } catch {}
-      finally { setLoadingP(false); }
+      const { data } = await supabase.from("partner_branches").select("partner_name");
+      if (data) setPartnersList([...new Set(data.map(x => x.partner_name))].sort());
+      setLoadingP(false);
     })();
+    // Dismiss info popup on outside click
     const onClick = e => {
       if (infoRef.current && !infoRef.current.contains(e.target)
         && infoBtnRef.current && !infoBtnRef.current.contains(e.target))
@@ -177,10 +350,53 @@ export default function RegisterPage() {
     return () => document.removeEventListener("mousedown", onClick);
   }, []);
 
-  const t = mk(d);
-  const up = (k, v) => { setForm(f => ({ ...f, [k]: v })); setErrors(e => e.filter(x => x !== k)); setErrMsg(""); };
-  const debounceRef = useRef({});
+  // Load clusters when role = cse_leader
+  useEffect(() => {
+    if (form.role !== "cse_leader") return;
+    (async () => {
+      setLoadingC(true);
+      const { data } = await supabase
+        .from("sdp_data")
+        .select("cluster_key, cluster, area, branch")
+        .order("cluster_key");
+      if (data) {
+        const unique = [...new Map(data.map(d => [d.cluster_key || d.cluster, d])).values()];
+        setClustersList(unique.sort((a, b) => (a.cluster_key || a.cluster).localeCompare(b.cluster_key || b.cluster)));
+      }
+      setLoadingC(false);
+    })();
+  }, [form.role]);
 
+  // Load SDP list when role = sdp_user
+  useEffect(() => {
+    if (form.role !== "sdp_user") return;
+    (async () => {
+      setLoadingS(true);
+      const { data } = await supabase
+        .from("sdp_data")
+        .select("sdp_id, name, cluster_key, cluster, area, status_usaha")
+        .order("area").order("name");
+      if (data) setSdpList(data);
+      setLoadingS(false);
+    })();
+  }, [form.role]);
+
+  // Check if sdp_id already registered in profiles
+  const checkSdpTaken = async (sdpId) => {
+    if (!sdpId) { setSdpTaken(false); return; }
+    const { data } = await supabase.from("profiles").select("id").eq("sdp_id", sdpId).maybeSingle();
+    setSdpTaken(!!data);
+  };
+
+  const t = mk(d);
+  const up = (k, v) => {
+    setForm(f => ({ ...f, [k]: v }));
+    setErrors(e => e.filter(x => x !== k));
+    setErrMsg("");
+    if (k === "sdp_id") { setSdpTaken(false); checkSdpTaken(v); }
+  };
+
+  const debounceRef = useRef({});
   const checkAvail = (field, value) => {
     if (!value) return;
     if (debounceRef.current[field]) clearTimeout(debounceRef.current[field]);
@@ -199,22 +415,29 @@ export default function RegisterPage() {
     match:   form.password !== "" && form.password === form.confirm_password,
   };
 
+  const needsPartner = NEEDS_PARTNER.includes(form.role);
+  const needsCluster = NEEDS_CLUSTER.includes(form.role);
+  const needsSdpId   = NEEDS_SDP_ID.includes(form.role);
+
   const handleRegister = async () => {
     setErrMsg(""); setErrors([]);
 
-    // Required field check — partner_name only required for finance_mpx
-    const needsPartner = NEEDS_PARTNER.includes(form.role);
-    const empty = Object.entries(form)
-      .filter(([k, v]) => !v && (k !== "partner_name" || needsPartner))
-      .map(([k]) => k);
-    if (empty.length) { setErrors(empty); setErrMsg("Harap lengkapi semua kolom."); return; }
+    // Validate required fields
+    const requiredFields = ["email","password","confirm_password","full_name","username","access_code"];
+    if (needsPartner) requiredFields.push("partner_name");
+    if (needsCluster) requiredFields.push("cluster");
+    if (needsSdpId)   requiredFields.push("sdp_id");
+
+    const empty = requiredFields.filter(k => !form[k]);
+    if (empty.length) { setErrors(empty); setErrMsg("Harap lengkapi semua kolom yang wajib diisi."); return; }
     if (!Object.values(pass).every(Boolean)) { setErrMsg("Syarat kata sandi belum terpenuhi."); return; }
+    if (sdpTaken) { setErrMsg("SDP ini sudah memiliki akun terdaftar. Hubungi SPM Sumatera."); return; }
 
     setLoading(true);
     try {
-      const email        = form.email.trim().toLowerCase();
-      const { password, full_name, username, role, access_code, partner_name } = form;
-      const codeUpper    = access_code.toUpperCase();
+      const email      = form.email.trim().toLowerCase();
+      const codeUpper  = form.access_code.toUpperCase();
+      const { password, full_name, username, role, partner_name, cluster, sdp_id } = form;
 
       // Duplicate checks
       if (exists.email)    { setErrMsg("Email sudah terdaftar.");    setLoading(false); return; }
@@ -224,8 +447,13 @@ export default function RegisterPage() {
       const { data: dupUsr } = await supabase.from("profiles").select("id").eq("username", username).maybeSingle();
       if (dupUsr) { setErrMsg("Username sudah terdaftar."); return; }
 
-      // ── Access code validation ───────────────────────────────────────────
-      // Build query: always match code + type + is_active
+      // Check sdp_id taken (re-check at submit time)
+      if (needsSdpId && sdp_id) {
+        const { data: sdpOwner } = await supabase.from("profiles").select("id").eq("sdp_id", sdp_id).maybeSingle();
+        if (sdpOwner) { setErrMsg("SDP ini sudah memiliki akun. Hubungi SPM Sumatera."); return; }
+      }
+
+      // ── Access code validation ──────────────────────────────────────────
       let codeQuery = supabase
         .from("access_codes")
         .select("id, partner_name")
@@ -233,9 +461,7 @@ export default function RegisterPage() {
         .eq("type", role)
         .eq("is_active", true);
 
-      // FIX: for finance_mpx the code must also belong to the selected partner.
-      // Without this check, any valid finance_mpx code (even from another partner)
-      // would pass, letting the user register under the wrong partner.
+      // finance_mpx: code must match the selected partner
       if (CODE_PER_PARTNER.includes(role)) {
         codeQuery = codeQuery.eq("partner_name", partner_name);
       }
@@ -243,17 +469,16 @@ export default function RegisterPage() {
       const { data: codeRow } = await codeQuery.maybeSingle();
 
       if (!codeRow) {
-        // Give a specific message for finance_mpx so the user understands
-        // the code must match their chosen partner — not just the role type.
-        setErrMsg(
-          role === "finance_mpx"
-            ? "Kode otoritas tidak valid untuk partner yang dipilih."
-            : "Kode otoritas tidak valid."
-        );
+        const msgs = {
+          finance_mpx: "Kode otoritas tidak valid untuk partner yang dipilih.",
+          cse_leader:  "Kode otoritas CSE tidak valid. Dapatkan dari SPM Sumatera.",
+          sdp_user:    "Kode otoritas SDP tidak valid. Dapatkan dari SPM atau CSE cluster Anda.",
+        };
+        setErrMsg(msgs[role] || "Kode otoritas tidak valid.");
         return;
       }
 
-      // Send OTP
+      // ── Send OTP ────────────────────────────────────────────────────────
       const otp = generateOTP();
       const { error: otpErr } = await supabase.from("email_otps").insert({
         email, otp: String(otp),
@@ -264,17 +489,23 @@ export default function RegisterPage() {
       const res = await sendOTPEmail(email, otp);
       if (!res.success) throw new Error(res.error);
 
+      // Save to sessionStorage — includes all role-specific fields
       sessionStorage.setItem("pending_reg", JSON.stringify({
         email, password, full_name, username, role,
         partner_name: needsPartner ? partner_name : "",
-        access_code: codeUpper,
+        cluster:      needsCluster ? cluster      : "",
+        sdp_id:       needsSdpId   ? sdp_id       : "",
+        access_code:  codeUpper,
       }));
-      router.push(`/verify?email=${email}`);
-    } catch (e) { setErrMsg(e.message || "Gagal memproses pendaftaran."); }
-    finally { setLoading(false); }
+      router.push(`/verify?email=${encodeURIComponent(email)}`);
+
+    } catch (e) {
+      setErrMsg(e.message || "Gagal memproses pendaftaran.");
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const needsPartner = NEEDS_PARTNER.includes(form.role);
   const selectedRole = ROLES.find(r => r.value === form.role);
 
   return (
@@ -283,18 +514,19 @@ export default function RegisterPage() {
       <div className="sh-mesh"><div className="sh-mesh-o1"/><div className="sh-mesh-o2"/><div className="sh-mesh-o3"/><div className="sh-mesh-v"/></div>
       {loading && <LoadingBar />}
 
+      {/* Theme toggle */}
       <button className="sh-btn"
         onClick={() => { const n = !d; setD(n); localStorage.setItem("sh-theme", n ? "dark" : "light"); }}
         style={{ position: "fixed", top: 16, right: 16, zIndex: 50, width: 36, height: 36, borderRadius: 9, border: `1px solid ${t.line}`, background: d ? "rgba(22,22,24,0.88)" : "rgba(255,255,255,0.88)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", display: "flex", alignItems: "center", justifyContent: "center", color: t.mid }}>
         {d ? <Sun size={15} strokeWidth={2} /> : <Moon size={15} strokeWidth={2} />}
       </button>
 
-      <div style={{ padding: "32px 16px 52px", display: "flex", flexDirection: "column", alignItems: "center", position: "relative", zIndex: 1 }}>
+      <div style={{ padding: "32px 16px 60px", display: "flex", flexDirection: "column", alignItems: "center", position: "relative", zIndex: 1 }}>
         <motion.div
           initial={{ opacity: 0, y: 16, scale: 0.988 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
           transition={{ duration: 0.48, ease: [0.25, 0.46, 0.45, 0.94] }}
-          style={{ width: "100%", maxWidth: 490 }}
+          style={{ width: "100%", maxWidth: 500 }}
         >
           <div style={{ marginBottom: 26 }}><SandraHubLogo d={d} /></div>
 
@@ -328,16 +560,15 @@ export default function RegisterPage() {
                 )}
               </AnimatePresence>
 
+              {/* ── Form Grid ── */}
               <div className="reg-grid" style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "12px 11px" }}>
 
-                {/* Nama Lengkap */}
+                {/* Nama + Username */}
                 <div>
                   <Field label="Nama Lengkap" icon={<User size={14} strokeWidth={2} />} hasError={errors.includes("full_name")} t={t}>
                     <TInput placeholder="Nama lengkap" value={form.full_name} onChange={v => up("full_name", v)} t={t} />
                   </Field>
                 </div>
-
-                {/* Username */}
                 <div>
                   <Field label="Username" icon={<User size={14} strokeWidth={2} />} hasError={errors.includes("username") || exists.username}
                     trailing={checking.username && <Loader2 size={12} style={{ color: B.teal, flexShrink: 0, animation: "sh-spin .85s linear infinite" }} />} t={t}>
@@ -364,44 +595,141 @@ export default function RegisterPage() {
                   )}
                 </div>
 
-                {/* Role — 3 pilihan termasuk Internal IOH */}
+                {/* ── Role Dropdown ── */}
                 <div style={{ gridColumn: "1 / -1" }}>
-                  <Field label="Role Pengguna" icon={<Shield size={14} strokeWidth={2} />} hasError={false} t={t}>
-                    <TSelect value={form.role} onChange={v => { up("role", v); up("partner_name", ""); }} t={t}>
-                      {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-                    </TSelect>
+                  <Field
+                    label="Role Pengguna"
+                    icon={<Shield size={14} strokeWidth={2} />}
+                    hasError={false}
+                    t={t}
+                  >
+                    <div style={{ flex: 1, minWidth: 0, height: "100%", position: "relative", display: "flex", alignItems: "center" }}>
+                      <select
+                        value={form.role}
+                        onChange={e => {
+                          up("role", e.target.value);
+                          up("partner_name", "");
+                          up("cluster", "");
+                          up("sdp_id", "");
+                          setSdpTaken(false);
+                        }}
+                        style={{
+                          width: "100%", height: "100%", background: "transparent",
+                          border: "none", outline: "none",
+                          fontSize: 14, fontWeight: 500, color: t.hi,
+                          fontFamily: FONT, cursor: "pointer",
+                          paddingRight: 24,
+                        }}
+                      >
+                        {ROLE_GROUPS.map(g => (
+                          <optgroup key={g.label} label={g.label}>
+                            {g.roles.map(r => (
+                              <option key={r.value} value={r.value}>{r.label}</option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                      <ChevronDown size={13} style={{ position: "absolute", right: 0, pointerEvents: "none", color: t.lo }} />
+                    </div>
                   </Field>
-                  {/* Role description badge */}
+                  {/* Role description */}
                   {selectedRole && (
-                    <div style={{ marginTop: 6, paddingLeft: 2, fontSize: 11.5, color: t.lo }}>
-                      <span style={{ fontWeight: 600, color: t.mid }}>{selectedRole.label}:</span> {selectedRole.desc}
+                    <div style={{ marginTop: 7, display: "flex", alignItems: "center", gap: 8, padding: "7px 11px", borderRadius: 8, background: t.sub, border: `1px solid ${t.line}` }}>
+                      <div style={{ width: 24, height: 24, borderRadius: 6, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: selectedRole.color + (d ? "22" : "18"), border: `1px solid ${selectedRole.color}44` }}>
+                        <selectedRole.icon size={12} strokeWidth={2} style={{ color: selectedRole.color }} />
+                      </div>
+                      <div style={{ minWidth: 0 }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: selectedRole.color }}>{selectedRole.label}: </span>
+                        <span style={{ fontSize: 12, color: t.mid }}>{selectedRole.desc}</span>
+                      </div>
                     </div>
                   )}
                 </div>
 
-                {/* Partner — hanya untuk finance_mpx */}
+                {/* ── Conditional: Partner (finance_mpx) ── */}
                 <AnimatePresence>
                   {needsPartner && (
-                    <motion.div key="partner"
-                      initial={{ opacity: 0, height: 0 }}
-                      animate={{ opacity: 1, height: "auto" }}
-                      exit={{ opacity: 0, height: 0 }}
-                      style={{ gridColumn: "1 / -1", overflow: "hidden" }}>
+                    <motion.div key="partner" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} style={{ gridColumn: "1 / -1", overflow: "hidden" }}>
                       <Field label="Nama Partner" icon={<Building2 size={14} strokeWidth={2} />} hasError={errors.includes("partner_name")} t={t}>
                         <TSelect value={form.partner_name} onChange={v => up("partner_name", v)} t={t}>
                           <option value="" disabled>{loadingP ? "Memuat..." : "— Pilih Partner —"}</option>
                           {partnersList.map(p => <option key={p} value={p}>{p}</option>)}
                         </TSelect>
                       </Field>
-                      {/* Info: kode harus sesuai partner yang dipilih */}
-                      <div style={{ marginTop: 6, paddingLeft: 2, fontSize: 11.5, color: t.lo }}>
+                      <div style={{ marginTop: 5, paddingLeft: 2, fontSize: 11.5, color: t.lo }}>
                         Kode otoritas harus sesuai dengan partner yang dipilih.
                       </div>
                     </motion.div>
                   )}
                 </AnimatePresence>
 
-                {/* Kode Otoritas */}
+                {/* ── Conditional: Cluster (cse_leader) ── */}
+                <AnimatePresence>
+                  {needsCluster && (
+                    <motion.div key="cluster" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} style={{ gridColumn: "1 / -1", overflow: "hidden" }}>
+                      <div style={{ marginBottom: 6, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: t.lo }}>Micro Cluster Anda <span style={{ color: t.red }}>*</span></div>
+                      <div className={`sh-field${errors.includes("cluster") ? " sh-field-err" : form.cluster ? " sh-field-ok" : ""}`}
+                        style={{ display: "flex", alignItems: "center", gap: 10, height: 46, padding: "0 13px", borderRadius: 10, background: t.fieldBg, border: `1.5px solid ${errors.includes("cluster") ? "rgba(220,38,38,0.40)" : t.line}` }}>
+                        <MapPin size={14} style={{ color: errors.includes("cluster") ? t.red : form.cluster ? t.green : t.lo, flexShrink: 0 }} />
+                        <select value={form.cluster} onChange={e => up("cluster", e.target.value)}
+                          style={{ flex: 1, minWidth: 0, height: "100%", background: "transparent", border: "none", outline: "none", fontSize: 14, fontWeight: 500, color: t.hi, fontFamily: FONT, cursor: "pointer" }}>
+                          <option value="" disabled>{loadingC ? "Memuat cluster..." : "— Pilih Micro Cluster —"}</option>
+                          {/* Group by area */}
+                          {["NORTH SUMATERA","CENTRAL SUMATERA","SOUTH SUMATERA"].map(area => {
+                            const areaItems = clustersList.filter(c => c.area === area);
+                            if (areaItems.length === 0) return null;
+                            return (
+                              <optgroup key={area} label={area.replace(" SUMATERA", "")}>
+                                {areaItems.map(c => (
+                                  <option key={c.cluster_key || c.cluster} value={c.cluster_key || c.cluster}>
+                                    {c.cluster_key || c.cluster} ({c.branch})
+                                  </option>
+                                ))}
+                              </optgroup>
+                            );
+                          })}
+                        </select>
+                      </div>
+                      {form.cluster && (
+                        <div style={{ marginTop: 5, paddingLeft: 2, fontSize: 11.5, color: t.green, fontWeight: 600 }}>
+                          ✓ Cluster dipilih: <strong>{form.cluster}</strong>
+                        </div>
+                      )}
+                      <div style={{ marginTop: 5, paddingLeft: 2, fontSize: 11.5, color: t.lo }}>
+                        Anda hanya bisa mengelola SDP dalam cluster ini.
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* ── Conditional: SDP ID (sdp_user) ── */}
+                <AnimatePresence>
+                  {needsSdpId && (
+                    <motion.div key="sdpid" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} style={{ gridColumn: "1 / -1", overflow: "hidden" }}>
+                      <div style={{ marginBottom: 6, fontSize: 10.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: t.lo }}>SDP Anda <span style={{ color: t.red }}>*</span></div>
+                      <SdpSearchInput
+                        value={form.sdp_id}
+                        onChange={v => up("sdp_id", v)}
+                        sdpList={sdpList}
+                        loading={loadingS}
+                        hasError={errors.includes("sdp_id") || sdpTaken}
+                        t={t} d={d}
+                      />
+                      {sdpTaken && (
+                        <div style={{ marginTop: 5, paddingLeft: 2, fontSize: 11.5, color: t.red, fontWeight: 600 }}>
+                          ⚠ SDP ini sudah memiliki akun. Hubungi SPM Sumatera.
+                        </div>
+                      )}
+                      {!sdpTaken && (
+                        <div style={{ marginTop: 5, paddingLeft: 2, fontSize: 11.5, color: t.lo }}>
+                          Anda hanya bisa mengakses dan mengubah data SDP ini.
+                        </div>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* ── Kode Otoritas ── */}
                 <div style={{ gridColumn: "1 / -1" }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
                     <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: t.lo }}>Kode Otoritas</label>
@@ -416,19 +744,24 @@ export default function RegisterPage() {
                       <motion.div ref={infoRef}
                         initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}
                         transition={{ duration: 0.16 }}
-                        style={{ marginBottom: 9, padding: "9px 13px", borderRadius: 10, background: t.tealBg, border: `1px solid ${t.tealBd}`, fontSize: 12.5, color: t.mid, lineHeight: 1.6 }}>
-                        <strong style={{ color: t.hi }}>Kode Otoritas</strong> bersifat unik per role & partner.
-                        Dapatkan melalui tim <strong style={{ color: t.hi }}>SPM Sumatera</strong>.
+                        style={{ marginBottom: 9, padding: "10px 13px", borderRadius: 10, background: t.tealBg, border: `1px solid ${t.tealBd}`, fontSize: 12.5, color: t.mid, lineHeight: 1.6 }}>
+                        <strong style={{ color: t.hi }}>Kode Otoritas</strong> bersifat unik per role.
+                        <br />
+                        <span style={{ fontSize: 11.5 }}>
+                          • SPM / Finance MPX / IOH → dari <strong style={{ color: t.hi }}>SPM Sumatera</strong><br />
+                          • CSE → dari <strong style={{ color: t.hi }}>SPM Sumatera</strong><br />
+                          • SDP User → dari <strong style={{ color: t.hi }}>SPM</strong> atau <strong style={{ color: t.hi }}>CSE</strong> cluster Anda
+                        </span>
                       </motion.div>
                     )}
                   </AnimatePresence>
                   <Field icon={<Shield size={14} strokeWidth={2} />} hasError={errors.includes("access_code")} t={t}>
-                    <TInput placeholder="Masukkan kode" value={form.access_code}
+                    <TInput placeholder="Masukkan kode otoritas" value={form.access_code}
                       onChange={v => up("access_code", v.toUpperCase())} t={t} />
                   </Field>
                 </div>
 
-                {/* Password */}
+                {/* ── Password ── */}
                 <div>
                   <Field label="Kata Sandi" icon={<Lock size={14} strokeWidth={2} />} hasError={errors.includes("password")} t={t}>
                     <TInput type="password" placeholder="Min. 8 karakter" value={form.password} onChange={v => up("password", v)} t={t} />
@@ -450,8 +783,8 @@ export default function RegisterPage() {
               </div>
 
               {/* Submit */}
-              <button className="sh-btn" onClick={handleRegister} disabled={loading}
-                style={{ marginTop: 18, width: "100%", height: 46, borderRadius: 10, border: "none", background: loading ? `${B.magenta}55` : `linear-gradient(135deg, ${B.magenta} 0%, #9A1070 100%)`, color: "#fff", fontSize: 13.5, fontWeight: 700, letterSpacing: "-0.01em", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: loading ? "none" : "0 4px 18px rgba(198,22,141,0.28)", cursor: loading ? "not-allowed" : "pointer", transition: "background .18s, box-shadow .18s", fontFamily: FONT }}>
+              <button className="sh-btn" onClick={handleRegister} disabled={loading || sdpTaken}
+                style={{ marginTop: 18, width: "100%", height: 46, borderRadius: 10, border: "none", background: loading ? `${B.magenta}55` : `linear-gradient(135deg, ${B.magenta} 0%, #9A1070 100%)`, color: "#fff", fontSize: 13.5, fontWeight: 700, letterSpacing: "-0.01em", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: loading ? "none" : "0 4px 18px rgba(198,22,141,0.28)", cursor: loading || sdpTaken ? "not-allowed" : "pointer", transition: "background .18s, box-shadow .18s", fontFamily: FONT }}>
                 {loading ? <Loader2 size={17} style={{ animation: "sh-spin .85s linear infinite" }} /> : <><Send size={13} strokeWidth={2.2} /><span>Verifikasi Email</span></>}
               </button>
             </div>
