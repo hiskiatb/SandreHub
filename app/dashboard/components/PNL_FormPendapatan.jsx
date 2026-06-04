@@ -70,7 +70,6 @@ const mk = (d) => ({
   disabledColor: d ? '#7A7A8A' : '#7878A0',
   info: d ? '#60C8F0' : '#0284C7', infoBg: d ? 'rgba(96,200,240,0.10)' : 'rgba(2,132,199,0.07)',
   infoBd: d ? 'rgba(96,200,240,0.25)' : 'rgba(2,132,199,0.18)',
-  // SPM-only field theme (purple-ish)
   spm: d ? '#A78BFA' : '#7C3AED', spmBg: d ? 'rgba(167,139,250,0.10)' : 'rgba(124,58,237,0.06)',
   spmBd: d ? 'rgba(167,139,250,0.26)' : 'rgba(124,58,237,0.18)',
 });
@@ -177,7 +176,6 @@ const SecLabel = ({ children, t }) => (
   </div>
 );
 
-// ─── SPM-Only Field Badge ─────────────────────────────────────────────────────
 function SpmBadge({ t }) {
   return (
     <span style={{
@@ -191,7 +189,6 @@ function SpmBadge({ t }) {
   );
 }
 
-// ─── Last Updated Info ────────────────────────────────────────────────────────
 function LastUpdatedInfo({ info, updatedAt, t }) {
   const dateStr = info?.at || updatedAt;
   if (!dateStr) return null;
@@ -206,8 +203,6 @@ function LastUpdatedInfo({ info, updatedAt, t }) {
   );
 }
 
-// ─── SPM Field Wrapper ────────────────────────────────────────────────────────
-// Wraps a field with locked indicator, last update info, and report button
 function SpmField({ label, children, info, updatedAt, onReport, canReport, t }) {
   return (
     <div style={{ padding: '14px 16px', borderRadius: 10, background: t.spmBg, border: `1px solid ${t.spmBd}` }}>
@@ -482,7 +477,7 @@ function SumRow({ icon: Icon, label, value, highlight, t }) {
 const FormPendapatan = ({
   onUpdate, theme, setIsFormDirty, activeContext, onSaveSuccess, readOnly = false,
   disabledMonths = new Set(), onMonthChange,
-  userRole = '',   // NEW: 'spm_sumatera' | 'finance_mpx' | 'internal_ioh' | etc.
+  userRole = '',
 }) => {
   const [step, setStep] = useState(1);
   const [showSubmit, setShowSubmit] = useState(false);
@@ -494,12 +489,17 @@ const FormPendapatan = ({
   const [toast, setToast] = useState({ show: false, type: 'success', msg: '' });
   const [reportStatus, setReportStatus] = useState({ isFinalized: false, finalizedAt: null, finalizedBy: null, validationNotes: null, updatedAt: null });
 
-  // ── SPM fields last-update info (from pnl_import_logs) ────────────────────
-  const [spmFieldsInfo, setSpmFieldsInfo] = useState({ slaFee: null, champions: null });
+  // ── SPM fields last-update info ───────────────────────────────────────────
+  // Now includes backMargin alongside slaFee and champions
+  const [spmFieldsInfo, setSpmFieldsInfo] = useState({
+    backMargin: null,
+    slaFee: null,
+    champions: null,
+  });
 
   // ── Dispute report modal ──────────────────────────────────────────────────
   const [showReportModal, setShowReportModal] = useState(false);
-  const [reportField, setReportField]         = useState(null); // 'slaFee' | 'champions'
+  const [reportField, setReportField]         = useState(null); // 'backMargin' | 'slaFee' | 'champions'
   const [reportMsg, setReportMsg]             = useState('');
   const [reportSending, setReportSending]     = useState(false);
 
@@ -512,10 +512,8 @@ const FormPendapatan = ({
   const effectiveReadOnly = readOnly || monthDisabled;
 
   // ── Role-based field permissions ──────────────────────────────────────────
-  // SLA Monthly Fee and Hadiah Champions Club: only editable by spm_sumatera
-  const isSPMUser       = userRole === 'spm_sumatera';
+  const isSPMUser        = userRole === 'spm_sumatera';
   const spmFieldReadOnly = effectiveReadOnly || !isSPMUser;
-  // finance_mpx can report (not read-only overall, but not SPM either)
   const canReportDispute = !effectiveReadOnly && !isSPMUser && userRole === 'finance_mpx';
 
   // ── Default state factory ─────────────────────────────────────────────────
@@ -561,7 +559,8 @@ const FormPendapatan = ({
     if (monthDisabled) { setIsLoading(false); setData(defaults()); setAttachments([]); return; }
     (async () => {
       if (!ctx.mpxName || !ctx.branch) { setIsLoading(false); return; }
-      setIsLoading(true); setAttachments([]); setSpmFieldsInfo({ slaFee: null, champions: null });
+      setIsLoading(true); setAttachments([]);
+      setSpmFieldsInfo({ backMargin: null, slaFee: null, champions: null });
       try {
         const { data: db, error } = await supabase.from('pnl_reports').select('*')
           .eq('partner_name', ctx.mpxName).eq('branch', ctx.branch)
@@ -588,8 +587,8 @@ const FormPendapatan = ({
         setData(s); prevCtx$.current = ctx; fetched$.current = true;
 
         // ── Query pnl_import_logs for SPM field last-update info ──────────
+        // Tracks: back_margin, sla_fee, rewards_champions
         try {
-          // pk format matches ImportWizard: partner|branch|mpc|month|year (lowercase)
           const pkStr = `${ctx.mpxName}|${ctx.branch}|${ctx.mpxType}|${ctx.month}|${ctx.year}`.toLowerCase();
           const { data: iLogs } = await supabase
             .from('pnl_import_logs')
@@ -597,22 +596,25 @@ const FormPendapatan = ({
             .order('created_at', { ascending: false })
             .limit(30);
           if (iLogs && iLogs.length > 0) {
-            let slaInfo = null, champInfo = null;
+            let backMarginInfo = null, slaInfo = null, champInfo = null;
             for (const log of iLogs) {
               const entries = log.entries || [];
               const entry = entries.find(e => e.pk === pkStr);
               if (entry) {
                 const changes = entry.changes || [];
+                if (!backMarginInfo && changes.some(c => c.field === 'back_margin')) {
+                  backMarginInfo = { at: log.created_at, by: log.user_email };
+                }
                 if (!slaInfo && changes.some(c => c.field === 'sla_fee')) {
                   slaInfo = { at: log.created_at, by: log.user_email };
                 }
                 if (!champInfo && changes.some(c => c.field === 'rewards_champions')) {
                   champInfo = { at: log.created_at, by: log.user_email };
                 }
-                if (slaInfo && champInfo) break;
+                if (backMarginInfo && slaInfo && champInfo) break;
               }
             }
-            setSpmFieldsInfo({ slaFee: slaInfo, champions: champInfo });
+            setSpmFieldsInfo({ backMargin: backMarginInfo, slaFee: slaInfo, champions: champInfo });
           }
         } catch (logErr) {
           console.warn('Import logs fetch:', logErr.message);
@@ -718,8 +720,8 @@ const FormPendapatan = ({
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Sesi berakhir');
-      const fieldLabel = reportField === 'slaFee' ? 'SLA Monthly Fee' : 'Hadiah Champions Club';
-      const fieldValue = reportField === 'slaFee' ? data.salesFee.slaFee : data.rewards.champions;
+      const fieldLabel = { backMargin: 'Back Margin', slaFee: 'SLA Monthly Fee', champions: 'Hadiah Champions Club' }[reportField];
+      const fieldValue = reportField === 'backMargin' ? data.salesFee.backMargin : reportField === 'slaFee' ? data.salesFee.slaFee : data.rewards.champions;
       await pushNotification(supabase, {
         type: 'field_dispute',
         form: 'pendapatan',
@@ -752,8 +754,11 @@ const FormPendapatan = ({
   // ── Standard product handlers ─────────────────────────────────────────────
   const updateVal = useCallback((section, id, field, val) => {
     if (effectiveReadOnly) return;
-    // Enforce SPM-only for sla_fee and rewards_champions
-    if (!isSPMUser && (field === 'slaFee' || (section === 'salesFee' && field === 'slaFee') || (section === 'rewards' && field === 'champions'))) return;
+    // Enforce SPM-only for back_margin, sla_fee, and rewards_champions
+    if (!isSPMUser && (
+      (section === 'salesFee' && (field === 'backMargin' || field === 'slaFee')) ||
+      (section === 'rewards'  && field === 'champions')
+    )) return;
     setData(prev => {
       if (section === 'partnerIncome') return { ...prev, partnerIncome: val };
       if (Array.isArray(prev[section])) return { ...prev, [section]: prev[section].map(i => i.id === id ? { ...i, [field]: val } : i) };
@@ -846,6 +851,15 @@ const FormPendapatan = ({
   const notes = reportStatus.validationNotes ?? '';
   const hasPengeluaranFinal = notes.includes('pengeluaran:final');
 
+  // ── Dispute modal derived values ──────────────────────────────────────────
+  const REPORT_FIELD_MAP = {
+    backMargin: { label: 'Back Margin',          value: () => data.salesFee.backMargin },
+    slaFee:     { label: 'SLA Monthly Fee',       value: () => data.salesFee.slaFee },
+    champions:  { label: 'Hadiah Champions Club', value: () => data.rewards.champions },
+  };
+  const reportFieldLabel = reportField ? REPORT_FIELD_MAP[reportField].label : '';
+  const reportFieldValue = reportField ? REPORT_FIELD_MAP[reportField].value() : 0;
+
   if (isLoading) return (
     <><G d={d} t={t} />
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: 340, gap: 14, fontFamily: FONT_STACK }}>
@@ -857,10 +871,6 @@ const FormPendapatan = ({
       </div>
     </>
   );
-
-  // ── Dispute Report Modal ──────────────────────────────────────────────────
-  const reportFieldLabel = reportField === 'slaFee' ? 'SLA Monthly Fee' : 'Hadiah Champions Club';
-  const reportFieldValue = reportField === 'slaFee' ? data.salesFee.slaFee : data.rewards.champions;
 
   return (
     <div style={{ width: '100%', margin: '0 auto', paddingBottom: 80, fontFamily: FONT_STACK, WebkitFontSmoothing: 'antialiased', color: t.hi }}>
@@ -923,8 +933,6 @@ const FormPendapatan = ({
                         <div style={{ fontSize: 11, color: t.mid, marginTop: 2 }}>Laporan akan dikirim ke Tim SPM Sumatera</div>
                       </div>
                     </div>
-
-                    {/* Field info */}
                     <div style={{ padding: '11px 14px', borderRadius: 9, background: t.spmBg, border: `1px solid ${t.spmBd}`, marginBottom: 14 }}>
                       <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: t.spm, marginBottom: 4 }}>Field yang Dilaporkan</div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -932,12 +940,8 @@ const FormPendapatan = ({
                         <span style={{ fontSize: 14, fontWeight: 700, color: t.spm, fontVariantNumeric: 'tabular-nums' }}>{formatIDR(reportFieldValue)}</span>
                       </div>
                     </div>
-
-                    {/* Message textarea */}
                     <div style={{ marginBottom: 16 }}>
-                      <label style={{ display: 'block', fontSize: 10, fontWeight: 700, letterSpacing: '0.09em', textTransform: 'uppercase', color: t.mid, marginBottom: 6 }}>
-                        Alasan / Keterangan
-                      </label>
+                      <label style={{ display: 'block', fontSize: 10, fontWeight: 700, letterSpacing: '0.09em', textTransform: 'uppercase', color: t.mid, marginBottom: 6 }}>Alasan / Keterangan</label>
                       <textarea
                         value={reportMsg}
                         onChange={e => setReportMsg(e.target.value)}
@@ -951,15 +955,9 @@ const FormPendapatan = ({
                       <div style={{ fontSize: 10, color: t.lo, marginTop: 4 }}>{reportMsg.trim().length} karakter · minimal 10 karakter untuk mengirim</div>
                     </div>
                   </div>
-
                   <div style={{ padding: '8px 24px 20px', display: 'flex', gap: 8 }}>
-                    <button onClick={() => { if (!reportSending) setShowReportModal(false); }}
-                      className="fp-btn-ghost" style={{ flex: 1, justifyContent: 'center' }} disabled={reportSending}>
-                      Batal
-                    </button>
-                    <button onClick={handleReport}
-                      disabled={reportMsg.trim().length < 10 || reportSending}
-                      className="fp-btn-primary"
+                    <button onClick={() => { if (!reportSending) setShowReportModal(false); }} className="fp-btn-ghost" style={{ flex: 1, justifyContent: 'center' }} disabled={reportSending}>Batal</button>
+                    <button onClick={handleReport} disabled={reportMsg.trim().length < 10 || reportSending} className="fp-btn-primary"
                       style={{ flex: 1, justifyContent: 'center', background: reportSending ? t.redBg : 'linear-gradient(135deg,#DC2626,#B91C1C)', color: reportSending ? t.red : '#fff', boxShadow: 'none' }}>
                       {reportSending ? <><Loader2 size={13} style={{ animation: 'fpspin 1s linear infinite' }} />Mengirim…</> : <><Send size={13} />Kirim Laporan</>}
                     </button>
@@ -1128,12 +1126,36 @@ const FormPendapatan = ({
                   <div style={{ fontSize: 20, fontWeight: 800, color: t.green, fontVariantNumeric: 'tabular-nums' }}>{formatIDR(stats.upfront)}</div>
                 </div>
 
-                {/* B. Sales Margin */}
+                {/* B. Sales Margin — Realtime editable, Back Margin SPM-only */}
                 <Card t={t}><Body>
                   <SecLabel t={t}>B. Sales Margin</SecLabel>
-                  <div className="gsf" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 11 }}>
-                    <div><label className="lbl">Realtime Margin</label><LocalInput numericValue={data.salesFee.realtimeMargin} onChange={v => updateVal('salesFee', null, 'realtimeMargin', v)} className={effectiveReadOnly ? 'fpi fpi-ro' : 'fpi'} readOnly={effectiveReadOnly} /></div>
-                    <div><label className="lbl">Back Margin</label><LocalInput numericValue={data.salesFee.backMargin} onChange={v => updateVal('salesFee', null, 'backMargin', v)} className={effectiveReadOnly ? 'fpi fpi-ro' : 'fpi'} readOnly={effectiveReadOnly} /></div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
+                    {/* Realtime Margin — editable by finance_mpx */}
+                    <div>
+                      <label className="lbl">Realtime Margin</label>
+                      <LocalInput numericValue={data.salesFee.realtimeMargin} onChange={v => updateVal('salesFee', null, 'realtimeMargin', v)} className={effectiveReadOnly ? 'fpi fpi-ro' : 'fpi'} readOnly={effectiveReadOnly} />
+                    </div>
+                    {/* Back Margin — SPM only */}
+                    <SpmField
+                      label="Back Margin"
+                      info={spmFieldsInfo.backMargin}
+                      updatedAt={!spmFieldsInfo.backMargin && data.salesFee.backMargin > 0 ? reportStatus.updatedAt : null}
+                      canReport={canReportDispute}
+                      onReport={() => openReport('backMargin')}
+                      t={t}
+                    >
+                      <LocalInput
+                        numericValue={data.salesFee.backMargin}
+                        onChange={v => updateVal('salesFee', null, 'backMargin', v)}
+                        className={spmFieldReadOnly ? 'fpi-spm fpi-spm-ro' : 'fpi-spm'}
+                        readOnly={spmFieldReadOnly}
+                      />
+                      {!isSPMUser && !effectiveReadOnly && (
+                        <div style={{ marginTop: 6, fontSize: 10, color: t.lo, lineHeight: 1.5 }}>
+                          Nilai ini diisi oleh Tim SPM Sumatera. Jika tidak sesuai, gunakan tombol <strong style={{ color: t.red }}>Laporkan</strong>.
+                        </div>
+                      )}
+                    </SpmField>
                   </div>
                 </Body></Card>
 
@@ -1174,7 +1196,7 @@ const FormPendapatan = ({
                       <div style={{ width: 34, height: 34, borderRadius: 8, background: 'rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}><Zap size={16} /></div>
                       <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#fff' }}>Total Sales Fee</span>
                     </div>
-                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.65)', paddingLeft: 44 }}>Upfront Discount + Sales Margin + SLA Fee + Special Program</div>
+                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.65)', paddingLeft: 44 }}>Upfront Discount + Realtime + Back Margin + SLA Fee + Special Program</div>
                   </div>
                   <span style={{ fontSize: 26, fontWeight: 800, color: '#fff', fontVariantNumeric: 'tabular-nums' }}>{formatIDR(stats.sfTotal)}</span>
                 </div>
@@ -1210,7 +1232,7 @@ const FormPendapatan = ({
                       )}
                     </SpmField>
 
-                    {/* B. Hadiah Lainnya — editable by finance_mpx */}
+                    {/* B. Hadiah Lainnya */}
                     <div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 7 }}>
                         <label className="lbl" style={{ margin: 0 }}>B. Hadiah Lainnya</label>
@@ -1276,13 +1298,14 @@ const FormPendapatan = ({
                     )}
                   </Body></Card>
 
-                  {/* SPM Fields Summary in Review */}
+                  {/* SPM Fields Summary — now includes Back Margin */}
                   <Card t={t}><Body>
                     <SecLabel t={t}>Nilai Diisi Tim SPM</SecLabel>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                       {[
-                        { label: 'SLA Monthly Fee', value: data.salesFee.slaFee, info: spmFieldsInfo.slaFee, field: 'slaFee' },
-                        { label: 'Hadiah Champions Club', value: data.rewards.champions, info: spmFieldsInfo.champions, field: 'champions' },
+                        { label: 'Back Margin',           value: data.salesFee.backMargin,  info: spmFieldsInfo.backMargin,  field: 'backMargin' },
+                        { label: 'SLA Monthly Fee',       value: data.salesFee.slaFee,      info: spmFieldsInfo.slaFee,      field: 'slaFee'     },
+                        { label: 'Hadiah Champions Club', value: data.rewards.champions,    info: spmFieldsInfo.champions,   field: 'champions'  },
                       ].map(item => (
                         <div key={item.field} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '11px 14px', borderRadius: 9, background: t.spmBg, border: `1px solid ${t.spmBd}` }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
