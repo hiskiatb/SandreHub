@@ -188,15 +188,19 @@ function getRegionFromRow(r) {
 function getPartnerNameFromRow(r) {
   return (r["Partner Name"]||r["partner name"]||r["PARTNER NAME"]||r["partner_name"]||r["partnerName"]||"").toString();
 }
-
 /*
  * applySidebarFilter — v3
- * filterPartner DIHAPUS. Data selalu menampilkan semua partner.
- * Filter partner dilakukan user via dropdown sidebar (filters.ptype).
- * regionFilter tetap aktif untuk IOH regional.
+ * FIX: Menambahkan parameter 'partnerName' agar Finance MPX 
+ * hanya melihat data sesuai perusahaan mereka sendiri (di-lock di belakang layar).
  */
-function applySidebarFilter(rows, filterMpxType, regionFilter, masterData, src) {
+function applySidebarFilter(rows, partnerName, filterMpxType, regionFilter, masterData, src) {
   let result = rows;
+
+  // --- FILTER PARTNER: Mengunci data untuk Finance MPX ---
+  if (partnerName && src !== "agency") {
+    const targetPartner = normalizeName(partnerName);
+    result = result.filter(r => normalizeName(getPartnerNameFromRow(r)) === targetPartner);
+  }
 
   if (filterMpxType && src !== "agency") {
     const tp = filterMpxType.toUpperCase().trim();
@@ -550,14 +554,18 @@ export default function PayoutTracker({
   const [partnerFile, setPartnerFile] = useState("");
   const [agencyFile,  setAgencyFile]  = useState("");
 
-  // Derived: partnerName TIDAK digunakan sebagai filter — semua partner tampil
+  // Derived: Memfilter data sebelum dimasukkan ke dalam chart/tabel
   const { partnerRaw, agencyRaw } = useMemo(() => {
     const pAll = allRaw.filter(r => r._source === "partner" || !r._source);
     const aAll = allRaw.filter(r => r._source === "agency");
-    const pR = applySidebarFilter(pAll, filterMpxType, regionFilter, masterData, "partner");
-    const aR = applySidebarFilter(aAll, null, null, null, "agency");
+    
+    // FIX: Mengirimkan 'partnerName' ke argumen kedua fungsi
+    const pR = applySidebarFilter(pAll, partnerName, filterMpxType, regionFilter, masterData, "partner");
+    const aR = applySidebarFilter(aAll, null, null, null, null, "agency");
+    
     return { partnerRaw: pR, agencyRaw: aR };
-  }, [allRaw, filterMpxType, regionFilter, masterData]);
+  }, [allRaw, partnerName, filterMpxType, regionFilter, masterData]); 
+  // FIX: Pastikan 'partnerName' juga dimasukkan ke array dependency agar ter-update.
 
   const { partnerAgg, agencyAgg } = useMemo(() => {
     const { agg: pAgg } = parseRows(partnerRaw, "partner");
