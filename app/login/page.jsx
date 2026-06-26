@@ -42,6 +42,7 @@ const HUBS = [
     desc:     "Marketing Sumatera",
     sub:      "Untuk BME, RGE, dan Territory Manager",
     path:     "/marta/login",
+    dev:      true,
     gradient: "linear-gradient(135deg,#ED1C24 0%,#C2187C 100%)",
     border:   "rgba(194,24,124,0.35)",
     glow:     "rgba(194,24,124,0.12)",
@@ -173,6 +174,18 @@ export default function HubPickerPage() {
                   <div style={{ fontSize: 13, color: t.mid, lineHeight: 1.5 }}>
                     {hub.sub}
                   </div>
+                  {hub.dev && (
+                    <div style={{
+                      marginTop: 7, display: "inline-flex", alignItems: "center", gap: 5,
+                      fontSize: 9.5, fontWeight: 800, letterSpacing: "0.1em",
+                      textTransform: "uppercase", padding: "3px 8px", borderRadius: 99,
+                      color: d ? "#FBBF24" : "#B45309",
+                      background: d ? "rgba(245,158,11,0.14)" : "rgba(217,119,6,0.10)",
+                      border: `1px solid ${d ? "rgba(245,158,11,0.32)" : "rgba(217,119,6,0.28)"}`,
+                    }}>
+                      🚧 Dalam Pengembangan
+                    </div>
+                  )}
                 </div>
 
                 {/* Arrow */}

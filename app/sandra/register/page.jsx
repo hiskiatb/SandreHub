@@ -457,6 +457,12 @@ export default function RegisterPage() {
       <div className="sh-mesh"><div className="sh-mesh-o1"/><div className="sh-mesh-o2"/><div className="sh-mesh-o3"/><div className="sh-mesh-v"/></div>
       {loading && <LoadingBar />}
 
+      {/* Back to hub picker */}
+      <button className="sh-btn" onClick={() => router.push("/login")}
+        style={{ position: "fixed", top: 16, left: 16, zIndex: 50, display: "flex", alignItems: "center", gap: 6, height: 36, padding: "0 13px", borderRadius: 9, border: `1px solid ${t.line}`, background: d ? "rgba(22,22,24,0.88)" : "rgba(255,255,255,0.88)", backdropFilter: "blur(20px)", WebkitBackdropFilter: "blur(20px)", color: t.mid, fontSize: 13, fontWeight: 600, fontFamily: FONT, cursor: "pointer" }}>
+        <ArrowLeft size={14} strokeWidth={2} /> Ganti Hub
+      </button>
+
       {/* Theme toggle */}
       <button className="sh-btn"
         onClick={() => { const n = !d; setD(n); localStorage.setItem("sh-theme", n ? "dark" : "light"); }}

@@ -1,9 +1,9 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import supabaseMarta from "../../../lib/supabaseMarta";
+import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { HubLogo } from "../../../components/HubLogo";
-import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, Construction } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -54,6 +54,7 @@ export default function MartaLoginPage() {
 
   const handleLogin = async () => {
     setErrMsg(""); setErrors([]);
+    if (!MARTA_CONFIGURED) { setErrMsg("MartaHub masih dalam pengembangan — login belum tersedia."); return; }
     const empty = ["email", "password"].filter(k => !form[k]);
     if (empty.length) { setErrors(empty); setErrMsg("Harap isi email dan kata sandi."); return; }
     setLoading(true);
@@ -145,16 +146,25 @@ export default function MartaLoginPage() {
                 <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.04em", color: t.hi, lineHeight: 1.1 }}>
                   Marta<span style={{ background: `linear-gradient(90deg,${RED},${MAGA})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Hub</span>
                 </div>
-                <div style={{ marginTop: 3, fontSize: 11, fontWeight: 600, letterSpacing: "0.14em", textTransform: "uppercase", color: t.mid }}>
-                  Marketing Sumatera
+                <div style={{ marginTop: 5, display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 8px", borderRadius: 999, background: d ? "rgba(245,158,11,0.14)" : "rgba(217,119,6,0.10)", border: `1px solid ${d ? "rgba(245,158,11,0.32)" : "rgba(217,119,6,0.28)"}` }}>
+                  <Construction size={11} color={d ? "#FBBF24" : "#B45309"} strokeWidth={2.4} />
+                  <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", color: d ? "#FBBF24" : "#B45309" }}>Dalam Pengembangan</span>
                 </div>
               </div>
             </div>
 
             {/* Heading */}
-            <div style={{ marginBottom: 20 }}>
+            <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 17, fontWeight: 700, color: t.hi, letterSpacing: "-0.02em" }}>Masuk ke Akun</div>
               <div style={{ marginTop: 3, fontSize: 13, color: t.mid }}>Selamat datang kembali</div>
+            </div>
+
+            {/* Dev notice */}
+            <div style={{ marginBottom: 18, padding: "10px 13px", borderRadius: 10, background: d ? "rgba(245,158,11,0.10)" : "rgba(217,119,6,0.07)", border: `1px solid ${d ? "rgba(245,158,11,0.26)" : "rgba(217,119,6,0.22)"}`, display: "flex", alignItems: "flex-start", gap: 9 }}>
+              <Construction size={15} color={d ? "#FBBF24" : "#B45309"} strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: d ? "#FBBF24" : "#B45309" }}>
+                MartaHub sedang dalam tahap pengembangan{MARTA_CONFIGURED ? "" : " — sebagian fitur, termasuk login, belum tersedia"}.
+              </span>
             </div>
 
             {/* Error */}
@@ -197,9 +207,9 @@ export default function MartaLoginPage() {
             </div>
 
             {/* Submit */}
-            <button onClick={handleLogin} disabled={loading}
-              style={{ marginTop: 20, width: "100%", height: 46, borderRadius: 10, border: "none", background: loading ? `${RED}55` : `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: loading ? "none" : `0 4px 18px rgba(237,28,36,0.25)`, cursor: loading ? "not-allowed" : "pointer", fontFamily: FONT, transition: "opacity 0.15s" }}>
-              {loading ? <Loader2 size={16} style={{ animation: "spin .85s linear infinite" }} /> : <><span>Masuk ke MartaHub</span><ArrowRight size={14} strokeWidth={2.5} /></>}
+            <button onClick={handleLogin} disabled={loading || !MARTA_CONFIGURED}
+              style={{ marginTop: 20, width: "100%", height: 46, borderRadius: 10, border: "none", background: (loading || !MARTA_CONFIGURED) ? `${RED}55` : `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: (loading || !MARTA_CONFIGURED) ? "none" : `0 4px 18px rgba(237,28,36,0.25)`, cursor: (loading || !MARTA_CONFIGURED) ? "not-allowed" : "pointer", fontFamily: FONT, transition: "opacity 0.15s" }}>
+              {!MARTA_CONFIGURED ? <span>Login belum tersedia</span> : loading ? <Loader2 size={16} style={{ animation: "spin .85s linear infinite" }} /> : <><span>Masuk ke MartaHub</span><ArrowRight size={14} strokeWidth={2.5} /></>}
             </button>
           </div>
 

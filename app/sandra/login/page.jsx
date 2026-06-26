@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import supabase from "../../../lib/supabase";
 import { HubLogo } from "../../../components/HubLogo";
-import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowRight, CheckCircle2 } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const FONT  = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -108,6 +108,13 @@ export default function SandraLoginPage() {
         <div style={{ position:"absolute", top:"-20%", left:"-10%", width:"60vw", height:"60vw", borderRadius:"50%", background:"radial-gradient(circle,rgba(237,28,36,0.08) 0%,transparent 70%)", filter:"blur(2px)" }} />
         <div style={{ position:"absolute", bottom:"-15%", right:"-5%", width:"50vw", height:"50vw", borderRadius:"50%", background:"radial-gradient(circle,rgba(194,24,124,0.07) 0%,transparent 70%)", filter:"blur(2px)" }} />
         <div style={{ position:"absolute", inset:0, background:d?"radial-gradient(ellipse at 50% 50%,transparent 30%,rgba(10,10,11,0.7) 100%)":"radial-gradient(ellipse at 50% 50%,transparent 30%,rgba(244,244,246,0.6) 100%)" }} />
+      </div>
+
+      {/* Back to hub picker */}
+      <div style={{ position:"fixed", top:18, left:18, zIndex:50 }}>
+        <button onClick={() => router.push("/login")} style={{ display:"flex", alignItems:"center", gap:6, background:d?"rgba(20,20,23,0.9)":"rgba(255,255,255,0.9)", border:`1px solid ${t.line}`, borderRadius:10, padding:"8px 14px", cursor:"pointer", color:t.mid, fontSize:13, fontWeight:600, fontFamily:FONT, backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)" }}>
+          <ArrowLeft size={14}/> Ganti Hub
+        </button>
       </div>
 
       <button onClick={() => { const n=!d; setD(n); localStorage.setItem("hub-theme",n?"dark":"light"); }} style={{ position:"fixed", top:18, right:18, zIndex:50, width:36, height:36, borderRadius:10, border:`1px solid ${t.line}`, background:d?"rgba(20,20,23,0.9)":"rgba(255,255,255,0.9)", backdropFilter:"blur(20px)", WebkitBackdropFilter:"blur(20px)", display:"flex", alignItems:"center", justifyContent:"center", color:t.mid, cursor:"pointer" }}>
