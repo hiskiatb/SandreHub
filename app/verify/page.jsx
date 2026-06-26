@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import supabase from "../../lib/supabase";
 import { generateOTP } from "../../lib/email/otp";
 import { sendOTPEmail } from "../../lib/email/sendOTP";
-import { Sun, Moon, Loader2, ChevronLeft, MailOpen, ShieldCheck, RefreshCw, Edit3, AlertCircle } from "lucide-react";
+import { Sun, Moon, Loader2, ChevronLeft, MailOpen, ShieldCheck, RefreshCw, Edit3, AlertCircle, Box } from "lucide-react";
 import { HubLogo } from "../../components/HubLogo";
 
 const B = { red: "#ED1C24", yellow: "#FFCB05", teal: "#32BCAD", magenta: "#C6168D" };
