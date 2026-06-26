@@ -19,6 +19,16 @@
   }
 }
 
+/* Explicit user preference overrides OS setting */
+[data-theme="dark"] {
+  --background: #0A0A0B;
+  --foreground: #F0F0F2;
+}
+[data-theme="light"] {
+  --background: #F4F4F6;
+  --foreground: #111116;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);

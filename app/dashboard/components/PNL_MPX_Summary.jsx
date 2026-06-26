@@ -457,7 +457,7 @@ async function makePDF(data, r, ctx, attachments = []) {
       ...(r.up   ? [["  — Upfront Discount (1,5% MOBO)",fRpFull(r.up),   fPctR(r.p(r.up))]]   : []),
       ...(r.smg  ? [["  — Sales Margin (RT + Back)",    fRpFull(r.smg),  fPctR(r.p(r.smg))]]  : []),
       ...(r.sla  ? [["  — Monthly Fee SLA",             fRpFull(r.sla),  fPctR(r.p(r.sla))]]  : []),
-      ...(r.spc  ? [["  — Special Program",             fRpFull(r.spc),  fPctR(r.p(r.spc))]]  : []),
+      ...(r.spc  ? [["  — Tactical Program",             fRpFull(r.spc),  fPctR(r.p(r.spc))]]  : []),
       ...(r.thd  ? [["Hadiah & Lainnya",                fRpFull(r.thd),  fPctR(r.p(r.thd))]]  : []),
       ...(r.rwc  ? [["  — Rewards Champions Club",      fRpFull(r.rwc),  fPctR(r.p(r.rwc))]]  : []),
       ...(r.rwl  ? [["  — Rewards Lainnya",             fRpFull(r.rwl),  fPctR(r.p(r.rwl))]]  : []),
@@ -592,7 +592,7 @@ async function makePDF(data, r, ctx, attachments = []) {
   if (r.up)  komRows.push(["Upfront Discount (1,5% Modal MOBO)", fRpFull(r.up),  fPct(r.tko ? r.up  / r.tko * 100 : 0)]);
   if (r.smg) komRows.push(["Sales Margin (Realtime + Back Margin)", fRpFull(r.smg), fPct(r.tko ? r.smg / r.tko * 100 : 0)]);
   if (r.sla) komRows.push(["Monthly Fee SLA", fRpFull(r.sla), fPct(r.tko ? r.sla / r.tko * 100 : 0)]);
-  if (r.spc) komRows.push(["Special Program", fRpFull(r.spc), fPct(r.tko ? r.spc / r.tko * 100 : 0)]);
+  if (r.spc) komRows.push(["Tactical Program", fRpFull(r.spc), fPct(r.tko ? r.spc / r.tko * 100 : 0)]);
   if (komRows.length) {
     komRows.push(["TOTAL KOMISI & INSENTIF", fRpFull(r.tko), "100,00%"]);
     tbl("4. KOMISI & INSENTIF", ["Keterangan", "Jumlah (IDR)", "% dari Total"], komRows,
@@ -957,7 +957,7 @@ const MPX_Summary_PNL = ({ activeContext, theme }) => {
     ...(report.up  ? [{ label: "— Upfront Discount",  amount: report.up,  ratio: report.p(report.up),  indent: 2 }] : []),
     ...(report.smg ? [{ label: "— Sales Margin",       amount: report.smg, ratio: report.p(report.smg), indent: 2 }] : []),
     ...(report.sla ? [{ label: "— Monthly Fee SLA",    amount: report.sla, ratio: report.p(report.sla), indent: 2 }] : []),
-    ...(report.spc ? [{ label: "— Special Program",    amount: report.spc, ratio: report.p(report.spc), indent: 2 }] : []),
+    ...(report.spc ? [{ label: "— Tactical Program",    amount: report.spc, ratio: report.p(report.spc), indent: 2 }] : []),
 
     { label: "Total Hadiah & Lainnya",     amount: report.thd,  ratio: report.p(report.thd),  indent: 1, kind: "subtot" },
     ...(report.rwc ? [{ label: "— Champions Club",     amount: report.rwc, ratio: report.p(report.rwc), indent: 2 }] : []),

@@ -3,14 +3,16 @@
  * page.jsx
  *
  * CHANGES:
- * - Tambah SDP Status Form (Status Badan Usaha & Individual)
- * - Role baru: cse_leader (profile.cluster) dan sdp_user (profile.sdp_id)
+ * - Tambah SDP Status Form
+ * - Role lapangan: cse_rse (akses per cluster, aplikasi mobile)
  * - Tambah userRole prop ke FormPendapatan
  * - Tambah Import Data Otomatis (PNL_ImportWizard) untuk role spm_sumatera
  */
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import supabase from "../../lib/supabase";
 import { useRouter } from "next/navigation";
+import { HubLogo } from "../../components/HubLogo";
+import { HubLogoLoader, HubLogoLoaderDark } from "../../components/HubLogoLoader";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ArrowUpRight, ArrowDownLeft, LayoutGrid, PieChart, Sun, Moon,
@@ -18,7 +20,7 @@ import {
   LogOut, ChevronRight, Calendar, Box, Layers,
   Shield, Globe, Building2, Store, SlidersHorizontal,
   Table2, Wallet, PanelLeftClose, PanelLeftOpen,
-  FileSpreadsheet, Users,
+  FileSpreadsheet, Users, Key,
 } from "lucide-react";
 
 import FormPendapatan   from "./components/PNL_FormPendapatan";
@@ -31,6 +33,8 @@ import NotificationBell from "./components/NotificationBell";
 import AdminPanel       from "./components/PNL_AdminPanel";
 import PNL_ImportWizard from "./components/PNL_ImportWizard";
 import SDP_StatusForm   from "./components/SDP_StatusForm";
+import MC_ClusterMapping from "./components/MC_ClusterMapping";
+import KodeOtoritas     from "./components/KodeOtoritas";
 
 // ─── Role Maps ────────────────────────────────────────────────────────────────
 const IOH_ROLE_REGION_MAP = {
@@ -38,8 +42,7 @@ const IOH_ROLE_REGION_MAP = {
   "ioh_north_sumatera":   "NORTH SUMATERA",
   "ioh_central_sumatera": "CENTRAL SUMATERA",
   "ioh_south_sumatera":   "SOUTH SUMATERA",
-  "cse_leader":           null,   // akses per cluster (profile.cluster)
-  "sdp_user":             null,   // akses SDP sendiri (profile.sdp_id)
+  "cse_rse":              null,   // akses per cluster (mobile)
 };
 const IOH_ROLES = new Set(["internal_ioh","ioh_north_sumatera","ioh_central_sumatera","ioh_south_sumatera"]);
 
@@ -50,8 +53,7 @@ const ROLE_BADGE = {
   "ioh_north_sumatera":   { bg: "yellowBg",  bd: "yellowBd",  color: "yellow"  },
   "ioh_central_sumatera": { bg: "yellowBg",  bd: "yellowBd",  color: "yellow"  },
   "ioh_south_sumatera":   { bg: "yellowBg",  bd: "yellowBd",  color: "yellow"  },
-  "cse_leader":           { bg: "blueBg",    bd: "blueBd",    color: "blue"    },
-  "sdp_user":             { bg: "blueBg",    bd: "blueBd",    color: "blue"    },
+  "cse_rse":              { bg: "blueBg",    bd: "blueBd",    color: "blue"    },
 };
 
 // ─── Theme ────────────────────────────────────────────────────────────────────
@@ -162,8 +164,8 @@ const CURRENT_YEAR        = CURRENT_DATE.getFullYear();
 const getCurrentMonth     = () => MONTHS[CURRENT_MONTH_INDEX];
 const getCurrentYear      = () => CURRENT_YEAR.toString();
 
-const HIDE_DATE_PICKER_VIEWS    = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status"]);
-const HIDE_SIDEBAR_FILTER_VIEWS = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status"]);
+const HIDE_DATE_PICKER_VIEWS    = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","mc-cluster","kode-otoritas"]);
+const HIDE_SIDEBAR_FILTER_VIEWS = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","mc-cluster","kode-otoritas"]);
 const PNL_VIEWS = new Set(["summary","pendapatan","pengeluaran"]);
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -252,17 +254,8 @@ function DashCard({ icon, title, desc, tag, active, onClick, t, d, accent = {} }
 
 function LoadingScreen() {
   return (
-    <div style={{ width: "100%", height: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0D0D0E", fontFamily: FONT_STACK }}>
-      <style>{`@keyframes sp{to{transform:rotate(360deg)}} @keyframes bt{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.55;transform:scale(.9)}}`}</style>
-      <div style={{ position: "relative", width: 80, height: 80, marginBottom: 28 }}>
-        <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: "2px solid transparent", borderTopColor: "#ED1C24", borderRightColor: "transparent", animation: "sp 1.1s linear infinite" }}/>
-        <div style={{ position: "absolute", inset: 14, borderRadius: 12, background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", display: "flex", alignItems: "center", justifyContent: "center", animation: "bt 2s ease-in-out infinite" }}>
-          <Box size={22} color="#FFFFFF" strokeWidth={2.2} />
-        </div>
-      </div>
-      <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.04em", color: "#F2F2F3" }}>
-        Sandra<span style={{ background: "linear-gradient(90deg,#ED1C24,#C6168D)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Hub</span>
-      </div>
+    <div style={{ width:"100%", height:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--background,#F4F4F7)" }}>
+      <HubLogoLoader variant="sandra" logoSize={88} />
     </div>
   );
 }
@@ -281,7 +274,7 @@ function SidebarToggleBtn({ collapsed, onToggle, t }) {
 function RoleBadge({ role, t }) {
   const cfg = ROLE_BADGE[role] || ROLE_BADGE["finance_mpx"];
   // CSE/SDP use blue badge colors (not t.blue which is the brand red)
-  const isSdpRole = role === "cse_leader" || role === "sdp_user";
+  const isSdpRole = role === "cse_rse";
   return (
     <span style={{
       display: "inline-flex", alignItems: "center", gap: 4,
@@ -368,7 +361,11 @@ export default function DashboardPage() {
   const [loading,           setLoading]          = useState(true);
   const [profile,           setProfile]          = useState(null);
   const [view,              setView]             = useState("overview");
-  const [theme,             setTheme]            = useState("dark");
+  const [theme,             setTheme]            = useState(() =>
+    typeof window !== "undefined"
+      ? (localStorage.getItem("hub-theme") || localStorage.getItem("sh-theme") || "dark")
+      : "dark"
+  );
   const [profileOpen,       setProfileOpen]      = useState(false);
   const [navOpen,           setNavOpen]          = useState(true);
   const [sidebarCollapsed,  setSidebarCollapsed] = useState(false);
@@ -390,9 +387,10 @@ export default function DashboardPage() {
   const isSPM       = profile?.role === "spm_sumatera";
   const isMPX       = profile?.role === "finance_mpx";
   const isIOHAny    = IOH_ROLES.has(profile?.role);
-  const isCSE       = profile?.role === "cse_leader";
-  const isSDPUser   = profile?.role === "sdp_user";
-  const isSDPMember = isCSE || isSDPUser;   // bisa akses SDP Status Form
+  const isCSE       = profile?.role === "cse_rse";
+  const isBSM       = profile?.role === "bsm";
+  const isPICRegion = profile?.role === "pic_region";
+  const isSDPMember = isCSE || isBSM || isPICRegion;   // bisa akses SDP Status Form
 
   const iohLockedRegion = IOH_ROLE_REGION_MAP[profile?.role] ?? null;
   const isReadOnly      = isIOHAny;
@@ -429,21 +427,21 @@ export default function DashboardPage() {
 
   const d = theme === "dark";
   const t = tk(d);
-  const toggleTheme = () => { const next = d ? "light" : "dark"; setTheme(next); localStorage.setItem("sh-theme", next); };
+  const toggleTheme = () => { const next = d ? "light" : "dark"; setTheme(next); localStorage.setItem("hub-theme", next); localStorage.setItem("sh-theme", next); };
 
   // ── Init ──────────────────────────────────────────────────────────────────
   useEffect(() => {
-    setTheme(localStorage.getItem("sh-theme") || "dark");
+    setTheme(localStorage.getItem("hub-theme") || localStorage.getItem("sh-theme") || "dark");
     const sc = localStorage.getItem("sh-sidebar-collapsed");
     if (sc) setSidebarCollapsed(sc === "true");
 
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return router.push("/login");
+      if (!user) return router.push("/sandra/login");
       const { data: prof } = await supabase.from("profiles").select("*").eq("id", user.id).single();
 
-      // CSE/SDP user: tidak perlu load partner_branches
-      const isCseOrSdp = prof?.role === "cse_leader" || prof?.role === "sdp_user";
+      // CSE/SDP/BSM/PIC: tidak perlu load partner_branches
+      const isCseOrSdp = prof?.role === "cse_rse" || prof?.role === "bsm" || prof?.role === "pic_region";
       let mapData = [];
       if (!isCseOrSdp) {
         let query = supabase.from("partner_branches").select("*").order("partner_name", { ascending: true });
@@ -563,6 +561,22 @@ export default function DashboardPage() {
     setActiveType("ALL");
   };
 
+  // Muat ulang daftar partner/branch (dipakai setelah Admin Panel menambah/
+  // mengubah/menghapus branch) supaya selektor & Control Center langsung sinkron.
+  const refreshBranches = useCallback(async () => {
+    if (!profile) return;
+    const isCseOrSdp = profile.role === "cse_rse" || profile.role === "bsm" || profile.role === "pic_region";
+    if (isCseOrSdp) return;
+    let query = supabase.from("partner_branches").select("*").order("partner_name", { ascending: true });
+    if (profile.role === "finance_mpx") query = query.eq("partner_name", profile.partner_name);
+    const lockedRegion = IOH_ROLE_REGION_MAP[profile.role];
+    if (lockedRegion) query = query.eq("region", lockedRegion);
+    const { data } = await query;
+    const mapData = data || [];
+    setMasterData(mapData);
+    setRegions([...new Set(mapData.map(i => i.region))].sort());
+  }, [profile]);
+
   const navigate = (viewId) => {
     if (formDirty) { setPendingView(viewId); setExitConfirm(true); }
     else { setView(viewId); setMobileOpen(false); }
@@ -585,8 +599,8 @@ export default function DashboardPage() {
   const SidebarInner = () => (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", userSelect: "none" }}>
       <div style={{ height: HEADER_H, display: "flex", alignItems: "center", padding: "0 20px", flexShrink: 0, borderBottom: `1px solid ${t.line}`, background: d ? "linear-gradient(135deg, #1A0506 0%, #111113 100%)" : "linear-gradient(135deg, #FFF5F5 0%, #FFFFFF 100%)" }}>
-        <div style={{ width: 32, height: 32, borderRadius: 8, flexShrink: 0, background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", display: "flex", alignItems: "center", justifyContent: "center", color: "#FFFFFF" }}>
-          <Box size={15} strokeWidth={2.4} />
+        <div style={{ width: 32, height: 32, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <HubLogo variant="sandra" size={32} dark={d} shadow={false} />
         </div>
         <div style={{ marginLeft: 10 }}>
           <span style={{ fontSize: 18, fontWeight: 700, letterSpacing: "-0.03em", color: t.hi, lineHeight: 1 }}>
@@ -666,9 +680,11 @@ export default function DashboardPage() {
                   {canMonitor && <SNavItem icon={<Table2 size={14} />}        label="Pivot P&L Summary"    active={view === "pivot-summary"}  onClick={() => navigate("pivot-summary")} />}
                   {!isSDPMember && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} onClick={() => navigate("payout-tracker")} />}
                   {!isSDPMember && <SNavItem icon={<PieChart size={14} />}    label="Laporan P&L"          active={PNL_VIEWS.has(view)}       onClick={() => navigate("summary")} />}
-                  {canSdp       && <SNavItem icon={<Users size={14} />}       label="Status SDP"           active={view === "sdp-status"}     onClick={() => navigate("sdp-status")} />}
+                  {canSdp       && <SNavItem icon={<Users size={14} />}       label="SDP Status"           active={view === "sdp-status"}     onClick={() => navigate("sdp-status")} />}
                   {isSPM        && <SNavItem icon={<Shield size={14} />}      label="Admin Panel"          active={view === "admin-panel"}    onClick={() => navigate("admin-panel")} />}
                   {isSPM        && <SNavItem icon={<FileSpreadsheet size={14} />} label="Import Data"      active={view === "import-wizard"}  onClick={() => navigate("import-wizard")} />}
+                  {isSPM        && <SNavItem icon={<MapPin size={14} />}           label="MC/Cluster Mapping" active={view === "mc-cluster"}       onClick={() => navigate("mc-cluster")} />}
+                  {isSPM        && <SNavItem icon={<Key size={14} />}              label="Kode Otoritas"      active={view === "kode-otoritas"}    onClick={() => navigate("kode-otoritas")} />}
                 </div>
               </motion.div>
             )}
@@ -750,7 +766,7 @@ export default function DashboardPage() {
                       <RoleBadge role={profile?.role} t={t} />
                     </div>
                     <div style={{ padding: 6 }}>
-                      <button className="danger-btn" onClick={async () => { await supabase.auth.signOut(); router.replace("/login"); }}><LogOut size={14} /> Keluar dari Akun</button>
+                      <button className="danger-btn" onClick={async () => { await supabase.auth.signOut(); router.replace("/sandra/login"); }}><LogOut size={14} /> Keluar dari Akun</button>
                     </div>
                   </motion.div>
                 )}
@@ -815,15 +831,17 @@ export default function DashboardPage() {
                       accent={{ color: "#C6168D", bg: d ? "rgba(198,22,141,0.11)" : "rgba(198,22,141,0.07)", bd: d ? "rgba(198,22,141,0.28)" : "rgba(198,22,141,0.16)", shadow: "rgba(198,22,141,0.16)" }} />
                   )}
 
-                  {/* Status SDP — SPM, CSE, dan SDP user */}
+                  {/* SDP Status — SPM, BSM, CSE, SDP user */}
                   {canSdp && (
-                    <DashCard icon={<Users size={20} />} title="Status Badan Usaha & Individual"
+                    <DashCard icon={<Users size={20} />} title="SDP Status"
                       desc={
-                        isSPM     ? "Pantau dan kelola status pengisian data seluruh 361 SDP Sumatera dengan dashboard & cluster table." :
-                        isCSE     ? `Update dan verifikasi data SDP di micro cluster ${profile?.cluster || "Anda"}.` :
-                                    `Isi dan submit data SDP Anda (${profile?.sdp_id || "—"}).`
+                        isSPM       ? "Upload territory, mapping kode otoritas, rekap data, dan pantau status seluruh SDP Sumatera." :
+                        isCSE       ? `Isi formulir data SDP di cluster ${profile?.cluster || "Anda"}.` :
+                        isBSM       ? "Kelola kode otoritas CSE/RGE, rekap data SDP, dan konfirmasi di branch Anda." :
+                        isPICRegion ? "Monitor progres pengisian dan konfirmasi BSM seluruh SDP." :
+                                      `Isi dan submit data SDP Anda.`
                       }
-                      tag={isSPM ? "Admin" : "SDP"} active={true} onClick={() => navigate("sdp-status")} t={t} d={d}
+                      tag={isSPM ? "Admin" : isBSM ? "BSM" : isPICRegion ? "PIC" : "SDP"} active={true} onClick={() => navigate("sdp-status")} t={t} d={d}
                       accent={{ color: d ? "#30D158" : "#1A9E5A", bg: d ? "rgba(48,209,88,0.11)" : "rgba(26,158,90,0.07)", bd: d ? "rgba(48,209,88,0.28)" : "rgba(26,158,90,0.20)", shadow: "rgba(48,209,88,0.16)" }} />
                   )}
 
@@ -835,10 +853,24 @@ export default function DashboardPage() {
                   )}
 
                   {isSPM && (
+                    <DashCard icon={<MapPin size={20} />} title="MC / Cluster Mapping"
+                      desc="Kelola mapping MC (IM3) dan Cluster (3ID) per branch. Upload CSV atau tambah data manual."
+                      tag="Admin" active={true} onClick={() => navigate("mc-cluster")} t={t} d={d}
+                      accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.12)" : "rgba(50,188,173,0.08)", bd: d ? "rgba(50,188,173,0.30)" : "rgba(50,188,173,0.20)", shadow: "rgba(50,188,173,0.20)" }} />
+                  )}
+
+                  {isSPM && (
                     <DashCard icon={<FileSpreadsheet size={20} />} title="Import Data Otomatis"
                       desc="Upload Excel/CSV, mapping kolom drag-and-drop, lalu import massal ke database laporan."
                       tag="Admin" active={true} onClick={() => navigate("import-wizard")} t={t} d={d}
                       accent={{ color: d ? "#60C8F0" : "#0284C7", bg: d ? "rgba(96,200,240,0.11)" : "rgba(2,132,199,0.07)", bd: d ? "rgba(96,200,240,0.28)" : "rgba(2,132,199,0.18)", shadow: "rgba(2,132,199,0.16)" }} />
+                  )}
+
+                  {isSPM && (
+                    <DashCard icon={<Key size={20} />} title="Kode Otoritas"
+                      desc="Kelola semua kode otoritas BSM, Sales Team (MC/Cluster), dan Partner dalam satu tempat."
+                      tag="Admin" active={true} onClick={() => navigate("kode-otoritas")} t={t} d={d}
+                      accent={{ color: "#C6168D", bg: d ? "rgba(198,22,141,0.11)" : "rgba(198,22,141,0.07)", bd: d ? "rgba(198,22,141,0.28)" : "rgba(198,22,141,0.16)", shadow: "rgba(198,22,141,0.16)" }} />
                   )}
                 </div>
               </motion.div>
@@ -877,7 +909,7 @@ export default function DashboardPage() {
             {view === "admin-panel" && isSPM && (
               <motion.div key="ap" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
-                <AdminPanel theme={theme} profile={profile} />
+                <AdminPanel theme={theme} profile={profile} onBranchesChanged={refreshBranches} />
               </motion.div>
             )}
 
@@ -893,7 +925,23 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
-            {/* ── Status Badan Usaha & Individual (SDP) ── */}
+            {/* ── MC / Cluster Mapping ── */}
+            {view === "mc-cluster" && isSPM && (
+              <motion.div key="mc" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <MC_ClusterMapping theme={theme} profile={profile} />
+              </motion.div>
+            )}
+
+            {/* ── Kode Otoritas ── */}
+            {view === "kode-otoritas" && isSPM && (
+              <motion.div key="ko" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <KodeOtoritas theme={theme} profile={profile} />
+              </motion.div>
+            )}
+
+            {/* ── SDP Status ── */}
             {view === "sdp-status" && canSdp && (
               <motion.div key="sdp" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 {!isSDPMember && (

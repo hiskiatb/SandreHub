@@ -1,0 +1,58 @@
+"use client";
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import supabaseMarta from "../../../lib/supabaseMarta";
+import { HubLogo } from "../../../components/HubLogo";
+import { HubLogoLoader } from "../../../components/HubLogoLoader";
+
+const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,sans-serif`;
+
+export default function ActivityPlanPage() {
+  const router = useRouter();
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    supabaseMarta.auth.getSession().then(({ data: { session } }) => {
+      if (!session) { router.replace("/marta/login?redirect=/martahub/activities"); return; }
+      setUser(session.user);
+      setLoading(false);
+    });
+  }, [router]);
+
+  if (loading) return (
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F0F4FA" }}>
+      <HubLogoLoader variant="marta" logoSize={80} />
+    </div>
+  );
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#F0F4FA", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 0 }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,700;9..40,800&display=swap');`}</style>
+
+      <HubLogo variant="marta" size={72} shadow />
+
+      <div style={{ marginTop: 28, textAlign: "center" }}>
+        <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.04em", color: "#1A1A1D", marginBottom: 8 }}>
+          Activity Plan
+        </div>
+        <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: "#AEAEB8", marginBottom: 24 }}>
+          Coming Soon
+        </div>
+        <p style={{ fontSize: 14, color: "#5A5A68", lineHeight: 1.6, maxWidth: 380, margin: "0 auto 32px" }}>
+          Fitur Activity Planning untuk BME/RGE sedang dalam pengembangan. Buat rencana kegiatan marketing, atur jadwal, dan kelola target harian.
+        </p>
+        <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
+          <button onClick={() => router.push("/martahub")}
+            style={{ padding: "10px 22px", borderRadius: 10, background: "#1565C0", color: "white", border: "none", fontWeight: 700, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>
+            ← Kembali ke Dashboard
+          </button>
+          <button onClick={() => router.push("/")}
+            style={{ padding: "10px 22px", borderRadius: 10, background: "transparent", color: "#8A8A96", border: "1px solid #D4D4DA", fontWeight: 600, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>
+            Hub Selector
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

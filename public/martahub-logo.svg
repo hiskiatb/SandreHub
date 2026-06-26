@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <defs>
+    <linearGradient id="hexGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#FF3B30"/>
+      <stop offset="50%"  stop-color="#ED1C24"/>
+      <stop offset="100%" stop-color="#C0392B"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#ED1C24" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+  <!-- Flat-top hexagon with rounded corners -->
+  <path
+    d="M50 6
+       L84 25
+       Q90 28.5 90 36
+       L90 64
+       Q90 71.5 84 75
+       L50 94
+       L16 75
+       Q10 71.5 10 64
+       L10 36
+       Q10 28.5 16 25
+       Z"
+    fill="url(#hexGrad)"
+    filter="url(#shadow)"
+  />
+  <!-- M letter -->
+  <text
+    x="50" y="67"
+    text-anchor="middle"
+    font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif"
+    font-size="52"
+    font-weight="900"
+    fill="white"
+    letter-spacing="-2"
+  >M</text>
+</svg>

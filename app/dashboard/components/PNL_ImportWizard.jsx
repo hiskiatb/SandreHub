@@ -10,15 +10,13 @@ import{
   AlertCircle,Check,ArrowRight,Equal,User,
 }from"lucide-react";
 
-const PK=["partner_name","branch","mpc_mp3","month","year"];
 const FF=`"DM Sans",-apple-system,"Helvetica Neue",sans-serif`;
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 
 /* ─────────────────────────────────────────────────────────────
-   NOT-NULL DEFAULTS  — semua kolom NOT NULL yang bukan PK
-   Pastikan upsert tidak mengirim null untuk kolom ini
+   NOT-NULL DEFAULTS  — semua kolom NOT NULL yang bukan PK (PNL)
    ───────────────────────────────────────────────────────────── */
-const NOT_NULL_DEFAULTS={
+const PNL_NOT_NULL_DEFAULTS={
   label_mkt_lain_1:"Program Lain",
   qty_mkt_lain_2:0,price_mkt_lain_2:0,label_mkt_lain_2:"",
   qty_mkt_lain_3:0,price_mkt_lain_3:0,label_mkt_lain_3:"",
@@ -63,11 +61,38 @@ const T=d=>({
 
 /* ─────────────────────────────────────────────────────────────
    FORM DEFINITIONS
+   Setiap form punya: pk[], table, conflictKey, notNullDefaults
    ───────────────────────────────────────────────────────────── */
 const FORM_DEFS={
+  sdp_rekap:{
+    id:"sdp_rekap",label:"Rekap Data SDP",
+    description:"Import data bulanan SDP: status usaha, owner, kontak",
+    pk:["sdp_id","period"],
+    table:"sdp_monthly_data",
+    conflictKey:"sdp_id,period",
+    notNullDefaults:{},
+    fields:[
+      {key:"sdp_id",    label:"SDP ID",              group:"primary",required:true, type:"text"},
+      {key:"period",    label:"Periode",              group:"primary",required:true, type:"period_select"},
+      {key:"status_usaha",          label:"Status Usaha",          group:"data",required:false,type:"text"},
+      {key:"nama_owner",            label:"Nama Owner",            group:"data",required:false,type:"text"},
+      {key:"nik",                   label:"NIK",                   group:"data",required:false,type:"text"},
+      {key:"no_ottocash",           label:"No Ottocash",           group:"data",required:false,type:"text"},
+      {key:"alamat",                label:"Alamat",                group:"data",required:false,type:"text"},
+      {key:"email_owner",           label:"Email Owner",           group:"data",required:false,type:"text"},
+      {key:"email_pic_list",        label:"Email PIC (pisah koma)",group:"data",required:false,type:"array"},
+      {key:"no_whatsapp",           label:"No WhatsApp",           group:"data",required:false,type:"text"},
+      {key:"terminate_status",      label:"Status Kemitraan",       group:"status",required:false,type:"text"},
+      {key:"bsm_status",            label:"Status BSM",             group:"status",required:false,type:"text"},
+    ],
+  },
   pendapatan:{
     id:"pendapatan",label:"Form Pendapatan",
     description:"Margin produk, Saldo Mobo, Sales Fee, Rewards",
+    pk:["partner_name","branch","mpc_mp3","month","year"],
+    table:"pnl_reports",
+    conflictKey:"partner_name,branch,mpc_mp3,month,year",
+    notNullDefaults:PNL_NOT_NULL_DEFAULTS,
     fields:[
       {key:"partner_name",label:"Nama Partner",group:"primary",required:true,type:"text"},
       {key:"branch",label:"Branch / Cabang",group:"primary",required:true,type:"text"},
@@ -115,7 +140,7 @@ const FORM_DEFS={
       {key:"realtime_margin",label:"Realtime Margin",group:"salesfee",required:false,type:"numeric"},
       {key:"back_margin",label:"Back Margin",group:"salesfee",required:false,type:"numeric"},
       {key:"sla_fee",label:"SLA Monthly Fee",group:"salesfee",required:false,type:"numeric"},
-      {key:"special_program",label:"Special Program",group:"salesfee",required:false,type:"numeric"},
+      {key:"special_program",label:"Tactical Program",group:"salesfee",required:false,type:"numeric"},
       {key:"rewards_champions",label:"Hadiah Champions Club",group:"rewards",required:false,type:"numeric"},
       {key:"rewards_lainnya",label:"Hadiah Lainnya",group:"rewards",required:false,type:"numeric"},
       {key:"partner_income",label:"Pendapatan Partner (Manual)",group:"rewards",required:false,type:"numeric"},
@@ -124,6 +149,10 @@ const FORM_DEFS={
   pengeluaran:{
     id:"pengeluaran",label:"Form Pengeluaran",
     description:"OPEX, SDM, Marketing — biaya operasional partner",
+    pk:["partner_name","branch","mpc_mp3","month","year"],
+    table:"pnl_reports",
+    conflictKey:"partner_name,branch,mpc_mp3,month,year",
+    notNullDefaults:PNL_NOT_NULL_DEFAULTS,
     fields:[
       {key:"partner_name",label:"Nama Partner",group:"primary",required:true,type:"text"},
       {key:"branch",label:"Branch / Cabang",group:"primary",required:true,type:"text"},
@@ -206,6 +235,7 @@ const GROUP_META={
   salesfee:{label:"⚡ Sales Fee"},rewards:{label:"🏆 Rewards"},
   opex:{label:"🏢 OPEX"},sdm:{label:"👥 SDM / HR"},
   mkt:{label:"📣 Marketing"},com:{label:"💳 Cost of Money"},
+  data:{label:"📋 Data SDP"},status:{label:"⚠️ Status Terminate"},
 };
 
 /* ─────────────────────────────────────────────────────────────
@@ -321,7 +351,7 @@ function Bdg({c="gray",children,small}){
 /* ═══════════════════════════════════════════════════════════════
    MAIN COMPONENT
    ═══════════════════════════════════════════════════════════════ */
-export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb}){
+export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,formTypeProp=null}){
   const d=theme==="dark",t=T(d);
   const cssVars={
     "--t1":t.t1,"--t2":t.t2,"--t3":t.t3,
@@ -343,7 +373,7 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb}){
   const[headerRow,setHeaderRow]=useState(0);
   const[fileCols,setFileCols]=useState([]);
   const[fileRows,setFileRows]=useState([]);
-  const[formType,setFormType]=useState("pendapatan");
+  const[formType,setFormType]=useState(formTypeProp??"pendapatan");
   const[dragOver,setDragOver]=useState(false);
 
   /* ── mapping ── */
@@ -374,12 +404,23 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb}){
   const[logExpandedEntry,setLogExpandedEntry]=useState(null);
   const[currentUser,setCurrentUser]=useState(null);
 
+  /* ── SDP fixed values & period list ── */
+  const[fixedValues,setFixedValues]=useState({});
+  const[sdpPeriods,setSdpPeriods]=useState([]);
+
   /* ── toast ── */
   const[toast,setToast]=useState(null);
   const[selectedChip,setSelectedChip]=useState(null); // click-to-map
   const fileRef=useRef(null);
   const abortRef=useRef(false);
   const fd=FORM_DEFS[formType];
+
+  /* ── Per-form config (PK, table, conflict key) ── */
+  const formPK          = fd?.pk          ?? ["partner_name","branch","mpc_mp3","month","year"];
+  const formTable       = fd?.table       ?? "pnl_reports";
+  const formConflict    = fd?.conflictKey ?? "partner_name,branch,mpc_mp3,month,year";
+  const formDefaults    = fd?.notNullDefaults ?? PNL_NOT_NULL_DEFAULTS;
+  const isSDP           = formType === "sdp_rekap";
 
   const toast$=(type,msg)=>{setToast({type,msg});setTimeout(()=>setToast(null),4500);};
 
@@ -402,6 +443,15 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb}){
       if(data?.user)setCurrentUser({id:data.user.id,email:data.user.email});
     });
   },[sb]);
+
+  /* ── fetch available periods for SDP period_select dropdown ── */
+  useEffect(()=>{
+    if(!isSDP||!sb)return;
+    sb.from("sdp_master").select("period").then(({data})=>{
+      const periods=[...new Set((data||[]).map(r=>r.period).filter(Boolean))].sort().reverse();
+      setSdpPeriods(periods);
+    });
+  },[isSDP,sb]);
 
   /* ─────────────────────────────────────────────────────────
      LOG OPERATIONS — Supabase SQL table (fallback: localStorage)
@@ -566,18 +616,20 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb}){
     return fileRows.map((row,i)=>{
       const out={};let okPK=true;
       for(const f of fd.fields){
+        const hasFixed=fixedValues[f.key]!==undefined;
         const src=mapping[f.key];
-        const raw=src!==undefined?(row[src]??""):"";
+        const raw=hasFixed?fixedValues[f.key]:(src!==undefined?(row[src]??""):"");
         if(f.type==="numeric"){const n=pNum(raw);out[f.key]=n!==null?n:(raw!==""?raw:"");}
+        else if(f.type==="array"){out[f.key]=String(raw||"").split(",").map(s=>s.trim()).filter(Boolean);}
         else out[f.key]=String(raw||"").trim();
-        if(f.required&&(out[f.key]===""||out[f.key]===null))okPK=false;
+        if(f.required&&(out[f.key]===""||out[f.key]===null||(Array.isArray(out[f.key])&&!out[f.key].length)))okPK=false;
       }
-      const pk=PK.map(k=>String(out[k]||"").trim().toLowerCase()).join("|");
+      const pk=formPK.map(k=>{const v=out[k];return String(Array.isArray(v)?v.join(","):v||"").trim().toLowerCase();}).join("|");
       return{_i:i,_ok:okPK,_pk:pk,...out};
     });
-  },[fileRows,mapping,fd]);
+  },[fileRows,mapping,fixedValues,fd,formPK]);
 
-  const mappedNonPK=useMemo(()=>fd.fields.filter(f=>!PK.includes(f.key)&&mapping[f.key]),[fd,mapping]);
+  const mappedNonPK=useMemo(()=>fd.fields.filter(f=>!formPK.includes(f.key)&&mapping[f.key]),[fd,mapping,formPK]);
 
   /* ── row classification ── */
   const rowStatus=useCallback((row)=>{
@@ -613,10 +665,10 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb}){
   },[parsedRows,newsRows,updates,sameRows,skipped,toImport,filter]);
 
   const validation=useMemo(()=>{
-    const miss=fd.fields.filter(f=>f.required&&!mapping[f.key]);
+    const miss=fd.fields.filter(f=>f.required&&!mapping[f.key]&&fixedValues[f.key]===undefined);
     return{miss,ok:miss.length===0,mapped:Object.keys(mapping).length};
-  },[mapping,fd]);
-  const pkAllMapped=useMemo(()=>PK.every(k=>!!mapping[k]),[mapping]);
+  },[mapping,fixedValues,fd]);
+  const pkAllMapped=useMemo(()=>formPK.every(k=>!!mapping[k]||fixedValues[k]!==undefined),[mapping,fixedValues,formPK]);
 
   const totalChangedFields=useMemo(()=>{
     let count=0;
@@ -646,22 +698,23 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb}){
     if(!v.length){setExisting({});return;}
     setLoadingDB(true);setDbError(null);
     try{
-      const partners=[...new Set(v.map(r=>String(r.partner_name||"").trim()).filter(Boolean))];
-      let{data,error}=await sb.from("pnl_reports").select("*").in("partner_name",partners);
-      if(!error&&(!data||!data.length)&&partners.length){
-        const orF=partners.map(p=>`partner_name.ilike.${p}`).join(",");
-        ({data,error}=await sb.from("pnl_reports").select("*").or(orF));
+      const filterField=formPK[0];
+      const filterVals=[...new Set(v.map(r=>String(r[filterField]||"").trim()).filter(Boolean))];
+      let{data,error}=await sb.from(formTable).select("*").in(filterField,filterVals);
+      if(!error&&(!data||!data.length)&&filterVals.length&&!isSDP){
+        const orF=filterVals.map(p=>`${filterField}.ilike.${p}`).join(",");
+        ({data,error}=await sb.from(formTable).select("*").or(orF));
       }
       if(error)throw error;
       const map={};
       (data||[]).forEach(row=>{
-        const pk=PK.map(k=>String(row[k]||"").trim().toLowerCase()).join("|");
+        const pk=formPK.map(k=>String(row[k]||"").trim().toLowerCase()).join("|");
         map[pk]=row;
       });
       setExisting(map);setLastSync(Date.now());
     }catch(e){setDbError(e.message);toast$("error","Gagal memuat DB: "+e.message);}
     finally{setLoadingDB(false);}
-  },[sb,parsedRows]);
+  },[sb,parsedRows,formTable,formPK,isSDP]);
 
   useEffect(()=>{if(pkAllMapped)loadExisting();},[pkAllMapped,loadExisting]);
 
@@ -669,7 +722,7 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb}){
   const buildLogEntries=useCallback((rows)=>{
     return rows.map(row=>{
       const ex=existing[row._pk];
-      const pkValues={};PK.forEach(k=>{pkValues[k]=String(row[k]||"").trim();});
+      const pkValues={};formPK.forEach(k=>{pkValues[k]=String(row[k]||"").trim();});
       const changes=[];
       if(ex){
         /* Existing row: record only changed fields */
@@ -704,13 +757,13 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb}){
 
   /* ── export diff ── */
   const exportDiff=()=>{
-    const headers=["Status","Last Updated DB",...PK,
+    const headers=["Status","Last Updated DB",...formPK,
       ...mappedNonPK.flatMap(f=>[`${f.label} (Baru)`,`${f.label} (Lama DB)`])];
     const rows=parsedRows.map(row=>{
       const ex=existing[row._pk];
       const st={skip:"Skip",new:"Baru",update:"Update",same:"Sama"}[rowStatus(row)]||"?";
       const lastUpd=ex?.updated_at?fmtDateTime(ex.updated_at):"—";
-      const pkVals=PK.map(k=>String(row[k]||""));
+      const pkVals=formPK.map(k=>String(row[k]||""));
       const dataPairs=mappedNonPK.flatMap(f=>{
         const nv=dispRaw(row[f.key],f.type==="numeric");
         const ov=ex?dispRaw(ex[f.key],f.type==="numeric"):"—";
@@ -738,20 +791,19 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb}){
         /* Hapus kolom sistem */
         ["id","user_id","created_at","updated_at","is_finalized",
           "finalized_at","finalized_by"].forEach(k=>delete base[k]);
-        /* Terapkan field dari mapping */
+        /* Terapkan field dari mapping / fixed values */
         for(const f of fd.fields){
-          if(!mapping[f.key])continue;
-          if(PK.includes(f.key)){if(!ex)base[f.key]=String(row[f.key]||"").trim();continue;}
+          const hasMapped=!!mapping[f.key];
+          const hasFixed=fixedValues[f.key]!==undefined;
+          if(!hasMapped&&!hasFixed)continue;
+          if(formPK.includes(f.key)){if(!ex)base[f.key]=String(row[f.key]||"").trim();continue;}
           const v=row[f.key];
-          base[f.key]=f.type==="numeric"
-            ?(typeof v==="number"?v:(pNum(v)??0))
-            :String(v||"").trim();
+          if(f.type==="numeric")base[f.key]=typeof v==="number"?v:(pNum(v)??0);
+          else if(f.type==="array")base[f.key]=Array.isArray(v)?v:String(v||"").split(",").map(s=>s.trim()).filter(Boolean);
+          else base[f.key]=String(v||"").trim();
         }
-        /* ══ FIX: pastikan kolom NOT NULL tidak null ══
-           Terapkan default untuk kolom yang tidak ada di mapping.
-           Ini mencegah error "null value violates not-null constraint"
-           pada kolom seperti label_mkt_lain_1, attachments_*, dll. */
-        Object.entries(NOT_NULL_DEFAULTS).forEach(([k,v])=>{
+        /* Pastikan kolom NOT NULL tidak null (per-form defaults) */
+        Object.entries(formDefaults).forEach(([k,v])=>{
           if(base[k]===undefined||base[k]===null)base[k]=v;
         });
         return base;
@@ -760,8 +812,8 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb}){
       if(sb){
         for(let i=0;i<rows.length;i+=50){
           if(abortRef.current){fail+=rows.length-i;break;}
-          const{error}=await sb.from("pnl_reports")
-            .upsert(rows.slice(i,i+50),{onConflict:"partner_name,branch,mpc_mp3,month,year"});
+          const{error}=await sb.from(formTable)
+            .upsert(rows.slice(i,i+50),{onConflict:formConflict});
           if(error){fail+=Math.min(50,rows.length-i);errs.push(error.message);}
           else ok+=Math.min(50,rows.length-i);
           setImportProgress({done:Math.min(i+50,rows.length),total:rows.length});
@@ -794,7 +846,7 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb}){
     const pkStr=Object.values(pkValues).join("|");
     setRevertingId({logId,pkStr,field});
     try{
-      const{error}=await sb.from("pnl_reports")
+      const{error}=await sb.from(FORM_DEFS[formType]?.table??"pnl_reports")
         .update({[field]:oldVal!==undefined?oldVal:null}).match(pkValues);
       if(error)throw error;
       toast$("success","Kolom berhasil dikembalikan ke nilai sebelumnya");
@@ -821,7 +873,7 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb}){
     const pkStr=Object.values(entry.pkValues).join("|");
     setRevertingId({logId,pkStr,field:"__row__"});
     try{
-      const{error}=await sb.from("pnl_reports").update(upd).match(entry.pkValues);
+      const{error}=await sb.from(FORM_DEFS[formType]?.table??"pnl_reports").update(upd).match(entry.pkValues);
       if(error)throw error;
       toast$("success",`${Object.keys(upd).length} kolom dikembalikan`);
       const log=changeLog.find(l=>l.id===logId);
@@ -1067,10 +1119,7 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb}){
                                   )}
                                   <span style={{fontSize:11,fontWeight:500,color:t.t1,
                                     overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                                    {entry.pkValues?.partner_name}
-                                    <span style={{color:t.t3}}> · </span>{entry.pkValues?.branch}
-                                    <span style={{color:t.t3}}> · </span>
-                                    {entry.pkValues?.month} {entry.pkValues?.year}
+                                    {Object.values(entry.pkValues||{}).join(" · ")}
                                   </span>
                                 </div>
                                 <div style={{fontSize:10,color:t.t3}}>
@@ -1741,6 +1790,33 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb}){
                                     </span>
                                   )}
                                 </div>
+                                {/* Period dropdown for period_select type */}
+                                {f.type==="period_select"&&(
+                                  <div style={{marginTop:4}}>
+                                    <select
+                                      value={fixedValues[f.key]||""}
+                                      onChange={e=>{
+                                        const v=e.target.value;
+                                        if(v){
+                                          setFixedValues(p=>({...p,[f.key]:v}));
+                                          /* clear column mapping if any */
+                                          setMapping(p=>{const c={...p};delete c[f.key];return c;});
+                                        }else{
+                                          setFixedValues(p=>{const c={...p};delete c[f.key];return c;});
+                                        }
+                                      }}
+                                      style={{width:"100%",fontSize:11,padding:"4px 6px",
+                                        background:fixedValues[f.key]?t.G+"22":t.bg,
+                                        color:fixedValues[f.key]?t.G:t.t2,
+                                        border:`1px solid ${fixedValues[f.key]?t.G:t.lineS}`,
+                                        borderRadius:5,cursor:"pointer",outline:"none"}}>
+                                      <option value="">— Pilih periode —</option>
+                                      {sdpPeriods.map(p=>(
+                                        <option key={p} value={p}>{p}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
@@ -1809,12 +1885,12 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb}){
                       <span style={{fontSize:9,fontWeight:700,letterSpacing:".07em",
                         textTransform:"uppercase",color:t.t3}}>Status</span>
                     </th>
-                    {PK.map((k,ki)=>{
+                    {formPK.map((k,ki)=>{
                       const f=fd.fields.find(x=>x.key===k);
                       return(
                         <th key={k} style={{padding:"9px 11px",textAlign:"left",verticalAlign:"middle",
                           background:t.raised,borderBottom:`2px solid ${t.line}`,
-                          borderRight:ki===PK.length-1?`2px solid ${t.line}`:`1px solid ${t.lineS}`,
+                          borderRight:ki===formPK.length-1?`2px solid ${t.line}`:`1px solid ${t.lineS}`,
                           fontSize:10,fontWeight:700,color:t.acc,whiteSpace:"nowrap",minWidth:120}}>
                           <div>{f?.label||k}</div>
                           <div style={{fontSize:9,fontWeight:400,color:t.t3,marginTop:1}}>Primary Key</div>
@@ -1906,13 +1982,13 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb}){
                           )}
                         </td>
                         {/* PK cells */}
-                        {PK.map((k,ki)=>(
+                        {formPK.map((k,ki)=>(
                           <td key={k} style={{padding:"6px 11px",
                             color:!row[k]&&fd.fields.find(f=>f.key===k)?.required?t.R:t.t1,
                             fontWeight:ki===0?600:400,whiteSpace:"nowrap",
                             overflow:"hidden",textOverflow:"ellipsis",maxWidth:180,verticalAlign:"middle",
-                            borderRight:ki===PK.length-1?`2px solid ${t.line}`:`1px solid ${t.lineS}`,
-                            ...(k==="partner_name"?{
+                            borderRight:ki===formPK.length-1?`2px solid ${t.line}`:`1px solid ${t.lineS}`,
+                            ...(ki===0?{
                               position:"sticky",left:110,zIndex:2,background:stickyBg}:{})}}>
                             {String(row[k]||"—")}
                           </td>

@@ -592,7 +592,7 @@ export default function PNLControlCenter({
       setLoading(true);
       const { data, error } = await supabase
         .from("pnl_reports")
-        .select("partner_name,branch,mpc_mp3,month,year,is_finalized,validation_notes,finalized_at,updated_at")
+        .select("partner_name,branch,mpc_mp3,month,year,is_finalized,validation_notes,finalized_at,updated_at,grand_total_revenue,realtime_margin,back_margin,sla_fee,special_program,rewards_champions")
         .eq("year", Number(activeYear));
       if (!error && data) {
         const map = {};
@@ -734,6 +734,38 @@ export default function PNLControlCenter({
     const key  = `${row.partner_name}|${row.branch_name}|${row.mpc_mp3}|${month}|${year}`;
     const item = statusMap[key];
     if (!item) return { status: "EMPTY", notes: null, updatedAt: null };
+
+    // Jika laporan belum final dan SATU-SATUNYA data yang terisi adalah field
+    // yang diisi otomatis Tim SPM (Realtime/Back Margin, SLA, Tactical Program,
+    // Champions), maka partner belum mengisi apa pun -> jangan tandai Draft.
+    if (!item.is_finalized) {
+      const spmSum =
+        (Number(item.realtime_margin)  || 0) +
+        (Number(item.back_margin)      || 0) +
+        (Number(item.sla_fee)          || 0) +
+        (Number(item.special_program)  || 0) +
+        (Number(item.rewards_champions)|| 0);
+      const gtr = Number(item.grand_total_revenue) || 0;
+      const partnerPortion = gtr - spmSum;
+
+      // Januari & Februari: pada dua bulan ini data partner sempat diisi manual,
+      // jadi JANGAN berlakukan aturan umum "SPM-only -> EMPTY" — biarkan tetap
+      // Draft meski terlihat seperti hanya isian SPM. Pengecualian: bila yang
+      // terisi MURNI Sales Fee + Hadiah Champions (tanpa kontribusi partner sama
+      // sekali, partnerPortion = 0) maka tetap dianggap belum diisi (EMPTY).
+      if (month === "Januari" || month === "Februari") {
+        if (Math.abs(partnerPortion) < 1) {
+          return { status: "EMPTY", notes: null, updatedAt: null };
+        }
+      }
+      // Bulan lain: hanya anggap "SPM-only" bila total revenue tidak negatif
+      // (nilai negatif = sudah ada input partner, jangan disembunyikan) dan
+      // kontribusi partner ≤ 0.
+      else if (gtr >= 0 && partnerPortion <= 0) {
+        return { status: "EMPTY", notes: null, updatedAt: null };
+      }
+    }
+
     return {
       status:    item.is_finalized ? "FINALIZED" : "DRAFT",
       notes:     item.validation_notes || null,

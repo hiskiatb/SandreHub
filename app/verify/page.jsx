@@ -5,7 +5,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import supabase from "../../lib/supabase";
 import { generateOTP } from "../../lib/email/otp";
 import { sendOTPEmail } from "../../lib/email/sendOTP";
-import { Sun, Moon, Loader2, ChevronLeft, MailOpen, ShieldCheck, RefreshCw, Edit3, AlertCircle, Box } from "lucide-react";
+import { Sun, Moon, Loader2, ChevronLeft, MailOpen, ShieldCheck, RefreshCw, Edit3, AlertCircle } from "lucide-react";
+import { HubLogo } from "../../components/HubLogo";
 
 const B = { red: "#ED1C24", yellow: "#FFCB05", teal: "#32BCAD", magenta: "#C6168D" };
 
@@ -32,9 +33,7 @@ const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI","SF Pro Text
 function SandraHubLogo({ d }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
-      <div style={{ width: 56, height: 56, borderRadius: 14, background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", display: "flex", alignItems: "center", justifyContent: "center", color: "#FFFFFF", boxShadow: "0 8px 24px rgba(237,28,36,0.30)" }}>
-        <Box size={26} strokeWidth={2.2} />
-      </div>
+      <HubLogo variant="sandra" size={64} dark={d} shadow inBox />
       <div style={{ textAlign: "center" }}>
         <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.04em", lineHeight: 1, color: d ? "#F2F2F3" : "#1A1A1D" }}>
           Sandra<span style={{ background: "linear-gradient(90deg,#ED1C24,#C6168D)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Hub</span>
@@ -101,15 +100,10 @@ function VerifyContent() {
   useEffect(() => {
     setD(localStorage.getItem("sh-theme") !== "light");
     const raw = sessionStorage.getItem("pending_reg");
-
-if (raw) {
-    const parsed = JSON.parse(raw);
-    console.log("pending_reg:", parsed);
-    setPending(parsed);
-  }
-
-    if (raw) setPending(JSON.parse(raw));
-    else if (!emailParam) router.replace("/register");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      setPending(parsed);
+    } else if (!emailParam) router.replace("/register");
   }, [emailParam, router]);
 
   useEffect(() => {
@@ -187,8 +181,10 @@ const handleVerify = async () => {
     sessionStorage.removeItem("pending_reg");
     setDone(true);
 
+    // Redirect ke login yang sesuai berdasarkan role
+    const isSandraRole = ["bsm","cse_rse"].includes(pending?.role);
     setTimeout(() => {
-      router.push("/login?verified=true");
+      router.push(isSandraRole ? "/sandra/login?verified=1" : "/login?verified=true");
     }, 1800);
 
   } catch (err) {

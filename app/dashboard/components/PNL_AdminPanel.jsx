@@ -713,7 +713,7 @@ function AccessCodesSection({ t, d, refreshTrigger }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // SECTION 3 — Partner Branches
 // ═══════════════════════════════════════════════════════════════════════════════
-function PartnerBranchesSection({ t, d, onBranchAdded }) {
+function PartnerBranchesSection({ t, d, onBranchAdded, onChanged }) {
   const [branches,     setBranches]     = useState([]);
   const [loading,      setLoading]      = useState(true);
   const [search,       setSearch]       = useState("");
@@ -786,12 +786,17 @@ function PartnerBranchesSection({ t, d, onBranchAdded }) {
   };
 
   // ── Check duplicate branch before insert ─────────────────────────────────
-  const checkDuplicateBranch = async (partnerName, branchName) => {
+  // Keunikan mengikuti index DB unique_partner_branch_full:
+  // (partner_name, branch_name, mpc_mp3, region). Jadi partner+branch yang sama
+  // dengan MPC/MP3 berbeda TIDAK dianggap duplikat.
+  const checkDuplicateBranch = async (partnerName, branchName, mpcMp3, region) => {
     const { data } = await supabase
       .from("partner_branches")
       .select("id")
       .eq("partner_name", partnerName.trim())
       .eq("branch_name", branchName.trim())
+      .eq("mpc_mp3", mpcMp3)
+      .eq("region", region)
       .maybeSingle();
     return !!data;
   };
@@ -808,11 +813,13 @@ function PartnerBranchesSection({ t, d, onBranchAdded }) {
         const originalBranch = branches.find(b => b.id === editId);
         const partnerChanged = originalBranch?.partner_name !== form.partner_name.trim();
         const branchChanged  = originalBranch?.branch_name  !== form.branch_name.trim();
+        const mpcChanged     = originalBranch?.mpc_mp3       !== form.mpc_mp3;
+        const regionChanged  = originalBranch?.region        !== form.region;
 
-        if (partnerChanged || branchChanged) {
-          const isDuplicate = await checkDuplicateBranch(form.partner_name, form.branch_name);
+        if (partnerChanged || branchChanged || mpcChanged || regionChanged) {
+          const isDuplicate = await checkDuplicateBranch(form.partner_name, form.branch_name, form.mpc_mp3, form.region);
           if (isDuplicate) {
-            showToast("error", `Branch "${form.branch_name.trim()}" sudah terdaftar untuk partner "${form.partner_name.trim()}"`);
+            showToast("error", `Branch "${form.branch_name.trim()}" (${form.mpc_mp3}) sudah terdaftar untuk partner "${form.partner_name.trim()}"`);
             setSaving(false);
             return;
           }
@@ -829,9 +836,9 @@ function PartnerBranchesSection({ t, d, onBranchAdded }) {
 
       } else {
         // ── ADD mode — check duplicate first ─────────────────────────────────
-        const isDuplicate = await checkDuplicateBranch(form.partner_name, form.branch_name);
+        const isDuplicate = await checkDuplicateBranch(form.partner_name, form.branch_name, form.mpc_mp3, form.region);
         if (isDuplicate) {
-          showToast("error", `Branch "${form.branch_name.trim()}" sudah terdaftar untuk partner "${form.partner_name.trim()}"`);
+          showToast("error", `Branch "${form.branch_name.trim()}" (${form.mpc_mp3}) sudah terdaftar untuk partner "${form.partner_name.trim()}"`);
           setSaving(false);
           return;
         }
@@ -862,6 +869,7 @@ function PartnerBranchesSection({ t, d, onBranchAdded }) {
       setShowAdd(false);
       setEditId(null);
       load();
+      onChanged?.(); // beri tahu halaman agar reload daftar partner/branch (selektor & Control Center)
     } catch (e) {
       showToast("error", e.message);
     }
@@ -881,6 +889,7 @@ function PartnerBranchesSection({ t, d, onBranchAdded }) {
     showToast("success", "Branch dihapus");
     setConfirm(null);
     setBranches(prev => prev.filter(b => b.id !== id));
+    onChanged?.();
   };
 
   const REGION_COLORS = { "NORTH SUMATERA": "#3B82F6", "CENTRAL SUMATERA": "#F59E0B", "SOUTH SUMATERA": "#10B981" };
@@ -1103,7 +1112,7 @@ function PartnerBranchesSection({ t, d, onBranchAdded }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN
 // ═══════════════════════════════════════════════════════════════════════════════
-export default function PNL_AdminPanel({ theme, profile }) {
+export default function PNL_AdminPanel({ theme, profile, onBranchesChanged }) {
   const d = theme === "dark";
   const t = tk(d);
   const [tab, setTab] = useState("permissions");
@@ -1153,7 +1162,7 @@ export default function PNL_AdminPanel({ theme, profile }) {
       <div style={{ background: t.card, borderRadius: "0 0 14px 14px", border: `1px solid ${t.line}`, borderTop: "none", padding: "clamp(14px,3vw,24px)", boxShadow: t.shadow }}>
         {tab === "permissions" && <RolePermissionsSection t={t} d={d} />}
         {tab === "codes"       && <AccessCodesSection     t={t} d={d} refreshTrigger={codeRefresh} />}
-        {tab === "branches"    && <PartnerBranchesSection t={t} d={d} onBranchAdded={() => setCodeRefresh(c => c + 1)} />}
+        {tab === "branches"    && <PartnerBranchesSection t={t} d={d} onBranchAdded={() => setCodeRefresh(c => c + 1)} onChanged={onBranchesChanged} />}
       </div>
 
       {/* RLS guidance */}
