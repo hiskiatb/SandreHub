@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import supabase from "../../../lib/supabase";
 import { HubLogo } from "../../../components/HubLogo";
@@ -25,7 +25,7 @@ const mk = (d) => ({
   card$:   d ? "0 24px 60px rgba(0,0,0,0.65)" : "0 8px 40px rgba(0,0,0,0.10)",
 });
 
-export default function SandraLoginPage() {
+function SandraLoginInner() {
   const router       = useRouter();
   const searchParams = useSearchParams();
   const [d, setD]    = useState(true);
@@ -234,5 +234,13 @@ export default function SandraLoginPage() {
         button:active:not(:disabled) { transform: scale(0.97); }
       `}</style>
     </div>
+  );
+}
+
+export default function SandraLoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <SandraLoginInner />
+    </Suspense>
   );
 }

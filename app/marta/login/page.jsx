@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { HubLogo } from "../../../components/HubLogo";
@@ -24,7 +24,7 @@ const mk = (d) => ({
   card$:   d ? "0 24px 60px rgba(0,0,0,0.65)" : "0 8px 40px rgba(0,0,0,0.10)",
 });
 
-export default function MartaLoginPage() {
+function MartaLoginInner() {
   const router       = useRouter();
   const searchParams = useSearchParams();
   const [d, setD]    = useState(true);
@@ -244,5 +244,13 @@ export default function MartaLoginPage() {
         }
       `}</style>
     </div>
+  );
+}
+
+export default function MartaLoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <MartaLoginInner />
+    </Suspense>
   );
 }
