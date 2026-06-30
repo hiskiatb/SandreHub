@@ -182,7 +182,7 @@ const handleVerify = async () => {
     setDone(true);
 
     // Redirect ke login yang sesuai berdasarkan role
-    const isSandraRole = ["bsm","cse_rse"].includes(pending?.role);
+    const isSandraRole = ["bsm","cse_rse","agency"].includes(pending?.role);
     setTimeout(() => {
       router.push(isSandraRole ? "/sandra/login?verified=1" : "/login?verified=true");
     }, 1800);

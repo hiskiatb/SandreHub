@@ -20,7 +20,7 @@ import {
   LogOut, ChevronRight, Calendar, Box, Layers,
   Shield, Globe, Building2, Store, SlidersHorizontal,
   Table2, Wallet, PanelLeftClose, PanelLeftOpen,
-  FileSpreadsheet, Users, Key,
+  FileSpreadsheet, Users, Key, Briefcase,
 } from "lucide-react";
 
 import FormPendapatan   from "./components/PNL_FormPendapatan";
@@ -35,6 +35,7 @@ import PNL_ImportWizard from "./components/PNL_ImportWizard";
 import SDP_StatusForm   from "./components/SDP_StatusForm";
 import MC_ClusterMapping from "./components/MC_ClusterMapping";
 import KodeOtoritas     from "./components/KodeOtoritas";
+import MFTS_Module      from "./components/MFTS_Module";
 
 // ─── Role Maps ────────────────────────────────────────────────────────────────
 const IOH_ROLE_REGION_MAP = {
@@ -43,8 +44,14 @@ const IOH_ROLE_REGION_MAP = {
   "ioh_central_sumatera": "CENTRAL SUMATERA",
   "ioh_south_sumatera":   "SOUTH SUMATERA",
   "cse_rse":              null,   // akses per cluster (mobile)
+  // Salesforce Management (MFTS)
+  "salesforce_mgmt_sumatera": null,             // L2 — seluruh Sumatera (Circle)
+  "region_sfm_north":         "NORTH SUMATERA", // L3
+  "region_sfm_central":       "CENTRAL SUMATERA",
+  "region_sfm_south":         "SOUTH SUMATERA",
 };
 const IOH_ROLES = new Set(["internal_ioh","ioh_north_sumatera","ioh_central_sumatera","ioh_south_sumatera"]);
+const SFM_ROLES = new Set(["salesforce_mgmt_sumatera","region_sfm_north","region_sfm_central","region_sfm_south"]);
 
 const ROLE_BADGE = {
   "spm_sumatera":         { bg: "magentaBg", bd: "magentaBd", color: "magenta" },
@@ -164,7 +171,7 @@ const CURRENT_YEAR        = CURRENT_DATE.getFullYear();
 const getCurrentMonth     = () => MONTHS[CURRENT_MONTH_INDEX];
 const getCurrentYear      = () => CURRENT_YEAR.toString();
 
-const HIDE_DATE_PICKER_VIEWS    = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","mc-cluster","kode-otoritas"]);
+const HIDE_DATE_PICKER_VIEWS    = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","mc-cluster","kode-otoritas","mfts"]);
 const HIDE_SIDEBAR_FILTER_VIEWS = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","mc-cluster","kode-otoritas"]);
 const PNL_VIEWS = new Set(["summary","pendapatan","pengeluaran"]);
 
@@ -387,6 +394,8 @@ export default function DashboardPage() {
   const isSPM       = profile?.role === "spm_sumatera";
   const isMPX       = profile?.role === "finance_mpx";
   const isIOHAny    = IOH_ROLES.has(profile?.role);
+  const isSFM       = SFM_ROLES.has(profile?.role);
+  const canMfts     = isSPM || isIOHAny || isSFM;
   const isCSE       = profile?.role === "cse_rse";
   const isBSM       = profile?.role === "bsm";
   const isPICRegion = profile?.role === "pic_region";
@@ -439,6 +448,9 @@ export default function DashboardPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return router.push("/sandra/login");
       const { data: prof } = await supabase.from("profiles").select("*").eq("id", user.id).single();
+
+      // Agency: bukan user dashboard internal → arahkan ke portal agency
+      if (prof?.role === "agency") return router.replace("/agency");
 
       // CSE/SDP/BSM/PIC: tidak perlu load partner_branches
       const isCseOrSdp = prof?.role === "cse_rse" || prof?.role === "bsm" || prof?.role === "pic_region";
@@ -681,6 +693,7 @@ export default function DashboardPage() {
                   {!isSDPMember && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} onClick={() => navigate("payout-tracker")} />}
                   {!isSDPMember && <SNavItem icon={<PieChart size={14} />}    label="Laporan P&L"          active={PNL_VIEWS.has(view)}       onClick={() => navigate("summary")} />}
                   {canSdp       && <SNavItem icon={<Users size={14} />}       label="SDP Status"           active={view === "sdp-status"}     onClick={() => navigate("sdp-status")} />}
+                  {canMfts && <SNavItem icon={<Briefcase size={14} />} label="Pemenuhan Manpower" active={view === "mfts"}          onClick={() => navigate("mfts")} />}
                   {isSPM        && <SNavItem icon={<Shield size={14} />}      label="Admin Panel"          active={view === "admin-panel"}    onClick={() => navigate("admin-panel")} />}
                   {isSPM        && <SNavItem icon={<FileSpreadsheet size={14} />} label="Import Data"      active={view === "import-wizard"}  onClick={() => navigate("import-wizard")} />}
                   {isSPM        && <SNavItem icon={<MapPin size={14} />}           label="MC/Cluster Mapping" active={view === "mc-cluster"}       onClick={() => navigate("mc-cluster")} />}
@@ -845,6 +858,13 @@ export default function DashboardPage() {
                       accent={{ color: d ? "#30D158" : "#1A9E5A", bg: d ? "rgba(48,209,88,0.11)" : "rgba(26,158,90,0.07)", bd: d ? "rgba(48,209,88,0.28)" : "rgba(26,158,90,0.20)", shadow: "rgba(48,209,88,0.16)" }} />
                   )}
 
+                  {canMfts && (
+                    <DashCard icon={<Briefcase size={20} />} title="Pemenuhan Manpower"
+                      desc="Lacak pemenuhan DSF: alokasi per cluster, vacancy yang sedang digarap, roster manpower, dan progres agency."
+                      tag="Manpower" active={true} onClick={() => navigate("mfts")} t={t} d={d}
+                      accent={{ color: d ? "#0A84FF" : "#2563EB", bg: d ? "rgba(10,132,255,0.12)" : "rgba(37,99,235,0.07)", bd: d ? "rgba(10,132,255,0.28)" : "rgba(37,99,235,0.18)", shadow: "rgba(37,99,235,0.16)" }} />
+                  )}
+
                   {isSPM && (
                     <DashCard icon={<Shield size={20} />} title="Admin Panel"
                       desc="Kelola role, permission, kode otoritas, dan daftar partner branches seluruh Sumatera."
@@ -902,6 +922,14 @@ export default function DashboardPage() {
               <motion.div key="pt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
                 <PayoutTracker theme={theme} profile={profile} partnerName={isMPX ? (profile?.partner_name || null) : (activePartner || null)} filterType={activeType !== "ALL" ? activeType : null} readOnly={isReadOnly} />
+              </motion.div>
+            )}
+
+            {/* ── MFTS — Pemenuhan Manpower ── */}
+            {view === "mfts" && canMfts && (
+              <motion.div key="mfts" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <MFTS_Module supabase={supabase} theme={theme} profile={profile} scopeRegion={iohLockedRegion} />
               </motion.div>
             )}
 

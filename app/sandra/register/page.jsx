@@ -94,6 +94,36 @@ const ROLES = [
     desc: "Akses lihat region South Sumatera",
     icon: Shield, color: "#FFCB05",
   },
+  {
+    value: "salesforce_mgmt_sumatera",
+    label: "Salesforce Management Sumatera",
+    desc: "Alokasi & pantau pemenuhan manpower seluruh Sumatera (Circle)",
+    icon: Briefcase, color: "#C6168D",
+  },
+  {
+    value: "region_sfm_north",
+    label: "Region SFM — North Sumatera",
+    desc: "Pemenuhan manpower region North Sumatera",
+    icon: Briefcase, color: "#32BCAD",
+  },
+  {
+    value: "region_sfm_central",
+    label: "Region SFM — Central Sumatera",
+    desc: "Pemenuhan manpower region Central Sumatera",
+    icon: Briefcase, color: "#32BCAD",
+  },
+  {
+    value: "region_sfm_south",
+    label: "Region SFM — South Sumatera",
+    desc: "Pemenuhan manpower region South Sumatera",
+    icon: Briefcase, color: "#32BCAD",
+  },
+  {
+    value: "agency",
+    label: "Agency (Pemenuhan Manpower)",
+    desc: "PIC agency pengisi manpower — pakai Kode Agency",
+    icon: Users, color: "#0A84FF",
+  },
 ];
 
 const NEEDS_PARTNER  = ["finance_mpx"];
@@ -207,6 +237,14 @@ const ROLE_GROUPS = [
   {
     label: "IOH (Read-only)",
     roles: ROLES.filter(r => r.value === "internal_ioh" || r.value.startsWith("ioh_")),
+  },
+  {
+    label: "Salesforce Management (Pemenuhan Manpower)",
+    roles: ROLES.filter(r => r.value === "salesforce_mgmt_sumatera" || r.value.startsWith("region_sfm_")),
+  },
+  {
+    label: "Agency (Pemenuhan Manpower)",
+    roles: ROLES.filter(r => r.value === "agency"),
   },
 ];
 
@@ -378,7 +416,12 @@ export default function RegisterPage() {
       let assignmentId = null;
 
       if (!noCode) {
-        if (needsBsm) {
+        if (role === "agency") {
+          // Agency: validasi Kode Agency (mf_agency_codes) via endpoint publik
+          const vr = await fetch("/api/agency/validate-code", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: codeUpper }) });
+          const vd = await vr.json();
+          if (!vd.valid) { setErrMsg(vd.message || "Kode Agency tidak valid."); return; }
+        } else if (needsBsm) {
           // BSM: validasi kode dari sdp_assignments (branch-scoped)
           const { data: asmRow } = await supabase
             .from("sdp_assignments")
@@ -436,6 +479,7 @@ export default function RegisterPage() {
         partner_name:  needsPartner ? partner_name : "",
         cluster:       needsCluster ? cluster      : "",
         access_code:   noCode ? "" : codeUpper,
+        agency_code:   role === "agency" ? codeUpper : "",
         bsm_brand:     needsBsm     ? bsm_brand    : null,
         bsm_branch:    needsBsm     ? bsm_branch   : null,
         assignment_id: assignmentId,

@@ -110,6 +110,7 @@ export async function POST(req) {
     const {
       email, otp, password,
       full_name, username, role, partner_name,
+      agency_code,
     } = body;
 
     const cleanEmail = email?.trim().toLowerCase();
@@ -195,6 +196,25 @@ export async function POST(req) {
       );
     }
 
+    // ── 3b. Agency: validasi kode & resolve agency_id (server-side) ─────────
+    let mfAgencyId = null;
+    if (role === "agency") {
+      const { data: codeRow } = await supabaseAdmin
+        .from("mf_agency_codes")
+        .select("id, agency_id, active, used_by")
+        .ilike("code", String(agency_code ?? "").trim())
+        .maybeSingle();
+      if (!codeRow || !codeRow.active) {
+        // Rollback auth user — kode tidak valid / sudah dipakai
+        await supabaseAdmin.auth.admin.deleteUser(authData.user.id).catch(() => {});
+        return NextResponse.json(
+          { success: false, message: "Kode agency tidak valid atau sudah dipakai." },
+          { status: 400 }
+        );
+      }
+      mfAgencyId = codeRow.agency_id;
+    }
+
     // ── 4. Create profile ──────────────────────────────────────────────────
     const { error: profileError } = await supabaseAdmin
       .from("profiles")
@@ -206,6 +226,7 @@ export async function POST(req) {
           username:     username    ?? null,
           role:         role        ?? null,
           partner_name: partner_name ?? null,
+          mf_agency_id: mfAgencyId,
           updated_at:   new Date().toISOString(),
         },
         { onConflict: "id" }
@@ -229,6 +250,14 @@ export async function POST(req) {
       .from("email_otps")
       .update({ verified: true })
       .eq("id", otpData.id);
+
+    // ── 5b. Agency: tandai kode terpakai & tautkan ke user ─────────────────
+    if (role === "agency" && agency_code) {
+      await supabaseAdmin
+        .from("mf_agency_codes")
+        .update({ active: false, used_by: authData.user.id, used_by_email: cleanEmail, used_at: new Date().toISOString() })
+        .ilike("code", String(agency_code).trim());
+    }
 
     return NextResponse.json({ success: true, message: "Registrasi berhasil!" });
 
