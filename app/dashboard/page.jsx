@@ -402,6 +402,11 @@ export default function DashboardPage() {
   const isSDPMember = isCSE || isBSM || isPICRegion;   // bisa akses SDP Status Form
 
   const iohLockedRegion = IOH_ROLE_REGION_MAP[profile?.role] ?? null;
+  // Region efektif untuk memfilter tampilan (payout/MFTS):
+  //  • IOH regional  → region terkunci (mis. NORTH SUMATERA)
+  //  • IOH Sumatera (internal_ioh) → mengikuti pilihan "Region View" di sidebar
+  //    ("SUMATERA" = seluruh region → null = tidak difilter)
+  const iohRegionView   = iohLockedRegion || (isIOHAny && activeRegion !== "SUMATERA" ? activeRegion : null);
   const isReadOnly      = isIOHAny;
   const canMonitor      = isSPM || isIOHAny || isMPX;
   const canSdp          = isSPM || isSDPMember;
@@ -636,7 +641,7 @@ export default function DashboardPage() {
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               {(isSPM || isIOHAny) && (
-                <FilterSelect label={iohLockedRegion ? "Region (terkunci)" : "Region"} icon={<Globe size={12} />} value={activeRegion}
+                <FilterSelect label={iohLockedRegion ? "Region (terkunci)" : (isIOHAny ? "Region View" : "Region")} icon={<Globe size={12} />} value={activeRegion}
                   onChange={v => { if (iohLockedRegion) return; setActiveRegion(v); setActivePartner(""); setActiveBranch(""); }}
                   t={t} d={d} disabled={!!iohLockedRegion}>
                   <option value="SUMATERA">Seluruh Sumatera</option>
@@ -921,7 +926,7 @@ export default function DashboardPage() {
             {view === "payout-tracker" && !isSDPMember && (
               <motion.div key="pt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
-                <PayoutTracker theme={theme} profile={profile} partnerName={isMPX ? (profile?.partner_name || null) : (activePartner || null)} filterType={activeType !== "ALL" ? activeType : null} readOnly={isReadOnly} />
+                <PayoutTracker theme={theme} profile={profile} regionFilter={iohRegionView} partnerName={isMPX ? (profile?.partner_name || null) : (activePartner || null)} filterType={activeType !== "ALL" ? activeType : null} readOnly={isReadOnly} masterData={masterData} />
               </motion.div>
             )}
 
@@ -929,7 +934,7 @@ export default function DashboardPage() {
             {view === "mfts" && canMfts && (
               <motion.div key="mfts" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
-                <MFTS_Module supabase={supabase} theme={theme} profile={profile} scopeRegion={iohLockedRegion} />
+                <MFTS_Module supabase={supabase} theme={theme} profile={profile} scopeRegion={iohRegionView} />
               </motion.div>
             )}
 

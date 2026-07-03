@@ -1,106 +1,67 @@
 "use client";
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import supabaseMarta from "../../../lib/supabaseMarta";
-import { HubLogo } from "../../../components/HubLogo";
-import { HubLogoLoader } from "../../../components/HubLogoLoader";
-
-const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,sans-serif`;
-
-const MOCK_LEADERBOARD = [
-  { rank: 1, name: "Rizky Pratama", branch: "Medan Kota", score: 2840, achievement: "284%", badge: "🥇" },
-  { rank: 2, name: "Siti Rahayu", branch: "Deli Serdang", score: 2710, achievement: "271%", badge: "🥈" },
-  { rank: 3, name: "Ahmad Fauzi", branch: "Binjai", score: 2590, achievement: "259%", badge: "🥉" },
-  { rank: 4, name: "Dewi Lestari", branch: "Serdang Bedagai", score: 2430, achievement: "243%", badge: "" },
-  { rank: 5, name: "Budi Santoso", branch: "Tebing Tinggi", score: 2280, achievement: "228%", badge: "" },
-  { rank: 6, name: "Rina Wijaya", branch: "Langkat", score: 2150, achievement: "215%", badge: "" },
-  { rank: 7, name: "Hendra Putra", branch: "Karo", score: 1980, achievement: "198%", badge: "" },
-  { rank: 8, name: "Maya Sari", branch: "Siantar", score: 1860, achievement: "186%", badge: "" },
-];
+import { useState, useEffect, useCallback } from "react";
+import MartaShell, { T } from "../components/MartaShell";
+import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 
 export default function LeaderboardPage() {
-  const router = useRouter();
-  const [user, setUser] = useState(null);
+  return (
+    <MartaShell active="leaderboard" title="Leaderboard" subtitle="Peringkat performa BME/RGE.">
+      {() => <Body />}
+    </MartaShell>
+  );
+}
+
+function Body() {
+  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    supabaseMarta.auth.getSession().then(({ data: { session } }) => {
-      if (!session) { router.replace("/marta/login?redirect=/martahub/leaderboard"); return; }
-      setUser(session.user);
-      setLoading(false);
-    });
-  }, [router]);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await supabaseMarta
+        .from("mh_leaderboard_summary")
+        .select("*")
+        .order("final_score", { ascending: false })
+        .limit(100);
+      setRows(data || []);
+    } catch (_) { setRows([]); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
-  if (loading) return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F0F4FA" }}>
-      <HubLogoLoader variant="marta" logoSize={80} />
-    </div>
-  );
+  const medal = (i) => (i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}`);
 
   return (
-    <div style={{ minHeight: "100vh", background: "#F0F4FA", fontFamily: FONT, padding: "40px 20px" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,700;9..40,800&display=swap');`}</style>
-
-      <div style={{ maxWidth: 680, margin: "0 auto" }}>
-        {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 32 }}>
-          <HubLogo variant="marta" size={44} shadow={false} />
-          <div>
-            <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em", color: "#1A1A1D" }}>
-              Leaderboard
-            </div>
-            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: "#AEAEB8" }}>
-              April 2026 · Sumatera Utara
-            </div>
-          </div>
-          <button onClick={() => router.push("/martahub")}
-            style={{ marginLeft: "auto", padding: "8px 18px", borderRadius: 9, background: "white", color: "#5A5A68", border: "1px solid #E2E2E6", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>
-            ← Dashboard
-          </button>
-        </div>
-
-        {/* Preview banner */}
-        <div style={{ background: "linear-gradient(135deg,#EEF4FF,#F0F7FF)", border: "1px solid #BDD1FF", borderRadius: 12, padding: "14px 18px", marginBottom: 24, display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#1565C0", flexShrink: 0 }} />
-          <span style={{ fontSize: 13, color: "#1565C0", fontWeight: 600 }}>Preview data — Leaderboard real-time akan tersedia setelah integrasi Supabase selesai.</span>
-        </div>
-
-        {/* Podium top 3 */}
-        <div style={{ display: "flex", justifyContent: "center", gap: 16, marginBottom: 28, alignItems: "flex-end" }}>
-          {[MOCK_LEADERBOARD[1], MOCK_LEADERBOARD[0], MOCK_LEADERBOARD[2]].map((p, i) => {
-            const heights = [88, 108, 72];
-            const colors = ["#8A8A96", "#F0A830", "#B87333"];
-            return (
-              <div key={p.rank} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-                <div style={{ fontSize: 20 }}>{p.badge}</div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: "#1A1A1D", textAlign: "center", maxWidth: 90 }}>{p.name.split(" ")[0]}</div>
-                <div style={{ width: 80, height: heights[i], background: `linear-gradient(180deg, ${colors[i]}22, ${colors[i]}44)`, border: `2px solid ${colors[i]}66`, borderRadius: "8px 8px 0 0", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <span style={{ fontSize: 22, fontWeight: 800, color: colors[i] }}>#{p.rank}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Full list */}
-        <div style={{ background: "white", borderRadius: 14, border: "1px solid #E2E2E6", overflow: "hidden" }}>
-          {MOCK_LEADERBOARD.map((p, i) => (
-            <div key={p.rank} style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 20px", borderBottom: i < MOCK_LEADERBOARD.length - 1 ? "1px solid #F0F0F2" : "none", background: i < 3 ? `rgba(21,101,192,0.03)` : "white" }}>
-              <div style={{ width: 28, height: 28, borderRadius: "50%", background: i < 3 ? "#1565C020" : "#F0F0F2", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <span style={{ fontSize: 11, fontWeight: 800, color: i < 3 ? "#1565C0" : "#8A8A96" }}>{p.rank}</span>
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: "#1A1A1D" }}>{p.name} {p.badge}</div>
-                <div style={{ fontSize: 11, color: "#8A8A96" }}>{p.branch}</div>
-              </div>
-              <div style={{ textAlign: "right" }}>
-                <div style={{ fontSize: 14, fontWeight: 800, color: "#1565C0" }}>{p.achievement}</div>
-                <div style={{ fontSize: 10, color: "#AEAEB8" }}>{p.score.toLocaleString()} pts</div>
-              </div>
-            </div>
-          ))}
+    <div>
+      {!MARTA_CONFIGURED && <div style={{ ...card, borderColor: T.warning, background: T.warningBg, color: "#7a5b00", marginBottom: 16 }}>Supabase MartaHub belum dikonfigurasi / project paused.</div>}
+      <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
+            <thead><tr style={{ background: "#F7F9FC", color: T.mid, textAlign: "left" }}>
+              {["#", "User", "Branch", "Brand", "Aktivitas", "Achievement", "Produktivitas", "Geo", "Skor"].map((h) => <th key={h} style={{ padding: "9px 14px", fontSize: 11, fontWeight: 800, textTransform: "uppercase" }}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {loading && <tr><td colSpan={9} style={{ padding: 26, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
+              {!loading && rows.length === 0 && <tr><td colSpan={9} style={{ padding: 26, textAlign: "center", color: T.lo }}>Belum ada data leaderboard.</td></tr>}
+              {!loading && rows.map((r, i) => (
+                <tr key={r.id || i} style={{ borderTop: `1px solid ${T.line}` }}>
+                  <td style={{ padding: "10px 14px", fontWeight: 800 }}>{medal(i)}</td>
+                  <td style={{ padding: "10px 14px", fontWeight: 700 }}>{r.user_name || r.user_id || "—"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.branch_id || "—"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.brand || "—"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.total_activities ?? 0}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.achievement_pct != null ? `${Math.round(r.achievement_pct)}%` : "—"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.productivity_pct != null ? `${Math.round(r.productivity_pct)}%` : "—"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.geo_compliance != null ? `${Math.round(r.geo_compliance)}%` : "—"}</td>
+                  <td style={{ padding: "10px 14px", fontWeight: 800 }}>{r.final_score != null ? Math.round(r.final_score) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
   );
 }
+
+const card = { background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 14, fontSize: 13 };

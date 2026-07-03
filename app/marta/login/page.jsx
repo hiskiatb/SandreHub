@@ -1,7 +1,8 @@
 "use client";
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
+import { supabase } from "../../../lib/supabase";
+import { canViewMarta } from "../../../lib/martaAccess";
 import { HubLogo } from "../../../components/HubLogo";
 import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, Construction } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -40,11 +41,18 @@ function MartaLoginInner() {
 
   useEffect(() => {
     setD(localStorage.getItem("hub-theme") !== "light");
-    supabaseMarta.auth.getSession().then(({ data: { session } }) => {
-      if (session) router.replace(redirect);
+    if (searchParams.get("e") === "forbidden") {
+      setErrMsg("Akun ini tidak memiliki akses ke MartaHub.");
+    }
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) { setChecking(false); return; }
+      const { data: profile } = await supabase
+        .from("profiles").select("role").eq("id", session.user.id).single();
+      if (profile && canViewMarta(profile.role)) router.replace(redirect);
       else setChecking(false);
-    });
-  }, []);
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const up = (k, v) => {
     setForm(f => ({ ...f, [k]: v }));
@@ -54,12 +62,11 @@ function MartaLoginInner() {
 
   const handleLogin = async () => {
     setErrMsg(""); setErrors([]);
-    if (!MARTA_CONFIGURED) { setErrMsg("MartaHub masih dalam pengembangan — login belum tersedia."); return; }
     const empty = ["email", "password"].filter(k => !form[k]);
     if (empty.length) { setErrors(empty); setErrMsg("Harap isi email dan kata sandi."); return; }
     setLoading(true);
     try {
-      const { data, error } = await supabaseMarta.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email: form.email.trim().toLowerCase(), password: form.password,
       });
       if (error) {
@@ -67,15 +74,12 @@ function MartaLoginInner() {
         setErrMsg(error.message.includes("Invalid login") ? "Email atau kata sandi tidak sesuai." : error.message);
         return;
       }
-      // Check profile active status
-      const { data: profile } = await supabaseMarta
-        .from("mh_profiles")
-        .select("is_active")
-        .eq("id", data.user.id)
-        .single();
-      if (!profile?.is_active) {
-        await supabaseMarta.auth.signOut();
-        setErrMsg("Akun belum aktif. Hubungi admin untuk aktivasi.");
+      // Akses MartaHub memakai akun SandraHub — tahap awal khusus SPM Sumatera.
+      const { data: profile } = await supabase
+        .from("profiles").select("role").eq("id", data.user.id).single();
+      if (!profile || !canViewMarta(profile.role)) {
+        await supabase.auth.signOut();
+        setErrMsg("Akun ini tidak memiliki akses ke MartaHub.");
         return;
       }
       router.refresh();
@@ -163,7 +167,7 @@ function MartaLoginInner() {
             <div style={{ marginBottom: 18, padding: "10px 13px", borderRadius: 10, background: d ? "rgba(245,158,11,0.10)" : "rgba(217,119,6,0.07)", border: `1px solid ${d ? "rgba(245,158,11,0.26)" : "rgba(217,119,6,0.22)"}`, display: "flex", alignItems: "flex-start", gap: 9 }}>
               <Construction size={15} color={d ? "#FBBF24" : "#B45309"} strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 1 }} />
               <span style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: d ? "#FBBF24" : "#B45309" }}>
-                MartaHub sedang dalam tahap pengembangan{MARTA_CONFIGURED ? "" : " — sebagian fitur, termasuk login, belum tersedia"}.
+                MartaHub masih tahap awal. Gunakan akun SandraHub Anda — akses saat ini khusus <b>SPM Sumatera</b>.
               </span>
             </div>
 
@@ -207,17 +211,17 @@ function MartaLoginInner() {
             </div>
 
             {/* Submit */}
-            <button onClick={handleLogin} disabled={loading || !MARTA_CONFIGURED}
-              style={{ marginTop: 20, width: "100%", height: 46, borderRadius: 10, border: "none", background: (loading || !MARTA_CONFIGURED) ? `${RED}55` : `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: (loading || !MARTA_CONFIGURED) ? "none" : `0 4px 18px rgba(237,28,36,0.25)`, cursor: (loading || !MARTA_CONFIGURED) ? "not-allowed" : "pointer", fontFamily: FONT, transition: "opacity 0.15s" }}>
-              {!MARTA_CONFIGURED ? <span>Login belum tersedia</span> : loading ? <Loader2 size={16} style={{ animation: "spin .85s linear infinite" }} /> : <><span>Masuk ke MartaHub</span><ArrowRight size={14} strokeWidth={2.5} /></>}
+            <button onClick={handleLogin} disabled={loading}
+              style={{ marginTop: 20, width: "100%", height: 46, borderRadius: 10, border: "none", background: loading ? `${RED}55` : `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: loading ? "none" : `0 4px 18px rgba(237,28,36,0.25)`, cursor: loading ? "not-allowed" : "pointer", fontFamily: FONT, transition: "opacity 0.15s" }}>
+              {loading ? <Loader2 size={16} style={{ animation: "spin .85s linear infinite" }} /> : <><span>Masuk ke MartaHub</span><ArrowRight size={14} strokeWidth={2.5} /></>}
             </button>
           </div>
 
           {/* Footer */}
           <div style={{ padding: "12px 28px", borderTop: `1px solid ${t.line}`, background: d ? "rgba(255,255,255,0.018)" : "rgba(0,0,0,0.018)", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-            <span style={{ fontSize: 13, color: t.mid }}>Belum punya akun MartaHub?</span>
-            <button onClick={() => router.push("/marta/register")} style={{ fontSize: 13, fontWeight: 700, border: "none", padding: 0, cursor: "pointer", background: "none", color: RED, fontFamily: FONT }}>
-              Daftar
+            <span style={{ fontSize: 13, color: t.mid }}>Pakai akun SandraHub Anda.</span>
+            <button onClick={() => router.push("/sandra/login")} style={{ fontSize: 13, fontWeight: 700, border: "none", padding: 0, cursor: "pointer", background: "none", color: RED, fontFamily: FONT }}>
+              Login SandraHub
             </button>
           </div>
         </div>

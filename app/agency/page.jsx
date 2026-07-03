@@ -4,6 +4,9 @@
 // Agency Portal — MFTS
 // Hanya untuk user role='agency'. RLS otomatis membatasi data ke
 // agency milik user. Agency memajukan stage vacancy-nya saja.
+//
+// Desain: "action-first". Tiap seat = 1 kartu dengan aksi jelas.
+// Update progres lewat 3 tombol besar: Lanjut / Ada kendala / Sudah join.
 // ============================================================
 
 import { useEffect, useMemo, useState } from "react";
@@ -11,8 +14,9 @@ import { useRouter } from "next/navigation";
 import supabase from "../../lib/supabase";
 import { HubLogo } from "../../components/HubLogo";
 import {
-  Briefcase, ChevronRight, X, Loader2, LogOut, RefreshCw, AlertTriangle, Clock,
-  CheckCircle2, Sun, Moon, UserCheck, FilterX,
+  Briefcase, X, Loader2, LogOut, RefreshCw, AlertTriangle, Clock,
+  CheckCircle2, Sun, Moon, UserCheck, FilterX, Search, ArrowRight, HelpCircle,
+  Hourglass, MapPin, PartyPopper,
 } from "lucide-react";
 import { passesRow, optionsFor, FilterTh, FilterMenu } from "../dashboard/components/MFTS_TableFilter";
 
@@ -24,6 +28,7 @@ const mk = (d) => ({
   teal: "#1A9E90", tealBg: d ? "rgba(50,188,173,.12)" : "rgba(26,158,144,.08)", tealBd: d ? "rgba(50,188,173,.3)" : "rgba(26,158,144,.2)",
   red: "#ED1C24", redBg: d ? "rgba(237,28,36,.1)" : "rgba(237,28,36,.07)", redBd: d ? "rgba(237,28,36,.25)" : "rgba(237,28,36,.18)",
   amber: "#D4A800", amberBg: d ? "rgba(255,203,5,.12)" : "rgba(212,168,0,.1)", amberBd: d ? "rgba(255,203,5,.3)" : "rgba(212,168,0,.25)",
+  blue: d ? "#0A84FF" : "#2563EB", blueBg: d ? "rgba(10,132,255,.12)" : "rgba(37,99,235,.08)", blueBd: d ? "rgba(10,132,255,.3)" : "rgba(37,99,235,.2)",
   green: "#1A9E90", orange: "#E8830C",
   md: d ? "0 6px 20px rgba(0,0,0,.55)" : "0 6px 18px rgba(0,0,0,.09)",
 });
@@ -34,6 +39,7 @@ const baseName = (n) => up(n).replace(/^(MC[- ]|CS[- ])/, "").trim();
 const mcLabel = (c) => (c ? `MC-${baseName(c)}` : "");
 const MONTHS_ID = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
 const fmtPeriod = (p) => { const s = String(p || ""); if (s.length < 6) return "—"; const m = +s.slice(4, 6); return `${MONTHS_ID[m - 1] || "?"} ${s.slice(0, 4)}`; };
+const isJoinedName = (s) => /joined/i.test(s || "");
 function brandBadge(b) {
   const x = up(b);
   const c = x === "IM3" ? "#C6168D" : x === "3ID" ? "#E8830C" : x === "HYBRID" ? "#2563EB" : "#8A8A9C";
@@ -54,7 +60,9 @@ export default function AgencyPortal() {
   const [err, setErr] = useState("");
   const [tab, setTab] = useState("vacancy"); // vacancy | manpower
   const [manpower, setManpower] = useState([]);
-  const [vacFilters, setVacFilters] = useState({}); const [vacOpenCol, setVacOpenCol] = useState(""); const [vacRect, setVacRect] = useState(null);
+  const [q, setQ] = useState("");                 // pencarian kartu vacancy
+  const [vacScope, setVacScope] = useState("todo"); // todo | all
+  const [showHelp, setShowHelp] = useState(true);
   const [mpFilters, setMpFilters] = useState({}); const [mpOpenCol, setMpOpenCol] = useState(""); const [mpRect, setMpRect] = useState(null);
 
   useEffect(() => { setD(localStorage.getItem("hub-theme") !== "light"); }, []);
@@ -100,27 +108,34 @@ export default function AgencyPortal() {
       const filled = String(v.status || "") === "closed_filled";
       const onHold = v.status === "on_hold";
       const overdue = !filled && !onHold && stage?.target_days != null && idle > stage.target_days;
-      out.push({ ...v, stage, age, idle, filled, closed: filled, onHold, overdue });
+      const waiting = !filled && isJoinedName(stage?.name); // Joined → menunggu verifikasi internal
+      out.push({ ...v, stage, age, idle, filled, closed: filled, onHold, overdue, waiting });
     }
     return out;
   }, [vacancies, stageById]);
   const openRows = rows.filter((r) => !r.closed);
-  const ac = { overdue: openRows.filter((r) => r.overdue).length, idle: openRows.filter((r) => !r.onHold && r.idle > 5).length, open: openRows.length, filled: rows.filter((r) => r.closed).length };
+  const ac = {
+    overdue: openRows.filter((r) => r.overdue).length,
+    idle: openRows.filter((r) => !r.onHold && r.idle > 5).length,
+    open: openRows.length,
+    filled: rows.filter((r) => r.closed).length,
+  };
 
-  // ---- Tab Vacancy (seat yang masih perlu diproses) ----
-  const VAC_FCOLS = [["fbrand", "Brand"], ["fmc", "MC"], ["fim3", "ID_DSF_IM3"], ["f3id", "ID_DSF_3ID"], ["fposisi", "Posisi"], ["fregion", "Region"], ["fbranch", "Branch"], ["fperiod", "Periode"], ["fstage", "Stage"], ["fage", "Umur"], ["fidle", "Idle"]];
-  const vacView = useMemo(() => openRows.map((r) => ({
-    ...r,
-    fbrand: up(r.brand) === "HYBRID" ? "Hybrid" : (r.brand || ""), fmc: mcLabel(r.mc_cluster),
-    fim3: r.id_dsf_im3 || "", f3id: r.id_dsf_3id || "", fposisi: r.position || "",
-    fregion: r.region || "", fbranch: r.branch || "", fperiod: fmtPeriod(r.target_period),
-    fstage: r.onHold ? "On-Hold" : (r.stage?.name || ""), fage: `${r.age}h`, fidle: `${r.idle}h`,
-  })).sort((a, b) =>
-    up(a.region).localeCompare(up(b.region)) || up(a.area).localeCompare(up(b.area)) ||
-    up(a.branch).localeCompare(up(b.branch)) || up(a.fmc).localeCompare(up(b.fmc)) || up(a.fbrand).localeCompare(up(b.fbrand)),
-  ), [openRows]);
-  const vacRows = useMemo(() => vacView.filter((r) => passesRow(r, vacFilters, VAC_FCOLS, null)), [vacView, vacFilters]); // eslint-disable-line
-  const anyVacFilter = VAC_FCOLS.some(([k]) => (vacFilters[k] || []).length);
+  // "Perlu tindakan" = agency masih bisa berbuat sesuatu (bukan on-hold / bukan menunggu verifikasi).
+  const needsAction = (r) => !r.onHold && !r.waiting && (r.overdue || r.idle > 5);
+  const todoCount = openRows.filter(needsAction).length;
+
+  // ---- Kartu Vacancy ----
+  const vacList = useMemo(() => {
+    const qq = up(q);
+    let list = vacScope === "todo" ? openRows.filter(needsAction) : openRows;
+    if (qq) list = list.filter((r) => [mcLabel(r.mc_cluster), r.position, r.region, r.branch, r.area, r.id_dsf_im3, r.id_dsf_3id, r.id_staffinc]
+      .some((x) => up(x).includes(qq)));
+    return [...list].sort((a, b) =>
+      (b.overdue ? 1 : 0) - (a.overdue ? 1 : 0) ||
+      (a.waiting ? 1 : 0) - (b.waiting ? 1 : 0) ||   // yang menunggu verifikasi ke bawah
+      b.idle - a.idle || b.age - a.age);
+  }, [openRows, q, vacScope]);
 
   // ---- Tab Manpower (roster DSF agency) ----
   const MP_FCOLS = [["fbrand", "Brand"], ["id_im3", "ID_DSF_IM3"], ["id_3id", "ID_DSF_3ID"], ["id_staffinc", "ID_STAFFINC"], ["nama", "NAMA_DSF"], ["fmc", "MC"], ["fbranch", "Branch"], ["fregion", "Region"], ["fcircle", "Circle"], ["id_tl", "ID_STAFFINC_TL"], ["nama_tl", "NAMA_TL"]];
@@ -137,19 +152,14 @@ export default function AgencyPortal() {
   const mpRows = useMemo(() => mpView.filter((r) => passesRow(r, mpFilters, MP_FCOLS, null)), [mpView, mpFilters]); // eslint-disable-line
   const anyMpFilter = MP_FCOLS.some(([k]) => (mpFilters[k] || []).length);
 
-  // Beranda "perlu tindakan": prioritaskan over-SLA lalu idle; sembunyikan yang sehat & yang menunggu verifikasi internal.
-  const todo = useMemo(() => openRows
-    .filter((r) => !r.onHold && (r.overdue || r.idle > 5) && !/joined/i.test(r.stage?.name || ""))
-    .sort((a, b) => (b.overdue ? 1 : 0) - (a.overdue ? 1 : 0) || b.idle - a.idle)
-    .slice(0, 8), [openRows]);
-
-  async function doAdvance(vac, toStageId, reasonId, note, counters, identity) {
+  async function doAdvance(vac, { toStageId, reasonId = null, reasonText = "", note = "", identity = null }) {
     const to = stageById[toStageId]; const now = new Date().toISOString();
+    const noteFinal = [reasonText ? `Lainnya: ${reasonText}` : "", note].filter(Boolean).join(" — ")
+      || (identity?.joined_name ? `Joined diajukan: ${identity.joined_name}` : null);
     const { error: e1 } = await supabase.from("mf_vacancy_events").insert({
       vacancy_id: vac.id, from_stage_id: vac.current_stage_id, to_stage_id: toStageId,
-      owner: to?.owner_default || "agency", reason_code_id: reasonId || null,
-      note: note || (identity?.joined_name ? `Joined diajukan: ${identity.joined_name}` : null),
-      counters: counters || null, actor: profile?.id || null, actor_name: profile?.full_name || profile?.email || null,
+      owner: to?.owner_default || "agency", reason_code_id: reasonId || null, note: noteFinal,
+      actor: profile?.id || null, actor_name: profile?.full_name || profile?.email || null,
       actor_role: "agency", ts: now,
     });
     if (e1) throw new Error(e1.message);
@@ -196,7 +206,7 @@ export default function AgencyPortal() {
 
       <div style={{ maxWidth: 1760, margin: "0 auto", padding: "22px clamp(16px, 3vw, 40px) 60px" }}>
         <div style={{ fontSize: 22, fontWeight: 800, marginBottom: 4 }}>Halo, {profile?.full_name || "PIC"} 👋</div>
-        <div style={{ fontSize: 13.5, color: t.mid, marginBottom: 18 }}>Update progres setiap vacancy yang ditugaskan ke {agencyName}.</div>
+        <div style={{ fontSize: 13.5, color: t.mid, marginBottom: 18 }}>Perbarui progres setiap posisi yang ditugaskan ke {agencyName}. Mulai dari yang <b style={{ color: t.hi }}>perlu tindakan</b> di bawah.</div>
 
         {err && <div style={{ ...card, padding: 14, borderColor: t.redBd, background: t.redBg, color: t.red, marginBottom: 16 }}>{err}</div>}
 
@@ -207,33 +217,9 @@ export default function AgencyPortal() {
           <Stat t={t} icon={<CheckCircle2 size={16} />} tone={t.green} bg={t.tealBg} bd={t.tealBd} v={ac.filled} l="Sudah terisi" />
         </div>
 
-        {/* Beranda: perlu tindakan (exception-first) */}
-        {todo.length > 0 && (
-          <div style={{ ...card, padding: 0, marginBottom: 18, overflow: "hidden", borderColor: t.amberBd }}>
-            <div style={{ padding: "11px 16px", borderBottom: `1px solid ${t.line}`, fontWeight: 800, fontSize: 13.5, display: "flex", alignItems: "center", gap: 8, color: t.hi, background: t.amberBg }}>
-              <AlertTriangle size={15} style={{ color: t.amber }} /> Perlu tindakan hari ini <span style={{ color: t.amber }}>({todo.length})</span>
-            </div>
-            <div>
-              {todo.map((r, i) => (
-                <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderTop: i ? `1px solid ${t.line}` : "none", flexWrap: "wrap" }}>
-                  {brandBadge(r.brand)}
-                  <span style={{ fontWeight: 700, color: t.hi }}>{mcLabel(r.mc_cluster) || r.position}</span>
-                  <span style={{ fontSize: 12, color: t.mid }}>{r.stage?.name || "—"}</span>
-                  {r.overdue && <span style={{ fontSize: 10, fontWeight: 800, color: t.red, background: t.redBg, border: `1px solid ${t.redBd}`, padding: "2px 7px", borderRadius: 999 }}>OVER SLA</span>}
-                  {!r.overdue && r.idle > 5 && <span style={{ fontSize: 10, fontWeight: 800, color: t.orange, background: t.amberBg, border: `1px solid ${t.amberBd}`, padding: "2px 7px", borderRadius: 999 }}>Idle {r.idle}h</span>}
-                  <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ fontSize: 11.5, color: t.lo }}>{[r.region, r.branch].filter(Boolean).join(" · ")}</span>
-                    <button onClick={() => setAdvancing(r)} style={{ ...btn(t), padding: "5px 10px", background: t.teal, color: "#fff", borderColor: t.teal }}>Tindak <ChevronRight size={13} /></button>
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* Tabs: Vacancy (perlu diproses) | Manpower (roster) */}
         <div style={{ display: "flex", gap: 8, marginBottom: 16, borderBottom: `1px solid ${t.line}` }}>
-          {[["vacancy", "Vacancy", <Briefcase key="b" size={14} />, ac.open], ["manpower", "Manpower", <UserCheck key="u" size={14} />, ac.filled]].map(([id, label, ic, n]) => (
+          {[["vacancy", "Posisi Kosong", <Briefcase key="b" size={14} />, ac.open], ["manpower", "Sudah Terisi", <UserCheck key="u" size={14} />, ac.filled]].map(([id, label, ic, n]) => (
             <button key={id} onClick={() => setTab(id)}
               style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 14px", background: "none", border: "none", borderBottom: `2px solid ${tab === id ? t.teal : "transparent"}`, color: tab === id ? t.hi : t.mid, fontWeight: 700, fontSize: 13.5, cursor: "pointer", fontFamily: FONT, marginBottom: -1 }}>
               {ic} {label} <span style={{ fontSize: 11, fontWeight: 800, color: tab === id ? t.teal : t.lo }}>{n}</span>
@@ -242,49 +228,59 @@ export default function AgencyPortal() {
         </div>
 
         {tab === "vacancy" && (
-          <div style={{ ...card, overflow: "hidden" }}>
-            <div style={{ padding: "12px 16px", borderBottom: `1px solid ${t.line}`, fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-              <span>Vacancy <span style={{ color: t.mid, fontWeight: 500 }}>· seat yang perlu diproses</span></span>
-              {anyVacFilter && <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 11.5, color: t.mid }}>{vacRows.length} dari {vacView.length}</span><button onClick={() => { setVacFilters({}); setVacOpenCol(""); }} style={{ ...btn(t), padding: "5px 10px", color: t.red, borderColor: t.redBd }}><FilterX size={13} /> Hapus filter</button></span>}
+          <>
+            {/* Panduan singkat */}
+            {showHelp && (
+              <div style={{ ...card, padding: "12px 14px", marginBottom: 14, background: t.blueBg, borderColor: t.blueBd, display: "flex", gap: 12, alignItems: "flex-start" }}>
+                <HelpCircle size={18} style={{ color: t.blue, flexShrink: 0, marginTop: 1 }} />
+                <div style={{ fontSize: 12.5, color: t.hi, lineHeight: 1.6, flex: 1 }}>
+                  <b>Cara pakai:</b> tiap kartu di bawah adalah satu posisi. Klik <b>Perbarui progres</b>, lalu pilih salah satu:
+                  {" "}<b style={{ color: t.teal }}>Lanjut ke tahap berikut</b> jika ada kemajuan,
+                  {" "}<b style={{ color: t.amber }}>Ada kendala</b> jika macet (tulis alasannya),
+                  atau <b style={{ color: t.blue }}>Sudah join</b> jika kandidat sudah bergabung.
+                </div>
+                <button onClick={() => setShowHelp(false)} style={{ ...iconBtn(t), width: 26, height: 26, border: "none", background: "transparent", color: t.mid }}><X size={15} /></button>
+              </div>
+            )}
+
+            {/* Kontrol: segmen + pencarian */}
+            <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ display: "inline-flex", background: t.sub, border: `1px solid ${t.line}`, borderRadius: 10, padding: 3 }}>
+                {[["todo", `Perlu tindakan (${todoCount})`], ["all", `Semua (${ac.open})`]].map(([id, label]) => (
+                  <button key={id} onClick={() => setVacScope(id)}
+                    style={{ padding: "7px 13px", borderRadius: 8, border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 12.5, fontWeight: 700,
+                      background: vacScope === id ? t.card : "transparent", color: vacScope === id ? t.hi : t.mid, boxShadow: vacScope === id ? t.md : "none" }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div style={{ position: "relative", flex: "1 1 240px", maxWidth: 360 }}>
+                <Search size={15} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: t.lo }} />
+                <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari MC, posisi, region, ID…"
+                  style={{ ...inp(t), paddingLeft: 34 }} />
+              </div>
             </div>
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
-                <thead><tr style={{ background: t.sub, color: t.mid, textAlign: "left" }}>
-                  <th style={{ padding: "9px 8px", fontSize: 11, fontWeight: 800, textTransform: "uppercase", textAlign: "center", width: 68, minWidth: 68 }}>No.</th>
-                  {VAC_FCOLS.map(([k, label]) => <FilterTh key={k} t={t} label={label} colKey={k} filters={vacFilters} onOpen={(ck, rc) => { setVacRect(rc); setVacOpenCol(ck); }} />)}
-                  <th style={{ padding: "9px 12px", fontSize: 11, fontWeight: 800, textTransform: "uppercase" }} />
-                </tr></thead>
-                <tbody>
-                  {vacRows.length === 0 && <tr><td colSpan={13} style={{ padding: 28, textAlign: "center", color: t.lo }}>{anyVacFilter ? "Tidak ada yang cocok dengan filter." : "Tidak ada seat yang perlu diproses 🎉"}</td></tr>}
-                  {vacRows.map((r, i) => (
-                    <tr key={r.id} style={{ borderTop: `1px solid ${t.line}` }}>
-                      <td style={{ padding: "10px 8px", color: t.lo, fontWeight: 600, textAlign: "center" }}>{i + 1}</td>
-                      <td style={{ padding: "10px 12px" }}>{brandBadge(r.brand)}</td>
-                      <td style={{ padding: "10px 12px", fontWeight: 600, color: t.hi }}>{mcLabel(r.mc_cluster) || "—"}</td>
-                      <td style={{ padding: "10px 12px", color: t.mid }}>{r.id_dsf_im3 || "—"}</td>
-                      <td style={{ padding: "10px 12px", color: t.mid }}>{r.id_dsf_3id || "—"}</td>
-                      <td style={{ padding: "10px 12px", fontWeight: 700, color: t.hi }}>{r.position}</td>
-                      <td style={{ padding: "10px 12px", color: t.mid }}>{r.region || "—"}</td>
-                      <td style={{ padding: "10px 12px", color: t.mid }}>{r.branch || "—"}</td>
-                      <td style={{ padding: "10px 12px" }}><span style={{ fontSize: 11, fontWeight: 700, color: t.mid, background: t.sub, border: `1px solid ${t.line}`, padding: "2px 8px", borderRadius: 999 }}>{fmtPeriod(r.target_period)}</span></td>
-                      <td style={{ padding: "10px 12px" }}>{r.onHold ? <span style={{ color: t.mid, fontWeight: 700 }}>On-Hold</span> : <span style={{ fontWeight: 700 }}>{r.stage?.name || "—"}{r.overdue && <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 800, color: t.red, background: t.redBg, border: `1px solid ${t.redBd}`, padding: "1px 5px", borderRadius: 5 }}>OVER SLA</span>}</span>}</td>
-                      <td style={{ padding: "10px 12px", fontWeight: 800, color: ageTone(t, r.age) }}>{r.age}h</td>
-                      <td style={{ padding: "10px 12px", fontWeight: 700, color: r.idle > 5 && !r.onHold ? t.orange : t.lo }}>{r.idle}h</td>
-                      <td style={{ padding: "10px 12px", textAlign: "right" }}>
-                        {!r.onHold && <button onClick={() => setAdvancing(r)} style={{ ...btn(t), padding: "5px 10px", background: t.teal, color: "#fff", borderColor: t.teal }}>Maju <ChevronRight size={13} /></button>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+
+            {/* Grid kartu */}
+            {vacList.length === 0 ? (
+              <div style={{ ...card, padding: 40, textAlign: "center", color: t.mid }}>
+                {q ? "Tidak ada posisi yang cocok dengan pencarian." :
+                  vacScope === "todo"
+                    ? <><PartyPopper size={22} style={{ color: t.teal, marginBottom: 8 }} /><div style={{ fontWeight: 700, color: t.hi }}>Semua aman 🎉</div><div style={{ fontSize: 12.5, marginTop: 3 }}>Tidak ada posisi yang perlu tindakan hari ini. Lihat “Semua” untuk daftar lengkap.</div></>
+                    : "Belum ada posisi kosong."}
+              </div>
+            ) : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(320px,1fr))", gap: 12 }}>
+                {vacList.map((r) => <SeatCard key={r.id} t={t} r={r} stages={stages} onUpdate={() => setAdvancing(r)} />)}
+              </div>
+            )}
+          </>
         )}
 
         {tab === "manpower" && (
           <div style={{ ...card, overflow: "hidden" }}>
             <div style={{ padding: "12px 16px", borderBottom: `1px solid ${t.line}`, fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-              <span>Manpower <span style={{ color: t.mid, fontWeight: 500 }}>· DSF aktif yang sudah terisi</span></span>
+              <span>Sudah Terisi <span style={{ color: t.mid, fontWeight: 500 }}>· DSF aktif</span></span>
               {anyMpFilter && <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}><span style={{ fontSize: 11.5, color: t.mid }}>{mpRows.length} dari {mpView.length}</span><button onClick={() => { setMpFilters({}); setMpOpenCol(""); }} style={{ ...btn(t), padding: "5px 10px", color: t.red, borderColor: t.redBd }}><FilterX size={13} /> Hapus filter</button></span>}
             </div>
             <div style={{ overflowX: "auto" }}>
@@ -317,12 +313,11 @@ export default function AgencyPortal() {
           </div>
         )}
 
-        {vacOpenCol && <FilterMenu t={t} rect={vacRect} label={(VAC_FCOLS.find(([k]) => k === vacOpenCol) || [, vacOpenCol])[1]} options={optionsFor(vacView, vacFilters, VAC_FCOLS, vacOpenCol)} selected={vacFilters[vacOpenCol] || []} onChange={(arr) => setVacFilters((p) => ({ ...p, [vacOpenCol]: arr }))} onClose={() => { setVacOpenCol(""); setVacRect(null); }} />}
         {mpOpenCol && <FilterMenu t={t} rect={mpRect} label={(MP_FCOLS.find(([k]) => k === mpOpenCol) || [, mpOpenCol])[1]} options={optionsFor(mpView, mpFilters, MP_FCOLS, mpOpenCol)} selected={mpFilters[mpOpenCol] || []} onChange={(arr) => setMpFilters((p) => ({ ...p, [mpOpenCol]: arr }))} onClose={() => { setMpOpenCol(""); setMpRect(null); }} />}
       </div>
 
-      {advancing && <AdvanceModal t={t} vac={advancing} stages={stages} reasons={reasons} onClose={() => setAdvancing(null)}
-        onSubmit={async (toId, rId, note, counters, identity) => { await doAdvance(advancing, toId, rId, note, counters, identity); setAdvancing(null); }} />}
+      {advancing && <ActionSheet t={t} vac={advancing} stages={stages} reasons={reasons} onClose={() => setAdvancing(null)}
+        onSubmit={async (payload) => { await doAdvance(advancing, payload); setAdvancing(null); }} />}
 
       <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&display=swap');*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}body{margin:0}@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
@@ -341,47 +336,166 @@ function Stat({ t, icon, tone, bg, bd, v, l }) {
   </div>;
 }
 
-function AdvanceModal({ t, vac, stages, reasons, onClose, onSubmit }) {
+/* ---------- Kartu seat ---------- */
+function SeatCard({ t, r, stages, onUpdate }) {
   const ordered = [...stages].sort((a, b) => a.ord - b.ord);
-  const curOrd = stages.find((s) => s.id === vac.current_stage_id)?.ord ?? 0;
-  const nextStage = ordered.find((s) => s.ord > curOrd) || ordered[ordered.length - 1];
-  const [toId, setToId] = useState(nextStage?.id);
-  const [reasonId, setReasonId] = useState("");
+  const curOrd = r.stage?.ord ?? -1;
+  const nextStage = ordered.find((s) => s.ord > curOrd && !s.is_terminal && !isJoinedName(s.name));
+
+  // Baris status besar (langsung terbaca)
+  let statusChip;
+  if (r.onHold) statusChip = <Chip t={t} tone={t.mid} bg={t.sub} bd={t.line} icon={<Hourglass size={11} />} text="On-Hold (dijeda internal)" />;
+  else if (r.waiting) statusChip = <Chip t={t} tone={t.blue} bg={t.blueBg} bd={t.blueBd} icon={<Clock size={11} />} text="Menunggu verifikasi internal" />;
+  else if (r.overdue) statusChip = <Chip t={t} tone={t.red} bg={t.redBg} bd={t.redBd} icon={<AlertTriangle size={11} />} text="Lewat SLA — segera tindak" />;
+  else if (r.idle > 5) statusChip = <Chip t={t} tone={t.orange} bg={t.amberBg} bd={t.amberBd} icon={<Clock size={11} />} text={`Didiamkan ${r.idle} hari`} />;
+  else statusChip = <Chip t={t} tone={t.teal} bg={t.tealBg} bd={t.tealBd} icon={<CheckCircle2 size={11} />} text="Berjalan" />;
+
+  const canAct = !r.onHold && !r.waiting;
+
+  return (
+    <div style={{ background: t.card, border: `1px solid ${r.overdue && canAct ? t.redBd : t.line}`, borderRadius: 14, padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {brandBadge(r.brand)}
+        <span style={{ fontWeight: 800, fontSize: 15, color: t.hi }}>{mcLabel(r.mc_cluster) || r.position}</span>
+      </div>
+      <div style={{ fontSize: 12.5, color: t.mid, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+        <MapPin size={12} style={{ color: t.lo }} />
+        {[r.region, r.branch].filter(Boolean).join(" · ") || "Lokasi —"}
+        <span style={{ color: t.lo }}>·</span>
+        <span>{fmtPeriod(r.target_period)}</span>
+      </div>
+
+      <div>{statusChip}</div>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 12, color: t.mid, borderTop: `1px solid ${t.line}`, paddingTop: 10 }}>
+        <span>Tahap: <b style={{ color: t.hi }}>{r.stage?.name || "—"}</b></span>
+        <span style={{ display: "inline-flex", gap: 10 }}>
+          <span title="Umur seat">Umur <b style={{ color: ageTone(t, r.age) }}>{r.age}h</b></span>
+          <span title="Lama tak ada update">Idle <b style={{ color: r.idle > 5 && canAct ? t.orange : t.lo }}>{r.idle}h</b></span>
+        </span>
+      </div>
+
+      {canAct ? (
+        <>
+          {nextStage && <div style={{ fontSize: 11.5, color: t.lo }}>Berikutnya biasanya: <b style={{ color: t.mid }}>{nextStage.name}</b></div>}
+          <button onClick={onUpdate} style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.teal}`, background: t.teal, color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
+            Perbarui progres <ArrowRight size={15} />
+          </button>
+        </>
+      ) : (
+        <div style={{ fontSize: 11.5, color: t.lo, fontStyle: "italic" }}>
+          {r.waiting ? "Tidak perlu tindakan — menunggu tim internal memverifikasi." : "Sedang dijeda oleh tim internal."}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Chip({ t, tone, bg, bd, icon, text }) {
+  return <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 800, color: tone, background: bg, border: `1px solid ${bd}`, padding: "4px 9px", borderRadius: 999 }}>{icon}{text}</span>;
+}
+
+/* ---------- ActionSheet: 3 tombol besar ---------- */
+function ActionSheet({ t, vac, stages, reasons, onClose, onSubmit }) {
+  const ordered = [...stages].sort((a, b) => a.ord - b.ord);
+  const curOrd = stages.find((s) => s.id === vac.current_stage_id)?.ord ?? -1;
+  const joinStage = stages.find((s) => isJoinedName(s.name) && !s.is_terminal);
+  const nextStage = ordered.find((s) => s.ord > curOrd && !s.is_terminal && !isJoinedName(s.name));
+  const canJoin = joinStage && curOrd < (joinStage.ord ?? 999);
+
+  const [choice, setChoice] = useState(null); // 'next' | 'block' | 'join'
   const [note, setNote] = useState("");
-  const [c, setC] = useState({ sourced: "", interviewed: "", offered: "", declined: "" });
-  const [saving, setSaving] = useState(false);
-  const [e, setE] = useState("");
-  const stById = Object.fromEntries(stages.map((s) => [s.id, s]));
-  const toStage = stById[toId];
-  const isJoin = toStage && /joined/i.test(toStage.name) && !toStage.is_terminal; // tahap "Joined (pending verify)"
-  const isBlock = toStage && toStage.ord <= curOrd; // tidak maju → dianggap macet, wajib alasan
-  const isHybrid = up(vac.brand) === "HYBRID";
+  const [reasonSel, setReasonSel] = useState("");   // "" | "<id>" | "__other__"
+  const [reasonOther, setReasonOther] = useState("");
   const [idn, setIdn] = useState({
     joined_name: vac.joined_name || "", id_dsf_im3: vac.id_dsf_im3 || "", id_dsf_3id: vac.id_dsf_3id || "",
     id_staffinc: vac.id_staffinc || "", id_staffinc_tl: vac.id_staffinc_tl || "", nama_tl: vac.nama_tl || "",
   });
   const setI = (k, v) => setIdn((p) => ({ ...p, [k]: v }));
+  const [saving, setSaving] = useState(false);
+  const [e, setE] = useState("");
+  const isHybrid = up(vac.brand) === "HYBRID";
+
+  const ACTIONS = [
+    nextStage && { id: "next", tone: t.teal, bg: t.tealBg, bd: t.tealBd, icon: <ArrowRight size={18} />, title: "Lanjut ke tahap berikut", sub: `Menuju: ${nextStage.name}` },
+    canJoin && { id: "join", tone: t.blue, bg: t.blueBg, bd: t.blueBd, icon: <PartyPopper size={18} />, title: "Sudah join", sub: "Kandidat sudah bergabung — ajukan untuk verifikasi" },
+    { id: "block", tone: t.amber, bg: t.amberBg, bd: t.amberBd, icon: <AlertTriangle size={18} />, title: "Ada kendala (macet)", sub: "Belum bisa lanjut — catat alasannya" },
+  ].filter(Boolean);
+
+  async function submit() {
+    setE("");
+    if (choice === "next") {
+      setSaving(true);
+      try { await onSubmit({ toStageId: nextStage.id, note: note.trim() }); }
+      catch (err) { setE(err.message || "Gagal"); setSaving(false); }
+      return;
+    }
+    if (choice === "join") {
+      if (!idn.joined_name.trim()) { setE("Nama DSF wajib diisi saat menandai Sudah join."); return; }
+      if (isHybrid && (!idn.id_dsf_im3.trim() || !idn.id_dsf_3id.trim())) { setE("Seat Hybrid: isi ID_DSF_IM3 dan ID_DSF_3ID."); return; }
+      setSaving(true);
+      try {
+        await onSubmit({
+          toStageId: joinStage.id, note: note.trim(),
+          identity: {
+            joined_name: idn.joined_name.trim() || null, id_dsf_im3: idn.id_dsf_im3.trim() || null, id_dsf_3id: idn.id_dsf_3id.trim() || null,
+            id_staffinc: idn.id_staffinc.trim() || null, id_staffinc_tl: idn.id_staffinc_tl.trim() || null, nama_tl: idn.nama_tl.trim() || null,
+          },
+        });
+      } catch (err) { setE(err.message || "Gagal"); setSaving(false); }
+      return;
+    }
+    if (choice === "block") {
+      const reasonId = reasonSel && reasonSel !== "__other__" ? Number(reasonSel) : null;
+      const reasonText = reasonSel === "__other__" ? reasonOther.trim() : "";
+      if (!reasonId && !reasonText) { setE("Pilih alasan kendalanya, atau tulis sendiri lewat “Lainnya…”."); return; }
+      setSaving(true);
+      try { await onSubmit({ toStageId: vac.current_stage_id, reasonId, reasonText, note: note.trim() }); }
+      catch (err) { setE(err.message || "Gagal"); setSaving(false); }
+      return;
+    }
+  }
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={onClose}>
-      <div onClick={(ev) => ev.stopPropagation()} style={{ width: "100%", maxWidth: 460, background: t.card, borderRadius: 16, border: `1px solid ${t.line}`, boxShadow: t.md, fontFamily: FONT, maxHeight: "92vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", borderBottom: `1px solid ${t.line}` }}>
-          <div style={{ fontWeight: 800, fontSize: 15 }}>Maju stage — {vac.position}</div>
+      <div onClick={(ev) => ev.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: t.card, borderRadius: 16, border: `1px solid ${t.line}`, boxShadow: t.md, fontFamily: FONT, maxHeight: "92vh", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "14px 18px", borderBottom: `1px solid ${t.line}` }}>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 15 }}>Perbarui progres</div>
+            <div style={{ fontSize: 12, color: t.mid, marginTop: 2 }}>{mcLabel(vac.mc_cluster) || vac.position} · tahap sekarang: <b style={{ color: t.hi }}>{stages.find((s) => s.id === vac.current_stage_id)?.name || "—"}</b></div>
+          </div>
           <button onClick={onClose} style={{ ...iconBtn(t), width: 30, height: 30, border: "none", background: "transparent" }}><X size={18} /></button>
         </div>
-        <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
-          {e && <div style={{ color: t.red, fontSize: 12, fontWeight: 600 }}>{e}</div>}
-          <div><label style={lbl(t)}>Pindah ke stage</label>
-            <select value={toId} onChange={(ev) => setToId(Number(ev.target.value))} style={inp(t)}>
-              {ordered.filter((s) => !s.is_terminal).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+
+        <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 12 }}>
+          {e && <div style={{ color: t.red, fontSize: 12, fontWeight: 700, background: t.redBg, border: `1px solid ${t.redBd}`, borderRadius: 8, padding: "8px 10px" }}>{e}</div>}
+
+          {/* 3 tombol besar */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {ACTIONS.map((a) => {
+              const active = choice === a.id;
+              return (
+                <button key={a.id} onClick={() => { setChoice(a.id); setE(""); }}
+                  style={{ display: "flex", alignItems: "center", gap: 12, textAlign: "left", padding: "12px 14px", borderRadius: 12, cursor: "pointer", fontFamily: FONT,
+                    border: `2px solid ${active ? a.tone : t.line}`, background: active ? a.bg : t.sub, transition: "all .12s ease" }}>
+                  <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 38, height: 38, borderRadius: 10, background: a.bg, color: a.tone, flexShrink: 0 }}>{a.icon}</span>
+                  <span style={{ flex: 1 }}>
+                    <span style={{ display: "block", fontSize: 14, fontWeight: 800, color: active ? a.tone : t.hi }}>{a.title}</span>
+                    <span style={{ display: "block", fontSize: 11.5, color: t.mid, marginTop: 1 }}>{a.sub}</span>
+                  </span>
+                  {active && <CheckCircle2 size={18} style={{ color: a.tone }} />}
+                </button>
+              );
+            })}
           </div>
-          {isJoin && (
-            <div style={{ border: `1px solid ${t.tealBd}`, background: t.tealBg, borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 800, color: t.teal }}>Data DSF yang join (akan diverifikasi internal)</div>
+
+          {/* Form kontekstual sesuai pilihan */}
+          {choice === "join" && (
+            <div style={{ border: `1px solid ${t.blueBd}`, background: t.blueBg, borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: t.blue }}>Data DSF yang join (akan diverifikasi internal)</div>
               <div><label style={lbl(t)}>Nama DSF *</label><input value={idn.joined_name} onChange={(ev) => setI("joined_name", ev.target.value)} placeholder="Nama lengkap joiner" style={inp(t)} /></div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                {(isHybrid || true) && <div><label style={lbl(t)}>ID_DSF_IM3{isHybrid ? " *" : ""}</label><input value={idn.id_dsf_im3} onChange={(ev) => setI("id_dsf_im3", ev.target.value)} style={inp(t)} /></div>}
+                <div><label style={lbl(t)}>ID_DSF_IM3{isHybrid ? " *" : ""}</label><input value={idn.id_dsf_im3} onChange={(ev) => setI("id_dsf_im3", ev.target.value)} style={inp(t)} /></div>
                 <div><label style={lbl(t)}>ID_DSF_3ID{isHybrid ? " *" : ""}</label><input value={idn.id_dsf_3id} onChange={(ev) => setI("id_dsf_3id", ev.target.value)} style={inp(t)} /></div>
               </div>
               <div><label style={lbl(t)}>ID_STAFFINC</label><input value={idn.id_staffinc} onChange={(ev) => setI("id_staffinc", ev.target.value)} style={inp(t)} /></div>
@@ -391,40 +505,33 @@ function AdvanceModal({ t, vac, stages, reasons, onClose, onSubmit }) {
               </div>
             </div>
           )}
-          <div><label style={lbl(t)}>Alasan / blocker {isBlock ? "*" : "(opsional)"}</label>
-            <select value={reasonId} onChange={(ev) => setReasonId(ev.target.value)} style={{ ...inp(t), borderColor: isBlock && !reasonId ? t.amberBd : t.line }}>
-              <option value="">— tidak ada —</option>
-              {reasons.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
-            </select>
-            {isBlock && <div style={{ fontSize: 11, color: t.amber, marginTop: 4 }}>Tidak maju ke tahap berikutnya — pilih alasan macetnya.</div>}
-          </div>
-          <div><label style={lbl(t)}>Kandidat (opsional)</label>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
-              {["sourced", "interviewed", "offered", "declined"].map((k) => (
-                <div key={k}><div style={{ fontSize: 10, color: t.lo, marginBottom: 3, textTransform: "capitalize" }}>{k}</div>
-                  <input type="number" value={c[k]} onChange={(ev) => setC((p) => ({ ...p, [k]: ev.target.value }))} style={{ ...inp(t), padding: "7px 8px", textAlign: "center" }} /></div>
-              ))}
+
+          {choice === "block" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <label style={lbl(t)}>Alasan kendala *</label>
+              <select value={reasonSel} onChange={(ev) => setReasonSel(ev.target.value)} style={{ ...inp(t), borderColor: reasonSel ? t.line : t.amberBd }}>
+                <option value="">— pilih alasan —</option>
+                {reasons.map((r) => <option key={r.id} value={String(r.id)}>{r.label}</option>)}
+                <option value="__other__">Lainnya… (tulis sendiri)</option>
+              </select>
+              {reasonSel === "__other__" && (
+                <input autoFocus value={reasonOther} onChange={(ev) => setReasonOther(ev.target.value)} placeholder="Tulis kendala yang tidak ada di daftar…" style={inp(t)} />
+              )}
+              <div style={{ fontSize: 11, color: t.amber }}>Posisi tetap di tahap ini. Alasan tercatat agar tim internal bisa bantu.</div>
             </div>
-          </div>
-          <div><label style={lbl(t)}>Catatan (opsional)</label><textarea value={note} onChange={(ev) => setNote(ev.target.value)} rows={2} style={{ ...inp(t), resize: "vertical" }} /></div>
+          )}
+
+          {choice && (
+            <div><label style={lbl(t)}>Catatan (opsional)</label><textarea value={note} onChange={(ev) => setNote(ev.target.value)} rows={2} placeholder="Tambahan info bila perlu…" style={{ ...inp(t), resize: "vertical" }} /></div>
+          )}
         </div>
+
         <div style={{ padding: "12px 18px", borderTop: `1px solid ${t.line}`, display: "flex", justifyContent: "flex-end", gap: 8 }}>
           <button onClick={onClose} style={btn(t)}>Batal</button>
-          <button disabled={saving} onClick={async () => {
-            if (isJoin && !idn.joined_name.trim()) { setE("Nama DSF wajib diisi saat menandai Joined."); return; }
-            if (isJoin && isHybrid && (!idn.id_dsf_im3.trim() || !idn.id_dsf_3id.trim())) { setE("Seat Hybrid: isi ID_DSF_IM3 dan ID_DSF_3ID."); return; }
-            if (isBlock && !reasonId) { setE("Pilih alasan karena tidak maju ke tahap berikutnya."); return; }
-            setSaving(true); setE("");
-            try {
-              const counters = Object.fromEntries(Object.entries(c).map(([k, v]) => [k, Number(v) || 0]));
-              const identity = isJoin ? {
-                joined_name: idn.joined_name.trim() || null, id_dsf_im3: idn.id_dsf_im3.trim() || null, id_dsf_3id: idn.id_dsf_3id.trim() || null,
-                id_staffinc: idn.id_staffinc.trim() || null, id_staffinc_tl: idn.id_staffinc_tl.trim() || null, nama_tl: idn.nama_tl.trim() || null,
-              } : null;
-              await onSubmit(toId, reasonId ? Number(reasonId) : null, note, counters, identity);
-            } catch (err) { setE(err.message || "Gagal"); setSaving(false); }
-          }}
-            style={{ ...btn(t), background: t.teal, color: "#fff", borderColor: t.teal }}>{saving ? "Menyimpan…" : "Simpan"}</button>
+          <button disabled={saving || !choice} onClick={submit}
+            style={{ ...btn(t), background: choice ? t.teal : t.sub, color: choice ? "#fff" : t.lo, borderColor: choice ? t.teal : t.line, cursor: choice ? "pointer" : "not-allowed" }}>
+            {saving ? "Menyimpan…" : "Simpan"}
+          </button>
         </div>
       </div>
     </div>

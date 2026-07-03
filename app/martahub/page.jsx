@@ -1,16 +1,18 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import supabaseMarta from "../../lib/supabaseMarta";
+import { supabase } from "../../lib/supabase";
+import { guardMarta, isMartaAdmin } from "../../lib/martaAccess";
 import { HubLogo } from "../../components/HubLogo";
 import { HubLogoLoader, HubLogoLoaderDark } from "../../components/HubLogoLoader";
+import { MapCard } from "./components/SumatraMap";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const C = {
-  primary:   "#1565C0",
-  primaryL:  "#1E88E5",
-  primaryD:  "#0D47A1",
+  primary:   "#ED1C24",
+  primaryL:  "#E23B86",
+  primaryD:  "#C6168D",
   accent:    "#FF6F00",
   success:   "#2E7D32",
   successL:  "#E8F5E9",
@@ -19,7 +21,7 @@ const C = {
   error:     "#C62828",
   errorL:    "#FFEBEE",
   im3:       "#E53935",
-  tri:       "#1E88E5",
+  tri:       "#E23B86",
 };
 
 const mk = (d) => ({
@@ -32,9 +34,9 @@ const mk = (d) => ({
   hi:       d ? "#E8EDF8" : "#0D1117",
   mid:      d ? "#7B8BAD" : "#4A5568",
   lo:       d ? "#4A5A7D" : "#7B8BAD",
-  primary:  "#1565C0",
-  primaryBg: d ? "#0D1E3A" : "#EEF4FF",
-  primaryBd: d ? "#1A3560" : "#BDD1FF",
+  primary:  "#ED1C24",
+  primaryBg: d ? "#2A0A14" : "#FCEAEE",
+  primaryBd: d ? "#5A1030" : "#F3C6D6",
   success:  "#2E7D32",
   successBg: d ? "#0A2010" : "#E8F5E9",
   warning:  "#F57F17",
@@ -60,10 +62,22 @@ const NAV = [
   { label: "Leaderboard", icon: "trophy", path: "leaderboard" },
   { section: "MANAGEMENT" },
   { label: "Approval Center", icon: "check", path: "approval", badge: 12 },
+  { label: "Assignments", icon: "users", path: "assignments" },
   { label: "Master Data", icon: "db", path: "master" },
   { label: "User Management", icon: "users", path: "users" },
   { label: "System Settings", icon: "settings", path: "settings" },
 ];
+
+// Rute untuk item nav yang punya halaman tersendiri
+const NAV_ROUTES = {
+  activities: "/martahub/activities",
+  submission: "/martahub/submission",
+  map: "/martahub/map",
+  leaderboard: "/martahub/leaderboard",
+  approval: "/martahub/approval",
+  master: "/martahub/master",
+  assignments: "/martahub/assignments",
+};
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 function Icon({ name, size = 16, color = "currentColor" }) {
@@ -95,6 +109,7 @@ function Icon({ name, size = 16, color = "currentColor" }) {
     chevD:    <svg style={s} viewBox="0 0 24 24" {...p}><polyline points="6 9 12 15 18 9"/></svg>,
     menu:     <svg style={s} viewBox="0 0 24 24" {...p}><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>,
     close:    <svg style={s} viewBox="0 0 24 24" {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+    expand:   <svg style={s} viewBox="0 0 24 24" {...p}><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>,
     hub:      <svg style={s} viewBox="0 0 24 24" {...p}><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/></svg>,
     img:      <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>,
   };
@@ -198,7 +213,7 @@ function LineChart({ data, labels, color, height = 140 }) {
 // ─── Mock Data ────────────────────────────────────────────────────────────────
 const MOCK = {
   kpis: [
-    { label: "Total Activity", value: "134", sub: "+18% vs Mar 2026", trend: "up", color: "#1565C0", icon: "calendar", spark: [88,95,105,112,118,116,127,134] },
+    { label: "Total Activity", value: "134", sub: "+18% vs Mar 2026", trend: "up", color: "#ED1C24", icon: "calendar", spark: [88,95,105,112,118,116,127,134] },
     { label: "Achievement %", value: "127%", sub: "+12% vs Mar 2026", trend: "up", color: "#2E7D32", icon: "trophy", spark: [92,98,105,112,118,116,122,127] },
     { label: "Productivity %", value: "185%", sub: "+15% vs Mar 2026", trend: "up", color: "#7B1FA2", icon: "chart", spark: [120,135,142,156,168,170,178,185] },
     { label: "Revenue (Actual)", value: "Rp 67,4 jt", sub: "+22% vs Mar 2026", trend: "up", color: "#E65100", icon: "insight", spark: [42,48,52,58,63,61,65,67] },
@@ -208,7 +223,7 @@ const MOCK = {
   achieveTrend: { data: [92,105,112,118,116,127], labels: ["Nov 25","Des 25","Jan 26","Feb 26","Mar 26","Apr 26"] },
   productivTrend: { data: [120,142,156,168,170,185], labels: ["Nov 25","Des 25","Jan 26","Feb 26","Mar 26","Apr 26"] },
   eventCategory: [
-    { label: "Direct Selling", value: 52, pct: "38.8%", color: "#1565C0" },
+    { label: "Direct Selling", value: 52, pct: "38.8%", color: "#ED1C24" },
     { label: "Sponsorship", value: 32, pct: "23.9%", color: "#7B1FA2" },
     { label: "Joint Event", value: 24, pct: "17.9%", color: "#00695C" },
     { label: "Thematic", value: 18, pct: "13.4%", color: "#E65100" },
@@ -221,75 +236,20 @@ const MOCK = {
   ],
   activities: [
     { no: 1, name: "HALAL BI-HALAL SCOOTER RISE", branch: "Tebing Tinggi", cat: "Sponsorship", catColor: "#7B1FA2", planDate: "11-Apr-26", actualDate: "11-Apr-26", target: "10/1", actual: "133/1", revenue: "Rp 4.655.000", productivity: "931%", achievement: "1330%", status: "Approved", statusColor: "#2E7D32" },
-    { no: 2, name: "OPEN BOOTH FWA", branch: "Del. Serdang Raya", cat: "Direct Selling", catColor: "#1565C0", planDate: "15-Apr-26", actualDate: "15-Apr-26", target: "10/5", actual: "5/5", revenue: "Rp 925.000", productivity: "185%", achievement: "50%", status: "Approved", statusColor: "#2E7D32" },
+    { no: 2, name: "OPEN BOOTH FWA", branch: "Del. Serdang Raya", cat: "Direct Selling", catColor: "#ED1C24", planDate: "15-Apr-26", actualDate: "15-Apr-26", target: "10/5", actual: "5/5", revenue: "Rp 925.000", productivity: "185%", achievement: "50%", status: "Approved", statusColor: "#2E7D32" },
     { no: 3, name: "PAKET IBADAH HAJI", branch: "Del. Serdang Raya", cat: "Thematic", catColor: "#E65100", planDate: "24-Apr-26", actualDate: "24-Apr-26", target: "10/1", actual: "25/0", revenue: "Rp 15.875.000", productivity: "3175%", achievement: "250%", status: "Approved", statusColor: "#2E7D32" },
-    { no: 4, name: "FUN RUN HUT GUNUNGSITOLI", branch: "Nias", cat: "Joint Event", catColor: "#00695C", planDate: "19-Apr-26", actualDate: "19-Apr-26", target: "10/1", actual: "150/2", revenue: "Rp 7.050.000", productivity: "1410%", achievement: "1500%", status: "Validated", statusColor: "#1565C0" },
+    { no: 4, name: "FUN RUN HUT GUNUNGSITOLI", branch: "Nias", cat: "Joint Event", catColor: "#00695C", planDate: "19-Apr-26", actualDate: "19-Apr-26", target: "10/1", actual: "150/2", revenue: "Rp 7.050.000", productivity: "1410%", achievement: "1500%", status: "Validated", statusColor: "#ED1C24" },
     { no: 5, name: "OPEN BOOTH FWA", branch: "Pantai Labu", cat: "Thematic", catColor: "#E65100", planDate: "28-Apr-26", actualDate: "28-Apr-26", target: "10/1", actual: "3/5", revenue: "Rp 855.000", productivity: "171%", achievement: "30%", status: "Submitted", statusColor: "#F57F17" },
   ],
 };
 
 const QUICK_ACTIONS = [
-  { label: "Plan Activity", sub: "Create new plan", icon: "calendar", color: "#1565C0", colorBg: "#EEF4FF" },
+  { label: "Plan Activity", sub: "Create new plan", icon: "calendar", color: "#ED1C24", colorBg: "#FCEAEE" },
   { label: "Submit Activity", sub: "Record actual activity", icon: "send", color: "#7B1FA2", colorBg: "#F3E8FF" },
   { label: "Check In (GPS)", sub: "Start geo tracking", icon: "pin", color: "#2E7D32", colorBg: "#E8F5E9" },
   { label: "Upload Document", sub: "Add documentation", icon: "img", color: "#E65100", colorBg: "#FFF3E0" },
   { label: "View Calendar", sub: "Activity schedule", icon: "cal", color: "#00695C", colorBg: "#E0F2F1" },
 ];
-
-// ─── Map Placeholder ──────────────────────────────────────────────────────────
-function ActivityMap({ t }) {
-  const pins = [
-    { x: 68, y: 32, count: 8, color: C.success, label: "Medan" },
-    { x: 52, y: 44, count: 3, color: C.warning, label: "Binjai" },
-    { x: 74, y: 52, count: 5, color: C.success, label: "Deli Serdang" },
-    { x: 30, y: 26, count: 2, color: C.error, label: "Langkat" },
-    { x: 86, y: 42, count: 6, color: C.success, label: "Serdang Bedagai" },
-    { x: 44, y: 62, count: 4, color: C.warning, label: "Karo" },
-    { x: 20, y: 58, count: 1, color: C.error, label: "Dairi" },
-    { x: 62, y: 72, count: 7, color: C.success, label: "Siantar" },
-    { x: 80, y: 68, count: 3, color: C.warning, label: "Simalungun" },
-    { x: 38, y: 78, count: 2, color: C.success, label: "Asahan" },
-  ];
-  return (
-    <div style={{ position: "relative", width: "100%", height: 260, borderRadius: 12, overflow: "hidden", background: `linear-gradient(135deg, ${t.hover} 0%, ${t.appBg} 100%)`, border: `1px solid ${t.line}` }}>
-      {/* Fake map grid */}
-      <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0.15 }} viewBox="0 0 400 260">
-        {Array.from({ length: 8 }).map((_, i) => <line key={`h${i}`} x1="0" y1={i * 37} x2="400" y2={i * 37} stroke={t.mid} strokeWidth="0.5"/>)}
-        {Array.from({ length: 10 }).map((_, i) => <line key={`v${i}`} x1={i * 44} y1="0" x2={i * 44} y2="260" stroke={t.mid} strokeWidth="0.5"/>)}
-        <path d="M80,30 Q120,20 160,35 Q200,50 230,40 Q270,30 300,45 Q330,55 360,50" fill="none" stroke={t.mid} strokeWidth="1.5"/>
-        <path d="M60,80 Q100,70 150,85 Q190,95 220,82 Q260,68 300,80 Q340,90 380,78" fill="none" stroke={t.mid} strokeWidth="1"/>
-        <path d="M100,130 Q140,115 180,128 Q220,140 260,125 Q300,112 340,130" fill="none" stroke={t.mid} strokeWidth="1"/>
-        <path d="M120,180 Q160,165 200,178 Q240,190 280,172 Q320,158 360,175" fill="none" stroke={t.mid} strokeWidth="1"/>
-      </svg>
-
-      {/* Pins */}
-      {pins.map((pin, i) => (
-        <div key={i} style={{ position: "absolute", left: `${pin.x}%`, top: `${pin.y}%`, transform: "translate(-50%,-50%)", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-          <div style={{ width: 28, height: 28, borderRadius: "50%", background: pin.color + "22", border: `2px solid ${pin.color}`, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 4px 12px ${pin.color}40`, cursor: "pointer" }}>
-            <span style={{ fontSize: 10, fontWeight: 800, color: pin.color }}>{pin.count}</span>
-          </div>
-        </div>
-      ))}
-
-      {/* Legend */}
-      <div style={{ position: "absolute", bottom: 10, right: 10, background: t.card, borderRadius: 8, padding: "8px 12px", display: "flex", flexDirection: "column", gap: 4, border: `1px solid ${t.line}` }}>
-        {[["High Productivity", C.success], ["Medium Productivity", C.warning], ["Low Productivity", C.error]].map(([l, c]) => (
-          <div key={l} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <div style={{ width: 8, height: 8, borderRadius: "50%", background: c }} />
-            <span style={{ fontSize: 9.5, color: t.mid }}>{l}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* Map controls */}
-      <div style={{ position: "absolute", top: 10, right: 10, display: "flex", flexDirection: "column", gap: 4 }}>
-        {["+", "−", "⊙"].map((btn, i) => (
-          <button key={i} style={{ width: 28, height: 28, borderRadius: 6, background: t.card, border: `1px solid ${t.line}`, color: t.mid, fontSize: 14, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>{btn}</button>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 // ─── Main Component ────────────────────────────────────────────────────────────
 export default function MartaHubDashboard() {
@@ -300,30 +260,61 @@ export default function MartaHubDashboard() {
       : false
   );
   const [collapsed, setCollapsed] = useState(false);
+  const [mobile, setMobile] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeNav, setActiveNav] = useState("dashboard");
   const [user, setUser] = useState(null);
+  const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [dateRange] = useState("01 Apr 2026 – 30 Apr 2026");
   const [activeTab, setActiveTab] = useState("All");
 
   const t = mk(dark);
 
+  // Filter Recent Activity berdasarkan tab status
+  const filteredActivities = activeTab === "All"
+    ? MOCK.activities
+    : MOCK.activities.filter((a) => a.status === activeTab);
+  const tabCount = (tab) => tab === "All" ? MOCK.activities.length : MOCK.activities.filter((a) => a.status === tab).length;
+
   useEffect(() => {
     // Sync theme from hub-theme (set by auth pages), fallback to system preference
     const saved = localStorage.getItem("hub-theme");
     if (saved) setDark(saved !== "light");
     else setDark(window.matchMedia("(prefers-color-scheme: dark)").matches);
-    supabaseMarta.auth.getSession().then(({ data: { session } }) => {
-      if (!session) { router.replace("/marta/login?redirect=/martahub"); return; }
-      setUser(session.user);
+    guardMarta(router, "/martahub").then((res) => {
+      if (!res.ok) return; // guard sudah redirect
+      setUser(res.session.user);
+      setProfile(res.profile);
       setLoading(false);
     });
   }, [router]);
 
+  // Responsif: <768 = mobile (sidebar jadi drawer), 768–1200 = auto-collapse
+  useEffect(() => {
+    const onResize = () => {
+      const w = window.innerWidth;
+      const m = w < 768;
+      setMobile(m);
+      if (m) setCollapsed(false);           // drawer selalu tampil penuh
+      else { setDrawerOpen(false); setCollapsed(w < 1200); }
+    };
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   const handleLogout = async () => {
-    await supabaseMarta.auth.signOut();
+    await supabase.auth.signOut();
     router.push("/marta/login");
   };
+
+  const toggleNav = () => (mobile ? setDrawerOpen((o) => !o) : setCollapsed((c) => !c));
+
+  // Nama & inisial tampilan dari profil SandraHub
+  const displayName = profile?.full_name || user?.email?.split("@")[0] || "Pengguna";
+  const initial = (profile?.full_name || user?.email || "M").trim()[0]?.toUpperCase() || "M";
+  const roleLabel = profile?.role === "spm_sumatera" ? "SPM Sumatera" : (profile?.role || "");
 
   const SIDEBAR_W = collapsed ? 64 : 240;
 
@@ -344,16 +335,54 @@ export default function MartaHubDashboard() {
         .mh-nav{transition:background .15s,color .15s}
         .mh-nav:hover{background:${t.hover} !important}
         .mh-card{transition:box-shadow .2s,transform .2s}
-        .mh-card:hover{box-shadow:0 8px 32px rgba(21,101,192,0.12) !important;transform:translateY(-1px)}
+        .mh-card:hover{box-shadow:0 8px 32px rgba(237,28,36,0.12) !important;transform:translateY(-1px)}
         .mh-btn{transition:opacity .14s,transform .1s;cursor:pointer;border:none;background:none;font-family:${FONT}}
         .mh-btn:hover{opacity:.8}
         .mh-btn:active{transform:scale(.97)}
         .mh-row:hover td{background:${t.hover} !important}
         @keyframes mh-pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+
+        /* ── Responsive grids ── */
+        .mh-content{padding:20px 24px 40px}
+        .mh-kpi{display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin-bottom:20px}
+        .mh-charts{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:16px;margin-bottom:16px}
+        .mh-donuts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+        .mh-qa{display:flex;gap:8px;flex-wrap:wrap}
+        .mh-qa > *{flex:1 1 160px}
+        .leaflet-container{background:${t.hover}}
+
+        /* Laptop / half-screen */
+        @media (max-width:1200px){
+          .mh-kpi{grid-template-columns:repeat(3,1fr)}
+          .mh-charts{grid-template-columns:1fr 1fr}
+        }
+        @media (max-width:900px){
+          .mh-content{padding:16px 16px 32px}
+          .mh-charts{grid-template-columns:1fr}
+          .mh-donuts{grid-template-columns:1fr}
+        }
+        /* Mobile */
+        @media (max-width:767px){
+          .mh-kpi{grid-template-columns:repeat(2,1fr);gap:10px}
+          .mh-content{padding:14px 12px 28px}
+          .mh-topbar{padding:0 14px !important;gap:10px !important}
+          .mh-hide-sm{display:none !important}
+          .mh-qa > *{flex:1 1 46%}
+        }
+        @media (max-width:400px){
+          .mh-kpi{grid-template-columns:1fr}
+        }
       `}</style>
 
+      {/* Backdrop untuk drawer mobile */}
+      {mobile && drawerOpen && (
+        <div onClick={() => setDrawerOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 290 }} />
+      )}
+
       {/* ── SIDEBAR ─────────────────────────────────────────────────────────── */}
-      <div style={{ width: SIDEBAR_W, minHeight: "100vh", background: t.sidebar, borderRight: `1px solid ${t.line}`, display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh", overflow: "hidden", transition: "width .22s cubic-bezier(.4,0,.2,1)", flexShrink: 0 }}>
+      <div style={ mobile
+        ? { width: 240, background: t.sidebar, borderRight: `1px solid ${t.line}`, display: "flex", flexDirection: "column", position: "fixed", top: 0, left: 0, height: "100vh", overflow: "hidden", zIndex: 300, transform: drawerOpen ? "translateX(0)" : "translateX(-100%)", transition: "transform .25s cubic-bezier(.4,0,.2,1)", boxShadow: drawerOpen ? "0 0 40px rgba(0,0,0,0.3)" : "none" }
+        : { width: SIDEBAR_W, minHeight: "100vh", background: t.sidebar, borderRight: `1px solid ${t.line}`, display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh", overflow: "hidden", transition: "width .22s cubic-bezier(.4,0,.2,1)", flexShrink: 0 } }>
         {/* Logo */}
         <div style={{ padding: collapsed ? "18px 0" : "18px 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${t.line}`, cursor: "pointer" }} onClick={() => router.push("/")}>
           <div style={{ width: 36, height: 36, flexShrink: 0, margin: collapsed ? "0 auto" : 0 }}>
@@ -378,8 +407,8 @@ export default function MartaHubDashboard() {
             );
             const active = activeNav === item.path;
             return (
-              <div key={i} className="mh-nav" onClick={() => setActiveNav(item.path)}
-                style={{ display: "flex", alignItems: "center", gap: 10, padding: collapsed ? "10px 0" : "9px 10px", borderRadius: 9, cursor: "pointer", marginBottom: 1, justifyContent: collapsed ? "center" : "flex-start", background: active ? (dark ? "rgba(21,101,192,0.18)" : "rgba(21,101,192,0.08)") : "transparent", position: "relative" }}
+              <div key={i} className="mh-nav" onClick={() => { const r = NAV_ROUTES[item.path]; if (r) { router.push(r); } else { setActiveNav(item.path); if (mobile) setDrawerOpen(false); } }}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: collapsed ? "10px 0" : "9px 10px", borderRadius: 9, cursor: "pointer", marginBottom: 1, justifyContent: collapsed ? "center" : "flex-start", background: active ? (dark ? "rgba(237,28,36,0.18)" : "rgba(237,28,36,0.08)") : "transparent", position: "relative" }}
                 title={collapsed ? item.label : undefined}
               >
                 <span style={{ color: active ? C.primary : t.lo, flexShrink: 0 }}><Icon name={item.icon} size={17} color={active ? C.primary : t.lo} /></span>
@@ -396,11 +425,11 @@ export default function MartaHubDashboard() {
           {!collapsed && user && (
             <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 10 }}>
               <div style={{ width: 34, height: 34, borderRadius: "50%", background: `linear-gradient(135deg,${C.primary},${C.primaryD})`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <span style={{ fontSize: 13, fontWeight: 800, color: "white" }}>{user.email?.[0]?.toUpperCase()}</span>
+                <span style={{ fontSize: 13, fontWeight: 800, color: "white" }}>{initial}</span>
               </div>
               <div style={{ flex: 1, overflow: "hidden" }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: t.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{user.email?.split("@")[0]}</div>
-                <div style={{ fontSize: 10, color: t.lo }}>Region Manager</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: t.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{displayName}</div>
+                <div style={{ fontSize: 10, color: t.lo, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{roleLabel}</div>
               </div>
             </div>
           )}
@@ -416,25 +445,25 @@ export default function MartaHubDashboard() {
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" }}>
 
         {/* Topbar */}
-        <div style={{ height: 60, background: t.surface, borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", padding: "0 24px", gap: 16, position: "sticky", top: 0, zIndex: 100 }}>
-          <button className="mh-btn" onClick={() => setCollapsed(!collapsed)} style={{ padding: 6, borderRadius: 7, color: t.mid }}>
-            <Icon name={collapsed ? "menu" : "menu"} size={18} color={t.mid} />
+        <div className="mh-topbar" style={{ minHeight: 60, background: t.surface, borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", padding: "0 24px", gap: 16, position: "sticky", top: 0, zIndex: 100 }}>
+          <button className="mh-btn" onClick={toggleNav} style={{ padding: 6, borderRadius: 7, color: t.mid }}>
+            <Icon name="menu" size={18} color={t.mid} />
           </button>
-          <div>
+          <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "-0.02em", color: t.hi }}>Dashboard</div>
-            <div style={{ fontSize: 11, color: t.lo }}>Overview marketing activity performance</div>
+            <div className="mh-hide-sm" style={{ fontSize: 11, color: t.lo, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Overview marketing activity performance</div>
           </div>
           <div style={{ flex: 1 }} />
 
           {/* Date range */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 14px", borderRadius: 9, border: `1.5px solid ${t.line}`, background: t.hover, cursor: "pointer" }}>
+          <div className="mh-hide-sm" style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 14px", borderRadius: 9, border: `1.5px solid ${t.line}`, background: t.hover, cursor: "pointer" }}>
             <Icon name="cal" size={14} color={t.mid} />
             <span style={{ fontSize: 12, fontWeight: 600, color: t.mid }}>{dateRange}</span>
             <Icon name="chevD" size={12} color={t.lo} />
           </div>
 
           {/* Filter */}
-          <button className="mh-btn" style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 9, border: `1.5px solid ${t.line}`, background: t.hover, color: t.mid, fontSize: 12, fontWeight: 600 }}>
+          <button className="mh-btn mh-hide-sm" style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 9, border: `1.5px solid ${t.line}`, background: t.hover, color: t.mid, fontSize: 12, fontWeight: 600 }}>
             <Icon name="filter" size={13} color={t.mid} /> Filter
           </button>
 
@@ -452,16 +481,16 @@ export default function MartaHubDashboard() {
           </button>
 
           {/* Avatar */}
-          <div style={{ width: 34, height: 34, borderRadius: "50%", background: `linear-gradient(135deg,${C.primary},${C.primaryD})`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 2px 8px rgba(21,101,192,0.35)" }}>
-            <span style={{ fontSize: 13, fontWeight: 800, color: "white" }}>{user?.email?.[0]?.toUpperCase() || "M"}</span>
+          <div style={{ width: 34, height: 34, borderRadius: "50%", background: `linear-gradient(135deg,${C.primary},${C.primaryD})`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 2px 8px rgba(237,28,36,0.35)" }} title={`${displayName} · ${roleLabel}`}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: "white" }}>{initial}</span>
           </div>
         </div>
 
         {/* Content */}
-        <div style={{ flex: 1, overflow: "auto", padding: "20px 24px 40px" }}>
+        <div className="mh-content" style={{ flex: 1, overflow: "auto" }}>
 
           {/* ── KPI Cards ─────────────────────────────────────────────────── */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 14, marginBottom: 20 }}>
+          <div className="mh-kpi">
             {MOCK.kpis.map((kpi, i) => (
               <div key={i} className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: "16px 16px 14px", position: "relative", overflow: "hidden" }}>
                 <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2.5, background: kpi.color, borderRadius: "14px 14px 0 0" }} />
@@ -482,7 +511,7 @@ export default function MartaHubDashboard() {
           </div>
 
           {/* ── Charts Row ────────────────────────────────────────────────── */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1.3fr", gap: 16, marginBottom: 16 }}>
+          <div className="mh-charts">
             {/* Achievement Trend */}
             <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
@@ -521,12 +550,12 @@ export default function MartaHubDashboard() {
                   ))}
                 </div>
               </div>
-              <ActivityMap t={t} />
+              <MapCard t={t} dark={dark} canManage={isMartaAdmin(profile?.role)} />
             </div>
           </div>
 
           {/* ── Donut Charts Row ──────────────────────────────────────────── */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+          <div className="mh-donuts">
             {/* Event Category */}
             <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, marginBottom: 16 }}>Event Category Contribution</div>
@@ -584,7 +613,7 @@ export default function MartaHubDashboard() {
 
           {/* ── Quick Actions ─────────────────────────────────────────────── */}
           <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: "16px 20px", marginBottom: 16 }}>
-            <div style={{ display: "flex", gap: 4 }}>
+            <div className="mh-qa">
               {QUICK_ACTIONS.map((a, i) => (
                 <button key={i} className="mh-btn" style={{ flex: 1, display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderRadius: 10, background: a.colorBg, border: "none", textAlign: "left", cursor: "pointer" }}>
                   <div style={{ width: 36, height: 36, borderRadius: 10, background: a.color, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -607,8 +636,8 @@ export default function MartaHubDashboard() {
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 {["All", "Draft", "Submitted", "Validated", "Approved"].map(tab => (
                   <button key={tab} className="mh-btn" onClick={() => setActiveTab(tab)}
-                    style={{ padding: "4px 12px", borderRadius: 100, fontSize: 11, fontWeight: 700, border: `1.5px solid ${activeTab === tab ? C.primary : t.line}`, background: activeTab === tab ? C.primary : "transparent", color: activeTab === tab ? "white" : t.mid, cursor: "pointer" }}>
-                    {tab}
+                    style={{ padding: "4px 12px", borderRadius: 100, fontSize: 11, fontWeight: 700, border: `1.5px solid ${activeTab === tab ? "transparent" : t.line}`, background: activeTab === tab ? "linear-gradient(135deg,#ED1C24 0%,#C6168D 100%)" : "transparent", color: activeTab === tab ? "white" : t.mid, cursor: "pointer" }}>
+                    {tab} <span style={{ opacity: 0.7, fontWeight: 600 }}>{tabCount(tab)}</span>
                   </button>
                 ))}
                 <button className="mh-btn" style={{ marginLeft: 8, padding: "4px 12px", borderRadius: 100, fontSize: 11, fontWeight: 700, border: `1.5px solid ${t.line}`, background: "transparent", color: C.primary, cursor: "pointer" }}>
@@ -628,13 +657,16 @@ export default function MartaHubDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {MOCK.activities.map((a, i) => (
+                  {filteredActivities.length === 0 && (
+                    <tr><td colSpan={14} style={{ padding: "26px 14px", textAlign: "center", fontSize: 12, color: t.lo }}>Tidak ada aktivitas untuk filter “{activeTab}”.</td></tr>
+                  )}
+                  {filteredActivities.map((a, i) => (
                     <tr key={i} className="mh-row" style={{ borderBottom: `1px solid ${t.line}` }}>
                       <td style={{ padding: "11px 14px", fontSize: 12, color: t.lo }}>{a.no}</td>
-                      <td style={{ padding: "11px 14px", fontSize: 12, fontWeight: 600, color: t.hi, whiteSpace: "nowrap", maxWidth: 180 }}>{a.name}</td>
+                      <td title={a.name} style={{ padding: "11px 14px", fontSize: 12, fontWeight: 600, color: t.hi, whiteSpace: "nowrap", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{a.name}</td>
                       <td style={{ padding: "11px 14px", fontSize: 12, color: t.mid, whiteSpace: "nowrap" }}>{a.branch}</td>
                       <td style={{ padding: "11px 14px" }}>
-                        <span style={{ fontSize: 10.5, fontWeight: 700, padding: "3px 9px", borderRadius: 100, background: a.catColor + "18", color: a.catColor, border: `1px solid ${a.catColor}30` }}>{a.cat}</span>
+                        <span style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 10.5, fontWeight: 700, padding: "3px 10px", borderRadius: 100, background: a.catColor + "18", color: a.catColor, border: `1px solid ${a.catColor}30` }}>{a.cat}</span>
                       </td>
                       <td style={{ padding: "11px 14px", fontSize: 11.5, color: t.mid, whiteSpace: "nowrap" }}>{a.planDate}</td>
                       <td style={{ padding: "11px 14px", fontSize: 11.5, color: t.mid, whiteSpace: "nowrap" }}>{a.actualDate}</td>

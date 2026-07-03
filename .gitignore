@@ -1,5 +1,24 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+# CONFIDENTIAL data sources — JANGAN commit (berisi lat/long & data mentah)
+# List Site, Map SHP (shapefile), dan spreadsheet mentah lainnya.
+*.xlsb
+*.xls
+*.xlsx
+*.shp
+*.shx
+*.dbf
+*.prj
+*.cpg
+*.kml
+*.kmz
+*.geojson
+List Site*
+Map SHP*
+/private/
+/confidential/
+/data-raw/
+
 # dependencies
 /node_modules
 /.pnp

@@ -1,109 +1,93 @@
 "use client";
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import supabaseMarta from "../../../lib/supabaseMarta";
-import { HubLogo } from "../../../components/HubLogo";
-import { HubLogoLoader } from "../../../components/HubLogoLoader";
+import { useState, useEffect, useCallback } from "react";
+import MartaShell, { T, FONT } from "../components/MartaShell";
+import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 
-const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,sans-serif`;
-
-const MOCK_APPROVALS = [
-  { id: 1, name: "HALAL BI-HALAL SCOOTER RISE", branch: "Tebing Tinggi", bme: "Rizky P.", type: "Sponsorship", typeColor: "#7B1FA2", date: "11-Apr-26", revenue: "Rp 4.655.000", status: "Pending Review" },
-  { id: 2, name: "OPEN BOOTH FWA — PANTAI LABU", branch: "Pantai Labu", bme: "Ahmad F.", type: "Thematic", typeColor: "#E65100", date: "28-Apr-26", revenue: "Rp 855.000", status: "Pending Review" },
-  { id: 3, name: "PAKET IBADAH HAJI", branch: "Del. Serdang Raya", bme: "Siti R.", type: "Thematic", typeColor: "#E65100", date: "24-Apr-26", revenue: "Rp 15.875.000", status: "Revision Requested" },
-  { id: 4, name: "OPEN BOOTH FWA — SERDANG RAYA", branch: "Del. Serdang Raya", bme: "Dewi L.", type: "Direct Selling", typeColor: "#1565C0", date: "15-Apr-26", revenue: "Rp 925.000", status: "Pending Review" },
-];
-
-const STATUS_STYLE = {
-  "Pending Review":     { bg: "#FFF3E0", color: "#E65100", bd: "#FFD180" },
-  "Revision Requested": { bg: "#FFEBEE", color: "#C62828", bd: "#FFCDD2" },
-  "Approved":           { bg: "#E8F5E9", color: "#2E7D32", bd: "#C8E6C9" },
+const fmtDate = (s) => {
+  if (!s || s.length < 10) return "—";
+  const [y, m, d] = s.slice(0, 10).split("-");
+  const mo = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"][(+m || 1) - 1];
+  return `${d} ${mo} ${y}`;
 };
 
 export default function ApprovalPage() {
-  const router = useRouter();
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    supabaseMarta.auth.getSession().then(({ data: { session } }) => {
-      if (!session) { router.replace("/marta/login?redirect=/martahub/approval"); return; }
-      setUser(session.user);
-      setLoading(false);
-    });
-  }, [router]);
-
-  if (loading) return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F0F4FA" }}>
-      <HubLogoLoader variant="marta" logoSize={80} />
-    </div>
+  return (
+    <MartaShell active="approval" title="Approval Center" subtitle="Tinjau & setujui rencana kegiatan yang diajukan.">
+      {(ctx) => <Body canManage={ctx?.canManage} />}
+    </MartaShell>
   );
+}
+
+function Body({ canManage }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true); setErr("");
+    try {
+      const { data, error } = await supabaseMarta
+        .from("mh_activities")
+        .select("id, event_name, brand, mc, site_id, plan_date_start, plan_date, event_categories, status")
+        .eq("status", "submitted")
+        .order("created_at", { ascending: true });
+      if (error) throw new Error(error.message);
+      setRows(data || []);
+    } catch (e) { setErr(e.message || "Gagal memuat"); }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function decide(id, approve) {
+    setBusy(id); setErr("");
+    try {
+      const { error } = await supabaseMarta.from("mh_activities").update({ status: approve ? "approved" : "rejected" }).eq("id", id);
+      if (error) throw new Error(error.message);
+      await load();
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(""); }
+  }
 
   return (
-    <div style={{ minHeight: "100vh", background: "#F0F4FA", fontFamily: FONT, padding: "40px 20px" }}>
-      <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,700;9..40,800&display=swap');`}</style>
+    <div>
+      {!MARTA_CONFIGURED && <div style={{ ...card, borderColor: T.warning, background: T.warningBg, color: "#7a5b00", marginBottom: 16 }}>Supabase MartaHub belum dikonfigurasi / project paused.</div>}
+      {err && <div style={{ ...card, borderColor: T.error, background: T.errorBg, color: T.error, marginBottom: 16 }}>{err}</div>}
 
-      <div style={{ maxWidth: 780, margin: "0 auto" }}>
-        {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 28 }}>
-          <HubLogo variant="marta" size={44} shadow={false} />
-          <div>
-            <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em", color: "#1A1A1D" }}>
-              Approval Center
-            </div>
-            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.12em", textTransform: "uppercase", color: "#AEAEB8" }}>
-              Activity Submission Review
-            </div>
-          </div>
-          <div style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
-            <div style={{ padding: "4px 12px", borderRadius: 100, background: "#FFF3E020", border: "1px solid #FFD18066", fontSize: 12, fontWeight: 700, color: "#E65100" }}>
-              {MOCK_APPROVALS.filter(a => a.status === "Pending Review").length} Pending
-            </div>
-            <button onClick={() => router.push("/martahub")}
-              style={{ padding: "8px 18px", borderRadius: 9, background: "white", color: "#5A5A68", border: "1px solid #E2E2E6", fontWeight: 600, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>
-              ← Dashboard
-            </button>
-          </div>
-        </div>
-
-        {/* Preview banner */}
-        <div style={{ background: "linear-gradient(135deg,#FFF8E1,#FFFDE7)", border: "1px solid #FFE082", borderRadius: 12, padding: "14px 18px", marginBottom: 24, display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#F57F17", flexShrink: 0 }} />
-          <span style={{ fontSize: 13, color: "#E65100", fontWeight: 600 }}>Preview mode — Approval actions (Approve / Reject) akan aktif setelah integrasi workflow Supabase.</span>
-        </div>
-
-        {/* Cards */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {MOCK_APPROVALS.map((item) => {
-            const ss = STATUS_STYLE[item.status] || STATUS_STYLE["Pending Review"];
-            return (
-              <div key={item.id} style={{ background: "white", borderRadius: 14, border: "1px solid #E2E2E6", padding: "18px 22px" }}>
-                <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 5 }}>
-                      <span style={{ fontSize: 14, fontWeight: 800, color: "#1A1A1D", letterSpacing: "-0.02em" }}>{item.name}</span>
-                      <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 100, background: item.typeColor + "14", color: item.typeColor, border: `1px solid ${item.typeColor}30` }}>{item.type}</span>
-                    </div>
-                    <div style={{ fontSize: 12, color: "#8A8A96", display: "flex", gap: 14 }}>
-                      <span>📍 {item.branch}</span>
-                      <span>👤 {item.bme}</span>
-                      <span>📅 {item.date}</span>
-                      <span style={{ fontWeight: 700, color: "#1A1A1D" }}>{item.revenue}</span>
-                    </div>
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8, flexShrink: 0 }}>
-                    <span style={{ fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 100, background: ss.bg, color: ss.color, border: `1px solid ${ss.bd}` }}>{item.status}</span>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <button style={{ padding: "6px 14px", borderRadius: 8, background: "#E8F5E9", color: "#2E7D32", border: "1px solid #C8E6C9", fontWeight: 700, fontSize: 11, cursor: "not-allowed", opacity: 0.6, fontFamily: FONT }}>✓ Approve</button>
-                      <button style={{ padding: "6px 14px", borderRadius: 8, background: "#FFEBEE", color: "#C62828", border: "1px solid #FFCDD2", fontWeight: 700, fontSize: 11, cursor: "not-allowed", opacity: 0.6, fontFamily: FONT }}>✕ Reject</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+      <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.line}`, fontWeight: 800, fontSize: 14 }}>Menunggu persetujuan <span style={{ color: T.mid, fontWeight: 500 }}>· {rows.length}</span></div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
+            <thead><tr style={{ background: "#F7F9FC", color: T.mid, textAlign: "left" }}>
+              {["Event", "Brand", "MC", "Site", "Tanggal", ""].map((h) => <th key={h} style={{ padding: "9px 14px", fontSize: 11, fontWeight: 800, textTransform: "uppercase" }}>{h}</th>)}
+            </tr></thead>
+            <tbody>
+              {loading && <tr><td colSpan={6} style={{ padding: 26, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
+              {!loading && rows.length === 0 && <tr><td colSpan={6} style={{ padding: 26, textAlign: "center", color: T.lo }}>Tidak ada yang perlu disetujui 🎉</td></tr>}
+              {!loading && rows.map((r) => (
+                <tr key={r.id} style={{ borderTop: `1px solid ${T.line}` }}>
+                  <td style={{ padding: "10px 14px", fontWeight: 700 }}>{r.event_name || "—"}</td>
+                  <td style={{ padding: "10px 14px" }}>{r.brand ? <span style={{ fontSize: 10.5, fontWeight: 800, color: r.brand === "tri" ? T.tri : T.im3 }}>{r.brand === "tri" ? "3ID" : "IM3"}</span> : "—"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.mc || "—"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.site_id || "—"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{fmtDate(r.plan_date_start || r.plan_date)}</td>
+                  <td style={{ padding: "10px 14px", textAlign: "right" }}>
+                    {canManage && (
+                      <span style={{ display: "inline-flex", gap: 8 }}>
+                        <button disabled={busy === r.id} onClick={() => decide(r.id, true)} style={{ ...btn, background: T.success, color: "#fff", borderColor: T.success }}>Setujui</button>
+                        <button disabled={busy === r.id} onClick={() => decide(r.id, false)} style={{ ...btn, color: T.error, borderColor: `${T.error}44` }}>Tolak</button>
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
   );
 }
+
+const card = { background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 14, fontSize: 13 };
+const btn = { padding: "6px 12px", borderRadius: 8, border: `1px solid ${T.line}`, background: "#fff", color: T.hi, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT };

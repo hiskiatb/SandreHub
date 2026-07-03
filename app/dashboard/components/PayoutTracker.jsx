@@ -244,11 +244,18 @@ function applySidebarFilter(rows, partnerName, filterMpxType, regionFilter, mast
     const tp = filterMpxType.toUpperCase().trim();
     result = result.filter(r => getMpxTypeFromRow(r) === tp);
   }
-  if (regionFilter && src !== "agency") {
+  if (regionFilter) {
     const targetRegion = regionFilter.toUpperCase().trim();
     result = result.filter(r => {
       const rowRegion = getRegionFromRow(r);
-      if (rowRegion) return rowRegion === targetRegion;
+      if (rowRegion) {
+        // Kolom Region bisa MULTI-region, dipisah titik koma (;) — mis.
+        // "NORTH SUMATERA; CENTRAL SUMATERA" → dapat diakses kedua region.
+        const parts = rowRegion.split(";").map(s => s.trim()).filter(Boolean);
+        if (parts.some(p => p === "ALL" || p === "SUMATERA" || p === "ALL SUMATERA")) return true;
+        return parts.includes(targetRegion);
+      }
+      // Fallback: turunkan region dari master partner bila kolom Region kosong.
       if (masterData && masterData.length > 0) {
         const match = masterData.find(m => normalizeName(m.partner_name) === normalizeName(getPartnerNameFromRow(r)));
         if (match) return match.region?.toUpperCase().trim() === targetRegion;
@@ -616,8 +623,26 @@ export default function PayoutTracker({
   const isSPM    = profile?.role === "spm_sumatera";
   const isIOHAny = ["internal_ioh","ioh_north_sumatera","ioh_central_sumatera","ioh_south_sumatera"].includes(profile?.role);
   const isIOHRegional = ["ioh_north_sumatera","ioh_central_sumatera","ioh_south_sumatera"].includes(profile?.role);
+  // IOH Sumatera (umbrella) boleh memilih region view sendiri di sidebar payout.
+  const isIOHUmbrella = isIOHAny && !isIOHRegional;
+  // Role yang melihat seluruh Sumatera & boleh memfilter per-region: SPM + IOH Sumatera.
+  const canPickRegion = isSPM || isIOHUmbrella;
 
   const filterMpxType = filterType || null;
+
+  // Pilihan region view. "" = seluruh Sumatera (tidak difilter).
+  // Nilai awal mengikuti regionFilter yang dibawa dari view lain (mis. MFTS).
+  const [regionView, setRegionView] = useState(canPickRegion ? (regionFilter || "") : "");
+  // Daftar region dari master data (fallback ke 3 region Sumatera).
+  const regionOptions = useMemo(() => {
+    const fromMaster = [...new Set((masterData || []).map(m => (m.region || "").toUpperCase().trim()).filter(Boolean))];
+    const fallback = ["NORTH SUMATERA","CENTRAL SUMATERA","SOUTH SUMATERA"];
+    return fromMaster.length ? fromMaster.sort() : fallback;
+  }, [masterData]);
+  // Region efektif yang dipakai memfilter data:
+  //  • SPM / IOH umbrella → pilihan regionView (null jika "Seluruh Sumatera")
+  //  • IOH regional terkunci → regionFilter dari prop
+  const effectiveRegion = canPickRegion ? (regionView || null) : regionFilter;
 
   const [screen, setScreen]          = useState("loading");
   const [src, setSrc]                = useState("partner");
@@ -638,10 +663,10 @@ export default function PayoutTracker({
   const { partnerRaw, agencyRaw } = useMemo(() => {
     const pAll = allRaw.filter(r => r._source === "partner" || !r._source);
     const aAll = allRaw.filter(r => r._source === "agency");
-    const pR = applySidebarFilter(pAll, partnerName, filterMpxType, regionFilter, masterData, "partner");
-    const aR = applySidebarFilter(aAll, null, null, null, null, "agency");
+    const pR = applySidebarFilter(pAll, partnerName, filterMpxType, effectiveRegion, masterData, "partner");
+    const aR = applySidebarFilter(aAll, null, null, effectiveRegion, masterData, "agency");
     return { partnerRaw: pR, agencyRaw: aR };
-  }, [allRaw, partnerName, filterMpxType, regionFilter, masterData]);
+  }, [allRaw, partnerName, filterMpxType, effectiveRegion, masterData]);
 
   const { partnerAgg, agencyAgg } = useMemo(() => {
     const { agg: pAgg } = parseRows(partnerRaw, "partner");
@@ -876,12 +901,12 @@ export default function PayoutTracker({
   }
 
   useEffect(()=>{
-    if (isIOHRegional && src==="agency") setSrc("partner");
+    // IOH regional kini boleh lihat Agency juga — datanya sudah ter-scope region.
     if (!isSPM && !isIOHAny && src==="agency") setSrc("partner");
-  },[isSPM,isIOHAny,isIOHRegional,src]);
+  },[isSPM,isIOHAny,src]);
 
   useEffect(()=>{
-    const canAgency = isSPM || (isIOHAny && !isIOHRegional);
+    const canAgency = isSPM || isIOHAny;
     if (partnerRaw.length===0 && agencyRaw.length>0 && canAgency) setSrc("agency");
     else if (agencyRaw.length===0 && partnerRaw.length>0) setSrc("partner");
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -967,8 +992,9 @@ export default function PayoutTracker({
   };
 
   const sharedProps = {
-    isSPM,isIOHAny,isIOHRegional,profile,
-    partnerName,filterMpxType,regionFilter,
+    isSPM,isIOHAny,isIOHRegional,isIOHUmbrella,canPickRegion,profile,
+    regionView,setRegionView,regionOptions,
+    partnerName,filterMpxType,regionFilter:effectiveRegion,
     screen,setScreen,loading,loadText,toast,
     partnerRaw:adminPartnerRaw,agencyRaw:adminAgencyRaw,
     viewPartnerRaw:partnerRaw, viewAgencyRaw:agencyRaw,
@@ -1421,6 +1447,7 @@ function GrandTotalBanner({ grand, partnerCount, monthsCount = 0, groupCount = 0
 function DashScreen(props) {
   const w = useWidth();
   const { t, src, setSrc, setScreen, activeTab, setActiveTab, isSPM, isIOHAny, isIOHRegional,
+    isIOHUmbrella, canPickRegion, regionView, setRegionView, regionOptions,
     regionFilter, filterMpxType, viewPartnerRaw, viewAgencyRaw, pubMeta,
     filters, setFilters, opts, curAgg, curRaw, filtAgg, filtRaw,
     setCollapsed, searchFocus, setSearchFocus, searchIdx, setSearchIdx,
@@ -1433,7 +1460,7 @@ function DashScreen(props) {
 
   const segPartnerCount = (viewPartnerRaw||[]).length;
   const segAgencyCount  = (viewAgencyRaw||[]).length;
-  const segVisible = ((isSPM||(isIOHAny&&!isIOHRegional))?["partner","agency"]:["partner"])
+  const segVisible = ((isSPM||isIOHAny)?["partner","agency"]:["partner"])
     .filter(s=>(s==="partner"?segPartnerCount:segAgencyCount)>0);
 
   const resetFilters = () => { setFilters({month:[],entity:[],ptype:[],prog:[],status:[],q:""}); setSearchInput(""); };
@@ -1485,6 +1512,26 @@ function DashScreen(props) {
           </div>
         )}
       </div>
+
+      {canPickRegion&&(
+        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16,flexWrap:"wrap"}}>
+          <span style={{display:"inline-flex",alignItems:"center",gap:6,fontFamily:MONO,fontSize:10,letterSpacing:"0.14em",textTransform:"uppercase",color:t.muted}}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            Region View
+          </span>
+          <select value={regionView||""} onChange={e=>setRegionView(e.target.value)}
+            style={{fontFamily:"inherit",fontSize:13,fontWeight:600,color:t.ink,background:t.surf,border:`1px solid ${t.line}`,borderRadius:9,padding:"7px 12px",cursor:"pointer",outline:"none",minWidth:180}}>
+            <option value="">Seluruh Sumatera</option>
+            {(regionOptions||[]).map(r=><option key={r} value={r}>{r}</option>)}
+          </select>
+          {regionView&&(
+            <button onClick={()=>setRegionView("")}
+              style={{fontFamily:"inherit",fontSize:11.5,fontWeight:600,color:t.muted,background:"transparent",border:`1px solid ${t.line}`,borderRadius:8,padding:"6px 10px",cursor:"pointer"}}>
+              Reset
+            </button>
+          )}
+        </div>
+      )}
 
       {segVisible.length>0&&(
         <div style={{display:"inline-flex",gap:4,background:t.surf,border:`1px solid ${t.line}`,borderRadius:14,padding:4,marginBottom:18,boxShadow:t.shadow1,overflowX:"auto",maxWidth:"100%"}}>
@@ -1705,7 +1752,7 @@ function SummaryTable({ t, w, filtAgg, grand, grandPartnerCount, sortedMonths, c
     {k:"prog",l:"Program",left:true},
     {k:"n",l:"#Rec"},
     {k:"po",l:"PO"},
-    ...(!isAg?[{k:"surat",l:"Pmt. Letter"}]:[]),
+    ...(!isAg?[{k:"surat",l:"Surat Pemberitahuan"}]:[]),
     {k:"inv",l:"Invoice"},
     {k:"clv",l:"CLV"},
     {k:"clr",l:"Clearing"},
