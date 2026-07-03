@@ -32,8 +32,8 @@ const kbd = (fn) => ({
 
 const SLA_P = [
   { key:"reva_po",   label:"Reva → PO",                sla:2, from:["reva date","reva"],                 to:["po date","po number"] },
-  { key:"po_surat",  label:"PO → Payment Letter",       sla:1, from:["po date"],                         to:["surat pemberitahuan date","surat pemberitahuan","surat"] },
-  { key:"surat_inv", label:"Payment Letter → Invoice",  sla:2, from:["surat pemberitahuan date","surat"], to:["invoice submission","invoice"] },
+  { key:"po_surat",  label:"PO → Surat Pemberitahuan",       sla:1, from:["po date"],                         to:["surat pemberitahuan date","surat pemberitahuan","surat"] },
+  { key:"surat_inv", label:"Surat Pemberitahuan → Invoice",  sla:2, from:["surat pemberitahuan date","surat"], to:["invoice submission","invoice"] },
   { key:"inv_clv",   label:"Invoice → CLV",             sla:2, from:["invoice submission","invoice"],     to:["clv date","clv"] },
   { key:"clv_clear", label:"CLV → Bank Clearing",       sla:3, from:["clv date","clv"],                   to:["clearing date","clearing"] },
 ];
@@ -840,7 +840,7 @@ export default function PayoutTracker({
   const funnelStages = useMemo(()=>{
     const g = grand;
     if (isAg) return [{key:"po",label:"PO Issued",val:g.po,color:C.tealDp},{key:"inv",label:"Invoice Submitted",val:g.inv,color:C.teal},{key:"clv",label:"CLV",val:g.clv,color:C.yellow},{key:"clr",label:"Bank Cleared",val:g.clr,color:C.yellowD}];
-    return [{key:"po",label:"PO Issued",val:g.po,color:C.tealDp},{key:"surat",label:"Payment Letter",val:g.surat,color:C.tealD},{key:"inv",label:"Invoice Submitted",val:g.inv,color:C.teal},{key:"clv",label:"CLV",val:g.clv,color:C.yellow},{key:"clr",label:"Bank Cleared",val:g.clr,color:C.yellowD}];
+    return [{key:"po",label:"PO Issued",val:g.po,color:C.tealDp},{key:"surat",label:"Surat Pemberitahuan",val:g.surat,color:C.tealD},{key:"inv",label:"Invoice Submitted",val:g.inv,color:C.teal},{key:"clv",label:"CLV",val:g.clv,color:C.yellow},{key:"clr",label:"Bank Cleared",val:g.clr,color:C.yellowD}];
   },[grand,isAg]);
 
   const trendSeries = useMemo(()=>{
@@ -890,11 +890,11 @@ export default function PayoutTracker({
     if (fmt==="xlsx") {
       const XLSX=await getXLSX();
       const wb=XLSX.utils.book_new();
-      const ws=XLSX.utils.json_to_sheet(filtAgg.map(r=>({"Program Date":fmtMonthYear(r.month),"Entity":r.entity,"Partner/Agency Type":r.ptype,"Program Type":r.prog,"#Records":r.n,"PO":r.po,"Payment Letter":r.surat,"Invoice":r.inv,"CLV":r.clv,"Clearing":r.clr,"% Invoice":r.n?+(r.inv/r.n*100).toFixed(1):0,"% CLV":r.n?+(r.clv/r.n*100).toFixed(1):0,"% Clearing":r.n?+(r.clr/r.n*100).toFixed(1):0})));
+      const ws=XLSX.utils.json_to_sheet(filtAgg.map(r=>({"Program Date":fmtMonthYear(r.month),"Entity":r.entity,"Partner/Agency Type":r.ptype,"Program Type":r.prog,"#Records":r.n,"PO":r.po,"Surat Pemberitahuan":r.surat,"Invoice":r.inv,"CLV":r.clv,"Clearing":r.clr,"% Invoice":r.n?+(r.inv/r.n*100).toFixed(1):0,"% CLV":r.n?+(r.clv/r.n*100).toFixed(1):0,"% Clearing":r.n?+(r.clr/r.n*100).toFixed(1):0})));
       XLSX.utils.book_append_sheet(wb,ws,"Summary"); XLSX.writeFile(wb,`${pref}_summary_${stamp}.xlsx`);
       showToast("Filtered summary downloaded — Excel","success");
     } else {
-      const hdr="Program Date,Entity,Partner Type,Program Type,#Rec,PO,Payment Letter,Invoice,CLV,Clearing,% Invoice,% CLV,% Clearing";
+      const hdr="Program Date,Entity,Partner Type,Program Type,#Rec,PO,Surat Pemberitahuan,Invoice,CLV,Clearing,% Invoice,% CLV,% Clearing";
       const body=filtAgg.map(r=>[fmtMonthYear(r.month),r.entity,r.ptype,r.prog,r.n,r.po,r.surat,r.inv,r.clv,r.clr,r.n?+(r.inv/r.n*100).toFixed(1):0,r.n?+(r.clv/r.n*100).toFixed(1):0,r.n?+(r.clr/r.n*100).toFixed(1):0].join(",")).join("\n");
       const a=document.createElement("a"); a.href="data:text/csv;charset=utf-8,\uFEFF"+encodeURIComponent(hdr+"\n"+body); a.download=`${pref}_${stamp}.csv`; a.click();
       showToast("Filtered summary downloaded — CSV","success");
@@ -1750,7 +1750,7 @@ function DashTab(props) {
             </div>
           </Card>
           <Card t={t} pad={false}>
-            <CardHead title={isAg?"Top 10 Agencies":"Top 10 Partners"} accent={C.magenta} sub="By total amount · click to view all programs" t={t}/>
+            <CardHead title={isAg?"Top Agencies":"Top Partners"} accent={C.magenta} sub="By total amount · click to view all programs" t={t}/>
             <div style={{padding:20}}>
               {topPartners.length===0?<div style={{textAlign:"center",color:t.muted,padding:"2rem",fontFamily:MONO,fontSize:12}}>No data available</div>:<div style={{display:"flex",flexDirection:"column",gap:6}}>{topPartners.map((p,i)=><TpRow key={i} p={p} i={i} maxAmt={topPartners[0]?.amt||1} isExp={tpExp===p.name} onToggle={()=>setTpExp(e=>e===p.name?null:p.name)} t={t}/>)}</div>}
             </div>
