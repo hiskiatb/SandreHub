@@ -72,6 +72,18 @@ const MENUS = {
   ],
 };
 
+// Role IOH (monitoring, baca-saja) memakai menu Data SDP yang sama.
+const IOH_MONITOR_MENU = [
+  {
+    id     : "rekap",
+    icon   : Download,
+    label  : "Data SDP",
+    desc   : "Pantau data SDP per periode — filter, detail & export Excel (baca-saja)",
+    accent : "blue",
+  },
+];
+["internal_ioh", "ioh_north_sumatera", "ioh_central_sumatera", "ioh_south_sumatera"].forEach((r) => { MENUS[r] = IOH_MONITOR_MENU; });
+
 // ─── Role badge ───────────────────────────────────────────────────────────────
 function RoleBadge({ role, t }) {
   const cfg = {
@@ -162,7 +174,7 @@ function ComingSoon({ role, t }) {
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
-export default function SDP_StatusForm({ supabase, theme = "dark", profile }) {
+export default function SDP_StatusForm({ supabase, theme = "dark", profile, readOnly = false, lockRegion = null }) {
   const d    = theme === "dark";
   const t    = mk(d);
   const role = profile?.role ?? "";
@@ -182,7 +194,7 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile }) {
       }}
     >
       <ArrowLeft size={15} />
-      Kembali ke SDP Status
+      Kembali ke Form SDP
     </button>
   );
 
@@ -200,7 +212,7 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile }) {
     return (
       <div style={{ fontFamily: FF }}>
         {renderBack()}
-        <SDP_RekapCSE supabase={supabase} theme={theme} profile={profile} />
+        <SDP_RekapCSE supabase={supabase} theme={theme} profile={profile} readOnly={readOnly} lockRegion={lockRegion} />
       </div>
     );
   }
@@ -212,7 +224,7 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile }) {
       {/* Page header */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: -0.5, color: t.hi }}>
-          SDP Status
+          Form SDP
         </div>
         <div style={{ fontSize: 13, color: t.mid, marginTop: 3 }}>
           Pilih menu di bawah untuk melanjutkan

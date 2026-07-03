@@ -167,7 +167,7 @@ function DetailDrawer({ supabase, row, t, d, onClose }) {
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────
-export default function SDP_RekapCSE({ supabase, theme = "dark", profile }) {
+export default function SDP_RekapCSE({ supabase, theme = "dark", profile, readOnly = false, lockRegion = null }) {
   const d = theme === "dark";
   const t = mk(d);
 
@@ -179,7 +179,7 @@ export default function SDP_RekapCSE({ supabase, theme = "dark", profile }) {
   const [detail, setDetail]   = useState(null);
 
   const [search, setSearch]   = useState("");
-  const [fRegion, setFRegion] = useState("ALL");
+  const [fRegion, setFRegion] = useState(lockRegion || "ALL");
   const [fArea, setFArea]     = useState("ALL");
   const [fBranch, setFBranch] = useState("ALL");
   const [fCluster, setFCluster] = useState("ALL");
@@ -241,6 +241,7 @@ export default function SDP_RekapCSE({ supabase, theme = "dark", profile }) {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return rows.filter(r => {
+      if (lockRegion && r.region !== lockRegion) return false; // scope IOH regional
       if (fRegion !== "ALL" && r.region !== fRegion) return false;
       if (fArea !== "ALL" && r.area !== fArea) return false;
       if (fBranch !== "ALL" && r.branch !== fBranch) return false;
@@ -323,7 +324,9 @@ export default function SDP_RekapCSE({ supabase, theme = "dark", profile }) {
           <input placeholder="Cari ID, nama, cluster, owner…" value={search} onChange={e => setSearch(e.target.value)} style={{ border: "none", background: "none", outline: "none", flex: 1, fontSize: 13, color: t.hi, fontFamily: FF }} />
           {search && <button onClick={() => setSearch("")} style={{ border: "none", background: "none", cursor: "pointer", color: t.lo }}><X size={12} /></button>}
         </div>
-        <Sel value={fRegion} onChange={onRegion} t={t} minWidth={140} opts={regionOpts.map(v => ({ value: v, label: v === "ALL" ? "Semua Region" : v }))} />
+        {lockRegion
+          ? <div title="Region terkunci" style={{ display: "inline-flex", alignItems: "center", gap: 6, minWidth: 140, padding: "0 12px", height: 36, borderRadius: 8, border: `1px solid ${t.line}`, background: t.hover, color: t.mid, fontSize: 12.5, fontWeight: 600, fontFamily: FF }}>{lockRegion}</div>
+          : <Sel value={fRegion} onChange={onRegion} t={t} minWidth={140} opts={regionOpts.map(v => ({ value: v, label: v === "ALL" ? "Semua Region" : v }))} />}
         <Sel value={fArea}   onChange={onArea}   t={t} minWidth={140} opts={areaOpts.map(v => ({ value: v, label: v === "ALL" ? "Semua Area" : v }))} />
         <Sel value={fBranch} onChange={onBranch} t={t} minWidth={130} opts={branchOpts.map(v => ({ value: v, label: v === "ALL" ? "Semua Branch" : v }))} />
         <Sel value={fCluster} onChange={setFCluster} t={t} minWidth={140} opts={clusterOpts.map(v => ({ value: v, label: v === "ALL" ? "Semua Cluster" : v }))} />

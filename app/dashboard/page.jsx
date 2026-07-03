@@ -20,7 +20,7 @@ import {
   LogOut, ChevronRight, Calendar, Box, Layers,
   Shield, Globe, Building2, Store, SlidersHorizontal,
   Table2, Wallet, PanelLeftClose, PanelLeftOpen,
-  FileSpreadsheet, Users, Key, Briefcase,
+  FileSpreadsheet, Users, Key, Briefcase, Wrench,
 } from "lucide-react";
 
 import FormPendapatan   from "./components/PNL_FormPendapatan";
@@ -36,6 +36,7 @@ import SDP_StatusForm   from "./components/SDP_StatusForm";
 import MC_ClusterMapping from "./components/MC_ClusterMapping";
 import KodeOtoritas     from "./components/KodeOtoritas";
 import MFTS_Module      from "./components/MFTS_Module";
+import MenuAccessManager from "./components/MenuAccessManager";
 
 // ─── Role Maps ────────────────────────────────────────────────────────────────
 const IOH_ROLE_REGION_MAP = {
@@ -171,9 +172,20 @@ const CURRENT_YEAR        = CURRENT_DATE.getFullYear();
 const getCurrentMonth     = () => MONTHS[CURRENT_MONTH_INDEX];
 const getCurrentYear      = () => CURRENT_YEAR.toString();
 
-const HIDE_DATE_PICKER_VIEWS    = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","mc-cluster","kode-otoritas","mfts"]);
-const HIDE_SIDEBAR_FILTER_VIEWS = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","mc-cluster","kode-otoritas"]);
+const HIDE_DATE_PICKER_VIEWS    = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","mc-cluster","kode-otoritas","mfts","menu-access"]);
+const HIDE_SIDEBAR_FILTER_VIEWS = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","mc-cluster","kode-otoritas","menu-access"]);
 const PNL_VIEWS = new Set(["summary","pendapatan","pengeluaran"]);
+
+// Sub-menu yang ketersediaannya dapat dikontrol SPM per-role (maintenance).
+const CONTROLLABLE_MENUS = {
+  "summary":        "Laporan P&L",
+  "control-center": "PNL Control Center",
+  "pivot-summary":  "Pivot P&L Summary",
+  "payout-tracker": "Payout Tracker",
+  "sdp-status":     "Form SDP",
+  "mfts":           "Pemenuhan Manpower",
+};
+const menuKeyForView = (v) => (PNL_VIEWS.has(v) ? "summary" : v);
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 function FilterSelect({ label, value, onChange, children, t, d, disabled, icon }) {
@@ -196,12 +208,40 @@ function FilterSelect({ label, value, onChange, children, t, d, disabled, icon }
   );
 }
 
-function SNavItem({ icon, label, active, onClick, disabled }) {
+function SNavItem({ icon, label, active, onClick, disabled, maint }) {
   return (
     <button onClick={onClick} disabled={disabled} className={`snav${active ? " active" : ""}`}>
       <span style={{ flexShrink: 0, display: "flex", opacity: active ? 1 : 0.7 }}>{icon}</span>
       <span style={{ flex: 1, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>{label}</span>
+      {maint && <span title="Sedang dalam pemeliharaan" style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, borderRadius: 5, background: "rgba(255,176,32,0.16)", color: "#FFB020" }}><Wrench size={10} /></span>}
     </button>
+  );
+}
+
+// Panel pemberitahuan saat sebuah menu ditandai "dalam pemeliharaan" untuk role user.
+function MaintenanceView({ t, label, note, onBack }) {
+  const amber = "#FFB020";
+  return (
+    <div style={{ maxWidth: 560, margin: "48px auto 0", padding: "40px 32px", borderRadius: 16, border: `1px solid ${t.line}`, background: t.surface, textAlign: "center", boxShadow: t.shadowSm }}>
+      <div style={{ width: 62, height: 62, borderRadius: 16, margin: "0 auto 20px", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,176,32,0.13)", border: "1px solid rgba(255,176,32,0.30)" }}>
+        <Wrench size={27} color={amber} strokeWidth={2.1} />
+      </div>
+      <h3 style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em", color: t.hi, marginBottom: 8 }}>
+        {label} sedang dalam pemeliharaan
+      </h3>
+      <p style={{ fontSize: 13.5, color: t.mid, lineHeight: 1.6, maxWidth: 400, margin: "0 auto" }}>
+        Menu ini untuk sementara kami nonaktifkan karena sedang ditingkatkan. Tim SPM Sumatera sedang mengerjakannya — silakan cek kembali beberapa saat lagi. Terima kasih atas pengertiannya.
+      </p>
+      {note && (
+        <div style={{ marginTop: 18, padding: "11px 14px", borderRadius: 10, background: "rgba(255,176,32,0.09)", border: "1px solid rgba(255,176,32,0.24)", fontSize: 12.5, color: t.hi, lineHeight: 1.55, textAlign: "left", display: "flex", gap: 9 }}>
+          <AlertTriangle size={15} color={amber} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span><b style={{ color: amber }}>Catatan:</b> {note}</span>
+        </div>
+      )}
+      <button className="back-btn" onClick={onBack} style={{ marginTop: 24, display: "inline-flex" }}>
+        <ChevronLeft size={15} /> Kembali ke Overview
+      </button>
+    </div>
   );
 }
 
@@ -409,7 +449,20 @@ export default function DashboardPage() {
   const iohRegionView   = iohLockedRegion || (isIOHAny && activeRegion !== "SUMATERA" ? activeRegion : null);
   const isReadOnly      = isIOHAny;
   const canMonitor      = isSPM || isIOHAny || isMPX;
-  const canSdp          = isSPM || isSDPMember;
+  const canSdp          = isSPM || isSDPMember || isIOHAny;   // IOH: lihat saja (read-only)
+
+  // ── Kontrol ketersediaan menu (maintenance per-role, diatur SPM) ────────────
+  const [menuStatus, setMenuStatus] = useState(new Map()); // menu_key -> { status, note }
+  useEffect(() => {
+    if (!profile?.role || isSPM) { setMenuStatus(new Map()); return; } // SPM tak terpengaruh
+    let alive = true;
+    supabase.from("app_menu_status").select("menu_key, status, note").eq("role", profile.role)
+      .then(({ data }) => { if (alive) setMenuStatus(new Map((data || []).map(r => [r.menu_key, r]))); });
+    return () => { alive = false; };
+  }, [profile?.role, isSPM]);
+  const menuMaint  = (mk) => !isSPM && menuStatus.get(mk)?.status === "maintenance";
+  const viewMenuKey    = menuKeyForView(view);
+  const viewUnderMaint = !!CONTROLLABLE_MENUS[viewMenuKey] && menuMaint(viewMenuKey);
 
   // ── PNL form access ───────────────────────────────────────────────────────
   const canPnl = useMemo(() => {
@@ -693,12 +746,13 @@ export default function DashboardPage() {
             {navOpen && (
               <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.17 }} style={{ overflow: "hidden" }}>
                 <div style={{ marginLeft: 14, paddingLeft: 10, borderLeft: `1px solid ${t.line}`, paddingTop: 4, paddingBottom: 4, display: "flex", flexDirection: "column", gap: 2 }}>
-                  {canMonitor && <SNavItem icon={<Layers size={14} />}        label="PNL Control Center"   active={view === "control-center"} onClick={() => navigate("control-center")} />}
-                  {canMonitor && <SNavItem icon={<Table2 size={14} />}        label="Pivot P&L Summary"    active={view === "pivot-summary"}  onClick={() => navigate("pivot-summary")} />}
-                  {!isSDPMember && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} onClick={() => navigate("payout-tracker")} />}
-                  {!isSDPMember && <SNavItem icon={<PieChart size={14} />}    label="Laporan P&L"          active={PNL_VIEWS.has(view)}       onClick={() => navigate("summary")} />}
-                  {canSdp       && <SNavItem icon={<Users size={14} />}       label="SDP Status"           active={view === "sdp-status"}     onClick={() => navigate("sdp-status")} />}
-                  {canMfts && <SNavItem icon={<Briefcase size={14} />} label="Pemenuhan Manpower" active={view === "mfts"}          onClick={() => navigate("mfts")} />}
+                  {canMonitor && <SNavItem icon={<Layers size={14} />}        label="PNL Control Center"   active={view === "control-center"} maint={menuMaint("control-center")} onClick={() => navigate("control-center")} />}
+                  {canMonitor && <SNavItem icon={<Table2 size={14} />}        label="Pivot P&L Summary"    active={view === "pivot-summary"}  maint={menuMaint("pivot-summary")} onClick={() => navigate("pivot-summary")} />}
+                  {!isSDPMember && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
+                  {!isSDPMember && <SNavItem icon={<PieChart size={14} />}    label="Laporan P&L"          active={PNL_VIEWS.has(view)}       maint={menuMaint("summary")} onClick={() => navigate("summary")} />}
+                  {canSdp       && <SNavItem icon={<Users size={14} />}       label="Form SDP"             active={view === "sdp-status"}     maint={menuMaint("sdp-status")} onClick={() => navigate("sdp-status")} />}
+                  {canMfts && <SNavItem icon={<Briefcase size={14} />} label="Pemenuhan Manpower" active={view === "mfts"}          maint={menuMaint("mfts")} onClick={() => navigate("mfts")} />}
+                  {isSPM        && <SNavItem icon={<Wrench size={14} />}      label="Kelola Menu"          active={view === "menu-access"}    onClick={() => navigate("menu-access")} />}
                   {isSPM        && <SNavItem icon={<Shield size={14} />}      label="Admin Panel"          active={view === "admin-panel"}    onClick={() => navigate("admin-panel")} />}
                   {isSPM        && <SNavItem icon={<FileSpreadsheet size={14} />} label="Import Data"      active={view === "import-wizard"}  onClick={() => navigate("import-wizard")} />}
                   {isSPM        && <SNavItem icon={<MapPin size={14} />}           label="MC/Cluster Mapping" active={view === "mc-cluster"}       onClick={() => navigate("mc-cluster")} />}
@@ -849,17 +903,18 @@ export default function DashboardPage() {
                       accent={{ color: "#C6168D", bg: d ? "rgba(198,22,141,0.11)" : "rgba(198,22,141,0.07)", bd: d ? "rgba(198,22,141,0.28)" : "rgba(198,22,141,0.16)", shadow: "rgba(198,22,141,0.16)" }} />
                   )}
 
-                  {/* SDP Status — SPM, BSM, CSE, SDP user */}
+                  {/* Form SDP — SPM, BSM, CSE, PIC, dan IOH (lihat saja) */}
                   {canSdp && (
-                    <DashCard icon={<Users size={20} />} title="SDP Status"
+                    <DashCard icon={<Users size={20} />} title="Form SDP"
                       desc={
                         isSPM       ? "Upload territory, mapping kode otoritas, rekap data, dan pantau status seluruh SDP Sumatera." :
                         isCSE       ? `Isi formulir data SDP di cluster ${profile?.cluster || "Anda"}.` :
                         isBSM       ? "Kelola kode otoritas CSE/RGE, rekap data SDP, dan konfirmasi di branch Anda." :
                         isPICRegion ? "Monitor progres pengisian dan konfirmasi BSM seluruh SDP." :
+                        isIOHAny    ? "Pantau data SDP" + (iohLockedRegion ? ` region ${iohLockedRegion}` : " seluruh Sumatera") + " — tampilan baca-saja." :
                                       `Isi dan submit data SDP Anda.`
                       }
-                      tag={isSPM ? "Admin" : isBSM ? "BSM" : isPICRegion ? "PIC" : "SDP"} active={true} onClick={() => navigate("sdp-status")} t={t} d={d}
+                      tag={isSPM ? "Admin" : isBSM ? "BSM" : isPICRegion ? "PIC" : isIOHAny ? "Monitor" : "SDP"} active={true} onClick={() => navigate("sdp-status")} t={t} d={d}
                       accent={{ color: d ? "#30D158" : "#1A9E5A", bg: d ? "rgba(48,209,88,0.11)" : "rgba(26,158,90,0.07)", bd: d ? "rgba(48,209,88,0.28)" : "rgba(26,158,90,0.20)", shadow: "rgba(48,209,88,0.16)" }} />
                   )}
 
@@ -868,6 +923,13 @@ export default function DashboardPage() {
                       desc="Lacak pemenuhan DSF: alokasi per cluster, vacancy yang sedang digarap, roster manpower, dan progres agency."
                       tag="Manpower" active={true} onClick={() => navigate("mfts")} t={t} d={d}
                       accent={{ color: d ? "#0A84FF" : "#2563EB", bg: d ? "rgba(10,132,255,0.12)" : "rgba(37,99,235,0.07)", bd: d ? "rgba(10,132,255,0.28)" : "rgba(37,99,235,0.18)", shadow: "rgba(37,99,235,0.16)" }} />
+                  )}
+
+                  {isSPM && (
+                    <DashCard icon={<Wrench size={20} />} title="Kelola Menu"
+                      desc="Atur ketersediaan tiap sub-menu per role. Tandai menu 'dalam pemeliharaan' — role tetap melihatnya dengan pemberitahuan."
+                      tag="Admin" active={true} onClick={() => navigate("menu-access")} t={t} d={d}
+                      accent={{ color: d ? "#FFB020" : "#B7791F", bg: d ? "rgba(255,176,32,0.12)" : "rgba(183,121,31,0.08)", bd: d ? "rgba(255,176,32,0.30)" : "rgba(183,121,31,0.22)", shadow: "rgba(183,121,31,0.16)" }} />
                   )}
 
                   {isSPM && (
@@ -902,7 +964,7 @@ export default function DashboardPage() {
             )}
 
             {/* ── PNL Control Center ── */}
-            {view === "control-center" && canMonitor && (
+            {view === "control-center" && canMonitor && !viewUnderMaint && (
               <motion.div key="cc" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
                 <PNLControlCenter
@@ -915,7 +977,7 @@ export default function DashboardPage() {
             )}
 
             {/* ── Pivot P&L Summary ── */}
-            {view === "pivot-summary" && canMonitor && (
+            {view === "pivot-summary" && canMonitor && !viewUnderMaint && (
               <motion.div key="ps" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
                 <PNLPivotSummary theme={theme} activeYear={activeYear} userRole={profile?.role} partnerName={isMPX ? profile?.partner_name : null} />
@@ -923,7 +985,7 @@ export default function DashboardPage() {
             )}
 
             {/* ── Payout Tracker ── */}
-            {view === "payout-tracker" && !isSDPMember && (
+            {view === "payout-tracker" && !isSDPMember && !viewUnderMaint && (
               <motion.div key="pt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
                 <PayoutTracker theme={theme} profile={profile} regionFilter={iohRegionView} partnerName={isMPX ? (profile?.partner_name || null) : (activePartner || null)} filterType={activeType !== "ALL" ? activeType : null} readOnly={isReadOnly} masterData={masterData} />
@@ -931,7 +993,7 @@ export default function DashboardPage() {
             )}
 
             {/* ── MFTS — Pemenuhan Manpower ── */}
-            {view === "mfts" && canMfts && (
+            {view === "mfts" && canMfts && !viewUnderMaint && (
               <motion.div key="mfts" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
                 <MFTS_Module supabase={supabase} theme={theme} profile={profile} scopeRegion={iohRegionView} />
@@ -975,7 +1037,7 @@ export default function DashboardPage() {
             )}
 
             {/* ── SDP Status ── */}
-            {view === "sdp-status" && canSdp && (
+            {view === "sdp-status" && canSdp && !viewUnderMaint && (
               <motion.div key="sdp" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 {!isSDPMember && (
                   <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}>
@@ -988,14 +1050,36 @@ export default function DashboardPage() {
                       supabase={supabase}
                       theme={theme}
                       profile={profile}
+                      readOnly={isIOHAny}
+                      lockRegion={iohLockedRegion}
                     />
                   </div>
                 </div>
               </motion.div>
             )}
 
+            {/* ── Kelola Menu (SPM) ── */}
+            {view === "menu-access" && isSPM && (
+              <motion.div key="ma" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
+                  <div style={{ padding: "24px 28px" }}>
+                    <MenuAccessManager supabase={supabase} theme={theme} profile={profile} />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {/* ── Pemberitahuan menu sedang dipelihara ── */}
+            {viewUnderMaint && (
+              <motion.div key="maint" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <MaintenanceView t={t} label={CONTROLLABLE_MENUS[viewMenuKey]} note={menuStatus.get(viewMenuKey)?.note} onBack={() => navigate("overview")} />
+              </motion.div>
+            )}
+
             {/* ── Laporan P&L (Summary / Pendapatan / Pengeluaran) ── */}
-            {PNL_VIEWS.has(view) && (
+            {PNL_VIEWS.has(view) && !viewUnderMaint && (
               <motion.div key="fv" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} style={{ maxWidth: 920, margin: "0 auto" }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 20 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
                 {!canPnl ? (
