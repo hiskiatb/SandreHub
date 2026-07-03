@@ -273,14 +273,20 @@ const clearCache = () => { try { sessionStorage.removeItem(CACHE); } catch {} };
 
 async function dbSave(payload) {
   try {
-    await supabase.from("payout_data").delete().gt("id",0);
-    const { error } = await supabase.from("payout_data").insert({
+    // NON-DESTRUKTIF: insert baris baru DULU, ambil id-nya, baru hapus baris lama.
+    // Jika insert gagal, data lama di DB tetap utuh (tidak ada window kosong).
+    const { data, error } = await supabase.from("payout_data").insert({
       file_name:payload.fileName, row_count:payload.rowCount,
       published_at:payload.publishedAt, raw_data:payload.rows, mode:"raw",
-    });
+    }).select("id").single();
     if (error) throw error;
-    return true;
-  } catch (e) { console.error(e); return false; }
+    // Sisakan hanya baris terbaru sebagai satu sumber kebenaran.
+    await supabase.from("payout_data").delete().neq("id", data.id);
+    return { ok:true, error:null };
+  } catch (e) {
+    console.error("dbSave error:", e);
+    return { ok:false, error:e?.message || String(e) };
+  }
 }
 
 async function dbLoad() {
@@ -721,14 +727,24 @@ export default function PayoutTracker({
 
   useEffect(()=>{
     (async()=>{
+      // 1) Cache dipakai HANYA sebagai placeholder cepat agar layar tidak kosong.
+      //    Ini TIDAK dijadikan sumber kebenaran.
       const cached = getCache();
       if (cached?.rows?.length) {
         ingestCloud(cached); setScreen(isSPM?"admin":"dashboard"); setLoading(false);
       } else {
         startLoad("Loading data…");
-        const saved = await dbLoad(); stopLoad();
-        if (isSPM) { if (saved?.rows?.length) { setCache(saved); ingestCloud(saved); } setScreen("admin"); }
-        else { if (!saved?.rows?.length) { setScreen("empty"); return; } setCache(saved); ingestCloud(saved); setScreen("dashboard"); }
+      }
+      // 2) SELALU ambil versi otoritatif dari Supabase supaya semua device
+      //    menampilkan data & timestamp "Last updated" yang identik.
+      const saved = await dbLoad(); stopLoad();
+      if (saved?.rows?.length) {
+        setCache(saved); ingestCloud(saved);
+        setScreen(isSPM?"admin":"dashboard");
+      } else {
+        // DB kosong = tidak ada data terpublish → bersihkan cache lokal yang basi.
+        clearCache(); setAllRaw([]); setPubMeta(null);
+        setScreen(isSPM?"admin":"empty");
       }
     })();
     const ch = supabase.channel("pt_rt_v3")
@@ -761,10 +777,10 @@ export default function PayoutTracker({
     const ts = new Date().toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});
     const fnames = [partnerFile,agencyFile].filter(Boolean).join(", ")||"Data";
     startLoad("Uploading to cloud…");
-    const ok = await dbSave({ fileName:fnames, rowCount:merged.length, publishedAt:ts, rows:merged });
+    const res = await dbSave({ fileName:fnames, rowCount:merged.length, publishedAt:ts, rows:merged });
     stopLoad();
-    if (ok) { const meta={fileName:fnames,rowCount:merged.length,publishedAt:ts}; setPubMeta(meta); setCache({...meta,rows:merged}); setAllRaw(merged); showToast("✓ Published — all viewers auto-updated","success"); }
-    else showToast("Failed to save to cloud","error");
+    if (res.ok) { const meta={fileName:fnames,rowCount:merged.length,publishedAt:ts}; setPubMeta(meta); setCache({...meta,rows:merged}); setAllRaw(merged); showToast("✓ Published — all viewers auto-updated","success"); }
+    else showToast("Gagal simpan ke cloud: "+(res.error||"unknown error"),"error");
   }
 
   async function viewDash() {
@@ -1520,7 +1536,13 @@ function DashScreen(props) {
             Region View
           </span>
           <select value={regionView||""} onChange={e=>setRegionView(e.target.value)}
-            style={{fontFamily:"inherit",fontSize:13,fontWeight:600,color:t.ink,background:t.surf,border:`1px solid ${t.line}`,borderRadius:9,padding:"7px 12px",cursor:"pointer",outline:"none",minWidth:180}}>
+            style={{
+              fontFamily:"inherit",fontSize:13,fontWeight:600,color:t.ink,
+              background:`${t.surf} url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23${(t.muted||'#8894a8').replace('#','')}' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>") no-repeat right 12px center`,
+              border:`1px solid ${t.line}`,borderRadius:9,
+              padding:"8px 34px 8px 13px",cursor:"pointer",outline:"none",minWidth:190,
+              WebkitAppearance:"none",MozAppearance:"none",appearance:"none",lineHeight:1.2
+            }}>
             <option value="">Seluruh Sumatera</option>
             {(regionOptions||[]).map(r=><option key={r} value={r}>{r}</option>)}
           </select>
