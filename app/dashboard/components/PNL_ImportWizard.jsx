@@ -140,8 +140,8 @@ const FORM_DEFS={
       {key:"realtime_margin",label:"Realtime Margin",group:"salesfee",required:false,type:"numeric"},
       {key:"back_margin",label:"Back Margin",group:"salesfee",required:false,type:"numeric"},
       {key:"sla_fee",label:"SLA Monthly Fee",group:"salesfee",required:false,type:"numeric"},
-      {key:"special_program",label:"Tactical Program",group:"salesfee",required:false,type:"numeric"},
-      {key:"rewards_champions",label:"Hadiah Champions Club",group:"rewards",required:false,type:"numeric"},
+      {key:"special_program",label:"Tactical Program",group:"salesfee",required:false,type:"numeric",aliases:["Total Tactical Program","Tactical Total"]},
+      {key:"rewards_champions",label:"Champions Reward",group:"rewards",required:false,type:"numeric",aliases:["Hadiah Champions Club","Champions Club","Champions"]},
       {key:"rewards_lainnya",label:"Hadiah Lainnya",group:"rewards",required:false,type:"numeric"},
       {key:"partner_income",label:"Pendapatan Partner (Manual)",group:"rewards",required:false,type:"numeric"},
     ],
@@ -296,18 +296,106 @@ function autoMatch(cols,fields){
   const map={},used=new Set();
   const n=s=>s.toLowerCase().replace(/[\s_\-\.\/]/g,"").replace(/[^a-z0-9]/g,"");
   for(const f of fields){
-    const nt=n(f.key),nl=n(f.label);let best=null,bs=0;
+    // Cocokkan berdasarkan key, label, dan alias (mis. "Hadiah Champions Club" → Champions Reward).
+    const targets=[f.key,f.label,...(f.aliases||[])].map(n);
+    let best=null,bs=0;
     for(const c of cols){
       if(used.has(c))continue;const nc=n(c);
-      if(nc===nt||nc===nl){best=c;bs=100;break;}
+      if(targets.includes(nc)){best=c;bs=100;break;}
       let sc=0;
-      if(nc.includes(nt)||nt.includes(nc))sc=Math.max(sc,60);
-      if(nc.includes(nl)||nl.includes(nc))sc=Math.max(sc,55);
+      for(const nt of targets){
+        if(nc.includes(nt)||nt.includes(nc))sc=Math.max(sc,58);
+      }
       if(sc>bs){bs=sc;best=c;}
     }
     if(best&&bs>=55){map[f.key]=best;used.add(best);}
   }
   return map;
+}
+
+/* ── Periode & Tactical Program helpers ──────────────────────────
+   month disimpan di DB sbg nama Indonesia lengkap (Januari…Desember). */
+const ID_MONTHS=["Januari","Februari","Maret","April","Mei","Juni",
+  "Juli","Agustus","September","Oktober","November","Desember"];
+const ID_SHORT=["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
+// Peta 3-huruf awal → index bulan (Indonesia & Inggris).
+const MON3={jan:0,feb:1,mar:2,apr:3,mei:4,may:4,jun:5,jul:6,agu:7,aug:7,
+  sep:8,okt:9,oct:9,nov:10,des:11,dec:11};
+// Kembalikan index bulan (0-11) dari token teks, atau -1.
+function monthIdx(tok){
+  const s=String(tok||"").trim().toLowerCase();
+  if(!s)return -1;
+  if(/^\d{1,2}$/.test(s)){const n=parseInt(s,10);return n>=1&&n<=12?n-1:-1;}
+  const k=s.slice(0,3);
+  return k in MON3?MON3[k]:-1;
+}
+function yr4(y){const s=String(y||"").trim();return s.length===2?("20"+s):s;}
+// Ambil {month, year} dari kolom "Periode". Menerima:
+// "Jan'26", "Jan 26", "Juli 2026", "2026-07", "07/2026".
+// month selalu dinormalkan ke nama Indonesia lengkap (cocok dgn DB).
+function parsePeriode(v){
+  const s=String(v||"").trim();
+  if(!s)return{month:"",year:""};
+  let m=s.match(/^(\d{4})[-/](\d{1,2})$/);                 // 2026-07
+  if(m){const i=monthIdx(m[2]);return{month:i>=0?ID_MONTHS[i]:m[2],year:m[1]};}
+  m=s.match(/^(\d{1,2})[-/](\d{4})$/);                     // 07-2026
+  if(m){const i=monthIdx(m[1]);return{month:i>=0?ID_MONTHS[i]:m[1],year:m[2]};}
+  m=s.match(/^([A-Za-z]{3,})\s*['’\s]\s*(\d{2,4})$/);      // Jan'26 / Juli 2026
+  if(m){const i=monthIdx(m[1]);return{month:i>=0?ID_MONTHS[i]:m[1],year:yr4(m[2])};}
+  return{month:s,year:""};
+}
+// Format tampilan Periode: "Jan'26".
+function fmtPeriodeShort(month,year){
+  const i=monthIdx(month);
+  const mm=i>=0?ID_SHORT[i]:String(month||"").trim();
+  const yy=String(year||"").trim().slice(-2);
+  if(!mm&&!yy)return"";
+  return `${mm}'${yy}`;
+}
+// Nama partner dgn badan usaha dipindah ke belakang: "PT BANGUN HARTA MANDIRI" → "BANGUN HARTA MANDIRI, PT".
+// Memudahkan lookup/urut berdasarkan nama inti. Kolom bantu saja (tidak dipakai saat import).
+function partnerNameSuffix(name){
+  const s=String(name||"").trim();
+  const m=s.match(/^(PT|CV|UD|PD|CU|KOPERASI)\.?\s+(.+)$/i);
+  if(m)return `${m[2].trim()}, ${m[1].toUpperCase()}`;
+  return s;
+}
+// Deteksi kolom TACTICAL_[program] (case-insensitive).
+const isTacticalCol=c=>/^tactical[_\s-]+/i.test(String(c||"").trim());
+const tacticalProgName=c=>String(c||"").trim().replace(/^tactical[_\s-]+/i,"").trim();
+/* Normalisasi baris upload SPM sebelum mapping:
+   • kolom "Periode" → month + year
+   • kolom TACTICAL_* → special_program (jumlah) + __spb (breakdown JSON string)
+   Mengembalikan {cols, rows} baru (kolom sintetis ditambahkan). */
+function normalizeSpmRows(cols,rows){
+  const tacCols=cols.filter(isTacticalCol);
+  const periodeCol=cols.find(c=>/^periode$|^period$/i.test(String(c||"").trim()));
+  if(!tacCols.length&&!periodeCol)return{cols,rows};
+  const outCols=[...cols];
+  const ensure=name=>{if(!outCols.includes(name))outCols.push(name);};
+  if(tacCols.length){ensure("special_program");ensure("__spb");}
+  if(periodeCol){ensure("month");ensure("year");}
+  const outRows=rows.map(r=>{
+    const o={...r};
+    if(tacCols.length){
+      let sum=0;const bd={};
+      tacCols.forEach(tc=>{
+        const prog=tacticalProgName(tc);
+        const val=pNum(r[tc])??0;
+        if(prog)bd[prog]=val;
+        sum+=val;
+      });
+      o.special_program=sum;
+      o.__spb=JSON.stringify(bd);
+    }
+    if(periodeCol){
+      const{month,year}=parsePeriode(r[periodeCol]);
+      if(month)o.month=month;
+      if(year)o.year=year;
+    }
+    return o;
+  });
+  return{cols:outCols,rows:outRows};
 }
 function dlTemplate(fd){
   const h=fd.fields.map(f=>f.key);
@@ -545,10 +633,13 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
       if(!seen[base]){seen[base]=1;return base;}
       seen[base]++;return`${base}_${seen[base]}`;
     });
-    const rows=raw.slice(hRow+1)
+    const rawRows=raw.slice(hRow+1)
       .filter(r=>Array.isArray(r)&&r.some(c=>String(c||"").trim()!==""))
       .map(r=>{const o={};hArr.forEach((h,i)=>{o[h]=r[i]??""});return o;});
-    setFileCols(hArr);setFileRows(rows);
+    // Normalisasi khusus SPM: Periode → month/year, TACTICAL_* → special_program + breakdown.
+    const{cols,rows}=normalizeSpmRows(hArr,rawRows);
+    // Sembunyikan kolom internal "__spb" dari daftar kolom yang bisa dipetakan user.
+    setFileCols(cols.filter(c=>c!=="__spb"));setFileRows(rows);
   },[]);
 
   const parseSheet=useCallback((wb,name)=>{
@@ -777,6 +868,64 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
     toast$("success","Diff diekspor ke Excel");
   };
 
+  /* ── Download DATA TERSIMPAN (bukan template kosong) ──────────────
+     Khusus feed pendapatan/SPM: unduh nilai yang sudah diinput agar
+     bisa diedit & di-upload ulang. Tactical Program di-expand jadi
+     kolom TACTICAL_[program]; Periode = "<Bulan> <Tahun>". */
+  const dlFilled=useCallback(async(feed)=>{
+    if(feed.id!=="pendapatan"){dlTemplate(feed);return;}
+    if(!sb){toast$("error","Database tidak tersedia");return;}
+    const num=v=>{const x=Number(v);return isNaN(x)?0:x;};
+    toast$("success","Menyiapkan data tersimpan…");
+    try{
+      const{data,error}=await sb.from(feed.table)
+        .select("partner_name,branch,mpc_mp3,month,year,mobo_modal,realtime_margin,back_margin,sla_fee,special_program,special_program_breakdown,rewards_champions")
+        .order("partner_name",{ascending:true});
+      if(error)throw error;
+      const list=[...(data||[])];
+      const bdOf=r=>(r.special_program_breakdown&&typeof r.special_program_breakdown==="object")?r.special_program_breakdown:{};
+      // Kunci urut kronologis = tahun*100 + indeks bulan. Periode kosong/tak dikenal → paling bawah.
+      const periodKey=r=>{
+        const y=parseInt(yr4(r.year)||"",10);
+        let m=monthIdx(r.month);
+        if(!y||m<0)return Number.MAX_SAFE_INTEGER;  // data tak lengkap → paling akhir
+        return y*100+m;                              // mis. Jan 2026 = 202600, Feb = 202601 …
+      };
+      // Urutkan dari Jan'26 → seterusnya, lalu per partner.
+      list.sort((a,b)=>{
+        const ka=periodKey(a),kb=periodKey(b);
+        if(ka!==kb)return ka-kb;
+        return String(a.partner_name||"").localeCompare(String(b.partner_name||""));
+      });
+      // Union nama program tactical dari seluruh baris.
+      const progSet=new Set();
+      list.forEach(r=>Object.keys(bdOf(r)).forEach(k=>{if(k)progSet.add(k);}));
+      const progs=[...progSet];
+      const useBreakdown=progs.length>0;
+      // Baris lama (punya total tapi belum ada breakdown) → tampung di "Umum" agar tidak hilang.
+      const hasLegacy=list.some(r=>Object.keys(bdOf(r)).length===0&&num(r.special_program)>0);
+      if(useBreakdown&&hasLegacy&&!progSet.has("Umum"))progs.push("Umum");
+      // Urutan kolom: Periode (paling kiri) → identitas → nilai SPM → Champions → TACTICAL (paling kanan).
+      const headers=["Periode","Nama Partner","Nama Partner (PT di Belakang)","Branch / Cabang","MPC / MP3",
+        "Total Alokasi Mobo","Realtime Margin","Back Margin","SLA Monthly Fee","Champions Reward"];
+      if(useBreakdown)progs.forEach(p=>headers.push(`TACTICAL_${p}`));
+      else headers.push("Tactical Program");
+      const rows=list.map(r=>{
+        let bd=bdOf(r);
+        if(useBreakdown&&Object.keys(bd).length===0&&num(r.special_program)>0)bd={Umum:num(r.special_program)};
+        const row=[fmtPeriodeShort(r.month,r.year),r.partner_name||"",partnerNameSuffix(r.partner_name),r.branch||"",r.mpc_mp3||"",
+          num(r.mobo_modal),num(r.realtime_margin),num(r.back_margin),num(r.sla_fee),num(r.rewards_champions)];
+        if(useBreakdown)progs.forEach(p=>row.push(num(bd[p])));
+        else row.push(num(r.special_program));
+        return row;
+      });
+      const ws=XLSX.utils.aoa_to_sheet([headers,...rows]);
+      const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Data SPM");
+      XLSX.writeFile(wb,`data_spm_${new Date().toISOString().slice(0,10)}.xlsx`);
+      toast$("success",`Terunduh ${rows.length.toLocaleString("id-ID")} baris data tersimpan`);
+    }catch(e){toast$("error","Gagal ambil data: "+e.message);}
+  },[sb]);
+
   /* ── IMPORT ── */
   const doImport=async()=>{
     if(!toImport.length){toast$("error","Tidak ada baris untuk diimport");return;}
@@ -801,6 +950,11 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
           if(f.type==="numeric")base[f.key]=typeof v==="number"?v:(pNum(v)??0);
           else if(f.type==="array")base[f.key]=Array.isArray(v)?v:String(v||"").split(",").map(s=>s.trim()).filter(Boolean);
           else base[f.key]=String(v||"").trim();
+        }
+        /* Breakdown Tactical Program (side-channel dari normalizeSpmRows). */
+        const orig=fileRows[row._i];
+        if(orig&&orig.__spb!==undefined){
+          try{base.special_program_breakdown=JSON.parse(orig.__spb||"{}");}catch{base.special_program_breakdown={};}
         }
         /* Pastikan kolom NOT NULL tidak null (per-form defaults) */
         Object.entries(formDefaults).forEach(([k,v])=>{
@@ -1316,8 +1470,8 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
             <FileSpreadsheet size={20} strokeWidth={1.7}/>
           </div>
           <div style={{flex:1}}>
-            <div style={{fontSize:20,fontWeight:700,letterSpacing:"-.04em",color:t.t1}}>Import Data PNL</div>
-            <div style={{fontSize:12,color:t.t3}}>Upload Excel · Petakan kolom · Cek diff · Merge ke Supabase</div>
+            <div style={{fontSize:20,fontWeight:700,letterSpacing:"-.04em",color:t.t1}}>Import Data · Form Pendapatan</div>
+            <div style={{fontSize:12,color:t.t3}}>Mengisi otomatis <strong style={{color:t.t2}}>Form Pendapatan (PNL)</strong> — kolom yang diisi tim SPM Sumatera</div>
           </div>
           <button className="gbtn" style={{position:"relative"}} onClick={()=>setShowLog(true)}>
             <History size={12}/>Log
@@ -1362,13 +1516,13 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
           <div className="card" style={{padding:"18px 18px 16px"}}>
             <div style={{fontSize:12,fontWeight:700,color:t.t1,marginBottom:12,
               display:"flex",alignItems:"center",gap:6}}>
-              <Info size={13} style={{color:t.B}}/>Cara Kerja Import
+              <Info size={13} style={{color:t.B}}/>Alur Pengisian Form Pendapatan
             </div>
             {[
-              {n:1,tx:"Upload file Excel, pilih sheet dan baris header yang tepat"},
-              {n:2,tx:"Pilih jenis laporan, petakan kolom ke field (atau Auto-match)"},
-              {n:3,tx:"Baris yang nilainya sama persis dengan DB dilewati otomatis — hemat bandwidth"},
-              {n:4,tx:"Setiap perubahan dicatat di Log SQL & bisa direvert per-kolom kapan saja"},
+              {n:1,tx:"Download \"Data Tersimpan\" di samping — berisi data yang sudah masuk (Periode di kiri, Tactical di kanan)"},
+              {n:2,tx:"Admin mengisi/mengubah kolom SPM: Total Alokasi Mobo, Realtime/Back Margin, SLA Fee, TACTICAL_[program], Champions Reward"},
+              {n:3,tx:"Upload kembali file itu — kolom terpetakan otomatis (Auto-match). Baris yang sama persis dengan DB dilewati"},
+              {n:4,tx:"Data langsung mengisi Form Pendapatan (PNL). Tiap perubahan tercatat di Log & bisa di-revert per-kolom"},
             ].map(s=>(
               <div key={s.n} style={{display:"flex",gap:10,alignItems:"flex-start",marginBottom:8}}>
                 <div style={{width:20,height:20,borderRadius:6,background:t.accL,
@@ -1382,26 +1536,25 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
           <div className="card" style={{padding:"18px 18px 16px"}}>
             <div style={{fontSize:12,fontWeight:700,color:t.t1,marginBottom:12,
               display:"flex",alignItems:"center",gap:6}}>
-              <FileDown size={13} style={{color:t.G}}/>Download Template Excel
+              <FileDown size={13} style={{color:t.G}}/>Mulai dari sini
             </div>
-            {Object.values(FORM_DEFS).map(f=>(
-              <button key={f.id} onClick={()=>dlTemplate(f)}
-                style={{display:"flex",alignItems:"center",gap:10,padding:"11px 13px",
-                  borderRadius:9,border:`1px solid ${t.line}`,background:t.raised,
-                  cursor:"pointer",textAlign:"left",transition:".12s",fontFamily:FF,width:"100%",
-                  marginBottom:8}}>
-                <div style={{width:32,height:32,borderRadius:8,background:t.GL,
-                  border:`1px solid ${t.GB}`,flexShrink:0,
-                  display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  <FileSpreadsheet size={14} style={{color:t.G}}/>
-                </div>
-                <div style={{flex:1,minWidth:0,textAlign:"left"}}>
-                  <div style={{fontSize:12,fontWeight:600,color:t.t1}}>{f.label}</div>
-                  <div style={{fontSize:10,color:t.t3,marginTop:1}}>{f.description}</div>
-                </div>
-                <Download size={12} style={{color:t.t3,flexShrink:0}}/>
-              </button>
-            ))}
+            <button onClick={()=>dlFilled(FORM_DEFS.pendapatan)}
+              style={{display:"flex",alignItems:"center",gap:10,padding:"12px 13px",
+                borderRadius:9,border:`1px solid ${t.GB}`,background:t.GL,
+                cursor:"pointer",textAlign:"left",transition:".12s",fontFamily:FF,width:"100%",
+                marginBottom:8}}>
+              <div style={{width:34,height:34,borderRadius:8,background:t.G,flexShrink:0,
+                display:"flex",alignItems:"center",justifyContent:"center"}}>
+                <Download size={16} style={{color:"#fff"}}/>
+              </div>
+              <div style={{flex:1,minWidth:0,textAlign:"left"}}>
+                <div style={{fontSize:12.5,fontWeight:700,color:t.t1}}>Download Data Tersimpan</div>
+                <div style={{fontSize:10.5,color:t.t2,marginTop:1}}>Form Pendapatan — data terkini, siap diedit & di-upload ulang</div>
+              </div>
+            </button>
+            <div style={{fontSize:10.5,color:t.t3,lineHeight:1.55,padding:"2px 2px 0"}}>
+              Belum ada data? Tombol ini tetap memberi kerangka kolom yang benar untuk diisi.
+            </div>
           </div>
         </div>
       </div>
@@ -1470,7 +1623,7 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
               </span>
             )}
           </button>
-          <button className="gbtn" onClick={()=>dlTemplate(fd)}><FileDown size={11}/>Template</button>
+          <button className="gbtn" onClick={()=>dlFilled(fd)}><FileDown size={11}/>{fd.id==="pendapatan"?"Data Tersimpan":"Template"}</button>
           <button className="gbtn" onClick={reset}><X size={11}/>Ganti File</button>
         </div>
 
@@ -1622,24 +1775,21 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
                 <div style={{padding:"8px 13px 5px",display:"flex",alignItems:"center",gap:5}}>
                   <LayoutList size={10} style={{color:t.t3}}/>
                   <span style={{fontSize:9,fontWeight:700,letterSpacing:".07em",
-                    textTransform:"uppercase",color:t.t3}}>Jenis Laporan</span>
+                    textTransform:"uppercase",color:t.t3}}>Tujuan Import</span>
                 </div>
-                {Object.values(FORM_DEFS).map(f=>(
-                  <div key={f.id} className={`fti${formType===f.id?" act":""}`}
-                    onClick={()=>{setFormType(f.id);setMapping({});setFieldQ("");}}>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:12,fontWeight:600,
-                        color:formType===f.id?t.acc:t.t1,
-                        overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                        {f.label.replace("Form ","")}
-                      </div>
-                      <div style={{fontSize:10,color:t.t3,marginTop:1}}>
-                        {f.fields.length} field · {f.fields.filter(x=>x.required).length} wajib
-                      </div>
+                {/* Dikunci ke Form Pendapatan (PNL) — tidak ada pemilihan feed lain agar tidak membingungkan. */}
+                <div className="fti act" style={{cursor:"default"}}>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,fontWeight:700,color:t.acc,
+                      overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                      Form Pendapatan
                     </div>
-                    {formType===f.id&&<ChevronRight size={12} style={{color:t.acc,flexShrink:0}}/>}
+                    <div style={{fontSize:10,color:t.t3,marginTop:1}}>
+                      Data masuk ke PNL · {fd.fields.filter(x=>x.required).length} kolom wajib
+                    </div>
                   </div>
-                ))}
+                  <CheckCircle2 size={12} style={{color:t.acc,flexShrink:0}}/>
+                </div>
               </div>
               <div style={{padding:"9px 11px",borderBottom:`1px solid ${t.lineS}`,flexShrink:0}}>
                 <div style={{position:"relative"}}>

@@ -3,7 +3,7 @@ import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import supabase from "../../../lib/supabase";
 import { HubLogo } from "../../../components/HubLogo";
-import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, CheckCircle2, UserRound, ChevronRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const FONT  = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -214,6 +214,22 @@ function SandraLoginInner() {
             </button>
           </div>
         </div>
+
+        {/* Login sebagai Promotor — jalur khusus tim lapangan (SSO Google) */}
+        <button onClick={()=>router.push("/promotor")}
+          style={{ marginTop:16, width:"100%", display:"flex", alignItems:"center", gap:13, padding:"14px 16px", borderRadius:14, cursor:"pointer", textAlign:"left", fontFamily:FONT,
+            background:d?"rgba(237,28,36,0.08)":"rgba(237,28,36,0.05)", border:`1.5px solid ${d?"rgba(237,28,36,0.35)":"rgba(237,28,36,0.28)"}`, transition:"transform .12s, box-shadow .15s, border-color .15s" }}
+          onMouseEnter={(e)=>{ e.currentTarget.style.boxShadow="0 8px 26px rgba(237,28,36,0.18)"; e.currentTarget.style.transform="translateY(-1px)"; }}
+          onMouseLeave={(e)=>{ e.currentTarget.style.boxShadow="none"; e.currentTarget.style.transform="none"; }}>
+          <span style={{ width:42, height:42, borderRadius:12, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", background:"linear-gradient(135deg,#ED1C24,#C6168D)", color:"#fff", boxShadow:"0 4px 14px rgba(237,28,36,0.32)" }}>
+            <UserRound size={21} strokeWidth={2.2} />
+          </span>
+          <span style={{ flex:1, minWidth:0 }}>
+            <span style={{ display:"block", fontSize:14.5, fontWeight:800, letterSpacing:"-0.02em", color:t.hi }}>Login sebagai Promotor</span>
+            <span style={{ display:"block", fontSize:12, color:t.mid, marginTop:2 }}>Untuk tim promotor lapangan — masuk dengan akun Google</span>
+          </span>
+          <ChevronRight size={18} style={{ color:"#ED1C24", flexShrink:0 }} />
+        </button>
 
         <div style={{ marginTop:18, textAlign:"center", fontSize:10.5, letterSpacing:"0.12em", textTransform:"uppercase", color:t.lo, opacity:0.35, fontWeight:600 }}>
           © 2026 SandraHub · S&D Sumatera

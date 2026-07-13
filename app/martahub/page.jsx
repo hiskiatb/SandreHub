@@ -62,9 +62,8 @@ const NAV = [
   { label: "Leaderboard", icon: "trophy", path: "leaderboard" },
   { section: "MANAGEMENT" },
   { label: "Approval Center", icon: "check", path: "approval", badge: 12 },
-  { label: "Assignments", icon: "users", path: "assignments" },
+  { label: "User Management", icon: "users", path: "assignments", route: "/martahub/assignments" },
   { label: "Master Data", icon: "db", path: "master" },
-  { label: "User Management", icon: "users", path: "users" },
   { label: "System Settings", icon: "settings", path: "settings" },
 ];
 
@@ -108,10 +107,17 @@ function Icon({ name, size = 16, color = "currentColor" }) {
     dots:     <svg style={s} viewBox="0 0 24 24" {...p}><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>,
     chevD:    <svg style={s} viewBox="0 0 24 24" {...p}><polyline points="6 9 12 15 18 9"/></svg>,
     menu:     <svg style={s} viewBox="0 0 24 24" {...p}><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>,
+    close:      <svg style={s} viewBox="0 0 24 24" {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
+    panelClose: <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><path d="M16 15l-3-3 3-3"/></svg>,
+    panelOpen:  <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><path d="M14 9l3 3-3 3"/></svg>,
     close:    <svg style={s} viewBox="0 0 24 24" {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
     expand:   <svg style={s} viewBox="0 0 24 24" {...p}><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>,
     hub:      <svg style={s} viewBox="0 0 24 24" {...p}><circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14"/></svg>,
     img:      <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>,
+    activity: <svg style={s} viewBox="0 0 24 24" {...p}><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
+    trendUp:  <svg style={s} viewBox="0 0 24 24" {...p}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>,
+    money:    <svg style={s} viewBox="0 0 24 24" {...p}><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>,
+    percent:  <svg style={s} viewBox="0 0 24 24" {...p}><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>,
   };
   return icons[name] || null;
 }
@@ -213,12 +219,12 @@ function LineChart({ data, labels, color, height = 140 }) {
 // ─── Mock Data ────────────────────────────────────────────────────────────────
 const MOCK = {
   kpis: [
-    { label: "Total Activity", value: "134", sub: "+18% vs Mar 2026", trend: "up", color: "#ED1C24", icon: "calendar", spark: [88,95,105,112,118,116,127,134] },
-    { label: "Achievement %", value: "127%", sub: "+12% vs Mar 2026", trend: "up", color: "#2E7D32", icon: "trophy", spark: [92,98,105,112,118,116,122,127] },
-    { label: "Productivity %", value: "185%", sub: "+15% vs Mar 2026", trend: "up", color: "#7B1FA2", icon: "chart", spark: [120,135,142,156,168,170,178,185] },
-    { label: "Revenue (Actual)", value: "Rp 67,4 jt", sub: "+22% vs Mar 2026", trend: "up", color: "#E65100", icon: "insight", spark: [42,48,52,58,63,61,65,67] },
-    { label: "Cost Ratio", value: "18,5%", sub: "-2,3% vs Mar 2026", trend: "down", color: "#C62828", icon: "filter", spark: [24,22,21,20,19,21,19,18] },
-    { label: "Geo Compliance", value: "98%", sub: "+5% vs Mar 2026", trend: "up", color: "#00695C", icon: "pin", spark: [85,88,90,92,94,93,96,98] },
+    { label: "Total Activity", value: "134", sub: "+18% vs Mar 2026", trend: "up", color: "#2563EB", icon: "activity", spark: [88,95,105,112,118,116,127,134] },
+    { label: "Achievement %", value: "127%", sub: "+12% vs Mar 2026", trend: "up", color: "#16A34A", icon: "trophy", spark: [92,98,105,112,118,116,122,127] },
+    { label: "Productivity %", value: "185%", sub: "+15% vs Mar 2026", trend: "up", color: "#7C3AED", icon: "trendUp", spark: [120,135,142,156,168,170,178,185] },
+    { label: "Revenue (Actual)", value: "Rp 67,4 jt", sub: "+22% vs Mar 2026", trend: "up", color: "#EA580C", icon: "money", spark: [42,48,52,58,63,61,65,67] },
+    { label: "Cost Ratio", value: "18,5%", sub: "-2,3% vs Mar 2026", trend: "down", color: "#DB2777", icon: "percent", spark: [24,22,21,20,19,21,19,18] },
+    { label: "Geo Compliance", value: "98%", sub: "+5% vs Mar 2026", trend: "up", color: "#0D9488", icon: "pin", spark: [85,88,90,92,94,93,96,98] },
   ],
   achieveTrend: { data: [92,105,112,118,116,127], labels: ["Nov 25","Des 25","Jan 26","Feb 26","Mar 26","Apr 26"] },
   productivTrend: { data: [120,142,156,168,170,185], labels: ["Nov 25","Des 25","Jan 26","Feb 26","Mar 26","Apr 26"] },
@@ -325,7 +331,7 @@ export default function MartaHubDashboard() {
   );
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: t.appBg, fontFamily: FONT, color: t.hi }}>
+    <div className="mh-root" style={{ display: "flex", minHeight: "100vh", background: t.appBg, fontFamily: FONT, color: t.hi }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&display=swap');
         *{box-sizing:border-box;margin:0;padding:0}
@@ -341,6 +347,16 @@ export default function MartaHubDashboard() {
         .mh-btn:active{transform:scale(.97)}
         .mh-row:hover td{background:${t.hover} !important}
         @keyframes mh-pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+
+        /* ── Standarisasi dropdown & tombol ────────────────────────────────── */
+        .mh-root select{
+          -webkit-appearance:none !important; -moz-appearance:none !important; appearance:none !important;
+          background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236B7280' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>") !important;
+          background-repeat:no-repeat !important; background-position:right 11px center !important;
+          background-size:13px !important; padding-right:30px !important; cursor:pointer;
+        }
+        .mh-root select::-ms-expand{display:none !important;}
+        .mh-root button{ white-space:nowrap; }
 
         /* ── Responsive grids ── */
         .mh-content{padding:20px 24px 40px}
@@ -384,16 +400,16 @@ export default function MartaHubDashboard() {
         ? { width: 240, background: t.sidebar, borderRight: `1px solid ${t.line}`, display: "flex", flexDirection: "column", position: "fixed", top: 0, left: 0, height: "100vh", overflow: "hidden", zIndex: 300, transform: drawerOpen ? "translateX(0)" : "translateX(-100%)", transition: "transform .25s cubic-bezier(.4,0,.2,1)", boxShadow: drawerOpen ? "0 0 40px rgba(0,0,0,0.3)" : "none" }
         : { width: SIDEBAR_W, minHeight: "100vh", background: t.sidebar, borderRight: `1px solid ${t.line}`, display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh", overflow: "hidden", transition: "width .22s cubic-bezier(.4,0,.2,1)", flexShrink: 0 } }>
         {/* Logo */}
-        <div style={{ padding: collapsed ? "18px 0" : "18px 16px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${t.line}`, cursor: "pointer" }} onClick={() => router.push("/")}>
-          <div style={{ width: 36, height: 36, flexShrink: 0, margin: collapsed ? "0 auto" : 0 }}>
-            <HubLogo variant="marta" size={36} shadow={false} />
+        <div style={{ height: 60, flexShrink: 0, padding: collapsed ? 0 : "0 16px", display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 10, borderBottom: `1px solid ${t.line}`, cursor: "pointer", position: "relative" }} onClick={() => router.push("/")}>
+          <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg, #ED1C24 0%, #C6168D 100%)" }} />
+          <div style={{ width: 38, height: 38, flexShrink: 0, margin: collapsed ? "0 auto" : 0 }}>
+            <HubLogo variant="marta" size={38} shadow={false} />
           </div>
           {!collapsed && (
             <div>
-              <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.03em", color: t.hi }}>
-                Marta<span style={{ color: C.primary }}>Hub</span>
+              <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: "-0.04em", color: t.hi, lineHeight: 1 }}>
+                Marta<span style={{ background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Hub</span>
               </div>
-              <div style={{ fontSize: 9.5, fontWeight: 600, letterSpacing: "0.12em", color: t.lo, textTransform: "uppercase" }}>Marketing Intel</div>
             </div>
           )}
         </div>
@@ -445,13 +461,13 @@ export default function MartaHubDashboard() {
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" }}>
 
         {/* Topbar */}
-        <div className="mh-topbar" style={{ minHeight: 60, background: t.surface, borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", padding: "0 24px", gap: 16, position: "sticky", top: 0, zIndex: 100 }}>
-          <button className="mh-btn" onClick={toggleNav} style={{ padding: 6, borderRadius: 7, color: t.mid }}>
-            <Icon name="menu" size={18} color={t.mid} />
+        <div className="mh-topbar" style={{ height: 60, flexShrink: 0, background: t.surface, borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", padding: "0 24px", gap: 16, position: "sticky", top: 0, zIndex: 100 }}>
+          <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg, #ED1C24 0%, #C6168D 100%)" }} />
+          <button className="mh-btn" onClick={toggleNav} title={collapsed ? "Buka sidebar" : "Tutup sidebar"} style={{ padding: 6, borderRadius: 7, color: t.mid }}>
+            <Icon name={mobile ? (drawerOpen ? "close" : "menu") : (collapsed ? "panelOpen" : "panelClose")} size={18} color={t.mid} />
           </button>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "-0.02em", color: t.hi }}>Dashboard</div>
-            <div className="mh-hide-sm" style={{ fontSize: 11, color: t.lo, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Overview marketing activity performance</div>
+            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: t.hi }}>Dashboard</div>
           </div>
           <div style={{ flex: 1 }} />
 
@@ -492,19 +508,18 @@ export default function MartaHubDashboard() {
           {/* ── KPI Cards ─────────────────────────────────────────────────── */}
           <div className="mh-kpi">
             {MOCK.kpis.map((kpi, i) => (
-              <div key={i} className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: "16px 16px 14px", position: "relative", overflow: "hidden" }}>
-                <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2.5, background: kpi.color, borderRadius: "14px 14px 0 0" }} />
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 10 }}>
-                  <div style={{ width: 32, height: 32, borderRadius: 9, background: kpi.color + "15", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <Icon name={kpi.icon} size={15} color={kpi.color} />
+              <div key={i} className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 16, position: "relative", overflow: "hidden" }}>
+                <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: kpi.color, borderRadius: "14px 14px 0 0" }} />
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 10, background: kpi.color + "1A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <Icon name={kpi.icon} size={17} color={kpi.color} />
                   </div>
-                  <Sparkline data={kpi.spark} color={kpi.color} height={32} />
+                  <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.05em", color: t.lo, textTransform: "uppercase", lineHeight: 1.3 }}>{kpi.label}</div>
                 </div>
-                <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em", color: kpi.color, lineHeight: 1, marginBottom: 4 }}>{kpi.value}</div>
-                <div style={{ fontSize: 10.5, fontWeight: 600, color: t.lo, marginBottom: 6, lineHeight: 1.3 }}>{kpi.label}</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  <span style={{ fontSize: 9, color: kpi.trend === "up" ? C.success : C.error, fontWeight: 700 }}>{kpi.trend === "up" ? "▲" : "▼"}</span>
-                  <span style={{ fontSize: 9.5, color: kpi.trend === "up" ? C.success : C.error, fontWeight: 600 }}>{kpi.sub}</span>
+                <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-0.03em", color: kpi.color, lineHeight: 1, marginBottom: 8 }}>{kpi.value}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ fontSize: 10, color: kpi.trend === "up" ? C.success : C.error, fontWeight: 800 }}>{kpi.trend === "up" ? "▲" : "▼"}</span>
+                  <span style={{ fontSize: 10.5, color: kpi.trend === "up" ? C.success : C.error, fontWeight: 600 }}>{kpi.sub}</span>
                 </div>
               </div>
             ))}

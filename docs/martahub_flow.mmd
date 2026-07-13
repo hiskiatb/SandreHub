@@ -1,0 +1,72 @@
+%% MartaHub — Application Flow (Mobile & Web)
+%% Import ke FigJam: plugin "Mermaid" → paste isi file ini.
+%% Edit bebas: ubah teks node/panah di bawah.
+flowchart LR
+  %% ── MOBILE (petugas lapangan) ─────────────────────────────
+  subgraph MOB["MOBILE — BME / RGE (lapangan)"]
+    direction TB
+    M1["1 · Login (Email OTP)"]
+    M2["Home / Dashboard"]
+    M3["2 · Buat Plan Activity (4 step)"]
+    M4["3 · Check-in Lokasi (GPS)"]
+    M5["4 · Submit Actual + Foto"]
+    M1 --> M2 --> M3 --> M4 --> M5
+  end
+
+  %% ── BACKEND (Supabase, dipakai bersama) ───────────────────
+  subgraph BE["SUPABASE — backend bersama (Auth · Postgres RLS · Storage)"]
+    direction TB
+    DB1[("auth.users")]
+    DB2[("mh_profiles")]
+    DB3[("mh_assignments")]
+    DB4[("mh_sites")]
+    DB5[("mh_activities")]
+    DB6[("mh_documents")]
+    ST["Storage: mh-photos"]
+    DB7[("mh_leaderboard_summary")]
+  end
+
+  %% ── WEB /martahub (back-office) ───────────────────────────
+  subgraph WEB["WEB /martahub — Head / TMV / Admin"]
+    direction TB
+    W1["A · User Management (assign akun)"]
+    W2["B · Master Data — List Site"]
+    W3["C · Approval Center"]
+    W4["Struktur Branch & Brand"]
+    W5["Leaderboard / Monitoring"]
+  end
+
+  %% ── Provisioning & login ──────────────────────────────────
+  W1 -- "assign email (mh_assign_user)" --> DB3
+  M1 -- "OTP → sesi" --> DB1
+  DB1 -- "trigger mh_handle_new_user" --> DB2
+  DB3 -. "bind email → scope" .-> DB2
+  DB2 -- "profil active / pending" --> M1
+
+  %% ── Master data → plan ────────────────────────────────────
+  W2 -- "import + finalize" --> DB4
+  DB4 -- "daftar site (pilih saat plan)" --> M3
+
+  %% ── Siklus activity ───────────────────────────────────────
+  M3 -- "simpan draft" --> DB5
+  M4 -- "checkin_valid + geo log" --> DB5
+  M5 -- "upload foto" --> ST
+  ST --> DB6
+  M5 -- "status submitted" --> DB5
+  DB5 -- "submission masuk" --> W3
+  W3 -- "approve / reject" --> DB5
+
+  %% ── Skor & struktur ───────────────────────────────────────
+  DB5 -- "agregasi" --> DB7
+  DB7 -- "peringkat" --> W5
+  DB7 -- "skor" --> M2
+  DB3 --> W4
+  DB4 --> W4
+
+  %% ── Warna (opsional; boleh dihapus) ───────────────────────
+  classDef mob fill:#FDECEC,stroke:#EC008C,color:#0D1117;
+  classDef web fill:#EAF2FB,stroke:#1565C0,color:#0D1117;
+  classDef be  fill:#F7F9FC,stroke:#94A3B8,color:#0D1117;
+  class M1,M2,M3,M4,M5 mob;
+  class W1,W2,W3,W4,W5 web;
+  class DB1,DB2,DB3,DB4,DB5,DB6,DB7,ST be;

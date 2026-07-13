@@ -11,10 +11,11 @@
  */
 import React, { useState } from "react";
 import {
-  UploadCloud, ChevronRight, ArrowLeft, Construction, Download,
+  UploadCloud, ChevronRight, ArrowLeft, Construction, Download, FilePlus2,
 } from "lucide-react";
-import SDP_UploadTerritory from "./SDP_UploadTerritory";
-import SDP_RekapCSE        from "./SDP_RekapCSE";
+import SDP_UploadTerritory   from "./SDP_UploadTerritory";
+import SDP_RekapCSE          from "./SDP_RekapCSE";
+import SDP_SubmissionForms   from "./SDP_SubmissionForms";
 
 // ─── Theme ─────────────────────────────────────────────────────────────────────
 const mk = (d) => ({
@@ -83,6 +84,18 @@ const IOH_MONITOR_MENU = [
   },
 ];
 ["internal_ioh", "ioh_north_sumatera", "ioh_central_sumatera", "ioh_south_sumatera"].forEach((r) => { MENUS[r] = IOH_MONITOR_MENU; });
+
+// Form Registrasi / Terminasi / Rebordering — untuk role SDP (scope per akun).
+const SUBMISSION_CARD = {
+  id     : "submission_forms",
+  icon   : FilePlus2,
+  label  : "Registrasi & Perubahan SDP",
+  desc   : "Form SDP Registration, Termination & Rebordering — kirim langsung ke database",
+  accent : "mag",
+};
+["spm_sumatera", "cse_rse", "bsm", "pic_region"].forEach((r) => {
+  MENUS[r] = [...(MENUS[r] || []), SUBMISSION_CARD];
+});
 
 // ─── Role badge ───────────────────────────────────────────────────────────────
 function RoleBadge({ role, t }) {
@@ -199,6 +212,15 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile, read
   );
 
   // ── Active sub-view ─────────────────────────────────────────────────────────
+  if (activeMenu === "submission_forms") {
+    // Back ditangani oleh komponen (landing → Form SDP, form → landing).
+    return (
+      <div style={{ fontFamily: FF }}>
+        <SDP_SubmissionForms supabase={supabase} theme={theme} profile={profile} onExit={() => setActiveMenu(null)} />
+      </div>
+    );
+  }
+
   if (activeMenu === "upload_territory") {
     return (
       <div style={{ fontFamily: FF }}>

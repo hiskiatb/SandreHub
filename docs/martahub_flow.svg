@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 560" font-family="Inter, Arial, sans-serif">
+  <defs>
+    <marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto-start-reverse">
+      <path d="M0,0 L7,3 L0,6 z" fill="#6B7280"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1000" height="560" fill="#FFFFFF"/>
+
+  <!-- Title -->
+  <text x="500" y="32" text-anchor="middle" font-size="20" font-weight="700" fill="#0D1117">MartaHub — Application Flow (Mobile &amp; Web)</text>
+  <text x="500" y="54" text-anchor="middle" font-size="12.5" fill="#4A5568">Dua klien mengelilingi satu backend Supabase. Angka 1–4 = urutan kerja lapangan · Huruf A–C = proses back-office.</text>
+
+  <!-- Lane headers -->
+  <rect x="40" y="78" width="230" height="30" rx="8" fill="#FDECEC" stroke="#EC008C"/>
+  <text x="155" y="98" text-anchor="middle" font-size="12.5" font-weight="700" fill="#B01267">MOBILE — BME / RGE (lapangan)</text>
+  <rect x="385" y="78" width="230" height="30" rx="8" fill="#EEF1F6" stroke="#94A3B8"/>
+  <text x="500" y="98" text-anchor="middle" font-size="12.5" font-weight="700" fill="#475569">SUPABASE — backend bersama</text>
+  <rect x="730" y="78" width="230" height="30" rx="8" fill="#EAF2FB" stroke="#1565C0"/>
+  <text x="845" y="98" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1565C0">WEB /martahub — Head / TMV / Admin</text>
+
+  <!-- Backend big box -->
+  <rect x="385" y="130" width="230" height="352" rx="12" fill="#F7F9FC" stroke="#94A3B8"/>
+  <text x="500" y="150" text-anchor="middle" font-size="10.5" fill="#64748B">Auth · Postgres (RLS) · Storage</text>
+  <!-- backend pills -->
+  <g font-size="11.5" font-weight="600" fill="#0D1117">
+    <rect x="400" y="160" width="200" height="26" rx="6" fill="#FFFFFF" stroke="#CBD5E1"/><text x="500" y="177" text-anchor="middle">auth.users</text>
+    <rect x="400" y="192" width="200" height="26" rx="6" fill="#FFFFFF" stroke="#CBD5E1"/><text x="500" y="209" text-anchor="middle">mh_profiles</text>
+    <rect x="400" y="224" width="200" height="26" rx="6" fill="#FFFFFF" stroke="#CBD5E1"/><text x="500" y="241" text-anchor="middle">mh_assignments</text>
+    <rect x="400" y="256" width="200" height="26" rx="6" fill="#FFFFFF" stroke="#CBD5E1"/><text x="500" y="273" text-anchor="middle">mh_sites</text>
+    <rect x="400" y="288" width="200" height="26" rx="6" fill="#FFFFFF" stroke="#CBD5E1"/><text x="500" y="305" text-anchor="middle">mh_activities</text>
+    <rect x="400" y="320" width="200" height="26" rx="6" fill="#FFFFFF" stroke="#CBD5E1"/><text x="500" y="337" text-anchor="middle">mh_documents · Storage(mh-photos)</text>
+    <rect x="400" y="352" width="200" height="26" rx="6" fill="#FFFFFF" stroke="#CBD5E1"/><text x="500" y="369" text-anchor="middle">mh_leaderboard_summary</text>
+  </g>
+
+  <!-- Mobile boxes -->
+  <g font-size="12" font-weight="600" fill="#0D1117">
+    <rect x="40" y="130" width="230" height="52" rx="10" fill="#FFFFFF" stroke="#EC008C"/><text x="155" y="160" text-anchor="middle">1 · Login (Email OTP)</text>
+    <rect x="40" y="205" width="230" height="52" rx="10" fill="#FFFFFF" stroke="#EC008C"/><text x="155" y="235" text-anchor="middle">Home / Dashboard</text>
+    <rect x="40" y="280" width="230" height="52" rx="10" fill="#FFFFFF" stroke="#EC008C"/><text x="155" y="310" text-anchor="middle">2 · Buat Plan Activity (4 step)</text>
+    <rect x="40" y="355" width="230" height="52" rx="10" fill="#FFFFFF" stroke="#EC008C"/><text x="155" y="385" text-anchor="middle">3 · Check-in Lokasi (GPS)</text>
+    <rect x="40" y="430" width="230" height="52" rx="10" fill="#FFFFFF" stroke="#EC008C"/><text x="155" y="460" text-anchor="middle">4 · Submit Actual + Foto</text>
+  </g>
+  <!-- Mobile vertical flow -->
+  <g stroke="#EC008C" stroke-width="1.5" fill="none" marker-end="url(#ah)" opacity="0.55">
+    <line x1="155" y1="182" x2="155" y2="203"/>
+    <line x1="155" y1="257" x2="155" y2="278"/>
+    <line x1="155" y1="332" x2="155" y2="353"/>
+    <line x1="155" y1="407" x2="155" y2="428"/>
+  </g>
+
+  <!-- Web boxes -->
+  <g font-size="12" font-weight="600" fill="#0D1117">
+    <rect x="730" y="130" width="230" height="52" rx="10" fill="#FFFFFF" stroke="#1565C0"/><text x="845" y="160" text-anchor="middle">A · User Management (assign)</text>
+    <rect x="730" y="205" width="230" height="52" rx="10" fill="#FFFFFF" stroke="#1565C0"/><text x="845" y="235" text-anchor="middle">B · Master Data — List Site</text>
+    <rect x="730" y="280" width="230" height="52" rx="10" fill="#FFFFFF" stroke="#1565C0"/><text x="845" y="310" text-anchor="middle">C · Approval Center</text>
+    <rect x="730" y="355" width="230" height="52" rx="10" fill="#FFFFFF" stroke="#1565C0"/><text x="845" y="385" text-anchor="middle">Struktur Branch &amp; Brand</text>
+    <rect x="730" y="430" width="230" height="52" rx="10" fill="#FFFFFF" stroke="#1565C0"/><text x="845" y="460" text-anchor="middle">Leaderboard / Monitoring</text>
+  </g>
+
+  <!-- Left connectors (mobile <-> backend) -->
+  <g stroke="#6B7280" stroke-width="1.4" fill="none">
+    <line x1="385" y1="156" x2="272" y2="156" marker-end="url(#ah)"/>
+    <line x1="385" y1="231" x2="272" y2="231" marker-end="url(#ah)"/>
+    <line x1="272" y1="306" x2="385" y2="306" marker-end="url(#ah)" marker-start="url(#ah)"/>
+    <line x1="272" y1="381" x2="383" y2="381" marker-end="url(#ah)"/>
+    <line x1="272" y1="456" x2="383" y2="456" marker-end="url(#ah)"/>
+  </g>
+  <g font-size="10" fill="#4A5568" text-anchor="middle">
+    <text x="328" y="150">cek email → profil</text>
+    <text x="328" y="225">skor dashboard</text>
+    <text x="328" y="300">site ↔ draft</text>
+    <text x="328" y="375">check-in valid</text>
+    <text x="328" y="450">actual + foto</text>
+  </g>
+
+  <!-- Right connectors (web <-> backend) -->
+  <g stroke="#6B7280" stroke-width="1.4" fill="none">
+    <line x1="730" y1="156" x2="617" y2="156" marker-end="url(#ah)"/>
+    <line x1="730" y1="231" x2="617" y2="231" marker-end="url(#ah)"/>
+    <line x1="617" y1="306" x2="730" y2="306" marker-end="url(#ah)" marker-start="url(#ah)"/>
+    <line x1="617" y1="381" x2="728" y2="381" marker-end="url(#ah)"/>
+    <line x1="617" y1="456" x2="728" y2="456" marker-end="url(#ah)"/>
+  </g>
+  <g font-size="10" fill="#4A5568" text-anchor="middle">
+    <text x="673" y="150">assign akun</text>
+    <text x="673" y="225">List Site → sites</text>
+    <text x="673" y="300">approve / reject</text>
+    <text x="673" y="375">coverage akun</text>
+    <text x="673" y="450">leaderboard</text>
+  </g>
+
+  <!-- Legend -->
+  <text x="500" y="512" text-anchor="middle" font-size="11" fill="#94A3B8">Foto disimpan di Supabase Storage (bucket mh-photos); referensinya di tabel mh_documents. BME &amp; RGE = label saja (fungsi sama), tanpa urban/rural.</text>
+</svg>

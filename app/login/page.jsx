@@ -28,7 +28,7 @@ const HUBS = [
     variant:  "sandra",
     name:     "SandraHub",
     desc:     "S&D Sumatera",
-    sub:      "Untuk tim SPM, MPX, dan distribusi Sumatera",
+    sub:      "Sales and Distribution Sumatera Hub",
     path:     "/sandra/login",
     gradient: "linear-gradient(135deg,#ED1C24 0%,#C6168D 100%)",
     border:   "rgba(237,28,36,0.35)",
@@ -40,7 +40,7 @@ const HUBS = [
     variant:  "marta",
     name:     "MartaHub",
     desc:     "Marketing Sumatera",
-    sub:      "Untuk BME, RGE, dan Territory Manager",
+    sub:      "Marketing Sumatera Hub",
     path:     "/marta/login",
     dev:      true,
     gradient: "linear-gradient(135deg,#ED1C24 0%,#C2187C 100%)",
@@ -157,19 +157,8 @@ export default function HubPickerPage() {
 
                 {/* Text */}
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-                    <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: t.hi }}>
-                      {hub.name}
-                    </span>
-                    <span style={{
-                      fontSize: 10, fontWeight: 700, letterSpacing: "0.1em",
-                      textTransform: "uppercase", padding: "2px 8px",
-                      borderRadius: 99, color: hub.accent,
-                      background: d ? `${hub.accent}1A` : `${hub.accent}12`,
-                      border: `1px solid ${hub.accent}30`,
-                    }}>
-                      {hub.desc}
-                    </span>
+                  <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: t.hi, marginBottom: 4 }}>
+                    {hub.name}
                   </div>
                   <div style={{ fontSize: 13, color: t.mid, lineHeight: 1.5 }}>
                     {hub.sub}

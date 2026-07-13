@@ -37,6 +37,7 @@ import MC_ClusterMapping from "./components/MC_ClusterMapping";
 import KodeOtoritas     from "./components/KodeOtoritas";
 import MFTS_Module      from "./components/MFTS_Module";
 import MenuAccessManager from "./components/MenuAccessManager";
+import PTS_Module        from "./components/PTS_Module";
 
 // ─── Role Maps ────────────────────────────────────────────────────────────────
 const IOH_ROLE_REGION_MAP = {
@@ -172,8 +173,8 @@ const CURRENT_YEAR        = CURRENT_DATE.getFullYear();
 const getCurrentMonth     = () => MONTHS[CURRENT_MONTH_INDEX];
 const getCurrentYear      = () => CURRENT_YEAR.toString();
 
-const HIDE_DATE_PICKER_VIEWS    = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","mc-cluster","kode-otoritas","mfts","menu-access"]);
-const HIDE_SIDEBAR_FILTER_VIEWS = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","mc-cluster","kode-otoritas","menu-access"]);
+const HIDE_DATE_PICKER_VIEWS    = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","mc-cluster","kode-otoritas","mfts","menu-access","promotor-tracking"]);
+const HIDE_SIDEBAR_FILTER_VIEWS = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","mc-cluster","kode-otoritas","menu-access","promotor-tracking"]);
 const PNL_VIEWS = new Set(["summary","pendapatan","pengeluaran"]);
 
 // Sub-menu yang ketersediaannya dapat dikontrol SPM per-role (maintenance).
@@ -752,6 +753,7 @@ export default function DashboardPage() {
                   {!isSDPMember && <SNavItem icon={<PieChart size={14} />}    label="Laporan P&L"          active={PNL_VIEWS.has(view)}       maint={menuMaint("summary")} onClick={() => navigate("summary")} />}
                   {canSdp       && <SNavItem icon={<Users size={14} />}       label="Form SDP"             active={view === "sdp-status"}     maint={menuMaint("sdp-status")} onClick={() => navigate("sdp-status")} />}
                   {canMfts && <SNavItem icon={<Briefcase size={14} />} label="Pemenuhan Manpower" active={view === "mfts"}          maint={menuMaint("mfts")} onClick={() => navigate("mfts")} />}
+                  {(isSPM || isPICRegion) && <SNavItem icon={<Store size={14} />} label="Promotor Tracking" active={view === "promotor-tracking"} onClick={() => navigate("promotor-tracking")} />}
                   {isSPM        && <SNavItem icon={<Wrench size={14} />}      label="Kelola Menu"          active={view === "menu-access"}    onClick={() => navigate("menu-access")} />}
                   {isSPM        && <SNavItem icon={<Shield size={14} />}      label="Admin Panel"          active={view === "admin-panel"}    onClick={() => navigate("admin-panel")} />}
                   {isSPM        && <SNavItem icon={<FileSpreadsheet size={14} />} label="Import Data"      active={view === "import-wizard"}  onClick={() => navigate("import-wizard")} />}
@@ -925,6 +927,13 @@ export default function DashboardPage() {
                       accent={{ color: d ? "#0A84FF" : "#2563EB", bg: d ? "rgba(10,132,255,0.12)" : "rgba(37,99,235,0.07)", bd: d ? "rgba(10,132,255,0.28)" : "rgba(37,99,235,0.18)", shadow: "rgba(37,99,235,0.16)" }} />
                   )}
 
+                  {(isSPM || isPICRegion) && (
+                    <DashCard icon={<Store size={20} />} title="Promotor Tracking System"
+                      desc="Mapping Promotor↔Outlet per bulan (upload Excel) dan pantau aktivitas: check-in/out, selfie berstempel, dan penjualan kartu."
+                      tag={isSPM ? "Admin" : "PIC"} active={true} onClick={() => navigate("promotor-tracking")} t={t} d={d}
+                      accent={{ color: "#ED1C24", bg: d ? "rgba(237,28,36,0.12)" : "rgba(237,28,36,0.07)", bd: d ? "rgba(237,28,36,0.28)" : "rgba(237,28,36,0.18)", shadow: "rgba(237,28,36,0.18)" }} />
+                  )}
+
                   {isSPM && (
                     <DashCard icon={<Wrench size={20} />} title="Kelola Menu"
                       desc="Atur ketersediaan tiap sub-menu per role. Tandai menu 'dalam pemeliharaan' — role tetap melihatnya dengan pemberitahuan."
@@ -997,6 +1006,18 @@ export default function DashboardPage() {
               <motion.div key="mfts" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
                 <MFTS_Module supabase={supabase} theme={theme} profile={profile} scopeRegion={iohRegionView} />
+              </motion.div>
+            )}
+
+            {/* ── Promotor Tracking System ── */}
+            {view === "promotor-tracking" && (isSPM || isPICRegion) && (
+              <motion.div key="pts" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
+                  <div style={{ padding: "24px 28px" }}>
+                    <PTS_Module supabase={supabase} theme={theme} profile={profile} />
+                  </div>
+                </div>
               </motion.div>
             )}
 

@@ -52,12 +52,20 @@ export default function MapIntelligencePage() {
   );
 
   return (
-    <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: t.appBg, fontFamily: FONT, color: t.hi }}>
+    <div className="mh-root" style={{ height: "100vh", display: "flex", flexDirection: "column", background: t.appBg, fontFamily: FONT, color: t.hi }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&display=swap');
         *{box-sizing:border-box;margin:0;padding:0}
         ::-webkit-scrollbar{width:5px;height:5px}
         ::-webkit-scrollbar-thumb{background:${dark ? "#2A3350" : "#CBD6EA"};border-radius:99px}
+        .mh-root select{
+          -webkit-appearance:none !important; -moz-appearance:none !important; appearance:none !important;
+          background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236B7280' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>") !important;
+          background-repeat:no-repeat !important; background-position:right 11px center !important;
+          background-size:13px !important; padding-right:30px !important; cursor:pointer;
+        }
+        .mh-root select::-ms-expand{display:none !important;}
+        .mh-root button{ white-space:nowrap; }
       `}</style>
 
       {/* Topbar */}

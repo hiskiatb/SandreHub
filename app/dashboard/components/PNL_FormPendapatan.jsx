@@ -928,7 +928,7 @@ const FormPendapatan = ({
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Sesi berakhir');
-      const RMAP = { realtimeMargin:{label:'Realtime Margin',val:()=>data.salesFee.realtimeMargin}, backMargin:{label:'Back Margin',val:()=>data.salesFee.backMargin}, slaFee:{label:'SLA Monthly Fee',val:()=>data.salesFee.slaFee}, specialProgram:{label:'Tactical Program',val:()=>data.salesFee.specialProgram}, champions:{label:'Hadiah Champions Club',val:()=>data.rewards.champions} };
+      const RMAP = { realtimeMargin:{label:'Realtime Margin',val:()=>data.salesFee.realtimeMargin}, backMargin:{label:'Back Margin',val:()=>data.salesFee.backMargin}, slaFee:{label:'SLA Monthly Fee',val:()=>data.salesFee.slaFee}, specialProgram:{label:'Tactical Program',val:()=>data.salesFee.specialProgram}, champions:{label:'Champions Reward',val:()=>data.rewards.champions} };
       const fieldLabel = RMAP[reportField].label, fieldValue = RMAP[reportField].val();
       await pushNotification(supabase,{type:'field_dispute',form:'pendapatan',partner_name:activeContext.mpxName,branch:activeContext.branch,mpc_mp3:activeContext.mpxType,month:activeContext.month,year:activeContext.year,dispute_field:fieldLabel,dispute_value:fieldValue,dispute_value_formatted:formatIDR(fieldValue),dispute_message:reportMsg.trim(),triggered_by:user.id,triggered_name:user.user_metadata?.full_name??'',triggered_email:user.email??''});
       toast$('success',`Laporan "${fieldLabel}" berhasil dikirim ke Tim SPM`);
@@ -1009,7 +1009,7 @@ const FormPendapatan = ({
   const ctxMonth=activeContext?.month??'', ctxYear=activeContext?.year??'';
   const ctxType=activeContext?.mpxType??'', ctxName=activeContext?.mpxName??'', ctxBranch=activeContext?.branch??'';
   const notes=reportStatus.validationNotes??'', hasPengeluaranFinal=notes.includes('pengeluaran:final');
-  const reportFieldLabel = reportField ? ({backMargin:'Back Margin',slaFee:'SLA Monthly Fee',champions:'Hadiah Champions Club'}[reportField]) : '';
+  const reportFieldLabel = reportField ? ({backMargin:'Back Margin',slaFee:'SLA Monthly Fee',champions:'Champions Reward'}[reportField]) : '';
   const reportFieldValue = reportField ? ({backMargin:()=>data.salesFee.backMargin,slaFee:()=>data.salesFee.slaFee,champions:()=>data.rewards.champions}[reportField]()) : 0;
 
   if (isLoading) return (
@@ -1320,7 +1320,7 @@ const FormPendapatan = ({
                 <SecHero icon={Award} step={3} title="Hadiah & Reward" t={t}/>
                 <Card t={t} style={{maxWidth:540,margin:'0 auto'}}><Body>
                   <div style={{display:'flex',flexDirection:'column',gap:18}}>
-                    <SpmField label="A. Hadiah Champions Club" info={spmFieldsInfo.champions} updatedAt={!spmFieldsInfo.champions&&data.rewards.champions>0?reportStatus.updatedAt:null} canReport={canReportDispute} onReport={()=>openReport('champions')} t={t}>
+                    <SpmField label="A. Champions Reward" info={spmFieldsInfo.champions} updatedAt={!spmFieldsInfo.champions&&data.rewards.champions>0?reportStatus.updatedAt:null} canReport={canReportDispute} onReport={()=>openReport('champions')} t={t}>
                       <LocalInput numericValue={data.rewards.champions} onChange={v=>updateVal('rewards',null,'champions',v)} className={spmFieldReadOnly?'fpi-spm fpi-spm-ro fpi-spm-ro-lg':'fpi-spm fpi-spm-ro-lg'} readOnly={spmFieldReadOnly}/>
                       {!isSPMUser&&!effectiveReadOnly&&<div style={{marginTop:6,fontSize:10,color:t.lo,lineHeight:1.5}}>Nilai ini diisi oleh Tim SPM Sumatera. Jika tidak sesuai, gunakan tombol <strong style={{color:t.red}}>Laporkan</strong>.</div>}
                     </SpmField>
