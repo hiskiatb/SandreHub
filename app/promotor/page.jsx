@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import supabase from "../../lib/supabase";
 import { HubLogoLoader } from "../../components/HubLogoLoader";
-import { CameraSheet, QRScannerSheet, AccessHelp } from "./components";
+import { CameraSheet, QRScannerSheet, AccessHelp, BottomSheet } from "./components";
 import {
   ymNow, ymLabel, fmtTime, fmtDateFull, fmtDateTime, durationOf,
   normalizePhone, getPosition, checkGeoPermission, uploadSelfie, signedPhoto,
@@ -464,16 +464,15 @@ function AppShell(p) {
 
       {/* Bantuan izin lokasi (mis. sebelumnya 'never allow') */}
       {geoHelp && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(17,18,22,0.4)", backdropFilter: "blur(6px)", display: "flex", flexDirection: "column", justifyContent: "flex-end" }} onClick={() => setGeoHelp(false)}>
-          <div onClick={(e) => e.stopPropagation()} style={{ background: C.card, borderRadius: "26px 26px 0 0", padding: "10px 18px calc(env(safe-area-inset-bottom,0px) + 20px)", boxShadow: "0 -18px 50px rgba(23,24,28,0.18)", animation: "sheetup .28s cubic-bezier(.22,1,.36,1)", maxWidth: 560, margin: "0 auto", width: "100%" }}>
-            <div style={{ width: 38, height: 4, borderRadius: 99, background: C.line, margin: "0 auto 14px" }} />
+        <BottomSheet onClose={() => setGeoHelp(false)}>
+          <div style={{ padding: "2px 18px calc(env(safe-area-inset-bottom,0px) + 20px)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
               <div style={{ fontSize: 17, fontWeight: 800, color: C.hi, letterSpacing: "-0.02em" }}>Izin Lokasi</div>
               <button onClick={() => setGeoHelp(false)} style={{ width: 34, height: 34, borderRadius: 10, border: "none", background: C.sub, color: C.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={18} /></button>
             </div>
             <AccessHelp kind="lokasi" onRetry={fixGeo} />
           </div>
-        </div>
+        </BottomSheet>
       )}
 
       {/* Animasi sukses tag (ala FaceID) */}
@@ -748,9 +747,8 @@ function GeoChip({ geo, err, onFix }) {
 }
 function OutletPicker({ outlets, onPick, onClose }) {
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(17,18,22,0.4)", backdropFilter: "blur(6px)", display: "flex", flexDirection: "column", justifyContent: "flex-end", fontFamily: FF }} onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: C.card, borderRadius: "26px 26px 0 0", padding: "10px 18px calc(env(safe-area-inset-bottom,0px) + 20px)", boxShadow: "0 -18px 50px rgba(23,24,28,0.18)", animation: "sheetup .28s cubic-bezier(.22,1,.36,1)", maxWidth: 560, margin: "0 auto", width: "100%" }}>
-        <div style={{ width: 38, height: 4, borderRadius: 99, background: C.line, margin: "0 auto 14px" }} />
+    <BottomSheet onClose={onClose}>
+      <div style={{ padding: "2px 18px calc(env(safe-area-inset-bottom,0px) + 20px)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
           <div style={{ fontSize: 17, fontWeight: 800, color: C.hi, letterSpacing: "-0.02em" }}>Pilih Outlet</div>
           <button onClick={onClose} style={{ width: 34, height: 34, borderRadius: 10, border: "none", background: C.sub, color: C.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={18} /></button>
@@ -768,7 +766,6 @@ function OutletPicker({ outlets, onPick, onClose }) {
           ))}
         </div>
       </div>
-      <style>{`@keyframes sheetup{from{transform:translateY(100%)}to{transform:none}}`}</style>
-    </div>
+    </BottomSheet>
   );
 }

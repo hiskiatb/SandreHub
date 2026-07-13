@@ -48,32 +48,40 @@ export async function checkGeoPermission() {
 }
 
 // Gambar frame video → canvas, tempel watermark, kompres JPEG ≤ maxKB
-export async function stampAndCompress(video, { lines = [], maxKB = 500, maxDim = 1080 } = {}) {
+export async function stampAndCompress(video, { lines = [], maxKB = 500, maxDim = 1080, mirror = true } = {}) {
   const vw = video.videoWidth || 720, vh = video.videoHeight || 960;
   const scale = Math.min(1, maxDim / Math.max(vw, vh));
   const w = Math.round(vw * scale), h = Math.round(vh * scale);
   const canvas = document.createElement("canvas");
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext("2d");
-  // mirror (kamera depan) agar natural
-  ctx.save(); ctx.translate(w, 0); ctx.scale(-1, 1);
+  // mirror hanya untuk kamera depan agar natural
+  ctx.save();
+  if (mirror) { ctx.translate(w, 0); ctx.scale(-1, 1); }
   ctx.drawImage(video, 0, 0, w, h); ctx.restore();
 
-  // Watermark panel bawah
-  const pad = Math.round(w * 0.035);
-  const fs = Math.max(13, Math.round(w * 0.032));
-  const lh = Math.round(fs * 1.42);
-  const panelH = lines.length * lh + pad * 1.4;
-  const grad = ctx.createLinearGradient(0, h - panelH - 30, 0, h);
-  grad.addColorStop(0, "rgba(0,0,0,0)"); grad.addColorStop(1, "rgba(0,0,0,0.78)");
-  ctx.fillStyle = grad; ctx.fillRect(0, h - panelH - 30, w, panelH + 30);
-  ctx.textBaseline = "alphabetic";
-  ctx.font = `700 ${fs}px "DM Sans", system-ui, sans-serif`;
-  let y = h - panelH + pad;
+  // Watermark panel bawah — responsif (auto-fit lebar agar tidak terpotong)
+  const pad = Math.round(w * 0.04);
+  const maxW = w - pad * 2;
+  let fs = Math.max(12, Math.round(w * 0.033));
+  // ukur baris terlebar, kecilkan font bila melebihi lebar
+  let widest = 0;
   lines.forEach((ln, i) => {
-    ctx.font = `${i === 0 ? 700 : 500} ${i === 0 ? fs + 2 : fs}px "DM Sans", system-ui, sans-serif`;
+    ctx.font = `${i === 0 ? 700 : 500} ${i === 0 ? fs + 1 : fs}px "DM Sans", system-ui, sans-serif`;
+    widest = Math.max(widest, ctx.measureText(String(ln)).width);
+  });
+  if (widest > maxW) fs = Math.max(9, Math.floor(fs * maxW / widest));
+  const lh = Math.round(fs * 1.4);
+  const panelH = lines.length * lh + pad * 1.2;
+  const grad = ctx.createLinearGradient(0, h - panelH - 24, 0, h);
+  grad.addColorStop(0, "rgba(0,0,0,0)"); grad.addColorStop(1, "rgba(0,0,0,0.8)");
+  ctx.fillStyle = grad; ctx.fillRect(0, h - panelH - 24, w, panelH + 24);
+  ctx.textBaseline = "alphabetic";
+  let y = h - panelH + pad * 0.5;
+  lines.forEach((ln, i) => {
+    ctx.font = `${i === 0 ? 700 : 500} ${i === 0 ? fs + 1 : fs}px "DM Sans", system-ui, sans-serif`;
     ctx.fillStyle = i === 0 ? "#FFFFFF" : "rgba(255,255,255,0.92)";
-    ctx.fillText(ln, pad, y + fs); y += lh;
+    ctx.fillText(String(ln), pad, y + fs); y += lh;
   });
 
   // Kompres iteratif ke target

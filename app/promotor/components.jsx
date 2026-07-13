@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Camera, X, RotateCcw, Check, Keyboard, Loader2, ScanLine, AlertTriangle, RefreshCw } from "lucide-react";
+import { Camera, X, RotateCcw, Check, Keyboard, Loader2, ScanLine, AlertTriangle, RefreshCw, SwitchCamera } from "lucide-react";
 import { stampAndCompress, normalizePhone } from "./ptsClient";
 
 // Ambil kandidat nomor HP Indonesia dari isi QR (isi QR sering menyambung
@@ -14,22 +14,59 @@ function extractPhone(raw) {
 
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 
-/* ── Bottom sheet frame ──────────────────────────────────────── */
-function Sheet({ title, onClose, children, accent = "#ED1C24" }) {
+/* ── Bottom sheet dengan tap & drag-to-close (ala MartaHub) ──── */
+export function BottomSheet({ onClose, children, maxWidth = 560 }) {
+  const [dy, setDy] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const startY = useRef(null);
+  const sheetRef = useRef(null);
+
+  const begin = (y) => { startY.current = y; setDragging(true); };
+  const move = (y) => { if (startY.current == null) return; const d = y - startY.current; setDy(d > 0 ? d : 0); };
+  const end = () => {
+    if (startY.current == null) return;
+    const h = sheetRef.current?.offsetHeight || 400;
+    const close = dy > Math.max(56, h * 0.1);   // digeser ≥10% tinggi → tutup
+    startY.current = null; setDragging(false);
+    if (close) onClose(); else setDy(0);
+  };
+
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(17,18,22,0.4)", backdropFilter: "blur(6px)", display: "flex", flexDirection: "column", justifyContent: "flex-end", fontFamily: FF }} onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: "#FFFFFF", borderRadius: "26px 26px 0 0", overflow: "hidden", boxShadow: "0 -18px 50px rgba(23,24,28,0.18)", maxHeight: "94svh", display: "flex", flexDirection: "column", animation: "sheetup .28s cubic-bezier(.22,1,.36,1)", maxWidth: 560, margin: "0 auto", width: "100%" }}>
-        <div style={{ width: 38, height: 4, borderRadius: 99, background: "#E4E5EA", margin: "10px auto 4px" }} />
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 18px 12px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 17, fontWeight: 800, letterSpacing: "-0.02em", color: "#17181C" }}>
-            <span style={{ width: 8, height: 8, borderRadius: 3, background: accent }} />{title}
-          </div>
-          <button onClick={onClose} style={{ width: 34, height: 34, borderRadius: 10, border: "none", background: "#F3F4F6", color: "#61616C", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={18} /></button>
+    <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(17,18,22,0.42)", backdropFilter: "blur(6px)", display: "flex", flexDirection: "column", justifyContent: "flex-end", fontFamily: FF }} onClick={onClose}>
+      <div ref={sheetRef} onClick={(e) => e.stopPropagation()}
+        onTouchStart={(e) => begin(e.touches[0].clientY)}
+        onTouchMove={(e) => move(e.touches[0].clientY)}
+        onTouchEnd={end}
+        style={{
+          background: "#FFFFFF", borderRadius: "26px 26px 0 0", overflow: "hidden",
+          boxShadow: "0 -18px 50px rgba(23,24,28,0.18)", maxHeight: "94svh", display: "flex", flexDirection: "column",
+          maxWidth, margin: "0 auto", width: "100%",
+          transform: `translateY(${dy}px)`,
+          transition: dragging ? "none" : "transform .3s cubic-bezier(.22,1,.36,1)",
+          animation: dy === 0 && !dragging ? "sheetup .3s cubic-bezier(.22,1,.36,1)" : "none",
+        }}>
+        <div style={{ padding: "11px 0 3px", display: "flex", justifyContent: "center" }}>
+          <div style={{ width: 40, height: 5, borderRadius: 99, background: "#D7D8DE" }} />
         </div>
         {children}
       </div>
       <style>{`@keyframes sheetup{from{transform:translateY(100%)}to{transform:none}}@keyframes pspin{to{transform:rotate(360deg)}}`}</style>
     </div>
+  );
+}
+
+/* ── Sheet berjudul (memakai BottomSheet) ──── */
+function Sheet({ title, onClose, children, accent = "#ED1C24" }) {
+  return (
+    <BottomSheet onClose={onClose}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 18px 12px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 17, fontWeight: 800, letterSpacing: "-0.02em", color: "#17181C" }}>
+          <span style={{ width: 8, height: 8, borderRadius: 3, background: accent }} />{title}
+        </div>
+        <button onClick={onClose} style={{ width: 34, height: 34, borderRadius: 10, border: "none", background: "#F3F4F6", color: "#61616C", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={18} /></button>
+      </div>
+      {children}
+    </BottomSheet>
   );
 }
 
@@ -67,6 +104,7 @@ export function CameraSheet({ title = "Ambil Selfie", stampLines, onCapture, onC
   const [shot, setShot] = useState(null);   // {dataUrl, blob, size}
   const [busy, setBusy] = useState(false);
   const [tries, setTries] = useState(0);
+  const [facing, setFacing] = useState("user");   // user (depan) | environment (belakang)
 
   const stop = useCallback(() => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -81,7 +119,7 @@ export function CameraSheet({ title = "Ambil Selfie", stampLines, onCapture, onC
     }
     (async () => {
       try {
-        const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 960 }, height: { ideal: 1280 } }, audio: false });
+        const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing }, width: { ideal: 960 }, height: { ideal: 1280 } }, audio: false });
         if (!alive) { s.getTracks().forEach((t) => t.stop()); return; }
         streamRef.current = s;
         if (videoRef.current) { videoRef.current.srcObject = s; await videoRef.current.play().catch(() => {}); }
@@ -91,16 +129,17 @@ export function CameraSheet({ title = "Ambil Selfie", stampLines, onCapture, onC
       }
     })();
     return () => { alive = false; stop(); };
-  }, [stop, tries]);
+  }, [stop, tries, facing]);
 
   const retry = () => { setErr(""); setTries((n) => n + 1); };
+  const switchCam = () => { stop(); setShot(null); setFacing((f) => (f === "user" ? "environment" : "user")); };
 
   const capture = async () => {
     if (!videoRef.current) return;
     setBusy(true);
     try {
       const lines = typeof stampLines === "function" ? stampLines(new Date()) : (stampLines || []);
-      const res = await stampAndCompress(videoRef.current, { lines, maxKB: 500 });
+      const res = await stampAndCompress(videoRef.current, { lines, maxKB: 500, mirror: facing === "user" });
       setShot(res);
     } finally { setBusy(false); }
   };
@@ -113,9 +152,15 @@ export function CameraSheet({ title = "Ambil Selfie", stampLines, onCapture, onC
       <div style={{ padding: "0 18px 18px", display: "flex", flexDirection: "column", gap: 14 }}>
         <div style={{ position: "relative", width: "100%", aspectRatio: "3/4", borderRadius: 18, overflow: "hidden", background: "#000", border: "1px solid #26262B" }}>
           {!shot ? (
-            <video ref={videoRef} playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover", transform: "scaleX(-1)" }} />
+            <video ref={videoRef} playsInline muted style={{ width: "100%", height: "100%", objectFit: "cover", transform: facing === "user" ? "scaleX(-1)" : "none" }} />
           ) : (
             <img src={shot.dataUrl} alt="selfie" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          )}
+          {!shot && !err && (
+            <button onClick={switchCam} aria-label="Ganti kamera"
+              style={{ position: "absolute", top: 12, left: 12, width: 40, height: 40, borderRadius: 12, border: "none", background: "rgba(0,0,0,0.5)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", backdropFilter: "blur(4px)" }}>
+              <SwitchCamera size={19} />
+            </button>
           )}
           {!ready && !err && (
             <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#9A9AA6", fontSize: 13, gap: 8 }}>
