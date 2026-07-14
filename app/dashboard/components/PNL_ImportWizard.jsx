@@ -296,8 +296,14 @@ function autoMatch(cols,fields){
   const map={},used=new Set();
   const n=s=>s.toLowerCase().replace(/[\s_\-\.\/]/g,"").replace(/[^a-z0-9]/g,"");
   for(const f of fields){
-    // Cocokkan berdasarkan key, label, dan alias (mis. "Hadiah Champions Club" → Champions Reward).
-    const targets=[f.key,f.label,...(f.aliases||[])].map(n);
+    // Prioritas: kolom yang namanya sama persis dengan KEY field (mis. kolom
+    // sintetis "special_program" hasil hitung total → field Tactical Program),
+    // mengalahkan kolom manual yang cuma cocok dengan label.
+    const nk=n(f.key);
+    const keyCol=cols.find(c=>!used.has(c)&&n(c)===nk);
+    if(keyCol){map[f.key]=keyCol;used.add(keyCol);continue;}
+    // Cocokkan berdasarkan label & alias (mis. "Hadiah Champions Club" → Champions Reward).
+    const targets=[f.label,...(f.aliases||[])].map(n);
     let best=null,bs=0;
     for(const c of cols){
       if(used.has(c))continue;const nc=n(c);
@@ -378,15 +384,16 @@ function normalizeSpmRows(cols,rows){
   const outRows=rows.map(r=>{
     const o={...r};
     if(tacCols.length){
+      // Tactical Program = TOTAL dari breakdown. Hanya breakdown yang PUNYA NILAI
+      // (bukan nol/kosong) yang dicatat; bila tidak ada, subtotal = 0.
       let sum=0;const bd={};
       tacCols.forEach(tc=>{
         const prog=tacticalProgName(tc);
-        const val=pNum(r[tc])??0;
-        if(prog)bd[prog]=val;
-        sum+=val;
+        const val=pNum(r[tc]);
+        if(prog&&val!=null&&val!==0){bd[prog]=val;sum+=val;}
       });
-      o.special_program=sum;
-      o.__spb=JSON.stringify(bd);
+      o.special_program=sum;            // 0 bila tak ada breakdown bernilai
+      o.__spb=JSON.stringify(bd);       // hanya berisi breakdown bernilai
     }
     if(periodeCol){
       const{month,year}=parsePeriode(r[periodeCol]);
@@ -638,8 +645,9 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
       .map(r=>{const o={};hArr.forEach((h,i)=>{o[h]=r[i]??""});return o;});
     // Normalisasi khusus SPM: Periode → month/year, TACTICAL_* → special_program + breakdown.
     const{cols,rows}=normalizeSpmRows(hArr,rawRows);
-    // Sembunyikan kolom internal "__spb" dari daftar kolom yang bisa dipetakan user.
-    setFileCols(cols.filter(c=>c!=="__spb"));setFileRows(rows);
+    // Sembunyikan kolom internal "__spb" DAN kolom mentah TACTICAL_* (otomatis
+    // dikonsumsi jadi breakdown). User cukup memakai "special_program" (total).
+    setFileCols(cols.filter(c=>c!=="__spb"&&!isTacticalCol(c)));setFileRows(rows);
   },[]);
 
   const parseSheet=useCallback((wb,name)=>{
@@ -2025,6 +2033,18 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
               </div>
             )}
 
+            {parsedRows.some(r=>r.special_program_breakdown&&Object.keys(r.special_program_breakdown).length>0)&&(
+              <div style={{padding:"10px 16px",background:t.BL,borderBottom:`1px solid ${t.BB}`,
+                display:"flex",alignItems:"flex-start",gap:9}}>
+                <Info size={13} style={{color:t.B,flexShrink:0,marginTop:1}}/>
+                <span style={{fontSize:11.5,color:t.B,lineHeight:1.55}}>
+                  <strong>Tactical Program otomatis.</strong> Kolom <code>TACTICAL_*</code> dipecah jadi breakdown, dan
+                  {" "}<strong>Tactical Program = total seluruh breakdown</strong> (dihitung otomatis — tidak perlu kolom total).
+                  {" "}Hanya breakdown <strong>bernilai</strong> yang disimpan; bila kosong, subtotalnya <strong>0</strong>.
+                </span>
+              </div>
+            )}
+
             <div style={{overflowX:"auto",overflowY:"auto",maxHeight:520}}>
               <table style={{borderCollapse:"collapse",fontSize:12,minWidth:"max-content"}}>
                 <thead style={{position:"sticky",top:0,zIndex:10}}>
@@ -2084,12 +2104,13 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
                   {displayed.map((row,idx)=>{
                     const ex=existing[row._pk];
                     const st=rowStatus(row);
-                    const rowBg=idx%2===0?"transparent":d?"rgba(255,255,255,0.012)":"rgba(0,0,0,0.014)";
                     const isSame=st==="same";
+                    // Baris genap/ganjil & "sama" pakai warna OPAQUE (bukan rgba transparan)
+                    // supaya freeze-pane (kolom sticky) tidak tembus pandang saat digeser.
+                    const rowBg=isSame?(d?"#161618":"#F1F2F4"):idx%2===0?t.card:(d?"#1E1E20":"#FAFAFB");
                     const stickyBg=st==="update"?(d?"#1A1500":"#FFFBEA")
                       :st==="new"?(d?"#001412":"#F0FDF5")
-                      :isSame?(d?"rgba(255,255,255,0.03)":"rgba(0,0,0,0.025)")
-                      :t.card;
+                      :rowBg;
                     const nChanges=st==="update"&&ex?mappedNonPK.filter(f=>{
                       const nv=row[f.key],ov=ex[f.key];
                       if(f.type==="numeric"){
@@ -2101,8 +2122,7 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
 
                     return(
                       <tr key={row._i} className="dr"
-                        style={{background:rowBg,borderBottom:`1px solid ${t.lineS}`,
-                          opacity:isSame?.55:1}}>
+                        style={{background:rowBg,borderBottom:`1px solid ${t.lineS}`}}>
                         {/* status cell */}
                         <td style={{padding:"6px 12px",position:"sticky",left:0,zIndex:2,
                           background:stickyBg,borderRight:`1px solid ${t.line}`,

@@ -681,7 +681,7 @@ const FormPendapatan = ({
     ],
     vcCustom: [],
     mobo: { modal: 0, jual: 0 },
-    salesFee: { realtimeMargin: 0, backMargin: 0, slaFee: 0, specialProgram: 0 },
+    salesFee: { realtimeMargin: 0, backMargin: 0, slaFee: 0, specialProgram: 0, specialProgramBreakdown: {} },
     rewards: { champions: 0, lainnya: 0 },
     partnerIncome: 0,
   }), []);
@@ -716,7 +716,7 @@ const FormPendapatan = ({
           s.vc = s.vc.map(i => { const qty2 = db[i.dbQty2] ?? 0, hr2 = db[i.dbRetail2] ?? 0; return { ...i, qty: db[i.dbQty] ?? 0, hRetail: db[i.dbRetail] ?? 0, qty2, hRetail2: hr2, hasEntry2: qty2 > 0 || hr2 > 0 }; });
           if (Array.isArray(rd.vc_custom)) s.vcCustom = rd.vc_custom.filter(c => c.name || c.qty > 0 || c.hRetail > 0 || c.hPokok > 0).map(c => ({ id: c.id ?? `cvc_${Date.now()}_${Math.random()}`, name: c.name ?? '', hPokok: c.hPokok ?? 0, qty: c.qty ?? 0, hRetail: c.hRetail ?? 0 }));
           s.mobo = { modal: db.mobo_modal ?? 0, jual: db.mobo_jual ?? 0 };
-          s.salesFee = { realtimeMargin: db.realtime_margin ?? 0, backMargin: db.back_margin ?? 0, slaFee: db.sla_fee ?? 0, specialProgram: db.special_program ?? 0 };
+          s.salesFee = { realtimeMargin: db.realtime_margin ?? 0, backMargin: db.back_margin ?? 0, slaFee: db.sla_fee ?? 0, specialProgram: db.special_program ?? 0, specialProgramBreakdown: (db.special_program_breakdown && typeof db.special_program_breakdown === 'object') ? db.special_program_breakdown : {} };
           s.rewards = { champions: db.rewards_champions ?? 0, lainnya: db.rewards_lainnya ?? 0 };
           s.partnerIncome = db.partner_income ?? 0;
           setAttachments(Array.isArray(db.attachments_pendapatan) ? db.attachments_pendapatan : []);
@@ -1297,8 +1297,23 @@ const FormPendapatan = ({
                 </Body></Card>
                 <Card t={t}><Body>
                   <SpmField label="D. Tactical Program" info={spmFieldsInfo.specialProgram} updatedAt={!spmFieldsInfo.specialProgram&&data.salesFee.specialProgram>0?reportStatus.updatedAt:null} canReport={canReportDispute} onReport={()=>openReport('specialProgram')} t={t}>
-                    <LocalInput numericValue={data.salesFee.specialProgram} onChange={v=>updateVal('salesFee',null,'specialProgram',v)} className={spmFieldReadOnly?'fpi-spm fpi-spm-ro':'fpi-spm'} readOnly={spmFieldReadOnly}/>
-                    {!isSPMUser&&!effectiveReadOnly&&<div style={{marginTop:6,fontSize:10,color:t.lo,lineHeight:1.5}}>Nilai ini diisi oleh Tim SPM Sumatera. Jika tidak sesuai, gunakan tombol <strong style={{color:t.red}}>Laporkan</strong>.</div>}
+                    {Object.keys(data.salesFee.specialProgramBreakdown||{}).length>0?(
+                      <div style={{display:'flex',flexDirection:'column',gap:7}}>
+                        {Object.entries(data.salesFee.specialProgramBreakdown).map(([prog,val])=>(
+                          <div key={prog} style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,padding:'10px 13px',borderRadius:9,background:t.spmBg,border:`1px solid ${t.spmBd}`}}>
+                            <span style={{fontSize:13,fontWeight:600,color:t.hi}}>{prog}</span>
+                            <span style={{fontSize:14,fontWeight:700,color:t.hi,fontFeatureSettings:'"tnum"'}}>{Number(val||0).toLocaleString('id-ID')}</span>
+                          </div>
+                        ))}
+                        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,padding:'11px 13px',borderRadius:9,background:d?'rgba(167,139,250,0.14)':'rgba(124,58,237,0.09)',border:`1px solid ${d?'rgba(167,139,250,0.3)':'rgba(124,58,237,0.22)'}`,marginTop:1}}>
+                          <span style={{fontSize:11,fontWeight:800,letterSpacing:'0.05em',textTransform:'uppercase',color:d?'#A78BFA':'#7C3AED'}}>Subtotal Tactical Program</span>
+                          <span style={{fontSize:15,fontWeight:800,color:d?'#A78BFA':'#7C3AED',fontFeatureSettings:'"tnum"'}}>{Number(data.salesFee.specialProgram||0).toLocaleString('id-ID')}</span>
+                        </div>
+                      </div>
+                    ):(
+                      <LocalInput numericValue={data.salesFee.specialProgram} onChange={v=>updateVal('salesFee',null,'specialProgram',v)} className={spmFieldReadOnly?'fpi-spm fpi-spm-ro':'fpi-spm'} readOnly={spmFieldReadOnly}/>
+                    )}
+                    {!isSPMUser&&!effectiveReadOnly&&<div style={{marginTop:6,fontSize:10,color:t.lo,lineHeight:1.5}}>Nilai ini diisi oleh Tim SPM Sumatera{Object.keys(data.salesFee.specialProgramBreakdown||{}).length>0?' (rincian per program di atas)':''}. Jika tidak sesuai, gunakan tombol <strong style={{color:t.red}}>Laporkan</strong>.</div>}
                   </SpmField>
                 </Body></Card>
                 <div style={{padding:'15px 20px',borderRadius:12,background:'linear-gradient(135deg,#ED1C24 0%,#C6168D 100%)',display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:12,boxShadow:'0 4px 20px rgba(237,28,36,0.28)'}}>

@@ -174,7 +174,9 @@ export default function PromotorApp() {
 /* ══════════════════ Splash (loader SandraHub) ══════════════════ */
 function Splash() {
   return (
-    <div style={{ minHeight: "100svh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FF }}>
+    <div className="pts-splash" style={{ minHeight: "100svh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FF }}>
+      {/* Paksa kontras terang walau <html data-theme="dark"> terbawa dari dashboard */}
+      <style>{`.pts-splash .hl-name-text{color:#17181C !important}.pts-splash .hl-sub-text{color:#9A9AA6 !important}`}</style>
       <HubLogoLoader variant="sandra" logoSize={76} />
     </div>
   );

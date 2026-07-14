@@ -11,11 +11,15 @@
  */
 import React, { useState } from "react";
 import {
-  UploadCloud, ChevronRight, ArrowLeft, Construction, Download, FilePlus2,
+  UploadCloud, ChevronRight, ArrowLeft, Construction, Download, FilePlus2, ClipboardList, KeyRound,
 } from "lucide-react";
 import SDP_UploadTerritory   from "./SDP_UploadTerritory";
 import SDP_RekapCSE          from "./SDP_RekapCSE";
 import SDP_SubmissionForms   from "./SDP_SubmissionForms";
+import SDP_Field             from "./SDP_Field";
+import SDP_Report            from "./SDP_Report";
+import SDP_MyCodes           from "./SDP_MyCodes";
+import SDP_Home              from "./SDP_Home";
 
 // ─── Theme ─────────────────────────────────────────────────────────────────────
 const mk = (d) => ({
@@ -84,6 +88,32 @@ const IOH_MONITOR_MENU = [
   },
 ];
 ["internal_ioh", "ioh_north_sumatera", "ioh_central_sumatera", "ioh_south_sumatera"].forEach((r) => { MENUS[r] = IOH_MONITOR_MENU; });
+
+// Data SDP (mobile field flow) — List/Detail per periode, untuk CSE & BSM.
+const FIELD_CARD = {
+  id     : "field",
+  icon   : ClipboardList,
+  label  : "Data SDP",
+  desc   : "Daftar SDP Anda per periode — status, detail lengkap & riwayat",
+  accent : "blue",
+};
+const REPORT_CARD = {
+  id     : "report",
+  icon   : Download,
+  label  : "Laporan",
+  desc   : "Ringkasan progres pengisian per periode & per cluster",
+  accent : "teal",
+};
+["cse_rse"].forEach((r) => { MENUS[r] = [FIELD_CARD, REPORT_CARD, ...(MENUS[r] || [])]; });
+
+const MYCODES_CARD = {
+  id     : "mycodes",
+  icon   : KeyRound,
+  label  : "Kode Otoritas",
+  desc   : "Klaim & lihat kode cluster/branch yang Anda kelola",
+  accent : "mag",
+};
+["cse_rse", "bsm"].forEach((r) => { MENUS[r] = [...(MENUS[r] || []), MYCODES_CARD]; });
 
 // Form Registrasi / Terminasi / Rebordering — untuk role SDP (scope per akun).
 const SUBMISSION_CARD = {
@@ -221,6 +251,33 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile, read
     );
   }
 
+  if (activeMenu === "field") {
+    return (
+      <div style={{ fontFamily: FF }}>
+        {renderBack()}
+        <SDP_Field supabase={supabase} theme={theme} profile={profile} readOnly={readOnly} />
+      </div>
+    );
+  }
+
+  if (activeMenu === "report") {
+    return (
+      <div style={{ fontFamily: FF }}>
+        {renderBack()}
+        <SDP_Report supabase={supabase} theme={theme} profile={profile} />
+      </div>
+    );
+  }
+
+  if (activeMenu === "mycodes") {
+    return (
+      <div style={{ fontFamily: FF }}>
+        {renderBack()}
+        <SDP_MyCodes supabase={supabase} theme={theme} profile={profile} />
+      </div>
+    );
+  }
+
   if (activeMenu === "upload_territory") {
     return (
       <div style={{ fontFamily: FF }}>
@@ -235,6 +292,15 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile, read
       <div style={{ fontFamily: FF }}>
         {renderBack()}
         <SDP_RekapCSE supabase={supabase} theme={theme} profile={profile} readOnly={readOnly} lockRegion={lockRegion} />
+      </div>
+    );
+  }
+
+  // ── Home kaya untuk CSE (replika app mobile, responsif) ─────────────────────
+  if (role === "cse_rse") {
+    return (
+      <div style={{ fontFamily: FF }}>
+        <SDP_Home supabase={supabase} theme={theme} profile={profile} onNavigate={setActiveMenu} />
       </div>
     );
   }
