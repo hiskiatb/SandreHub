@@ -16,6 +16,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft, ChevronRight, FilePlus2, FileMinus2, Shuffle,
   Check, Loader2, History, AlertCircle, UploadCloud, Paperclip, X, ExternalLink,
+  MapPin, CalendarDays, Building2, Landmark, Users, ClipboardCheck, ArrowLeftRight,
 } from "lucide-react";
 
 const mk = (d) => ({
@@ -64,6 +65,7 @@ const REG_FIELDS = [
   { k: "email_pic_ioh", label: "Email PIC IOH" },
   { k: "kabupaten", label: "Kab/Kota" },
   { k: "kecamatan_coverage", label: "Kecamatan Coverage" },
+  { k: "partner_territory", label: "Partner Territory" },
   { k: "bill_to_address", label: "Bill To Address", type: "area" },
   { k: "ship_to_address", label: "Ship To Address", type: "area" },
   { k: "kode_pos", label: "Kode Pos" },
@@ -143,10 +145,63 @@ const REB_FIELDS = [
   { k: "remarks", label: "Remarks", type: "area" },
 ];
 
+// ── Pengelompokan visual — biar formulir panjang tidak jadi satu grid
+// raksasa yang memusingkan. Tiap section = kartu tersendiri berjudul.
+// Field yang tidak masuk daftar keys manapun otomatis jatuh ke section
+// terakhir ("Lainnya") supaya tidak ada yang hilang bila field bertambah.
+function withSections(fields, sections) {
+  const used = new Set();
+  const out = sections.map((s) => {
+    const items = fields.filter((f) => s.keys.includes(f.k));
+    items.forEach((f) => used.add(f.k));
+    return { ...s, fields: items };
+  });
+  const rest = fields.filter((f) => !used.has(f.k));
+  if (rest.length) out.push({ id: "lainnya", title: "Lainnya", icon: ClipboardCheck, fields: rest });
+  return out.filter((s) => s.fields.length > 0);
+}
+
+const REG_SECTIONS = [
+  { id: "sdp", title: "Identitas SDP & Wilayah", icon: MapPin,
+    keys: ["sdp_id_new", "brand", "sdp_name", "circle", "region", "branch", "kabupaten", "kecamatan_coverage", "partner_territory"] },
+  { id: "info", title: "Info Registrasi", icon: CalendarDays,
+    keys: ["pairing_id", "hybrid_type", "submission_month", "submission_date", "request_type", "registration_scope"] },
+  { id: "partner", title: "Data Partner / Perusahaan", icon: Building2,
+    keys: ["partner_company_name", "customer_legal_name", "company_type", "status_company", "ktp_number", "ktp_file", "npwp_number", "npwp_file", "bill_to_address", "ship_to_address", "kode_pos"] },
+  { id: "bank", title: "Data Bank", icon: Landmark,
+    keys: ["bank_name", "bank_branch_kcp", "bank_account_number", "bank_account_name", "commitment_fee_status"] },
+  { id: "contact", title: "Kontak PIC & CSE", icon: Users,
+    keys: ["pic_name_partner", "pic_phone_number", "msisdn_master_trx", "pic_email_partner", "email_pic_ioh", "cse_name", "cse_partner_id", "cse_number"] },
+  { id: "approval", title: "Branding & Approval", icon: ClipboardCheck,
+    keys: ["need_sap_creation", "need_oracle_creation", "branding_update_required", "branding_status", "main_document_folder_link", "circle_submit_status", "hq_validation_status", "final_registration_status", "supporting_files", "remarks"] },
+];
+
+const TERM_SECTIONS = [
+  { id: "sdp", title: "Identitas SDP & Wilayah", icon: MapPin,
+    keys: ["circle", "region", "area", "branch", "micro_cluster", "partner_territory", "sdp_type", "sdp_code", "sdp_name", "lokasi_sdp", "num_kec"] },
+  { id: "info", title: "Info Pengajuan", icon: CalendarDays,
+    keys: ["submission_month", "submission_date"] },
+  { id: "terminate", title: "Detail Terminasi", icon: ClipboardCheck,
+    keys: ["termination_reason", "last_active_date", "effective_termination_date", "kecamatan_return_completed", "kecamatan_return_where"] },
+  { id: "approval", title: "Approval & Dokumen", icon: Users,
+    keys: ["circle_iom_link", "document_folder_link", "approval_status", "hq_validation_status", "final_status", "pic_circle", "pic_hq", "remarks"] },
+];
+
+const REB_SECTIONS = [
+  { id: "loc", title: "Lokasi & Jenis", icon: MapPin,
+    keys: ["circle", "kecamatan", "kabupaten", "rebordering_action", "sdp_type"] },
+  { id: "before", title: "SDP Sebelum (Existing)", icon: ArrowLeftRight,
+    keys: ["existing_sdp_id", "existing_sdp_name", "existing_partner_territory", "existing_region", "existing_branch", "existing_micro_cluster"] },
+  { id: "after", title: "SDP Sesudah (Tujuan)", icon: ArrowLeftRight,
+    keys: ["rebordering_to", "after_sdp_code", "after_sdp_name", "after_partner_territory", "after_region", "after_branch", "after_micro_cluster", "effective_date"] },
+  { id: "approval", title: "Approval", icon: ClipboardCheck,
+    keys: ["approval_iom_link", "mapping_status", "owner", "remarks"] },
+];
+
 const FORMS = {
-  registration: { table: "sdp_registration", title: "SDP Registration", icon: FilePlus2, accent: "teal", fields: REG_FIELDS },
-  termination: { table: "sdp_termination", title: "Termination", icon: FileMinus2, accent: "acc", fields: TERM_FIELDS },
-  rebordering: { table: "sdp_rebordering", title: "Rebordering Kecamatan", icon: Shuffle, accent: "mag", fields: REB_FIELDS },
+  registration: { table: "sdp_registration", title: "SDP Registration", icon: FilePlus2, accent: "teal", fields: REG_FIELDS, sections: withSections(REG_FIELDS, REG_SECTIONS) },
+  termination: { table: "sdp_termination", title: "Termination", icon: FileMinus2, accent: "acc", fields: TERM_FIELDS, sections: withSections(TERM_FIELDS, TERM_SECTIONS) },
+  rebordering: { table: "sdp_rebordering", title: "Rebordering Kecamatan", icon: Shuffle, accent: "mag", fields: REB_FIELDS, sections: withSections(REB_FIELDS, REB_SECTIONS) },
 };
 
 const uniq = (arr) => [...new Set(arr.filter((v) => v != null && String(v).trim() !== ""))].sort((a, b) => String(a).localeCompare(String(b)));
@@ -182,7 +237,8 @@ export default function SDP_SubmissionForms({ supabase, theme = "dark", profile,
       const [{ data: c }, sdpRes] = await Promise.all([
         supabase.rpc("sdp_territory_combos"),
         (() => {
-          let q = supabase.from("sdp_master").select("sdp_id, sdp_name, sdp_type, pt_name, region, branch, area, cluster");
+          let q = supabase.from("sdp_master").select("sdp_id, sdp_name, sdp_type, pt_name, region, branch, area, cluster")
+            .order("period", { ascending: false });
           if (role === "cse_rse" && profile?.cluster) q = q.eq("cluster", profile.cluster);
           else if (role === "bsm" && profile?.bsm_branch) q = q.eq("branch", profile.bsm_branch);
           return q.limit(5000);
@@ -190,7 +246,15 @@ export default function SDP_SubmissionForms({ supabase, theme = "dark", profile,
       ]);
       if (!on) return;
       setCombos(c || []);
-      setSdps(sdpRes.data || []);
+      // sdp_master punya satu baris per (sdp_id, periode) — dedupe supaya tiap
+      // SDP hanya muncul sekali di dropdown (ambil data periode terbaru berkat
+      // order period desc di atas).
+      const seen = new Set();
+      const dedupedSdps = (sdpRes.data || []).filter((s) => {
+        if (!s.sdp_id || seen.has(s.sdp_id)) return false;
+        seen.add(s.sdp_id); return true;
+      });
+      setSdps(dedupedSdps);
       setLoadingMaster(false);
     })();
     return () => { on = false; };
@@ -368,14 +432,32 @@ function FormView({ cfg, t, d, supabase, profile, role, combos, scopeFilter, sdp
               {msg.type === "ok" ? <Check size={15} /> : <AlertCircle size={15} />} {msg.text}
             </div>
           )}
-          <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: 20, boxShadow: t.sm }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-              {cfg.fields.map((f) => (
-                <FieldInput key={f.k} f={f} t={t} value={val[f.k] ?? ""} onChange={(v) => set(f.k, v)}
-                  geoOptions={f.geo ? geoOptions(f) : null} sdpTypes={sdpTypes} sdps={sdps} onPickSdp={pickSdp} col={col} brandLock={brandLock} supabase={supabase} />
-              ))}
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 20 }}>
+          {/* Field dikelompokkan per section (kartu tersendiri) supaya formulir
+              panjang tidak jadi satu grid raksasa yang memusingkan. */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {(cfg.sections?.length ? cfg.sections : [{ id: "all", title: cfg.title, fields: cfg.fields }]).map((sec) => {
+              const SecIcon = sec.icon;
+              return (
+                <div key={sec.id} style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: 20, boxShadow: t.sm }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 16 }}>
+                    {SecIcon && (
+                      <span style={{ width: 30, height: 30, borderRadius: 9, background: `${col}18`, border: `1px solid ${col}33`, color: col, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <SecIcon size={15} />
+                      </span>
+                    )}
+                    <div style={{ fontSize: 14, fontWeight: 800, color: t.hi }}>{sec.title}</div>
+                    <div style={{ fontSize: 11.5, color: t.mid, marginLeft: "auto" }}>{sec.fields.length} kolom</div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                    {sec.fields.map((f) => (
+                      <FieldInput key={f.k} f={f} t={t} value={val[f.k] ?? ""} onChange={(v) => set(f.k, v)}
+                        geoOptions={f.geo ? geoOptions(f) : null} sdpTypes={sdpTypes} sdps={sdps} onPickSdp={pickSdp} col={col} brandLock={brandLock} supabase={supabase} />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <button onClick={submit} disabled={saving}
                 style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 22px", borderRadius: 10, border: "none", cursor: saving ? "default" : "pointer", fontFamily: FF, fontSize: 14, fontWeight: 800, color: "#fff", background: `linear-gradient(135deg, ${t.acc} 0%, ${t.mag} 100%)`, opacity: saving ? 0.7 : 1 }}>
                 {saving ? <Loader2 size={16} className="spin" /> : <Check size={16} />} Kirim

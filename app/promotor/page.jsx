@@ -1,24 +1,26 @@
 "use client";
 /**
  * /promotor — App Promotor (mobile web)
- * Alur: Login(SSO) → cek assignment (pending?) → izin lokasi → Aktivitas Hari Ini
- *       → Check-In (selfie+geo) → Tag QR → Check-Out → Riwayat.
+ * Alur baru (geofencing, tanpa Check-In/Check-Out):
+ *   Login(SSO) → cek assignment (pending?) → pilih outlet aktif → aktifkan lokasi
+ *   → Tag QR (setiap tagging dicek jarak ke outlet; di luar radius → konfirmasi,
+ *     tetap tersimpan tapi ditandai untuk evaluasi) → Riwayat.
  * Sumber data: tabel pts_* (TraceHub). Online-only.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  MapPin, LogOut, RefreshCw, Clock, Store, QrCode, LogIn, CheckCircle2,
+  MapPin, LogOut, RefreshCw, Clock, Store, QrCode, CheckCircle2,
   ShoppingBag, ChevronRight, History, Navigation, AlertTriangle, Loader2,
-  Camera, X, Hourglass, ChevronLeft, Phone, CalendarDays, Trash2,
-  Power, ArrowLeftRight, Check, Inbox, ShieldQuestion,
+  X, ChevronLeft, Phone, CalendarDays, Trash2,
+  Power, ArrowLeftRight, Inbox, ShieldQuestion, Radar, RefreshCcw,
 } from "lucide-react";
 import supabase from "../../lib/supabase";
 import { HubLogoLoader } from "../../components/HubLogoLoader";
-import { CameraSheet, QRScannerSheet, AccessHelp, BottomSheet } from "./components";
+import { QRScannerSheet, AccessHelp, BottomSheet } from "./components";
 import {
-  ymNow, ymLabel, fmtTime, fmtDateFull, fmtDateTime, durationOf,
-  normalizePhone, getPosition, checkGeoPermission, uploadSelfie, signedPhoto,
+  ymNow, fmtTime, fmtDateFull, fmtDateTime,
+  normalizePhone, getPosition, checkGeoPermission,
 } from "./ptsClient";
 
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -51,6 +53,8 @@ function playSuccessTone() {
   } catch { /* abaikan */ }
 }
 
+const todayStart = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.toISOString(); };
+
 export default function PromotorApp() {
   const router = useRouter();
   const [phase, setPhase] = useState("loading");   // loading | pending | app
@@ -59,8 +63,8 @@ export default function PromotorApp() {
   const [name, setName] = useState("");
   const [promotorId, setPromotorId] = useState(null);
   const [outlets, setOutlets] = useState([]);      // {code,id,branch,area,region,name}
-  const [session, setSession] = useState(null);    // sesi aktif
-  const [sales, setSales] = useState([]);
+  const [activeOutlet, setActiveOutlet] = useState(null);
+  const [todaySales, setTodaySales] = useState([]);
   const [view, setView] = useState("home");        // home | history
   const [history, setHistory] = useState([]);
 
@@ -71,12 +75,15 @@ export default function PromotorApp() {
   const period = ymNow();
   const flash = (msg, tone = "ok") => { setToast({ msg, tone }); setTimeout(() => setToast(null), 2600); };
 
-  const loadSales = useCallback(async (sid) => {
-    const { data } = await supabase.from("pts_sale").select("*").eq("session_id", sid).order("tagged_at", { ascending: false });
-    setSales(data || []);
+  const loadTodaySales = useCallback(async (em, outletId) => {
+    if (!outletId) { setTodaySales([]); return; }
+    const { data } = await supabase.from("pts_sale").select("*")
+      .ilike("email", em).eq("outlet_id", outletId).gte("tagged_at", todayStart())
+      .order("tagged_at", { ascending: false });
+    setTodaySales(data || []);
   }, []);
 
-  /* ── Bootstrap: auth + assignment + sesi aktif ─────────────── */
+  /* ── Bootstrap: auth + assignment ──────────────────────────── */
   const bootstrap = useCallback(async () => {
     setPhase("loading");
     const { data: ures } = await supabase.auth.getUser();
@@ -103,17 +110,16 @@ export default function PromotorApp() {
 
     // daftar outlet unik
     const byCode = new Map();
-    rows.forEach((r) => { if (!byCode.has(r.outlet_code)) byCode.set(r.outlet_code, { code: r.outlet_code, id: r.outlet_id, branch: r.branch, area: r.area, region: r.region, name: r.outlet_code }); });
-    setOutlets([...byCode.values()]);
+    rows.forEach((r) => { if (!byCode.has(r.outlet_code)) byCode.set(r.outlet_code, { code: r.outlet_code, id: r.outlet_id, branch: r.branch, area: r.area, region: r.region, brand: r.brand, cluster: r.cluster, name: r.outlet_code }); });
+    const outletList = [...byCode.values()];
+    setOutlets(outletList);
 
-    // sesi aktif (belum check-out)
-    const { data: openSes } = await supabase.from("pts_session")
-      .select("*").ilike("email", em).is("check_out_at", null).order("check_in_at", { ascending: false }).limit(1);
-    if (openSes && openSes[0]) { setSession(openSes[0]); await loadSales(openSes[0].id); }
-    else { setSession(null); setSales([]); }
+    // outlet aktif: otomatis jika hanya 1, selain itu tunggu pilihan promotor
+    if (outletList.length === 1) { setActiveOutlet(outletList[0]); await loadTodaySales(em, outletList[0].id); }
+    else { setActiveOutlet(null); setTodaySales([]); }
 
     setPhase("app");
-  }, [router, period, loadSales]);
+  }, [router, period, loadTodaySales]);
 
   useEffect(() => { bootstrap(); }, [bootstrap]);
 
@@ -123,7 +129,7 @@ export default function PromotorApp() {
     let alive = true;
     (async () => {
       const st = await checkGeoPermission();
-      if (st === "denied") { setGeoErr("Izin lokasi ditolak. Aktifkan lokasi untuk Check-In."); return; }
+      if (st === "denied") { setGeoErr("Izin lokasi ditolak. Aktifkan lokasi untuk melakukan tagging."); return; }
       try { const p = await getPosition(); if (alive) { setGeo(p); setGeoErr(""); } }
       catch { if (alive) setGeoErr("Lokasi belum aktif. Ketuk untuk mengizinkan."); }
     })();
@@ -136,19 +142,8 @@ export default function PromotorApp() {
   };
 
   const loadHistory = useCallback(async () => {
-    const { data: ses } = await supabase.from("pts_session").select("*").ilike("email", email).order("check_in_at", { ascending: false }).limit(60);
-    const list = ses || [];
-    if (list.length) {
-      const ids = list.map((s) => s.id);
-      const { data: sl } = await supabase.from("pts_sale").select("session_id").in("session_id", ids);
-      const cnt = new Map(); (sl || []).forEach((r) => cnt.set(r.session_id, (cnt.get(r.session_id) || 0) + 1));
-      const withUrls = await Promise.all(list.map(async (s) => ({
-        ...s, salesCount: cnt.get(s.id) || 0,
-        inUrl: await signedPhoto(supabase, s.check_in_photo_url),
-        outUrl: await signedPhoto(supabase, s.check_out_photo_url),
-      })));
-      setHistory(withUrls);
-    } else setHistory([]);
+    const { data } = await supabase.from("pts_sale").select("*").ilike("email", email).order("tagged_at", { ascending: false }).limit(80);
+    setHistory(data || []);
   }, [email]);
 
   const signOut = async () => { await supabase.auth.signOut(); router.replace("/promotor/login"); };
@@ -161,8 +156,8 @@ export default function PromotorApp() {
     <AppShell
       name={name} email={email} uid={uid} promotorId={promotorId}
       period={period} outlets={outlets}
-      session={session} setSession={setSession}
-      sales={sales} loadSales={loadSales}
+      activeOutlet={activeOutlet} setActiveOutlet={setActiveOutlet}
+      todaySales={todaySales} loadTodaySales={loadTodaySales}
       geo={geo} geoErr={geoErr} refreshGeo={refreshGeo}
       view={view} setView={setView}
       history={history} loadHistory={loadHistory}
@@ -191,12 +186,12 @@ function Pending({ email, onReload, onSignOut }) {
       <style>{`@keyframes pspin{to{transform:rotate(360deg)}}@keyframes fl{0%,100%{opacity:.55}50%{opacity:1}}`}</style>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6 }}>
         <div style={{ width: 76, height: 76, borderRadius: 22, background: "rgba(255,176,32,0.12)", border: "1px solid rgba(255,176,32,0.3)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 22, animation: "fl 2s ease infinite" }}>
-          <Hourglass size={34} color={C.amber} />
+          <Loader2 size={34} color={C.amber} style={{ animation: "pspin 2s linear infinite" }} />
         </div>
         <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em" }}>Menunggu Aktivasi</h1>
         <p style={{ fontSize: 14, color: C.mid, lineHeight: 1.6, maxWidth: 320, marginTop: 10 }}>
           Email <b style={{ color: C.hi }}>{email}</b> berhasil masuk, tetapi belum dipetakan ke outlet.
-          Hubungi <b style={{ color: C.hi }}>PIC Region</b> Anda untuk didaftarkan, lalu tekan Muat Ulang.
+          Hubungi <b style={{ color: C.hi }}>SPM Sumatera</b> Anda untuk didaftarkan di Data Promotor &amp; Data Mapping Promotor, lalu tekan Muat Ulang.
         </p>
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 11, marginBottom: "calc(env(safe-area-inset-bottom,0px) + 26px)" }}>
@@ -213,16 +208,16 @@ function Pending({ email, onReload, onSignOut }) {
 
 /* ══════════════════ App Shell ══════════════════ */
 function AppShell(p) {
-  const { name, email, uid, promotorId, period, outlets, session, setSession, sales, loadSales, geo, geoErr, refreshGeo, view, setView, history, loadHistory, onSignOut, flash, toast } = p;
-  const [sheet, setSheet] = useState(null);        // 'checkin-cam' | 'checkout-cam' | 'qr'
+  const { name, email, promotorId, outlets, activeOutlet, setActiveOutlet, todaySales, loadTodaySales, geo, geoErr, refreshGeo, view, setView, history, loadHistory, onSignOut, flash, toast } = p;
+  const [sheet, setSheet] = useState(null);        // 'qr'
   const [pickOutlet, setPickOutlet] = useState(false);
-  const [chosenOutlet, setChosenOutlet] = useState(null);
   const [busy, setBusy] = useState(false);
   const [geoHelp, setGeoHelp] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [delSale, setDelSale] = useState(null);
   const [success, setSuccess] = useState(null);     // msisdn berhasil → animasi
   const [taken, setTaken] = useState(null);          // { phone, owner }
+  const [outsideConfirm, setOutsideConfirm] = useState(null); // { phone, raw, distance, radius }
   const [incoming, setIncoming] = useState([]);      // permintaan transfer masuk
   const [approveReq, setApproveReq] = useState(null);
 
@@ -238,15 +233,13 @@ function AppShell(p) {
     try {
       const { data, error } = await supabase.rpc(approve ? "pts_approve_transfer" : "pts_reject_transfer", { p_id: req.id });
       if (error) throw error;
-      if (data?.status === "approved") { flash("Nomor dipindahkan."); if (session) await loadSales(session.id); }
+      if (data?.status === "approved") { flash("Nomor dipindahkan."); if (activeOutlet) await loadTodaySales(email, activeOutlet.id); }
       else if (data?.status === "rejected") flash("Pengajuan ditolak.");
       else flash("Tidak dapat memproses.", "err");
       await loadIncoming();
     } catch (e) { flash("Gagal: " + (e?.message || e), "err"); }
     finally { setBusy(false); }
   };
-  const [nowTs, setNowTs] = useState(Date.now());
-  useEffect(() => { const id = setInterval(() => setNowTs(Date.now()), 30000); return () => clearInterval(id); }, []);
   useEffect(() => { if (success) { const id = setTimeout(() => setSuccess(null), 1900); return () => clearTimeout(id); } }, [success]);
 
   const fixGeo = async () => { const g = await refreshGeo(); if (!g) setGeoHelp(true); else setGeoHelp(false); };
@@ -254,65 +247,56 @@ function AppShell(p) {
 
   useEffect(() => { if (view === "history") loadHistory(); }, [view, loadHistory]);
 
-  const soldCount = sales.length;
+  const soldCount = todaySales.length;
 
-  const stampLines = (outletLabel) => (dt) => {
-    const g = geo;
-    return [
-      fmtDateTime(dt.toISOString()) + " WIB",
-      g ? `${g.lat}, ${g.lng}${g.accuracy ? ` · ±${g.accuracy}m` : ""}` : "Lokasi tidak tersedia",
-      outletLabel || "",
-      name,
-    ].filter(Boolean);
+  const chooseOutlet = async (o) => { setActiveOutlet(o); setPickOutlet(false); await loadTodaySales(email, o.id); };
+
+  /* Tag penjualan (QR) — via RPC pts_tag_sale (geofence-aware) */
+  const tagSale = async (normalized, raw, confirmOutside) => {
+    const { data, error } = await supabase.rpc("pts_tag_sale", {
+      p_phone: normalized, p_session: null, p_outlet: activeOutlet.id,
+      p_lat: geo?.lat ?? null, p_lng: geo?.lng ?? null, p_raw: String(raw),
+      p_confirm_outside: confirmOutside,
+    });
+    if (error) throw error;
+    return data;
   };
 
-  /* Check-In */
-  const startCheckIn = () => {
-    if (outlets.length === 1) { setChosenOutlet(outlets[0]); setSheet("checkin-cam"); }
-    else setPickOutlet(true);
-  };
-  const onCheckInPhoto = async (shot) => {
-    setSheet(null); setBusy(true);
-    try {
-      let g = geo || await refreshGeo();
-      const url = await uploadSelfie(supabase, shot.blob, { uid, kind: "checkin" });
-      const payload = {
-        promotor_id: promotorId, email, outlet_id: chosenOutlet?.id || null, outlet_code: chosenOutlet?.code || null,
-        period, check_in_at: new Date().toISOString(),
-        check_in_lat: g?.lat ?? null, check_in_lng: g?.lng ?? null, check_in_accuracy: g?.accuracy ?? null,
-        check_in_photo_url: url, geo_flag: g ? (g.accuracy && g.accuracy > 100 ? "low_accuracy" : "ok") : "no_location",
-      };
-      const { data, error } = await supabase.from("pts_session").insert(payload).select().single();
-      if (error) throw error;
-      setSession(data); await loadSales(data.id);
-      flash("Check-In berhasil");
-    } catch (e) { flash("Gagal Check-In: " + (e?.message || e), "err"); }
-    finally { setBusy(false); setChosenOutlet(null); }
-  };
-
-  /* Tag penjualan (QR) — via RPC pts_tag_sale (cek kepemilikan) */
   const onQR = async (raw) => {
     setSheet(null);
     const { normalized, valid } = normalizePhone(raw);
     if (!valid) { flash(`Nomor tidak valid: ${normalized || raw}`, "err"); return; }
-    if (!session) { flash("Belum ada sesi aktif.", "err"); return; }
+    if (!activeOutlet) { flash("Pilih outlet aktif terlebih dulu.", "err"); return; }
+    let g = geo;
+    if (!g) { g = await refreshGeo(); if (!g) { setGeoHelp(true); return; } }
     setBusy(true);
     try {
-      const { data, error } = await supabase.rpc("pts_tag_sale", {
-        p_phone: normalized, p_session: session.id, p_outlet: session.outlet_id,
-        p_lat: geo?.lat ?? null, p_lng: geo?.lng ?? null, p_raw: String(raw),
-      });
-      if (error) throw error;
-      const st = data?.status;
-      if (st === "ok") { await loadSales(session.id); setBusy(false); playSuccessTone(); setSuccess(normalized); return; }
-      if (st === "self") { flash("Nomor ini sudah Anda tag.", "err"); }
-      else if (st === "taken" || st === "taken_race") {
-        setBusy(false);
-        setTaken({ phone: normalized, owner: data?.owner || null });
-        return;
-      } else { flash("Gagal menyimpan.", "err"); }
-    } catch (e) { flash("Gagal menyimpan: " + (e?.message || e), "err"); }
-    finally { setBusy(false); }
+      const data = await tagSale(normalized, raw, false);
+      await handleTagResult(data, normalized, raw);
+    } catch (e) { flash("Gagal menyimpan: " + (e?.message || e), "err"); setBusy(false); }
+  };
+
+  const handleTagResult = async (data, normalized, raw) => {
+    const st = data?.status;
+    if (st === "ok") { await loadTodaySales(email, activeOutlet.id); setBusy(false); playSuccessTone(); setSuccess(normalized); return; }
+    if (st === "self") { flash("Nomor ini sudah Anda tag.", "err"); setBusy(false); return; }
+    if (st === "taken" || st === "taken_race") { setBusy(false); setTaken({ phone: normalized, owner: data?.owner || null }); return; }
+    if (st === "outside_radius") {
+      setBusy(false);
+      setOutsideConfirm({ phone: normalized, raw, distance: data?.distance_meters, radius: data?.radius_meters });
+      return;
+    }
+    if (st === "unauth") { flash("Sesi login berakhir, silakan masuk ulang.", "err"); setBusy(false); return; }
+    flash("Gagal menyimpan.", "err"); setBusy(false);
+  };
+
+  const confirmOutsideTag = async () => {
+    const c = outsideConfirm; if (!c) return;
+    setOutsideConfirm(null); setBusy(true);
+    try {
+      const data = await tagSale(c.phone, c.raw, true);
+      await handleTagResult(data, c.phone, c.raw);
+    } catch (e) { flash("Gagal menyimpan: " + (e?.message || e), "err"); setBusy(false); }
   };
 
   /* Ajukan pemindahan nomor yang sudah ditag orang lain */
@@ -329,35 +313,17 @@ function AppShell(p) {
     finally { setBusy(false); }
   };
 
-  /* Check-Out */
-  const onCheckOutPhoto = async (shot) => {
-    setSheet(null); setBusy(true);
-    try {
-      let g = geo || await refreshGeo();
-      const url = await uploadSelfie(supabase, shot.blob, { uid, kind: "checkout" });
-      const { data, error } = await supabase.from("pts_session").update({
-        check_out_at: new Date().toISOString(), check_out_lat: g?.lat ?? null, check_out_lng: g?.lng ?? null, check_out_photo_url: url,
-      }).eq("id", session.id).select().single();
-      if (error) throw error;
-      setSession(null); setSales([]);
-      flash("Check-Out berhasil");
-    } catch (e) { flash("Gagal Check-Out: " + (e?.message || e), "err"); }
-    finally { setBusy(false); }
-  };
-
   const doDeleteSale = async () => {
     const s = delSale; if (!s) return;
     setDelSale(null); setBusy(true);
     try {
       const { error } = await supabase.from("pts_sale").delete().eq("id", s.id);
       if (error) throw error;
-      if (session) await loadSales(session.id);
+      if (activeOutlet) await loadTodaySales(email, activeOutlet.id);
       flash("Nomor dihapus");
     } catch (e) { flash("Gagal menghapus: " + (e?.message || e), "err"); }
     finally { setBusy(false); }
   };
-
-  const outletLabel = session ? (session.outlet_code || "Outlet") : (chosenOutlet?.code || "");
 
   return (
     <div style={{ minHeight: "100svh", background: C.bg, color: C.hi, fontFamily: FF, paddingBottom: "calc(env(safe-area-inset-bottom,0px) + 24px)" }}>
@@ -418,11 +384,13 @@ function AppShell(p) {
                 <GeoChip geo={geo} err={geoErr} onFix={fixGeo} />
               </div>
 
-              {!session ? (
-                <CheckInPanel outlets={outlets} onStart={startCheckIn} busy={busy} />
+              {!activeOutlet ? (
+                <OutletSelectPanel outlets={outlets} onPick={chooseOutlet} />
+              ) : !geo ? (
+                <GeoGatePanel outlet={activeOutlet} err={geoErr} onFix={fixGeo} onChangeOutlet={() => setPickOutlet(true)} />
               ) : (
-                <ActivePanel session={session} sales={sales} soldCount={soldCount} busy={busy} nowTs={nowTs}
-                  onTag={() => setSheet("qr")} onCheckout={() => setSheet("checkout-cam")} onDelete={(s) => setDelSale(s)} />
+                <TagPanel outlet={activeOutlet} sales={todaySales} soldCount={soldCount} busy={busy} geo={geo}
+                  onTag={() => setSheet("qr")} onDelete={(s) => setDelSale(s)} onChangeOutlet={() => setPickOutlet(true)} multiOutlet={outlets.length > 1} />
               )}
             </div>
           )}
@@ -445,7 +413,7 @@ function AppShell(p) {
 
       {/* Outlet picker */}
       {pickOutlet && (
-        <OutletPicker outlets={outlets} onPick={(o) => { setChosenOutlet(o); setPickOutlet(false); setSheet("checkin-cam"); }} onClose={() => setPickOutlet(false)} />
+        <OutletPicker outlets={outlets} onPick={chooseOutlet} onClose={() => setPickOutlet(false)} />
       )}
 
       {/* Konfirmasi Hapus Nomor */}
@@ -475,6 +443,26 @@ function AppShell(p) {
             <AccessHelp kind="lokasi" onRetry={fixGeo} />
           </div>
         </BottomSheet>
+      )}
+
+      {/* Konfirmasi tagging di luar radius outlet (geofencing) */}
+      {outsideConfirm && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 145, background: "rgba(17,18,22,0.45)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 26 }} onClick={() => setOutsideConfirm(null)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 380, background: C.card, borderRadius: 24, padding: "24px 22px 20px", boxShadow: C.lg, animation: "pop .22s cubic-bezier(.22,1,.36,1)" }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
+              <div style={{ width: 58, height: 58, borderRadius: 17, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(37,99,235,0.1)", color: C.blue, marginBottom: 14 }}><Radar size={26} /></div>
+              <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", color: C.hi }}>Anda di luar area outlet</div>
+              <div style={{ fontSize: 13.5, color: C.mid, marginTop: 8, lineHeight: 1.55 }}>
+                Terdeteksi <b style={{ color: C.hi }}>± {outsideConfirm.distance != null ? Math.round(outsideConfirm.distance) : "?"} meter</b> dari outlet (radius diizinkan {outsideConfirm.radius ?? "?"} m).
+                Penjualan ini akan <b style={{ color: C.hi }}>tetap tercatat</b>, namun ditandai sebagai tagging di luar area outlet untuk bahan evaluasi program.
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+              <button className="press" onClick={() => setOutsideConfirm(null)} style={{ flex: 1, height: 50, borderRadius: 14, border: `1px solid ${C.line}`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Batal</button>
+              <button className="press" onClick={confirmOutsideTag} style={{ flex: 1.3, height: 50, borderRadius: 14, border: "none", background: C.blue, color: "#fff", fontFamily: FF, fontSize: 14, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>Tetap Simpan</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Animasi sukses tag (ala FaceID) */}
@@ -540,8 +528,6 @@ function AppShell(p) {
       )}
 
       {/* Sheets */}
-      {sheet === "checkin-cam" && <CameraSheet title="Selfie Check-In" stampLines={stampLines(outletLabel)} onCapture={onCheckInPhoto} onClose={() => setSheet(null)} />}
-      {sheet === "checkout-cam" && <CameraSheet title="Selfie Check-Out" stampLines={stampLines(outletLabel)} onCapture={onCheckOutPhoto} onClose={() => setSheet(null)} />}
       {sheet === "qr" && <QRScannerSheet onDetect={onQR} onClose={() => setSheet(null)} />}
 
       {/* Busy overlay */}
@@ -566,69 +552,70 @@ function AppShell(p) {
 }
 
 /* ── Panels ─────────────────────────────────────────────────── */
-function CheckInPanel({ outlets, onStart, busy }) {
+function OutletSelectPanel({ outlets, onPick }) {
   return (
     <div>
-      {/* Judul sederhana */}
       <div style={{ marginBottom: 18 }}>
         <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.lo }}>Aktivitas Hari Ini</div>
-        <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-0.035em", color: C.hi, marginTop: 6 }}>Siap mulai bekerja?</div>
-        <div style={{ fontSize: 13.5, color: C.mid, marginTop: 5, lineHeight: 1.5 }}>Check-In dulu untuk membuka penjualan &amp; pencatatan.</div>
+        <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-0.035em", color: C.hi, marginTop: 6 }}>Pilih outlet aktif</div>
+        <div style={{ fontSize: 13.5, color: C.mid, marginTop: 5, lineHeight: 1.5 }}>Pilih outlet tempat Anda bertugas hari ini sebelum mulai tagging.</div>
       </div>
-
-      {/* Outlet list */}
-      <div style={{ background: C.card, borderRadius: 18, padding: 14, marginBottom: 16, boxShadow: C.md }}>
+      <div style={{ background: C.card, borderRadius: 18, padding: 14, boxShadow: C.md }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.lo, margin: "2px 4px 12px" }}>
           <Store size={13} /> Outlet Anda ({outlets.length})
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {outlets.map((o) => (
-            <div key={o.code} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 12px", borderRadius: 14, background: C.sub }}>
+            <button key={o.code} className="press" onClick={() => onPick(o)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 12px", borderRadius: 14, background: C.sub, border: "none", cursor: "pointer", textAlign: "left", fontFamily: FF, width: "100%" }}>
               <div style={{ width: 38, height: 38, borderRadius: 11, background: "#fff", color: C.brand, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: C.sm }}><Store size={17} /></div>
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em", fontFamily: "monospace", color: C.hi }}>{o.code}</div>
                 <div style={{ fontSize: 12, color: C.mid }}>{[o.branch, o.area].filter(Boolean).join(" · ") || "—"}</div>
               </div>
-            </div>
+              <ChevronRight size={18} color={C.lo} />
+            </button>
           ))}
         </div>
       </div>
-
-      <button onClick={onStart} disabled={busy} className="press"
-        style={{ width: "100%", height: 58, borderRadius: 16, border: "none", cursor: "pointer", background: C.brand, color: "#fff", fontFamily: FF, fontSize: 16.5, fontWeight: 700, letterSpacing: "-0.01em", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, boxShadow: "0 8px 22px rgba(237,28,36,0.24)" }}>
-        <LogIn size={20} /> Check-In Sekarang
-      </button>
-      <p style={{ fontSize: 12, color: C.mid, textAlign: "center", marginTop: 13, lineHeight: 1.5 }}>
-        Anda akan mengambil <b style={{ color: C.hi }}>selfie di outlet</b>. Lokasi &amp; waktu terekam otomatis.
-      </p>
     </div>
   );
 }
 
-function ActivePanel({ session, sales, soldCount, busy, nowTs, onTag, onCheckout, onDelete }) {
-  const dur = (() => {
-    const ms = (nowTs || Date.now()) - new Date(session.check_in_at).getTime();
-    if (ms < 0) return "0j 00m";
-    const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
-    return `${h}j ${String(m).padStart(2, "0")}m`;
-  })();
+function GeoGatePanel({ outlet, err, onFix, onChangeOutlet }) {
   return (
     <div style={{ animation: "up .3s ease" }}>
-      {/* Sesi aktif — kartu putih bersih */}
+      <div style={{ background: C.card, borderRadius: 18, padding: "18px 18px 16px", marginBottom: 14, boxShadow: C.md, textAlign: "center" }}>
+        <div style={{ width: 60, height: 60, borderRadius: 18, margin: "0 auto 14px", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,176,32,0.12)", color: C.amber }}><MapPin size={26} /></div>
+        <div style={{ fontSize: 17, fontWeight: 800, color: C.hi, letterSpacing: "-0.02em" }}>Aktifkan lokasi untuk mulai tagging</div>
+        <div style={{ fontSize: 13, color: C.mid, marginTop: 8, lineHeight: 1.5 }}>Outlet aktif: <b style={{ color: C.hi, fontFamily: "monospace" }}>{outlet.code}</b>. Setiap tagging membutuhkan lokasi untuk validasi jarak ke outlet.</div>
+        {err && <div style={{ marginTop: 10, fontSize: 12, color: "#C62828" }}>{err}</div>}
+        <button onClick={onFix} className="press" style={{ marginTop: 16, width: "100%", height: 52, borderRadius: 14, border: "none", background: C.brand, color: "#fff", fontFamily: FF, fontSize: 15, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <Navigation size={17} /> Aktifkan Lokasi
+        </button>
+        <button onClick={onChangeOutlet} className="press" style={{ marginTop: 9, width: "100%", height: 42, borderRadius: 12, border: `1px solid ${C.line}`, background: "transparent", color: C.mid, fontFamily: FF, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+          Ganti outlet
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOutlet, multiOutlet }) {
+  return (
+    <div style={{ animation: "up .3s ease" }}>
       <div style={{ background: C.card, borderRadius: 18, padding: "18px 18px 16px", marginBottom: 14, boxShadow: C.md }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
           <div>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Outlet ID</div>
-            <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em", fontFamily: "monospace", marginTop: 4, color: C.hi }}>{session.outlet_code || "Outlet"}</div>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Outlet Aktif</div>
+            <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em", fontFamily: "monospace", marginTop: 4, color: C.hi }}>{outlet.code}</div>
+            <div style={{ fontSize: 12, color: C.mid, marginTop: 2 }}>{[outlet.branch, outlet.area].filter(Boolean).join(" · ") || "—"}</div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 800, letterSpacing: "0.03em", color: C.green, padding: "5px 10px", borderRadius: 99, background: "rgba(26,158,90,0.1)" }}>
-            <span style={{ width: 7, height: 7, borderRadius: 99, background: C.green }} /> AKTIF
-          </div>
+          {multiOutlet && (
+            <button onClick={onChangeOutlet} className="press" style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: C.mid, background: C.sub, border: `1px solid ${C.line}`, borderRadius: 99, padding: "5px 10px", cursor: "pointer", fontFamily: FF }}><RefreshCcw size={11} /> Ganti</button>
+          )}
         </div>
         <div style={{ display: "flex", gap: 9, marginTop: 16 }}>
-          <LightStat icon={<LogIn size={13} />} label="Check-In" value={fmtTime(session.check_in_at)} />
-          <LightStat icon={<Clock size={13} />} label="Durasi" value={dur} />
-          <LightStat icon={<ShoppingBag size={13} />} label="Terjual" value={soldCount} accent={C.green} />
+          <LightStat icon={<ShoppingBag size={13} />} label="Terjual hari ini" value={soldCount} accent={C.green} />
         </div>
       </div>
 
@@ -637,6 +624,9 @@ function ActivePanel({ session, sales, soldCount, busy, nowTs, onTag, onCheckout
         style={{ width: "100%", height: 58, borderRadius: 16, border: "none", cursor: "pointer", background: C.brand, color: "#fff", fontFamily: FF, fontSize: 16.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, boxShadow: "0 8px 22px rgba(237,28,36,0.24)", marginBottom: 14 }}>
         <QrCode size={20} /> Tag Penjualan (Scan QR)
       </button>
+      <p style={{ fontSize: 11.5, color: C.mid, textAlign: "center", marginTop: -8, marginBottom: 14, lineHeight: 1.5 }}>
+        Lokasi Anda dicek otomatis. Di luar radius outlet, Anda akan diminta konfirmasi sebelum tersimpan.
+      </p>
 
       {/* Daftar terjual */}
       {sales.length > 0 && (
@@ -647,7 +637,7 @@ function ActivePanel({ session, sales, soldCount, busy, nowTs, onTag, onCheckout
           <div style={{ display: "flex", flexDirection: "column" }}>
             {sales.map((s, i) => (
               <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 2px", borderTop: i === 0 ? "none" : `1px solid ${C.lineSoft}` }}>
-                <span style={{ width: 30, height: 30, borderRadius: 9, background: "rgba(26,158,90,0.1)", color: C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Phone size={14} /></span>
+                <span style={{ width: 30, height: 30, borderRadius: 9, background: s.within_radius === false ? "rgba(37,99,235,0.1)" : "rgba(26,158,90,0.1)", color: s.within_radius === false ? C.blue : C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.within_radius === false ? <Radar size={14} /> : <Phone size={14} />}</span>
                 <span style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 700, flex: 1, color: C.hi }}>{s.phone_normalized}</span>
                 <span style={{ fontSize: 12, color: C.mid, fontWeight: 500 }}>{fmtTime(s.tagged_at)}</span>
                 <button className="press" onClick={() => onDelete(s)} disabled={busy} aria-label="Hapus"
@@ -659,11 +649,6 @@ function ActivePanel({ session, sales, soldCount, busy, nowTs, onTag, onCheckout
           </div>
         </div>
       )}
-
-      <button onClick={onCheckout} disabled={busy} className="press"
-        style={{ width: "100%", height: 56, borderRadius: 18, border: `1.5px solid ${C.line}`, cursor: "pointer", background: C.card, color: C.hi, fontFamily: FF, fontSize: 15.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, boxShadow: C.sm }}>
-        <LogOut size={18} /> Check-Out &amp; Akhiri Sesi
-      </button>
     </div>
   );
 }
@@ -680,38 +665,23 @@ function LightStat({ icon, label, value, accent }) {
 function HistoryView({ history }) {
   return (
     <div style={{ animation: "up .3s ease" }}>
-      <h2 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", marginBottom: 14 }}>Riwayat Saya</h2>
+      <h2 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", marginBottom: 14 }}>Riwayat Tagging Saya</h2>
       {history.length === 0 ? (
         <div className="card" style={{ padding: "40px 20px", textAlign: "center", color: C.mid }}>
           <History size={26} style={{ opacity: 0.5, marginBottom: 8 }} /><div style={{ fontSize: 13.5 }}>Belum ada aktivitas tercatat.</div>
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {history.map((s) => (
-            <div key={s.id} style={{ background: C.card, borderRadius: 20, padding: 16, boxShadow: C.md }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <span style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(237,28,36,0.09)", color: C.brand, display: "flex", alignItems: "center", justifyContent: "center" }}><Store size={16} /></span>
-                  <div>
-                    <div style={{ fontSize: 14.5, fontWeight: 800, fontFamily: "monospace", color: C.hi }}>{s.outlet_code || "Outlet"}</div>
-                    <div style={{ fontSize: 11.5, color: C.lo, fontWeight: 500 }}>{fmtDateTime(s.check_in_at)}</div>
-                  </div>
-                </div>
-                <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: "0.03em", padding: "4px 10px", borderRadius: 99, background: s.check_out_at ? "rgba(26,158,90,0.12)" : "rgba(37,99,235,0.12)", color: s.check_out_at ? C.green : C.blue }}>
-                  {s.check_out_at ? "SELESAI" : "AKTIF"}
-                </span>
+            <div key={s.id} style={{ background: C.card, borderRadius: 16, padding: 14, boxShadow: C.md, display: "flex", alignItems: "center", gap: 11 }}>
+              <span style={{ width: 34, height: 34, borderRadius: 10, background: s.within_radius === false ? "rgba(37,99,235,0.1)" : "rgba(26,158,90,0.1)", color: s.within_radius === false ? C.blue : C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.within_radius === false ? <Radar size={16} /> : <Phone size={16} />}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14.5, fontWeight: 800, fontFamily: "monospace", color: C.hi }}>{s.phone_normalized}</div>
+                <div style={{ fontSize: 11.5, color: C.lo, fontWeight: 500 }}>{fmtDateTime(s.tagged_at)}{s.within_radius === false ? " · di luar area" : ""}</div>
               </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <MiniStat label="Durasi" value={s.check_out_at ? durationOf(s.check_in_at, s.check_out_at) : "berjalan"} />
-                <MiniStat label="Terjual" value={`${s.salesCount} kartu`} accent={C.green} />
-                <MiniStat label="Selesai" value={s.check_out_at ? fmtTime(s.check_out_at) : "—"} />
-              </div>
-              {(s.inUrl || s.outUrl) && (
-                <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-                  {s.inUrl && <a href={s.inUrl} target="_blank" rel="noreferrer" style={{ flex: 1 }}><img src={s.inUrl} alt="in" style={{ width: "100%", height: 78, objectFit: "cover", borderRadius: 12 }} /></a>}
-                  {s.outUrl && <a href={s.outUrl} target="_blank" rel="noreferrer" style={{ flex: 1 }}><img src={s.outUrl} alt="out" style={{ width: "100%", height: 78, objectFit: "cover", borderRadius: 12 }} /></a>}
-                </div>
-              )}
+              <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.03em", padding: "4px 9px", borderRadius: 99, background: s.ga_status === "TERVALIDASI" || s.ga_status === "TERVALIDASI_LUAR_AREA" ? "rgba(26,158,90,0.12)" : s.ga_status === "TIDAK_DITEMUKAN" ? "rgba(220,38,38,0.1)" : "rgba(255,176,32,0.14)", color: s.ga_status === "TERVALIDASI" || s.ga_status === "TERVALIDASI_LUAR_AREA" ? C.green : s.ga_status === "TIDAK_DITEMUKAN" ? "#DC2626" : C.amber, whiteSpace: "nowrap" }}>
+                {s.ga_status === "TERVALIDASI" ? "Tervalidasi" : s.ga_status === "TERVALIDASI_LUAR_AREA" ? "Luar area" : s.ga_status === "TIDAK_DITEMUKAN" ? "Tdk ditemukan" : "Belum GA"}
+              </span>
             </div>
           ))}
         </div>
@@ -732,14 +702,6 @@ function TakenRow({ label, value }) {
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontSize: 13 }}>
       <span style={{ color: C.mid, fontWeight: 500 }}>{label}</span>
       <span style={{ color: C.hi, fontWeight: 700, textAlign: "right", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>{value}</span>
-    </div>
-  );
-}
-function MiniStat({ label, value, accent }) {
-  return (
-    <div style={{ flex: 1, background: C.sub, borderRadius: 12, padding: "9px 11px" }}>
-      <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase", color: C.lo }}>{label}</div>
-      <div style={{ fontSize: 14.5, fontWeight: 800, letterSpacing: "-0.01em", marginTop: 3, color: accent || C.hi }}>{value}</div>
     </div>
   );
 }

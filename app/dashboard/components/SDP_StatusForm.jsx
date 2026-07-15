@@ -49,6 +49,11 @@ const mk = (d) => ({
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
 
 // ─── Sub-menu definitions per role ────────────────────────────────────────────
+// Satu tampilan "Data SDP" untuk SEMUA role (list → detail lengkap, termasuk
+// peta lat/long, sama seperti CSE). Yang membedakan antar role hanyalah:
+//   • cakupan data (scope query per role — cluster/branch/penuh)
+//   • wewenang approval (CSE mengajukan, BSM/SPM/PIC Region menyetujui/menolak
+//     atau langsung mengisi & menyelesaikan)
 const MENUS = {
   spm_sumatera: [
     {
@@ -58,26 +63,13 @@ const MENUS = {
       desc   : "Sinkronisasi data SDP Sumatera dari file Territory IOH bulanan",
       accent : "teal",
     },
-    {
-      id     : "rekap",
-      icon   : Download,
-      label  : "Data SDP",
-      desc   : "Tabel semua SDP per periode — filter lengkap, detail & riwayat, export Excel",
-      accent : "blue",
-    },
   ],
-  bsm: [
-    {
-      id     : "rekap",
-      icon   : Download,
-      label  : "Data SDP",
-      desc   : "Tabel SDP di branch Anda per periode — detail, riwayat & export Excel",
-      accent : "blue",
-    },
-  ],
+  bsm: [],
+  pic_region: [],
 };
 
-// Role IOH (monitoring, baca-saja) memakai menu Data SDP yang sama.
+// Role IOH (monitoring, baca-saja) — tabel rekap tetap dipertahankan karena
+// perannya murni memantau lintas region, bukan mengisi/menyetujui data.
 const IOH_MONITOR_MENU = [
   {
     id     : "rekap",
@@ -89,12 +81,13 @@ const IOH_MONITOR_MENU = [
 ];
 ["internal_ioh", "ioh_north_sumatera", "ioh_central_sumatera", "ioh_south_sumatera"].forEach((r) => { MENUS[r] = IOH_MONITOR_MENU; });
 
-// Data SDP (mobile field flow) — List/Detail per periode, untuk CSE & BSM.
+// Data SDP (list → detail lengkap + peta lat/long + approval) — sama untuk
+// CSE, BSM, SPM Sumatera & PIC Region. Cakupan & tombol approval menyesuaikan role.
 const FIELD_CARD = {
   id     : "field",
   icon   : ClipboardList,
   label  : "Data SDP",
-  desc   : "Daftar SDP Anda per periode — status, detail lengkap & riwayat",
+  desc   : "Daftar SDP per periode — status, detail lengkap, peta lokasi & riwayat",
   accent : "blue",
 };
 const REPORT_CARD = {
@@ -104,7 +97,7 @@ const REPORT_CARD = {
   desc   : "Ringkasan progres pengisian per periode & per cluster",
   accent : "teal",
 };
-["cse_rse"].forEach((r) => { MENUS[r] = [FIELD_CARD, REPORT_CARD, ...(MENUS[r] || [])]; });
+["cse_rse", "bsm", "spm_sumatera", "pic_region"].forEach((r) => { MENUS[r] = [FIELD_CARD, REPORT_CARD, ...(MENUS[r] || [])]; });
 
 const MYCODES_CARD = {
   id     : "mycodes",
@@ -227,8 +220,9 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile, read
 
   const menus = MENUS[role] ?? null;
   const menuIds = useMemo(() => new Set((menus || []).map((m) => m.id)), [menus]);
-  // Data SDP: cse_rse pakai 'field' (SDP_Field), bsm & spm_sumatera pakai 'rekap' (SDP_RekapCSE).
-  const listMenuId = role === "cse_rse" ? "field" : "rekap";
+  // Data SDP: satu tampilan (SDP_Field) untuk semua role yang ikut alur
+  // pengisian/approval. IOH (monitoring lintas region) tetap pakai 'rekap'.
+  const listMenuId = ["internal_ioh", "ioh_north_sumatera", "ioh_central_sumatera", "ioh_south_sumatera"].includes(role) ? "rekap" : "field";
 
   // Terima id biasa ("field") atau id majemuk "submission_forms:<jenis>" dari
   // Quick Action dashboard desktop, supaya bisa langsung membuka form yang dituju.
@@ -272,7 +266,7 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile, read
     return (
       <div style={{ fontFamily: FF }}>
         {renderBack()}
-        <SDP_Field supabase={supabase} theme={theme} profile={profile} readOnly={readOnly} />
+        <SDP_Field supabase={supabase} theme={theme} profile={profile} readOnly={readOnly} lockRegion={lockRegion} />
       </div>
     );
   }
@@ -315,7 +309,7 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile, read
 
   // ── Dashboard komprehensif (mobile: replika app; desktop: KPI + tabel + quick
   // actions) — untuk role yang punya menu Data SDP + Registrasi/Perubahan.
-  if (["cse_rse", "bsm", "spm_sumatera"].includes(role)) {
+  if (["cse_rse", "bsm", "spm_sumatera", "pic_region"].includes(role)) {
     return (
       <div style={{ fontFamily: FF }}>
         <SDP_Home supabase={supabase} theme={theme} profile={profile} onNavigate={navigateTo}

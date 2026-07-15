@@ -1,16 +1,24 @@
 "use client";
 // ============================================================
-// SDP Field (migrasi mobile SandraHub → web responsif) — Stage 1
-// Data SDP untuk CSE/RSE & BSM: List per periode → Detail.
-// Scoping & status setia ke app Flutter (sdp_provider.dart).
+// SDP Field — tampilan "Data SDP" TUNGGAL untuk semua role yang ikut
+// alur pengisian & approval (CSE/RSE, BSM, SPM Sumatera, PIC Region).
+// List per periode (dengan filter wilayah lengkap + export Excel) →
+// Detail lengkap (termasuk peta lat/long) → Isi/Ubah data.
+// Yang membedakan antar role HANYA:
+//   • cakupan data — cluster (CSE), branch (BSM), atau penuh (SPM/PIC)
+//   • wewenang — CSE mengajukan (submit_edit, perlu approval), BSM/SPM/
+//     PIC Region bisa langsung mengisi & menyelesaikan (bsm_set) DAN
+//     menyetujui/menolak pengajuan CSE (approve_edit / reject_edit)
 // Tabel: sdp_master, sdp_monthly_data, sdp_edit_requests,
 //        sdp_status_log, sales_access_codes, mc_cluster_mapping.
 // ============================================================
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import * as XLSX from "xlsx";
 import {
   ChevronLeft, ChevronRight, ChevronDown, Search, RefreshCw, Store, MapPin,
   CheckCircle2, Clock, XCircle, AlertTriangle, FileText, Loader2, History, Phone, User, Mail, Pencil,
+  Download, X,
 } from "lucide-react";
 import SDP_Edit from "./SDP_Edit";
 
@@ -39,6 +47,11 @@ function buildPeriods() {
 const fmtDateTime = (iso) => iso ? new Date(iso).toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 const brandOfCluster = (c) => String(c || "").startsWith("CS") ? "3ID" : "IM3";
 
+// Role dengan wewenang approval: bisa langsung mengisi & menyelesaikan data
+// (bsm_set), serta menyetujui/menolak pengajuan CSE. Ini satu-satunya sumber
+// perbedaan "tingkatan" antar role — form & tampilannya tetap sama.
+const APPROVAL_ROLES = ["bsm", "spm_sumatera", "pic_region"];
+
 /* ── Status alur (mirror SdpEntry.status) ───────────────────── */
 function statusOf(monthly, hasOpenRequest) {
   if (hasOpenRequest) return "pending";
@@ -57,12 +70,36 @@ const STATUS = {
   review:   { label: "Perlu Ditinjau", icon: AlertTriangle, tone: "blue" },
   belum:    { label: "Belum Lengkap",  icon: FileText,      tone: "lo" },
 };
+const ACTION_LABEL = {
+  SUBMIT_EDIT:   "Diajukan — menunggu persetujuan",
+  APPROVE_EDIT:  "Disetujui",
+  REJECT_EDIT:   "Ditolak",
+  CANCEL_EDIT:   "Pengajuan dibatalkan",
+  BSM_SET:       "Diisi & diselesaikan",
+  CARRY_FORWARD: "Disalin dari periode sebelumnya",
+  PERIOD_OPEN:   "Periode baru dibuka",
+};
+
+/* ── Select kecil (dipakai filter wilayah) ──────────────────── */
+function Sel({ value, onChange, opts, t, minWidth = 130 }) {
+  return (
+    <div style={{ position: "relative", flexShrink: 0 }}>
+      <select value={value} onChange={(e) => onChange(e.target.value)}
+        style={{ appearance: "none", WebkitAppearance: "none", fontFamily: FF, fontSize: 12.5, fontWeight: 700, color: t.hi, background: t.sub, border: `1px solid ${t.line}`, borderRadius: 9, padding: "8px 28px 8px 11px", cursor: "pointer", minWidth }}>
+        {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+      <ChevronDown size={12} color={t.mid} style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+    </div>
+  );
+}
 
 /* ══════════════════════════════════════════════════════════════ */
 export default function SDP_Field({ supabase, theme = "light", profile, readOnly = false }) {
   const d = theme === "dark";
   const t = mk(d);
   const role = profile?.role || "";
+  const canApprove = !readOnly && APPROVAL_ROLES.includes(role);
+  const canEditCse = !readOnly && role === "cse_rse";
   const periods = useMemo(() => buildPeriods(), []);
   const [period, setPeriod] = useState(periods[0]);
   const [loading, setLoading] = useState(true);
@@ -70,6 +107,11 @@ export default function SDP_Field({ supabase, theme = "light", profile, readOnly
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
   const [statusF, setStatusF] = useState("all");
+  const [fRegion, setFRegion] = useState("ALL");
+  const [fArea, setFArea] = useState("ALL");
+  const [fBranch, setFBranch] = useState("ALL");
+  const [fCluster, setFCluster] = useState("ALL");
+  const [fBrand, setFBrand] = useState("ALL");
   const [detail, setDetail] = useState(null);   // SDP entry sedang dibuka
   const [editing, setEditing] = useState(null);  // SDP entry sedang diedit
 
@@ -81,7 +123,7 @@ export default function SDP_Field({ supabase, theme = "light", profile, readOnly
       const { data: rm } = await guard(supabase.from("mc_cluster_mapping").select("cluster, region"));
       const regionMap = new Map((rm || []).map((r) => [r.cluster, r.region]));
 
-      // 2) scoped master
+      // 2) scoped master — inilah satu-satunya tempat "cakupan" per role diatur.
       let master = [];
       const base = supabase.from("sdp_master").select("*").eq("period", period);
       if (role === "cse_rse") {
@@ -99,7 +141,7 @@ export default function SDP_Field({ supabase, theme = "light", profile, readOnly
           master = (data || []).filter((r) => pairs.has(`${r.branch}|${brandOfCluster(r.cluster)}`));
         }
       } else {
-        const { data } = await base; master = data || [];   // SPM / IOH / lainnya → semua (baca-saja)
+        const { data } = await base; master = data || [];   // SPM Sumatera / PIC Region / IOH → penuh
       }
 
       if (!master.length) { setRows([]); setLoading(false); return; }
@@ -115,9 +157,11 @@ export default function SDP_Field({ supabase, theme = "light", profile, readOnly
 
       setRows(master.map((r) => {
         const m = monthly.get(r.sdp_id) || null;
+        const region = r.cluster ? (regionMap.get(r.cluster) || "") : "";
         return {
           ...r,
-          region: r.cluster ? (regionMap.get(r.cluster) || "") : "",
+          region,
+          brand: brandOfCluster(r.cluster),
           monthly: m, hasOpen: openIds.has(r.sdp_id),
           status: statusOf(m, openIds.has(r.sdp_id)),
           name: r.sdp_name || r.sdp_id,
@@ -127,14 +171,29 @@ export default function SDP_Field({ supabase, theme = "light", profile, readOnly
   }, [supabase, period, role, profile?.id]);
   useEffect(() => { load(); }, [load]);
 
+  // ── Opsi filter wilayah bertingkat (mengikuti data yang sudah ter-scope) ──
+  const regionOpts  = useMemo(() => ["ALL", ...[...new Set(rows.map((r) => r.region).filter(Boolean))].sort()], [rows]);
+  const areaOpts    = useMemo(() => ["ALL", ...[...new Set(rows.filter((r) => fRegion === "ALL" || r.region === fRegion).map((r) => r.area).filter(Boolean))].sort()], [rows, fRegion]);
+  const branchOpts  = useMemo(() => ["ALL", ...[...new Set(rows.filter((r) => (fRegion === "ALL" || r.region === fRegion) && (fArea === "ALL" || r.area === fArea)).map((r) => r.branch).filter(Boolean))].sort()], [rows, fRegion, fArea]);
+  const clusterOpts = useMemo(() => ["ALL", ...[...new Set(rows.filter((r) => fBranch === "ALL" || r.branch === fBranch).map((r) => r.cluster).filter(Boolean))].sort()], [rows, fBranch]);
+  const onRegion = (v) => { setFRegion(v); setFArea("ALL"); setFBranch("ALL"); setFCluster("ALL"); };
+  const onArea   = (v) => { setFArea(v); setFBranch("ALL"); setFCluster("ALL"); };
+  const onBranch = (v) => { setFBranch(v); setFCluster("ALL"); };
+  const hasGeoFilters = regionOpts.length > 2 || branchOpts.length > 2; // >1 pilihan asli selain ALL
+
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     return rows.filter((r) => {
       if (statusF !== "all" && r.status !== statusF) return false;
-      if (s && !`${r.sdp_id} ${r.name} ${r.cluster} ${r.branch} ${r.area}`.toLowerCase().includes(s)) return false;
+      if (fRegion !== "ALL" && r.region !== fRegion) return false;
+      if (fArea !== "ALL" && r.area !== fArea) return false;
+      if (fBranch !== "ALL" && r.branch !== fBranch) return false;
+      if (fCluster !== "ALL" && r.cluster !== fCluster) return false;
+      if (fBrand !== "ALL" && r.brand !== fBrand) return false;
+      if (s && !`${r.sdp_id} ${r.name} ${r.cluster} ${r.branch} ${r.area} ${r.pt_name || ""}`.toLowerCase().includes(s)) return false;
       return true;
     });
-  }, [rows, q, statusF]);
+  }, [rows, q, statusF, fRegion, fArea, fBranch, fCluster, fBrand]);
 
   const counts = useMemo(() => {
     const c = { all: rows.length, selesai: 0, pending: 0, rejected: 0, review: 0, belum: 0 };
@@ -142,13 +201,37 @@ export default function SDP_Field({ supabase, theme = "light", profile, readOnly
     return c;
   }, [rows]);
 
+  const exportExcel = () => {
+    const cols = [
+      ["ID", (r) => r.sdp_id], ["BRAND", (r) => r.brand], ["TYPE", (r) => r.sdp_type],
+      ["NAME", (r) => r.name], ["PT NAME", (r) => r.pt_name],
+      ["CLUSTER", (r) => r.cluster], ["BRANCH", (r) => r.branch], ["AREA", (r) => r.area], ["REGION", (r) => r.region],
+      ["SDP LIVE", (r) => r.monthly?.sdp_live], ["STATUS USAHA", (r) => r.monthly?.status_usaha],
+      ["NAMA OWNER", (r) => r.monthly?.nama_owner], ["NIK", (r) => r.monthly?.nik],
+      ["NO OTTOCASH", (r) => r.monthly?.no_ottocash], ["ALAMAT", (r) => r.monthly?.alamat],
+      ["LATITUDE", (r) => r.monthly?.latitude], ["LONGITUDE", (r) => r.monthly?.longitude],
+      ["EMAIL OWNER", (r) => r.monthly?.email_owner], ["NO WHATSAPP", (r) => r.monthly?.no_whatsapp],
+      ["STATUS TERMINATE", (r) => r.monthly?.terminate_status],
+      ["FORM STATUS", (r) => r.monthly?.form_status], ["BSM STATUS", (r) => r.monthly?.bsm_status],
+    ];
+    const aoa = [cols.map((c) => c[0]), ...filtered.map((r) => cols.map((c) => c[1](r) ?? ""))];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!cols"] = cols.map((c) => ({ wch: Math.max(10, Math.min(34, c[0].length + 6)) }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `Data SDP ${period}`);
+    XLSX.writeFile(wb, `Data_SDP_${period}_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
   if (editing) return <SDP_Edit supabase={supabase} theme={theme} profile={profile} entry={editing}
+    finalizeDirect={canApprove}
     onBack={() => setEditing(null)}
     onSaved={() => { setEditing(null); setDetail(null); load(); }} />;
 
-  if (detail) return <SdpDetail t={t} d={d} supabase={supabase} entry={detail} onBack={() => setDetail(null)}
-    canEdit={role === "cse_rse" && !readOnly && detail.status !== "pending"}
-    onEdit={() => setEditing(detail)} />;
+  if (detail) return <SdpDetail t={t} d={d} supabase={supabase} profile={profile} entry={detail} onBack={() => setDetail(null)}
+    canEdit={(canEditCse && detail.status !== "pending") || canApprove}
+    canApprove={canApprove}
+    onEdit={() => setEditing(detail)}
+    onChanged={() => { setDetail(null); load(); }} />;
 
   const toneCol = (tone) => ({ green: t.green, amber: t.amber, brand: t.brand, blue: t.blue, lo: t.lo }[tone] || t.mid);
 
@@ -163,14 +246,21 @@ export default function SDP_Field({ supabase, theme = "light", profile, readOnly
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14, flexWrap: "wrap", marginBottom: 16 }}>
         <div>
           <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em" }}>Data SDP</div>
-          <div style={{ fontSize: 12.5, color: t.mid, marginTop: 2 }}>{readOnly ? "Pantau" : "Kelola"} SDP Anda per periode{role ? ` · ${role}` : ""}.</div>
+          <div style={{ fontSize: 12.5, color: t.mid, marginTop: 2 }}>{readOnly ? "Pantau" : "Kelola"} data SDP per periode{role ? ` · ${role}` : ""}.</div>
         </div>
-        <div style={{ position: "relative" }}>
-          <select value={period} onChange={(e) => setPeriod(e.target.value)}
-            style={{ appearance: "none", fontFamily: FF, fontSize: 14, fontWeight: 700, color: t.hi, background: t.card, border: `1.5px solid ${t.brand}44`, borderRadius: 11, padding: "10px 34px 10px 14px", cursor: "pointer", boxShadow: t.sm }}>
-            {periods.map((p) => <option key={p} value={p}>{periodLabel(p)}</option>)}
-          </select>
-          <ChevronDown size={15} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: t.mid, pointerEvents: "none" }} />
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ position: "relative" }}>
+            <select value={period} onChange={(e) => setPeriod(e.target.value)}
+              style={{ appearance: "none", fontFamily: FF, fontSize: 14, fontWeight: 700, color: t.hi, background: t.card, border: `1.5px solid ${t.brand}44`, borderRadius: 11, padding: "10px 34px 10px 14px", cursor: "pointer", boxShadow: t.sm }}>
+              {periods.map((p) => <option key={p} value={p}>{periodLabel(p)}</option>)}
+            </select>
+            <ChevronDown size={15} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: t.mid, pointerEvents: "none" }} />
+          </div>
+          {filtered.length > 0 && (
+            <button onClick={exportExcel} style={{ display: "flex", alignItems: "center", gap: 7, height: 42, padding: "0 16px", borderRadius: 11, background: t.green, border: "none", color: "#fff", fontFamily: FF, fontSize: 13, fontWeight: 700, cursor: "pointer", boxShadow: t.sm }}>
+              <Download size={14} /> Export
+            </button>
+          )}
         </div>
       </div>
 
@@ -178,10 +268,21 @@ export default function SDP_Field({ supabase, theme = "light", profile, readOnly
       <div style={{ display: "flex", gap: 9, marginBottom: 12 }}>
         <div style={{ position: "relative", flex: 1 }}>
           <Search size={15} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: t.mid }} />
-          <input className="sdpin" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari SDP ID / nama / cluster / branch" style={{ paddingLeft: 34 }} />
+          <input className="sdpin" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari SDP ID / nama / cluster / branch / PT" style={{ paddingLeft: 34 }} />
         </div>
         <button onClick={load} style={{ width: 44, borderRadius: 11, border: `1px solid ${t.line}`, background: t.card, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><RefreshCw size={16} /></button>
       </div>
+
+      {/* Filter wilayah (muncul bila cakupan role mencakup >1 wilayah) */}
+      {hasGeoFilters && (
+        <div style={{ display: "flex", gap: 7, flexWrap: "wrap", marginBottom: 10 }}>
+          <Sel value={fRegion} onChange={onRegion} t={t} opts={regionOpts.map((v) => ({ value: v, label: v === "ALL" ? "Semua Region" : v }))} />
+          <Sel value={fArea} onChange={onArea} t={t} opts={areaOpts.map((v) => ({ value: v, label: v === "ALL" ? "Semua Area" : v }))} />
+          <Sel value={fBranch} onChange={onBranch} t={t} opts={branchOpts.map((v) => ({ value: v, label: v === "ALL" ? "Semua Branch" : v }))} />
+          <Sel value={fCluster} onChange={setFCluster} t={t} opts={clusterOpts.map((v) => ({ value: v, label: v === "ALL" ? "Semua Cluster" : v }))} />
+          <Sel value={fBrand} onChange={setFBrand} t={t} minWidth={110} opts={[{ value: "ALL", label: "Semua Brand" }, { value: "3ID", label: "3ID" }, { value: "IM3", label: "IM3" }]} />
+        </div>
+      )}
 
       {/* Filter status */}
       <div style={{ display: "flex", gap: 7, overflowX: "auto", paddingBottom: 6, marginBottom: 12, WebkitOverflowScrolling: "touch" }}>
@@ -208,11 +309,11 @@ export default function SDP_Field({ supabase, theme = "light", profile, readOnly
         </div>
       ) : filtered.length === 0 ? (
         <div style={{ padding: "44px 20px", textAlign: "center", color: t.mid, background: t.card, borderRadius: 16, border: `1px solid ${t.line}` }}>
-          <Store size={26} style={{ opacity: .5, marginBottom: 8 }} /><div style={{ fontSize: 13.5 }}>Tidak ada SDP untuk {periodLabel(period)}{role === "cse_rse" ? " — pastikan kode cluster sudah diklaim." : "."}</div>
+          <Store size={26} style={{ opacity: .5, marginBottom: 8 }} /><div style={{ fontSize: 13.5 }}>{rows.length ? "Tidak ada SDP yang cocok dengan filter." : `Tidak ada SDP untuk ${periodLabel(period)}${role === "cse_rse" ? " — pastikan kode cluster sudah diklaim." : "."}`}</div>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {filtered.map((r) => {
+          {filtered.slice(0, 600).map((r) => {
             const st = STATUS[r.status]; const Ico = st.icon; const col = toneCol(st.tone);
             return (
               <div key={r.sdp_id} className="sdpcard" onClick={() => setDetail(r)} style={{ padding: 15 }}>
@@ -234,6 +335,7 @@ export default function SDP_Field({ supabase, theme = "light", profile, readOnly
               </div>
             );
           })}
+          {filtered.length > 600 && <div style={{ padding: "10px 4px", textAlign: "center", color: t.mid, fontSize: 12 }}>+ {filtered.length - 600} SDP lain — gunakan filter / export untuk daftar lengkap</div>}
         </div>
       )}
       <div style={{ marginTop: 12, fontSize: 12, color: t.mid }}>{filtered.length} SDP · {periodLabel(period)}</div>
@@ -253,12 +355,73 @@ function DetailRow({ t, icon, label, value }) {
     </div>
   );
 }
-function SdpDetail({ t, d, supabase, entry, onBack, canEdit, onEdit }) {
+
+/* ── Panel approval (BSM / SPM Sumatera / PIC Region) ───────────── */
+function ApprovalPanel({ t, supabase, profile, entry, onChanged }) {
+  const [req, setReq] = useState(undefined); // undefined = memuat, null = tak ada
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    setReq(undefined);
+    supabase.from("sdp_edit_requests").select("id, cse_note, requested_by_name, requested_by_role, created_at")
+      .eq("sdp_id", entry.sdp_id).eq("period", entry.period).eq("status", "PENDING")
+      .order("created_at", { ascending: false }).limit(1).maybeSingle()
+      .then(({ data }) => { if (alive) setReq(data || null); });
+    return () => { alive = false; };
+  }, [supabase, entry.sdp_id, entry.period]);
+
+  const act = async (kind) => {
+    if (!req) return;
+    setBusy(true); setErr("");
+    try {
+      const fn = kind === "approve" ? "sdp_approve_edit" : "sdp_reject_edit";
+      const { error } = await supabase.rpc(fn, { p_request_id: req.id, p_note: note.trim() || null });
+      if (error) throw error;
+      onChanged?.();
+    } catch (e) { setErr(`Gagal ${kind === "approve" ? "menyetujui" : "menolak"}: ` + (e?.message || e)); setBusy(false); }
+  };
+
+  if (req === undefined) return null;
+  if (req === null) return null;
+
+  return (
+    <div style={{ background: `${t.amber}12`, border: `1px solid ${t.amber}33`, borderRadius: 18, padding: 18, marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <Clock size={16} color={t.amber} />
+        <div style={{ fontSize: 14, fontWeight: 800, color: t.hi }}>Menunggu Persetujuan Anda</div>
+      </div>
+      <div style={{ fontSize: 12.5, color: t.mid, marginBottom: 10 }}>
+        Diajukan oleh <b style={{ color: t.hi }}>{req.requested_by_name || "—"}</b>{req.requested_by_role ? ` (${req.requested_by_role})` : ""} · {fmtDateTime(req.created_at)}
+      </div>
+      {req.cse_note && (
+        <div style={{ fontSize: 12.5, color: t.hi, background: t.card, borderRadius: 10, padding: "8px 11px", marginBottom: 10 }}>
+          <b>Catatan pengaju:</b> {req.cse_note}
+        </div>
+      )}
+      <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Catatan approval (opsional)"
+        style={{ width: "100%", boxSizing: "border-box", fontFamily: FF, fontSize: 13, color: t.hi, background: t.card, border: `1px solid ${t.line}`, borderRadius: 10, padding: "9px 11px", outline: "none", resize: "vertical", marginBottom: 10 }} />
+      {err && <div style={{ fontSize: 12, color: t.brand, marginBottom: 8 }}>{err}</div>}
+      <div style={{ display: "flex", gap: 9 }}>
+        <button onClick={() => act("reject")} disabled={busy} style={{ flex: 1, height: 42, borderRadius: 11, border: `1px solid ${t.brand}55`, background: "transparent", color: t.brand, fontFamily: FF, fontSize: 13, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer" }}>
+          {busy ? <Loader2 size={15} className="sdpspin" /> : <X size={15} />} Tolak
+        </button>
+        <button onClick={() => act("approve")} disabled={busy} style={{ flex: 1, height: 42, borderRadius: 11, border: "none", background: t.green, color: "#fff", fontFamily: FF, fontSize: 13, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer", boxShadow: t.sm }}>
+          {busy ? <Loader2 size={15} className="sdpspin" /> : <CheckCircle2 size={15} />} Setujui
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SdpDetail({ t, d, supabase, profile, entry, onBack, canEdit, canApprove, onEdit, onChanged }) {
   const m = entry.monthly || {};
   const [history, setHistory] = useState(null);
   useEffect(() => {
     let alive = true;
-    supabase.from("sdp_status_log").select("*").eq("sdp_id", entry.sdp_id).eq("period", entry.period).order("created_at", { ascending: false }).limit(30)
+    supabase.from("sdp_status_log").select("*").eq("sdp_id", entry.sdp_id).eq("period", entry.period).order("changed_at", { ascending: false }).limit(30)
       .then(({ data }) => { if (alive) setHistory(data || []); });
     return () => { alive = false; };
   }, [supabase, entry.sdp_id, entry.period]);
@@ -268,7 +431,7 @@ function SdpDetail({ t, d, supabase, entry, onBack, canEdit, onEdit }) {
 
   return (
     <div style={{ fontFamily: FF, color: t.hi }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 10, flexWrap: "wrap" }}>
         <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: t.mid, fontFamily: FF, fontSize: 13, fontWeight: 700, padding: 0 }}>
           <ChevronLeft size={16} /> Kembali ke daftar
         </button>
@@ -297,6 +460,11 @@ function SdpDetail({ t, d, supabase, entry, onBack, canEdit, onEdit }) {
           </div>
         )}
       </div>
+
+      {/* Approval — hanya tampil untuk role BSM/SPM/PIC Region saat status pending */}
+      {canApprove && entry.status === "pending" && (
+        <ApprovalPanel t={t} supabase={supabase} profile={profile} entry={entry} onChanged={onChanged} />
+      )}
 
       {/* Data bulanan */}
       <div style={{ background: t.card, borderRadius: 18, padding: "6px 18px 14px", boxShadow: t.md, marginBottom: 14 }}>
@@ -333,8 +501,8 @@ function SdpDetail({ t, d, supabase, entry, onBack, canEdit, onEdit }) {
               <div key={h.id || i} style={{ display: "flex", gap: 11, padding: "10px 0", borderTop: i === 0 ? "none" : `1px solid ${t.lineSoft}` }}>
                 <span style={{ width: 8, height: 8, borderRadius: 99, background: t.brand, flexShrink: 0, marginTop: 6 }} />
                 <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: t.hi }}>{h.action || h.status || h.note || "Perubahan"}</div>
-                  <div style={{ fontSize: 11.5, color: t.mid, marginTop: 2 }}>{h.actor_name || h.by_name || ""}{(h.actor_name || h.by_name) ? " · " : ""}{fmtDateTime(h.created_at)}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: t.hi }}>{ACTION_LABEL[h.action] || h.action || "Perubahan"}</div>
+                  <div style={{ fontSize: 11.5, color: t.mid, marginTop: 2 }}>{h.changed_by_name || "sistem"}{h.changed_by_role ? ` · ${h.changed_by_role}` : ""} · {fmtDateTime(h.changed_at)}</div>
                   {h.note && <div style={{ fontSize: 12.5, color: t.mid, marginTop: 3 }}>{h.note}</div>}
                 </div>
               </div>

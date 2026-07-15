@@ -46,7 +46,7 @@ function Field({ t, label, required, children, hint }) {
   );
 }
 
-export default function SDP_Edit({ supabase, theme = "light", profile, entry, onBack, onSaved }) {
+export default function SDP_Edit({ supabase, theme = "light", profile, entry, onBack, onSaved, finalizeDirect = false }) {
   const d = theme === "dark"; const t = mk(d);
   const m = entry.monthly || {};
 
@@ -107,14 +107,28 @@ export default function SDP_Edit({ supabase, theme = "light", profile, entry, on
     longitude_gudang: sameGudang ? lng : lngG,
   });
 
+  // finalizeDirect = role tingkat approval (BSM/SPM Sumatera/PIC Region) — bisa
+  // langsung mengisi & menyelesaikan data (RPC sdp_bsm_set) tanpa menunggu
+  // persetujuan dirinya sendiri. CSE tetap mengajukan (sdp_submit_edit) →
+  // menunggu approval BSM/SPM. Form & validasi (termasuk lat/long) tetap sama
+  // untuk semua role — hanya jalur penyimpanan yang berbeda sesuai tingkatan.
   const run = async (kind) => {
     if (kind === "submit") { const v = validate(); if (v) { setErr(v); return; } }
     setBusy(true); setErr("");
     try {
-      const fn = kind === "submit" ? "sdp_submit_edit" : "sdp_save_draft";
-      const params = kind === "submit"
-        ? { p_sdp_id: entry.sdp_id, p_period: entry.period, p_proposed: payload(), p_note: note.trim() || null }
-        : { p_sdp_id: entry.sdp_id, p_period: entry.period, p_values: payload() };
+      let fn, params;
+      if (kind === "submit") {
+        if (finalizeDirect) {
+          fn = "sdp_bsm_set";
+          params = { p_sdp_id: entry.sdp_id, p_period: entry.period, p_values: payload(), p_note: note.trim() || null };
+        } else {
+          fn = "sdp_submit_edit";
+          params = { p_sdp_id: entry.sdp_id, p_period: entry.period, p_proposed: payload(), p_note: note.trim() || null };
+        }
+      } else {
+        fn = "sdp_save_draft";
+        params = { p_sdp_id: entry.sdp_id, p_period: entry.period, p_values: payload() };
+      }
       const { error } = await supabase.rpc(fn, params);
       if (error) throw error;
       if (kind === "submit") { setDone(true); setTimeout(() => onSaved?.(), 1400); }
@@ -126,15 +140,20 @@ export default function SDP_Edit({ supabase, theme = "light", profile, entry, on
   if (done) return (
     <div style={{ fontFamily: FF, minHeight: 360, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, color: t.hi }}>
       <div style={{ width: 72, height: 72, borderRadius: 22, background: `${t.green}1A`, display: "flex", alignItems: "center", justifyContent: "center", color: t.green }}><CheckCircle2 size={38} /></div>
-      <div style={{ fontSize: 18, fontWeight: 800 }}>Terkirim ke BSM</div>
-      <div style={{ fontSize: 13.5, color: t.mid }}>Data {entry.sdp_id} menunggu konfirmasi BSM.</div>
+      <div style={{ fontSize: 18, fontWeight: 800 }}>{finalizeDirect ? "Data diselesaikan" : "Terkirim ke BSM"}</div>
+      <div style={{ fontSize: 13.5, color: t.mid }}>{finalizeDirect ? `Data ${entry.sdp_id} sudah final.` : `Data ${entry.sdp_id} menunggu konfirmasi BSM.`}</div>
     </div>
   );
 
   const inStyle = { fontFamily: FF, fontSize: 14, color: t.hi, background: t.inputBg, border: `1px solid ${t.line}`, borderRadius: 11, padding: "11px 12px", outline: "none", width: "100%", boxSizing: "border-box" };
 
+  const cardStyle = { background: t.card, borderRadius: 18, padding: 18, boxShadow: t.md };
+  const sectionTitle = (label) => (
+    <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: t.lo, marginBottom: 14 }}>{label}</div>
+  );
+
   return (
-    <div style={{ fontFamily: FF, color: t.hi }}>
+    <div style={{ fontFamily: FF, color: t.hi, maxWidth: 1180, margin: "0 auto" }}>
       <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: t.mid, fontFamily: FF, fontSize: 13, fontWeight: 700, padding: 0, marginBottom: 14 }}>
         <ChevronLeft size={16} /> Batal
       </button>
@@ -144,90 +163,105 @@ export default function SDP_Edit({ supabase, theme = "light", profile, entry, on
         <div style={{ fontSize: 12.5, fontFamily: "monospace", color: t.mid, marginTop: 3 }}>{entry.sdp_id} · {entry.period}</div>
       </div>
 
-      <div style={{ background: t.card, borderRadius: 18, padding: 18, boxShadow: t.md, maxWidth: 640 }}>
-        <Field t={t} label="Tanggal SDP Live" required hint="Tanggal SDP ini mulai aktif">
-          <input type="date" value={sdpLive} onChange={(e) => setSdpLive(e.target.value)} style={inStyle} />
-        </Field>
-        <Field t={t} label="Status usaha" required>
-          <div style={{ display: "flex", gap: 8 }}>
-            {STATUS_USAHA.map((o) => (
-              <button key={o} onClick={() => setStatusUsaha(o)} style={{ flex: 1, padding: "11px 8px", borderRadius: 11, border: `1.5px solid ${statusUsaha === o ? t.brand : t.line}`, background: statusUsaha === o ? `${t.brand}12` : t.inputBg, color: statusUsaha === o ? t.brand : t.mid, fontFamily: FF, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>{o}</button>
-            ))}
-          </div>
-        </Field>
-        <Field t={t} label="Nama perusahaan / owner" required hint="Otomatis huruf kapital">
-          <input value={namaOwner} onChange={(e) => setNamaOwner(e.target.value)} style={{ ...inStyle, textTransform: "uppercase" }} />
-        </Field>
-        <Field t={t} label="NIK" required hint="Harus 16 digit angka">
-          <input value={nik} onChange={(e) => setNik(e.target.value.replace(/\D/g, "").slice(0, 16))} inputMode="numeric" style={inStyle} />
-        </Field>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <Field t={t} label="No. Ottocash"><input value={noOttocash} onChange={(e) => setNoOttocash(e.target.value.replace(/\D/g, ""))} inputMode="numeric" style={inStyle} /></Field>
-          <Field t={t} label="No. WhatsApp" required><input value={noWa} onChange={(e) => setNoWa(e.target.value.replace(/\D/g, ""))} inputMode="numeric" style={inStyle} /></Field>
-        </div>
-        <Field t={t} label="Email owner" required>
-          <input value={emailOwner} onChange={(e) => setEmailOwner(e.target.value)} inputMode="email" style={inStyle} />
-        </Field>
-        <Field t={t} label="Email PIC" hint="Tekan + untuk menambah beberapa email">
-          <div style={{ display: "flex", gap: 8 }}>
-            <input value={picInput} onChange={(e) => setPicInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addPic())} placeholder="email@domain.com" inputMode="email" style={inStyle} />
-            <button onClick={addPic} style={{ width: 46, borderRadius: 11, border: "none", background: t.brand, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><Plus size={18} /></button>
-          </div>
-          {emailPic.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 8 }}>
-              {emailPic.map((e) => (
-                <span key={e} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 99, background: t.sub, fontSize: 12.5, color: t.hi }}>
-                  {e}<button onClick={() => setEmailPic(emailPic.filter((x) => x !== e))} style={{ background: "none", border: "none", cursor: "pointer", color: t.mid, display: "flex" }}><X size={13} /></button>
-                </span>
+      {/* Dua kolom di layar lebar (identitas & kontak | lokasi), menumpuk di layar sempit */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))", gap: 16, alignItems: "start" }}>
+        <div style={cardStyle}>
+          {sectionTitle("Identitas & Kontak")}
+          <Field t={t} label="Tanggal SDP Live" required hint="Tanggal SDP ini mulai aktif">
+            <input type="date" value={sdpLive} onChange={(e) => setSdpLive(e.target.value)} style={inStyle} />
+          </Field>
+          <Field t={t} label="Status usaha" required>
+            <div style={{ display: "flex", gap: 8 }}>
+              {STATUS_USAHA.map((o) => (
+                <button key={o} onClick={() => setStatusUsaha(o)} style={{ flex: 1, padding: "11px 8px", borderRadius: 11, border: `1.5px solid ${statusUsaha === o ? t.brand : t.line}`, background: statusUsaha === o ? `${t.brand}12` : t.inputBg, color: statusUsaha === o ? t.brand : t.mid, fontFamily: FF, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>{o}</button>
               ))}
             </div>
-          )}
-        </Field>
-        <Field t={t} label="Detail alamat SDP" hint="No. rumah, RT/RW, patokan (opsional)">
-          <textarea value={alamat} onChange={(e) => setAlamat(e.target.value)} rows={2} style={{ ...inStyle, resize: "vertical" }} />
-        </Field>
-
-        <Field t={t} label="Titik lokasi SDP" required hint="Geser peta / seret pin, atau pakai lokasi Anda">
-          <MapPicker t={t} supabase={supabase} lat={lat} lng={lng} onChange={(la, ln) => { setLat(la); setLng(ln); }} />
-        </Field>
-
-        {/* Gudang */}
-        <div style={{ display: "flex", alignItems: "center", gap: 9, margin: "4px 0 14px", cursor: "pointer" }} onClick={() => setSameGudang((s) => !s)}>
-          <div style={{ width: 22, height: 22, borderRadius: 7, border: `1.5px solid ${sameGudang ? t.brand : t.line}`, background: sameGudang ? t.brand : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{sameGudang && <CheckCircle2 size={14} color="#fff" />}</div>
-          <span style={{ fontSize: 13.5, color: t.hi, fontWeight: 600 }}>Alamat gudang sama dengan alamat SDP</span>
-        </div>
-        {!sameGudang && (
-          <>
-            <Field t={t} label="Detail alamat gudang" hint="No. gudang, blok, patokan (opsional)">
-              <textarea value={alamatGudang} onChange={(e) => setAlamatGudang(e.target.value)} rows={2} style={{ ...inStyle, resize: "vertical" }} />
-            </Field>
-            <Field t={t} label="Titik lokasi gudang">
-              <MapPicker t={t} supabase={supabase} lat={latG} lng={lngG} onChange={(la, ln) => { setLatG(la); setLngG(ln); }} />
-            </Field>
-          </>
-        )}
-
-        <Field t={t} label="Status terminate">
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {TERMINATE.map((o) => (
-              <button key={o} onClick={() => setTerminate(o)} style={{ textAlign: "left", padding: "11px 12px", borderRadius: 11, border: `1.5px solid ${terminate === o ? t.brand : t.line}`, background: terminate === o ? `${t.brand}12` : t.inputBg, color: terminate === o ? t.brand : t.mid, fontFamily: FF, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>{o}</button>
-            ))}
+          </Field>
+          <Field t={t} label="Nama perusahaan / owner" required hint="Otomatis huruf kapital">
+            <input value={namaOwner} onChange={(e) => setNamaOwner(e.target.value)} style={{ ...inStyle, textTransform: "uppercase" }} />
+          </Field>
+          <Field t={t} label="NIK" required hint="Harus 16 digit angka">
+            <input value={nik} onChange={(e) => setNik(e.target.value.replace(/\D/g, "").slice(0, 16))} inputMode="numeric" style={inStyle} />
+          </Field>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <Field t={t} label="No. Ottocash"><input value={noOttocash} onChange={(e) => setNoOttocash(e.target.value.replace(/\D/g, ""))} inputMode="numeric" style={inStyle} /></Field>
+            <Field t={t} label="No. WhatsApp" required><input value={noWa} onChange={(e) => setNoWa(e.target.value.replace(/\D/g, ""))} inputMode="numeric" style={inStyle} /></Field>
           </div>
-        </Field>
-        <Field t={t} label="Catatan (opsional)">
-          <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Jelaskan bila perlu" style={{ ...inStyle, resize: "vertical" }} />
-        </Field>
+          <Field t={t} label="Email owner" required>
+            <input value={emailOwner} onChange={(e) => setEmailOwner(e.target.value)} inputMode="email" style={inStyle} />
+          </Field>
+          <Field t={t} label="Email PIC" hint="Tekan + untuk menambah beberapa email">
+            <div style={{ display: "flex", gap: 8 }}>
+              <input value={picInput} onChange={(e) => setPicInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addPic())} placeholder="email@domain.com" inputMode="email" style={inStyle} />
+              <button onClick={addPic} style={{ width: 46, borderRadius: 11, border: "none", background: t.brand, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><Plus size={18} /></button>
+            </div>
+            {emailPic.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginTop: 8 }}>
+                {emailPic.map((e) => (
+                  <span key={e} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "5px 10px", borderRadius: 99, background: t.sub, fontSize: 12.5, color: t.hi }}>
+                    {e}<button onClick={() => setEmailPic(emailPic.filter((x) => x !== e))} style={{ background: "none", border: "none", cursor: "pointer", color: t.mid, display: "flex" }}><X size={13} /></button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </Field>
+        </div>
+
+        <div style={cardStyle}>
+          {sectionTitle("Lokasi")}
+          <Field t={t} label="Detail alamat SDP" hint="No. rumah, RT/RW, patokan (opsional)">
+            <textarea value={alamat} onChange={(e) => setAlamat(e.target.value)} rows={2} style={{ ...inStyle, resize: "vertical" }} />
+          </Field>
+
+          <Field t={t} label="Titik lokasi SDP" required hint="Geser peta / seret pin, atau pakai lokasi Anda">
+            <MapPicker t={t} supabase={supabase} lat={lat} lng={lng} onChange={(la, ln) => { setLat(la); setLng(ln); }} />
+          </Field>
+
+          {/* Gudang */}
+          <div style={{ display: "flex", alignItems: "center", gap: 9, margin: "4px 0 14px", cursor: "pointer" }} onClick={() => setSameGudang((s) => !s)}>
+            <div style={{ width: 22, height: 22, borderRadius: 7, border: `1.5px solid ${sameGudang ? t.brand : t.line}`, background: sameGudang ? t.brand : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{sameGudang && <CheckCircle2 size={14} color="#fff" />}</div>
+            <span style={{ fontSize: 13.5, color: t.hi, fontWeight: 600 }}>Alamat gudang sama dengan alamat SDP</span>
+          </div>
+          {!sameGudang && (
+            <>
+              <Field t={t} label="Detail alamat gudang" hint="No. gudang, blok, patokan (opsional)">
+                <textarea value={alamatGudang} onChange={(e) => setAlamatGudang(e.target.value)} rows={2} style={{ ...inStyle, resize: "vertical" }} />
+              </Field>
+              <Field t={t} label="Titik lokasi gudang">
+                <MapPicker t={t} supabase={supabase} lat={latG} lng={lngG} onChange={(la, ln) => { setLatG(la); setLngG(ln); }} />
+              </Field>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Status & catatan — lebar penuh di bawah dua kolom */}
+      <div style={{ ...cardStyle, marginTop: 16 }}>
+        {sectionTitle("Status & Catatan")}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
+          <Field t={t} label="Status terminate">
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {TERMINATE.map((o) => (
+                <button key={o} onClick={() => setTerminate(o)} style={{ textAlign: "left", padding: "11px 12px", borderRadius: 11, border: `1.5px solid ${terminate === o ? t.brand : t.line}`, background: terminate === o ? `${t.brand}12` : t.inputBg, color: terminate === o ? t.brand : t.mid, fontFamily: FF, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>{o}</button>
+              ))}
+            </div>
+          </Field>
+          <Field t={t} label="Catatan (opsional)">
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={5} placeholder="Jelaskan bila perlu" style={{ ...inStyle, resize: "vertical", height: "100%" }} />
+          </Field>
+        </div>
 
         {err && (
-          <div style={{ display: "flex", gap: 9, padding: "11px 13px", borderRadius: 11, background: `${t.brand}12`, border: `1px solid ${t.brand}33`, color: t.brand, fontSize: 13, fontWeight: 600, marginBottom: 14 }}>
+          <div style={{ display: "flex", gap: 9, padding: "11px 13px", borderRadius: 11, background: `${t.brand}12`, border: `1px solid ${t.brand}33`, color: t.brand, fontSize: 13, fontWeight: 600, marginTop: 16 }}>
             <AlertTriangle size={16} style={{ flexShrink: 0 }} />{err}
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10, marginTop: 16, maxWidth: 480, marginLeft: "auto" }}>
           <button onClick={() => run("draft")} disabled={busy} style={{ flex: 1, height: 50, borderRadius: 13, border: `1px solid ${t.line}`, background: t.card, color: t.hi, fontFamily: FF, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}><Save size={17} /> Simpan Draft</button>
           <button onClick={() => run("submit")} disabled={busy} style={{ flex: 1.3, height: 50, borderRadius: 13, border: "none", background: t.brand, color: "#fff", fontFamily: FF, fontSize: 14.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer", boxShadow: t.sm }}>
-            {busy ? <Loader2 size={18} className="sdpspin" /> : <Send size={17} />} Kirim ke BSM
+            {busy ? <Loader2 size={18} className="sdpspin" /> : finalizeDirect ? <CheckCircle2 size={17} /> : <Send size={17} />}
+            {finalizeDirect ? " Simpan & Selesaikan" : " Kirim ke BSM"}
           </button>
         </div>
       </div>

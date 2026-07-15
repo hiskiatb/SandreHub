@@ -14,7 +14,8 @@ import {
   Upload, Download, FileSpreadsheet, Users, MapPin, Search, Filter,
   CheckCircle2, AlertTriangle, Clock, X, ChevronDown, ChevronRight,
   RefreshCw, Image as ImageIcon, LogIn, ShoppingBag, CalendarDays,
-  Loader2, Store, UserCheck, UserX, Info, Phone,
+  Loader2, Store, UserCheck, UserX, Info, Phone, IdCard, Radar,
+  UploadCloud, Plus, Trash2, Pencil, Save, Ban, BarChart3,
 } from "lucide-react";
 
 /* ── Design tokens (selaras dashboard SandraHub) ──────────────────────── */
@@ -81,7 +82,8 @@ export function normalizePhone(raw) {
   return { normalized: d, valid: /^62\d{8,13}$/.test(d), raw: String(raw ?? "") };
 }
 
-const TEMPLATE_HEADERS = ["Periode", "Nama Promotor", "Email", "List ID Outlet", "Branch", "Area", "Region"];
+// Data Mapping Promotor: 1 baris = 1 outlet, kunci relasi = ID Promotor (bukan email lagi)
+const TEMPLATE_HEADERS = ["Brand", "ID Outlet", "Nama Outlet", "Cluster", "Branch", "Area", "Region", "Longitude", "Latitude", "ID Promotor"];
 
 // 3 region resmi Sumatera (selaras IOH Territory)
 const REGIONS = ["NORTH SUMATERA", "CENTRAL SUMATERA", "SOUTH SUMATERA"];
@@ -91,6 +93,21 @@ const REGION_ALIASES = {
   "SOUTH SUMATERA": "SOUTH SUMATERA", SOUTH: "SOUTH SUMATERA", "SUMATERA SELATAN": "SOUTH SUMATERA", SELATAN: "SOUTH SUMATERA", SUMSEL: "SOUTH SUMATERA",
 };
 const canonRegion = (s) => REGION_ALIASES[String(s || "").trim().toUpperCase().replace(/\s+/g, " ")] || null;
+
+// Status validasi GA (D+2, window 3 hari dari tagged_at)
+const GA_STATUS_LABEL = {
+  BELUM_TERVALIDASI: "Belum Tervalidasi GA",
+  TERVALIDASI: "Tervalidasi",
+  TERVALIDASI_LUAR_AREA: "Tervalidasi — Luar Area",
+  TIDAK_DITEMUKAN: "Tidak Ditemukan",
+};
+const GA_STATUS_TONE = { BELUM_TERVALIDASI: "amber", TERVALIDASI: "green", TERVALIDASI_LUAR_AREA: "blue", TIDAK_DITEMUKAN: "red" };
+const GEOFENCE_SCOPES = [
+  { value: "global", label: "Global (semua outlet)" },
+  { value: "region", label: "Per Region" },
+  { value: "branch", label: "Per Branch" },
+  { value: "outlet", label: "Per Outlet (kode outlet)" },
+];
 
 /* ── UI atoms ─────────────────────────────────────────────────────────── */
 function Segmented({ t, options, value, onChange }) {
@@ -133,7 +150,7 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
   const d = theme === "dark";
   const t = mk(d);
 
-  const [tab, setTab] = useState("upload");            // upload | preview
+  const [tab, setTab] = useState("upload");            // upload | promotor | preview | geofence | ga
   const [period, setPeriod] = useState(ymNow());
   const [outlets, setOutlets] = useState([]);          // {code, ...}
   const outletByCode = useMemo(() => {
@@ -145,6 +162,8 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
     setOutlets(data || []);
   }, [supabase]);
   useEffect(() => { loadOutlets(); }, [loadOutlets]);
+
+  const isFullAdmin = profile?.role === "spm_sumatera" || profile?.role === "internal_ioh";
 
   return (
     <div style={{ fontFamily: FF, color: t.hi }}>
@@ -188,14 +207,19 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
       <div style={{ marginBottom: 22 }}>
         <Segmented t={t} value={tab} onChange={setTab}
           options={[
-            { value: "upload",  label: "Upload Mapping", icon: <Upload size={14} /> },
-            { value: "preview", label: "Preview Data",   icon: <FileSpreadsheet size={14} /> },
+            { value: "upload",   label: "Data Mapping Promotor", icon: <Upload size={14} /> },
+            { value: "promotor", label: "Data Promotor",         icon: <IdCard size={14} /> },
+            { value: "preview",  label: "Preview Data",          icon: <FileSpreadsheet size={14} /> },
+            { value: "geofence", label: "Geofence",              icon: <Radar size={14} /> },
+            { value: "ga",       label: "Validasi GA",           icon: <UploadCloud size={14} /> },
           ]} />
       </div>
 
-      {tab === "upload"
-        ? <UploadMapping t={t} d={d} supabase={supabase} profile={profile} period={period} outletByCode={outletByCode} outletsLoaded={outlets.length} onOutletsNeeded={loadOutlets} />
-        : <PreviewData   t={t} d={d} supabase={supabase} period={period} outletByCode={outletByCode} />}
+      {tab === "upload"   && <UploadMapping   t={t} d={d} supabase={supabase} profile={profile} period={period} outletByCode={outletByCode} outletsLoaded={outlets.length} onOutletsNeeded={loadOutlets} />}
+      {tab === "promotor" && <DataPromotor    t={t} d={d} supabase={supabase} profile={profile} />}
+      {tab === "preview"  && <PreviewData     t={t} d={d} supabase={supabase} period={period} outletByCode={outletByCode} />}
+      {tab === "geofence" && <GeofenceSettings t={t} d={d} supabase={supabase} profile={profile} outlets={outlets} isFullAdmin={isFullAdmin} />}
+      {tab === "ga"       && <GaValidation    t={t} d={d} supabase={supabase} profile={profile} isFullAdmin={isFullAdmin} />}
     </div>
   );
 }
@@ -215,27 +239,23 @@ function UploadMapping({ t, d, supabase, profile, period, outletByCode, outletsL
 
   const resetParse = () => { setRows(null); setFileName(""); setResult(null); setErr(""); if (fileRef.current) fileRef.current.value = ""; };
 
-  /* Download Excel bulan terpilih (data terkini / template) */
+  /* Download Excel bulan terpilih (data terkini / template) — format Data Mapping Promotor */
   const downloadExcel = async () => {
     setErr("");
     const { data } = await supabase.from("pts_assignment").select("*").eq("period", period);
-    // group by email → gabung outlet_code dengan ;
-    const byEmail = new Map();
-    (data || []).forEach((r) => {
-      const k = (r.email || "").toLowerCase();
-      if (!byEmail.has(k)) byEmail.set(k, { nama: r.full_name || "", email: r.email || "", outlets: [], branch: r.branch || "", area: r.area || "", region: r.region || region });
-      byEmail.get(k).outlets.push(r.outlet_code);
+    const body = (data || []).map((r) => {
+      const o = outletByCode.get(String(r.outlet_code || "").toUpperCase());
+      return [r.brand || o?.brand || "", r.outlet_code, o?.name || "", r.cluster || o?.cluster || "", r.branch, r.area, r.region, o?.longitude ?? "", o?.latitude ?? "", r.promotor_id || ""];
     });
-    let body = [...byEmail.values()].map((v) => [period, v.nama, v.email, v.outlets.join(";"), v.branch, v.area, v.region]);
-    if (body.length === 0) body = [[period, "Budi Santoso", "budi.santoso@gmail.com", "OTL-MDN-014;OTL-MDN-021", "Medan", "Medan Kota", picRegion || "NORTH SUMATERA"]];
+    if (body.length === 0) body.push(["IM3", "OTL-MDN-014", "Outlet Contoh Medan", "Cluster A", "Medan", "Medan Kota", picRegion || "NORTH SUMATERA", 98.6785, 3.5952, "PRO-0001"]);
     const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADERS, ...body]);
-    ws["!cols"] = [{ wch: 10 }, { wch: 22 }, { wch: 28 }, { wch: 34 }, { wch: 16 }, { wch: 16 }, { wch: 14 }];
+    ws["!cols"] = [{ wch: 10 }, { wch: 14 }, { wch: 24 }, { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 14 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `Mapping ${period}`);
     XLSX.writeFile(wb, `PTS_Mapping_${period}.xlsx`);
   };
 
-  /* Parse file → expand List ID Outlet → validasi */
+  /* Parse file → 1 baris = 1 outlet, kunci = ID Promotor → validasi */
   const parseFile = async (file) => {
     setErr(""); setResult(null);
     try {
@@ -247,36 +267,39 @@ function UploadMapping({ t, d, supabase, profile, period, outletByCode, outletsL
       if (!raw.length) { setErr("File kosong."); return; }
       const head = raw[0].map((h) => String(h || "").trim().toLowerCase());
       const idx = (name) => head.findIndex((h) => h === name.toLowerCase());
-      const iEmail = idx("email"), iNama = idx("nama promotor"), iList = idx("list id outlet"),
-            iBranch = idx("branch"), iArea = idx("area"), iRegion = idx("region");
-      if (iEmail < 0 || iList < 0 || iNama < 0) { setErr("Header wajib tidak ditemukan: butuh 'Nama Promotor', 'Email', 'List ID Outlet'."); return; }
+      const iBrand = idx("brand"), iOutlet = idx("id outlet"), iNama = idx("nama outlet"), iCluster = idx("cluster"),
+            iBranch = idx("branch"), iArea = idx("area"), iRegion = idx("region"),
+            iLng = idx("longitude"), iLat = idx("latitude"), iPromo = idx("id promotor");
+      if (iOutlet < 0 || iPromo < 0) { setErr("Header wajib tidak ditemukan: butuh 'ID Outlet' dan 'ID Promotor'."); return; }
 
       const expanded = [];
       for (let r = 1; r < raw.length; r++) {
         const row = raw[r]; if (!row || row.every((c) => c === "" || c == null)) continue;
-        const email = String(row[iEmail] ?? "").trim();
-        const nama = String(row[iNama] ?? "").trim();
+        const code = String(row[iOutlet] ?? "").trim();
+        const promotorId = String(row[iPromo] ?? "").trim();
+        const brand = iBrand >= 0 ? String(row[iBrand] ?? "").trim() : "";
+        const namaOutlet = iNama >= 0 ? String(row[iNama] ?? "").trim() : "";
+        const cluster = iCluster >= 0 ? String(row[iCluster] ?? "").trim() : "";
         const branch = iBranch >= 0 ? String(row[iBranch] ?? "").trim() : "";
         const area = iArea >= 0 ? String(row[iArea] ?? "").trim() : "";
         const regRaw = iRegion >= 0 ? String(row[iRegion] ?? "").trim() : "";
         const regCanon = canonRegion(regRaw) || canonRegion(region);
-        const list = String(row[iList] ?? "").split(/[;,]/).map((s) => s.trim()).filter(Boolean);
+        const lng = iLng >= 0 ? Number(row[iLng]) : null;
+        const lat = iLat >= 0 ? Number(row[iLat]) : null;
+        const o = outletByCode.get(code.toUpperCase());
         const errs = [];
-        if (!nama) errs.push("Nama kosong");
-        if (!emailValid(email)) errs.push("Email tidak valid");
-        if (!list.length) errs.push("List ID Outlet kosong");
+        if (!code) errs.push("ID Outlet kosong");
+        if (!promotorId) errs.push("ID Promotor kosong");
         if (!regCanon) errs.push("Region harus North/Central/South Sumatera");
         else if (picRegion && regCanon !== picRegion) errs.push(`Di luar wilayah Anda (${picRegion})`);
-        list.forEach((code) => {
-          const o = outletByCode.get(code.toUpperCase());
-          expanded.push({
-            rowNo: r + 1, period, email, full_name: nama,
-            outlet_code: code, outlet_id: o?.id || null, outlet_name: o?.name || "",
-            branch: branch || o?.branch || "", area: area || o?.area || "", region: regCanon || regRaw,
-            status: "active", isNewOutlet: !o, errors: errs,   // outlet baru = dibuat otomatis, bukan error
-          });
+        if (!o && (lat == null || isNaN(lat) || lng == null || isNaN(lng))) errs.push("Outlet baru wajib isi Latitude & Longitude");
+        expanded.push({
+          rowNo: r + 1, period, brand: brand || o?.brand || "", promotor_id: promotorId,
+          outlet_code: code, outlet_id: o?.id || null, outlet_name: namaOutlet || o?.name || code,
+          cluster: cluster || o?.cluster || "", branch: branch || o?.branch || "", area: area || o?.area || "",
+          region: regCanon || regRaw, lat: !isNaN(lat) ? lat : (o?.latitude ?? null), lng: !isNaN(lng) ? lng : (o?.longitude ?? null),
+          status: "active", isNewOutlet: !o, errors: errs,
         });
-        if (!list.length) expanded.push({ rowNo: r + 1, period, email, full_name: nama, outlet_code: "", outlet_id: null, outlet_name: "", branch, area, region: regCanon || regRaw, status: "active", isNewOutlet: false, errors: errs });
       }
       setRows(expanded);
     } catch (e) {
@@ -289,48 +312,61 @@ function UploadMapping({ t, d, supabase, profile, period, outletByCode, outletsL
 
   const errorCount = rows ? rows.filter((r) => r.errors.length).length : 0;
   const okRows = rows ? rows.filter((r) => !r.errors.length) : [];
-  const uniqEmails = rows ? new Set(okRows.map((r) => r.email.toLowerCase())).size : 0;
+  const uniqPromotors = rows ? new Set(okRows.map((r) => r.promotor_id.toUpperCase())).size : 0;
   const newOutlets = rows ? [...new Set(okRows.filter((r) => r.isNewOutlet && r.outlet_code).map((r) => r.outlet_code.toUpperCase()))] : [];
+  const unknownPromotors = rows ? [...new Set(okRows.map((r) => r.promotor_id.toUpperCase()))] : [];
 
-  /* Simpan: buat outlet baru → replace mapping bulan ini */
+  /* Simpan: buat outlet baru → replace mapping bulan ini (relasi kunci: ID Promotor) */
   const save = async () => {
     if (!okRows.length) return;
     setBusy(true); setErr(""); setResult(null);
     try {
-      // 1) Auto-create outlet yang belum ada di master (dari data file mapping)
-      const seen = new Set();
-      const newOutletPayload = [];
+      // 1) Auto-create/update outlet dari data mapping (brand, cluster, koordinat)
+      const seenOut = new Set();
+      const outletPayload = [];
       okRows.forEach((r) => {
         if (!r.outlet_code) return;
         const key = r.outlet_code.toUpperCase();
-        if (r.isNewOutlet && !seen.has(key)) {
-          seen.add(key);
-          newOutletPayload.push({ code: r.outlet_code, name: r.outlet_name || r.outlet_code, branch: r.branch, area: r.area, region: r.region, status: "active" });
+        if (!seenOut.has(key)) {
+          seenOut.add(key);
+          outletPayload.push({ code: r.outlet_code, name: r.outlet_name || r.outlet_code, brand: r.brand, cluster: r.cluster, branch: r.branch, area: r.area, region: r.region, latitude: r.lat, longitude: r.lng, status: "active" });
         }
       });
-      if (newOutletPayload.length) {
-        const { error: outErr } = await supabase.from("pts_outlet").upsert(newOutletPayload, { onConflict: "code" });
+      if (outletPayload.length) {
+        const { error: outErr } = await supabase.from("pts_outlet").upsert(outletPayload, { onConflict: "code" });
         if (outErr) throw outErr;
       }
 
-      // 2) Refresh master → resolve outlet_id untuk semua kode
+      // 2) Resolve promotor_id (business key) → pts_promotor.id (uuid). Promotor harus sudah terdaftar di Data Promotor.
+      const { data: pros } = await supabase.from("pts_promotor").select("id,promotor_id,email,full_name").not("promotor_id", "is", null);
+      const proByBizId = new Map((pros || []).map((p) => [String(p.promotor_id).toUpperCase(), p]));
+      const missingPromotors = [...new Set(okRows.map((r) => r.promotor_id.toUpperCase()))].filter((pid) => !proByBizId.has(pid));
+      if (missingPromotors.length) {
+        throw new Error(`ID Promotor belum terdaftar di tab "Data Promotor": ${missingPromotors.slice(0, 8).join(", ")}${missingPromotors.length > 8 ? ` (+${missingPromotors.length - 8} lainnya)` : ""}. Daftarkan dulu di tab Data Promotor sebelum upload mapping.`);
+      }
+
+      // 3) Refresh master → resolve outlet_id untuk semua kode
       const { data: freshOutlets } = await supabase.from("pts_outlet").select("id,code");
       const idByCode = new Map((freshOutlets || []).map((o) => [String(o.code).trim().toUpperCase(), o.id]));
 
-      // 3) Replace mapping bulan ini
+      // 4) Replace mapping bulan ini
       const { error: delErr } = await supabase.from("pts_assignment").delete().eq("period", period);
       if (delErr) throw delErr;
-      const payload = okRows.map((r) => ({
-        period: r.period, email: r.email, full_name: r.full_name,
-        outlet_id: idByCode.get(r.outlet_code.toUpperCase()) || null,
-        outlet_code: r.outlet_code, branch: r.branch, area: r.area, region: r.region,
-        status: "active", assigned_by: profile?.id || null,
-      }));
+      const payload = okRows.map((r) => {
+        const pro = proByBizId.get(r.promotor_id.toUpperCase());
+        return {
+          period: r.period, email: pro?.email || "", full_name: pro?.full_name || "",
+          promotor_id_ref: pro?.id || null, brand: r.brand, cluster: r.cluster,
+          outlet_id: idByCode.get(r.outlet_code.toUpperCase()) || null,
+          outlet_code: r.outlet_code, branch: r.branch, area: r.area, region: r.region,
+          status: "active", assigned_by: profile?.id || null,
+        };
+      });
       const { error: insErr } = await supabase.from("pts_assignment").insert(payload);
       if (insErr) throw insErr;
 
       await onOutletsNeeded(); // muat ulang master outlet di modul
-      setResult({ mappings: payload.length, promotors: uniqEmails, skipped: errorCount, newOutlets: newOutletPayload.length });
+      setResult({ mappings: payload.length, promotors: uniqPromotors, skipped: errorCount, newOutlets: outletPayload.filter((o) => !outletByCode.get(o.code.toUpperCase())).length });
       setRows(null); setFileName(""); if (fileRef.current) fileRef.current.value = "";
     } catch (e) {
       setErr("Gagal menyimpan: " + (e?.message || e));
@@ -373,8 +409,8 @@ function UploadMapping({ t, d, supabase, profile, period, outletByCode, outletsL
             <FileSpreadsheet size={22} />
           </div>
           <div style={{ fontSize: 14.5, fontWeight: 600, color: t.hi }}>{fileName || "Tarik file .xlsx / .csv ke sini, atau klik untuk memilih"}</div>
-          <div style={{ fontSize: 12.5, color: t.mid, marginTop: 5 }}>Kolom: Periode · Nama Promotor · Email · List ID Outlet (dipisah ;) · Branch · Area · Region</div>
-          <div style={{ fontSize: 11.5, color: t.lo, marginTop: 3 }}>Region valid: North Sumatera · Central Sumatera · South Sumatera</div>
+          <div style={{ fontSize: 12.5, color: t.mid, marginTop: 5 }}>Kolom: Brand · ID Outlet · Nama Outlet · Cluster · Branch · Area · Region · Longitude · Latitude · ID Promotor</div>
+          <div style={{ fontSize: 11.5, color: t.lo, marginTop: 3 }}>1 baris = 1 outlet. ID Promotor harus sudah terdaftar di tab &ldquo;Data Promotor&rdquo;. Region valid: North/Central/South Sumatera.</div>
         </div>
       </div>
 
@@ -389,7 +425,7 @@ function UploadMapping({ t, d, supabase, profile, period, outletByCode, outletsL
         <div style={{ marginTop: 16, display: "flex", gap: 11, padding: "14px 16px", borderRadius: 12, background: t.greenBg, border: `1px solid ${t.greenBd}` }}>
           <CheckCircle2 size={18} color={t.green} style={{ flexShrink: 0, marginTop: 1 }} />
           <div style={{ fontSize: 13.5, color: t.hi }}>
-            <b>Mapping {ymLabel(period)} tersimpan.</b> {result.mappings} mapping untuk {result.promotors} Promotor.
+            <b>Mapping {ymLabel(period)} tersimpan.</b> {result.mappings} mapping outlet untuk {result.promotors} Promotor.
             {result.newOutlets > 0 && <span style={{ color: t.blue }}> {result.newOutlets} outlet baru dibuat.</span>}
             {result.skipped > 0 && <span style={{ color: t.amber }}> {result.skipped} baris dilewati karena error.</span>}
           </div>
@@ -404,7 +440,7 @@ function UploadMapping({ t, d, supabase, profile, period, outletByCode, outletsL
               <span style={{ fontSize: 13, fontWeight: 600, color: t.hi }}>Pratinjau: {rows.length} baris mapping</span>
               <Chip t={t} tone="green" icon={<CheckCircle2 size={12} />}>{okRows.length} valid</Chip>
               {errorCount > 0 && <Chip t={t} tone="red" icon={<AlertTriangle size={12} />}>{errorCount} error</Chip>}
-              <Chip t={t} tone="blue" icon={<Users size={12} />}>{uniqEmails} promotor</Chip>
+              <Chip t={t} tone="blue" icon={<Users size={12} />}>{uniqPromotors} promotor</Chip>
               {newOutlets.length > 0 && <Chip t={t} tone="blue" icon={<Store size={12} />}>{newOutlets.length} outlet baru</Chip>}
             </div>
             <div style={{ display: "flex", gap: 9 }}>
@@ -421,7 +457,7 @@ function UploadMapping({ t, d, supabase, profile, period, outletByCode, outletsL
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    {["Baris", "Nama Promotor", "Email", "ID Outlet", "Branch", "Area", "Region", "Status"].map((h) => <th key={h} className="pts-th">{h}</th>)}
+                    {["Baris", "Brand", "ID Outlet", "Nama Outlet", "Cluster", "Branch", "Area", "Region", "ID Promotor", "Status"].map((h) => <th key={h} className="pts-th">{h}</th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -430,12 +466,14 @@ function UploadMapping({ t, d, supabase, profile, period, outletByCode, outletsL
                     return (
                       <tr key={i} className="pts-row" style={{ background: bad ? t.redBg : "transparent" }}>
                         <td className="pts-td" style={{ color: t.mid }}>{r.rowNo}</td>
-                        <td className="pts-td" style={{ fontWeight: 600 }}>{r.full_name || "—"}</td>
-                        <td className="pts-td">{r.email || "—"}</td>
+                        <td className="pts-td">{r.brand || "—"}</td>
                         <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 12 }}>{r.outlet_code || "—"}</td>
+                        <td className="pts-td" style={{ fontWeight: 600 }}>{r.outlet_name || "—"}</td>
+                        <td className="pts-td">{r.cluster || "—"}</td>
                         <td className="pts-td">{r.branch || "—"}</td>
                         <td className="pts-td">{r.area || "—"}</td>
                         <td className="pts-td">{r.region || "—"}</td>
+                        <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 700 }}>{r.promotor_id || "—"}</td>
                         <td className="pts-td">
                           {bad
                             ? <span title={r.errors.join("; ")} style={{ display: "inline-flex", alignItems: "center", gap: 5, color: t.red, fontWeight: 600, fontSize: 12 }}><AlertTriangle size={12} /> {r.errors[0]}</span>
@@ -455,6 +493,169 @@ function UploadMapping({ t, d, supabase, profile, period, outletByCode, outletsL
       )}
 
       <style>{`.spin{animation:ptsspin 1s linear infinite}@keyframes ptsspin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+}
+
+/* ══════════════════════════ DATA PROMOTOR ══════════════════════════════
+   Master identitas promotor — ID Promotor jadi kunci bisnis (dipakai di
+   Data Mapping Promotor & pts_sale), email digeser jadi "Email Pribadi". */
+const emptyPromotorForm = () => ({ id: null, promotor_id: "", full_name: "", email: "", phone: "", region: "", effective_date: "", status: "active" });
+
+function DataPromotor({ t, d, supabase, profile }) {
+  const [loading, setLoading] = useState(true);
+  const [list, setList] = useState([]);
+  const [q, setQ] = useState("");
+  const [form, setForm] = useState(emptyPromotorForm());
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const picRegion = profile?.role === "pic_region" ? canonRegion(profile?.region) : null;
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await supabase.from("pts_promotor").select("*").order("full_name", { ascending: true });
+      setList(data || []);
+    } catch { setList([]); } finally { setLoading(false); }
+  }, [supabase]);
+  useEffect(() => { load(); }, [load]);
+
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    return list.filter((r) => {
+      if (picRegion && canonRegion(r.region) && canonRegion(r.region) !== picRegion) return false;
+      if (!s) return true;
+      return `${r.promotor_id} ${r.full_name} ${r.email} ${r.phone}`.toLowerCase().includes(s);
+    });
+  }, [list, q, picRegion]);
+
+  const startNew = () => { setForm({ ...emptyPromotorForm(), region: picRegion || "" }); setEditing(true); setErr(""); };
+  const startEdit = (r) => { setForm({ id: r.id, promotor_id: r.promotor_id || "", full_name: r.full_name || "", email: r.email || "", phone: r.phone || "", region: r.region || "", effective_date: r.effective_date || "", status: r.status || "active" }); setEditing(true); setErr(""); };
+  const cancel = () => { setEditing(false); setForm(emptyPromotorForm()); setErr(""); };
+
+  const save = async () => {
+    setErr("");
+    if (!form.promotor_id.trim()) return setErr("ID Promotor wajib diisi.");
+    if (!form.full_name.trim()) return setErr("Nama Promotor wajib diisi.");
+    if (form.email && !emailValid(form.email)) return setErr("Email Pribadi tidak valid.");
+    setBusy(true);
+    try {
+      const payload = {
+        promotor_id: form.promotor_id.trim(), full_name: form.full_name.trim(),
+        email: form.email.trim().toLowerCase() || `${form.promotor_id.trim().toLowerCase()}@pts.local`,
+        phone: form.phone.trim() || null, region: form.region || null,
+        effective_date: form.effective_date || null, status: form.status,
+      };
+      if (form.id) {
+        const { error } = await supabase.from("pts_promotor").update(payload).eq("id", form.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("pts_promotor").insert(payload);
+        if (error) throw error;
+      }
+      await load(); cancel();
+    } catch (e) {
+      setErr("Gagal menyimpan: " + (e?.message || e));
+    } finally { setBusy(false); }
+  };
+
+  const toggleStatus = async (r) => {
+    const next = r.status === "active" ? "inactive" : "active";
+    await supabase.from("pts_promotor").update({ status: next }).eq("id", r.id);
+    load();
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 16px", borderRadius: 12, background: t.brandBg, border: `1px solid ${t.brandBd}`, marginBottom: 18 }}>
+        <Info size={17} color={t.brand} style={{ flexShrink: 0 }} />
+        <span style={{ fontSize: 13.5, color: t.hi, fontWeight: 500 }}>
+          Master identitas Promotor. <b>ID Promotor</b> adalah kunci yang dipakai saat mengisi <b>Data Mapping Promotor</b> — daftarkan promotor di sini dulu sebelum melakukan mapping outlet.
+        </span>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <div style={{ position: "relative" }}>
+          <Search size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: t.mid }} />
+          <input className="pts-in" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari ID Promotor / nama / email"
+            style={{ paddingLeft: 32, width: 260 }} />
+        </div>
+        <div style={{ display: "flex", gap: 9 }}>
+          <button className="pts-btn" onClick={load} style={{ background: t.card, color: t.mid, border: `1px solid ${t.line}` }}><RefreshCw size={14} /> Muat ulang</button>
+          <button className="pts-btn" onClick={startNew} style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}><Plus size={15} /> Promotor Baru</button>
+        </div>
+      </div>
+
+      {editing && (
+        <div style={{ marginBottom: 18, padding: 18, borderRadius: 14, background: t.card, border: `1px solid ${t.line}`, boxShadow: t.md }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: t.hi, marginBottom: 14 }}>{form.id ? "Ubah Data Promotor" : "Tambah Promotor Baru"}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+            <Field t={t} label="ID Promotor *"><input className="pts-in" value={form.promotor_id} onChange={(e) => setForm({ ...form, promotor_id: e.target.value })} placeholder="PRO-0001" disabled={!!form.id} /></Field>
+            <Field t={t} label="Nama Promotor *"><input className="pts-in" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} placeholder="Nama lengkap" /></Field>
+            <Field t={t} label="Email Pribadi"><input className="pts-in" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="nama@email.com" /></Field>
+            <Field t={t} label="No. HP"><input className="pts-in" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="08xx" /></Field>
+            <Field t={t} label="Region">
+              <select className="pts-in" value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })} disabled={!!picRegion}>
+                <option value="">— pilih region —</option>
+                {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </Field>
+            <Field t={t} label="Tanggal Efektif Bekerja"><input className="pts-in" type="date" value={form.effective_date} onChange={(e) => setForm({ ...form, effective_date: e.target.value })} /></Field>
+          </div>
+          {err && <div style={{ marginTop: 12, fontSize: 12.5, color: t.red, display: "flex", alignItems: "center", gap: 6 }}><AlertTriangle size={13} />{err}</div>}
+          <div style={{ display: "flex", gap: 9, marginTop: 16, justifyContent: "flex-end" }}>
+            <button className="pts-btn" onClick={cancel} style={{ background: t.sub, color: t.mid, border: `1px solid ${t.line}` }}><X size={14} /> Batal</button>
+            <button className="pts-btn" onClick={save} disabled={busy} style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}>{busy ? <Loader2 size={14} className="spin" /> : <Save size={14} />} Simpan</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden", boxShadow: t.sm }}>
+        <div style={{ overflow: "auto", maxHeight: 560 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
+            <thead><tr>{["ID Promotor", "Nama", "Email Pribadi", "No. HP", "Region", "Efektif Bekerja", "Status", ""].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr></thead>
+            <tbody>
+              {loading ? (
+                <tr><td className="pts-td" colSpan={8} style={{ textAlign: "center", padding: 40, color: t.mid }}><Loader2 size={20} className="spin" style={{ verticalAlign: "middle" }} /> Memuat…</td></tr>
+              ) : filtered.length === 0 ? (
+                <tr><td className="pts-td" colSpan={8} style={{ textAlign: "center", padding: 44, color: t.mid }}><Users size={24} style={{ opacity: .5, marginBottom: 8 }} /><br />Belum ada Promotor terdaftar.</td></tr>
+              ) : filtered.map((r) => (
+                <tr key={r.id} className="pts-row">
+                  <td className="pts-td" style={{ fontFamily: "monospace", fontWeight: 700 }}>{r.promotor_id || "—"}</td>
+                  <td className="pts-td" style={{ fontWeight: 600 }}>{r.full_name}</td>
+                  <td className="pts-td" style={{ color: t.mid }}>{r.email}</td>
+                  <td className="pts-td">{r.phone || "—"}</td>
+                  <td className="pts-td">{r.region || "—"}</td>
+                  <td className="pts-td">{r.effective_date ? fmtDate(r.effective_date) : "—"}</td>
+                  <td className="pts-td">
+                    {r.status === "active"
+                      ? <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: t.greenBg, color: t.green, border: `1px solid ${t.greenBd}` }}><UserCheck size={11} /> Aktif</span>
+                      : <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: t.hover, color: t.mid, border: `1px solid ${t.line}` }}><UserX size={11} /> Nonaktif</span>}
+                  </td>
+                  <td className="pts-td">
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button onClick={() => startEdit(r)} title="Ubah" style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Pencil size={13} /></button>
+                      <button onClick={() => toggleStatus(r)} title={r.status === "active" ? "Nonaktifkan" : "Aktifkan"} style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Ban size={13} /></button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div style={{ marginTop: 10, fontSize: 12, color: t.mid }}>{filtered.length} Promotor.</div>
+    </div>
+  );
+}
+
+function Field({ t, label, children }) {
+  return (
+    <div>
+      <label style={{ display: "block", fontSize: 11.5, fontWeight: 600, color: t.mid, marginBottom: 5 }}>{label}</label>
+      {children}
     </div>
   );
 }
@@ -608,6 +809,12 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
   return (
     <div>
       {modeToggle}
+      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 16px", borderRadius: 12, background: t.amberBg, border: `1px solid ${t.amberBd}`, marginBottom: 18 }}>
+        <Info size={17} color={t.amber} style={{ flexShrink: 0 }} />
+        <span style={{ fontSize: 13, color: t.hi }}>
+          Sistem Check-In / Check-Out sudah <b>dihentikan</b> dan digantikan alur geofencing langsung pada tagging SP. Tabel di bawah adalah <b>data historis</b> sesi lama (dipertahankan untuk arsip). Aktivitas tagging terbaru — termasuk jarak ke outlet &amp; status validasi GA — ada di tab <b>Penjualan (MSISDN)</b>.
+        </span>
+      </div>
       {/* Stats */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
         <Stat t={t} icon={<Users size={18} />}       label="Promotor ter-map" value={stats.promotor} accent={{ fg: t.mag, bg: t.magBg, bd: t.magBd }} />
@@ -728,6 +935,8 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
   const [q, setQ] = useState("");
+  const [geoF, setGeoF] = useState("all");   // all | within | outside
+  const [gaF, setGaF] = useState("all");     // all | BELUM_TERVALIDASI | TERVALIDASI | ...
   const outletById = useMemo(() => { const m = new Map(); outletByCode.forEach((o) => m.set(o.id, o)); return m; }, [outletByCode]);
 
   const load = useCallback(async () => {
@@ -738,13 +947,13 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
       const nd = new Date(y, mo, 1);
       const end = `${nd.getFullYear()}-${pad2(nd.getMonth() + 1)}-01`;
       const { data: sales } = await supabase.from("pts_sale")
-        .select("id,phone_normalized,email,outlet_id,region,lat,lng,tagged_at,raw_qr_value")
+        .select("id,phone_normalized,email,outlet_id,region,lat,lng,tagged_at,raw_qr_value,distance_meters,within_radius,outside_confirmed_at,ga_status")
         .gte("tagged_at", start).lt("tagged_at", end).order("tagged_at", { ascending: false });
       const { data: pros } = await supabase.from("pts_promotor").select("email,full_name");
       const nameByEmail = new Map((pros || []).map((p) => [(p.email || "").toLowerCase(), p.full_name]));
       setRows((sales || []).map((s) => {
         const o = outletById.get(s.outlet_id);
-        return { ...s, nama: nameByEmail.get((s.email || "").toLowerCase()) || "—", branch: o?.branch || "", area: o?.area || "", region: s.region || o?.region || "" };
+        return { ...s, nama: nameByEmail.get((s.email || "").toLowerCase()) || "—", outlet_code: o?.code || "", branch: o?.branch || "", area: o?.area || "", region: s.region || o?.region || "" };
       }));
     } catch { setRows([]); } finally { setLoading(false); }
   }, [supabase, period, outletById]);
@@ -752,27 +961,53 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return rows.filter((r) => !s || `${r.phone_normalized} ${r.nama} ${r.email}`.toLowerCase().includes(s));
-  }, [rows, q]);
+    return rows.filter((r) => {
+      if (geoF === "within" && r.within_radius === false) return false;
+      if (geoF === "outside" && r.within_radius !== false) return false;
+      if (gaF !== "all" && (r.ga_status || "BELUM_TERVALIDASI") !== gaF) return false;
+      if (s && !`${r.phone_normalized} ${r.nama} ${r.email} ${r.outlet_code}`.toLowerCase().includes(s)) return false;
+      return true;
+    });
+  }, [rows, q, geoF, gaF]);
+
+  const stats = useMemo(() => {
+    const outside = rows.filter((r) => r.within_radius === false).length;
+    const belum = rows.filter((r) => (r.ga_status || "BELUM_TERVALIDASI") === "BELUM_TERVALIDASI").length;
+    return { total: rows.length, outside, belum };
+  }, [rows]);
 
   const download = () => {
-    const head = ["No", "Tanggal", "Jam", "MSISDN", "Nama Promotor", "Email", "Branch", "Area", "Region", "Latitude", "Longitude"];
-    const body = filtered.map((r, i) => [i + 1, fmtDate(r.tagged_at), fmtTime(r.tagged_at), r.phone_normalized, r.nama, r.email, r.branch, r.area, r.region, r.lat ?? "", r.lng ?? ""]);
+    const head = ["No", "Tanggal", "Jam", "MSISDN", "Nama Promotor", "Email", "ID Outlet", "Branch", "Area", "Region", "Latitude", "Longitude", "Jarak ke Outlet (m)", "Dalam Radius?", "Status Validasi GA"];
+    const body = filtered.map((r, i) => [i + 1, fmtDate(r.tagged_at), fmtTime(r.tagged_at), r.phone_normalized, r.nama, r.email, r.outlet_code, r.branch, r.area, r.region, r.lat ?? "", r.lng ?? "", r.distance_meters ?? "", r.within_radius === false ? "Tidak" : "Ya", GA_STATUS_LABEL[r.ga_status] || r.ga_status]);
     const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
-    ws["!cols"] = [{ wch: 5 }, { wch: 12 }, { wch: 8 }, { wch: 16 }, { wch: 20 }, { wch: 26 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 14 }];
+    ws["!cols"] = [{ wch: 5 }, { wch: 12 }, { wch: 8 }, { wch: 16 }, { wch: 20 }, { wch: 26 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 20 }];
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, `MSISDN ${period}`);
     XLSX.writeFile(wb, `PTS_MSISDN_${period}.xlsx`);
   };
 
   return (
     <div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+        <Stat t={t} icon={<Phone size={18} />}      label="Total tagging"        value={stats.total}  accent={{ fg: t.mag, bg: t.magBg, bd: t.magBd }} />
+        <Stat t={t} icon={<Radar size={18} />}       label="Di luar radius"       value={stats.outside} accent={{ fg: t.blue, bg: t.blueBg, bd: t.blueBd }} />
+        <Stat t={t} icon={<Clock size={18} />}       label="Belum tervalidasi GA" value={stats.belum}  accent={{ fg: t.amber, bg: t.amberBg, bd: t.amberBd }} />
+      </div>
+
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <div style={{ position: "relative" }}>
             <Search size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: t.mid }} />
-            <input className="pts-in" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari MSISDN / nama / email" style={{ paddingLeft: 32, width: 260 }} />
+            <input className="pts-in" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari MSISDN / nama / email / outlet" style={{ paddingLeft: 32, width: 240 }} />
           </div>
-          <Chip t={t} tone="green" icon={<Phone size={12} />}>{filtered.length} MSISDN</Chip>
+          <Segmented t={t} value={geoF} onChange={setGeoF} options={[
+            { value: "all", label: "Semua lokasi" },
+            { value: "within", label: "Dalam radius" },
+            { value: "outside", label: "Luar radius" },
+          ]} />
+          <select className="pts-in" value={gaF} onChange={(e) => setGaF(e.target.value)}>
+            <option value="all">Semua status GA</option>
+            {Object.entries(GA_STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
         </div>
         <div style={{ display: "flex", gap: 9 }}>
           <button className="pts-btn" onClick={load} style={{ background: t.card, color: t.mid, border: `1px solid ${t.line}` }}><RefreshCw size={14} /> Muat ulang</button>
@@ -782,9 +1017,9 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
 
       <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden", boxShadow: t.sm }}>
         <div style={{ overflow: "auto", maxHeight: 620 }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1180 }}>
             <thead>
-              <tr>{["No", "Tanggal", "Jam", "MSISDN", "Promotor", "Email", "Branch", "Area", "Region", "Lat", "Lng"].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr>
+              <tr>{["No", "Tanggal", "Jam", "MSISDN", "Promotor", "ID Outlet", "Branch", "Region", "Jarak (m)", "Lokasi", "Status GA"].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr>
             </thead>
             <tbody>
               {loading ? (
@@ -798,19 +1033,339 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
                   <td className="pts-td" style={{ fontWeight: 600 }}>{fmtTime(r.tagged_at)}</td>
                   <td className="pts-td" style={{ fontFamily: "monospace", fontWeight: 700 }}>{r.phone_normalized}</td>
                   <td className="pts-td" style={{ fontWeight: 600 }}>{r.nama}</td>
-                  <td className="pts-td" style={{ color: t.mid }}>{r.email}</td>
+                  <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 11.5 }}>{r.outlet_code || "—"}</td>
                   <td className="pts-td">{r.branch || "—"}</td>
-                  <td className="pts-td">{r.area || "—"}</td>
                   <td className="pts-td">{r.region || "—"}</td>
-                  <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 11.5 }}>{r.lat ?? "—"}</td>
-                  <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 11.5 }}>{r.lng ?? "—"}</td>
+                  <td className="pts-td" style={{ fontFamily: "monospace" }}>{r.distance_meters != null ? Math.round(r.distance_meters) : "—"}</td>
+                  <td className="pts-td">
+                    {r.within_radius === false
+                      ? <span title={r.outside_confirmed_at ? `Dikonfirmasi ${fmtDate(r.outside_confirmed_at)} ${fmtTime(r.outside_confirmed_at)}` : ""} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: t.blueBg, color: t.blue, border: `1px solid ${t.blueBd}` }}><Radar size={11} /> Luar area</span>
+                      : <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: t.greenBg, color: t.green, border: `1px solid ${t.greenBd}` }}><CheckCircle2 size={11} /> Dalam area</span>}
+                  </td>
+                  <td className="pts-td"><Chip t={t} tone={GA_STATUS_TONE[r.ga_status] || "amber"}>{GA_STATUS_LABEL[r.ga_status] || r.ga_status}</Chip></td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </div>
-      <div style={{ marginTop: 10, fontSize: 12, color: t.mid }}>Data pada level MSISDN · Latitude &amp; Longitude dipisah · {filtered.length} baris.</div>
+      <div style={{ marginTop: 10, fontSize: 12, color: t.mid }}>
+        Data pada level MSISDN · {filtered.length} baris · Status GA divalidasi dalam rentang 3 hari dari waktu tagging (lihat tab <b>Validasi GA</b>).
+      </div>
+      <style>{`.spin{animation:ptsspin 1s linear infinite}@keyframes ptsspin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+}
+
+/* ══════════════════════════ GEOFENCE SETTINGS ══════════════════════════
+   Radius (meter) yang dipakai untuk validasi lokasi saat tagging SP.
+   Resolusi: outlet > branch > region > global > default 30m. */
+function GeofenceSettings({ t, d, supabase, profile, outlets, isFullAdmin }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [scopeType, setScopeType] = useState("global");
+  const [scopeValue, setScopeValue] = useState("");
+  const [radius, setRadius] = useState(30);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await supabase.from("pts_geofence_setting").select("*").order("scope_type", { ascending: true });
+      setRows(data || []);
+    } catch { setRows([]); } finally { setLoading(false); }
+  }, [supabase]);
+  useEffect(() => { load(); }, [load]);
+
+  const globalRow = rows.find((r) => r.scope_type === "global");
+  const effectiveDefault = globalRow?.radius_meters ?? 30;
+
+  const branches = useMemo(() => [...new Set(outlets.map((o) => o.branch).filter(Boolean))].sort(), [outlets]);
+  const outletCodes = useMemo(() => outlets.map((o) => o.code).filter(Boolean).sort(), [outlets]);
+
+  const save = async () => {
+    setErr("");
+    if (!isFullAdmin) return setErr("Hanya SPM Sumatera yang dapat mengubah radius geofence.");
+    if (scopeType !== "global" && !scopeValue.trim()) return setErr("Nilai cakupan (region/branch/kode outlet) wajib diisi.");
+    if (!(Number(radius) > 0)) return setErr("Radius harus lebih dari 0 meter.");
+    setBusy(true);
+    try {
+      const payload = { scope_type: scopeType, scope_value: scopeType === "global" ? "" : scopeValue.trim(), radius_meters: Number(radius), updated_by: profile?.id || null, updated_at: new Date().toISOString() };
+      const { error } = await supabase.from("pts_geofence_setting").upsert(payload, { onConflict: "scope_type,scope_value" });
+      if (error) throw error;
+      setScopeValue(""); setRadius(30);
+      await load();
+    } catch (e) {
+      setErr("Gagal menyimpan: " + (e?.message || e));
+    } finally { setBusy(false); }
+  };
+
+  const remove = async (r) => {
+    await supabase.from("pts_geofence_setting").delete().eq("id", r.id);
+    load();
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 16px", borderRadius: 12, background: t.brandBg, border: `1px solid ${t.brandBd}`, marginBottom: 18 }}>
+        <Radar size={17} color={t.brand} style={{ flexShrink: 0 }} />
+        <span style={{ fontSize: 13.5, color: t.hi, fontWeight: 500 }}>
+          Radius maksimum jarak tagging dari titik outlet. Sistem memakai aturan paling spesifik: <b>Outlet → Branch → Region → Global</b>. Jika tidak ada aturan sama sekali, default <b>30 meter</b> dipakai. Di luar radius, tagging tetap tersimpan namun ditandai untuk evaluasi.
+        </span>
+      </div>
+
+      {!isFullAdmin && (
+        <div style={{ marginBottom: 16, padding: "11px 14px", borderRadius: 10, background: t.amberBg, border: `1px solid ${t.amberBd}`, fontSize: 12.5, color: t.hi }}>
+          Anda melihat pengaturan ini sebagai read-only. Hanya role <b>SPM Sumatera</b> yang dapat mengubah radius geofence.
+        </div>
+      )}
+
+      <div style={{ marginBottom: 18, padding: 18, borderRadius: 14, background: t.card, border: `1px solid ${t.line}`, boxShadow: t.sm, opacity: isFullAdmin ? 1 : .6, pointerEvents: isFullAdmin ? "auto" : "none" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: t.hi, marginBottom: 14 }}>Atur / Tambah Radius</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+          <Field t={t} label="Cakupan">
+            <select className="pts-in" value={scopeType} onChange={(e) => { setScopeType(e.target.value); setScopeValue(""); }}>
+              {GEOFENCE_SCOPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </Field>
+          {scopeType === "region" && (
+            <Field t={t} label="Region">
+              <select className="pts-in" value={scopeValue} onChange={(e) => setScopeValue(e.target.value)}>
+                <option value="">— pilih region —</option>
+                {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </Field>
+          )}
+          {scopeType === "branch" && (
+            <Field t={t} label="Branch">
+              <select className="pts-in" value={scopeValue} onChange={(e) => setScopeValue(e.target.value)}>
+                <option value="">— pilih branch —</option>
+                {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+              </select>
+            </Field>
+          )}
+          {scopeType === "outlet" && (
+            <Field t={t} label="Kode Outlet">
+              <select className="pts-in" value={scopeValue} onChange={(e) => setScopeValue(e.target.value)}>
+                <option value="">— pilih outlet —</option>
+                {outletCodes.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </Field>
+          )}
+          <Field t={t} label="Radius (meter)"><input className="pts-in" type="number" min={1} value={radius} onChange={(e) => setRadius(e.target.value)} /></Field>
+        </div>
+        {err && <div style={{ marginTop: 12, fontSize: 12.5, color: t.red, display: "flex", alignItems: "center", gap: 6 }}><AlertTriangle size={13} />{err}</div>}
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+          <button className="pts-btn" onClick={save} disabled={busy} style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}>{busy ? <Loader2 size={14} className="spin" /> : <Save size={14} />} Simpan Radius</button>
+        </div>
+      </div>
+
+      <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden", boxShadow: t.sm }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead><tr>{["Cakupan", "Nilai", "Radius (m)", "Diubah", ""].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr></thead>
+          <tbody>
+            {loading ? (
+              <tr><td className="pts-td" colSpan={5} style={{ textAlign: "center", padding: 30, color: t.mid }}><Loader2 size={18} className="spin" /></td></tr>
+            ) : rows.length === 0 ? (
+              <tr><td className="pts-td" colSpan={5} style={{ textAlign: "center", padding: 30, color: t.mid }}>Belum ada aturan — semua tagging memakai default 30 meter.</td></tr>
+            ) : rows.map((r) => (
+              <tr key={r.id} className="pts-row">
+                <td className="pts-td" style={{ fontWeight: 600, textTransform: "capitalize" }}>{r.scope_type}</td>
+                <td className="pts-td">{r.scope_value || "— (semua)"}</td>
+                <td className="pts-td" style={{ fontWeight: 700 }}>{r.radius_meters} m</td>
+                <td className="pts-td" style={{ color: t.mid, fontSize: 11.5 }}>{r.updated_at ? `${fmtDate(r.updated_at)} ${fmtTime(r.updated_at)}` : "—"}</td>
+                <td className="pts-td">{isFullAdmin && <button onClick={() => remove(r)} style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.redBd}`, background: t.redBg, color: t.red, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Trash2 size={13} /></button>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ marginTop: 10, fontSize: 12, color: t.mid }}>Radius default saat ini (tanpa aturan lain yang cocok): <b>{effectiveDefault} meter</b>.</div>
+    </div>
+  );
+}
+
+/* ══════════════════════════ VALIDASI GA (D+2) ══════════════════════════
+   Upload data usage GA (MSISDN + waktu usage) → cocokkan dengan pts_sale
+   dalam rentang 3 hari dari waktu tagging → set status validasi. */
+function GaValidation({ t, d, supabase, profile, isFullAdmin }) {
+  const fileRef = useRef(null);
+  const [drag, setDrag] = useState(false);
+  const [fileName, setFileName] = useState("");
+  const [rows, setRows] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [result, setResult] = useState(null);
+  const [err, setErr] = useState("");
+  const [summary, setSummary] = useState(null);
+  const [loadingSummary, setLoadingSummary] = useState(true);
+
+  const loadSummary = useCallback(async () => {
+    setLoadingSummary(true);
+    try {
+      const { data } = await supabase.from("pts_sale").select("ga_status");
+      const counts = { BELUM_TERVALIDASI: 0, TERVALIDASI: 0, TERVALIDASI_LUAR_AREA: 0, TIDAK_DITEMUKAN: 0 };
+      (data || []).forEach((r) => { counts[r.ga_status] = (counts[r.ga_status] || 0) + 1; });
+      setSummary(counts);
+    } catch { setSummary(null); } finally { setLoadingSummary(false); }
+  }, [supabase]);
+  useEffect(() => { loadSummary(); }, [loadSummary]);
+
+  const downloadTemplate = () => {
+    const ws = XLSX.utils.aoa_to_sheet([["MSISDN", "Waktu Usage (YYYY-MM-DD HH:mm)"], ["6281234567890", "2026-07-13 10:00"]]);
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "GA Usage");
+    XLSX.writeFile(wb, "PTS_GA_Template.xlsx");
+  };
+
+  const parseFile = async (file) => {
+    setErr(""); setResult(null);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false });
+      if (!raw.length) { setErr("File kosong."); return; }
+      const head = raw[0].map((h) => String(h || "").trim().toLowerCase());
+      const idx = (name) => head.findIndex((h) => h.includes(name));
+      const iPhone = idx("msisdn"), iTime = idx("waktu");
+      if (iPhone < 0 || iTime < 0) { setErr("Header wajib: 'MSISDN' dan 'Waktu Usage'."); return; }
+      const parsed = [];
+      for (let r = 1; r < raw.length; r++) {
+        const row = raw[r]; if (!row || row.every((c) => c === "" || c == null)) continue;
+        const phoneRaw = String(row[iPhone] ?? "").trim();
+        const { normalized, valid } = normalizePhone(phoneRaw);
+        const timeRaw = row[iTime];
+        const usageAt = timeRaw instanceof Date ? timeRaw : new Date(String(timeRaw).replace(" ", "T"));
+        parsed.push({ phone_normalized: normalized, usage_at: usageAt.toISOString(), valid: valid && !isNaN(usageAt.getTime()) });
+      }
+      setRows(parsed);
+    } catch (e) { setErr("Gagal membaca file: " + (e?.message || e)); }
+  };
+
+  const onPick = (e) => { const f = e.target.files?.[0]; if (f) { setFileName(f.name); parseFile(f); } };
+  const onDrop = (e) => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files?.[0]; if (f) { setFileName(f.name); parseFile(f); } };
+
+  const okRows = rows ? rows.filter((r) => r.valid) : [];
+
+  const uploadAndValidate = async () => {
+    if (!okRows.length) return;
+    setUploading(true); setErr(""); setResult(null);
+    try {
+      const payload = okRows.map((r) => ({ phone_normalized: r.phone_normalized, usage_at: r.usage_at, uploaded_by: profile?.id || null, source_file: fileName || null }));
+      const { error: insErr } = await supabase.from("pts_ga_usage").insert(payload);
+      if (insErr) throw insErr;
+      setValidating(true);
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc("pts_apply_ga_validation");
+      if (rpcErr) throw rpcErr;
+      setResult({ uploaded: payload.length, matched: rpcRes?.matched ?? 0, expired: rpcRes?.expired_unmatched ?? 0 });
+      setRows(null); setFileName(""); if (fileRef.current) fileRef.current.value = "";
+      await loadSummary();
+    } catch (e) {
+      setErr("Gagal memproses: " + (e?.message || e));
+    } finally { setUploading(false); setValidating(false); }
+  };
+
+  const runValidationOnly = async () => {
+    setValidating(true); setErr("");
+    try {
+      const { data: rpcRes, error } = await supabase.rpc("pts_apply_ga_validation");
+      if (error) throw error;
+      setResult({ uploaded: 0, matched: rpcRes?.matched ?? 0, expired: rpcRes?.expired_unmatched ?? 0 });
+      await loadSummary();
+    } catch (e) { setErr("Gagal menjalankan validasi: " + (e?.message || e)); } finally { setValidating(false); }
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 16px", borderRadius: 12, background: t.brandBg, border: `1px solid ${t.brandBd}`, marginBottom: 18 }}>
+        <Info size={17} color={t.brand} style={{ flexShrink: 0 }} />
+        <span style={{ fontSize: 13.5, color: t.hi, fontWeight: 500 }}>
+          Data usage GA <b>tidak real-time</b> — umumnya tersedia <b>D+2</b>. Upload data usage untuk memvalidasi tagging ± 2 hari lalu. Sistem mencocokkan MSISDN dalam rentang <b>3 hari</b> dari waktu tagging. Tagging di luar radius outlet tetap tervalidasi (status &ldquo;Tervalidasi — Luar Area&rdquo;) dan menjadi bahan evaluasi program, bukan ditolak.
+        </span>
+      </div>
+
+      {!isFullAdmin && (
+        <div style={{ marginBottom: 16, padding: "11px 14px", borderRadius: 10, background: t.amberBg, border: `1px solid ${t.amberBd}`, fontSize: 12.5, color: t.hi }}>
+          Upload &amp; validasi GA hanya dapat dilakukan oleh role <b>SPM Sumatera</b>.
+        </div>
+      )}
+
+      {/* Ringkasan status */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
+        <Stat t={t} icon={<Clock size={18} />}        label="Belum Tervalidasi GA"     value={loadingSummary ? "…" : (summary?.BELUM_TERVALIDASI ?? 0)} accent={{ fg: t.amber, bg: t.amberBg, bd: t.amberBd }} />
+        <Stat t={t} icon={<CheckCircle2 size={18} />} label="Tervalidasi"              value={loadingSummary ? "…" : (summary?.TERVALIDASI ?? 0)}       accent={{ fg: t.green, bg: t.greenBg, bd: t.greenBd }} />
+        <Stat t={t} icon={<Radar size={18} />}         label="Tervalidasi — Luar Area"  value={loadingSummary ? "…" : (summary?.TERVALIDASI_LUAR_AREA ?? 0)} accent={{ fg: t.blue, bg: t.blueBg, bd: t.blueBd }} />
+        <Stat t={t} icon={<AlertTriangle size={18} />} label="Tidak Ditemukan"          value={loadingSummary ? "…" : (summary?.TIDAK_DITEMUKAN ?? 0)}   accent={{ fg: t.red, bg: t.redBg, bd: t.redBd }} />
+      </div>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+        <button className="pts-btn" onClick={downloadTemplate} style={{ background: t.card, color: t.hi, border: `1px solid ${t.line}`, boxShadow: t.sm }}><Download size={15} /> Download Template GA</button>
+        <button className="pts-btn" onClick={runValidationOnly} disabled={!isFullAdmin || validating} style={{ background: t.card, color: t.hi, border: `1px solid ${t.line}`, boxShadow: t.sm }}>{validating ? <Loader2 size={15} className="spin" /> : <RefreshCw size={15} />} Jalankan Ulang Validasi</button>
+      </div>
+
+      <div
+        onDragOver={(e) => { if (isFullAdmin) { e.preventDefault(); setDrag(true); } }}
+        onDragLeave={() => setDrag(false)}
+        onDrop={isFullAdmin ? onDrop : undefined}
+        onClick={() => isFullAdmin && fileRef.current?.click()}
+        style={{
+          border: `1.5px dashed ${drag ? t.brand : t.line}`, borderRadius: 14, padding: "34px 24px", textAlign: "center", cursor: isFullAdmin ? "pointer" : "not-allowed",
+          background: drag ? t.brandBg : t.sub, transition: "all .15s", opacity: isFullAdmin ? 1 : .6,
+        }}>
+        <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={onPick} disabled={!isFullAdmin} />
+        <div style={{ width: 48, height: 48, borderRadius: 12, margin: "0 auto 14px", display: "flex", alignItems: "center", justifyContent: "center", background: t.card, border: `1px solid ${t.line}`, color: t.brand }}>
+          <UploadCloud size={22} />
+        </div>
+        <div style={{ fontSize: 14.5, fontWeight: 600, color: t.hi }}>{fileName || "Tarik file GA usage (.xlsx/.csv) ke sini, atau klik untuk memilih"}</div>
+        <div style={{ fontSize: 12.5, color: t.mid, marginTop: 5 }}>Kolom: MSISDN · Waktu Usage</div>
+      </div>
+
+      {err && <div style={{ marginTop: 16, display: "flex", gap: 10, padding: "12px 14px", borderRadius: 10, background: t.redBg, border: `1px solid ${t.redBd}` }}><AlertTriangle size={16} color={t.red} style={{ flexShrink: 0, marginTop: 1 }} /><span style={{ fontSize: 13, color: t.hi }}>{err}</span></div>}
+
+      {result && (
+        <div style={{ marginTop: 16, display: "flex", gap: 11, padding: "14px 16px", borderRadius: 12, background: t.greenBg, border: `1px solid ${t.greenBd}` }}>
+          <CheckCircle2 size={18} color={t.green} style={{ flexShrink: 0, marginTop: 1 }} />
+          <div style={{ fontSize: 13.5, color: t.hi }}>
+            {result.uploaded > 0 && <><b>{result.uploaded} baris GA</b> diunggah. </>}
+            <b>{result.matched}</b> tagging tervalidasi. <b>{result.expired}</b> tagging melewati window 3 hari tanpa ditemukan di data GA.
+          </div>
+        </div>
+      )}
+
+      {rows && (
+        <div style={{ marginTop: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: t.hi }}>Pratinjau: {rows.length} baris</span>
+              <Chip t={t} tone="green" icon={<CheckCircle2 size={12} />}>{okRows.length} valid</Chip>
+              {rows.length - okRows.length > 0 && <Chip t={t} tone="red" icon={<AlertTriangle size={12} />}>{rows.length - okRows.length} error</Chip>}
+            </div>
+            <div style={{ display: "flex", gap: 9 }}>
+              <button className="pts-btn" onClick={() => { setRows(null); setFileName(""); }} style={{ background: t.card, color: t.mid, border: `1px solid ${t.line}` }}><X size={14} /> Batal</button>
+              <button className="pts-btn" onClick={uploadAndValidate} disabled={!isFullAdmin || uploading || okRows.length === 0} style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}>
+                {uploading ? <Loader2 size={15} className="spin" /> : <UploadCloud size={15} />} Upload &amp; Validasi
+              </button>
+            </div>
+          </div>
+          <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden", boxShadow: t.sm }}>
+            <div style={{ maxHeight: 320, overflow: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead><tr>{["MSISDN", "Waktu Usage", "Status"].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr></thead>
+                <tbody>
+                  {rows.slice(0, 300).map((r, i) => (
+                    <tr key={i} className="pts-row" style={{ background: r.valid ? "transparent" : t.redBg }}>
+                      <td className="pts-td" style={{ fontFamily: "monospace" }}>{r.phone_normalized}</td>
+                      <td className="pts-td">{r.usage_at}</td>
+                      <td className="pts-td">{r.valid ? <span style={{ color: t.green, fontWeight: 600, fontSize: 12 }}>OK</span> : <span style={{ color: t.red, fontWeight: 600, fontSize: 12 }}>Nomor/waktu tidak valid</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
       <style>{`.spin{animation:ptsspin 1s linear infinite}@keyframes ptsspin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
