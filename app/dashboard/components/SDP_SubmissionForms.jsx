@@ -158,12 +158,18 @@ async function openDoc(supabase, path) {
   if (!error && data?.signedUrl) window.open(data.signedUrl, "_blank");
 }
 
-export default function SDP_SubmissionForms({ supabase, theme = "dark", profile, onExit }) {
+export default function SDP_SubmissionForms({ supabase, theme = "dark", profile, onExit, initialFormType = null }) {
   const d = theme === "dark";
   const t = mk(d);
   const role = profile?.role ?? "";
 
-  const [formType, setFormType] = useState(null); // null | key of FORMS
+  // initialFormType datang dari deep-link (mis. Quick Action "Register SDP" di dashboard
+  // desktop) → langsung buka form yang dituju, skip halaman pilih jenis form.
+  const [formType, setFormType] = useState(initialFormType && FORMS[initialFormType] ? initialFormType : null); // null | key of FORMS
+  useEffect(() => {
+    if (initialFormType && FORMS[initialFormType]) setFormType(initialFormType);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialFormType]);
   const [combos, setCombos] = useState([]);
   const [sdps, setSdps] = useState([]);            // sdp_master (scoped)
   const [loadingMaster, setLoadingMaster] = useState(true);

@@ -876,21 +876,59 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
     toast$("success","Diff diekspor ke Excel");
   };
 
-  /* ── Download DATA TERSIMPAN (bukan template kosong) ──────────────
-     Khusus feed pendapatan/SPM: unduh nilai yang sudah diinput agar
-     bisa diedit & di-upload ulang. Tactical Program di-expand jadi
+  /* ── Download DATA TERSIMPAN + MAPPING PARTNER (bukan cuma yang sudah
+     terisi) ──────────────────────────────────────────────────────
+     Khusus feed pendapatan/SPM: unduh SATU BARIS untuk setiap kombinasi
+     partner × branch × tipe (dari master "partner_branches") × setiap
+     periode yang tersedia di aplikasi (Jan START_YEAR → bulan berjalan).
+     Kombinasi yang sudah punya data di pnl_reports diisi nilainya;
+     yang belum tetap muncul sebagai baris kosong (0) — supaya SPM
+     langsung terlihat partner/periode mana yang belum diisi, tanpa
+     harus menambah baris manual. Tactical Program di-expand jadi
      kolom TACTICAL_[program]; Periode = "<Bulan> <Tahun>". */
   const dlFilled=useCallback(async(feed)=>{
     if(feed.id!=="pendapatan"){dlTemplate(feed);return;}
     if(!sb){toast$("error","Database tidak tersedia");return;}
     const num=v=>{const x=Number(v);return isNaN(x)?0:x;};
-    toast$("success","Menyiapkan data tersimpan…");
+    toast$("success","Menyiapkan data & mapping partner…");
     try{
-      const{data,error}=await sb.from(feed.table)
-        .select("partner_name,branch,mpc_mp3,month,year,mobo_modal,realtime_margin,back_margin,sla_fee,special_program,special_program_breakdown,rewards_champions")
-        .order("partner_name",{ascending:true});
+      const[{data,error},{data:pbData,error:pbError}]=await Promise.all([
+        sb.from(feed.table)
+          .select("partner_name,branch,mpc_mp3,month,year,mobo_modal,realtime_margin,back_margin,sla_fee,special_program,special_program_breakdown,rewards_champions"),
+        sb.from("partner_branches").select("partner_name,branch_name,mpc_mp3"),
+      ]);
       if(error)throw error;
-      const list=[...(data||[])];
+      if(pbError)throw pbError;
+
+      // Semua periode yang tersedia di aplikasi (Jan START_YEAR → bulan berjalan),
+      // sama seperti daftar bulan di PNL Control Center.
+      const START_YEAR=2026;
+      const now=new Date();const curY=now.getFullYear(),curM=now.getMonth();
+      const periods=[];
+      for(let y=START_YEAR;y<=curY;y++){
+        const maxM=y===curY?curM:11;
+        for(let m=0;m<=maxM;m++)periods.push({month:ID_MONTHS[m],year:String(y)});
+      }
+
+      // Mapping partner (dedup partner_name × branch_name × mpc_mp3).
+      const partners=[...new Map((pbData||[])
+        .filter(p=>p.partner_name&&p.branch_name&&p.mpc_mp3)
+        .map(p=>[`${p.partner_name}|${p.branch_name}|${p.mpc_mp3}`,p])).values()];
+
+      // Data tersimpan, diindeks per kombinasi partner|branch|tipe|bulan|tahun.
+      const savedMap=new Map();
+      (data||[]).forEach(r=>savedMap.set(`${r.partner_name}|${r.branch}|${r.mpc_mp3}|${r.month}|${yr4(r.year)}`,r));
+
+      // Cross-join partner × periode → SEMUA partner muncul di tiap periode,
+      // bukan cuma yang sudah punya data (isi 0 bila belum diisi).
+      const list=[];
+      for(const p of partners){
+        for(const per of periods){
+          const key=`${p.partner_name}|${p.branch_name}|${p.mpc_mp3}|${per.month}|${per.year}`;
+          const saved=savedMap.get(key);
+          list.push(saved?saved:{partner_name:p.partner_name,branch:p.branch_name,mpc_mp3:p.mpc_mp3,month:per.month,year:per.year});
+        }
+      }
       const bdOf=r=>(r.special_program_breakdown&&typeof r.special_program_breakdown==="object")?r.special_program_breakdown:{};
       // Kunci urut kronologis = tahun*100 + indeks bulan. Periode kosong/tak dikenal → paling bawah.
       const periodKey=r=>{
@@ -930,7 +968,7 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
       const ws=XLSX.utils.aoa_to_sheet([headers,...rows]);
       const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Data SPM");
       XLSX.writeFile(wb,`data_spm_${new Date().toISOString().slice(0,10)}.xlsx`);
-      toast$("success",`Terunduh ${rows.length.toLocaleString("id-ID")} baris data tersimpan`);
+      toast$("success",`Terunduh ${rows.length.toLocaleString("id-ID")} baris — ${partners.length} partner × ${periods.length} periode`);
     }catch(e){toast$("error","Gagal ambil data: "+e.message);}
   },[sb]);
 

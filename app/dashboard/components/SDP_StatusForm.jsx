@@ -9,7 +9,7 @@
  *
  * Props: { supabase, theme = "dark", profile }
  */
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   UploadCloud, ChevronRight, ArrowLeft, Construction, Download, FilePlus2, ClipboardList, KeyRound,
 } from "lucide-react";
@@ -223,8 +223,24 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile, read
   const role = profile?.role ?? "";
 
   const [activeMenu, setActiveMenu] = useState(null);   // null = sub-menu list
+  const [subFormType, setSubFormType] = useState(null); // deep-link ke jenis form spesifik
 
   const menus = MENUS[role] ?? null;
+  const menuIds = useMemo(() => new Set((menus || []).map((m) => m.id)), [menus]);
+  // Data SDP: cse_rse pakai 'field' (SDP_Field), bsm & spm_sumatera pakai 'rekap' (SDP_RekapCSE).
+  const listMenuId = role === "cse_rse" ? "field" : "rekap";
+
+  // Terima id biasa ("field") atau id majemuk "submission_forms:<jenis>" dari
+  // Quick Action dashboard desktop, supaya bisa langsung membuka form yang dituju.
+  const navigateTo = (id) => {
+    if (typeof id === "string" && id.startsWith("submission_forms:")) {
+      setSubFormType(id.split(":")[1]);
+      setActiveMenu("submission_forms");
+    } else {
+      setSubFormType(null);
+      setActiveMenu(id);
+    }
+  };
 
   const renderBack = () => (
     <button
@@ -246,7 +262,8 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile, read
     // Back ditangani oleh komponen (landing → Form SDP, form → landing).
     return (
       <div style={{ fontFamily: FF }}>
-        <SDP_SubmissionForms supabase={supabase} theme={theme} profile={profile} onExit={() => setActiveMenu(null)} />
+        <SDP_SubmissionForms supabase={supabase} theme={theme} profile={profile} initialFormType={subFormType}
+          onExit={() => { setActiveMenu(null); setSubFormType(null); }} />
       </div>
     );
   }
@@ -296,11 +313,13 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile, read
     );
   }
 
-  // ── Home kaya untuk CSE (replika app mobile, responsif) ─────────────────────
-  if (role === "cse_rse") {
+  // ── Dashboard komprehensif (mobile: replika app; desktop: KPI + tabel + quick
+  // actions) — untuk role yang punya menu Data SDP + Registrasi/Perubahan.
+  if (["cse_rse", "bsm", "spm_sumatera"].includes(role)) {
     return (
       <div style={{ fontFamily: FF }}>
-        <SDP_Home supabase={supabase} theme={theme} profile={profile} onNavigate={setActiveMenu} />
+        <SDP_Home supabase={supabase} theme={theme} profile={profile} onNavigate={navigateTo}
+          listMenuId={listMenuId} availableIds={menuIds} />
       </div>
     );
   }
@@ -327,7 +346,7 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile, read
               key={item.id}
               item={item}
               t={t}
-              onClick={() => setActiveMenu(item.id)}
+              onClick={() => navigateTo(item.id)}
             />
           ))}
         </div>
