@@ -870,17 +870,23 @@ const FormPendapatan = ({
     return true;
   };
 
-  // Kontribusi partner = total revenue tanpa field auto-isi Tim SPM
-  // (Realtime/Back Margin, SLA, Tactical Program, Champions).
-  const partnerPortion =
-    stats.gtMg + stats.upfront +
-    Number(data.rewards.lainnya || 0) + Number(data.partnerIncome || 0);
+  // Apakah partner sudah mengisi *sesuatu* di field miliknya sendiri.
+  // Dicek dari input mentah (qty/hRetail/dll), BUKAN dari hasil margin —
+  // margin bisa sah bernilai 0 kalau partner menjual pas di harga HPP,
+  // dan itu tetap harus bisa disimpan sebagai draft.
+  const hasAnyPartnerEntry =
+    data.sp.some(i => i.qty > 0 || i.hRetail > 0 || i.qty2 > 0 || i.hRetail2 > 0) ||
+    data.spCustom.some(c => c.qty > 0 || c.hRetail > 0 || c.qty2 > 0 || c.hRetail2 > 0) ||
+    data.vc.some(i => i.qty > 0 || i.hRetail > 0 || i.qty2 > 0 || i.hRetail2 > 0) ||
+    data.vcCustom.some(c => c.qty > 0 || c.hRetail > 0) ||
+    Number(data.mobo.modal || 0) > 0 || Number(data.mobo.jual || 0) > 0 ||
+    Number(data.rewards.lainnya || 0) > 0 || Number(data.partnerIncome || 0) > 0;
 
   const handleSaveDraft = async () => {
     if (readOnly || !validate()) return;
     // Partner tidak boleh menyimpan draft bila baru ada data auto-isi SPM saja.
     // (Tim SPM tetap boleh menyimpan field-nya sendiri.)
-    if (!isSPMUser && partnerPortion <= 0) {
+    if (!isSPMUser && !hasAnyPartnerEntry) {
       toast$('error', 'Belum ada data pendapatan yang diisi. Isi minimal satu data sebelum menyimpan draft.');
       return;
     }
@@ -1488,7 +1494,7 @@ const FormPendapatan = ({
       {!monthDisabled&&(
         <div style={{position:'fixed',bottom:0,left:0,right:0,borderTop:`1px solid ${t.line}`,background:d?'rgba(13,13,14,0.94)':'rgba(255,255,255,0.94)',backdropFilter:'blur(24px)',WebkitBackdropFilter:'blur(24px)',zIndex:60,padding:'11px 16px'}}>
           <div style={{width:'100%',margin:'0 auto',display:'flex',alignItems:'center',justifyContent:'flex-end',gap:8,flexWrap:'wrap'}}>
-            {!effectiveReadOnly&&<button onClick={handleSaveDraft} disabled={isSaving||(!isSPMUser&&partnerPortion<=0)} title={!isSPMUser&&partnerPortion<=0?'Isi minimal satu data pendapatan dulu':undefined} className="fp-btn-ghost">{isSaving?<><Loader2 size={13} style={{animation:'fpspin 1s linear infinite'}}/>Simpan...</>:<><Save size={13}/>Draft</>}</button>}
+            {!effectiveReadOnly&&<button onClick={handleSaveDraft} disabled={isSaving||(!isSPMUser&&!hasAnyPartnerEntry)} title={!isSPMUser&&!hasAnyPartnerEntry?'Isi minimal satu data pendapatan dulu':undefined} className="fp-btn-ghost">{isSaving?<><Loader2 size={13} style={{animation:'fpspin 1s linear infinite'}}/>Simpan...</>:<><Save size={13}/>Draft</>}</button>}
             {step>1&&<button onClick={()=>setStep(s=>s-1)} className="fp-btn-ghost"><ArrowLeft size={13}/>Kembali</button>}
             {step<4?<button onClick={()=>setStep(s=>s+1)} className="fp-btn-primary">Lanjut <ArrowRight size={13}/></button>
               :!effectiveReadOnly&&<button onClick={()=>setShowSubmit(true)} disabled={isSaving} className="fp-btn-primary"><Send size={13}/>Kirim</button>}
