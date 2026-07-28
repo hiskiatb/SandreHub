@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import MartaShell, { T } from "../components/MartaShell";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
+import { getMartaScope, applyMartaScope } from "../../../lib/martaScope";
 
 const fmtDate = (s) => {
   if (!s || s.length < 10) return "—";
@@ -13,33 +14,43 @@ const fmtDate = (s) => {
 export default function SubmissionPage() {
   return (
     <MartaShell active="submission" title="Activity Submission" subtitle="Realisasi kegiatan yang sudah dijalankan & di-check-in.">
-      {() => <Body />}
+      {(ctx) => <Body email={ctx?.session?.user?.email} />}
     </MartaShell>
   );
 }
 
-function Body() {
+function Body({ email }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [scope, setScope] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await supabaseMarta
+      const sc = email ? await getMartaScope(email) : null;
+      setScope(sc);
+      let query = supabaseMarta
         .from("mh_activities")
         .select("id, event_name, brand, mc, site_id, plan_date_start, plan_date, actual_date, checkin_valid, status")
         .in("status", ["submitted", "approved", "completed"])
         .order("created_at", { ascending: false })
         .limit(500);
+      query = await applyMartaScope(query, sc);
+      const { data } = await query;
       setRows(data || []);
     } catch (_) { setRows([]); }
     finally { setLoading(false); }
-  }, []);
+  }, [email]);
   useEffect(() => { load(); }, [load]);
 
   return (
     <div>
       {!MARTA_CONFIGURED && <div style={{ ...card, borderColor: T.warning, background: T.warningBg, color: "#7a5b00", marginBottom: 16 }}>Supabase MartaHub belum dikonfigurasi / project paused.</div>}
+      {scope && !scope.unscoped && scope.found && (
+        <div style={{ display: "inline-block", marginBottom: 10, fontSize: 11, fontWeight: 700, color: T.mid, background: "#F0F4FA", border: `1px solid ${T.line}`, borderRadius: 100, padding: "2px 10px" }}>
+          Scope: {scope.region || "—"} · {(scope.brand || "—").toUpperCase()}
+        </div>
+      )}
       <div style={{ ...card, padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>

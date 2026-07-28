@@ -1,11 +1,14 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../lib/supabase";
 import { guardMarta, isMartaAdmin } from "../../lib/martaAccess";
+import { supabaseMarta } from "../../lib/supabaseMarta";
+import { getMartaScope, applyMartaScope } from "../../lib/martaScope";
 import { HubLogo } from "../../components/HubLogo";
 import { HubLogoLoader, HubLogoLoaderDark } from "../../components/HubLogoLoader";
 import { MapCard } from "./components/SumatraMap";
+import { slug, monthKeyYYYYMM, nearestPriorTarget } from "../../lib/activityTarget";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -60,8 +63,9 @@ const NAV = [
   { label: "Productivity Analytics", icon: "chart", path: "analytics" },
   { label: "Performance Insight", icon: "insight", path: "insight" },
   { label: "Leaderboard", icon: "trophy", path: "leaderboard" },
+  { label: "Geo Compliance", icon: "pin", path: "geo-compliance" },
   { section: "MANAGEMENT" },
-  { label: "Approval Center", icon: "check", path: "approval", badge: 12 },
+  { label: "Approval Center", icon: "check", path: "approval" },
   { label: "User Management", icon: "users", path: "assignments", route: "/martahub/assignments" },
   { label: "Master Data", icon: "db", path: "master" },
   { label: "System Settings", icon: "settings", path: "settings" },
@@ -71,11 +75,17 @@ const NAV = [
 const NAV_ROUTES = {
   activities: "/martahub/activities",
   submission: "/martahub/submission",
+  monitoring: "/martahub/monitoring",
+  calendar: "/martahub/calendar",
   map: "/martahub/map",
+  analytics: "/martahub/analytics",
+  insight: "/martahub/insight",
   leaderboard: "/martahub/leaderboard",
+  "geo-compliance": "/martahub/geo-compliance",
   approval: "/martahub/approval",
   master: "/martahub/master",
   assignments: "/martahub/assignments",
+  settings: "/martahub/settings",
 };
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
@@ -216,45 +226,211 @@ function LineChart({ data, labels, color, height = 140 }) {
   );
 }
 
-// ─── Mock Data ────────────────────────────────────────────────────────────────
-const MOCK = {
-  kpis: [
-    { label: "Total Activity", value: "134", sub: "+18% vs Mar 2026", trend: "up", color: "#2563EB", icon: "activity", spark: [88,95,105,112,118,116,127,134] },
-    { label: "Achievement %", value: "127%", sub: "+12% vs Mar 2026", trend: "up", color: "#16A34A", icon: "trophy", spark: [92,98,105,112,118,116,122,127] },
-    { label: "Productivity %", value: "185%", sub: "+15% vs Mar 2026", trend: "up", color: "#7C3AED", icon: "trendUp", spark: [120,135,142,156,168,170,178,185] },
-    { label: "Revenue (Actual)", value: "Rp 67,4 jt", sub: "+22% vs Mar 2026", trend: "up", color: "#EA580C", icon: "money", spark: [42,48,52,58,63,61,65,67] },
-    { label: "Cost Ratio", value: "18,5%", sub: "-2,3% vs Mar 2026", trend: "down", color: "#DB2777", icon: "percent", spark: [24,22,21,20,19,21,19,18] },
-    { label: "Geo Compliance", value: "98%", sub: "+5% vs Mar 2026", trend: "up", color: "#0D9488", icon: "pin", spark: [85,88,90,92,94,93,96,98] },
-  ],
-  achieveTrend: { data: [92,105,112,118,116,127], labels: ["Nov 25","Des 25","Jan 26","Feb 26","Mar 26","Apr 26"] },
-  productivTrend: { data: [120,142,156,168,170,185], labels: ["Nov 25","Des 25","Jan 26","Feb 26","Mar 26","Apr 26"] },
-  eventCategory: [
-    { label: "Direct Selling", value: 52, pct: "38.8%", color: "#ED1C24" },
-    { label: "Sponsorship", value: 32, pct: "23.9%", color: "#7B1FA2" },
-    { label: "Joint Event", value: 24, pct: "17.9%", color: "#00695C" },
-    { label: "Thematic", value: 18, pct: "13.4%", color: "#E65100" },
-    { label: "Others", value: 8, pct: "6.0%", color: "#455A64" },
-  ],
-  networkCat: [
-    { label: "Strong", value: 78, pct: "58.2%", color: "#2E7D32" },
-    { label: "Medium", value: 36, pct: "26.9%", color: "#F57F17" },
-    { label: "Weak", value: 20, pct: "14.9%", color: "#C62828" },
-  ],
-  activities: [
-    { no: 1, name: "HALAL BI-HALAL SCOOTER RISE", branch: "Tebing Tinggi", cat: "Sponsorship", catColor: "#7B1FA2", planDate: "11-Apr-26", actualDate: "11-Apr-26", target: "10/1", actual: "133/1", revenue: "Rp 4.655.000", productivity: "931%", achievement: "1330%", status: "Approved", statusColor: "#2E7D32" },
-    { no: 2, name: "OPEN BOOTH FWA", branch: "Del. Serdang Raya", cat: "Direct Selling", catColor: "#ED1C24", planDate: "15-Apr-26", actualDate: "15-Apr-26", target: "10/5", actual: "5/5", revenue: "Rp 925.000", productivity: "185%", achievement: "50%", status: "Approved", statusColor: "#2E7D32" },
-    { no: 3, name: "PAKET IBADAH HAJI", branch: "Del. Serdang Raya", cat: "Thematic", catColor: "#E65100", planDate: "24-Apr-26", actualDate: "24-Apr-26", target: "10/1", actual: "25/0", revenue: "Rp 15.875.000", productivity: "3175%", achievement: "250%", status: "Approved", statusColor: "#2E7D32" },
-    { no: 4, name: "FUN RUN HUT GUNUNGSITOLI", branch: "Nias", cat: "Joint Event", catColor: "#00695C", planDate: "19-Apr-26", actualDate: "19-Apr-26", target: "10/1", actual: "150/2", revenue: "Rp 7.050.000", productivity: "1410%", achievement: "1500%", status: "Validated", statusColor: "#ED1C24" },
-    { no: 5, name: "OPEN BOOTH FWA", branch: "Pantai Labu", cat: "Thematic", catColor: "#E65100", planDate: "28-Apr-26", actualDate: "28-Apr-26", target: "10/1", actual: "3/5", revenue: "Rp 855.000", productivity: "171%", achievement: "30%", status: "Submitted", statusColor: "#F57F17" },
-  ],
-};
+// ─── Real data: mh_activities → bentuk KPI/Chart/Table Dashboard ─────────────
+// (Menggantikan MOCK statis — dihitung dari baris mh_activities asli yang
+// sudah discope per TMV via lib/martaScope.js. Formula ikut §9 MARTAHUB_SPEC.md:
+//   Achievement % = Σactual_sp / Σtarget_sp × 100
+//   Productivity % = Σrevenue / Σcost × 100  (revenue=actual_rev_3m, cost=cost_actual ?? cost_estimate)
+//   Geo-compliance % = proporsi baris dengan checkin_valid/geo_compliant = true
 
+const CAT_LABELS = { directSelling: "Direct Selling", sponsorship: "Sponsorship", thematic: "Thematic", jointEvent: "Joint Event", openBooth: "Open Booth", project: "Project" };
+const CAT_COLORS = { directSelling: "#ED1C24", sponsorship: "#7B1FA2", thematic: "#E65100", jointEvent: "#00695C", openBooth: "#0277BD", project: "#455A64" };
+const NET_LABELS = { strong: "Strong", medium: "Medium", weak: "Weak" };
+const NET_COLORS = { strong: "#2E7D32", medium: "#F57F17", weak: "#C62828" };
+const STATUS_LABELS = { draft: "Draft", planned: "Planned", checked_in: "Checked In", submitted: "Submitted", approved: "Approved", rejected: "Rejected", revisionRequired: "Revision Required", inProgress: "In Progress", done: "Done", completed: "Completed", cancelled: "Cancelled" };
+const STATUS_COLORS = { draft: "#7B8BAD", planned: "#0277BD", checked_in: "#0277BD", submitted: "#F57F17", approved: "#2E7D32", rejected: "#C62828", revisionRequired: "#C62828", inProgress: "#F57F17", done: "#2E7D32", completed: "#2E7D32", cancelled: "#7B8BAD" };
+const MONTH_ABBR = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
+
+function titleCase(s) {
+  if (!s) return "-";
+  return String(s).replace(/[_-]/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase()).trim();
+}
+function rowCategory(a) {
+  const arr = Array.isArray(a.event_categories) ? a.event_categories : null;
+  const key = (arr && arr[0]) || a.event_category || null;
+  if (!key) return { key: "others", label: "Others", color: "#455A64" };
+  return { key, label: CAT_LABELS[key] || titleCase(key), color: CAT_COLORS[key] || "#455A64" };
+}
+function fmtRupiah(n) {
+  const v = n || 0;
+  const jt = v / 1_000_000;
+  if (Math.abs(jt) >= 1) return `Rp ${jt.toLocaleString("id-ID", { maximumFractionDigits: 1 })} jt`;
+  return `Rp ${v.toLocaleString("id-ID")}`;
+}
+function pctStr(n) { return `${Math.round(n || 0)}%`; }
+function sumBy(rows, fn) { return rows.reduce((s, r) => s + (fn(r) || 0), 0); }
+// Achievement % resmi = Σactual_sp ÷ Σtarget RESMI (mh_activity_target, di-set
+// TMV/Brand TMV per Branch×Brand×Bulan) — BUKAN lagi Σtarget yang BME
+// declare sendiri per-plan (r.target_sp). Target per-plan BME TETAP dipakai
+// utk kolom "Achievement" per-baris di tabel Recent Activity (metrik BEDA:
+// progress event itu sendiri vs rencana BME sendiri) — jangan disatukan.
+// `ctx` wajib: { branchSlugMap, activityTargets } — lihat lib/activityTarget.js
+// utk jembatan branch_id v1(uuid)->v2(slug) & carry-forward bulan terdekat.
+function achievementPct(rows, ctx) {
+  const a = sumBy(rows, (r) => r.actual_sp);
+  if (!ctx) return 0;
+  const { branchSlugMap, activityTargets } = ctx;
+  const seen = new Set();
+  let t = 0;
+  for (const r of rows) {
+    const bs = branchSlugMap.get(r.branch_id);
+    if (!bs || !r.brand || !r.plan_date) continue;
+    const mk = monthKeyYYYYMM(r.plan_date);
+    const key = `${bs}|${r.brand}|${mk}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const eff = nearestPriorTarget(activityTargets, bs, r.brand, mk);
+    if (eff?.target_sp) t += eff.target_sp;
+  }
+  return t > 0 ? (a / t) * 100 : 0;
+}
+function productivityPct(rows) {
+  const cost = sumBy(rows, (r) => r.cost_actual ?? r.cost_estimate);
+  const rev = sumBy(rows, (r) => r.actual_rev_3m);
+  return cost > 0 ? (rev / cost) * 100 : 0;
+}
+function costRatioPct(rows) {
+  const rev = sumBy(rows, (r) => r.actual_rev_3m);
+  const cost = sumBy(rows, (r) => r.cost_actual ?? r.cost_estimate);
+  return rev > 0 ? (cost / rev) * 100 : 0;
+}
+function geoCompliancePct(rows) {
+  const tracked = rows.filter((r) => r.checkin_valid !== null && r.checkin_valid !== undefined ? true : (r.geo_compliant !== null && r.geo_compliant !== undefined));
+  if (!tracked.length) return 0;
+  const ok = tracked.filter((r) => (r.checkin_valid ?? r.geo_compliant) === true).length;
+  return (ok / tracked.length) * 100;
+}
+function monthKeyOf(dateStr) { return dateStr ? String(dateStr).slice(0, 7) : null; }
+function monthLabel(key) {
+  const [y, m] = key.split("-").map(Number);
+  return `${MONTH_ABBR[(m || 1) - 1]} ${String(y).slice(2)}`;
+}
+function fmtDate(d) {
+  if (!d) return "-";
+  const dt = new Date(`${d}T00:00:00`);
+  if (Number.isNaN(dt.getTime())) return "-";
+  return dt.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "2-digit" });
+}
+function breakdown(list, labelOf, colorOf) {
+  const counts = new Map();
+  for (const r of list) {
+    const key = labelOf(r).key;
+    const prev = counts.get(key) || { label: labelOf(r).label, color: colorOf(r), value: 0 };
+    prev.value += 1;
+    counts.set(key, prev);
+  }
+  const total = list.length;
+  return [...counts.values()].sort((a, b) => b.value - a.value).map((c) => ({
+    ...c,
+    pct: total > 0 ? `${((c.value / total) * 100).toFixed(1)}%` : "0%",
+  }));
+}
+
+const EMPTY_DASHBOARD = { kpis: [], achieveTrend: { data: [], labels: [] }, productivTrend: { data: [], labels: [] }, eventCategory: [], networkCat: [], activities: [], currentMonthLabel: "", currentCount: 0 };
+
+function computeDashboardData(rows, branchMap, branchSlugMap, activityTargets) {
+  if (!rows) return EMPTY_DASHBOARD;
+  const targetCtx = { branchSlugMap: branchSlugMap || new Map(), activityTargets: activityTargets || [] };
+  const now = new Date();
+  const curKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const prevD = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const prevKey = `${prevD.getFullYear()}-${String(prevD.getMonth() + 1).padStart(2, "0")}`;
+  const prevLabel = monthLabel(prevKey);
+
+  const curRows = rows.filter((r) => monthKeyOf(r.plan_date) === curKey);
+  const prevRows = rows.filter((r) => monthKeyOf(r.plan_date) === prevKey);
+
+  const curRevenue = sumBy(curRows, (r) => r.actual_rev_3m);
+  const prevRevenue = sumBy(prevRows, (r) => r.actual_rev_3m);
+  const curAch = achievementPct(curRows, targetCtx), prevAch = achievementPct(prevRows, targetCtx);
+  const curProd = productivityPct(curRows), prevProd = productivityPct(prevRows);
+  const curCost = costRatioPct(curRows), prevCost = costRatioPct(prevRows);
+  const curGeo = geoCompliancePct(curRows), prevGeo = geoCompliancePct(prevRows);
+
+  const pctDelta = (cur, prev) => (prev > 0 ? ((cur - prev) / prev) * 100 : (cur > 0 ? 100 : 0));
+  const dCount = pctDelta(curRows.length, prevRows.length);
+  const dAch = curAch - prevAch, dProd = curProd - prevProd, dCost = curCost - prevCost, dGeo = curGeo - prevGeo;
+  const dRev = pctDelta(curRevenue, prevRevenue);
+  const sub = (d, unit) => `${d >= 0 ? "+" : ""}${d.toFixed(1)}${unit} vs ${prevLabel}`;
+
+  const monthKeys = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    monthKeys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+  // Satu lintasan per bulan menghasilkan seluruh 6 seri (dipakai trend chart
+  // besar DAN sparkline mini per-KPI) — hindari re-filter rows 6× terpisah.
+  const monthlyRowsByKey = monthKeys.map((k) => rows.filter((r) => monthKeyOf(r.plan_date) === k));
+  const series = {
+    count: monthlyRowsByKey.map((rs) => rs.length),
+    achievement: monthlyRowsByKey.map((rs) => Math.round(achievementPct(rs, targetCtx))),
+    productivity: monthlyRowsByKey.map((rs) => Math.round(productivityPct(rs))),
+    revenue: monthlyRowsByKey.map((rs) => sumBy(rs, (r) => r.actual_rev_3m)),
+    costRatio: monthlyRowsByKey.map((rs) => Math.round(costRatioPct(rs))),
+    geo: monthlyRowsByKey.map((rs) => Math.round(geoCompliancePct(rs))),
+  };
+  const achieveTrend = { data: series.achievement, labels: monthKeys.map(monthLabel) };
+  const productivTrend = { data: series.productivity, labels: monthKeys.map(monthLabel) };
+
+  const kpis = [
+    { label: "Total Activity", value: String(curRows.length), sub: sub(dCount, "%"), trend: dCount >= 0 ? "up" : "down", color: "#2563EB", icon: "activity", spark: series.count },
+    { label: "Achievement", value: pctStr(curAch), sub: sub(dAch, "pp"), trend: dAch >= 0 ? "up" : "down", color: C.primary, icon: "trophy", spark: series.achievement, hero: true },
+    { label: "Productivity", value: pctStr(curProd), sub: sub(dProd, "pp"), trend: dProd >= 0 ? "up" : "down", color: C.primaryD, icon: "trendUp", spark: series.productivity, hero: true },
+    { label: "Revenue (Actual)", value: fmtRupiah(curRevenue), sub: sub(dRev, "%"), trend: dRev >= 0 ? "up" : "down", color: C.accent, icon: "money", spark: series.revenue },
+    { label: "Cost Ratio", value: pctStr(curCost), sub: sub(dCost, "pp"), trend: dCost <= 0 ? "up" : "down", color: C.warning, icon: "percent", spark: series.costRatio },
+    { label: "Geo Compliance", value: pctStr(curGeo), sub: sub(dGeo, "pp"), trend: dGeo >= 0 ? "up" : "down", color: C.success, icon: "pin", spark: series.geo },
+  ];
+
+  const eventCategory = breakdown(curRows, (r) => rowCategory(r), (r) => rowCategory(r).color);
+  const networkCat = breakdown(
+    curRows,
+    (r) => ({ key: r.network_category || "unknown", label: NET_LABELS[r.network_category] || titleCase(r.network_category) || "Belum diketahui" }),
+    (r) => NET_COLORS[r.network_category] || "#7B8BAD"
+  );
+
+  const activities = curRows.map((r, i) => {
+    const cat = rowCategory(r);
+    const rev = r.actual_rev_3m ?? 0;
+    const cost = r.cost_actual ?? r.cost_estimate ?? 0;
+    // Sengaja pakai r.target_sp (target internal per-event, BME isi sendiri
+    // saat Create Plan) — BEDA dari KPI "Achievement %" di atas yang sekarang
+    // pakai target RESMI dari mh_activity_target. Ini progress event itu
+    // sendiri vs rencana BME sendiri, bukan vs target Branch×Brand resmi.
+    const ach = r.target_sp ? ((r.actual_sp ?? 0) / r.target_sp) * 100 : null;
+    const prod = cost ? (rev / cost) * 100 : null;
+    const statusKey = r.status || "draft";
+    return {
+      no: i + 1,
+      name: r.event_name || "-",
+      branch: branchMap.get(r.branch_id) || "-",
+      cat: cat.label,
+      catColor: cat.color,
+      planDate: fmtDate(r.plan_date),
+      actualDate: fmtDate(r.actual_date),
+      target: `${r.target_sp ?? 0}/${r.target_fwa ?? 0}`,
+      actual: r.actual_sp == null ? "-" : `${r.actual_sp}/${r.actual_fwa ?? 0}`,
+      revenue: fmtRupiah(rev),
+      productivity: prod == null ? "-" : pctStr(prod),
+      achievement: ach == null ? "-" : pctStr(ach),
+      status: STATUS_LABELS[statusKey] || titleCase(statusKey),
+      statusColor: STATUS_COLORS[statusKey] || "#7B8BAD",
+    };
+  });
+
+  return { kpis, achieveTrend, productivTrend, eventCategory, networkCat, activities, currentMonthLabel: monthLabel(curKey), currentCount: curRows.length };
+}
+
+// Rute nyata (dari NAV_ROUTES) — sebelumnya tombol-tombol ini tidak punya
+// onClick sama sekali (murni dekoratif, klaim aksi yang tidak terjadi apa-apa).
+// "Check In (GPS)"/"Upload Document" dihapus dari sini: itu alur mobile-only
+// (Check-in & upload foto activity report), web tidak punya halaman utk itu —
+// menampilkannya di sini akan menjanjikan sesuatu yang tidak bisa dilakukan.
 const QUICK_ACTIONS = [
-  { label: "Plan Activity", sub: "Create new plan", icon: "calendar", color: "#ED1C24", colorBg: "#FCEAEE" },
-  { label: "Submit Activity", sub: "Record actual activity", icon: "send", color: "#7B1FA2", colorBg: "#F3E8FF" },
-  { label: "Check In (GPS)", sub: "Start geo tracking", icon: "pin", color: "#2E7D32", colorBg: "#E8F5E9" },
-  { label: "Upload Document", sub: "Add documentation", icon: "img", color: "#E65100", colorBg: "#FFF3E0" },
-  { label: "View Calendar", sub: "Activity schedule", icon: "cal", color: "#00695C", colorBg: "#E0F2F1" },
+  { label: "Plan Activity", sub: "Buat plan baru", icon: "calendar", color: "#ED1C24", route: "activities" },
+  { label: "Submit Activity", sub: "Catat hasil activity", icon: "send", color: "#7B1FA2", route: "submission" },
+  { label: "Activity Monitoring", sub: "Pantau semua activity", icon: "monitor", color: "#0277BD", route: "monitoring" },
+  { label: "Activity Calendar", sub: "Jadwal & ketersediaan", icon: "cal", color: "#00695C", route: "calendar" },
+  { label: "Approval Center", sub: "Tinjau persetujuan", icon: "check", color: "#E65100", route: "approval" },
 ];
 
 // ─── Main Component ────────────────────────────────────────────────────────────
@@ -272,16 +448,47 @@ export default function MartaHubDashboard() {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [dateRange] = useState("01 Apr 2026 – 30 Apr 2026");
   const [activeTab, setActiveTab] = useState("All");
+  const [scope, setScope] = useState(null);
+  const [pendingCount, setPendingCount] = useState(null);
+  const [rawActivities, setRawActivities] = useState([]);
+  const [branchMap, setBranchMap] = useState(() => new Map());
+  // branch_id v1 (uuid, mh_branches) -> slug(nama) v2 (text, sama seperti
+  // mh_sites/mh_activity_target) — jembatan utk hitung Achievement % dari
+  // target resmi TMV (lib/activityTarget.js, diverifikasi 100% match).
+  const [branchSlugMap, setBranchSlugMap] = useState(() => new Map());
+  const [activityTargets, setActivityTargets] = useState([]);
+  const [dataErr, setDataErr] = useState(null);
 
   const t = mk(dark);
 
+  // Bentuk KPI/chart/table dari baris mh_activities asli (sudah discope TMV)
+  const data = useMemo(
+    () => computeDashboardData(rawActivities, branchMap, branchSlugMap, activityTargets),
+    [rawActivities, branchMap, branchSlugMap, activityTargets]
+  );
+
+  // Titik Activity Map — data ASLI dari mh_activities (evidence, boleh tampil
+  // apa adanya sesuai §0.2), MENGGANTIKAN 10 pin kota contoh yang sebelumnya
+  // di-hardcode di SumatraMap.jsx (bukan dari database sama sekali).
+  const mapActivities = useMemo(() => rawActivities
+    .filter((r) => Number.isFinite(r.latitude) && Number.isFinite(r.longitude))
+    .map((r) => {
+      const statusKey = r.status || "draft";
+      return {
+        lat: r.latitude, lng: r.longitude,
+        name: r.event_name || "-",
+        branch: branchMap.get(r.branch_id) || null,
+        status: STATUS_LABELS[statusKey] || titleCase(statusKey),
+        color: STATUS_COLORS[statusKey] || "#7B8BAD",
+      };
+    }), [rawActivities, branchMap]);
+
   // Filter Recent Activity berdasarkan tab status
   const filteredActivities = activeTab === "All"
-    ? MOCK.activities
-    : MOCK.activities.filter((a) => a.status === activeTab);
-  const tabCount = (tab) => tab === "All" ? MOCK.activities.length : MOCK.activities.filter((a) => a.status === tab).length;
+    ? data.activities
+    : data.activities.filter((a) => a.status === activeTab);
+  const tabCount = (tab) => tab === "All" ? data.activities.length : data.activities.filter((a) => a.status === tab).length;
 
   useEffect(() => {
     // Sync theme from hub-theme (set by auth pages), fallback to system preference
@@ -295,6 +502,57 @@ export default function MartaHubDashboard() {
       setLoading(false);
     });
   }, [router]);
+
+  // Ambil scope TMV + data mh_activities asli (6 bulan terakhir) begitu user login diketahui
+  useEffect(() => {
+    if (!user?.email) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const sc = await getMartaScope(user.email);
+        if (cancelled) return;
+        setScope(sc);
+
+        let pendingQ = supabaseMarta.from("mh_activities").select("id", { count: "exact", head: true }).eq("status", "submitted");
+        pendingQ = await applyMartaScope(pendingQ, sc);
+        const { count: pending } = await pendingQ;
+        if (!cancelled) setPendingCount(pending ?? 0);
+
+        const { data: branches, error: branchErr } = await supabaseMarta.from("mh_branches").select("id, name");
+        if (!cancelled && !branchErr && branches) {
+          setBranchMap(new Map(branches.map((b) => [b.id, b.name])));
+          setBranchSlugMap(new Map(branches.map((b) => [b.id, slug(b.name)])));
+        }
+
+        // Target resmi Achievement % (mh_activity_target, di-set TMV/Brand TMV
+        // via Master Data > Target Aktivitas) — tabel kecil, org-wide, RLS
+        // select-all, dibaca langsung tanpa RPC (pola sama mh_posmat_target).
+        const { data: targets, error: targetErr } = await supabaseMarta
+          .from("mh_activity_target")
+          .select("branch_id,brand,month,target_sp,target_fwa,target_revenue");
+        if (!cancelled && !targetErr && targets) setActivityTargets(targets);
+
+        const since = new Date();
+        since.setMonth(since.getMonth() - 5);
+        since.setDate(1);
+        const sinceISO = since.toISOString().slice(0, 10);
+
+        let q = supabaseMarta
+          .from("mh_activities")
+          .select("id,status,brand,branch_id,plan_date,actual_date,event_category,event_categories,network_category,target_sp,target_fwa,actual_sp,actual_fwa,cost_estimate,cost_actual,actual_rev_3m,checkin_valid,geo_compliant,event_name,mc,created_at,latitude,longitude")
+          .gte("plan_date", sinceISO)
+          .order("plan_date", { ascending: false });
+        q = await applyMartaScope(q, sc);
+        const { data: rows, error } = await q;
+        if (cancelled) return;
+        if (error) throw new Error(error.message);
+        setRawActivities(rows || []);
+      } catch (e) {
+        if (!cancelled) setDataErr(e.message);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user?.email]);
 
   // Responsif: <768 = mobile (sidebar jadi drawer), 768–1200 = auto-collapse
   useEffect(() => {
@@ -341,7 +599,7 @@ export default function MartaHubDashboard() {
         .mh-nav{transition:background .15s,color .15s}
         .mh-nav:hover{background:${t.hover} !important}
         .mh-card{transition:box-shadow .2s,transform .2s}
-        .mh-card:hover{box-shadow:0 8px 32px rgba(237,28,36,0.12) !important;transform:translateY(-1px)}
+        .mh-card:hover{box-shadow:0 8px 24px rgba(0,0,0,0.08) !important;transform:translateY(-1px)}
         .mh-btn{transition:opacity .14s,transform .1s;cursor:pointer;border:none;background:none;font-family:${FONT}}
         .mh-btn:hover{opacity:.8}
         .mh-btn:active{transform:scale(.97)}
@@ -360,17 +618,21 @@ export default function MartaHubDashboard() {
 
         /* ── Responsive grids ── */
         .mh-content{padding:20px 24px 40px}
-        .mh-kpi{display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin-bottom:20px}
+        .mh-brief{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+        .mh-kpi-hero{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+        .mh-kpi-secondary{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
         .mh-charts{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:16px;margin-bottom:16px}
         .mh-donuts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
-        .mh-qa{display:flex;gap:8px;flex-wrap:wrap}
-        .mh-qa > *{flex:1 1 160px}
+        .mh-qa{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+        .mh-qa-btn{transition:transform .15s,box-shadow .15s}
+        .mh-qa-btn:hover{transform:translateY(-2px)}
         .leaflet-container{background:${t.hover}}
 
         /* Laptop / half-screen */
         @media (max-width:1200px){
-          .mh-kpi{grid-template-columns:repeat(3,1fr)}
+          .mh-kpi-secondary{grid-template-columns:repeat(2,1fr)}
           .mh-charts{grid-template-columns:1fr 1fr}
+          .mh-qa{grid-template-columns:repeat(3,1fr)}
         }
         @media (max-width:900px){
           .mh-content{padding:16px 16px 32px}
@@ -379,14 +641,18 @@ export default function MartaHubDashboard() {
         }
         /* Mobile */
         @media (max-width:767px){
-          .mh-kpi{grid-template-columns:repeat(2,1fr);gap:10px}
+          .mh-kpi-hero{grid-template-columns:1fr;gap:10px}
+          .mh-kpi-secondary{grid-template-columns:repeat(2,1fr);gap:10px}
           .mh-content{padding:14px 12px 28px}
           .mh-topbar{padding:0 14px !important;gap:10px !important}
           .mh-hide-sm{display:none !important}
-          .mh-qa > *{flex:1 1 46%}
+          .mh-qa{grid-template-columns:repeat(2,1fr)}
         }
         @media (max-width:400px){
-          .mh-kpi{grid-template-columns:1fr}
+          .mh-kpi-secondary{grid-template-columns:1fr}
+        }
+        @media (prefers-reduced-motion: reduce){
+          .mh-qa-btn, .mh-card{transition:none !important}
         }
       `}</style>
 
@@ -429,7 +695,7 @@ export default function MartaHubDashboard() {
               >
                 <span style={{ color: active ? C.primary : t.lo, flexShrink: 0 }}><Icon name={item.icon} size={17} color={active ? C.primary : t.lo} /></span>
                 {!collapsed && <span style={{ fontSize: 13, fontWeight: active ? 700 : 500, color: active ? C.primary : t.mid, flex: 1 }}>{item.label}</span>}
-                {!collapsed && item.badge && <span style={{ fontSize: 10, fontWeight: 700, color: "white", background: C.error, borderRadius: 100, padding: "1px 6px", minWidth: 18, textAlign: "center" }}>{item.badge}</span>}
+                {!collapsed && item.path === "approval" && !!pendingCount && <span style={{ fontSize: 10, fontWeight: 700, color: "white", background: C.error, borderRadius: 100, padding: "1px 6px", minWidth: 18, textAlign: "center" }}>{pendingCount}</span>}
                 {active && <div style={{ position: "absolute", left: 0, top: "20%", bottom: "20%", width: 3, background: C.primary, borderRadius: "0 3px 3px 0" }} />}
               </div>
             );
@@ -468,28 +734,21 @@ export default function MartaHubDashboard() {
           </button>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: t.hi }}>Dashboard</div>
+            <div className="mh-hide-sm" style={{ fontSize: 11, color: t.lo, marginTop: 1 }}>{data.currentMonthLabel}</div>
           </div>
           <div style={{ flex: 1 }} />
 
-          {/* Date range */}
-          <div className="mh-hide-sm" style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 14px", borderRadius: 9, border: `1.5px solid ${t.line}`, background: t.hover, cursor: "pointer" }}>
-            <Icon name="cal" size={14} color={t.mid} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: t.mid }}>{dateRange}</span>
-            <Icon name="chevD" size={12} color={t.lo} />
-          </div>
-
-          {/* Filter */}
-          <button className="mh-btn mh-hide-sm" style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", borderRadius: 9, border: `1.5px solid ${t.line}`, background: t.hover, color: t.mid, fontSize: 12, fontWeight: 600 }}>
-            <Icon name="filter" size={13} color={t.mid} /> Filter
-          </button>
-
-          {/* Bell */}
-          <div style={{ position: "relative", cursor: "pointer" }}>
+          {/* Bell — jumlah nyata dari antrean Approval (pendingCount), bukan dot dekoratif */}
+          <button className="mh-btn" onClick={() => router.push("/martahub/approval")} title={pendingCount ? `${pendingCount} menunggu persetujuan` : "Tidak ada yang menunggu persetujuan"} style={{ position: "relative" }}>
             <div style={{ padding: 8, borderRadius: 9, border: `1.5px solid ${t.line}`, background: t.hover, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Icon name="bell" size={17} color={t.mid} />
             </div>
-            <div style={{ position: "absolute", top: 6, right: 6, width: 7, height: 7, borderRadius: "50%", background: C.error, border: `1.5px solid ${t.surface}` }} />
-          </div>
+            {!!pendingCount && (
+              <div style={{ position: "absolute", top: -3, right: -3, minWidth: 16, height: 16, padding: "0 3px", borderRadius: 99, background: C.error, border: `1.5px solid ${t.surface}`, color: "#fff", fontSize: 9.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {pendingCount > 99 ? "99+" : pendingCount}
+              </div>
+            )}
+          </button>
 
           {/* Dark toggle */}
           <button className="mh-btn" onClick={() => setDark(!dark)} style={{ padding: 8, borderRadius: 9, border: `1.5px solid ${t.line}`, background: t.hover, display: "flex", alignItems: "center", color: t.mid }}>
@@ -497,7 +756,7 @@ export default function MartaHubDashboard() {
           </button>
 
           {/* Avatar */}
-          <div style={{ width: 34, height: 34, borderRadius: "50%", background: `linear-gradient(135deg,${C.primary},${C.primaryD})`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 2px 8px rgba(237,28,36,0.35)" }} title={`${displayName} · ${roleLabel}`}>
+          <div style={{ width: 34, height: 34, borderRadius: "50%", background: `linear-gradient(135deg,${C.primary},${C.primaryD})`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }} title={`${displayName} · ${roleLabel}`}>
             <span style={{ fontSize: 13, fontWeight: 800, color: "white" }}>{initial}</span>
           </div>
         </div>
@@ -505,21 +764,79 @@ export default function MartaHubDashboard() {
         {/* Content */}
         <div className="mh-content" style={{ flex: 1, overflow: "auto" }}>
 
-          {/* ── KPI Cards ─────────────────────────────────────────────────── */}
-          <div className="mh-kpi">
-            {MOCK.kpis.map((kpi, i) => (
-              <div key={i} className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 16, position: "relative", overflow: "hidden" }}>
-                <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: kpi.color, borderRadius: "14px 14px 0 0" }} />
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-                  <div style={{ width: 36, height: 36, borderRadius: 10, background: kpi.color + "1A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <Icon name={kpi.icon} size={17} color={kpi.color} />
-                  </div>
-                  <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.05em", color: t.lo, textTransform: "uppercase", lineHeight: 1.3 }}>{kpi.label}</div>
+          {dataErr && (
+            <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 10, background: t.errorBg, border: `1px solid ${C.error}30`, color: C.error, fontSize: 12, fontWeight: 600 }}>
+              Gagal memuat data mh_activities: {dataErr}
+            </div>
+          )}
+          {scope && !scope.unscoped && !scope.found && (
+            <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 10, background: t.warningBg, border: `1px solid ${C.warning}30`, color: C.warning, fontSize: 12, fontWeight: 600 }}>
+              Email Anda belum terdaftar sebagai profil MartaHub (mh_profiles) — dashboard menampilkan data kosong.
+            </div>
+          )}
+
+          {/* ── Briefing — periode nyata + status approval nyata (data pendingCount
+               sebelumnya sudah di-fetch tapi tidak pernah ditampilkan di konten). ── */}
+          <div className="mh-brief">
+            <div style={{ fontSize: 13, color: t.mid }}>
+              Ringkasan <b style={{ color: t.hi }}>{data.currentMonthLabel}</b> · <b style={{ color: t.hi }}>{data.currentCount}</b> activity tercatat
+            </div>
+            <div style={{ flex: 1 }} />
+            {pendingCount != null && (
+              pendingCount > 0 ? (
+                <button className="mh-btn" onClick={() => router.push("/martahub/approval")}
+                  style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 12px", borderRadius: 100, background: t.warningBg, border: `1px solid ${C.warning}40` }}>
+                  <Icon name="bell" size={13} color={C.warning} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#8a5b00" }}>{pendingCount} menunggu persetujuan</span>
+                  <Icon name="arrow" size={12} color="#8a5b00" />
+                </button>
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 12px", borderRadius: 100, background: t.successBg }}>
+                  <Icon name="check" size={13} color={C.success} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: C.success }}>Semua approval sudah diproses</span>
                 </div>
-                <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-0.03em", color: kpi.color, lineHeight: 1, marginBottom: 8 }}>{kpi.value}</div>
+              )
+            )}
+          </div>
+
+          {/* ── KPI — 2 metrik utama (hero, dgn sparkline besar) + 4 pendukung ── */}
+          <div className="mh-kpi-hero">
+            {data.kpis.filter((k) => k.hero).map((kpi, i) => (
+              <div key={i} className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: "18px 20px" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+                  <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                      <div style={{ width: 32, height: 32, borderRadius: 9, background: kpi.color + "16", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <Icon name={kpi.icon} size={16} color={kpi.color} />
+                      </div>
+                      <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: "0.03em", color: t.mid }}>{kpi.label}</div>
+                    </div>
+                    <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: "-0.03em", color: t.hi, lineHeight: 1, marginBottom: 8, fontVariantNumeric: "tabular-nums" }}>{kpi.value}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                      <span style={{ fontSize: 10, color: kpi.trend === "up" ? C.success : C.error, fontWeight: 800 }}>{kpi.trend === "up" ? "▲" : "▼"}</span>
+                      <span style={{ fontSize: 11, color: kpi.trend === "up" ? C.success : C.error, fontWeight: 600 }}>{kpi.sub}</span>
+                    </div>
+                  </div>
+                  <div style={{ paddingTop: 4 }}>
+                    <Sparkline data={kpi.spark} color={kpi.color} height={46} />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="mh-kpi-secondary">
+            {data.kpis.filter((k) => !k.hero).map((kpi, i) => (
+              <div key={i} className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 16 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 10 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 8, background: kpi.color + "16", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <Icon name={kpi.icon} size={15} color={kpi.color} />
+                  </div>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.03em", color: t.mid, lineHeight: 1.3 }}>{kpi.label}</div>
+                </div>
+                <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: "-0.02em", color: t.hi, lineHeight: 1, marginBottom: 7, fontVariantNumeric: "tabular-nums" }}>{kpi.value}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ fontSize: 10, color: kpi.trend === "up" ? C.success : C.error, fontWeight: 800 }}>{kpi.trend === "up" ? "▲" : "▼"}</span>
-                  <span style={{ fontSize: 10.5, color: kpi.trend === "up" ? C.success : C.error, fontWeight: 600 }}>{kpi.sub}</span>
+                  <span style={{ fontSize: 9.5, color: kpi.trend === "up" ? C.success : C.error, fontWeight: 800 }}>{kpi.trend === "up" ? "▲" : "▼"}</span>
+                  <span style={{ fontSize: 10, color: kpi.trend === "up" ? C.success : C.error, fontWeight: 600 }}>{kpi.sub}</span>
                 </div>
               </div>
             ))}
@@ -531,12 +848,10 @@ export default function MartaHubDashboard() {
             <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>Achievement Trend</div>
-                <select style={{ fontSize: 11, fontWeight: 600, color: t.mid, background: t.hover, border: `1px solid ${t.line}`, borderRadius: 6, padding: "3px 8px", cursor: "pointer" }}>
-                  <option>By Month</option>
-                </select>
+                <span style={{ fontSize: 10, fontWeight: 700, color: t.lo, background: t.hover, borderRadius: 6, padding: "3px 8px" }}>6 Bulan Terakhir</span>
               </div>
               <div style={{ color: t.lo }}>
-                <LineChart data={MOCK.achieveTrend.data} labels={MOCK.achieveTrend.labels} color={C.primary} height={130} />
+                <LineChart data={data.achieveTrend.data} labels={data.achieveTrend.labels} color={C.primary} height={130} />
               </div>
             </div>
 
@@ -544,46 +859,36 @@ export default function MartaHubDashboard() {
             <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>Productivity Trend</div>
-                <select style={{ fontSize: 11, fontWeight: 600, color: t.mid, background: t.hover, border: `1px solid ${t.line}`, borderRadius: 6, padding: "3px 8px", cursor: "pointer" }}>
-                  <option>By Month</option>
-                </select>
+                <span style={{ fontSize: 10, fontWeight: 700, color: t.lo, background: t.hover, borderRadius: 6, padding: "3px 8px" }}>6 Bulan Terakhir</span>
               </div>
               <div style={{ color: t.lo }}>
-                <LineChart data={MOCK.productivTrend.data} labels={MOCK.productivTrend.labels} color="#7B1FA2" height={130} />
+                <LineChart data={data.productivTrend.data} labels={data.productivTrend.labels} color={C.primaryD} height={130} />
               </div>
             </div>
 
-            {/* Activity Map */}
+            {/* Activity Map — filter layer sesungguhnya (status/site/wilayah) ada
+                di dalam MapCard sendiri (tombol tune), tidak diduplikasi di sini. */}
             <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>Activity Map</div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  {["All Branch", "All Category", "All Network"].map(f => (
-                    <select key={f} style={{ fontSize: 10, fontWeight: 600, color: t.mid, background: t.hover, border: `1px solid ${t.line}`, borderRadius: 5, padding: "2px 6px", cursor: "pointer" }}>
-                      <option>{f}</option>
-                    </select>
-                  ))}
-                </div>
-              </div>
-              <MapCard t={t} dark={dark} canManage={isMartaAdmin(profile?.role)} />
+              <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, marginBottom: 12 }}>Activity Map</div>
+              <MapCard t={t} dark={dark} canManage={isMartaAdmin(profile?.role)} activityPoints={mapActivities} />
             </div>
           </div>
 
           {/* ── Donut Charts Row ──────────────────────────────────────────── */}
           <div className="mh-donuts">
-            {/* Event Category */}
+            {/* Activity Category */}
             <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, marginBottom: 16 }}>Event Category Contribution</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, marginBottom: 16 }}>Activity Category Contribution</div>
               <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
                 <div style={{ position: "relative", flexShrink: 0 }}>
-                  <DonutChart data={MOCK.eventCategory} size={130} strokeW={20} />
+                  <DonutChart data={data.eventCategory} size={130} strokeW={20} />
                   <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-                    <div style={{ fontSize: 20, fontWeight: 800, color: t.hi }}>134</div>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: t.hi }}>{data.eventCategory.reduce((s, d) => s + d.value, 0)}</div>
                     <div style={{ fontSize: 9.5, color: t.lo, fontWeight: 600 }}>Total</div>
                   </div>
                 </div>
                 <div style={{ flex: 1 }}>
-                  {MOCK.eventCategory.map((d, i) => (
+                  {data.eventCategory.map((d, i) => (
                     <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 9 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <div style={{ width: 10, height: 10, borderRadius: 3, background: d.color, flexShrink: 0 }} />
@@ -604,10 +909,10 @@ export default function MartaHubDashboard() {
               <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, marginBottom: 16 }}>Network Category Performance</div>
               <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
                 <div style={{ flexShrink: 0 }}>
-                  <DonutChart data={MOCK.networkCat} size={130} strokeW={20} />
+                  <DonutChart data={data.networkCat} size={130} strokeW={20} />
                 </div>
                 <div style={{ flex: 1 }}>
-                  {MOCK.networkCat.map((d, i) => (
+                  {data.networkCat.map((d, i) => (
                     <div key={i} style={{ marginBottom: 14 }}>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -630,32 +935,40 @@ export default function MartaHubDashboard() {
           <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: "16px 20px", marginBottom: 16 }}>
             <div className="mh-qa">
               {QUICK_ACTIONS.map((a, i) => (
-                <button key={i} className="mh-btn" style={{ flex: 1, display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderRadius: 10, background: a.colorBg, border: "none", textAlign: "left", cursor: "pointer" }}>
+                <button key={i} className="mh-btn mh-qa-btn" onClick={() => router.push(NAV_ROUTES[a.route])}
+                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderRadius: 10, background: a.color + "14", border: `1px solid ${a.color}30`, textAlign: "left", cursor: "pointer" }}>
                   <div style={{ width: 36, height: 36, borderRadius: 10, background: a.color, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     <Icon name={a.icon} size={17} color="white" />
                   </div>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: a.color }}>{a.label}</div>
-                    <div style={{ fontSize: 10.5, color: a.color, opacity: 0.65 }}>{a.sub}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: a.color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.label}</div>
+                    <div style={{ fontSize: 10.5, color: a.color, opacity: 0.75, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.sub}</div>
                   </div>
                 </button>
               ))}
             </div>
           </div>
 
-          {/* ── Recent Activity Table ─────────────────────────────────────── */}
+          {/* ── Recent Activity ──────────────────────────────────────────────
+               Ringkasan saja (bukan tabel detail 14-kolom seperti sebelumnya) —
+               detail penuh & filter lanjutan sudah ada di menu Activity
+               Monitoring tersendiri; dashboard cukup menampilkan yang perlu
+               diketahui sekilas + jalan pintas ke sana. Tab status diperbaiki:
+               "Validated" sebelumnya tidak pernah cocok dgn status manapun
+               (bug lama — tab itu selalu kosong), diganti "Rejected" yg nyata. */}
           <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, overflow: "hidden" }}>
             {/* Header */}
-            <div style={{ padding: "16px 20px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ padding: "16px 20px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: t.hi }}>Recent Activity</div>
-              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                {["All", "Draft", "Submitted", "Validated", "Approved"].map(tab => (
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                {["All", "Draft", "Submitted", "Approved", "Rejected"].map(tab => (
                   <button key={tab} className="mh-btn" onClick={() => setActiveTab(tab)}
                     style={{ padding: "4px 12px", borderRadius: 100, fontSize: 11, fontWeight: 700, border: `1.5px solid ${activeTab === tab ? "transparent" : t.line}`, background: activeTab === tab ? "linear-gradient(135deg,#ED1C24 0%,#C6168D 100%)" : "transparent", color: activeTab === tab ? "white" : t.mid, cursor: "pointer" }}>
                     {tab} <span style={{ opacity: 0.7, fontWeight: 600 }}>{tabCount(tab)}</span>
                   </button>
                 ))}
-                <button className="mh-btn" style={{ marginLeft: 8, padding: "4px 12px", borderRadius: 100, fontSize: 11, fontWeight: 700, border: `1.5px solid ${t.line}`, background: "transparent", color: C.primary, cursor: "pointer" }}>
+                <button className="mh-btn" onClick={() => router.push("/martahub/monitoring")}
+                  style={{ marginLeft: 8, padding: "4px 12px", borderRadius: 100, fontSize: 11, fontWeight: 700, border: `1.5px solid ${t.line}`, background: "transparent", color: C.primary, cursor: "pointer" }}>
                   View All
                 </button>
               </div>
@@ -666,47 +979,39 @@ export default function MartaHubDashboard() {
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: t.hover }}>
-                    {["No.", "Event Name", "Branch", "Event Category", "Plan Date", "Actual Date", "Target (SP/FWA)", "Actual (SP/FWA)", "Revenue", "Productivity", "Achievement", "Status", "Location", "Action"].map(h => (
+                    {["Event Name", "Branch", "Category", "Plan Date", "Achievement", "Status"].map(h => (
                       <th key={h} style={{ padding: "10px 14px", fontSize: 10.5, fontWeight: 700, color: t.lo, textAlign: "left", whiteSpace: "nowrap", borderBottom: `1px solid ${t.line}`, letterSpacing: "0.03em" }}>{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {filteredActivities.length === 0 && (
-                    <tr><td colSpan={14} style={{ padding: "26px 14px", textAlign: "center", fontSize: 12, color: t.lo }}>Tidak ada aktivitas untuk filter “{activeTab}”.</td></tr>
+                    <tr><td colSpan={6} style={{ padding: "26px 14px", textAlign: "center", fontSize: 12, color: t.lo }}>Tidak ada aktivitas untuk filter “{activeTab}”.</td></tr>
                   )}
-                  {filteredActivities.map((a, i) => (
+                  {filteredActivities.slice(0, 8).map((a, i) => (
                     <tr key={i} className="mh-row" style={{ borderBottom: `1px solid ${t.line}` }}>
-                      <td style={{ padding: "11px 14px", fontSize: 12, color: t.lo }}>{a.no}</td>
-                      <td title={a.name} style={{ padding: "11px 14px", fontSize: 12, fontWeight: 600, color: t.hi, whiteSpace: "nowrap", maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis" }}>{a.name}</td>
+                      <td title={a.name} style={{ padding: "11px 14px", fontSize: 12, fontWeight: 600, color: t.hi, whiteSpace: "nowrap", maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis" }}>{a.name}</td>
                       <td style={{ padding: "11px 14px", fontSize: 12, color: t.mid, whiteSpace: "nowrap" }}>{a.branch}</td>
                       <td style={{ padding: "11px 14px" }}>
                         <span style={{ display: "inline-block", whiteSpace: "nowrap", fontSize: 10.5, fontWeight: 700, padding: "3px 10px", borderRadius: 100, background: a.catColor + "18", color: a.catColor, border: `1px solid ${a.catColor}30` }}>{a.cat}</span>
                       </td>
                       <td style={{ padding: "11px 14px", fontSize: 11.5, color: t.mid, whiteSpace: "nowrap" }}>{a.planDate}</td>
-                      <td style={{ padding: "11px 14px", fontSize: 11.5, color: t.mid, whiteSpace: "nowrap" }}>{a.actualDate}</td>
-                      <td style={{ padding: "11px 14px", fontSize: 12, fontWeight: 600, color: t.hi }}>{a.target}</td>
-                      <td style={{ padding: "11px 14px", fontSize: 12, fontWeight: 600, color: t.hi }}>{a.actual}</td>
-                      <td style={{ padding: "11px 14px", fontSize: 12, color: t.hi, whiteSpace: "nowrap" }}>{a.revenue}</td>
-                      <td style={{ padding: "11px 14px", fontSize: 12, fontWeight: 700, color: C.success }}>{a.productivity}</td>
-                      <td style={{ padding: "11px 14px", fontSize: 12, fontWeight: 700, color: parseFloat(a.achievement) >= 100 ? C.success : C.warning }}>{a.achievement}</td>
+                      <td style={{ padding: "11px 14px", fontSize: 12, fontWeight: 700, color: parseFloat(a.achievement) >= 100 ? C.success : C.warning, fontVariantNumeric: "tabular-nums" }}>{a.achievement}</td>
                       <td style={{ padding: "11px 14px" }}>
                         <span style={{ fontSize: 10.5, fontWeight: 700, padding: "3px 10px", borderRadius: 100, background: a.statusColor + "15", color: a.statusColor, border: `1px solid ${a.statusColor}35` }}>{a.status}</span>
-                      </td>
-                      <td style={{ padding: "11px 14px" }}>
-                        <button className="mh-btn" style={{ color: t.lo }}><Icon name="pin" size={15} color={t.lo} /></button>
-                      </td>
-                      <td style={{ padding: "11px 14px" }}>
-                        <div style={{ display: "flex", gap: 4 }}>
-                          <button className="mh-btn" style={{ width: 26, height: 26, borderRadius: 6, background: t.hover, display: "flex", alignItems: "center", justifyContent: "center", color: t.mid }}><Icon name="eye" size={13} color={t.mid} /></button>
-                          <button className="mh-btn" style={{ width: 26, height: 26, borderRadius: 6, background: t.hover, display: "flex", alignItems: "center", justifyContent: "center", color: t.mid }}><Icon name="dots" size={13} color={t.mid} /></button>
-                        </div>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            {filteredActivities.length > 8 && (
+              <div style={{ padding: "10px 20px", borderTop: `1px solid ${t.line}`, textAlign: "center" }}>
+                <button className="mh-btn" onClick={() => router.push("/martahub/monitoring")} style={{ fontSize: 11.5, fontWeight: 700, color: C.primary }}>
+                  Lihat {filteredActivities.length - 8} lainnya di Activity Monitoring →
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>

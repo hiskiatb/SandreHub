@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import MartaShell, { T, FONT } from "../components/MartaShell";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
+import { getMartaScope, applyMartaScope } from "../../../lib/martaScope";
 
 const CAT_LABEL = {
   directSelling: "Direct Selling", jointEvent: "Join Event", openBooth: "Open Booth",
@@ -23,30 +24,35 @@ const fmtDate = (s) => {
 export default function ActivityPlanPage() {
   return (
     <MartaShell active="activities" title="Activity Plan" subtitle="Rencana kegiatan yang dibuat BME/RGE di lapangan.">
-      {() => <Body />}
+      {(ctx) => <Body email={ctx?.session?.user?.email} />}
     </MartaShell>
   );
 }
 
-function Body() {
+function Body({ email }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
+  const [scope, setScope] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true); setErr("");
     try {
-      const { data, error } = await supabaseMarta
+      const sc = email ? await getMartaScope(email) : null;
+      setScope(sc);
+      let query = supabaseMarta
         .from("mh_activities")
-        .select("id, event_name, brand, mc, branch_id, event_categories, plan_date_start, plan_date, site_id, network_category, area_potential, status, checkin_valid, created_at")
+        .select("id, event_name, brand, mc, branch_id, event_categories, plan_date_start, plan_date, site_id, network_category, area_potential, status, checkin_valid, created_at, approved_by_name, approved_by_email")
         .order("created_at", { ascending: false })
         .limit(500);
+      query = await applyMartaScope(query, sc);
+      const { data, error } = await query;
       if (error) throw new Error(error.message);
       setRows(data || []);
     } catch (e) { setErr(e.message || "Gagal memuat"); }
     finally { setLoading(false); }
-  }, []);
+  }, [email]);
   useEffect(() => { load(); }, [load]);
 
   const term = q.trim().toLowerCase();
@@ -73,6 +79,11 @@ function Body() {
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari event / MC / site…"
           style={{ ...inp, maxWidth: 320 }} />
+        {scope && !scope.unscoped && scope.found && (
+          <div style={{ alignSelf: "center", fontSize: 11, fontWeight: 700, color: T.mid, background: "#F0F4FA", border: `1px solid ${T.line}`, borderRadius: 100, padding: "2px 10px" }}>
+            Scope: {scope.region || "—"} · {(scope.brand || "—").toUpperCase()}
+          </div>
+        )}
         <div style={{ marginLeft: "auto", alignSelf: "center", fontSize: 12.5, color: T.mid }}>{view.length} plan</div>
       </div>
 
@@ -80,11 +91,11 @@ function Body() {
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
             <thead><tr style={{ background: "#F7F9FC", color: T.mid, textAlign: "left" }}>
-              {["Event", "Brand", "MC", "Site", "Kategori", "Tanggal", "Network", "Status", "Check-in"].map((h) => <th key={h} style={{ padding: "9px 14px", fontSize: 11, fontWeight: 800, textTransform: "uppercase" }}>{h}</th>)}
+              {["Event", "Brand", "MC", "Site", "Kategori", "Tanggal", "Network", "Status", "Diputuskan Oleh", "Check-in"].map((h) => <th key={h} style={{ padding: "9px 14px", fontSize: 11, fontWeight: 800, textTransform: "uppercase" }}>{h}</th>)}
             </tr></thead>
             <tbody>
-              {loading && <tr><td colSpan={9} style={{ padding: 26, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
-              {!loading && view.length === 0 && <tr><td colSpan={9} style={{ padding: 26, textAlign: "center", color: T.lo }}>Belum ada activity plan.</td></tr>}
+              {loading && <tr><td colSpan={10} style={{ padding: 26, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
+              {!loading && view.length === 0 && <tr><td colSpan={10} style={{ padding: 26, textAlign: "center", color: T.lo }}>Belum ada activity plan.</td></tr>}
               {!loading && view.map((r) => {
                 const st = STATUS[r.status] || [r.status, T.mid, "#eef1f6"];
                 return (
@@ -97,6 +108,7 @@ function Body() {
                     <td style={{ padding: "10px 14px", color: T.mid }}>{fmtDate(r.plan_date_start || r.plan_date)}</td>
                     <td style={{ padding: "10px 14px", color: T.mid }}>{r.network_category || "—"}</td>
                     <td style={{ padding: "10px 14px" }}><span style={{ fontSize: 10.5, fontWeight: 800, color: st[1], background: st[2], padding: "2px 8px", borderRadius: 999 }}>{st[0]}</span></td>
+                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.approved_by_name || r.approved_by_email || "—"}</td>
                     <td style={{ padding: "10px 14px" }}>{r.checkin_valid == null ? "—" : r.checkin_valid ? <span style={{ color: T.success, fontWeight: 700 }}>Valid</span> : <span style={{ color: T.error, fontWeight: 700 }}>Invalid</span>}</td>
                   </tr>
                 );

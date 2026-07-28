@@ -34,3 +34,57 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* ══════════════════════════════════════════════════════════════════════
+   Form SDP — lapisan animasi halus (SandraHub). Opt-in via .sdp-root.
+   Hanya animasi opacity/transform (hemat GPU) + hormati reduced-motion.
+   ══════════════════════════════════════════════════════════════════════ */
+@keyframes sdpUp   { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes sdpFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes sdpPop  { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
+
+/* Masuknya sebuah view/panel */
+.sdp-view  { animation: sdpUp .5s cubic-bezier(.22,.61,.36,1) both; }
+.sdp-fade  { animation: sdpFade .45s ease both; }
+.sdp-pop   { animation: sdpPop .4s cubic-bezier(.34,1.56,.64,1) both; }
+
+/* Kartu-kartu yang muncul berurutan (stagger) */
+.sdp-stagger > * { animation: sdpUp .55s cubic-bezier(.22,.61,.36,1) both; }
+.sdp-stagger > *:nth-child(1){ animation-delay:.04s }
+.sdp-stagger > *:nth-child(2){ animation-delay:.09s }
+.sdp-stagger > *:nth-child(3){ animation-delay:.14s }
+.sdp-stagger > *:nth-child(4){ animation-delay:.19s }
+.sdp-stagger > *:nth-child(5){ animation-delay:.24s }
+.sdp-stagger > *:nth-child(6){ animation-delay:.29s }
+.sdp-stagger > *:nth-child(7){ animation-delay:.34s }
+.sdp-stagger > *:nth-child(8){ animation-delay:.39s }
+.sdp-stagger > *:nth-child(n+9){ animation-delay:.44s }
+
+/* Kartu dengan hover lift (untuk elemen tanpa hover-JS) */
+.sdp-card { transition: transform .22s cubic-bezier(.22,.61,.36,1), box-shadow .22s ease, border-color .22s ease; will-change: transform; }
+.sdp-card:hover { transform: translateY(-3px); }
+
+/* Interaksi mulus untuk seluruh kontrol di dalam Form SDP */
+.sdp-root button { transition: transform .1s ease, filter .2s ease, box-shadow .22s ease, opacity .2s ease; }
+.sdp-root button:not(:disabled):hover  { filter: brightness(1.04); }
+.sdp-root button:not(:disabled):active { transform: scale(.97); }
+
+.sdp-root :is(input, select, textarea) { transition: box-shadow .18s ease, border-color .18s ease, background .18s ease; }
+.sdp-root :is(input, select, textarea):focus { box-shadow: 0 0 0 3px rgba(50,188,173,.18); }
+
+/* Tombol primary (gradasi merah-magenta) — kilau lembut saat hover */
+.sdp-root button[data-primary]:not(:disabled):hover { box-shadow: 0 8px 22px rgba(198,22,141,.28); }
+
+/* Spinner util (dipakai komponen SDP) */
+.sdp-root .spin { animation: sp 1s linear infinite; }
+@keyframes sp { to { transform: rotate(360deg); } }
+
+/* Leaflet: kurung z-index internal (kontrol zoom = z1000, pane = z400) agar tidak
+   menembus di atas dropdown / tombol form. isolate = buat stacking context sendiri. */
+.leaflet-container { isolation: isolate; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sdp-view, .sdp-fade, .sdp-pop, .sdp-stagger > * { animation: none !important; }
+  .sdp-card, .sdp-root button, .sdp-root :is(input,select,textarea) { transition: none !important; }
+  .sdp-card:hover, .sdp-root button:not(:disabled):active { transform: none !important; }
+}

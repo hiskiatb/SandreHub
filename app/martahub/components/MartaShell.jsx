@@ -5,6 +5,8 @@ import { guardMarta } from "../../../lib/martaAccess";
 import { HubLogo } from "../../../components/HubLogo";
 import { HubLogoLoader } from "../../../components/HubLogoLoader";
 import { supabase } from "../../../lib/supabase";
+import { supabaseMarta } from "../../../lib/supabaseMarta";
+import { getMartaScope, applyMartaScope } from "../../../lib/martaScope";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const HEADER_H = 60; // tinggi header sidebar & topbar SAMA agar garis bawah sejajar
@@ -26,18 +28,21 @@ const NAV = [
   { section: "ACTIVITY" },
   { label: "Activity Plan", icon: "calendar", path: "activities", route: "/martahub/activities" },
   { label: "Activity Submission", icon: "send", path: "submission", route: "/martahub/submission" },
-  { label: "Activity Monitoring", icon: "monitor", path: "monitoring", route: "/martahub" },
-  { label: "Calendar", icon: "cal", path: "calendar", route: "/martahub" },
+  { label: "Activity Monitoring", icon: "monitor", path: "monitoring", route: "/martahub/monitoring" },
+  { label: "Calendar", icon: "cal", path: "calendar", route: "/martahub/calendar" },
   { section: "INTELLIGENCE" },
   { label: "Map Intelligence", icon: "map", path: "map", route: "/martahub/map" },
-  { label: "Productivity Analytics", icon: "chart", path: "analytics", route: "/martahub" },
-  { label: "Performance Insight", icon: "insight", path: "insight", route: "/martahub" },
+  { label: "Productivity Analytics", icon: "chart", path: "analytics", route: "/martahub/analytics" },
+  { label: "Performance Insight", icon: "insight", path: "insight", route: "/martahub/insight" },
   { label: "Leaderboard", icon: "trophy", path: "leaderboard", route: "/martahub/leaderboard" },
+  { label: "Geo Compliance", icon: "pin", path: "geo-compliance", route: "/martahub/geo-compliance" },
   { section: "MANAGEMENT" },
-  { label: "Approval Center", icon: "check", path: "approval", route: "/martahub/approval", badge: 12 },
+  { label: "Approval Center", icon: "check", path: "approval", route: "/martahub/approval" },
   { label: "User Management", icon: "users", path: "assignments", route: "/martahub/assignments" },
   { label: "Master Data", icon: "db", path: "master", route: "/martahub/master" },
-  { label: "System Settings", icon: "settings", path: "settings", route: "/martahub" },
+  { label: "POSMAT Stock", icon: "db", path: "posmat", route: "/martahub/posmat" },
+  { label: "Validasi Lokasi", icon: "check", path: "validasi", route: "/martahub/validasi" },
+  { label: "System Settings", icon: "settings", path: "settings", route: "/martahub/settings" },
 ];
 
 function Icon({ name, size = 16, color = "currentColor" }) {
@@ -53,6 +58,7 @@ function Icon({ name, size = 16, color = "currentColor" }) {
     chart:    <svg style={s} viewBox="0 0 24 24" {...p}><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
     insight:  <svg style={s} viewBox="0 0 24 24" {...p}><path d="M2 20h20M6 20V10M10 20V4M14 20V12M18 20V8"/></svg>,
     trophy:   <svg style={s} viewBox="0 0 24 24" {...p}><path d="M6 9H3.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h2.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16M8 22v-3M16 22v-3M6 2h12v10a6 6 0 0 1-12 0V2z"/></svg>,
+    pin:      <svg style={s} viewBox="0 0 24 24" {...p}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>,
     check:    <svg style={s} viewBox="0 0 24 24" {...p}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>,
     db:       <svg style={s} viewBox="0 0 24 24" {...p}><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>,
     users:    <svg style={s} viewBox="0 0 24 24" {...p}><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>,
@@ -78,6 +84,7 @@ export default function MartaShell({ active, title, subtitle, actions, children 
   const [mobile, setMobile] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [pendingCount, setPendingCount] = useState(null);
 
   useEffect(() => {
     guardMarta(router, typeof window !== "undefined" ? window.location.pathname : "/martahub").then((res) => {
@@ -86,6 +93,22 @@ export default function MartaShell({ active, title, subtitle, actions, children 
       setLoading(false);
     });
   }, [router]);
+
+  // Badge Approval Center — jumlah nyata mh_activities status=submitted yang
+  // masuk cakupan (region×brand) pengguna, bukan angka statis.
+  useEffect(() => {
+    const email = ctx?.session?.user?.email;
+    if (!email) return;
+    let cancelled = false;
+    (async () => {
+      const sc = await getMartaScope(email);
+      let q = supabaseMarta.from("mh_activities").select("id", { count: "exact", head: true }).eq("status", "submitted");
+      q = await applyMartaScope(q, sc);
+      const { count } = await q;
+      if (!cancelled) setPendingCount(count ?? 0);
+    })();
+    return () => { cancelled = true; };
+  }, [ctx?.session?.user?.email]);
 
   useEffect(() => {
     const onResize = () => {
@@ -184,7 +207,7 @@ export default function MartaShell({ active, title, subtitle, actions, children 
                 title={collapsed ? item.label : undefined}>
                 <span style={{ color: on ? T.primary : T.lo, flexShrink: 0 }}><Icon name={item.icon} size={17} color={on ? T.primary : T.lo} /></span>
                 {!collapsed && <span style={{ fontSize: 13, fontWeight: on ? 700 : 500, color: on ? T.primary : T.mid, flex: 1 }}>{item.label}</span>}
-                {!collapsed && item.badge && <span style={{ fontSize: 10, fontWeight: 700, color: "white", background: T.error, borderRadius: 100, padding: "1px 6px", minWidth: 18, textAlign: "center" }}>{item.badge}</span>}
+                {!collapsed && item.path === "approval" && !!pendingCount && <span style={{ fontSize: 10, fontWeight: 700, color: "white", background: T.error, borderRadius: 100, padding: "1px 6px", minWidth: 18, textAlign: "center" }}>{pendingCount}</span>}
                 {on && <div style={{ position: "absolute", left: 0, top: "20%", bottom: "20%", width: 3, background: T.primary, borderRadius: "0 3px 3px 0" }} />}
               </div>
             );

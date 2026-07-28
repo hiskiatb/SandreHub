@@ -18,7 +18,7 @@ import * as XLSX from "xlsx";
 import {
   ChevronLeft, ChevronRight, ChevronDown, Search, RefreshCw, Store, MapPin,
   CheckCircle2, Clock, XCircle, AlertTriangle, FileText, Loader2, History, Phone, User, Mail, Pencil,
-  Download, X,
+  Download, X, ArrowLeft, Info,
 } from "lucide-react";
 import SDP_Edit from "./SDP_Edit";
 
@@ -94,7 +94,7 @@ function Sel({ value, onChange, opts, t, minWidth = 130 }) {
 }
 
 /* ══════════════════════════════════════════════════════════════ */
-export default function SDP_Field({ supabase, theme = "light", profile, readOnly = false }) {
+export default function SDP_Field({ supabase, theme = "light", profile, readOnly = false, lockRegion = null, onExit, helpText }) {
   const d = theme === "dark";
   const t = mk(d);
   const role = profile?.role || "";
@@ -242,6 +242,18 @@ export default function SDP_Field({ supabase, theme = "light", profile, readOnly
         .sdpcard{background:${t.card};border:1px solid ${t.line};border-radius:16px;box-shadow:${t.sm};transition:transform .12s,box-shadow .15s;cursor:pointer}
         .sdpcard:active{transform:scale(.99)}`}</style>
 
+      {onExit && (
+        <button onClick={onExit} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: t.mid, fontFamily: FF, fontSize: 12.5, fontWeight: 600, padding: 0, marginBottom: 12 }}>
+          <ArrowLeft size={14} /> Form SDP
+        </button>
+      )}
+      {helpText && (
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "9px 12px", borderRadius: 10, background: `${t.blue}0D`, border: `1px solid ${t.blue}33`, marginBottom: 14 }}>
+          <Info size={14} color={t.blue} style={{ flexShrink: 0, marginTop: 1 }} />
+          <div style={{ fontSize: 12.5, color: t.mid, lineHeight: 1.5 }}>{helpText}</div>
+        </div>
+      )}
+
       {/* Header + periode */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 14, flexWrap: "wrap", marginBottom: 16 }}>
         <div>
@@ -312,30 +324,42 @@ export default function SDP_Field({ supabase, theme = "light", profile, readOnly
           <Store size={26} style={{ opacity: .5, marginBottom: 8 }} /><div style={{ fontSize: 13.5 }}>{rows.length ? "Tidak ada SDP yang cocok dengan filter." : `Tidak ada SDP untuk ${periodLabel(period)}${role === "cse_rse" ? " — pastikan kode cluster sudah diklaim." : "."}`}</div>
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {filtered.slice(0, 600).map((r) => {
-            const st = STATUS[r.status]; const Ico = st.icon; const col = toneCol(st.tone);
-            return (
-              <div key={r.sdp_id} className="sdpcard" onClick={() => setDetail(r)} style={{ padding: 15 }}>
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.01em", color: t.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.name}</div>
-                    <div style={{ fontSize: 12, fontFamily: "monospace", color: t.mid, marginTop: 2 }}>{r.sdp_id}</div>
-                  </div>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0, padding: "4px 9px", borderRadius: 99, fontSize: 11, fontWeight: 800, color: col, background: `${col}1A`, border: `1px solid ${col}33` }}>
-                    <Ico size={12} /> {st.label}
-                  </span>
-                </div>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", marginTop: 10, fontSize: 12, color: t.mid }}>
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Store size={12} /> {r.sdp_type || "—"}</span>
-                  {r.cluster && <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><MapPin size={12} /> {r.cluster}</span>}
-                  {r.branch && <span>· {r.branch}</span>}
-                  {r.region && <span>· {r.region}</span>}
-                </div>
-              </div>
-            );
-          })}
-          {filtered.length > 600 && <div style={{ padding: "10px 4px", textAlign: "center", color: t.mid, fontSize: 12 }}>+ {filtered.length - 600} SDP lain — gunakan filter / export untuk daftar lengkap</div>}
+        <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, boxShadow: t.sm, overflow: "hidden" }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr style={{ background: t.sub, borderBottom: `1px solid ${t.line}` }}>
+                  {["SDP ID", "Nama SDP", "Type", "Brand", "Cluster", "Branch", "Region", "Status", ""].map((h, i) => (
+                    <th key={h + i} style={{ padding: "10px 14px", textAlign: h === "" ? "center" : "left", fontSize: 10.5, fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase", color: t.mid, whiteSpace: "nowrap", position: "sticky", top: 0, background: t.sub }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.slice(0, 600).map((r) => {
+                  const st = STATUS[r.status]; const Ico = st.icon; const col = toneCol(st.tone);
+                  return (
+                    <tr key={r.sdp_id} onClick={() => setDetail(r)}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                      style={{ borderTop: `1px solid ${t.lineSoft}`, cursor: "pointer" }}>
+                      <td style={{ padding: "10px 14px", fontFamily: "monospace", fontSize: 12, color: t.mid, whiteSpace: "nowrap" }}>{r.sdp_id}</td>
+                      <td style={{ padding: "10px 14px", fontWeight: 700, color: t.hi, maxWidth: 230, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.name}</td>
+                      <td style={{ padding: "10px 14px", color: t.mid, whiteSpace: "nowrap" }}>{r.sdp_type || "—"}</td>
+                      <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}><span style={{ fontSize: 11, fontWeight: 700, color: t.mid, background: t.sub, borderRadius: 6, padding: "2px 7px" }}>{r.brand || "—"}</span></td>
+                      <td style={{ padding: "10px 14px", color: t.mid, whiteSpace: "nowrap", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis" }}>{r.cluster || "—"}</td>
+                      <td style={{ padding: "10px 14px", color: t.mid, whiteSpace: "nowrap" }}>{r.branch || "—"}</td>
+                      <td style={{ padding: "10px 14px", color: t.mid, whiteSpace: "nowrap" }}>{r.region || "—"}</td>
+                      <td style={{ padding: "10px 14px", whiteSpace: "nowrap" }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 99, fontSize: 11, fontWeight: 800, color: col, background: `${col}1A`, border: `1px solid ${col}33` }}><Ico size={11} /> {st.label}</span>
+                      </td>
+                      <td style={{ padding: "10px 14px", textAlign: "center" }}><ChevronRight size={15} color={t.lo} /></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {filtered.length > 600 && <div style={{ padding: "10px 14px", textAlign: "center", color: t.mid, fontSize: 12, borderTop: `1px solid ${t.line}` }}>+ {filtered.length - 600} SDP lain — gunakan filter / export untuk daftar lengkap</div>}
         </div>
       )}
       <div style={{ marginTop: 12, fontSize: 12, color: t.mid }}>{filtered.length} SDP · {periodLabel(period)}</div>

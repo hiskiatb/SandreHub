@@ -1060,11 +1060,9 @@ export default function DashboardPage() {
             {/* ── SDP Status ── */}
             {view === "sdp-status" && canSdp && !viewUnderMaint && (
               <motion.div key="sdp" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                {!isSDPMember && (
-                  <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}>
-                    <ChevronLeft size={15} /> Kembali ke Overview
-                  </button>
-                )}
+                {/* Tombol "Kembali ke Overview" ditangani DI DALAM SDP_StatusForm
+                    (hanya tampil di landing SDP) agar tidak menumpuk dengan tombol
+                    kembali sub-view. */}
                 <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
                   <div style={{ padding: "24px 28px" }}>
                     <SDP_StatusForm
@@ -1073,6 +1071,8 @@ export default function DashboardPage() {
                       profile={profile}
                       readOnly={isIOHAny}
                       lockRegion={iohLockedRegion}
+                      showOverviewBack={!isSDPMember}
+                      onBackToOverview={() => navigate("overview")}
                     />
                   </div>
                 </div>

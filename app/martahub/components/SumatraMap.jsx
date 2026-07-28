@@ -1,27 +1,31 @@
 "use client";
 import { useState, useEffect, useRef, useMemo } from "react";
-import { parseGeoFile, sanitizeSumatra, esc, idbAll, idbPut, idbDelete, idbClear } from "../../../lib/geoImport";
-import { uploadTerritory, uploadSites, listTerritory, fetchTerritoryGeojson, signedUrl, removeTerritory } from "../../../lib/territoryStore";
-import { parseSiteFile, idbAllSites, idbPutSite, idbClearSites } from "../../../lib/siteImport";
+import { parseGeoFile, sanitizeSumatra, esc, idbAll, idbPut, idbDelete, idbClear, ALLOWED as TERRITORY_EXT, periodFromName, periodKeyFromName } from "../../../lib/geoImport";
+import { getMapLayerStatus, setMapLayerStatus } from "../../../lib/territoryStore";
+import { parseSiteFile, idbAllSites, idbPutSite, idbClearSites, ALLOWED as SITE_EXT } from "../../../lib/siteImport";
+import { supabase } from "../../../lib/supabase";
+import {
+  supportsFolderLink, saveFolderHandle, getFolderHandle, clearFolderHandle,
+  setLastFile, ensurePermission, checkPermission, listMatchingFiles,
+} from "../../../lib/folderHandles";
 import "leaflet/dist/leaflet.css";
+
+// Email sesi (SandraHub, sama seperti gerbang akses MartaHub §0.1) — dipakai
+// hanya untuk mencatat SIAPA terakhir memproses file lokal (audit ringan di
+// status metadata), bukan untuk otentikasi ke project MartaHub.
+async function currentEmail() {
+  try { const { data: { user } } = await supabase.auth.getUser(); return user?.email || null; }
+  catch { return null; }
+}
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const C = { success: "#2E7D32", warning: "#F57F17", error: "#C62828", errorL: "#FFEBEE" };
 
-// ── Data pin aktivitas (contoh) ───────────────────────────────────────────────
-const MAP_PINS = [
-  { name: "Medan", lat: 3.5952, lng: 98.6722, count: 8, level: "high" },
-  { name: "Binjai", lat: 3.6001, lng: 98.4854, count: 3, level: "medium" },
-  { name: "Deli Serdang", lat: 3.4200, lng: 98.6700, count: 5, level: "high" },
-  { name: "Langkat", lat: 3.9000, lng: 98.2900, count: 2, level: "low" },
-  { name: "Serdang Bedagai", lat: 3.3600, lng: 99.0600, count: 6, level: "high" },
-  { name: "Kabanjahe (Karo)", lat: 3.1000, lng: 98.4900, count: 4, level: "medium" },
-  { name: "Sidikalang (Dairi)", lat: 2.7430, lng: 98.3120, count: 1, level: "low" },
-  { name: "Pematang Siantar", lat: 2.9600, lng: 99.0600, count: 7, level: "high" },
-  { name: "Simalungun", lat: 2.9000, lng: 99.2000, count: 3, level: "medium" },
-  { name: "Kisaran (Asahan)", lat: 2.9830, lng: 99.6200, count: 2, level: "high" },
-];
-const LEVEL_COLOR = { high: C.success, medium: C.warning, low: C.error };
+// Warna titik Activity Map, by status mh_activities (BUKAN pin contoh lagi —
+// data selalu dioper dari luar via prop `activityPoints`, dari mh_activities
+// asli). Dipertahankan longgar (fallback abu) supaya status baru/tak dikenal
+// tidak pernah bikin titik hilang dari peta.
+const ACTIVITY_STATUS_COLOR = { approved: C.success, submitted: C.warning, plan_submitted: "#0277BD", revision_needed: C.error, rejected: C.error, draft: "#7B8BAD" };
 const SUMATRA_BOUNDS = [[-6.6, 94.4], [6.7, 107.1]]; // seluruh Pulau Sumatera
 
 // ── Choropleth helpers ────────────────────────────────────────────────────────
@@ -76,12 +80,6 @@ async function buildBaseMap(el, { dark, expanded, interactive = expanded }) {
     ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
     : "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
   L.tileLayer(tiles, { subdomains: "abcd", maxZoom: 18 }).addTo(map);
-  MAP_PINS.forEach((p) => {
-    const c = LEVEL_COLOR[p.level]; const sz = expanded ? 30 : 26;
-    const icon = L.divIcon({ className: "", html: `<div style="width:${sz}px;height:${sz}px;border-radius:50%;background:${c}26;border:2px solid ${c};display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px ${c}66;font:800 ${expanded ? 12 : 11}px ${FONT};color:${c}">${p.count}</div>`, iconSize: [sz, sz], iconAnchor: [sz / 2, sz / 2] });
-    const m = L.marker([p.lat, p.lng], { icon, pane: "markerPane" }).addTo(map).bindTooltip(`${p.name} · ${p.count} aktivitas`, { direction: "top", offset: [0, -sz / 2] });
-    if (expanded) m.openTooltip();
-  });
   const inval = () => { try { if (map._container && map._container.isConnected) map.invalidateSize({ animate: false }); } catch { /* removed */ } };
   [60, 200, 400, 700, 1100, 1700].forEach((ms) => setTimeout(inval, ms));
   requestAnimationFrame(() => requestAnimationFrame(inval));
@@ -156,6 +154,29 @@ async function paintOverlays(map, fgRef, layers, { expanded, appBg }) {
       if (b && b.isValid()) map.fitBounds(b, { padding: [26, 26], animate: false });
     } catch { /* noop */ }
   }
+}
+
+// ── Activity Map — titik ASLI dari mh_activities (evidence, §0.2) ────────────
+// Dioper dari luar via prop `activityPoints` (page.jsx query mh_activities
+// terscope TMV) — komponen ini TIDAK query apa pun sendiri, murni render.
+async function paintActivities(map, ref, points, { expanded } = {}) {
+  if (!map || !map._container) return;
+  const L = (await import("leaflet")).default;
+  if (ref.current) { try { map.removeLayer(ref.current); } catch { /* noop */ } ref.current = null; }
+  if (!points || !points.length) return;
+  if (!map.getPane("activityPane")) { map.createPane("activityPane"); map.getPane("activityPane").style.zIndex = 660; }
+  const grp = L.layerGroup();
+  const sz = expanded ? 22 : 18;
+  points.forEach((p) => {
+    const c = p.color || ACTIVITY_STATUS_COLOR[p.statusKey] || "#455A64";
+    const icon = L.divIcon({ className: "", html: `<div style="width:${sz}px;height:${sz}px;border-radius:50%;background:${c}26;border:2px solid ${c}"></div>`, iconSize: [sz, sz], iconAnchor: [sz / 2, sz / 2] });
+    const m = L.marker([p.lat, p.lng], { icon, pane: "activityPane" });
+    const label = [esc(p.name || "Activity"), p.branch, p.status].filter(Boolean).join(" · ");
+    m.bindTooltip(label, { direction: "top", offset: [0, -sz / 2] });
+    grp.addLayer(m);
+  });
+  grp.addTo(map);
+  ref.current = grp;
 }
 
 // ── Site (titik) ──────────────────────────────────────────────────────────────
@@ -320,15 +341,23 @@ function I({ name, size = 15, color = "currentColor" }) {
     plus: <svg style={s} viewBox="0 0 24 24" {...p}><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>,
     minus: <svg style={s} viewBox="0 0 24 24" {...p}><line x1="5" y1="12" x2="19" y2="12" /></svg>,
     fit: <svg style={s} viewBox="0 0 24 24" {...p}><path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4" /></svg>,
+    folder: <svg style={s} viewBox="0 0 24 24" {...p}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" /></svg>,
+    calendar: <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></svg>,
+    refresh: <svg style={s} viewBox="0 0 24 24" {...p}><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg>,
   };
   return icons[name] || null;
 }
 
-function MapLegend({ t }) {
+// Legend Activity Map — status asli mh_activities (ganti "Produktivitas
+// Tinggi/Sedang/Rendah" lama yang cuma cocok utk 10 pin contoh yang sudah
+// dihapus). Disembunyikan otomatis kalau tidak ada titik activity sama sekali
+// supaya tidak menampilkan legend kosong/menyesatkan.
+function MapLegend({ t, show = true }) {
+  if (!show) return null;
   return (
     <div style={{ position: "absolute", bottom: 12, left: 12, zIndex: 500, background: t.card, borderRadius: 10, padding: "9px 13px", display: "flex", flexDirection: "column", gap: 5, border: `1px solid ${t.line}`, boxShadow: "0 4px 16px rgba(0,0,0,0.14)" }}>
-      <div style={{ fontSize: 9.5, fontWeight: 800, color: t.mid, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 1 }}>Produktivitas</div>
-      {[["Tinggi", C.success], ["Sedang", C.warning], ["Rendah", C.error]].map(([l, c]) => (
+      <div style={{ fontSize: 9.5, fontWeight: 800, color: t.mid, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 1 }}>Status Activity</div>
+      {[["Approved", C.success], ["Menunggu", C.warning], ["Ditolak/Revisi", C.error]].map(([l, c]) => (
         <div key={l} style={{ display: "flex", alignItems: "center", gap: 7 }}>
           <div style={{ width: 9, height: 9, borderRadius: "50%", background: c }} />
           <span style={{ fontSize: 10.5, color: t.mid }}>{l}</span>
@@ -339,26 +368,150 @@ function MapLegend({ t }) {
 }
 
 // ── Hook: kelola layer batas wilayah ──────────────────────────────────────────
-// Render dari cache lokal (IndexedDB) untuk cepat; SUMBER AMAN = Supabase Storage
-// privat (khusus spm_sumatera, signed-URL, audit). Berkas asli tersimpan utuh.
+// Sumber tampilan = cache lokal (IndexedDB), 100% di device ini. TIDAK ADA lagi
+// payload (geojson/koordinat site) yang tersimpan di server mana pun — hanya
+// STATUS metadata (nama file, periode, jumlah fitur, siapa/kapan) yang dicatat
+// di project MartaHub (mh_map_layer_status) supaya perangkat lain tahu file
+// mana yang perlu di-connect ulang secara lokal. Lihat lib/territoryStore.js.
+//
+// TIDAK ADA tombol "upload" — dua jalur pengisian data, keduanya 100% lokal:
+//  1. "Hubungkan Folder" (File System Access API, Chrome/Edge) — user pilih
+//     folder SEKALI, browser mengingat *referensi* foldernya (bukan isinya)
+//     di IndexedDB perangkat ini. Sesi berikutnya (mis. setelah logout/login)
+//     tinggal klik "Berikan Izin Ulang" kalau browser sudah lupa izinnya —
+//     tidak pernah otomatis/silent, selalu perlu klik eksplisit user.
+//  2. Fallback file-picker biasa (browser yang tidak dukung File System Access
+//     API, mis. Firefox/Safari) — pilih file manual tiap sesi, seperti semula.
+// Di KEDUA jalur: isi file (geojson/koordinat) diproses di browser & disimpan
+// HANYA di IndexedDB lokal — tidak pernah dikirim ke server mana pun (§0.2).
 export function useGeoLayers() {
   const fileRef = useRef(null);
   const [layers, setLayers] = useState([]);      // yang ditampilkan (parsed, cache lokal)
-  const [serverFiles, setServerFiles] = useState([]); // daftar aman di server
+  const [layerStatus, setLayerStatus] = useState([]); // status organisasi (metadata saja), dari DB
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState("");
   const [err, setErr] = useState("");
   const siteFileRef = useRef(null);
   const [sites, setSites] = useState([]);         // record { id,name,period,sites:[],count,total,visible,ts }
-  const [serverSites, setServerSites] = useState([]);
 
-  const refreshServer = () => listTerritory("territory").then(setServerFiles).catch(() => {});
-  const refreshServerSites = () => listTerritory("sites").then(setServerSites).catch(() => {});
+  // ── Folder link — HANYA referensi folder (FileSystemDirectoryHandle) di
+  // IndexedDB perangkat ini, TIDAK PERNAH isinya. Lihat lib/folderHandles.js.
+  const territoryHandleRef = useRef(null);
+  const sitesHandleRef = useRef(null);
+  const [territoryFolder, setTerritoryFolder] = useState(null); // { name, needsPermission, files, activeFile } | null
+  const [sitesFolder, setSitesFolder] = useState(null);
+
+  const refreshStatus = () => getMapLayerStatus().then(setLayerStatus).catch(() => {});
+
+  // Render GeoJSON/site hasil parse ke peta + cache lokal (ganti data lama).
+  async function renderParsed({ name, period, geojson, count, total }) {
+    const rec = { id: (crypto?.randomUUID?.() || String(Date.now())), name, period, geojson, count, total, visible: true, ts: Date.now() };
+    await idbClear(); await idbPut(rec); setLayers([rec]);
+  }
+  async function renderParsedSite({ name, sites: arr, count, total }) {
+    const rec = { id: (crypto?.randomUUID?.() || String(Date.now())), name, period: null, sites: arr, count, total, visible: true, ts: Date.now() };
+    await idbClearSites(); await idbPutSite(rec); setSites([rec]);
+  }
+
+  // Satu jalur proses File, dipakai baik dari folder-link maupun fallback
+  // <input type=file> — supaya perilaku (parsing, simpan lokal, catat status)
+  // konsisten dari mana pun File-nya berasal.
+  async function processFile(kind, file) {
+    setBusy(true); setErr(""); setStatus(""); setProgress(1);
+    try {
+      const parsed = kind === "territory"
+        ? await parseGeoFile(file, (p) => setProgress(Math.min(85, p)))
+        : await parseSiteFile(file, (p) => setProgress(Math.min(85, p)));
+      if (kind === "territory") await renderParsed(parsed); else await renderParsedSite(parsed);
+      setStatus("Tersimpan lokal di perangkat ini."); setProgress(92);
+      try {
+        const email = await currentEmail();
+        await setMapLayerStatus({ kind, fileName: file.name, period: parsed.period || null, count: parsed.count, total: parsed.total, email });
+        await refreshStatus();
+      } catch (se) { setErr("Tampil di peta, tapi gagal mencatat status: " + se.message); }
+      setProgress(100);
+    } catch (e) { setErr(e.message || "Gagal membaca berkas."); }
+    finally { setTimeout(() => { setBusy(false); setProgress(0); }, 600); }
+  }
+
+  async function scanFolder(kind) {
+    const handle = kind === "territory" ? territoryHandleRef.current : sitesHandleRef.current;
+    const setFolder = kind === "territory" ? setTerritoryFolder : setSitesFolder;
+    if (!handle) return [];
+    try {
+      const files = await listMatchingFiles(handle, kind === "territory" ? TERRITORY_EXT : SITE_EXT);
+      setFolder((f) => ({ ...(f || {}), files, needsPermission: false }));
+      return files;
+    } catch (e) { setErr("Gagal membaca isi folder: " + (e.message || e)); return []; }
+  }
+
+  async function loadFromFolderFile(kind, fileEntry) {
+    const setFolder = kind === "territory" ? setTerritoryFolder : setSitesFolder;
+    try {
+      const file = await fileEntry.handle.getFile();
+      await processFile(kind, file);
+      await setLastFile(kind, fileEntry.name);
+      setFolder((f) => ({ ...(f || {}), activeFile: fileEntry.name }));
+    } catch (e) { setErr("Gagal membaca file dari folder: " + (e.message || e)); }
+  }
+
+  // Klik "Hubungkan Folder" — HARUS dipanggil langsung dari user-gesture.
+  async function connectFolder(kind) {
+    if (!supportsFolderLink) return;
+    setErr("");
+    try {
+      const dirHandle = await window.showDirectoryPicker();
+      const handleRef = kind === "territory" ? territoryHandleRef : sitesHandleRef;
+      const setFolder = kind === "territory" ? setTerritoryFolder : setSitesFolder;
+      handleRef.current = dirHandle;
+      await saveFolderHandle(kind, dirHandle, dirHandle.name);
+      setFolder({ name: dirHandle.name, needsPermission: false, files: [], activeFile: null });
+      const files = await scanFolder(kind);
+      if (files.length) await loadFromFolderFile(kind, files[0]);
+      else setErr(`Tidak ada file yang cocok di folder ini (format: ${kind === "territory" ? ".zip/.kml/.kmz/.geojson" : ".xlsx/.xls/.csv"}).`);
+    } catch (e) { if (e?.name !== "AbortError") setErr("Gagal menghubungkan folder: " + (e.message || e)); }
+  }
+
+  // Klik "Berikan Izin Ulang" — HARUS dipanggil langsung dari user-gesture,
+  // biasanya setelah sesi baru (logout/login) & browser sudah lupa izinnya.
+  async function reauthorizeFolder(kind) {
+    const handleRef = kind === "territory" ? territoryHandleRef : sitesHandleRef;
+    const setFolder = kind === "territory" ? setTerritoryFolder : setSitesFolder;
+    const handle = handleRef.current;
+    if (!handle) return;
+    const ok = await ensurePermission(handle);
+    if (!ok) { setErr("Izin folder ditolak — data tidak bisa dibaca sampai izin diberikan."); return; }
+    setFolder((f) => ({ ...(f || {}), needsPermission: false }));
+    const files = await scanFolder(kind);
+    const rec = await getFolderHandle(kind);
+    const preferred = files.find((f2) => f2.name === rec?.lastFile) || files[0];
+    if (preferred) await loadFromFolderFile(kind, preferred);
+  }
+
+  // Scan ulang folder yang SUDAH terhubung (mis. isi file periode yang sedang
+  // aktif baru saja diganti) tanpa perlu connect folder dari nol. SENGAJA
+  // memuat ulang periode yang sedang aktif (bukan lompat ke file terbaru) —
+  // supaya "Refresh" tidak diam-diam mengganti pilihan periode user (§UX).
+  async function refreshFolder(kind) {
+    const current = kind === "territory" ? territoryFolder : sitesFolder;
+    const files = await scanFolder(kind);
+    if (!files.length) return;
+    const same = files.find((f) => f.name === current?.activeFile);
+    await loadFromFolderFile(kind, same || files[0]);
+  }
+
+  async function disconnectFolder(kind) {
+    const handleRef = kind === "territory" ? territoryHandleRef : sitesHandleRef;
+    const setFolder = kind === "territory" ? setTerritoryFolder : setSitesFolder;
+    await clearFolderHandle(kind);
+    handleRef.current = null;
+    setFolder(null);
+  }
 
   useEffect(() => {
     (async () => {
-      // 1) Muat cache lokal (kalau ada) — cepat, tampil instan.
+      // 1) Muat cache lokal (kalau ada) — cepat, tampil instan, satu-satunya sumber payload.
       let localLayers = [];
       try {
         const rows = await idbAll();
@@ -372,111 +525,54 @@ export function useGeoLayers() {
         localLayers.sort((a, b) => (b.ts || 0) - (a.ts || 0));
         setLayers(localLayers);
       } catch { /* noop */ }
-      let localSites = [];
-      try { localSites = (await idbAllSites() || []).sort((a, b) => (b.ts || 0) - (a.ts || 0)); setSites(localSites); } catch { /* noop */ }
+      try { setSites((await idbAllSites() || []).sort((a, b) => (b.ts || 0) - (a.ts || 0))); } catch { /* noop */ }
 
-      // 2) Ambil daftar server. Bila lokal kosong (mis. user LAIN yang tidak
-      //    mengunggah), otomatis muat data TERBARU dari server agar peta tetap tampil.
-      try {
-        const files = await listTerritory("territory");
-        setServerFiles(files);
-        if (!localLayers.length && files.length) loadFromServer(files[0]);
-      } catch { /* noop */ }
-      try {
-        const sfiles = await listTerritory("sites");
-        setServerSites(sfiles);
-        if (!localSites.length && sfiles.length) loadSitesFromServer(sfiles[0]);
-      } catch { /* noop */ }
+      // 2) Status organisasi (metadata saja) — TIDAK ada payload untuk dimuat balik;
+      //    kalau device ini kosong, status dipakai untuk tampilkan "belum tersambung".
+      await refreshStatus();
+
+      // 3) Folder yang sudah pernah dihubungkan di perangkat ini (kalau ada) —
+      //    cek izin TANPA meminta (aman di luar user-gesture); kalau izin masih
+      //    berlaku, langsung scan+muat lagi. Kalau tidak, tampilkan status
+      //    "perlu izin ulang" — TIDAK pernah minta izin otomatis/silent.
+      if (supportsFolderLink) {
+        try {
+          const tRec = await getFolderHandle("territory");
+          if (tRec?.handle) {
+            territoryHandleRef.current = tRec.handle;
+            const granted = await checkPermission(tRec.handle);
+            setTerritoryFolder({ name: tRec.folderName, needsPermission: !granted, files: [], activeFile: tRec.lastFile });
+            if (granted) await scanFolder("territory");
+          }
+        } catch { /* noop */ }
+        try {
+          const sRec = await getFolderHandle("sites");
+          if (sRec?.handle) {
+            sitesHandleRef.current = sRec.handle;
+            const granted = await checkPermission(sRec.handle);
+            setSitesFolder({ name: sRec.folderName, needsPermission: !granted, files: [], activeFile: sRec.lastFile });
+            if (granted) await scanFolder("sites");
+          }
+        } catch { /* noop */ }
+      }
     })();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Site (titik) ──
+  // ── Fallback <input type=file> (browser tanpa File System Access API) ──
   async function onPickSite(ev) {
     const file = ev.target.files?.[0];
     if (ev.target) ev.target.value = "";
     if (!file) return;
-    setBusy(true); setErr(""); setStatus(""); setProgress(1);
-    try {
-      const parsed = await parseSiteFile(file, (p) => setProgress(Math.min(80, p)));
-      const rec = { id: (crypto?.randomUUID?.() || String(Date.now())), name: parsed.name, period: null, sites: parsed.sites, count: parsed.count, total: parsed.total, visible: true, ts: Date.now() };
-      await idbClearSites(); await idbPutSite(rec); setSites([rec]);
-      setStatus("Menyimpan site aman ke server…"); setProgress(90);
-      try { await uploadSites({ fileName: file.name, sites: parsed.sites, count: parsed.count, total: parsed.total }); await refreshServerSites(); setStatus("Site tersimpan aman."); }
-      catch (se) { setErr("Titik tampil, tapi gagal simpan ke server: " + se.message); }
-      setProgress(100);
-    } catch (e) { setErr(e.message || "Gagal membaca berkas site."); }
-    finally { setTimeout(() => { setBusy(false); setProgress(0); }, 600); }
+    await processFile("sites", file);
   }
-  async function removeServerSite(rec) {
-    setBusy(true); setErr("");
-    try { await removeTerritory(rec); await refreshServerSites(); } catch (e) { setErr("Gagal hapus: " + (e.message || e)); }
-    finally { setBusy(false); }
-  }
-  const clearSites = async () => { await idbClearSites(); setSites([]); };
-
-  // Render GeoJSON hasil parse ke peta + cache lokal (ganti data lama).
-  async function renderParsed({ name, period, geojson, count, total }) {
-    const rec = { id: (crypto?.randomUUID?.() || String(Date.now())), name, period, geojson, count, total, visible: true, ts: Date.now() };
-    await idbClear(); await idbPut(rec); setLayers([rec]);
-  }
-
   async function onPick(ev) {
     const file = ev.target.files?.[0];
     if (ev.target) ev.target.value = "";
     if (!file) return;
-    setBusy(true); setErr(""); setStatus(""); setProgress(1);
-    try {
-      const parsed = await parseGeoFile(file, (p) => setProgress(Math.min(80, p)));
-      await renderParsed(parsed);                 // tampil di peta (cache lokal)
-      setStatus("Menyimpan aman ke server…"); setProgress(90);
-      try {
-        await uploadTerritory({ fileName: file.name, period: parsed.period, geojson: parsed.geojson, count: parsed.count, total: parsed.total });
-        await refreshServer();
-        setStatus("Tersimpan aman di server.");
-      } catch (se) {
-        setErr("Peta tampil, tapi gagal simpan ke server: " + se.message);
-      }
-      setProgress(100);
-    } catch (e) { setErr(e.message || "Gagal membaca berkas."); }
-    finally { setTimeout(() => { setBusy(false); setProgress(0); }, 600); }
+    await processFile("territory", file);
   }
 
-  // Muat data dari server → tampilkan di peta.
-  async function loadFromServer(rec) {
-    setBusy(true); setErr(""); setStatus("Mengambil dari server…"); setProgress(40);
-    try {
-      const geojson = await fetchTerritoryGeojson(rec);
-      setProgress(85);
-      await renderParsed({ name: (rec.file_name || "territory").replace(/\.[^.]+$/, ""), period: rec.period, geojson, count: rec.feature_sumatra || geojson.features?.length || 0, total: rec.feature_total });
-      setStatus("Dimuat ke peta.");
-    } catch (e) { setErr("Gagal memuat dari server: " + (e.message || e)); }
-    finally { setTimeout(() => { setBusy(false); setProgress(0); }, 500); }
-  }
-  // Muat titik site dari server → tampilkan di peta (untuk user yang tidak mengunggah).
-  async function loadSitesFromServer(rec) {
-    setBusy(true); setErr(""); setStatus("Mengambil site dari server…"); setProgress(40);
-    try {
-      const payload = await fetchTerritoryGeojson(rec); // JSON generik → { type:"sites", sites:[...] }
-      const arr = Array.isArray(payload?.sites) ? payload.sites : (Array.isArray(payload) ? payload : []);
-      setProgress(85);
-      const localRec = { id: (crypto?.randomUUID?.() || String(Date.now())), name: (rec.file_name || "sites").replace(/\.[^.]+$/, ""), period: rec.period || null, sites: arr, count: arr.length, total: rec.feature_total, visible: true, ts: Date.now() };
-      try { await idbClearSites(); await idbPutSite(localRec); } catch { /* quota */ }
-      setSites([localRec]);
-      setStatus("Site dimuat ke peta.");
-    } catch (e) { setErr("Gagal memuat site dari server: " + (e.message || e)); }
-    finally { setTimeout(() => { setBusy(false); setProgress(0); }, 500); }
-  }
-  async function downloadServer(rec) {
-    try { const url = await signedUrl(rec, 120); window.open(url, "_blank", "noopener"); }
-    catch (e) { setErr("Gagal membuat tautan unduh: " + (e.message || e)); }
-  }
-  async function removeServer(rec) {
-    setBusy(true); setErr("");
-    try { await removeTerritory(rec); await refreshServer(); }
-    catch (e) { setErr("Gagal hapus: " + (e.message || e)); }
-    finally { setBusy(false); }
-  }
-
+  const clearSites = async () => { await idbClearSites(); setSites([]); };
   const toggleLayer = async (id) => {
     setLayers((ls) => ls.map((l) => l.id === id ? { ...l, visible: !l.visible } : l));
     const l = layers.find((x) => x.id === id); if (l) await idbPut({ ...l, visible: !l.visible });
@@ -486,115 +582,207 @@ export function useGeoLayers() {
   // Titik site yang ditampilkan (flatten dari record aktif)
   const siteData = sites.flatMap((r) => (r.visible !== false ? (r.sites || []) : []));
   return {
-    fileRef, layers, serverFiles, busy, progress, status, err, onPick, toggleLayer, removeLayer, clearAll, loadFromServer, downloadServer, removeServer,
-    siteFileRef, sites, siteData, serverSites, onPickSite, removeServerSite, clearSites,
+    fileRef, layers, layerStatus, busy, progress, status, err, onPick, toggleLayer, removeLayer, clearAll,
+    siteFileRef, sites, siteData, onPickSite, clearSites,
+    territoryFolder, sitesFolder, connectFolder, reauthorizeFolder, refreshFolder, disconnectFolder, pickFolderFile: loadFromFolderFile,
   };
 }
 
+// ── Baris status ringkas 1 kind ("connected" / "disconnected" / "none") ──────
+// "connected"    = ada data di cache lokal perangkat INI (localCount > 0) — ini
+//                  yang benar-benar menentukan apa yang tampil di peta, TERLEPAS
+//                  dari ada/tidaknya status organisasi (mis. status baru dihapus
+//                  tapi cache lokal browser belum ikut dibersihkan — kasus nyata
+//                  yang bikin strip & peta kelihatan kontradiktif kalau dicek
+//                  cuma dari statusRow).
+// "disconnected" = TIDAK ada cache lokal, tapi organisasi pernah catat status —
+//                  kasus paling umum: ganti laptop/browser, karena payload
+//                  memang TIDAK PERNAH disimpan di server (§0.2).
+// "none"         = benar-benar kosong (lokal maupun organisasi).
+function fmtWhen(d) { if (!d) return ""; const x = new Date(d); return isNaN(x) ? "" : x.toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }); }
+export function LayerStatusRow({ t, label, dotColor, localCount, localInfo, statusRow, canManage, onConnect, onClear, compact = false }) {
+  const state = localCount > 0 ? "connected" : statusRow ? "disconnected" : "none";
+  const color = state === "connected" ? C.success : state === "disconnected" ? C.warning : t.lo;
+  const bg = state === "connected" ? `${C.success}12` : state === "disconnected" ? `${C.warning}14` : "transparent";
+  const who = statusRow?.updated_by_email ? statusRow.updated_by_email.split("@")[0] : null;
+  const localName = localInfo?.name ? `${localInfo.name}${localInfo.period ? ` · ${localInfo.period}` : ""}` : null;
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: compact ? "7px 9px" : "8px 10px", borderRadius: 9, background: bg, border: `1px solid ${state === "none" ? t.line : color + "33"}` }}>
+      <span style={{ width: 7, height: 7, marginTop: 4, borderRadius: 99, background: state === "none" ? dotColor : color, flexShrink: 0 }} />
+      <div style={{ flex: 1, minWidth: 0, fontSize: compact ? 10.5 : 11, color: t.mid, lineHeight: 1.45 }}>
+        <b style={{ color: t.hi }}>{label}</b>
+        {state === "connected" && (
+          <> · <span style={{ color: C.success, fontWeight: 700 }}>Tersambung (perangkat ini)</span> — {statusRow ? <>{statusRow.period ? `${statusRow.period} · ` : ""}{statusRow.file_name}{who ? ` · ${who}` : ""} · {fmtWhen(statusRow.updated_at)}</> : <>{localName || "data lokal"} <i>(belum tercatat status organisasi)</i></>}</>
+        )}
+        {state === "disconnected" && <> · <span style={{ color: "#8a5b00", fontWeight: 700 }}>Belum tersambung di perangkat ini</span> — terakhir {statusRow.period ? `${statusRow.period} · ` : ""}<b>{statusRow.file_name}</b>{who ? ` oleh ${who}` : ""} ({fmtWhen(statusRow.updated_at)}). Pilih file yang sama untuk tampil di peta ini.</>}
+        {state === "none" && <> · Belum ada data.</>}
+      </div>
+      {canManage && state !== "connected" && (
+        <button onClick={onConnect} style={{ flexShrink: 0, fontSize: 10, fontWeight: 800, color: "#fff", background: state === "disconnected" ? C.warning : "linear-gradient(135deg,#ED1C24,#C6168D)", border: "none", borderRadius: 7, padding: "4px 10px", cursor: "pointer", whiteSpace: "nowrap" }}>
+          Hubungkan
+        </button>
+      )}
+      {canManage && state === "connected" && onClear && (
+        <button onClick={onClear} title="Hapus data lokal dari perangkat ini" style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 6, border: `1px solid ${C.error}40`, background: "#fff", color: C.error, cursor: "pointer" }}>
+          <I name="trash" size={11} color={C.error} />
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── Panel kelola layer (dipakai modal & halaman penuh) ────────────────────────
+// ── Jalur pengisian data (Hubungkan Folder ATAU fallback file-picker) ────────
+// Tidak ada "upload" — connect folder cuma menyimpan REFERENSI folder secara
+// lokal (lib/folderHandles.js), isi file tidak pernah dikirim ke server mana
+// pun (§0.2). Dipakai untuk section Batas Wilayah & Titik Site (parameterized
+// by `kind`) supaya perilakunya konsisten.
+function ConnectSourceSection({ t, geo, kind, color, acceptAttr, gradient }) {
+  const { busy, progress } = geo;
+  const folder = kind === "territory" ? geo.territoryFolder : geo.sitesFolder;
+  const fileRef = kind === "territory" ? geo.fileRef : geo.siteFileRef;
+  const onPickFallback = kind === "territory" ? geo.onPick : geo.onPickSite;
+  const hasLocal = kind === "territory" ? geo.layers.length > 0 : geo.siteData.length > 0;
+  const btnBase = { width: "100%", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, height: 38, borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.85 : 1, fontFamily: FONT };
+  const primaryStyle = { border: "none", background: "linear-gradient(135deg,#ED1C24,#C6168D)", color: "#fff" };
+  const outlineStyle = { border: `1px solid ${color}`, background: "transparent", color };
+
+  if (!supportsFolderLink) {
+    return (<>
+      <input ref={fileRef} type="file" accept={acceptAttr} onChange={onPickFallback} style={{ display: "none" }} />
+      <button onClick={() => fileRef.current?.click()} disabled={busy} style={{ ...btnBase, ...(gradient ? primaryStyle : outlineStyle) }}>
+        <I name="upload" size={15} color={gradient ? "#fff" : color} /> {busy ? `Memproses… ${progress}%` : (hasLocal ? "Perbarui berkas (perangkat ini)" : "Pilih berkas (perangkat ini)")}
+      </button>
+      <div style={{ fontSize: 10, color: t.lo, lineHeight: 1.55, margin: "8px 0" }}>
+        Browser ini tidak mendukung &ldquo;Hubungkan Folder&rdquo; (butuh Chrome/Edge) — pilih berkas manual, tetap diproses 100% lokal, tidak pernah dikirim ke server.
+      </div>
+    </>);
+  }
+
+  if (!folder) {
+    return (<>
+      <button onClick={() => geo.connectFolder(kind)} disabled={busy} style={{ ...btnBase, ...(gradient ? primaryStyle : outlineStyle) }}>
+        <I name="folder" size={15} color={gradient ? "#fff" : color} /> {busy ? `Memproses… ${progress}%` : "Hubungkan Folder"}
+      </button>
+      <div style={{ fontSize: 10, color: t.lo, lineHeight: 1.55, margin: "8px 0" }}>
+        Pilih folder yang berisi berkas {kind === "territory" ? "batas wilayah (.zip/.kml/.kmz/.geojson)" : "titik site (.xlsx/.xls/.csv)"} — periode terdeteksi otomatis dari nama file, bisa diganti kapan saja setelah terhubung.
+      </div>
+    </>);
+  }
+
+  if (folder.needsPermission) {
+    return (<>
+      <div style={{ fontSize: 10.5, color: "#8a5b00", background: "#FFFDE7", border: "1px solid #F0E3B0", borderRadius: 9, padding: "8px 10px", marginBottom: 8, lineHeight: 1.5 }}>
+        Folder <b>{folder.name}</b> pernah terhubung di perangkat ini, tapi izin browser perlu di-refresh (wajar setelah logout/login atau sesi baru).
+      </div>
+      <button onClick={() => geo.reauthorizeFolder(kind)} disabled={busy} style={{ ...btnBase, ...primaryStyle }}>
+        <I name="shield" size={14} color="#fff" /> {busy ? `Memproses… ${progress}%` : "Berikan Izin Ulang"}
+      </button>
+    </>);
+  }
+
+  // Turunkan periode dari nama tiap file (murni tampilan — TIDAK disimpan di
+  // mana pun selain hasil parse-nya sendiri, sesuai "yang disimpan hanya path
+  // foldernya"). Urut: yang punya periode dulu (terbaru→terlama), sisanya
+  // (nama tak terdeteksi) diurut by lastModified.
+  const filesWithMeta = (folder.files || []).map((f) => ({ ...f, period: periodFromName(f.name), periodKey: periodKeyFromName(f.name) }));
+  const sortedFiles = filesWithMeta.slice().sort((a, b) => {
+    if (a.periodKey && b.periodKey) return b.periodKey.localeCompare(a.periodKey);
+    if (a.periodKey || b.periodKey) return a.periodKey ? -1 : 1;
+    return b.lastModified - a.lastModified;
+  });
+  const chevron = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236B7280' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>";
+
+  return (<>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+      <div style={{ width: 30, height: 30, borderRadius: 8, background: `${color}14`, border: `1px solid ${color}33`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <I name="folder" size={14} color={color} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 12, fontWeight: 800, color: t.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={folder.name}>{folder.name}</div>
+        <div style={{ fontSize: 9.5, color: t.lo }}>Folder tersambung</div>
+      </div>
+      <button onClick={() => geo.refreshFolder(kind)} disabled={busy} title="Refresh dari folder"
+        style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${t.line}`, background: t.hover, display: "flex", alignItems: "center", justifyContent: "center", color: t.mid, cursor: busy ? "default" : "pointer", flexShrink: 0 }}>
+        <I name="refresh" size={13} color={t.mid} />
+      </button>
+      <button onClick={() => geo.disconnectFolder(kind)} disabled={busy} title="Putuskan folder"
+        style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${C.error}30`, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", color: C.error, cursor: busy ? "default" : "pointer", flexShrink: 0 }}>
+        <I name="trash" size={13} color={C.error} />
+      </button>
+    </div>
+
+    {busy && (
+      <div style={{ height: 5, borderRadius: 99, background: t.hover, overflow: "hidden", marginBottom: 10 }}>
+        <div style={{ height: "100%", width: `${progress}%`, background: gradient ? "linear-gradient(90deg,#ED1C24,#C6168D)" : color, borderRadius: 99, transition: "width .2s ease" }} />
+      </div>
+    )}
+
+    {sortedFiles.length > 0 ? (<>
+      <div style={{ fontSize: 10, fontWeight: 800, color: t.mid, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 5, display: "flex", alignItems: "center", gap: 5 }}>
+        <I name="calendar" size={11} color={t.mid} /> Periode
+      </div>
+      <select
+        value={folder.activeFile || ""}
+        disabled={busy}
+        onChange={(e) => { const f = sortedFiles.find((x) => x.name === e.target.value); if (f) geo.pickFolderFile(kind, f); }}
+        style={{ width: "100%", padding: "8px 30px 8px 11px", borderRadius: 9, border: `1px solid ${t.line}`, background: t.card, color: t.hi, fontSize: 12.5, fontWeight: 700, appearance: "none", WebkitAppearance: "none", MozAppearance: "none", cursor: busy ? "default" : "pointer", backgroundImage: `url("${chevron}")`, backgroundRepeat: "no-repeat", backgroundPosition: "right 10px center", backgroundSize: 13 }}>
+        {sortedFiles.map((f) => <option key={f.name} value={f.name}>{f.period || f.name}</option>)}
+      </select>
+      <div style={{ fontSize: 10, color: t.lo, marginTop: 6, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={folder.activeFile || ""}>
+        {folder.activeFile ? <>Berkas: <b style={{ color: t.mid }}>{folder.activeFile}</b></> : "Belum ada berkas dimuat"}
+      </div>
+    </>) : (
+      <div style={{ fontSize: 11, color: t.lo, padding: "6px 0" }}>
+        Tidak ada berkas yang cocok di folder ini (format: {kind === "territory" ? ".zip/.kml/.kmz/.geojson" : ".xlsx/.xls/.csv"}).
+      </div>
+    )}
+  </>);
+}
+
 export function LayerPanel({ t, geo, style, canManage = false }) {
-  const { fileRef, layers, serverFiles, busy, progress, status, err, onPick, removeServer,
-    siteFileRef, sites, serverSites, onPickSite, removeServerSite } = geo;
+  const { layers, layerStatus, status, err, sites, siteData } = geo;
   const siteCount = sites.reduce((n, r) => n + (r.count || (r.sites || []).length || 0), 0);
-  const iconBtn = { display: "flex", alignItems: "center", justifyContent: "center", width: 26, height: 26, borderRadius: 7, border: `1px solid ${t.line}`, background: t.hover, cursor: "pointer" };
-  const mb = (b) => b ? `${(b / 1048576).toFixed(1)} MB` : "";
-  const fmtUpdate = (d) => { if (!d) return ""; const x = new Date(d); return isNaN(x) ? "" : x.toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }); };
+  const territoryStatus = layerStatus.find((s) => s.kind === "territory") || null;
+  const sitesStatus = layerStatus.find((s) => s.kind === "sites") || null;
   return (
     <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, boxShadow: "0 8px 30px rgba(0,0,0,0.16)", padding: 14, ...style }}>
       <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
         <I name="layers" size={15} color={t.hi} />
         <div style={{ fontSize: 13, fontWeight: 800, color: t.hi }}>Batas Wilayah</div>
+        {layers[0]?.count > 0 && <span style={{ fontSize: 9.5, fontWeight: 800, color: t.mid }}>{layers[0].count.toLocaleString("id-ID")} wilayah</span>}
       </div>
-      {canManage ? (<>
-        <input ref={fileRef} type="file" accept=".zip,.kml,.kmz,.geojson,.json" onChange={onPick} style={{ display: "none" }} />
-        <button onClick={() => fileRef.current?.click()} disabled={busy}
-          style={{ width: "100%", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, height: 38, borderRadius: 10, border: "none", background: "linear-gradient(135deg,#ED1C24,#C6168D)", color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.85 : 1, fontFamily: FONT }}>
-          <I name="upload" size={15} color="#fff" /> {busy ? `Memproses… ${progress}%` : (serverFiles.length ? "Perbarui data bulan ini" : "Unggah batas (SHP / KML)")}
-        </button>
-        {busy && (
-          <div style={{ height: 6, borderRadius: 99, background: t.hover, overflow: "hidden", marginTop: 8 }}>
-            <div style={{ height: "100%", width: `${progress}%`, background: "linear-gradient(90deg,#ED1C24,#C6168D)", borderRadius: 99, transition: "width .2s ease" }} />
-          </div>
-        )}
-        {status && !err && <div style={{ fontSize: 10.5, color: C.success, marginTop: 8 }}>{status}</div>}
-        <div style={{ fontSize: 10, color: t.lo, lineHeight: 1.55, margin: "10px 0" }}>
-          <I name="shield" size={11} color={C.success} /> Disimpan aman di <b>server privat</b> (khusus SPM Sumatera, terenkripsi, unduh via tautan singkat, ada audit). Peta menampilkan wilayah <b>Sumatera</b>; berkas asli tersimpan utuh. Upload baru <b>mengganti</b> data bulan sebelumnya. Format: .zip (SHP), .kml, .kmz, .geojson · maks 200 MB.
-        </div>
-      </>) : (
+      {canManage ? (
+        <ConnectSourceSection t={t} geo={geo} kind="territory" color="#ED1C24" acceptAttr=".zip,.kml,.kmz,.geojson,.json" gradient />
+      ) : (
         <div style={{ fontSize: 10.5, color: t.lo, lineHeight: 1.55, margin: "2px 0 10px", display: "flex", alignItems: "flex-start", gap: 6 }}>
           <I name="shield" size={12} color={C.success} />
           <span>Mode <b>lihat saja</b>. Data batas wilayah & titik site dikelola oleh SPM Sumatera; Anda dapat menjelajah peta secara penuh.</span>
         </div>
       )}
-      {err && <div style={{ fontSize: 11, color: C.error, background: C.errorL, border: `1px solid ${C.error}30`, borderRadius: 8, padding: "7px 9px", marginBottom: 8 }}>{err}</div>}
-
-      <div style={{ fontSize: 10, fontWeight: 800, color: t.mid, textTransform: "uppercase", letterSpacing: "0.05em", margin: "4px 0 6px" }}>Tersimpan di server</div>
-      {serverFiles.length === 0 ? (
-        <div style={{ fontSize: 11, color: t.lo, padding: "2px 0 4px" }}>{canManage ? "Belum ada. Unggah untuk menyimpan aman." : "Belum ada data batas wilayah."}</div>
-      ) : (
-        <div style={{ maxHeight: 300, overflowY: "auto" }}>
-          {serverFiles.map((f) => {
-            const active = layers.some((l) => l.period === f.period && l.name === (f.file_name || "").replace(/\.[^.]+$/, ""));
-            return (
-              <div key={f.id} style={{ padding: "8px 0", borderTop: `1px solid ${t.line}` }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 11.5, fontWeight: 700, color: t.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {f.file_name}{active && <span style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 800, color: "#fff", background: C.success, borderRadius: 999, padding: "1px 6px" }}>DI PETA</span>}
-                    </div>
-                    <div style={{ fontSize: 9.5, color: t.lo, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {f.period ? `${f.period} · ` : ""}{f.feature_sumatra ? `${f.feature_sumatra.toLocaleString("id-ID")} wil · ` : ""}{mb(f.size_bytes)}
-                    </div>
-                    <div style={{ fontSize: 9.5, color: t.lo, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      Update: {fmtUpdate(f.created_at)}{f.uploaded_by_email ? ` · ${f.uploaded_by_email.split("@")[0]}` : ""}
-                    </div>
-                  </div>
-                  {canManage && <button onClick={() => removeServer(f)} disabled={busy} title="Hapus dari server" style={{ ...iconBtn, borderColor: `${C.error}40` }}><I name="trash" size={13} color={C.error} /></button>}
-                </div>
-              </div>
-            );
-          })}
+      {status && !err && <div style={{ fontSize: 10.5, color: C.success, marginTop: 8 }}>{status}</div>}
+      {err && <div style={{ fontSize: 11, color: C.error, background: C.errorL, border: `1px solid ${C.error}30`, borderRadius: 8, padding: "7px 9px", marginTop: 8 }}>{err}</div>}
+      {canManage && (
+        <div style={{ fontSize: 10, color: t.lo, lineHeight: 1.55, margin: "10px 0" }}>
+          <I name="shield" size={11} color={C.success} /> Isi file diproses & disimpan <b>100% lokal di perangkat ini</b> — tidak pernah dikirim ke server. Hanya nama file & referensi folder yang diingat, supaya sesi berikutnya tinggal beri izin ulang, bukan pilih ulang dari nol. Peta menampilkan wilayah <b>Sumatera</b>.
         </div>
       )}
 
       {/* ── Titik Site ─────────────────────────────────────────────────────── */}
       <div style={{ borderTop: `1px solid ${t.line}`, margin: "14px 0 10px" }} />
       <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
-        <span style={{ width: 11, height: 11, borderRadius: 99, background: SITE_COLOR, flexShrink: 0, boxShadow: `0 0 0 3px ${SITE_COLOR}25` }} />
+        <span style={{ width: 11, height: 11, borderRadius: 99, background: SITE_COLOR, flexShrink: 0 }} />
         <div style={{ fontSize: 13, fontWeight: 800, color: t.hi }}>Titik Site</div>
         {siteCount > 0 && <span style={{ fontSize: 9.5, fontWeight: 800, color: SITE_COLOR }}>{siteCount.toLocaleString("id-ID")} titik</span>}
       </div>
-      {canManage && (<>
-        <input ref={siteFileRef} type="file" accept=".xlsb,.xlsx,.xls,.csv" onChange={onPickSite} style={{ display: "none" }} />
-        <button onClick={() => siteFileRef.current?.click()} disabled={busy}
-          style={{ width: "100%", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 7, height: 38, borderRadius: 10, border: `1px solid ${SITE_COLOR}`, background: "transparent", color: SITE_COLOR, fontSize: 12.5, fontWeight: 700, cursor: busy ? "default" : "pointer", opacity: busy ? 0.85 : 1, fontFamily: FONT }}>
-          <I name="upload" size={15} color={SITE_COLOR} /> {busy ? `Memproses… ${progress}%` : (serverSites.length ? "Perbarui daftar site" : "Unggah daftar site (Excel)")}
-        </button>
-        <div style={{ fontSize: 10, color: t.lo, lineHeight: 1.55, margin: "8px 0" }}>
-          Excel (.xlsb / .xlsx / .csv) berisi koordinat site. Titik di luar Sumatera diabaikan. Klik titik di peta untuk melihat detailnya. Upload baru <b>mengganti</b> daftar sebelumnya.
-        </div>
-      </>)}
-      {serverSites.length === 0 && (
-        <div style={{ fontSize: 11, color: t.lo, padding: "2px 0 4px" }}>{canManage ? "Belum ada. Unggah daftar site." : "Belum ada titik site."}</div>
+      {canManage ? (
+        <ConnectSourceSection t={t} geo={geo} kind="sites" color={SITE_COLOR} acceptAttr=".xlsb,.xlsx,.xls,.csv" />
+      ) : (
+        siteData.length === 0 && <div style={{ fontSize: 11, color: t.lo, padding: "2px 0 4px" }}>Belum ada titik site.</div>
       )}
-      {serverSites.length > 0 && (
-        <div style={{ maxHeight: 220, overflowY: "auto" }}>
-          {serverSites.map((f) => (
-            <div key={f.id} style={{ padding: "8px 0", borderTop: `1px solid ${t.line}` }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 700, color: t.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{f.file_name}</div>
-                  <div style={{ fontSize: 9.5, color: t.lo, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {f.feature_sumatra ? `${f.feature_sumatra.toLocaleString("id-ID")} titik · ` : ""}{mb(f.size_bytes)}
-                  </div>
-                  <div style={{ fontSize: 9.5, color: t.lo, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    Update: {fmtUpdate(f.created_at)}{f.uploaded_by_email ? ` · ${f.uploaded_by_email.split("@")[0]}` : ""}
-                  </div>
-                </div>
-                {canManage && <button onClick={() => removeServerSite(f)} disabled={busy} title="Hapus dari server" style={{ ...iconBtn, borderColor: `${C.error}40` }}><I name="trash" size={13} color={C.error} /></button>}
-              </div>
-            </div>
-          ))}
+      {canManage && (
+        <div style={{ fontSize: 10, color: t.lo, lineHeight: 1.55, margin: "8px 0" }}>
+          Excel (.xlsb / .xlsx / .csv) berisi koordinat site — diproses <b>100% lokal</b>, tidak pernah dikirim ke server. Titik di luar Sumatera diabaikan.
         </div>
       )}
     </div>
@@ -602,15 +790,16 @@ export function LayerPanel({ t, geo, style, canManage = false }) {
 }
 
 // ── Kartu peta (dashboard): preview → modal ───────────────────────────────────
-export function MapCard({ t, dark, height = 260, canManage = false }) {
-  const boxRef = useRef(null), mapRef = useRef(null), fgRef = useRef(null), sitesFgRef = useRef(null);
-  const bigRef = useRef(null), bigMapRef = useRef(null), bigFgRef = useRef(null), bigSitesFgRef = useRef(null);
+export function MapCard({ t, dark, height = 260, canManage = false, activityPoints = [] }) {
+  const boxRef = useRef(null), mapRef = useRef(null), fgRef = useRef(null), sitesFgRef = useRef(null), activitiesFgRef = useRef(null);
+  const bigRef = useRef(null), bigMapRef = useRef(null), bigFgRef = useRef(null), bigSitesFgRef = useRef(null), bigActivitiesFgRef = useRef(null);
   const [expanded, setExpanded] = useState(false);
   const [boot, setBoot] = useState(0);
   const geo = useGeoLayers();
   const { layers, siteData } = geo;
   const layersRef = useRef(layers); layersRef.current = layers; // selalu terbaru (hindari race saat build async)
   const siteRef = useRef(siteData); siteRef.current = siteData;
+  const activityRef = useRef(activityPoints); activityRef.current = activityPoints;
 
   // Bangun ulang sekali setelah layout dashboard benar-benar settle (meniru efek
   // toggle tema) — memastikan peta tampil di render pertama tanpa perlu di-toggle.
@@ -625,14 +814,16 @@ export function MapCard({ t, dark, height = 260, canManage = false }) {
       if (!boxRef.current || mapRef.current) return;
       const map = await buildBaseMap(boxRef.current, { dark, expanded: false, interactive: true });
       if (!map) return; if (cancelled) { map.remove(); return; }
-      mapRef.current = map; fgRef.current = null; sitesFgRef.current = null;
+      mapRef.current = map; fgRef.current = null; sitesFgRef.current = null; activitiesFgRef.current = null;
       await paintOverlays(map, fgRef, layersRef.current, { expanded: false, appBg: t.appBg });
       paintSites(map, sitesFgRef, siteRef.current);
+      paintActivities(map, activitiesFgRef, activityRef.current, { expanded: false });
     })();
-    return () => { cancelled = true; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; fgRef.current = null; sitesFgRef.current = null; } };
+    return () => { cancelled = true; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; fgRef.current = null; sitesFgRef.current = null; activitiesFgRef.current = null; } };
   }, [dark, boot]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (mapRef.current) paintOverlays(mapRef.current, fgRef, layers, { expanded: false, appBg: t.appBg }); }, [layers]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (mapRef.current) paintSites(mapRef.current, sitesFgRef, siteData); }, [siteData]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (mapRef.current) paintActivities(mapRef.current, activitiesFgRef, activityPoints, { expanded: false }); }, [activityPoints]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!expanded) return;
@@ -643,22 +834,46 @@ export function MapCard({ t, dark, height = 260, canManage = false }) {
       if (!bigRef.current || bigMapRef.current) return;
       const map = await buildBaseMap(bigRef.current, { dark, expanded: true });
       if (!map) return; if (cancelled) { map.remove(); return; }
-      bigMapRef.current = map; bigFgRef.current = null; bigSitesFgRef.current = null;
+      bigMapRef.current = map; bigFgRef.current = null; bigSitesFgRef.current = null; bigActivitiesFgRef.current = null;
       await paintOverlays(map, bigFgRef, layersRef.current, { expanded: true, appBg: t.appBg });
       paintSites(map, bigSitesFgRef, siteRef.current);
+      paintActivities(map, bigActivitiesFgRef, activityRef.current, { expanded: true });
     })();
-    return () => { cancelled = true; window.removeEventListener("keydown", onKey); if (bigMapRef.current) { bigMapRef.current.remove(); bigMapRef.current = null; bigFgRef.current = null; bigSitesFgRef.current = null; } };
+    return () => { cancelled = true; window.removeEventListener("keydown", onKey); if (bigMapRef.current) { bigMapRef.current.remove(); bigMapRef.current = null; bigFgRef.current = null; bigSitesFgRef.current = null; bigActivitiesFgRef.current = null; } };
   }, [expanded, dark]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (bigMapRef.current) paintOverlays(bigMapRef.current, bigFgRef, layers, { expanded: true, appBg: t.appBg }); }, [layers]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (bigMapRef.current) paintSites(bigMapRef.current, bigSitesFgRef, siteData); }, [siteData]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (bigMapRef.current) paintActivities(bigMapRef.current, bigActivitiesFgRef, activityPoints, { expanded: true }); }, [activityPoints]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Shortcut "connect ulang" langsung di dashboard — laptop/browser berbeda
+  // berarti IndexedDB lokal kosong walau organisasi sudah pernah upload
+  // (payload memang tidak pernah ke server, §0.2). Klik "Hubungkan" membuka
+  // modal (LayerPanel di dalamnya sudah punya tombol upload yang berfungsi).
+  const territoryStatus = geo.layerStatus.find((s) => s.kind === "territory") || null;
+  const sitesStatus = geo.layerStatus.find((s) => s.kind === "sites") || null;
+  const anyDisconnected = (territoryStatus && layers.length === 0) || (sitesStatus && siteData.length === 0);
+  const showStrip = territoryStatus || sitesStatus || layers.length > 0 || siteData.length > 0;
 
   return (
     <>
+      {showStrip && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 5, marginBottom: 8 }}>
+          <LayerStatusRow t={t} label="Batas Wilayah" dotColor={t.lo} localCount={layers.length} localInfo={layers[0]} statusRow={territoryStatus}
+            canManage={canManage} onConnect={() => setExpanded(true)} onClear={geo.clearAll} compact />
+          <LayerStatusRow t={t} label="Titik Site" dotColor={SITE_COLOR} localCount={siteData.length} localInfo={geo.sites[0]} statusRow={sitesStatus}
+            canManage={canManage} onConnect={() => setExpanded(true)} onClear={geo.clearSites} compact />
+        </div>
+      )}
       <div style={{ position: "relative", width: "100%", height, borderRadius: 12, overflow: "hidden", border: `1px solid ${t.line}`, isolation: "isolate" }}>
         <div ref={boxRef} style={{ position: "absolute", inset: 0, zIndex: 0 }} />
-        <MapLegend t={t} />
+        <MapLegend t={t} show={activityPoints.length > 0} />
         {layers.length > 0 && (
           <div style={{ position: "absolute", top: 10, left: 10, zIndex: 650, fontSize: 10, fontWeight: 700, color: "#fff", background: "linear-gradient(135deg,#ED1C24,#C6168D)", borderRadius: 999, padding: "3px 9px" }}>{layers.length} batas wilayah</div>
+        )}
+        {!canManage && anyDisconnected && (
+          <div style={{ position: "absolute", bottom: 12, right: 12, zIndex: 650, fontSize: 9.5, fontWeight: 700, color: "#8a5b00", background: "#FFFDE7", border: "1px solid #F0E3B0", borderRadius: 999, padding: "3px 10px" }}>
+            Sebagian layer belum tersambung di perangkat ini
+          </div>
         )}
         {/* Toolbar: perbesar · zoom · full Sumatera */}
         <div style={{ position: "absolute", top: 10, right: 10, zIndex: 650, display: "flex", flexDirection: "column", gap: 6 }}>
@@ -684,8 +899,8 @@ export function MapCard({ t, dark, height = 260, canManage = false }) {
               <button onClick={() => setExpanded(false)} title="Tutup" style={{ width: 32, height: 32, borderRadius: 9, background: t.hover, border: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "center", color: t.mid, cursor: "pointer" }}><I name="close" size={16} color={t.mid} /></button>
             </div>
             <div ref={bigRef} style={{ position: "absolute", inset: 0, zIndex: 0 }} />
-            <MapLegend t={t} />
-            <LayerPanel t={t} geo={geo} canManage={false} style={{ position: "absolute", top: 56, right: 14, zIndex: 700, width: 264, maxHeight: "calc(100% - 76px)", overflowY: "auto" }} />
+            <MapLegend t={t} show={activityPoints.length > 0} />
+            <LayerPanel t={t} geo={geo} canManage={canManage} style={{ position: "absolute", top: 56, right: 14, zIndex: 700, width: 264, maxHeight: "calc(100% - 76px)", overflowY: "auto" }} />
           </div>
         </div>
       )}
@@ -694,12 +909,13 @@ export function MapCard({ t, dark, height = 260, canManage = false }) {
 }
 
 // ── Peta penuh (halaman Map Intelligence) ─────────────────────────────────────
-export default function MapFull({ t, dark, canManage = false }) {
-  const boxRef = useRef(null), mapRef = useRef(null), fgRef = useRef(null), sitesFgRef = useRef(null);
+export default function MapFull({ t, dark, canManage = false, activityPoints = [] }) {
+  const boxRef = useRef(null), mapRef = useRef(null), fgRef = useRef(null), sitesFgRef = useRef(null), activitiesFgRef = useRef(null);
   const geo = useGeoLayers();
   const { layers, siteData } = geo;
   const layersRef = useRef(layers); layersRef.current = layers;
   const siteRef = useRef(siteData); siteRef.current = siteData;
+  const activityRef = useRef(activityPoints); activityRef.current = activityPoints;
 
   useEffect(() => {
     let cancelled = false;
@@ -707,20 +923,22 @@ export default function MapFull({ t, dark, canManage = false }) {
       if (!boxRef.current || mapRef.current) return;
       const map = await buildBaseMap(boxRef.current, { dark, expanded: true });
       if (!map) return; if (cancelled) { map.remove(); return; }
-      mapRef.current = map; fgRef.current = null; sitesFgRef.current = null;
+      mapRef.current = map; fgRef.current = null; sitesFgRef.current = null; activitiesFgRef.current = null;
       await paintOverlays(map, fgRef, layersRef.current, { expanded: true, appBg: t.appBg });
       paintSites(map, sitesFgRef, siteRef.current);
+      paintActivities(map, activitiesFgRef, activityRef.current, { expanded: true });
     })();
-    return () => { cancelled = true; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; fgRef.current = null; sitesFgRef.current = null; } };
+    return () => { cancelled = true; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; fgRef.current = null; sitesFgRef.current = null; activitiesFgRef.current = null; } };
   }, [dark]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (mapRef.current) paintOverlays(mapRef.current, fgRef, layers, { expanded: true, appBg: t.appBg }); }, [layers]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (mapRef.current) paintSites(mapRef.current, sitesFgRef, siteData); }, [siteData]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (mapRef.current) paintActivities(mapRef.current, activitiesFgRef, activityPoints, { expanded: true }); }, [activityPoints]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", minHeight: 0, borderRadius: 14, overflow: "hidden", border: `1px solid ${t.line}`, isolation: "isolate" }}>
       <div ref={boxRef} style={{ position: "absolute", inset: 0, zIndex: 0 }} />
-      <MapLegend t={t} />
-      <LayerPanel t={t} geo={geo} canManage={false} style={{ position: "absolute", top: 14, right: 14, zIndex: 700, width: 280, maxHeight: "calc(100% - 28px)", overflowY: "auto" }} />
+      <MapLegend t={t} show={activityPoints.length > 0} />
+      <LayerPanel t={t} geo={geo} canManage={canManage} style={{ position: "absolute", top: 14, right: 14, zIndex: 700, width: 280, maxHeight: "calc(100% - 28px)", overflowY: "auto" }} />
     </div>
   );
 }

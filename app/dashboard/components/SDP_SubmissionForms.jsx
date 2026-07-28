@@ -272,11 +272,15 @@ export default function SDP_SubmissionForms({ supabase, theme = "dark", profile,
 
   if (formType) {
     const cfg = FORMS[formType];
+    // Bila dibuka via deep-link (Terminate/Rebordering dari dashboard), tombol
+    // kembali langsung keluar ke dashboard — JANGAN tampilkan landing form lama
+    // (yang masih memuat kartu Registrasi lama).
+    const deepLinked = !!(initialFormType && FORMS[initialFormType]);
     return (
       <FormView
         cfg={cfg} t={t} d={d} supabase={supabase} profile={profile} role={role}
         combos={combos} scopeFilter={scopeFilter} sdps={sdps} sdpTypes={sdpTypes}
-        onBack={() => setFormType(null)}
+        onBack={deepLinked && onExit ? onExit : () => setFormType(null)}
       />
     );
   }
@@ -289,14 +293,14 @@ export default function SDP_SubmissionForms({ supabase, theme = "dark", profile,
           <ArrowLeft size={15} /> Kembali ke Form SDP
         </button>
       )}
-      <div style={{ marginBottom: 6, fontSize: 20, fontWeight: 800, letterSpacing: -0.5 }}>Registrasi & Perubahan SDP</div>
+      <div style={{ marginBottom: 6, fontSize: 20, fontWeight: 800, letterSpacing: -0.5 }}>Perubahan SDP</div>
       <div style={{ fontSize: 13, color: t.mid, marginBottom: 20 }}>
-        Pilih jenis pengajuan. Kolom geografis mengikuti scope akun Anda
+        Pilih jenis perubahan. Untuk mendaftarkan SDP baru, gunakan menu <b>Registrasi SDP</b> (form baru, SDP ID otomatis). Kolom geografis mengikuti scope akun Anda
         {role === "cse_rse" ? ` (cluster ${profile?.cluster || "Anda"})` : role === "bsm" ? ` (branch ${profile?.bsm_branch || "Anda"})` : ""}.
       </div>
       {loadingMaster && <div style={{ fontSize: 13, color: t.mid, marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}><Loader2 size={15} className="spin" /> Memuat master data…</div>}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>
-        {Object.entries(FORMS).map(([key, f]) => {
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+        {Object.entries(FORMS).filter(([key]) => key !== "registration").map(([key, f]) => {
           const Icon = f.icon;
           const col = f.accent === "teal" ? t.tealD : f.accent === "acc" ? t.acc : t.mag;
           const bg = f.accent === "teal" ? t.tealBg : f.accent === "acc" ? t.accBg : t.magBg;
@@ -386,12 +390,18 @@ function FormView({ cfg, t, d, supabase, profile, role, combos, scopeFilter, sdp
         if (f.type === "num") v = Number(v);
         row[f.k] = v;
       }
+      // WAJIB: submitted_by = auth.uid() (syarat RLS INSERT) + status awal 'submitted'
+      // agar submission masuk antrean approval BSM.
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Sesi tidak ditemukan, silakan login ulang.");
+      row.submitted_by = user.id;
+      row.status = "submitted";
       row.submitted_by_name = profile?.full_name || profile?.username || null;
       row.submitter_role = role;
       row.submitter_brand = profile?.bsm_brand || val.brand || null;
-      row.submitter_branch = profile?.bsm_branch || val.branch || null;
-      row.submitter_cluster = profile?.cluster || val.micro_cluster || null;
-      row.submitter_region = val.region || null;
+      row.submitter_branch = profile?.bsm_branch || val.branch || val.existing_branch || val.after_branch || null;
+      row.submitter_cluster = profile?.cluster || val.micro_cluster || val.existing_micro_cluster || null;
+      row.submitter_region = val.region || val.existing_region || val.after_region || null;
       const { error } = await supabase.from(cfg.table).insert(row);
       if (error) throw error;
       setMsg({ type: "ok", text: "Data berhasil dikirim." });

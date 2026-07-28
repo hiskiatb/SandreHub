@@ -15,7 +15,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ChevronDown, ChevronRight, ChevronLeft, CalendarDays, CheckCircle2, Clock, AlertTriangle, XCircle, FileText,
   Store, Ban, Hourglass, Pencil, KeyRound, TrendingUp, FilePlus2, FileMinus2, Shuffle, Loader2,
-  Users, Info, Activity, Eye,
+  Users, Info, Activity, Eye, Download, UploadCloud, TableProperties, ShieldCheck, Inbox, Mail,
 } from "lucide-react";
 
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -54,6 +54,10 @@ const STATUS_META = {
   belum:    { label: "Belum Lengkap",  tone: "lo" },
 };
 
+// Langkah yang disarankan: pengisi yang punya SDP belum tuntas → arahkan ke
+// "Lengkapi Data" (indeks 1); selain itu mulai dari langkah pertama.
+const fillerNext = (role, agg) => (role === "cse_rse" && (agg.belum + agg.review + agg.rejected) > 0) ? 1 : 0;
+
 const DESKTOP_BP = 1024;
 function useIsDesktop() {
   const [isDesktop, setIsDesktop] = useState(() => (typeof window !== "undefined" ? window.innerWidth >= DESKTOP_BP : false));
@@ -66,12 +70,16 @@ function useIsDesktop() {
   return isDesktop;
 }
 
-export default function SDP_Home({ supabase, theme = "light", profile, onNavigate, listMenuId = "field", availableIds }) {
+export default function SDP_Home({ supabase, theme = "light", profile, onNavigate, listMenuId = "field", availableIds, impersonate = null, periodExt = null, setPeriodExt }) {
   const d = theme === "dark"; const t = mk(d);
   const role = profile?.role || "";
   const isDesktop = useIsDesktop();
   const periods = useMemo(() => buildPeriods(), []);
-  const [period, setPeriod] = useState(periods[0]);
+  // Periode dipertahankan di induk (SDP_StatusForm) agar tidak ter-reset saat
+  // kembali dari sub-menu.
+  const [periodLocal, setPeriodLocal] = useState(periodExt || periods[0]);
+  const period = periodExt || periodLocal;
+  const setPeriod = (v) => { setPeriodLocal(v); setPeriodExt?.(v); };
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
   const [activity, setActivity] = useState([]);
@@ -85,7 +93,17 @@ export default function SDP_Home({ supabase, theme = "light", profile, onNavigat
     try {
       let master = [];
       const base = supabase.from("sdp_master").select("sdp_id,cluster,branch,sdp_name,pt_name,sdp_type,area").eq("period", period);
-      if (role === "cse_rse") {
+      if (impersonate) {
+        // Pratinjau SPM "Lihat sebagai": muat data langsung dari scope terpilih
+        // (lewati sales_access_codes yang milik akun SPM).
+        let q = base;
+        if (impersonate.cluster) q = q.eq("cluster", impersonate.cluster);
+        else if (impersonate.branch) q = q.eq("branch", impersonate.branch);
+        else if (impersonate.region) q = q.eq("region", impersonate.region);
+        const { data } = await guard(q); master = data || [];
+        // BSM = branch × brand → filter brand dari prefix cluster (CS→3ID, MC→IM3).
+        if (impersonate.brand) master = master.filter((r) => brandOfCluster(r.cluster) === impersonate.brand);
+      } else if (role === "cse_rse") {
         const { data: codes } = await guard(supabase.from("sales_access_codes").select("scope_value").eq("user_id", profile.id).eq("role", "cse_rse").eq("is_registered", true).eq("is_active", true));
         const clusters = [...new Set((codes || []).map((c) => c.scope_value).filter(Boolean))];
         if (clusters.length) { const { data } = await guard(base.in("cluster", clusters)); master = data || []; }
@@ -134,7 +152,7 @@ export default function SDP_Home({ supabase, theme = "light", profile, onNavigat
         setMonthCounts({ registration: reg.count || 0, rebordering: reb.count || 0, termination: term.count || 0 });
       } catch { setMonthCounts({ registration: 0, rebordering: 0, termination: 0 }); }
     } catch (e) { setErr(e?.message || String(e)); setRows([]); } finally { setLoading(false); }
-  }, [supabase, period, role, profile?.id, profile?.cluster, profile?.bsm_branch]);
+  }, [supabase, period, role, profile?.id, profile?.cluster, profile?.bsm_branch, impersonate?.cluster, impersonate?.branch, impersonate?.brand, impersonate?.region]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { setPage(1); }, [period, rows.length]);
 
@@ -151,6 +169,15 @@ export default function SDP_Home({ supabase, theme = "light", profile, onNavigat
   const nav = (id) => onNavigate?.(id);
 
   const sortedRows = useMemo(() => [...rows].sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""))), [rows]);
+
+  // Info atasan (BSM) untuk CSE/RSE: branch & brand tempat approval diteruskan.
+  const supervisor = useMemo(() => {
+    if (role !== "cse_rse") return null;
+    const branches = [...new Set(rows.map((r) => r.branch).filter(Boolean))].sort();
+    const brands = [...new Set(rows.map((r) => brandOfCluster(r.cluster)).filter(Boolean))].sort();
+    if (!branches.length && !brands.length) return null;
+    return { branches, brands };
+  }, [rows, role]);
 
   if (loading) {
     return <div style={{ fontFamily: FF, padding: 60, textAlign: "center", color: t.mid }}><Loader2 size={22} style={{ animation: "hspin 1s linear infinite" }} /><div style={{ marginTop: 8, fontSize: 13 }}>Memuat…</div><style>{`@keyframes hspin{to{transform:rotate(360deg)}}`}</style></div>;
@@ -172,17 +199,86 @@ export default function SDP_Home({ supabase, theme = "light", profile, onNavigat
         t={t} role={role} profile={profile} period={period} periods={periods} setPeriod={setPeriod}
         agg={agg} pct={pct} monthCounts={monthCounts} sortedRows={sortedRows} page={page} setPage={setPage}
         nav={nav} activity={activity} listMenuId={listMenuId} availableIds={availableIds} nextPeriodLabel={nextPeriodLabel} period0={period}
+        supervisor={supervisor}
       />
     );
   }
   return (
     <MobileHome t={t} role={role} profile={profile} period={period} periods={periods} setPeriod={setPeriod}
-      agg={agg} pct={pct} nav={nav} listMenuId={listMenuId} availableIds={availableIds} />
+      agg={agg} pct={pct} nav={nav} listMenuId={listMenuId} availableIds={availableIds} supervisor={supervisor} />
+  );
+}
+
+// ════════════════════════ STEPPER ALUR PER PERAN ════════════════════════
+// Banner langkah bernomor: memberi tahu tiap peran harus mulai dari mana &
+// ke mana berikutnya. Langkah yang disarankan (nextStep) disorot.
+function stepsFor(role, listMenuId) {
+  if (role === "spm_sumatera") return [
+    { label: "Upload Territory", sub: "Acuan wilayah bulanan", id: "upload_territory", icon: UploadCloud },
+    { label: "Pantau & Validasi", sub: "Cek kelengkapan CSE",   id: "monitor",          icon: Activity },
+    { label: "Export ke HQ",      sub: "Blok siap-paste",        id: "export",           icon: Download },
+  ];
+  if (role === "pic_region") return [
+    { label: "Pantau Kelengkapan", sub: "Progres per cluster", id: "monitor",   icon: Activity },
+    { label: "Validasi Data",      sub: "Tinjau & sahkan",     id: listMenuId,  icon: CheckCircle2 },
+    { label: "Export ke HQ",       sub: "Blok siap-paste",     id: "export",    icon: Download },
+  ];
+  if (role === "bsm") return [
+    { label: "Approval", sub: "Setujui submission CSE", id: "approval",  icon: ShieldCheck },
+    { label: "Data SDP", sub: "Kelola & lengkapi",     id: listMenuId,  icon: CheckCircle2 },
+    { label: "Registrasi", sub: "Daftarkan SDP baru",  id: "quickform", icon: FilePlus2 },
+  ];
+  // cse_rse (pengisi utama)
+  return [
+    { label: "Registrasi SDP", sub: "Daftarkan SDP baru",     id: "quickform",  icon: FilePlus2 },
+    { label: "Lengkapi Data",  sub: "Isi detail outlet",      id: listMenuId,   icon: Pencil },
+    { label: "Status Approval", sub: "Ikuti persetujuan BSM", id: "approval",   icon: ShieldCheck },
+  ];
+}
+
+function RoleStepper({ t, role, nav, has, listMenuId, nextStep }) {
+  const steps = stepsFor(role, listMenuId).filter((s) => has(s.id));
+  if (steps.length < 2) return null;
+  return (
+    <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, boxShadow: t.sm, padding: "14px 16px", marginBottom: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 12 }}>
+        <Info size={14} color={t.blue} />
+        <div style={{ fontSize: 12.5, fontWeight: 800, color: t.hi }}>Alur kerja Anda</div>
+        <div style={{ fontSize: 11.5, color: t.mid }}>· ikuti langkah berurutan</div>
+      </div>
+      <div style={{ display: "flex", alignItems: "stretch", gap: 6, flexWrap: "wrap" }}>
+        {steps.map((s, i) => {
+          const Icon = s.icon;
+          const active = i === nextStep;
+          const col = active ? t.brand : t.mid;
+          return (
+            <React.Fragment key={s.label}>
+              <button onClick={() => nav(s.id)} style={{
+                flex: "1 1 150px", minWidth: 130, display: "flex", alignItems: "center", gap: 10, textAlign: "left",
+                padding: "10px 12px", borderRadius: 12, cursor: "pointer", fontFamily: FF,
+                background: active ? `${t.brand}0D` : t.sub,
+                border: `1.5px solid ${active ? `${t.brand}55` : t.line}`,
+              }}>
+                <span style={{ position: "relative", width: 30, height: 30, borderRadius: 9, flexShrink: 0, background: active ? t.brand : `${col}18`, color: active ? "#fff" : col, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Icon size={15} />
+                  <span style={{ position: "absolute", top: -6, left: -6, width: 16, height: 16, borderRadius: 99, background: active ? t.brand : t.lo, color: "#fff", fontSize: 9.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 12.5, fontWeight: 800, color: t.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.label}</span>
+                  <span style={{ display: "block", fontSize: 10.5, color: t.mid, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{active ? "→ langkah berikutnya" : s.sub}</span>
+                </span>
+              </button>
+              {i < steps.length - 1 && <ChevronRight size={15} color={t.lo} style={{ alignSelf: "center", flexShrink: 0 }} />}
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
 // ════════════════════════ MOBILE (replika app) ════════════════════════
-function MobileHome({ t, role, profile, period, periods, setPeriod, agg, pct, nav, listMenuId, availableIds }) {
+function MobileHome({ t, role, profile, period, periods, setPeriod, agg, pct, nav, listMenuId, availableIds, supervisor }) {
   const has = (id) => !availableIds || availableIds.has(id);
   return (
     <div style={{ fontFamily: FF, color: t.hi, maxWidth: 720, margin: "0 auto" }}>
@@ -194,6 +290,11 @@ function MobileHome({ t, role, profile, period, periods, setPeriod, agg, pct, na
           <span style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, padding: "5px 11px", borderRadius: 99, background: `${t.teal}18`, color: t.teal, fontSize: 12, fontWeight: 800 }}>
             <span style={{ width: 7, height: 7, borderRadius: 99, background: t.teal }} /> {roleLabel(role)}
           </span>
+          {supervisor && (
+            <div style={{ marginTop: 8, fontSize: 12, color: t.mid }}>
+              <span style={{ fontWeight: 700, color: t.hi }}>Atasan (BSM):</span> {supervisor.branches.join(", ") || "—"} · <b style={{ color: t.hi }}>{supervisor.brands.join("/") || "—"}</b>
+            </div>
+          )}
         </div>
         <div style={{ position: "relative" }}>
           <CalendarDays size={15} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: t.brand, pointerEvents: "none" }} />
@@ -203,6 +304,8 @@ function MobileHome({ t, role, profile, period, periods, setPeriod, agg, pct, na
           <ChevronDown size={15} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: t.mid, pointerEvents: "none" }} />
         </div>
       </div>
+
+      <RoleStepper t={t} role={role} nav={nav} has={has} listMenuId={listMenuId} nextStep={fillerNext(role, agg)} />
 
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {/* Hero progres (tappable → Data SDP) */}
@@ -279,9 +382,14 @@ function MobileHome({ t, role, profile, period, periods, setPeriod, agg, pct, na
         <div style={{ fontSize: 15, fontWeight: 800, marginTop: 4 }}>Akses cepat</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 11 }}>
           <QuickItem t={t} icon={<Store size={20} />} tint={t.blue} label="Data SDP" sub="Daftar & isi data" onClick={() => nav(listMenuId)} />
+          {has("quickform") && <QuickItem t={t} icon={<FilePlus2 size={20} />} tint={t.teal} label="Registrasi SDP" sub="Daftarkan SDP baru" onClick={() => nav("quickform")} />}
+          {has("drafts") && <QuickItem t={t} icon={<Inbox size={20} />} tint={t.mag} label="Draft & Link" sub="Draft & link dibagikan" onClick={() => nav("drafts")} />}
+          {has("submission_forms:termination") && <QuickItem t={t} icon={<FileMinus2 size={20} />} tint={t.brand} label="Terminate SDP" sub="Akhiri SDP existing" onClick={() => nav("submission_forms:termination")} />}
+          {has("submission_forms:rebordering") && <QuickItem t={t} icon={<Shuffle size={20} />} tint={t.blue} label="Rebordering" sub="Pindah kecamatan" onClick={() => nav("submission_forms:rebordering")} />}
+          {has("approval") && <QuickItem t={t} icon={<ShieldCheck size={20} />} tint={t.amber} label={role === "cse_rse" ? "Status Approval" : "Approval"} sub={role === "cse_rse" ? "Status submission Anda" : "Setujui submission CSE"} onClick={() => nav("approval")} />}
+          {has("summary") && <QuickItem t={t} icon={<TableProperties size={20} />} tint={t.blue} label="Ringkasan Siklus" sub="Live · New · Term · Reb" onClick={() => nav("summary")} />}
           {has("report") && <QuickItem t={t} icon={<TrendingUp size={20} />} tint={t.gold} label="Laporan" sub="Progres pengisian" onClick={() => nav("report")} />}
           {has("mycodes") && <QuickItem t={t} icon={<KeyRound size={20} />} tint={t.mag} label="Kode Otoritas" sub="Klaim cluster" onClick={() => nav("mycodes")} />}
-          {has("submission_forms") && <QuickItem t={t} icon={<FilePlus2 size={20} />} tint={t.brand} label="Registrasi" sub="Reg / Terminasi" onClick={() => nav("submission_forms")} />}
         </div>
       </div>
     </div>
@@ -324,7 +432,7 @@ function QuickItem({ t, icon, tint, label, sub, onClick }) {
 // ════════════════════════ DESKTOP (dashboard komprehensif) ════════════════════════
 const PAGE_SIZE = 8;
 
-function DesktopDashboard({ t, role, profile, period, periods, setPeriod, agg, pct, monthCounts, sortedRows, page, setPage, nav, activity, listMenuId, availableIds }) {
+function DesktopDashboard({ t, role, profile, period, periods, setPeriod, agg, pct, monthCounts, sortedRows, page, setPage, nav, activity, listMenuId, availableIds, supervisor }) {
   const has = (id) => !availableIds || availableIds.has(id);
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / PAGE_SIZE));
   const pageRows = sortedRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -340,12 +448,30 @@ function DesktopDashboard({ t, role, profile, period, periods, setPeriod, agg, p
     { key: "pending", icon: <Hourglass size={19} />, label: "Menunggu Approval", value: agg.pending, sub: "perlu tindak lanjut", tint: t.amber },
   ];
 
-  const quickActions = [
-    { need: "submission_forms", id: "submission_forms:registration", icon: FilePlus2, label: "Register SDP", sub: "Ajukan pendaftaran SDP baru", tint: t.teal },
-    { need: "submission_forms", id: "submission_forms:rebordering", icon: Shuffle, label: "Rebordering SDP", sub: "Ubah territory / lokasi SDP", tint: t.blue },
-    { need: "submission_forms", id: "submission_forms:termination", icon: FileMinus2, label: "Terminate SDP", sub: "Ajukan penghentian SDP", tint: t.brand },
-    { need: listMenuId, id: listMenuId, icon: Store, label: "Lihat Semua SDP", sub: "Daftar & kelola data SDP", tint: t.mag },
-  ].filter((it) => has(it.need));
+  // Navigasi utama dikelompokkan agar tiap menu punya TUJUAN BERBEDA yang jelas
+  // (bukan banyak tile yang semuanya menuju "Data SDP").
+  const menuGroups = [
+    { title: "Isi & Ubah Data", items: [
+      { need: "quickform", id: "quickform", icon: FilePlus2, label: "Registrasi SDP", sub: "Daftarkan SDP baru — ID otomatis", tint: t.teal },
+      { need: "submission_forms:termination", id: "submission_forms:termination", icon: FileMinus2, label: "Terminate SDP", sub: "Akhiri kemitraan SDP existing", tint: t.brand },
+      { need: "submission_forms:rebordering", id: "submission_forms:rebordering", icon: Shuffle, label: "Rebordering SDP", sub: "Pindahkan cakupan kecamatan", tint: t.blue },
+      { need: "bulkgrid", id: "bulkgrid", icon: FileText, label: "Registrasi Massal", sub: "Tempel dari Excel sekaligus", tint: t.mag },
+      { need: "drafts", id: "drafts", icon: Inbox, label: "Draft & Link", sub: "Draft, link dibagikan & kiriman balik", tint: t.mag },
+    ] },
+    { title: "Pantau & Analitik", items: [
+      { need: "approval", id: "approval", icon: ShieldCheck, label: role === "cse_rse" ? "Status Approval" : "Approval SDP", sub: role === "cse_rse" ? "Status semua submission Anda" : "Setujui/tolak submission CSE (semua jenis)", tint: t.amber },
+      { need: listMenuId, id: listMenuId, icon: Store, label: "Data SDP", sub: "Daftar lengkap, detail & lokasi", tint: t.blue },
+      { need: "summary", id: "summary", icon: TableProperties, label: "Ringkasan Siklus", sub: "Live · New · Terminate · Reb", tint: t.blue },
+      { need: "monitor", id: "monitor", icon: Activity, label: "Monitor Kelengkapan", sub: "Progres pengisian per cluster", tint: t.amber },
+      { need: "report", id: "report", icon: TrendingUp, label: "Laporan", sub: "Progres pengisian per periode", tint: t.gold },
+    ] },
+    { title: "Kelola & Export", items: [
+      { need: "export", id: "export", icon: Download, label: "Export ke HQ", sub: "Blok siap-paste ke spreadsheet HQ", tint: t.teal },
+      { need: "mycodes", id: "mycodes", icon: KeyRound, label: "Kode Otoritas", sub: "Klaim cluster/branch Anda", tint: t.mag },
+      { need: "upload_territory", id: "upload_territory", icon: UploadCloud, label: "Upload Territory", sub: "Acuan wilayah bulanan (SPM)", tint: t.teal },
+      { need: "email_mapping", id: "email_mapping", icon: Mail, label: "Mapping Email Login", sub: "Email → role & branch (import Excel)", tint: t.blue },
+    ] },
+  ].map((g) => ({ ...g, items: g.items.filter((it) => has(it.need)) })).filter((g) => g.items.length);
 
   return (
     <div style={{ fontFamily: FF, color: t.hi }}>
@@ -354,6 +480,11 @@ function DesktopDashboard({ t, role, profile, period, periods, setPeriod, agg, p
         <div>
           <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em" }}>Dashboard SDP</div>
           <div style={{ fontSize: 13, color: t.mid, marginTop: 3 }}>{greeting()}, {shortName(profile?.full_name) || "Pengguna"} · {roleLabel(role)}</div>
+          {supervisor && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, padding: "4px 10px", borderRadius: 8, background: t.sub, border: `1px solid ${t.line}`, fontSize: 12, color: t.mid }}>
+              <Users size={12} /> Atasan (BSM): <b style={{ color: t.hi }}>{supervisor.branches.join(", ") || "—"}</b> · <b style={{ color: t.hi }}>{supervisor.brands.join("/") || "—"}</b>
+            </span>
+          )}
         </div>
         <div style={{ position: "relative" }}>
           <CalendarDays size={15} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: t.brand, pointerEvents: "none" }} />
@@ -364,8 +495,10 @@ function DesktopDashboard({ t, role, profile, period, periods, setPeriod, agg, p
         </div>
       </div>
 
+      <RoleStepper t={t} role={role} nav={nav} has={has} listMenuId={listMenuId} nextStep={fillerNext(role, agg)} />
+
       {/* KPI row */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 14, marginBottom: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 14, marginBottom: 22 }}>
         {kpis.map((k) => (
           <div key={k.key} style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: 16, boxShadow: t.sm }}>
             <span style={{ width: 38, height: 38, borderRadius: 11, background: `${k.tint}18`, color: k.tint, display: "flex", alignItems: "center", justifyContent: "center" }}>{k.icon}</span>
@@ -376,8 +509,20 @@ function DesktopDashboard({ t, role, profile, period, periods, setPeriod, agg, p
         ))}
       </div>
 
-      {/* Main grid: tabel + panel kanan */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 340px", gap: 18, alignItems: "start", marginBottom: 20 }}>
+      {/* Menu utama — tiap kartu tujuan berbeda & jelas */}
+      <div style={{ marginBottom: 22 }}>
+        {menuGroups.map((g) => (
+          <div key={g.title} style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: t.mid, marginBottom: 10 }}>{g.title}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(215px, 1fr))", gap: 12 }}>
+              {g.items.map((it) => <MenuTile key={it.id} t={t} it={it} onClick={() => nav(it.id)} />)}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabel SDP terbaru + panel kanan (aktivitas & pengingat) */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 18, alignItems: "start" }}>
         {/* Recent SDP table */}
         <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 18, boxShadow: t.sm, overflow: "hidden" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 18px", borderBottom: `1px solid ${t.line}` }}>
@@ -440,27 +585,8 @@ function DesktopDashboard({ t, role, profile, period, periods, setPeriod, agg, p
           )}
         </div>
 
-        {/* Panel kanan */}
+        {/* Panel kanan: aktivitas & pengingat */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 18, boxShadow: t.sm, padding: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 800, color: t.hi, marginBottom: 12 }}>Quick Actions</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {quickActions.map((qa) => {
-                const Icon = qa.icon;
-                return (
-                  <button key={qa.id} onClick={() => nav(qa.id)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 10px", borderRadius: 12, border: `1px solid ${t.line}`, background: t.sub, cursor: "pointer", fontFamily: FF, textAlign: "left" }}>
-                    <span style={{ width: 34, height: 34, borderRadius: 10, background: `${qa.tint}18`, color: qa.tint, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon size={16} /></span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>{qa.label}</div>
-                      <div style={{ fontSize: 11, color: t.mid, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{qa.sub}</div>
-                    </div>
-                    <ChevronRight size={15} color={t.lo} />
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
           <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 18, boxShadow: t.sm, padding: 16 }}>
             <div style={{ fontSize: 14, fontWeight: 800, color: t.hi, marginBottom: 12 }}>Aktivitas Terbaru</div>
             {activity.length === 0 ? (
@@ -479,51 +605,40 @@ function DesktopDashboard({ t, role, profile, period, periods, setPeriod, agg, p
               </div>
             )}
           </div>
-        </div>
-      </div>
 
-      {/* Lifecycle + reminder */}
-      <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 18 }}>
-        <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 18, boxShadow: t.sm, padding: 20 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: t.hi }}>Siklus SDP</div>
-          <div style={{ fontSize: 12, color: t.mid, marginTop: 2, marginBottom: 18 }}>Satu SDP, beberapa tahap pengelolaan</div>
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-            {[
-              { icon: FilePlus2, label: "Registrasi", desc: "Daftarkan SDP baru", col: t.teal, id: has("submission_forms") ? "submission_forms:registration" : null },
-              { icon: CheckCircle2, label: "Aktif", desc: "SDP aktif & operasional", col: t.green, id: has(listMenuId) ? listMenuId : null },
-              { icon: Shuffle, label: "Rebordering", desc: "Update territory / lokasi", col: t.blue, id: has("submission_forms") ? "submission_forms:rebordering" : null },
-              { icon: Ban, label: "Terminasi", desc: "Akhiri kemitraan SDP", col: t.brand, id: has("submission_forms") ? "submission_forms:termination" : null },
-            ].map((s, i, arr) => {
-              const Icon = s.icon;
-              return (
-                <React.Fragment key={s.label}>
-                  <button onClick={() => s.id && nav(s.id)} disabled={!s.id} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, background: "none", border: "none", cursor: s.id ? "pointer" : "default", fontFamily: FF, padding: 0 }}>
-                    <span style={{ width: 46, height: 46, borderRadius: 14, background: `${s.col}18`, color: s.col, display: "flex", alignItems: "center", justifyContent: "center", border: `1.5px solid ${s.col}33` }}><Icon size={20} /></span>
-                    <div style={{ textAlign: "center" }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 800, color: t.hi }}>{s.label}</div>
-                      <div style={{ fontSize: 10.5, color: t.mid, marginTop: 1, maxWidth: 100 }}>{s.desc}</div>
-                    </div>
-                  </button>
-                  {i < arr.length - 1 && <ChevronRight size={16} color={t.lo} style={{ marginTop: 13, flexShrink: 0 }} />}
-                </React.Fragment>
-              );
-            })}
+          <div style={{ background: `${t.blue}0D`, border: `1px solid ${t.blue}33`, borderRadius: 18, padding: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+              <Info size={16} color={t.blue} />
+              <div style={{ fontSize: 13.5, fontWeight: 800, color: t.hi }}>Pengingat Penting</div>
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 7, fontSize: 12, color: t.mid, lineHeight: 1.5 }}>
+              <li>Ikuti stepper “Alur kerja Anda” di atas — kerjakan langkah berurutan.</li>
+              <li>Pastikan data benar & lengkap sebelum dikirim.</li>
+              <li>Rebordering: pilih SDP existing agar data utama terisi otomatis.</li>
+              <li>Dokumen partner: tempel <b>link folder OneDrive</b> yang disediakan (tidak perlu unggah file).</li>
+              <li>Status mengikuti alur review BSM/SPM setiap bulan.</li>
+            </ul>
           </div>
-        </div>
-
-        <div style={{ background: `${t.blue}0D`, border: `1px solid ${t.blue}33`, borderRadius: 18, padding: 20 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
-            <Info size={17} color={t.blue} />
-            <div style={{ fontSize: 14, fontWeight: 800, color: t.hi }}>Pengingat Penting</div>
-          </div>
-          <ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 8, fontSize: 12.5, color: t.mid, lineHeight: 1.5 }}>
-            <li>Pastikan data yang diinput sudah benar dan lengkap.</li>
-            <li>Untuk Rebordering, pilih SDP existing agar data utama terisi otomatis — tidak perlu input ulang.</li>
-            <li>Dokumen KTP/NPWP wajib diunggah dalam format PDF pada Form Registrasi.</li>
-            <li>Status akan berubah mengikuti alur review BSM/SPM setiap bulan.</li>
-          </ul>
         </div>
       </div>
     </div>
+  );
+}
+
+// Kartu menu desktop — satu tujuan jelas per kartu.
+function MenuTile({ t, it, onClick }) {
+  const Icon = it.icon;
+  return (
+    <button onClick={onClick}
+      onMouseEnter={(e) => { e.currentTarget.style.borderColor = `${it.tint}66`; e.currentTarget.style.boxShadow = t.md; e.currentTarget.style.transform = "translateY(-1px)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.borderColor = t.line; e.currentTarget.style.boxShadow = t.sm; e.currentTarget.style.transform = "none"; }}
+      style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 14px", borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, cursor: "pointer", fontFamily: FF, textAlign: "left", boxShadow: t.sm, transition: "all .15s ease" }}>
+      <span style={{ width: 40, height: 40, borderRadius: 11, background: `${it.tint}18`, color: it.tint, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon size={19} /></span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: t.hi }}>{it.label}</div>
+        <div style={{ fontSize: 11.5, color: t.mid, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.sub}</div>
+      </div>
+      <ChevronRight size={16} color={t.lo} style={{ flexShrink: 0 }} />
+    </button>
   );
 }

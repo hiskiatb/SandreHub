@@ -1,9 +1,11 @@
 "use client";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { UploadCloud, Map as MapIcon, ChevronRight, ChevronDown, ArrowLeft, CheckCircle2, AlertTriangle, Clock, Network, Search, Store, UserCheck, UserX } from "lucide-react";
+import { UploadCloud, Map as MapIcon, ChevronRight, ChevronDown, ArrowLeft, CheckCircle2, AlertTriangle, Clock, Network, Search, Store, UserCheck, UserX, Target as TargetIcon, Tag, Plus, Pencil } from "lucide-react";
 import MartaShell, { T } from "../components/MartaShell";
 import { useGeoLayers, LayerPanel } from "../components/SumatraMap";
 import supabaseMarta from "../../../lib/supabaseMarta";
+import { getMartaScope } from "../../../lib/martaScope";
+import { nearestPriorTarget } from "../../../lib/activityTarget";
 import {
   TARGET_FIELDS, readWorkbook, deriveTable, guessMapping, buildRows, runImport,
   fetchImportHistory, currentYYYYMM, monthLabel, MONTH_NAMES,
@@ -13,16 +15,16 @@ import { passesRow, optionsFor, FilterTh, FilterMenu } from "../../dashboard/com
 export default function MasterDataPage() {
   return (
     <MartaShell active="master" title="Master Data" subtitle="Data bulanan MartaHub — List Site (branch BME/RGE) & Batas Wilayah.">
-      {(ctx) => <Body canManage={ctx?.canManage} />}
+      {(ctx) => <Body canManage={ctx?.canManage} email={ctx?.session?.user?.email} />}
     </MartaShell>
   );
 }
 
 const mtT = { card: "#FFFFFF", line: T.line, hi: T.hi, mid: T.mid, lo: T.lo, hover: "#F0F4FA" };
 
-function Body({ canManage }) {
+function Body({ canManage, email }) {
   const geo = useGeoLayers();
-  const [active, setActive] = useState(null); // null | 'list_site' | 'territory'
+  const [active, setActive] = useState(null); // null | 'list_site' | 'territory' | 'activity_target'
   const [history, setHistory] = useState([]);
   const currentMonth = currentYYYYMM();
 
@@ -56,6 +58,12 @@ function Body({ canManage }) {
       </div>
     );
   }
+  if (active === "activity_target") {
+    return <ActivityTargetView email={email} canManage={canManage} onBack={() => setActive(null)} />;
+  }
+  if (active === "sp_fwa_types") {
+    return <SpFwaTypesView email={email} canManage={canManage} onBack={() => setActive(null)} />;
+  }
 
   // ── Hub ───────────────────────────────────────────────────────────────────
   return (
@@ -84,7 +92,317 @@ function Body({ canManage }) {
           desc="Hirarki Region → Brand → Branch beserta akun (TMV / BME / RGE) yang termapping, plus status pengisian (Terisi/Kosong)."
           onClick={() => setActive("hierarchy")}
         />
+        <MenuCard
+          icon={TargetIcon} label="Target Aktivitas"
+          desc="Target SP/FWA/Revenue per Branch × Brand × Bulan, ditetapkan TMV/Brand TMV — jadi acuan Achievement % di Dashboard."
+          onClick={() => setActive("activity_target")}
+        />
+        <MenuCard
+          icon={Tag} label="Jenis SP & FWA"
+          desc="Master jenis SP & FWA beserta harga per unit — dipakai mobile utk menghitung Revenue otomatis dari MSISDN yang dicatat DSF/TL DSF/BME."
+          onClick={() => setActive("sp_fwa_types")}
+        />
       </div>
+    </div>
+  );
+}
+
+// ── Jenis SP & FWA — master jenis + harga per unit (Revenue otomatis mobile) ──
+function SpFwaTypesView({ email, canManage, onBack }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(null); // null=tutup, {}=baru, {...}=edit
+  const [err, setErr] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const { data, error } = await supabaseMarta.rpc("mh_product_type_list");
+    if (!error) setRows(data || []);
+    setLoading(false);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div style={{ maxWidth: 860 }}>
+      <BackBtn onClick={onBack} />
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: T.hi }}>Jenis SP & FWA</div>
+        {canManage && <button onClick={() => setEditing({})} style={{ ...pbtn, marginLeft: "auto" }}><Plus size={15} /> Tambah</button>}
+      </div>
+      <div style={{ color: T.mid, fontSize: 12.5, marginBottom: 14 }}>
+        Harga per unit di sini dipakai mobile utk menghitung <b>Revenue otomatis</b> saat DSF/TL DSF/BME mencatat MSISDN SP/FWA di Activity Report — bukan lagi angka manual.
+      </div>
+      {!canManage && <div style={{ ...note, marginBottom: 14 }}>Mode lihat saja — hanya Head TMV / Brand TMV / SPM Sumatera yang bisa mengubah jenis & harga.</div>}
+      {err && <div style={{ ...note, marginBottom: 12, background: T.errorBg, borderColor: T.error, color: T.error }}>{err}</div>}
+      <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+          <thead><tr style={{ background: "#F7F9FC", color: T.mid }}>
+            {["Nama", "Kategori", "Brand", "Harga / Unit", "Status", ""].map((h) => <th key={h} style={{ padding: "8px 12px", textAlign: "left" }}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {loading && <tr><td colSpan={6} style={{ padding: 20, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
+            {!loading && rows.length === 0 && <tr><td colSpan={6} style={{ padding: 20, textAlign: "center", color: T.lo }}>Belum ada jenis SP/FWA.</td></tr>}
+            {rows.map((r) => (
+              <tr key={r.id} style={{ borderTop: `1px solid ${T.line}` }}>
+                <td style={{ padding: "8px 12px", fontWeight: 700, color: T.hi }}>{r.name}</td>
+                <td style={{ padding: "8px 12px" }}>
+                  <span style={{ ...pill, color: r.category === "fwa" ? T.blue : T.primary, background: r.category === "fwa" ? T.blueBg : "#FFF0F0" }}>
+                    {r.category === "fwa" ? "FWA" : "SP"}
+                  </span>
+                </td>
+                <td style={{ padding: "8px 12px", color: T.mid }}>{brandLabel(r.brand)}</td>
+                <td style={{ padding: "8px 12px", color: T.hi, fontWeight: 700 }}>Rp {Number(r.unit_price || 0).toLocaleString("id-ID")}</td>
+                <td style={{ padding: "8px 12px" }}>
+                  <span style={{ ...pill, color: r.active ? T.success : T.lo, background: r.active ? T.successBg : "#F1F2F5" }}>{r.active ? "Aktif" : "Nonaktif"}</span>
+                </td>
+                <td style={{ padding: "8px 12px", textAlign: "right" }}>
+                  {canManage && <button onClick={() => setEditing(r)} style={iconBtn}><Pencil size={14} /></button>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {editing && (
+        <SpFwaTypeModal row={editing} email={email} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} onError={setErr} />
+      )}
+    </div>
+  );
+}
+
+function SpFwaTypeModal({ row, email, onClose, onSaved, onError }) {
+  const isNew = !row.id;
+  const [category, setCategory] = useState(row.category || "sp");
+  const [brand, setBrand] = useState(row.brand || "im3");
+  const [name, setName] = useState(row.name || "");
+  const [unitPrice, setUnitPrice] = useState(row.unit_price ?? "");
+  const [activeFlag, setActiveFlag] = useState(row.active ?? true);
+  const [saving, setSaving] = useState(false);
+  const canSave = name.trim() && !saving;
+
+  async function save() {
+    setSaving(true);
+    try {
+      const { error } = await supabaseMarta.rpc("mh_product_type_upsert", {
+        p_id: row.id || null, p_category: category, p_brand: brand, p_name: name.trim(),
+        p_unit_price: unitPrice === "" ? 0 : Number(unitPrice), p_active: activeFlag, p_caller_email: email,
+      });
+      if (error) throw error;
+      onSaved();
+    } catch (e) { onError(e.message || "Gagal menyimpan"); onClose(); }
+    finally { setSaving(false); }
+  }
+
+  return (
+    <Modal onClose={onClose} title={isNew ? "Tambah Jenis SP/FWA" : "Edit Jenis SP/FWA"}>
+      <Field label="Kategori">
+        <select value={category} onChange={(e) => setCategory(e.target.value)} style={selectStyle}>
+          <option value="sp">SP</option>
+          <option value="fwa">FWA</option>
+        </select>
+      </Field>
+      <Field label="Brand">
+        <select value={brand} onChange={(e) => setBrand(e.target.value)} style={selectStyle}>
+          <option value="im3">IM3</option>
+          <option value="tri">3ID</option>
+        </select>
+      </Field>
+      <Field label="Nama *"><input value={name} onChange={(e) => setName(e.target.value)} style={inp} placeholder="Mis. Perdana Reguler 10K" /></Field>
+      <Field label="Harga per Unit (Rp)">
+        <input type="number" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} style={inp} placeholder="0" />
+      </Field>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: T.mid, marginTop: 4 }}>
+        <input type="checkbox" checked={activeFlag} onChange={(e) => setActiveFlag(e.target.checked)} /> Aktif (muncul di pilihan jenis saat mobile input Penjualan SP/FWA)
+      </label>
+      <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end", gap: 10 }}>
+        <button onClick={onClose} style={btn}>Batal</button>
+        <button onClick={save} disabled={!canSave} style={{ ...pbtn, ...(!canSave ? disabledPbtn : {}) }}>{saving ? "Menyimpan…" : "Simpan"}</button>
+      </div>
+    </Modal>
+  );
+}
+
+function Modal({ title, onClose, children }) {
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 20, width: 420, maxWidth: "92vw", maxHeight: "86vh", overflow: "auto" }}>
+        <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 14 }}>{title}</div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <label style={{ display: "block", marginBottom: 10 }}>
+      <div style={{ fontSize: 11.5, fontWeight: 700, color: T.hi, marginBottom: 5 }}>{label}</div>
+      {children}
+    </label>
+  );
+}
+
+// ── Target Aktivitas — bulk-entry per Brand+Bulan, carry-forward otomatis ────
+function ActivityTargetView({ email, canManage, onBack }) {
+  const [scope, setScope] = useState(null);
+  const [combos, setCombos] = useState([]);
+  const [allTargets, setAllTargets] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [brand, setBrand] = useState("");
+  const [month, setMonth] = useState(currentYYYYMM());
+  const [rows, setRows] = useState({}); // branch_id -> { branchName, sp, fwa, revenue, carriedFrom }
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const sc = email ? await getMartaScope(email) : null;
+    setScope(sc);
+    const [bb, tg] = await Promise.all([
+      supabaseMarta.rpc("mh_branch_brand_list"),
+      supabaseMarta.rpc("mh_activity_list_targets"),
+    ]);
+    setCombos(bb.data || []);
+    setAllTargets(tg.data || []);
+    setLoading(false);
+  }, [email]);
+  useEffect(() => { load(); }, [load]);
+
+  // Brand TMV -> discope ke region+brand-nya sendiri; Head TMV -> region saja;
+  // SPM Sumatera/admin -> unscoped (pola sama halaman lain, lib/martaScope.js).
+  const scopedCombos = useMemo(() => {
+    if (!scope || scope.unscoped) return combos;
+    return combos.filter((c) => (!scope.region || c.region === scope.region) && (!scope.brand || c.brand === scope.brand));
+  }, [combos, scope]);
+
+  const brandOptions = useMemo(() => [...new Set(scopedCombos.map((c) => c.brand))].sort(), [scopedCombos]);
+  useEffect(() => { if (!brand && brandOptions.length) setBrand(brandOptions[0]); }, [brand, brandOptions]);
+
+  const branches = useMemo(() => {
+    const seen = new Map();
+    for (const c of scopedCombos) if (c.brand === brand && !seen.has(c.branch_id)) seen.set(c.branch_id, c.branch);
+    return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [scopedCombos, brand]);
+
+  // Prefill tiap ganti brand/bulan — carry-forward dari target bulan terdekat
+  // sebelumnya kalau bulan ini belum pernah diset (lib/activityTarget.js,
+  // dipakai ULANG persis sama oleh Dashboard utk hitung Achievement %).
+  useEffect(() => {
+    if (!brand || !month || !branches.length) { setRows({}); return; }
+    const next = {};
+    for (const [branchId, branchName] of branches) {
+      const exact = allTargets.find((t) => t.branch_id === branchId && t.brand === brand && t.month === month);
+      const effective = exact || nearestPriorTarget(allTargets, branchId, brand, month);
+      next[branchId] = {
+        branchName,
+        sp: effective?.target_sp ?? "", fwa: effective?.target_fwa ?? "", revenue: effective?.target_revenue ?? "",
+        carriedFrom: !exact && effective ? effective.month : null,
+      };
+    }
+    setRows(next);
+  }, [branches, brand, month, allTargets]);
+
+  function setField(branchId, field, value) {
+    setRows((r) => ({ ...r, [branchId]: { ...r[branchId], [field]: value } }));
+  }
+
+  async function saveAll() {
+    setSaving(true); setErr(""); setOk("");
+    try {
+      const payload = Object.entries(rows).map(([branchId, r]) => ({
+        branch_id: branchId, branch_name: r.branchName, brand, month,
+        target_sp: r.sp === "" ? null : Number(r.sp),
+        target_fwa: r.fwa === "" ? null : Number(r.fwa),
+        target_revenue: r.revenue === "" ? null : Number(r.revenue),
+        note: null,
+      }));
+      const { error } = await supabaseMarta.rpc("mh_activity_set_targets_batch", { p_rows: payload, p_caller_email: email });
+      if (error) throw new Error(error.message);
+      setOk(`Tersimpan ${payload.length} branch untuk ${monthLabel(month)}.`);
+      await load();
+    } catch (e) { setErr(e.message || "Gagal menyimpan target"); }
+    finally { setSaving(false); }
+  }
+
+  const monthInputVal = `${month.slice(0, 4)}-${month.slice(4, 6)}`;
+  const disabledPbtn = { background: "#F1F2F5", color: T.lo, boxShadow: "none", cursor: "not-allowed" };
+
+  return (
+    <div style={{ maxWidth: 900 }}>
+      <BackBtn onClick={onBack} />
+      <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>Target Aktivitas</div>
+      <div style={{ color: T.mid, fontSize: 12.5, marginBottom: 14 }}>
+        Target resmi SP / FWA / Revenue per Branch × Brand × Bulan — jadi acuan <b>Achievement %</b> di Dashboard. Target per-event yang BME isi sendiri saat Create Plan tetap ada (alat bantu planning BME), tapi Achievement % resmi dihitung dari target di sini.
+      </div>
+
+      {!canManage ? (
+        <div style={note}>Mode lihat saja — hanya Head TMV / Brand TMV / SPM Sumatera yang bisa mengubah target.</div>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
+            <label style={{ display: "block" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: T.hi, marginBottom: 4 }}>Brand</div>
+              <select value={brand} onChange={(e) => setBrand(e.target.value)} style={{ ...selectStyle, width: 140 }} disabled={brandOptions.length <= 1}>
+                {brandOptions.map((b) => <option key={b} value={b}>{b === "tri" ? "3ID" : b.toUpperCase()}</option>)}
+              </select>
+            </label>
+            <label style={{ display: "block" }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: T.hi, marginBottom: 4 }}>Bulan</div>
+              <input type="month" value={monthInputVal} onChange={(e) => setMonth(e.target.value.replace("-", ""))}
+                style={{ ...inp, width: 170 }} />
+            </label>
+          </div>
+
+          {err && <div style={{ ...note, marginBottom: 10, background: T.errorBg, borderColor: T.error, color: T.error }}>{err}</div>}
+          {ok && <div style={{ ...note, marginBottom: 10, background: T.successBg, borderColor: T.success, color: "#155724" }}>{ok}</div>}
+
+          <div style={{ overflow: "auto", border: `1px solid ${T.line}`, borderRadius: 10, marginBottom: 12 }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+              <thead>
+                <tr style={{ background: "#F7F9FC" }}>
+                  {["Branch", "Target SP", "Target FWA", "Target Revenue"].map((h) => (
+                    <th key={h} style={{ padding: "8px 12px", textAlign: "left", fontWeight: 700, color: T.mid, fontSize: 11 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {loading && <tr><td colSpan={4} style={{ padding: 20, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
+                {!loading && branches.length === 0 && (
+                  <tr><td colSpan={4} style={{ padding: 20, textAlign: "center", color: T.lo }}>Tidak ada branch untuk brand ini dalam scope Anda.</td></tr>
+                )}
+                {!loading && branches.map(([branchId]) => {
+                  const r = rows[branchId] || {};
+                  return (
+                    <tr key={branchId} style={{ borderTop: `1px solid ${T.line}` }}>
+                      <td style={{ padding: "8px 12px", fontWeight: 700, color: T.hi, whiteSpace: "nowrap" }}>
+                        {r.branchName}
+                        {r.carriedFrom && (
+                          <span style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 700, color: "#8a5b00", background: T.warningBg, borderRadius: 999, padding: "1px 7px", whiteSpace: "nowrap" }}>
+                            disalin dari {monthLabel(r.carriedFrom)}
+                          </span>
+                        )}
+                      </td>
+                      {["sp", "fwa", "revenue"].map((f) => (
+                        <td key={f} style={{ padding: "6px 10px" }}>
+                          <input type="number" value={r[f] ?? ""} onChange={(e) => setField(branchId, f, e.target.value)}
+                            style={{ ...inp, padding: "6px 9px" }} />
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <button onClick={saveAll} disabled={saving || loading || !branches.length}
+            style={{ ...pbtn, ...((saving || loading || !branches.length) ? disabledPbtn : {}) }}>
+            {saving ? "Menyimpan…" : `Simpan Semua (${branches.length} branch)`}
+          </button>
+        </>
+      )}
     </div>
   );
 }
@@ -314,7 +632,8 @@ function UploadStep({ period, onChangePeriod, onDone }) {
 
         {/* Cocokkan kolom — semua field, auto-match dari header */}
         <div style={{ margin: "18px 0 3px", fontSize: 11.5, fontWeight: 800, color: T.mid, textTransform: "uppercase" }}>Cocokkan Kolom</div>
-        <div style={{ fontSize: 12, color: T.mid, marginBottom: 10 }}>Kolom yang dibutuhkan dicocokkan otomatis dari header (pola “like” nama kolom). Ubah bila ada yang meleset. Semua kolom asli tetap disimpan.</div>
+        <div style={{ fontSize: 12, color: T.mid, marginBottom: 6 }}>Kolom yang dibutuhkan dicocokkan otomatis dari header (pola “like” nama kolom). Ubah bila ada yang meleset. Semua kolom asli tetap disimpan.</div>
+        <div style={{ ...note, marginBottom: 10 }}>Koordinat (Lat/Long) <b>sengaja tidak diimpor di sini</b> — data referensi lokasi dikelola lokal lewat menu <b>Batas Wilayah (Peta)</b> di Master Data atau <b>Validasi Lokasi</b>, tidak pernah lewat upload List Site ini.</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px,1fr))", gap: 10 }}>
           {TARGET_FIELDS.map(fieldSelect)}
         </div>
@@ -354,8 +673,6 @@ const COLUMNS = [
   { key: "area", label: "Area" },
   { key: "circle", label: "Circle" },
   { key: "kecamatan", label: "Kecamatan Unik" },
-  { key: "longitude", label: "Long" },
-  { key: "latitude", label: "Lat" },
 ];
 
 const FCOLS = COLUMNS.map((c) => [c.key, c.label]);
@@ -759,8 +1076,11 @@ const card = { background: "#FFFFFF", border: `1px solid ${T.line}`, borderRadiu
 const note = { background: "#FFFDE7", border: `1px solid #F0E3B0`, color: "#7a5b00", borderRadius: 10, padding: "10px 12px", fontSize: 12.5, lineHeight: 1.5 };
 // Semua tombol: satu baris (nowrap), ikon rapi dengan gap.
 const btn = { padding: "8px 14px", borderRadius: 9, border: `1px solid ${T.line}`, background: "#fff", color: T.hi, fontSize: 12.5, fontWeight: 700, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, whiteSpace: "nowrap", lineHeight: 1 };
+const iconBtn = { ...btn, padding: "6px 8px" };
 const GRAD = "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)"; // gradasi primary
-const pbtn = { ...btn, background: GRAD, color: "#fff", border: "none", padding: "9px 16px", boxShadow: "0 2px 8px rgba(198,22,141,.22)" };
+const pbtn = { ...btn, background: GRAD, color: "#fff", border: "none", padding: "9px 16px" };
+const disabledPbtn = { background: "#F1F2F5", color: T.lo, boxShadow: "none", cursor: "not-allowed" };
+const pill = { fontSize: 10.5, fontWeight: 800, padding: "3px 9px", borderRadius: 999, display: "inline-block" };
 const linkBtn = { background: "none", border: "none", color: T.hi, fontSize: 12.5, fontWeight: 700, cursor: "pointer", padding: 0 };
 const inp = { padding: "8px 11px", borderRadius: 9, border: `1px solid ${T.line}`, background: "#fff", color: T.hi, fontSize: 13, outline: "none", boxSizing: "border-box", width: "100%" };
 // Semua dropdown: panah kustom dengan jarak rapi dari tepi (tidak mepet).
