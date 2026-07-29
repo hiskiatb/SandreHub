@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import supabase from "../../lib/supabase";
 import { HubLogoLoader } from "../../components/HubLogoLoader";
-import { QRScannerSheet, AccessHelp, BottomSheet } from "./components";
+import { QRScannerSheet, AccessHelp, BottomSheet, imeiValid } from "./components";
 import {
   ymNow, fmtTime, fmtDateFull, fmtDateTime,
   normalizePhone, getPosition, checkGeoPermission,
@@ -75,15 +75,19 @@ export default function PromotorApp() {
   const period = ymNow();
   const flash = (msg, tone = "ok") => { setToast({ msg, tone }); setTimeout(() => setToast(null), 2600); };
 
-  const loadTodaySales = useCallback(async (em, outletId) => {
+  const loadTodaySales = useCallback(async (proId, outletId) => {
     if (!outletId) { setTodaySales([]); return; }
     const { data } = await supabase.from("pts_sale").select("*")
-      .ilike("email", em).eq("outlet_id", outletId).gte("tagged_at", todayStart())
+      .eq("promotor_id", proId).eq("outlet_id", outletId).gte("tagged_at", todayStart())
       .order("tagged_at", { ascending: false });
     setTodaySales(data || []);
   }, []);
 
-  /* ── Bootstrap: auth + assignment ──────────────────────────── */
+  /* ── Bootstrap: auth + assignment ──────────────────────────────────────
+     Identitas dipegang oleh promotor_id (uuid, permanen) — bukan email.
+     Email hanya dipakai SEKALI untuk mengklaim slot yang sudah didaftarkan
+     admin (mis. dari roster ID); setelah auth_user_id tertaut, perubahan
+     nama/email berikutnya tidak memutus riwayat pencapaian. ────────────── */
   const bootstrap = useCallback(async () => {
     setPhase("loading");
     const { data: ures } = await supabase.auth.getUser();
@@ -91,20 +95,43 @@ export default function PromotorApp() {
     if (!user) { router.replace("/promotor/login"); return; }
     const em = (user.email || "").toLowerCase();
     setEmail(em); setUid(user.id);
+    const googleName = user.user_metadata?.full_name || user.user_metadata?.name || em.split("@")[0];
 
-    // assignment bulan berjalan
-    const { data: asg } = await supabase.from("pts_assignment")
-      .select("*").ilike("email", em).eq("period", period).eq("status", "active");
-    const rows = asg || [];
-    const nm = rows[0]?.full_name || user.user_metadata?.full_name || user.user_metadata?.name || em.split("@")[0];
-    setName(nm);
+    // 1) Cari profil yang sudah tertaut ke akun ini (via auth_user_id — stabil).
+    let { data: prof } = await supabase.from("pts_promotor")
+      .select("*").eq("auth_user_id", user.id).maybeSingle();
 
-    // upsert profil promotor
-    const active = rows.length > 0;
-    const { data: prof } = await supabase.from("pts_promotor")
-      .upsert({ email: em, auth_user_id: user.id, full_name: nm, region: rows[0]?.region || null, status: active ? "active" : "pending", updated_at: new Date().toISOString() }, { onConflict: "email" })
-      .select().single();
+    if (!prof) {
+      // 2) Belum tertaut: klaim slot yang sudah didaftarkan admin lewat email,
+      //    tanpa menimpa promotor_id/full_name yang sudah diisi admin.
+      const { data: existing } = await supabase.from("pts_promotor")
+        .select("*").ilike("email", em).is("auth_user_id", null).maybeSingle();
+      if (existing) {
+        const { data: linked } = await supabase.from("pts_promotor")
+          .update({ auth_user_id: user.id, full_name: existing.full_name || googleName, updated_at: new Date().toISOString() })
+          .eq("id", existing.id).select().single();
+        prof = linked;
+      } else {
+        // 3) Benar-benar baru: buat profil "pending" tanpa promotor_id (admin
+        //    akan mengaitkan ID roster ke profil ini nanti bila perlu).
+        const { data: created } = await supabase.from("pts_promotor")
+          .insert({ email: em, auth_user_id: user.id, full_name: googleName, status: "pending" })
+          .select().single();
+        prof = created;
+      }
+    }
     setPromotorId(prof?.id || null);
+    setName(prof?.full_name || googleName);
+
+    // assignment bulan berjalan — dicari lewat promotor_id (uuid), bukan email.
+    const { data: asg } = await supabase.from("pts_assignment")
+      .select("*").eq("promotor_id_ref", prof?.id || "00000000-0000-0000-0000-000000000000").eq("period", period).eq("status", "active");
+    const rows = asg || [];
+    const active = rows.length > 0;
+
+    await supabase.from("pts_promotor")
+      .update({ region: rows[0]?.region || prof?.region || null, status: active ? "active" : "pending", updated_at: new Date().toISOString() })
+      .eq("id", prof.id);
 
     if (!active) { setPhase("pending"); return; }
 
@@ -115,7 +142,7 @@ export default function PromotorApp() {
     setOutlets(outletList);
 
     // outlet aktif: otomatis jika hanya 1, selain itu tunggu pilihan promotor
-    if (outletList.length === 1) { setActiveOutlet(outletList[0]); await loadTodaySales(em, outletList[0].id); }
+    if (outletList.length === 1) { setActiveOutlet(outletList[0]); await loadTodaySales(prof.id, outletList[0].id); }
     else { setActiveOutlet(null); setTodaySales([]); }
 
     setPhase("app");
@@ -142,9 +169,9 @@ export default function PromotorApp() {
   };
 
   const loadHistory = useCallback(async () => {
-    const { data } = await supabase.from("pts_sale").select("*").ilike("email", email).order("tagged_at", { ascending: false }).limit(80);
+    const { data } = await supabase.from("pts_sale").select("*").eq("promotor_id", promotorId).order("tagged_at", { ascending: false }).limit(80);
     setHistory(data || []);
-  }, [email]);
+  }, [promotorId]);
 
   const signOut = async () => { await supabase.auth.signOut(); router.replace("/promotor/login"); };
 
@@ -217,7 +244,7 @@ function AppShell(p) {
   const [delSale, setDelSale] = useState(null);
   const [success, setSuccess] = useState(null);     // msisdn berhasil → animasi
   const [taken, setTaken] = useState(null);          // { phone, owner }
-  const [outsideConfirm, setOutsideConfirm] = useState(null); // { phone, raw, distance, radius }
+  const [outsideConfirm, setOutsideConfirm] = useState(null); // { phone, imei, raw, distance, radius }
   const [incoming, setIncoming] = useState([]);      // permintaan transfer masuk
   const [approveReq, setApproveReq] = useState(null);
 
@@ -233,7 +260,7 @@ function AppShell(p) {
     try {
       const { data, error } = await supabase.rpc(approve ? "pts_approve_transfer" : "pts_reject_transfer", { p_id: req.id });
       if (error) throw error;
-      if (data?.status === "approved") { flash("Nomor dipindahkan."); if (activeOutlet) await loadTodaySales(email, activeOutlet.id); }
+      if (data?.status === "approved") { flash("Nomor dipindahkan."); if (activeOutlet) await loadTodaySales(promotorId, activeOutlet.id); }
       else if (data?.status === "rejected") flash("Pengajuan ditolak.");
       else flash("Tidak dapat memproses.", "err");
       await loadIncoming();
@@ -249,43 +276,47 @@ function AppShell(p) {
 
   const soldCount = todaySales.length;
 
-  const chooseOutlet = async (o) => { setActiveOutlet(o); setPickOutlet(false); await loadTodaySales(email, o.id); };
+  const chooseOutlet = async (o) => { setActiveOutlet(o); setPickOutlet(false); await loadTodaySales(promotorId, o.id); };
 
-  /* Tag penjualan (QR) — via RPC pts_tag_sale (geofence-aware) */
-  const tagSale = async (normalized, raw, confirmOutside) => {
+  /* Tag penjualan (QR) — via RPC pts_tag_sale (geofence-aware).
+     Payload tag sebenarnya "nomor|imei" — IMEI ikut disimpan per tagging. */
+  const tagSale = async (normalized, imei, raw, confirmOutside) => {
     const { data, error } = await supabase.rpc("pts_tag_sale", {
       p_phone: normalized, p_session: null, p_outlet: activeOutlet.id,
       p_lat: geo?.lat ?? null, p_lng: geo?.lng ?? null, p_raw: String(raw),
-      p_confirm_outside: confirmOutside,
+      p_confirm_outside: confirmOutside, p_imei: imei || null,
     });
     if (error) throw error;
     return data;
   };
 
-  const onQR = async (raw) => {
+  const onQR = async ({ phone, imei, raw }) => {
     setSheet(null);
-    const { normalized, valid } = normalizePhone(raw);
-    if (!valid) { flash(`Nomor tidak valid: ${normalized || raw}`, "err"); return; }
+    const { normalized, valid } = normalizePhone(phone);
+    if (!valid) { flash(`Nomor tidak valid: ${normalized || phone}`, "err"); return; }
+    if (!imeiValid(imei)) { flash("IMEI belum valid, periksa lagi.", "err"); return; }
     if (!activeOutlet) { flash("Pilih outlet aktif terlebih dulu.", "err"); return; }
     let g = geo;
     if (!g) { g = await refreshGeo(); if (!g) { setGeoHelp(true); return; } }
     setBusy(true);
     try {
-      const data = await tagSale(normalized, raw, false);
-      await handleTagResult(data, normalized, raw);
+      const data = await tagSale(normalized, imei, raw, false);
+      await handleTagResult(data, normalized, imei, raw);
     } catch (e) { flash("Gagal menyimpan: " + (e?.message || e), "err"); setBusy(false); }
   };
 
-  const handleTagResult = async (data, normalized, raw) => {
+  const handleTagResult = async (data, normalized, imei, raw) => {
     const st = data?.status;
-    if (st === "ok") { await loadTodaySales(email, activeOutlet.id); setBusy(false); playSuccessTone(); setSuccess(normalized); return; }
+    if (st === "ok") { await loadTodaySales(promotorId, activeOutlet.id); setBusy(false); playSuccessTone(); setSuccess(normalized); return; }
     if (st === "self") { flash("Nomor ini sudah Anda tag.", "err"); setBusy(false); return; }
     if (st === "taken" || st === "taken_race") { setBusy(false); setTaken({ phone: normalized, owner: data?.owner || null }); return; }
     if (st === "outside_radius") {
       setBusy(false);
-      setOutsideConfirm({ phone: normalized, raw, distance: data?.distance_meters, radius: data?.radius_meters });
+      setOutsideConfirm({ phone: normalized, imei, raw, distance: data?.distance_meters, radius: data?.radius_meters });
       return;
     }
+    if (st === "geo_required") { setBusy(false); flash("Lokasi diperlukan untuk tagging di outlet ini. Aktifkan lokasi lalu coba lagi.", "err"); setGeoHelp(true); return; }
+    if (st === "invalid_phone") { flash(`Nomor tidak valid: ${normalized || raw}`, "err"); setBusy(false); return; }
     if (st === "unauth") { flash("Sesi login berakhir, silakan masuk ulang.", "err"); setBusy(false); return; }
     flash("Gagal menyimpan.", "err"); setBusy(false);
   };
@@ -294,21 +325,24 @@ function AppShell(p) {
     const c = outsideConfirm; if (!c) return;
     setOutsideConfirm(null); setBusy(true);
     try {
-      const data = await tagSale(c.phone, c.raw, true);
-      await handleTagResult(data, c.phone, c.raw);
+      const data = await tagSale(c.phone, c.imei, c.raw, true);
+      await handleTagResult(data, c.phone, c.imei, c.raw);
     } catch (e) { flash("Gagal menyimpan: " + (e?.message || e), "err"); setBusy(false); }
   };
 
-  /* Ajukan pemindahan nomor yang sudah ditag orang lain */
+  /* Ajukan pemindahan nomor yang sudah ditag orang lain — outlet aktif dikirim
+     eksplisit (bukan diturunkan dari sesi check-in/out lama yang sudah tidak
+     dipakai lagi), supaya outlet tujuan pengajuan tercatat benar. */
   const requestTransfer = async () => {
     const phone = taken?.phone; if (!phone) return;
     setTaken(null); setBusy(true);
     try {
-      const { data, error } = await supabase.rpc("pts_request_transfer", { p_phone: phone });
+      const { data, error } = await supabase.rpc("pts_request_transfer", { p_phone: phone, p_outlet: activeOutlet?.id || null });
       if (error) throw error;
       if (data?.status === "requested") flash("Pengajuan pemindahan terkirim.");
       else if (data?.status === "self") flash("Nomor ini sudah milik Anda.");
-      else flash("Nomor tidak ditemukan.", "err");
+      else if (data?.status === "notfound") flash("Nomor tidak ditemukan.", "err");
+      else flash("Gagal mengajukan pemindahan.", "err");
     } catch (e) { flash("Gagal mengajukan: " + (e?.message || e), "err"); }
     finally { setBusy(false); }
   };
@@ -319,7 +353,7 @@ function AppShell(p) {
     try {
       const { error } = await supabase.from("pts_sale").delete().eq("id", s.id);
       if (error) throw error;
-      if (activeOutlet) await loadTodaySales(email, activeOutlet.id);
+      if (activeOutlet) await loadTodaySales(promotorId, activeOutlet.id);
       flash("Nomor dihapus");
     } catch (e) { flash("Gagal menghapus: " + (e?.message || e), "err"); }
     finally { setBusy(false); }
@@ -601,19 +635,32 @@ function GeoGatePanel({ outlet, err, onFix, onChangeOutlet }) {
 }
 
 function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOutlet, multiOutlet }) {
+  const OutletHeader = multiOutlet ? "button" : "div";
   return (
     <div style={{ animation: "up .3s ease" }}>
       <div style={{ background: C.card, borderRadius: 18, padding: "18px 18px 16px", marginBottom: 14, boxShadow: C.md }}>
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
-          <div>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Outlet Aktif</div>
+        <OutletHeader
+          type={multiOutlet ? "button" : undefined}
+          onClick={multiOutlet ? onChangeOutlet : undefined}
+          className={multiOutlet ? "press" : undefined}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
+            border: "none", background: "transparent", padding: 0, margin: 0, textAlign: "left",
+            cursor: multiOutlet ? "pointer" : "default", fontFamily: FF,
+          }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>
+              Outlet Aktif{multiOutlet && <span style={{ fontSize: 10, fontWeight: 700, color: C.brand, textTransform: "none", letterSpacing: 0 }}>· ketuk untuk ganti</span>}
+            </div>
             <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em", fontFamily: "monospace", marginTop: 4, color: C.hi }}>{outlet.code}</div>
             <div style={{ fontSize: 12, color: C.mid, marginTop: 2 }}>{[outlet.branch, outlet.area].filter(Boolean).join(" · ") || "—"}</div>
           </div>
           {multiOutlet && (
-            <button onClick={onChangeOutlet} className="press" style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, color: C.mid, background: C.sub, border: `1px solid ${C.line}`, borderRadius: 99, padding: "5px 10px", cursor: "pointer", fontFamily: FF }}><RefreshCcw size={11} /> Ganti</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, marginLeft: 12, width: 44, height: 44, borderRadius: 14, background: C.sub, border: `1px solid ${C.line}`, justifyContent: "center" }}>
+              <RefreshCcw size={16} color={C.brand} />
+            </div>
           )}
-        </div>
+        </OutletHeader>
         <div style={{ display: "flex", gap: 9, marginTop: 16 }}>
           <LightStat icon={<ShoppingBag size={13} />} label="Terjual hari ini" value={soldCount} accent={C.green} />
         </div>
@@ -638,7 +685,10 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
             {sales.map((s, i) => (
               <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 2px", borderTop: i === 0 ? "none" : `1px solid ${C.lineSoft}` }}>
                 <span style={{ width: 30, height: 30, borderRadius: 9, background: s.within_radius === false ? "rgba(37,99,235,0.1)" : "rgba(26,158,90,0.1)", color: s.within_radius === false ? C.blue : C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.within_radius === false ? <Radar size={14} /> : <Phone size={14} />}</span>
-                <span style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 700, flex: 1, color: C.hi }}>{s.phone_normalized}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 700, color: C.hi }}>{s.phone_normalized}</div>
+                  {s.imei && <div style={{ fontSize: 10.5, fontFamily: "monospace", color: C.lo }}>IMEI {s.imei}</div>}
+                </div>
                 <span style={{ fontSize: 12, color: C.mid, fontWeight: 500 }}>{fmtTime(s.tagged_at)}</span>
                 <button className="press" onClick={() => onDelete(s)} disabled={busy} aria-label="Hapus"
                   style={{ width: 32, height: 32, borderRadius: 9, border: "none", background: "rgba(220,38,38,0.08)", color: "#DC2626", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
@@ -677,6 +727,7 @@ function HistoryView({ history }) {
               <span style={{ width: 34, height: 34, borderRadius: 10, background: s.within_radius === false ? "rgba(37,99,235,0.1)" : "rgba(26,158,90,0.1)", color: s.within_radius === false ? C.blue : C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.within_radius === false ? <Radar size={16} /> : <Phone size={16} />}</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 14.5, fontWeight: 800, fontFamily: "monospace", color: C.hi }}>{s.phone_normalized}</div>
+                {s.imei && <div style={{ fontSize: 10.5, fontFamily: "monospace", color: C.lo }}>IMEI {s.imei}</div>}
                 <div style={{ fontSize: 11.5, color: C.lo, fontWeight: 500 }}>{fmtDateTime(s.tagged_at)}{s.within_radius === false ? " · di luar area" : ""}</div>
               </div>
               <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.03em", padding: "4px 9px", borderRadius: 99, background: s.ga_status === "TERVALIDASI" || s.ga_status === "TERVALIDASI_LUAR_AREA" ? "rgba(26,158,90,0.12)" : s.ga_status === "TIDAK_DITEMUKAN" ? "rgba(220,38,38,0.1)" : "rgba(255,176,32,0.14)", color: s.ga_status === "TERVALIDASI" || s.ga_status === "TERVALIDASI_LUAR_AREA" ? C.green : s.ga_status === "TIDAK_DITEMUKAN" ? "#DC2626" : C.amber, whiteSpace: "nowrap" }}>

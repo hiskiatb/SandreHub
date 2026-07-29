@@ -12,6 +12,19 @@ function extractPhone(raw) {
   return normalizePhone(m ? m[0] : digits);
 }
 
+// Format tag sebenarnya: "08xxxxxxxxxx|xxxxxxxxxxxxxxx" — nomor & IMEI
+// dipisah "|". Jika tidak ada "|" (kartu lama / QR tanpa IMEI), IMEI dibiarkan
+// kosong dan wajib diisi manual sebelum lanjut.
+export function parseTagPayload(raw) {
+  const str = String(raw ?? "");
+  const i = str.indexOf("|");
+  const phonePart = i >= 0 ? str.slice(0, i) : str;
+  const imeiPart = i >= 0 ? str.slice(i + 1) : "";
+  return { phone: extractPhone(phonePart), imei: imeiPart.replace(/\D/g, "") };
+}
+
+export const imeiValid = (v) => /^\d{6,20}$/.test(String(v || "").replace(/\D/g, ""));
+
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 
 /* ── Bottom sheet dengan tap & drag-to-close (ala MartaHub) ──── */
@@ -227,10 +240,12 @@ export function QRScannerSheet({ onDetect, onClose }) {
   const [err, setErr] = useState("");
   const [manual, setManual] = useState(false);
   const [manualVal, setManualVal] = useState("");
+  const [manualImei, setManualImei] = useState("");
   const [scanning, setScanning] = useState(false);
   const [tries, setTries] = useState(0);
   const [detected, setDetected] = useState(false);
   const [numVal, setNumVal] = useState("");
+  const [imeiVal, setImeiVal] = useState("");
   const editedRef = useRef(false);
   const lastRawRef = useRef("");
 
@@ -240,11 +255,11 @@ export function QRScannerSheet({ onDetect, onClose }) {
     streamRef.current = null;
   }, []);
 
-  const finish = useCallback((val) => {
+  const finish = useCallback((phone, imei, raw) => {
     if (doneRef.current) return;
     doneRef.current = true;
     stop();
-    onDetectRef.current?.(val);
+    onDetectRef.current?.({ phone, imei, raw });
   }, [stop]);
 
   // Inisialisasi: muat jsQR → nyalakan kamera → live tracking kotak QR
@@ -252,7 +267,7 @@ export function QRScannerSheet({ onDetect, onClose }) {
     let alive = true;
     doneRef.current = false;
     lastRawRef.current = "";
-    setErr(""); setScanning(false); setDetected(false);
+    setErr(""); setScanning(false); setDetected(false); setNumVal(""); setImeiVal("");
 
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
       setErr("Kamera perlu koneksi HTTPS. Gunakan input manual."); setManual(true); return;
@@ -307,11 +322,13 @@ export function QRScannerSheet({ onDetect, onClose }) {
             }
             if (code && code.data && String(code.data).trim()) {
               lastSeen = ts; setDetected(true);
-              // QR berganti (scan QR berikutnya) → perbarui nomor ke QR terakhir
+              // QR berganti (scan QR berikutnya) → perbarui nomor & IMEI ke QR terakhir
               if (code.data !== lastRawRef.current) {
                 lastRawRef.current = code.data;
                 editedRef.current = false;
-                setNumVal(extractPhone(code.data).normalized);
+                const parsed = parseTagPayload(code.data);
+                setNumVal(parsed.phone.normalized);
+                setImeiVal(parsed.imei);
               }
             } else if (ts - lastSeen > 500) {
               setDetected(false);
@@ -328,10 +345,13 @@ export function QRScannerSheet({ onDetect, onClose }) {
   }, [stop, tries]);
 
   const close = () => { stop(); onClose(); };
-  const submitManual = () => { const v = manualVal.trim(); if (v) finish(v); };
-  const retryCam = () => { stop(); setManual(false); setErr(""); editedRef.current = false; setNumVal(""); setTries((n) => n + 1); };
+  const manualPhoneCheck = normalizePhone(manualVal);
+  const manualOk = manualPhoneCheck.valid && imeiValid(manualImei);
+  const submitManual = () => { if (manualOk) finish(manualPhoneCheck.normalized, manualImei.replace(/\D/g, ""), manualVal.trim()); };
+  const retryCam = () => { stop(); setManual(false); setErr(""); editedRef.current = false; setNumVal(""); setImeiVal(""); setTries((n) => n + 1); };
   const numCheck = normalizePhone(numVal);
-  const proceed = () => { if (numCheck.valid) finish(numCheck.normalized); };
+  const scanOk = numCheck.valid && imeiValid(imeiVal);
+  const proceed = () => { if (scanOk) finish(numCheck.normalized, imeiVal.replace(/\D/g, ""), lastRawRef.current || numVal); };
 
   return (
     <Sheet title="Scan QR Kartu SIM" onClose={close}>
@@ -360,24 +380,43 @@ export function QRScannerSheet({ onDetect, onClose }) {
 
         {manual ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <label style={{ fontSize: 12.5, fontWeight: 600, color: "#61616C" }}>Masukkan nomor dari QR / kartu SIM</label>
-            <input value={manualVal} onChange={(e) => setManualVal(e.target.value)} inputMode="numeric" placeholder="mis. 082617837181 atau 62826…"
-              style={{ height: 52, borderRadius: 13, border: "1px solid #E4E5EA", background: "#F6F7F9", color: "#17181C", fontFamily: FF, fontSize: 16, padding: "0 15px", outline: "none" }} />
-            <button onClick={submitManual} disabled={!manualVal.trim()} style={{ height: 52, borderRadius: 13, border: "none", background: "#ED1C24", color: "#fff", fontFamily: FF, fontSize: 15, fontWeight: 700, cursor: "pointer", opacity: manualVal.trim() ? 1 : 0.5 }}>Lanjut</button>
+            <div>
+              <label style={{ fontSize: 12.5, fontWeight: 600, color: "#61616C" }}>Nomor HP</label>
+              <input value={manualVal} onChange={(e) => setManualVal(e.target.value)} inputMode="numeric" placeholder="mis. 082617837181 atau 62826…"
+                style={{ width: "100%", height: 52, borderRadius: 13, border: "1px solid #E4E5EA", background: "#F6F7F9", color: "#17181C", fontFamily: FF, fontSize: 16, padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 12.5, fontWeight: 600, color: "#61616C" }}>IMEI perangkat</label>
+              <input value={manualImei} onChange={(e) => setManualImei(e.target.value)} inputMode="numeric" placeholder="mis. 356789102345678"
+                style={{ width: "100%", height: 52, borderRadius: 13, border: `1px solid ${manualImei && !imeiValid(manualImei) ? "#F0C2C2" : "#E4E5EA"}`, background: "#F6F7F9", color: "#17181C", fontFamily: FF, fontSize: 16, padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
+            </div>
+            <button onClick={submitManual} disabled={!manualOk} style={{ height: 52, borderRadius: 13, border: "none", background: manualOk ? "#ED1C24" : "#E4E5EA", color: manualOk ? "#fff" : "#A2A2AD", fontFamily: FF, fontSize: 15, fontWeight: 700, cursor: manualOk ? "pointer" : "default", transition: "background .15s" }}>Lanjut</button>
           </div>
         ) : !err && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {/* Nomor terdeteksi (bisa dikoreksi) */}
-            <label style={{ fontSize: 12, fontWeight: 700, color: "#61616C", display: "flex", alignItems: "center", gap: 6 }}>
-              Nomor terdeteksi
-              {numVal && (numCheck.valid
-                ? <span style={{ color: "#1A9E5A", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}><Check size={13} /> valid</span>
-                : <span style={{ color: "#B7791F", fontWeight: 700 }}>· periksa lagi</span>)}
-            </label>
-            <input value={numVal} onChange={(e) => { editedRef.current = true; setNumVal(e.target.value); }} inputMode="numeric" placeholder="menunggu QR…"
-              style={{ height: 52, borderRadius: 13, border: `1px solid ${numVal && !numCheck.valid ? "#F0C2C2" : "#E4E5EA"}`, background: "#F6F7F9", color: "#17181C", fontFamily: FF, fontSize: 17, fontWeight: 700, letterSpacing: "0.01em", padding: "0 15px", outline: "none" }} />
-            <button onClick={proceed} disabled={!numCheck.valid}
-              style={{ height: 52, borderRadius: 13, border: "none", background: numCheck.valid ? "#ED1C24" : "#E4E5EA", color: numCheck.valid ? "#fff" : "#A2A2AD", fontFamily: FF, fontSize: 15.5, fontWeight: 700, cursor: numCheck.valid ? "pointer" : "default", transition: "background .15s" }}>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 700, color: "#61616C", display: "flex", alignItems: "center", gap: 6 }}>
+                Nomor terdeteksi
+                {numVal && (numCheck.valid
+                  ? <span style={{ color: "#1A9E5A", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}><Check size={13} /> valid</span>
+                  : <span style={{ color: "#B7791F", fontWeight: 700 }}>· periksa lagi</span>)}
+              </label>
+              <input value={numVal} onChange={(e) => { editedRef.current = true; setNumVal(e.target.value); }} inputMode="numeric" placeholder="menunggu QR…"
+                style={{ width: "100%", height: 52, borderRadius: 13, border: `1px solid ${numVal && !numCheck.valid ? "#F0C2C2" : "#E4E5EA"}`, background: "#F6F7F9", color: "#17181C", fontFamily: FF, fontSize: 17, fontWeight: 700, letterSpacing: "0.01em", padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 12, fontWeight: 700, color: "#61616C", display: "flex", alignItems: "center", gap: 6 }}>
+                IMEI perangkat
+                {imeiVal && (imeiValid(imeiVal)
+                  ? <span style={{ color: "#1A9E5A", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}><Check size={13} /> valid</span>
+                  : <span style={{ color: "#B7791F", fontWeight: 700 }}>· periksa lagi</span>)}
+              </label>
+              <input value={imeiVal} onChange={(e) => setImeiVal(e.target.value)} inputMode="numeric" placeholder="belum terbaca dari QR — isi manual"
+                style={{ width: "100%", height: 52, borderRadius: 13, border: `1px solid ${imeiVal && !imeiValid(imeiVal) ? "#F0C2C2" : "#E4E5EA"}`, background: "#F6F7F9", color: "#17181C", fontFamily: FF, fontSize: 17, fontWeight: 700, letterSpacing: "0.01em", padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
+            </div>
+            <button onClick={proceed} disabled={!scanOk}
+              style={{ height: 52, borderRadius: 13, border: "none", background: scanOk ? "#ED1C24" : "#E4E5EA", color: scanOk ? "#fff" : "#A2A2AD", fontFamily: FF, fontSize: 15.5, fontWeight: 700, cursor: scanOk ? "pointer" : "default", transition: "background .15s" }}>
               Lanjut
             </button>
             <button onClick={() => setManual(true)} style={{ height: 44, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#61616C", fontFamily: FF, fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}><Keyboard size={15} /> Input manual</button>
