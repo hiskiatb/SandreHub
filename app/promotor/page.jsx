@@ -290,6 +290,7 @@ function AppShell(p) {
   const [geoHelp, setGeoHelp] = useState(false);
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [delSale, setDelSale] = useState(null);
+  const [delAck, setDelAck] = useState(false);      // centang wajib jika nomor sudah tervalidasi GA
   const [success, setSuccess] = useState(null);     // msisdn berhasil → animasi
   const [taken, setTaken] = useState(null);          // { phone, owner }
   const [outsideConfirm, setOutsideConfirm] = useState(null); // { phone, imei, raw, distance, radius }
@@ -429,12 +430,12 @@ function AppShell(p) {
 
   const doDeleteSale = async () => {
     const s = delSale; if (!s) return;
-    setDelSale(null); setBusy(true);
+    setDelSale(null); setDelAck(false); setBusy(true);
     try {
       const { error } = await supabase.from("pts_sale").delete().eq("id", s.id);
       if (error) throw error;
       if (activeOutlet) await loadTodaySales(promotorId, activeOutlet.id);
-      loadSummary();
+      loadSummary(); loadHistory();
       flash("Nomor dihapus");
     } catch (e) { flash("Gagal menghapus: " + describeError(e, "doDeleteSale"), "err"); }
     finally { setBusy(false); }
@@ -465,7 +466,7 @@ function AppShell(p) {
 
       <div style={{ padding: "8px 18px 0", maxWidth: 560, margin: "0 auto" }}>
         {view === "history"
-          ? <HistoryView history={history} />
+          ? <HistoryView history={history} onDelete={(s) => setDelSale(s)} />
           : (
             <div style={{ animation: "up .32s cubic-bezier(.22,1,.36,1)" }}>
               {/* Periode aktif */}
@@ -525,21 +526,38 @@ function AppShell(p) {
         <OutletPicker outlets={outlets} onPick={chooseOutlet} onClose={() => setPickOutlet(false)} />
       )}
 
-      {/* Konfirmasi Hapus Nomor */}
-      {delSale && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 140, background: "rgba(17,18,22,0.45)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 26 }} onClick={() => setDelSale(null)}>
-          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 360, background: C.card, borderRadius: 24, padding: "26px 22px 20px", boxShadow: C.lg, textAlign: "center", animation: "pop .22s cubic-bezier(.22,1,.36,1)" }}>
-            <div style={{ width: 60, height: 60, borderRadius: 18, margin: "0 auto 16px", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(220,38,38,0.09)", color: "#DC2626" }}><Trash2 size={25} /></div>
-            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", color: C.hi }}>Hapus nomor ini?</div>
-            <div style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 700, color: C.hi, marginTop: 10, padding: "8px 12px", borderRadius: 10, background: C.sub, display: "inline-block" }}>{delSale.phone_normalized}</div>
-            <div style={{ fontSize: 13, color: C.mid, marginTop: 10, lineHeight: 1.5 }}>Data penjualan ini akan dihapus permanen dan tidak bisa dikembalikan.</div>
-            <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
-              <button className="press" onClick={() => setDelSale(null)} style={{ flex: 1, height: 50, borderRadius: 14, border: `1px solid ${C.line}`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Batal</button>
-              <button className="press" onClick={doDeleteSale} style={{ flex: 1, height: 50, borderRadius: 14, border: "none", background: "#DC2626", color: "#fff", fontFamily: FF, fontSize: 14.5, fontWeight: 800, cursor: "pointer", boxShadow: "0 8px 22px rgba(220,38,38,0.28)" }}>Hapus</button>
+      {/* Konfirmasi Hapus Nomor — peringatan lebih tegas jika sudah tervalidasi GA */}
+      {delSale && (() => {
+        const isValidated = delSale.ga_status === "TERVALIDASI" || delSale.ga_status === "TERVALIDASI_LUAR_AREA";
+        const canDelete = !isValidated || delAck;
+        const closeModal = () => { setDelSale(null); setDelAck(false); };
+        return (
+          <div style={{ position: "fixed", inset: 0, zIndex: 140, background: "rgba(17,18,22,0.45)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 26 }} onClick={closeModal}>
+            <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 380, background: C.card, borderRadius: 24, padding: "26px 22px 20px", boxShadow: C.lg, textAlign: "center", animation: "pop .22s cubic-bezier(.22,1,.36,1)" }}>
+              <div style={{ width: 60, height: 60, borderRadius: 18, margin: "0 auto 16px", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(220,38,38,0.09)", color: "#DC2626" }}><Trash2 size={25} /></div>
+              <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", color: C.hi }}>Hapus nomor ini?</div>
+              <div style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 700, color: C.hi, marginTop: 10, padding: "8px 12px", borderRadius: 10, background: C.sub, display: "inline-block" }}>{delSale.phone_normalized}</div>
+              <div style={{ fontSize: 13, color: C.mid, marginTop: 10, lineHeight: 1.5 }}>Data claim ini akan dihapus permanen dan tidak bisa dikembalikan.</div>
+              {isValidated && (
+                <div style={{ marginTop: 14, textAlign: "left", padding: "12px 14px", borderRadius: 12, background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.25)" }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12.5, color: "#DC2626", fontWeight: 700, lineHeight: 1.5 }}>
+                    <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+                    Nomor ini <u>sudah tervalidasi GA</u>. Menghapusnya akan menghilangkan pencapaian yang sudah terbukti valid.
+                  </div>
+                  <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 11, fontSize: 12.5, color: C.hi, fontWeight: 600, cursor: "pointer" }}>
+                    <input type="checkbox" checked={delAck} onChange={(e) => setDelAck(e.target.checked)} style={{ width: 17, height: 17, flexShrink: 0 }} />
+                    Saya paham nomor ini sudah tervalidasi dan tetap ingin menghapusnya.
+                  </label>
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+                <button className="press" onClick={closeModal} style={{ flex: 1, height: 50, borderRadius: 14, border: `1px solid ${C.line}`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Batal</button>
+                <button className="press" onClick={doDeleteSale} disabled={!canDelete} style={{ flex: 1, height: 50, borderRadius: 14, border: "none", background: canDelete ? "#DC2626" : C.line, color: canDelete ? "#fff" : C.lo, fontFamily: FF, fontSize: 14.5, fontWeight: 800, cursor: canDelete ? "pointer" : "default", boxShadow: canDelete ? "0 8px 22px rgba(220,38,38,0.28)" : "none" }}>{isValidated ? "Tetap Hapus" : "Hapus"}</button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Bantuan izin lokasi (mis. sebelumnya 'never allow') */}
       {geoHelp && (
@@ -830,7 +848,7 @@ const GA_BADGE = {
 };
 const gaBadge = (status) => GA_BADGE[status] || { label: "Belum GA", fg: "#B7791F", bg: "rgba(255,176,32,0.14)" };
 
-function HistoryView({ history }) {
+function HistoryView({ history, onDelete }) {
   return (
     <div style={{ animation: "up .3s ease" }}>
       <h2 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", marginBottom: 14 }}>Riwayat Claim Saya</h2>
@@ -852,6 +870,11 @@ function HistoryView({ history }) {
                     <div style={{ fontSize: 11.5, color: C.lo, fontWeight: 500 }}>{fmtDateTime(s.tagged_at)}{s.within_radius === false ? " · di luar area" : ""}</div>
                   </div>
                   <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.03em", padding: "4px 9px", borderRadius: 99, background: badge.bg, color: badge.fg, whiteSpace: "nowrap" }}>{badge.label}</span>
+                  {onDelete && (
+                    <button onClick={() => onDelete(s)} aria-label="Hapus" style={{ width: 30, height: 30, borderRadius: 9, border: "none", background: "rgba(220,38,38,0.08)", color: "#DC2626", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                      <Trash2 size={14} />
+                    </button>
+                  )}
                 </div>
                 {s.ga_note && (
                   <div style={{ marginTop: 9, padding: "8px 10px", borderRadius: 10, background: "rgba(255,176,32,0.1)", fontSize: 11.5, color: C.amber, lineHeight: 1.5 }}>{s.ga_note}</div>

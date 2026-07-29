@@ -72,10 +72,15 @@ export function BottomSheet({ onClose, children, maxWidth = 560 }) {
           transition: dragging ? "none" : "transform .3s cubic-bezier(.22,1,.36,1)",
           animation: dy === 0 && !dragging ? "sheetup .3s cubic-bezier(.22,1,.36,1)" : "none",
         }}>
-        <div style={{ padding: "11px 0 3px", display: "flex", justifyContent: "center" }}>
+        <div style={{ padding: "11px 0 3px", display: "flex", justifyContent: "center", flexShrink: 0 }}>
           <div style={{ width: 40, height: 5, borderRadius: 99, background: "#D7D8DE" }} />
         </div>
-        {children}
+        {/* Konten bisa di-scroll — tanpa ini, tombol di bagian bawah (mis.
+            "Lanjut") bisa tertutup keyboard iOS/Android saat mengetik di
+            input dan jadi tidak terjangkau sama sekali. */}
+        <div style={{ overflowY: "auto", WebkitOverflowScrolling: "touch", flex: "1 1 auto", minHeight: 0 }}>
+          {children}
+        </div>
       </div>
       <style>{`@keyframes sheetup{from{transform:translateY(100%)}to{transform:none}}`}</style>
     </div>
@@ -393,21 +398,21 @@ export function QRScannerSheet({ onDetect, onClose }) {
         {err && <AccessHelp kind="kamera" onRetry={retryCam} />}
 
         {manual ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <form onSubmit={(e) => { e.preventDefault(); submitManual(); }} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div>
               <label style={{ fontSize: 12.5, fontWeight: 600, color: "#61616C" }}>Nomor HP</label>
-              <input value={manualVal} onChange={(e) => setManualVal(e.target.value)} inputMode="numeric" placeholder="mis. 082617837181 atau 62826…"
+              <input value={manualVal} onChange={(e) => setManualVal(e.target.value)} inputMode="numeric" enterKeyHint="next" placeholder="mis. 082617837181 atau 62826…"
                 style={{ width: "100%", height: 52, borderRadius: 13, border: "1px solid #E4E5EA", background: "#F6F7F9", color: "#17181C", fontFamily: FF, fontSize: 16, padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
             </div>
             <div>
               <label style={{ fontSize: 12.5, fontWeight: 600, color: "#61616C" }}>IMEI perangkat</label>
-              <input value={manualImei} onChange={(e) => setManualImei(e.target.value)} inputMode="numeric" placeholder="mis. 356789102345678"
+              <input value={manualImei} onChange={(e) => setManualImei(e.target.value)} inputMode="numeric" enterKeyHint="done" placeholder="mis. 356789102345678"
                 style={{ width: "100%", height: 52, borderRadius: 13, border: `1px solid ${manualImei && !imeiValid(manualImei) ? "#F0C2C2" : "#E4E5EA"}`, background: "#F6F7F9", color: "#17181C", fontFamily: FF, fontSize: 16, padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
             </div>
-            <button onClick={submitManual} disabled={!manualOk} style={{ height: 52, borderRadius: 13, border: "none", background: manualOk ? "#ED1C24" : "#E4E5EA", color: manualOk ? "#fff" : "#A2A2AD", fontFamily: FF, fontSize: 15, fontWeight: 700, cursor: manualOk ? "pointer" : "default", transition: "background .15s" }}>Lanjut</button>
-          </div>
+            <button type="submit" disabled={!manualOk} style={{ height: 52, borderRadius: 13, border: "none", background: manualOk ? "#ED1C24" : "#E4E5EA", color: manualOk ? "#fff" : "#A2A2AD", fontFamily: FF, fontSize: 15, fontWeight: 700, cursor: manualOk ? "pointer" : "default", transition: "background .15s" }}>Lanjut</button>
+          </form>
         ) : !err && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <form onSubmit={(e) => { e.preventDefault(); proceed(); }} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {/* Nomor terdeteksi (bisa dikoreksi) */}
             <div>
               <label style={{ fontSize: 12, fontWeight: 700, color: "#61616C", display: "flex", alignItems: "center", gap: 6 }}>
@@ -416,7 +421,7 @@ export function QRScannerSheet({ onDetect, onClose }) {
                   ? <span style={{ color: "#1A9E5A", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}><Check size={13} /> valid</span>
                   : <span style={{ color: "#B7791F", fontWeight: 700 }}>· periksa lagi</span>)}
               </label>
-              <input value={numVal} onChange={(e) => { editedRef.current = true; setNumVal(e.target.value); }} inputMode="numeric" placeholder="menunggu QR…"
+              <input value={numVal} onChange={(e) => { editedRef.current = true; setNumVal(e.target.value); }} inputMode="numeric" enterKeyHint="next" placeholder="menunggu QR…"
                 style={{ width: "100%", height: 52, borderRadius: 13, border: `1px solid ${numVal && !numCheck.valid ? "#F0C2C2" : "#E4E5EA"}`, background: "#F6F7F9", color: "#17181C", fontFamily: FF, fontSize: 17, fontWeight: 700, letterSpacing: "0.01em", padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
             </div>
             <div>
@@ -426,15 +431,15 @@ export function QRScannerSheet({ onDetect, onClose }) {
                   ? <span style={{ color: "#1A9E5A", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}><Check size={13} /> valid</span>
                   : <span style={{ color: "#B7791F", fontWeight: 700 }}>· periksa lagi</span>)}
               </label>
-              <input value={imeiVal} onChange={(e) => setImeiVal(e.target.value)} inputMode="numeric" placeholder="belum terbaca dari QR — isi manual"
+              <input value={imeiVal} onChange={(e) => setImeiVal(e.target.value)} inputMode="numeric" enterKeyHint="done" placeholder="belum terbaca dari QR — isi manual"
                 style={{ width: "100%", height: 52, borderRadius: 13, border: `1px solid ${imeiVal && !imeiValid(imeiVal) ? "#F0C2C2" : "#E4E5EA"}`, background: "#F6F7F9", color: "#17181C", fontFamily: FF, fontSize: 17, fontWeight: 700, letterSpacing: "0.01em", padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
             </div>
-            <button onClick={proceed} disabled={!scanOk}
+            <button type="submit" disabled={!scanOk}
               style={{ height: 52, borderRadius: 13, border: "none", background: scanOk ? "#ED1C24" : "#E4E5EA", color: scanOk ? "#fff" : "#A2A2AD", fontFamily: FF, fontSize: 15.5, fontWeight: 700, cursor: scanOk ? "pointer" : "default", transition: "background .15s" }}>
               Lanjut
             </button>
-            <button onClick={() => setManual(true)} style={{ height: 44, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#61616C", fontFamily: FF, fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}><Keyboard size={15} /> Input manual</button>
-          </div>
+            <button type="button" onClick={() => setManual(true)} style={{ height: 44, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#61616C", fontFamily: FF, fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}><Keyboard size={15} /> Input manual</button>
+          </form>
         )}
       </div>
     </Sheet>
