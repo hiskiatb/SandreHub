@@ -13,15 +13,28 @@ import {
   MapPin, LogOut, RefreshCw, Clock, Store, QrCode, CheckCircle2,
   ShoppingBag, ChevronRight, History, Navigation, AlertTriangle,
   X, ChevronLeft, Phone, CalendarDays, Trash2,
-  Power, ArrowLeftRight, Inbox, ShieldQuestion, Radar, RefreshCcw,
+  ArrowLeftRight, Inbox, ShieldQuestion, Radar, RefreshCcw,
 } from "lucide-react";
 import supabase from "../../lib/supabase";
 import { HubLogoLoader } from "../../components/HubLogoLoader";
 import { QRScannerSheet, AccessHelp, BottomSheet, imeiValid, Spinner } from "./components";
 import {
-  ymNow, fmtTime, fmtDateFull, fmtDateTime,
+  ymNow, ymLabel, pad2, fmtTime, fmtDateFull, fmtDateTime,
   normalizePhone, getPosition, checkGeoPermission,
 } from "./ptsClient";
+
+// Rollout SandraHub dimulai Juli 2026 — periode tidak bisa dipilih sebelum ini.
+const PERIOD_FLOOR = "2026-07";
+function periodOptions() {
+  const out = [];
+  const now = new Date();
+  const floor = new Date(2026, 6, 1);
+  for (let d = new Date(now.getFullYear(), now.getMonth(), 1); d >= floor; d.setMonth(d.getMonth() - 1)) {
+    out.push(`${d.getFullYear()}-${pad2(d.getMonth() + 1)}`);
+  }
+  if (!out.length) out.push(PERIOD_FLOOR);
+  return out;
+}
 
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const C = {
@@ -71,9 +84,28 @@ export default function PromotorApp() {
   const [geo, setGeo] = useState(null);
   const [geoErr, setGeoErr] = useState("");
   const [toast, setToast] = useState(null);
+  const toastTimerRef = useRef(null);
 
-  const period = ymNow();
-  const flash = (msg, tone = "ok") => { setToast({ msg, tone }); setTimeout(() => setToast(null), 2600); };
+  const [period, setPeriod] = useState(ymNow());
+  // Toast error dibiarkan tampil jauh lebih lama (dan bisa diketuk untuk
+  // ditutup) — sebelumnya 2.6 detik untuk semua tone, terlalu cepat untuk
+  // sempat dibaca/screenshot saat error.
+  const flash = (msg, tone = "ok") => {
+    setToast({ msg, tone });
+    clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), tone === "err" ? 10000 : 2600);
+  };
+
+  // Jaring pengaman: tangkap error JS/promise yang lolos dari try/catch di
+  // manapun (mis. dari dalam QRScannerSheet) supaya tidak gagal diam-diam
+  // tanpa pesan apapun — semua error tetap tampil lewat toast yang sama.
+  useEffect(() => {
+    const onError = (e) => flash("Error tak terduga: " + (e?.error?.message || e?.message || "unknown"), "err");
+    const onRejection = (e) => flash("Error tak terduga: " + (e?.reason?.message || e?.reason || "unknown"), "err");
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => { window.removeEventListener("error", onError); window.removeEventListener("unhandledrejection", onRejection); };
+  }, []);
 
   const loadTodaySales = useCallback(async (proId, outletId) => {
     if (!outletId) { setTodaySales([]); return; }
@@ -83,13 +115,12 @@ export default function PromotorApp() {
     setTodaySales(data || []);
   }, []);
 
-  /* ── Bootstrap: auth + assignment ──────────────────────────────────────
+  /* ── Identitas: auth + tautan ke pts_promotor — jalan SEKALI saat masuk.
      Identitas dipegang oleh promotor_id (uuid, permanen) — bukan email.
      Email hanya dipakai SEKALI untuk mengklaim slot yang sudah didaftarkan
      admin (mis. dari roster ID); setelah auth_user_id tertaut, perubahan
      nama/email berikutnya tidak memutus riwayat pencapaian. ────────────── */
-  const bootstrap = useCallback(async () => {
-    setPhase("loading");
+  const resolveIdentity = useCallback(async () => {
     const { data: ures } = await supabase.auth.getUser();
     const user = ures?.user;
     if (!user) { router.replace("/promotor/login"); return; }
@@ -122,18 +153,26 @@ export default function PromotorApp() {
     }
     setPromotorId(prof?.id || null);
     setName(prof?.full_name || googleName);
+  }, [router]);
 
-    // assignment bulan berjalan — dicari lewat promotor_id (uuid), bukan email.
+  useEffect(() => { resolveIdentity(); }, [resolveIdentity]);
+
+  /* ── Assignment per periode — jalan ulang tiap kali promotorId siap ATAU
+     periode yang dipilih berubah (dropdown bulan), tanpa perlu resolve
+     identitas dari awal lagi. ─────────────────────────────────────────── */
+  const loadPeriodAssignment = useCallback(async () => {
+    if (!promotorId) return;
+    setPhase("loading");
     const { data: asg } = await supabase.from("pts_assignment")
-      .select("*").eq("promotor_id_ref", prof?.id || "00000000-0000-0000-0000-000000000000").eq("period", period).eq("status", "active");
+      .select("*").eq("promotor_id_ref", promotorId).eq("period", period).eq("status", "active");
     const rows = asg || [];
     const active = rows.length > 0;
 
     await supabase.from("pts_promotor")
-      .update({ region: rows[0]?.region || prof?.region || null, status: active ? "active" : "pending", updated_at: new Date().toISOString() })
-      .eq("id", prof.id);
+      .update({ region: rows[0]?.region || null, status: active ? "active" : "pending", updated_at: new Date().toISOString() })
+      .eq("id", promotorId);
 
-    if (!active) { setPhase("pending"); return; }
+    if (!active) { setOutlets([]); setActiveOutlet(null); setTodaySales([]); setPhase("pending"); return; }
 
     // daftar outlet unik
     const byCode = new Map();
@@ -142,13 +181,13 @@ export default function PromotorApp() {
     setOutlets(outletList);
 
     // outlet aktif: otomatis jika hanya 1, selain itu tunggu pilihan promotor
-    if (outletList.length === 1) { setActiveOutlet(outletList[0]); await loadTodaySales(prof.id, outletList[0].id); }
+    if (outletList.length === 1) { setActiveOutlet(outletList[0]); await loadTodaySales(promotorId, outletList[0].id); }
     else { setActiveOutlet(null); setTodaySales([]); }
 
     setPhase("app");
-  }, [router, period, loadTodaySales]);
+  }, [promotorId, period, loadTodaySales]);
 
-  useEffect(() => { bootstrap(); }, [bootstrap]);
+  useEffect(() => { loadPeriodAssignment(); }, [loadPeriodAssignment]);
 
   // izin lokasi di awal
   useEffect(() => {
@@ -156,7 +195,7 @@ export default function PromotorApp() {
     let alive = true;
     (async () => {
       const st = await checkGeoPermission();
-      if (st === "denied") { setGeoErr("Izin lokasi ditolak. Aktifkan lokasi untuk melakukan tagging."); return; }
+      if (st === "denied") { setGeoErr("Izin lokasi ditolak. Aktifkan lokasi untuk melakukan claim."); return; }
       try { const p = await getPosition(); if (alive) { setGeo(p); setGeoErr(""); } }
       catch { if (alive) setGeoErr("Lokasi belum aktif. Ketuk untuk mengizinkan."); }
     })();
@@ -177,12 +216,12 @@ export default function PromotorApp() {
 
   /* ── Render ────────────────────────────────────────────────── */
   if (phase === "loading") return <Splash />;
-  if (phase === "pending") return <Pending email={email} onReload={bootstrap} onSignOut={signOut} />;
+  if (phase === "pending") return <Pending email={email} period={period} setPeriod={setPeriod} onReload={loadPeriodAssignment} onSignOut={signOut} />;
 
   return (
     <AppShell
       name={name} email={email} uid={uid} promotorId={promotorId}
-      period={period} outlets={outlets}
+      period={period} setPeriod={setPeriod} outlets={outlets}
       activeOutlet={activeOutlet} setActiveOutlet={setActiveOutlet}
       todaySales={todaySales} loadTodaySales={loadTodaySales}
       geo={geo} geoErr={geoErr} refreshGeo={refreshGeo}
@@ -205,7 +244,7 @@ function Splash() {
 }
 
 /* ══════════════════ Pending ══════════════════ */
-function Pending({ email, onReload, onSignOut }) {
+function Pending({ email, period, setPeriod, onReload, onSignOut }) {
   const [busy, setBusy] = useState(false);
   const reload = async () => { setBusy(true); await onReload(); setBusy(false); };
   return (
@@ -217,9 +256,18 @@ function Pending({ email, onReload, onSignOut }) {
         </div>
         <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em" }}>Menunggu Aktivasi</h1>
         <p style={{ fontSize: 14, color: C.mid, lineHeight: 1.6, maxWidth: 320, marginTop: 10 }}>
-          Email <b style={{ color: C.hi }}>{email}</b> berhasil masuk, tetapi belum dipetakan ke outlet.
+          Email <b style={{ color: C.hi }}>{email}</b> berhasil masuk, tetapi belum dipetakan ke outlet untuk periode <b style={{ color: C.hi }}>{ymLabel(period)}</b>.
           Hubungi <b style={{ color: C.hi }}>SPM Sumatera</b> Anda untuk didaftarkan di Data Promotor &amp; Data Mapping Promotor, lalu tekan Muat Ulang.
         </p>
+        {setPeriod && (
+          <div style={{ marginTop: 16, width: "100%", maxWidth: 280 }}>
+            <label style={{ display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.lo, marginBottom: 6 }}>Cek periode lain</label>
+            <select value={period} onChange={(e) => setPeriod(e.target.value)}
+              style={{ width: "100%", height: 46, borderRadius: 12, border: `1px solid ${C.line}`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 14, fontWeight: 600, padding: "0 14px" }}>
+              {periodOptions().map((p) => <option key={p} value={p}>{ymLabel(p)}</option>)}
+            </select>
+          </div>
+        )}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 11, marginBottom: "calc(env(safe-area-inset-bottom,0px) + 26px)" }}>
         <button onClick={reload} disabled={busy} style={{ height: 54, borderRadius: 15, border: "none", background: C.brand, color: "#fff", fontFamily: FF, fontSize: 15.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, cursor: "pointer", opacity: busy ? 0.7 : 1 }}>
@@ -235,7 +283,7 @@ function Pending({ email, onReload, onSignOut }) {
 
 /* ══════════════════ App Shell ══════════════════ */
 function AppShell(p) {
-  const { name, email, promotorId, outlets, activeOutlet, setActiveOutlet, todaySales, loadTodaySales, geo, geoErr, refreshGeo, view, setView, history, loadHistory, onSignOut, flash, toast } = p;
+  const { name, email, promotorId, period, setPeriod, outlets, activeOutlet, setActiveOutlet, todaySales, loadTodaySales, geo, geoErr, refreshGeo, view, setView, history, loadHistory, onSignOut, flash, toast } = p;
   const [sheet, setSheet] = useState(null);        // 'qr'
   const [pickOutlet, setPickOutlet] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -247,6 +295,8 @@ function AppShell(p) {
   const [outsideConfirm, setOutsideConfirm] = useState(null); // { phone, imei, raw, distance, radius }
   const [incoming, setIncoming] = useState([]);      // permintaan transfer masuk
   const [approveReq, setApproveReq] = useState(null);
+  const [inboxOpen, setInboxOpen] = useState(false);
+  const [summary, setSummary] = useState(null);      // ringkasan klaim per periode
 
   const loadIncoming = useCallback(async () => {
     const { data } = await supabase.from("pts_transfer_request")
@@ -255,12 +305,30 @@ function AppShell(p) {
   }, [email]);
   useEffect(() => { loadIncoming(); }, [loadIncoming]);
 
+  /* Ringkasan Claim Penjualan periode terpilih: jumlah SP di-claim + rincian
+     validasi GA (total tervalidasi, biometric, non-biometric). */
+  const loadSummary = useCallback(async () => {
+    if (!promotorId) { setSummary(null); return; }
+    const [y, mo] = period.split("-").map(Number);
+    const start = `${period}-01`;
+    const nd = new Date(y, mo, 1);
+    const end = `${nd.getFullYear()}-${pad2(nd.getMonth() + 1)}-01`;
+    const { data } = await supabase.from("pts_sale").select("ga_status,biometric_status")
+      .eq("promotor_id", promotorId).gte("tagged_at", start).lt("tagged_at", end);
+    const rows = data || [];
+    const validated = rows.filter((r) => r.ga_status === "TERVALIDASI" || r.ga_status === "TERVALIDASI_LUAR_AREA").length;
+    const bio = rows.filter((r) => r.biometric_status === "BIOMETRIC").length;
+    const reg = rows.filter((r) => r.biometric_status === "REGULAR").length;
+    setSummary({ total: rows.length, validated, bio, reg });
+  }, [promotorId, period]);
+  useEffect(() => { loadSummary(); }, [loadSummary]);
+
   const decideTransfer = async (req, approve) => {
     setApproveReq(null); setBusy(true);
     try {
       const { data, error } = await supabase.rpc(approve ? "pts_approve_transfer" : "pts_reject_transfer", { p_id: req.id });
       if (error) throw error;
-      if (data?.status === "approved") { flash("Nomor dipindahkan."); if (activeOutlet) await loadTodaySales(promotorId, activeOutlet.id); }
+      if (data?.status === "approved") { flash("Nomor dipindahkan."); if (activeOutlet) await loadTodaySales(promotorId, activeOutlet.id); loadSummary(); }
       else if (data?.status === "rejected") flash("Pengajuan ditolak.");
       else flash("Tidak dapat memproses.", "err");
       await loadIncoming();
@@ -319,15 +387,15 @@ function AppShell(p) {
 
   const handleTagResult = async (data, normalized, imei, raw) => {
     const st = data?.status;
-    if (st === "ok") { await loadTodaySales(promotorId, activeOutlet.id); setBusy(false); playSuccessTone(); setSuccess(normalized); return; }
-    if (st === "self") { flash("Nomor ini sudah Anda tag.", "err"); setBusy(false); return; }
+    if (st === "ok") { await loadTodaySales(promotorId, activeOutlet.id); loadSummary(); setBusy(false); playSuccessTone(); setSuccess({ msisdn: normalized, at: new Date().toISOString() }); return; }
+    if (st === "self") { flash("Nomor ini sudah Anda claim.", "err"); setBusy(false); return; }
     if (st === "taken" || st === "taken_race") { setBusy(false); setTaken({ phone: normalized, owner: data?.owner || null }); return; }
     if (st === "outside_radius") {
       setBusy(false);
       setOutsideConfirm({ phone: normalized, imei, raw, distance: data?.distance_meters, radius: data?.radius_meters });
       return;
     }
-    if (st === "geo_required") { setBusy(false); flash("Lokasi diperlukan untuk tagging di outlet ini. Aktifkan lokasi lalu coba lagi.", "err"); setGeoHelp(true); return; }
+    if (st === "geo_required") { setBusy(false); flash("Lokasi diperlukan untuk claim di outlet ini. Aktifkan lokasi lalu coba lagi.", "err"); setGeoHelp(true); return; }
     if (st === "invalid_phone") { flash(`Nomor tidak valid: ${normalized || raw}`, "err"); setBusy(false); return; }
     if (st === "unauth") { flash("Sesi login berakhir, silakan masuk ulang.", "err"); setBusy(false); return; }
     flash("Gagal menyimpan.", "err"); setBusy(false);
@@ -366,6 +434,7 @@ function AppShell(p) {
       const { error } = await supabase.from("pts_sale").delete().eq("id", s.id);
       if (error) throw error;
       if (activeOutlet) await loadTodaySales(promotorId, activeOutlet.id);
+      loadSummary();
       flash("Nomor dihapus");
     } catch (e) { flash("Gagal menghapus: " + describeError(e, "doDeleteSale"), "err"); }
     finally { setBusy(false); }
@@ -388,8 +457,9 @@ function AppShell(p) {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
+          <IconBtn onClick={() => setInboxOpen(true)} badge={incoming.length}><Inbox size={17} /></IconBtn>
           <IconBtn onClick={() => setView(view === "home" ? "history" : "home")} active={view === "history"}>{view === "history" ? <ChevronLeft size={18} /> : <History size={17} />}</IconBtn>
-          <IconBtn onClick={() => setConfirmLogout(true)} danger><Power size={16} /></IconBtn>
+          <IconBtn onClick={() => setConfirmLogout(true)} danger label="Keluar"><LogOut size={16} /></IconBtn>
         </div>
       </div>
 
@@ -398,37 +468,30 @@ function AppShell(p) {
           ? <HistoryView history={history} />
           : (
             <div style={{ animation: "up .32s cubic-bezier(.22,1,.36,1)" }}>
-              {/* Permintaan pemindahan masuk */}
-              {incoming.length > 0 && (
-                <div style={{ background: C.card, borderRadius: 18, padding: 14, marginBottom: 16, boxShadow: C.md, border: `1px solid ${C.amber}33` }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 800, color: C.amber, marginBottom: 10 }}>
-                    <Inbox size={15} /> Permintaan Pemindahan ({incoming.length})
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                    {incoming.map((r) => (
-                      <div key={r.id} style={{ padding: "11px 12px", borderRadius: 13, background: C.sub }}>
-                        <div style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 800, color: C.hi }}>{r.phone_normalized}</div>
-                        <div style={{ fontSize: 12, color: C.mid, marginTop: 3, lineHeight: 1.5 }}>
-                          Diminta oleh <b style={{ color: C.hi }}>{r.to_full_name || r.to_email}</b>
-                          {(r.to_outlet_code || r.to_branch) ? ` · ${[r.to_outlet_code, r.to_branch, r.to_area].filter(Boolean).join(" / ")}` : ""}
-                        </div>
-                        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                          <button className="press" onClick={() => decideTransfer(r, false)} disabled={busy} style={{ flex: 1, height: 42, borderRadius: 11, border: `1px solid ${C.line}`, background: C.card, color: C.mid, fontFamily: FF, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Tolak</button>
-                          <button className="press" onClick={() => setApproveReq(r)} disabled={busy} style={{ flex: 1.3, height: 42, borderRadius: 11, border: "none", background: C.brand, color: "#fff", fontFamily: FF, fontSize: 13, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><ArrowLeftRight size={14} /> Pindahkan</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Tanggal + lokasi */}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 10 }}>
-                <div style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, color: C.mid, fontWeight: 600 }}>
-                  <CalendarDays size={13} /> {fmtDateFull(new Date().toISOString())}
+              {/* Periode aktif */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 10, flexWrap: "wrap" }}>
+                <div style={{ position: "relative" }}>
+                  <select value={period} onChange={(e) => setPeriod(e.target.value)}
+                    style={{ appearance: "none", height: 38, borderRadius: 12, border: `1px solid ${C.brand}55`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 13.5, fontWeight: 700, padding: "0 32px 0 34px", cursor: "pointer", boxShadow: C.sm }}>
+                    {periodOptions().map((pOpt) => <option key={pOpt} value={pOpt}>{ymLabel(pOpt)}</option>)}
+                  </select>
+                  <CalendarDays size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: C.brand, pointerEvents: "none" }} />
                 </div>
                 <GeoChip geo={geo} err={geoErr} onFix={fixGeo} />
               </div>
+
+              {/* Ringkasan Claim Penjualan periode ini */}
+              {summary && (
+                <div style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 16, boxShadow: C.md }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo, marginBottom: 11 }}>Ringkasan Claim Penjualan · {ymLabel(period)}</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 9 }}>
+                    <LightStat icon={<ShoppingBag size={13} />} label="Jumlah SP di-claim" value={summary.total} accent={C.mag} />
+                    <LightStat icon={<CheckCircle2 size={13} />} label="Total GA Tervalidasi" value={summary.validated} accent={C.green} />
+                    <LightStat icon={<CheckCircle2 size={13} />} label="GA Biometric" value={summary.bio} accent={C.blue} />
+                    <LightStat icon={<CheckCircle2 size={13} />} label="GA Non-Biometric" value={summary.reg} accent={C.amber} />
+                  </div>
+                </div>
+              )}
 
               {!activeOutlet ? (
                 <OutletSelectPanel outlets={outlets} onPick={chooseOutlet} />
@@ -511,7 +574,7 @@ function AppShell(p) {
         </div>
       )}
 
-      {/* Animasi sukses tag (ala FaceID) */}
+      {/* Animasi sukses claim (ala FaceID) */}
       {success && (
         <div style={{ position: "fixed", inset: 0, zIndex: 150, background: "rgba(244,245,247,0.86)", backdropFilter: "blur(8px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20 }}>
           <svg width="128" height="128" viewBox="0 0 128 128">
@@ -523,20 +586,22 @@ function AppShell(p) {
               strokeDasharray="70" strokeDashoffset="70" style={{ animation: "check .35s .42s cubic-bezier(.4,0,.2,1) forwards" }} />
           </svg>
           <div style={{ textAlign: "center", animation: "up .3s .5s both" }}>
-            <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.02em", color: C.hi }}>Berhasil di-tag</div>
-            <div style={{ fontSize: 16, fontFamily: "monospace", fontWeight: 700, color: C.green, marginTop: 6 }}>{success}</div>
+            <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.02em", color: C.hi }}>Berhasil di-Claim</div>
+            <div style={{ fontSize: 16, fontFamily: "monospace", fontWeight: 700, color: C.green, marginTop: 6 }}>{success.msisdn}</div>
+            <div style={{ fontSize: 12.5, color: C.mid, marginTop: 5 }}>{fmtDateTime(success.at)}</div>
           </div>
           <style>{`@keyframes ring{to{stroke-dashoffset:0}}@keyframes check{to{stroke-dashoffset:0}}`}</style>
         </div>
       )}
 
-      {/* Sudah ditagging oleh ID lain */}
+      {/* Sudah di-claim oleh ID lain */}
       {taken && (
         <div style={{ position: "fixed", inset: 0, zIndex: 140, background: "rgba(17,18,22,0.45)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 26 }} onClick={() => setTaken(null)}>
           <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 380, background: C.card, borderRadius: 24, padding: "24px 22px 20px", boxShadow: C.lg, animation: "pop .22s cubic-bezier(.22,1,.36,1)" }}>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
               <div style={{ width: 58, height: 58, borderRadius: 17, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(183,121,31,0.1)", color: C.amber, marginBottom: 14 }}><ShieldQuestion size={26} /></div>
-              <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", color: C.hi }}>Nomor sudah di-tag</div>
+              <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", color: C.hi }}>Nomor Ini Sudah Di-Claim</div>
+              <div style={{ fontSize: 13, color: C.mid, marginTop: 4 }}>oleh promotor lain — detail di bawah</div>
               <div style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 700, color: C.hi, marginTop: 8, padding: "6px 12px", borderRadius: 10, background: C.sub }}>{taken.phone}</div>
             </div>
             {taken.owner && (
@@ -576,6 +641,40 @@ function AppShell(p) {
       {/* Sheets */}
       {sheet === "qr" && <QRScannerSheet onDetect={onQR} onClose={() => setSheet(null)} />}
 
+      {/* Kotak Masuk — permintaan pemindahan claim dari promotor lain */}
+      {inboxOpen && (
+        <BottomSheet onClose={() => setInboxOpen(false)}>
+          <div style={{ padding: "2px 18px calc(env(safe-area-inset-bottom,0px) + 20px)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 17, fontWeight: 800, color: C.hi, letterSpacing: "-0.02em" }}><Inbox size={18} /> Kotak Masuk</div>
+              <button onClick={() => setInboxOpen(false)} style={{ width: 34, height: 34, borderRadius: 10, border: "none", background: C.sub, color: C.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={18} /></button>
+            </div>
+            {incoming.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "34px 10px", color: C.mid }}>
+                <Inbox size={26} style={{ opacity: .4, marginBottom: 8 }} /><div style={{ fontSize: 13 }}>Belum ada permintaan pemindahan claim.</div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+                {incoming.map((r) => (
+                  <div key={r.id} style={{ padding: "11px 12px", borderRadius: 13, background: C.sub }}>
+                    <div style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 800, color: C.hi }}>{r.phone_normalized}</div>
+                    <div style={{ fontSize: 12, color: C.mid, marginTop: 3, lineHeight: 1.5 }}>
+                      Diminta oleh <b style={{ color: C.hi }}>{r.to_full_name || r.to_email}</b>
+                      {(r.to_outlet_code || r.to_branch) ? ` · ${[r.to_outlet_code, r.to_branch, r.to_area].filter(Boolean).join(" / ")}` : ""}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.lo, marginTop: 3 }}>{fmtDateTime(r.requested_at)}</div>
+                    <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                      <button className="press" onClick={() => decideTransfer(r, false)} disabled={busy} style={{ flex: 1, height: 42, borderRadius: 11, border: `1px solid ${C.line}`, background: C.card, color: C.mid, fontFamily: FF, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Tolak</button>
+                      <button className="press" onClick={() => setApproveReq(r)} disabled={busy} style={{ flex: 1.3, height: 42, borderRadius: 11, border: "none", background: C.brand, color: "#fff", fontFamily: FF, fontSize: 13, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><ArrowLeftRight size={14} /> Pindahkan</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </BottomSheet>
+      )}
+
       {/* Busy overlay */}
       {busy && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 120 }}>
@@ -588,8 +687,8 @@ function AppShell(p) {
       {/* Toast */}
       {toast && (
         <div style={{ position: "fixed", left: 16, right: 16, bottom: "calc(env(safe-area-inset-bottom,0px) + 20px)", zIndex: 130, display: "flex", justifyContent: "center", pointerEvents: "none" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "12px 18px", borderRadius: 13, background: toast.tone === "err" ? "#FDECEC" : "#E7F7ED", border: `1px solid ${toast.tone === "err" ? "#F5C2C2" : "#B7E4C7"}`, color: toast.tone === "err" ? "#C62828" : "#1A9E5A", fontSize: 13.5, fontWeight: 700, boxShadow: "0 10px 30px rgba(23,24,28,0.12)", maxWidth: 460 }}>
-            {toast.tone === "err" ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}{toast.msg}
+          <div onClick={() => { clearTimeout(toastTimerRef.current); setToast(null); }} style={{ display: "flex", alignItems: "center", gap: 9, padding: "12px 18px", borderRadius: 13, background: toast.tone === "err" ? "#FDECEC" : "#E7F7ED", border: `1px solid ${toast.tone === "err" ? "#F5C2C2" : "#B7E4C7"}`, color: toast.tone === "err" ? "#C62828" : "#1A9E5A", fontSize: 13.5, fontWeight: 700, boxShadow: "0 10px 30px rgba(23,24,28,0.12)", maxWidth: 460, pointerEvents: "auto", cursor: "pointer" }}>
+            {toast.tone === "err" ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}<span>{toast.msg}</span>
           </div>
         </div>
       )}
@@ -661,15 +760,14 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
             cursor: multiOutlet ? "pointer" : "default", fontFamily: FF,
           }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>
-              Outlet Aktif{multiOutlet && <span style={{ fontSize: 10, fontWeight: 700, color: C.brand, textTransform: "none", letterSpacing: 0 }}>· ketuk untuk ganti</span>}
-            </div>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Outlet Aktif</div>
             <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em", fontFamily: "monospace", marginTop: 4, color: C.hi }}>{outlet.code}</div>
             <div style={{ fontSize: 12, color: C.mid, marginTop: 2 }}>{[outlet.branch, outlet.area].filter(Boolean).join(" · ") || "—"}</div>
           </div>
           {multiOutlet && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, marginLeft: 12, width: 44, height: 44, borderRadius: 14, background: C.sub, border: `1px solid ${C.line}`, justifyContent: "center" }}>
-              <RefreshCcw size={16} color={C.brand} />
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, marginLeft: 12, height: 40, padding: "0 13px", borderRadius: 12, background: C.sub, border: `1px solid ${C.line}` }}>
+              <RefreshCcw size={15} color={C.brand} />
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: C.brand }}>Ganti</span>
             </div>
           )}
         </OutletHeader>
@@ -681,7 +779,7 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
       {/* Tag penjualan */}
       <button onClick={onTag} disabled={busy} className="press"
         style={{ width: "100%", height: 58, borderRadius: 16, border: "none", cursor: "pointer", background: C.brand, color: "#fff", fontFamily: FF, fontSize: 16.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, boxShadow: "0 8px 22px rgba(237,28,36,0.24)", marginBottom: 14 }}>
-        <QrCode size={20} /> Tag Penjualan (Scan QR)
+        <QrCode size={20} /> Claim Penjualan (Scan QR)
       </button>
       <p style={{ fontSize: 11.5, color: C.mid, textAlign: "center", marginTop: -8, marginBottom: 14, lineHeight: 1.5 }}>
         Lokasi Anda dicek otomatis. Di luar radius outlet, Anda akan diminta konfirmasi sebelum tersimpan.
@@ -724,29 +822,43 @@ function LightStat({ icon, label, value, accent }) {
   );
 }
 
+const GA_BADGE = {
+  TERVALIDASI: { label: "Tervalidasi", fg: "#1A9E5A", bg: "rgba(26,158,90,0.12)" },
+  TERVALIDASI_LUAR_AREA: { label: "Tervalidasi · luar area", fg: "#1A9E5A", bg: "rgba(26,158,90,0.12)" },
+  TIDAK_SESUAI_OUTLET: { label: "Outlet tidak sesuai", fg: "#B7791F", bg: "rgba(255,176,32,0.14)" },
+  TIDAK_DITEMUKAN: { label: "Tdk ditemukan", fg: "#DC2626", bg: "rgba(220,38,38,0.1)" },
+};
+const gaBadge = (status) => GA_BADGE[status] || { label: "Belum GA", fg: "#B7791F", bg: "rgba(255,176,32,0.14)" };
+
 function HistoryView({ history }) {
   return (
     <div style={{ animation: "up .3s ease" }}>
-      <h2 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", marginBottom: 14 }}>Riwayat Tagging Saya</h2>
+      <h2 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", marginBottom: 14 }}>Riwayat Claim Saya</h2>
       {history.length === 0 ? (
         <div className="card" style={{ padding: "40px 20px", textAlign: "center", color: C.mid }}>
           <History size={26} style={{ opacity: 0.5, marginBottom: 8 }} /><div style={{ fontSize: 13.5 }}>Belum ada aktivitas tercatat.</div>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {history.map((s) => (
-            <div key={s.id} style={{ background: C.card, borderRadius: 16, padding: 14, boxShadow: C.md, display: "flex", alignItems: "center", gap: 11 }}>
-              <span style={{ width: 34, height: 34, borderRadius: 10, background: s.within_radius === false ? "rgba(37,99,235,0.1)" : "rgba(26,158,90,0.1)", color: s.within_radius === false ? C.blue : C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.within_radius === false ? <Radar size={16} /> : <Phone size={16} />}</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14.5, fontWeight: 800, fontFamily: "monospace", color: C.hi }}>{s.phone_normalized}</div>
-                {s.imei && <div style={{ fontSize: 10.5, fontFamily: "monospace", color: C.lo }}>IMEI {s.imei}</div>}
-                <div style={{ fontSize: 11.5, color: C.lo, fontWeight: 500 }}>{fmtDateTime(s.tagged_at)}{s.within_radius === false ? " · di luar area" : ""}</div>
+          {history.map((s) => {
+            const badge = gaBadge(s.ga_status);
+            return (
+              <div key={s.id} style={{ background: C.card, borderRadius: 16, padding: 14, boxShadow: C.md }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+                  <span style={{ width: 34, height: 34, borderRadius: 10, background: s.within_radius === false ? "rgba(37,99,235,0.1)" : "rgba(26,158,90,0.1)", color: s.within_radius === false ? C.blue : C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.within_radius === false ? <Radar size={16} /> : <Phone size={16} />}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14.5, fontWeight: 800, fontFamily: "monospace", color: C.hi }}>{s.phone_normalized}</div>
+                    {s.imei && <div style={{ fontSize: 10.5, fontFamily: "monospace", color: C.lo }}>IMEI {s.imei}</div>}
+                    <div style={{ fontSize: 11.5, color: C.lo, fontWeight: 500 }}>{fmtDateTime(s.tagged_at)}{s.within_radius === false ? " · di luar area" : ""}</div>
+                  </div>
+                  <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.03em", padding: "4px 9px", borderRadius: 99, background: badge.bg, color: badge.fg, whiteSpace: "nowrap" }}>{badge.label}</span>
+                </div>
+                {s.ga_note && (
+                  <div style={{ marginTop: 9, padding: "8px 10px", borderRadius: 10, background: "rgba(255,176,32,0.1)", fontSize: 11.5, color: C.amber, lineHeight: 1.5 }}>{s.ga_note}</div>
+                )}
               </div>
-              <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.03em", padding: "4px 9px", borderRadius: 99, background: s.ga_status === "TERVALIDASI" || s.ga_status === "TERVALIDASI_LUAR_AREA" ? "rgba(26,158,90,0.12)" : s.ga_status === "TIDAK_DITEMUKAN" ? "rgba(220,38,38,0.1)" : "rgba(255,176,32,0.14)", color: s.ga_status === "TERVALIDASI" || s.ga_status === "TERVALIDASI_LUAR_AREA" ? C.green : s.ga_status === "TIDAK_DITEMUKAN" ? "#DC2626" : C.amber, whiteSpace: "nowrap" }}>
-                {s.ga_status === "TERVALIDASI" ? "Tervalidasi" : s.ga_status === "TERVALIDASI_LUAR_AREA" ? "Luar area" : s.ga_status === "TIDAK_DITEMUKAN" ? "Tdk ditemukan" : "Belum GA"}
-              </span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -754,11 +866,16 @@ function HistoryView({ history }) {
 }
 
 /* ── Small parts ─────────────────────────────────────────────── */
-function IconBtn({ children, onClick, active, danger }) {
+function IconBtn({ children, onClick, active, danger, label, badge }) {
   const col = danger ? "#DC2626" : active ? C.brand : C.mid;
   const bd = danger ? "rgba(220,38,38,0.28)" : active ? C.brand : C.line;
   const bg = danger ? "rgba(220,38,38,0.06)" : active ? "rgba(237,28,36,0.08)" : C.card;
-  return <button className="press" onClick={onClick} style={{ width: 42, height: 42, borderRadius: 13, border: `1px solid ${bd}`, background: bg, color: col, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: C.sm }}>{children}</button>;
+  return (
+    <button className="press" onClick={onClick} style={{ position: "relative", height: 42, minWidth: 42, padding: label ? "0 14px" : 0, borderRadius: 13, border: `1px solid ${bd}`, background: bg, color: col, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer", boxShadow: C.sm, fontFamily: FF, fontSize: 12.5, fontWeight: 700, whiteSpace: "nowrap" }}>
+      {children}{label}
+      {badge > 0 && <span style={{ position: "absolute", top: -5, right: -5, minWidth: 18, height: 18, padding: "0 4px", borderRadius: 99, background: C.brand, color: "#fff", fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 0 0 2px #F4F5F7" }}>{badge}</span>}
+    </button>
+  );
 }
 function TakenRow({ label, value }) {
   return (
