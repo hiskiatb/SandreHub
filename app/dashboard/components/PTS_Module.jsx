@@ -287,8 +287,13 @@ function UploadMapping({ t, d, supabase, profile, period, outletByCode, outletsL
         const area = iArea >= 0 ? String(row[iArea] ?? "").trim() : "";
         const regRaw = iRegion >= 0 ? String(row[iRegion] ?? "").trim() : "";
         const regCanon = canonRegion(regRaw) || canonRegion(region);
-        const lng = iLng >= 0 ? Number(row[iLng]) : null;
-        const lat = iLat >= 0 ? Number(row[iLat]) : null;
+        // Number("") === 0 di JS — sel kosong TIDAK BOLEH jadi koordinat (0,0)
+        // literal, harus dianggap "tidak diisi" (NaN) supaya jatuh ke fallback
+        // koordinat outlet yang sudah ada, bukan menimpanya dengan (0,0).
+        const latRaw = iLat >= 0 ? String(row[iLat] ?? "").trim() : "";
+        const lngRaw = iLng >= 0 ? String(row[iLng] ?? "").trim() : "";
+        const lat = latRaw === "" ? NaN : Number(latRaw);
+        const lng = lngRaw === "" ? NaN : Number(lngRaw);
         const o = outletByCode.get(code.toUpperCase());
         const errs = [];
         if (!code) errs.push("ID Outlet kosong");

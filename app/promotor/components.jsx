@@ -61,9 +61,6 @@ export function BottomSheet({ onClose, children, maxWidth = 560 }) {
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(17,18,22,0.42)", backdropFilter: "blur(6px)", display: "flex", flexDirection: "column", justifyContent: "flex-end", fontFamily: FF }} onClick={onClose}>
       <div ref={sheetRef} onClick={(e) => e.stopPropagation()}
-        onTouchStart={(e) => begin(e.touches[0].clientY)}
-        onTouchMove={(e) => move(e.touches[0].clientY)}
-        onTouchEnd={end}
         style={{
           background: "#FFFFFF", borderRadius: "26px 26px 0 0", overflow: "hidden",
           boxShadow: "0 -18px 50px rgba(23,24,28,0.18)", maxHeight: "94svh", display: "flex", flexDirection: "column",
@@ -72,7 +69,16 @@ export function BottomSheet({ onClose, children, maxWidth = 560 }) {
           transition: dragging ? "none" : "transform .3s cubic-bezier(.22,1,.36,1)",
           animation: dy === 0 && !dragging ? "sheetup .3s cubic-bezier(.22,1,.36,1)" : "none",
         }}>
-        <div style={{ padding: "11px 0 3px", display: "flex", justifyContent: "center", flexShrink: 0 }}>
+        {/* Gestur geser-untuk-tutup HANYA di handle ini — sebelumnya dipasang
+            di seluruh sheet, jadi setiap ketukan tombol/input di dalam sheet
+            (mis. "Lanjut") juga ikut memicu begin/end drag di tengah gestur
+            tap, yang bisa membuat Safari mobile membatalkan sintesis event
+            click-nya (glitch tanpa error, tombol seperti tidak merespons). */}
+        <div
+          onTouchStart={(e) => begin(e.touches[0].clientY)}
+          onTouchMove={(e) => move(e.touches[0].clientY)}
+          onTouchEnd={end}
+          style={{ padding: "11px 0 3px", display: "flex", justifyContent: "center", flexShrink: 0, touchAction: "none" }}>
           <div style={{ width: 40, height: 5, borderRadius: 99, background: "#D7D8DE" }} />
         </div>
         {/* Konten bisa di-scroll — tanpa ini, tombol di bagian bawah (mis.
@@ -265,6 +271,7 @@ export function QRScannerSheet({ onDetect, onClose }) {
   const [detected, setDetected] = useState(false);
   const [numVal, setNumVal] = useState("");
   const [imeiVal, setImeiVal] = useState("");
+  const [localErr, setLocalErr] = useState("");
   const editedRef = useRef(false);
   const lastRawRef = useRef("");
 
@@ -345,6 +352,7 @@ export function QRScannerSheet({ onDetect, onClose }) {
               if (code.data !== lastRawRef.current) {
                 lastRawRef.current = code.data;
                 editedRef.current = false;
+                setLocalErr("");
                 const parsed = parseTagPayload(code.data);
                 setNumVal(parsed.phone.normalized);
                 setImeiVal(parsed.imei);
@@ -366,11 +374,25 @@ export function QRScannerSheet({ onDetect, onClose }) {
   const close = () => { stop(); onClose(); };
   const manualPhoneCheck = normalizePhone(manualVal);
   const manualOk = manualPhoneCheck.valid && imeiValid(manualImei);
-  const submitManual = () => { if (manualOk) finish(manualPhoneCheck.normalized, manualImei.replace(/\D/g, ""), manualVal.trim()); };
-  const retryCam = () => { stop(); setManual(false); setErr(""); editedRef.current = false; setNumVal(""); setImeiVal(""); setTries((n) => n + 1); };
+  // Tombol TIDAK di-disable — sebuah <button disabled> yang tersentuh di
+  // mobile tidak memberi respons apapun (tidak ada event sama sekali), yang
+  // dari sisi pengguna terlihat sama persis dengan "glitch". Selalu bisa
+  // diketuk; kalau memang belum valid, tampilkan alasannya secara eksplisit.
+  const submitManual = () => {
+    if (!manualPhoneCheck.valid) { setLocalErr("Nomor HP belum valid, periksa lagi."); return; }
+    if (!imeiValid(manualImei)) { setLocalErr("IMEI belum valid, periksa lagi."); return; }
+    setLocalErr("");
+    finish(manualPhoneCheck.normalized, manualImei.replace(/\D/g, ""), manualVal.trim());
+  };
+  const retryCam = () => { stop(); setManual(false); setErr(""); setLocalErr(""); editedRef.current = false; setNumVal(""); setImeiVal(""); setTries((n) => n + 1); };
   const numCheck = normalizePhone(numVal);
   const scanOk = numCheck.valid && imeiValid(imeiVal);
-  const proceed = () => { if (scanOk) finish(numCheck.normalized, imeiVal.replace(/\D/g, ""), lastRawRef.current || numVal); };
+  const proceed = () => {
+    if (!numCheck.valid) { setLocalErr("Nomor HP belum valid, periksa lagi."); return; }
+    if (!imeiValid(imeiVal)) { setLocalErr("IMEI belum valid, periksa lagi."); return; }
+    setLocalErr("");
+    finish(numCheck.normalized, imeiVal.replace(/\D/g, ""), lastRawRef.current || numVal);
+  };
 
   return (
     <Sheet title="Scan QR Kartu SIM" onClose={close}>
@@ -409,7 +431,8 @@ export function QRScannerSheet({ onDetect, onClose }) {
               <input value={manualImei} onChange={(e) => setManualImei(e.target.value)} inputMode="numeric" enterKeyHint="done" placeholder="mis. 356789102345678"
                 style={{ width: "100%", height: 52, borderRadius: 13, border: `1px solid ${manualImei && !imeiValid(manualImei) ? "#F0C2C2" : "#E4E5EA"}`, background: "#F6F7F9", color: "#17181C", fontFamily: FF, fontSize: 16, padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
             </div>
-            <button type="submit" disabled={!manualOk} style={{ height: 52, borderRadius: 13, border: "none", background: manualOk ? "#ED1C24" : "#E4E5EA", color: manualOk ? "#fff" : "#A2A2AD", fontFamily: FF, fontSize: 15, fontWeight: 700, cursor: manualOk ? "pointer" : "default", transition: "background .15s" }}>Lanjut</button>
+            {localErr && <div style={{ fontSize: 12.5, fontWeight: 700, color: "#DC2626", textAlign: "center" }}>{localErr}</div>}
+            <button type="submit" style={{ height: 52, borderRadius: 13, border: "none", background: manualOk ? "#ED1C24" : "#E4E5EA", color: manualOk ? "#fff" : "#A2A2AD", fontFamily: FF, fontSize: 15, fontWeight: 700, cursor: "pointer", transition: "background .15s", touchAction: "manipulation" }}>Lanjut</button>
           </form>
         ) : !err && (
           <form onSubmit={(e) => { e.preventDefault(); proceed(); }} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -434,8 +457,9 @@ export function QRScannerSheet({ onDetect, onClose }) {
               <input value={imeiVal} onChange={(e) => setImeiVal(e.target.value)} inputMode="numeric" enterKeyHint="done" placeholder="belum terbaca dari QR — isi manual"
                 style={{ width: "100%", height: 52, borderRadius: 13, border: `1px solid ${imeiVal && !imeiValid(imeiVal) ? "#F0C2C2" : "#E4E5EA"}`, background: "#F6F7F9", color: "#17181C", fontFamily: FF, fontSize: 17, fontWeight: 700, letterSpacing: "0.01em", padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
             </div>
-            <button type="submit" disabled={!scanOk}
-              style={{ height: 52, borderRadius: 13, border: "none", background: scanOk ? "#ED1C24" : "#E4E5EA", color: scanOk ? "#fff" : "#A2A2AD", fontFamily: FF, fontSize: 15.5, fontWeight: 700, cursor: scanOk ? "pointer" : "default", transition: "background .15s" }}>
+            {localErr && <div style={{ fontSize: 12.5, fontWeight: 700, color: "#DC2626", textAlign: "center" }}>{localErr}</div>}
+            <button type="submit"
+              style={{ height: 52, borderRadius: 13, border: "none", background: scanOk ? "#ED1C24" : "#E4E5EA", color: scanOk ? "#fff" : "#A2A2AD", fontFamily: FF, fontSize: 15.5, fontWeight: 700, cursor: "pointer", transition: "background .15s", touchAction: "manipulation" }}>
               Lanjut
             </button>
             <button type="button" onClick={() => setManual(true)} style={{ height: 44, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#61616C", fontFamily: FF, fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}><Keyboard size={15} /> Input manual</button>
