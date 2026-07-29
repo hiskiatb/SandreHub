@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Camera, X, RotateCcw, Check, Keyboard, Loader2, ScanLine, AlertTriangle, RefreshCw, SwitchCamera } from "lucide-react";
+import { Camera, X, RotateCcw, Check, Keyboard, ScanLine, AlertTriangle, RefreshCw, SwitchCamera } from "lucide-react";
 import { stampAndCompress, normalizePhone } from "./ptsClient";
 
 // Ambil kandidat nomor HP Indonesia dari isi QR (isi QR sering menyambung
@@ -26,6 +26,20 @@ export function parseTagPayload(raw) {
 export const imeiValid = (v) => /^\d{6,20}$/.test(String(v || "").replace(/\D/g, ""));
 
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
+
+/* ── Spinner (indikator loading standar — dipakai di semua state loading) ── */
+export function Spinner({ size = 20, color = "currentColor" }) {
+  return (
+    <div style={{ display: "inline-block", position: "relative", width: size, height: size, flexShrink: 0 }}>
+      {Array.from({ length: 12 }).map((_, i) => (
+        <div key={i} style={{ position: "absolute", inset: 0, transform: `rotate(${i * 30}deg)`, animation: "sh-spin 1.2s linear infinite", animationDelay: `${-1.1 + i * 0.1}s` }}>
+          <div style={{ position: "absolute", top: "6%", left: "46%", width: "8%", height: "26%", borderRadius: "40%", background: color }} />
+        </div>
+      ))}
+      <style>{`@keyframes sh-spin{0%{opacity:1}100%{opacity:.15}}`}</style>
+    </div>
+  );
+}
 
 /* ── Bottom sheet dengan tap & drag-to-close (ala MartaHub) ──── */
 export function BottomSheet({ onClose, children, maxWidth = 560 }) {
@@ -63,7 +77,7 @@ export function BottomSheet({ onClose, children, maxWidth = 560 }) {
         </div>
         {children}
       </div>
-      <style>{`@keyframes sheetup{from{transform:translateY(100%)}to{transform:none}}@keyframes pspin{to{transform:rotate(360deg)}}`}</style>
+      <style>{`@keyframes sheetup{from{transform:translateY(100%)}to{transform:none}}`}</style>
     </div>
   );
 }
@@ -177,7 +191,7 @@ export function CameraSheet({ title = "Ambil Selfie", stampLines, onCapture, onC
           )}
           {!ready && !err && (
             <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#9A9AA6", fontSize: 13, gap: 8 }}>
-              <Loader2 size={18} style={{ animation: "pspin 1s linear infinite" }} /> Menyalakan kamera…
+              <Spinner size={18} color="#9A9AA6" /> Menyalakan kamera…
             </div>
           )}
           {err && (
@@ -195,7 +209,7 @@ export function CameraSheet({ title = "Ambil Selfie", stampLines, onCapture, onC
         ) : !shot ? (
           <button onClick={capture} disabled={!ready || busy}
             style={{ height: 56, borderRadius: 15, border: "none", cursor: ready ? "pointer" : "default", background: "#ED1C24", color: "#fff", fontFamily: FF, fontSize: 16, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, opacity: ready ? 1 : 0.55 }}>
-            {busy ? <Loader2 size={20} style={{ animation: "pspin 1s linear infinite" }} /> : <Camera size={20} />} Ambil Foto
+            {busy ? <Spinner size={20} color="#fff" /> : <Camera size={20} />} Ambil Foto
           </button>
         ) : (
           <div style={{ display: "flex", gap: 11 }}>
@@ -368,7 +382,7 @@ export function QRScannerSheet({ onDetect, onClose }) {
             )}
             <div style={{ position: "absolute", bottom: 12, left: 0, right: 0, textAlign: "center", color: "#fff", fontSize: 12.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>
               {!scanning
-                ? <><Loader2 size={15} style={{ animation: "pspin 1s linear infinite" }} /> Menyalakan kamera…</>
+                ? <><Spinner size={15} color="#fff" /> Menyalakan kamera…</>
                 : detected
                   ? <span style={{ color: "#4ADE80" }}>✓ QR terdeteksi</span>
                   : <><ScanLine size={15} /> Arahkan ke QR kartu SIM</>}

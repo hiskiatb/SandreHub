@@ -11,13 +11,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   MapPin, LogOut, RefreshCw, Clock, Store, QrCode, CheckCircle2,
-  ShoppingBag, ChevronRight, History, Navigation, AlertTriangle, Loader2,
+  ShoppingBag, ChevronRight, History, Navigation, AlertTriangle,
   X, ChevronLeft, Phone, CalendarDays, Trash2,
   Power, ArrowLeftRight, Inbox, ShieldQuestion, Radar, RefreshCcw,
 } from "lucide-react";
 import supabase from "../../lib/supabase";
 import { HubLogoLoader } from "../../components/HubLogoLoader";
-import { QRScannerSheet, AccessHelp, BottomSheet, imeiValid } from "./components";
+import { QRScannerSheet, AccessHelp, BottomSheet, imeiValid, Spinner } from "./components";
 import {
   ymNow, fmtTime, fmtDateFull, fmtDateTime,
   normalizePhone, getPosition, checkGeoPermission,
@@ -210,10 +210,10 @@ function Pending({ email, onReload, onSignOut }) {
   const reload = async () => { setBusy(true); await onReload(); setBusy(false); };
   return (
     <div style={{ minHeight: "100svh", background: C.bg, color: C.hi, fontFamily: FF, display: "flex", flexDirection: "column", padding: "0 26px", textAlign: "center" }}>
-      <style>{`@keyframes pspin{to{transform:rotate(360deg)}}@keyframes fl{0%,100%{opacity:.55}50%{opacity:1}}`}</style>
+      <style>{`@keyframes fl{0%,100%{opacity:.55}50%{opacity:1}}`}</style>
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6 }}>
         <div style={{ width: 76, height: 76, borderRadius: 22, background: "rgba(255,176,32,0.12)", border: "1px solid rgba(255,176,32,0.3)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 22, animation: "fl 2s ease infinite" }}>
-          <Loader2 size={34} color={C.amber} style={{ animation: "pspin 2s linear infinite" }} />
+          <Spinner size={34} color={C.amber} />
         </div>
         <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em" }}>Menunggu Aktivasi</h1>
         <p style={{ fontSize: 14, color: C.mid, lineHeight: 1.6, maxWidth: 320, marginTop: 10 }}>
@@ -223,7 +223,7 @@ function Pending({ email, onReload, onSignOut }) {
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 11, marginBottom: "calc(env(safe-area-inset-bottom,0px) + 26px)" }}>
         <button onClick={reload} disabled={busy} style={{ height: 54, borderRadius: 15, border: "none", background: C.brand, color: "#fff", fontFamily: FF, fontSize: 15.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, cursor: "pointer", opacity: busy ? 0.7 : 1 }}>
-          {busy ? <Loader2 size={19} style={{ animation: "pspin 1s linear infinite" }} /> : <RefreshCw size={18} />} Muat Ulang Status
+          {busy ? <Spinner size={19} color="#fff" /> : <RefreshCw size={18} />} Muat Ulang Status
         </button>
         <button onClick={onSignOut} style={{ height: 50, borderRadius: 14, border: `1px solid ${C.line}`, background: "transparent", color: C.mid, fontFamily: FF, fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}>
           <LogOut size={16} /> Keluar
@@ -264,7 +264,7 @@ function AppShell(p) {
       else if (data?.status === "rejected") flash("Pengajuan ditolak.");
       else flash("Tidak dapat memproses.", "err");
       await loadIncoming();
-    } catch (e) { flash("Gagal: " + (e?.message || e), "err"); }
+    } catch (e) { flash("Gagal: " + describeError(e, "decideTransfer"), "err"); }
     finally { setBusy(false); }
   };
   useEffect(() => { if (success) { const id = setTimeout(() => setSuccess(null), 1900); return () => clearTimeout(id); } }, [success]);
@@ -281,6 +281,7 @@ function AppShell(p) {
   /* Tag penjualan (QR) — via RPC pts_tag_sale (geofence-aware).
      Payload tag sebenarnya "nomor|imei" — IMEI ikut disimpan per tagging. */
   const tagSale = async (normalized, imei, raw, confirmOutside) => {
+    if (!activeOutlet?.id) throw new Error("Outlet aktif tidak ditemukan, pilih ulang outlet.");
     const { data, error } = await supabase.rpc("pts_tag_sale", {
       p_phone: normalized, p_session: null, p_outlet: activeOutlet.id,
       p_lat: geo?.lat ?? null, p_lng: geo?.lng ?? null, p_raw: String(raw),
@@ -290,19 +291,30 @@ function AppShell(p) {
     return data;
   };
 
+  // Ambil pesan sedetail mungkin dari error Supabase (message/details/hint/code)
+  // dan catat ke console — supaya kegagalan tagging bisa didiagnosis dari
+  // remote debugging, bukan cuma tampil "Gagal menyimpan" tanpa info.
+  const describeError = (e, tag) => {
+    console.error(`[PTS ${tag}]`, e);
+    if (!e) return "Terjadi kesalahan tidak dikenal.";
+    const parts = [e.message, e.details, e.hint].filter(Boolean);
+    const msg = parts.length ? parts.join(" — ") : String(e);
+    return e.code ? `${msg} (${e.code})` : msg;
+  };
+
   const onQR = async ({ phone, imei, raw }) => {
     setSheet(null);
-    const { normalized, valid } = normalizePhone(phone);
-    if (!valid) { flash(`Nomor tidak valid: ${normalized || phone}`, "err"); return; }
-    if (!imeiValid(imei)) { flash("IMEI belum valid, periksa lagi.", "err"); return; }
-    if (!activeOutlet) { flash("Pilih outlet aktif terlebih dulu.", "err"); return; }
-    let g = geo;
-    if (!g) { g = await refreshGeo(); if (!g) { setGeoHelp(true); return; } }
-    setBusy(true);
     try {
+      const { normalized, valid } = normalizePhone(phone);
+      if (!valid) { flash(`Nomor tidak valid: ${normalized || phone}`, "err"); return; }
+      if (!imeiValid(imei)) { flash("IMEI belum valid, periksa lagi.", "err"); return; }
+      if (!activeOutlet) { flash("Pilih outlet aktif terlebih dulu.", "err"); return; }
+      let g = geo;
+      if (!g) { g = await refreshGeo(); if (!g) { setGeoHelp(true); return; } }
+      setBusy(true);
       const data = await tagSale(normalized, imei, raw, false);
       await handleTagResult(data, normalized, imei, raw);
-    } catch (e) { flash("Gagal menyimpan: " + (e?.message || e), "err"); setBusy(false); }
+    } catch (e) { flash("Gagal menyimpan: " + describeError(e, "onQR"), "err"); setBusy(false); }
   };
 
   const handleTagResult = async (data, normalized, imei, raw) => {
@@ -327,7 +339,7 @@ function AppShell(p) {
     try {
       const data = await tagSale(c.phone, c.imei, c.raw, true);
       await handleTagResult(data, c.phone, c.imei, c.raw);
-    } catch (e) { flash("Gagal menyimpan: " + (e?.message || e), "err"); setBusy(false); }
+    } catch (e) { flash("Gagal menyimpan: " + describeError(e, "confirmOutsideTag"), "err"); setBusy(false); }
   };
 
   /* Ajukan pemindahan nomor yang sudah ditag orang lain — outlet aktif dikirim
@@ -343,7 +355,7 @@ function AppShell(p) {
       else if (data?.status === "self") flash("Nomor ini sudah milik Anda.");
       else if (data?.status === "notfound") flash("Nomor tidak ditemukan.", "err");
       else flash("Gagal mengajukan pemindahan.", "err");
-    } catch (e) { flash("Gagal mengajukan: " + (e?.message || e), "err"); }
+    } catch (e) { flash("Gagal mengajukan: " + describeError(e, "requestTransfer"), "err"); }
     finally { setBusy(false); }
   };
 
@@ -355,13 +367,13 @@ function AppShell(p) {
       if (error) throw error;
       if (activeOutlet) await loadTodaySales(promotorId, activeOutlet.id);
       flash("Nomor dihapus");
-    } catch (e) { flash("Gagal menghapus: " + (e?.message || e), "err"); }
+    } catch (e) { flash("Gagal menghapus: " + describeError(e, "doDeleteSale"), "err"); }
     finally { setBusy(false); }
   };
 
   return (
     <div style={{ minHeight: "100svh", background: C.bg, color: C.hi, fontFamily: FF, paddingBottom: "calc(env(safe-area-inset-bottom,0px) + 24px)" }}>
-      <style>{`@keyframes pspin{to{transform:rotate(360deg)}}@keyframes up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+      <style>{`@keyframes up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
         @keyframes pop{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
         @keyframes sheetup{from{transform:translateY(100%)}to{transform:none}}
         .press{transition:transform .12s}.press:active{transform:scale(.975)}`}</style>
@@ -568,7 +580,7 @@ function AppShell(p) {
       {busy && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 120 }}>
           <div style={{ background: C.card, border: `1px solid ${C.line}`, borderRadius: 16, padding: "20px 26px", display: "flex", alignItems: "center", gap: 12, color: C.hi, fontSize: 14, fontWeight: 600 }}>
-            <Loader2 size={20} style={{ animation: "pspin 1s linear infinite", color: C.brand }} /> Memproses…
+            <Spinner size={20} color={C.brand} /> Memproses…
           </div>
         </div>
       )}
