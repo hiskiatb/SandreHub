@@ -343,7 +343,7 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
    pts_effective_assignment — kalau bulan berjalan belum di-upload, otomatis
    pakai mapping bulan terakhir yang ada (alokasi dianggap tetap sampai
    diubah, bukan wajib upload ulang tiap bulan). */
-const emptyPromotorForm = () => ({ id: null, promotor_id: "", full_name: "", email: "", phone: "", region: "", effective_date: "", status: "active" });
+const emptyPromotorForm = () => ({ id: null, promotor_id: "", full_name: "", email: "", phone: "", region: "", effective_date: "", status: "active", sales_target: 150 });
 
 function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, outletsLoaded, onOutletsNeeded }) {
   const [loading, setLoading] = useState(true);
@@ -480,7 +480,7 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
   // ID Promotor dikunci hanya bila baris ini SUDAH punya ID (mis. dari roster) —
   // profil yang lahir dari login mandiri (promotor_id masih kosong) tetap bisa
   // dikaitkan ke ID roster yang benar oleh admin.
-  const startEdit = (r) => { setForm({ id: r.id, promotor_id: r.promotor_id || "", full_name: r.full_name || "", email: r.email || "", phone: r.phone || "", region: r.region || "", effective_date: r.effective_date || "", status: r.status || "active" }); setIdLocked(!!r.promotor_id); setEditing(true); setErr(""); };
+  const startEdit = (r) => { setForm({ id: r.id, promotor_id: r.promotor_id || "", full_name: r.full_name || "", email: r.email || "", phone: r.phone || "", region: r.region || "", effective_date: r.effective_date || "", status: r.status || "active", sales_target: r.sales_target || 150 }); setIdLocked(!!r.promotor_id); setEditing(true); setErr(""); };
   const cancel = () => { setEditing(false); setForm(emptyPromotorForm()); setErr(""); };
 
   const saveForm = async () => {
@@ -488,6 +488,7 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
     if (!form.promotor_id.trim()) return setErr("ID Promotor wajib diisi.");
     if (!form.full_name.trim()) return setErr("Nama Promotor wajib diisi.");
     if (form.email && !emailValid(form.email)) return setErr("Email Pribadi tidak valid.");
+    if (!(Number(form.sales_target) > 0)) return setErr("Target Penjualan harus lebih dari 0.");
     setBusy(true);
     try {
       const payload = {
@@ -500,6 +501,7 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
         region: form.region || null,
         effective_date: form.effective_date || null,
         status: form.status,
+        sales_target: Number(form.sales_target),
       };
       if (form.id) {
         const { error } = await supabase.from("pts_promotor").update(payload).eq("id", form.id);
@@ -1053,6 +1055,11 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
               </select>
             </Field>
             <Field t={t} label="Tanggal Efektif Bekerja"><input className="pts-in" type="date" value={form.effective_date} onChange={(e) => setForm({ ...form, effective_date: e.target.value })} /></Field>
+            <Field t={t} label={`Target Penjualan (SP/bulan)${profile?.role !== "spm_sumatera" ? " — hanya SPM Sumatera" : ""}`}>
+              <input className="pts-in" type="number" min={1} value={form.sales_target}
+                disabled={profile?.role !== "spm_sumatera"}
+                onChange={(e) => setForm({ ...form, sales_target: e.target.value })} />
+            </Field>
           </div>
           {err && <div style={{ marginTop: 12, fontSize: 12.5, color: t.red, display: "flex", alignItems: "center", gap: 6 }}><AlertTriangle size={13} />{err}</div>}
           <div style={{ display: "flex", gap: 9, marginTop: 16, justifyContent: "flex-end" }}>

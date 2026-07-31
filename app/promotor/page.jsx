@@ -14,6 +14,7 @@ import {
   ShoppingBag, ChevronRight, History, Navigation, AlertTriangle,
   X, ChevronLeft, Phone, CalendarDays, Trash2,
   ArrowLeftRight, Inbox, ShieldQuestion, Radar, RefreshCcw, Pencil, Check,
+  Target, TrendingUp, Fingerprint, Sparkles,
 } from "lucide-react";
 import supabase from "../../lib/supabase";
 import { HubLogoLoader } from "../../components/HubLogoLoader";
@@ -42,6 +43,18 @@ const C = {
   md: "0 1px 3px rgba(23,24,28,0.06), 0 10px 26px rgba(23,24,28,0.05)",
   lg: "0 2px 6px rgba(23,24,28,0.07), 0 20px 44px rgba(23,24,28,0.09)",
   grad: "linear-gradient(135deg,#ED1C24 0%,#C6168D 100%)",
+};
+
+/* Palet identitas untuk hero card home — dipakai konsisten sebagai aksen
+   di ring target, chip status, dan sub-stat. Charcoal jadi dasar hero
+   (bukan hitam pekat) supaya tetap terasa premium tapi tidak "gelap mati". */
+const PAL = {
+  charcoal: "#4A4A4D",
+  red: "#ED1C24",
+  yellow: "#F6CB43",
+  teal: "#5AC8A8",
+  purple: "#B0298F",
+  pink: "#EC1E79",
 };
 
 /* Warna identitas brand — dipakai konsisten di seluruh app promotor supaya
@@ -87,6 +100,7 @@ export default function PromotorApp() {
   const [uid, setUid] = useState("");
   const [name, setName] = useState("");
   const [promotorId, setPromotorId] = useState(null);
+  const [salesTarget, setSalesTarget] = useState(150); // diset admin SPM per-promotor
   const [outlets, setOutlets] = useState([]);      // {code,id,branch,area,region,name}
   const [assignmentSrc, setAssignmentSrc] = useState(null); // { sourcePeriod, carried } — mapping ini dari bulan mana
   const [activeOutlet, setActiveOutlet] = useState(null);
@@ -166,6 +180,7 @@ export default function PromotorApp() {
     }
     setPromotorId(prof?.id || null);
     setName(prof?.full_name || googleName);
+    setSalesTarget(prof?.sales_target || 150);
   }, [router]);
 
   useEffect(() => { resolveIdentity(); }, [resolveIdentity]);
@@ -253,7 +268,7 @@ export default function PromotorApp() {
 
   return (
     <AppShell
-      name={name} setName={setName} email={email} uid={uid} promotorId={promotorId}
+      name={name} setName={setName} email={email} uid={uid} promotorId={promotorId} salesTarget={salesTarget}
       period={period} setPeriod={setPeriod} outlets={outlets} setOutlets={setOutlets} assignmentSrc={assignmentSrc}
       activeOutlet={activeOutlet} setActiveOutlet={setActiveOutlet}
       todaySales={todaySales} loadTodaySales={loadTodaySales}
@@ -316,7 +331,7 @@ function Pending({ email, period, setPeriod, onReload, onSignOut }) {
 
 /* ══════════════════ App Shell ══════════════════ */
 function AppShell(p) {
-  const { name, setName, email, promotorId, period, setPeriod, outlets, setOutlets, assignmentSrc, activeOutlet, setActiveOutlet, todaySales, loadTodaySales, geo, geoErr, refreshGeo, view, setView, history, loadHistory, onSignOut, flash, toast } = p;
+  const { name, setName, email, promotorId, salesTarget, period, setPeriod, outlets, setOutlets, assignmentSrc, activeOutlet, setActiveOutlet, todaySales, loadTodaySales, geo, geoErr, refreshGeo, view, setView, history, loadHistory, onSignOut, flash, toast } = p;
   const [sheet, setSheet] = useState(null);        // 'qr'
   const [pickOutlet, setPickOutlet] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -580,18 +595,8 @@ function AppShell(p) {
                 <GeoChip geo={geo} err={geoErr} onFix={fixGeo} />
               </div>
 
-              {/* Ringkasan Claim Penjualan periode ini */}
-              {summary && (
-                <div style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 16, boxShadow: C.md }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo, marginBottom: 11 }}>Ringkasan Claim Penjualan · {ymLabel(ymNow())}</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 9 }}>
-                    <LightStat icon={<ShoppingBag size={13} />} label="Jumlah SP di-claim" value={summary.total} accent={C.mag} />
-                    <LightStat icon={<CheckCircle2 size={13} />} label="Total GA Tervalidasi" value={summary.validated} accent={C.green} />
-                    <LightStat icon={<CheckCircle2 size={13} />} label="GA Biometric" value={summary.bio} accent={C.blue} />
-                    <LightStat icon={<CheckCircle2 size={13} />} label="GA Non-Biometric" value={summary.reg} accent={C.amber} />
-                  </div>
-                </div>
-              )}
+              {/* Kontribusi Anda bulan ini — hero card */}
+              <HeroCard summary={summary} target={salesTarget} periodLabel={ymLabel(ymNow())} />
 
               {!activeOutlet ? (
                 <OutletSelectPanel outlets={outlets} onPick={chooseOutlet} onRename={setRenamingOutlet} />
@@ -1058,6 +1063,87 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* Hero card "Kontribusi Anda" — pengganti ringkasan lama yang cuma daftar
+   angka putih polos. Progress ring menunjukkan % dari target bulanan
+   (target diset admin SPM per-promotor, default 150), warnanya berubah
+   sesuai capaian supaya sekilas terasa "hidup", bukan sekadar dashboard.
+   Catatan istilah: ini KLAIM KONTRIBUSI promotor atas SP yang terjual di
+   outlet-nya (bisa lewat scan QR atau input manual) — bukan klaim bahwa
+   promotor sendiri yang menjual eceran; itu sebabnya SP di outlet yang
+   tidak di-claim promotor manapun tidak ikut terhitung di sini. */
+function HeroCard({ summary, target, periodLabel }) {
+  const total = summary?.total ?? 0;
+  const pct = target > 0 ? Math.min(100, Math.round((total / target) * 100)) : 0;
+  const tier = pct >= 80 ? { color: PAL.teal, label: "Sudah dekat target!" }
+    : pct >= 40 ? { color: PAL.yellow, label: "Terus jalan, hampir separuh" }
+    : { color: PAL.pink, label: "Ayo mulai kejar target" };
+
+  const R = 52, CIRC = 2 * Math.PI * R;
+  const dash = CIRC * (pct / 100);
+
+  return (
+    <div style={{
+      position: "relative", overflow: "hidden", borderRadius: 22, marginBottom: 16,
+      background: `linear-gradient(160deg, ${PAL.charcoal} 0%, #333335 100%)`,
+      padding: "18px 18px 16px", boxShadow: C.md,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 14 }}>
+        <Sparkles size={13} color={PAL.yellow} />
+        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: "rgba(255,255,255,0.65)" }}>
+          Kontribusi Anda · {periodLabel}
+        </span>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", width: 108, height: 108, flexShrink: 0 }}>
+          <svg viewBox="0 0 120 120" width="108" height="108" style={{ transform: "rotate(-90deg)" }}>
+            <circle cx="60" cy="60" r={R} fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="10" />
+            <circle cx="60" cy="60" r={R} fill="none" stroke={tier.color} strokeWidth="10" strokeLinecap="round"
+              strokeDasharray={`${dash} ${CIRC}`} style={{ transition: "stroke-dasharray .6s cubic-bezier(.22,1,.36,1)" }} />
+          </svg>
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff" }}>{pct}%</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 9.5, fontWeight: 600, color: "rgba(255,255,255,0.55)" }}><Target size={9} /> target</span>
+          </div>
+        </div>
+
+        <div style={{ flex: 1, minWidth: 140 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+            <span style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff" }}>{total}</span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>/ {target} SP</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 4 }}>
+            <TrendingUp size={12} color={tier.color} />
+            <span style={{ fontSize: 12, fontWeight: 600, color: tier.color }}>{tier.label}</span>
+          </div>
+        </div>
+      </div>
+
+      {summary && (
+        <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
+          <HeroChip icon={<CheckCircle2 size={12} />} label="Tervalidasi" value={summary.validated} color={PAL.teal} />
+          <HeroChip icon={<Fingerprint size={12} />} label="Biometric" value={summary.bio} color={PAL.yellow} />
+          <HeroChip icon={<CheckCircle2 size={12} />} label="Non-Biometric" value={summary.reg} color={PAL.purple} />
+        </div>
+      )}
+
+      <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.45)", marginTop: 13, lineHeight: 1.5 }}>
+        Dihitung dari SP yang Anda klaim sebagai kontribusi Anda, dari seluruh outlet Anda — bukan penjualan outlet secara umum.
+      </div>
+    </div>
+  );
+}
+
+function HeroChip({ icon, label, value, color }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,0.08)", borderRadius: 11, padding: "7px 10px", minWidth: 0 }}>
+      <span style={{ color, display: "flex", flexShrink: 0 }}>{icon}</span>
+      <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", flexShrink: 0 }}>{value}</span>
+      <span style={{ fontSize: 10.5, fontWeight: 600, color: "rgba(255,255,255,0.55)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
     </div>
   );
 }
