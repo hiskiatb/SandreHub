@@ -15,7 +15,7 @@ import {
   X, ChevronLeft, Phone, CalendarDays, Trash2,
   ArrowLeftRight, Inbox, ShieldQuestion, Radar, RefreshCcw, Pencil, Check,
   Target, TrendingUp, Sparkles,
-  ListChecks, ScanFace, XCircle, HelpCircle,
+  ListChecks, ScanFace, XCircle, HelpCircle, IdCard,
 } from "lucide-react";
 import supabase from "../../lib/supabase";
 import { HubLogoLoader } from "../../components/HubLogoLoader";
@@ -434,6 +434,21 @@ function AppShell(p) {
   const fixGeo = async () => { const g = await refreshGeo(); if (!g) setGeoHelp(true); else setGeoHelp(false); };
   const initial = (name || "P").trim().charAt(0).toUpperCase();
 
+  /* Tombol "Claim Penjualan" mengambang — supaya aksi utama tetap 1 tap
+     tanpa perlu scroll lewat hero card + detail status dulu. Kalau semua
+     syarat sudah terpenuhi, langsung buka scanner; kalau belum, geser layar
+     ke bagian yang perlu diisi (bukan cuma diam/error tanpa arah). */
+  const actionSectionRef = useRef(null);
+  const needsBrandFab = !!activeOutlet?.code3id;
+  const fabReady = !!(activeOutlet && geo && (!needsBrandFab || brand));
+  const handleFabClick = () => {
+    if (fabReady) { setSheet("qr"); return; }
+    actionSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (!activeOutlet) flash("Pilih outlet aktif dulu.", "err");
+    else if (!geo) flash("Aktifkan lokasi dulu.", "err");
+    else if (needsBrandFab && !brand) flash("Pilih brand (IM3/3ID) dulu.", "err");
+  };
+
   useEffect(() => { if (view === "history") loadHistory(); }, [view, loadHistory]);
 
   const soldCount = todaySales.length;
@@ -563,7 +578,7 @@ function AppShell(p) {
   };
 
   return (
-    <div style={{ minHeight: "100svh", background: C.bg, color: C.hi, fontFamily: FF, paddingBottom: "calc(env(safe-area-inset-bottom,0px) + 24px)" }}>
+    <div style={{ minHeight: "100svh", background: C.bg, color: C.hi, fontFamily: FF, paddingBottom: view === "home" ? "calc(env(safe-area-inset-bottom,0px) + 92px)" : "calc(env(safe-area-inset-bottom,0px) + 24px)" }}>
       <style>{`@keyframes up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
         @keyframes pop{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
         @keyframes sheetup{from{transform:translateY(100%)}to{transform:none}}
@@ -610,18 +625,36 @@ function AppShell(p) {
               <HeroCard summary={summary} target={salesTarget} periodLabel={ymLabel(ymNow())} />
               <StatusDetailCard summary={summary} onSeeRejected={() => setView("history")} />
 
-              {!activeOutlet ? (
-                <OutletSelectPanel outlets={outlets} onPick={chooseOutlet} onRename={setRenamingOutlet} />
-              ) : !geo ? (
-                <GeoGatePanel outlet={activeOutlet} err={geoErr} onFix={fixGeo} onChangeOutlet={() => setPickOutlet(true)} />
-              ) : (
-                <TagPanel outlet={activeOutlet} sales={todaySales} soldCount={soldCount} busy={busy} geo={geo}
-                  brand={brand} onBrandChange={setBrand} assignmentSrc={assignmentSrc} onRename={setRenamingOutlet}
-                  onTag={() => setSheet("qr")} onDelete={(s) => setDelSale(s)} onChangeOutlet={() => setPickOutlet(true)} multiOutlet={outlets.length > 1} />
-              )}
+              <div ref={actionSectionRef}>
+                {!activeOutlet ? (
+                  <OutletSelectPanel outlets={outlets} onPick={chooseOutlet} onRename={setRenamingOutlet} />
+                ) : !geo ? (
+                  <GeoGatePanel outlet={activeOutlet} err={geoErr} onFix={fixGeo} onChangeOutlet={() => setPickOutlet(true)} />
+                ) : (
+                  <TagPanel outlet={activeOutlet} sales={todaySales} soldCount={soldCount} busy={busy} geo={geo}
+                    brand={brand} onBrandChange={setBrand} assignmentSrc={assignmentSrc} onRename={setRenamingOutlet}
+                    onTag={() => setSheet("qr")} onDelete={(s) => setDelSale(s)} onChangeOutlet={() => setPickOutlet(true)} multiOutlet={outlets.length > 1} />
+                )}
+              </div>
             </div>
           )}
       </div>
+
+      {/* Tombol mengambang "Claim Penjualan" — akses 1 tap dari mana pun di
+          halaman home, tidak perlu scroll lewat kartu ringkasan dulu. */}
+      {view === "home" && (
+        <button onClick={handleFabClick} className="press" aria-label="Claim Penjualan"
+          style={{
+            position: "fixed", left: "50%", transform: "translateX(-50%)",
+            bottom: "calc(env(safe-area-inset-bottom,0px) + 18px)", zIndex: 60,
+            display: "flex", alignItems: "center", gap: 9, height: 54, padding: "0 24px",
+            borderRadius: 999, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 14.5, fontWeight: 800,
+            background: fabReady ? C.brand : C.hi, color: "#fff",
+            boxShadow: "0 10px 26px rgba(0,0,0,0.24)", maxWidth: "calc(100% - 36px)", whiteSpace: "nowrap",
+          }}>
+          <QrCode size={18} /> Claim Penjualan
+        </button>
+      )}
 
       {/* Konfirmasi Logout */}
       {confirmLogout && (
@@ -883,7 +916,7 @@ function AppShell(p) {
 
       {/* Toast */}
       {toast && (
-        <div style={{ position: "fixed", left: 16, right: 16, bottom: "calc(env(safe-area-inset-bottom,0px) + 20px)", zIndex: 130, display: "flex", justifyContent: "center", pointerEvents: "none" }}>
+        <div style={{ position: "fixed", left: 16, right: 16, bottom: view === "home" ? "calc(env(safe-area-inset-bottom,0px) + 82px)" : "calc(env(safe-area-inset-bottom,0px) + 20px)", zIndex: 130, display: "flex", justifyContent: "center", pointerEvents: "none" }}>
           <div onClick={() => { clearTimeout(toastTimerRef.current); setToast(null); }} style={{ display: "flex", alignItems: "center", gap: 9, padding: "12px 18px", borderRadius: 13, background: toast.tone === "err" ? "#FDECEC" : "#E7F7ED", border: `1px solid ${toast.tone === "err" ? "#F5C2C2" : "#B7E4C7"}`, color: toast.tone === "err" ? "#C62828" : "#1A9E5A", fontSize: 13.5, fontWeight: 700, boxShadow: "0 10px 30px rgba(23,24,28,0.12)", maxWidth: 460, pointerEvents: "auto", cursor: "pointer" }}>
             {toast.tone === "err" ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}<span>{toast.msg}</span>
           </div>
@@ -1088,18 +1121,25 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
    promotor sendiri yang menjual eceran; itu sebabnya SP di outlet yang
    tidak di-claim promotor manapun tidak ikut terhitung di sini. */
 function HeroCard({ summary, target, periodLabel }) {
-  const total = summary?.total ?? 0;
-  const pct = target > 0 ? Math.min(100, Math.round((total / target) * 100)) : 0;
+  // Target 150 itu target RGU-GA BIOMETRIC — bukan jumlah SP yang di-claim.
+  // Total pengajuan bisa jauh lebih tinggi dari 150 karena banyak yang
+  // belum/tidak lolos jadi RGU-GA Biometric; itu sebabnya progress ring
+  // pakai summary.bio, bukan summary.total.
+  const bio = summary?.bio ?? 0;
+  const pct = target > 0 ? Math.min(100, Math.round((bio / target) * 100)) : 0;
   const tier = pct >= 80 ? { color: PAL.teal, label: "Sudah dekat target!" }
     : pct >= 40 ? { color: PAL.yellow, label: "Terus jalan, hampir separuh" }
     : { color: PAL.pink, label: "Ayo mulai kejar target" };
 
-  const R = 52, CIRC = 2 * Math.PI * R;
-  const dash = CIRC * (pct / 100);
+  // Radius diberi margin ekstra dari tepi viewBox (60) supaya stroke-cap
+  // bulat di ujung arc tidak pernah kelihatan "menabrak" batas lingkaran
+  // pelacak di belakangnya, terutama saat progress masih sangat kecil.
+  const R = 46, CIRC = 2 * Math.PI * R;
+  const dash = pct <= 0 ? 0 : Math.max(CIRC * (pct / 100), 3); // min. terlihat walau 1%
 
   return (
     <div style={{
-      position: "relative", overflow: "hidden", borderRadius: 22, marginBottom: 16,
+      position: "relative", overflow: "hidden", borderRadius: 22, marginBottom: 14,
       background: `linear-gradient(160deg, ${PAL.charcoal} 0%, #333335 100%)`,
       padding: "18px 18px 16px", boxShadow: C.md,
     }}>
@@ -1112,10 +1152,12 @@ function HeroCard({ summary, target, periodLabel }) {
 
       <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
         <div style={{ position: "relative", width: 108, height: 108, flexShrink: 0 }}>
-          <svg viewBox="0 0 120 120" width="108" height="108" style={{ transform: "rotate(-90deg)" }}>
-            <circle cx="60" cy="60" r={R} fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="10" />
-            <circle cx="60" cy="60" r={R} fill="none" stroke={tier.color} strokeWidth="10" strokeLinecap="round"
-              strokeDasharray={`${dash} ${CIRC}`} style={{ transition: "stroke-dasharray .6s cubic-bezier(.22,1,.36,1)" }} />
+          <svg viewBox="0 0 120 120" width="108" height="108" style={{ transform: "rotate(-90deg)", overflow: "visible" }}>
+            <circle cx="60" cy="60" r={R} fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="9" />
+            {dash > 0 && (
+              <circle cx="60" cy="60" r={R} fill="none" stroke={tier.color} strokeWidth="9" strokeLinecap="round"
+                strokeDasharray={`${dash} ${CIRC}`} style={{ transition: "stroke-dasharray .6s cubic-bezier(.22,1,.36,1)" }} />
+            )}
           </svg>
           <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
             <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff" }}>{pct}%</span>
@@ -1123,10 +1165,10 @@ function HeroCard({ summary, target, periodLabel }) {
           </div>
         </div>
 
-        <div style={{ flex: 1, minWidth: 140 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-            <span style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff" }}>{total}</span>
-            <span style={{ fontSize: 14, fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>/ {target} SP</span>
+        <div style={{ flex: 1, minWidth: 150 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff" }}>{bio}</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>/ {target} RGU-GA Biometric</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 4 }}>
             <TrendingUp size={12} color={tier.color} />
@@ -1136,7 +1178,7 @@ function HeroCard({ summary, target, periodLabel }) {
       </div>
 
       <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.45)", marginTop: 13, lineHeight: 1.5 }}>
-        Dihitung dari SP yang Anda klaim sebagai kontribusi Anda, dari seluruh outlet Anda — bukan penjualan outlet secara umum. Rincian status RGU-GA ada di bawah.
+        Target dihitung dari RGU-GA Biometric — SP yang tervalidasi lewat biometrik, akumulasi dari seluruh outlet Anda. Total semua pengajuan (belum tentu Biometric) ada di kartu di bawah.
       </div>
     </div>
   );
@@ -1158,7 +1200,7 @@ function StatusDetailCard({ summary, onSeeRejected }) {
       <StatusRow icon={<Clock size={15} />} label="Dalam Pengajuan" sub="Belum tercatat RGU-GA" value={summary.pending} color={C.amber} />
       <StatusRow icon={<CheckCircle2 size={15} />} label="Total Tervalidasi" value={summary.validated} color={C.green} />
       <StatusRow icon={<ScanFace size={15} />} label="RGU-GA Biometric" value={summary.bio} color="#2563EB" indent />
-      <StatusRow icon={<CheckCircle2 size={15} />} label="RGU-GA Non-Biometric" value={summary.reg} color={PAL.purple} indent />
+      <StatusRow icon={<IdCard size={15} />} label="RGU-GA Non-Biometric" value={summary.reg} color={PAL.purple} indent />
       <StatusRow icon={<XCircle size={15} />} label="Pengajuan Ditolak" sub="Tercatat di outlet lain — tap untuk lihat" value={summary.rejected}
         color="#DC2626" onClick={summary.rejected > 0 ? onSeeRejected : undefined} />
       {summary.notFound > 0 && (
@@ -1242,7 +1284,7 @@ function HistoryView({ history, onDelete }) {
                         <span title="RGU-GA Biometric" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 99, background: "rgba(37,99,235,0.12)", color: "#2563EB" }}><ScanFace size={10} /> Biometric</span>
                       )}
                       {s.biometric_status === "REGULAR" && (
-                        <span title="RGU-GA Non-Biometric" style={{ fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 99, background: PAL.purple + "22", color: PAL.purple }}>Non-Biometric</span>
+                        <span title="RGU-GA Non-Biometric" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 99, background: PAL.purple + "22", color: PAL.purple }}><IdCard size={10} /> Non-Biometric</span>
                       )}
                     </div>
                     {s.imei && <div style={{ fontSize: 10.5, fontFamily: "monospace", color: C.lo }}>IMEI {s.imei}</div>}
