@@ -54,8 +54,8 @@ const BRAND = {
   // Kontras teks-vs-tombol sudah dicek: IM3 11.65:1, 3ID 5.38:1 (WCAG AA
   // butuh 4.5:1 utk teks 16.5px). Magenta dipakai #C6168D — bukan #EC008C
   // yang cuma 4.25:1 dan gagal AA untuk teks putih.
-  IM3:   { solid: "#FFCB05", onSolid: "#17181C", soft: "rgba(255,203,5,0.20)", ink: "#8A6A00", glow: "rgba(255,203,5,0.42)" },
-  "3ID": { solid: "#C6168D", onSolid: "#FFFFFF", soft: "rgba(198,22,141,0.10)", ink: "#C6168D", glow: "rgba(198,22,141,0.32)" },
+  IM3:   { solid: "#FFCB05", onSolid: "#17181C", soft: "rgba(255,203,5,0.20)", ink: "#8A6A00" },
+  "3ID": { solid: "#C6168D", onSolid: "#FFFFFF", soft: "rgba(198,22,141,0.10)", ink: "#C6168D" },
 };
 const brandTheme = (b) => BRAND[b] || null;
 
@@ -933,7 +933,6 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
                     border: `1.5px solid ${on ? bt.solid : C.line}`,
                     background: on ? bt.solid : C.sub,
                     color: on ? bt.onSolid : C.hi,
-                    boxShadow: on ? `0 4px 14px ${bt.glow}` : "none",
                     fontFamily: FF, fontSize: 14.5, fontWeight: 800, cursor: "pointer", transition: "background .15s, color .15s",
                   }}>
                   {b}
@@ -954,15 +953,14 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
           cursor: canTag ? "pointer" : "default",
           background: !canTag ? C.line : (bt ? bt.solid : C.brand),
           color: !canTag ? C.lo : (bt ? bt.onSolid : "#fff"),
-          boxShadow: !canTag ? "none" : `0 8px 22px ${bt ? bt.glow : "rgba(237,28,36,0.24)"}`,
           fontFamily: FF, fontSize: 16.5, fontWeight: 700,
           display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-          marginBottom: 14, transition: "background .15s, color .15s, box-shadow .15s",
+          marginBottom: 14, transition: "background .15s, color .15s",
         }}>
         <QrCode size={20} /> Claim Penjualan{bt ? ` ${brand}` : ""} (Scan QR)
       </button>
       <p style={{ fontSize: 11.5, color: C.mid, textAlign: "center", marginTop: -8, marginBottom: 14, lineHeight: 1.5 }}>
-        Lokasi Anda dicek otomatis. Di luar radius outlet, Anda akan diminta konfirmasi sebelum tersimpan.
+        Lokasi saat claim atau pencatatan penjualan akan dicatat sebagai bahan evaluasi program.
       </p>
 
       {/* Daftar terjual */}
