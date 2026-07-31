@@ -1,12 +1,23 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { AlertTriangle, Plus, Check, Copy } from "lucide-react";
+import { AlertTriangle, Plus, Check, Copy, Lock } from "lucide-react";
 import MartaShell, { T, FONT } from "../components/MartaShell";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
+import { getMartaScope } from "../../../lib/martaScope";
+
+// Label field Cluster/MC berbeda per brand — konvensi yg sudah ada di spec
+// (IM3 disebut "MC", 3ID disebut "Cluster"), keduanya sama-sama kolom
+// mh_assignments.mc/mh_sites.mc. MIRROR mobile assignments_provider.dart.
+const mcLabelForBrand = (brand) => (brand === "tri" ? "Cluster" : "MC");
 
 // ✅ "Head" → "Head TMV" dan "TMV" → "Brand TMV" adalah relabel tampilan saja
 // (MARTAHUB_ACTIVITY_USER_SPEC.md §4.5) — nilai role di database (head/tmv)
 // TIDAK berubah. Role tl_dsf/dsf/md/spm_sumatera baru (§4.2/§4.5).
+// ✅ dse/gse/ae/promotor/cse_rse/bsm ditambahkan (§ POSMAT semua level) — role
+// baru khusus pencatat POSMAT, branch-scoped spt bme/rge, TANPA atasan.
+// `mh_profiles.role`/`mh_assignments.role` TIDAK LAGI dibatasi enum CHECK di
+// database (cuma validasi format) — role baru ke depannya CUKUP ditambah di
+// sini, TANPA migrasi DB.
 const ROLES = [
   ["spm_sumatera", "SPM Sumatera (Superadmin Nasional)"],
   ["head", "Head TMV (per Region)"],
@@ -16,6 +27,12 @@ const ROLES = [
   ["tl_dsf", "TL DSF (Team Leader DSF)"],
   ["dsf", "DSF (Field Sales)"],
   ["md", "MD (Material Distributor)"],
+  ["dse", "DSE"],
+  ["gse", "GSE"],
+  ["ae", "AE"],
+  ["promotor", "Promotor"],
+  ["cse_rse", "CSE/RSE"],
+  ["bsm", "BSM"],
 ];
 const REGIONS = [["NORTH SUMATERA", "NORTH SUMATERA"], ["CENTRAL SUMATERA", "CENTRAL SUMATERA"], ["SOUTH SUMATERA", "SOUTH SUMATERA"]];
 const BRANDS = [["im3", "IM3"], ["tri", "3ID (TRI)"]];
@@ -52,6 +69,14 @@ function Body({ canManage, callerEmail }) {
   const [editRow, setEditRow] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
+  // Scope caller (Head/Brand TMV) — membatasi Region/Brand yg boleh dipilih
+  // saat Tambah/Edit assignment (§ region-brand-branch-cluster tl_dsf/dsf/md).
+  const [scope, setScope] = useState(null);
+  useEffect(() => {
+    let on = true;
+    getMartaScope(callerEmail).then((s) => { if (on) setScope(s); });
+    return () => { on = false; };
+  }, [callerEmail]);
 
   function copyEmail(u) {
     navigator.clipboard?.writeText(u.email);
@@ -96,6 +121,7 @@ function Body({ canManage, callerEmail }) {
           p_supervisor_assignment_id: form.supervisorAssignmentId || null,
           p_dsf_org_id: form.dsfOrgId || null,
           p_caller_email: callerEmail || null,
+          p_mc: form.mc || null,
         });
         if (error) throw new Error(error.message);
         ok += 1;
@@ -120,6 +146,7 @@ function Body({ canManage, callerEmail }) {
         p_supervisor_assignment_id: form.supervisorAssignmentId || null,
         p_dsf_org_id: form.dsfOrgId || null,
         p_caller_email: callerEmail || null,
+        p_mc: form.mc || null,
       });
       if (error) throw new Error(error.message);
       setInfo("Assignment diperbarui.");
@@ -215,7 +242,10 @@ function Body({ canManage, callerEmail }) {
                   <td style={{ padding: "10px 14px", color: T.mid, fontSize: 12 }}>{sup ? (sup.full_name || sup.email) : "—"}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{REGION_LABEL[r.region] || r.region || "—"}</td>
                   <td style={{ padding: "10px 14px" }}>{r.brand ? badge(r.brand === "tri" ? "3ID" : "IM3", r.brand === "tri" ? T.tri : T.im3, "#fff0f4") : "—"}</td>
-                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.branch_name || r.branch_id || "—"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>
+                    {r.branch_name || r.branch_id || "—"}
+                    {r.mc && <span style={{ color: T.lo, fontSize: 11.5, marginLeft: 6 }}>· {r.mc}</span>}
+                  </td>
                   <td style={{ padding: "10px 14px" }}>{r.logged_in ? badge("Aktif", T.success, T.successBg) : badge("Menunggu login", "#8a5b00", T.warningBg)}</td>
                   <td style={{ padding: "10px 14px", textAlign: "right", whiteSpace: "nowrap" }}>
                     {canManage && <button onClick={() => setEditRow(r)} style={{ ...btn, marginRight: 6 }}>Edit</button>}
@@ -229,8 +259,8 @@ function Body({ canManage, callerEmail }) {
         )}
       </div>
 
-      {showAdd && <AddModal onClose={() => setShowAdd(false)} onSave={addAssignments} existing={rows} />}
-      {editRow && <EditModal row={editRow} onClose={() => setEditRow(null)} onSave={updateAssignment} existing={rows} />}
+      {showAdd && <AddModal onClose={() => setShowAdd(false)} onSave={addAssignments} existing={rows} scope={scope} />}
+      {editRow && <EditModal row={editRow} onClose={() => setEditRow(null)} onSave={updateAssignment} existing={rows} scope={scope} />}
       {confirmState && <ConfirmModal {...confirmState} onClose={() => setConfirmState(null)} />}
     </div>
   );
@@ -256,6 +286,7 @@ function HierarchyTree({ rows }) {
         <span style={{ fontSize: 10.5, color: T.mid }}>{ROLE_LABEL[r.role] || r.role}</span>
         {r.brand && badge(r.brand === "tri" ? "3ID" : "IM3", r.brand === "tri" ? T.tri : T.im3, "#fff0f4")}
         {r.branch_name && <span style={{ fontSize: 11, color: T.lo }}>{r.branch_name}</span>}
+        {r.mc && <span style={{ fontSize: 11, color: T.lo }}>· {r.mc}</span>}
         {r.dsf_org_id && <span style={{ fontSize: 11, color: T.lo }}>ID: {r.dsf_org_id}</span>}
         {!r.logged_in && badge("Menunggu login", "#8a5b00", T.warningBg)}
       </div>
@@ -333,7 +364,7 @@ function ConfirmModal({ title, message, confirmLabel = "Hapus", danger = true, o
 
 const BRAND_LABEL = { im3: "IM3", tri: "3ID" };
 
-function AddModal({ onClose, onSave, existing }) {
+function AddModal({ onClose, onSave, existing, scope }) {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [role, setRole] = useState("bme");
@@ -345,13 +376,64 @@ function AddModal({ onClose, onSave, existing }) {
   const [loading, setLoading] = useState(false);
   const [supervisorId, setSupervisorId] = useState("");
   const [dsfOrgId, setDsfOrgId] = useState("");
-  const isBranchRole = role === "bme" || role === "rge";
+  // Branch × Cluster/MC tunggal — khusus tl_dsf/dsf/md (beda dari bme/rge yg
+  // pakai multi-select `selected` di atas, krn 1 org role ini = 1 branch).
+  const [branchId, setBranchId] = useState("");
+  const [branchName, setBranchName] = useState("");
+  const [mc, setMc] = useState("");
+  const [mcOptions, setMcOptions] = useState([]);
+  // Mirror UserAssignment.isBranchRole (mobile assignments_provider.dart) —
+  // 6 role POSMAT baru diperlakukan sama persis spt bme/rge.
+  const isBranchRole = ["bme", "rge", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"].includes(role);
   const isTmv = role === "tmv";
   const isDsf = role === "dsf";
-  // tl_dsf/md/dsf tidak punya region/brand/branch sendiri — diwarisi dari
-  // rantai supervisor (✅ dikonfirmasi §4.2/§4.5a), jadi form-nya disederhanakan.
+  // tl_dsf/md/dsf SEKARANG py region/brand/branch sendiri (opsional) — dipilih
+  // di sini scope-constrained ke caller (lockedRegion/lockedBrand di bawah),
+  // beda dgn kalau dibuat via "Kelola Tim" BME/TL DSF sendiri yg otomatis ikut.
   const isPureHierarchyRole = role === "tl_dsf" || role === "md" || role === "dsf";
   const needsSupervisor = isHierarchyRole(role);
+
+  // Scope caller (Head TMV → region sendiri, Brand TMV → region+brand sendiri
+  // persis) — SPM Sumatera/admin unscoped (null = bebas).
+  const lockedRegion = scope && (scope.role === "head" || scope.role === "tmv") ? scope.region : null;
+  const lockedBrand = scope && scope.role === "tmv" ? scope.brand : null;
+  useEffect(() => {
+    if (lockedRegion) setRegion(lockedRegion);
+    if (lockedBrand) setBrand(lockedBrand);
+  }, [lockedRegion, lockedBrand]);
+
+  // Daftar Cluster/MC unik untuk branch+brand terpilih (mh_sites), khusus
+  // tl_dsf/dsf/md — MIRROR pola mcListForBranchProvider mobile.
+  useEffect(() => {
+    let on = true;
+    if (!branchId || !brand) { setMcOptions([]); return; }
+    supabaseMarta.from("mh_sites").select("mc").eq("branch_id", branchId).eq("brand", brand).eq("active", true)
+      .then(({ data }) => {
+        if (!on) return;
+        const set = new Set();
+        for (const r of data || []) { const m = (r.mc || "").trim(); if (m) set.add(m); }
+        setMcOptions([...set].sort());
+      });
+    return () => { on = false; };
+  }, [branchId, brand]);
+
+  // Branch unik utk brand terpilih — picker branch TUNGGAL tl_dsf/dsf/md
+  // (beda dari `branches` di bawah yg multi-brand utk grid bme/rge).
+  const pureBranches = useMemo(() => {
+    const seen = new Set(); const arr = [];
+    for (const r of branchRows) {
+      if (r.brand !== brand || !r.branch_id || seen.has(r.branch_id)) continue;
+      seen.add(r.branch_id); arr.push(r);
+    }
+    arr.sort((a, b) => String(a.branch).localeCompare(String(b.branch)));
+    return arr;
+  }, [branchRows, brand]);
+
+  const pickPureBranch = (id) => {
+    const b = pureBranches.find((x) => x.branch_id === id);
+    setBranchId(id); setBranchName(b?.branch || ""); setMc("");
+    if (b?.region && !lockedRegion) setRegion(b.region);
+  };
   const supervisorOptions = useMemo(() => {
     const wanted = SUPERVISOR_ROLES_FOR[role];
     if (!wanted) return [];
@@ -404,10 +486,12 @@ function AddModal({ onClose, onSave, existing }) {
   const save = () => {
     if (!canSave) return;
     if (isPureHierarchyRole) {
-      // tl_dsf / md / dsf — tanpa region/brand/branch manual, atasan wajib.
+      // tl_dsf / md / dsf — region/brand scope-constrained ke caller, branch
+      // & cluster/MC opsional, atasan wajib.
       onSave([{
         email: emailKey, fullName: name.trim().toUpperCase(), role,
-        region: null, brand: null, branchId: null, branchName: null,
+        region: region || null, brand: brand || null,
+        branchId: branchId || null, branchName: branchName || null, mc: mc || null,
         supervisorAssignmentId: supervisorId, dsfOrgId: isDsf ? dsfOrgId.trim() : null,
       }]);
     } else if (isBranchRole) {
@@ -464,16 +548,55 @@ function AddModal({ onClose, onSave, existing }) {
           <div style={{ display: "flex", gap: 12 }}>
             <div style={{ flex: 1 }}>
               <Field label="Role">
-                <select value={role} onChange={(e) => { setRole(e.target.value); setSelected(new Set()); setSupervisorId(""); setDsfOrgId(""); }} style={selectStyle}>
+                <select value={role} onChange={(e) => { setRole(e.target.value); setSelected(new Set()); setSupervisorId(""); setDsfOrgId(""); setBranchId(""); setBranchName(""); setMc(""); }} style={selectStyle}>
                   {ROLES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
               </Field>
             </div>
-            {role !== "spm_sumatera" && !isPureHierarchyRole && (
-              <div style={{ flex: 1 }}><Field label="Region"><select value={region} onChange={(e) => setRegion(e.target.value)} style={selectStyle}>{REGIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field></div>
+            {role !== "spm_sumatera" && (
+              <div style={{ flex: 1 }}>
+                <Field label="Region">
+                  {lockedRegion ? (
+                    <div style={{ ...inp, background: T.sub || "#F7F9FC", color: T.mid, cursor: "not-allowed", display: "flex", alignItems: "center", gap: 6 }}>
+                      {REGION_LABEL[region] || region} <Lock size={12} />
+                    </div>
+                  ) : (
+                    <select value={region} onChange={(e) => setRegion(e.target.value)} style={selectStyle}>{REGIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+                  )}
+                </Field>
+              </div>
             )}
           </div>
-          {isTmv && <Field label="Brand"><select value={brand} onChange={(e) => setBrand(e.target.value)} style={selectStyle}>{BRANDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>}
+          {(isTmv || isPureHierarchyRole) && (
+            <Field label="Brand">
+              {lockedBrand ? (
+                <div style={{ ...inp, background: T.sub || "#F7F9FC", color: T.mid, cursor: "not-allowed", display: "flex", alignItems: "center", gap: 6 }}>
+                  {BRAND_LABEL[brand] || brand} <Lock size={12} />
+                </div>
+              ) : (
+                <select value={brand} onChange={(e) => { setBrand(e.target.value); if (isPureHierarchyRole) { setBranchId(""); setBranchName(""); setMc(""); } }} style={selectStyle}>{BRANDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+              )}
+            </Field>
+          )}
+
+          {isPureHierarchyRole && (
+            <>
+              <Field label="Branch (opsional)">
+                <select value={branchId} onChange={(e) => pickPureBranch(e.target.value)} style={selectStyle}>
+                  <option value="">— pilih branch —</option>
+                  {pureBranches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch}</option>)}
+                </select>
+              </Field>
+              {branchId && mcOptions.length > 0 && (
+                <Field label={`${mcLabelForBrand(brand)} (opsional)`}>
+                  <select value={mc} onChange={(e) => setMc(e.target.value)} style={selectStyle}>
+                    <option value="">— pilih {mcLabelForBrand(brand)} —</option>
+                    {mcOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </Field>
+              )}
+            </>
+          )}
 
           {needsSupervisor && (
             <Field label={`Atasan Langsung ${SUPERVISOR_ROLES_FOR[role].map((r) => ROLE_LABEL[r]).join(" / ")} *`}>
@@ -537,22 +660,29 @@ function AddModal({ onClose, onSave, existing }) {
   );
 }
 
-// Edit satu assignment (email tetap; ubah role/region/brand/branch).
-function EditModal({ row, onClose, onSave, existing }) {
+// Edit satu assignment (email tetap; ubah role/region/brand/branch/cluster).
+function EditModal({ row, onClose, onSave, existing, scope }) {
   const [name, setName] = useState(row.full_name || "");
   const [role, setRole] = useState(row.role || "bme");
   const [region, setRegion] = useState(row.region || "NORTH SUMATERA");
   const [brand, setBrand] = useState(row.brand || "im3");
   const [branchId, setBranchId] = useState(row.branch_id || "");
   const [branchName, setBranchName] = useState(row.branch_name || "");
+  const [mc, setMc] = useState(row.mc || "");
+  const [mcOptions, setMcOptions] = useState([]);
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [supervisorId, setSupervisorId] = useState(row.supervisor_assignment_id || "");
   const [dsfOrgId, setDsfOrgId] = useState(row.dsf_org_id || "");
-  const isBranchRole = role === "bme" || role === "rge";
+  // Mirror UserAssignment.isBranchRole (mobile assignments_provider.dart) —
+  // 6 role POSMAT baru diperlakukan sama persis spt bme/rge.
+  const isBranchRole = ["bme", "rge", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"].includes(role);
   const isTmv = role === "tmv";
   const isDsf = role === "dsf";
+  // tl_dsf/md/dsf SEKARANG py region/brand/branch sendiri (opsional) — lihat
+  // catatan sama di AddModal.
   const isPureHierarchyRole = role === "tl_dsf" || role === "md" || role === "dsf";
+  const hasBranchField = isBranchRole || isPureHierarchyRole;
   const needsSupervisor = isHierarchyRole(role);
   const supervisorOptions = useMemo(() => {
     const wanted = SUPERVISOR_ROLES_FOR[role];
@@ -560,6 +690,10 @@ function EditModal({ row, onClose, onSave, existing }) {
     return (existing || []).filter((r) => wanted.includes(r.role) && r.id !== row.id)
       .sort((a, b) => String(a.full_name || a.email).localeCompare(String(b.full_name || b.email)));
   }, [existing, role, row.id]);
+
+  // Scope caller (Head/Brand TMV) — sama persis AddModal.
+  const lockedRegion = scope && (scope.role === "head" || scope.role === "tmv") ? scope.region : null;
+  const lockedBrand = scope && scope.role === "tmv" ? scope.brand : null;
 
   useEffect(() => {
     let on = true; setLoading(true);
@@ -580,10 +714,24 @@ function EditModal({ row, onClose, onSave, existing }) {
     return arr;
   }, [data, brand]);
 
+  // Daftar Cluster/MC unik untuk branch+brand terpilih — sama persis AddModal.
+  useEffect(() => {
+    let on = true;
+    if (!branchId || !brand) { setMcOptions([]); return; }
+    supabaseMarta.from("mh_sites").select("mc").eq("branch_id", branchId).eq("brand", brand).eq("active", true)
+      .then(({ data }) => {
+        if (!on) return;
+        const set = new Set();
+        for (const r of data || []) { const m = (r.mc || "").trim(); if (m) set.add(m); }
+        setMcOptions([...set].sort());
+      });
+    return () => { on = false; };
+  }, [branchId, brand]);
+
   const pickBranch = (id) => {
     const b = branches.find((x) => x.branch_id === id);
-    setBranchId(id); setBranchName(b?.branch || "");
-    if (b?.region) setRegion(b.region);
+    setBranchId(id); setBranchName(b?.branch || ""); setMc("");
+    if (b?.region && !lockedRegion) setRegion(b.region);
   };
 
   const canSave = name.trim() && row.email && (!isBranchRole || branchId)
@@ -592,11 +740,12 @@ function EditModal({ row, onClose, onSave, existing }) {
   const save = () => {
     if (!canSave) return;
     onSave(row.id, {
-      role, region: isPureHierarchyRole || role === "spm_sumatera" ? null : region,
+      role, region: role === "spm_sumatera" ? null : region,
       fullName: name.trim().toUpperCase(),
-      brand: (isTmv || isBranchRole) ? brand : null,
-      branchId: isBranchRole ? branchId : null,
-      branchName: isBranchRole ? branchName : null,
+      brand: (isTmv || hasBranchField) ? brand : null,
+      branchId: hasBranchField ? (branchId || null) : null,
+      branchName: hasBranchField ? (branchName || null) : null,
+      mc: mc || null,
       supervisorAssignmentId: needsSupervisor ? supervisorId : null,
       dsfOrgId: isDsf ? dsfOrgId.trim() : null,
     });
@@ -611,18 +760,44 @@ function EditModal({ row, onClose, onSave, existing }) {
           <Field label="Email"><input value={row.email} disabled style={{ ...inp, background: T.sub || "#F7F9FC", color: T.mid, cursor: "not-allowed" }} /></Field>
           <div style={{ display: "flex", gap: 12 }}>
             <div style={{ flex: 1 }}><Field label="Role"><select value={role} onChange={(e) => { setRole(e.target.value); }} style={selectStyle}>{ROLES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field></div>
-            {role !== "spm_sumatera" && !isPureHierarchyRole && (
-              <div style={{ flex: 1 }}><Field label="Region"><select value={region} onChange={(e) => setRegion(e.target.value)} style={selectStyle}>{REGIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field></div>
+            {role !== "spm_sumatera" && (
+              <div style={{ flex: 1 }}>
+                <Field label="Region">
+                  {lockedRegion ? (
+                    <div style={{ ...inp, background: T.sub || "#F7F9FC", color: T.mid, cursor: "not-allowed", display: "flex", alignItems: "center", gap: 6 }}>
+                      {REGION_LABEL[region] || region} <Lock size={12} />
+                    </div>
+                  ) : (
+                    <select value={region} onChange={(e) => setRegion(e.target.value)} style={selectStyle}>{REGIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+                  )}
+                </Field>
+              </div>
             )}
           </div>
-          {(isTmv || isBranchRole) && (
-            <Field label="Brand"><select value={brand} onChange={(e) => { setBrand(e.target.value); setBranchId(""); setBranchName(""); }} style={selectStyle}>{BRANDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
+          {(isTmv || hasBranchField) && (
+            <Field label="Brand">
+              {lockedBrand ? (
+                <div style={{ ...inp, background: T.sub || "#F7F9FC", color: T.mid, cursor: "not-allowed", display: "flex", alignItems: "center", gap: 6 }}>
+                  {BRAND_LABEL[brand] || brand} <Lock size={12} />
+                </div>
+              ) : (
+                <select value={brand} onChange={(e) => { setBrand(e.target.value); if (hasBranchField) { setBranchId(""); setBranchName(""); setMc(""); } }} style={selectStyle}>{BRANDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+              )}
+            </Field>
           )}
-          {isBranchRole && (
-            <Field label="Branch">
+          {hasBranchField && (
+            <Field label={isBranchRole ? "Branch" : "Branch (opsional)"}>
               <select value={branchId} onChange={(e) => pickBranch(e.target.value)} style={selectStyle} disabled={loading}>
                 <option value="">{loading ? "Memuat branch…" : "— pilih branch —"}</option>
                 {branches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch}</option>)}
+              </select>
+            </Field>
+          )}
+          {hasBranchField && branchId && mcOptions.length > 0 && (
+            <Field label={`${mcLabelForBrand(brand)} (opsional)`}>
+              <select value={mc} onChange={(e) => setMc(e.target.value)} style={selectStyle}>
+                <option value="">— pilih {mcLabelForBrand(brand)} —</option>
+                {mcOptions.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
             </Field>
           )}

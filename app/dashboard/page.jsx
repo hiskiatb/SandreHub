@@ -753,7 +753,7 @@ export default function DashboardPage() {
                   {!isSDPMember && <SNavItem icon={<PieChart size={14} />}    label="Laporan P&L"          active={PNL_VIEWS.has(view)}       maint={menuMaint("summary")} onClick={() => navigate("summary")} />}
                   {canSdp       && <SNavItem icon={<Users size={14} />}       label="Form SDP"             active={view === "sdp-status"}     maint={menuMaint("sdp-status")} onClick={() => navigate("sdp-status")} />}
                   {canMfts && <SNavItem icon={<Briefcase size={14} />} label="Pemenuhan Manpower" active={view === "mfts"}          maint={menuMaint("mfts")} onClick={() => navigate("mfts")} />}
-                  {(isSPM || isPICRegion) && <SNavItem icon={<Store size={14} />} label="Promotor Tracking" active={view === "promotor-tracking"} onClick={() => navigate("promotor-tracking")} />}
+                  {(isSPM || isPICRegion || isSFM || isCSE) && <SNavItem icon={<Store size={14} />} label="Promotor Tracking" active={view === "promotor-tracking"} onClick={() => navigate("promotor-tracking")} />}
                   {isSPM        && <SNavItem icon={<Wrench size={14} />}      label="Kelola Menu"          active={view === "menu-access"}    onClick={() => navigate("menu-access")} />}
                   {isSPM        && <SNavItem icon={<Shield size={14} />}      label="Admin Panel"          active={view === "admin-panel"}    onClick={() => navigate("admin-panel")} />}
                   {isSPM        && <SNavItem icon={<FileSpreadsheet size={14} />} label="Import Data"      active={view === "import-wizard"}  onClick={() => navigate("import-wizard")} />}
@@ -927,10 +927,10 @@ export default function DashboardPage() {
                       accent={{ color: d ? "#0A84FF" : "#2563EB", bg: d ? "rgba(10,132,255,0.12)" : "rgba(37,99,235,0.07)", bd: d ? "rgba(10,132,255,0.28)" : "rgba(37,99,235,0.18)", shadow: "rgba(37,99,235,0.16)" }} />
                   )}
 
-                  {(isSPM || isPICRegion) && (
+                  {(isSPM || isPICRegion || isSFM || isCSE) && (
                     <DashCard icon={<Store size={20} />} title="Promotor Tracking System"
-                      desc="Mapping Promotor↔Outlet per bulan (upload Excel) dan pantau aktivitas: check-in/out, selfie berstempel, dan penjualan kartu."
-                      tag={isSPM ? "Admin" : "PIC"} active={true} onClick={() => navigate("promotor-tracking")} t={t} d={d}
+                      desc="Roster identitas promotor, mapping outlet per bulan (dual brand IM3/3ID), geofence, dan pantau klaim penjualan SP dengan validasi GA."
+                      tag={isSPM ? "Admin" : isSFM ? "SFM" : isCSE ? "CSE" : "PIC"} active={true} onClick={() => navigate("promotor-tracking")} t={t} d={d}
                       accent={{ color: "#ED1C24", bg: d ? "rgba(237,28,36,0.12)" : "rgba(237,28,36,0.07)", bd: d ? "rgba(237,28,36,0.28)" : "rgba(237,28,36,0.18)", shadow: "rgba(237,28,36,0.18)" }} />
                   )}
 
@@ -1010,7 +1010,7 @@ export default function DashboardPage() {
             )}
 
             {/* ── Promotor Tracking System ── */}
-            {view === "promotor-tracking" && (isSPM || isPICRegion) && (
+            {view === "promotor-tracking" && (isSPM || isPICRegion || isSFM || isCSE) && (
               <motion.div key="pts" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
                 <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>

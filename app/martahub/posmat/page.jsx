@@ -213,37 +213,49 @@ function TypeModal({ row, email, onClose, onSaved, onError }) {
 // ═══════════════════════════════════════════════════════════════════════════
 //  2. STOK & MUTASI
 // ═══════════════════════════════════════════════════════════════════════════
+// ✅ Stok jadi shared pool per Branch×Brand (bukan lagi per-MD individu) —
+// sebelum ini top-up CUMA bisa ditarget ke assignment ber-role 'md', jadi
+// BME/RGE/role lain TIDAK PERNAH bisa punya saldo sama sekali (akar masalah
+// "BME tidak bisa isi POSMAT"). Sekarang siapa pun di branch×brand yg sama
+// berbagi 1 pool, sejalan dgn Target Terpasang yg SUDAH branch×brand sejak
+// awal.
 function StockView({ email, canManage }) {
   const [types, setTypes] = useState([]);
-  const [mds, setMds] = useState([]);
+  const [combos, setCombos] = useState([]);
   const [overview, setOverview] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState({ mdId: "", typeId: "", month: currentYYYYMM(), amount: "", note: "" });
+  const [form, setForm] = useState({ branchId: "", brand: "", typeId: "", month: currentYYYYMM(), amount: "", note: "" });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [t, a, o] = await Promise.all([
+    const [t, bb, o] = await Promise.all([
       supabaseMarta.rpc("mh_posmat_list_types"),
-      supabaseMarta.rpc("mh_list_assignments"),
+      supabaseMarta.rpc("mh_branch_brand_list"),
       supabaseMarta.rpc("mh_posmat_stock_overview"),
     ]);
     setTypes((t.data || []).filter((x) => x.active));
-    setMds((a.data || []).filter((x) => x.role === "md"));
+    setCombos(bb.data || []);
     setOverview(o.data || []);
     setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const canSubmit = form.mdId && form.typeId && form.month && Number(form.amount) !== 0 && !Number.isNaN(Number(form.amount)) && !saving;
+  const branchOptions = useMemo(() => {
+    const seen = new Map();
+    for (const c of combos) if (c.branch_id && !seen.has(c.branch_id)) seen.set(c.branch_id, c.branch);
+    return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [combos]);
+
+  const canSubmit = form.branchId && form.brand && form.typeId && form.month && Number(form.amount) !== 0 && !Number.isNaN(Number(form.amount)) && !saving;
 
   async function submit() {
     setSaving(true); setErr(""); setOk("");
     try {
       const { error } = await supabaseMarta.rpc("mh_posmat_set_monthly_stock", {
-        p_md_assignment_id: form.mdId, p_posmat_type_id: form.typeId, p_month: form.month,
+        p_branch_id: form.branchId, p_brand: form.brand, p_posmat_type_id: form.typeId, p_month: form.month,
         p_amount: Number(form.amount), p_note: form.note.trim() || null, p_caller_email: email,
       });
       if (error) throw error;
@@ -257,7 +269,7 @@ function StockView({ email, canManage }) {
   return (
     <div style={{ maxWidth: 1000 }}>
       <div style={{ fontSize: 18, fontWeight: 800, color: T.hi, marginBottom: 3 }}>Stok & Mutasi</div>
-      <div style={{ fontSize: 13, color: T.mid, marginBottom: 14 }}>Saldo bersifat carry-over tanpa batas — top-up menambah saldo berjalan, tidak mereset tiap bulan.</div>
+      <div style={{ fontSize: 13, color: T.mid, marginBottom: 14 }}>Saldo milik BRANCH × BRAND (dibagikan bersama semua orang di sana, bukan per-individu) — bersifat carry-over tanpa batas, top-up menambah saldo berjalan, tidak mereset tiap bulan.</div>
 
       {canManage && (
         <div style={{ ...card, marginBottom: 14 }}>
@@ -265,10 +277,17 @@ function StockView({ email, canManage }) {
           {err && <div style={{ ...note, marginBottom: 10, background: T.errorBg, borderColor: T.error, color: T.error }}>{err}</div>}
           {ok && <div style={{ ...note, marginBottom: 10, background: T.successBg, borderColor: T.success, color: "#155724" }}>{ok}</div>}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px,1fr))", gap: 10 }}>
-            <Field label="MD">
-              <select value={form.mdId} onChange={(e) => setForm((f) => ({ ...f, mdId: e.target.value }))} style={selectStyle}>
-                <option value="">— pilih MD —</option>
-                {mds.map((m) => <option key={m.id} value={m.id}>{m.full_name || m.email}</option>)}
+            <Field label="Branch">
+              <select value={form.branchId} onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))} style={selectStyle}>
+                <option value="">— pilih branch —</option>
+                {branchOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+              </select>
+            </Field>
+            <Field label="Brand">
+              <select value={form.brand} onChange={(e) => setForm((f) => ({ ...f, brand: e.target.value }))} style={selectStyle}>
+                <option value="">— pilih brand —</option>
+                <option value="im3">IM3</option>
+                <option value="tri">3ID</option>
               </select>
             </Field>
             <Field label="Jenis Material">
@@ -288,18 +307,18 @@ function StockView({ email, canManage }) {
       )}
 
       <div style={{ ...card, padding: 0, overflow: "hidden" }}>
-        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.line}`, fontWeight: 800, fontSize: 14 }}>Saldo Berjalan per MD × Jenis Material</div>
+        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.line}`, fontWeight: 800, fontSize: 14 }}>Saldo Berjalan per Branch × Brand × Jenis Material</div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
           <thead><tr style={{ background: "#F7F9FC", color: T.mid }}>
-            {["MD", "Wilayah", "Jenis Material", "Top-up", "Terpakai", "Saldo"].map((h) => <th key={h} style={{ padding: "8px 12px", textAlign: "left" }}>{h}</th>)}
+            {["Branch", "Brand", "Jenis Material", "Top-up", "Terpakai", "Saldo"].map((h) => <th key={h} style={{ padding: "8px 12px", textAlign: "left" }}>{h}</th>)}
           </tr></thead>
           <tbody>
             {loading && <tr><td colSpan={6} style={{ padding: 20, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
             {!loading && overview.length === 0 && <tr><td colSpan={6} style={{ padding: 20, textAlign: "center", color: T.lo }}>Belum ada stok tercatat.</td></tr>}
             {overview.map((r, i) => (
-              <tr key={`${r.md_assignment_id}-${r.posmat_type_id}-${i}`} style={{ borderTop: `1px solid ${T.line}` }}>
-                <td style={{ padding: "8px 12px", fontWeight: 700, color: T.hi }}>{r.md_full_name || r.md_email}</td>
-                <td style={{ padding: "8px 12px", color: T.mid }}>{[r.branch_name, brandLabel(r.brand)].filter(Boolean).join(" · ") || "—"}</td>
+              <tr key={`${r.branch_id}-${r.brand}-${r.posmat_type_id}-${i}`} style={{ borderTop: `1px solid ${T.line}` }}>
+                <td style={{ padding: "8px 12px", fontWeight: 700, color: T.hi }}>{r.branch_name || r.branch_id}</td>
+                <td style={{ padding: "8px 12px", color: T.mid }}>{brandLabel(r.brand)}</td>
                 <td style={{ padding: "8px 12px", color: T.mid }}>{r.type_name}</td>
                 <td style={{ padding: "8px 12px", color: T.mid }}>{Number(r.total_topup).toLocaleString()} {r.unit}</td>
                 <td style={{ padding: "8px 12px", color: T.mid }}>{Number(r.total_consumed).toLocaleString()} {r.unit}</td>
@@ -396,20 +415,25 @@ function TargetView({ email, canManage }) {
       <div style={{ ...card, padding: 0, overflow: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
           <thead><tr style={{ background: "#F7F9FC", color: T.mid }}>
-            {["Branch", "Brand", "Bulan", "Target", "Diubah oleh"].map((h) => <th key={h} style={{ padding: "8px 12px", textAlign: "left" }}>{h}</th>)}
+            {["Branch", "Brand", "Bulan", "Target", "Tercapai", "Diubah oleh"].map((h) => <th key={h} style={{ padding: "8px 12px", textAlign: "left" }}>{h}</th>)}
           </tr></thead>
           <tbody>
-            {loading && <tr><td colSpan={5} style={{ padding: 20, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
-            {!loading && targets.length === 0 && <tr><td colSpan={5} style={{ padding: 20, textAlign: "center", color: T.lo }}>Belum ada target diset.</td></tr>}
-            {targets.map((r) => (
-              <tr key={r.id} style={{ borderTop: `1px solid ${T.line}` }}>
-                <td style={{ padding: "8px 12px", fontWeight: 700, color: T.hi }}>{r.branch_name || r.branch_id}</td>
-                <td style={{ padding: "8px 12px", color: T.mid }}>{brandLabel(r.brand)}</td>
-                <td style={{ padding: "8px 12px", color: T.mid }}>{monthLabel(r.month)}</td>
-                <td style={{ padding: "8px 12px", fontWeight: 800, color: T.hi }}>{r.target_qty}</td>
-                <td style={{ padding: "8px 12px", color: T.mid }}>{r.updated_by_name || "—"}</td>
-              </tr>
-            ))}
+            {loading && <tr><td colSpan={6} style={{ padding: 20, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
+            {!loading && targets.length === 0 && <tr><td colSpan={6} style={{ padding: 20, textAlign: "center", color: T.lo }}>Belum ada target diset.</td></tr>}
+            {targets.map((r) => {
+              const achieved = Number(r.achieved_qty || 0);
+              const met = r.target_qty > 0 && achieved >= r.target_qty;
+              return (
+                <tr key={r.id} style={{ borderTop: `1px solid ${T.line}` }}>
+                  <td style={{ padding: "8px 12px", fontWeight: 700, color: T.hi }}>{r.branch_name || r.branch_id}</td>
+                  <td style={{ padding: "8px 12px", color: T.mid }}>{brandLabel(r.brand)}</td>
+                  <td style={{ padding: "8px 12px", color: T.mid }}>{monthLabel(r.month)}</td>
+                  <td style={{ padding: "8px 12px", fontWeight: 800, color: T.hi }}>{r.target_qty}</td>
+                  <td style={{ padding: "8px 12px", fontWeight: 800, color: met ? T.success : T.mid }}>{achieved}{r.target_qty > 0 ? ` (${Math.round((achieved / r.target_qty) * 100)}%)` : ""}</td>
+                  <td style={{ padding: "8px 12px", color: T.mid }}>{r.updated_by_name || "—"}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

@@ -113,7 +113,11 @@ function Body({ email }) {
   }, [email]);
   useEffect(() => { load(); }, [load]);
 
-  const canApprove = !!(scope && scope.found && ["admin", "head", "tmv"].includes(scope.role));
+  // ✅ spm_sumatera ikut approver — superadmin nasional (§4.5) yang sudah jadi
+  // approver di jalur POSMAT/rekonsiliasi, tapi dulu justru tidak bisa approve
+  // Activity Plan/Laporan. Ditegakkan juga server-side di mh_web_decide_plan /
+  // mh_web_decide_activity / mh_activity_decide_edit_request.
+  const canApprove = !!(scope && scope.found && ["admin", "head", "tmv", "spm_sumatera"].includes(scope.role));
 
   function openDialog(row, kind, type) {
     setDialog({ row, kind, type });

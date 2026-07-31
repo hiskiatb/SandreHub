@@ -150,7 +150,7 @@ function RadiusSettings({ canEdit, email }) {
             canEdit={canEdit}
           />
           <RadiusField
-            label="Radius MD Activities (meter)"
+            label="Radius POSMAT (meter)"
             fieldKey="md_activity_radius_meters"
             value={values.md_activity_radius_meters}
             onChange={(v) => setValues((s) => ({ ...s, md_activity_radius_meters: v }))}

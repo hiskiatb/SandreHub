@@ -19,7 +19,7 @@ import supabase from "../../lib/supabase";
 import { HubLogoLoader } from "../../components/HubLogoLoader";
 import { QRScannerSheet, AccessHelp, BottomSheet, Sheet, imeiValid, Spinner } from "./components";
 import {
-  ymLabel, pad2, fmtTime, fmtDateFull, fmtDateTime,
+  ymNow, ymLabel, pad2, fmtTime, fmtDateFull, fmtDateTime,
   normalizePhone, getPosition, checkGeoPermission,
 } from "./ptsClient";
 
@@ -43,6 +43,21 @@ const C = {
   lg: "0 2px 6px rgba(23,24,28,0.07), 0 20px 44px rgba(23,24,28,0.09)",
   grad: "linear-gradient(135deg,#ED1C24 0%,#C6168D 100%)",
 };
+
+/* Warna identitas brand — dipakai konsisten di seluruh app promotor supaya
+   promotor langsung sadar dia sedang meng-claim untuk brand yang mana.
+   IM3 kuning → teks HARUS gelap (kuning + putih tidak terbaca);
+   3ID magenta → teks putih.
+   `soft`/`ink` untuk badge kecil di atas kartu putih, `solid`/`onSolid`
+   untuk tombol primary. */
+const BRAND = {
+  // Kontras teks-vs-tombol sudah dicek: IM3 11.65:1, 3ID 5.38:1 (WCAG AA
+  // butuh 4.5:1 utk teks 16.5px). Magenta dipakai #C6168D — bukan #EC008C
+  // yang cuma 4.25:1 dan gagal AA untuk teks putih.
+  IM3:   { solid: "#FFCB05", onSolid: "#17181C", soft: "rgba(255,203,5,0.20)", ink: "#8A6A00", glow: "rgba(255,203,5,0.42)" },
+  "3ID": { solid: "#C6168D", onSolid: "#FFFFFF", soft: "rgba(198,22,141,0.10)", ink: "#C6168D", glow: "rgba(198,22,141,0.32)" },
+};
+const brandTheme = (b) => BRAND[b] || null;
 
 // Nada sukses (dua nada naik) via Web Audio — tanpa file
 function playSuccessTone() {
@@ -350,13 +365,19 @@ function AppShell(p) {
   }, [email]);
   useEffect(() => { loadIncoming(); }, [loadIncoming]);
 
-  /* Ringkasan Claim Penjualan periode terpilih: jumlah SP di-claim + rincian
-     validasi GA (total tervalidasi, biometric, non-biometric). */
+  /* Ringkasan Claim Penjualan: jumlah SP di-claim + rincian validasi GA
+     (total tervalidasi, biometric, non-biometric) — mengikuti BULAN
+     KALENDER SESUNGGUHNYA (tagged_at pakai waktu nyata), BUKAN "periode"
+     mapping yang sedang dipilih di dropdown. Keduanya bisa beda saat admin
+     sengaja menyiapkan mapping bulan depan lebih awal (mis. upload mapping
+     Agustus padahal hari ini masih Juli) — claim yang baru saja ditag hari
+     ini harus tetap kehitung, bukan hilang karena difilter ke rentang
+     tanggal periode yang belum tiba. */
   const loadSummary = useCallback(async () => {
     if (!promotorId) { setSummary(null); return; }
-    const [y, mo] = period.split("-").map(Number);
-    const start = `${period}-01`;
-    const nd = new Date(y, mo, 1);
+    const now = new Date();
+    const start = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
+    const nd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
     const end = `${nd.getFullYear()}-${pad2(nd.getMonth() + 1)}-01`;
     const { data } = await supabase.from("pts_sale").select("ga_status,biometric_status")
       .eq("promotor_id", promotorId).gte("tagged_at", start).lt("tagged_at", end);
@@ -365,7 +386,7 @@ function AppShell(p) {
     const bio = rows.filter((r) => r.biometric_status === "BIOMETRIC").length;
     const reg = rows.filter((r) => r.biometric_status === "REGULAR").length;
     setSummary({ total: rows.length, validated, bio, reg });
-  }, [promotorId, period]);
+  }, [promotorId]);
   useEffect(() => { loadSummary(); }, [loadSummary]);
 
   const decideTransfer = async (req, approve) => {
@@ -534,7 +555,7 @@ function AppShell(p) {
               {/* Ringkasan Claim Penjualan periode ini */}
               {summary && (
                 <div style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 16, boxShadow: C.md }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo, marginBottom: 11 }}>Ringkasan Claim Penjualan · {ymLabel(period)}</div>
+                  <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo, marginBottom: 11 }}>Ringkasan Claim Penjualan · {ymLabel(ymNow())}</div>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 9 }}>
                     <LightStat icon={<ShoppingBag size={13} />} label="Jumlah SP di-claim" value={summary.total} accent={C.mag} />
                     <LightStat icon={<CheckCircle2 size={13} />} label="Total GA Tervalidasi" value={summary.validated} accent={C.green} />
@@ -811,8 +832,8 @@ function OutletSelectPanel({ outlets, onPick, onRename }) {
                   <div style={{ minWidth: 0, flex: 1 }}>
                     <div style={{ fontSize: 14.5, fontWeight: 800, letterSpacing: "-0.01em", color: C.hi }}>{displayName}</div>
                     <div style={{ display: "flex", gap: 5, marginTop: 3, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: "rgba(237,28,36,0.1)", color: "#ED1C24" }}>IM3 {o.code}</span>
-                      {hasDual && <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: "rgba(37,99,235,0.12)", color: "#2563EB" }}>3ID {o.code3id}</span>}
+                      <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: BRAND.IM3.soft, color: BRAND.IM3.ink }}>IM3 {o.code}</span>
+                      {hasDual && <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: BRAND["3ID"].soft, color: BRAND["3ID"].ink }}>3ID {o.code3id}</span>}
                     </div>
                     <div style={{ fontSize: 11.5, color: C.mid, marginTop: 4 }}>{[o.branch, o.area].filter(Boolean).join(" · ") || "—"}</div>
                   </div>
@@ -855,6 +876,9 @@ function GeoGatePanel({ outlet, err, onFix, onChangeOutlet }) {
 function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOutlet, onRename, multiOutlet, brand, onBrandChange, assignmentSrc }) {
   const needsBrand = !!outlet.code3id;
   const canTag = !needsBrand || !!brand;
+  // Tema warna aktif = brand yang dipilih. Outlet single-brand tidak punya
+  // pilihan, jadi tetap pakai warna netral (merah) — bukan menebak brand.
+  const bt = brandTheme(brand);
   return (
     <div style={{ animation: "up .3s ease" }}>
       <div style={{ background: C.card, borderRadius: 18, padding: "18px 18px 16px", marginBottom: 14, boxShadow: C.md }}>
@@ -873,8 +897,8 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
               )}
             </div>
             <div style={{ display: "flex", gap: 5, marginTop: 5, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: "rgba(237,28,36,0.1)", color: "#ED1C24" }}>IM3 {outlet.code}</span>
-              {outlet.code3id && <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: "rgba(37,99,235,0.12)", color: "#2563EB" }}>3ID {outlet.code3id}</span>}
+              <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: BRAND.IM3.soft, color: BRAND.IM3.ink }}>IM3 {outlet.code}</span>
+              {outlet.code3id && <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: BRAND["3ID"].soft, color: BRAND["3ID"].ink }}>3ID {outlet.code3id}</span>}
             </div>
             <div style={{ fontSize: 12, color: C.mid, marginTop: 4 }}>{[outlet.branch, outlet.area].filter(Boolean).join(" · ") || "—"}</div>
             {assignmentSrc?.carried && (
@@ -901,9 +925,17 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
           <div style={{ display: "flex", gap: 8 }}>
             {["IM3", "3ID"].map((b) => {
               const on = brand === b;
+              const bt = BRAND[b];
               return (
                 <button key={b} type="button" className="press" onClick={() => onBrandChange(b)}
-                  style={{ flex: 1, height: 46, borderRadius: 13, border: `1.5px solid ${on ? C.brand : C.line}`, background: on ? C.brand : C.sub, color: on ? "#fff" : C.hi, fontFamily: FF, fontSize: 14.5, fontWeight: 800, cursor: "pointer" }}>
+                  style={{
+                    flex: 1, height: 46, borderRadius: 13,
+                    border: `1.5px solid ${on ? bt.solid : C.line}`,
+                    background: on ? bt.solid : C.sub,
+                    color: on ? bt.onSolid : C.hi,
+                    boxShadow: on ? `0 4px 14px ${bt.glow}` : "none",
+                    fontFamily: FF, fontSize: 14.5, fontWeight: 800, cursor: "pointer", transition: "background .15s, color .15s",
+                  }}>
                   {b}
                 </button>
               );
@@ -913,10 +945,21 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
         </div>
       )}
 
-      {/* Tag penjualan */}
+      {/* Tag penjualan — warna tombol mengikuti brand yang sedang dipilih
+          (IM3 kuning/teks hitam, 3ID magenta/teks putih) supaya promotor
+          tidak salah brand. Outlet single-brand tetap merah netral. */}
       <button onClick={onTag} disabled={busy || !canTag} className="press"
-        style={{ width: "100%", height: 58, borderRadius: 16, border: "none", cursor: canTag ? "pointer" : "default", background: canTag ? C.brand : C.line, color: canTag ? "#fff" : C.lo, fontFamily: FF, fontSize: 16.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, boxShadow: canTag ? "0 8px 22px rgba(237,28,36,0.24)" : "none", marginBottom: 14 }}>
-        <QrCode size={20} /> Claim Penjualan (Scan QR)
+        style={{
+          width: "100%", height: 58, borderRadius: 16, border: "none",
+          cursor: canTag ? "pointer" : "default",
+          background: !canTag ? C.line : (bt ? bt.solid : C.brand),
+          color: !canTag ? C.lo : (bt ? bt.onSolid : "#fff"),
+          boxShadow: !canTag ? "none" : `0 8px 22px ${bt ? bt.glow : "rgba(237,28,36,0.24)"}`,
+          fontFamily: FF, fontSize: 16.5, fontWeight: 700,
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+          marginBottom: 14, transition: "background .15s, color .15s, box-shadow .15s",
+        }}>
+        <QrCode size={20} /> Claim Penjualan{bt ? ` ${brand}` : ""} (Scan QR)
       </button>
       <p style={{ fontSize: 11.5, color: C.mid, textAlign: "center", marginTop: -8, marginBottom: 14, lineHeight: 1.5 }}>
         Lokasi Anda dicek otomatis. Di luar radius outlet, Anda akan diminta konfirmasi sebelum tersimpan.
@@ -971,9 +1014,10 @@ const GA_BADGE = {
 const gaBadge = (status) => GA_BADGE[status] || { label: "Belum GA", fg: "#B7791F", bg: "rgba(255,176,32,0.14)" };
 
 function BrandChip({ brand }) {
-  const on3id = brand === "3ID";
+  const bt = brandTheme(brand);
+  if (!bt) return null;
   return (
-    <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: "0.03em", padding: "2px 7px", borderRadius: 99, flexShrink: 0, background: on3id ? "rgba(37,99,235,0.12)" : "rgba(237,28,36,0.1)", color: on3id ? "#2563EB" : "#ED1C24" }}>
+    <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: "0.03em", padding: "2px 7px", borderRadius: 99, flexShrink: 0, background: bt.soft, color: bt.ink }}>
       {brand}
     </span>
   );
@@ -1068,8 +1112,8 @@ function OutletPicker({ outlets, onPick, onClose, onRename }) {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 14.5, fontWeight: 800, color: C.hi, letterSpacing: "-0.01em" }}>{displayName}</div>
                     <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: "monospace", padding: "2px 7px", borderRadius: 99, background: "rgba(237,28,36,0.1)", color: "#ED1C24" }}>IM3 {o.code}</span>
-                      {hasDual && <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: "monospace", padding: "2px 7px", borderRadius: 99, background: "rgba(37,99,235,0.12)", color: "#2563EB" }}>3ID {o.code3id}</span>}
+                      <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: "monospace", padding: "2px 7px", borderRadius: 99, background: BRAND.IM3.soft, color: BRAND.IM3.ink }}>IM3 {o.code}</span>
+                      {hasDual && <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: "monospace", padding: "2px 7px", borderRadius: 99, background: BRAND["3ID"].soft, color: BRAND["3ID"].ink }}>3ID {o.code3id}</span>}
                     </div>
                     <div style={{ fontSize: 11.5, color: C.mid, marginTop: 5 }}>{[o.branch, o.area].filter(Boolean).join(" · ") || "—"}</div>
                   </div>
