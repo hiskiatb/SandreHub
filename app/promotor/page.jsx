@@ -14,7 +14,8 @@ import {
   ShoppingBag, ChevronRight, History, Navigation, AlertTriangle,
   X, ChevronLeft, Phone, CalendarDays, Trash2,
   ArrowLeftRight, Inbox, ShieldQuestion, Radar, RefreshCcw, Pencil, Check,
-  Target, TrendingUp, Fingerprint, Sparkles,
+  Target, TrendingUp, Sparkles,
+  ListChecks, ScanFace, XCircle, HelpCircle,
 } from "lucide-react";
 import supabase from "../../lib/supabase";
 import { HubLogoLoader } from "../../components/HubLogoLoader";
@@ -399,10 +400,20 @@ function AppShell(p) {
     const { data } = await supabase.from("pts_sale").select("ga_status,biometric_status")
       .eq("promotor_id", promotorId).gte("tagged_at", start).lt("tagged_at", end);
     const rows = data || [];
+    // Rincian status RGU-GA selengkap mungkin — bukan cuma "tervalidasi vs
+    // belum", tapi tiap tahap pengajuan sampai hasil akhirnya:
+    //  - pending      : BELUM_TERVALIDASI — masih dalam pengajuan, GA belum sempat cocok
+    //  - validated    : TERVALIDASI + TERVALIDASI_LUAR_AREA — RGU-GA ketemu & cocok
+    //    - bio/reg    : pecahan validated berdasar biometric_status
+    //  - rejected     : TIDAK_SESUAI_OUTLET — RGU-GA ketemu, tapi tercatat di outlet lain (bukan milik promotor ini)
+    //  - notFound     : TIDAK_DITEMUKAN — sampai window habis, RGU-GA tidak pernah ketemu sama sekali
     const validated = rows.filter((r) => r.ga_status === "TERVALIDASI" || r.ga_status === "TERVALIDASI_LUAR_AREA").length;
     const bio = rows.filter((r) => r.biometric_status === "BIOMETRIC").length;
     const reg = rows.filter((r) => r.biometric_status === "REGULAR").length;
-    setSummary({ total: rows.length, validated, bio, reg });
+    const pending = rows.filter((r) => !r.ga_status || r.ga_status === "BELUM_TERVALIDASI").length;
+    const rejected = rows.filter((r) => r.ga_status === "TIDAK_SESUAI_OUTLET").length;
+    const notFound = rows.filter((r) => r.ga_status === "TIDAK_DITEMUKAN").length;
+    setSummary({ total: rows.length, validated, bio, reg, pending, rejected, notFound });
   }, [promotorId]);
   useEffect(() => { loadSummary(); }, [loadSummary]);
 
@@ -597,6 +608,7 @@ function AppShell(p) {
 
               {/* Kontribusi Anda bulan ini — hero card */}
               <HeroCard summary={summary} target={salesTarget} periodLabel={ymLabel(ymNow())} />
+              <StatusDetailCard summary={summary} onSeeRejected={() => setView("history")} />
 
               {!activeOutlet ? (
                 <OutletSelectPanel outlets={outlets} onPick={chooseOutlet} onRename={setRenamingOutlet} />
@@ -1123,28 +1135,56 @@ function HeroCard({ summary, target, periodLabel }) {
         </div>
       </div>
 
-      {summary && (
-        <div style={{ display: "flex", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
-          <HeroChip icon={<CheckCircle2 size={12} />} label="Tervalidasi" value={summary.validated} color={PAL.teal} />
-          <HeroChip icon={<Fingerprint size={12} />} label="Biometric" value={summary.bio} color={PAL.yellow} />
-          <HeroChip icon={<CheckCircle2 size={12} />} label="Non-Biometric" value={summary.reg} color={PAL.purple} />
-        </div>
-      )}
-
       <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.45)", marginTop: 13, lineHeight: 1.5 }}>
-        Dihitung dari SP yang Anda klaim sebagai kontribusi Anda, dari seluruh outlet Anda — bukan penjualan outlet secara umum.
+        Dihitung dari SP yang Anda klaim sebagai kontribusi Anda, dari seluruh outlet Anda — bukan penjualan outlet secara umum. Rincian status RGU-GA ada di bawah.
       </div>
     </div>
   );
 }
 
-function HeroChip({ icon, label, value, color }) {
+/* Rincian status RGU-GA — setelah SP di-claim, tiap nomor melewati tahap:
+   Dalam Pengajuan → (dicek GA) → Tervalidasi (dipecah Biometric/Non-Biometric)
+   ATAU Pengajuan Ditolak (ternyata tercatat di outlet lain, bukan outlet
+   promotor ini) ATAU Tidak Ditemukan (sampai window habis, GA tidak pernah
+   cocok). Baris "Pengajuan Ditolak" bisa diklik → lompat ke Riwayat, tiap
+   nomornya sudah ada catatan outlet tujuan (ga_note) di sana. */
+function StatusDetailCard({ summary, onSeeRejected }) {
+  if (!summary) return null;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(255,255,255,0.08)", borderRadius: 11, padding: "7px 10px", minWidth: 0 }}>
-      <span style={{ color, display: "flex", flexShrink: 0 }}>{icon}</span>
-      <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", flexShrink: 0 }}>{value}</span>
-      <span style={{ fontSize: 10.5, fontWeight: 600, color: "rgba(255,255,255,0.55)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
+    <div style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 16, boxShadow: C.md }}>
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo, marginBottom: 4 }}>Detail Status Pengajuan</div>
+      <StatusRow icon={<ListChecks size={15} />} label="Total Pengajuan" value={summary.total} color={C.hi} bold />
+      <div style={{ height: 1, background: C.lineSoft, margin: "6px 0" }} />
+      <StatusRow icon={<Clock size={15} />} label="Dalam Pengajuan" sub="Belum tercatat RGU-GA" value={summary.pending} color={C.amber} />
+      <StatusRow icon={<CheckCircle2 size={15} />} label="Total Tervalidasi" value={summary.validated} color={C.green} />
+      <StatusRow icon={<ScanFace size={15} />} label="RGU-GA Biometric" value={summary.bio} color="#2563EB" indent />
+      <StatusRow icon={<CheckCircle2 size={15} />} label="RGU-GA Non-Biometric" value={summary.reg} color={PAL.purple} indent />
+      <StatusRow icon={<XCircle size={15} />} label="Pengajuan Ditolak" sub="Tercatat di outlet lain — tap untuk lihat" value={summary.rejected}
+        color="#DC2626" onClick={summary.rejected > 0 ? onSeeRejected : undefined} />
+      {summary.notFound > 0 && (
+        <StatusRow icon={<HelpCircle size={15} />} label="Tidak Ditemukan di RGU-GA" sub="Sampai batas waktu, data GA tidak pernah cocok" value={summary.notFound} color={C.mid} />
+      )}
     </div>
+  );
+}
+
+function StatusRow({ icon, label, sub, value, color, bold, indent, onClick }) {
+  const Comp = onClick ? "button" : "div";
+  return (
+    <Comp onClick={onClick} className={onClick ? "press" : undefined}
+      style={{
+        display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 2px",
+        marginLeft: indent ? 22 : 0, border: "none", background: "transparent", textAlign: "left",
+        fontFamily: FF, cursor: onClick ? "pointer" : "default",
+      }}>
+      <span style={{ color, flexShrink: 0, display: "flex" }}>{icon}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: bold ? 13.5 : 12.5, fontWeight: bold ? 800 : 600, color: C.hi }}>{label}</div>
+        {sub && <div style={{ fontSize: 10.5, color: C.mid, marginTop: 1 }}>{sub}</div>}
+      </div>
+      <span style={{ fontSize: bold ? 18 : 15, fontWeight: 800, color, flexShrink: 0 }}>{value}</span>
+      {onClick && <ChevronRight size={14} color={C.lo} style={{ flexShrink: 0 }} />}
+    </Comp>
   );
 }
 
@@ -1157,13 +1197,16 @@ function LightStat({ icon, label, value, accent }) {
   );
 }
 
+// Label konsisten dengan Detail Status Pengajuan di home — supaya istilah
+// di Riwayat dan di Ringkasan tidak beda-beda.
 const GA_BADGE = {
+  BELUM_TERVALIDASI: { label: "Dalam Pengajuan", fg: "#B7791F", bg: "rgba(255,176,32,0.14)" },
   TERVALIDASI: { label: "Tervalidasi", fg: "#1A9E5A", bg: "rgba(26,158,90,0.12)" },
-  TERVALIDASI_LUAR_AREA: { label: "Tervalidasi · luar area", fg: "#1A9E5A", bg: "rgba(26,158,90,0.12)" },
-  TIDAK_SESUAI_OUTLET: { label: "Outlet tidak sesuai", fg: "#B7791F", bg: "rgba(255,176,32,0.14)" },
-  TIDAK_DITEMUKAN: { label: "Tdk ditemukan", fg: "#DC2626", bg: "rgba(220,38,38,0.1)" },
+  TERVALIDASI_LUAR_AREA: { label: "Tervalidasi · Luar Area", fg: "#1A9E5A", bg: "rgba(26,158,90,0.12)" },
+  TIDAK_SESUAI_OUTLET: { label: "Pengajuan Ditolak", fg: "#DC2626", bg: "rgba(220,38,38,0.1)" },
+  TIDAK_DITEMUKAN: { label: "Tidak Ditemukan", fg: "#61616C", bg: "rgba(97,97,108,0.12)" },
 };
-const gaBadge = (status) => GA_BADGE[status] || { label: "Belum GA", fg: "#B7791F", bg: "rgba(255,176,32,0.14)" };
+const gaBadge = (status) => GA_BADGE[status] || GA_BADGE.BELUM_TERVALIDASI;
 
 function BrandChip({ brand }) {
   const bt = brandTheme(brand);
@@ -1192,9 +1235,15 @@ function HistoryView({ history, onDelete }) {
                 <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
                   <span style={{ width: 34, height: 34, borderRadius: 10, background: s.within_radius === false ? "rgba(37,99,235,0.1)" : "rgba(26,158,90,0.1)", color: s.within_radius === false ? C.blue : C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.within_radius === false ? <Radar size={16} /> : <Phone size={16} />}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
                       <span style={{ fontSize: 14.5, fontWeight: 800, fontFamily: "monospace", color: C.hi }}>{s.phone_normalized}</span>
                       {s.brand && <BrandChip brand={s.brand} />}
+                      {s.biometric_status === "BIOMETRIC" && (
+                        <span title="RGU-GA Biometric" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 99, background: "rgba(37,99,235,0.12)", color: "#2563EB" }}><ScanFace size={10} /> Biometric</span>
+                      )}
+                      {s.biometric_status === "REGULAR" && (
+                        <span title="RGU-GA Non-Biometric" style={{ fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 99, background: PAL.purple + "22", color: PAL.purple }}>Non-Biometric</span>
+                      )}
                     </div>
                     {s.imei && <div style={{ fontSize: 10.5, fontFamily: "monospace", color: C.lo }}>IMEI {s.imei}</div>}
                     <div style={{ fontSize: 11.5, color: C.lo, fontWeight: 500 }}>{fmtDateTime(s.tagged_at)}{s.within_radius === false ? " · di luar area" : ""}</div>
@@ -1206,9 +1255,18 @@ function HistoryView({ history, onDelete }) {
                     </button>
                   )}
                 </div>
-                {s.ga_note && (
-                  <div style={{ marginTop: 9, padding: "8px 10px", borderRadius: 10, background: "rgba(255,176,32,0.1)", fontSize: 11.5, color: C.amber, lineHeight: 1.5 }}>{s.ga_note}</div>
-                )}
+                {s.ga_note && (() => {
+                  const rejected = s.ga_status === "TIDAK_SESUAI_OUTLET";
+                  return (
+                    <div style={{
+                      marginTop: 9, padding: "8px 10px", borderRadius: 10, lineHeight: 1.5, fontSize: 11.5,
+                      background: rejected ? "rgba(220,38,38,0.08)" : "rgba(255,176,32,0.1)",
+                      color: rejected ? "#DC2626" : C.amber,
+                    }}>
+                      {rejected && <b>Ditolak — </b>}{s.ga_note}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}
