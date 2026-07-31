@@ -326,6 +326,8 @@ function AppShell(p) {
   const [delAck, setDelAck] = useState(false);      // centang wajib jika nomor sudah tervalidasi GA
   const [success, setSuccess] = useState(null);     // msisdn berhasil → animasi
   const [taken, setTaken] = useState(null);          // { phone, owner }
+  const [selfClaim, setSelfClaim] = useState(null);  // { phone, sale } — nomor ini sudah di-claim SENDIRI di outlet lain
+  const [moveBusy, setMoveBusy] = useState(false);
   const [outsideConfirm, setOutsideConfirm] = useState(null); // { phone, imei, raw, distance, radius }
   const [incoming, setIncoming] = useState([]);      // permintaan transfer masuk
   const [approveReq, setApproveReq] = useState(null);
@@ -456,7 +458,7 @@ function AppShell(p) {
   const handleTagResult = async (data, normalized, imei, raw) => {
     const st = data?.status;
     if (st === "ok") { await loadTodaySales(promotorId, activeOutlet.id); loadSummary(); setBusy(false); playSuccessTone(); setSuccess({ msisdn: normalized, at: new Date().toISOString(), brand: data?.brand || null }); return; }
-    if (st === "self") { flash("Nomor ini sudah Anda claim.", "err"); setBusy(false); return; }
+    if (st === "self") { setBusy(false); setSelfClaim({ phone: normalized, sale: data?.sale || null }); return; }
     if (st === "taken" || st === "taken_race") { setBusy(false); setTaken({ phone: normalized, owner: data?.owner || null }); return; }
     if (st === "outside_radius") {
       setBusy(false);
@@ -493,6 +495,32 @@ function AppShell(p) {
       else flash("Gagal mengajukan pemindahan.", "err");
     } catch (e) { flash("Gagal mengajukan: " + describeError(e, "requestTransfer"), "err"); }
     finally { setBusy(false); }
+  };
+
+  /* Pindahkan nomor yang sudah di-claim SENDIRI ke outlet aktif saat ini —
+     tanpa approval (beda dengan requestTransfer di atas), karena datanya
+     tetap milik promotor yang sama, cuma atribusi outlet/brand-nya yang
+     diperbaiki. */
+  const moveOwnSale = async () => {
+    const c = selfClaim; if (!c || !activeOutlet) return;
+    setMoveBusy(true);
+    try {
+      const { data, error } = await supabase.rpc("pts_move_own_sale", {
+        p_phone: c.phone, p_new_outlet: activeOutlet.id,
+        p_brand: activeOutlet.code3id ? brand : null,
+      });
+      if (error) throw error;
+      if (data?.status === "ok") {
+        setSelfClaim(null);
+        await loadTodaySales(promotorId, activeOutlet.id); loadSummary(); loadHistory();
+        flash("Nomor dipindahkan ke outlet ini.");
+      } else if (data?.status === "invalid_brand") {
+        flash("Pilih brand (IM3/3ID) untuk outlet ini terlebih dulu.", "err");
+      } else {
+        flash("Gagal memindahkan nomor.", "err");
+      }
+    } catch (e) { flash("Gagal memindahkan: " + describeError(e, "moveOwnSale"), "err"); }
+    finally { setMoveBusy(false); }
   };
 
   const doDeleteSale = async () => {
@@ -733,6 +761,46 @@ function AppShell(p) {
           </div>
         </div>
       )}
+
+      {/* Nomor ini sudah Anda claim sendiri — mungkin di outlet lain milik
+          Anda. Beda dengan modal "taken" (promotor lain): di sini tidak
+          perlu approval, tinggal klik Pindahkan. */}
+      {selfClaim && (() => {
+        const s = selfClaim.sale;
+        const sameOutlet = s && activeOutlet && s.outlet_id === activeOutlet.id;
+        return (
+          <div style={{ position: "fixed", inset: 0, zIndex: 140, background: "rgba(17,18,22,0.45)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 26 }} onClick={() => setSelfClaim(null)}>
+            <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 380, background: C.card, borderRadius: 24, padding: "24px 22px 20px", boxShadow: C.lg, animation: "pop .22s cubic-bezier(.22,1,.36,1)" }}>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
+                <div style={{ width: 58, height: 58, borderRadius: 17, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(37,99,235,0.1)", color: C.blue, marginBottom: 14 }}><ShieldQuestion size={26} /></div>
+                <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", color: C.hi }}>Nomor Ini Sudah Anda Claim</div>
+                <div style={{ fontSize: 13, color: C.mid, marginTop: 4 }}>
+                  {sameOutlet ? "sudah tercatat di outlet ini" : "tercatat di outlet lain milik Anda — detail di bawah"}
+                </div>
+                <div style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 700, color: C.hi, marginTop: 8, padding: "6px 12px", borderRadius: 10, background: C.sub }}>{selfClaim.phone}</div>
+              </div>
+              {s && (
+                <div style={{ marginTop: 16, borderRadius: 14, background: C.sub, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 7 }}>
+                  <TakenRow label="Outlet" value={s.outlet_name || s.outlet_code || "—"} />
+                  {s.brand && <TakenRow label="Brand" value={s.brand} />}
+                  <TakenRow label="Branch" value={s.branch || "—"} />
+                  <TakenRow label="Area" value={s.area || "—"} />
+                  <TakenRow label="Region" value={s.region || "—"} />
+                  <TakenRow label="Waktu" value={s.tagged_at ? fmtDateTime(s.tagged_at) : "—"} />
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+                <button className="press" onClick={() => setSelfClaim(null)} style={{ flex: 1, height: 50, borderRadius: 14, border: `1px solid ${C.line}`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 14.5, fontWeight: 700, cursor: "pointer" }}>Batal</button>
+                {!sameOutlet && (
+                  <button className="press" onClick={moveOwnSale} disabled={moveBusy} style={{ flex: 1.4, height: 50, borderRadius: 14, border: "none", background: C.blue, color: "#fff", fontFamily: FF, fontSize: 14, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+                    {moveBusy ? <Spinner size={16} color="#fff" /> : <ArrowLeftRight size={16} />} Pindahkan ke Sini
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Konfirmasi setujui pemindahan */}
       {approveReq && (
