@@ -33,11 +33,14 @@ export function optionsFor(rows, filters, cols, key) {
   return [...s].filter((x) => x !== "" && x !== NONE).sort((a, b) => a.localeCompare(b));
 }
 
-// Header <th> dengan tombol filter
-export function FilterTh({ t, label, colKey, filters, onOpen }) {
+// Header <th> dengan tombol filter. className opsional — dipakai consumer
+// yang header-nya distyle lewat CSS class (bukan lewat background/color di
+// <tr>, seperti PTS_Module) supaya sel ini tetap konsisten (sticky, warna,
+// border) dengan <th> polos di sebelahnya.
+export function FilterTh({ t, label, colKey, filters, onOpen, className }) {
   const active = (filters[colKey] || []).length > 0;
   return (
-    <th style={{ padding: "9px 12px", fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em", whiteSpace: "nowrap" }}>
+    <th className={className} style={{ padding: "9px 12px", fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.04em", whiteSpace: "nowrap" }}>
       <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
         {label}
         <button title="Filter"

@@ -13,28 +13,25 @@ import {
   MapPin, LogOut, RefreshCw, Clock, Store, QrCode, CheckCircle2,
   ShoppingBag, ChevronRight, History, Navigation, AlertTriangle,
   X, ChevronLeft, Phone, CalendarDays, Trash2,
-  ArrowLeftRight, Inbox, ShieldQuestion, Radar, RefreshCcw,
+  ArrowLeftRight, Inbox, ShieldQuestion, Radar, RefreshCcw, Pencil, Check,
 } from "lucide-react";
 import supabase from "../../lib/supabase";
 import { HubLogoLoader } from "../../components/HubLogoLoader";
-import { QRScannerSheet, AccessHelp, BottomSheet, imeiValid, Spinner } from "./components";
+import { QRScannerSheet, AccessHelp, BottomSheet, Sheet, imeiValid, Spinner } from "./components";
 import {
-  ymNow, ymLabel, pad2, fmtTime, fmtDateFull, fmtDateTime,
+  ymLabel, pad2, fmtTime, fmtDateFull, fmtDateTime,
   normalizePhone, getPosition, checkGeoPermission,
 } from "./ptsClient";
 
-// Rollout SandraHub dimulai Juli 2026 — periode tidak bisa dipilih sebelum ini.
-const PERIOD_FLOOR = "2026-07";
-function periodOptions() {
-  const out = [];
-  const now = new Date();
-  const floor = new Date(2026, 6, 1);
-  for (let d = new Date(now.getFullYear(), now.getMonth(), 1); d >= floor; d.setMonth(d.getMonth() - 1)) {
-    out.push(`${d.getFullYear()}-${pad2(d.getMonth() + 1)}`);
-  }
-  if (!out.length) out.push(PERIOD_FLOOR);
-  return out;
-}
+// PTS baru mulai berjalan Agustus 2026 — sama persis dengan PERIOD_OPTIONS di
+// PTS_Module.jsx (admin). SEBELUMNYA dihitung dari tanggal hari ini (floor
+// Juli, jalan mundur dari bulan berjalan), yang berarti sebelum tanggal 1
+// Agustus tiba, promotor sama sekali tidak bisa memilih periode Agustus
+// walau mapping-nya sudah diupload admin — selalu jatuh ke "Menunggu
+// Aktivasi" untuk bulan lama yang kosong. Daftar tetap (bukan dihitung dari
+// "sekarang") supaya konsisten dengan data yang sungguh ada.
+const PERIOD_OPTIONS = ["2026-08", "2026-09"];
+function periodOptions() { return PERIOD_OPTIONS; }
 
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const C = {
@@ -76,6 +73,7 @@ export default function PromotorApp() {
   const [name, setName] = useState("");
   const [promotorId, setPromotorId] = useState(null);
   const [outlets, setOutlets] = useState([]);      // {code,id,branch,area,region,name}
+  const [assignmentSrc, setAssignmentSrc] = useState(null); // { sourcePeriod, carried } — mapping ini dari bulan mana
   const [activeOutlet, setActiveOutlet] = useState(null);
   const [todaySales, setTodaySales] = useState([]);
   const [view, setView] = useState("home");        // home | history
@@ -86,7 +84,7 @@ export default function PromotorApp() {
   const [toast, setToast] = useState(null);
   const toastTimerRef = useRef(null);
 
-  const [period, setPeriod] = useState(ymNow());
+  const [period, setPeriod] = useState(PERIOD_OPTIONS[0]);
   // Toast error dibiarkan tampil jauh lebih lama (dan bisa diketuk untuk
   // ditutup) — sebelumnya 2.6 detik untuk semua tone, terlalu cepat untuk
   // sempat dibaca/screenshot saat error.
@@ -163,13 +161,19 @@ export default function PromotorApp() {
   const loadPeriodAssignment = useCallback(async () => {
     if (!promotorId) return;
     setPhase("loading");
-    const { data: asg } = await supabase.from("pts_assignment")
-      .select("*").eq("promotor_id_ref", promotorId).eq("period", period).eq("status", "active");
-    const rows = asg || [];
+    // Alokasi outlet dianggap tetap sampai diubah admin — kalau periode ini
+    // belum pernah di-upload, pts_effective_assignment otomatis pakai
+    // mapping bulan terakhir yang ada (bukan kosong).
+    const { data: asgAll } = await supabase.rpc("pts_effective_assignment", { p_period: period });
+    const rows = (asgAll || []).filter((r) => r.promotor_id_ref === promotorId && r.status === "active");
     const active = rows.length > 0;
+    setAssignmentSrc(active ? { sourcePeriod: rows[0].source_period, carried: rows[0].is_carried_forward } : null);
 
+    // "status" TIDAK disentuh di sini lagi — sejak sekarang artinya identitas
+    // Aktif/Vacant/Pending yang dikelola admin (Roster Promotor), bukan lagi
+    // "ada assignment periode ini atau tidak".
     await supabase.from("pts_promotor")
-      .update({ region: rows[0]?.region || null, status: active ? "active" : "pending", updated_at: new Date().toISOString() })
+      .update({ region: rows[0]?.region || null, updated_at: new Date().toISOString() })
       .eq("id", promotorId);
 
     if (!active) { setOutlets([]); setActiveOutlet(null); setTodaySales([]); setPhase("pending"); return; }
@@ -178,6 +182,20 @@ export default function PromotorApp() {
     const byCode = new Map();
     rows.forEach((r) => { if (!byCode.has(r.outlet_code)) byCode.set(r.outlet_code, { code: r.outlet_code, id: r.outlet_id, branch: r.branch, area: r.area, region: r.region, brand: r.brand, cluster: r.cluster, name: r.outlet_code }); });
     const outletList = [...byCode.values()];
+
+    // Ambil code_3id per outlet — satu outlet fisik bisa punya ID IM3 dan ID
+    // 3ID sekaligus, jadi pencapaian di outlet itu harus dipilih brand-nya
+    // saat tagging (bukan diambil dari assignment).
+    const outletIds = outletList.map((o) => o.id).filter(Boolean);
+    if (outletIds.length) {
+      const { data: outRows } = await supabase.from("pts_outlet").select("id,code_3id,name").in("id", outletIds);
+      const meta = new Map((outRows || []).map((r) => [r.id, r]));
+      outletList.forEach((o) => {
+        const m = meta.get(o.id);
+        o.code3id = m?.code_3id || null;
+        if (m?.name) o.name = m.name;   // nama outlet asli, bukan pakai kode sebagai fallback
+      });
+    }
     setOutlets(outletList);
 
     // outlet aktif: otomatis jika hanya 1, selain itu tunggu pilihan promotor
@@ -220,8 +238,8 @@ export default function PromotorApp() {
 
   return (
     <AppShell
-      name={name} email={email} uid={uid} promotorId={promotorId}
-      period={period} setPeriod={setPeriod} outlets={outlets}
+      name={name} setName={setName} email={email} uid={uid} promotorId={promotorId}
+      period={period} setPeriod={setPeriod} outlets={outlets} setOutlets={setOutlets} assignmentSrc={assignmentSrc}
       activeOutlet={activeOutlet} setActiveOutlet={setActiveOutlet}
       todaySales={todaySales} loadTodaySales={loadTodaySales}
       geo={geo} geoErr={geoErr} refreshGeo={refreshGeo}
@@ -283,7 +301,7 @@ function Pending({ email, period, setPeriod, onReload, onSignOut }) {
 
 /* ══════════════════ App Shell ══════════════════ */
 function AppShell(p) {
-  const { name, email, promotorId, period, setPeriod, outlets, activeOutlet, setActiveOutlet, todaySales, loadTodaySales, geo, geoErr, refreshGeo, view, setView, history, loadHistory, onSignOut, flash, toast } = p;
+  const { name, setName, email, promotorId, period, setPeriod, outlets, setOutlets, assignmentSrc, activeOutlet, setActiveOutlet, todaySales, loadTodaySales, geo, geoErr, refreshGeo, view, setView, history, loadHistory, onSignOut, flash, toast } = p;
   const [sheet, setSheet] = useState(null);        // 'qr'
   const [pickOutlet, setPickOutlet] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -297,7 +315,33 @@ function AppShell(p) {
   const [incoming, setIncoming] = useState([]);      // permintaan transfer masuk
   const [approveReq, setApproveReq] = useState(null);
   const [inboxOpen, setInboxOpen] = useState(false);
+  const [brand, setBrand] = useState(null);          // brand yang dipilih utk claim di outlet dual-brand
+  useEffect(() => { setBrand(null); }, [activeOutlet?.id]);
   const [summary, setSummary] = useState(null);      // ringkasan klaim per periode
+  const [editProfile, setEditProfile] = useState(false);   // edit nama sendiri
+  const [renamingOutlet, setRenamingOutlet] = useState(null); // outlet yg sedang diganti namanya
+
+  /* Ubah nama sendiri — hanya full_name, ID (promotor_id/user_id_3id) dikunci
+     server-side (trigger) apapun yang dikirim dari sini. */
+  const saveProfileName = async (val) => {
+    const trimmed = val.trim();
+    if (!trimmed) throw new Error("Nama tidak boleh kosong.");
+    const { error } = await supabase.from("pts_promotor").update({ full_name: trimmed, updated_at: new Date().toISOString() }).eq("id", promotorId);
+    if (error) throw error;
+    setName(trimmed);
+  };
+
+  /* Ubah nama outlet yang sedang di-mapping ke promotor ini — RLS+trigger
+     server memastikan hanya kolom `name` yang benar-benar berubah, ID
+     outlet (IM3/3ID) tidak bisa disentuh dari sini. */
+  const saveOutletName = async (outlet, val) => {
+    const trimmed = val.trim();
+    if (!trimmed) throw new Error("Nama outlet tidak boleh kosong.");
+    const { error } = await supabase.from("pts_outlet").update({ name: trimmed }).eq("id", outlet.id);
+    if (error) throw error;
+    setOutlets((prev) => prev.map((o) => (o.id === outlet.id ? { ...o, name: trimmed } : o)));
+    if (activeOutlet?.id === outlet.id) setActiveOutlet((prev) => (prev ? { ...prev, name: trimmed } : prev));
+  };
 
   const loadIncoming = useCallback(async () => {
     const { data } = await supabase.from("pts_transfer_request")
@@ -351,10 +395,12 @@ function AppShell(p) {
      Payload tag sebenarnya "nomor|imei" — IMEI ikut disimpan per tagging. */
   const tagSale = async (normalized, imei, raw, confirmOutside) => {
     if (!activeOutlet?.id) throw new Error("Outlet aktif tidak ditemukan, pilih ulang outlet.");
+    if (activeOutlet.code3id && !brand) throw new Error("Pilih brand (IM3/3ID) untuk pencapaian di outlet ini terlebih dulu.");
     const { data, error } = await supabase.rpc("pts_tag_sale", {
       p_phone: normalized, p_session: null, p_outlet: activeOutlet.id,
       p_lat: geo?.lat ?? null, p_lng: geo?.lng ?? null, p_raw: String(raw),
       p_confirm_outside: confirmOutside, p_imei: imei || null,
+      p_brand: activeOutlet.code3id ? brand : null,
     });
     if (error) throw error;
     return data;
@@ -388,7 +434,7 @@ function AppShell(p) {
 
   const handleTagResult = async (data, normalized, imei, raw) => {
     const st = data?.status;
-    if (st === "ok") { await loadTodaySales(promotorId, activeOutlet.id); loadSummary(); setBusy(false); playSuccessTone(); setSuccess({ msisdn: normalized, at: new Date().toISOString() }); return; }
+    if (st === "ok") { await loadTodaySales(promotorId, activeOutlet.id); loadSummary(); setBusy(false); playSuccessTone(); setSuccess({ msisdn: normalized, at: new Date().toISOString(), brand: data?.brand || null }); return; }
     if (st === "self") { flash("Nomor ini sudah Anda claim.", "err"); setBusy(false); return; }
     if (st === "taken" || st === "taken_race") { setBusy(false); setTaken({ phone: normalized, owner: data?.owner || null }); return; }
     if (st === "outside_radius") {
@@ -450,13 +496,17 @@ function AppShell(p) {
 
       {/* Header */}
       <div style={{ padding: "calc(env(safe-area-inset-top,0px) + 16px) 18px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, background: "linear-gradient(180deg,#F4F5F7 76%,rgba(244,245,247,0))", zIndex: 5, maxWidth: 560, margin: "0 auto" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+        <button className="press" onClick={() => setEditProfile(true)} aria-label="Edit nama saya"
+          style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, border: "none", background: "transparent", padding: 0, margin: 0, cursor: "pointer", textAlign: "left", fontFamily: FF }}>
           <div style={{ width: 44, height: 44, borderRadius: 14, flexShrink: 0, background: C.grad, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, boxShadow: "0 6px 16px rgba(237,28,36,0.28)" }}>{initial}</div>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 12, color: C.mid, fontWeight: 600, letterSpacing: "0.02em" }}>Selamat datang</div>
-            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 190 }}>{name}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
+              <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 168, color: C.hi }}>{name}</span>
+              <Pencil size={12} color={C.lo} style={{ flexShrink: 0 }} />
+            </div>
           </div>
-        </div>
+        </button>
         <div style={{ display: "flex", gap: 8 }}>
           <IconBtn onClick={() => setInboxOpen(true)} badge={incoming.length}><Inbox size={17} /></IconBtn>
           <IconBtn onClick={() => setView(view === "home" ? "history" : "home")} active={view === "history"}>{view === "history" ? <ChevronLeft size={18} /> : <History size={17} />}</IconBtn>
@@ -495,11 +545,12 @@ function AppShell(p) {
               )}
 
               {!activeOutlet ? (
-                <OutletSelectPanel outlets={outlets} onPick={chooseOutlet} />
+                <OutletSelectPanel outlets={outlets} onPick={chooseOutlet} onRename={setRenamingOutlet} />
               ) : !geo ? (
                 <GeoGatePanel outlet={activeOutlet} err={geoErr} onFix={fixGeo} onChangeOutlet={() => setPickOutlet(true)} />
               ) : (
                 <TagPanel outlet={activeOutlet} sales={todaySales} soldCount={soldCount} busy={busy} geo={geo}
+                  brand={brand} onBrandChange={setBrand} assignmentSrc={assignmentSrc} onRename={setRenamingOutlet}
                   onTag={() => setSheet("qr")} onDelete={(s) => setDelSale(s)} onChangeOutlet={() => setPickOutlet(true)} multiOutlet={outlets.length > 1} />
               )}
             </div>
@@ -523,7 +574,25 @@ function AppShell(p) {
 
       {/* Outlet picker */}
       {pickOutlet && (
-        <OutletPicker outlets={outlets} onPick={chooseOutlet} onClose={() => setPickOutlet(false)} />
+        <OutletPicker outlets={outlets} onPick={chooseOutlet} onClose={() => setPickOutlet(false)} onRename={setRenamingOutlet} />
+      )}
+
+      {/* Edit nama saya — hanya nama, ID tidak bisa diubah dari sini */}
+      {editProfile && (
+        <RenameSheet title="Edit Nama Saya" label="Nama Promotor" placeholder="Nama lengkap Anda"
+          initial={name} onClose={() => setEditProfile(false)}
+          onSave={async (val) => { await saveProfileName(val); flash("Nama berhasil diperbarui."); }}
+        />
+      )}
+
+      {/* Ganti nama outlet yang di-mapping ke Anda — ID outlet (IM3/3ID) tetap terkunci */}
+      {renamingOutlet && (
+        <RenameSheet title="Ganti Nama Outlet" label="Nama Outlet" placeholder="Nama outlet"
+          initial={renamingOutlet.name && renamingOutlet.name !== renamingOutlet.code ? renamingOutlet.name : ""}
+          note={`ID Outlet IM3 ${renamingOutlet.code}${renamingOutlet.code3id ? ` · 3ID ${renamingOutlet.code3id}` : ""} tidak bisa diubah — hanya nama outlet.`}
+          onClose={() => setRenamingOutlet(null)}
+          onSave={async (val) => { await saveOutletName(renamingOutlet, val); flash("Nama outlet berhasil diperbarui."); }}
+        />
       )}
 
       {/* Konfirmasi Hapus Nomor — peringatan lebih tegas jika sudah tervalidasi GA */}
@@ -605,7 +674,10 @@ function AppShell(p) {
           </svg>
           <div style={{ textAlign: "center", animation: "up .3s .5s both" }}>
             <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.02em", color: C.hi }}>Berhasil di-Claim</div>
-            <div style={{ fontSize: 16, fontFamily: "monospace", fontWeight: 700, color: C.green, marginTop: 6 }}>{success.msisdn}</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 6 }}>
+              <span style={{ fontSize: 16, fontFamily: "monospace", fontWeight: 700, color: C.green }}>{success.msisdn}</span>
+              {success.brand && <BrandChip brand={success.brand} />}
+            </div>
             <div style={{ fontSize: 12.5, color: C.mid, marginTop: 5 }}>{fmtDateTime(success.at)}</div>
           </div>
           <style>{`@keyframes ring{to{stroke-dashoffset:0}}@keyframes check{to{stroke-dashoffset:0}}`}</style>
@@ -626,6 +698,7 @@ function AppShell(p) {
               <div style={{ marginTop: 16, borderRadius: 14, background: C.sub, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 7 }}>
                 <TakenRow label="Oleh" value={taken.owner.full_name || taken.owner.email} />
                 <TakenRow label="Outlet" value={taken.owner.outlet_code || "—"} />
+                {taken.owner.brand && <TakenRow label="Brand" value={taken.owner.brand} />}
                 <TakenRow label="Branch" value={taken.owner.branch || "—"} />
                 <TakenRow label="Area" value={taken.owner.area || "—"} />
                 <TakenRow label="Region" value={taken.owner.region || "—"} />
@@ -715,7 +788,7 @@ function AppShell(p) {
 }
 
 /* ── Panels ─────────────────────────────────────────────────── */
-function OutletSelectPanel({ outlets, onPick }) {
+function OutletSelectPanel({ outlets, onPick, onRename }) {
   return (
     <div>
       <div style={{ marginBottom: 18 }}>
@@ -727,17 +800,33 @@ function OutletSelectPanel({ outlets, onPick }) {
         <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.lo, margin: "2px 4px 12px" }}>
           <Store size={13} /> Outlet Anda ({outlets.length})
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {outlets.map((o) => (
-            <button key={o.code} className="press" onClick={() => onPick(o)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 12px", borderRadius: 14, background: C.sub, border: "none", cursor: "pointer", textAlign: "left", fontFamily: FF, width: "100%" }}>
-              <div style={{ width: 38, height: 38, borderRadius: 11, background: "#fff", color: C.brand, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: C.sm }}><Store size={17} /></div>
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em", fontFamily: "monospace", color: C.hi }}>{o.code}</div>
-                <div style={{ fontSize: 12, color: C.mid }}>{[o.branch, o.area].filter(Boolean).join(" · ") || "—"}</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
+          {outlets.map((o) => {
+            const displayName = o.name && o.name !== o.code ? o.name : o.code;
+            const hasDual = !!o.code3id;
+            return (
+              <div key={o.code} style={{ display: "flex", alignItems: "center", borderRadius: 14, background: C.sub, width: "100%" }}>
+                <button className="press" onClick={() => onPick(o)} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 12, padding: "13px 8px 13px 12px", border: "none", background: "transparent", cursor: "pointer", textAlign: "left", fontFamily: FF }}>
+                  <div style={{ width: 40, height: 40, borderRadius: 12, background: "#fff", color: C.brand, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: C.sm }}><Store size={18} /></div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 14.5, fontWeight: 800, letterSpacing: "-0.01em", color: C.hi }}>{displayName}</div>
+                    <div style={{ display: "flex", gap: 5, marginTop: 3, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: "rgba(237,28,36,0.1)", color: "#ED1C24" }}>IM3 {o.code}</span>
+                      {hasDual && <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: "rgba(37,99,235,0.12)", color: "#2563EB" }}>3ID {o.code3id}</span>}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: C.mid, marginTop: 4 }}>{[o.branch, o.area].filter(Boolean).join(" · ") || "—"}</div>
+                  </div>
+                  <ChevronRight size={18} color={C.lo} />
+                </button>
+                {onRename && (
+                  <button onClick={(e) => { e.stopPropagation(); onRename(o); }} aria-label="Ganti nama outlet"
+                    style={{ width: 34, height: 34, borderRadius: 10, border: "none", background: "transparent", color: C.lo, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, marginRight: 8 }}>
+                    <Pencil size={14} />
+                  </button>
+                )}
               </div>
-              <ChevronRight size={18} color={C.lo} />
-            </button>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
@@ -763,40 +852,70 @@ function GeoGatePanel({ outlet, err, onFix, onChangeOutlet }) {
   );
 }
 
-function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOutlet, multiOutlet }) {
-  const OutletHeader = multiOutlet ? "button" : "div";
+function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOutlet, onRename, multiOutlet, brand, onBrandChange, assignmentSrc }) {
+  const needsBrand = !!outlet.code3id;
+  const canTag = !needsBrand || !!brand;
   return (
     <div style={{ animation: "up .3s ease" }}>
       <div style={{ background: C.card, borderRadius: 18, padding: "18px 18px 16px", marginBottom: 14, boxShadow: C.md }}>
-        <OutletHeader
-          type={multiOutlet ? "button" : undefined}
-          onClick={multiOutlet ? onChangeOutlet : undefined}
-          className={multiOutlet ? "press" : undefined}
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
-            border: "none", background: "transparent", padding: 0, margin: 0, textAlign: "left",
-            cursor: multiOutlet ? "pointer" : "default", fontFamily: FF,
-          }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Outlet Aktif</div>
-            <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em", fontFamily: "monospace", marginTop: 4, color: C.hi }}>{outlet.code}</div>
-            <div style={{ fontSize: 12, color: C.mid, marginTop: 2 }}>{[outlet.branch, outlet.area].filter(Boolean).join(" · ") || "—"}</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+              <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.02em", color: C.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {outlet.name && outlet.name !== outlet.code ? outlet.name : outlet.code}
+              </span>
+              {onRename && (
+                <button onClick={() => onRename(outlet)} aria-label="Ganti nama outlet"
+                  style={{ width: 26, height: 26, borderRadius: 8, border: "none", background: C.sub, color: C.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                  <Pencil size={12} />
+                </button>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 5, marginTop: 5, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: "rgba(237,28,36,0.1)", color: "#ED1C24" }}>IM3 {outlet.code}</span>
+              {outlet.code3id && <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: "rgba(37,99,235,0.12)", color: "#2563EB" }}>3ID {outlet.code3id}</span>}
+            </div>
+            <div style={{ fontSize: 12, color: C.mid, marginTop: 4 }}>{[outlet.branch, outlet.area].filter(Boolean).join(" · ") || "—"}</div>
+            {assignmentSrc?.carried && (
+              <div style={{ fontSize: 10.5, color: C.amber, marginTop: 4, fontWeight: 600 }}>Mapping dari {ymLabel(assignmentSrc.sourcePeriod)} (belum ada update)</div>
+            )}
           </div>
           {multiOutlet && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, marginLeft: 12, height: 40, padding: "0 13px", borderRadius: 12, background: C.sub, border: `1px solid ${C.line}` }}>
+            <button onClick={onChangeOutlet} className="press" style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, marginLeft: 12, height: 40, padding: "0 13px", borderRadius: 12, background: C.sub, border: `1px solid ${C.line}`, cursor: "pointer", fontFamily: FF }}>
               <RefreshCcw size={15} color={C.brand} />
               <span style={{ fontSize: 12.5, fontWeight: 700, color: C.brand }}>Ganti</span>
-            </div>
+            </button>
           )}
-        </OutletHeader>
+        </div>
         <div style={{ display: "flex", gap: 9, marginTop: 16 }}>
           <LightStat icon={<ShoppingBag size={13} />} label="Terjual hari ini" value={soldCount} accent={C.green} />
         </div>
       </div>
 
+      {/* Pilihan brand — outlet ini punya ID IM3 & 3ID sekaligus, pencapaian
+          harus dipilih per-tagging supaya SP masuk ke brand yang benar. */}
+      {needsBrand && (
+        <div style={{ background: C.card, borderRadius: 18, padding: 14, marginBottom: 14, boxShadow: C.md }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo, marginBottom: 10 }}>Claim untuk brand</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {["IM3", "3ID"].map((b) => {
+              const on = brand === b;
+              return (
+                <button key={b} type="button" className="press" onClick={() => onBrandChange(b)}
+                  style={{ flex: 1, height: 46, borderRadius: 13, border: `1.5px solid ${on ? C.brand : C.line}`, background: on ? C.brand : C.sub, color: on ? "#fff" : C.hi, fontFamily: FF, fontSize: 14.5, fontWeight: 800, cursor: "pointer" }}>
+                  {b}
+                </button>
+              );
+            })}
+          </div>
+          {!brand && <div style={{ fontSize: 11.5, color: C.amber, fontWeight: 600, marginTop: 9 }}>Pilih brand dulu sebelum claim penjualan.</div>}
+        </div>
+      )}
+
       {/* Tag penjualan */}
-      <button onClick={onTag} disabled={busy} className="press"
-        style={{ width: "100%", height: 58, borderRadius: 16, border: "none", cursor: "pointer", background: C.brand, color: "#fff", fontFamily: FF, fontSize: 16.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, boxShadow: "0 8px 22px rgba(237,28,36,0.24)", marginBottom: 14 }}>
+      <button onClick={onTag} disabled={busy || !canTag} className="press"
+        style={{ width: "100%", height: 58, borderRadius: 16, border: "none", cursor: canTag ? "pointer" : "default", background: canTag ? C.brand : C.line, color: canTag ? "#fff" : C.lo, fontFamily: FF, fontSize: 16.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 10, boxShadow: canTag ? "0 8px 22px rgba(237,28,36,0.24)" : "none", marginBottom: 14 }}>
         <QrCode size={20} /> Claim Penjualan (Scan QR)
       </button>
       <p style={{ fontSize: 11.5, color: C.mid, textAlign: "center", marginTop: -8, marginBottom: 14, lineHeight: 1.5 }}>
@@ -814,7 +933,10 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
               <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 2px", borderTop: i === 0 ? "none" : `1px solid ${C.lineSoft}` }}>
                 <span style={{ width: 30, height: 30, borderRadius: 9, background: s.within_radius === false ? "rgba(37,99,235,0.1)" : "rgba(26,158,90,0.1)", color: s.within_radius === false ? C.blue : C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.within_radius === false ? <Radar size={14} /> : <Phone size={14} />}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 700, color: C.hi }}>{s.phone_normalized}</div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                    <span style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 700, color: C.hi }}>{s.phone_normalized}</span>
+                    {s.brand && <BrandChip brand={s.brand} />}
+                  </div>
                   {s.imei && <div style={{ fontSize: 10.5, fontFamily: "monospace", color: C.lo }}>IMEI {s.imei}</div>}
                 </div>
                 <span style={{ fontSize: 12, color: C.mid, fontWeight: 500 }}>{fmtTime(s.tagged_at)}</span>
@@ -848,6 +970,15 @@ const GA_BADGE = {
 };
 const gaBadge = (status) => GA_BADGE[status] || { label: "Belum GA", fg: "#B7791F", bg: "rgba(255,176,32,0.14)" };
 
+function BrandChip({ brand }) {
+  const on3id = brand === "3ID";
+  return (
+    <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: "0.03em", padding: "2px 7px", borderRadius: 99, flexShrink: 0, background: on3id ? "rgba(37,99,235,0.12)" : "rgba(237,28,36,0.1)", color: on3id ? "#2563EB" : "#ED1C24" }}>
+      {brand}
+    </span>
+  );
+}
+
 function HistoryView({ history, onDelete }) {
   return (
     <div style={{ animation: "up .3s ease" }}>
@@ -865,7 +996,10 @@ function HistoryView({ history, onDelete }) {
                 <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
                   <span style={{ width: 34, height: 34, borderRadius: 10, background: s.within_radius === false ? "rgba(37,99,235,0.1)" : "rgba(26,158,90,0.1)", color: s.within_radius === false ? C.blue : C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.within_radius === false ? <Radar size={16} /> : <Phone size={16} />}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14.5, fontWeight: 800, fontFamily: "monospace", color: C.hi }}>{s.phone_normalized}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                      <span style={{ fontSize: 14.5, fontWeight: 800, fontFamily: "monospace", color: C.hi }}>{s.phone_normalized}</span>
+                      {s.brand && <BrandChip brand={s.brand} />}
+                    </div>
                     {s.imei && <div style={{ fontSize: 10.5, fontFamily: "monospace", color: C.lo }}>IMEI {s.imei}</div>}
                     <div style={{ fontSize: 11.5, color: C.lo, fontWeight: 500 }}>{fmtDateTime(s.tagged_at)}{s.within_radius === false ? " · di luar area" : ""}</div>
                   </div>
@@ -912,27 +1046,85 @@ function GeoChip({ geo, err, onFix }) {
   if (geo && !err) return <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 600, padding: "5px 10px", borderRadius: 99, background: "rgba(48,209,88,0.12)", color: C.green, border: "1px solid rgba(48,209,88,0.25)" }}><Navigation size={12} /> Lokasi aktif{geo.accuracy ? ` · ±${geo.accuracy}m` : ""}</span>;
   return <button onClick={onFix} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 600, padding: "5px 10px", borderRadius: 99, background: "rgba(255,176,32,0.12)", color: C.amber, border: "1px solid rgba(255,176,32,0.28)", cursor: "pointer", fontFamily: FF }}><AlertTriangle size={12} /> Aktifkan lokasi</button>;
 }
-function OutletPicker({ outlets, onPick, onClose }) {
+function OutletPicker({ outlets, onPick, onClose, onRename }) {
   return (
     <BottomSheet onClose={onClose}>
       <div style={{ padding: "2px 18px calc(env(safe-area-inset-bottom,0px) + 20px)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-          <div style={{ fontSize: 17, fontWeight: 800, color: C.hi, letterSpacing: "-0.02em" }}>Pilih Outlet</div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: C.hi, letterSpacing: "-0.02em" }}>Pilih Outlet</div>
+            <div style={{ fontSize: 12, color: C.mid, marginTop: 2 }}>{outlets.length} outlet aktif — tap salah satu untuk berpindah</div>
+          </div>
           <button onClick={onClose} style={{ width: 34, height: 34, borderRadius: 10, border: "none", background: C.sub, color: C.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={18} /></button>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-          {outlets.map((o) => (
-            <button className="press" key={o.code} onClick={() => onPick(o)} style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 14px", borderRadius: 14, background: C.sub, border: "none", cursor: "pointer", textAlign: "left", fontFamily: FF }}>
-              <div style={{ width: 38, height: 38, borderRadius: 11, background: "#fff", color: C.brand, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: C.sm }}><Store size={17} /></div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: C.hi, fontFamily: "monospace" }}>{o.code}</div>
-                <div style={{ fontSize: 12, color: C.mid }}>{[o.branch, o.area].filter(Boolean).join(" · ") || "—"}</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 12 }}>
+          {outlets.map((o) => {
+            const displayName = o.name && o.name !== o.code ? o.name : o.code;
+            const hasDual = !!o.code3id;
+            return (
+              <div key={o.code} style={{ display: "flex", alignItems: "center", borderRadius: 14, background: C.sub }}>
+                <button className="press" onClick={() => onPick(o)} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 12, padding: "14px 8px 14px 14px", border: "none", background: "transparent", cursor: "pointer", textAlign: "left", fontFamily: FF }}>
+                  <div style={{ width: 40, height: 40, borderRadius: 12, background: "#fff", color: C.brand, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: C.sm }}><Store size={18} /></div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14.5, fontWeight: 800, color: C.hi, letterSpacing: "-0.01em" }}>{displayName}</div>
+                    <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: "monospace", padding: "2px 7px", borderRadius: 99, background: "rgba(237,28,36,0.1)", color: "#ED1C24" }}>IM3 {o.code}</span>
+                      {hasDual && <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: "monospace", padding: "2px 7px", borderRadius: 99, background: "rgba(37,99,235,0.12)", color: "#2563EB" }}>3ID {o.code3id}</span>}
+                    </div>
+                    <div style={{ fontSize: 11.5, color: C.mid, marginTop: 5 }}>{[o.branch, o.area].filter(Boolean).join(" · ") || "—"}</div>
+                  </div>
+                  <ChevronRight size={18} color={C.lo} />
+                </button>
+                {onRename && (
+                  <button onClick={(e) => { e.stopPropagation(); onRename(o); }} aria-label="Ganti nama outlet"
+                    style={{ width: 36, height: 36, borderRadius: 10, border: "none", background: "transparent", color: C.lo, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, marginRight: 8 }}>
+                    <Pencil size={15} />
+                  </button>
+                )}
               </div>
-              <ChevronRight size={18} color={C.lo} />
-            </button>
-          ))}
+            );
+          })}
         </div>
       </div>
     </BottomSheet>
+  );
+}
+
+/* ── Sheet generik utk ganti nama (dipakai utk nama promotor & nama outlet
+   sendiri) — cuma satu field teks, tidak pernah menyentuh kolom ID apapun. ── */
+function RenameSheet({ title, label, placeholder, initial, note, onClose, onSave }) {
+  const [val, setVal] = useState(initial || "");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const submit = async () => {
+    if (!val.trim()) { setErr("Tidak boleh kosong."); return; }
+    setSaving(true); setErr("");
+    try {
+      await onSave(val.trim());
+      onClose();
+    } catch (e) {
+      setErr(e?.message || "Gagal menyimpan.");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Sheet title={title} onClose={onClose}>
+      <div style={{ padding: "0 18px calc(env(safe-area-inset-bottom,0px) + 20px)", display: "flex", flexDirection: "column", gap: 12 }}>
+        <div>
+          <label style={{ fontSize: 12.5, fontWeight: 600, color: C.mid }}>{label}</label>
+          <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} placeholder={placeholder} maxLength={120} enterKeyHint="done"
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+            style={{ width: "100%", height: 52, borderRadius: 13, border: `1px solid ${C.line}`, background: C.sub, color: C.hi, fontFamily: FF, fontSize: 16, fontWeight: 600, padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
+        </div>
+        {note && <div style={{ fontSize: 11.5, color: C.lo, lineHeight: 1.5 }}>{note}</div>}
+        {err && <div style={{ fontSize: 12.5, fontWeight: 700, color: "#DC2626" }}>{err}</div>}
+        <button onClick={submit} disabled={saving || !val.trim()} className="press"
+          style={{ height: 52, borderRadius: 13, border: "none", background: val.trim() ? C.brand : C.line, color: val.trim() ? "#fff" : C.lo, fontFamily: FF, fontSize: 15, fontWeight: 700, cursor: val.trim() ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          {saving ? <Spinner size={18} color="#fff" /> : <Check size={18} />} Simpan
+        </button>
+      </div>
+    </Sheet>
   );
 }

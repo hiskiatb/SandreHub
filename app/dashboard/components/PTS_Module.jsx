@@ -2,21 +2,28 @@
 
 // ============================================================
 // PTS — Promotor Tracking System (SandraHub)
-// Admin (spm_sumatera / pic_region): 2 sub-menu
-//   1) Upload Mapping — per bulan (download → edit → upload Excel)
-//   2) Preview Data    — tabel komprehensif (termasuk "Belum Login")
+// Admin (spm_sumatera / pic_region), sub-menu diurut sesuai alur kerja:
+//   1) Roster Promotor        — daftar identitas promotor (master data)
+//   2) Mapping Outlet Promotor — assignment promotor↔outlet per bulan
+//   3) Geofence                — atur radius validasi tagging
+//   4) Ringkasan Aktivitas     — status login & klaim SP per promotor/brand
+//   5) Validasi GA              — cocokkan klaim dengan data usage GA
+//   6) Klaim Nomor              — audit pengajuan pemindahan MSISDN
+// Tidak ada lagi fitur Check-In/Check-Out — sudah digantikan alur
+// geofencing langsung pada Claim Penjualan (tagging QR/manual).
 // Sumber kebenaran: tabel pts_* di Supabase (TraceHub).
 // ============================================================
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import {
-  Upload, Download, FileSpreadsheet, Users, MapPin, Search, Filter,
+  Upload, Download, FileSpreadsheet, Users, MapPin, Search, Filter, FilterX,
   CheckCircle2, AlertTriangle, Clock, X, ChevronDown, ChevronRight,
-  RefreshCw, Image as ImageIcon, LogIn, ShoppingBag, CalendarDays,
+  RefreshCw, ShoppingBag, CalendarDays,
   Loader2, Store, UserCheck, UserX, Info, Phone, IdCard, Radar,
-  UploadCloud, Plus, Trash2, Pencil, Save, Ban, BarChart3, ArrowLeftRight,
+  UploadCloud, Plus, Trash2, Pencil, Save, Ban, BarChart3, ArrowLeftRight, Settings2, Eye,
 } from "lucide-react";
+import { passesRow, optionsFor, FilterTh, FilterMenu } from "./MFTS_TableFilter";
 
 /* ── Design tokens (selaras dashboard SandraHub) ──────────────────────── */
 const mk = (d) => ({
@@ -47,6 +54,11 @@ const mk = (d) => ({
   red   : d ? "#F87171" : "#DC2626",
   redBg : d ? "rgba(248,113,113,.12)" : "rgba(220,38,38,.07)",
   redBd : d ? "rgba(248,113,113,.30)" : "rgba(220,38,38,.20)",
+  // Alias ke brand (merah) — dipakai komponen filter tabel bersama (MFTS_TableFilter)
+  // yang menulis t.teal/tealBg/tealBd, supaya warna highlight-nya konsisten dgn PTS.
+  teal  : d ? "#ED1C24" : "#ED1C24",
+  tealBg: d ? "rgba(237,28,36,.12)" : "rgba(237,28,36,.07)",
+  tealBd: d ? "rgba(237,28,36,.30)" : "rgba(237,28,36,.20)",
   inputBg: d ? "#131315" : "#FFFFFF",
   sm    : d ? "0 1px 3px rgba(0,0,0,.55)" : "0 1px 3px rgba(23,24,28,.06)",
   md    : d ? "0 8px 24px rgba(0,0,0,.5)" : "0 8px 24px rgba(23,24,28,.09)",
@@ -56,21 +68,11 @@ const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-
 /* ── Helpers ──────────────────────────────────────────────────────────── */
 const MONTHS_ID = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
 const pad2 = (n) => String(n).padStart(2, "0");
-const ymNow = () => { const x = new Date(); return `${x.getFullYear()}-${pad2(x.getMonth() + 1)}`; };
 const ymLabel = (ym) => { if (!ym) return "—"; const [y, m] = ym.split("-"); return `${MONTHS_ID[+m - 1]} ${y}`; };
-const periodOptions = (back = 11, fwd = 1) => {
-  const out = []; const now = new Date();
-  for (let i = -fwd; i <= back; i++) { const d = new Date(now.getFullYear(), now.getMonth() - i, 1); out.push(`${d.getFullYear()}-${pad2(d.getMonth() + 1)}`); }
-  return out;
-};
+// PTS baru mulai berjalan Agustus 2026 — bulan aktif dibatasi ke Agustus & September saja.
+const PERIOD_OPTIONS = ["2026-08", "2026-09"];
 const fmtTime = (iso) => iso ? new Date(iso).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" }) : "";
 const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString("id-ID", { day: "2-digit", month: "short" }) : "";
-const durationOf = (a, b) => {
-  if (!a || !b) return "";
-  const ms = new Date(b).getTime() - new Date(a).getTime(); if (ms < 0) return "";
-  const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
-  return `${h}j ${pad2(m)}m`;
-};
 const emailValid = (e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(e || "").trim());
 
 // Normalisasi nomor telepon → format 62 (mirror aturan server §6 spec)
@@ -82,8 +84,21 @@ export function normalizePhone(raw) {
   return { normalized: d, valid: /^62\d{8,13}$/.test(d), raw: String(raw ?? "") };
 }
 
-// Data Mapping Promotor: 1 baris = 1 outlet, kunci relasi = ID Promotor (bukan email lagi)
-const TEMPLATE_HEADERS = ["Brand", "ID Outlet", "Nama Outlet", "Cluster", "Branch", "Area", "Region", "Longitude", "Latitude", "ID Promotor"];
+// Mapping Outlet Promotor: 1 baris file = 1 promotor, sampai 4 outlet per
+// baris (masing-masing outlet punya ID IM3 & ID 3ID sendiri-sendiri). Kunci
+// relasi promotor: ID Promotor (IM3) diutamakan, lalu ID Promotor (3ID),
+// email sebagai cadangan terakhir — pola ID-dulu-email-cadangan yang sama
+// dipakai di seluruh sistem ini.
+const OUTLET_SLOTS = 4;
+const MAPPING_HEADERS = [
+  "ALAMAT EMAIL PROMOTOR", "ID PROMOTOR (IM3)", "ID PROMOTOR (3ID)", "REGION", "BRANCH", "MC",
+  ...Array.from({ length: OUTLET_SLOTS }, (_, i) => i + 1).flatMap((n) => [
+    `NAMA OUTLET ${n}`, `KATEGORI OUTLET ${n}`, `ID OUTLET ${n} (IM3)`, `ID OUTLET ${n} (3ID)`,
+  ]),
+];
+// Header Excel kadang ada spasi liar sebelum ")" (mis. "(IM3 )") — normalisasi
+// sebelum dibandingkan supaya tetap match.
+const normHeader = (h) => String(h || "").trim().toUpperCase().replace(/\s+/g, " ").replace(/\(\s+/g, "(").replace(/\s+\)/g, ")");
 
 // 3 region resmi Sumatera (selaras IOH Territory)
 const REGIONS = ["NORTH SUMATERA", "CENTRAL SUMATERA", "SOUTH SUMATERA"];
@@ -93,6 +108,7 @@ const REGION_ALIASES = {
   "SOUTH SUMATERA": "SOUTH SUMATERA", SOUTH: "SOUTH SUMATERA", "SUMATERA SELATAN": "SOUTH SUMATERA", SELATAN: "SOUTH SUMATERA", SUMSEL: "SOUTH SUMATERA",
 };
 const canonRegion = (s) => REGION_ALIASES[String(s || "").trim().toUpperCase().replace(/\s+/g, " ")] || null;
+const REGION_SFM_ROLE = { "NORTH SUMATERA": "region_sfm_north", "CENTRAL SUMATERA": "region_sfm_central", "SOUTH SUMATERA": "region_sfm_south" };
 
 // Status validasi GA (D+2, window 3 hari dari tagged_at)
 const GA_STATUS_LABEL = {
@@ -152,10 +168,17 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
   const t = mk(d);
 
   const [tab, setTab] = useState("upload");            // upload | promotor | preview | geofence | ga
-  const [period, setPeriod] = useState(ymNow());
+  const [period, setPeriod] = useState(PERIOD_OPTIONS[0]);
   const [outlets, setOutlets] = useState([]);          // {code, ...}
+  // Outlet fisik bisa punya ID IM3 (code) dan ID 3ID (code_3id) sekaligus —
+  // keduanya harus bisa dipakai untuk mencocokkan ID Outlet dari file upload.
   const outletByCode = useMemo(() => {
-    const m = new Map(); outlets.forEach((o) => m.set(String(o.code).trim().toUpperCase(), o)); return m;
+    const m = new Map();
+    outlets.forEach((o) => {
+      if (o.code) m.set(String(o.code).trim().toUpperCase(), o);
+      if (o.code_3id) m.set(String(o.code_3id).trim().toUpperCase(), o);
+    });
+    return m;
   }, [outlets]);
 
   const loadOutlets = useCallback(async () => {
@@ -164,7 +187,46 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
   }, [supabase]);
   useEffect(() => { loadOutlets(); }, [loadOutlets]);
 
-  const isFullAdmin = profile?.role === "spm_sumatera" || profile?.role === "internal_ioh";
+  /* ── "Lihat sebagai" (View As) — hanya utk SPM Sumatera ────────────────
+     Supaya SPM bisa mengecek tampilan SFM Circle / SFM Region / CSE-RSE
+     per MC tanpa perlu login berganti-ganti akun. Ini simulasi TAMPILAN
+     & SCOPING KLIEN saja (roleLockedRegion/roleLockedMc, tombol aksi) —
+     data yang sudah ter-fetch tetap penuh (RLS asli SPM tidak berubah),
+     jadi write tetap memakai wewenang SPM yang sesungguhnya. ──────────── */
+  const isSpmSumatera = profile?.role === "spm_sumatera";
+  const [viewAs, setViewAs] = useState("self");            // self | circle | region | cse
+  const [viewAsRegion, setViewAsRegion] = useState(REGIONS[0]);
+  const [viewAsMc, setViewAsMc] = useState("");
+  const [mcOptions, setMcOptions] = useState([]);
+
+  useEffect(() => {
+    if (!isSpmSumatera) return;
+    (async () => {
+      const { data } = await supabase.from("pts_assignment").select("mc").not("mc", "is", null);
+      const uniq = [...new Set((data || []).map((r) => String(r.mc || "").trim()).filter(Boolean))].sort();
+      setMcOptions(uniq);
+      setViewAsMc((cur) => cur || uniq[0] || "");
+    })();
+  }, [isSpmSumatera, supabase]);
+
+  const isViewingAs = isSpmSumatera && viewAs !== "self";
+  const effectiveProfile = useMemo(() => {
+    if (!isViewingAs) return profile;
+    if (viewAs === "circle") return { ...profile, role: "salesforce_mgmt_sumatera" };
+    if (viewAs === "region") return { ...profile, role: REGION_SFM_ROLE[viewAsRegion], region: viewAsRegion };
+    if (viewAs === "cse") return { ...profile, role: "cse_rse", cluster: viewAsMc };
+    return profile;
+  }, [isViewingAs, viewAs, viewAsRegion, viewAsMc, profile]);
+
+  const viewAsSummary = viewAs === "circle" ? "SFM Circle (Salesforce Mgmt Sumatera)"
+    : viewAs === "region" ? `SFM Region — ${viewAsRegion}`
+    : viewAs === "cse" ? `CSE / RSE — MC ${viewAsMc || "(pilih MC)"}`
+    : "";
+
+  // pts_full_admin() di server juga meng-include salesforce_mgmt_sumatera —
+  // klien wajib konsisten, supaya simulasi "Lihat sebagai SFM Circle"
+  // benar-benar merepresentasikan akses aslinya (bukan tampilan salah).
+  const isFullAdmin = effectiveProfile?.role === "spm_sumatera" || effectiveProfile?.role === "internal_ioh" || effectiveProfile?.role === "salesforce_mgmt_sumatera";
 
   return (
     <div style={{ fontFamily: FF, color: t.hi }}>
@@ -190,356 +252,229 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
           </div>
         </div>
 
-        {/* Selektor bulan — menonjol */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-          <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: t.lo }}>Bulan aktif</label>
-          <div style={{ position: "relative" }}>
-            <CalendarDays size={15} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: t.brand, pointerEvents: "none" }} />
-            <select value={period} onChange={(e) => setPeriod(e.target.value)}
-              style={{ appearance: "none", fontFamily: FF, fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em", color: t.hi, background: t.card, border: `1.5px solid ${t.brandBd}`, borderRadius: 11, padding: "10px 38px 10px 34px", cursor: "pointer", boxShadow: t.sm }}>
-              {periodOptions().map((p) => <option key={p} value={p}>{ymLabel(p)}</option>)}
-            </select>
-            <ChevronDown size={15} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: t.mid, pointerEvents: "none" }} />
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
+          {/* "Lihat sebagai" — hanya utk SPM Sumatera, supaya bisa cek tampilan
+              role lain (SFM Circle/Region, CSE-RSE per MC) tanpa ganti akun. */}
+          {isSpmSumatera && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: t.lo }}>Lihat sebagai</label>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <select value={viewAs} onChange={(e) => setViewAs(e.target.value)}
+                  style={{ appearance: "none", fontFamily: FF, fontSize: 13, fontWeight: 700, color: isViewingAs ? t.amber : t.hi, background: t.card, border: `1.5px solid ${isViewingAs ? t.amberBd : t.line}`, borderRadius: 11, padding: "10px 14px", cursor: "pointer", boxShadow: t.sm }}>
+                  <option value="self">Saya sendiri (SPM Sumatera)</option>
+                  <option value="circle">SFM Circle</option>
+                  <option value="region">SFM Region</option>
+                  <option value="cse">CSE / RSE (per MC)</option>
+                </select>
+                {viewAs === "region" && (
+                  <select value={viewAsRegion} onChange={(e) => setViewAsRegion(e.target.value)}
+                    style={{ appearance: "none", fontFamily: FF, fontSize: 13, fontWeight: 600, color: t.hi, background: t.card, border: `1.5px solid ${t.amberBd}`, borderRadius: 11, padding: "10px 14px", cursor: "pointer", boxShadow: t.sm }}>
+                    {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                )}
+                {viewAs === "cse" && (
+                  <select value={viewAsMc} onChange={(e) => setViewAsMc(e.target.value)}
+                    style={{ appearance: "none", fontFamily: FF, fontSize: 13, fontWeight: 600, color: t.hi, background: t.card, border: `1.5px solid ${t.amberBd}`, borderRadius: 11, padding: "10px 14px", cursor: "pointer", boxShadow: t.sm, maxWidth: 220 }}>
+                    {mcOptions.length === 0 && <option value="">(belum ada data MC)</option>}
+                    {mcOptions.map((mc) => <option key={mc} value={mc}>{mc}</option>)}
+                  </select>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Selektor bulan — menonjol */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: t.lo }}>Bulan aktif</label>
+            <div style={{ position: "relative" }}>
+              <CalendarDays size={15} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: t.brand, pointerEvents: "none" }} />
+              <select value={period} onChange={(e) => setPeriod(e.target.value)}
+                style={{ appearance: "none", fontFamily: FF, fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em", color: t.hi, background: t.card, border: `1.5px solid ${t.brandBd}`, borderRadius: 11, padding: "10px 38px 10px 34px", cursor: "pointer", boxShadow: t.sm }}>
+                {PERIOD_OPTIONS.map((p) => <option key={p} value={p}>{ymLabel(p)}</option>)}
+              </select>
+              <ChevronDown size={15} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: t.mid, pointerEvents: "none" }} />
+            </div>
           </div>
         </div>
       </div>
 
-      {/* ── Tab switch ─────────────────────────────────────────── */}
+      {isViewingAs && (
+        <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "12px 16px", borderRadius: 12, background: t.amberBg, border: `1px solid ${t.amberBd}`, marginBottom: 18 }}>
+          <Eye size={17} color={t.amber} style={{ flexShrink: 0 }} />
+          <span style={{ fontSize: 13, color: t.hi, flex: 1 }}>
+            Sedang melihat tampilan sebagai <b style={{ color: t.amber }}>{viewAsSummary}</b> — data terlihat &amp; tombol aksi mengikuti batasan role ini. Aksi simpan/hapus tetap memakai wewenang Anda (SPM Sumatera) yang sebenarnya, bukan batasan simulasi ini.
+          </span>
+          <button onClick={() => setViewAs("self")} className="pts-btn" style={{ background: t.card, color: t.amber, border: `1px solid ${t.amberBd}`, flexShrink: 0 }}><X size={13} /> Kembali ke tampilan saya</button>
+        </div>
+      )}
+
+      {/* ── Tab switch — diurut sesuai alur kerja: daftarkan & map promotor →
+          atur radius → pantau aktivitas → validasi GA → audit klaim.
+          Roster & Mapping Outlet SENGAJA digabung jadi satu menu — identitas
+          promotor dan penugasan outletnya adalah satu pekerjaan, bukan dua
+          tab terpisah yang harus bolak-balik. ───────────────────────── */}
       <div style={{ marginBottom: 22 }}>
         <Segmented t={t} value={tab} onChange={setTab}
           options={[
-            { value: "upload",   label: "Data Mapping Promotor", icon: <Upload size={14} /> },
-            { value: "promotor", label: "Data Promotor",         icon: <IdCard size={14} /> },
-            { value: "preview",  label: "Preview Data",          icon: <FileSpreadsheet size={14} /> },
-            { value: "geofence", label: "Geofence",              icon: <Radar size={14} /> },
-            { value: "ga",       label: "Validasi GA",           icon: <UploadCloud size={14} /> },
-            { value: "claims",   label: "Klaim Nomor",           icon: <ArrowLeftRight size={14} /> },
+            { value: "promotor", label: "Promotor & Outlet",        icon: <IdCard size={14} /> },
+            { value: "geofence", label: "Geofence",                 icon: <Radar size={14} /> },
+            { value: "preview",  label: "Ringkasan Aktivitas",      icon: <FileSpreadsheet size={14} /> },
+            { value: "ga",       label: "Validasi GA",              icon: <UploadCloud size={14} /> },
+            { value: "claims",   label: "Klaim Nomor",              icon: <ArrowLeftRight size={14} /> },
           ]} />
       </div>
 
-      {tab === "upload"   && <UploadMapping   t={t} d={d} supabase={supabase} profile={profile} period={period} outletByCode={outletByCode} outletsLoaded={outlets.length} onOutletsNeeded={loadOutlets} />}
-      {tab === "promotor" && <DataPromotor    t={t} d={d} supabase={supabase} profile={profile} />}
+      {tab === "promotor" && <PromotorOutletManager t={t} d={d} supabase={supabase} profile={effectiveProfile} period={period} outletByCode={outletByCode} outletsLoaded={outlets.length} onOutletsNeeded={loadOutlets} />}
       {tab === "preview"  && <PreviewData     t={t} d={d} supabase={supabase} period={period} outletByCode={outletByCode} />}
-      {tab === "geofence" && <GeofenceSettings t={t} d={d} supabase={supabase} profile={profile} outlets={outlets} isFullAdmin={isFullAdmin} />}
-      {tab === "ga"       && <GaValidation    t={t} d={d} supabase={supabase} profile={profile} isFullAdmin={isFullAdmin} outletByCode={outletByCode} period={period} />}
+      {tab === "geofence" && <GeofenceSettings t={t} d={d} supabase={supabase} profile={effectiveProfile} outlets={outlets} isFullAdmin={isFullAdmin} onOutletsChanged={loadOutlets} />}
+      {tab === "ga"       && <GaValidation    t={t} d={d} supabase={supabase} profile={effectiveProfile} isFullAdmin={isFullAdmin} outletByCode={outletByCode} period={period} />}
       {tab === "claims"   && <ClaimHistory    t={t} d={d} supabase={supabase} />}
     </div>
   );
 }
 
 /* ══════════════════════════ UPLOAD MAPPING ════════════════════════════ */
-function UploadMapping({ t, d, supabase, profile, period, outletByCode, outletsLoaded, onOutletsNeeded }) {
-  const fileRef = useRef(null);
-  const [drag, setDrag] = useState(false);
-  const [rows, setRows] = useState(null);        // parsed+validated expanded rows
-  const [fileName, setFileName] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState(null);
-  const [err, setErr] = useState("");
-
-  const region = profile?.region || "";
-  const picRegion = profile?.role === "pic_region" ? canonRegion(profile?.region) : null;
-
-  const resetParse = () => { setRows(null); setFileName(""); setResult(null); setErr(""); if (fileRef.current) fileRef.current.value = ""; };
-
-  /* Download Excel bulan terpilih (data terkini / template) — format Data Mapping Promotor */
-  const downloadExcel = async () => {
-    setErr("");
-    const { data } = await supabase.from("pts_assignment").select("*").eq("period", period);
-    const body = (data || []).map((r) => {
-      const o = outletByCode.get(String(r.outlet_code || "").toUpperCase());
-      return [r.brand || o?.brand || "", r.outlet_code, o?.name || "", r.cluster || o?.cluster || "", r.branch, r.area, r.region, o?.longitude ?? "", o?.latitude ?? "", r.promotor_id || ""];
-    });
-    if (body.length === 0) body.push(["IM3", "OTL-MDN-014", "Outlet Contoh Medan", "Cluster A", "Medan", "Medan Kota", picRegion || "NORTH SUMATERA", 98.6785, 3.5952, "PRO-0001"]);
-    const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADERS, ...body]);
-    ws["!cols"] = [{ wch: 10 }, { wch: 14 }, { wch: 24 }, { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 14 }];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, `Mapping ${period}`);
-    XLSX.writeFile(wb, `PTS_Mapping_${period}.xlsx`);
-  };
-
-  /* Parse file → 1 baris = 1 outlet, kunci = ID Promotor → validasi */
-  const parseFile = async (file) => {
-    setErr(""); setResult(null);
-    try {
-      if (outletsLoaded === 0) await onOutletsNeeded();
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array" });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const raw = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false });
-      if (!raw.length) { setErr("File kosong."); return; }
-      const head = raw[0].map((h) => String(h || "").trim().toLowerCase());
-      const idx = (name) => head.findIndex((h) => h === name.toLowerCase());
-      const iBrand = idx("brand"), iOutlet = idx("id outlet"), iNama = idx("nama outlet"), iCluster = idx("cluster"),
-            iBranch = idx("branch"), iArea = idx("area"), iRegion = idx("region"),
-            iLng = idx("longitude"), iLat = idx("latitude"), iPromo = idx("id promotor");
-      if (iOutlet < 0 || iPromo < 0) { setErr("Header wajib tidak ditemukan: butuh 'ID Outlet' dan 'ID Promotor'."); return; }
-
-      const expanded = [];
-      for (let r = 1; r < raw.length; r++) {
-        const row = raw[r]; if (!row || row.every((c) => c === "" || c == null)) continue;
-        const code = String(row[iOutlet] ?? "").trim();
-        const promotorId = String(row[iPromo] ?? "").trim();
-        const brand = iBrand >= 0 ? String(row[iBrand] ?? "").trim() : "";
-        const namaOutlet = iNama >= 0 ? String(row[iNama] ?? "").trim() : "";
-        const cluster = iCluster >= 0 ? String(row[iCluster] ?? "").trim() : "";
-        const branch = iBranch >= 0 ? String(row[iBranch] ?? "").trim() : "";
-        const area = iArea >= 0 ? String(row[iArea] ?? "").trim() : "";
-        const regRaw = iRegion >= 0 ? String(row[iRegion] ?? "").trim() : "";
-        const regCanon = canonRegion(regRaw) || canonRegion(region);
-        // Number("") === 0 di JS — sel kosong TIDAK BOLEH jadi koordinat (0,0)
-        // literal, harus dianggap "tidak diisi" (NaN) supaya jatuh ke fallback
-        // koordinat outlet yang sudah ada, bukan menimpanya dengan (0,0).
-        const latRaw = iLat >= 0 ? String(row[iLat] ?? "").trim() : "";
-        const lngRaw = iLng >= 0 ? String(row[iLng] ?? "").trim() : "";
-        const lat = latRaw === "" ? NaN : Number(latRaw);
-        const lng = lngRaw === "" ? NaN : Number(lngRaw);
-        const o = outletByCode.get(code.toUpperCase());
-        const errs = [];
-        if (!code) errs.push("ID Outlet kosong");
-        if (!promotorId) errs.push("ID Promotor kosong");
-        if (!regCanon) errs.push("Region harus North/Central/South Sumatera");
-        else if (picRegion && regCanon !== picRegion) errs.push(`Di luar wilayah Anda (${picRegion})`);
-        if (!o && (lat == null || isNaN(lat) || lng == null || isNaN(lng))) errs.push("Outlet baru wajib isi Latitude & Longitude");
-        expanded.push({
-          rowNo: r + 1, period, brand: brand || o?.brand || "", promotor_id: promotorId,
-          outlet_code: code, outlet_id: o?.id || null, outlet_name: namaOutlet || o?.name || code,
-          cluster: cluster || o?.cluster || "", branch: branch || o?.branch || "", area: area || o?.area || "",
-          region: regCanon || regRaw, lat: !isNaN(lat) ? lat : (o?.latitude ?? null), lng: !isNaN(lng) ? lng : (o?.longitude ?? null),
-          status: "active", isNewOutlet: !o, errors: errs,
-        });
-      }
-      setRows(expanded);
-    } catch (e) {
-      setErr("Gagal membaca file: " + (e?.message || e));
-    }
-  };
-
-  const onPick = (e) => { const f = e.target.files?.[0]; if (f) { setFileName(f.name); parseFile(f); } };
-  const onDrop = (e) => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files?.[0]; if (f) { setFileName(f.name); parseFile(f); } };
-
-  const errorCount = rows ? rows.filter((r) => r.errors.length).length : 0;
-  const okRows = rows ? rows.filter((r) => !r.errors.length) : [];
-  const uniqPromotors = rows ? new Set(okRows.map((r) => r.promotor_id.toUpperCase())).size : 0;
-  const newOutlets = rows ? [...new Set(okRows.filter((r) => r.isNewOutlet && r.outlet_code).map((r) => r.outlet_code.toUpperCase()))] : [];
-  const unknownPromotors = rows ? [...new Set(okRows.map((r) => r.promotor_id.toUpperCase()))] : [];
-
-  /* Simpan: buat outlet baru → replace mapping bulan ini (relasi kunci: ID Promotor) */
-  const save = async () => {
-    if (!okRows.length) return;
-    setBusy(true); setErr(""); setResult(null);
-    try {
-      // 1) Auto-create/update outlet dari data mapping (brand, cluster, koordinat)
-      const seenOut = new Set();
-      const outletPayload = [];
-      okRows.forEach((r) => {
-        if (!r.outlet_code) return;
-        const key = r.outlet_code.toUpperCase();
-        if (!seenOut.has(key)) {
-          seenOut.add(key);
-          outletPayload.push({ code: r.outlet_code, name: r.outlet_name || r.outlet_code, brand: r.brand, cluster: r.cluster, branch: r.branch, area: r.area, region: r.region, latitude: r.lat, longitude: r.lng, status: "active" });
-        }
-      });
-      if (outletPayload.length) {
-        const { error: outErr } = await supabase.from("pts_outlet").upsert(outletPayload, { onConflict: "code" });
-        if (outErr) throw outErr;
-      }
-
-      // 2) Resolve promotor_id (business key) → pts_promotor.id (uuid). Promotor harus sudah terdaftar di Data Promotor.
-      const { data: pros } = await supabase.from("pts_promotor").select("id,promotor_id,email,full_name").not("promotor_id", "is", null);
-      const proByBizId = new Map((pros || []).map((p) => [String(p.promotor_id).toUpperCase(), p]));
-      const missingPromotors = [...new Set(okRows.map((r) => r.promotor_id.toUpperCase()))].filter((pid) => !proByBizId.has(pid));
-      if (missingPromotors.length) {
-        throw new Error(`ID Promotor belum terdaftar di tab "Data Promotor": ${missingPromotors.slice(0, 8).join(", ")}${missingPromotors.length > 8 ? ` (+${missingPromotors.length - 8} lainnya)` : ""}. Daftarkan dulu di tab Data Promotor sebelum upload mapping.`);
-      }
-
-      // 3) Refresh master → resolve outlet_id untuk semua kode
-      const { data: freshOutlets } = await supabase.from("pts_outlet").select("id,code");
-      const idByCode = new Map((freshOutlets || []).map((o) => [String(o.code).trim().toUpperCase(), o.id]));
-
-      // 4) Replace mapping bulan ini
-      const { error: delErr } = await supabase.from("pts_assignment").delete().eq("period", period);
-      if (delErr) throw delErr;
-      const payload = okRows.map((r) => {
-        const pro = proByBizId.get(r.promotor_id.toUpperCase());
-        return {
-          period: r.period, email: pro?.email || "", full_name: pro?.full_name || "",
-          promotor_id_ref: pro?.id || null, brand: r.brand, cluster: r.cluster,
-          outlet_id: idByCode.get(r.outlet_code.toUpperCase()) || null,
-          outlet_code: r.outlet_code, branch: r.branch, area: r.area, region: r.region,
-          status: "active", assigned_by: profile?.id || null,
-        };
-      });
-      const { error: insErr } = await supabase.from("pts_assignment").insert(payload);
-      if (insErr) throw insErr;
-
-      await onOutletsNeeded(); // muat ulang master outlet di modul
-      setResult({ mappings: payload.length, promotors: uniqPromotors, skipped: errorCount, newOutlets: outletPayload.filter((o) => !outletByCode.get(o.code.toUpperCase())).length });
-      setRows(null); setFileName(""); if (fileRef.current) fileRef.current.value = "";
-    } catch (e) {
-      setErr("Gagal menyimpan: " + (e?.message || e));
-    } finally { setBusy(false); }
-  };
-
-  return (
-    <div>
-      {/* Banner bulan aktif */}
-      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 16px", borderRadius: 12, background: t.brandBg, border: `1px solid ${t.brandBd}`, marginBottom: 18 }}>
-        <Info size={17} color={t.brand} style={{ flexShrink: 0 }} />
-        <span style={{ fontSize: 13.5, color: t.hi, fontWeight: 500 }}>
-          Anda sedang mengedit mapping bulan <b style={{ color: t.brand }}>{ymLabel(period)}</b>. Perubahan hanya berlaku untuk bulan ini.
-        </span>
-      </div>
-
-      {/* Aksi: download + dropzone */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 14 }}>
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-          <button className="pts-btn" onClick={downloadExcel}
-            style={{ background: t.card, color: t.hi, border: `1px solid ${t.line}`, boxShadow: t.sm }}>
-            <Download size={15} /> Download Excel {ymLabel(period)}
-          </button>
-          <span style={{ fontSize: 12.5, color: t.mid, alignSelf: "center", display: "flex", alignItems: "center", gap: 6 }}>
-            <ChevronRight size={13} /> Unduh, edit di Excel, lalu upload kembali di bawah.
-          </span>
-        </div>
-
-        <div
-          onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
-          onDragLeave={() => setDrag(false)}
-          onDrop={onDrop}
-          onClick={() => fileRef.current?.click()}
-          style={{
-            border: `1.5px dashed ${drag ? t.brand : t.line}`, borderRadius: 14, padding: "34px 24px", textAlign: "center", cursor: "pointer",
-            background: drag ? t.brandBg : t.sub, transition: "all .15s",
-          }}>
-          <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={onPick} />
-          <div style={{ width: 48, height: 48, borderRadius: 12, margin: "0 auto 14px", display: "flex", alignItems: "center", justifyContent: "center", background: t.card, border: `1px solid ${t.line}`, color: t.brand }}>
-            <FileSpreadsheet size={22} />
-          </div>
-          <div style={{ fontSize: 14.5, fontWeight: 600, color: t.hi }}>{fileName || "Tarik file .xlsx / .csv ke sini, atau klik untuk memilih"}</div>
-          <div style={{ fontSize: 12.5, color: t.mid, marginTop: 5 }}>Kolom: Brand · ID Outlet · Nama Outlet · Cluster · Branch · Area · Region · Longitude · Latitude · ID Promotor</div>
-          <div style={{ fontSize: 11.5, color: t.lo, marginTop: 3 }}>1 baris = 1 outlet. ID Promotor harus sudah terdaftar di tab &ldquo;Data Promotor&rdquo;. Region valid: North/Central/South Sumatera.</div>
-        </div>
-      </div>
-
-      {err && (
-        <div style={{ marginTop: 16, display: "flex", gap: 10, padding: "12px 14px", borderRadius: 10, background: t.redBg, border: `1px solid ${t.redBd}` }}>
-          <AlertTriangle size={16} color={t.red} style={{ flexShrink: 0, marginTop: 1 }} />
-          <span style={{ fontSize: 13, color: t.hi }}>{err}</span>
-        </div>
-      )}
-
-      {result && (
-        <div style={{ marginTop: 16, display: "flex", gap: 11, padding: "14px 16px", borderRadius: 12, background: t.greenBg, border: `1px solid ${t.greenBd}` }}>
-          <CheckCircle2 size={18} color={t.green} style={{ flexShrink: 0, marginTop: 1 }} />
-          <div style={{ fontSize: 13.5, color: t.hi }}>
-            <b>Mapping {ymLabel(period)} tersimpan.</b> {result.mappings} mapping outlet untuk {result.promotors} Promotor.
-            {result.newOutlets > 0 && <span style={{ color: t.blue }}> {result.newOutlets} outlet baru dibuat.</span>}
-            {result.skipped > 0 && <span style={{ color: t.amber }}> {result.skipped} baris dilewati karena error.</span>}
-          </div>
-        </div>
-      )}
-
-      {/* Pratinjau hasil parse */}
-      {rows && (
-        <div style={{ marginTop: 18 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: t.hi }}>Pratinjau: {rows.length} baris mapping</span>
-              <Chip t={t} tone="green" icon={<CheckCircle2 size={12} />}>{okRows.length} valid</Chip>
-              {errorCount > 0 && <Chip t={t} tone="red" icon={<AlertTriangle size={12} />}>{errorCount} error</Chip>}
-              <Chip t={t} tone="blue" icon={<Users size={12} />}>{uniqPromotors} promotor</Chip>
-              {newOutlets.length > 0 && <Chip t={t} tone="blue" icon={<Store size={12} />}>{newOutlets.length} outlet baru</Chip>}
-            </div>
-            <div style={{ display: "flex", gap: 9 }}>
-              <button className="pts-btn" onClick={resetParse} style={{ background: t.card, color: t.mid, border: `1px solid ${t.line}` }}><X size={14} /> Batal</button>
-              <button className="pts-btn" onClick={save} disabled={busy || okRows.length === 0}
-                style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}>
-                {busy ? <Loader2 size={15} className="spin" /> : <CheckCircle2 size={15} />} Simpan Mapping {ymLabel(period).split(" ")[0]}
-              </button>
-            </div>
-          </div>
-
-          <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden", boxShadow: t.sm }}>
-            <div style={{ maxHeight: 380, overflow: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr>
-                    {["Baris", "Brand", "ID Outlet", "Nama Outlet", "Cluster", "Branch", "Area", "Region", "ID Promotor", "Status"].map((h) => <th key={h} className="pts-th">{h}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.slice(0, 300).map((r, i) => {
-                    const bad = r.errors.length > 0;
-                    return (
-                      <tr key={i} className="pts-row" style={{ background: bad ? t.redBg : "transparent" }}>
-                        <td className="pts-td" style={{ color: t.mid }}>{r.rowNo}</td>
-                        <td className="pts-td">{r.brand || "—"}</td>
-                        <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 12 }}>{r.outlet_code || "—"}</td>
-                        <td className="pts-td" style={{ fontWeight: 600 }}>{r.outlet_name || "—"}</td>
-                        <td className="pts-td">{r.cluster || "—"}</td>
-                        <td className="pts-td">{r.branch || "—"}</td>
-                        <td className="pts-td">{r.area || "—"}</td>
-                        <td className="pts-td">{r.region || "—"}</td>
-                        <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 700 }}>{r.promotor_id || "—"}</td>
-                        <td className="pts-td">
-                          {bad
-                            ? <span title={r.errors.join("; ")} style={{ display: "inline-flex", alignItems: "center", gap: 5, color: t.red, fontWeight: 600, fontSize: 12 }}><AlertTriangle size={12} /> {r.errors[0]}</span>
-                            : r.isNewOutlet
-                              ? <span title="Outlet baru — akan dibuat otomatis" style={{ display: "inline-flex", alignItems: "center", gap: 5, color: t.blue, fontWeight: 600, fontSize: 12 }}><Store size={12} /> Outlet baru</span>
-                              : <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: t.green, fontWeight: 600, fontSize: 12 }}><CheckCircle2 size={12} /> OK</span>}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            {rows.length > 300 && <div style={{ padding: "9px 14px", fontSize: 12, color: t.mid, borderTop: `1px solid ${t.lineSoft}` }}>Menampilkan 300 dari {rows.length} baris.</div>}
-          </div>
-        </div>
-      )}
-
-      <style>{`.spin{animation:ptsspin 1s linear infinite}@keyframes ptsspin{to{transform:rotate(360deg)}}`}</style>
-    </div>
-  );
-}
-
-/* ══════════════════════════ DATA PROMOTOR ══════════════════════════════
-   Master identitas promotor — ID Promotor jadi kunci bisnis (dipakai di
-   Data Mapping Promotor & pts_sale), email digeser jadi "Email Pribadi". */
+/* ══════════════════════════ PROMOTOR & OUTLET ══════════════════════════
+   Satu menu gabungan: identitas promotor (roster) DAN mapping outlet
+   ditangani bersama — identitas orang dan penugasan outletnya adalah satu
+   pekerjaan, jadi tidak perlu dua tab terpisah. ID Promotor jadi kunci
+   bisnis (dipakai di mapping outlet & pts_sale), email digeser jadi
+   "Email Pribadi" (dipakai utk login). Outlet per bulan dibaca lewat
+   pts_effective_assignment — kalau bulan berjalan belum di-upload, otomatis
+   pakai mapping bulan terakhir yang ada (alokasi dianggap tetap sampai
+   diubah, bukan wajib upload ulang tiap bulan). */
 const emptyPromotorForm = () => ({ id: null, promotor_id: "", full_name: "", email: "", phone: "", region: "", effective_date: "", status: "active" });
 
-function DataPromotor({ t, d, supabase, profile }) {
+function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, outletsLoaded, onOutletsNeeded }) {
   const [loading, setLoading] = useState(true);
   const [list, setList] = useState([]);
+  const [assignSrc, setAssignSrc] = useState(null); // { sourcePeriod, carried } — dari pts_effective_assignment
   const [q, setQ] = useState("");
+  // Filter ala-Excel langsung di header kolom tabel (pola sama dgn roster
+  // Manpower — lihat MFTS_TableFilter/MFTS_Manpower): klik ikon filter di
+  // <th>, cascading options, tidak auto-apply (tombol Terapkan/Bersihkan).
+  const [filters, setFilters] = useState({});
+  const [openCol, setOpenCol] = useState("");
+  const [rect, setRect] = useState(null);
   const [form, setForm] = useState(emptyPromotorForm());
   const [editing, setEditing] = useState(false);
   const [idLocked, setIdLocked] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [showBulk, setShowBulk] = useState(false);
+  const [showBulkMapping, setShowBulkMapping] = useState(false);
+  const [editingMapping, setEditingMapping] = useState(null); // promotor row sedang di-kelola mapping-nya
 
-  const picRegion = profile?.role === "pic_region" ? canonRegion(profile?.region) : null;
+  const region = profile?.region || "";
+  // Role-locked region: PIC Region terkunci ke profile.region, sedangkan
+  // SFM Region terkunci ke wilayah role-nya (north/central/south).
+  const roleLockedRegion = useMemo(() => {
+    const r = profile?.role;
+    if (r === "pic_region") return canonRegion(profile?.region) || null;
+    if (r === "region_sfm_north") return "NORTH SUMATERA";
+    if (r === "region_sfm_central") return "CENTRAL SUMATERA";
+    if (r === "region_sfm_south") return "SOUTH SUMATERA";
+    return null;
+  }, [profile?.role, profile?.region]);
+  const picRegion = roleLockedRegion; // backward-compat: variable dipakai di beberapa tempat lama
+
+  // CSE/RSE terkunci ke 1 MC (cluster) — sejalan dgn RLS pts_cse_ok_mc di
+  // server. Klien fetch data penuh (RLS asli pemanggil yang membatasi utk
+  // CSE sungguhan), jadi filter MC ini dibutuhkan di sisi klien juga.
+  const roleLockedMc = useMemo(() => {
+    if (profile?.role === "cse_rse" && profile?.cluster) return String(profile.cluster).trim().toUpperCase();
+    return null;
+  }, [profile?.role, profile?.cluster]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await supabase.from("pts_promotor").select("*").order("full_name", { ascending: true });
-      setList(data || []);
+      const [proRes, asgRes] = await Promise.all([
+        supabase.from("pts_promotor").select("*").order("full_name", { ascending: true }),
+        supabase.rpc("pts_effective_assignment", { p_period: period }),
+      ]);
+      const promotors = proRes.data || [];
+      const asg = asgRes.data || [];
+      setAssignSrc(asg.length ? { sourcePeriod: asg[0].source_period, carried: asg[0].is_carried_forward } : null);
+
+      const outletsByPromotor = new Map(); // promotor.id → [assignment rows]
+      const metaByPromotor = new Map();    // promotor.id → {branch, mc}
+      asg.forEach((a) => {
+        if (!a.promotor_id_ref) return;
+        if (!outletsByPromotor.has(a.promotor_id_ref)) outletsByPromotor.set(a.promotor_id_ref, []);
+        outletsByPromotor.get(a.promotor_id_ref).push(a);
+        if (!metaByPromotor.has(a.promotor_id_ref)) metaByPromotor.set(a.promotor_id_ref, { branch: a.branch, mc: a.mc });
+      });
+
+      const enriched = promotors.map((p) => {
+        const rows = outletsByPromotor.get(p.id) || [];
+        const meta = metaByPromotor.get(p.id);
+        const vacant = !!p.vacant;
+        const hasRealEmail = !!p.email;
+        return {
+          ...p,
+          outlets: rows.map((a) => {
+            const o = outletByCode.get(String(a.outlet_code || "").toUpperCase());
+            return { name: o?.name || a.outlet_code, category: o?.category || "", im3: o?.code || a.outlet_code, tid: o?.code_3id || "", idPending: !!o?.id_pending };
+          }),
+          branch: meta?.branch || "", mc: meta?.mc || "",
+          // Field flat (string) supaya bisa langsung difilter ala-Excel di header
+          // kolom (lihat FCOLS/MFTS_TableFilter) — bukan objek turunan terpisah.
+          statusPromo: vacant ? "Vacant" : (hasRealEmail && p.effective_date ? "Aktif" : "Pending"),
+          statusMap: rows.length > 0 ? "Sudah ter-mapping" : "Belum ter-mapping",
+          statusLogin: p.auth_user_id ? "Sudah login" : "Belum login",
+        };
+      });
+      setList(enriched);
     } catch { setList([]); } finally { setLoading(false); }
-  }, [supabase]);
+  }, [supabase, period, outletByCode]);
   useEffect(() => { load(); }, [load]);
 
-  const filtered = useMemo(() => {
+  // Kolom yang bisa difilter ala-Excel langsung dari header tabel. Region/MC
+  // dikeluarkan kalau role sudah dikunci ke 1 region/MC saja (tak ada gunanya).
+  const FCOLS = useMemo(() => {
+    const cols = [];
+    if (!roleLockedRegion) cols.push(["region", "Region"]);
+    cols.push(["branch", "Branch"]);
+    if (!roleLockedMc) cols.push(["mc", "MC"]);
+    cols.push(["statusPromo", "Status Promotor"], ["statusMap", "Status Mapping"], ["statusLogin", "Login"]);
+    return cols;
+  }, [roleLockedRegion, roleLockedMc]);
+
+  // Scope role-lock (region ATAU MC, tergantung role) + pencarian teks bebas
+  // → baru difilter header kolom di atasnya.
+  const searched = useMemo(() => {
     const s = q.trim().toLowerCase();
     return list.filter((r) => {
-      if (picRegion && canonRegion(r.region) && canonRegion(r.region) !== picRegion) return false;
+      if (roleLockedRegion && canonRegion(r.region) !== roleLockedRegion) return false;
+      if (roleLockedMc && String(r.mc || "").trim().toUpperCase() !== roleLockedMc) return false;
       if (!s) return true;
-      return `${r.promotor_id} ${r.full_name} ${r.email} ${r.phone}`.toLowerCase().includes(s);
+      return `${r.promotor_id} ${r.full_name || ""} ${r.email || ""} ${r.phone || ""} ${r.outlets.map((o) => o.im3 + " " + o.tid).join(" ")}`.toLowerCase().includes(s);
     });
-  }, [list, q, picRegion]);
+  }, [list, q, roleLockedRegion, roleLockedMc]);
+
+  const filtered = useMemo(() => searched.filter((r) => passesRow(r, filters, FCOLS, null)), [searched, filters, FCOLS]);
+
+  const resetFilters = () => { setQ(""); setFilters({}); setOpenCol(""); };
+  const anyFilterActive = Boolean(q) || FCOLS.some(([k]) => (filters[k] || []).length);
+
+  // Ringkasan atas dihitung dari BARIS YANG SEDANG TAMPIL (sesuai filter aktif)
+  // — bukan dari total keseluruhan — supaya angkanya benar-benar mencerminkan
+  // apa yang sedang difilter/dilihat admin.
+  const stats = useMemo(() => {
+    let aktif = 0, vacant = 0, pending = 0, mapped = 0, unmapped = 0, loggedIn = 0, notLoggedIn = 0;
+    filtered.forEach((r) => {
+      if (r.statusPromo === "Aktif") aktif++; else if (r.statusPromo === "Vacant") vacant++; else pending++;
+      if (r.statusMap === "Sudah ter-mapping") mapped++; else unmapped++;
+      if (r.statusLogin === "Sudah login") loggedIn++; else notLoggedIn++;
+    });
+    return { total: filtered.length, aktif, vacant, pending, mapped, unmapped, loggedIn, notLoggedIn };
+  }, [filtered]);
+  // Denominator konteks ("X dari Y") — total dalam scope role, TANPA filter —
+  // dipisah dari `stats` supaya keduanya bisa punya arti masing-masing.
+  const scopedTotal = useMemo(() => list.filter((r) =>
+    (!roleLockedRegion || canonRegion(r.region) === roleLockedRegion) &&
+    (!roleLockedMc || String(r.mc || "").trim().toUpperCase() === roleLockedMc)
+  ).length, [list, roleLockedRegion, roleLockedMc]);
 
   const startNew = () => { setForm({ ...emptyPromotorForm(), region: picRegion || "" }); setIdLocked(false); setEditing(true); setErr(""); };
   // ID Promotor dikunci hanya bila baris ini SUDAH punya ID (mis. dari roster) —
@@ -548,7 +483,7 @@ function DataPromotor({ t, d, supabase, profile }) {
   const startEdit = (r) => { setForm({ id: r.id, promotor_id: r.promotor_id || "", full_name: r.full_name || "", email: r.email || "", phone: r.phone || "", region: r.region || "", effective_date: r.effective_date || "", status: r.status || "active" }); setIdLocked(!!r.promotor_id); setEditing(true); setErr(""); };
   const cancel = () => { setEditing(false); setForm(emptyPromotorForm()); setErr(""); };
 
-  const save = async () => {
+  const saveForm = async () => {
     setErr("");
     if (!form.promotor_id.trim()) return setErr("ID Promotor wajib diisi.");
     if (!form.full_name.trim()) return setErr("Nama Promotor wajib diisi.");
@@ -556,10 +491,15 @@ function DataPromotor({ t, d, supabase, profile }) {
     setBusy(true);
     try {
       const payload = {
-        promotor_id: form.promotor_id.trim(), full_name: form.full_name.trim(),
-        email: form.email.trim().toLowerCase() || `${form.promotor_id.trim().toLowerCase()}@pts.local`,
-        phone: form.phone.trim() || null, region: form.region || null,
-        effective_date: form.effective_date || null, status: form.status,
+        promotor_id: form.promotor_id.trim(),
+        full_name: form.full_name.trim() || null,
+        // Email kosong → NULL. Tidak boleh jadi dummy @pts.local — biar
+        // status "Pending" (belum ada email) bisa difilter dengan benar.
+        email: form.email.trim().toLowerCase() || null,
+        phone: form.phone.trim() || null,
+        region: form.region || null,
+        effective_date: form.effective_date || null,
+        status: form.status,
       };
       if (form.id) {
         const { error } = await supabase.from("pts_promotor").update(payload).eq("id", form.id);
@@ -574,100 +514,370 @@ function DataPromotor({ t, d, supabase, profile }) {
     } finally { setBusy(false); }
   };
 
-  const toggleStatus = async (r) => {
-    const next = r.status === "active" ? "inactive" : "active";
-    await supabase.from("pts_promotor").update({ status: next }).eq("id", r.id);
-    load();
+  // Status Promotor: Vacant (override manual oleh CSE/SFM Region, dicek
+  // ulang di server via RPC) > Aktif (email pribadi + tanggal efektif
+  // terisi) > Pending (default, data belum lengkap).
+  const promotorStatusInfo = (r) => {
+    if (r.vacant) return { label: "Vacant", bg: t.amberBg, fg: t.amber, bd: t.amberBd, icon: <UserX size={11} /> };
+    const hasRealEmail = !!r.email;
+    if (hasRealEmail && r.effective_date) return { label: "Aktif", bg: t.greenBg, fg: t.green, bd: t.greenBd, icon: <UserCheck size={11} /> };
+    return { label: "Pending", bg: t.hover, fg: t.mid, bd: t.line, icon: <Clock size={11} /> };
   };
 
-  /* ── Import Roster ID (bulk) ─────────────────────────────────────────
-     Format: workbook 3-sheet NSA/CSA/SSA "Promotor Outlet Sumatera", berisi
-     slot ID pra-alokasi (belum tentu ada nama/email/outlet). User ID IM3
-     jadi promotor_id kanonik (kunci abadi pencapaian); User ID 3ID disimpan
-     sebagai referensi. Nama/email/outlet menyusul lewat edit manual atau
-     Data Mapping Promotor bulan berjalan — tanpa mengubah ID. ───────────── */
-  const bulkFileRef = useRef(null);
-  const [bulkDrag, setBulkDrag] = useState(false);
-  const [bulkFileName, setBulkFileName] = useState("");
-  const [bulkRows, setBulkRows] = useState(null);
-  const [bulkBusy, setBulkBusy] = useState(false);
-  const [bulkResult, setBulkResult] = useState(null);
-  const [bulkErr, setBulkErr] = useState("");
-  const SHEET_REGION = { NSA: "NORTH SUMATERA", CSA: "CENTRAL SUMATERA", SSA: "SOUTH SUMATERA" };
+  // Hint UI saja (tombol muncul/tidak) — otorisasi sesungguhnya selalu dicek
+  // ulang di RPC pts_set_promotor_vacant / RLS di server.
+  //
+  // Aturan scope (identik dgn RLS Supabase):
+  //  - spm_sumatera / internal_ioh / salesforce_mgmt_sumatera  → semua promotor
+  //  - region_sfm_* / pic_region                                → per region
+  //  - cse_rse                                                   → per MC (dari assignment)
+  const canManagePromotor = (r) => {
+    const role = profile?.role;
+    if (role === "spm_sumatera" || role === "internal_ioh" || role === "salesforce_mgmt_sumatera") return true;
+    if (role === "region_sfm_north") return canonRegion(r.region) === "NORTH SUMATERA";
+    if (role === "region_sfm_central") return canonRegion(r.region) === "CENTRAL SUMATERA";
+    if (role === "region_sfm_south") return canonRegion(r.region) === "SOUTH SUMATERA";
+    if (role === "pic_region") return canonRegion(r.region) === canonRegion(profile?.region);
+    if (role === "cse_rse") {
+      // CSE hanya boleh baris promotor yang MC-nya = cluster dia.
+      if (!profile?.cluster) return false;
+      return String(r.mc || "").toUpperCase() === String(profile.cluster).toUpperCase();
+    }
+    return false;
+  };
+  const canManageVacancy = canManagePromotor;   // gate yang sama
 
-  const resetBulk = () => { setBulkRows(null); setBulkFileName(""); setBulkResult(null); setBulkErr(""); if (bulkFileRef.current) bulkFileRef.current.value = ""; };
-
-  const parseRosterFile = async (file) => {
-    setBulkErr(""); setBulkResult(null);
+  const [vacantBusy, setVacantBusy] = useState(null);
+  const toggleVacant = async (r) => {
+    setVacantBusy(r.id); setErr("");
     try {
+      const { data, error } = await supabase.rpc("pts_set_promotor_vacant", { p_promotor_id: r.id, p_vacant: !r.vacant });
+      if (error) throw error;
+      if (data?.status === "forbidden") { setErr(`Anda tidak punya akses menandai ${r.full_name} vacant (di luar scope MC/Region Anda).`); return; }
+      if (data?.status !== "ok") { setErr("Gagal mengubah status vacant."); return; }
+      await load();
+    } catch (e) {
+      setErr("Gagal: " + (e?.message || e));
+    } finally { setVacantBusy(null); }
+  };
+
+  /* ── Hapus Promotor ────────────────────────────────────────────────────
+     pts_assignment.promotor_id_ref → pts_promotor.id pakai delete_rule
+     NO ACTION (bukan cascade) — kalau promotor punya mapping outlet di
+     periode manapun, hapus langsung akan gagal kena FK. Jadi bersihkan dulu
+     SEMUA baris pts_assignment miliknya (lintas periode), baru hapus
+     identitasnya. Riwayat pts_sale TIDAK ikut terhapus (kolom promotor_id
+     otomatis jadi NULL via ON DELETE SET NULL) — pencapaian historis tetap
+     ada, cuma tautan identitasnya lepas. */
+  const [deletingPromotor, setDeletingPromotor] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteErr, setDeleteErr] = useState("");
+  const deletePromotor = async (r) => {
+    setDeleteBusy(true); setDeleteErr("");
+    try {
+      const { error: delAsgErr } = await supabase.from("pts_assignment").delete().eq("promotor_id_ref", r.id);
+      if (delAsgErr) throw delAsgErr;
+      const { error: delProErr } = await supabase.from("pts_promotor").delete().eq("id", r.id);
+      if (delProErr) throw delProErr;
+      setDeletingPromotor(null);
+      await load();
+    } catch (e) {
+      setDeleteErr("Gagal menghapus: " + (e?.message || e));
+    } finally { setDeleteBusy(false); }
+  };
+
+  /* ── Upload Mapping (bulk identitas + assignment) ─────────────────────
+     1 baris file = 1 promotor, sampai 4 slot outlet → di-expand jadi 1
+     baris internal per outlet. Relasi kunci: ID Promotor (IM3) diutamakan,
+     lalu ID Promotor (3ID), email sebagai cadangan terakhir. ────────────── */
+  const mapFileRef = useRef(null);
+  const [mapDrag, setMapDrag] = useState(false);
+  const [mapRows, setMapRows] = useState(null);
+  const [mapFileName, setMapFileName] = useState("");
+  const [mapBusy, setMapBusy] = useState(false);
+  const [mapResult, setMapResult] = useState(null);
+  const [mapErr, setMapErr] = useState("");
+
+  const resetMapParse = () => { setMapRows(null); setMapFileName(""); setMapResult(null); setMapErr(""); if (mapFileRef.current) mapFileRef.current.value = ""; };
+
+  const downloadExcel = () => {
+    setMapErr("");
+    const withOutlets = list.filter((p) => p.outlets.length > 0);
+    const body = withOutlets.map((p) => {
+      const row = [p.email || "", p.promotor_id || "", p.user_id_3id || "", p.region || "", p.branch || "", p.mc || ""];
+      for (let n = 0; n < OUTLET_SLOTS; n++) {
+        const o = p.outlets[n];
+        row.push(o?.name || "", o?.category || "", o?.im3 || "", o?.tid || "");
+      }
+      return row;
+    });
+    if (body.length === 0) body.push([
+      "nama@email.com", "PRSMTRSS1001", "PR3IDSS1001", picRegion || "SOUTH SUMATERA", "Palembang", "MC-01",
+      "Outlet Contoh 1", "Kios", "OTL-IM3-0001", "OTL-3ID-0001", "", "", "", "", "", "", "", "", "", "", "", "",
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([MAPPING_HEADERS, ...body]);
+    ws["!cols"] = MAPPING_HEADERS.map((h) => ({ wch: h.startsWith("NAMA") ? 22 : h.startsWith("ID") ? 16 : 14 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `Mapping ${period}`);
+    XLSX.writeFile(wb, `PTS_Mapping_${period}.xlsx`);
+  };
+
+  const parseMapFile = async (file) => {
+    setMapErr(""); setMapResult(null);
+    try {
+      if (outletsLoaded === 0) await onOutletsNeeded();
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: "array" });
-      const parsed = [];
-      wb.SheetNames.forEach((sheetName) => {
-        const ws = wb.Sheets[sheetName];
-        const raw = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false });
-        if (!raw.length) return;
-        const head = raw[0].map((h) => String(h || "").trim().replace(/\s+/g, " ").toUpperCase());
-        const idx = (name) => head.findIndex((h) => h === name);
-        const iUserIm3 = idx("USER ID IM3"), iUser3id = idx("USER ID 3ID"),
-              iRegion = idx("REGION"), iName = idx("NAMA PROMOTOR"), iHp = idx("HP PROMOTOR"),
-              iKtp = idx("KTP PROMOTOR"), iEmail = idx("EMAIL PROMOTOR");
-        if (iUserIm3 < 0) return; // sheet tak dikenali (bukan format roster), lewati
-        const fallbackRegion = SHEET_REGION[sheetName.trim().toUpperCase()] || "";
-        for (let r = 1; r < raw.length; r++) {
-          const row = raw[r]; if (!row || row.every((c) => c === "" || c == null)) continue;
-          const promotorId = String(row[iUserIm3] ?? "").trim();
-          if (!promotorId) continue;
-          const regionRaw = iRegion >= 0 ? String(row[iRegion] ?? "").trim() : "";
-          parsed.push({
-            sheet: sheetName, promotor_id: promotorId,
-            user_id_3id: iUser3id >= 0 ? (String(row[iUser3id] ?? "").trim() || null) : null,
-            full_name: iName >= 0 ? (String(row[iName] ?? "").trim() || null) : null,
-            phone: iHp >= 0 ? (String(row[iHp] ?? "").trim() || null) : null,
-            ktp: iKtp >= 0 ? (String(row[iKtp] ?? "").trim() || null) : null,
-            email: iEmail >= 0 ? (String(row[iEmail] ?? "").trim().toLowerCase() || null) : null,
-            region: canonRegion(regionRaw) || canonRegion(fallbackRegion) || null,
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false });
+      if (!raw.length) { setMapErr("File kosong."); return; }
+      const head = raw[0].map(normHeader);
+      const idx = (name) => head.findIndex((h) => h === normHeader(name));
+      const iEmail = idx("ALAMAT EMAIL PROMOTOR"), iIdIm3 = idx("ID PROMOTOR (IM3)"), iId3id = idx("ID PROMOTOR (3ID)"),
+            iRegion = idx("REGION"), iBranch = idx("BRANCH"), iMc = idx("MC");
+      if (iIdIm3 < 0 && iId3id < 0) {
+        setMapErr("Header wajib tidak ditemukan: butuh minimal salah satu 'ID PROMOTOR (IM3)' / 'ID PROMOTOR (3ID)'.");
+        return;
+      }
+      const slots = Array.from({ length: OUTLET_SLOTS }, (_, i) => i + 1).map((n) => ({
+        n, iNama: idx(`NAMA OUTLET ${n}`), iKategori: idx(`KATEGORI OUTLET ${n}`),
+        iIm3: idx(`ID OUTLET ${n} (IM3)`), iTid: idx(`ID OUTLET ${n} (3ID)`),
+      })).filter((s) => s.iNama >= 0 || s.iIm3 >= 0 || s.iTid >= 0);
+      if (!slots.length) { setMapErr("Header wajib tidak ditemukan: minimal 1 slot outlet (mis. 'ID OUTLET 1 (IM3)')."); return; }
+
+      // Slot outlet EFEKTIF per promotor — bukan posisi kolom baris asal.
+      // Kalau ID Promotor yang sama muncul lagi di baris lain (mis. dobel
+      // input, masing-masing cuma isi Outlet 1 dengan outlet berbeda),
+      // kemunculan kedua otomatis digeser ke slot berikutnya yang masih
+      // kosong (Outlet 2, dst) — bukan tabrakan di slot 1 yang sama.
+      // Maksimal tetap 4 outlet per promotor; kelebihannya error, bukan
+      // dibuang diam-diam.
+      const slotCounter = new Map(); // promoKey → jumlah outlet terpakai
+      const nextSlot = (key) => {
+        const n = (slotCounter.get(key) || 0) + 1;
+        slotCounter.set(key, n);
+        return n;
+      };
+
+      const expanded = [];
+      for (let r = 1; r < raw.length; r++) {
+        const row = raw[r]; if (!row || row.every((c) => c === "" || c == null)) continue;
+        const email = String(row[iEmail] ?? "").trim();
+        const promotorId = iIdIm3 >= 0 ? String(row[iIdIm3] ?? "").trim() : "";
+        const user3id = iId3id >= 0 ? String(row[iId3id] ?? "").trim() : "";
+        if (!email && !promotorId && !user3id) continue;
+        const regRaw = iRegion >= 0 ? String(row[iRegion] ?? "").trim() : "";
+        const regCanon = canonRegion(regRaw) || canonRegion(region);
+        const branch = iBranch >= 0 ? String(row[iBranch] ?? "").trim() : "";
+        const mc = iMc >= 0 ? String(row[iMc] ?? "").trim() : "";
+
+        const rowErrs = [];
+        // Email pribadi opsional di tahap ini (dipakai untuk sinkron login bila
+        // diisi) — identitas promotor sudah cukup dari ID IM3/3ID saja.
+        if (!promotorId && !user3id) rowErrs.push("ID Promotor (IM3/3ID) kosong");
+        if (!regCanon) rowErrs.push("Region harus North/Central/South Sumatera");
+        else if (picRegion && regCanon !== picRegion) rowErrs.push(`Di luar wilayah Anda (${picRegion})`);
+
+        const promoKey = (promotorId || user3id || email || `row-${r}`).toUpperCase();
+
+        let anyOutlet = false;
+        slots.forEach((s) => {
+          const outletName = s.iNama >= 0 ? String(row[s.iNama] ?? "").trim() : "";
+          const kategori = s.iKategori >= 0 ? String(row[s.iKategori] ?? "").trim() : "";
+          const outIm3 = s.iIm3 >= 0 ? String(row[s.iIm3] ?? "").trim() : "";
+          const outTid = s.iTid >= 0 ? String(row[s.iTid] ?? "").trim() : "";
+          if (!outletName && !outIm3 && !outTid) return; // slot benar-benar kosong — lewati
+          anyOutlet = true;
+
+          // Slot efektif promotor ini (lintas baris) — bukan posisi kolom
+          // baris asal. ID Promotor sama yang muncul lagi di baris lain
+          // otomatis lanjut ke slot berikutnya (Outlet 2, 3, 4), bukan
+          // tabrakan di slot yang sama.
+          const effSlot = nextSlot(promoKey);
+          if (effSlot > OUTLET_SLOTS) {
+            expanded.push({
+              rowNo: r + 1, slot: effSlot, period,
+              email, promotor_id: promotorId, user_id_3id: user3id,
+              outlet_code: "", outlet_code_3id: null, outlet_im3: outIm3 || "", outlet_3id: outTid || "",
+              outlet_id: null, outlet_name: outletName || "", category: kategori || "",
+              branch, mc, region: regCanon || regRaw, isNewOutlet: false, idIncomplete: false,
+              errors: [...rowErrs, `Promotor sudah punya ${OUTLET_SLOTS} outlet — outlet ke-${effSlot} ini tidak bisa diproses`],
+            });
+            return;
+          }
+
+          // Outlet dengan nama tapi belum ada ID sama sekali TETAP disimpan
+          // (bukan error yang menggagalkan baris) — itu tetap alokasi nyata,
+          // cuma ID resminya belum lengkap. Pakai kode placeholder supaya
+          // baris ini tidak pernah dibuang begitu saja.
+          const hasId = !!(outIm3 || outTid);
+          const idIncomplete = !hasId;
+          const primaryCode = outIm3 || outTid || `PENDING-${promoKey}-${effSlot}`;
+          const secondaryCode = outIm3 && outTid ? outTid : null;
+          const existing = hasId ? outletByCode.get(primaryCode.toUpperCase()) : null;
+          expanded.push({
+            rowNo: r + 1, slot: effSlot, period,
+            email, promotor_id: promotorId, user_id_3id: user3id,
+            outlet_code: primaryCode, outlet_code_3id: secondaryCode,
+            outlet_im3: outIm3 || "", outlet_3id: outTid || "",
+            outlet_id: existing?.id || null, outlet_name: outletName || existing?.name || primaryCode,
+            category: kategori || existing?.category || "",
+            branch, mc, region: regCanon || regRaw,
+            isNewOutlet: !existing, idIncomplete, errors: [...rowErrs],
+          });
+        });
+        if (!anyOutlet) {
+          // Identity-only row: promotor terdaftar/di-update, tapi belum
+          // punya outlet bulan ini. Bukan error — tetap tersimpan supaya
+          // status Aktif/Vacant/Pending & filter berjalan benar.
+          expanded.push({
+            rowNo: r + 1, slot: 0, period, email, promotor_id: promotorId, user_id_3id: user3id,
+            outlet_code: "", outlet_code_3id: null, outlet_id: null, outlet_name: "", category: "",
+            branch, mc, region: regCanon || regRaw, isNewOutlet: false, identityOnly: true,
+            errors: [...rowErrs],
           });
         }
-      });
-      if (!parsed.length) { setBulkErr("Tidak ditemukan baris dengan 'User ID IM3' pada file ini."); return; }
-      setBulkRows(parsed);
+      }
+      setMapRows(expanded);
     } catch (e) {
-      setBulkErr("Gagal membaca file: " + (e?.message || e));
+      setMapErr("Gagal membaca file: " + (e?.message || e));
     }
   };
 
-  const onBulkPick = (e) => { const f = e.target.files?.[0]; if (f) { setBulkFileName(f.name); parseRosterFile(f); } };
-  const onBulkDrop = (e) => { e.preventDefault(); setBulkDrag(false); const f = e.dataTransfer.files?.[0]; if (f) { setBulkFileName(f.name); parseRosterFile(f); } };
+  const onMapPick = (e) => { const f = e.target.files?.[0]; if (f) { setMapFileName(f.name); parseMapFile(f); } };
+  const onMapDrop = (e) => { e.preventDefault(); setMapDrag(false); const f = e.dataTransfer.files?.[0]; if (f) { setMapFileName(f.name); parseMapFile(f); } };
 
-  const saveBulk = async () => {
-    if (!bulkRows?.length) return;
-    setBulkBusy(true); setBulkErr(""); setBulkResult(null);
+  const mapErrorCount = mapRows ? mapRows.filter((r) => r.errors.length).length : 0;
+  const mapOkRows = mapRows ? mapRows.filter((r) => !r.errors.length) : [];
+  const mapUniqPromotors = mapRows ? new Set(mapOkRows.map((r) => (r.email || r.promotor_id || r.user_id_3id).toLowerCase())).size : 0;
+  const mapNewOutlets = mapRows ? [...new Set(mapOkRows.filter((r) => r.isNewOutlet && r.outlet_code).map((r) => r.outlet_code.toUpperCase()))] : [];
+  const mapIncompleteCount = mapRows ? mapOkRows.filter((r) => r.idIncomplete).length : 0;
+
+  const saveMap = async () => {
+    if (!mapOkRows.length) return;
+    setMapBusy(true); setMapErr(""); setMapResult(null);
     try {
-      const payload = bulkRows.map((r) => ({
-        promotor_id: r.promotor_id,
-        user_id_3id: r.user_id_3id,
-        full_name: r.full_name,
-        email: r.email || `${r.promotor_id.toLowerCase()}@pts.local`,
-        phone: r.phone,
-        ktp: r.ktp,
-        region: r.region,
-        status: "pending",
-      }));
-      const chunkSize = 200;
-      let saved = 0;
-      for (let i = 0; i < payload.length; i += chunkSize) {
-        const chunk = payload.slice(i, i + chunkSize);
-        const { error } = await supabase.from("pts_promotor").upsert(chunk, { onConflict: "promotor_id" });
-        if (error) throw error;
-        saved += chunk.length;
+      // 1) Upsert outlet dari tiap slot (code = ID IM3/3ID mana pun yang terisi)
+      const seenOut = new Set();
+      const outletPayload = [];
+      mapOkRows.forEach((r) => {
+        if (!r.outlet_code) return;
+        const key = r.outlet_code.toUpperCase();
+        if (seenOut.has(key)) return;
+        seenOut.add(key);
+        outletPayload.push({
+          code: r.outlet_code, code_3id: r.outlet_code_3id || null,
+          name: r.outlet_name || r.outlet_code, category: r.category || null,
+          branch: r.branch, region: r.region, status: "active",
+          id_pending: !!r.idIncomplete,
+        });
+      });
+      if (outletPayload.length) {
+        const { error: outErr } = await supabase.from("pts_outlet").upsert(outletPayload, { onConflict: "code" });
+        if (outErr) throw outErr;
       }
-      setBulkResult({ saved, total: bulkRows.length });
-      setBulkRows(null); setBulkFileName(""); if (bulkFileRef.current) bulkFileRef.current.value = "";
-      await load();
+
+      // 2) Resolve promotor: ID IM3 → ID 3ID → email (pola ID-dulu-email-cadangan).
+      //    Yang belum terdaftar OTOMATIS dibuat (upsert by promotor_id) —
+      //    tidak perlu langkah "roster import" terpisah lagi.
+      let { data: pros } = await supabase.from("pts_promotor").select("id,promotor_id,user_id_3id,email,full_name");
+      const buildMaps = (list) => ({
+        byIm3: new Map((list || []).filter((p) => p.promotor_id).map((p) => [String(p.promotor_id).toUpperCase(), p])),
+        by3id: new Map((list || []).filter((p) => p.user_id_3id).map((p) => [String(p.user_id_3id).toUpperCase(), p])),
+        byEmail: new Map((list || []).map((p) => [(p.email || "").toLowerCase(), p])),
+      });
+      let { byIm3: proByIm3, by3id: proBy3id, byEmail: proByEmail } = buildMaps(pros);
+      const resolvePro = (r) => (r.promotor_id && proByIm3.get(r.promotor_id.toUpperCase()))
+        || (r.user_id_3id && proBy3id.get(r.user_id_3id.toUpperCase()))
+        || (r.email && proByEmail.get(r.email.toLowerCase()));
+
+      const uniqByPromotor = new Map(); // 1 entri per promotor unik (dedup lintas slot)
+      mapOkRows.forEach((r) => { const k = (r.promotor_id || r.user_id_3id || r.email).toUpperCase(); if (!uniqByPromotor.has(k)) uniqByPromotor.set(k, r); });
+
+      // Baris tanpa promotor_id (IM3) tidak bisa auto-create karena
+      // promotor_id adalah kunci bisnis wajib. Yang mungkin dibuat: ada
+      // promotor_id tapi belum ada di DB.
+      const toCreate = [...uniqByPromotor.values()].filter((r) => r.promotor_id && !resolvePro(r));
+      let createdCount = 0;
+      if (toCreate.length) {
+        const createPayload = toCreate.map((r) => ({
+          promotor_id: r.promotor_id,
+          user_id_3id: r.user_id_3id || null,
+          full_name: null,   // nama menyusul dari Promotor Baru / Edit
+          email: r.email || null,
+          region: r.region || null,
+          status: "pending",
+        }));
+        const { error: crErr } = await supabase.from("pts_promotor").upsert(createPayload, { onConflict: "promotor_id" });
+        if (crErr) throw crErr;
+        createdCount = createPayload.length;
+        // Refresh cache dari server supaya baris baru bisa diresolve
+        const refresh = await supabase.from("pts_promotor").select("id,promotor_id,user_id_3id,email,full_name");
+        pros = refresh.data || pros;
+        ({ byIm3: proByIm3, by3id: proBy3id, byEmail: proByEmail } = buildMaps(pros));
+      }
+
+      const stillMissing = [...uniqByPromotor.values()].filter((r) => !resolvePro(r));
+      if (stillMissing.length) {
+        const preview = stillMissing.slice(0, 8).map((r) => r.email || r.user_id_3id).join(", ");
+        throw new Error(`Baris tanpa ID Promotor (IM3) tidak bisa dibuat otomatis: ${preview}${stillMissing.length > 8 ? ` (+${stillMissing.length - 8} lainnya)` : ""}. Lengkapi ID Promotor (IM3) di file.`);
+      }
+
+      // 3) Sinkron email pribadi & ID 3ID promotor dari file (tidak pernah
+      //    menimpa nilai asli dengan kosong; kegagalan 1 promotor tidak
+      //    menggagalkan keseluruhan batch — email unik bisa bentrok).
+      const proUpdates = [];
+      uniqByPromotor.forEach((r) => {
+        const pro = resolvePro(r);
+        const patch = {};
+        if (r.email && pro.email?.toLowerCase() !== r.email.toLowerCase()) patch.email = r.email;
+        if (r.user_id_3id && pro.user_id_3id !== r.user_id_3id) patch.user_id_3id = r.user_id_3id;
+        if (Object.keys(patch).length) proUpdates.push({ id: pro.id, patch });
+      });
+      await Promise.all(proUpdates.map(async ({ id, patch }) => {
+        const { error } = await supabase.from("pts_promotor").update(patch).eq("id", id);
+        if (error) console.warn("Gagal sinkron promotor", id, error.message);
+      }));
+
+      // 4) Refresh master outlet → resolve outlet_id untuk semua kode
+      const { data: freshOutlets } = await supabase.from("pts_outlet").select("id,code");
+      const idByCode = new Map((freshOutlets || []).map((o) => [String(o.code).trim().toUpperCase(), o.id]));
+
+      // 5) Replace mapping bulan ini — HANYA baris yang punya outlet yang
+      //    di-insert ke pts_assignment. Baris identity-only sudah di-upsert
+      //    ke pts_promotor di atas dan tidak menghasilkan assignment.
+      const { error: delErr } = await supabase.from("pts_assignment").delete().eq("period", period);
+      if (delErr) throw delErr;
+      const payload = mapOkRows.filter((r) => r.outlet_code).map((r) => {
+        const pro = resolvePro(r);
+        return {
+          period: r.period, email: pro?.email || r.email || null, full_name: pro?.full_name || null,
+          promotor_id_ref: pro?.id || null, mc: r.mc || null,
+          outlet_id: idByCode.get(r.outlet_code.toUpperCase()) || null,
+          outlet_code: r.outlet_code, branch: r.branch, region: r.region,
+          status: "active", assigned_by: profile?.id || null,
+        };
+      });
+      if (payload.length) {
+        const { error: insErr } = await supabase.from("pts_assignment").insert(payload);
+        if (insErr) throw insErr;
+      }
+
+      await onOutletsNeeded(); // muat ulang master outlet di modul
+      await load(); // refresh tabel gabungan
+      const identityOnlyCount = mapOkRows.filter((r) => r.identityOnly).length;
+      setMapResult({
+        mappings: payload.length,
+        promotors: uniqByPromotor.size,
+        identityOnly: identityOnlyCount,
+        created: createdCount,
+        skipped: mapErrorCount,
+        newOutlets: outletPayload.filter((o) => !outletByCode.get(o.code.toUpperCase())).length,
+      });
+      setMapRows(null); setMapFileName(""); if (mapFileRef.current) mapFileRef.current.value = "";
     } catch (e) {
-      setBulkErr("Gagal menyimpan: " + (e?.message || e));
-    } finally { setBulkBusy(false); }
+      setMapErr("Gagal menyimpan: " + (e?.message || e));
+    } finally { setMapBusy(false); }
   };
 
   return (
@@ -675,87 +885,159 @@ function DataPromotor({ t, d, supabase, profile }) {
       <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 16px", borderRadius: 12, background: t.brandBg, border: `1px solid ${t.brandBd}`, marginBottom: 18 }}>
         <Info size={17} color={t.brand} style={{ flexShrink: 0 }} />
         <span style={{ fontSize: 13.5, color: t.hi, fontWeight: 500 }}>
-          Master identitas Promotor. <b>ID Promotor</b> adalah kunci yang dipakai saat mengisi <b>Data Mapping Promotor</b> — daftarkan promotor di sini dulu sebelum melakukan mapping outlet.
+          Identitas Promotor &amp; penugasan outlet-nya untuk <b style={{ color: t.brand }}>{ymLabel(period)}</b> dalam satu tabel. Alokasi outlet dianggap tetap sampai diubah — kalau bulan ini belum di-upload, otomatis pakai mapping bulan terakhir.
+          {assignSrc?.carried && <> <b style={{ color: t.amber }}>Sedang menampilkan mapping dari {ymLabel(assignSrc.sourcePeriod)}.</b></>}
         </span>
       </div>
 
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-        <div style={{ position: "relative" }}>
-          <Search size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: t.mid }} />
-          <input className="pts-in" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari ID Promotor / nama / email"
-            style={{ paddingLeft: 32, width: 260 }} />
+      {/* Ringkasan — mengikuti filter yang sedang aktif (search + filter
+          header kolom), bukan total keseluruhan. Angka "X dari Y" total
+          tanpa-filter tetap ada di caption bawah tabel untuk konteks. */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 8, marginBottom: 14 }}>
+        <StatMini t={t} label="Ditampilkan"  value={stats.total}       tone="neutral" />
+        <StatMini t={t} label="Aktif"        value={stats.aktif}       tone="green" />
+        <StatMini t={t} label="Vacant"       value={stats.vacant}      tone="amber" />
+        <StatMini t={t} label="Pending"      value={stats.pending}     tone="neutral" />
+        <StatMini t={t} label="Ter-mapping"  value={stats.mapped}      tone="green" />
+        <StatMini t={t} label="Belum mapping" value={stats.unmapped}   tone="blue" />
+        <StatMini t={t} label="Sudah login"  value={stats.loggedIn}    tone="green" />
+        <StatMini t={t} label="Belum login"  value={stats.notLoggedIn} tone="amber" />
+      </div>
+
+      {/* Toolbar: search + actions. Filter per kolom sekarang langsung di
+          header tabel (klik ikon filter di setiap <th>, ala-Excel) — lihat
+          FilterTh/FilterMenu di bawah, pola yang sama seperti roster Manpower. */}
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+        <div style={{ display: "flex", gap: 9, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ position: "relative" }}>
+            <Search size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: t.mid }} />
+            <input className="pts-in" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari ID Promotor / nama / email / outlet"
+              style={{ paddingLeft: 32, width: 300 }} />
+          </div>
+          {anyFilterActive && (
+            <button className="pts-btn" onClick={resetFilters} style={{ background: t.redBg, color: t.red, border: `1px solid ${t.redBd}` }}><FilterX size={14} /> Hapus filter</button>
+          )}
+          {anyFilterActive && <span style={{ fontSize: 11.5, color: t.mid, fontWeight: 600 }}>{filtered.length} dari {searched.length} baris</span>}
         </div>
-        <div style={{ display: "flex", gap: 9 }}>
+        <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
           <button className="pts-btn" onClick={load} style={{ background: t.card, color: t.mid, border: `1px solid ${t.line}` }}><RefreshCw size={14} /> Muat ulang</button>
-          <button className="pts-btn" onClick={() => { setShowBulk((v) => !v); resetBulk(); }} style={{ background: t.card, color: t.hi, border: `1px solid ${t.line}`, boxShadow: t.sm }}><UploadCloud size={15} /> Import Roster ID</button>
-          <button className="pts-btn" onClick={startNew} style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}><Plus size={15} /> Promotor Baru</button>
+          <button className="pts-btn" onClick={downloadExcel} style={{ background: t.card, color: t.hi, border: `1px solid ${t.line}`, boxShadow: t.sm }}><Download size={15} /> Download Mapping {ymLabel(period)}</button>
+          <button className="pts-btn" onClick={() => { setShowBulkMapping((v) => !v); resetMapParse(); }} style={{ background: t.card, color: t.hi, border: `1px solid ${t.line}`, boxShadow: t.sm }}><Upload size={15} /> Upload Mapping</button>
+          {profile?.role !== "cse_rse" && (
+            <button className="pts-btn" onClick={startNew} style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}><Plus size={15} /> Promotor Baru</button>
+          )}
         </div>
       </div>
 
-      {showBulk && (
+      {/* ── Panel: Upload Mapping ────────────────────────────────────── */}
+      {showBulkMapping && (
         <div style={{ marginBottom: 18, padding: 18, borderRadius: 14, background: t.card, border: `1px solid ${t.line}`, boxShadow: t.md }}>
-          <div style={{ fontSize: 14, fontWeight: 700, color: t.hi, marginBottom: 6 }}>Import Roster ID (Excel 3-sheet NSA/CSA/SSA)</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: t.hi, marginBottom: 6 }}>Upload Mapping — {ymLabel(period)}</div>
           <div style={{ fontSize: 12.5, color: t.mid, marginBottom: 14 }}>
-            Untuk file &ldquo;Promotor Outlet Sumatera&rdquo; — tiap baris = 1 slot promotor dengan ID pra-alokasi (<b>User ID IM3</b> jadi ID Promotor permanen, <b>User ID 3ID</b> disimpan sebagai referensi). Nama/email boleh masih kosong dan diisi belakangan tanpa mengubah ID; ID yang sudah ada akan di-update (upsert berdasarkan ID Promotor), bukan diduplikasi.
+            Kolom: Alamat Email Promotor · ID Promotor (IM3) · ID Promotor (3ID) · Region · Branch · MC · lalu Nama/Kategori/ID Outlet (IM3)/(3ID) untuk Outlet 1–4. 1 baris = 1 promotor, sampai 4 outlet. Promotor baru akan otomatis dibuat berdasarkan ID Promotor bila belum ada di sistem.
           </div>
           <div
-            onDragOver={(e) => { e.preventDefault(); setBulkDrag(true); }}
-            onDragLeave={() => setBulkDrag(false)}
-            onDrop={onBulkDrop}
-            onClick={() => bulkFileRef.current?.click()}
+            onDragOver={(e) => { e.preventDefault(); setMapDrag(true); }}
+            onDragLeave={() => setMapDrag(false)}
+            onDrop={onMapDrop}
+            onClick={() => mapFileRef.current?.click()}
             style={{
-              border: `1.5px dashed ${bulkDrag ? t.brand : t.line}`, borderRadius: 14, padding: "26px 20px", textAlign: "center", cursor: "pointer",
-              background: bulkDrag ? t.brandBg : t.sub, transition: "all .15s",
+              border: `1.5px dashed ${mapDrag ? t.brand : t.line}`, borderRadius: 14, padding: "26px 20px", textAlign: "center", cursor: "pointer",
+              background: mapDrag ? t.brandBg : t.sub, transition: "all .15s",
             }}>
-            <input ref={bulkFileRef} type="file" accept=".xlsx,.xls" hidden onChange={onBulkPick} />
+            <input ref={mapFileRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={onMapPick} />
             <FileSpreadsheet size={22} style={{ color: t.brand, marginBottom: 8 }} />
-            <div style={{ fontSize: 14, fontWeight: 600, color: t.hi }}>{bulkFileName || "Tarik file .xlsx ke sini, atau klik untuk memilih"}</div>
+            <div style={{ fontSize: 14, fontWeight: 600, color: t.hi }}>{mapFileName || "Tarik file .xlsx / .csv ke sini, atau klik untuk memilih"}</div>
           </div>
 
-          {bulkErr && <div style={{ marginTop: 14, display: "flex", gap: 10, padding: "12px 14px", borderRadius: 10, background: t.redBg, border: `1px solid ${t.redBd}` }}><AlertTriangle size={16} color={t.red} style={{ flexShrink: 0, marginTop: 1 }} /><span style={{ fontSize: 13, color: t.hi }}>{bulkErr}</span></div>}
+          {mapErr && (
+            <div style={{ marginTop: 14, display: "flex", gap: 10, padding: "12px 14px", borderRadius: 10, background: t.redBg, border: `1px solid ${t.redBd}` }}>
+              <AlertTriangle size={16} color={t.red} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 13, color: t.hi }}>{mapErr}</span>
+            </div>
+          )}
 
-          {bulkResult && <div style={{ marginTop: 14, display: "flex", gap: 11, padding: "14px 16px", borderRadius: 12, background: t.greenBg, border: `1px solid ${t.greenBd}` }}><CheckCircle2 size={18} color={t.green} style={{ flexShrink: 0, marginTop: 1 }} /><div style={{ fontSize: 13.5, color: t.hi }}><b>{bulkResult.saved}</b> dari {bulkResult.total} slot ID tersimpan/diperbarui.</div></div>}
+          {mapResult && (
+            <div style={{ marginTop: 14, display: "flex", gap: 11, padding: "14px 16px", borderRadius: 12, background: t.greenBg, border: `1px solid ${t.greenBd}` }}>
+              <CheckCircle2 size={18} color={t.green} style={{ flexShrink: 0, marginTop: 1 }} />
+              <div style={{ fontSize: 13.5, color: t.hi }}>
+                <b>Mapping {ymLabel(period)} tersimpan.</b> {mapResult.mappings} mapping outlet untuk {mapResult.promotors} Promotor.
+                {mapResult.created > 0 && <span style={{ color: t.blue }}> {mapResult.created} promotor baru dibuat.</span>}
+                {mapResult.identityOnly > 0 && <span style={{ color: t.mid }}> {mapResult.identityOnly} identitas tersimpan tanpa outlet.</span>}
+                {mapResult.newOutlets > 0 && <span style={{ color: t.blue }}> {mapResult.newOutlets} outlet baru dibuat.</span>}
+                {mapResult.skipped > 0 && <span style={{ color: t.amber }}> {mapResult.skipped} baris dilewati karena error.</span>}
+              </div>
+            </div>
+          )}
 
-          {bulkRows && (
+          {mapRows && (
             <div style={{ marginTop: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
                 <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: t.hi }}>Pratinjau: {bulkRows.length} slot</span>
-                  {Object.entries(bulkRows.reduce((acc, r) => { acc[r.sheet] = (acc[r.sheet] || 0) + 1; return acc; }, {})).map(([sheet, n]) => (
-                    <Chip key={sheet} t={t} tone="blue">{sheet}: {n}</Chip>
-                  ))}
-                  <Chip t={t} tone="green" icon={<UserCheck size={12} />}>{bulkRows.filter((r) => r.full_name).length} sudah ada nama</Chip>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: t.hi }}>Pratinjau: {mapRows.length} baris mapping</span>
+                  <Chip t={t} tone="green" icon={<CheckCircle2 size={12} />}>{mapOkRows.length} valid</Chip>
+                  {mapErrorCount > 0 && <Chip t={t} tone="red" icon={<AlertTriangle size={12} />}>{mapErrorCount} error</Chip>}
+                  <Chip t={t} tone="blue" icon={<Users size={12} />}>{mapUniqPromotors} promotor</Chip>
+                  {mapNewOutlets.length > 0 && <Chip t={t} tone="blue" icon={<Store size={12} />}>{mapNewOutlets.length} outlet baru</Chip>}
+                  {mapIncompleteCount > 0 && <Chip t={t} tone="amber" icon={<AlertTriangle size={12} />}>{mapIncompleteCount} ID belum lengkap — tetap disimpan</Chip>}
                 </div>
                 <div style={{ display: "flex", gap: 9 }}>
-                  <button className="pts-btn" onClick={resetBulk} style={{ background: t.sub, color: t.mid, border: `1px solid ${t.line}` }}><X size={14} /> Batal</button>
-                  <button className="pts-btn" onClick={saveBulk} disabled={bulkBusy} style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}>{bulkBusy ? <Loader2 size={15} className="spin" /> : <UploadCloud size={15} />} Simpan {bulkRows.length} Slot ID</button>
+                  <button className="pts-btn" onClick={resetMapParse} style={{ background: t.card, color: t.mid, border: `1px solid ${t.line}` }}><X size={14} /> Batal</button>
+                  <button className="pts-btn" onClick={saveMap} disabled={mapBusy || mapOkRows.length === 0}
+                    style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}>
+                    {mapBusy ? <Loader2 size={15} className="spin" /> : <CheckCircle2 size={15} />} Simpan Mapping {ymLabel(period).split(" ")[0]}
+                  </button>
                 </div>
               </div>
+
               <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden", boxShadow: t.sm }}>
-                <div style={{ maxHeight: 320, overflow: "auto" }}>
+                <div style={{ maxHeight: 380, overflow: "auto" }}>
                   <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                    <thead><tr>{["Sheet", "ID Promotor (IM3)", "ID 3ID", "Nama", "Region", "KTP"].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr></thead>
+                    <thead>
+                      <tr>
+                        {["Baris", "Slot", "Email Promotor", "ID (IM3)", "ID (3ID)", "Region", "Branch", "MC", "Nama Outlet", "Kategori", "ID Outlet (IM3)", "ID Outlet (3ID)", "Status"].map((h) => <th key={h} className="pts-th">{h}</th>)}
+                      </tr>
+                    </thead>
                     <tbody>
-                      {bulkRows.slice(0, 200).map((r, i) => (
-                        <tr key={i} className="pts-row">
-                          <td className="pts-td">{r.sheet}</td>
-                          <td className="pts-td" style={{ fontFamily: "monospace", fontWeight: 700 }}>{r.promotor_id}</td>
-                          <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 12, color: t.mid }}>{r.user_id_3id || "—"}</td>
-                          <td className="pts-td">{r.full_name || <span style={{ color: t.lo }}>belum diisi</span>}</td>
-                          <td className="pts-td">{r.region || "—"}</td>
-                          <td className="pts-td">{r.ktp || "—"}</td>
-                        </tr>
-                      ))}
+                      {mapRows.slice(0, 300).map((r, i) => {
+                        const bad = r.errors.length > 0;
+                        return (
+                          <tr key={i} className="pts-row" style={{ background: bad ? t.redBg : "transparent" }}>
+                            <td className="pts-td" style={{ color: t.mid }}>{r.rowNo}</td>
+                            <td className="pts-td" style={{ color: t.mid }}>{r.slot || "—"}</td>
+                            <td className="pts-td">{r.email || "—"}</td>
+                            <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 700 }}>{r.promotor_id || "—"}</td>
+                            <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 12, fontWeight: 700 }}>{r.user_id_3id || "—"}</td>
+                            <td className="pts-td">{r.region || "—"}</td>
+                            <td className="pts-td">{r.branch || "—"}</td>
+                            <td className="pts-td">{r.mc || "—"}</td>
+                            <td className="pts-td" style={{ fontWeight: 600 }}>{r.outlet_name || "—"}</td>
+                            <td className="pts-td">{r.category || "—"}</td>
+                            <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 12 }}>{r.outlet_im3 || "—"}</td>
+                            <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 12 }}>{r.outlet_3id || "—"}</td>
+                            <td className="pts-td">
+                              {bad
+                                ? <span title={r.errors.join("; ")} style={{ display: "inline-flex", alignItems: "center", gap: 5, color: t.red, fontWeight: 600, fontSize: 12 }}><AlertTriangle size={12} /> {r.errors[0]}</span>
+                                : r.idIncomplete
+                                  ? <span title="Nama outlet sudah tercatat, ID IM3/3ID belum diisi — tetap disimpan sebagai alokasi, lengkapi ID-nya lain kali" style={{ display: "inline-flex", alignItems: "center", gap: 5, color: t.amber, fontWeight: 600, fontSize: 12 }}><AlertTriangle size={12} /> ID belum lengkap</span>
+                                  : r.isNewOutlet
+                                    ? <span title="Outlet baru — akan dibuat otomatis" style={{ display: "inline-flex", alignItems: "center", gap: 5, color: t.blue, fontWeight: 600, fontSize: 12 }}><Store size={12} /> Outlet baru</span>
+                                    : <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: t.green, fontWeight: 600, fontSize: 12 }}><CheckCircle2 size={12} /> OK</span>}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
-                {bulkRows.length > 200 && <div style={{ padding: "9px 14px", fontSize: 12, color: t.mid, borderTop: `1px solid ${t.lineSoft}` }}>Menampilkan 200 dari {bulkRows.length} slot.</div>}
+                {mapRows.length > 300 && <div style={{ padding: "9px 14px", fontSize: 12, color: t.mid, borderTop: `1px solid ${t.lineSoft}` }}>Menampilkan 300 dari {mapRows.length} baris.</div>}
               </div>
             </div>
           )}
         </div>
       )}
 
+      {/* ── Panel: Tambah/Ubah Promotor (identitas) ──────────────────── */}
       {editing && (
         <div style={{ marginBottom: 18, padding: 18, borderRadius: 14, background: t.card, border: `1px solid ${t.line}`, boxShadow: t.md }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: t.hi, marginBottom: 14 }}>{form.id ? "Ubah Data Promotor" : "Tambah Promotor Baru"}</div>
@@ -775,46 +1057,365 @@ function DataPromotor({ t, d, supabase, profile }) {
           {err && <div style={{ marginTop: 12, fontSize: 12.5, color: t.red, display: "flex", alignItems: "center", gap: 6 }}><AlertTriangle size={13} />{err}</div>}
           <div style={{ display: "flex", gap: 9, marginTop: 16, justifyContent: "flex-end" }}>
             <button className="pts-btn" onClick={cancel} style={{ background: t.sub, color: t.mid, border: `1px solid ${t.line}` }}><X size={14} /> Batal</button>
-            <button className="pts-btn" onClick={save} disabled={busy} style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}>{busy ? <Loader2 size={14} className="spin" /> : <Save size={14} />} Simpan</button>
+            <button className="pts-btn" onClick={saveForm} disabled={busy} style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}>{busy ? <Loader2 size={14} className="spin" /> : <Save size={14} />} Simpan</button>
           </div>
         </div>
       )}
 
+      {err && !editing && (
+        <div style={{ marginBottom: 16, display: "flex", gap: 10, padding: "12px 14px", borderRadius: 10, background: t.redBg, border: `1px solid ${t.redBd}` }}>
+          <AlertTriangle size={16} color={t.red} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span style={{ fontSize: 13, color: t.hi }}>{err}</span>
+        </div>
+      )}
+
+      {/* ── Tabel gabungan — struktur kolomnya persis mengikuti template
+          Excel Mapping: Email · ID (IM3) · ID (3ID) · Region · Branch · MC ·
+          Outlet 1..4 (nama + kategori + ID IM3 + ID 3ID di tiap sel) —
+          plus kolom status di ujung untuk mengganti "check-mark"
+          spreadsheet dengan info live. */}
       <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden", boxShadow: t.sm }}>
-        <div style={{ overflow: "auto", maxHeight: 560 }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 860 }}>
-            <thead><tr>{["ID Promotor", "Nama", "Email Pribadi", "No. HP", "Region", "Efektif Bekerja", "Status", ""].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr></thead>
+        <div style={{ overflow: "auto", maxHeight: 620 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 2100 }}>
+            <thead>
+              <tr>
+                <th className="pts-th">Nama Promotor</th>
+                <th className="pts-th">Email Promotor</th>
+                <th className="pts-th">ID Promotor (IM3)</th>
+                <th className="pts-th">ID Promotor (3ID)</th>
+                {FCOLS.map(([k, label]) => <FilterTh key={k} t={t} label={label} colKey={k} filters={filters} className="pts-th" onOpen={(ck, r) => { setRect(r); setOpenCol(ck); }} />)}
+                {[1, 2, 3, 4].map((n) => <th key={n} className="pts-th" style={{ minWidth: 220 }}>Outlet {n} (Nama · Kategori · ID IM3 · ID 3ID)</th>)}
+                <th className="pts-th">Efektif</th>
+                <th className="pts-th"></th>
+              </tr>
+            </thead>
             <tbody>
               {loading ? (
-                <tr><td className="pts-td" colSpan={8} style={{ textAlign: "center", padding: 40, color: t.mid }}><Loader2 size={20} className="spin" style={{ verticalAlign: "middle" }} /> Memuat…</td></tr>
+                <tr><td className="pts-td" colSpan={10 + FCOLS.length} style={{ textAlign: "center", padding: 40, color: t.mid }}><Loader2 size={20} className="spin" style={{ verticalAlign: "middle" }} /> Memuat…</td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td className="pts-td" colSpan={8} style={{ textAlign: "center", padding: 44, color: t.mid }}><Users size={24} style={{ opacity: .5, marginBottom: 8 }} /><br />Belum ada Promotor terdaftar.</td></tr>
-              ) : filtered.map((r) => (
-                <tr key={r.id} className="pts-row">
-                  <td className="pts-td" style={{ fontFamily: "monospace", fontWeight: 700 }}>{r.promotor_id || "—"}</td>
-                  <td className="pts-td" style={{ fontWeight: 600 }}>{r.full_name}</td>
-                  <td className="pts-td" style={{ color: t.mid }}>{r.email}</td>
-                  <td className="pts-td">{r.phone || "—"}</td>
-                  <td className="pts-td">{r.region || "—"}</td>
-                  <td className="pts-td">{r.effective_date ? fmtDate(r.effective_date) : "—"}</td>
-                  <td className="pts-td">
-                    {r.status === "active"
-                      ? <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: t.greenBg, color: t.green, border: `1px solid ${t.greenBd}` }}><UserCheck size={11} /> Aktif</span>
-                      : <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: t.hover, color: t.mid, border: `1px solid ${t.line}` }}><UserX size={11} /> Nonaktif</span>}
-                  </td>
-                  <td className="pts-td">
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <button onClick={() => startEdit(r)} title="Ubah" style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Pencil size={13} /></button>
-                      <button onClick={() => toggleStatus(r)} title={r.status === "active" ? "Nonaktifkan" : "Aktifkan"} style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Ban size={13} /></button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                <tr><td className="pts-td" colSpan={10 + FCOLS.length} style={{ textAlign: "center", padding: 44, color: t.mid }}><Users size={24} style={{ opacity: .5, marginBottom: 8 }} /><br />Tidak ada Promotor yang sesuai filter.</td></tr>
+              ) : filtered.map((r) => {
+                const si = promotorStatusInfo(r);
+                return (
+                  <tr key={r.id} className="pts-row">
+                    <td className="pts-td" style={{ fontWeight: 700, color: r.full_name ? t.hi : t.lo, fontStyle: r.full_name ? "normal" : "italic" }}>{r.full_name || "belum diisi"}</td>
+                    <td className="pts-td" style={{ color: r.email ? t.hi : t.lo, fontStyle: r.email ? "normal" : "italic" }}>{r.email || "belum diisi"}</td>
+                    <td className="pts-td" style={{ fontFamily: "monospace", fontWeight: 700 }}>{r.promotor_id || <span style={{ color: t.lo }}>—</span>}</td>
+                    <td className="pts-td" style={{ fontFamily: "monospace", fontWeight: 700 }}>{r.user_id_3id || <span style={{ color: t.lo }}>—</span>}</td>
+                    {!roleLockedRegion && <td className="pts-td">{r.region || <span style={{ color: t.lo }}>—</span>}</td>}
+                    <td className="pts-td">{r.branch || <span style={{ color: t.lo }}>—</span>}</td>
+                    {!roleLockedMc && <td className="pts-td">{r.mc || <span style={{ color: t.lo }}>—</span>}</td>}
+                    <td className="pts-td">
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: si.bg, color: si.fg, border: `1px solid ${si.bd}` }}>{si.icon} {si.label}</span>
+                    </td>
+                    <td className="pts-td">
+                      {r.statusMap === "Belum ter-mapping"
+                        ? <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: t.blueBg, color: t.blue, border: `1px solid ${t.blueBd}` }}><Store size={11} /> Belum ter-mapping</span>
+                        : <span style={{ fontSize: 11.5, fontWeight: 600, color: t.hi }}>{r.outlets.length} outlet</span>}
+                    </td>
+                    <td className="pts-td">
+                      {r.statusLogin === "Sudah login"
+                        ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 7px", borderRadius: 99, fontSize: 10.5, fontWeight: 700, background: t.greenBg, color: t.green, border: `1px solid ${t.greenBd}` }}><UserCheck size={10} /> Aktif</span>
+                        : <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 7px", borderRadius: 99, fontSize: 10.5, fontWeight: 700, background: t.amberBg, color: t.amber, border: `1px solid ${t.amberBd}` }}><UserX size={10} /> Belum</span>}
+                    </td>
+                    {[0, 1, 2, 3].map((i) => {
+                      const o = r.outlets[i];
+                      return (
+                        <td key={i} className="pts-td" style={{ verticalAlign: "top", padding: "8px 12px" }}>
+                          {o ? (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                              <div style={{ fontWeight: 700, fontSize: 12.5, color: t.hi }}>
+                                {o.name || "—"}
+                                {o.idPending && <span title="ID outlet belum lengkap" style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: t.amber }}>ID belum lengkap</span>}
+                              </div>
+                              <div style={{ fontSize: 11, color: t.mid }}>{o.category || "—"}</div>
+                              <div style={{ fontFamily: "monospace", fontSize: 11, color: "#ED1C24" }}>IM3 {o.im3 || "—"}</div>
+                              <div style={{ fontFamily: "monospace", fontSize: 11, color: "#2563EB" }}>3ID {o.tid || "—"}</div>
+                            </div>
+                          ) : (
+                            <span style={{ color: t.lo, fontSize: 12 }}>—</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                    <td className="pts-td">{r.effective_date ? fmtDate(r.effective_date) : <span style={{ color: t.lo }}>—</span>}</td>
+                    <td className="pts-td">
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {canManagePromotor(r) && (
+                          <button onClick={() => setEditingMapping(r)} title="Kelola mapping outlet (edit semua kolom langsung di sini)"
+                            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.brandBd}`, background: t.brandBg, color: t.brand, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Settings2 size={13} /></button>
+                        )}
+                        {canManagePromotor(r) && (
+                          <button onClick={() => startEdit(r)} title="Lengkapi/ubah identitas promotor" style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Pencil size={13} /></button>
+                        )}
+                        {canManageVacancy(r) && (
+                          <button onClick={() => toggleVacant(r)} disabled={vacantBusy === r.id} title={r.vacant ? "Batalkan Vacant" : "Tandai Vacant"}
+                            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${r.vacant ? t.amberBd : t.line}`, background: r.vacant ? t.amberBg : t.card, color: r.vacant ? t.amber : t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            {vacantBusy === r.id ? <Loader2 size={13} className="spin" /> : <Ban size={13} />}
+                          </button>
+                        )}
+                        {canManagePromotor(r) && (
+                          <button onClick={() => { setDeletingPromotor(r); setDeleteErr(""); }} title="Hapus promotor"
+                            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.redBd}`, background: t.redBg, color: t.red, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Trash2 size={13} /></button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
       </div>
-      <div style={{ marginTop: 10, fontSize: 12, color: t.mid }}>{filtered.length} Promotor.</div>
+      <div style={{ marginTop: 10, fontSize: 12, color: t.mid }}>{filtered.length} dari {scopedTotal} Promotor{anyFilterActive ? " (sesuai filter aktif)" : ""}.</div>
+
+      {openCol && (
+        <FilterMenu t={t} rect={rect} label={(FCOLS.find(([k]) => k === openCol) || [, openCol])[1]}
+          options={optionsFor(searched, filters, FCOLS, openCol)} selected={filters[openCol] || []}
+          onChange={(arr) => setFilters((p) => ({ ...p, [openCol]: arr }))} onClose={() => { setOpenCol(""); setRect(null); }} />
+      )}
+
+      {editingMapping && (
+        <MappingEditModal t={t} supabase={supabase} profile={profile} period={period} row={editingMapping} outletByCode={outletByCode}
+          onClose={() => setEditingMapping(null)}
+          onSaved={async () => { setEditingMapping(null); await onOutletsNeeded(); await load(); }} />
+      )}
+
+      {deletingPromotor && (
+        <DeletePromotorModal t={t} row={deletingPromotor} busy={deleteBusy} err={deleteErr}
+          onClose={() => { if (!deleteBusy) { setDeletingPromotor(null); setDeleteErr(""); } }}
+          onConfirm={() => deletePromotor(deletingPromotor)} />
+      )}
+
+      <style>{`.spin{animation:ptsspin 1s linear infinite}@keyframes ptsspin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+}
+
+/* ══════════════════════ KELOLA MAPPING (modal, per promotor) ═══════════
+   "Sangat mudah diedit langsung dari UI": Branch/MC + 4 slot outlet
+   (Nama/Kategori/ID IM3/ID 3ID) untuk 1 promotor, semua kolom bisa
+   diganti-ganti bebas tanpa perlu bolak-balik Excel. Aturan resolusi ID
+   outlet & kode placeholder PERSIS sama dengan upload massal (saveMap):
+   IM3 diutamakan → 3ID → kode sementara PENDING-xxx bila cuma nama yang
+   terisi. Hanya menghapus/mengganti assignment MILIK promotor ini saja
+   untuk periode berjalan — promotor lain tidak tersentuh. ──────────────── */
+function MappingEditModal({ t, supabase, profile, period, row, outletByCode, onClose, onSaved }) {
+  const [branch, setBranch] = useState(row.branch || "");
+  const [mc, setMc] = useState(row.mc || "");
+  const [slots, setSlots] = useState(() => Array.from({ length: OUTLET_SLOTS }, (_, i) => {
+    const o = row.outlets[i];
+    if (!o) return { name: "", category: "", im3: "", tid: "" };
+    // Kode placeholder (PENDING-...) bukan ID asli — jangan ditampilkan
+    // seolah-olah sudah ada ID resmi.
+    return { name: o.name || "", category: o.category || "", im3: o.idPending ? "" : (o.im3 || ""), tid: o.tid || "" };
+  }));
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const setSlot = (i, patch) => setSlots((prev) => prev.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
+  const clearSlot = (i) => setSlot(i, { name: "", category: "", im3: "", tid: "" });
+
+  const filledCount = slots.filter((s) => s.name || s.im3 || s.tid || s.category).length;
+
+  const save = async () => {
+    setErr(""); setSaving(true);
+    try {
+      const promotorKey = (row.promotor_id || row.user_id_3id || row.email || "X").toUpperCase();
+      const resolved = slots
+        .map((s, i) => ({ ...s, n: i + 1 }))
+        .filter((s) => s.name || s.im3 || s.tid || s.category)
+        .map((s) => {
+          const hasId = !!(s.im3 || s.tid);
+          const outlet_code = s.im3 || s.tid || `PENDING-${promotorKey}-${s.n}`;
+          const outlet_code_3id = s.im3 && s.tid ? s.tid : null;
+          const existing = hasId ? outletByCode.get(outlet_code.toUpperCase()) : null;
+          return {
+            outlet_code, outlet_code_3id,
+            outlet_name: s.name || existing?.name || outlet_code,
+            category: s.category || existing?.category || "",
+            idIncomplete: !hasId,
+          };
+        });
+
+      // 1) Upsert outlet per slot terisi
+      if (resolved.length) {
+        const outletPayload = resolved.map((r) => ({
+          code: r.outlet_code, code_3id: r.outlet_code_3id || null,
+          name: r.outlet_name, category: r.category || null,
+          branch: branch.trim() || null, region: row.region || null, status: "active",
+          id_pending: r.idIncomplete,
+        }));
+        const { error } = await supabase.from("pts_outlet").upsert(outletPayload, { onConflict: "code" });
+        if (error) throw error;
+      }
+
+      // 2) Refresh master → resolve outlet_id
+      const { data: freshOutlets } = await supabase.from("pts_outlet").select("id,code");
+      const idByCode = new Map((freshOutlets || []).map((o) => [String(o.code).trim().toUpperCase(), o.id]));
+
+      // 3) Replace assignment milik promotor INI SAJA utk periode berjalan
+      const { error: delErr } = await supabase.from("pts_assignment").delete().eq("period", period).eq("promotor_id_ref", row.id);
+      if (delErr) throw delErr;
+
+      if (resolved.length) {
+        const payload = resolved.map((r) => ({
+          period, email: row.email || null, full_name: row.full_name || null,
+          promotor_id_ref: row.id, mc: mc.trim() || null,
+          outlet_id: idByCode.get(r.outlet_code.toUpperCase()) || null,
+          outlet_code: r.outlet_code, branch: branch.trim() || null, region: row.region || null,
+          status: "active", assigned_by: profile?.id || null,
+        }));
+        const { error: insErr } = await supabase.from("pts_assignment").insert(payload);
+        if (insErr) throw insErr;
+      }
+
+      await onSaved();
+    } catch (e) {
+      setErr("Gagal menyimpan: " + (e?.message || e));
+      setSaving(false);
+    }
+  };
+
+  const inp = { fontFamily: "inherit", fontSize: 13, color: t.hi, background: t.inputBg, border: `1px solid ${t.line}`, borderRadius: 8, padding: "8px 10px", outline: "none", width: "100%", boxSizing: "border-box" };
+  const lbl = { display: "block", fontSize: 10.5, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: t.lo, marginBottom: 5 };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 760, maxHeight: "90vh", overflowY: "auto", background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, boxShadow: t.md }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "16px 20px", borderBottom: `1px solid ${t.line}`, position: "sticky", top: 0, background: t.card, borderRadius: "16px 16px 0 0", zIndex: 1 }}>
+          <div>
+            <div style={{ fontSize: 15.5, fontWeight: 700, color: t.hi }}>Kelola Mapping — {row.full_name || row.promotor_id || "Promotor"}</div>
+            <div style={{ fontSize: 12, color: t.mid, marginTop: 2 }}>
+              ID (IM3) <b style={{ color: t.hi, fontFamily: "monospace" }}>{row.promotor_id || "—"}</b>
+              {" · "}ID (3ID) <b style={{ color: t.hi, fontFamily: "monospace" }}>{row.user_id_3id || "—"}</b>
+              {" · "}Region <b style={{ color: t.hi }}>{row.region || "—"}</b>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: "transparent", color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><X size={18} /></button>
+        </div>
+
+        <div style={{ padding: 20 }}>
+          <div style={{ display: "flex", gap: 10, padding: "11px 14px", borderRadius: 10, background: t.brandBg, border: `1px solid ${t.brandBd}`, marginBottom: 18 }}>
+            <Info size={15} color={t.brand} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span style={{ fontSize: 12.5, color: t.hi }}>Ubah Branch/MC dan sampai 4 outlet langsung di sini — tidak perlu Excel. Kalau ID Outlet (IM3/3ID) belum ada, isi Nama Outlet saja; sistem otomatis pakai kode sementara sampai ID resminya dilengkapi.</span>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 18 }}>
+            <div><label style={lbl}>Branch</label><input style={inp} value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="mis. Bandar Lampung" /></div>
+            <div><label style={lbl}>MC</label><input style={inp} value={mc} onChange={(e) => setMc(e.target.value)} placeholder="mis. MC-Lampung Selatan" /></div>
+          </div>
+
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: t.mid, marginBottom: 8 }}>
+            Outlet ({filledCount}/{OUTLET_SLOTS} terisi)
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {slots.map((s, i) => {
+              const active = !!(s.name || s.im3 || s.tid || s.category);
+              return (
+                <div key={i} style={{ border: `1px solid ${active ? t.brandBd : t.line}`, background: active ? t.brandBg : t.sub, borderRadius: 12, padding: 14 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: t.hi, display: "inline-flex", alignItems: "center", gap: 6 }}><Store size={13} color={active ? t.brand : t.lo} /> Outlet {i + 1}</span>
+                    {active && <button onClick={() => clearSlot(i)} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 600, color: t.mid, background: "transparent", border: "none", cursor: "pointer" }}><Trash2 size={12} /> Kosongkan</button>}
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1fr", gap: 8 }}>
+                    <div><label style={lbl}>Nama Outlet</label><input style={inp} value={s.name} onChange={(e) => setSlot(i, { name: e.target.value })} placeholder="Nama outlet" /></div>
+                    <div><label style={lbl}>Kategori</label><input style={inp} value={s.category} onChange={(e) => setSlot(i, { category: e.target.value })} placeholder="REGULAR/KRO/KAM" /></div>
+                    <div><label style={lbl}>ID Outlet (IM3)</label><input style={{ ...inp, fontFamily: "monospace" }} value={s.im3} onChange={(e) => setSlot(i, { im3: e.target.value })} placeholder="—" /></div>
+                    <div><label style={lbl}>ID Outlet (3ID)</label><input style={{ ...inp, fontFamily: "monospace" }} value={s.tid} onChange={(e) => setSlot(i, { tid: e.target.value })} placeholder="—" /></div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {err && <div style={{ marginTop: 16, display: "flex", gap: 10, padding: "12px 14px", borderRadius: 10, background: t.redBg, border: `1px solid ${t.redBd}` }}><AlertTriangle size={16} color={t.red} style={{ flexShrink: 0, marginTop: 1 }} /><span style={{ fontSize: 13, color: t.hi }}>{err}</span></div>}
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 9, padding: "14px 20px", borderTop: `1px solid ${t.line}`, position: "sticky", bottom: 0, background: t.card, borderRadius: "0 0 16px 16px" }}>
+          <button onClick={onClose} className="pts-btn" style={{ background: t.sub, color: t.mid, border: `1px solid ${t.line}` }}>Batal</button>
+          <button onClick={save} disabled={saving} className="pts-btn" style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}>
+            {saving ? <Loader2 size={15} className="spin" /> : <CheckCircle2 size={15} />} Simpan Mapping
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════ HAPUS PROMOTOR (konfirmasi ketik "HAPUS") ═══════
+   Aksi permanen: hapus semua mapping outlet promotor ini (lintas periode)
+   lalu identitasnya. Riwayat penjualan (pts_sale) TETAP ada, hanya tautan
+   promotor_id-nya lepas (ON DELETE SET NULL) — bukan ikut terhapus. */
+function DeletePromotorModal({ t, row, busy, err, onClose, onConfirm }) {
+  const [ack, setAck] = useState("");
+  const ready = ack.trim().toUpperCase() === "HAPUS";
+  const mappingCount = row.outlets?.length || 0;
+
+  return (
+    <div onClick={busy ? undefined : onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 460, background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, boxShadow: t.md }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "20px 20px 0" }}>
+          <div style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: t.redBg, color: t.red, border: `1px solid ${t.redBd}` }}>
+            <Trash2 size={19} />
+          </div>
+          <div>
+            <div style={{ fontSize: 15.5, fontWeight: 700, color: t.hi }}>Hapus Promotor</div>
+            <div style={{ fontSize: 12.5, color: t.mid, marginTop: 1 }}>Tindakan ini permanen dan tidak bisa dibatalkan.</div>
+          </div>
+        </div>
+
+        <div style={{ padding: 20 }}>
+          <div style={{ padding: "12px 14px", borderRadius: 10, background: t.sub, border: `1px solid ${t.line}`, marginBottom: 14 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: t.hi }}>{row.full_name || "(nama belum diisi)"}</div>
+            <div style={{ fontSize: 12, color: t.mid, marginTop: 2, fontFamily: "monospace" }}>{row.promotor_id || "—"}{row.user_id_3id ? ` · ${row.user_id_3id}` : ""}</div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, padding: "11px 14px", borderRadius: 10, background: t.amberBg, border: `1px solid ${t.amberBd}`, marginBottom: 16 }}>
+            <AlertTriangle size={16} color={t.amber} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span style={{ fontSize: 12.5, color: t.hi, lineHeight: 1.55 }}>
+              Menghapus juga menghapus <b>semua mapping outlet</b> promotor ini di setiap periode{mappingCount > 0 ? ` (saat ini terlihat ${mappingCount} outlet di bulan aktif)` : ""}.
+              Riwayat penjualan yang sudah tercatat tetap tersimpan, tapi tautannya ke promotor ini akan lepas.
+            </span>
+          </div>
+
+          <label style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: t.mid, marginBottom: 6 }}>
+            Ketik <b style={{ color: t.red, fontFamily: "monospace" }}>HAPUS</b> untuk konfirmasi
+          </label>
+          <input className="pts-in" value={ack} onChange={(e) => setAck(e.target.value)} placeholder="HAPUS" autoFocus
+            style={{ width: "100%", boxSizing: "border-box", fontFamily: "monospace", letterSpacing: "0.05em" }} />
+
+          {err && <div style={{ marginTop: 12, display: "flex", gap: 8, fontSize: 12.5, color: t.red }}><AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />{err}</div>}
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 9, padding: "14px 20px", borderTop: `1px solid ${t.line}` }}>
+          <button onClick={onClose} disabled={busy} className="pts-btn" style={{ background: t.sub, color: t.mid, border: `1px solid ${t.line}` }}>Batal</button>
+          <button onClick={onConfirm} disabled={!ready || busy} className="pts-btn" style={{ background: ready ? t.red : t.line, color: ready ? "#fff" : t.lo, boxShadow: ready ? t.sm : "none" }}>
+            {busy ? <Loader2 size={15} className="spin" /> : <Trash2 size={15} />} Hapus Permanen
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Kartu ringkasan mini untuk header Promotor & Outlet — dipisah supaya
+// tidak menabrak Stat besar yang dipakai di Ringkasan Aktivitas.
+function StatMini({ t, label, value, tone }) {
+  const tones = {
+    green:   { fg: t.green, bg: t.greenBg, bd: t.greenBd },
+    amber:   { fg: t.amber, bg: t.amberBg, bd: t.amberBd },
+    blue:    { fg: t.blue,  bg: t.blueBg,  bd: t.blueBd  },
+    neutral: { fg: t.hi,    bg: t.sub,     bd: t.line    },
+  };
+  const c = tones[tone] || tones.neutral;
+  return (
+    <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 10, padding: "10px 12px", boxShadow: t.sm }}>
+      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: t.mid, marginBottom: 4 }}>{label}</div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 7 }}>
+        <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.02em", color: c.fg }}>{value}</span>
+        <span style={{ height: 6, width: 6, borderRadius: 99, background: c.fg, opacity: .7 }} />
+      </div>
     </div>
   );
 }
@@ -829,13 +1430,19 @@ function Field({ t, label, children }) {
 }
 
 /* ══════════════════════════ PREVIEW DATA ══════════════════════════════ */
+/* ══════════════ RINGKASAN AKTIVITAS ══════════════
+   Catatan: sistem Check-In/Check-Out (pts_session) sudah dihapus total dari
+   modul ini — digantikan alur geofencing langsung pada saat Claim Penjualan
+   (tagging). Tab ini murni: siapa yang sudah dipetakan bulan ini, siapa yang
+   belum pernah login (auth_user_id kosong), dan berapa SP yang sudah
+   diklaim per brand (IM3/3ID). Detail per nomor MSISDN ada di sub-tampilan
+   "Detail per Nomor". */
 function PreviewData({ t, d, supabase, period, outletByCode }) {
-  const [mode, setMode] = useState("sesi");         // sesi | msisdn
+  const [mode, setMode] = useState("ringkasan");    // ringkasan | msisdn
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
-  const [statusF, setStatusF] = useState("all");   // all | active | not_logged_in
+  const [statusF, setStatusF] = useState("all");    // all | active | not_logged_in
   const [q, setQ] = useState("");
-  const [expanded, setExpanded] = useState(null);   // session id → daftar nomor
 
   // Kunci identitas promotor untuk pengelompokan: promotor_id (uuid, permanen)
   // bila ada, baru jatuh ke email untuk baris lama / belum tertaut ID.
@@ -844,74 +1451,69 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [asgRes, sesRes, proRes] = await Promise.all([
-        supabase.from("pts_assignment").select("*").eq("period", period),
-        supabase.from("pts_session").select("*").eq("period", period).order("check_in_at", { ascending: false }),
-        supabase.from("pts_promotor").select("id,email,status,full_name,phone"),
+      // Basis: SEMUA promotor (RLS sudah membatasi per-region utk pic_region/
+      // SFM), bukan cuma yang punya assignment bulan ini — supaya promotor
+      // yang belum/tidak ter-mapping bulan ini tetap kelihatan (Status
+      // Mapping: "Belum ter-mapping"), bukan hilang diam-diam.
+      const [asgRes, proRes] = await Promise.all([
+        supabase.rpc("pts_effective_assignment", { p_period: period }),
+        supabase.from("pts_promotor").select("id,email,full_name,auth_user_id,region,effective_date,vacant"),
       ]);
       const assignments = asgRes.data || [];
-      const sessions = sesRes.data || [];
-      const proById = new Map((proRes.data || []).map((p) => [p.id, p]));
-      const proByEmail = new Map((proRes.data || []).map((p) => [(p.email || "").toLowerCase(), p]));
-      const resolvePro = (promotorId, email) => (promotorId && proById.get(promotorId)) || proByEmail.get((email || "").toLowerCase());
+      const promotors = proRes.data || [];
+      const proById = new Map(promotors.map((p) => [p.id, p]));
 
-      // sales per session
-      let salesBySession = new Map();
-      if (sessions.length) {
-        const ids = sessions.map((s) => s.id);
-        const { data: sales } = await supabase.from("pts_sale").select("session_id,phone_normalized,tagged_at").in("session_id", ids);
+      const outletsByKey = new Map();  // key → Set(outlet_code)
+      const metaByKey = new Map();     // key → {branch, mc, region, email, full_name}
+      assignments.forEach((a) => {
+        const k = idKey(a.promotor_id_ref, a.email);
+        if (!outletsByKey.has(k)) outletsByKey.set(k, new Set());
+        outletsByKey.get(k).add(a.outlet_code);
+        if (!metaByKey.has(k)) metaByKey.set(k, { branch: a.branch, mc: a.mc, region: a.region, email: a.email, full_name: a.full_name });
+      });
+
+      // Klaim SP periode ini per promotor_id, dipecah per brand
+      const [y, mo] = period.split("-").map(Number);
+      const start = `${period}-01`;
+      const nd = new Date(y, mo, 1);
+      const end = `${nd.getFullYear()}-${pad2(nd.getMonth() + 1)}-01`;
+      const promotorIds = promotors.map((p) => p.id);
+      const salesByPromotor = new Map();
+      if (promotorIds.length) {
+        const { data: sales } = await supabase.from("pts_sale").select("promotor_id,brand")
+          .in("promotor_id", promotorIds).gte("tagged_at", start).lt("tagged_at", end);
         (sales || []).forEach((s) => {
-          if (!salesBySession.has(s.session_id)) salesBySession.set(s.session_id, []);
-          salesBySession.get(s.session_id).push(s);
+          if (!salesByPromotor.has(s.promotor_id)) salesByPromotor.set(s.promotor_id, { total: 0, im3: 0, tid: 0 });
+          const agg = salesByPromotor.get(s.promotor_id);
+          agg.total++;
+          if (s.brand === "IM3") agg.im3++; else if (s.brand === "3ID") agg.tid++;
         });
       }
 
-      const asgMeta = new Map(); // idKey → {full_name, email, branch, area, region, outlets:Set}
-      assignments.forEach((a) => {
-        const k = idKey(a.promotor_id_ref, a.email);
-        if (!asgMeta.has(k)) asgMeta.set(k, { promotorId: a.promotor_id_ref || null, email: a.email, full_name: a.full_name, branch: a.branch, area: a.area, region: a.region, outlets: new Set() });
-        asgMeta.get(k).outlets.add(a.outlet_code);
-      });
+      // Gabungan kunci: tiap promotor roster + kunci assignment lama yang
+      // tidak tertaut promotor_id_ref (email-only, baris legacy).
+      const allKeys = new Set(promotors.map((p) => p.id));
+      metaByKey.forEach((_, k) => { if (!proById.has(k)) allKeys.add(k); });
 
-      const out = [];
-      const keysWithSession = new Set();
-
-      // 1 baris per sesi
-      sessions.forEach((s) => {
-        const k = idKey(s.promotor_id, s.email); keysWithSession.add(k);
-        const meta = asgMeta.get(k) || {};
-        const pro = resolvePro(s.promotor_id, s.email);
-        const outlet = outletByCode.get(String(s.outlet_code || "").toUpperCase());
-        const sales = salesBySession.get(s.id) || [];
-        out.push({
-          kind: "session", id: s.id,
-          region: outlet?.region || meta.region || "", branch: outlet?.branch || meta.branch || "", area: outlet?.area || meta.area || "",
-          outlet: outlet?.name || s.outlet_code || "—", outlet_code: s.outlet_code || "",
-          nama: pro?.full_name || meta.full_name || "—", email: s.email || "",
-          statusAkun: pro?.status === "active" ? "Aktif" : (pro ? "Aktif" : "Aktif"),
-          checkIn: s.check_in_at, checkInLat: s.check_in_lat, checkInLng: s.check_in_lng, checkInPhoto: s.check_in_photo_url,
-          checkOut: s.check_out_at, checkOutLat: s.check_out_lat, checkOutLng: s.check_out_lng, checkOutPhoto: s.check_out_photo_url,
-          sales, salesCount: sales.length,
-          statusSesi: s.auto_checkout ? "Auto-Checkout" : (s.check_out_at ? "Selesai" : "Aktif"),
-          geoFlag: s.geo_flag || "ok",
-        });
-      });
-
-      // Promotor di-map tapi belum ada aktivitas / belum login
-      asgMeta.forEach((meta, k) => {
-        if (keysWithSession.has(k)) return;
-        const pro = resolvePro(meta.promotorId, meta.email);
-        const firstOutletCode = [...meta.outlets][0] || "";
+      const out = [...allKeys].map((k) => {
+        const pro = proById.get(k);
+        const meta = metaByKey.get(k);
+        const outlets = outletsByKey.get(k) || new Set();
+        const firstOutletCode = [...outlets][0] || "";
         const outlet = outletByCode.get(String(firstOutletCode).toUpperCase());
-        out.push({
-          kind: "idle", id: "idle-" + k,
-          region: outlet?.region || meta.region || "", branch: outlet?.branch || meta.branch || "", area: outlet?.area || meta.area || "",
-          outlet: meta.outlets.size > 1 ? `${meta.outlets.size} outlet` : (outlet?.name || firstOutletCode || "—"), outlet_code: firstOutletCode,
-          nama: pro?.full_name || meta.full_name || "—", email: meta.email || "",
-          statusAkun: pro ? "Aktif" : "Belum Login",
-          checkIn: null, checkOut: null, sales: [], salesCount: 0,
-          statusSesi: "—", geoFlag: "—",
-        });
+        const agg = salesByPromotor.get(k) || { total: 0, im3: 0, tid: 0 };
+        const hasRealEmail = !!pro?.email;
+        const promotorStatus = pro?.vacant ? "Vacant" : (hasRealEmail && pro?.effective_date ? "Aktif" : "Pending");
+        return {
+          id: k,
+          region: outlet?.region || meta?.region || pro?.region || "", branch: outlet?.branch || meta?.branch || "", mc: meta?.mc || "",
+          outletCount: outlets.size,
+          outlet: outlets.size > 1 ? `${outlets.size} outlet` : (outlet?.name || firstOutletCode || "—"), outlet_code: firstOutletCode,
+          nama: pro?.full_name || meta?.full_name || "—", email: pro?.email || meta?.email || "",
+          loginStatus: pro?.auth_user_id ? "Aktif" : "Belum Login",
+          promotorStatus,
+          total: agg.total, im3: agg.im3, tid: agg.tid,
+        };
       });
 
       setRows(out);
@@ -925,55 +1527,38 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
     return rows.filter((r) => {
-      if (statusF === "active" && r.statusAkun !== "Aktif") return false;
-      if (statusF === "not_logged_in" && r.statusAkun !== "Belum Login") return false;
+      if (statusF === "active" && r.loginStatus !== "Aktif") return false;
+      if (statusF === "not_logged_in" && r.loginStatus !== "Belum Login") return false;
       if (s && !(`${r.nama} ${r.email} ${r.outlet} ${r.outlet_code}`.toLowerCase().includes(s))) return false;
       return true;
     });
   }, [rows, statusF, q]);
 
   const stats = useMemo(() => {
-    const emails = new Set(rows.map((r) => r.email.toLowerCase()));
-    const belum = new Set(rows.filter((r) => r.statusAkun === "Belum Login").map((r) => r.email.toLowerCase()));
-    const sesRows = rows.filter((r) => r.kind === "session");
-    const terjual = sesRows.reduce((a, r) => a + r.salesCount, 0);
-    return { promotor: emails.size, belum: belum.size, checkin: sesRows.length, terjual };
+    const belum = rows.filter((r) => r.loginStatus === "Belum Login").length;
+    const vacant = rows.filter((r) => r.promotorStatus === "Vacant").length;
+    const belumMapping = rows.filter((r) => r.outletCount === 0).length;
+    const total = rows.reduce((a, r) => a + r.total, 0);
+    return { promotor: rows.length, belum, vacant, belumMapping, total };
   }, [rows]);
 
+  const mappingLabel = (r) => (r.outletCount === 0 ? "Belum ter-mapping" : `${r.outletCount} outlet`);
+
   const exportExcel = () => {
-    const head = ["No", "Tanggal", "Region", "Branch", "Area", "Outlet", "ID Outlet", "Nama Promotor", "Email", "Status Akun", "Check-In", "Lokasi In", "Foto In", "Check-Out", "Lokasi Out", "Foto Out", "Durasi", "Jml Terjual", "Daftar Nomor", "Status Sesi", "Flag Lokasi"];
-    const body = filtered.map((r, i) => [
-      i + 1, r.checkIn ? fmtDate(r.checkIn) : "—", r.region, r.branch, r.area, r.outlet, r.outlet_code, r.nama, r.email, r.statusAkun,
-      r.checkIn ? fmtTime(r.checkIn) : "—", r.checkInLat != null ? `${r.checkInLat}, ${r.checkInLng}` : "—", r.checkInPhoto || "—",
-      r.checkOut ? fmtTime(r.checkOut) : "—", r.checkOutLat != null ? `${r.checkOutLat}, ${r.checkOutLng}` : "—", r.checkOutPhoto || "—",
-      durationOf(r.checkIn, r.checkOut) || "—", r.salesCount, (r.sales || []).map((s) => s.phone_normalized).join(" | ") || "—", r.statusSesi, r.geoFlag,
-    ]);
+    const head = ["No", "Region", "Branch", "MC", "Outlet", "ID Outlet", "Nama Promotor", "Email", "Status Promotor", "Status Mapping", "Status Login", "Total Klaim SP", "IM3", "3ID"];
+    const body = filtered.map((r, i) => [i + 1, r.region, r.branch, r.mc, r.outlet, r.outlet_code, r.nama, r.email, r.promotorStatus, mappingLabel(r), r.loginStatus, r.total, r.im3, r.tid]);
     const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, `Preview ${period}`);
-    XLSX.writeFile(wb, `PTS_Preview_${period}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, `Ringkasan ${period}`);
+    XLSX.writeFile(wb, `PTS_Ringkasan_${period}.xlsx`);
   };
-
-  const cellLoc = (lat, lng) => lat != null
-    ? <a href={`https://maps.google.com/?q=${lat},${lng}`} target="_blank" rel="noreferrer" style={{ color: t.blue, textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}><MapPin size={11} />{Number(lat).toFixed(4)},{Number(lng).toFixed(4)}</a>
-    : <span style={{ color: t.lo }}>—</span>;
-  const openPhoto = async (p) => {
-    if (!p) return;
-    let path = p;
-    if (/^https?:\/\//.test(path)) { const m = path.match(/pts-photos\/(.+)$/); if (m) path = m[1]; else { window.open(p, "_blank"); return; } }
-    const { data } = await supabase.storage.from("pts-photos").createSignedUrl(path, 3600);
-    if (data?.signedUrl) window.open(data.signedUrl, "_blank");
-  };
-  const cellPhoto = (url) => url
-    ? <button onClick={() => openPhoto(url)} style={{ color: t.blue, background: "none", border: "none", cursor: "pointer", fontFamily: FF, fontSize: 12.5, display: "inline-flex", alignItems: "center", gap: 4, padding: 0 }}><ImageIcon size={12} /> lihat</button>
-    : <span style={{ color: t.lo }}>—</span>;
 
   const modeToggle = (
     <div style={{ marginBottom: 16 }}>
       <Segmented t={t} value={mode} onChange={setMode}
         options={[
-          { value: "sesi", label: "Aktivitas (Sesi)", icon: <LogIn size={13} /> },
-          { value: "msisdn", label: "Penjualan (MSISDN)", icon: <Phone size={13} /> },
+          { value: "ringkasan", label: "Ringkasan Promotor", icon: <Users size={13} /> },
+          { value: "msisdn", label: "Detail per Nomor", icon: <Phone size={13} /> },
         ]} />
     </div>
   );
@@ -983,18 +1568,13 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
   return (
     <div>
       {modeToggle}
-      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 16px", borderRadius: 12, background: t.amberBg, border: `1px solid ${t.amberBd}`, marginBottom: 18 }}>
-        <Info size={17} color={t.amber} style={{ flexShrink: 0 }} />
-        <span style={{ fontSize: 13, color: t.hi }}>
-          Sistem Check-In / Check-Out sudah <b>dihentikan</b> dan digantikan alur geofencing langsung pada tagging SP. Tabel di bawah adalah <b>data historis</b> sesi lama (dipertahankan untuk arsip). Aktivitas tagging terbaru — termasuk jarak ke outlet &amp; status validasi GA — ada di tab <b>Penjualan (MSISDN)</b>.
-        </span>
-      </div>
       {/* Stats */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
-        <Stat t={t} icon={<Users size={18} />}       label="Promotor ter-map" value={stats.promotor} accent={{ fg: t.mag, bg: t.magBg, bd: t.magBd }} />
-        <Stat t={t} icon={<UserX size={18} />}        label="Belum login"      value={stats.belum}    accent={{ fg: t.amber, bg: t.amberBg, bd: t.amberBd }} />
-        <Stat t={t} icon={<LogIn size={18} />}        label="Sesi check-in"    value={stats.checkin}  accent={{ fg: t.blue, bg: t.blueBg, bd: t.blueBd }} />
-        <Stat t={t} icon={<ShoppingBag size={18} />}  label="Kartu terjual"    value={stats.terjual}  accent={{ fg: t.green, bg: t.greenBg, bd: t.greenBd }} />
+        <Stat t={t} icon={<Users size={18} />}       label="Total Promotor"   value={stats.promotor}     accent={{ fg: t.mag, bg: t.magBg, bd: t.magBd }} />
+        <Stat t={t} icon={<Store size={18} />}       label="Belum ter-mapping" value={stats.belumMapping} accent={{ fg: t.blue, bg: t.blueBg, bd: t.blueBd }} />
+        <Stat t={t} icon={<Ban size={18} />}         label="Vacant"           value={stats.vacant}       accent={{ fg: t.amber, bg: t.amberBg, bd: t.amberBd }} />
+        <Stat t={t} icon={<UserX size={18} />}       label="Belum login"      value={stats.belum}        accent={{ fg: t.amber, bg: t.amberBg, bd: t.amberBd }} />
+        <Stat t={t} icon={<ShoppingBag size={18} />} label="Total Klaim SP"   value={stats.total}        accent={{ fg: t.green, bg: t.greenBg, bd: t.greenBd }} />
       </div>
 
       {/* Toolbar */}
@@ -1003,7 +1583,7 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
           <Segmented t={t} value={statusF} onChange={setStatusF}
             options={[
               { value: "all", label: "Semua", count: rows.length },
-              { value: "active", label: "Aktif" },
+              { value: "active", label: "Login: Aktif" },
               { value: "not_logged_in", label: "Belum login", icon: <UserX size={13} /> },
             ]} />
           <div style={{ position: "relative" }}>
@@ -1018,77 +1598,54 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
         </div>
       </div>
 
-      {/* Tabel komprehensif */}
+      {/* Tabel ringkasan per promotor */}
       <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden", boxShadow: t.sm }}>
         <div style={{ overflow: "auto", maxHeight: 620 }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1180 }}>
             <thead>
               <tr>
-                {["No", "Tgl", "Branch", "Area", "ID Outlet", "Promotor", "Email", "Status Akun", "Check-In", "Lokasi In", "Foto In", "Check-Out", "Lokasi Out", "Foto Out", "Durasi", "Terjual", "Status Sesi", "Flag"].map((h) => (
+                {["No", "Branch", "MC", "Outlet", "Promotor", "Email", "Status Promotor", "Status Mapping", "Status Login", "Total Klaim SP", "IM3", "3ID"].map((h) => (
                   <th key={h} className="pts-th">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td className="pts-td" colSpan={18} style={{ textAlign: "center", padding: 40, color: t.mid }}><Loader2 size={20} className="spin" style={{ verticalAlign: "middle" }} /> Memuat data…</td></tr>
+                <tr><td className="pts-td" colSpan={12} style={{ textAlign: "center", padding: 40, color: t.mid }}><Loader2 size={20} className="spin" style={{ verticalAlign: "middle" }} /> Memuat data…</td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td className="pts-td" colSpan={18} style={{ textAlign: "center", padding: 48, color: t.mid }}>
+                <tr><td className="pts-td" colSpan={12} style={{ textAlign: "center", padding: 48, color: t.mid }}>
                   <Store size={26} style={{ opacity: .5, marginBottom: 8 }} /><br />
-                  Belum ada data untuk {ymLabel(period)}. Upload mapping terlebih dulu di tab <b>Upload Mapping</b>.
+                  Belum ada data untuk {ymLabel(period)}. Mapping outlet promotor terlebih dulu di tab <b>Mapping Outlet Promotor</b>.
                 </td></tr>
               ) : filtered.map((r, i) => {
-                const belum = r.statusAkun === "Belum Login";
+                const belumLogin = r.loginStatus === "Belum Login";
+                const belumMapping = r.outletCount === 0;
+                const psTone = r.promotorStatus === "Vacant" ? { bg: t.amberBg, fg: t.amber, bd: t.amberBd } : r.promotorStatus === "Aktif" ? { bg: t.greenBg, fg: t.green, bd: t.greenBd } : { bg: t.hover, fg: t.mid, bd: t.line };
                 return (
-                  <React.Fragment key={r.id}>
-                    <tr className="pts-row" style={{ background: belum ? t.amberBg : "transparent" }}>
-                      <td className="pts-td" style={{ color: t.mid }}>{i + 1}</td>
-                      <td className="pts-td">{r.checkIn ? fmtDate(r.checkIn) : <span style={{ color: t.lo }}>—</span>}</td>
-                      <td className="pts-td">{r.branch || "—"}</td>
-                      <td className="pts-td">{r.area || "—"}</td>
-                      <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 11.5, color: t.mid }}>{r.outlet_code || "—"}</td>
-                      <td className="pts-td" style={{ fontWeight: 600 }}>{r.nama}</td>
-                      <td className="pts-td" style={{ color: t.mid }}>{r.email}</td>
-                      <td className="pts-td">
-                        {belum
-                          ? <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: t.amberBg, color: t.amber, border: `1px solid ${t.amberBd}` }}><UserX size={11} /> Belum Login</span>
-                          : <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: t.greenBg, color: t.green, border: `1px solid ${t.greenBd}` }}><UserCheck size={11} /> Aktif</span>}
-                      </td>
-                      <td className="pts-td" style={{ fontWeight: 600 }}>{r.checkIn ? fmtTime(r.checkIn) : <span style={{ color: t.lo }}>—</span>}</td>
-                      <td className="pts-td">{r.checkIn ? cellLoc(r.checkInLat, r.checkInLng) : <span style={{ color: t.lo }}>—</span>}</td>
-                      <td className="pts-td">{r.checkIn ? cellPhoto(r.checkInPhoto) : <span style={{ color: t.lo }}>—</span>}</td>
-                      <td className="pts-td" style={{ fontWeight: 600 }}>{r.checkOut ? fmtTime(r.checkOut) : <span style={{ color: t.lo }}>—</span>}</td>
-                      <td className="pts-td">{r.checkOut ? cellLoc(r.checkOutLat, r.checkOutLng) : <span style={{ color: t.lo }}>—</span>}</td>
-                      <td className="pts-td">{r.checkOut ? cellPhoto(r.checkOutPhoto) : <span style={{ color: t.lo }}>—</span>}</td>
-                      <td className="pts-td">{durationOf(r.checkIn, r.checkOut) || <span style={{ color: t.lo }}>—</span>}</td>
-                      <td className="pts-td">
-                        {r.salesCount > 0
-                          ? <button onClick={() => setExpanded(expanded === r.id ? null : r.id)}
-                              style={{ display: "inline-flex", alignItems: "center", gap: 5, background: t.brandBg, color: t.brand, border: `1px solid ${t.brandBd}`, borderRadius: 8, padding: "3px 9px", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FF }}>
-                              {r.salesCount} <ChevronRight size={12} style={{ transform: expanded === r.id ? "rotate(90deg)" : "none", transition: "transform .15s" }} />
-                            </button>
-                          : <span style={{ color: t.lo }}>0</span>}
-                      </td>
-                      <td className="pts-td">
-                        <span style={{ fontSize: 11.5, fontWeight: 600, color: r.statusSesi === "Aktif" ? t.blue : r.statusSesi === "Selesai" ? t.green : r.statusSesi === "Auto-Checkout" ? t.amber : t.lo }}>{r.statusSesi}</span>
-                      </td>
-                      <td className="pts-td"><span style={{ fontSize: 11.5, color: r.geoFlag === "ok" ? t.mid : t.amber }}>{r.geoFlag}</span></td>
-                    </tr>
-                    {expanded === r.id && r.sales.length > 0 && (
-                      <tr>
-                        <td colSpan={18} style={{ padding: "12px 16px", background: t.sub, borderBottom: `1px solid ${t.lineSoft}` }}>
-                          <div style={{ fontSize: 11.5, fontWeight: 700, color: t.mid, marginBottom: 8, letterSpacing: "0.04em", textTransform: "uppercase" }}>Daftar nomor terjual ({r.sales.length})</div>
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                            {r.sales.map((s, k) => (
-                              <span key={k} style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "5px 10px", borderRadius: 8, background: t.card, border: `1px solid ${t.line}`, fontSize: 12.5, fontFamily: "monospace", color: t.hi }}>
-                                {s.phone_normalized}<span style={{ fontFamily: FF, color: t.lo, fontSize: 11 }}>{fmtTime(s.tagged_at)}</span>
-                              </span>
-                            ))}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </React.Fragment>
+                  <tr key={r.id} className="pts-row" style={{ background: r.promotorStatus === "Vacant" ? t.amberBg : belumMapping ? t.hover : "transparent" }}>
+                    <td className="pts-td" style={{ color: t.mid }}>{i + 1}</td>
+                    <td className="pts-td">{r.branch || "—"}</td>
+                    <td className="pts-td">{r.mc || "—"}</td>
+                    <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 11.5, color: t.mid }}>{r.outlet_code || "—"}</td>
+                    <td className="pts-td" style={{ fontWeight: 600 }}>{r.nama}</td>
+                    <td className="pts-td" style={{ color: t.mid }}>{r.email}</td>
+                    <td className="pts-td">
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: psTone.bg, color: psTone.fg, border: `1px solid ${psTone.bd}` }}>{r.promotorStatus}</span>
+                    </td>
+                    <td className="pts-td">
+                      {belumMapping
+                        ? <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: t.blueBg, color: t.blue, border: `1px solid ${t.blueBd}` }}><Store size={11} /> Belum ter-mapping</span>
+                        : <span style={{ fontSize: 11.5, fontWeight: 600, color: t.hi }}>{mappingLabel(r)}</span>}
+                    </td>
+                    <td className="pts-td">
+                      {belumLogin
+                        ? <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: t.amberBg, color: t.amber, border: `1px solid ${t.amberBd}` }}><UserX size={11} /> Belum Login</span>
+                        : <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: t.greenBg, color: t.green, border: `1px solid ${t.greenBd}` }}><UserCheck size={11} /> Aktif</span>}
+                    </td>
+                    <td className="pts-td" style={{ fontWeight: 700 }}>{r.total}</td>
+                    <td className="pts-td" style={{ color: t.mid }}>{r.im3 || "—"}</td>
+                    <td className="pts-td" style={{ color: t.mid }}>{r.tid || "—"}</td>
+                  </tr>
                 );
               })}
             </tbody>
@@ -1096,7 +1653,7 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
         </div>
       </div>
       <div style={{ marginTop: 10, fontSize: 12, color: t.mid }}>
-        Menampilkan {filtered.length} baris · Baris <b style={{ color: t.amber }}>kuning</b> = Promotor sudah di-map bulan ini tapi belum pernah login.
+        Menampilkan {filtered.length} baris · Baris <b style={{ color: t.amber }}>kuning</b> = Vacant, baris abu-abu = belum ter-mapping bulan ini.
       </div>
 
       <style>{`.spin{animation:ptsspin 1s linear infinite}@keyframes ptsspin{to{transform:rotate(360deg)}}`}</style>
@@ -1111,6 +1668,7 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
   const [q, setQ] = useState("");
   const [geoF, setGeoF] = useState("all");   // all | within | outside
   const [gaF, setGaF] = useState("all");     // all | BELUM_TERVALIDASI | TERVALIDASI | ...
+  const [brandF, setBrandF] = useState("all"); // all | IM3 | 3ID
   const outletById = useMemo(() => { const m = new Map(); outletByCode.forEach((o) => m.set(o.id, o)); return m; }, [outletByCode]);
 
   const load = useCallback(async () => {
@@ -1121,7 +1679,7 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
       const nd = new Date(y, mo, 1);
       const end = `${nd.getFullYear()}-${pad2(nd.getMonth() + 1)}-01`;
       const { data: sales } = await supabase.from("pts_sale")
-        .select("id,phone_normalized,imei,email,promotor_id,outlet_id,region,lat,lng,tagged_at,raw_qr_value,distance_meters,within_radius,outside_confirmed_at,ga_status,biometric_status,ga_note")
+        .select("id,phone_normalized,imei,brand,email,promotor_id,outlet_id,region,lat,lng,tagged_at,raw_qr_value,distance_meters,within_radius,outside_confirmed_at,ga_status,biometric_status,ga_note")
         .gte("tagged_at", start).lt("tagged_at", end).order("tagged_at", { ascending: false });
       const { data: pros } = await supabase.from("pts_promotor").select("id,email,full_name");
       const nameById = new Map((pros || []).map((p) => [p.id, p.full_name]));
@@ -1142,10 +1700,11 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
       if (geoF === "within" && r.within_radius === false) return false;
       if (geoF === "outside" && r.within_radius !== false) return false;
       if (gaF !== "all" && (r.ga_status || "BELUM_TERVALIDASI") !== gaF) return false;
+      if (brandF !== "all" && r.brand !== brandF) return false;
       if (s && !`${r.phone_normalized} ${r.imei} ${r.nama} ${r.email} ${r.outlet_code}`.toLowerCase().includes(s)) return false;
       return true;
     });
-  }, [rows, q, geoF, gaF]);
+  }, [rows, q, geoF, gaF, brandF]);
 
   const stats = useMemo(() => {
     const outside = rows.filter((r) => r.within_radius === false).length;
@@ -1154,10 +1713,10 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
   }, [rows]);
 
   const download = () => {
-    const head = ["No", "Tanggal", "Jam", "MSISDN", "IMEI", "Nama Promotor", "Email", "ID Outlet", "Branch", "Area", "Region", "Latitude", "Longitude", "Jarak ke Outlet (m)", "Dalam Radius?", "Status Validasi GA", "Biometric", "Catatan GA"];
-    const body = filtered.map((r, i) => [i + 1, fmtDate(r.tagged_at), fmtTime(r.tagged_at), r.phone_normalized, r.imei || "", r.nama, r.email, r.outlet_code, r.branch, r.area, r.region, r.lat ?? "", r.lng ?? "", r.distance_meters ?? "", r.within_radius === false ? "Tidak" : "Ya", GA_STATUS_LABEL[r.ga_status] || r.ga_status, r.biometric_status || "", r.ga_note || ""]);
+    const head = ["No", "Tanggal", "Jam", "MSISDN", "IMEI", "Brand", "Nama Promotor", "Email", "ID Outlet", "Branch", "Area", "Region", "Latitude", "Longitude", "Jarak ke Outlet (m)", "Dalam Radius?", "Status Validasi GA", "Biometric", "Catatan GA"];
+    const body = filtered.map((r, i) => [i + 1, fmtDate(r.tagged_at), fmtTime(r.tagged_at), r.phone_normalized, r.imei || "", r.brand || "", r.nama, r.email, r.outlet_code, r.branch, r.area, r.region, r.lat ?? "", r.lng ?? "", r.distance_meters ?? "", r.within_radius === false ? "Tidak" : "Ya", GA_STATUS_LABEL[r.ga_status] || r.ga_status, r.biometric_status || "", r.ga_note || ""]);
     const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
-    ws["!cols"] = [{ wch: 5 }, { wch: 12 }, { wch: 8 }, { wch: 16 }, { wch: 18 }, { wch: 20 }, { wch: 26 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 20 }, { wch: 14 }, { wch: 34 }];
+    ws["!cols"] = [{ wch: 5 }, { wch: 12 }, { wch: 8 }, { wch: 16 }, { wch: 18 }, { wch: 8 }, { wch: 20 }, { wch: 26 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 20 }, { wch: 14 }, { wch: 34 }];
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, `MSISDN ${period}`);
     XLSX.writeFile(wb, `PTS_MSISDN_${period}.xlsx`);
   };
@@ -1185,6 +1744,11 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
             <option value="all">Semua status GA</option>
             {Object.entries(GA_STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
+          <select className="pts-in" value={brandF} onChange={(e) => setBrandF(e.target.value)}>
+            <option value="all">Semua brand</option>
+            <option value="IM3">IM3</option>
+            <option value="3ID">3ID</option>
+          </select>
         </div>
         <div style={{ display: "flex", gap: 9 }}>
           <button className="pts-btn" onClick={load} style={{ background: t.card, color: t.mid, border: `1px solid ${t.line}` }}><RefreshCw size={14} /> Muat ulang</button>
@@ -1194,15 +1758,15 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
 
       <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden", boxShadow: t.sm }}>
         <div style={{ overflow: "auto", maxHeight: 620 }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1360 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1440 }}>
             <thead>
-              <tr>{["No", "Tanggal", "Jam", "MSISDN", "IMEI", "Promotor", "ID Outlet", "Branch", "Region", "Jarak (m)", "Lokasi", "Status GA", "Biometric"].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr>
+              <tr>{["No", "Tanggal", "Jam", "MSISDN", "IMEI", "Brand", "Promotor", "ID Outlet", "Branch", "Region", "Jarak (m)", "Lokasi", "Status GA", "Biometric"].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td className="pts-td" colSpan={13} style={{ textAlign: "center", padding: 40, color: t.mid }}><Loader2 size={20} className="spin" style={{ verticalAlign: "middle" }} /> Memuat…</td></tr>
+                <tr><td className="pts-td" colSpan={14} style={{ textAlign: "center", padding: 40, color: t.mid }}><Loader2 size={20} className="spin" style={{ verticalAlign: "middle" }} /> Memuat…</td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td className="pts-td" colSpan={13} style={{ textAlign: "center", padding: 44, color: t.mid }}><Phone size={24} style={{ opacity: .5, marginBottom: 8 }} /><br />Belum ada penjualan untuk {ymLabel(period)}.</td></tr>
+                <tr><td className="pts-td" colSpan={14} style={{ textAlign: "center", padding: 44, color: t.mid }}><Phone size={24} style={{ opacity: .5, marginBottom: 8 }} /><br />Belum ada penjualan untuk {ymLabel(period)}.</td></tr>
               ) : filtered.map((r, i) => (
                 <tr key={r.id} className="pts-row">
                   <td className="pts-td" style={{ color: t.mid }}>{i + 1}</td>
@@ -1210,6 +1774,7 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
                   <td className="pts-td" style={{ fontWeight: 600 }}>{fmtTime(r.tagged_at)}</td>
                   <td className="pts-td" style={{ fontFamily: "monospace", fontWeight: 700 }}>{r.phone_normalized}</td>
                   <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 11.5, color: t.mid }}>{r.imei || "—"}</td>
+                  <td className="pts-td">{r.brand ? <Chip t={t} tone={r.brand === "3ID" ? "blue" : "red"}>{r.brand}</Chip> : "—"}</td>
                   <td className="pts-td" style={{ fontWeight: 600 }}>{r.nama}</td>
                   <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 11.5 }}>{r.outlet_code || "—"}</td>
                   <td className="pts-td">{r.branch || "—"}</td>
@@ -1239,7 +1804,7 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
 /* ══════════════════════════ GEOFENCE SETTINGS ══════════════════════════
    Radius (meter) yang dipakai untuk validasi lokasi saat tagging SP.
    Resolusi: outlet > branch > region > global > default 30m. */
-function GeofenceSettings({ t, d, supabase, profile, outlets, isFullAdmin }) {
+function GeofenceSettings({ t, d, supabase, profile, outlets, isFullAdmin, onOutletsChanged }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [scopeType, setScopeType] = useState("global");
@@ -1247,6 +1812,110 @@ function GeofenceSettings({ t, d, supabase, profile, outlets, isFullAdmin }) {
   const [radius, setRadius] = useState(30);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  // ── Upload titik outlet (BRAND + ID OUTLET + LATITUDE + LONGITUDE) ──
+  // File ini hanya diproses di memori: koordinat langsung di-upsert ke
+  // pts_outlet (kolom latitude/longitude) sesuai brand:
+  //   BRAND=IM3 → cocokkan ke pts_outlet.code
+  //   BRAND=3ID → cocokkan ke pts_outlet.code_3id
+  // Dua brand pada outlet fisik yang sama akan berbagi koordinat yang
+  // sama karena keduanya menunjuk row pts_outlet yang sama (kunci = code).
+  const coordFileRef = useRef(null);
+  const [coordDrag, setCoordDrag] = useState(false);
+  const [coordFileName, setCoordFileName] = useState("");
+  const [coordRows, setCoordRows] = useState(null);
+  const [coordBusy, setCoordBusy] = useState(false);
+  const [coordResult, setCoordResult] = useState(null);
+  const [coordErr, setCoordErr] = useState("");
+
+  const outletByAnyCode = useMemo(() => {
+    const m = new Map();
+    outlets.forEach((o) => {
+      if (o.code) m.set(String(o.code).trim().toUpperCase(), o);
+      if (o.code_3id) m.set(String(o.code_3id).trim().toUpperCase(), o);
+    });
+    return m;
+  }, [outlets]);
+
+  const resetCoord = () => { setCoordRows(null); setCoordFileName(""); setCoordResult(null); setCoordErr(""); if (coordFileRef.current) coordFileRef.current.value = ""; };
+
+  const downloadCoordTemplate = () => {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ["BRAND", "ID OUTLET", "LATITUDE", "LONGITUDE"],
+      ["IM3", "OTL-IM3-0001", -3.5952, 98.6785],
+      ["3ID", "OTL-3ID-0001", -3.5952, 98.6785],
+    ]);
+    ws["!cols"] = [{ wch: 8 }, { wch: 18 }, { wch: 12 }, { wch: 12 }];
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Titik Outlet");
+    XLSX.writeFile(wb, "PTS_Outlet_Coords_Template.xlsx");
+  };
+
+  const parseCoordFile = async (file) => {
+    setCoordErr(""); setCoordResult(null);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const raw = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false });
+      if (!raw.length) { setCoordErr("File kosong."); return; }
+      const head = raw[0].map((h) => String(h || "").trim().toUpperCase());
+      const idx = (name) => head.findIndex((h) => h === name);
+      const iBrand = idx("BRAND"), iCode = idx("ID OUTLET"), iLat = idx("LATITUDE"), iLng = idx("LONGITUDE");
+      if (iCode < 0 || iLat < 0 || iLng < 0) { setCoordErr("Header wajib: 'ID OUTLET', 'LATITUDE', 'LONGITUDE' (BRAND opsional tapi disarankan)."); return; }
+      const parsed = [];
+      for (let r = 1; r < raw.length; r++) {
+        const row = raw[r]; if (!row || row.every((c) => c === "" || c == null)) continue;
+        const code = String(row[iCode] ?? "").trim();
+        const brand = iBrand >= 0 ? String(row[iBrand] ?? "").trim().toUpperCase() : "";
+        // Number("") === 0 di JS — cek eksplisit supaya sel kosong tidak jadi 0
+        const latRaw = String(row[iLat] ?? "").trim();
+        const lngRaw = String(row[iLng] ?? "").trim();
+        const lat = latRaw === "" ? NaN : Number(latRaw);
+        const lng = lngRaw === "" ? NaN : Number(lngRaw);
+        const outlet = code ? outletByAnyCode.get(code.toUpperCase()) : null;
+        const errs = [];
+        if (!code) errs.push("ID Outlet kosong");
+        else if (!outlet) errs.push("ID Outlet tidak ditemukan di master outlet");
+        if (isNaN(lat) || isNaN(lng)) errs.push("Lat/Lng harus angka");
+        if (!isNaN(lat) && !isNaN(lng) && lat === 0 && lng === 0) errs.push("Koordinat (0,0) tidak valid");
+        if (brand && !["IM3", "3ID"].includes(brand)) errs.push("BRAND harus IM3 atau 3ID (atau kosong)");
+        parsed.push({
+          rowNo: r + 1, brand, code, outlet_id: outlet?.id || null, outlet_name: outlet?.name || "",
+          lat, lng, errors: errs,
+        });
+      }
+      if (!parsed.length) { setCoordErr("Tidak ada baris data pada file ini."); return; }
+      setCoordRows(parsed);
+    } catch (e) { setCoordErr("Gagal membaca file: " + (e?.message || e)); }
+  };
+
+  const onCoordPick = (e) => { const f = e.target.files?.[0]; if (f) { setCoordFileName(f.name); parseCoordFile(f); } };
+  const onCoordDrop = (e) => { e.preventDefault(); setCoordDrag(false); const f = e.dataTransfer.files?.[0]; if (f) { setCoordFileName(f.name); parseCoordFile(f); } };
+
+  const coordOkRows = coordRows ? coordRows.filter((r) => !r.errors.length) : [];
+  const coordErrCount = coordRows ? coordRows.filter((r) => r.errors.length).length : 0;
+
+  const saveCoords = async () => {
+    if (!coordOkRows.length) return;
+    setCoordBusy(true); setCoordErr(""); setCoordResult(null);
+    try {
+      // Group by outlet_id — beberapa baris (brand IM3 & 3ID) untuk outlet
+      // fisik yang sama harus jadi 1 update, koordinat terakhir menang.
+      const byOutlet = new Map();
+      coordOkRows.forEach((r) => { byOutlet.set(r.outlet_id, { latitude: r.lat, longitude: r.lng }); });
+      let updated = 0;
+      for (const [outlet_id, patch] of byOutlet) {
+        const { error } = await supabase.from("pts_outlet").update(patch).eq("id", outlet_id);
+        if (error) throw error;
+        updated++;
+      }
+      setCoordResult({ updated, rows: coordOkRows.length, skipped: coordErrCount });
+      setCoordRows(null); setCoordFileName(""); if (coordFileRef.current) coordFileRef.current.value = "";
+      if (onOutletsChanged) await onOutletsChanged();
+    } catch (e) {
+      setCoordErr("Gagal menyimpan: " + (e?.message || e));
+    } finally { setCoordBusy(false); }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1299,6 +1968,89 @@ function GeofenceSettings({ t, d, supabase, profile, outlets, isFullAdmin }) {
           Anda melihat pengaturan ini sebagai read-only. Hanya role <b>SPM Sumatera</b> yang dapat mengubah radius geofence.
         </div>
       )}
+
+      {/* ── Upload titik outlet (BRAND + ID OUTLET + LATITUDE + LONGITUDE) ── */}
+      <div style={{ marginBottom: 18, padding: 18, borderRadius: 14, background: t.card, border: `1px solid ${t.line}`, boxShadow: t.sm, opacity: isFullAdmin ? 1 : .6, pointerEvents: isFullAdmin ? "auto" : "none" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: t.hi }}>Upload Titik Outlet (BRAND · ID OUTLET · Lat · Lng)</div>
+            <div style={{ fontSize: 12.5, color: t.mid, marginTop: 3 }}>Koordinat inilah yang dibandingkan dengan lokasi promotor saat Claim Penjualan (baik scan QR maupun input manual). ID Outlet cocokkan ke IM3 <b>atau</b> 3ID — dua brand di outlet fisik yang sama akan berbagi 1 titik.</div>
+          </div>
+          <button className="pts-btn" onClick={downloadCoordTemplate} style={{ background: t.card, color: t.hi, border: `1px solid ${t.line}`, boxShadow: t.sm }}><Download size={14} /> Template</button>
+        </div>
+        <div
+          onDragOver={(e) => { e.preventDefault(); setCoordDrag(true); }}
+          onDragLeave={() => setCoordDrag(false)}
+          onDrop={onCoordDrop}
+          onClick={() => coordFileRef.current?.click()}
+          style={{
+            border: `1.5px dashed ${coordDrag ? t.brand : t.line}`, borderRadius: 12, padding: "22px 16px", textAlign: "center", cursor: "pointer",
+            background: coordDrag ? t.brandBg : t.sub, transition: "all .15s",
+          }}>
+          <input ref={coordFileRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={onCoordPick} />
+          <FileSpreadsheet size={22} style={{ color: t.brand, marginBottom: 8 }} />
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: t.hi }}>{coordFileName || "Tarik file .xlsx / .csv ke sini, atau klik untuk memilih"}</div>
+          <div style={{ fontSize: 11.5, color: t.lo, marginTop: 5 }}>Kolom wajib: BRAND · ID OUTLET · LATITUDE · LONGITUDE</div>
+        </div>
+        {coordErr && (
+          <div style={{ marginTop: 12, display: "flex", gap: 10, padding: "11px 13px", borderRadius: 10, background: t.redBg, border: `1px solid ${t.redBd}` }}>
+            <AlertTriangle size={16} color={t.red} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span style={{ fontSize: 13, color: t.hi }}>{coordErr}</span>
+          </div>
+        )}
+        {coordResult && (
+          <div style={{ marginTop: 12, display: "flex", gap: 11, padding: "12px 14px", borderRadius: 12, background: t.greenBg, border: `1px solid ${t.greenBd}` }}>
+            <CheckCircle2 size={18} color={t.green} style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ fontSize: 13.5, color: t.hi }}>
+              <b>{coordResult.updated}</b> outlet diperbarui titik koordinatnya.
+              {coordResult.skipped > 0 && <span style={{ color: t.amber }}> {coordResult.skipped} baris dilewati karena error.</span>}
+            </div>
+          </div>
+        )}
+        {coordRows && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: t.hi }}>Pratinjau: {coordRows.length} baris</span>
+                <Chip t={t} tone="green" icon={<CheckCircle2 size={12} />}>{coordOkRows.length} valid</Chip>
+                {coordErrCount > 0 && <Chip t={t} tone="red" icon={<AlertTriangle size={12} />}>{coordErrCount} error</Chip>}
+              </div>
+              <div style={{ display: "flex", gap: 9 }}>
+                <button className="pts-btn" onClick={resetCoord} style={{ background: t.card, color: t.mid, border: `1px solid ${t.line}` }}><X size={14} /> Batal</button>
+                <button className="pts-btn" onClick={saveCoords} disabled={coordBusy || coordOkRows.length === 0}
+                  style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}>
+                  {coordBusy ? <Loader2 size={15} className="spin" /> : <MapPin size={15} />} Simpan {coordOkRows.length} Titik
+                </button>
+              </div>
+            </div>
+            <div style={{ border: `1px solid ${t.line}`, borderRadius: 10, overflow: "hidden" }}>
+              <div style={{ maxHeight: 260, overflow: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead><tr>{["Baris", "Brand", "ID Outlet", "Nama Outlet", "Lat", "Lng", "Status"].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr></thead>
+                  <tbody>
+                    {coordRows.slice(0, 300).map((r, i) => (
+                      <tr key={i} className="pts-row" style={{ background: r.errors.length ? t.redBg : "transparent" }}>
+                        <td className="pts-td" style={{ color: t.mid }}>{r.rowNo}</td>
+                        <td className="pts-td">{r.brand || "—"}</td>
+                        <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 12 }}>{r.code || "—"}</td>
+                        <td className="pts-td">{r.outlet_name || <span style={{ color: t.lo }}>—</span>}</td>
+                        <td className="pts-td" style={{ fontFamily: "monospace" }}>{isNaN(r.lat) ? "—" : r.lat}</td>
+                        <td className="pts-td" style={{ fontFamily: "monospace" }}>{isNaN(r.lng) ? "—" : r.lng}</td>
+                        <td className="pts-td">
+                          {r.errors.length
+                            ? <span title={r.errors.join("; ")} style={{ display: "inline-flex", alignItems: "center", gap: 5, color: t.red, fontWeight: 600, fontSize: 12 }}><AlertTriangle size={12} /> {r.errors[0]}</span>
+                            : <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: t.green, fontWeight: 600, fontSize: 12 }}><CheckCircle2 size={12} /> OK</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {coordRows.length > 300 && <div style={{ padding: "9px 14px", fontSize: 12, color: t.mid, borderTop: `1px solid ${t.lineSoft}` }}>Menampilkan 300 dari {coordRows.length} baris.</div>}
+            </div>
+          </div>
+        )}
+      </div>
 
       <div style={{ marginBottom: 18, padding: 18, borderRadius: 14, background: t.card, border: `1px solid ${t.line}`, boxShadow: t.sm, opacity: isFullAdmin ? 1 : .6, pointerEvents: isFullAdmin ? "auto" : "none" }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: t.hi, marginBottom: 14 }}>Atur / Tambah Radius</div>

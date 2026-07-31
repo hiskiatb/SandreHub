@@ -94,7 +94,7 @@ export function BottomSheet({ onClose, children, maxWidth = 560 }) {
 }
 
 /* ── Sheet berjudul (memakai BottomSheet) ──── */
-function Sheet({ title, onClose, children, accent = "#ED1C24" }) {
+export function Sheet({ title, onClose, children, accent = "#ED1C24" }) {
   return (
     <BottomSheet onClose={onClose}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 18px 12px" }}>
