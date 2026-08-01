@@ -1097,11 +1097,11 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
                 <th className="pts-th pts-th-sticky" style={{ minWidth: 104 }}>Aksi</th>
                 <th className="pts-th">Nama Promotor</th>
                 <th className="pts-th">Email Promotor</th>
+                <th className="pts-th">Efektif</th>
                 <th className="pts-th">ID Promotor (IM3)</th>
                 <th className="pts-th">ID Promotor (3ID)</th>
                 {FCOLS.map(([k, label]) => <FilterTh key={k} t={t} label={label} colKey={k} filters={filters} className="pts-th" onOpen={(ck, r) => { setRect(r); setOpenCol(ck); }} />)}
                 {[1, 2, 3, 4].map((n) => <th key={n} className="pts-th" style={{ minWidth: 220 }}>Outlet {n} (Nama · Kategori · ID IM3 · ID 3ID)</th>)}
-                <th className="pts-th">Efektif</th>
               </tr>
             </thead>
             <tbody>
@@ -1137,6 +1137,7 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
                     </td>
                     <td className="pts-td" style={{ fontWeight: 700, color: r.full_name ? t.hi : t.lo, fontStyle: r.full_name ? "normal" : "italic" }}>{r.full_name || "belum diisi"}</td>
                     <td className="pts-td" style={{ color: r.email ? t.hi : t.lo, fontStyle: r.email ? "normal" : "italic" }}>{r.email || "belum diisi"}</td>
+                    <td className="pts-td">{r.effective_date ? fmtDate(r.effective_date) : <span style={{ color: t.lo }}>—</span>}</td>
                     <td className="pts-td" style={{ fontFamily: "monospace", fontWeight: 700 }}>{r.promotor_id || <span style={{ color: t.lo }}>—</span>}</td>
                     <td className="pts-td" style={{ fontFamily: "monospace", fontWeight: 700 }}>{r.user_id_3id || <span style={{ color: t.lo }}>—</span>}</td>
                     {!roleLockedRegion && <td className="pts-td">{r.region || <span style={{ color: t.lo }}>—</span>}</td>}
@@ -1175,7 +1176,6 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
                         </td>
                       );
                     })}
-                    <td className="pts-td">{r.effective_date ? fmtDate(r.effective_date) : <span style={{ color: t.lo }}>—</span>}</td>
                   </tr>
                 );
               })}
