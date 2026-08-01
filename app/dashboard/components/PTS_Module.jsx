@@ -21,7 +21,7 @@ import {
   CheckCircle2, AlertTriangle, Clock, X, ChevronDown, ChevronRight,
   RefreshCw, ShoppingBag, CalendarDays,
   Loader2, Store, UserCheck, UserX, Info, Phone, IdCard, Radar,
-  UploadCloud, Plus, Trash2, Pencil, Save, Ban, BarChart3, ArrowLeftRight, Settings2, Eye,
+  UploadCloud, Plus, Trash2, Save, Ban, BarChart3, ArrowLeftRight, Settings2, Eye,
 } from "lucide-react";
 import { passesRow, optionsFor, FilterTh, FilterMenu } from "./MFTS_TableFilter";
 
@@ -480,10 +480,6 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
   ).length, [list, roleLockedRegion, roleLockedMc]);
 
   const startNew = () => { setForm({ ...emptyPromotorForm(), region: picRegion || "" }); setIdLocked(false); setEditing(true); setErr(""); };
-  // ID Promotor dikunci hanya bila baris ini SUDAH punya ID (mis. dari roster) —
-  // profil yang lahir dari login mandiri (promotor_id masih kosong) tetap bisa
-  // dikaitkan ke ID roster yang benar oleh admin.
-  const startEdit = (r) => { setForm({ id: r.id, promotor_id: r.promotor_id || "", full_name: r.full_name || "", email: r.email || "", phone: r.phone || "", region: r.region || "", effective_date: r.effective_date || "", status: r.status || "active", sales_target: r.sales_target || 150 }); setIdLocked(!!r.promotor_id); setEditing(true); setErr(""); };
   const cancel = () => { setEditing(false); setForm(emptyPromotorForm()); setErr(""); };
 
   const saveForm = async () => {
@@ -927,15 +923,21 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
         <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
           <button className="pts-btn" onClick={load} style={{ background: t.card, color: t.mid, border: `1px solid ${t.line}` }}><RefreshCw size={14} /> Muat ulang</button>
           <button className="pts-btn" onClick={downloadExcel} style={{ background: t.card, color: t.hi, border: `1px solid ${t.line}`, boxShadow: t.sm }}><Download size={15} /> Download Mapping {ymLabel(period)}</button>
-          <button className="pts-btn" onClick={() => { setShowBulkMapping((v) => !v); resetMapParse(); }} style={{ background: t.card, color: t.hi, border: `1px solid ${t.line}`, boxShadow: t.sm }}><Upload size={15} /> Upload Mapping</button>
+          {/* Upload massal via Excel — level SFM ke atas saja (SFM Circle/Region,
+              PIC Region, SPM). CSE/RSE hanya kelola per-promotor lewat "Edit Data". */}
+          {profile?.role !== "cse_rse" && (
+            <button className="pts-btn" onClick={() => { setShowBulkMapping((v) => !v); resetMapParse(); }} style={{ background: t.card, color: t.hi, border: `1px solid ${t.line}`, boxShadow: t.sm }}><Upload size={15} /> Upload Mapping</button>
+          )}
           {profile?.role !== "cse_rse" && (
             <button className="pts-btn" onClick={startNew} style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}><Plus size={15} /> Promotor Baru</button>
           )}
         </div>
       </div>
 
-      {/* ── Panel: Upload Mapping ────────────────────────────────────── */}
-      {showBulkMapping && (
+      {/* ── Panel: Upload Mapping — dijaga ganda (tombol pembukanya sudah
+          disembunyikan dari CSE/RSE, ini jaga-jaga kalau showBulkMapping
+          somehow true). ─────────────────────────────────────────────── */}
+      {showBulkMapping && profile?.role !== "cse_rse" && (
         <div style={{ marginBottom: 18, padding: 18, borderRadius: 14, background: t.card, border: `1px solid ${t.line}`, boxShadow: t.md }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: t.hi, marginBottom: 6 }}>Upload Mapping — {ymLabel(period)}</div>
           <div style={{ fontSize: 12.5, color: t.mid, marginBottom: 14 }}>
@@ -1089,7 +1091,7 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 2100 }}>
             <thead>
               <tr>
-                <th className="pts-th pts-th-sticky" style={{ minWidth: 132 }}>Aksi</th>
+                <th className="pts-th pts-th-sticky" style={{ minWidth: 156 }}>Aksi</th>
                 <th className="pts-th">Nama Promotor</th>
                 <th className="pts-th">Email Promotor</th>
                 <th className="pts-th">ID Promotor (IM3)</th>
@@ -1108,24 +1110,25 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
                 const si = promotorStatusInfo(r);
                 return (
                   <tr key={r.id} className="pts-row">
-                    <td className="pts-td pts-td-sticky">
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", maxWidth: 108 }}>
+                    <td className="pts-td pts-td-sticky" style={{ whiteSpace: "normal" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 5, width: 140 }}>
                         {canManagePromotor(r) && (
-                          <button onClick={() => setEditingMapping(r)} title="Kelola mapping outlet (edit semua kolom langsung di sini)"
-                            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.brandBd}`, background: t.brandBg, color: t.brand, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Settings2 size={13} /></button>
-                        )}
-                        {canManagePromotor(r) && (
-                          <button onClick={() => startEdit(r)} title="Lengkapi/ubah identitas promotor" style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Pencil size={13} /></button>
+                          <button onClick={() => setEditingMapping(r)} title="Edit data diri & mapping outlet"
+                            style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.brandBd}`, background: t.brandBg, color: t.brand, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, textAlign: "left" }}>
+                            <Settings2 size={13} style={{ flexShrink: 0 }} /> Edit Data
+                          </button>
                         )}
                         {canManageVacancy(r) && (
                           <button onClick={() => toggleVacant(r)} disabled={vacantBusy === r.id} title={r.vacant ? "Batalkan Vacant" : "Tandai Vacant"}
-                            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${r.vacant ? t.amberBd : t.line}`, background: r.vacant ? t.amberBg : t.card, color: r.vacant ? t.amber : t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                            {vacantBusy === r.id ? <Loader2 size={13} className="spin" /> : <Ban size={13} />}
+                            style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 10px", borderRadius: 8, border: `1px solid ${r.vacant ? t.amberBd : t.line}`, background: r.vacant ? t.amberBg : t.card, color: r.vacant ? t.amber : t.mid, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, textAlign: "left" }}>
+                            {vacantBusy === r.id ? <Loader2 size={13} className="spin" style={{ flexShrink: 0 }} /> : <Ban size={13} style={{ flexShrink: 0 }} />} {r.vacant ? "Aktifkan" : "Vacant"}
                           </button>
                         )}
                         {canManagePromotor(r) && (
                           <button onClick={() => { setDeletingPromotor(r); setDeleteErr(""); }} title="Hapus promotor"
-                            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.redBd}`, background: t.redBg, color: t.red, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Trash2 size={13} /></button>
+                            style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.redBd}`, background: t.redBg, color: t.red, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, textAlign: "left" }}>
+                            <Trash2 size={13} style={{ flexShrink: 0 }} /> Hapus Data
+                          </button>
                         )}
                       </div>
                     </td>
@@ -1186,7 +1189,7 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
       )}
 
       {editingMapping && (
-        <MappingEditModal t={t} supabase={supabase} profile={profile} period={period} row={editingMapping} outletByCode={outletByCode}
+        <MappingEditModal t={t} supabase={supabase} profile={profile} period={period} row={editingMapping} outletByCode={outletByCode} picRegion={picRegion}
           onClose={() => setEditingMapping(null)}
           onSaved={async () => { setEditingMapping(null); await onOutletsNeeded(); await load(); }} />
       )}
@@ -1210,7 +1213,19 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
    IM3 diutamakan → 3ID → kode sementara PENDING-xxx bila cuma nama yang
    terisi. Hanya menghapus/mengganti assignment MILIK promotor ini saja
    untuk periode berjalan — promotor lain tidak tersentuh. ──────────────── */
-function MappingEditModal({ t, supabase, profile, period, row, outletByCode, onClose, onSaved }) {
+function MappingEditModal({ t, supabase, profile, period, row, outletByCode, picRegion, onClose, onSaved }) {
+  // Data diri — digabung ke modal yang sama dgn mapping outlet supaya admin
+  // tidak perlu buka 2 tombol terpisah utk 1 promotor. ID Promotor/3ID
+  // sengaja tetap read-only (kunci identitas, hanya bisa ditautkan lewat
+  // alur "Promotor Baru" / Import Roster ID).
+  const [fullName, setFullName] = useState(row.full_name || "");
+  const [email, setEmail] = useState(row.email || "");
+  const [phone, setPhone] = useState(row.phone || "");
+  const [region, setRegion] = useState(row.region || "");
+  const [effectiveDate, setEffectiveDate] = useState(row.effective_date || "");
+  const [salesTarget, setSalesTarget] = useState(row.sales_target || 150);
+  const [status, setStatus] = useState(row.status || "active");
+
   const [branch, setBranch] = useState(row.branch || "");
   const [mc, setMc] = useState(row.mc || "");
   const [slots, setSlots] = useState(() => Array.from({ length: OUTLET_SLOTS }, (_, i) => {
@@ -1229,9 +1244,21 @@ function MappingEditModal({ t, supabase, profile, period, row, outletByCode, onC
   const filledCount = slots.filter((s) => s.name || s.im3 || s.tid || s.category).length;
 
   const save = async () => {
-    setErr(""); setSaving(true);
+    setErr("");
+    if (!fullName.trim()) { setErr("Nama Promotor wajib diisi."); return; }
+    if (email && !emailValid(email)) { setErr("Email Pribadi tidak valid."); return; }
+    if (!(Number(salesTarget) > 0)) { setErr("Target Penjualan harus lebih dari 0."); return; }
+    setSaving(true);
     try {
-      const promotorKey = (row.promotor_id || row.user_id_3id || row.email || "X").toUpperCase();
+      // 0) Simpan data diri promotor dulu
+      const identityPayload = {
+        full_name: fullName.trim(), email: email.trim().toLowerCase() || null, phone: phone.trim() || null,
+        region: region || null, effective_date: effectiveDate || null, status, sales_target: Number(salesTarget),
+      };
+      const { error: idErr } = await supabase.from("pts_promotor").update(identityPayload).eq("id", row.id);
+      if (idErr) throw idErr;
+
+      const promotorKey = (row.promotor_id || row.user_id_3id || email || "X").toUpperCase();
       const resolved = slots
         .map((s, i) => ({ ...s, n: i + 1 }))
         .filter((s) => s.name || s.im3 || s.tid || s.category)
@@ -1253,7 +1280,7 @@ function MappingEditModal({ t, supabase, profile, period, row, outletByCode, onC
         const outletPayload = resolved.map((r) => ({
           code: r.outlet_code, code_3id: r.outlet_code_3id || null,
           name: r.outlet_name, category: r.category || null,
-          branch: branch.trim() || null, region: row.region || null, status: "active",
+          branch: branch.trim() || null, region: region || null, status: "active",
           id_pending: r.idIncomplete,
         }));
         const { error } = await supabase.from("pts_outlet").upsert(outletPayload, { onConflict: "code" });
@@ -1270,10 +1297,10 @@ function MappingEditModal({ t, supabase, profile, period, row, outletByCode, onC
 
       if (resolved.length) {
         const payload = resolved.map((r) => ({
-          period, email: row.email || null, full_name: row.full_name || null,
+          period, email: email.trim().toLowerCase() || null, full_name: fullName.trim() || null,
           promotor_id_ref: row.id, mc: mc.trim() || null,
           outlet_id: idByCode.get(r.outlet_code.toUpperCase()) || null,
-          outlet_code: r.outlet_code, branch: branch.trim() || null, region: row.region || null,
+          outlet_code: r.outlet_code, branch: branch.trim() || null, region: region || null,
           status: "active", assigned_by: profile?.id || null,
         }));
         const { error: insErr } = await supabase.from("pts_assignment").insert(payload);
@@ -1295,17 +1322,38 @@ function MappingEditModal({ t, supabase, profile, period, row, outletByCode, onC
       <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 760, maxHeight: "90vh", overflowY: "auto", background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, boxShadow: t.md }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "16px 20px", borderBottom: `1px solid ${t.line}`, position: "sticky", top: 0, background: t.card, borderRadius: "16px 16px 0 0", zIndex: 1 }}>
           <div>
-            <div style={{ fontSize: 15.5, fontWeight: 700, color: t.hi }}>Kelola Mapping — {row.full_name || row.promotor_id || "Promotor"}</div>
+            <div style={{ fontSize: 15.5, fontWeight: 700, color: t.hi }}>Edit Data — {row.full_name || row.promotor_id || "Promotor"}</div>
             <div style={{ fontSize: 12, color: t.mid, marginTop: 2 }}>
               ID (IM3) <b style={{ color: t.hi, fontFamily: "monospace" }}>{row.promotor_id || "—"}</b>
               {" · "}ID (3ID) <b style={{ color: t.hi, fontFamily: "monospace" }}>{row.user_id_3id || "—"}</b>
-              {" · "}Region <b style={{ color: t.hi }}>{row.region || "—"}</b>
             </div>
           </div>
           <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: "transparent", color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><X size={18} /></button>
         </div>
 
         <div style={{ padding: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: t.mid, marginBottom: 8 }}>Data Promotor</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 18 }}>
+            <div><label style={lbl}>Nama Promotor *</label><input style={inp} value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Nama lengkap" /></div>
+            <div><label style={lbl}>Email Pribadi</label><input style={inp} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nama@email.com" /></div>
+            <div><label style={lbl}>No. HP</label><input style={inp} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="08xx" /></div>
+            <div>
+              <label style={lbl}>Region</label>
+              <select style={inp} value={region} onChange={(e) => setRegion(e.target.value)} disabled={!!picRegion}>
+                <option value="">— pilih region —</option>
+                {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div><label style={lbl}>Tanggal Efektif Bekerja</label><input style={inp} type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} /></div>
+            <div><label style={lbl}>Target Penjualan</label><input style={inp} type="number" min={1} value={salesTarget} onChange={(e) => setSalesTarget(e.target.value)} /></div>
+            <div>
+              <label style={lbl}>Status</label>
+              <select style={inp} value={status} onChange={(e) => setStatus(e.target.value)}>
+                <option value="active">Aktif</option><option value="inactive">Nonaktif</option>
+              </select>
+            </div>
+          </div>
+
           <div style={{ display: "flex", gap: 10, padding: "11px 14px", borderRadius: 10, background: t.brandBg, border: `1px solid ${t.brandBd}`, marginBottom: 18 }}>
             <Info size={15} color={t.brand} style={{ flexShrink: 0, marginTop: 1 }} />
             <span style={{ fontSize: 12.5, color: t.hi }}>Ubah Branch/MC dan sampai 4 outlet langsung di sini — tidak perlu Excel. Kalau ID Outlet (IM3/3ID) belum ada, isi Nama Outlet saja; sistem otomatis pakai kode sementara sampai ID resminya dilengkapi.</span>
@@ -1345,7 +1393,7 @@ function MappingEditModal({ t, supabase, profile, period, row, outletByCode, onC
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 9, padding: "14px 20px", borderTop: `1px solid ${t.line}`, position: "sticky", bottom: 0, background: t.card, borderRadius: "0 0 16px 16px" }}>
           <button onClick={onClose} className="pts-btn" style={{ background: t.sub, color: t.mid, border: `1px solid ${t.line}` }}>Batal</button>
           <button onClick={save} disabled={saving} className="pts-btn" style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}>
-            {saving ? <Loader2 size={15} className="spin" /> : <CheckCircle2 size={15} />} Simpan Mapping
+            {saving ? <Loader2 size={15} className="spin" /> : <CheckCircle2 size={15} />} Simpan
           </button>
         </div>
       </div>
