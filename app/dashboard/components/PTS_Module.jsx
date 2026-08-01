@@ -21,7 +21,7 @@ import {
   CheckCircle2, AlertTriangle, Clock, X, ChevronDown, ChevronRight,
   RefreshCw, ShoppingBag, CalendarDays,
   Loader2, Store, UserCheck, UserX, Info, Phone, IdCard, Radar,
-  UploadCloud, Plus, Trash2, Save, Ban, BarChart3, ArrowLeftRight, Settings2, Eye,
+  UploadCloud, Plus, Trash2, Save, Ban, BarChart3, ArrowLeftRight, Eye, Pencil,
 } from "lucide-react";
 import { passesRow, optionsFor, FilterTh, FilterMenu } from "./MFTS_TableFilter";
 
@@ -392,7 +392,10 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
     setLoading(true);
     try {
       const [proRes, asgRes] = await Promise.all([
-        supabase.from("pts_promotor").select("*").order("full_name", { ascending: true }),
+        // Urut tetap berdasarkan ID Promotor — vacant TIDAK dikelompokkan
+        // terpisah, tetap di posisi ID-nya supaya urutan baris stabil &
+        // gampang dicari (baris tidak "meloncat" saat status berubah).
+        supabase.from("pts_promotor").select("*").order("promotor_id", { ascending: true, nullsFirst: false }),
         supabase.rpc("pts_effective_assignment", { p_period: period }),
       ]);
       const promotors = proRes.data || [];
@@ -1091,7 +1094,7 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 2100 }}>
             <thead>
               <tr>
-                <th className="pts-th pts-th-sticky" style={{ minWidth: 156 }}>Aksi</th>
+                <th className="pts-th pts-th-sticky" style={{ minWidth: 104 }}>Aksi</th>
                 <th className="pts-th">Nama Promotor</th>
                 <th className="pts-th">Email Promotor</th>
                 <th className="pts-th">ID Promotor (IM3)</th>
@@ -1110,24 +1113,24 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
                 const si = promotorStatusInfo(r);
                 return (
                   <tr key={r.id} className="pts-row">
-                    <td className="pts-td pts-td-sticky" style={{ whiteSpace: "normal" }}>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 5, width: 140 }}>
+                    <td className="pts-td pts-td-sticky">
+                      <div style={{ display: "flex", gap: 6 }}>
                         {canManagePromotor(r) && (
-                          <button onClick={() => setEditingMapping(r)} title="Edit data diri & mapping outlet"
-                            style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.brandBd}`, background: t.brandBg, color: t.brand, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, textAlign: "left" }}>
-                            <Settings2 size={13} style={{ flexShrink: 0 }} /> Edit Data
+                          <button onClick={() => setEditingMapping(r)} title="Edit Data — data diri & mapping outlet"
+                            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.brandBd}`, background: t.brandBg, color: t.brand, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                            <Pencil size={13} />
                           </button>
                         )}
                         {canManageVacancy(r) && (
-                          <button onClick={() => toggleVacant(r)} disabled={vacantBusy === r.id} title={r.vacant ? "Batalkan Vacant" : "Tandai Vacant"}
-                            style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 10px", borderRadius: 8, border: `1px solid ${r.vacant ? t.amberBd : t.line}`, background: r.vacant ? t.amberBg : t.card, color: r.vacant ? t.amber : t.mid, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, textAlign: "left" }}>
-                            {vacantBusy === r.id ? <Loader2 size={13} className="spin" style={{ flexShrink: 0 }} /> : <Ban size={13} style={{ flexShrink: 0 }} />} {r.vacant ? "Aktifkan" : "Vacant"}
+                          <button onClick={() => toggleVacant(r)} disabled={vacantBusy === r.id} title={r.vacant ? "Aktifkan kembali" : "Tandai Vacant"}
+                            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${r.vacant ? t.amberBd : t.line}`, background: r.vacant ? t.amberBg : t.card, color: r.vacant ? t.amber : t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                            {vacantBusy === r.id ? <Loader2 size={13} className="spin" /> : r.vacant ? <UserCheck size={13} /> : <Ban size={13} />}
                           </button>
                         )}
                         {canManagePromotor(r) && (
-                          <button onClick={() => { setDeletingPromotor(r); setDeleteErr(""); }} title="Hapus promotor"
-                            style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 10px", borderRadius: 8, border: `1px solid ${t.redBd}`, background: t.redBg, color: t.red, cursor: "pointer", fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, textAlign: "left" }}>
-                            <Trash2 size={13} style={{ flexShrink: 0 }} /> Hapus Data
+                          <button onClick={() => { setDeletingPromotor(r); setDeleteErr(""); }} title="Hapus Data — hapus promotor ini"
+                            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.redBd}`, background: t.redBg, color: t.red, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                            <Trash2 size={13} />
                           </button>
                         )}
                       </div>
