@@ -1094,7 +1094,7 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 2100 }}>
             <thead>
               <tr>
-                <th className="pts-th pts-th-sticky" style={{ minWidth: 104 }}>Aksi</th>
+                <th className="pts-th pts-th-sticky" style={{ minWidth: profile?.role === "spm_sumatera" ? 136 : 104 }}>Aksi</th>
                 <th className="pts-th">Nama Promotor</th>
                 <th className="pts-th">Email Promotor</th>
                 <th className="pts-th">Efektif</th>
@@ -1115,6 +1115,15 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
                   <tr key={r.id} className="pts-row">
                     <td className="pts-td pts-td-sticky">
                       <div style={{ display: "flex", gap: 6 }}>
+                        {/* Khusus SPM Sumatera: buka app promotor PERSIS seperti yang
+                            dilihat promotor tsb saat login (data live, read-only) —
+                            tanpa perlu tahu akun/password-nya. */}
+                        {profile?.role === "spm_sumatera" && (
+                          <button onClick={() => window.open(`/promotor?admin_preview=${r.id}`, "_blank", "noopener")} title="Lihat sebagai Promotor ini (read-only)"
+                            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.blueBd}`, background: t.blueBg, color: t.blue, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                            <Eye size={13} />
+                          </button>
+                        )}
                         {canManagePromotor(r) && (
                           <button onClick={() => setEditingMapping(r)} title="Edit Data — data diri & mapping outlet"
                             style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.brandBd}`, background: t.brandBg, color: t.brand, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>

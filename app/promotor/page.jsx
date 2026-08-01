@@ -102,6 +102,23 @@ export default function PromotorApp() {
   const [name, setName] = useState("");
   const [promotorId, setPromotorId] = useState(null);
   const [salesTarget, setSalesTarget] = useState(150); // diset admin SPM per-promotor
+
+  /* ── Mode Pratinjau Admin (khusus SPM Sumatera) ────────────────────────
+     ?admin_preview=<pts_promotor.id> — SPM bisa melihat app ini PERSIS
+     seperti yang dilihat promotor tsb saat login, tanpa perlu tahu
+     password/akun Google-nya. Data live (query yang sama, RLS admin sudah
+     mengizinkan baca semua baris) — hanya AKSI TULIS yang dikunci (lihat
+     `previewMode` di AppShell) supaya tidak ada sale/nama/mapping yang
+     ke-submit atas nama SPM padahal sedang "meminjam" tampilan promotor. */
+  const [previewId, setPreviewId] = useState(null);
+  const [previewReady, setPreviewReady] = useState(false);
+  useEffect(() => {
+    const pid = new URLSearchParams(window.location.search).get("admin_preview");
+    setPreviewId(pid || null);
+    setPreviewReady(true);
+  }, []);
+  const previewMode = !!previewId;
+  const backToDashboard = () => router.push("/dashboard");
   const [outlets, setOutlets] = useState([]);      // {code,id,branch,area,region,name}
   const [assignmentSrc, setAssignmentSrc] = useState(null); // { sourcePeriod, carried } — mapping ini dari bulan mana
   const [activeOutlet, setActiveOutlet] = useState(null);
@@ -149,9 +166,34 @@ export default function PromotorApp() {
      admin (mis. dari roster ID); setelah auth_user_id tertaut, perubahan
      nama/email berikutnya tidak memutus riwayat pencapaian. ────────────── */
   const resolveIdentity = useCallback(async () => {
+    if (!previewReady) return; // tunggu cek ?admin_preview dulu, baru resolve identitas
     const { data: ures } = await supabase.auth.getUser();
     const user = ures?.user;
     if (!user) { router.replace("/promotor/login"); return; }
+
+    if (previewId) {
+      // Mode Pratinjau Admin: verifikasi role SPM Sumatera lewat akun admin
+      // yang SEDANG login (bukan akun promotor), lalu muat identitas TARGET
+      // langsung by id — bukan identitas si admin sendiri.
+      const { data: adminProfile } = await supabase.from("profiles").select("role").eq("id", user.id).maybeSingle();
+      if (adminProfile?.role !== "spm_sumatera") {
+        flash("Anda tidak punya akses untuk mode pratinjau ini.", "err");
+        router.replace("/dashboard");
+        return;
+      }
+      const { data: target } = await supabase.from("pts_promotor").select("*").eq("id", previewId).maybeSingle();
+      if (!target) {
+        flash("Promotor tidak ditemukan.", "err");
+        router.replace("/dashboard");
+        return;
+      }
+      setEmail(target.email || ""); setUid(target.auth_user_id || "");
+      setPromotorId(target.id);
+      setName(target.full_name || target.promotor_id || "Promotor");
+      setSalesTarget(target.sales_target || 150);
+      return;
+    }
+
     const em = (user.email || "").toLowerCase();
     setEmail(em); setUid(user.id);
     const googleName = user.user_metadata?.full_name || user.user_metadata?.name || em.split("@")[0];
@@ -182,7 +224,7 @@ export default function PromotorApp() {
     setPromotorId(prof?.id || null);
     setName(prof?.full_name || googleName);
     setSalesTarget(prof?.sales_target || 150);
-  }, [router]);
+  }, [router, previewReady, previewId]);
 
   useEffect(() => { resolveIdentity(); }, [resolveIdentity]);
 
@@ -265,7 +307,7 @@ export default function PromotorApp() {
 
   /* ── Render ────────────────────────────────────────────────── */
   if (phase === "loading") return <Splash />;
-  if (phase === "pending") return <Pending email={email} period={period} setPeriod={setPeriod} onReload={loadPeriodAssignment} onSignOut={signOut} />;
+  if (phase === "pending") return <Pending email={email} period={period} setPeriod={setPeriod} onReload={loadPeriodAssignment} onSignOut={signOut} previewMode={previewMode} onBack={backToDashboard} />;
 
   return (
     <AppShell
@@ -277,6 +319,7 @@ export default function PromotorApp() {
       view={view} setView={setView}
       history={history} loadHistory={loadHistory}
       onSignOut={signOut} flash={flash} toast={toast}
+      previewMode={previewMode} onBack={backToDashboard}
     />
   );
 }
@@ -293,12 +336,15 @@ function Splash() {
 }
 
 /* ══════════════════ Pending ══════════════════ */
-function Pending({ email, period, setPeriod, onReload, onSignOut }) {
+function Pending({ email, period, setPeriod, onReload, onSignOut, previewMode, onBack }) {
   const [busy, setBusy] = useState(false);
   const reload = async () => { setBusy(true); await onReload(); setBusy(false); };
   return (
     <div style={{ minHeight: "100svh", background: C.bg, color: C.hi, fontFamily: FF, display: "flex", flexDirection: "column", padding: "0 26px", textAlign: "center" }}>
       <style>{`@keyframes fl{0%,100%{opacity:.55}50%{opacity:1}}`}</style>
+      {previewMode && (
+        <div style={{ margin: "14px -26px 0", padding: "10px 26px", background: "#FDF6E3", borderBottom: "1px solid #F0DCA8", fontSize: 12, fontWeight: 700, color: "#B7791F" }}>Mode Pratinjau Admin — read-only</div>
+      )}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6 }}>
         <div style={{ width: 76, height: 76, borderRadius: 22, background: "rgba(255,176,32,0.12)", border: "1px solid rgba(255,176,32,0.3)", display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 22, animation: "fl 2s ease infinite" }}>
           <Spinner size={34} color={C.amber} />
@@ -322,9 +368,15 @@ function Pending({ email, period, setPeriod, onReload, onSignOut }) {
         <button onClick={reload} disabled={busy} style={{ height: 54, borderRadius: 15, border: "none", background: C.brand, color: "#fff", fontFamily: FF, fontSize: 15.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, cursor: "pointer", opacity: busy ? 0.7 : 1 }}>
           {busy ? <Spinner size={19} color="#fff" /> : <RefreshCw size={18} />} Muat Ulang Status
         </button>
-        <button onClick={onSignOut} style={{ height: 50, borderRadius: 14, border: `1px solid ${C.line}`, background: "transparent", color: C.mid, fontFamily: FF, fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}>
-          <LogOut size={16} /> Keluar
-        </button>
+        {previewMode ? (
+          <button onClick={onBack} style={{ height: 50, borderRadius: 14, border: `1px solid ${C.line}`, background: "transparent", color: C.mid, fontFamily: FF, fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}>
+            <ChevronLeft size={16} /> Kembali ke Dashboard
+          </button>
+        ) : (
+          <button onClick={onSignOut} style={{ height: 50, borderRadius: 14, border: `1px solid ${C.line}`, background: "transparent", color: C.mid, fontFamily: FF, fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}>
+            <LogOut size={16} /> Keluar
+          </button>
+        )}
       </div>
     </div>
   );
@@ -332,7 +384,10 @@ function Pending({ email, period, setPeriod, onReload, onSignOut }) {
 
 /* ══════════════════ App Shell ══════════════════ */
 function AppShell(p) {
-  const { name, setName, email, promotorId, salesTarget, period, setPeriod, outlets, setOutlets, assignmentSrc, activeOutlet, setActiveOutlet, todaySales, loadTodaySales, geo, geoErr, refreshGeo, view, setView, history, loadHistory, onSignOut, flash, toast } = p;
+  const { name, setName, email, promotorId, salesTarget, period, setPeriod, outlets, setOutlets, assignmentSrc, activeOutlet, setActiveOutlet, todaySales, loadTodaySales, geo, geoErr, refreshGeo, view, setView, history, loadHistory, onSignOut, flash, toast, previewMode, onBack } = p;
+  // Semua aksi tulis dikunci saat Mode Pratinjau Admin — dipanggil di awal
+  // tiap handler supaya tidak ada satupun jalur yang lolos.
+  const guardPreview = () => { if (previewMode) { flash("Mode pratinjau — tidak bisa melakukan aksi ini.", "err"); return true; } return false; };
   const [sheet, setSheet] = useState(null);        // 'qr'
   const [pickOutlet, setPickOutlet] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -357,6 +412,7 @@ function AppShell(p) {
   /* Ubah nama sendiri — hanya full_name, ID (promotor_id/user_id_3id) dikunci
      server-side (trigger) apapun yang dikirim dari sini. */
   const saveProfileName = async (val) => {
+    if (previewMode) throw new Error("Mode pratinjau — tidak bisa mengubah data.");
     const trimmed = val.trim();
     if (!trimmed) throw new Error("Nama tidak boleh kosong.");
     const { error } = await supabase.from("pts_promotor").update({ full_name: trimmed, updated_at: new Date().toISOString() }).eq("id", promotorId);
@@ -368,6 +424,7 @@ function AppShell(p) {
      server memastikan hanya kolom `name` yang benar-benar berubah, ID
      outlet (IM3/3ID) tidak bisa disentuh dari sini. */
   const saveOutletName = async (outlet, val) => {
+    if (previewMode) throw new Error("Mode pratinjau — tidak bisa mengubah data.");
     const trimmed = val.trim();
     if (!trimmed) throw new Error("Nama outlet tidak boleh kosong.");
     const { error } = await supabase.from("pts_outlet").update({ name: trimmed }).eq("id", outlet.id);
@@ -418,6 +475,7 @@ function AppShell(p) {
   useEffect(() => { loadSummary(); }, [loadSummary]);
 
   const decideTransfer = async (req, approve) => {
+    if (guardPreview()) return;
     setApproveReq(null); setBusy(true);
     try {
       const { data, error } = await supabase.rpc(approve ? "pts_approve_transfer" : "pts_reject_transfer", { p_id: req.id });
@@ -442,6 +500,7 @@ function AppShell(p) {
   const needsBrandFab = !!activeOutlet?.code3id;
   const fabReady = !!(activeOutlet && geo && (!needsBrandFab || brand));
   const handleFabClick = () => {
+    if (guardPreview()) return;
     if (fabReady) { setSheet("qr"); return; }
     actionSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     if (!activeOutlet) flash("Pilih outlet aktif dulu.", "err");
@@ -483,6 +542,7 @@ function AppShell(p) {
 
   const onQR = async ({ phone, imei, raw }) => {
     setSheet(null);
+    if (guardPreview()) return;
     try {
       const { normalized, valid } = normalizePhone(phone);
       if (!valid) { flash(`Nomor tidak valid: ${normalized || phone}`, "err"); return; }
@@ -514,7 +574,9 @@ function AppShell(p) {
 
   const confirmOutsideTag = async () => {
     const c = outsideConfirm; if (!c) return;
-    setOutsideConfirm(null); setBusy(true);
+    setOutsideConfirm(null);
+    if (guardPreview()) return;
+    setBusy(true);
     try {
       const data = await tagSale(c.phone, c.imei, c.raw, true);
       await handleTagResult(data, c.phone, c.imei, c.raw);
@@ -526,7 +588,9 @@ function AppShell(p) {
      dipakai lagi), supaya outlet tujuan pengajuan tercatat benar. */
   const requestTransfer = async () => {
     const phone = taken?.phone; if (!phone) return;
-    setTaken(null); setBusy(true);
+    setTaken(null);
+    if (guardPreview()) return;
+    setBusy(true);
     try {
       const { data, error } = await supabase.rpc("pts_request_transfer", { p_phone: phone, p_outlet: activeOutlet?.id || null });
       if (error) throw error;
@@ -544,6 +608,7 @@ function AppShell(p) {
      diperbaiki. */
   const moveOwnSale = async () => {
     const c = selfClaim; if (!c || !activeOutlet) return;
+    if (guardPreview()) return;
     setMoveBusy(true);
     try {
       const { data, error } = await supabase.rpc("pts_move_own_sale", {
@@ -566,7 +631,9 @@ function AppShell(p) {
 
   const doDeleteSale = async () => {
     const s = delSale; if (!s) return;
-    setDelSale(null); setDelAck(false); setBusy(true);
+    setDelSale(null); setDelAck(false);
+    if (guardPreview()) return;
+    setBusy(true);
     try {
       const { error } = await supabase.from("pts_sale").delete().eq("id", s.id);
       if (error) throw error;
@@ -584,23 +651,35 @@ function AppShell(p) {
         @keyframes sheetup{from{transform:translateY(100%)}to{transform:none}}
         .press{transition:transform .12s}.press:active{transform:scale(.975)}`}</style>
 
+      {/* Mode Pratinjau Admin — pita read-only, supaya tidak mungkin lupa
+          sedang "meminjam" tampilan promotor lain. */}
+      {previewMode && (
+        <div style={{ position: "sticky", top: 0, zIndex: 6, padding: "calc(env(safe-area-inset-top,0px) + 8px) 18px 8px", background: "#B7791F", color: "#fff", fontSize: 12, fontWeight: 700, textAlign: "center" }}>
+          Mode Pratinjau Admin — melihat sebagai {name} · read-only
+        </div>
+      )}
+
       {/* Header */}
-      <div style={{ padding: "calc(env(safe-area-inset-top,0px) + 16px) 18px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, background: "linear-gradient(180deg,#F4F5F7 76%,rgba(244,245,247,0))", zIndex: 5, maxWidth: 560, margin: "0 auto" }}>
-        <button className="press" onClick={() => setEditProfile(true)} aria-label="Edit nama saya"
+      <div style={{ padding: `${previewMode ? "10px" : "calc(env(safe-area-inset-top,0px) + 16px)"} 18px 12px`, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: previewMode ? 34 : 0, background: "linear-gradient(180deg,#F4F5F7 76%,rgba(244,245,247,0))", zIndex: 5, maxWidth: 560, margin: "0 auto" }}>
+        <button className="press" onClick={() => { if (!guardPreview()) setEditProfile(true); }} aria-label="Edit nama saya"
           style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, border: "none", background: "transparent", padding: 0, margin: 0, cursor: "pointer", textAlign: "left", fontFamily: FF }}>
           <div style={{ width: 44, height: 44, borderRadius: 14, flexShrink: 0, background: C.grad, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, boxShadow: "0 6px 16px rgba(237,28,36,0.28)" }}>{initial}</div>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 12, color: C.mid, fontWeight: 600, letterSpacing: "0.02em" }}>Selamat datang</div>
             <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
               <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 168, color: C.hi }}>{name}</span>
-              <Pencil size={12} color={C.lo} style={{ flexShrink: 0 }} />
+              {!previewMode && <Pencil size={12} color={C.lo} style={{ flexShrink: 0 }} />}
             </div>
           </div>
         </button>
         <div style={{ display: "flex", gap: 8 }}>
           <IconBtn onClick={() => setInboxOpen(true)} badge={incoming.length}><Inbox size={17} /></IconBtn>
           <IconBtn onClick={() => setView(view === "home" ? "history" : "home")} active={view === "history"}>{view === "history" ? <ChevronLeft size={18} /> : <History size={17} />}</IconBtn>
-          <IconBtn onClick={() => setConfirmLogout(true)} danger label="Keluar"><LogOut size={16} /></IconBtn>
+          {previewMode ? (
+            <IconBtn onClick={onBack} label="Kembali"><ChevronLeft size={16} /></IconBtn>
+          ) : (
+            <IconBtn onClick={() => setConfirmLogout(true)} danger label="Keluar"><LogOut size={16} /></IconBtn>
+          )}
         </div>
       </div>
 
@@ -633,7 +712,7 @@ function AppShell(p) {
                 ) : (
                   <TagPanel outlet={activeOutlet} sales={todaySales} soldCount={soldCount} busy={busy} geo={geo}
                     brand={brand} onBrandChange={setBrand} assignmentSrc={assignmentSrc} onRename={setRenamingOutlet}
-                    onTag={() => setSheet("qr")} onDelete={(s) => setDelSale(s)} onChangeOutlet={() => setPickOutlet(true)} multiOutlet={outlets.length > 1} />
+                    onTag={() => { if (!guardPreview()) setSheet("qr"); }} onDelete={(s) => setDelSale(s)} onChangeOutlet={() => setPickOutlet(true)} multiOutlet={outlets.length > 1} />
                 )}
               </div>
             </div>
