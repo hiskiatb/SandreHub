@@ -238,6 +238,9 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
         .pts-th{position:sticky;top:0;z-index:2;background:${t.sub};font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:${t.mid};padding:11px 12px;text-align:left;white-space:nowrap;border-bottom:1px solid ${t.line}}
         .pts-td{padding:11px 12px;font-size:12.5px;color:${t.hi};border-bottom:1px solid ${t.lineSoft};white-space:nowrap}
         .pts-row:hover{background:${t.hover}}
+        .pts-th-sticky{left:0;z-index:3;box-shadow:1px 0 0 ${t.line}}
+        .pts-td-sticky{position:sticky;left:0;z-index:1;background:${t.card};box-shadow:1px 0 0 ${t.lineSoft}}
+        .pts-row:hover .pts-td-sticky{background:${t.hover}}
       `}</style>
 
       {/* ── Header ─────────────────────────────────────────────── */}
@@ -1086,6 +1089,7 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 2100 }}>
             <thead>
               <tr>
+                <th className="pts-th pts-th-sticky" style={{ minWidth: 132 }}>Aksi</th>
                 <th className="pts-th">Nama Promotor</th>
                 <th className="pts-th">Email Promotor</th>
                 <th className="pts-th">ID Promotor (IM3)</th>
@@ -1093,7 +1097,6 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
                 {FCOLS.map(([k, label]) => <FilterTh key={k} t={t} label={label} colKey={k} filters={filters} className="pts-th" onOpen={(ck, r) => { setRect(r); setOpenCol(ck); }} />)}
                 {[1, 2, 3, 4].map((n) => <th key={n} className="pts-th" style={{ minWidth: 220 }}>Outlet {n} (Nama · Kategori · ID IM3 · ID 3ID)</th>)}
                 <th className="pts-th">Efektif</th>
-                <th className="pts-th"></th>
               </tr>
             </thead>
             <tbody>
@@ -1105,6 +1108,27 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
                 const si = promotorStatusInfo(r);
                 return (
                   <tr key={r.id} className="pts-row">
+                    <td className="pts-td pts-td-sticky">
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", maxWidth: 108 }}>
+                        {canManagePromotor(r) && (
+                          <button onClick={() => setEditingMapping(r)} title="Kelola mapping outlet (edit semua kolom langsung di sini)"
+                            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.brandBd}`, background: t.brandBg, color: t.brand, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Settings2 size={13} /></button>
+                        )}
+                        {canManagePromotor(r) && (
+                          <button onClick={() => startEdit(r)} title="Lengkapi/ubah identitas promotor" style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Pencil size={13} /></button>
+                        )}
+                        {canManageVacancy(r) && (
+                          <button onClick={() => toggleVacant(r)} disabled={vacantBusy === r.id} title={r.vacant ? "Batalkan Vacant" : "Tandai Vacant"}
+                            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${r.vacant ? t.amberBd : t.line}`, background: r.vacant ? t.amberBg : t.card, color: r.vacant ? t.amber : t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            {vacantBusy === r.id ? <Loader2 size={13} className="spin" /> : <Ban size={13} />}
+                          </button>
+                        )}
+                        {canManagePromotor(r) && (
+                          <button onClick={() => { setDeletingPromotor(r); setDeleteErr(""); }} title="Hapus promotor"
+                            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.redBd}`, background: t.redBg, color: t.red, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Trash2 size={13} /></button>
+                        )}
+                      </div>
+                    </td>
                     <td className="pts-td" style={{ fontWeight: 700, color: r.full_name ? t.hi : t.lo, fontStyle: r.full_name ? "normal" : "italic" }}>{r.full_name || "belum diisi"}</td>
                     <td className="pts-td" style={{ color: r.email ? t.hi : t.lo, fontStyle: r.email ? "normal" : "italic" }}>{r.email || "belum diisi"}</td>
                     <td className="pts-td" style={{ fontFamily: "monospace", fontWeight: 700 }}>{r.promotor_id || <span style={{ color: t.lo }}>—</span>}</td>
@@ -1146,27 +1170,6 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
                       );
                     })}
                     <td className="pts-td">{r.effective_date ? fmtDate(r.effective_date) : <span style={{ color: t.lo }}>—</span>}</td>
-                    <td className="pts-td">
-                      <div style={{ display: "flex", gap: 6 }}>
-                        {canManagePromotor(r) && (
-                          <button onClick={() => setEditingMapping(r)} title="Kelola mapping outlet (edit semua kolom langsung di sini)"
-                            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.brandBd}`, background: t.brandBg, color: t.brand, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Settings2 size={13} /></button>
-                        )}
-                        {canManagePromotor(r) && (
-                          <button onClick={() => startEdit(r)} title="Lengkapi/ubah identitas promotor" style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Pencil size={13} /></button>
-                        )}
-                        {canManageVacancy(r) && (
-                          <button onClick={() => toggleVacant(r)} disabled={vacantBusy === r.id} title={r.vacant ? "Batalkan Vacant" : "Tandai Vacant"}
-                            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${r.vacant ? t.amberBd : t.line}`, background: r.vacant ? t.amberBg : t.card, color: r.vacant ? t.amber : t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                            {vacantBusy === r.id ? <Loader2 size={13} className="spin" /> : <Ban size={13} />}
-                          </button>
-                        )}
-                        {canManagePromotor(r) && (
-                          <button onClick={() => { setDeletingPromotor(r); setDeleteErr(""); }} title="Hapus promotor"
-                            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.redBd}`, background: t.redBg, color: t.red, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Trash2 size={13} /></button>
-                        )}
-                      </div>
-                    </td>
                   </tr>
                 );
               })}
