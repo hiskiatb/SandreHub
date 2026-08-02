@@ -17,6 +17,8 @@ import {
   Target, TrendingUp, Sparkles,
   ListChecks, ScanFace, XCircle, HelpCircle, IdCard,
 } from "lucide-react";
+import lottie from "lottie-web";
+import successAnimData from "../../public/promotor/success-animation.json";
 import supabase from "../../lib/supabase";
 import { HubLogoLoader } from "../../components/HubLogoLoader";
 import { WhatsAppIcon } from "../../components/WhatsAppIcon";
@@ -117,23 +119,41 @@ const BRAND = {
 };
 const brandTheme = (b) => BRAND[b] || null;
 
-// Nada sukses (dua nada naik) via Web Audio — tanpa file
+// Nada sukses — pakai sound effect asli (mirip notifikasi Apple Pay) yang
+// disediakan, bukan lagi nada sintetis Web Audio. Instance <Audio> dibuat
+// sekali dan dipakai ulang (currentTime direset) supaya tap berturut-turut
+// tidak saling menumpuk/telat.
+let _successAudio = null;
 function playSuccessTone() {
   try {
-    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
-    const ctx = new AC();
-    [[880, 0], [1174, 0.12]].forEach(([f, t]) => {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.type = "sine"; o.frequency.value = f;
-      o.connect(g); g.connect(ctx.destination);
-      const s = ctx.currentTime + t;
-      g.gain.setValueAtTime(0.0001, s);
-      g.gain.exponentialRampToValueAtTime(0.25, s + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, s + 0.16);
-      o.start(s); o.stop(s + 0.18);
-    });
-    setTimeout(() => ctx.close?.(), 500);
+    if (typeof window === "undefined") return;
+    if (!_successAudio) {
+      _successAudio = new window.Audio("/promotor/success-sound.mp3");
+      _successAudio.preload = "auto";
+    }
+    _successAudio.currentTime = 0;
+    _successAudio.volume = 0.85;
+    _successAudio.play().catch(() => { /* abaikan — butuh interaksi user di beberapa browser */ });
   } catch { /* abaikan */ }
+}
+
+// Ikon animasi sukses — pakai file Lottie asli yang dilampirkan (bukan lagi
+// checkmark SVG buatan sendiri), dirender via lottie-web langsung ke sebuah
+// <div> container. Diputar sekali (loop:false) begitu overlay muncul.
+function SuccessLottieIcon() {
+  const hostRef = useRef(null);
+  useEffect(() => {
+    if (!hostRef.current) return;
+    const anim = lottie.loadAnimation({
+      container: hostRef.current,
+      renderer: "svg",
+      loop: false,
+      autoplay: true,
+      animationData: successAnimData,
+    });
+    return () => anim.destroy();
+  }, []);
+  return <div ref={hostRef} style={{ width: 140, height: 140 }} />;
 }
 
 const todayStart = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.toISOString(); };
@@ -630,7 +650,7 @@ function AppShell(p) {
     } catch (e) { flash("Gagal: " + describeError(e, "decideTransfer"), "err"); }
     finally { setBusy(false); }
   };
-  useEffect(() => { if (success) { const id = setTimeout(() => setSuccess(null), 2200); return () => clearTimeout(id); } }, [success]);
+  useEffect(() => { if (success) { const id = setTimeout(() => setSuccess(null), 2600); return () => clearTimeout(id); } }, [success]);
 
   const fixGeo = async () => { const g = await refreshGeo(); if (!g) setGeoHelp(true); else setGeoHelp(false); };
   const initial = (name || "P").trim().charAt(0).toUpperCase();
@@ -881,7 +901,18 @@ function AppShell(p) {
           <div ref={actionSectionRef} style={{ animation: "up .32s cubic-bezier(.22,1,.36,1)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
               <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.lo }}>Aktivitas Hari Ini</div>
-              <GeoChip geo={geo} err={geoErr} onFix={fixGeo} />
+              {/* Chip "Lokasi aktif" dihilangkan dari sini — status geo tetap
+                  divalidasi di balik layar (GeoGatePanel tampil jika belum
+                  ada izin lokasi), tapi secara visual diganti dengan selector
+                  periode yang sama seperti di beranda supaya konsisten. */}
+              <div style={{ position: "relative" }}>
+                <select value={statsPeriod} onChange={(e) => setStatsPeriod(e.target.value)}
+                  style={{ appearance: "none", height: 34, borderRadius: 11, border: `1px solid ${C.brand}55`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 12.5, fontWeight: 700, padding: "0 28px 0 30px", cursor: "pointer", boxShadow: C.sm }}>
+                  {statsPeriodOptions().map((pOpt) => <option key={pOpt} value={pOpt}>{ymLabel(pOpt)}</option>)}
+                </select>
+                <CalendarDays size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.brand, pointerEvents: "none" }} />
+                <ChevronDown size={12} style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", color: C.lo, pointerEvents: "none" }} />
+              </div>
             </div>
             {!activeOutlet ? (
               <OutletSelectPanel outlets={outlets} onPick={chooseOutlet} onRename={setRenamingOutlet} />
@@ -905,14 +936,9 @@ function AppShell(p) {
                 "Lokasi aktif" dihilangkan dari beranda — itu hanya relevan
                 saat benar-benar tagging di layar Claim Penjualan. */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 10, flexWrap: "wrap" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-                <div style={{ width: 42, height: 42, borderRadius: 13, background: C.card, border: `1px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", color: C.brand, flexShrink: 0, boxShadow: C.sm }}>
-                  <MapPin size={20} />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Micro Cluster</div>
-                  <div style={{ fontSize: 13.5, fontWeight: 800, color: C.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 160, marginTop: 1 }}>{assignmentSrc?.mc || "—"}</div>
-                </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Micro Cluster</div>
+                <div style={{ fontSize: 15, fontWeight: 800, color: C.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 200, marginTop: 1 }}>{assignmentSrc?.mc || "—"}</div>
               </div>
               <div style={{ position: "relative" }}>
                 <select value={statsPeriod} onChange={(e) => setStatsPeriod(e.target.value)}
@@ -1080,28 +1106,21 @@ function AppShell(p) {
       )}
 
       {/* Animasi sukses claim — kartu putih melayang dengan spring pop-in
-          (ala notifikasi sukses di iOS), ring hijau yang menggambar lalu
-          checkmark menyusul, plus glow halus di belakangnya. Diganti total
-          dari versi sebelumnya (ring+teks mengambang tanpa kartu) supaya
-          terasa lebih "solid" dan premium. */}
+          (ala notifikasi sukses di iOS), memakai animasi Lottie asli yang
+          dilampirkan (lebih halus & "mewah" dibanding checkmark SVG buatan
+          sendiri) plus sound effect Apple Pay yang dilampirkan (lihat
+          playSuccessTone, dipanggil terpisah saat status sukses di-set). */}
       {success && (
         <div style={{ position: "fixed", inset: 0, zIndex: 150, background: "rgba(17,18,22,0.38)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 26 }}>
           <div style={{
-            width: "100%", maxWidth: 300, background: "#FFFFFF", borderRadius: 28, padding: "36px 26px 28px",
+            width: "100%", maxWidth: 300, background: "#FFFFFF", borderRadius: 28, padding: "22px 26px 30px",
             display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center",
             boxShadow: "0 30px 80px rgba(23,24,28,0.28), 0 4px 14px rgba(23,24,28,0.1)",
             animation: "successPop .52s cubic-bezier(.19,1.28,.32,1.02) both",
           }}>
-            <div style={{ position: "relative", width: 88, height: 88, marginBottom: 22, flexShrink: 0 }}>
-              <div style={{ position: "absolute", inset: -14, borderRadius: "50%", background: "radial-gradient(circle, rgba(26,158,90,0.22), transparent 72%)", animation: "successGlow 1s ease-out .05s both" }} />
-              <svg width="88" height="88" viewBox="0 0 88 88" style={{ position: "relative" }}>
-                <circle cx="44" cy="44" r="38" fill="none" stroke="rgba(26,158,90,0.14)" strokeWidth="7" />
-                <circle cx="44" cy="44" r="38" fill="none" stroke="#1A9E5A" strokeWidth="7" strokeLinecap="round"
-                  strokeDasharray="238.8" strokeDashoffset="238.8" transform="rotate(-90 44 44)"
-                  style={{ animation: "ring .5s .08s cubic-bezier(.4,0,.2,1) forwards" }} />
-                <path d="M28 45 L39 56 L61 32" fill="none" stroke="#1A9E5A" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round"
-                  strokeDasharray="48" strokeDashoffset="48" style={{ animation: "check .3s .48s cubic-bezier(.4,0,.2,1) forwards" }} />
-              </svg>
+            <div style={{ position: "relative", width: 140, height: 140, marginBottom: 4, flexShrink: 0 }}>
+              <div style={{ position: "absolute", inset: 10, borderRadius: "50%", background: "radial-gradient(circle, rgba(26,158,90,0.22), transparent 72%)", animation: "successGlow 1s ease-out .05s both" }} />
+              <div style={{ position: "relative" }}><SuccessLottieIcon /></div>
             </div>
             <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em", color: C.hi, animation: "up .32s .5s both" }}>Berhasil Diajukan</div>
             <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 11, animation: "up .32s .56s both" }}>
@@ -1113,8 +1132,6 @@ function AppShell(p) {
           <style>{`
             @keyframes successPop{0%{opacity:0;transform:scale(.8) translateY(8px)}100%{opacity:1;transform:scale(1) translateY(0)}}
             @keyframes successGlow{0%{opacity:0;transform:scale(.55)}55%{opacity:1}100%{opacity:0;transform:scale(1.4)}}
-            @keyframes ring{to{stroke-dashoffset:0}}
-            @keyframes check{to{stroke-dashoffset:0}}
           `}</style>
         </div>
       )}
@@ -1543,9 +1560,6 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
         }}>
         <QrCode size={20} /> Claim Penjualan{bt ? ` ${brand}` : ""} (Scan QR)
       </button>
-      <p style={{ fontSize: 11.5, color: C.mid, textAlign: "center", marginTop: -8, marginBottom: 14, lineHeight: 1.5 }}>
-        Lokasi saat claim atau pencatatan penjualan akan dicatat sebagai bahan evaluasi program.
-      </p>
 
       {/* Ringkasan pengajuan outlet ini — pengganti "Terjual hari ini" yang
           lama (cuma satu angka, tanggal hari ini saja) dengan ringkasan
@@ -1846,7 +1860,6 @@ function OutletSummaryGrid({ total, pending, bio, reg, rejected, extra, periodLa
           <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: "-0.03em", color: C.hi, marginTop: 5 }}>{total}</div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, marginTop: 2 }}>
-          {periodLabel && <span style={{ fontSize: 10.5, fontWeight: 700, color: C.mid, background: C.sub, borderRadius: 99, padding: "4px 10px" }}>{periodLabel}</span>}
           <div style={{ width: 38, height: 38, borderRadius: 12, background: C.sub, color: C.brand, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <ListChecks size={18} />
           </div>
