@@ -1444,9 +1444,6 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
             </button>
           )}
         </div>
-        <div style={{ display: "flex", gap: 9, marginTop: 16 }}>
-          <LightStat icon={<ShoppingBag size={13} />} label="Terjual hari ini" value={soldCount} accent={C.green} />
-        </div>
       </div>
 
       {/* Pilihan brand — outlet ini punya ID IM3 & 3ID sekaligus, pencapaian
@@ -1495,37 +1492,22 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
         Lokasi saat claim atau pencatatan penjualan akan dicatat sebagai bahan evaluasi program.
       </p>
 
-      {/* Detail Pengajuan Outlet Ini — pengganti "kartu terjual hari ini":
-          sekarang menampilkan pengajuan MSISDN di outlet ini beserta status
-          pastinya — dalam pengajuan, tervalidasi biometric/non-biometric,
-          atau di luar jaringan outlet — supaya promotor bisa langsung lihat
-          progres di sini tanpa harus pindah ke Riwayat. Discoped ke PERIODE
-          YANG SAMA dengan "Lihat performa" di beranda (statsPeriod) —
-          sebelumnya daftar ini tidak difilter periode sama sekali sehingga
-          isinya bisa beda dengan Riwayat Pengajuan untuk outlet yang sama;
-          sekarang keduanya selalu sinkron karena membaca sumber data & label
-          periode yang identik. */}
+      {/* Ringkasan pengajuan outlet ini — pengganti "Terjual hari ini" yang
+          lama (cuma satu angka, tanggal hari ini saja) dengan ringkasan
+          status yang sebenarnya dibutuhkan promotor saat mau claim: berapa
+          total, berapa yang masih menunggu validasi GA, berapa yang sudah
+          tervalidasi biometric/non-biometric, dan berapa yang ditolak.
+          Discoped ke PERIODE YANG SAMA dengan "Lihat performa" di beranda
+          (statsPeriod) dan sumber data yang identik dengan Riwayat
+          Pengajuan & Kontribusi Anda, supaya angkanya selalu tepat & sinkron
+          di mana pun ditampilkan. */}
+      <OutletSummaryGrid total={detailRows.length} pending={counts.pending} bio={counts.bio} reg={counts.reg}
+        rejected={counts.rejected} extra={counts.waitingOutlet + counts.notFound} periodLabel={periodLabel} />
+
       <div style={{ background: C.card, borderRadius: 20, padding: 16, marginBottom: 14, boxShadow: C.md }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.lo }}>
-            <ListChecks size={13} /> Detail Pengajuan Outlet Ini ({detailRows.length})
-          </div>
-          {periodLabel && <span style={{ fontSize: 10.5, fontWeight: 700, color: C.mid, background: C.sub, borderRadius: 99, padding: "3px 9px", flexShrink: 0 }}>{periodLabel}</span>}
+        <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.lo, marginBottom: 12 }}>
+          <ListChecks size={13} /> Detail Pengajuan ({detailRows.length})
         </div>
-        {detailRows.length > 0 && (
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 13 }}>
-            {[
-              ["Dalam Pengajuan", counts.pending, C.amber],
-              ["Biometric", counts.bio, "#2563EB"],
-              ["Non-Biometric", counts.reg, PAL.purple],
-              ["Menunggu Outlet", counts.waitingOutlet, C.amber],
-              ["Di Luar Jaringan", counts.rejected, "#DC2626"],
-              ["Tidak Ditemukan", counts.notFound, C.mid],
-            ].filter(([, v]) => v > 0).map(([label, value, color]) => (
-              <span key={label} style={{ fontSize: 10.5, fontWeight: 800, padding: "4px 10px", borderRadius: 99, background: color + "1A", color }}>{label} · {value}</span>
-            ))}
-          </div>
-        )}
         {detailRows.length === 0 ? (
           <div style={{ textAlign: "center", padding: "22px 10px", color: C.mid, fontSize: 12.5 }}>Belum ada pengajuan di outlet ini.</div>
         ) : (
@@ -1779,6 +1761,52 @@ function LightStat({ icon, label, value, accent }) {
   );
 }
 
+/* Ringkasan pengajuan outlet — ditampilkan di layar Claim Penjualan sebelum
+   promotor mulai scan. Hero row "Total Pengajuan" + grid 2x2 status utama
+   (Menunggu Validasi, GA Biometric, GA Non-Biometric, Pengajuan Ditolak).
+   Semua angka berasal dari `detail` (pts_sale) yang sudah difilter periode
+   & outlet yang sama persis dengan Riwayat Pengajuan/Kontribusi Anda. */
+function OutletSummaryGrid({ total, pending, bio, reg, rejected, extra, periodLabel }) {
+  const tiles = [
+    { key: "pending", label: "Menunggu Validasi", value: pending, color: C.amber, icon: <Clock size={15} /> },
+    { key: "bio", label: "Total GA Biometric", value: bio, color: "#2563EB", icon: <ScanFace size={15} /> },
+    { key: "reg", label: "Total GA Non-Biometric", value: reg, color: PAL.purple, icon: <IdCard size={15} /> },
+    { key: "rejected", label: "Pengajuan Ditolak", value: rejected, color: "#DC2626", icon: <XCircle size={15} /> },
+  ];
+  return (
+    <div style={{ background: C.card, borderRadius: 20, padding: 17, marginBottom: 14, boxShadow: C.md }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 15 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Total Pengajuan</div>
+          <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: "-0.03em", color: C.hi, marginTop: 3 }}>{total}</div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, marginTop: 2 }}>
+          {periodLabel && <span style={{ fontSize: 10.5, fontWeight: 700, color: C.mid, background: C.sub, borderRadius: 99, padding: "4px 10px" }}>{periodLabel}</span>}
+          <div style={{ width: 38, height: 38, borderRadius: 12, background: C.sub, color: C.brand, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <ListChecks size={18} />
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9 }}>
+        {tiles.map((t) => (
+          <div key={t.key} style={{ borderRadius: 14, padding: "11px 12px", background: `${t.color}0F`, border: `1px solid ${t.color}30` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 7 }}>
+              <span style={{ color: t.color, display: "flex" }}>{t.icon}</span>
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.02em", color: C.mid, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.label}</span>
+            </div>
+            <div style={{ fontSize: 21, fontWeight: 800, color: t.color, letterSpacing: "-0.02em" }}>{t.value}</div>
+          </div>
+        ))}
+      </div>
+      {extra > 0 && (
+        <div style={{ marginTop: 11, fontSize: 11, color: C.mid, textAlign: "center" }}>
+          + {extra} lainnya (menunggu mapping outlet / belum ditemukan di RGU-GA)
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Label konsisten dengan Detail Status Pengajuan di home — supaya istilah
 // di Riwayat dan di Ringkasan tidak beda-beda.
 const GA_BADGE = {
@@ -1854,40 +1882,70 @@ function HistoryView({ history, onDelete, promotorId, period, filter }) {
     return v;
   }, [withCat, tab, bioFilter]);
 
+  const isEmptyOverall = counts.all === 0;
+
+  // Pesan kosong yang disesuaikan per konteks — supaya "belum ada apa-apa
+  // sama sekali" terlihat berbeda (dan lebih tenang/rapi) dibanding "ada
+  // data lain, tapi kategori ini yang kosong".
+  const emptyCopy = isEmptyOverall
+    ? { title: "Belum Ada Pengajuan", sub: `Riwayat pengajuan Anda untuk periode ${period ? ymLabel(period) : "ini"} akan muncul di sini.` }
+    : { title: "Tidak Ada di Kategori Ini", sub: "Coba pilih tab lain untuk melihat pengajuan dengan status berbeda." };
+
   return (
     <div style={{ animation: "up .3s ease" }}>
-      {/* Tab section — pengganti daftar bertumpuk sebelumnya, supaya
-          promotor bisa langsung lompat ke konteks yang diinginkan. */}
-      <div style={{ display: "flex", gap: 7, overflowX: "auto", paddingBottom: 4, marginBottom: tab === "validated" ? 10 : 14, WebkitOverflowScrolling: "touch" }}>
-        {HISTORY_TABS.filter((t) => t.key === "all" || counts[t.key] > 0).map((t) => {
-          const on = tab === t.key;
-          return (
-            <button key={t.key} onClick={() => { setTab(t.key); if (t.key !== "validated") setBioFilter("all"); }} className="press"
-              style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 13px", borderRadius: 99, border: `1px solid ${on ? C.brand : C.line}`, background: on ? C.brand : C.card, color: on ? "#fff" : C.hi, fontFamily: FF, fontSize: 12.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
-              {t.title}
-              <span style={{ fontSize: 10.5, fontWeight: 800, padding: "1px 6px", borderRadius: 99, background: on ? "rgba(255,255,255,0.22)" : C.sub, color: on ? "#fff" : C.mid }}>{counts[t.key] || 0}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {tab === "validated" && (
-        <div style={{ display: "flex", gap: 7, marginBottom: 14 }}>
-          {[["all", "Semua"], ["bio", "Biometric"], ["reg", "Non-Biometric"]].map(([k, label]) => {
-            const on = bioFilter === k;
-            return (
-              <button key={k} onClick={() => setBioFilter(k)} className="press"
-                style={{ height: 28, padding: "0 11px", borderRadius: 99, border: `1px solid ${on ? C.blue : C.line}`, background: on ? "rgba(37,99,235,0.1)" : C.card, color: on ? C.blue : C.mid, fontFamily: FF, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                {label}
-              </button>
-            );
-          })}
+      {/* Ringkasan singkat — total & periode yang sedang ditampilkan,
+          konsisten dengan label periode di Kontribusi Anda & Detail
+          Pengajuan Outlet. */}
+      {!isEmptyOverall && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12 }}>
+          <span style={{ fontSize: 12.5, color: C.mid, fontWeight: 600 }}>{counts.all} pengajuan tercatat</span>
+          {period && <span style={{ fontSize: 10.5, fontWeight: 700, color: C.mid, background: C.sub, borderRadius: 99, padding: "3px 9px" }}>{ymLabel(period)}</span>}
         </div>
       )}
 
+      {/* Tab section — pengganti daftar bertumpuk sebelumnya, supaya
+          promotor bisa langsung lompat ke konteks yang diinginkan. Tidak
+          ditampilkan sama sekali kalau memang belum ada data apa pun,
+          supaya layar kosong terasa bersih, bukan menyisakan satu pil
+          "Semua (0)" yang janggal sendirian. */}
+      {!isEmptyOverall && (
+        <>
+          <div style={{ display: "flex", gap: 7, overflowX: "auto", paddingBottom: 4, marginBottom: tab === "validated" ? 10 : 14, WebkitOverflowScrolling: "touch" }}>
+            {HISTORY_TABS.filter((t) => t.key === "all" || counts[t.key] > 0).map((t) => {
+              const on = tab === t.key;
+              return (
+                <button key={t.key} onClick={() => { setTab(t.key); if (t.key !== "validated") setBioFilter("all"); }} className="press"
+                  style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 13px", borderRadius: 99, border: `1px solid ${on ? C.brand : C.line}`, background: on ? C.brand : C.card, color: on ? "#fff" : C.hi, fontFamily: FF, fontSize: 12.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+                  {t.title}
+                  <span style={{ fontSize: 10.5, fontWeight: 800, padding: "1px 6px", borderRadius: 99, background: on ? "rgba(255,255,255,0.22)" : C.sub, color: on ? "#fff" : C.mid }}>{counts[t.key] || 0}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {tab === "validated" && (
+            <div style={{ display: "flex", gap: 7, marginBottom: 14 }}>
+              {[["all", "Semua"], ["bio", "Biometric"], ["reg", "Non-Biometric"]].map(([k, label]) => {
+                const on = bioFilter === k;
+                return (
+                  <button key={k} onClick={() => setBioFilter(k)} className="press"
+                    style={{ height: 28, padding: "0 11px", borderRadius: 99, border: `1px solid ${on ? C.blue : C.line}`, background: on ? "rgba(37,99,235,0.1)" : C.card, color: on ? C.blue : C.mid, fontFamily: FF, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
+
       {visible.length === 0 ? (
-        <div style={{ padding: "40px 20px", textAlign: "center", color: C.mid }}>
-          <History size={26} style={{ opacity: 0.5, marginBottom: 8 }} /><div style={{ fontSize: 13.5 }}>Belum ada aktivitas untuk kategori ini.</div>
+        <div style={{ background: C.card, borderRadius: 20, padding: "40px 22px", textAlign: "center", boxShadow: C.md }}>
+          <div style={{ width: 54, height: 54, borderRadius: 16, margin: "0 auto 14px", display: "flex", alignItems: "center", justifyContent: "center", background: C.sub, color: C.lo }}>
+            <History size={23} />
+          </div>
+          <div style={{ fontSize: 14.5, fontWeight: 800, color: C.hi, letterSpacing: "-0.01em" }}>{emptyCopy.title}</div>
+          <div style={{ fontSize: 12.5, color: C.mid, marginTop: 6, lineHeight: 1.55, maxWidth: 280, marginLeft: "auto", marginRight: "auto" }}>{emptyCopy.sub}</div>
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
