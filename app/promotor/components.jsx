@@ -419,7 +419,7 @@ export function QRScannerSheet({ onDetect, onClose }) {
                 style={{ width: "100%", height: 52, borderRadius: 13, border: "1px solid #E4E5EA", background: "#F6F7F9", color: "#17181C", fontFamily: FF, fontSize: 16, padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
             </div>
             {localErr && <div style={{ fontSize: 12.5, fontWeight: 700, color: "#DC2626", textAlign: "center" }}>{localErr}</div>}
-            <button type="submit" style={{ height: 52, borderRadius: 13, border: "none", background: manualOk ? "#ED1C24" : "#E4E5EA", color: manualOk ? "#fff" : "#A2A2AD", fontFamily: FF, fontSize: 15, fontWeight: 700, cursor: "pointer", transition: "background .15s", touchAction: "manipulation" }}>Lanjut</button>
+            <button type="submit" style={{ height: 52, borderRadius: 13, border: "none", background: manualOk ? "#ED1C24" : "#E4E5EA", color: manualOk ? "#fff" : "#A2A2AD", fontFamily: FF, fontSize: 15, fontWeight: 700, cursor: "pointer", transition: "background .15s", touchAction: "manipulation" }}>Ajukan Claim</button>
           </form>
         ) : !err && (
           <form onSubmit={(e) => { e.preventDefault(); proceed(); }} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -437,7 +437,7 @@ export function QRScannerSheet({ onDetect, onClose }) {
             {localErr && <div style={{ fontSize: 12.5, fontWeight: 700, color: "#DC2626", textAlign: "center" }}>{localErr}</div>}
             <button type="submit"
               style={{ height: 52, borderRadius: 13, border: "none", background: scanOk ? "#ED1C24" : "#E4E5EA", color: scanOk ? "#fff" : "#A2A2AD", fontFamily: FF, fontSize: 15.5, fontWeight: 700, cursor: "pointer", transition: "background .15s", touchAction: "manipulation" }}>
-              Lanjut
+              Ajukan Claim
             </button>
             <button type="button" onClick={() => setManual(true)} style={{ height: 44, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#61616C", fontFamily: FF, fontSize: 13.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}><Keyboard size={15} /> Input manual</button>
           </form>

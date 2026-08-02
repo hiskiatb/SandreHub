@@ -12,7 +12,7 @@ import { useRouter } from "next/navigation";
 import {
   MapPin, LogOut, RefreshCw, Clock, Store, QrCode, CheckCircle2,
   ShoppingBag, ChevronRight, ChevronDown, History, Navigation, AlertTriangle,
-  X, ChevronLeft, Phone, CalendarDays, Trash2,
+  X, ChevronLeft, CalendarDays, Trash2,
   ArrowLeftRight, Inbox, ShieldQuestion, Radar, RefreshCcw, Pencil, Check,
   Target, TrendingUp, Sparkles,
   ListChecks, ScanFace, XCircle, HelpCircle, IdCard,
@@ -600,7 +600,7 @@ function AppShell(p) {
   }, [promotorId, statsPeriod]);
   useEffect(() => { loadSummary(); }, [loadSummary]);
 
-  /* Total RGU-GA Biometric SELURUH outlet yang sedang dimapping ke promotor
+  /* Total RGU-GA SP Biometric SELURUH outlet yang sedang dimapping ke promotor
      ini (bukan cuma pengajuan miliknya sendiri) — murni angka pembanding,
      TIDAK PERNAH disimpan ke database, hanya dihitung di sisi client dari
      data pts_sale yang sudah ada (jadi otomatis ikut ter-refresh setiap kali
@@ -630,7 +630,7 @@ function AppShell(p) {
     } catch (e) { flash("Gagal: " + describeError(e, "decideTransfer"), "err"); }
     finally { setBusy(false); }
   };
-  useEffect(() => { if (success) { const id = setTimeout(() => setSuccess(null), 1900); return () => clearTimeout(id); } }, [success]);
+  useEffect(() => { if (success) { const id = setTimeout(() => setSuccess(null), 2200); return () => clearTimeout(id); } }, [success]);
 
   const fixGeo = async () => { const g = await refreshGeo(); if (!g) setGeoHelp(true); else setGeoHelp(false); };
   const initial = (name || "P").trim().charAt(0).toUpperCase();
@@ -712,7 +712,17 @@ function AppShell(p) {
 
   const handleTagResult = async (data, normalized, raw) => {
     const st = data?.status;
-    if (st === "ok") { await loadTodaySales(promotorId, activeOutlet.id); loadSummary(); setBusy(false); playSuccessTone(); setSuccess({ msisdn: normalized, at: new Date().toISOString(), brand: data?.brand || null }); return; }
+    if (st === "ok") {
+      // Refresh SEMUA ringkasan yang bergantung pada data ini — supaya
+      // begitu berhasil claim, promotor langsung lihat angka bertambah di
+      // Kontribusi Anda, Detail Pengajuan Outlet, dan Riwayat, tanpa perlu
+      // keluar-masuk layar dulu.
+      await loadTodaySales(promotorId, activeOutlet.id);
+      loadSummary(); loadOutletBioTotal(); loadHistory();
+      setBusy(false); playSuccessTone();
+      setSuccess({ msisdn: normalized, at: new Date().toISOString(), brand: data?.brand || null });
+      return;
+    }
     if (st === "self") { setBusy(false); setSelfClaim({ phone: normalized, sale: data?.sale || null }); return; }
     if (st === "taken" || st === "taken_race") { setBusy(false); setTaken({ phone: normalized, owner: data?.owner || null }); return; }
     if (st === "outside_radius") {
@@ -895,13 +905,13 @@ function AppShell(p) {
                 "Lokasi aktif" dihilangkan dari beranda — itu hanya relevan
                 saat benar-benar tagging di layar Claim Penjualan. */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 10, flexWrap: "wrap" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                <div style={{ width: 30, height: 30, borderRadius: 10, background: C.card, border: `1px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", color: C.mid, flexShrink: 0, boxShadow: C.sm }}>
-                  <MapPin size={13} />
+              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                <div style={{ width: 42, height: 42, borderRadius: 13, background: C.card, border: `1px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", color: C.brand, flexShrink: 0, boxShadow: C.sm }}>
+                  <MapPin size={20} />
                 </div>
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>MC</div>
-                  <div style={{ fontSize: 12.5, fontWeight: 800, color: C.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 160, marginTop: 1 }}>{assignmentSrc?.mc || "—"}</div>
+                  <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Micro Cluster</div>
+                  <div style={{ fontSize: 13.5, fontWeight: 800, color: C.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 160, marginTop: 1 }}>{assignmentSrc?.mc || "—"}</div>
                 </div>
               </div>
               <div style={{ position: "relative" }}>
@@ -1069,26 +1079,43 @@ function AppShell(p) {
         </div>
       )}
 
-      {/* Animasi sukses claim (ala FaceID) */}
+      {/* Animasi sukses claim — kartu putih melayang dengan spring pop-in
+          (ala notifikasi sukses di iOS), ring hijau yang menggambar lalu
+          checkmark menyusul, plus glow halus di belakangnya. Diganti total
+          dari versi sebelumnya (ring+teks mengambang tanpa kartu) supaya
+          terasa lebih "solid" dan premium. */}
       {success && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 150, background: "rgba(244,245,247,0.86)", backdropFilter: "blur(8px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20 }}>
-          <svg width="128" height="128" viewBox="0 0 128 128">
-            <circle cx="64" cy="64" r="56" fill="none" stroke="rgba(26,158,90,0.18)" strokeWidth="8" />
-            <circle cx="64" cy="64" r="56" fill="none" stroke="#1A9E5A" strokeWidth="8" strokeLinecap="round"
-              strokeDasharray="352" strokeDashoffset="352" transform="rotate(-90 64 64)"
-              style={{ animation: "ring .5s cubic-bezier(.4,0,.2,1) forwards" }} />
-            <path d="M42 65 L57 80 L86 49" fill="none" stroke="#1A9E5A" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round"
-              strokeDasharray="70" strokeDashoffset="70" style={{ animation: "check .35s .42s cubic-bezier(.4,0,.2,1) forwards" }} />
-          </svg>
-          <div style={{ textAlign: "center", animation: "up .3s .5s both" }}>
-            <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.02em", color: C.hi }}>Berhasil di-Claim</div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, marginTop: 6 }}>
-              <span style={{ fontSize: 16, fontFamily: "monospace", fontWeight: 700, color: C.green }}>{success.msisdn}</span>
+        <div style={{ position: "fixed", inset: 0, zIndex: 150, background: "rgba(17,18,22,0.38)", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 26 }}>
+          <div style={{
+            width: "100%", maxWidth: 300, background: "#FFFFFF", borderRadius: 28, padding: "36px 26px 28px",
+            display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center",
+            boxShadow: "0 30px 80px rgba(23,24,28,0.28), 0 4px 14px rgba(23,24,28,0.1)",
+            animation: "successPop .52s cubic-bezier(.19,1.28,.32,1.02) both",
+          }}>
+            <div style={{ position: "relative", width: 88, height: 88, marginBottom: 22, flexShrink: 0 }}>
+              <div style={{ position: "absolute", inset: -14, borderRadius: "50%", background: "radial-gradient(circle, rgba(26,158,90,0.22), transparent 72%)", animation: "successGlow 1s ease-out .05s both" }} />
+              <svg width="88" height="88" viewBox="0 0 88 88" style={{ position: "relative" }}>
+                <circle cx="44" cy="44" r="38" fill="none" stroke="rgba(26,158,90,0.14)" strokeWidth="7" />
+                <circle cx="44" cy="44" r="38" fill="none" stroke="#1A9E5A" strokeWidth="7" strokeLinecap="round"
+                  strokeDasharray="238.8" strokeDashoffset="238.8" transform="rotate(-90 44 44)"
+                  style={{ animation: "ring .5s .08s cubic-bezier(.4,0,.2,1) forwards" }} />
+                <path d="M28 45 L39 56 L61 32" fill="none" stroke="#1A9E5A" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round"
+                  strokeDasharray="48" strokeDashoffset="48" style={{ animation: "check .3s .48s cubic-bezier(.4,0,.2,1) forwards" }} />
+              </svg>
+            </div>
+            <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em", color: C.hi, animation: "up .32s .5s both" }}>Berhasil Diajukan</div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 11, animation: "up .32s .56s both" }}>
+              <span style={{ fontSize: 16.5, fontFamily: "monospace", fontWeight: 800, color: C.hi, background: C.sub, borderRadius: 10, padding: "6px 13px" }}>{success.msisdn}</span>
               {success.brand && <BrandChip brand={success.brand} />}
             </div>
-            <div style={{ fontSize: 12.5, color: C.mid, marginTop: 5 }}>{fmtDateTime(success.at)}</div>
+            <div style={{ fontSize: 12, color: C.mid, marginTop: 10, animation: "up .32s .62s both" }}>{fmtDateTime(success.at)}</div>
           </div>
-          <style>{`@keyframes ring{to{stroke-dashoffset:0}}@keyframes check{to{stroke-dashoffset:0}}`}</style>
+          <style>{`
+            @keyframes successPop{0%{opacity:0;transform:scale(.8) translateY(8px)}100%{opacity:1;transform:scale(1) translateY(0)}}
+            @keyframes successGlow{0%{opacity:0;transform:scale(.55)}55%{opacity:1}100%{opacity:0;transform:scale(1.4)}}
+            @keyframes ring{to{stroke-dashoffset:0}}
+            @keyframes check{to{stroke-dashoffset:0}}
+          `}</style>
         </div>
       )}
 
@@ -1191,42 +1218,55 @@ function AppShell(p) {
         return (
           <BottomSheet onClose={() => setInboxOpen(false)}>
             <div style={{ padding: "2px 18px calc(env(safe-area-inset-bottom,0px) + 20px)" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 17, fontWeight: 800, color: C.hi, letterSpacing: "-0.02em" }}><Inbox size={18} /> Kotak Masuk</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 11, background: C.sub, color: C.brand, display: "flex", alignItems: "center", justifyContent: "center" }}><Inbox size={17} /></div>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: C.hi, letterSpacing: "-0.02em" }}>Kotak Masuk</div>
+                </div>
                 <button onClick={() => setInboxOpen(false)} style={{ width: 34, height: 34, borderRadius: 10, border: "none", background: C.sub, color: C.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={18} /></button>
               </div>
 
               {/* Perlu persetujuan — badge tetap nyala sampai diputuskan */}
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo, marginBottom: 9 }}>
-                Perlu Persetujuan {incoming.length > 0 ? `(${incoming.length})` : ""}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 11 }}>
+                <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 7, background: incoming.length > 0 ? "rgba(237,28,36,0.1)" : C.sub, color: incoming.length > 0 ? C.brand : C.lo, flexShrink: 0 }}><ArrowLeftRight size={12} /></span>
+                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.mid }}>Perlu Persetujuan</span>
+                {incoming.length > 0 && <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", background: C.brand, borderRadius: 99, padding: "1px 7px" }}>{incoming.length}</span>}
               </div>
               {incoming.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "16px 10px", color: C.mid, background: C.sub, borderRadius: 13, marginBottom: 18 }}>
-                  <div style={{ fontSize: 12.5 }}>Tidak ada permintaan pemindahan claim.</div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "22px 14px", background: C.sub, borderRadius: 16, marginBottom: 22 }}>
+                  <div style={{ width: 38, height: 38, borderRadius: 11, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", color: C.lo, marginBottom: 9, boxShadow: C.sm }}><ArrowLeftRight size={17} /></div>
+                  <div style={{ fontSize: 12.5, color: C.mid }}>Tidak ada permintaan pemindahan claim.</div>
                 </div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 9, marginBottom: 18 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 9, marginBottom: 22 }}>
                   {incoming.map((r) => (
-                    <div key={r.id} style={{ padding: "11px 12px", borderRadius: 13, background: C.sub }}>
-                      <div style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 800, color: C.hi }}>{r.phone_normalized}</div>
-                      <div style={{ fontSize: 12, color: C.mid, marginTop: 3, lineHeight: 1.5 }}>
+                    <div key={r.id} style={{ padding: "13px 14px", borderRadius: 16, background: C.card, border: `1px solid ${C.line}`, boxShadow: C.sm }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                        <span style={{ width: 32, height: 32, borderRadius: 9, background: "rgba(237,28,36,0.08)", color: C.brand, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><SimCardIcon size={15} /></span>
+                        <span style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 800, color: C.hi }}>{r.phone_normalized}</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: C.mid, marginTop: 9, lineHeight: 1.55 }}>
                         Diminta oleh <b style={{ color: C.hi }}>{r.to_full_name || r.to_email}</b>
                         {(r.to_outlet_code || r.to_branch) ? ` · ${[r.to_outlet_code, r.to_branch, r.to_area].filter(Boolean).join(" / ")}` : ""}
                       </div>
-                      <div style={{ fontSize: 11, color: C.lo, marginTop: 3 }}>{fmtDateTime(r.requested_at)}</div>
-                      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                        <button className="press" onClick={() => decideTransfer(r, false)} disabled={busy} style={{ flex: 1, height: 42, borderRadius: 11, border: `1px solid ${C.line}`, background: C.card, color: C.mid, fontFamily: FF, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Tolak</button>
-                        <button className="press" onClick={() => setApproveReq(r)} disabled={busy} style={{ flex: 1.3, height: 42, borderRadius: 11, border: "none", background: C.brand, color: "#fff", fontFamily: FF, fontSize: 13, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><ArrowLeftRight size={14} /> Pindahkan</button>
+                      <div style={{ fontSize: 11, color: C.lo, marginTop: 4 }}>{fmtDateTime(r.requested_at)}</div>
+                      <div style={{ display: "flex", gap: 8, marginTop: 11 }}>
+                        <button className="press" onClick={() => decideTransfer(r, false)} disabled={busy} style={{ flex: 1, height: 42, borderRadius: 12, border: `1px solid ${C.line}`, background: C.sub, color: C.mid, fontFamily: FF, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Tolak</button>
+                        <button className="press" onClick={() => setApproveReq(r)} disabled={busy} style={{ flex: 1.3, height: 42, borderRadius: 12, border: "none", background: C.brand, color: "#fff", fontFamily: FF, fontSize: 13, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, boxShadow: "0 8px 18px rgba(237,28,36,0.22)" }}><ArrowLeftRight size={14} /> Pindahkan</button>
                       </div>
                     </div>
                   ))}
                 </div>
               )}
 
+              <div style={{ height: 1, background: C.lineSoft, margin: "0 0 20px" }} />
+
               {/* Notifikasi info — badge berkurang begitu item ditap */}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 9, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>
-                  Notifikasi {unreadCount > 0 ? `(${unreadCount} belum dibaca)` : ""}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 11, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 22, height: 22, borderRadius: 7, background: unreadCount > 0 ? "rgba(37,99,235,0.1)" : C.sub, color: unreadCount > 0 ? C.blue : C.lo, flexShrink: 0 }}><Inbox size={12} /></span>
+                  <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.mid }}>Notifikasi</span>
+                  {unreadCount > 0 && <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", background: C.blue, borderRadius: 99, padding: "1px 7px" }}>{unreadCount}</span>}
                 </div>
                 <div style={{ position: "relative" }}>
                   <select value={notifFilter} onChange={(e) => setNotifFilter(e.target.value)}
@@ -1238,23 +1278,24 @@ function AppShell(p) {
                 </div>
               </div>
               {filteredNotifs.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "24px 10px", color: C.mid }}>
-                  <Inbox size={22} style={{ opacity: .4, marginBottom: 6 }} /><div style={{ fontSize: 12.5 }}>Belum ada notifikasi.</div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center", padding: "26px 14px", background: C.sub, borderRadius: 16 }}>
+                  <div style={{ width: 38, height: 38, borderRadius: 11, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", color: C.lo, marginBottom: 9, boxShadow: C.sm }}><Inbox size={17} /></div>
+                  <div style={{ fontSize: 12.5, color: C.mid }}>Belum ada notifikasi.</div>
                 </div>
               ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
                   {filteredNotifs.map((n) => (
                     <button key={n.id} onClick={() => markNotificationRead(n)} className="press" style={{
-                      display: "block", width: "100%", textAlign: "left", border: "none", cursor: "pointer", fontFamily: FF,
-                      padding: "11px 12px", borderRadius: 13, background: n.read_at ? C.sub : "rgba(37,99,235,0.07)",
-                      borderLeft: n.read_at ? "3px solid transparent" : `3px solid ${C.blue}`,
+                      display: "flex", alignItems: "flex-start", gap: 9, width: "100%", textAlign: "left", cursor: "pointer", fontFamily: FF,
+                      padding: "13px 14px", borderRadius: 16, background: n.read_at ? C.card : "rgba(37,99,235,0.06)",
+                      border: `1px solid ${n.read_at ? C.line : "rgba(37,99,235,0.24)"}`, boxShadow: C.sm,
                     }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                        {!n.read_at && <span style={{ width: 7, height: 7, borderRadius: 99, background: C.blue, flexShrink: 0 }} />}
+                      {!n.read_at && <span style={{ width: 7, height: 7, borderRadius: 99, background: C.blue, marginTop: 6, flexShrink: 0 }} />}
+                      <div style={{ flex: 1, minWidth: 0 }}>
                         <span style={{ fontSize: 13, fontWeight: 800, color: C.hi }}>{n.title}</span>
+                        <div style={{ fontSize: 12, color: C.mid, marginTop: 4, lineHeight: 1.55 }}>{n.body}</div>
+                        <div style={{ fontSize: 10.5, color: C.lo, marginTop: 6 }}>{fmtDateTime(n.created_at)}{n.period ? ` · periode ${ymLabel(n.period)}` : ""}</div>
                       </div>
-                      <div style={{ fontSize: 12, color: C.mid, marginTop: 4, lineHeight: 1.5 }}>{n.body}</div>
-                      <div style={{ fontSize: 10.5, color: C.lo, marginTop: 5 }}>{fmtDateTime(n.created_at)}{n.period ? ` · periode ${ymLabel(n.period)}` : ""}</div>
                     </button>
                   ))}
                 </div>
@@ -1345,25 +1386,30 @@ function OutletSelectPanel({ outlets, onPick, onRename }) {
             const displayName = o.name && o.name !== o.code ? o.name : o.code;
             const hasDual = !!o.code3id;
             return (
-              <div key={o.code} style={{ display: "flex", alignItems: "center", borderRadius: 14, background: C.sub, width: "100%" }}>
-                <button className="press" onClick={() => onPick(o)} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 12, padding: "13px 8px 13px 12px", border: "none", background: "transparent", cursor: "pointer", textAlign: "left", fontFamily: FF }}>
-                  <div style={{ width: 40, height: 40, borderRadius: 12, background: "#fff", color: C.brand, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: C.sm }}><Store size={18} /></div>
-                  <div style={{ minWidth: 0, flex: 1 }}>
-                    <div style={{ fontSize: 14.5, fontWeight: 800, letterSpacing: "-0.01em", color: C.hi }}>{displayName}</div>
-                    <div style={{ display: "flex", gap: 5, marginTop: 3, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: BRAND.IM3.soft, color: BRAND.IM3.ink }}>IM3 {o.code}</span>
-                      {hasDual && <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: BRAND["3ID"].soft, color: BRAND["3ID"].ink }}>3ID {o.code3id}</span>}
-                    </div>
-                    <div style={{ fontSize: 11.5, color: C.mid, marginTop: 4 }}>{[o.branch, o.area].filter(Boolean).join(" · ") || "—"}</div>
+              <div key={o.code} role="button" tabIndex={0} onClick={() => onPick(o)}
+                onKeyDown={(e) => { if (e.key === "Enter") onPick(o); }} className="press"
+                style={{ display: "flex", alignItems: "center", gap: 12, borderRadius: 14, background: C.sub, width: "100%", padding: "13px 12px", cursor: "pointer", fontFamily: FF, boxSizing: "border-box" }}>
+                <div style={{ width: 40, height: 40, borderRadius: 12, background: "#fff", color: C.brand, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: C.sm }}><Store size={18} /></div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  {/* Tombol edit nama diletakkan LANGSUNG di sebelah nama outlet
+                      (bukan lagi terpisah di ujung kanan baris) supaya jelas
+                      fungsinya untuk mengganti nama outlet ini. */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                    <span style={{ fontSize: 14.5, fontWeight: 800, letterSpacing: "-0.01em", color: C.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{displayName}</span>
+                    {onRename && (
+                      <button onClick={(e) => { e.stopPropagation(); onRename(o); }} aria-label="Ganti nama outlet"
+                        style={{ width: 23, height: 23, borderRadius: 7, border: "none", background: "#fff", color: C.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, boxShadow: C.sm }}>
+                        <Pencil size={11} />
+                      </button>
+                    )}
                   </div>
-                  <ChevronRight size={18} color={C.lo} />
-                </button>
-                {onRename && (
-                  <button onClick={(e) => { e.stopPropagation(); onRename(o); }} aria-label="Ganti nama outlet"
-                    style={{ width: 34, height: 34, borderRadius: 10, border: "none", background: "transparent", color: C.lo, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, marginRight: 8 }}>
-                    <Pencil size={14} />
-                  </button>
-                )}
+                  <div style={{ display: "flex", gap: 5, marginTop: 5, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: BRAND.IM3.soft, color: BRAND.IM3.ink }}>IM3 {o.code}</span>
+                    {hasDual && <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: BRAND["3ID"].soft, color: BRAND["3ID"].ink }}>3ID {o.code3id}</span>}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: C.mid, marginTop: 4 }}>{[o.branch, o.area].filter(Boolean).join(" · ") || "—"}</div>
+                </div>
+                <ChevronRight size={18} color={C.lo} style={{ flexShrink: 0 }} />
               </div>
             );
           })}
@@ -1399,7 +1445,13 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
   // pilihan, jadi tetap pakai warna netral (merah) — bukan menebak brand.
   const bt = brandTheme(brand);
   const [detailSale, setDetailSale] = useState(null);
-  const detailRows = detail || [];
+  // Detail Pengajuan Outlet mengikuti brand yang sedang dipilih di atas
+  // (kalau outlet-nya dual-brand) — belum pilih brand sama sekali =
+  // tampilkan TOTAL gabungan IM3+3ID, seperti semula.
+  const detailRows = useMemo(() => {
+    const rows = detail || [];
+    return brand ? rows.filter((s) => s.brand === brand) : rows;
+  }, [detail, brand]);
   const counts = useMemo(() => {
     const c = { pending: 0, bio: 0, reg: 0, waitingOutlet: 0, rejected: 0, notFound: 0 };
     detailRows.forEach((s) => {
@@ -1447,7 +1499,10 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
       </div>
 
       {/* Pilihan brand — outlet ini punya ID IM3 & 3ID sekaligus, pencapaian
-          harus dipilih per-tagging supaya SP masuk ke brand yang benar. */}
+          harus dipilih per-tagging supaya SP masuk ke brand yang benar.
+          Tap brand yang SUDAH terpilih lagi untuk membatalkan pilihan —
+          Detail Pengajuan Outlet di bawah otomatis kembali menampilkan
+          TOTAL gabungan kedua brand saat tidak ada yang dipilih. */}
       {needsBrand && (
         <div style={{ background: C.card, borderRadius: 18, padding: 14, marginBottom: 14, boxShadow: C.md }}>
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo, marginBottom: 10 }}>Claim untuk brand</div>
@@ -1456,7 +1511,7 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
               const on = brand === b;
               const bt = BRAND[b];
               return (
-                <button key={b} type="button" className="press" onClick={() => onBrandChange(b)}
+                <button key={b} type="button" className="press" onClick={() => onBrandChange(on ? null : b)}
                   style={{
                     flex: 1, height: 46, borderRadius: 13,
                     border: `1.5px solid ${on ? bt.solid : C.line}`,
@@ -1502,11 +1557,15 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
           Pengajuan & Kontribusi Anda, supaya angkanya selalu tepat & sinkron
           di mana pun ditampilkan. */}
       <OutletSummaryGrid total={detailRows.length} pending={counts.pending} bio={counts.bio} reg={counts.reg}
-        rejected={counts.rejected} extra={counts.waitingOutlet + counts.notFound} periodLabel={periodLabel} />
+        rejected={counts.rejected} extra={counts.waitingOutlet + counts.notFound} periodLabel={periodLabel}
+        brand={brand} showBrandBadge={needsBrand} />
 
       <div style={{ background: C.card, borderRadius: 20, padding: 16, marginBottom: 14, boxShadow: C.md }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.lo, marginBottom: 12 }}>
-          <ListChecks size={13} /> Detail Pengajuan ({detailRows.length})
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.lo }}>
+            <ListChecks size={13} /> Detail Pengajuan ({detailRows.length})
+          </div>
+          {needsBrand && brand && <BrandChip brand={brand} />}
         </div>
         {detailRows.length === 0 ? (
           <div style={{ textAlign: "center", padding: "22px 10px", color: C.mid, fontSize: 12.5 }}>Belum ada pengajuan di outlet ini.</div>
@@ -1611,7 +1670,7 @@ function ContributionCard({ summary, target, outletBioTotal, onNavigateHistory, 
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
               <span style={{ fontSize: 32, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff" }}>{bio}</span>
-              <span style={{ fontSize: 12.5, fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>/ {target} RGU-GA Biometric</span>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>/ {target} RGU-GA SP Biometric</span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
               <Target size={11} color="rgba(255,255,255,0.5)" />
@@ -1629,7 +1688,7 @@ function ContributionCard({ summary, target, outletBioTotal, onNavigateHistory, 
             <span style={{ fontSize: 12, fontWeight: 600, color: tier.color }}>{tier.label}</span>
           </div>
 
-          {/* Total pencapaian RGU-GA Biometric SELURUH outlet Anda (semua
+          {/* Total pencapaian RGU-GA SP Biometric SELURUH outlet Anda (semua
               promotor) + persentase kontribusi promotor ini terhadapnya —
               angka pembanding saja, tidak pernah tersimpan ke database. */}
           {sharePct != null && (
@@ -1639,7 +1698,7 @@ function ContributionCard({ summary, target, outletBioTotal, onNavigateHistory, 
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 11.5, fontWeight: 700, color: "#fff" }}>{sharePct}% dari total outlet Anda</div>
-                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.6)", marginTop: 1 }}>{bio} dari {outletBioTotal} RGU-GA Biometric seluruh outlet</div>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.6)", marginTop: 1 }}>{bio} dari {outletBioTotal} RGU-GA SP Biometric seluruh outlet</div>
               </div>
             </div>
           )}
@@ -1703,8 +1762,8 @@ function ContributionCard({ summary, target, outletBioTotal, onNavigateHistory, 
                 onClick={() => nav({ key: "pending", label: "Dalam Pengajuan" })} />
               <StatusRow icon={<CheckCircle2 size={15} />} label="Total Tervalidasi" value={summary.validated} color={C.green}
                 onClick={() => nav({ key: "validated", label: "Total Tervalidasi" })} />
-              <StatusRow icon={<ScanFace size={15} />} label="RGU-GA Biometric" value={summary.bio} color="#2563EB" indent
-                onClick={() => nav({ key: "validated", biometric: true, label: "RGU-GA Biometric" })} />
+              <StatusRow icon={<ScanFace size={15} />} label="RGU-GA SP Biometric" value={summary.bio} color="#2563EB" indent
+                onClick={() => nav({ key: "validated", biometric: true, label: "RGU-GA SP Biometric" })} />
               <StatusRow icon={<IdCard size={15} />} label="RGU-GA Non-Biometric" value={summary.reg} color={PAL.purple} indent
                 onClick={() => nav({ key: "validated", biometric: false, label: "RGU-GA Non-Biometric" })} />
               {summary.waitingOutlet > 0 && (
@@ -1766,19 +1825,25 @@ function LightStat({ icon, label, value, accent }) {
    (Menunggu Validasi, GA Biometric, GA Non-Biometric, Pengajuan Ditolak).
    Semua angka berasal dari `detail` (pts_sale) yang sudah difilter periode
    & outlet yang sama persis dengan Riwayat Pengajuan/Kontribusi Anda. */
-function OutletSummaryGrid({ total, pending, bio, reg, rejected, extra, periodLabel }) {
+function OutletSummaryGrid({ total, pending, bio, reg, rejected, extra, periodLabel, brand, showBrandBadge }) {
   const tiles = [
     { key: "pending", label: "Menunggu Validasi", value: pending, color: C.amber, icon: <Clock size={15} /> },
     { key: "bio", label: "Total GA Biometric", value: bio, color: "#2563EB", icon: <ScanFace size={15} /> },
     { key: "reg", label: "Total GA Non-Biometric", value: reg, color: PAL.purple, icon: <IdCard size={15} /> },
     { key: "rejected", label: "Pengajuan Ditolak", value: rejected, color: "#DC2626", icon: <XCircle size={15} /> },
   ];
+  const bt = brand ? BRAND[brand] : null;
   return (
     <div style={{ background: C.card, borderRadius: 20, padding: 17, marginBottom: 14, boxShadow: C.md }}>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 15 }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Total Pengajuan</div>
-          <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: "-0.03em", color: C.hi, marginTop: 3 }}>{total}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Total Pengajuan</span>
+            {showBrandBadge && (
+              <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: "0.03em", padding: "2px 7px", borderRadius: 99, background: bt ? bt.soft : C.sub, color: bt ? bt.ink : C.mid }}>{brand || "Semua Brand"}</span>
+            )}
+          </div>
+          <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: "-0.03em", color: C.hi, marginTop: 5 }}>{total}</div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, marginTop: 2 }}>
           {periodLabel && <span style={{ fontSize: 10.5, fontWeight: 700, color: C.mid, background: C.sub, borderRadius: 99, padding: "4px 10px" }}>{periodLabel}</span>}
@@ -1818,6 +1883,20 @@ const GA_BADGE = {
   TIDAK_DITEMUKAN: { label: "Tidak Ditemukan", fg: "#61616C", bg: "rgba(97,97,108,0.12)" },
 };
 const gaBadge = (status) => GA_BADGE[status] || GA_BADGE.BELUM_TERVALIDASI;
+
+/* Ikon kartu SIM — dipakai konsisten sebagai representasi MSISDN di seluruh
+   app promotor (pengganti ikon telepon generik yang kurang tepat konteksnya
+   untuk "nomor kartu perdana yang di-claim"). */
+function SimCardIcon({ size = 16 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M6.5 3h8.5l4.5 4.5V20a1 1 0 0 1-1 1h-12a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+      <rect x="8.3" y="10.2" width="7.4" height="6.3" rx="1.3" stroke="currentColor" strokeWidth="1.4" />
+      <line x1="8.3" y1="13.35" x2="15.7" y2="13.35" stroke="currentColor" strokeWidth="1.1" />
+      <line x1="12" y1="10.2" x2="12" y2="16.5" stroke="currentColor" strokeWidth="1.1" />
+    </svg>
+  );
+}
 
 function BrandChip({ brand }) {
   const bt = brandTheme(brand);
@@ -1906,12 +1985,16 @@ function HistoryView({ history, onDelete, promotorId, period, filter }) {
       {/* Tab section — pengganti daftar bertumpuk sebelumnya, supaya
           promotor bisa langsung lompat ke konteks yang diinginkan. Tidak
           ditampilkan sama sekali kalau memang belum ada data apa pun,
-          supaya layar kosong terasa bersih, bukan menyisakan satu pil
-          "Semua (0)" yang janggal sendirian. */}
+          supaya layar kosong terasa bersih. Kalau sudah ada data, SEMUA
+          tab selalu ditampilkan (walau count-nya 0) — sebelumnya tab
+          dengan count 0 disembunyikan, yang membuat layar ini "terlihat
+          beda" tergantung dari mana masuknya (tombol Riwayat di beranda vs
+          tap baris tertentu di Detail Status Pengajuan), padahal datanya
+          sama, cuma tab aktifnya yang berbeda. */}
       {!isEmptyOverall && (
         <>
           <div style={{ display: "flex", gap: 7, overflowX: "auto", paddingBottom: 4, marginBottom: tab === "validated" ? 10 : 14, WebkitOverflowScrolling: "touch" }}>
-            {HISTORY_TABS.filter((t) => t.key === "all" || counts[t.key] > 0).map((t) => {
+            {HISTORY_TABS.map((t) => {
               const on = tab === t.key;
               return (
                 <button key={t.key} onClick={() => { setTab(t.key); if (t.key !== "validated") setBioFilter("all"); }} className="press"
@@ -1971,13 +2054,13 @@ function HistoryRow({ s, promotorId, onDelete, onOpen }) {
       background: C.card, borderRadius: 16, padding: 13, boxShadow: C.md,
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
-        <span style={{ width: 34, height: 34, borderRadius: 10, background: s.within_radius === false ? "rgba(37,99,235,0.1)" : "rgba(26,158,90,0.1)", color: s.within_radius === false ? C.blue : C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.within_radius === false ? <Radar size={16} /> : <Phone size={16} />}</span>
+        <span style={{ width: 34, height: 34, borderRadius: 10, background: s.within_radius === false ? "rgba(37,99,235,0.1)" : "rgba(26,158,90,0.1)", color: s.within_radius === false ? C.blue : C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.within_radius === false ? <Radar size={16} /> : <SimCardIcon size={16} />}</span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
             <span style={{ fontSize: 14.5, fontWeight: 800, fontFamily: "monospace", color: C.hi }}>{s.phone_normalized}</span>
             {s.brand && <BrandChip brand={s.brand} />}
             {s.biometric_status === "BIOMETRIC" && (
-              <span title="RGU-GA Biometric" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 99, background: "rgba(37,99,235,0.12)", color: "#2563EB" }}><ScanFace size={10} /> Biometric</span>
+              <span title="RGU-GA SP Biometric" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 99, background: "rgba(37,99,235,0.12)", color: "#2563EB" }}><ScanFace size={10} /> Biometric</span>
             )}
             {s.biometric_status === "REGULAR" && (
               <span title="RGU-GA Non-Biometric" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 99, background: PAL.purple + "22", color: PAL.purple }}><IdCard size={10} /> Non-Biometric</span>
@@ -2137,25 +2220,29 @@ function OutletPicker({ outlets, onPick, onClose, onRename }) {
             const displayName = o.name && o.name !== o.code ? o.name : o.code;
             const hasDual = !!o.code3id;
             return (
-              <div key={o.code} style={{ display: "flex", alignItems: "center", borderRadius: 14, background: C.sub }}>
-                <button className="press" onClick={() => onPick(o)} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 12, padding: "14px 8px 14px 14px", border: "none", background: "transparent", cursor: "pointer", textAlign: "left", fontFamily: FF }}>
-                  <div style={{ width: 40, height: 40, borderRadius: 12, background: "#fff", color: C.brand, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: C.sm }}><Store size={18} /></div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 14.5, fontWeight: 800, color: C.hi, letterSpacing: "-0.01em" }}>{displayName}</div>
-                    <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: "monospace", padding: "2px 7px", borderRadius: 99, background: BRAND.IM3.soft, color: BRAND.IM3.ink }}>IM3 {o.code}</span>
-                      {hasDual && <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: "monospace", padding: "2px 7px", borderRadius: 99, background: BRAND["3ID"].soft, color: BRAND["3ID"].ink }}>3ID {o.code3id}</span>}
-                    </div>
-                    <div style={{ fontSize: 11.5, color: C.mid, marginTop: 5 }}>{[o.branch, o.area].filter(Boolean).join(" · ") || "—"}</div>
+              <div key={o.code} role="button" tabIndex={0} onClick={() => onPick(o)}
+                onKeyDown={(e) => { if (e.key === "Enter") onPick(o); }} className="press"
+                style={{ display: "flex", alignItems: "center", gap: 12, borderRadius: 14, background: C.sub, padding: "14px", cursor: "pointer", fontFamily: FF, boxSizing: "border-box" }}>
+                <div style={{ width: 40, height: 40, borderRadius: 12, background: "#fff", color: C.brand, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: C.sm }}><Store size={18} /></div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {/* Tombol edit nama langsung di sebelah nama outlet, supaya
+                      jelas fungsinya untuk mengganti nama outlet ini. */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                    <span style={{ fontSize: 14.5, fontWeight: 800, color: C.hi, letterSpacing: "-0.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{displayName}</span>
+                    {onRename && (
+                      <button onClick={(e) => { e.stopPropagation(); onRename(o); }} aria-label="Ganti nama outlet"
+                        style={{ width: 24, height: 24, borderRadius: 7, border: "none", background: "#fff", color: C.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, boxShadow: C.sm }}>
+                        <Pencil size={12} />
+                      </button>
+                    )}
                   </div>
-                  <ChevronRight size={18} color={C.lo} />
-                </button>
-                {onRename && (
-                  <button onClick={(e) => { e.stopPropagation(); onRename(o); }} aria-label="Ganti nama outlet"
-                    style={{ width: 36, height: 36, borderRadius: 10, border: "none", background: "transparent", color: C.lo, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, marginRight: 8 }}>
-                    <Pencil size={15} />
-                  </button>
-                )}
+                  <div style={{ display: "flex", gap: 6, marginTop: 5, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: "monospace", padding: "2px 7px", borderRadius: 99, background: BRAND.IM3.soft, color: BRAND.IM3.ink }}>IM3 {o.code}</span>
+                    {hasDual && <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: "monospace", padding: "2px 7px", borderRadius: 99, background: BRAND["3ID"].soft, color: BRAND["3ID"].ink }}>3ID {o.code3id}</span>}
+                  </div>
+                  <div style={{ fontSize: 11.5, color: C.mid, marginTop: 5 }}>{[o.branch, o.area].filter(Boolean).join(" · ") || "—"}</div>
+                </div>
+                <ChevronRight size={18} color={C.lo} style={{ flexShrink: 0 }} />
               </div>
             );
           })}
