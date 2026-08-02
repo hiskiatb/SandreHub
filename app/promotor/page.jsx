@@ -624,7 +624,10 @@ function AppShell(p) {
     if (fabReady) setSheet("qr");
   };
 
-  useEffect(() => { if (view === "history") loadHistory(); }, [view, loadHistory]);
+  // Riwayat juga dimuat saat masuk layar Claim Penjualan — dipakai untuk
+  // menampilkan detail pengajuan per outlet (bukan lagi cuma "terjual hari
+  // ini") di bawah panel tagging.
+  useEffect(() => { if (view === "history" || view === "claim") loadHistory(); }, [view, loadHistory]);
 
   const soldCount = todaySales.length;
 
@@ -841,7 +844,8 @@ function AppShell(p) {
             ) : (
               <TagPanel outlet={activeOutlet} sales={todaySales} soldCount={soldCount} busy={busy} geo={geo}
                 brand={brand} onBrandChange={setBrand} assignmentSrc={assignmentSrc} onRename={setRenamingOutlet}
-                onTag={() => { if (!guardPreview()) setSheet("qr"); }} onDelete={(s) => setDelSale(s)} onChangeOutlet={() => setPickOutlet(true)} multiOutlet={outlets.length > 1} />
+                onTag={() => { if (!guardPreview()) setSheet("qr"); }} onDelete={(s) => setDelSale(s)} onChangeOutlet={() => setPickOutlet(true)} multiOutlet={outlets.length > 1}
+                detail={history.filter((s) => s.outlet_id === activeOutlet.id || s.credited_outlet_id === activeOutlet.id)} promotorId={promotorId} />
             )}
           </div>
         ) : (
@@ -1351,12 +1355,25 @@ function GeoGatePanel({ outlet, err, onFix, onChangeOutlet }) {
   );
 }
 
-function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOutlet, onRename, multiOutlet, brand, onBrandChange, assignmentSrc }) {
+function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOutlet, onRename, multiOutlet, brand, onBrandChange, assignmentSrc, detail, promotorId }) {
   const needsBrand = !!outlet.code3id;
   const canTag = !needsBrand || !!brand;
   // Tema warna aktif = brand yang dipilih. Outlet single-brand tidak punya
   // pilihan, jadi tetap pakai warna netral (merah) — bukan menebak brand.
   const bt = brandTheme(brand);
+  const [detailSale, setDetailSale] = useState(null);
+  const detailRows = detail || [];
+  const counts = useMemo(() => {
+    const c = { pending: 0, bio: 0, reg: 0, waitingOutlet: 0, rejected: 0, notFound: 0 };
+    detailRows.forEach((s) => {
+      const cat = categoryOf(s);
+      if (cat === "validated") {
+        if (s.biometric_status === "BIOMETRIC") c.bio += 1;
+        else if (s.biometric_status === "REGULAR") c.reg += 1;
+      } else if (c[cat] !== undefined) c[cat] += 1;
+    });
+    return c;
+  }, [detailRows]);
   return (
     <div style={{ animation: "up .3s ease" }}>
       <div style={{ background: C.card, borderRadius: 18, padding: "18px 18px 16px", marginBottom: 14, boxShadow: C.md }}>
@@ -1441,32 +1458,39 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
         Lokasi saat claim atau pencatatan penjualan akan dicatat sebagai bahan evaluasi program.
       </p>
 
-      {/* Daftar terjual */}
-      {sales.length > 0 && (
-        <div style={{ background: C.card, borderRadius: 20, padding: 16, marginBottom: 14, boxShadow: C.md }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.lo, marginBottom: 12 }}>
-            <ShoppingBag size={13} /> Kartu terjual hari ini ({sales.length})
-          </div>
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            {sales.map((s, i) => (
-              <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 2px", borderTop: i === 0 ? "none" : `1px solid ${C.lineSoft}` }}>
-                <span style={{ width: 30, height: 30, borderRadius: 9, background: s.within_radius === false ? "rgba(37,99,235,0.1)" : "rgba(26,158,90,0.1)", color: s.within_radius === false ? C.blue : C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.within_radius === false ? <Radar size={14} /> : <Phone size={14} />}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                    <span style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 700, color: C.hi }}>{s.phone_normalized}</span>
-                    {s.brand && <BrandChip brand={s.brand} />}
-                  </div>
-                </div>
-                <span style={{ fontSize: 12, color: C.mid, fontWeight: 500 }}>{fmtTime(s.tagged_at)}</span>
-                <button className="press" onClick={() => onDelete(s)} disabled={busy} aria-label="Hapus"
-                  style={{ width: 32, height: 32, borderRadius: 9, border: "none", background: "rgba(220,38,38,0.08)", color: "#DC2626", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
-                  <Trash2 size={15} />
-                </button>
-              </div>
+      {/* Detail Pengajuan Outlet Ini — pengganti "kartu terjual hari ini":
+          sekarang menampilkan SELURUH pengajuan MSISDN di outlet ini
+          (bukan cuma hari ini) beserta status pastinya — dalam pengajuan,
+          tervalidasi biometric/non-biometric, atau di luar jaringan
+          outlet — supaya promotor bisa langsung lihat progres di sini
+          tanpa harus pindah ke Riwayat. */}
+      <div style={{ background: C.card, borderRadius: 20, padding: 16, marginBottom: 14, boxShadow: C.md }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.lo, marginBottom: 12 }}>
+          <ListChecks size={13} /> Detail Pengajuan Outlet Ini ({detailRows.length})
+        </div>
+        {detailRows.length > 0 && (
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 13 }}>
+            {[
+              ["Dalam Pengajuan", counts.pending, C.amber],
+              ["Biometric", counts.bio, "#2563EB"],
+              ["Non-Biometric", counts.reg, PAL.purple],
+              ["Menunggu Outlet", counts.waitingOutlet, C.amber],
+              ["Di Luar Jaringan", counts.rejected, "#DC2626"],
+              ["Tidak Ditemukan", counts.notFound, C.mid],
+            ].filter(([, v]) => v > 0).map(([label, value, color]) => (
+              <span key={label} style={{ fontSize: 10.5, fontWeight: 800, padding: "4px 10px", borderRadius: 99, background: color + "1A", color }}>{label} · {value}</span>
             ))}
           </div>
-        </div>
-      )}
+        )}
+        {detailRows.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "22px 10px", color: C.mid, fontSize: 12.5 }}>Belum ada pengajuan di outlet ini.</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {detailRows.map((s) => <HistoryRow key={s.id} s={s} promotorId={promotorId} onDelete={onDelete} onOpen={setDetailSale} />)}
+          </div>
+        )}
+      </div>
+      {detailSale && <GaMatchDetailModal sale={detailSale} onClose={() => setDetailSale(null)} />}
     </div>
   );
 }
@@ -1643,22 +1667,26 @@ function ContributionCard({ summary, target, outletBioTotal, onNavigateHistory, 
 
           {summary ? (
             <>
-              <StatusRow icon={<ListChecks size={15} />} label="Total Pengajuan" value={summary.total} color={C.hi} bold onClick={summary.total > 0 ? () => nav(null) : undefined} />
+              {/* Semua baris SELALU bisa ditap — mengarah ke Riwayat Pengajuan
+                  di tab yang sesuai (kalau memang kosong, tab-nya akan
+                  menampilkan kosong, tapi navigasinya tetap konsisten &
+                  tidak membingungkan "kenapa tidak bisa diklik"). */}
+              <StatusRow icon={<ListChecks size={15} />} label="Total Pengajuan" value={summary.total} color={C.hi} bold onClick={() => nav(null)} />
               <div style={{ height: 1, background: C.lineSoft, margin: "2px 0" }} />
               <StatusRow icon={<Clock size={15} />} label="Dalam Pengajuan" sub="Belum tercatat RGU-GA" value={summary.pending} color={C.amber}
-                onClick={summary.pending > 0 ? () => nav({ key: "pending", label: "Dalam Pengajuan" }) : undefined} />
+                onClick={() => nav({ key: "pending", label: "Dalam Pengajuan" })} />
               <StatusRow icon={<CheckCircle2 size={15} />} label="Total Tervalidasi" value={summary.validated} color={C.green}
-                onClick={summary.validated > 0 ? () => nav({ key: "validated", label: "Total Tervalidasi" }) : undefined} />
+                onClick={() => nav({ key: "validated", label: "Total Tervalidasi" })} />
               <StatusRow icon={<ScanFace size={15} />} label="RGU-GA Biometric" value={summary.bio} color="#2563EB" indent
-                onClick={summary.bio > 0 ? () => nav({ key: "validated", biometric: true, label: "RGU-GA Biometric" }) : undefined} />
+                onClick={() => nav({ key: "validated", biometric: true, label: "RGU-GA Biometric" })} />
               <StatusRow icon={<IdCard size={15} />} label="RGU-GA Non-Biometric" value={summary.reg} color={PAL.purple} indent
-                onClick={summary.reg > 0 ? () => nav({ key: "validated", biometric: false, label: "RGU-GA Non-Biometric" }) : undefined} />
+                onClick={() => nav({ key: "validated", biometric: false, label: "RGU-GA Non-Biometric" })} />
               {summary.waitingOutlet > 0 && (
                 <StatusRow icon={<Clock size={15} />} label="Menunggu Mapping Outlet" sub="Outlet dikenal, belum ada promotor termapping" value={summary.waitingOutlet} color={C.amber}
                   onClick={() => nav({ key: "waitingOutlet", label: "Menunggu Mapping Outlet" })} />
               )}
-              <StatusRow icon={<XCircle size={15} />} label="Di Luar Jaringan Outlet" sub="Outlet tidak dikenal sistem — tap untuk lihat" value={summary.rejected}
-                color="#DC2626" onClick={summary.rejected > 0 ? () => nav({ key: "rejected", label: "Di Luar Jaringan Outlet" }) : undefined} />
+              <StatusRow icon={<XCircle size={15} />} label="Di Luar Jaringan Outlet" value={summary.rejected}
+                color="#DC2626" onClick={() => nav({ key: "rejected", label: "Di Luar Jaringan Outlet" })} />
               {summary.notFound > 0 && (
                 <StatusRow icon={<HelpCircle size={15} />} label="Tidak Ditemukan di RGU-GA" sub="Sampai batas waktu, data GA tidak pernah cocok" value={summary.notFound} color={C.mid}
                   onClick={() => nav({ key: "notFound", label: "Tidak Ditemukan di RGU-GA" })} />
@@ -1676,7 +1704,7 @@ function ContributionCard({ summary, target, outletBioTotal, onNavigateHistory, 
 function StatusRow({ icon, label, sub, value, color, bold, indent, onClick }) {
   const Comp = onClick ? "button" : "div";
   return (
-    <Comp onClick={onClick} className={onClick ? "press" : undefined}
+    <Comp type={onClick ? "button" : undefined} onClick={onClick} className={onClick ? "press" : undefined}
       style={{
         display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 2px",
         marginLeft: indent ? 22 : 0, maxWidth: indent ? `calc(100% - 22px)` : "100%",
