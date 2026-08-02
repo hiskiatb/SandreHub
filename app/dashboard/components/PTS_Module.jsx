@@ -16,6 +16,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
+import Papa from "papaparse";
 import {
   Upload, Download, FileSpreadsheet, Users, MapPin, Search, Filter, FilterX,
   CheckCircle2, AlertTriangle, Clock, X, ChevronDown, ChevronRight,
@@ -2324,26 +2325,48 @@ function WhatsappSettings({ t, supabase, profile }) {
 /* ══════════════════════════ VALIDASI GA (D+2) ══════════════════════════
    Upload data usage GA (MSISDN + waktu usage) → cocokkan dengan pts_sale
    dalam rentang 3 hari dari waktu tagging → set status validasi. */
-function GaValidation({ t, d, supabase, profile, isFullAdmin, outletByCode, period }) {
+// Normalisasi MSISDN ringan khusus untuk pencocokan GA v2 — sama aturannya
+// dengan normalizePhone di app promotor (0xxx → 62xxx, 8xxx → 62xxx),
+// tapi tidak butuh detail alasan invalid, cukup boolean.
+function normalizeMsisdnLite(raw) {
+  let d = String(raw ?? "").replace(/[^\d]/g, "");
+  if (d.startsWith("0")) d = "62" + d.slice(1);
+  else if (d.startsWith("8")) d = "62" + d;
+  const valid = /^62[0-9]{8,13}$/.test(d);
+  return { normalized: d, valid };
+}
+
+/* ══════════════════════════ VALIDASI GA v2 ══════════════════════════════
+   Beda total dari v1: file GA sekarang dicocokkan (organization_id + brand)
+   ke outlet, lalu ke assignment promotor — bisa lintas outlet/promotor.
+   File bisa berjumlah JUTAAN baris (mis. 8 juta), jadi TIDAK dimuat penuh
+   ke memori — di-stream via PapaParse (worker terpisah), dicocokkan ke
+   pool nomor pts_sale (kecil, cukup di-load sekali), dan HANYA baris yang
+   match yang dikirim ke server. Baris yang tidak match dibuang langsung,
+   tidak pernah disimpan di manapun. */
+function GaValidation({ t, d, supabase, profile, isFullAdmin, period }) {
   const fileRef = useRef(null);
   const [drag, setDrag] = useState(false);
   const [fileName, setFileName] = useState("");
-  const [rows, setRows] = useState(null);
-  const [uploading, setUploading] = useState(false);
-  const [validating, setValidating] = useState(false);
+  const [phase, setPhase] = useState("idle"); // idle | scanning | preview | uploading | done
+  const [scanStats, setScanStats] = useState({ scanned: 0, matched: 0 });
+  const [matchedRows, setMatchedRows] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState(null); // { done, total }
   const [result, setResult] = useState(null);
   const [err, setErr] = useState("");
   const [summary, setSummary] = useState(null);
   const [loadingSummary, setLoadingSummary] = useState(true);
+  const cancelRef = useRef(false);
 
   const loadSummary = useCallback(async () => {
     setLoadingSummary(true);
     try {
-      const { data } = await supabase.from("pts_sale").select("ga_status,biometric_status");
-      const counts = { BELUM_TERVALIDASI: 0, TERVALIDASI: 0, TERVALIDASI_LUAR_AREA: 0, TIDAK_SESUAI_OUTLET: 0, TIDAK_DITEMUKAN: 0, BIOMETRIC: 0, REGULAR: 0 };
+      const { data } = await supabase.from("pts_sale").select("ga_status,biometric_status,credited_transfer_type");
+      const counts = { BELUM_TERVALIDASI: 0, TERVALIDASI: 0, TERVALIDASI_LUAR_AREA: 0, TIDAK_SESUAI_OUTLET: 0, TIDAK_DITEMUKAN: 0, MENUNGGU_MAPPING_OUTLET: 0, BIOMETRIC: 0, REGULAR: 0, same_promotor_diff_outlet: 0, diff_promotor: 0 };
       (data || []).forEach((r) => {
         counts[r.ga_status] = (counts[r.ga_status] || 0) + 1;
         if (r.biometric_status) counts[r.biometric_status] = (counts[r.biometric_status] || 0) + 1;
+        if (r.credited_transfer_type) counts[r.credited_transfer_type] = (counts[r.credited_transfer_type] || 0) + 1;
       });
       setSummary(counts);
     } catch { setSummary(null); } finally { setLoadingSummary(false); }
@@ -2352,86 +2375,129 @@ function GaValidation({ t, d, supabase, profile, isFullAdmin, outletByCode, peri
 
   const downloadTemplate = () => {
     const ws = XLSX.utils.aoa_to_sheet([
-      ["MSISDN", "ID OUTLET", "BRAND", "LATITUDE", "LONGITUDE", "BIOMETRIC_STATUS"],
-      ["6281234567890", "OTL-MDN-014", "IM3", -3.5952, 98.6785, "BIOMETRIC"],
+      ["ga_dt", "brand", "msisdn", "ga_branch", "organization_id", "biometric_status"],
+      ["2026-07-02", "IM3", "6281234567890", "MEDAN", "OTL-MDN-014", "BIOMETRIC"],
     ]);
-    ws["!cols"] = [{ wch: 16 }, { wch: 16 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 16 }];
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "GA Validasi");
-    XLSX.writeFile(wb, "PTS_GA_Template.xlsx");
+    ws["!cols"] = [{ wch: 12 }, { wch: 8 }, { wch: 16 }, { wch: 14 }, { wch: 16 }, { wch: 16 }];
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "GA Raw");
+    XLSX.writeFile(wb, "PTS_GA_Template_v2.xlsx");
   };
 
-  // Catatan penting: MSISDN & longlat dari file GA HANYA diproses sebentar di
-  // memori untuk mencocokkan ke pts_sale yang sudah ada (dientri promotor
-  // sendiri) — tidak pernah ditulis ke tabel manapun. Radius validasi memakai
-  // titik outlet vs titik pengajuan yang SUDAH tersimpan sejak tagging
-  // (pts_sale.within_radius), bukan longlat dari file ini.
-  const parseFile = async (file) => {
-    setErr(""); setResult(null);
+  /* Bangun satu kali per sesi upload: Set nomor yang PERNAH ditag promotor
+     (bukan cuma yang belum tervalidasi — GA yang sama bisa datang lagi
+     dengan koreksi biometric_status/outlet meski sebelumnya sudah
+     tervalidasi). Ini pool KECIL (ribuan, bukan jutaan) — muat aman. */
+  const loadPool = async () => {
+    const { data, error } = await supabase.from("pts_sale").select("phone_normalized");
+    if (error) throw error;
+    return new Set((data || []).map((r) => r.phone_normalized));
+  };
+
+  const resetFile = () => {
+    setPhase("idle"); setMatchedRows(null); setScanStats({ scanned: 0, matched: 0 });
+    setFileName(""); setResult(null); if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const handleFile = async (file) => {
+    setErr(""); setResult(null); setFileName(file.name); setPhase("scanning");
+    setScanStats({ scanned: 0, matched: 0 });
+    cancelRef.current = false;
     try {
-      const buf = await file.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array" });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const raw = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false });
-      if (!raw.length) { setErr("File kosong."); return; }
-      const head = raw[0].map((h) => String(h || "").trim().toUpperCase());
-      const idx = (name) => head.findIndex((h) => h === name);
-      const iMsisdn = idx("MSISDN"), iOutlet = idx("ID OUTLET"), iBrand = idx("BRAND"), iBio = idx("BIOMETRIC_STATUS");
-      if (iMsisdn < 0 || iOutlet < 0 || iBrand < 0) { setErr("Header wajib: 'MSISDN', 'ID OUTLET', 'BRAND'."); return; }
-      const parsed = [];
-      for (let r = 1; r < raw.length; r++) {
-        const row = raw[r]; if (!row || row.every((c) => c === "" || c == null)) continue;
-        const { normalized, valid } = normalizePhone(row[iMsisdn]);
-        const outletCode = String(row[iOutlet] ?? "").trim();
-        const brand = String(row[iBrand] ?? "").trim();
-        const bioRaw = iBio >= 0 ? String(row[iBio] ?? "").trim().toUpperCase() : "";
-        const outlet = outletByCode.get(outletCode.toUpperCase());
-        const errs = [];
-        if (!valid) errs.push("MSISDN tidak valid");
-        if (!outletCode) errs.push("ID Outlet kosong");
-        else if (!outlet) errs.push("ID Outlet tidak ditemukan di master outlet");
-        if (!brand) errs.push("Brand kosong");
-        if (bioRaw && !["BIOMETRIC", "REGULAR"].includes(bioRaw)) errs.push("BIOMETRIC_STATUS harus BIOMETRIC atau REGULAR");
-        parsed.push({
-          rowNo: r + 1, msisdn: normalized, outlet_code: outletCode, outlet_name: outlet?.name || "",
-          brand, biometric_status: ["BIOMETRIC", "REGULAR"].includes(bioRaw) ? bioRaw : "", errors: errs,
+      const pool = await loadPool();
+      const matched = [];
+      let scanned = 0;
+      let lastUiUpdate = 0;
+
+      const consumeRow = (obj) => {
+        scanned++;
+        const msisdnRaw = obj.msisdn ?? obj.MSISDN;
+        const { normalized, valid } = normalizeMsisdnLite(msisdnRaw);
+        if (valid && pool.has(normalized)) {
+          matched.push({
+            msisdn: normalized,
+            brand: String(obj.brand ?? obj.BRAND ?? "").trim().toUpperCase(),
+            ga_dt: String(obj.ga_dt ?? obj.GA_DT ?? "").trim(),
+            organization_id: String(obj.organization_id ?? obj.ORGANIZATION_ID ?? "").trim(),
+            ga_branch: String(obj.ga_branch ?? obj.GA_BRANCH ?? "").trim(),
+            biometric_status: String(obj.biometric_status ?? obj.BIOMETRIC_STATUS ?? "").trim().toUpperCase(),
+          });
+        }
+        // Throttle re-render — cukup tiap 20rb baris atau tiap 400ms supaya
+        // parser tidak menunggu React sibuk re-render tiap baris.
+        const now = Date.now();
+        if (scanned % 20000 === 0 || now - lastUiUpdate > 400) {
+          lastUiUpdate = now;
+          setScanStats({ scanned, matched: matched.length });
+        }
+      };
+
+      const isCsv = /\.csv$/i.test(file.name);
+      if (isCsv) {
+        await new Promise((resolve, reject) => {
+          Papa.parse(file, {
+            header: true, skipEmptyLines: true, worker: true, chunkSize: 1024 * 1024,
+            step: (res) => { if (cancelRef.current) return; consumeRow(res.data || {}); },
+            complete: () => resolve(),
+            error: (e) => reject(e),
+          });
         });
+      } else {
+        // File kecil (.xlsx/.xls) — aman dimuat penuh, dipakai untuk file
+        // uji coba kecil saja (Excel tidak sanggup menampung jutaan baris).
+        const buf = await file.arrayBuffer();
+        const wb = XLSX.read(buf, { type: "array" });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json(ws, { defval: "" });
+        json.forEach((obj) => consumeRow(obj));
       }
-      if (!parsed.length) { setErr("Tidak ada baris data pada file ini."); return; }
-      setRows(parsed);
-    } catch (e) { setErr("Gagal membaca file: " + (e?.message || e)); }
+
+      setScanStats({ scanned, matched: matched.length });
+      setMatchedRows(matched);
+      setPhase("preview");
+    } catch (e) {
+      setErr("Gagal membaca file: " + (e?.message || e));
+      setPhase("idle");
+    }
   };
 
-  const onPick = (e) => { const f = e.target.files?.[0]; if (f) { setFileName(f.name); parseFile(f); } };
-  const onDrop = (e) => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files?.[0]; if (f) { setFileName(f.name); parseFile(f); } };
-
-  const okRows = rows ? rows.filter((r) => !r.errors.length) : [];
+  const onPick = (e) => { const f = e.target.files?.[0]; if (f) handleFile(f); };
+  const onDrop = (e) => { e.preventDefault(); setDrag(false); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f); };
 
   const uploadAndValidate = async () => {
-    if (!okRows.length) return;
-    setUploading(true); setValidating(true); setErr(""); setResult(null);
+    if (!matchedRows || !matchedRows.length) return;
+    setPhase("uploading"); setErr(""); setResult(null);
+    const chunkSize = 1500;
+    const total = Math.ceil(matchedRows.length / chunkSize);
+    setUploadProgress({ done: 0, total });
     try {
-      const payload = okRows.map((r) => ({ msisdn: r.msisdn, outlet_code: r.outlet_code, brand: r.brand, biometric_status: r.biometric_status || null }));
-      const chunkSize = 500;
-      let matched = 0, mismatched = 0, expired = 0;
-      for (let i = 0; i < payload.length; i += chunkSize) {
-        const { data: rpcRes, error: rpcErr } = await supabase.rpc("pts_apply_ga_validation_batch", { p_period: period, p_rows: payload.slice(i, i + chunkSize) });
+      let processed = 0, changed = 0;
+      for (let i = 0; i < matchedRows.length; i += chunkSize) {
+        const chunk = matchedRows.slice(i, i + chunkSize);
+        const { data: rpcRes, error: rpcErr } = await supabase.rpc("pts_apply_ga_validation_batch_v2", { p_rows: chunk, p_source_period: period });
         if (rpcErr) throw rpcErr;
-        matched += rpcRes?.matched ?? 0; mismatched += rpcRes?.mismatched ?? 0; expired = rpcRes?.expired_unmatched ?? expired;
+        processed += rpcRes?.processed ?? 0; changed += rpcRes?.changed ?? 0;
+        setUploadProgress({ done: Math.min(total, Math.floor(i / chunkSize) + 1), total });
       }
-      setResult({ processed: payload.length, matched, mismatched, expired });
-      setRows(null); setFileName(""); if (fileRef.current) fileRef.current.value = "";
+      // Kolam mengambang: outlet yang sekarang sudah termapping bisa langsung
+      // "hidup" begitu ada upload apa pun, tidak perlu menunggu file bulan itu lagi.
+      const { data: sweepRes } = await supabase.rpc("pts_resweep_floating_ga_matches");
+      setResult({ processed, changed, resolvedFloating: sweepRes?.resolved ?? 0, scanned: scanStats.scanned, matchedTotal: matchedRows.length });
+      resetFile();
       await loadSummary();
     } catch (e) {
       setErr("Gagal memproses: " + (e?.message || e));
-    } finally { setUploading(false); setValidating(false); }
+      setPhase("preview");
+    }
   };
+
+  const busy = phase === "scanning" || phase === "uploading";
 
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 16px", borderRadius: 12, background: t.brandBg, border: `1px solid ${t.brandBd}`, marginBottom: 18 }}>
         <Info size={17} color={t.brand} style={{ flexShrink: 0 }} />
         <span style={{ fontSize: 13.5, color: t.hi, fontWeight: 500 }}>
-          Data GA <b>tidak real-time</b> — umumnya tersedia <b>D+2</b>. Upload ulang setiap hari untuk periode <b>{ymLabel(period)}</b> — sistem selalu memakai <b>data unggahan terakhir</b> untuk periode ini. MSISDN &amp; koordinat pada file ini hanya dicocokkan sebentar di memori (dibandingkan ke ID Outlet &amp; Brand pengajuan) lalu dibuang — <b>tidak pernah disimpan</b>. Radius kesesuaian lokasi memakai jarak outlet ↔ titik pengajuan yang sudah tersimpan sejak tagging (pengaturan radius di tab <b>Geofence</b>), bukan koordinat dari file ini.
+          Data GA <b>tidak real-time</b> — umumnya tersedia <b>D+2</b>. File bisa berisi <b>jutaan baris</b> — diproses langsung di browser Anda (tidak diunggah ke server), dan hanya nomor yang benar-benar cocok dengan pengajuan promotor yang dikirim ke database. Kepemilikan outlet ditentukan dari <b>organization_id + brand</b>, periode pencapaian mengikuti <b>ga_dt</b> (bukan tanggal pengajuan).
         </span>
       </div>
 
@@ -2446,6 +2512,11 @@ function GaValidation({ t, d, supabase, profile, isFullAdmin, outletByCode, peri
         <Stat t={t} icon={<Clock size={18} />}        label="Belum Tervalidasi GA"     value={loadingSummary ? "…" : (summary?.BELUM_TERVALIDASI ?? 0)} accent={{ fg: t.amber, bg: t.amberBg, bd: t.amberBd }} />
         <Stat t={t} icon={<CheckCircle2 size={18} />} label="Total Tervalidasi"        value={loadingSummary ? "…" : ((summary?.TERVALIDASI ?? 0) + (summary?.TERVALIDASI_LUAR_AREA ?? 0))} accent={{ fg: t.green, bg: t.greenBg, bd: t.greenBd }} />
         <Stat t={t} icon={<Radar size={18} />}         label="Tervalidasi — Luar Area"  value={loadingSummary ? "…" : (summary?.TERVALIDASI_LUAR_AREA ?? 0)} accent={{ fg: t.blue, bg: t.blueBg, bd: t.blueBd }} />
+        <Stat t={t} icon={<ArrowLeftRight size={18} />} label="Pindah Outlet (Sama Promotor)" value={loadingSummary ? "…" : (summary?.same_promotor_diff_outlet ?? 0)} accent={{ fg: t.blue, bg: t.blueBg, bd: t.blueBd }} />
+        <Stat t={t} icon={<ArrowLeftRight size={18} />} label="Pindah Promotor Lain"     value={loadingSummary ? "…" : (summary?.diff_promotor ?? 0)} accent={{ fg: t.mag, bg: t.magBg, bd: t.magBd }} />
+      </div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+        <Stat t={t} icon={<Clock size={18} />}        label="Menunggu Mapping Outlet"  value={loadingSummary ? "…" : (summary?.MENUNGGU_MAPPING_OUTLET ?? 0)} accent={{ fg: t.amber, bg: t.amberBg, bd: t.amberBd }} />
         <Stat t={t} icon={<AlertTriangle size={18} />} label="Outlet Tidak Sesuai"      value={loadingSummary ? "…" : (summary?.TIDAK_SESUAI_OUTLET ?? 0)} accent={{ fg: t.mag, bg: t.magBg, bd: t.magBd }} />
         <Stat t={t} icon={<AlertTriangle size={18} />} label="Tidak Ditemukan"          value={loadingSummary ? "…" : (summary?.TIDAK_DITEMUKAN ?? 0)}   accent={{ fg: t.red, bg: t.redBg, bd: t.redBd }} />
       </div>
@@ -2458,22 +2529,38 @@ function GaValidation({ t, d, supabase, profile, isFullAdmin, outletByCode, peri
         <button className="pts-btn" onClick={downloadTemplate} style={{ background: t.card, color: t.hi, border: `1px solid ${t.line}`, boxShadow: t.sm }}><Download size={15} /> Download Template GA</button>
       </div>
 
-      <div
-        onDragOver={(e) => { if (isFullAdmin) { e.preventDefault(); setDrag(true); } }}
-        onDragLeave={() => setDrag(false)}
-        onDrop={isFullAdmin ? onDrop : undefined}
-        onClick={() => isFullAdmin && fileRef.current?.click()}
-        style={{
-          border: `1.5px dashed ${drag ? t.brand : t.line}`, borderRadius: 14, padding: "34px 24px", textAlign: "center", cursor: isFullAdmin ? "pointer" : "not-allowed",
-          background: drag ? t.brandBg : t.sub, transition: "all .15s", opacity: isFullAdmin ? 1 : .6,
-        }}>
-        <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" hidden onChange={onPick} disabled={!isFullAdmin} />
-        <div style={{ width: 48, height: 48, borderRadius: 12, margin: "0 auto 14px", display: "flex", alignItems: "center", justifyContent: "center", background: t.card, border: `1px solid ${t.line}`, color: t.brand }}>
-          <UploadCloud size={22} />
+      {phase === "idle" && (
+        <div
+          onDragOver={(e) => { if (isFullAdmin) { e.preventDefault(); setDrag(true); } }}
+          onDragLeave={() => setDrag(false)}
+          onDrop={isFullAdmin ? onDrop : undefined}
+          onClick={() => isFullAdmin && fileRef.current?.click()}
+          style={{
+            border: `1.5px dashed ${drag ? t.brand : t.line}`, borderRadius: 14, padding: "34px 24px", textAlign: "center", cursor: isFullAdmin ? "pointer" : "not-allowed",
+            background: drag ? t.brandBg : t.sub, transition: "all .15s", opacity: isFullAdmin ? 1 : .6,
+          }}>
+          <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" hidden onChange={onPick} disabled={!isFullAdmin} />
+          <div style={{ width: 48, height: 48, borderRadius: 12, margin: "0 auto 14px", display: "flex", alignItems: "center", justifyContent: "center", background: t.card, border: `1px solid ${t.line}`, color: t.brand }}>
+            <UploadCloud size={22} />
+          </div>
+          <div style={{ fontSize: 14.5, fontWeight: 600, color: t.hi }}>{fileName || "Tarik file GA (.csv untuk file besar) ke sini, atau klik untuk memilih"}</div>
+          <div style={{ fontSize: 12.5, color: t.mid, marginTop: 5 }}>Kolom: ga_dt · brand · msisdn · ga_branch · organization_id · biometric_status</div>
         </div>
-        <div style={{ fontSize: 14.5, fontWeight: 600, color: t.hi }}>{fileName || "Tarik file GA (.xlsx/.csv) ke sini, atau klik untuk memilih"}</div>
-        <div style={{ fontSize: 12.5, color: t.mid, marginTop: 5 }}>Kolom: MSISDN · ID OUTLET · BRAND · LATITUDE · LONGITUDE · BIOMETRIC_STATUS</div>
-      </div>
+      )}
+
+      {phase === "scanning" && (
+        <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: "24px 22px", background: t.card, boxShadow: t.sm }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <Loader2 size={18} className="spin" color={t.brand} />
+            <span style={{ fontSize: 14, fontWeight: 700, color: t.hi }}>Memindai {fileName}…</span>
+          </div>
+          <div style={{ fontSize: 13, color: t.mid }}>
+            <b style={{ color: t.hi, fontVariantNumeric: "tabular-nums" }}>{scanStats.scanned.toLocaleString("id-ID")}</b> baris dipindai ·{" "}
+            <b style={{ color: t.green, fontVariantNumeric: "tabular-nums" }}>{scanStats.matched.toLocaleString("id-ID")}</b> cocok dengan pengajuan promotor
+          </div>
+          <div style={{ fontSize: 11.5, color: t.lo, marginTop: 8 }}>Diproses langsung di browser (web worker) — baris yang tidak cocok langsung dibuang, tidak disimpan.</div>
+        </div>
+      )}
 
       {err && <div style={{ marginTop: 16, display: "flex", gap: 10, padding: "12px 14px", borderRadius: 10, background: t.redBg, border: `1px solid ${t.redBd}` }}><AlertTriangle size={16} color={t.red} style={{ flexShrink: 0, marginTop: 1 }} /><span style={{ fontSize: 13, color: t.hi }}>{err}</span></div>}
 
@@ -2481,53 +2568,52 @@ function GaValidation({ t, d, supabase, profile, isFullAdmin, outletByCode, peri
         <div style={{ marginTop: 16, display: "flex", gap: 11, padding: "14px 16px", borderRadius: 12, background: t.greenBg, border: `1px solid ${t.greenBd}` }}>
           <CheckCircle2 size={18} color={t.green} style={{ flexShrink: 0, marginTop: 1 }} />
           <div style={{ fontSize: 13.5, color: t.hi }}>
-            <b>{result.processed} baris</b> diproses. <b>{result.matched}</b> tervalidasi, <b>{result.mismatched}</b> outlet tidak sesuai, <b>{result.expired}</b> tagging melewati window 3 hari tanpa ditemukan di data GA.
+            <b>{result.scanned.toLocaleString("id-ID")} baris</b> dipindai, <b>{result.matchedTotal.toLocaleString("id-ID")}</b> cocok &amp; diproses, <b>{result.changed}</b> ada perubahan (notifikasi terkirim), <b>{result.resolvedFloating}</b> pencapaian yang sebelumnya menunggu mapping outlet kini terselesaikan.
           </div>
         </div>
       )}
 
-      {rows && (
+      {(phase === "preview" || phase === "uploading") && matchedRows && (
         <div style={{ marginTop: 18 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: t.hi }}>Pratinjau: {rows.length} baris</span>
-              <Chip t={t} tone="green" icon={<CheckCircle2 size={12} />}>{okRows.length} valid</Chip>
-              {rows.length - okRows.length > 0 && <Chip t={t} tone="red" icon={<AlertTriangle size={12} />}>{rows.length - okRows.length} error</Chip>}
+              <span style={{ fontSize: 13, fontWeight: 600, color: t.hi }}>{scanStats.scanned.toLocaleString("id-ID")} baris dipindai</span>
+              <Chip t={t} tone="green" icon={<CheckCircle2 size={12} />}>{matchedRows.length.toLocaleString("id-ID")} cocok pengajuan</Chip>
             </div>
             <div style={{ display: "flex", gap: 9 }}>
-              <button className="pts-btn" onClick={() => { setRows(null); setFileName(""); }} style={{ background: t.card, color: t.mid, border: `1px solid ${t.line}` }}><X size={14} /> Batal</button>
-              <button className="pts-btn" onClick={uploadAndValidate} disabled={!isFullAdmin || uploading || okRows.length === 0} style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}>
-                {uploading || validating ? <Loader2 size={15} className="spin" /> : <UploadCloud size={15} />} Proses Validasi
+              <button className="pts-btn" onClick={resetFile} disabled={phase === "uploading"} style={{ background: t.card, color: t.mid, border: `1px solid ${t.line}` }}><X size={14} /> Batal</button>
+              <button className="pts-btn" onClick={uploadAndValidate} disabled={!isFullAdmin || busy || matchedRows.length === 0} style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}>
+                {phase === "uploading" ? <Loader2 size={15} className="spin" /> : <UploadCloud size={15} />}
+                {phase === "uploading" && uploadProgress ? ` Memproses ${uploadProgress.done}/${uploadProgress.total}` : ` Proses Validasi (${matchedRows.length.toLocaleString("id-ID")})`}
               </button>
             </div>
           </div>
-          <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden", boxShadow: t.sm }}>
-            <div style={{ maxHeight: 320, overflow: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr>{["Baris", "MSISDN", "ID Outlet", "Nama Outlet", "Brand", "Biometric", "Status"].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr></thead>
-                <tbody>
-                  {rows.slice(0, 300).map((r, i) => {
-                    const bad = r.errors.length > 0;
-                    return (
-                      <tr key={i} className="pts-row" style={{ background: bad ? t.redBg : "transparent" }}>
-                        <td className="pts-td" style={{ color: t.mid }}>{r.rowNo}</td>
-                        <td className="pts-td" style={{ fontFamily: "monospace", fontWeight: 700 }}>{r.msisdn || "—"}</td>
-                        <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 12 }}>{r.outlet_code || "—"}</td>
-                        <td className="pts-td">{r.outlet_name || "—"}</td>
-                        <td className="pts-td">{r.brand || "—"}</td>
-                        <td className="pts-td">{r.biometric_status || "—"}</td>
-                        <td className="pts-td">
-                          {bad
-                            ? <span title={r.errors.join("; ")} style={{ display: "inline-flex", alignItems: "center", gap: 5, color: t.red, fontWeight: 600, fontSize: 12 }}><AlertTriangle size={12} /> {r.errors[0]}</span>
-                            : <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: t.green, fontWeight: 600, fontSize: 12 }}><CheckCircle2 size={12} /> OK</span>}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+          {matchedRows.length === 0 ? (
+            <div style={{ padding: "24px 16px", textAlign: "center", color: t.mid, fontSize: 13, border: `1px solid ${t.line}`, borderRadius: 12 }}>
+              Tidak ada nomor di file ini yang cocok dengan pengajuan promotor manapun.
             </div>
-          </div>
+          ) : (
+            <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden", boxShadow: t.sm }}>
+              <div style={{ maxHeight: 320, overflow: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead><tr>{["MSISDN", "Brand", "GA Date", "Organization ID", "GA Branch", "Biometric"].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr></thead>
+                  <tbody>
+                    {matchedRows.slice(0, 300).map((r, i) => (
+                      <tr key={i} className="pts-row">
+                        <td className="pts-td" style={{ fontFamily: "monospace", fontWeight: 700 }}>{r.msisdn}</td>
+                        <td className="pts-td">{r.brand || "—"}</td>
+                        <td className="pts-td">{r.ga_dt || "—"}</td>
+                        <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 12 }}>{r.organization_id || "—"}</td>
+                        <td className="pts-td">{r.ga_branch || "—"}</td>
+                        <td className="pts-td">{r.biometric_status || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {matchedRows.length > 300 && <div style={{ padding: "8px 14px", fontSize: 11.5, color: t.mid, borderTop: `1px solid ${t.line}` }}>Menampilkan 300 dari {matchedRows.length.toLocaleString("id-ID")} baris cocok.</div>}
+            </div>
+          )}
         </div>
       )}
       <style>{`.spin{animation:ptsspin 1s linear infinite}@keyframes ptsspin{to{transform:rotate(360deg)}}`}</style>

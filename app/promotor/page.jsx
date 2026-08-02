@@ -37,6 +37,22 @@ import {
 const PERIOD_OPTIONS = ["2026-08", "2026-09"];
 function periodOptions() { return PERIOD_OPTIONS; }
 
+// Selector "Lihat performa" di beranda — TERPISAH dari `period` (yang
+// mengatur mapping outlet/assignment, dipakai di layar Menunggu Aktivasi).
+// Ini murni untuk menjelajah histori Kontribusi Anda ke bulan-bulan lalu,
+// karena pencapaian bisa "pindah periode" mengikuti ga_dt hasil validasi
+// GA — bukan lagi selalu bulan tagging. Rentang: 6 bulan ke belakang s.d.
+// bulan berjalan sekarang (tidak perlu bulan depan, belum ada datanya).
+function statsPeriodOptions() {
+  const out = [];
+  const now = new Date();
+  for (let i = 0; i < 6; i++) {
+    const dt = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    out.push(`${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}`);
+  }
+  return out; // terbaru dulu
+}
+
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const C = {
   bg: "#F4F5F7", card: "#FFFFFF", sub: "#F3F4F6", line: "#E9EAEE", lineSoft: "#F0F1F4",
@@ -134,6 +150,9 @@ export default function PromotorApp() {
   const toastTimerRef = useRef(null);
 
   const [period, setPeriod] = useState(PERIOD_OPTIONS[0]);
+  // Satu-satunya selector periode yang tampil di beranda — lihat komentar
+  // statsPeriodOptions() di atas. Default bulan berjalan.
+  const [statsPeriod, setStatsPeriod] = useState(statsPeriodOptions()[0]);
 
   // Tombol "Hubungi Call Center" (WhatsApp) — nomor & pesan pembuka diatur
   // SPM Sumatera lewat dashboard (pts_call_center_setting), dipakai baik di
@@ -313,8 +332,13 @@ export default function PromotorApp() {
     catch { setGeoErr("Tidak bisa mendapatkan lokasi. Pastikan GPS & izin aktif."); return null; }
   };
 
+  // Termasuk nomor yang AWALNYA diajukan promotor lain tapi hasil validasi
+  // GA memindahkan kreditnya ke promotor ini (credited_promotor_id) — bukan
+  // cuma yang dia tagging sendiri (promotor_id).
   const loadHistory = useCallback(async () => {
-    const { data } = await supabase.from("pts_sale").select("*").eq("promotor_id", promotorId).order("tagged_at", { ascending: false }).limit(80);
+    const { data } = await supabase.from("pts_sale").select("*")
+      .or(`promotor_id.eq.${promotorId},credited_promotor_id.eq.${promotorId}`)
+      .order("tagged_at", { ascending: false }).limit(80);
     setHistory(data || []);
   }, [promotorId]);
 
@@ -327,7 +351,8 @@ export default function PromotorApp() {
   return (
     <AppShell
       name={name} setName={setName} email={email} uid={uid} promotorId={promotorId} salesTarget={salesTarget}
-      period={period} setPeriod={setPeriod} outlets={outlets} setOutlets={setOutlets} assignmentSrc={assignmentSrc}
+      period={period} setPeriod={setPeriod} statsPeriod={statsPeriod} setStatsPeriod={setStatsPeriod}
+      outlets={outlets} setOutlets={setOutlets} assignmentSrc={assignmentSrc}
       activeOutlet={activeOutlet} setActiveOutlet={setActiveOutlet}
       todaySales={todaySales} loadTodaySales={loadTodaySales}
       geo={geo} geoErr={geoErr} refreshGeo={refreshGeo}
@@ -406,7 +431,7 @@ function Pending({ email, period, setPeriod, onReload, onSignOut, previewMode, o
 
 /* ══════════════════ App Shell ══════════════════ */
 function AppShell(p) {
-  const { name, setName, email, promotorId, salesTarget, period, setPeriod, outlets, setOutlets, assignmentSrc, activeOutlet, setActiveOutlet, todaySales, loadTodaySales, geo, geoErr, refreshGeo, view, setView, history, loadHistory, onSignOut, flash, toast, previewMode, onBack, waLink } = p;
+  const { name, setName, email, promotorId, salesTarget, period, setPeriod, statsPeriod, setStatsPeriod, outlets, setOutlets, assignmentSrc, activeOutlet, setActiveOutlet, todaySales, loadTodaySales, geo, geoErr, refreshGeo, view, setView, history, loadHistory, onSignOut, flash, toast, previewMode, onBack, waLink } = p;
   // Semua aksi tulis dikunci saat Mode Pratinjau Admin — dipanggil di awal
   // tiap handler supaya tidak ada satupun jalur yang lolos.
   const guardPreview = () => { if (previewMode) { flash("Mode pratinjau — tidak bisa melakukan aksi ini.", "err"); return true; } return false; };
@@ -462,38 +487,63 @@ function AppShell(p) {
   }, [email]);
   useEffect(() => { loadIncoming(); }, [loadIncoming]);
 
-  /* Ringkasan Claim Penjualan: jumlah SP di-claim + rincian validasi GA
-     (total tervalidasi, biometric, non-biometric) — mengikuti BULAN
-     KALENDER SESUNGGUHNYA (tagged_at pakai waktu nyata), BUKAN "periode"
-     mapping yang sedang dipilih di dropdown. Keduanya bisa beda saat admin
-     sengaja menyiapkan mapping bulan depan lebih awal (mis. upload mapping
-     Agustus padahal hari ini masih Juli) — claim yang baru saja ditag hari
-     ini harus tetap kehitung, bukan hilang karena difilter ke rentang
-     tanggal periode yang belum tiba. */
+  /* Notifikasi info (hasil validasi GA yang memindahkan/mempengaruhi
+     pencapaian) — digabung ke Kotak Masuk yang sama dengan permintaan
+     approval di atas, tapi tabel & makna berbeda: ini murni informasi,
+     tidak perlu keputusan. Badge berkurang HANYA setelah item benar-benar
+     ditap (lihat markNotificationRead). */
+  const [notifications, setNotifications] = useState([]);
+  const [notifFilter, setNotifFilter] = useState("all"); // 'all' | 'YYYY-MM'
+  const loadNotifications = useCallback(async () => {
+    if (!promotorId) { setNotifications([]); return; }
+    const { data } = await supabase.from("pts_notification")
+      .select("*").eq("promotor_id", promotorId).order("created_at", { ascending: false }).limit(150);
+    setNotifications(data || []);
+  }, [promotorId]);
+  useEffect(() => { loadNotifications(); }, [loadNotifications]);
+  useEffect(() => { if (inboxOpen) loadNotifications(); }, [inboxOpen, loadNotifications]);
+
+  const markNotificationRead = async (n) => {
+    if (!n.read_at) {
+      await supabase.rpc("pts_mark_notification_read", { p_id: n.id });
+      setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, read_at: new Date().toISOString() } : x)));
+    }
+  };
+
+  /* Ringkasan Claim Penjualan: jumlah SP di-claim + rincian validasi GA —
+     difilter dari `credited_period`, BUKAN dari tagged_at. Ini disengaja:
+     setelah GA Validation v2, periode "yang diakui" ikut ga_dt, jadi
+     pengajuan yang ditag bulan ini bisa saja ternyata masuk hitungan bulan
+     lalu (atau sebaliknya). `statsPeriod` adalah satu-satunya selector
+     periode di beranda — gantinya otomatis me-refresh ringkasan ini.
+     Query juga mencakup nomor yang KREDITNYA masuk ke promotor ini meski
+     awalnya diajukan promotor lain (credited_promotor_id). */
   const loadSummary = useCallback(async () => {
     if (!promotorId) { setSummary(null); return; }
-    const now = new Date();
-    const start = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-01`;
-    const nd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-    const end = `${nd.getFullYear()}-${pad2(nd.getMonth() + 1)}-01`;
-    const { data } = await supabase.from("pts_sale").select("ga_status,biometric_status")
-      .eq("promotor_id", promotorId).gte("tagged_at", start).lt("tagged_at", end);
-    const rows = data || [];
+    const { data } = await supabase.from("pts_sale").select("ga_status,biometric_status,credited_transfer_type,credited_promotor_id")
+      .eq("credited_period", statsPeriod)
+      .or(`promotor_id.eq.${promotorId},credited_promotor_id.eq.${promotorId}`);
+    // Baris yang KREDITNYA sudah pindah ke promotor lain (diff_promotor,
+    // credited_promotor_id != promotorId) tidak lagi dihitung sebagai
+    // pencapaian promotor ini — hanya relevan di Riwayat sebagai catatan.
+    const rows = (data || []).filter((r) => r.credited_promotor_id == null || r.credited_promotor_id === promotorId);
     // Rincian status RGU-GA selengkap mungkin — bukan cuma "tervalidasi vs
     // belum", tapi tiap tahap pengajuan sampai hasil akhirnya:
     //  - pending      : BELUM_TERVALIDASI — masih dalam pengajuan, GA belum sempat cocok
     //  - validated    : TERVALIDASI + TERVALIDASI_LUAR_AREA — RGU-GA ketemu & cocok
     //    - bio/reg    : pecahan validated berdasar biometric_status
-    //  - rejected     : TIDAK_SESUAI_OUTLET — RGU-GA ketemu, tapi tercatat di outlet lain (bukan milik promotor ini)
+    //  - waitingOutlet: MENUNGGU_MAPPING_OUTLET — outlet dikenal, belum ada promotor termapping
+    //  - rejected     : TIDAK_SESUAI_OUTLET — outlet di luar jaringan promotor manapun
     //  - notFound     : TIDAK_DITEMUKAN — sampai window habis, RGU-GA tidak pernah ketemu sama sekali
     const validated = rows.filter((r) => r.ga_status === "TERVALIDASI" || r.ga_status === "TERVALIDASI_LUAR_AREA").length;
     const bio = rows.filter((r) => r.biometric_status === "BIOMETRIC").length;
     const reg = rows.filter((r) => r.biometric_status === "REGULAR").length;
     const pending = rows.filter((r) => !r.ga_status || r.ga_status === "BELUM_TERVALIDASI").length;
+    const waitingOutlet = rows.filter((r) => r.ga_status === "MENUNGGU_MAPPING_OUTLET").length;
     const rejected = rows.filter((r) => r.ga_status === "TIDAK_SESUAI_OUTLET").length;
     const notFound = rows.filter((r) => r.ga_status === "TIDAK_DITEMUKAN").length;
-    setSummary({ total: rows.length, validated, bio, reg, pending, rejected, notFound });
-  }, [promotorId]);
+    setSummary({ total: rows.length, validated, bio, reg, pending, waitingOutlet, rejected, notFound });
+  }, [promotorId, statsPeriod]);
   useEffect(() => { loadSummary(); }, [loadSummary]);
 
   const decideTransfer = async (req, approve) => {
@@ -712,7 +762,7 @@ function AppShell(p) {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-          <IconBtn onClick={() => setInboxOpen(true)} badge={incoming.length}><Inbox size={17} /></IconBtn>
+          <IconBtn onClick={() => setInboxOpen(true)} badge={incoming.length + notifications.filter((n) => !n.read_at).length}><Inbox size={17} /></IconBtn>
           {previewMode ? (
             <IconBtn onClick={onBack} label="Kembali"><ChevronLeft size={16} /></IconBtn>
           ) : (
@@ -723,7 +773,7 @@ function AppShell(p) {
 
       <div style={{ padding: "8px 18px 0", maxWidth: 560, margin: "0 auto" }}>
         {view === "history" ? (
-          <HistoryView history={history} onDelete={(s) => setDelSale(s)} />
+          <HistoryView history={history} onDelete={(s) => setDelSale(s)} promotorId={promotorId} />
         ) : view === "claim" ? (
           <div ref={actionSectionRef} style={{ animation: "up .32s cubic-bezier(.22,1,.36,1)" }}>
             <div style={{ marginBottom: 4 }}>
@@ -745,23 +795,26 @@ function AppShell(p) {
           </div>
         ) : (
           <div style={{ animation: "up .32s cubic-bezier(.22,1,.36,1)" }}>
-            {/* Periode aktif */}
+            {/* Satu-satunya selector periode di beranda — mengontrol tampilan
+                Kontribusi Anda (bukan outlet aktif untuk tagging, itu selalu
+                ikut bulan berjalan sesungguhnya). Bisa mundur ke bulan lalu
+                karena pencapaian bisa "pindah periode" mengikuti ga_dt. */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 10, flexWrap: "wrap" }}>
               <div style={{ position: "relative" }}>
-                <select value={period} onChange={(e) => setPeriod(e.target.value)}
+                <select value={statsPeriod} onChange={(e) => setStatsPeriod(e.target.value)}
                   style={{ appearance: "none", height: 38, borderRadius: 12, border: `1px solid ${C.brand}55`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 13.5, fontWeight: 700, padding: "0 32px 0 34px", cursor: "pointer", boxShadow: C.sm }}>
-                  {periodOptions().map((pOpt) => <option key={pOpt} value={pOpt}>{ymLabel(pOpt)}</option>)}
+                  {statsPeriodOptions().map((pOpt) => <option key={pOpt} value={pOpt}>{ymLabel(pOpt)}</option>)}
                 </select>
                 <CalendarDays size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: C.brand, pointerEvents: "none" }} />
               </div>
               <GeoChip geo={geo} err={geoErr} onFix={fixGeo} />
             </div>
 
-            {/* Kontribusi Anda bulan ini — kartu flip: sisi depan ringkasan
-                target, sisi belakang rincian status pengajuan. Digabung jadi
-                satu kartu (bukan dua kartu terpisah selalu tampil) supaya
-                Claim Penjualan bisa naik lebih dekat ke jempol. */}
-            <ContributionCard summary={summary} target={salesTarget} periodLabel={ymLabel(ymNow())} onSeeRejected={() => setView("history")} />
+            {/* Kontribusi Anda — kartu flip: sisi depan ringkasan target,
+                sisi belakang rincian status pengajuan. Digabung jadi satu
+                kartu (bukan dua kartu terpisah selalu tampil) supaya Claim
+                Penjualan bisa naik lebih dekat ke jempol. */}
+            <ContributionCard summary={summary} target={salesTarget} periodLabel={ymLabel(statsPeriod)} onSeeRejected={() => setView("history")} />
 
             {/* Ringkasan outlet — hanya pratinjau, tap untuk buka layar Claim
                 Penjualan (outlet, gerbang lokasi, dan tagging kini di layar
@@ -1022,39 +1075,86 @@ function AppShell(p) {
       {/* Sheets */}
       {sheet === "qr" && <QRScannerSheet onDetect={onQR} onClose={() => setSheet(null)} />}
 
-      {/* Kotak Masuk — permintaan pemindahan claim dari promotor lain */}
-      {inboxOpen && (
-        <BottomSheet onClose={() => setInboxOpen(false)}>
-          <div style={{ padding: "2px 18px calc(env(safe-area-inset-bottom,0px) + 20px)" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 17, fontWeight: 800, color: C.hi, letterSpacing: "-0.02em" }}><Inbox size={18} /> Kotak Masuk</div>
-              <button onClick={() => setInboxOpen(false)} style={{ width: 34, height: 34, borderRadius: 10, border: "none", background: C.sub, color: C.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={18} /></button>
+      {/* Kotak Masuk — gabungan permintaan approval (pindah nomor manual)
+          dan notifikasi info (hasil validasi GA). Dua jenis berbeda, tapi
+          disatukan di satu tempat dengan bagian terpisah supaya tidak
+          tercampur: approval selalu di atas (perlu keputusan), notifikasi
+          info di bawah dengan filter periode. */}
+      {inboxOpen && (() => {
+        const filteredNotifs = notifications.filter((n) => notifFilter === "all" || n.period === notifFilter);
+        const unreadCount = notifications.filter((n) => !n.read_at).length;
+        return (
+          <BottomSheet onClose={() => setInboxOpen(false)}>
+            <div style={{ padding: "2px 18px calc(env(safe-area-inset-bottom,0px) + 20px)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 17, fontWeight: 800, color: C.hi, letterSpacing: "-0.02em" }}><Inbox size={18} /> Kotak Masuk</div>
+                <button onClick={() => setInboxOpen(false)} style={{ width: 34, height: 34, borderRadius: 10, border: "none", background: C.sub, color: C.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={18} /></button>
+              </div>
+
+              {/* Perlu persetujuan — badge tetap nyala sampai diputuskan */}
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo, marginBottom: 9 }}>
+                Perlu Persetujuan {incoming.length > 0 ? `(${incoming.length})` : ""}
+              </div>
+              {incoming.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "16px 10px", color: C.mid, background: C.sub, borderRadius: 13, marginBottom: 18 }}>
+                  <div style={{ fontSize: 12.5 }}>Tidak ada permintaan pemindahan claim.</div>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 9, marginBottom: 18 }}>
+                  {incoming.map((r) => (
+                    <div key={r.id} style={{ padding: "11px 12px", borderRadius: 13, background: C.sub }}>
+                      <div style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 800, color: C.hi }}>{r.phone_normalized}</div>
+                      <div style={{ fontSize: 12, color: C.mid, marginTop: 3, lineHeight: 1.5 }}>
+                        Diminta oleh <b style={{ color: C.hi }}>{r.to_full_name || r.to_email}</b>
+                        {(r.to_outlet_code || r.to_branch) ? ` · ${[r.to_outlet_code, r.to_branch, r.to_area].filter(Boolean).join(" / ")}` : ""}
+                      </div>
+                      <div style={{ fontSize: 11, color: C.lo, marginTop: 3 }}>{fmtDateTime(r.requested_at)}</div>
+                      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                        <button className="press" onClick={() => decideTransfer(r, false)} disabled={busy} style={{ flex: 1, height: 42, borderRadius: 11, border: `1px solid ${C.line}`, background: C.card, color: C.mid, fontFamily: FF, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Tolak</button>
+                        <button className="press" onClick={() => setApproveReq(r)} disabled={busy} style={{ flex: 1.3, height: 42, borderRadius: 11, border: "none", background: C.brand, color: "#fff", fontFamily: FF, fontSize: 13, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><ArrowLeftRight size={14} /> Pindahkan</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Notifikasi info — badge berkurang begitu item ditap */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 9, flexWrap: "wrap" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>
+                  Notifikasi {unreadCount > 0 ? `(${unreadCount} belum dibaca)` : ""}
+                </div>
+                <select value={notifFilter} onChange={(e) => setNotifFilter(e.target.value)}
+                  style={{ appearance: "none", height: 30, borderRadius: 9, border: `1px solid ${C.line}`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 11.5, fontWeight: 700, padding: "0 10px", cursor: "pointer" }}>
+                  <option value="all">Semua periode</option>
+                  {statsPeriodOptions().map((p) => <option key={p} value={p}>{ymLabel(p)}</option>)}
+                </select>
+              </div>
+              {filteredNotifs.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "24px 10px", color: C.mid }}>
+                  <Inbox size={22} style={{ opacity: .4, marginBottom: 6 }} /><div style={{ fontSize: 12.5 }}>Belum ada notifikasi.</div>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {filteredNotifs.map((n) => (
+                    <button key={n.id} onClick={() => markNotificationRead(n)} className="press" style={{
+                      display: "block", width: "100%", textAlign: "left", border: "none", cursor: "pointer", fontFamily: FF,
+                      padding: "11px 12px", borderRadius: 13, background: n.read_at ? C.sub : "rgba(37,99,235,0.07)",
+                      borderLeft: n.read_at ? "3px solid transparent" : `3px solid ${C.blue}`,
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                        {!n.read_at && <span style={{ width: 7, height: 7, borderRadius: 99, background: C.blue, flexShrink: 0 }} />}
+                        <span style={{ fontSize: 13, fontWeight: 800, color: C.hi }}>{n.title}</span>
+                      </div>
+                      <div style={{ fontSize: 12, color: C.mid, marginTop: 4, lineHeight: 1.5 }}>{n.body}</div>
+                      <div style={{ fontSize: 10.5, color: C.lo, marginTop: 5 }}>{fmtDateTime(n.created_at)}{n.period ? ` · periode ${ymLabel(n.period)}` : ""}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
-            {incoming.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "34px 10px", color: C.mid }}>
-                <Inbox size={26} style={{ opacity: .4, marginBottom: 8 }} /><div style={{ fontSize: 13 }}>Belum ada permintaan pemindahan claim.</div>
-              </div>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                {incoming.map((r) => (
-                  <div key={r.id} style={{ padding: "11px 12px", borderRadius: 13, background: C.sub }}>
-                    <div style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 800, color: C.hi }}>{r.phone_normalized}</div>
-                    <div style={{ fontSize: 12, color: C.mid, marginTop: 3, lineHeight: 1.5 }}>
-                      Diminta oleh <b style={{ color: C.hi }}>{r.to_full_name || r.to_email}</b>
-                      {(r.to_outlet_code || r.to_branch) ? ` · ${[r.to_outlet_code, r.to_branch, r.to_area].filter(Boolean).join(" / ")}` : ""}
-                    </div>
-                    <div style={{ fontSize: 11, color: C.lo, marginTop: 3 }}>{fmtDateTime(r.requested_at)}</div>
-                    <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                      <button className="press" onClick={() => decideTransfer(r, false)} disabled={busy} style={{ flex: 1, height: 42, borderRadius: 11, border: `1px solid ${C.line}`, background: C.card, color: C.mid, fontFamily: FF, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Tolak</button>
-                      <button className="press" onClick={() => setApproveReq(r)} disabled={busy} style={{ flex: 1.3, height: 42, borderRadius: 11, border: "none", background: C.brand, color: "#fff", fontFamily: FF, fontSize: 13, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}><ArrowLeftRight size={14} /> Pindahkan</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </BottomSheet>
-      )}
+          </BottomSheet>
+        );
+      })()}
 
       {/* Busy overlay */}
       {busy && (
@@ -1421,7 +1521,10 @@ function ContributionCard({ summary, target, periodLabel, onSeeRejected }) {
               <StatusRow icon={<CheckCircle2 size={15} />} label="Total Tervalidasi" value={summary.validated} color={C.green} />
               <StatusRow icon={<ScanFace size={15} />} label="RGU-GA Biometric" value={summary.bio} color="#2563EB" indent />
               <StatusRow icon={<IdCard size={15} />} label="RGU-GA Non-Biometric" value={summary.reg} color={PAL.purple} indent />
-              <StatusRow icon={<XCircle size={15} />} label="Pengajuan Ditolak" sub="Tercatat di outlet lain — tap untuk lihat" value={summary.rejected}
+              {summary.waitingOutlet > 0 && (
+                <StatusRow icon={<Clock size={15} />} label="Menunggu Mapping Outlet" sub="Outlet dikenal, belum ada promotor termapping" value={summary.waitingOutlet} color={C.amber} />
+              )}
+              <StatusRow icon={<XCircle size={15} />} label="Di Luar Jaringan Outlet" sub="Outlet tidak dikenal sistem — tap untuk lihat" value={summary.rejected}
                 color="#DC2626" onClick={summary.rejected > 0 ? onSeeRejected : undefined} />
               {summary.notFound > 0 && (
                 <StatusRow icon={<HelpCircle size={15} />} label="Tidak Ditemukan di RGU-GA" sub="Sampai batas waktu, data GA tidak pernah cocok" value={summary.notFound} color={C.mid} />
@@ -1476,7 +1579,8 @@ const GA_BADGE = {
   BELUM_TERVALIDASI: { label: "Dalam Pengajuan", fg: "#B7791F", bg: "rgba(255,176,32,0.14)" },
   TERVALIDASI: { label: "Tervalidasi", fg: "#1A9E5A", bg: "rgba(26,158,90,0.12)" },
   TERVALIDASI_LUAR_AREA: { label: "Tervalidasi · Luar Area", fg: "#1A9E5A", bg: "rgba(26,158,90,0.12)" },
-  TIDAK_SESUAI_OUTLET: { label: "Pengajuan Ditolak", fg: "#DC2626", bg: "rgba(220,38,38,0.1)" },
+  MENUNGGU_MAPPING_OUTLET: { label: "Menunggu Mapping Outlet", fg: "#B7791F", bg: "rgba(255,176,32,0.14)" },
+  TIDAK_SESUAI_OUTLET: { label: "Di Luar Jaringan Outlet", fg: "#DC2626", bg: "rgba(220,38,38,0.1)" },
   TIDAK_DITEMUKAN: { label: "Tidak Ditemukan", fg: "#61616C", bg: "rgba(97,97,108,0.12)" },
 };
 const gaBadge = (status) => GA_BADGE[status] || GA_BADGE.BELUM_TERVALIDASI;
@@ -1491,10 +1595,11 @@ function BrandChip({ brand }) {
   );
 }
 
-function HistoryView({ history, onDelete }) {
+function HistoryView({ history, onDelete, promotorId }) {
+  const [detailSale, setDetailSale] = useState(null);
   return (
     <div style={{ animation: "up .3s ease" }}>
-      <h2 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", marginBottom: 14 }}>Riwayat Claim Saya</h2>
+      <h2 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", marginBottom: 14 }}>Riwayat Pengajuan Saya</h2>
       {history.length === 0 ? (
         <div className="card" style={{ padding: "40px 20px", textAlign: "center", color: C.mid }}>
           <History size={26} style={{ opacity: 0.5, marginBottom: 8 }} /><div style={{ fontSize: 13.5 }}>Belum ada aktivitas tercatat.</div>
@@ -1503,8 +1608,17 @@ function HistoryView({ history, onDelete }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {history.map((s) => {
             const badge = gaBadge(s.ga_status);
+            // Pindah kredit — tampilkan info singkat kalau baris ini bukan
+            // lagi murni "diajukan dan diakui di outlet sendiri".
+            const movedAway = s.promotor_id === promotorId && s.credited_promotor_id && s.credited_promotor_id !== promotorId;
+            const gainedFromOther = s.credited_promotor_id === promotorId && s.promotor_id !== promotorId;
+            const movedOutletOnly = s.credited_transfer_type === "same_promotor_diff_outlet";
             return (
-              <div key={s.id} style={{ background: C.card, borderRadius: 16, padding: 14, boxShadow: C.md }}>
+              <div key={s.id} onClick={() => setDetailSale(s)} role="button" tabIndex={0}
+                onKeyDown={(e) => { if (e.key === "Enter") setDetailSale(s); }} className="press" style={{
+                display: "block", width: "100%", textAlign: "left", border: "none", cursor: "pointer", fontFamily: FF,
+                background: C.card, borderRadius: 16, padding: 14, boxShadow: C.md,
+              }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
                   <span style={{ width: 34, height: 34, borderRadius: 10, background: s.within_radius === false ? "rgba(37,99,235,0.1)" : "rgba(26,158,90,0.1)", color: s.within_radius === false ? C.blue : C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.within_radius === false ? <Radar size={16} /> : <Phone size={16} />}</span>
                   <div style={{ flex: 1, minWidth: 0 }}>
@@ -1519,32 +1633,119 @@ function HistoryView({ history, onDelete }) {
                       )}
                     </div>
                     {s.imei && <div style={{ fontSize: 10.5, fontFamily: "monospace", color: C.lo }}>IMEI {s.imei}</div>}
-                    <div style={{ fontSize: 11.5, color: C.lo, fontWeight: 500 }}>{fmtDateTime(s.tagged_at)}{s.within_radius === false ? " · di luar area" : ""}</div>
+                    <div style={{ fontSize: 11.5, color: C.lo, fontWeight: 500 }}>{fmtDateTime(s.tagged_at)}{s.within_radius === false ? " · di luar area" : ""}{s.credited_period ? ` · periode ${ymLabel(s.credited_period)}` : ""}</div>
                   </div>
-                  <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.03em", padding: "4px 9px", borderRadius: 99, background: badge.bg, color: badge.fg, whiteSpace: "nowrap" }}>{badge.label}</span>
+                  <ChevronRight size={15} color={C.lo} style={{ flexShrink: 0 }} />
                   {onDelete && (
-                    <button onClick={() => onDelete(s)} aria-label="Hapus" style={{ width: 30, height: 30, borderRadius: 9, border: "none", background: "rgba(220,38,38,0.08)", color: "#DC2626", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                    <button onClick={(e) => { e.stopPropagation(); onDelete(s); }} aria-label="Hapus" style={{ width: 30, height: 30, borderRadius: 9, border: "none", background: "rgba(220,38,38,0.08)", color: "#DC2626", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
                       <Trash2 size={14} />
                     </button>
                   )}
                 </div>
-                {s.ga_note && (() => {
-                  const rejected = s.ga_status === "TIDAK_SESUAI_OUTLET";
-                  return (
-                    <div style={{
-                      marginTop: 9, padding: "8px 10px", borderRadius: 10, lineHeight: 1.5, fontSize: 11.5,
-                      background: rejected ? "rgba(220,38,38,0.08)" : "rgba(255,176,32,0.1)",
-                      color: rejected ? "#DC2626" : C.amber,
-                    }}>
-                      {rejected && <b>Ditolak — </b>}{s.ga_note}
-                    </div>
-                  );
-                })()}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 9, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.03em", padding: "4px 9px", borderRadius: 99, background: badge.bg, color: badge.fg, whiteSpace: "nowrap" }}>{badge.label}</span>
+                  {movedAway && (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: "#B45309" }}><ArrowLeftRight size={11} /> Dipindahkan ke promotor lain</span>
+                  )}
+                  {gainedFromOther && (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: C.green }}><ArrowLeftRight size={11} /> Tambahan dari promotor lain</span>
+                  )}
+                  {movedOutletOnly && (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: C.blue }}><ArrowLeftRight size={11} /> Pindah outlet</span>
+                  )}
+                </div>
+                {s.ga_note && (
+                  <div style={{
+                    marginTop: 9, padding: "8px 10px", borderRadius: 10, lineHeight: 1.5, fontSize: 11.5,
+                    background: s.ga_status === "TIDAK_SESUAI_OUTLET" ? "rgba(220,38,38,0.08)" : "rgba(255,176,32,0.1)",
+                    color: s.ga_status === "TIDAK_SESUAI_OUTLET" ? "#DC2626" : C.amber,
+                  }}>
+                    {s.ga_note}
+                  </div>
+                )}
               </div>
             );
           })}
         </div>
       )}
+      {detailSale && <GaMatchDetailModal sale={detailSale} onClose={() => setDetailSale(null)} />}
+    </div>
+  );
+}
+
+/* Popup detail GA — ditampilkan saat baris Riwayat di-tap. Menampilkan data
+   mentah hasil pencocokan GA (ga_dt, brand, ga_branch, organization_id,
+   biometric_status) dari pts_ga_match, plus outlet/promotor yang diakui
+   kalau kreditnya berpindah. */
+function GaMatchDetailModal({ sale, onClose }) {
+  const [match, setMatch] = useState(undefined); // undefined=loading, null=belum ada, object=ada
+  const [creditedInfo, setCreditedInfo] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data: m } = await supabase.from("pts_ga_match").select("*").eq("sale_id", sale.id).maybeSingle();
+      if (!alive) return;
+      setMatch(m || null);
+
+      if (sale.credited_outlet_id || sale.credited_promotor_id) {
+        const [{ data: outlet }, { data: promotor }] = await Promise.all([
+          sale.credited_outlet_id ? supabase.from("pts_outlet").select("name,code,code_3id,branch,area,region").eq("id", sale.credited_outlet_id).maybeSingle() : Promise.resolve({ data: null }),
+          sale.credited_promotor_id ? supabase.from("pts_promotor").select("full_name,promotor_id,user_id_3id").eq("id", sale.credited_promotor_id).maybeSingle() : Promise.resolve({ data: null }),
+        ]);
+        if (alive) setCreditedInfo({ outlet, promotor });
+      }
+    })();
+    return () => { alive = false; };
+  }, [sale.id]);
+
+  const badge = gaBadge(sale.ga_status);
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 150, background: "rgba(17,18,22,0.45)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 22 }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 400, maxHeight: "85vh", overflowY: "auto", background: C.card, borderRadius: 22, padding: "22px 20px 18px", boxShadow: C.lg, animation: "pop .22s cubic-bezier(.22,1,.36,1)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+          <div style={{ fontSize: 16, fontFamily: "monospace", fontWeight: 800, color: C.hi }}>{sale.phone_normalized}</div>
+          <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 9, border: "none", background: C.sub, color: C.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={16} /></button>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 16 }}>
+          <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.03em", padding: "3px 9px", borderRadius: 99, background: badge.bg, color: badge.fg }}>{badge.label}</span>
+          {sale.credited_period && <span style={{ fontSize: 11, color: C.mid, fontWeight: 600 }}>periode {ymLabel(sale.credited_period)}</span>}
+        </div>
+
+        {match === undefined ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 9, color: C.mid, fontSize: 13, padding: "10px 0" }}><Spinner size={16} color={C.brand} /> Memuat detail…</div>
+        ) : match === null ? (
+          <div style={{ fontSize: 13, color: C.mid, padding: "10px 0", lineHeight: 1.5 }}>Belum ada data GA yang cocok untuk nomor ini — masih menunggu validasi.</div>
+        ) : (
+          <div style={{ borderRadius: 14, background: C.sub, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 7, marginBottom: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.lo, marginBottom: 2 }}>Data GA (Raw)</div>
+            <TakenRow label="GA Date" value={match.ga_dt || "—"} />
+            <TakenRow label="Brand" value={match.brand || "—"} />
+            <TakenRow label="MSISDN" value={match.msisdn || "—"} />
+            <TakenRow label="GA Branch" value={match.ga_branch || "—"} />
+            <TakenRow label="Organization ID" value={match.organization_id || "—"} />
+            <TakenRow label="Biometric Status" value={match.biometric_status || "—"} />
+          </div>
+        )}
+
+        {creditedInfo && (creditedInfo.outlet || creditedInfo.promotor) && (
+          <div style={{ borderRadius: 14, background: "rgba(37,99,235,0.06)", border: "1px solid rgba(37,99,235,0.16)", padding: "12px 14px", display: "flex", flexDirection: "column", gap: 7 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.blue, marginBottom: 2 }}>Diakui Sebagai Pencapaian</div>
+            {creditedInfo.promotor && (
+              <TakenRow label="Promotor" value={creditedInfo.promotor.full_name || (match?.brand === "3ID" ? creditedInfo.promotor.user_id_3id : creditedInfo.promotor.promotor_id) || "—"} />
+            )}
+            {creditedInfo.outlet && (
+              <>
+                <TakenRow label="Outlet" value={creditedInfo.outlet.name || creditedInfo.outlet.code || "—"} />
+                <TakenRow label="Branch" value={creditedInfo.outlet.branch || "—"} />
+                <TakenRow label="Area" value={creditedInfo.outlet.area || "—"} />
+                <TakenRow label="Region" value={creditedInfo.outlet.region || "—"} />
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
