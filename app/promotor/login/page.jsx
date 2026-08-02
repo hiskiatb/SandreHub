@@ -94,42 +94,34 @@ export default function PromotorLogin() {
           {busy ? <Loader2 size={21} style={{ animation: "pspin 1s linear infinite", color: "#ED1C24" }} />
                 : <><GoogleG /> Lanjutkan dengan Google</>}
         </button>
-
-        {/* Hubungi Call Center via WhatsApp — hanya tampil kalau SPM Sumatera
-            sudah mengatur nomornya dari dashboard. */}
-        {waLink && (
-          <>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", maxWidth: 360, margin: "18px 0" }}>
-              <div style={{ flex: 1, height: 1, background: "#ECEDF0" }} />
-              <span style={{ fontSize: 11.5, fontWeight: 700, color: "#B4B4BE", letterSpacing: "0.04em" }}>ATAU</span>
-              <div style={{ flex: 1, height: 1, background: "#ECEDF0" }} />
-            </div>
-            <a href={waLink} target="_blank" rel="noopener noreferrer"
-              style={{
-                width: "100%", maxWidth: 360, height: 54, borderRadius: 14, textDecoration: "none",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
-                background: "#E9FBF0", color: "#128C4A", border: "1.5px solid #BDEFD1", fontFamily: FF, fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em",
-                transition: "border-color .15s, box-shadow .15s",
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#8FE0B4"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(37,211,102,0.18)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#BDEFD1"; e.currentTarget.style.boxShadow = "none"; }}
-            >
-              <WhatsAppIcon size={20} /> Hubungi Call Center via WhatsApp
-            </a>
-          </>
-        )}
       </div>
 
-      {/* Info note */}
+      {/* Info note — satu kartu: cara masuk, lalu jalur alternatif WhatsApp
+          langsung di bawahnya (tanpa pemisah "ATAU" antar tombol). */}
       <div style={{ marginBottom: "calc(env(safe-area-inset-bottom, 0px) + 30px)", width: "100%", maxWidth: 360, alignSelf: "center" }}>
         {err && (
           <div style={{ marginBottom: 12, padding: "11px 14px", borderRadius: 12, background: "#FDECEC", border: "1px solid #F5C2C2", color: "#C62828", fontSize: 12.5, fontWeight: 600, textAlign: "center" }}>{err}</div>
         )}
-        <div style={{ display: "flex", gap: 10, padding: "13px 15px", borderRadius: 13, background: "#F6F7F9", border: "1px solid #ECEDF0" }}>
-          <Info size={16} color="#9A9AA6" style={{ flexShrink: 0, marginTop: 1 }} />
-          <span style={{ fontSize: 12.5, color: "#6B6B76", lineHeight: 1.55 }}>
-            Gunakan akun <b style={{ color: "#3A3A44" }}>Google (Gmail)</b> Anda. Belum bisa masuk? Hubungi <b style={{ color: "#3A3A44" }}>PIC Region</b> Anda untuk didaftarkan{waLink ? ", atau tekan tombol WhatsApp di atas" : ""}.
-          </span>
+        <div style={{ borderRadius: 13, background: "#F6F7F9", border: "1px solid #ECEDF0", overflow: "hidden" }}>
+          <div style={{ display: "flex", gap: 10, padding: "13px 15px" }}>
+            <Info size={16} color="#9A9AA6" style={{ flexShrink: 0, marginTop: 1 }} />
+            <span style={{ fontSize: 12.5, color: "#6B6B76", lineHeight: 1.55 }}>
+              Gunakan akun <b style={{ color: "#3A3A44" }}>Google (Gmail)</b>. Hubungi <b style={{ color: "#3A3A44" }}>CSE/RSE</b> Anda untuk didaftarkan.
+            </span>
+          </div>
+          {waLink && (
+            <a href={waLink} target="_blank" rel="noopener noreferrer"
+              style={{
+                display: "flex", alignItems: "center", gap: 9, padding: "12px 15px", textDecoration: "none",
+                borderTop: "1px solid #ECEDF0", background: "#F0FBF4", color: "#128C4A",
+                fontFamily: FF, fontSize: 13, fontWeight: 700, transition: "background .15s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "#E4F9EB"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "#F0FBF4"; }}
+            >
+              <WhatsAppIcon size={17} /> atau Hubungi Call Center via WhatsApp
+            </a>
+          )}
         </div>
       </div>
     </div>

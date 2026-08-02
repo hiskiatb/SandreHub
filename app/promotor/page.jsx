@@ -513,6 +513,13 @@ function AppShell(p) {
 
   const fixGeo = async () => { const g = await refreshGeo(); if (!g) setGeoHelp(true); else setGeoHelp(false); };
   const initial = (name || "P").trim().charAt(0).toUpperCase();
+  // Nama lengkap TETAP disimpan di database (pts_promotor.full_name) apa
+  // adanya — ini murni potongan tampilan supaya header tidak melebar saat
+  // nama gabungan panjang (>14 karakter, pakai kata pertama saja).
+  const displayName = useMemo(() => {
+    const trimmed = (name || "").trim();
+    return trimmed.length > 14 ? (trimmed.split(/\s+/)[0] || trimmed) : trimmed;
+  }, [name]);
 
   /* Tombol "Claim Penjualan" mengambang — supaya aksi utama tetap 1 tap
      tanpa perlu scroll lewat hero card + detail status dulu. Kalau semua
@@ -685,26 +692,27 @@ function AppShell(p) {
 
       {/* Header */}
       <div style={{ padding: `${previewMode ? "10px" : "calc(env(safe-area-inset-top,0px) + 16px)"} 18px 12px`, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: previewMode ? 34 : 0, background: "linear-gradient(180deg,#F4F5F7 76%,rgba(244,245,247,0))", zIndex: 5, maxWidth: 560, margin: "0 auto" }}>
-        <button className="press" onClick={() => { if (!guardPreview()) setEditProfile(true); }} aria-label="Edit nama saya"
-          style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0, border: "none", background: "transparent", padding: 0, margin: 0, cursor: "pointer", textAlign: "left", fontFamily: FF }}>
-          <div style={{ width: 44, height: 44, borderRadius: 14, flexShrink: 0, background: C.grad, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, boxShadow: "0 6px 16px rgba(237,28,36,0.28)" }}>{initial}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          {view !== "home" ? (
+            <IconBtn onClick={() => setView("home")} aria-label="Kembali ke beranda"><ChevronLeft size={18} /></IconBtn>
+          ) : (
+            <div style={{ width: 40, height: 40, borderRadius: 13, flexShrink: 0, background: C.grad, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, boxShadow: "0 6px 16px rgba(237,28,36,0.24)" }}>{initial}</div>
+          )}
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 12, color: C.mid, fontWeight: 600, letterSpacing: "0.02em" }}>Selamat datang</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 5, minWidth: 0 }}>
-              <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 168, color: C.hi }}>{name}</span>
-              {!previewMode && <Pencil size={12} color={C.lo} style={{ flexShrink: 0 }} />}
+            <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0, marginTop: 1 }}>
+              <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 150, color: C.hi }}>{displayName}</span>
+              {!previewMode && (
+                <button className="press" onClick={() => setEditProfile(true)} aria-label="Edit profil"
+                  style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, borderRadius: 8, border: `1px solid ${C.line}`, background: C.card, color: C.mid, cursor: "pointer", flexShrink: 0, boxShadow: C.sm }}>
+                  <Pencil size={11} />
+                </button>
+              )}
             </div>
           </div>
-        </button>
-        <div style={{ display: "flex", gap: 8 }}>
-          {waLink && (
-            <a href={waLink} target="_blank" rel="noopener noreferrer" aria-label="Hubungi Call Center via WhatsApp"
-              style={{ height: 42, width: 42, borderRadius: 13, border: "1px solid #BDEFD1", background: "#E9FBF0", color: "#128C4A", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: C.sm, flexShrink: 0 }}>
-              <WhatsAppIcon size={19} />
-            </a>
-          )}
+        </div>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
           <IconBtn onClick={() => setInboxOpen(true)} badge={incoming.length}><Inbox size={17} /></IconBtn>
-          <IconBtn onClick={() => setView(view === "home" ? "history" : "home")} active={view === "history"}>{view === "home" ? <History size={17} /> : <ChevronLeft size={18} />}</IconBtn>
           {previewMode ? (
             <IconBtn onClick={onBack} label="Kembali"><ChevronLeft size={16} /></IconBtn>
           ) : (
@@ -749,15 +757,52 @@ function AppShell(p) {
               <GeoChip geo={geo} err={geoErr} onFix={fixGeo} />
             </div>
 
-            {/* Kontribusi Anda bulan ini — hero card */}
-            <HeroCard summary={summary} target={salesTarget} periodLabel={ymLabel(ymNow())} />
-            <StatusDetailCard summary={summary} onSeeRejected={() => setView("history")} />
+            {/* Kontribusi Anda bulan ini — kartu flip: sisi depan ringkasan
+                target, sisi belakang rincian status pengajuan. Digabung jadi
+                satu kartu (bukan dua kartu terpisah selalu tampil) supaya
+                Claim Penjualan bisa naik lebih dekat ke jempol. */}
+            <ContributionCard summary={summary} target={salesTarget} periodLabel={ymLabel(ymNow())} onSeeRejected={() => setView("history")} />
 
             {/* Ringkasan outlet — hanya pratinjau, tap untuk buka layar Claim
                 Penjualan (outlet, gerbang lokasi, dan tagging kini di layar
                 terpisah, tidak lagi menyatu dengan beranda). */}
             <ClaimEntryCard outlet={activeOutlet} outletsCount={outlets.length} soldCount={soldCount}
               onOpen={handleFabClick} />
+
+            {/* Navigasi sekunder — pindahan dari header (Riwayat & Call
+                Center) supaya header lebih ringkas dan kedua aksi ini lebih
+                mudah dijangkau di dekat area jempol. */}
+            <button onClick={() => setView("history")} className="press" style={{
+              width: "100%", display: "flex", alignItems: "center", gap: 12, textAlign: "left",
+              border: `1px solid ${C.line}`, background: C.card, borderRadius: 16, padding: "13px 14px",
+              marginBottom: 10, cursor: "pointer", fontFamily: FF, boxShadow: C.sm,
+            }}>
+              <div style={{ width: 36, height: 36, borderRadius: 11, background: C.sub, color: C.hi, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <History size={16} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: C.hi }}>Riwayat Pengajuan Anda</div>
+                <div style={{ fontSize: 11.5, color: C.mid, marginTop: 1 }}>Lihat semua nomor yang pernah di-claim</div>
+              </div>
+              <ChevronRight size={16} color={C.lo} />
+            </button>
+
+            {waLink && (
+              <a href={waLink} target="_blank" rel="noopener noreferrer" className="press" style={{
+                width: "100%", display: "flex", alignItems: "center", gap: 12, textDecoration: "none",
+                border: "1px solid #BDEFD1", background: "#F0FBF4", borderRadius: 16, padding: "13px 14px",
+                marginBottom: 14, fontFamily: FF, boxShadow: C.sm,
+              }}>
+                <div style={{ width: 36, height: 36, borderRadius: 11, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <WhatsAppIcon size={18} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: "#128C4A" }}>Mengalami kendala?</div>
+                  <div style={{ fontSize: 11.5, color: "#3E8464", marginTop: 1 }}>Hubungi Call Center via WhatsApp</div>
+                </div>
+                <ChevronRight size={16} color="#7FB89A" />
+              </a>
+            )}
           </div>
         )}
       </div>
@@ -1267,92 +1312,126 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
    outlet-nya (bisa lewat scan QR atau input manual) — bukan klaim bahwa
    promotor sendiri yang menjual eceran; itu sebabnya SP di outlet yang
    tidak di-claim promotor manapun tidak ikut terhitung di sini. */
-function HeroCard({ summary, target, periodLabel }) {
-  // Target 150 itu target RGU-GA BIOMETRIC — bukan jumlah SP yang di-claim.
-  // Total pengajuan bisa jauh lebih tinggi dari 150 karena banyak yang
-  // belum/tidak lolos jadi RGU-GA Biometric; itu sebabnya progress ring
-  // pakai summary.bio, bukan summary.total.
+/* Kartu flip "Kontribusi Anda" — menggabungkan ringkasan target (depan) dan
+   rincian status pengajuan (belakang) jadi SATU kartu, supaya keduanya
+   tidak selalu makan tempat sekaligus (Claim Penjualan bisa naik lebih
+   dekat ke jempol). Animasi flip 3D cepat-tapi-mulus: kedua sisi memakai
+   CSS Grid stacking (grid-area sama) supaya tinggi kontainer otomatis
+   mengikuti sisi yang lebih tinggi tanpa perlu ukur manual via JS. */
+function ContributionCard({ summary, target, periodLabel, onSeeRejected }) {
+  const [open, setOpen] = useState(false);
   const bio = summary?.bio ?? 0;
   const pct = target > 0 ? Math.min(100, Math.round((bio / target) * 100)) : 0;
   const tier = pct >= 80 ? { color: PAL.teal, label: "Sudah dekat target!" }
     : pct >= 40 ? { color: PAL.yellow, label: "Terus jalan, hampir separuh" }
     : { color: PAL.pink, label: "Ayo mulai kejar target" };
-
-  // Radius diberi margin ekstra dari tepi viewBox (60) supaya stroke-cap
-  // bulat di ujung arc tidak pernah kelihatan "menabrak" batas lingkaran
-  // pelacak di belakangnya, terutama saat progress masih sangat kecil.
   const R = 46, CIRC = 2 * Math.PI * R;
-  const dash = pct <= 0 ? 0 : Math.max(CIRC * (pct / 100), 3); // min. terlihat walau 1%
+  const dash = pct <= 0 ? 0 : Math.max(CIRC * (pct / 100), 3);
+
+  const faceBase = { gridArea: "1/1", backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden", borderRadius: 22, boxShadow: C.md };
 
   return (
-    <div style={{
-      position: "relative", overflow: "hidden", borderRadius: 22, marginBottom: 14,
-      background: `linear-gradient(160deg, ${PAL.charcoal} 0%, #333335 100%)`,
-      padding: "18px 18px 16px", boxShadow: C.md,
-    }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 14 }}>
-        <Sparkles size={13} color={PAL.yellow} />
-        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: "rgba(255,255,255,0.65)" }}>
-          Kontribusi Anda · {periodLabel}
-        </span>
-      </div>
-
-      <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
-        <div style={{ position: "relative", width: 108, height: 108, flexShrink: 0 }}>
-          <svg viewBox="0 0 120 120" width="108" height="108" style={{ transform: "rotate(-90deg)", overflow: "visible" }}>
-            <circle cx="60" cy="60" r={R} fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="9" />
-            {dash > 0 && (
-              <circle cx="60" cy="60" r={R} fill="none" stroke={tier.color} strokeWidth="9" strokeLinecap="round"
-                strokeDasharray={`${dash} ${CIRC}`} style={{ transition: "stroke-dasharray .6s cubic-bezier(.22,1,.36,1)" }} />
-            )}
-          </svg>
-          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-            <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff" }}>{pct}%</span>
-            <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 9.5, fontWeight: 600, color: "rgba(255,255,255,0.55)" }}><Target size={9} /> target</span>
+    <div style={{ marginBottom: 14, perspective: 1600 }}>
+      <div style={{
+        position: "relative", display: "grid", transformStyle: "preserve-3d",
+        transition: "transform .46s cubic-bezier(.34,1,.4,1)",
+        transform: open ? "rotateY(180deg)" : "rotateY(0deg)",
+      }}>
+        {/* ── Depan: ringkasan target ── */}
+        <div style={{
+          ...faceBase, position: "relative", overflow: "hidden",
+          background: `linear-gradient(160deg, ${PAL.charcoal} 0%, #333335 100%)`,
+          padding: "18px 18px 16px", pointerEvents: open ? "none" : "auto",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <Sparkles size={13} color={PAL.yellow} />
+              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: "rgba(255,255,255,0.65)" }}>
+                Kontribusi Anda · {periodLabel}
+              </span>
+            </div>
           </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
+            <div style={{ position: "relative", width: 108, height: 108, flexShrink: 0 }}>
+              <svg viewBox="0 0 120 120" width="108" height="108" style={{ transform: "rotate(-90deg)", overflow: "visible" }}>
+                <circle cx="60" cy="60" r={R} fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="9" />
+                {dash > 0 && (
+                  <circle cx="60" cy="60" r={R} fill="none" stroke={tier.color} strokeWidth="9" strokeLinecap="round"
+                    strokeDasharray={`${dash} ${CIRC}`} style={{ transition: "stroke-dasharray .6s cubic-bezier(.22,1,.36,1)" }} />
+                )}
+              </svg>
+              <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+                <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff" }}>{pct}%</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 9.5, fontWeight: 600, color: "rgba(255,255,255,0.55)" }}><Target size={9} /> target</span>
+              </div>
+            </div>
+
+            <div style={{ flex: 1, minWidth: 150 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff" }}>{bio}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>/ {target} RGU-GA Biometric</span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 4 }}>
+                <TrendingUp size={12} color={tier.color} />
+                <span style={{ fontSize: 12, fontWeight: 600, color: tier.color }}>{tier.label}</span>
+              </div>
+            </div>
+          </div>
+
+          <button onClick={() => setOpen(true)} className="press" style={{
+            display: "flex", alignItems: "center", gap: 5, marginTop: 15, border: "none", cursor: "pointer",
+            background: "rgba(255,255,255,0.12)", color: "#fff", borderRadius: 11, padding: "8px 13px 8px 14px",
+            fontFamily: FF, fontSize: 12.5, fontWeight: 700,
+          }}>
+            Lihat Detail <ChevronRight size={14} />
+          </button>
         </div>
 
-        <div style={{ flex: 1, minWidth: 150 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff" }}>{bio}</span>
-            <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>/ {target} RGU-GA Biometric</span>
+        {/* ── Belakang: rincian status pengajuan ── */}
+        <div style={{
+          ...faceBase, transform: "rotateY(180deg)", background: C.card,
+          padding: "16px 16px 14px", pointerEvents: open ? "auto" : "none",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Detail Status Pengajuan</div>
+            <button onClick={() => setOpen(false)} className="press" aria-label="Tutup detail"
+              style={{ display: "flex", alignItems: "center", gap: 4, border: "none", background: C.sub, color: C.mid, borderRadius: 9, padding: "5px 9px 5px 7px", cursor: "pointer", fontFamily: FF, fontSize: 11.5, fontWeight: 700 }}>
+              <X size={12} /> Tutup
+            </button>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 4 }}>
-            <TrendingUp size={12} color={tier.color} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: tier.color }}>{tier.label}</span>
+
+          {/* Progress target sebagai bar (bukan ring) — konsisten dengan
+              angka bio/target di sisi depan. */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.hi }}>Target RGU-GA Biometric</span>
+              <span style={{ fontSize: 12.5, fontWeight: 800, color: tier.color }}>{bio} / {target} · {pct}%</span>
+            </div>
+            <div style={{ height: 9, borderRadius: 99, background: C.sub, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${pct}%`, borderRadius: 99, background: tier.color, transition: "width .6s cubic-bezier(.22,1,.36,1)" }} />
+            </div>
           </div>
+
+          {summary ? (
+            <>
+              <StatusRow icon={<ListChecks size={15} />} label="Total Pengajuan" value={summary.total} color={C.hi} bold />
+              <div style={{ height: 1, background: C.lineSoft, margin: "4px 0" }} />
+              <StatusRow icon={<Clock size={15} />} label="Dalam Pengajuan" sub="Belum tercatat RGU-GA" value={summary.pending} color={C.amber} />
+              <StatusRow icon={<CheckCircle2 size={15} />} label="Total Tervalidasi" value={summary.validated} color={C.green} />
+              <StatusRow icon={<ScanFace size={15} />} label="RGU-GA Biometric" value={summary.bio} color="#2563EB" indent />
+              <StatusRow icon={<IdCard size={15} />} label="RGU-GA Non-Biometric" value={summary.reg} color={PAL.purple} indent />
+              <StatusRow icon={<XCircle size={15} />} label="Pengajuan Ditolak" sub="Tercatat di outlet lain — tap untuk lihat" value={summary.rejected}
+                color="#DC2626" onClick={summary.rejected > 0 ? onSeeRejected : undefined} />
+              {summary.notFound > 0 && (
+                <StatusRow icon={<HelpCircle size={15} />} label="Tidak Ditemukan di RGU-GA" sub="Sampai batas waktu, data GA tidak pernah cocok" value={summary.notFound} color={C.mid} />
+              )}
+            </>
+          ) : (
+            <div style={{ fontSize: 12.5, color: C.mid, padding: "10px 2px" }}>Memuat ringkasan…</div>
+          )}
         </div>
       </div>
-
-      <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.45)", marginTop: 13, lineHeight: 1.5 }}>
-        Target dihitung dari RGU-GA Biometric — SP yang tervalidasi lewat biometrik, akumulasi dari seluruh outlet Anda. Total semua pengajuan (belum tentu Biometric) ada di kartu di bawah.
-      </div>
-    </div>
-  );
-}
-
-/* Rincian status RGU-GA — setelah SP di-claim, tiap nomor melewati tahap:
-   Dalam Pengajuan → (dicek GA) → Tervalidasi (dipecah Biometric/Non-Biometric)
-   ATAU Pengajuan Ditolak (ternyata tercatat di outlet lain, bukan outlet
-   promotor ini) ATAU Tidak Ditemukan (sampai window habis, GA tidak pernah
-   cocok). Baris "Pengajuan Ditolak" bisa diklik → lompat ke Riwayat, tiap
-   nomornya sudah ada catatan outlet tujuan (ga_note) di sana. */
-function StatusDetailCard({ summary, onSeeRejected }) {
-  if (!summary) return null;
-  return (
-    <div style={{ background: C.card, borderRadius: 18, padding: 16, marginBottom: 16, boxShadow: C.md }}>
-      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo, marginBottom: 4 }}>Detail Status Pengajuan</div>
-      <StatusRow icon={<ListChecks size={15} />} label="Total Pengajuan" value={summary.total} color={C.hi} bold />
-      <div style={{ height: 1, background: C.lineSoft, margin: "6px 0" }} />
-      <StatusRow icon={<Clock size={15} />} label="Dalam Pengajuan" sub="Belum tercatat RGU-GA" value={summary.pending} color={C.amber} />
-      <StatusRow icon={<CheckCircle2 size={15} />} label="Total Tervalidasi" value={summary.validated} color={C.green} />
-      <StatusRow icon={<ScanFace size={15} />} label="RGU-GA Biometric" value={summary.bio} color="#2563EB" indent />
-      <StatusRow icon={<IdCard size={15} />} label="RGU-GA Non-Biometric" value={summary.reg} color={PAL.purple} indent />
-      <StatusRow icon={<XCircle size={15} />} label="Pengajuan Ditolak" sub="Tercatat di outlet lain — tap untuk lihat" value={summary.rejected}
-        color="#DC2626" onClick={summary.rejected > 0 ? onSeeRejected : undefined} />
-      {summary.notFound > 0 && (
-        <StatusRow icon={<HelpCircle size={15} />} label="Tidak Ditemukan di RGU-GA" sub="Sampai batas waktu, data GA tidak pernah cocok" value={summary.notFound} color={C.mid} />
-      )}
     </div>
   );
 }
