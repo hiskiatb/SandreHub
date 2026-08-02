@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   MapPin, LogOut, RefreshCw, Clock, Store, QrCode, CheckCircle2,
-  ShoppingBag, ChevronRight, History, Navigation, AlertTriangle,
+  ShoppingBag, ChevronRight, ChevronDown, History, Navigation, AlertTriangle,
   X, ChevronLeft, Phone, CalendarDays, Trash2,
   ArrowLeftRight, Inbox, ShieldQuestion, Radar, RefreshCcw, Pencil, Check,
   Target, TrendingUp, Sparkles,
@@ -43,12 +43,15 @@ function periodOptions() { return PERIOD_OPTIONS; }
 // karena pencapaian bisa "pindah periode" mengikuti ga_dt hasil validasi
 // GA — bukan lagi selalu bulan tagging. Rentang: 6 bulan ke belakang s.d.
 // bulan berjalan sekarang (tidak perlu bulan depan, belum ada datanya).
+const PTS_FIRST_PERIOD = "2026-08"; // PTS mulai berjalan — tidak ada data sebelum ini
 function statsPeriodOptions() {
   const out = [];
   const now = new Date();
   for (let i = 0; i < 6; i++) {
     const dt = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    out.push(`${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}`);
+    const ym = `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}`;
+    if (ym < PTS_FIRST_PERIOD) break; // jangan tampilkan bulan sebelum PTS mulai
+    out.push(ym);
   }
   return out; // terbaru dulu
 }
@@ -398,10 +401,13 @@ function Pending({ email, period, setPeriod, onReload, onSignOut, previewMode, o
         {setPeriod && (
           <div style={{ marginTop: 16, width: "100%", maxWidth: 280 }}>
             <label style={{ display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.lo, marginBottom: 6 }}>Cek periode lain</label>
-            <select value={period} onChange={(e) => setPeriod(e.target.value)}
-              style={{ width: "100%", height: 46, borderRadius: 12, border: `1px solid ${C.line}`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 14, fontWeight: 600, padding: "0 14px" }}>
-              {periodOptions().map((p) => <option key={p} value={p}>{ymLabel(p)}</option>)}
-            </select>
+            <div style={{ position: "relative" }}>
+              <select value={period} onChange={(e) => setPeriod(e.target.value)}
+                style={{ appearance: "none", width: "100%", height: 46, borderRadius: 12, border: `1px solid ${C.line}`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 14, fontWeight: 600, padding: "0 38px 0 14px", cursor: "pointer" }}>
+                {periodOptions().map((p) => <option key={p} value={p}>{ymLabel(p)}</option>)}
+              </select>
+              <ChevronDown size={16} style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", color: C.lo, pointerEvents: "none" }} />
+            </div>
           </div>
         )}
       </div>
@@ -726,11 +732,21 @@ function AppShell(p) {
   };
 
   return (
-    <div style={{ minHeight: "100svh", background: C.bg, color: C.hi, fontFamily: FF, paddingBottom: "calc(env(safe-area-inset-bottom,0px) + 24px)" }}>
+    <div style={{ position: "relative", minHeight: "100svh", background: C.bg, color: C.hi, fontFamily: FF, paddingBottom: "calc(env(safe-area-inset-bottom,0px) + 24px)", isolation: "isolate" }}>
       <style>{`@keyframes up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
         @keyframes pop{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
         @keyframes sheetup{from{transform:translateY(100%)}to{transform:none}}
+        @keyframes auroraFloat{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-3%,2%) scale(1.06)}}
         .press{transition:transform .12s}.press:active{transform:scale(.975)}`}</style>
+
+      {/* Aurora — sentuhan warna lembut di belakang konten, statis & sangat
+          halus (bukan dekorasi berat) supaya beranda terasa premium tanpa
+          mengganggu keterbacaan. */}
+      <div aria-hidden style={{ position: "fixed", inset: 0, zIndex: 0, overflow: "hidden", pointerEvents: "none" }}>
+        <div style={{ position: "absolute", top: -120, left: -80, width: 320, height: 320, borderRadius: "50%", background: "radial-gradient(circle, rgba(237,28,36,0.10), transparent 70%)", animation: "auroraFloat 16s ease-in-out infinite" }} />
+        <div style={{ position: "absolute", top: -60, right: -100, width: 360, height: 360, borderRadius: "50%", background: "radial-gradient(circle, rgba(198,22,141,0.08), transparent 70%)", animation: "auroraFloat 20s ease-in-out infinite reverse" }} />
+      </div>
+      <div style={{ position: "relative", zIndex: 1 }}>
 
       {/* Mode Pratinjau Admin — pita read-only, supaya tidak mungkin lupa
           sedang "meminjam" tampilan promotor lain. */}
@@ -741,7 +757,7 @@ function AppShell(p) {
       )}
 
       {/* Header */}
-      <div style={{ padding: `${previewMode ? "10px" : "calc(env(safe-area-inset-top,0px) + 16px)"} 18px 12px`, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: previewMode ? 34 : 0, background: "linear-gradient(180deg,#F4F5F7 76%,rgba(244,245,247,0))", zIndex: 5, maxWidth: 560, margin: "0 auto" }}>
+      <div style={{ padding: `${previewMode ? "10px" : "calc(env(safe-area-inset-top,0px) + 16px)"} 18px 12px`, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: previewMode ? 34 : 0, background: "linear-gradient(180deg,rgba(244,245,247,0.92) 70%,rgba(244,245,247,0))", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", zIndex: 5, maxWidth: 560, margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
           {view !== "home" ? (
             <IconBtn onClick={() => setView("home")} aria-label="Kembali ke beranda"><ChevronLeft size={18} /></IconBtn>
@@ -802,10 +818,11 @@ function AppShell(p) {
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 10, flexWrap: "wrap" }}>
               <div style={{ position: "relative" }}>
                 <select value={statsPeriod} onChange={(e) => setStatsPeriod(e.target.value)}
-                  style={{ appearance: "none", height: 38, borderRadius: 12, border: `1px solid ${C.brand}55`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 13.5, fontWeight: 700, padding: "0 32px 0 34px", cursor: "pointer", boxShadow: C.sm }}>
+                  style={{ appearance: "none", height: 38, borderRadius: 12, border: `1px solid ${C.brand}55`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 13.5, fontWeight: 700, padding: "0 30px 0 34px", cursor: "pointer", boxShadow: C.sm }}>
                   {statsPeriodOptions().map((pOpt) => <option key={pOpt} value={pOpt}>{ymLabel(pOpt)}</option>)}
                 </select>
                 <CalendarDays size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: C.brand, pointerEvents: "none" }} />
+                <ChevronDown size={13} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: C.lo, pointerEvents: "none" }} />
               </div>
               <GeoChip geo={geo} err={geoErr} onFix={fixGeo} />
             </div>
@@ -1123,11 +1140,14 @@ function AppShell(p) {
                 <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>
                   Notifikasi {unreadCount > 0 ? `(${unreadCount} belum dibaca)` : ""}
                 </div>
-                <select value={notifFilter} onChange={(e) => setNotifFilter(e.target.value)}
-                  style={{ appearance: "none", height: 30, borderRadius: 9, border: `1px solid ${C.line}`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 11.5, fontWeight: 700, padding: "0 10px", cursor: "pointer" }}>
-                  <option value="all">Semua periode</option>
-                  {statsPeriodOptions().map((p) => <option key={p} value={p}>{ymLabel(p)}</option>)}
-                </select>
+                <div style={{ position: "relative" }}>
+                  <select value={notifFilter} onChange={(e) => setNotifFilter(e.target.value)}
+                    style={{ appearance: "none", height: 30, borderRadius: 9, border: `1px solid ${C.line}`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 11.5, fontWeight: 700, padding: "0 26px 0 10px", cursor: "pointer" }}>
+                    <option value="all">Semua periode</option>
+                    {statsPeriodOptions().map((p) => <option key={p} value={p}>{ymLabel(p)}</option>)}
+                  </select>
+                  <ChevronDown size={12} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", color: C.lo, pointerEvents: "none" }} />
+                </div>
               </div>
               {filteredNotifs.length === 0 ? (
                 <div style={{ textAlign: "center", padding: "24px 10px", color: C.mid }}>
@@ -1173,6 +1193,7 @@ function AppShell(p) {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
