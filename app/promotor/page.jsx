@@ -120,20 +120,38 @@ const BRAND = {
 const brandTheme = (b) => BRAND[b] || null;
 
 // Nada sukses — pakai sound effect asli (mirip notifikasi Apple Pay) yang
-// disediakan, bukan lagi nada sintetis Web Audio. Instance <Audio> dibuat
-// sekali dan dipakai ulang (currentTime direset) supaya tap berturut-turut
-// tidak saling menumpuk/telat.
-let _successAudio = null;
+// disediakan. Sengaja diputar lewat Web Audio API (decode buffer sekali,
+// lalu setiap kali dipanggil bikin AudioBufferSourceNode baru), BUKAN lewat
+// elemen <audio> biasa. Alasannya: file mp3 aslinya sempat punya metadata
+// ID3 (genre "Music", cover art) yang membuat sebagian browser/HP
+// menampilkan kontrol media (now-playing/lock screen) dengan tombol ulang —
+// jadi terasa seperti "lagu yang bisa diputar berulang", padahal maksudnya
+// cuma efek suara sekali ketuk. Metadata itu sudah dibersihkan dari file-nya,
+// dan dengan Web Audio API pemutarannya tidak pernah masuk ke Media Session
+// (tidak ada UI now-playing/repeat sama sekali) serta otomatis berhenti
+// begitu selesai — tidak ada opsi loop.
+let _successCtx = null;
+let _successBufferPromise = null;
 function playSuccessTone() {
   try {
     if (typeof window === "undefined") return;
-    if (!_successAudio) {
-      _successAudio = new window.Audio("/promotor/success-sound.mp3");
-      _successAudio.preload = "auto";
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    if (!_successCtx) _successCtx = new AC();
+    if (_successCtx.state === "suspended") _successCtx.resume().catch(() => {});
+    if (!_successBufferPromise) {
+      _successBufferPromise = fetch("/promotor/success-sound.mp3")
+        .then((r) => r.arrayBuffer())
+        .then((buf) => _successCtx.decodeAudioData(buf));
     }
-    _successAudio.currentTime = 0;
-    _successAudio.volume = 0.85;
-    _successAudio.play().catch(() => { /* abaikan — butuh interaksi user di beberapa browser */ });
+    _successBufferPromise.then((buffer) => {
+      const src = _successCtx.createBufferSource();
+      src.buffer = buffer;
+      src.loop = false; // one-shot, tegas — bukan musik yang bisa diulang
+      const gain = _successCtx.createGain();
+      gain.gain.value = 0.9;
+      src.connect(gain); gain.connect(_successCtx.destination);
+      src.start(0);
+    }).catch(() => { /* abaikan — gagal decode/putar tidak boleh menghentikan alur claim */ });
   } catch { /* abaikan */ }
 }
 
@@ -802,8 +820,10 @@ function AppShell(p) {
       if (error) throw error;
       if (data?.status === "ok") {
         setSelfClaim(null);
-        await loadTodaySales(promotorId, activeOutlet.id); loadSummary(); loadHistory();
-        flash("Nomor dipindahkan ke outlet ini.");
+        await loadTodaySales(promotorId, activeOutlet.id);
+        loadSummary(); loadOutletBioTotal(); loadHistory();
+        const targetBrand = activeOutlet.code3id ? brand : null;
+        flash(targetBrand ? `Nomor dipindahkan & dicatat sebagai ${targetBrand}.` : "Nomor dipindahkan ke outlet ini.");
       } else if (data?.status === "invalid_brand") {
         flash("Pilih brand (IM3/3ID) untuk outlet ini terlebih dulu.", "err");
       } else {
@@ -896,7 +916,7 @@ function AppShell(p) {
       <div style={{ padding: "8px 18px 0", maxWidth: 560, margin: "0 auto" }}>
         {view === "history" ? (
           <HistoryView history={history} onDelete={(s) => setDelSale(s)} promotorId={promotorId}
-            period={statsPeriod} filter={historyFilter} />
+            period={statsPeriod} onPeriodChange={setStatsPeriod} filter={historyFilter} />
         ) : view === "claim" ? (
           <div ref={actionSectionRef} style={{ animation: "up .32s cubic-bezier(.22,1,.36,1)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
@@ -1170,7 +1190,18 @@ function AppShell(p) {
           perlu approval, tinggal klik Pindahkan. */}
       {selfClaim && (() => {
         const s = selfClaim.sale;
-        const sameOutlet = s && activeOutlet && s.outlet_id === activeOutlet.id;
+        // Target brand yang sedang dipilih di layar Claim saat ini (kalau
+        // outlet aktif butuh brand). Dibandingkan dengan brand yang sudah
+        // tercatat di baris sale ini — kalau outlet-nya sama TAPI brand-nya
+        // beda (mis. sudah IM3, sekarang mau dicatat sebagai 3ID di outlet
+        // dual-brand yang sama), tetap dianggap "belum sama" supaya tombol
+        // "Pindahkan ke Sini" tetap muncul dan bisa memperbaiki brand-nya.
+        // Sebelumnya sameOutlet hanya membandingkan outlet_id, sehingga kasus
+        // ini salah dianggap "sudah di sini" dan tombol pindahnya hilang.
+        const targetBrand = activeOutlet?.code3id ? (brand || null) : null;
+        const currentBrand = s?.brand || null;
+        const sameOutlet = !!(s && activeOutlet && s.outlet_id === activeOutlet.id && currentBrand === targetBrand);
+        const onlyBrandDiffers = !!(s && activeOutlet && s.outlet_id === activeOutlet.id && currentBrand !== targetBrand);
         return (
           <div style={{ position: "fixed", inset: 0, zIndex: 140, background: "rgba(17,18,22,0.45)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 26 }} onClick={() => setSelfClaim(null)}>
             <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 380, background: C.card, borderRadius: 24, padding: "24px 22px 20px", boxShadow: C.lg, animation: "pop .22s cubic-bezier(.22,1,.36,1)" }}>
@@ -1178,7 +1209,11 @@ function AppShell(p) {
                 <div style={{ width: 58, height: 58, borderRadius: 17, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(37,99,235,0.1)", color: C.blue, marginBottom: 14 }}><ShieldQuestion size={26} /></div>
                 <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", color: C.hi }}>Nomor Ini Sudah Anda Claim</div>
                 <div style={{ fontSize: 13, color: C.mid, marginTop: 4 }}>
-                  {sameOutlet ? "sudah tercatat di outlet ini" : "tercatat di outlet lain milik Anda — detail di bawah"}
+                  {sameOutlet
+                    ? "sudah tercatat di outlet ini"
+                    : onlyBrandDiffers
+                      ? `tercatat sebagai ${currentBrand || "brand lain"} di outlet ini — pindahkan ke ${targetBrand || "brand ini"}?`
+                      : "tercatat di outlet lain milik Anda — detail di bawah"}
                 </div>
                 <div style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 700, color: C.hi, marginTop: 8, padding: "6px 12px", borderRadius: 10, background: C.sub }}>{selfClaim.phone}</div>
               </div>
@@ -1852,16 +1887,16 @@ function OutletSummaryGrid({ total, pending, bio, reg, rejected, extra, periodLa
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 15 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Total Pengajuan</span>
+            <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Total Pengajuan</span>
             {showBrandBadge && (
-              <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: "0.03em", padding: "2px 7px", borderRadius: 99, background: bt ? bt.soft : C.sub, color: bt ? bt.ink : C.mid }}>{brand || "Semua Brand"}</span>
+              <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: "0.03em", padding: "2px 7px", borderRadius: 99, background: bt ? bt.soft : C.sub, color: bt ? bt.ink : C.mid }}>{brand || "Semua Brand"}</span>
             )}
           </div>
-          <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: "-0.03em", color: C.hi, marginTop: 5 }}>{total}</div>
+          <div style={{ fontSize: 32, fontWeight: 700, letterSpacing: "-0.03em", color: C.hi, marginTop: 5 }}>{total}</div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, marginTop: 2 }}>
-          <div style={{ width: 38, height: 38, borderRadius: 12, background: C.sub, color: C.brand, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <ListChecks size={18} />
+          <div style={{ width: 38, height: 38, borderRadius: 12, background: "rgba(237,28,36,0.1)", color: C.brand, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <ShoppingBag size={18} />
           </div>
         </div>
       </div>
@@ -1870,9 +1905,9 @@ function OutletSummaryGrid({ total, pending, bio, reg, rejected, extra, periodLa
           <div key={t.key} style={{ borderRadius: 14, padding: "11px 12px", background: `${t.color}0F`, border: `1px solid ${t.color}30` }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 7 }}>
               <span style={{ color: t.color, display: "flex" }}>{t.icon}</span>
-              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.02em", color: C.mid, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.label}</span>
+              <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.02em", color: C.mid, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.label}</span>
             </div>
-            <div style={{ fontSize: 21, fontWeight: 800, color: t.color, letterSpacing: "-0.02em" }}>{t.value}</div>
+            <div style={{ fontSize: 21, fontWeight: 700, color: t.color, letterSpacing: "-0.02em" }}>{t.value}</div>
           </div>
         ))}
       </div>
@@ -1942,7 +1977,7 @@ const HISTORY_TABS = [
   { key: "notFound", title: "Tidak Ditemukan" },
 ];
 
-function HistoryView({ history, onDelete, promotorId, period, filter }) {
+function HistoryView({ history, onDelete, promotorId, period, onPeriodChange, filter }) {
   const [detailSale, setDetailSale] = useState(null);
   const [tab, setTab] = useState(filter?.key || "all");
   const [bioFilter, setBioFilter] = useState(filter?.key === "validated" ? (filter.biometric === true ? "bio" : filter.biometric === false ? "reg" : "all") : "all");
@@ -1985,13 +2020,20 @@ function HistoryView({ history, onDelete, promotorId, period, filter }) {
 
   return (
     <div style={{ animation: "up .3s ease" }}>
-      {/* Ringkasan singkat — total & periode yang sedang ditampilkan,
-          konsisten dengan label periode di Kontribusi Anda & Detail
-          Pengajuan Outlet. */}
-      {!isEmptyOverall && (
+      {/* Selector periode — sama seperti di beranda, supaya promotor bisa
+          langsung pindah bulan dari layar ini juga tanpa harus balik dulu
+          ke Kontribusi Anda. Selalu tampil (baik ada data atau tidak). */}
+      {onPeriodChange && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12 }}>
-          <span style={{ fontSize: 12.5, color: C.mid, fontWeight: 600 }}>{counts.all} pengajuan tercatat</span>
-          {period && <span style={{ fontSize: 10.5, fontWeight: 700, color: C.mid, background: C.sub, borderRadius: 99, padding: "3px 9px" }}>{ymLabel(period)}</span>}
+          <span style={{ fontSize: 12.5, color: C.mid, fontWeight: 600 }}>{isEmptyOverall ? "Belum ada pengajuan" : `${counts.all} pengajuan tercatat`}</span>
+          <div style={{ position: "relative" }}>
+            <select value={period} onChange={(e) => onPeriodChange(e.target.value)}
+              style={{ appearance: "none", height: 34, borderRadius: 11, border: `1px solid ${C.brand}55`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 12.5, fontWeight: 700, padding: "0 28px 0 30px", cursor: "pointer", boxShadow: C.sm }}>
+              {statsPeriodOptions().map((pOpt) => <option key={pOpt} value={pOpt}>{ymLabel(pOpt)}</option>)}
+            </select>
+            <CalendarDays size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.brand, pointerEvents: "none" }} />
+            <ChevronDown size={12} style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", color: C.lo, pointerEvents: "none" }} />
+          </div>
         </div>
       )}
 
