@@ -1546,16 +1546,20 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
         if (!metaByKey.has(k)) metaByKey.set(k, { branch: a.branch, mc: a.mc, region: a.region, email: a.email, full_name: a.full_name });
       });
 
-      // Klaim SP periode ini per promotor_id, dipecah per brand
-      const [y, mo] = period.split("-").map(Number);
-      const start = `${period}-01`;
-      const nd = new Date(y, mo, 1);
-      const end = `${nd.getFullYear()}-${pad2(nd.getMonth() + 1)}-01`;
+      // Klaim SP periode ini per promotor_id, dipecah per brand — pakai
+      // credited_period (bukan rentang tanggal dari tagged_at) supaya
+      // SELALU sinkron dengan app Promotor (Kontribusi Anda/Riwayat/Detail
+      // Outlet semuanya sudah pakai credited_period sebagai satu-satunya
+      // sumber kebenaran periode). Sebelumnya pakai `.gte/.lt("tagged_at",...)`
+      // dengan string tanggal polos, yang dibaca sebagai UTC oleh Postgres —
+      // klaim yang ditag menjelang tengah malam WIB bisa jatuh ke bucket
+      // bulan yang salah dan "hilang" di tampilan admin walau sudah
+      // muncul & tercatat benar di app Promotor.
       const promotorIds = promotors.map((p) => p.id);
       const salesByPromotor = new Map();
       if (promotorIds.length) {
         const { data: sales } = await supabase.from("pts_sale").select("promotor_id,brand")
-          .in("promotor_id", promotorIds).gte("tagged_at", start).lt("tagged_at", end);
+          .in("promotor_id", promotorIds).eq("credited_period", period);
         (sales || []).forEach((s) => {
           if (!salesByPromotor.has(s.promotor_id)) salesByPromotor.set(s.promotor_id, { total: 0, im3: 0, tid: 0 });
           const agg = salesByPromotor.get(s.promotor_id);
@@ -1748,13 +1752,14 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [y, mo] = period.split("-").map(Number);
-      const start = `${period}-01`;
-      const nd = new Date(y, mo, 1);
-      const end = `${nd.getFullYear()}-${pad2(nd.getMonth() + 1)}-01`;
+      // Sama seperti tab Ringkasan Aktivitas — filter pakai credited_period,
+      // bukan rentang tanggal tagged_at, supaya konsisten dengan app
+      // Promotor dan tidak "kehilangan" klaim yang ditag menjelang tengah
+      // malam WIB (tagged_at dibandingkan sebagai UTC kalau pakai string
+      // tanggal polos).
       const { data: sales } = await supabase.from("pts_sale")
-        .select("id,phone_normalized,brand,email,promotor_id,outlet_id,region,lat,lng,tagged_at,raw_qr_value,distance_meters,within_radius,outside_confirmed_at,ga_status,biometric_status,ga_note")
-        .gte("tagged_at", start).lt("tagged_at", end).order("tagged_at", { ascending: false });
+        .select("id,phone_normalized,brand,email,promotor_id,outlet_id,region,lat,lng,tagged_at,raw_qr_value,distance_meters,within_radius,outside_confirmed_at,ga_status,biometric_status,ga_note,credited_period")
+        .eq("credited_period", period).order("tagged_at", { ascending: false });
       const { data: pros } = await supabase.from("pts_promotor").select("id,email,full_name");
       const nameById = new Map((pros || []).map((p) => [p.id, p.full_name]));
       const nameByEmail = new Map((pros || []).map((p) => [(p.email || "").toLowerCase(), p.full_name]));
@@ -1834,13 +1839,13 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
         <div style={{ overflow: "auto", maxHeight: 620 }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1440 }}>
             <thead>
-              <tr>{["No", "Tanggal", "Jam", "MSISDN", "Brand", "Promotor", "ID Outlet", "Branch", "Region", "Jarak (m)", "Lokasi", "Status GA", "Biometric"].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr>
+              <tr>{["No", "Tanggal", "Jam", "MSISDN", "Brand", "Promotor", "ID Outlet", "Branch", "Region", "Latitude", "Longitude", "Jarak (m)", "Lokasi", "Status GA", "Biometric"].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td className="pts-td" colSpan={13} style={{ textAlign: "center", padding: 40, color: t.mid }}><Loader2 size={20} className="spin" style={{ verticalAlign: "middle" }} /> Memuat…</td></tr>
+                <tr><td className="pts-td" colSpan={15} style={{ textAlign: "center", padding: 40, color: t.mid }}><Loader2 size={20} className="spin" style={{ verticalAlign: "middle" }} /> Memuat…</td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td className="pts-td" colSpan={13} style={{ textAlign: "center", padding: 44, color: t.mid }}><Phone size={24} style={{ opacity: .5, marginBottom: 8 }} /><br />Belum ada penjualan untuk {ymLabel(period)}.</td></tr>
+                <tr><td className="pts-td" colSpan={15} style={{ textAlign: "center", padding: 44, color: t.mid }}><Phone size={24} style={{ opacity: .5, marginBottom: 8 }} /><br />Belum ada penjualan untuk {ymLabel(period)}.</td></tr>
               ) : filtered.map((r, i) => (
                 <tr key={r.id} className="pts-row">
                   <td className="pts-td" style={{ color: t.mid }}>{i + 1}</td>
@@ -1852,6 +1857,8 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
                   <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 11.5 }}>{r.outlet_code || "—"}</td>
                   <td className="pts-td">{r.branch || "—"}</td>
                   <td className="pts-td">{r.region || "—"}</td>
+                  <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 11 }}>{r.lat != null ? Number(r.lat).toFixed(6) : "—"}</td>
+                  <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 11 }}>{r.lng != null ? Number(r.lng).toFixed(6) : "—"}</td>
                   <td className="pts-td" style={{ fontFamily: "monospace" }}>{r.distance_meters != null ? Math.round(r.distance_meters) : "—"}</td>
                   <td className="pts-td">
                     {r.within_radius === false

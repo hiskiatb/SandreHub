@@ -919,12 +919,14 @@ function AppShell(p) {
             period={statsPeriod} onPeriodChange={setStatsPeriod} filter={historyFilter} />
         ) : view === "claim" ? (
           <div ref={actionSectionRef} style={{ animation: "up .32s cubic-bezier(.22,1,.36,1)" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-              <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.lo }}>Aktivitas Hari Ini</div>
-              {/* Chip "Lokasi aktif" dihilangkan dari sini — status geo tetap
-                  divalidasi di balik layar (GeoGatePanel tampil jika belum
-                  ada izin lokasi), tapi secara visual diganti dengan selector
-                  periode yang sama seperti di beranda supaya konsisten. */}
+            {/* Label "Aktivitas Hari Ini" dihilangkan — layar ini menampilkan
+                aktivitas untuk PERIODE/bulan yang dipilih, bukan cuma hari
+                ini, jadi label itu menyesatkan. Chip "Lokasi aktif" juga
+                dihilangkan dari sini — status geo tetap divalidasi di balik
+                layar (GeoGatePanel tampil jika belum ada izin lokasi), tapi
+                secara visual diganti dengan selector periode yang sama
+                seperti di beranda supaya konsisten. */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
               <div style={{ position: "relative" }}>
                 <select value={statsPeriod} onChange={(e) => setStatsPeriod(e.target.value)}
                   style={{ appearance: "none", height: 34, borderRadius: 11, border: `1px solid ${C.brand}55`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 12.5, fontWeight: 700, padding: "0 28px 0 30px", cursor: "pointer", boxShadow: C.sm }}>
@@ -1799,34 +1801,43 @@ function ContributionCard({ summary, target, outletBioTotal, onNavigateHistory, 
             </button>
           </div>
 
-          {summary ? (
-            <>
-              {/* Semua baris SELALU bisa ditap — mengarah ke Riwayat Pengajuan
-                  di tab yang sesuai (kalau memang kosong, tab-nya akan
-                  menampilkan kosong, tapi navigasinya tetap konsisten &
-                  tidak membingungkan "kenapa tidak bisa diklik"). */}
-              <StatusRow icon={<ListChecks size={15} />} label="Total Pengajuan" value={summary.total} color={C.hi} bold onClick={() => nav(null)} />
-              <div style={{ height: 1, background: C.lineSoft, margin: "2px 0" }} />
-              <StatusRow icon={<Clock size={15} />} label="Dalam Pengajuan" sub="Belum tercatat RGU-GA" value={summary.pending} color={C.amber}
-                onClick={() => nav({ key: "pending", label: "Dalam Pengajuan" })} />
-              <StatusRow icon={<CheckCircle2 size={15} />} label="Total Tervalidasi" value={summary.validated} color={C.green}
-                onClick={() => nav({ key: "validated", label: "Total Tervalidasi" })} />
-              <StatusRow icon={<ScanFace size={15} />} label="RGU-GA SP Biometric" value={summary.bio} color="#2563EB" indent
-                onClick={() => nav({ key: "validated", biometric: true, label: "RGU-GA SP Biometric" })} />
-              <StatusRow icon={<IdCard size={15} />} label="RGU-GA Non-Biometric" value={summary.reg} color={PAL.purple} indent
-                onClick={() => nav({ key: "validated", biometric: false, label: "RGU-GA Non-Biometric" })} />
-              {summary.waitingOutlet > 0 && (
-                <StatusRow icon={<Clock size={15} />} label="Menunggu Mapping Outlet" sub="Outlet dikenal, belum ada promotor termapping" value={summary.waitingOutlet} color={C.amber}
-                  onClick={() => nav({ key: "waitingOutlet", label: "Menunggu Mapping Outlet" })} />
-              )}
-              <StatusRow icon={<XCircle size={15} />} label="Di Luar Jaringan Outlet" value={summary.rejected}
-                color="#DC2626" onClick={() => nav({ key: "rejected", label: "Di Luar Jaringan Outlet" })} />
-              {summary.notFound > 0 && (
-                <StatusRow icon={<HelpCircle size={15} />} label="Tidak Ditemukan di RGU-GA" sub="Sampai batas waktu, data GA tidak pernah cocok" value={summary.notFound} color={C.mid}
-                  onClick={() => nav({ key: "notFound", label: "Tidak Ditemukan di RGU-GA" })} />
-              )}
-            </>
-          ) : (
+          {summary ? (() => {
+            // Semua baris SELALU bisa ditap — mengarah ke Riwayat Pengajuan di
+            // tab yang sesuai (kalau memang kosong, tab-nya akan menampilkan
+            // kosong, tapi navigasinya tetap konsisten & tidak membingungkan
+            // "kenapa tidak bisa diklik"). Disusun sebagai array supaya garis
+            // pemisah tipis bisa disisipkan otomatis di ANTARA setiap baris
+            // yang benar-benar tampil (termasuk baris kondisional seperti
+            // "Menunggu Mapping Outlet"/"Tidak Ditemukan"), bukan cuma
+            // setelah baris pertama seperti sebelumnya.
+            const rows = [
+              <StatusRow key="total" icon={<ListChecks size={15} />} label="Total Pengajuan" value={summary.total} color={C.hi} bold onClick={() => nav(null)} />,
+              <StatusRow key="pending" icon={<Clock size={15} />} label="Dalam Pengajuan" sub="Belum tercatat RGU-GA" value={summary.pending} color={C.amber}
+                onClick={() => nav({ key: "pending", label: "Dalam Pengajuan" })} />,
+              <StatusRow key="validated" icon={<CheckCircle2 size={15} />} label="Total Tervalidasi" value={summary.validated} color={C.green}
+                onClick={() => nav({ key: "validated", label: "Total Tervalidasi" })} />,
+              <StatusRow key="bio" icon={<ScanFace size={15} />} label="RGU-GA SP Biometric" value={summary.bio} color="#2563EB" indent
+                onClick={() => nav({ key: "validated", biometric: true, label: "RGU-GA SP Biometric" })} />,
+              <StatusRow key="reg" icon={<IdCard size={15} />} label="RGU-GA Non-Biometric" value={summary.reg} color={PAL.purple} indent
+                onClick={() => nav({ key: "validated", biometric: false, label: "RGU-GA Non-Biometric" })} />,
+            ];
+            if (summary.waitingOutlet > 0) {
+              rows.push(<StatusRow key="waitingOutlet" icon={<Clock size={15} />} label="Menunggu Mapping Outlet" sub="Outlet dikenal, belum ada promotor termapping" value={summary.waitingOutlet} color={C.amber}
+                onClick={() => nav({ key: "waitingOutlet", label: "Menunggu Mapping Outlet" })} />);
+            }
+            rows.push(<StatusRow key="rejected" icon={<XCircle size={15} />} label="Di Luar Jaringan Outlet" value={summary.rejected}
+              color="#DC2626" onClick={() => nav({ key: "rejected", label: "Di Luar Jaringan Outlet" })} />);
+            if (summary.notFound > 0) {
+              rows.push(<StatusRow key="notFound" icon={<HelpCircle size={15} />} label="Tidak Ditemukan di RGU-GA" sub="Sampai batas waktu, data GA tidak pernah cocok" value={summary.notFound} color={C.mid}
+                onClick={() => nav({ key: "notFound", label: "Tidak Ditemukan di RGU-GA" })} />);
+            }
+            return rows.map((row, i) => (
+              <div key={row.key}>
+                {i > 0 && <div style={{ height: 1, background: C.lineSoft, margin: "2px 0" }} />}
+                {row}
+              </div>
+            ));
+          })() : (
             <div style={{ fontSize: 12.5, color: C.mid, padding: "10px 2px" }}>Memuat ringkasan…</div>
           )}
         </div>
