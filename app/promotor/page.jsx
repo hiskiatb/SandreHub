@@ -1489,23 +1489,46 @@ function ContributionCard({ summary, target, periodLabel, outletBioTotal, onNavi
   // TIDAK disimpan ke database apapun. null = belum ada outlet/loading.
   const sharePct = (outletBioTotal != null && outletBioTotal > 0) ? Math.round((bio / outletBioTotal) * 100) : null;
 
-  // Kedua sisi memakai CSS Grid stacking (grid-area sama) — tinggi
-  // kontainer otomatis mengikuti sisi yang lebih tinggi, tanpa perlu ukur
-  // manual via JS (pendekatan ukur-manual sebelumnya salah: karena face-nya
-  // position:absolute, offsetHeight yang terbaca justru tinggi parent,
-  // bukan tinggi konten asli — menyebabkan kartu kolaps/terpotong).
-  const faceBase = { gridArea: "1/1", backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden", borderRadius: 22, boxShadow: C.md };
+  // Kartu depan (jumlah outlet 1..4 → tinggi berbeda-beda) dan kartu
+  // belakang bisa punya tinggi asli yang berbeda. Kedua sisi tetap
+  // ditumpuk dengan CSS Grid (gridArea sama) TAPI dengan alignSelf:"start"
+  // supaya masing-masing sisi TIDAK ikut diregangkan menyamai sisi lain —
+  // artinya offsetHeight yang diukur benar-benar tinggi konten asli sisi
+  // itu sendiri (bukan tinggi induk/sisi lain). Tinggi container lalu
+  // di-set eksplisit lewat JS mengikuti sisi yang sedang tampil, dan
+  // dianimasikan halus bersamaan dengan rotasi flip — jadi tinggi selalu
+  // pas dengan jumlah outlet yang sedang dimapping, tidak pernah
+  // menyisakan ruang kosong ATAUPUN memotong konten.
+  const frontRef = useRef(null);
+  const backRef = useRef(null);
+  const [frontH, setFrontH] = useState(null);
+  const [backH, setBackH] = useState(null);
+  useEffect(() => {
+    const measure = () => {
+      if (frontRef.current) setFrontH(frontRef.current.scrollHeight);
+      if (backRef.current) setBackH(backRef.current.scrollHeight);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    if (frontRef.current) ro.observe(frontRef.current);
+    if (backRef.current) ro.observe(backRef.current);
+    return () => ro.disconnect();
+  }, [summary, outlets, outletBioTotal, bio, target]);
+
+  const faceBase = { gridArea: "1/1", alignSelf: "start", backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden", borderRadius: 22, boxShadow: C.md };
   const nav = (filter) => { if (onNavigateHistory) onNavigateHistory(filter); };
 
   return (
     <div style={{ marginBottom: 14, perspective: 1600 }}>
       <div style={{
-        position: "relative", display: "grid", transformStyle: "preserve-3d",
-        transition: "transform .46s cubic-bezier(.34,1,.4,1)",
+        position: "relative", display: "grid", transformStyle: "preserve-3d", overflow: "visible",
+        height: (open ? backH : frontH) ?? undefined,
+        transition: "transform .46s cubic-bezier(.34,1,.4,1), height .42s cubic-bezier(.22,1,.36,1)",
         transform: open ? "rotateY(180deg)" : "rotateY(0deg)",
       }}>
         {/* ── Depan: ringkasan target ── */}
-        <div style={{
+        <div ref={frontRef} style={{
           ...faceBase, position: "relative", overflow: "hidden",
           background: `linear-gradient(160deg, ${PAL.charcoal} 0%, #333335 100%)`,
           padding: "16px 16px 15px", pointerEvents: open ? "none" : "auto",
@@ -1567,12 +1590,43 @@ function ContributionCard({ summary, target, periodLabel, outletBioTotal, onNavi
               </div>
             </div>
           )}
+
+          {/* Outlet Anda — SELALU ditampilkan di kartu ringkasan ini (bukan
+              di sisi Detail Status), walau belum ada data pengajuan sama
+              sekali di periode ini, supaya promotor tetap tahu persis outlet
+              mana saja yang sedang dimapping ke dirinya. */}
+          {outlets && outlets.length > 0 && (
+            <div style={{ marginTop: 13 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                <Store size={11} color="rgba(255,255,255,0.55)" />
+                <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.55)" }}>Outlet Anda ({outlets.length})</span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                {outlets.map((o) => {
+                  const oname = o.name && o.name !== o.code ? o.name : o.code;
+                  return (
+                    <div key={o.code} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 9px", borderRadius: 12, background: "rgba(255,255,255,0.07)" }}>
+                      <div style={{ width: 28, height: 28, borderRadius: 8, background: "rgba(255,255,255,0.12)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Store size={13} /></div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: "#fff", letterSpacing: "-0.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{oname}</div>
+                        <div style={{ display: "flex", gap: 5, marginTop: 3, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 9, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: "rgba(255,203,5,0.22)", color: "#FFCB05" }}>IM3 {o.code}</span>
+                          {o.code3id && <span style={{ fontSize: 9, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: "rgba(198,22,141,0.28)", color: "#F0A8DE" }}>3ID {o.code3id}</span>}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", textAlign: "right", flexShrink: 0, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{[o.branch, o.area].filter(Boolean).join(" · ") || "—"}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── Belakang: rincian status pengajuan — setiap baris bisa ditap
             untuk langsung membuka Riwayat Pengajuan yang sudah difilter ke
             konteks/section yang sesuai. ── */}
-        <div style={{
+        <div ref={backRef} style={{
           ...faceBase, transform: "rotateY(180deg)", background: C.card,
           padding: "14px 15px 12px", pointerEvents: open ? "auto" : "none",
         }}>
@@ -1609,37 +1663,6 @@ function ContributionCard({ summary, target, periodLabel, outletBioTotal, onNavi
             </>
           ) : (
             <div style={{ fontSize: 12.5, color: C.mid, padding: "10px 2px" }}>Memuat ringkasan…</div>
-          )}
-
-          {/* Outlet Anda — SELALU ditampilkan walau belum ada data pengajuan
-              sama sekali di periode ini, supaya promotor tetap tahu persis
-              outlet mana saja yang sedang dimapping ke dirinya. */}
-          {outlets && outlets.length > 0 && (
-            <div style={{ marginTop: summary?.total ? 12 : 4 }}>
-              <div style={{ height: 1, background: C.lineSoft, margin: "2px 0 10px" }} />
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 9 }}>
-                <Store size={12} color={C.lo} />
-                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.lo }}>Outlet Anda ({outlets.length})</span>
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-                {outlets.map((o) => {
-                  const oname = o.name && o.name !== o.code ? o.name : o.code;
-                  return (
-                    <div key={o.code} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 9px", borderRadius: 12, background: C.sub }}>
-                      <div style={{ width: 30, height: 30, borderRadius: 9, background: "#fff", color: C.brand, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: C.sm }}><Store size={13} /></div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12.5, fontWeight: 800, color: C.hi, letterSpacing: "-0.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{oname}</div>
-                        <div style={{ display: "flex", gap: 5, marginTop: 3, flexWrap: "wrap" }}>
-                          <span style={{ fontSize: 9, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: BRAND.IM3.soft, color: BRAND.IM3.ink }}>IM3 {o.code}</span>
-                          {o.code3id && <span style={{ fontSize: 9, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: BRAND["3ID"].soft, color: BRAND["3ID"].ink }}>3ID {o.code3id}</span>}
-                        </div>
-                      </div>
-                      <div style={{ fontSize: 10.5, color: C.mid, textAlign: "right", flexShrink: 0, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{[o.branch, o.area].filter(Boolean).join(" · ") || "—"}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
           )}
         </div>
       </div>
