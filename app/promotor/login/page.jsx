@@ -8,6 +8,8 @@ import { useRouter } from "next/navigation";
 import { Info, Loader2, ArrowLeft } from "lucide-react";
 import supabase from "../../../lib/supabase";
 import { HubLogo } from "../../../components/HubLogo";
+import { WhatsAppIcon } from "../../../components/WhatsAppIcon";
+import { buildWaLink, fetchCallCenterSetting } from "../../../lib/whatsapp";
 
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 
@@ -15,12 +17,25 @@ export default function PromotorLogin() {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [waLink, setWaLink] = useState(null);
 
   useEffect(() => {
     let alive = true;
     supabase.auth.getUser().then(({ data }) => { if (alive && data?.user) router.replace("/promotor"); });
     return () => { alive = false; };
   }, [router]);
+
+  // Tombol "Hubungi Call Center" — nomor & pesan pembuka diatur SPM Sumatera
+  // lewat dashboard, sehingga bisa berubah tanpa perlu update aplikasi.
+  useEffect(() => {
+    let alive = true;
+    fetchCallCenterSetting().then((s) => {
+      if (!alive) return;
+      const link = s ? buildWaLink(s.whatsapp_number, s.message_template) : null;
+      setWaLink(link);
+    });
+    return () => { alive = false; };
+  }, []);
 
   const signIn = async () => {
     setBusy(true); setErr("");
@@ -79,6 +94,30 @@ export default function PromotorLogin() {
           {busy ? <Loader2 size={21} style={{ animation: "pspin 1s linear infinite", color: "#ED1C24" }} />
                 : <><GoogleG /> Lanjutkan dengan Google</>}
         </button>
+
+        {/* Hubungi Call Center via WhatsApp — hanya tampil kalau SPM Sumatera
+            sudah mengatur nomornya dari dashboard. */}
+        {waLink && (
+          <>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", maxWidth: 360, margin: "18px 0" }}>
+              <div style={{ flex: 1, height: 1, background: "#ECEDF0" }} />
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: "#B4B4BE", letterSpacing: "0.04em" }}>ATAU</span>
+              <div style={{ flex: 1, height: 1, background: "#ECEDF0" }} />
+            </div>
+            <a href={waLink} target="_blank" rel="noopener noreferrer"
+              style={{
+                width: "100%", maxWidth: 360, height: 54, borderRadius: 14, textDecoration: "none",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
+                background: "#E9FBF0", color: "#128C4A", border: "1.5px solid #BDEFD1", fontFamily: FF, fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em",
+                transition: "border-color .15s, box-shadow .15s",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#8FE0B4"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(37,211,102,0.18)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#BDEFD1"; e.currentTarget.style.boxShadow = "none"; }}
+            >
+              <WhatsAppIcon size={20} /> Hubungi Call Center via WhatsApp
+            </a>
+          </>
+        )}
       </div>
 
       {/* Info note */}
@@ -89,7 +128,7 @@ export default function PromotorLogin() {
         <div style={{ display: "flex", gap: 10, padding: "13px 15px", borderRadius: 13, background: "#F6F7F9", border: "1px solid #ECEDF0" }}>
           <Info size={16} color="#9A9AA6" style={{ flexShrink: 0, marginTop: 1 }} />
           <span style={{ fontSize: 12.5, color: "#6B6B76", lineHeight: 1.55 }}>
-            Gunakan akun <b style={{ color: "#3A3A44" }}>Google (Gmail)</b> Anda. Belum bisa masuk? Hubungi <b style={{ color: "#3A3A44" }}>PIC Region</b> Anda untuk didaftarkan.
+            Gunakan akun <b style={{ color: "#3A3A44" }}>Google (Gmail)</b> Anda. Belum bisa masuk? Hubungi <b style={{ color: "#3A3A44" }}>PIC Region</b> Anda untuk didaftarkan{waLink ? ", atau tekan tombol WhatsApp di atas" : ""}.
           </span>
         </div>
       </div>

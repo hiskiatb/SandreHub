@@ -19,6 +19,8 @@ import {
 } from "lucide-react";
 import supabase from "../../lib/supabase";
 import { HubLogoLoader } from "../../components/HubLogoLoader";
+import { WhatsAppIcon } from "../../components/WhatsAppIcon";
+import { buildWaLink, fetchCallCenterSetting } from "../../lib/whatsapp";
 import { QRScannerSheet, AccessHelp, BottomSheet, Sheet, imeiValid, Spinner } from "./components";
 import {
   ymNow, ymLabel, pad2, fmtTime, fmtDateFull, fmtDateTime,
@@ -132,6 +134,19 @@ export default function PromotorApp() {
   const toastTimerRef = useRef(null);
 
   const [period, setPeriod] = useState(PERIOD_OPTIONS[0]);
+
+  // Tombol "Hubungi Call Center" (WhatsApp) — nomor & pesan pembuka diatur
+  // SPM Sumatera lewat dashboard (pts_call_center_setting), dipakai baik di
+  // layar Menunggu Aktivasi maupun di header aplikasi utama.
+  const [waLink, setWaLink] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    fetchCallCenterSetting().then((s) => {
+      if (!alive) return;
+      setWaLink(s ? buildWaLink(s.whatsapp_number, s.message_template) : null);
+    });
+    return () => { alive = false; };
+  }, []);
   // Toast error dibiarkan tampil jauh lebih lama (dan bisa diketuk untuk
   // ditutup) — sebelumnya 2.6 detik untuk semua tone, terlalu cepat untuk
   // sempat dibaca/screenshot saat error.
@@ -307,7 +322,7 @@ export default function PromotorApp() {
 
   /* ── Render ────────────────────────────────────────────────── */
   if (phase === "loading") return <Splash />;
-  if (phase === "pending") return <Pending email={email} period={period} setPeriod={setPeriod} onReload={loadPeriodAssignment} onSignOut={signOut} previewMode={previewMode} onBack={backToDashboard} />;
+  if (phase === "pending") return <Pending email={email} period={period} setPeriod={setPeriod} onReload={loadPeriodAssignment} onSignOut={signOut} previewMode={previewMode} onBack={backToDashboard} waLink={waLink} />;
 
   return (
     <AppShell
@@ -320,6 +335,7 @@ export default function PromotorApp() {
       history={history} loadHistory={loadHistory}
       onSignOut={signOut} flash={flash} toast={toast}
       previewMode={previewMode} onBack={backToDashboard}
+      waLink={waLink}
     />
   );
 }
@@ -336,7 +352,7 @@ function Splash() {
 }
 
 /* ══════════════════ Pending ══════════════════ */
-function Pending({ email, period, setPeriod, onReload, onSignOut, previewMode, onBack }) {
+function Pending({ email, period, setPeriod, onReload, onSignOut, previewMode, onBack, waLink }) {
   const [busy, setBusy] = useState(false);
   const reload = async () => { setBusy(true); await onReload(); setBusy(false); };
   return (
@@ -368,6 +384,12 @@ function Pending({ email, period, setPeriod, onReload, onSignOut, previewMode, o
         <button onClick={reload} disabled={busy} style={{ height: 54, borderRadius: 15, border: "none", background: C.brand, color: "#fff", fontFamily: FF, fontSize: 15.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, cursor: "pointer", opacity: busy ? 0.7 : 1 }}>
           {busy ? <Spinner size={19} color="#fff" /> : <RefreshCw size={18} />} Muat Ulang Status
         </button>
+        {waLink && (
+          <a href={waLink} target="_blank" rel="noopener noreferrer"
+            style={{ height: 50, borderRadius: 14, textDecoration: "none", background: "#E9FBF0", color: "#128C4A", border: "1.5px solid #BDEFD1", fontFamily: FF, fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            <WhatsAppIcon size={18} /> Hubungi Call Center via WhatsApp
+          </a>
+        )}
         {previewMode ? (
           <button onClick={onBack} style={{ height: 50, borderRadius: 14, border: `1px solid ${C.line}`, background: "transparent", color: C.mid, fontFamily: FF, fontSize: 14, fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}>
             <ChevronLeft size={16} /> Kembali ke Dashboard
@@ -384,7 +406,7 @@ function Pending({ email, period, setPeriod, onReload, onSignOut, previewMode, o
 
 /* ══════════════════ App Shell ══════════════════ */
 function AppShell(p) {
-  const { name, setName, email, promotorId, salesTarget, period, setPeriod, outlets, setOutlets, assignmentSrc, activeOutlet, setActiveOutlet, todaySales, loadTodaySales, geo, geoErr, refreshGeo, view, setView, history, loadHistory, onSignOut, flash, toast, previewMode, onBack } = p;
+  const { name, setName, email, promotorId, salesTarget, period, setPeriod, outlets, setOutlets, assignmentSrc, activeOutlet, setActiveOutlet, todaySales, loadTodaySales, geo, geoErr, refreshGeo, view, setView, history, loadHistory, onSignOut, flash, toast, previewMode, onBack, waLink } = p;
   // Semua aksi tulis dikunci saat Mode Pratinjau Admin — dipanggil di awal
   // tiap handler supaya tidak ada satupun jalur yang lolos.
   const guardPreview = () => { if (previewMode) { flash("Mode pratinjau — tidak bisa melakukan aksi ini.", "err"); return true; } return false; };
@@ -675,6 +697,12 @@ function AppShell(p) {
           </div>
         </button>
         <div style={{ display: "flex", gap: 8 }}>
+          {waLink && (
+            <a href={waLink} target="_blank" rel="noopener noreferrer" aria-label="Hubungi Call Center via WhatsApp"
+              style={{ height: 42, width: 42, borderRadius: 13, border: "1px solid #BDEFD1", background: "#E9FBF0", color: "#128C4A", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: C.sm, flexShrink: 0 }}>
+              <WhatsAppIcon size={19} />
+            </a>
+          )}
           <IconBtn onClick={() => setInboxOpen(true)} badge={incoming.length}><Inbox size={17} /></IconBtn>
           <IconBtn onClick={() => setView(view === "home" ? "history" : "home")} active={view === "history"}>{view === "home" ? <History size={17} /> : <ChevronLeft size={18} />}</IconBtn>
           {previewMode ? (

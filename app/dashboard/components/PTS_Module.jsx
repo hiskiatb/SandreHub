@@ -24,6 +24,7 @@ import {
   UploadCloud, Plus, Trash2, Save, Ban, BarChart3, ArrowLeftRight, Eye, Pencil,
 } from "lucide-react";
 import { passesRow, optionsFor, FilterTh, FilterMenu } from "./MFTS_TableFilter";
+import { WhatsAppIcon } from "../../../components/WhatsAppIcon";
 
 /* ── Design tokens (selaras dashboard SandraHub) ──────────────────────── */
 const mk = (d) => ({
@@ -324,6 +325,7 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
             { value: "preview",  label: "Ringkasan Aktivitas",      icon: <FileSpreadsheet size={14} /> },
             { value: "ga",       label: "Validasi GA",              icon: <UploadCloud size={14} /> },
             { value: "claims",   label: "Klaim Nomor",              icon: <ArrowLeftRight size={14} /> },
+            { value: "whatsapp", label: "Call Center WA",           icon: <Phone size={14} /> },
           ]} />
       </div>
 
@@ -332,6 +334,7 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
       {tab === "geofence" && <GeofenceSettings t={t} d={d} supabase={supabase} profile={effectiveProfile} outlets={outlets} isFullAdmin={isFullAdmin} onOutletsChanged={loadOutlets} />}
       {tab === "ga"       && <GaValidation    t={t} d={d} supabase={supabase} profile={effectiveProfile} isFullAdmin={isFullAdmin} outletByCode={outletByCode} period={period} />}
       {tab === "claims"   && <ClaimHistory    t={t} d={d} supabase={supabase} />}
+      {tab === "whatsapp" && <WhatsappSettings t={t} supabase={supabase} profile={effectiveProfile} isFullAdmin={isFullAdmin} />}
     </div>
   );
 }
@@ -2183,6 +2186,137 @@ function GeofenceSettings({ t, d, supabase, profile, outlets, isFullAdmin, onOut
         </table>
       </div>
       <div style={{ marginTop: 10, fontSize: 12, color: t.mid }}>Radius default saat ini (tanpa aturan lain yang cocok): <b>{effectiveDefault} meter</b>.</div>
+    </div>
+  );
+}
+
+/* ══════════════════════ CALL CENTER WHATSAPP ═══════════════════════════
+   Pengaturan singkat: nomor WhatsApp call center + template pesan pembuka
+   yang dipakai promotor lewat tombol "Hubungi Call Center via WhatsApp" di
+   layar login & aplikasi utama (app/promotor). Disimpan sebagai 1 baris
+   singleton di pts_call_center_setting. */
+function WhatsappSettings({ t, supabase, profile }) {
+  const [row, setRow] = useState(null);
+  const [number, setNumber] = useState("");
+  const [template, setTemplate] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [saved, setSaved] = useState(false);
+  // Verifikasi hak akses LANGSUNG dari server (RPC pts_call_center_admin(),
+  // fungsi yang sama persis dipakai RLS untuk mengizinkan/menolak simpan).
+  // Menu ini SENGAJA dipersempit: hanya role spm_sumatera persis yang boleh
+  // mengubah — beda dengan fitur lain (mis. Geofence) yang juga mengizinkan
+  // internal_ioh & salesforce_mgmt_sumatera. isFullAdmin dari props tidak
+  // dipakai di sini karena terlalu longgar untuk menu ini.
+  const [serverAdmin, setServerAdmin] = useState(null); // null=belum dicek, true/false=hasil RPC
+
+  useEffect(() => {
+    let alive = true;
+    supabase.rpc("pts_call_center_admin").then(({ data, error }) => {
+      if (!alive) return;
+      setServerAdmin(error ? false : !!data);
+    });
+    return () => { alive = false; };
+  }, [supabase]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await supabase.from("pts_call_center_setting").select("*").limit(1).maybeSingle();
+      setRow(data || null);
+      setNumber(data?.whatsapp_number || "");
+      setTemplate(data?.message_template || "");
+    } catch { setRow(null); } finally { setLoading(false); }
+  }, [supabase]);
+  useEffect(() => { load(); }, [load]);
+
+  const normalized = String(number || "").replace(/[^\d]/g, "").replace(/^0/, "62");
+  const previewLink = normalized ? `https://wa.me/${normalized}${template ? `?text=${encodeURIComponent(template)}` : ""}` : null;
+
+  // Boleh mencoba simpan hanya jika server MENGKONFIRMASI hak akses — bukan
+  // sekadar isFullAdmin di klien, supaya tidak ada lagi kejutan "berhasil
+  // di UI tapi ditolak RLS".
+  const canSave = serverAdmin === true;
+
+  const save = async () => {
+    setErr(""); setSaved(false);
+    if (!canSave) return setErr(`Menu ini khusus role SPM Sumatera${profile?.role ? ` (role login Anda saat ini: ${profile.role})` : ""}. Hubungi SPM Sumatera untuk melakukan perubahan.`);
+    if (!number.trim()) return setErr("Nomor WhatsApp wajib diisi.");
+    if (!/^\d{8,15}$/.test(normalized)) return setErr("Nomor tidak valid — gunakan format 08xx atau 62xx tanpa spasi/simbol.");
+    setBusy(true);
+    try {
+      const payload = { whatsapp_number: number.trim(), message_template: template.trim(), updated_by: profile?.id || null, updated_at: new Date().toISOString() };
+      const { error } = row?.id
+        ? await supabase.from("pts_call_center_setting").update(payload).eq("id", row.id)
+        : await supabase.from("pts_call_center_setting").insert(payload);
+      if (error) throw error;
+      setSaved(true);
+      await load();
+    } catch (e) {
+      const rls = /row-level security/i.test(e?.message || "");
+      setErr(rls
+        ? `Gagal menyimpan: akses ditolak sistem (RLS). Menu ini khusus role SPM Sumatera — akun Anda belum terdaftar dengan role tersebut.`
+        : "Gagal menyimpan: " + (e?.message || e));
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 16px", borderRadius: 12, background: "#E9FBF0", border: "1px solid #BDEFD1", marginBottom: 18 }}>
+        <WhatsAppIcon size={19} />
+        <span style={{ fontSize: 13.5, color: t.hi, fontWeight: 500 }}>
+          Nomor & pesan pembuka di sini akan tampil sebagai tombol <b>"Hubungi Call Center via WhatsApp"</b> di layar login promotor dan di halaman utama aplikasi promotor (SandraHub). Kosongkan nomor untuk menyembunyikan tombol tersebut.
+        </span>
+      </div>
+
+      {serverAdmin === false && (
+        <div style={{ marginBottom: 16, padding: "11px 14px", borderRadius: 10, background: t.amberBg, border: `1px solid ${t.amberBd}`, fontSize: 12.5, color: t.hi }}>
+          Anda melihat pengaturan ini sebagai read-only. Menu ini khusus role <b>SPM Sumatera</b>
+          {profile?.role ? <> — role login Anda saat ini: <b>{profile.role}</b></> : ""}.
+        </div>
+      )}
+
+      <div style={{ padding: 18, borderRadius: 14, background: t.card, border: `1px solid ${t.line}`, boxShadow: t.sm, opacity: serverAdmin === false ? .6 : 1, pointerEvents: serverAdmin === false ? "none" : "auto", maxWidth: 520 }}>
+        {loading ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 9, color: t.mid, fontSize: 13 }}><Loader2 size={16} className="spin" /> Memuat…</div>
+        ) : (
+          <>
+            <label style={{ display: "block", fontSize: 12.5, fontWeight: 700, color: t.mid, marginBottom: 6 }}>Nomor WhatsApp Call Center</label>
+            <input value={number} onChange={(e) => setNumber(e.target.value)} placeholder="mis. 081234567890"
+              style={{ width: "100%", height: 44, borderRadius: 10, border: `1px solid ${t.line}`, background: t.sub, color: t.hi, padding: "0 13px", fontSize: 14, fontWeight: 600, marginBottom: 16 }} />
+
+            <label style={{ display: "block", fontSize: 12.5, fontWeight: 700, color: t.mid, marginBottom: 6 }}>Template Pesan Pembuka</label>
+            <textarea value={template} onChange={(e) => setTemplate(e.target.value)} rows={3} placeholder="mis. Halo, saya promotor SandraHub ingin bertanya mengenai..."
+              style={{ width: "100%", borderRadius: 10, border: `1px solid ${t.line}`, background: t.sub, color: t.hi, padding: "11px 13px", fontSize: 13.5, fontFamily: "inherit", resize: "vertical", marginBottom: 14 }} />
+
+            {previewLink && (
+              <a href={previewLink} target="_blank" rel="noopener noreferrer"
+                style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: "#128C4A", textDecoration: "none", marginBottom: 14 }}>
+                <WhatsAppIcon size={15} /> Pratinjau &amp; uji coba tautan
+              </a>
+            )}
+
+            {err && (
+              <div style={{ marginBottom: 14, display: "flex", gap: 9, padding: "10px 13px", borderRadius: 10, background: t.redBg, border: `1px solid ${t.redBd}` }}>
+                <AlertTriangle size={15} color={t.red} style={{ flexShrink: 0, marginTop: 1 }} />
+                <span style={{ fontSize: 12.5, color: t.hi }}>{err}</span>
+              </div>
+            )}
+            {saved && !err && (
+              <div style={{ marginBottom: 14, display: "flex", gap: 9, padding: "10px 13px", borderRadius: 10, background: t.greenBg, border: `1px solid ${t.greenBd}` }}>
+                <CheckCircle2 size={15} color={t.green} style={{ flexShrink: 0, marginTop: 1 }} />
+                <span style={{ fontSize: 12.5, color: t.hi }}>Pengaturan tersimpan.</span>
+              </div>
+            )}
+
+            <button className="pts-btn" onClick={save} disabled={busy || serverAdmin === null}
+              style={{ background: "#25D366", color: "#fff", boxShadow: t.sm, opacity: (busy || serverAdmin === null) ? .7 : 1 }}>
+              {busy || serverAdmin === null ? <Loader2 size={15} className="spin" /> : <Save size={15} />} Simpan Pengaturan
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
