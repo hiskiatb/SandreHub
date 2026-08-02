@@ -499,13 +499,15 @@ function AppShell(p) {
   const actionSectionRef = useRef(null);
   const needsBrandFab = !!activeOutlet?.code3id;
   const fabReady = !!(activeOutlet && geo && (!needsBrandFab || brand));
+  // "Claim Penjualan" sekarang membuka LAYAR TERSENDIRI (bukan lagi disatukan
+  // dengan beranda) — beranda hanya menampilkan ringkasan capaian, sementara
+  // pemilihan outlet, gerbang lokasi, dan panel tagging pindah ke view
+  // "claim" yang baru. Kalau semua syarat sudah siap, scanner QR langsung
+  // dibuka begitu masuk layar tsb supaya tetap terasa 1 tap.
   const handleFabClick = () => {
     if (guardPreview()) return;
-    if (fabReady) { setSheet("qr"); return; }
-    actionSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    if (!activeOutlet) flash("Pilih outlet aktif dulu.", "err");
-    else if (!geo) flash("Aktifkan lokasi dulu.", "err");
-    else if (needsBrandFab && !brand) flash("Pilih brand (IM3/3ID) dulu.", "err");
+    setView("claim");
+    if (fabReady) setSheet("qr");
   };
 
   useEffect(() => { if (view === "history") loadHistory(); }, [view, loadHistory]);
@@ -645,7 +647,7 @@ function AppShell(p) {
   };
 
   return (
-    <div style={{ minHeight: "100svh", background: C.bg, color: C.hi, fontFamily: FF, paddingBottom: view === "home" ? "calc(env(safe-area-inset-bottom,0px) + 92px)" : "calc(env(safe-area-inset-bottom,0px) + 24px)" }}>
+    <div style={{ minHeight: "100svh", background: C.bg, color: C.hi, fontFamily: FF, paddingBottom: "calc(env(safe-area-inset-bottom,0px) + 24px)" }}>
       <style>{`@keyframes up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
         @keyframes pop{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
         @keyframes sheetup{from{transform:translateY(100%)}to{transform:none}}
@@ -674,7 +676,7 @@ function AppShell(p) {
         </button>
         <div style={{ display: "flex", gap: 8 }}>
           <IconBtn onClick={() => setInboxOpen(true)} badge={incoming.length}><Inbox size={17} /></IconBtn>
-          <IconBtn onClick={() => setView(view === "home" ? "history" : "home")} active={view === "history"}>{view === "history" ? <ChevronLeft size={18} /> : <History size={17} />}</IconBtn>
+          <IconBtn onClick={() => setView(view === "home" ? "history" : "home")} active={view === "history"}>{view === "home" ? <History size={17} /> : <ChevronLeft size={18} />}</IconBtn>
           {previewMode ? (
             <IconBtn onClick={onBack} label="Kembali"><ChevronLeft size={16} /></IconBtn>
           ) : (
@@ -684,56 +686,53 @@ function AppShell(p) {
       </div>
 
       <div style={{ padding: "8px 18px 0", maxWidth: 560, margin: "0 auto" }}>
-        {view === "history"
-          ? <HistoryView history={history} onDelete={(s) => setDelSale(s)} />
-          : (
-            <div style={{ animation: "up .32s cubic-bezier(.22,1,.36,1)" }}>
-              {/* Periode aktif */}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 10, flexWrap: "wrap" }}>
-                <div style={{ position: "relative" }}>
-                  <select value={period} onChange={(e) => setPeriod(e.target.value)}
-                    style={{ appearance: "none", height: 38, borderRadius: 12, border: `1px solid ${C.brand}55`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 13.5, fontWeight: 700, padding: "0 32px 0 34px", cursor: "pointer", boxShadow: C.sm }}>
-                    {periodOptions().map((pOpt) => <option key={pOpt} value={pOpt}>{ymLabel(pOpt)}</option>)}
-                  </select>
-                  <CalendarDays size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: C.brand, pointerEvents: "none" }} />
-                </div>
+        {view === "history" ? (
+          <HistoryView history={history} onDelete={(s) => setDelSale(s)} />
+        ) : view === "claim" ? (
+          <div ref={actionSectionRef} style={{ animation: "up .32s cubic-bezier(.22,1,.36,1)" }}>
+            <div style={{ marginBottom: 4 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.lo }}>Aktivitas Hari Ini</div>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 6, marginBottom: 14, flexWrap: "wrap" }}>
+                <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em", color: C.hi }}>Claim Penjualan</div>
                 <GeoChip geo={geo} err={geoErr} onFix={fixGeo} />
               </div>
-
-              {/* Kontribusi Anda bulan ini — hero card */}
-              <HeroCard summary={summary} target={salesTarget} periodLabel={ymLabel(ymNow())} />
-              <StatusDetailCard summary={summary} onSeeRejected={() => setView("history")} />
-
-              <div ref={actionSectionRef}>
-                {!activeOutlet ? (
-                  <OutletSelectPanel outlets={outlets} onPick={chooseOutlet} onRename={setRenamingOutlet} />
-                ) : !geo ? (
-                  <GeoGatePanel outlet={activeOutlet} err={geoErr} onFix={fixGeo} onChangeOutlet={() => setPickOutlet(true)} />
-                ) : (
-                  <TagPanel outlet={activeOutlet} sales={todaySales} soldCount={soldCount} busy={busy} geo={geo}
-                    brand={brand} onBrandChange={setBrand} assignmentSrc={assignmentSrc} onRename={setRenamingOutlet}
-                    onTag={() => { if (!guardPreview()) setSheet("qr"); }} onDelete={(s) => setDelSale(s)} onChangeOutlet={() => setPickOutlet(true)} multiOutlet={outlets.length > 1} />
-                )}
-              </div>
             </div>
-          )}
-      </div>
+            {!activeOutlet ? (
+              <OutletSelectPanel outlets={outlets} onPick={chooseOutlet} onRename={setRenamingOutlet} />
+            ) : !geo ? (
+              <GeoGatePanel outlet={activeOutlet} err={geoErr} onFix={fixGeo} onChangeOutlet={() => setPickOutlet(true)} />
+            ) : (
+              <TagPanel outlet={activeOutlet} sales={todaySales} soldCount={soldCount} busy={busy} geo={geo}
+                brand={brand} onBrandChange={setBrand} assignmentSrc={assignmentSrc} onRename={setRenamingOutlet}
+                onTag={() => { if (!guardPreview()) setSheet("qr"); }} onDelete={(s) => setDelSale(s)} onChangeOutlet={() => setPickOutlet(true)} multiOutlet={outlets.length > 1} />
+            )}
+          </div>
+        ) : (
+          <div style={{ animation: "up .32s cubic-bezier(.22,1,.36,1)" }}>
+            {/* Periode aktif */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 10, flexWrap: "wrap" }}>
+              <div style={{ position: "relative" }}>
+                <select value={period} onChange={(e) => setPeriod(e.target.value)}
+                  style={{ appearance: "none", height: 38, borderRadius: 12, border: `1px solid ${C.brand}55`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 13.5, fontWeight: 700, padding: "0 32px 0 34px", cursor: "pointer", boxShadow: C.sm }}>
+                  {periodOptions().map((pOpt) => <option key={pOpt} value={pOpt}>{ymLabel(pOpt)}</option>)}
+                </select>
+                <CalendarDays size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: C.brand, pointerEvents: "none" }} />
+              </div>
+              <GeoChip geo={geo} err={geoErr} onFix={fixGeo} />
+            </div>
 
-      {/* Tombol mengambang "Claim Penjualan" — akses 1 tap dari mana pun di
-          halaman home, tidak perlu scroll lewat kartu ringkasan dulu. */}
-      {view === "home" && (
-        <button onClick={handleFabClick} className="press" aria-label="Claim Penjualan"
-          style={{
-            position: "fixed", left: "50%", transform: "translateX(-50%)",
-            bottom: "calc(env(safe-area-inset-bottom,0px) + 18px)", zIndex: 60,
-            display: "flex", alignItems: "center", gap: 9, height: 54, padding: "0 24px",
-            borderRadius: 999, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 14.5, fontWeight: 800,
-            background: fabReady ? C.brand : C.hi, color: "#fff",
-            boxShadow: "0 10px 26px rgba(0,0,0,0.24)", maxWidth: "calc(100% - 36px)", whiteSpace: "nowrap",
-          }}>
-          <QrCode size={18} /> Claim Penjualan
-        </button>
-      )}
+            {/* Kontribusi Anda bulan ini — hero card */}
+            <HeroCard summary={summary} target={salesTarget} periodLabel={ymLabel(ymNow())} />
+            <StatusDetailCard summary={summary} onSeeRejected={() => setView("history")} />
+
+            {/* Ringkasan outlet — hanya pratinjau, tap untuk buka layar Claim
+                Penjualan (outlet, gerbang lokasi, dan tagging kini di layar
+                terpisah, tidak lagi menyatu dengan beranda). */}
+            <ClaimEntryCard outlet={activeOutlet} outletsCount={outlets.length} soldCount={soldCount}
+              onOpen={handleFabClick} />
+          </div>
+        )}
+      </div>
 
       {/* Konfirmasi Logout */}
       {confirmLogout && (
@@ -1006,13 +1005,54 @@ function AppShell(p) {
 }
 
 /* ── Panels ─────────────────────────────────────────────────── */
+/* Satu-satunya pintu masuk ke alur Claim Penjualan di beranda — menggantikan
+   tombol mengambang (FAB) lama supaya tidak ada dua elemen yang melakukan
+   hal yang sama. Tap di mana saja pada kartu ini membuka layar "Claim
+   Penjualan" (pilih outlet → pilih brand → scan QR). Saat outlet sudah
+   aktif, kartu juga menampilkan ringkasan singkat outlet & jumlah terjual
+   hari ini supaya tetap informatif tanpa perlu kartu terpisah. */
+function ClaimEntryCard({ outlet, outletsCount, soldCount, onOpen }) {
+  const displayName = outlet ? (outlet.name && outlet.name !== outlet.code ? outlet.name : outlet.code) : null;
+  return (
+    <button onClick={onOpen} className="press" style={{
+      width: "100%", textAlign: "left", border: "none", cursor: "pointer", fontFamily: FF,
+      background: C.grad, borderRadius: 22, padding: "18px 18px 18px 16px", marginBottom: 14,
+      boxShadow: "0 10px 26px rgba(237,28,36,0.24)", display: "flex", alignItems: "center", gap: 14,
+      position: "relative", overflow: "hidden",
+    }}>
+      <div style={{ position: "absolute", right: -26, top: -26, width: 120, height: 120, borderRadius: "50%", background: "rgba(255,255,255,0.09)" }} />
+      <div style={{
+        width: 50, height: 50, borderRadius: 15, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+        background: "rgba(255,255,255,0.18)", color: "#fff",
+      }}>
+        <QrCode size={23} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-0.02em", color: "#fff", display: "flex", alignItems: "center", gap: 6 }}>
+          Claim Penjualan Anda <ChevronRight size={17} />
+        </div>
+        {outlet ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 5, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: "rgba(255,255,255,0.92)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 180 }}>{displayName}</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11.5, fontWeight: 700, color: "rgba(255,255,255,0.85)" }}>
+              <ShoppingBag size={11} /> {soldCount} terjual hari ini
+            </span>
+          </div>
+        ) : (
+          <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.85)", marginTop: 5, lineHeight: 1.4 }}>
+            {outletsCount > 0 ? `Pilih outlet, brand, lalu scan QR` : "Tunggu mapping outlet dari SPM Sumatera"}
+          </div>
+        )}
+      </div>
+    </button>
+  );
+}
+
 function OutletSelectPanel({ outlets, onPick, onRename }) {
   return (
     <div>
-      <div style={{ marginBottom: 18 }}>
-        <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.lo }}>Aktivitas Hari Ini</div>
-        <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-0.035em", color: C.hi, marginTop: 6 }}>Pilih outlet aktif</div>
-        <div style={{ fontSize: 13.5, color: C.mid, marginTop: 5, lineHeight: 1.5 }}>Pilih outlet tempat Anda bertugas hari ini sebelum mulai tagging.</div>
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 13.5, color: C.mid, lineHeight: 1.5 }}>Pilih outlet tempat Anda bertugas hari ini sebelum mulai tagging.</div>
       </div>
       <div style={{ background: C.card, borderRadius: 18, padding: 14, boxShadow: C.md }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.lo, margin: "2px 4px 12px" }}>
@@ -1295,15 +1335,20 @@ function StatusRow({ icon, label, sub, value, color, bold, indent, onClick }) {
     <Comp onClick={onClick} className={onClick ? "press" : undefined}
       style={{
         display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "8px 2px",
-        marginLeft: indent ? 22 : 0, border: "none", background: "transparent", textAlign: "left",
-        fontFamily: FF, cursor: onClick ? "pointer" : "default",
+        marginLeft: indent ? 22 : 0, maxWidth: indent ? `calc(100% - 22px)` : "100%",
+        border: "none", background: "transparent", textAlign: "left",
+        fontFamily: FF, cursor: onClick ? "pointer" : "default", boxSizing: "border-box",
       }}>
       <span style={{ color, flexShrink: 0, display: "flex" }}>{icon}</span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: bold ? 13.5 : 12.5, fontWeight: bold ? 800 : 600, color: C.hi }}>{label}</div>
-        {sub && <div style={{ fontSize: 10.5, color: C.mid, marginTop: 1 }}>{sub}</div>}
+      <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+        <div style={{ fontSize: bold ? 13.5 : 12.5, fontWeight: bold ? 800 : 600, color: C.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
+        {sub && <div style={{ fontSize: 10.5, color: C.mid, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>}
       </div>
-      <span style={{ fontSize: bold ? 18 : 15, fontWeight: 800, color, flexShrink: 0 }}>{value}</span>
+      <span style={{
+        fontSize: bold ? 18 : 15, fontWeight: 800, color, flexShrink: 0, flexGrow: 0,
+        minWidth: bold ? 30 : 26, textAlign: "right", fontVariantNumeric: "tabular-nums",
+        fontFeatureSettings: '"tnum"',
+      }}>{value}</span>
       {onClick && <ChevronRight size={14} color={C.lo} style={{ flexShrink: 0 }} />}
     </Comp>
   );
