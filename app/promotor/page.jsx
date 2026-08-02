@@ -141,7 +141,7 @@ export default function PromotorApp() {
   const previewMode = !!previewId;
   const backToDashboard = () => router.push("/dashboard");
   const [outlets, setOutlets] = useState([]);      // {code,id,branch,area,region,name}
-  const [assignmentSrc, setAssignmentSrc] = useState(null); // { sourcePeriod, carried } — mapping ini dari bulan mana
+  const [assignmentSrc, setAssignmentSrc] = useState(null); // { sourcePeriod, carried, mc } — mapping ini dari bulan mana
   const [activeOutlet, setActiveOutlet] = useState(null);
   const [todaySales, setTodaySales] = useState([]);
   const [view, setView] = useState("home");        // home | history
@@ -277,7 +277,7 @@ export default function PromotorApp() {
     const { data: asgAll } = await supabase.rpc("pts_effective_assignment", { p_period: period });
     const rows = (asgAll || []).filter((r) => r.promotor_id_ref === promotorId && r.status === "active");
     const active = rows.length > 0;
-    setAssignmentSrc(active ? { sourcePeriod: rows[0].source_period, carried: rows[0].is_carried_forward } : null);
+    setAssignmentSrc(active ? { sourcePeriod: rows[0].source_period, carried: rows[0].is_carried_forward, mc: rows[0].mc || null } : null);
 
     // "status" TIDAK disentuh di sini lagi — sejak sekarang artinya identitas
     // Aktif/Vacant/Pending yang dikelola admin (Roster Promotor), bukan lagi
@@ -827,7 +827,7 @@ function AppShell(p) {
       <div style={{ padding: "8px 18px 0", maxWidth: 560, margin: "0 auto" }}>
         {view === "history" ? (
           <HistoryView history={history} onDelete={(s) => setDelSale(s)} promotorId={promotorId}
-            period={statsPeriod} filter={historyFilter} onClearFilter={() => setHistoryFilter(null)} />
+            period={statsPeriod} filter={historyFilter} />
         ) : view === "claim" ? (
           <div ref={actionSectionRef} style={{ animation: "up .32s cubic-bezier(.22,1,.36,1)" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
@@ -846,11 +846,23 @@ function AppShell(p) {
           </div>
         ) : (
           <div style={{ animation: "up .32s cubic-bezier(.22,1,.36,1)" }}>
-            {/* Satu-satunya selector periode di beranda — mengontrol tampilan
+            {/* Kiri: info MC promotor (dari mapping assignment) — kanan:
+                satu-satunya selector periode di beranda, mengontrol tampilan
                 Kontribusi Anda (bukan outlet aktif untuk tagging, itu selalu
                 ikut bulan berjalan sesungguhnya). Bisa mundur ke bulan lalu
-                karena pencapaian bisa "pindah periode" mengikuti ga_dt. */}
+                karena pencapaian bisa "pindah periode" mengikuti ga_dt.
+                "Lokasi aktif" dihilangkan dari beranda — itu hanya relevan
+                saat benar-benar tagging di layar Claim Penjualan. */}
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 10, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                <div style={{ width: 30, height: 30, borderRadius: 10, background: C.card, border: `1px solid ${C.line}`, display: "flex", alignItems: "center", justifyContent: "center", color: C.mid, flexShrink: 0, boxShadow: C.sm }}>
+                  <MapPin size={13} />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>MC</div>
+                  <div style={{ fontSize: 12.5, fontWeight: 800, color: C.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 160, marginTop: 1 }}>{assignmentSrc?.mc || "—"}</div>
+                </div>
+              </div>
               <div style={{ position: "relative" }}>
                 <select value={statsPeriod} onChange={(e) => setStatsPeriod(e.target.value)}
                   style={{ appearance: "none", height: 38, borderRadius: 12, border: `1px solid ${C.brand}55`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 13.5, fontWeight: 700, padding: "0 30px 0 34px", cursor: "pointer", boxShadow: C.sm }}>
@@ -859,14 +871,13 @@ function AppShell(p) {
                 <CalendarDays size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: C.brand, pointerEvents: "none" }} />
                 <ChevronDown size={13} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: C.lo, pointerEvents: "none" }} />
               </div>
-              <GeoChip geo={geo} err={geoErr} onFix={fixGeo} />
             </div>
 
             {/* Kontribusi Anda — kartu flip: sisi depan ringkasan target,
                 sisi belakang rincian status pengajuan. Digabung jadi satu
                 kartu (bukan dua kartu terpisah selalu tampil) supaya Claim
                 Penjualan bisa naik lebih dekat ke jempol. */}
-            <ContributionCard summary={summary} target={salesTarget} periodLabel={ymLabel(statsPeriod)}
+            <ContributionCard summary={summary} target={salesTarget}
               outletBioTotal={outletBioTotal} onNavigateHistory={openHistory} outlets={outlets} />
 
             {/* Ringkasan outlet — hanya pratinjau, tap untuk buka layar Claim
@@ -1474,15 +1485,13 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
    dekat ke jempol). Animasi flip 3D cepat-tapi-mulus: kedua sisi memakai
    CSS Grid stacking (grid-area sama) supaya tinggi kontainer otomatis
    mengikuti sisi yang lebih tinggi tanpa perlu ukur manual via JS. */
-function ContributionCard({ summary, target, periodLabel, outletBioTotal, onNavigateHistory, outlets }) {
+function ContributionCard({ summary, target, outletBioTotal, onNavigateHistory, outlets }) {
   const [open, setOpen] = useState(false);
   const bio = summary?.bio ?? 0;
   const pct = target > 0 ? Math.min(100, Math.round((bio / target) * 100)) : 0;
-  const tier = pct >= 80 ? { color: PAL.teal, label: "Sudah dekat target!" }
-    : pct >= 40 ? { color: PAL.yellow, label: "Terus jalan, hampir separuh" }
-    : { color: PAL.pink, label: "Ayo mulai kejar target" };
-  const R = 46, CIRC = 2 * Math.PI * R;
-  const dash = pct <= 0 ? 0 : Math.max(CIRC * (pct / 100), 3);
+  const tier = pct >= 80 ? { color: PAL.teal, grad: `linear-gradient(90deg, ${PAL.yellow}, ${PAL.teal})`, label: "Sudah dekat target!" }
+    : pct >= 40 ? { color: PAL.yellow, grad: `linear-gradient(90deg, ${PAL.pink}, ${PAL.yellow})`, label: "Terus jalan, hampir separuh" }
+    : { color: PAL.pink, grad: `linear-gradient(90deg, ${PAL.red}, ${PAL.pink})`, label: "Ayo mulai kejar target" };
 
   // Kontribusi terhadap TOTAL pencapaian outlet (semua promotor di outlet
   // yang sama) — murni angka pembanding, dihitung live dari pts_sale,
@@ -1537,7 +1546,7 @@ function ContributionCard({ summary, target, periodLabel, outletBioTotal, onNavi
             <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
               <Sparkles size={13} color={PAL.yellow} style={{ flexShrink: 0 }} />
               <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.65)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                Kontribusi Anda · {periodLabel}
+                Kontribusi Anda
               </span>
             </div>
             <button onClick={() => setOpen(true)} className="press" style={{
@@ -1549,31 +1558,25 @@ function ContributionCard({ summary, target, periodLabel, outletBioTotal, onNavi
             </button>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-            <div style={{ position: "relative", width: 96, height: 96, flexShrink: 0 }}>
-              <svg viewBox="0 0 120 120" width="96" height="96" style={{ transform: "rotate(-90deg)", overflow: "visible" }}>
-                <circle cx="60" cy="60" r={R} fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="9" />
-                {dash > 0 && (
-                  <circle cx="60" cy="60" r={R} fill="none" stroke={tier.color} strokeWidth="9" strokeLinecap="round"
-                    strokeDasharray={`${dash} ${CIRC}`} style={{ transition: "stroke-dasharray .6s cubic-bezier(.22,1,.36,1)" }} />
-                )}
-              </svg>
-              <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-                <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff" }}>{pct}%</span>
-                <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 600, color: "rgba(255,255,255,0.55)" }}><Target size={9} /> target</span>
-              </div>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 32, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff" }}>{bio}</span>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>/ {target} RGU-GA Biometric</span>
             </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+              <Target size={11} color="rgba(255,255,255,0.5)" />
+              <span style={{ fontSize: 15, fontWeight: 800, color: tier.color }}>{pct}%</span>
+            </div>
+          </div>
 
-            <div style={{ flex: 1, minWidth: 150 }}>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff" }}>{bio}</span>
-                <span style={{ fontSize: 12.5, fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>/ {target} RGU-GA Biometric</span>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 4 }}>
-                <TrendingUp size={12} color={tier.color} />
-                <span style={{ fontSize: 12, fontWeight: 600, color: tier.color }}>{tier.label}</span>
-              </div>
-            </div>
+          {/* Progress target sebagai line bar bergradasi (bukan ring lagi) —
+              warna gradasinya berubah mengikuti tier capaian. */}
+          <div style={{ height: 10, borderRadius: 99, background: "rgba(255,255,255,0.14)", overflow: "hidden", marginTop: 10 }}>
+            <div style={{ height: "100%", width: `${pct}%`, minWidth: pct > 0 ? 10 : 0, borderRadius: 99, background: tier.grad, transition: "width .6s cubic-bezier(.22,1,.36,1)" }} />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 9 }}>
+            <TrendingUp size={12} color={tier.color} />
+            <span style={{ fontSize: 12, fontWeight: 600, color: tier.color }}>{tier.label}</span>
           </div>
 
           {/* Total pencapaian RGU-GA Biometric SELURUH outlet Anda (semua
@@ -1736,68 +1739,87 @@ function categoryOf(s) {
   if (st === "TIDAK_DITEMUKAN") return "notFound";
   return "pending";
 }
-const HISTORY_SECTIONS = [
-  { key: "validated", title: "Tervalidasi", icon: <CheckCircle2 size={13} />, color: C.green },
-  { key: "pending", title: "Dalam Pengajuan", icon: <Clock size={13} />, color: C.amber },
-  { key: "waitingOutlet", title: "Menunggu Mapping Outlet", icon: <Clock size={13} />, color: C.amber },
-  { key: "rejected", title: "Di Luar Jaringan Outlet", icon: <XCircle size={13} />, color: "#DC2626" },
-  { key: "notFound", title: "Tidak Ditemukan", icon: <HelpCircle size={13} />, color: C.mid },
+// Tab Riwayat — konsisten dengan kartu Kontribusi Anda di beranda, supaya
+// tap dari sana langsung mendarat di tab yang benar.
+const HISTORY_TABS = [
+  { key: "all", title: "Semua" },
+  { key: "validated", title: "Tervalidasi" },
+  { key: "pending", title: "Dalam Pengajuan" },
+  { key: "waitingOutlet", title: "Menunggu Outlet" },
+  { key: "rejected", title: "Di Luar Jaringan" },
+  { key: "notFound", title: "Tidak Ditemukan" },
 ];
 
-function HistoryView({ history, onDelete, promotorId, period, filter, onClearFilter }) {
+function HistoryView({ history, onDelete, promotorId, period, filter }) {
   const [detailSale, setDetailSale] = useState(null);
+  const [tab, setTab] = useState(filter?.key || "all");
+  const [bioFilter, setBioFilter] = useState(filter?.key === "validated" ? (filter.biometric === true ? "bio" : filter.biometric === false ? "reg" : "all") : "all");
+
+  // Kalau ada tap baru dari Kontribusi Anda (mis. ganti dari "Tervalidasi"
+  // ke "Menunggu Mapping Outlet") sementara sudah di layar ini, ikuti tab
+  // barunya.
+  useEffect(() => {
+    setTab(filter?.key || "all");
+    setBioFilter(filter?.key === "validated" ? (filter.biometric === true ? "bio" : filter.biometric === false ? "reg" : "all") : "all");
+  }, [filter]);
 
   // Sejalan dengan Kontribusi Anda di beranda: mengikuti credited_period
   // (bulan yang sama dengan selector "Lihat performa"), bukan tagged_at.
   const scoped = useMemo(() => (period ? history.filter((s) => s.credited_period === period) : history), [history, period]);
   const withCat = useMemo(() => scoped.map((s) => ({ ...s, _cat: categoryOf(s) })), [scoped]);
+
+  const counts = useMemo(() => {
+    const c = { all: withCat.length, validated: 0, pending: 0, waitingOutlet: 0, rejected: 0, notFound: 0 };
+    withCat.forEach((s) => { c[s._cat] = (c[s._cat] || 0) + 1; });
+    return c;
+  }, [withCat]);
+
   const visible = useMemo(() => {
-    let v = withCat;
-    if (filter?.key) {
-      v = v.filter((s) => s._cat === filter.key);
-      if (filter.biometric === true) v = v.filter((s) => s.biometric_status === "BIOMETRIC");
-      if (filter.biometric === false) v = v.filter((s) => s.biometric_status === "REGULAR");
+    let v = tab === "all" ? withCat : withCat.filter((s) => s._cat === tab);
+    if (tab === "validated" && bioFilter !== "all") {
+      v = v.filter((s) => s.biometric_status === (bioFilter === "bio" ? "BIOMETRIC" : "REGULAR"));
     }
     return v;
-  }, [withCat, filter]);
+  }, [withCat, tab, bioFilter]);
 
   return (
     <div style={{ animation: "up .3s ease" }}>
-      {filter?.key && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, padding: "8px 10px 8px 12px", borderRadius: 12, background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.18)" }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: C.blue, flex: 1, minWidth: 0 }}>Filter: {filter.label}</span>
-          <button onClick={onClearFilter} className="press" style={{ display: "flex", alignItems: "center", gap: 4, border: "none", background: "#fff", color: C.blue, borderRadius: 8, padding: "5px 9px", cursor: "pointer", fontFamily: FF, fontSize: 11, fontWeight: 700, flexShrink: 0 }}>
-            <X size={11} /> Lihat Semua
-          </button>
+      {/* Tab section — pengganti daftar bertumpuk sebelumnya, supaya
+          promotor bisa langsung lompat ke konteks yang diinginkan. */}
+      <div style={{ display: "flex", gap: 7, overflowX: "auto", paddingBottom: 4, marginBottom: tab === "validated" ? 10 : 14, WebkitOverflowScrolling: "touch" }}>
+        {HISTORY_TABS.filter((t) => t.key === "all" || counts[t.key] > 0).map((t) => {
+          const on = tab === t.key;
+          return (
+            <button key={t.key} onClick={() => { setTab(t.key); if (t.key !== "validated") setBioFilter("all"); }} className="press"
+              style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 13px", borderRadius: 99, border: `1px solid ${on ? C.brand : C.line}`, background: on ? C.brand : C.card, color: on ? "#fff" : C.hi, fontFamily: FF, fontSize: 12.5, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
+              {t.title}
+              <span style={{ fontSize: 10.5, fontWeight: 800, padding: "1px 6px", borderRadius: 99, background: on ? "rgba(255,255,255,0.22)" : C.sub, color: on ? "#fff" : C.mid }}>{counts[t.key] || 0}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {tab === "validated" && (
+        <div style={{ display: "flex", gap: 7, marginBottom: 14 }}>
+          {[["all", "Semua"], ["bio", "Biometric"], ["reg", "Non-Biometric"]].map(([k, label]) => {
+            const on = bioFilter === k;
+            return (
+              <button key={k} onClick={() => setBioFilter(k)} className="press"
+                style={{ height: 28, padding: "0 11px", borderRadius: 99, border: `1px solid ${on ? C.blue : C.line}`, background: on ? "rgba(37,99,235,0.1)" : C.card, color: on ? C.blue : C.mid, fontFamily: FF, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                {label}
+              </button>
+            );
+          })}
         </div>
       )}
 
       {visible.length === 0 ? (
         <div style={{ padding: "40px 20px", textAlign: "center", color: C.mid }}>
-          <History size={26} style={{ opacity: 0.5, marginBottom: 8 }} /><div style={{ fontSize: 13.5 }}>Belum ada aktivitas tercatat.</div>
-        </div>
-      ) : filter?.key ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {visible.map((s) => <HistoryRow key={s.id} s={s} promotorId={promotorId} onDelete={onDelete} onOpen={setDetailSale} />)}
+          <History size={26} style={{ opacity: 0.5, marginBottom: 8 }} /><div style={{ fontSize: 13.5 }}>Belum ada aktivitas untuk kategori ini.</div>
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          {HISTORY_SECTIONS.map((sec) => {
-            const rows = visible.filter((s) => s._cat === sec.key);
-            if (!rows.length) return null;
-            return (
-              <div key={sec.key}>
-                <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 9 }}>
-                  <span style={{ color: sec.color, display: "flex" }}>{sec.icon}</span>
-                  <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.mid }}>{sec.title}</span>
-                  <span style={{ fontSize: 10.5, fontWeight: 800, color: sec.color, background: sec.color + "1A", borderRadius: 99, padding: "1px 8px" }}>{rows.length}</span>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {rows.map((s) => <HistoryRow key={s.id} s={s} promotorId={promotorId} onDelete={onDelete} onOpen={setDetailSale} />)}
-                </div>
-              </div>
-            );
-          })}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {visible.map((s) => <HistoryRow key={s.id} s={s} promotorId={promotorId} onDelete={onDelete} onOpen={setDetailSale} />)}
         </div>
       )}
       {detailSale && <GaMatchDetailModal sale={detailSale} onClose={() => setDetailSale(null)} />}
