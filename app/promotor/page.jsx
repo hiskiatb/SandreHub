@@ -462,6 +462,13 @@ function AppShell(p) {
   const [editProfile, setEditProfile] = useState(false);   // edit nama sendiri
   const [renamingOutlet, setRenamingOutlet] = useState(null); // outlet yg sedang diganti namanya
 
+  /* Navigasi dari kartu Kontribusi Anda (sisi detail) ke Riwayat Pengajuan,
+     sudah dipisah ke konteks/section yang sesuai (mis. tap "RGU-GA
+     Biometric" → Riwayat langsung menampilkan hanya section tervalidasi
+     biometric). `null` = tampilkan semua section seperti biasa. */
+  const [historyFilter, setHistoryFilter] = useState(null);
+  const openHistory = (filter = null) => { setHistoryFilter(filter); setView("history"); };
+
   /* Ubah nama sendiri — hanya full_name, ID (promotor_id/user_id_3id) dikunci
      server-side (trigger) apapun yang dikirim dari sini. */
   const saveProfileName = async (val) => {
@@ -551,6 +558,23 @@ function AppShell(p) {
     setSummary({ total: rows.length, validated, bio, reg, pending, waitingOutlet, rejected, notFound });
   }, [promotorId, statsPeriod]);
   useEffect(() => { loadSummary(); }, [loadSummary]);
+
+  /* Total RGU-GA Biometric SELURUH outlet yang sedang dimapping ke promotor
+     ini (bukan cuma pengajuan miliknya sendiri) — murni angka pembanding,
+     TIDAK PERNAH disimpan ke database, hanya dihitung di sisi client dari
+     data pts_sale yang sudah ada (jadi otomatis ikut ter-refresh setiap kali
+     admin upload raw data GA baru, tanpa perlu logic tambahan apapun).
+     Dipakai untuk menunjukkan persentase kontribusi promotor terhadap total
+     pencapaian outlet-nya. */
+  const [outletBioTotal, setOutletBioTotal] = useState(null);
+  const loadOutletBioTotal = useCallback(async () => {
+    const outletIds = [...new Set(outlets.map((o) => o.id).filter(Boolean))];
+    if (!outletIds.length) { setOutletBioTotal(null); return; }
+    const { count } = await supabase.from("pts_sale").select("id", { count: "exact", head: true })
+      .eq("credited_period", statsPeriod).eq("biometric_status", "BIOMETRIC").in("credited_outlet_id", outletIds);
+    setOutletBioTotal(typeof count === "number" ? count : null);
+  }, [outlets, statsPeriod]);
+  useEffect(() => { loadOutletBioTotal(); }, [loadOutletBioTotal]);
 
   const decideTransfer = async (req, approve) => {
     if (guardPreview()) return;
@@ -789,7 +813,8 @@ function AppShell(p) {
 
       <div style={{ padding: "8px 18px 0", maxWidth: 560, margin: "0 auto" }}>
         {view === "history" ? (
-          <HistoryView history={history} onDelete={(s) => setDelSale(s)} promotorId={promotorId} />
+          <HistoryView history={history} onDelete={(s) => setDelSale(s)} promotorId={promotorId}
+            period={statsPeriod} filter={historyFilter} onClearFilter={() => setHistoryFilter(null)} />
         ) : view === "claim" ? (
           <div ref={actionSectionRef} style={{ animation: "up .32s cubic-bezier(.22,1,.36,1)" }}>
             <div style={{ marginBottom: 4 }}>
@@ -831,7 +856,8 @@ function AppShell(p) {
                 sisi belakang rincian status pengajuan. Digabung jadi satu
                 kartu (bukan dua kartu terpisah selalu tampil) supaya Claim
                 Penjualan bisa naik lebih dekat ke jempol. */}
-            <ContributionCard summary={summary} target={salesTarget} periodLabel={ymLabel(statsPeriod)} onSeeRejected={() => setView("history")} />
+            <ContributionCard summary={summary} target={salesTarget} periodLabel={ymLabel(statsPeriod)}
+              outletBioTotal={outletBioTotal} onNavigateHistory={openHistory} />
 
             {/* Ringkasan outlet — hanya pratinjau, tap untuk buka layar Claim
                 Penjualan (outlet, gerbang lokasi, dan tagging kini di layar
@@ -842,7 +868,7 @@ function AppShell(p) {
             {/* Navigasi sekunder — pindahan dari header (Riwayat & Call
                 Center) supaya header lebih ringkas dan kedua aksi ini lebih
                 mudah dijangkau di dekat area jempol. */}
-            <button onClick={() => setView("history")} className="press" style={{
+            <button onClick={() => openHistory(null)} className="press" style={{
               width: "100%", display: "flex", alignItems: "center", gap: 12, textAlign: "left",
               border: `1px solid ${C.line}`, background: C.card, borderRadius: 16, padding: "13px 14px",
               marginBottom: 10, cursor: "pointer", fontFamily: FF, boxShadow: C.sm,
@@ -1439,7 +1465,7 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
    dekat ke jempol). Animasi flip 3D cepat-tapi-mulus: kedua sisi memakai
    CSS Grid stacking (grid-area sama) supaya tinggi kontainer otomatis
    mengikuti sisi yang lebih tinggi tanpa perlu ukur manual via JS. */
-function ContributionCard({ summary, target, periodLabel, onSeeRejected }) {
+function ContributionCard({ summary, target, periodLabel, outletBioTotal, onNavigateHistory }) {
   const [open, setOpen] = useState(false);
   const bio = summary?.bio ?? 0;
   const pct = target > 0 ? Math.min(100, Math.round((bio / target) * 100)) : 0;
@@ -1449,33 +1475,60 @@ function ContributionCard({ summary, target, periodLabel, onSeeRejected }) {
   const R = 46, CIRC = 2 * Math.PI * R;
   const dash = pct <= 0 ? 0 : Math.max(CIRC * (pct / 100), 3);
 
-  const faceBase = { gridArea: "1/1", backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden", borderRadius: 22, boxShadow: C.md };
+  // Kontribusi terhadap TOTAL pencapaian outlet (semua promotor di outlet
+  // yang sama) — murni angka pembanding, dihitung live dari pts_sale,
+  // TIDAK disimpan ke database apapun. null = belum ada outlet/loading.
+  const sharePct = (outletBioTotal != null && outletBioTotal > 0) ? Math.round((bio / outletBioTotal) * 100) : null;
+
+  // Sisi depan & belakang boleh punya tinggi berbeda — kartu mengukur
+  // tinggi asli tiap sisi lalu meng-animasikan tinggi container mengikuti
+  // sisi yang sedang tampil, supaya tidak ada ruang kosong dipaksakan sama
+  // tinggi dengan sisi lain (beda dengan teknik CSS-grid-stack sebelumnya).
+  const frontRef = useRef(null);
+  const backRef = useRef(null);
+  const [frontH, setFrontH] = useState(null);
+  const [backH, setBackH] = useState(null);
+  useEffect(() => {
+    if (frontRef.current) setFrontH(frontRef.current.offsetHeight);
+    if (backRef.current) setBackH(backRef.current.offsetHeight);
+  }, [summary, bio, target, sharePct, open]);
+
+  const faceBase = { position: "absolute", inset: 0, backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden", borderRadius: 22, boxShadow: C.md };
+  const nav = (filter) => { if (onNavigateHistory) onNavigateHistory(filter); };
 
   return (
     <div style={{ marginBottom: 14, perspective: 1600 }}>
       <div style={{
-        position: "relative", display: "grid", transformStyle: "preserve-3d",
-        transition: "transform .46s cubic-bezier(.34,1,.4,1)",
+        position: "relative", transformStyle: "preserve-3d",
+        height: (open ? backH : frontH) ?? "auto",
+        transition: "transform .46s cubic-bezier(.34,1,.4,1), height .46s cubic-bezier(.34,1,.4,1)",
         transform: open ? "rotateY(180deg)" : "rotateY(0deg)",
       }}>
         {/* ── Depan: ringkasan target ── */}
-        <div style={{
-          ...faceBase, position: "relative", overflow: "hidden",
+        <div ref={frontRef} style={{
+          ...faceBase, overflow: "hidden",
           background: `linear-gradient(160deg, ${PAL.charcoal} 0%, #333335 100%)`,
-          padding: "18px 18px 16px", pointerEvents: open ? "none" : "auto",
+          padding: "16px 16px 15px", pointerEvents: open ? "none" : "auto",
         }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 14 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <Sparkles size={13} color={PAL.yellow} />
-              <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: "rgba(255,255,255,0.65)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 13 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+              <Sparkles size={13} color={PAL.yellow} style={{ flexShrink: 0 }} />
+              <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.65)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 Kontribusi Anda · {periodLabel}
               </span>
             </div>
+            <button onClick={() => setOpen(true)} className="press" style={{
+              display: "flex", alignItems: "center", gap: 4, border: "none", cursor: "pointer", flexShrink: 0,
+              background: "rgba(255,255,255,0.14)", color: "#fff", borderRadius: 10, padding: "7px 11px 7px 12px",
+              fontFamily: FF, fontSize: 11.5, fontWeight: 700,
+            }}>
+              Lihat Detail <ChevronRight size={13} />
+            </button>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
-            <div style={{ position: "relative", width: 108, height: 108, flexShrink: 0 }}>
-              <svg viewBox="0 0 120 120" width="108" height="108" style={{ transform: "rotate(-90deg)", overflow: "visible" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+            <div style={{ position: "relative", width: 96, height: 96, flexShrink: 0 }}>
+              <svg viewBox="0 0 120 120" width="96" height="96" style={{ transform: "rotate(-90deg)", overflow: "visible" }}>
                 <circle cx="60" cy="60" r={R} fill="none" stroke="rgba(255,255,255,0.14)" strokeWidth="9" />
                 {dash > 0 && (
                   <circle cx="60" cy="60" r={R} fill="none" stroke={tier.color} strokeWidth="9" strokeLinecap="round"
@@ -1483,15 +1536,15 @@ function ContributionCard({ summary, target, periodLabel, onSeeRejected }) {
                 )}
               </svg>
               <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-                <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff" }}>{pct}%</span>
-                <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 9.5, fontWeight: 600, color: "rgba(255,255,255,0.55)" }}><Target size={9} /> target</span>
+                <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff" }}>{pct}%</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 600, color: "rgba(255,255,255,0.55)" }}><Target size={9} /> target</span>
               </div>
             </div>
 
             <div style={{ flex: 1, minWidth: 150 }}>
               <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff" }}>{bio}</span>
-                <span style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>/ {target} RGU-GA Biometric</span>
+                <span style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff" }}>{bio}</span>
+                <span style={{ fontSize: 12.5, fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>/ {target} RGU-GA Biometric</span>
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 4 }}>
                 <TrendingUp size={12} color={tier.color} />
@@ -1500,21 +1553,30 @@ function ContributionCard({ summary, target, periodLabel, onSeeRejected }) {
             </div>
           </div>
 
-          <button onClick={() => setOpen(true)} className="press" style={{
-            display: "flex", alignItems: "center", gap: 5, marginTop: 15, border: "none", cursor: "pointer",
-            background: "rgba(255,255,255,0.12)", color: "#fff", borderRadius: 11, padding: "8px 13px 8px 14px",
-            fontFamily: FF, fontSize: 12.5, fontWeight: 700,
-          }}>
-            Lihat Detail <ChevronRight size={14} />
-          </button>
+          {/* Total pencapaian RGU-GA Biometric SELURUH outlet Anda (semua
+              promotor) + persentase kontribusi promotor ini terhadapnya —
+              angka pembanding saja, tidak pernah tersimpan ke database. */}
+          {sharePct != null && (
+            <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 13, padding: "9px 11px", borderRadius: 12, background: "rgba(255,255,255,0.08)" }}>
+              <div style={{ width: 30, height: 30, borderRadius: 9, background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color: PAL.teal }}>
+                <Store size={14} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 11.5, fontWeight: 700, color: "#fff" }}>{sharePct}% dari total outlet Anda</div>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.6)", marginTop: 1 }}>{bio} dari {outletBioTotal} RGU-GA Biometric seluruh outlet</div>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* ── Belakang: rincian status pengajuan ── */}
-        <div style={{
+        {/* ── Belakang: rincian status pengajuan — setiap baris bisa ditap
+            untuk langsung membuka Riwayat Pengajuan yang sudah difilter ke
+            konteks/section yang sesuai. ── */}
+        <div ref={backRef} style={{
           ...faceBase, transform: "rotateY(180deg)", background: C.card,
-          padding: "16px 16px 14px", pointerEvents: open ? "auto" : "none",
+          padding: "14px 15px 8px", pointerEvents: open ? "auto" : "none",
         }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Detail Status Pengajuan</div>
             <button onClick={() => setOpen(false)} className="press" aria-label="Tutup detail"
               style={{ display: "flex", alignItems: "center", gap: 4, border: "none", background: C.sub, color: C.mid, borderRadius: 9, padding: "5px 9px 5px 7px", cursor: "pointer", fontFamily: FF, fontSize: 11.5, fontWeight: 700 }}>
@@ -1522,33 +1584,27 @@ function ContributionCard({ summary, target, periodLabel, onSeeRejected }) {
             </button>
           </div>
 
-          {/* Progress target sebagai bar (bukan ring) — konsisten dengan
-              angka bio/target di sisi depan. */}
-          <div style={{ marginBottom: 12 }}>
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 6 }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: C.hi }}>Target RGU-GA Biometric</span>
-              <span style={{ fontSize: 12.5, fontWeight: 800, color: tier.color }}>{bio} / {target} · {pct}%</span>
-            </div>
-            <div style={{ height: 9, borderRadius: 99, background: C.sub, overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${pct}%`, borderRadius: 99, background: tier.color, transition: "width .6s cubic-bezier(.22,1,.36,1)" }} />
-            </div>
-          </div>
-
           {summary ? (
             <>
-              <StatusRow icon={<ListChecks size={15} />} label="Total Pengajuan" value={summary.total} color={C.hi} bold />
-              <div style={{ height: 1, background: C.lineSoft, margin: "4px 0" }} />
-              <StatusRow icon={<Clock size={15} />} label="Dalam Pengajuan" sub="Belum tercatat RGU-GA" value={summary.pending} color={C.amber} />
-              <StatusRow icon={<CheckCircle2 size={15} />} label="Total Tervalidasi" value={summary.validated} color={C.green} />
-              <StatusRow icon={<ScanFace size={15} />} label="RGU-GA Biometric" value={summary.bio} color="#2563EB" indent />
-              <StatusRow icon={<IdCard size={15} />} label="RGU-GA Non-Biometric" value={summary.reg} color={PAL.purple} indent />
+              <StatusRow icon={<ListChecks size={15} />} label="Total Pengajuan" value={summary.total} color={C.hi} bold onClick={summary.total > 0 ? () => nav(null) : undefined} />
+              <div style={{ height: 1, background: C.lineSoft, margin: "2px 0" }} />
+              <StatusRow icon={<Clock size={15} />} label="Dalam Pengajuan" sub="Belum tercatat RGU-GA" value={summary.pending} color={C.amber}
+                onClick={summary.pending > 0 ? () => nav({ key: "pending", label: "Dalam Pengajuan" }) : undefined} />
+              <StatusRow icon={<CheckCircle2 size={15} />} label="Total Tervalidasi" value={summary.validated} color={C.green}
+                onClick={summary.validated > 0 ? () => nav({ key: "validated", label: "Total Tervalidasi" }) : undefined} />
+              <StatusRow icon={<ScanFace size={15} />} label="RGU-GA Biometric" value={summary.bio} color="#2563EB" indent
+                onClick={summary.bio > 0 ? () => nav({ key: "validated", biometric: true, label: "RGU-GA Biometric" }) : undefined} />
+              <StatusRow icon={<IdCard size={15} />} label="RGU-GA Non-Biometric" value={summary.reg} color={PAL.purple} indent
+                onClick={summary.reg > 0 ? () => nav({ key: "validated", biometric: false, label: "RGU-GA Non-Biometric" }) : undefined} />
               {summary.waitingOutlet > 0 && (
-                <StatusRow icon={<Clock size={15} />} label="Menunggu Mapping Outlet" sub="Outlet dikenal, belum ada promotor termapping" value={summary.waitingOutlet} color={C.amber} />
+                <StatusRow icon={<Clock size={15} />} label="Menunggu Mapping Outlet" sub="Outlet dikenal, belum ada promotor termapping" value={summary.waitingOutlet} color={C.amber}
+                  onClick={() => nav({ key: "waitingOutlet", label: "Menunggu Mapping Outlet" })} />
               )}
               <StatusRow icon={<XCircle size={15} />} label="Di Luar Jaringan Outlet" sub="Outlet tidak dikenal sistem — tap untuk lihat" value={summary.rejected}
-                color="#DC2626" onClick={summary.rejected > 0 ? onSeeRejected : undefined} />
+                color="#DC2626" onClick={summary.rejected > 0 ? () => nav({ key: "rejected", label: "Di Luar Jaringan Outlet" }) : undefined} />
               {summary.notFound > 0 && (
-                <StatusRow icon={<HelpCircle size={15} />} label="Tidak Ditemukan di RGU-GA" sub="Sampai batas waktu, data GA tidak pernah cocok" value={summary.notFound} color={C.mid} />
+                <StatusRow icon={<HelpCircle size={15} />} label="Tidak Ditemukan di RGU-GA" sub="Sampai batas waktu, data GA tidak pernah cocok" value={summary.notFound} color={C.mid}
+                  onClick={() => nav({ key: "notFound", label: "Tidak Ditemukan di RGU-GA" })} />
               )}
             </>
           ) : (
@@ -1616,80 +1672,146 @@ function BrandChip({ brand }) {
   );
 }
 
-function HistoryView({ history, onDelete, promotorId }) {
+// Konteks/section Riwayat — konsisten dengan kartu Kontribusi Anda di
+// beranda, supaya tap dari sana langsung mendarat di section yang benar.
+function categoryOf(s) {
+  const st = s.ga_status;
+  if (st === "TERVALIDASI" || st === "TERVALIDASI_LUAR_AREA") return "validated";
+  if (st === "MENUNGGU_MAPPING_OUTLET") return "waitingOutlet";
+  if (st === "TIDAK_SESUAI_OUTLET") return "rejected";
+  if (st === "TIDAK_DITEMUKAN") return "notFound";
+  return "pending";
+}
+const HISTORY_SECTIONS = [
+  { key: "validated", title: "Tervalidasi", icon: <CheckCircle2 size={13} />, color: C.green },
+  { key: "pending", title: "Dalam Pengajuan", icon: <Clock size={13} />, color: C.amber },
+  { key: "waitingOutlet", title: "Menunggu Mapping Outlet", icon: <Clock size={13} />, color: C.amber },
+  { key: "rejected", title: "Di Luar Jaringan Outlet", icon: <XCircle size={13} />, color: "#DC2626" },
+  { key: "notFound", title: "Tidak Ditemukan", icon: <HelpCircle size={13} />, color: C.mid },
+];
+
+function HistoryView({ history, onDelete, promotorId, period, filter, onClearFilter }) {
   const [detailSale, setDetailSale] = useState(null);
+
+  // Sejalan dengan Kontribusi Anda di beranda: mengikuti credited_period
+  // (bulan yang sama dengan selector "Lihat performa"), bukan tagged_at.
+  const scoped = useMemo(() => (period ? history.filter((s) => s.credited_period === period) : history), [history, period]);
+  const withCat = useMemo(() => scoped.map((s) => ({ ...s, _cat: categoryOf(s) })), [scoped]);
+  const visible = useMemo(() => {
+    let v = withCat;
+    if (filter?.key) {
+      v = v.filter((s) => s._cat === filter.key);
+      if (filter.biometric === true) v = v.filter((s) => s.biometric_status === "BIOMETRIC");
+      if (filter.biometric === false) v = v.filter((s) => s.biometric_status === "REGULAR");
+    }
+    return v;
+  }, [withCat, filter]);
+
   return (
     <div style={{ animation: "up .3s ease" }}>
-      <h2 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", marginBottom: 14 }}>Riwayat Pengajuan Saya</h2>
-      {history.length === 0 ? (
-        <div className="card" style={{ padding: "40px 20px", textAlign: "center", color: C.mid }}>
+      <h2 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", marginBottom: filter?.key ? 10 : 14 }}>Riwayat Pengajuan Saya</h2>
+
+      {filter?.key && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, padding: "8px 10px 8px 12px", borderRadius: 12, background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.18)" }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: C.blue, flex: 1, minWidth: 0 }}>Filter: {filter.label}</span>
+          <button onClick={onClearFilter} className="press" style={{ display: "flex", alignItems: "center", gap: 4, border: "none", background: "#fff", color: C.blue, borderRadius: 8, padding: "5px 9px", cursor: "pointer", fontFamily: FF, fontSize: 11, fontWeight: 700, flexShrink: 0 }}>
+            <X size={11} /> Lihat Semua
+          </button>
+        </div>
+      )}
+
+      {visible.length === 0 ? (
+        <div style={{ padding: "40px 20px", textAlign: "center", color: C.mid }}>
           <History size={26} style={{ opacity: 0.5, marginBottom: 8 }} /><div style={{ fontSize: 13.5 }}>Belum ada aktivitas tercatat.</div>
         </div>
-      ) : (
+      ) : filter?.key ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {history.map((s) => {
-            const badge = gaBadge(s.ga_status);
-            // Pindah kredit — tampilkan info singkat kalau baris ini bukan
-            // lagi murni "diajukan dan diakui di outlet sendiri".
-            const movedAway = s.promotor_id === promotorId && s.credited_promotor_id && s.credited_promotor_id !== promotorId;
-            const gainedFromOther = s.credited_promotor_id === promotorId && s.promotor_id !== promotorId;
-            const movedOutletOnly = s.credited_transfer_type === "same_promotor_diff_outlet";
+          {visible.map((s) => <HistoryRow key={s.id} s={s} promotorId={promotorId} onDelete={onDelete} onOpen={setDetailSale} />)}
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+          {HISTORY_SECTIONS.map((sec) => {
+            const rows = visible.filter((s) => s._cat === sec.key);
+            if (!rows.length) return null;
             return (
-              <div key={s.id} onClick={() => setDetailSale(s)} role="button" tabIndex={0}
-                onKeyDown={(e) => { if (e.key === "Enter") setDetailSale(s); }} className="press" style={{
-                display: "block", width: "100%", textAlign: "left", border: "none", cursor: "pointer", fontFamily: FF,
-                background: C.card, borderRadius: 16, padding: 14, boxShadow: C.md,
-              }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
-                  <span style={{ width: 34, height: 34, borderRadius: 10, background: s.within_radius === false ? "rgba(37,99,235,0.1)" : "rgba(26,158,90,0.1)", color: s.within_radius === false ? C.blue : C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.within_radius === false ? <Radar size={16} /> : <Phone size={16} />}</span>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 14.5, fontWeight: 800, fontFamily: "monospace", color: C.hi }}>{s.phone_normalized}</span>
-                      {s.brand && <BrandChip brand={s.brand} />}
-                      {s.biometric_status === "BIOMETRIC" && (
-                        <span title="RGU-GA Biometric" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 99, background: "rgba(37,99,235,0.12)", color: "#2563EB" }}><ScanFace size={10} /> Biometric</span>
-                      )}
-                      {s.biometric_status === "REGULAR" && (
-                        <span title="RGU-GA Non-Biometric" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 99, background: PAL.purple + "22", color: PAL.purple }}><IdCard size={10} /> Non-Biometric</span>
-                      )}
-                    </div>
-                    {s.imei && <div style={{ fontSize: 10.5, fontFamily: "monospace", color: C.lo }}>IMEI {s.imei}</div>}
-                    <div style={{ fontSize: 11.5, color: C.lo, fontWeight: 500 }}>{fmtDateTime(s.tagged_at)}{s.within_radius === false ? " · di luar area" : ""}{s.credited_period ? ` · periode ${ymLabel(s.credited_period)}` : ""}</div>
-                  </div>
-                  <ChevronRight size={15} color={C.lo} style={{ flexShrink: 0 }} />
-                  {onDelete && (
-                    <button onClick={(e) => { e.stopPropagation(); onDelete(s); }} aria-label="Hapus" style={{ width: 30, height: 30, borderRadius: 9, border: "none", background: "rgba(220,38,38,0.08)", color: "#DC2626", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
-                      <Trash2 size={14} />
-                    </button>
-                  )}
+              <div key={sec.key}>
+                <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 9 }}>
+                  <span style={{ color: sec.color, display: "flex" }}>{sec.icon}</span>
+                  <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.mid }}>{sec.title}</span>
+                  <span style={{ fontSize: 10.5, fontWeight: 800, color: sec.color, background: sec.color + "1A", borderRadius: 99, padding: "1px 8px" }}>{rows.length}</span>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 9, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.03em", padding: "4px 9px", borderRadius: 99, background: badge.bg, color: badge.fg, whiteSpace: "nowrap" }}>{badge.label}</span>
-                  {movedAway && (
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: "#B45309" }}><ArrowLeftRight size={11} /> Dipindahkan ke promotor lain</span>
-                  )}
-                  {gainedFromOther && (
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: C.green }}><ArrowLeftRight size={11} /> Tambahan dari promotor lain</span>
-                  )}
-                  {movedOutletOnly && (
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: C.blue }}><ArrowLeftRight size={11} /> Pindah outlet</span>
-                  )}
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {rows.map((s) => <HistoryRow key={s.id} s={s} promotorId={promotorId} onDelete={onDelete} onOpen={setDetailSale} />)}
                 </div>
-                {s.ga_note && (
-                  <div style={{
-                    marginTop: 9, padding: "8px 10px", borderRadius: 10, lineHeight: 1.5, fontSize: 11.5,
-                    background: s.ga_status === "TIDAK_SESUAI_OUTLET" ? "rgba(220,38,38,0.08)" : "rgba(255,176,32,0.1)",
-                    color: s.ga_status === "TIDAK_SESUAI_OUTLET" ? "#DC2626" : C.amber,
-                  }}>
-                    {s.ga_note}
-                  </div>
-                )}
               </div>
             );
           })}
         </div>
       )}
       {detailSale && <GaMatchDetailModal sale={detailSale} onClose={() => setDetailSale(null)} />}
+    </div>
+  );
+}
+
+function HistoryRow({ s, promotorId, onDelete, onOpen }) {
+  const badge = gaBadge(s.ga_status);
+  // Pindah kredit — tampilkan info singkat kalau baris ini bukan lagi murni
+  // "diajukan dan diakui di outlet sendiri".
+  const movedAway = s.promotor_id === promotorId && s.credited_promotor_id && s.credited_promotor_id !== promotorId;
+  const gainedFromOther = s.credited_promotor_id === promotorId && s.promotor_id !== promotorId;
+  const movedOutletOnly = s.credited_transfer_type === "same_promotor_diff_outlet";
+  return (
+    <div onClick={() => onOpen(s)} role="button" tabIndex={0}
+      onKeyDown={(e) => { if (e.key === "Enter") onOpen(s); }} className="press" style={{
+      display: "block", width: "100%", textAlign: "left", border: "none", cursor: "pointer", fontFamily: FF,
+      background: C.card, borderRadius: 16, padding: 13, boxShadow: C.md,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+        <span style={{ width: 34, height: 34, borderRadius: 10, background: s.within_radius === false ? "rgba(37,99,235,0.1)" : "rgba(26,158,90,0.1)", color: s.within_radius === false ? C.blue : C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.within_radius === false ? <Radar size={16} /> : <Phone size={16} />}</span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 14.5, fontWeight: 800, fontFamily: "monospace", color: C.hi }}>{s.phone_normalized}</span>
+            {s.brand && <BrandChip brand={s.brand} />}
+            {s.biometric_status === "BIOMETRIC" && (
+              <span title="RGU-GA Biometric" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 99, background: "rgba(37,99,235,0.12)", color: "#2563EB" }}><ScanFace size={10} /> Biometric</span>
+            )}
+            {s.biometric_status === "REGULAR" && (
+              <span title="RGU-GA Non-Biometric" style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 800, padding: "2px 6px", borderRadius: 99, background: PAL.purple + "22", color: PAL.purple }}><IdCard size={10} /> Non-Biometric</span>
+            )}
+          </div>
+          {s.imei && <div style={{ fontSize: 10.5, fontFamily: "monospace", color: C.lo }}>IMEI {s.imei}</div>}
+          <div style={{ fontSize: 11.5, color: C.lo, fontWeight: 500 }}>{fmtDateTime(s.tagged_at)}{s.within_radius === false ? " · di luar area" : ""}{s.credited_period ? ` · periode ${ymLabel(s.credited_period)}` : ""}</div>
+        </div>
+        <ChevronRight size={15} color={C.lo} style={{ flexShrink: 0 }} />
+        {onDelete && (
+          <button onClick={(e) => { e.stopPropagation(); onDelete(s); }} aria-label="Hapus" style={{ width: 30, height: 30, borderRadius: 9, border: "none", background: "rgba(220,38,38,0.08)", color: "#DC2626", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+            <Trash2 size={14} />
+          </button>
+        )}
+      </div>
+      {(badge || movedAway || gainedFromOther || movedOutletOnly) && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 9, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.03em", padding: "4px 9px", borderRadius: 99, background: badge.bg, color: badge.fg, whiteSpace: "nowrap" }}>{badge.label}</span>
+          {movedAway && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: "#B45309" }}><ArrowLeftRight size={11} /> Dipindahkan ke promotor lain</span>
+          )}
+          {gainedFromOther && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: C.green }}><ArrowLeftRight size={11} /> Tambahan dari promotor lain</span>
+          )}
+          {movedOutletOnly && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: C.blue }}><ArrowLeftRight size={11} /> Pindah outlet</span>
+          )}
+        </div>
+      )}
+      {s.ga_note && (
+        <div style={{
+          marginTop: 9, padding: "8px 10px", borderRadius: 10, lineHeight: 1.5, fontSize: 11.5,
+          background: s.ga_status === "TIDAK_SESUAI_OUTLET" ? "rgba(220,38,38,0.08)" : "rgba(255,176,32,0.1)",
+          color: s.ga_status === "TIDAK_SESUAI_OUTLET" ? "#DC2626" : C.amber,
+        }}>
+          {s.ga_note}
+        </div>
+      )}
     </div>
   );
 }
