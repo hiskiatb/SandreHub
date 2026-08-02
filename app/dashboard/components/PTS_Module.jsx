@@ -1753,7 +1753,7 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
       const nd = new Date(y, mo, 1);
       const end = `${nd.getFullYear()}-${pad2(nd.getMonth() + 1)}-01`;
       const { data: sales } = await supabase.from("pts_sale")
-        .select("id,phone_normalized,imei,brand,email,promotor_id,outlet_id,region,lat,lng,tagged_at,raw_qr_value,distance_meters,within_radius,outside_confirmed_at,ga_status,biometric_status,ga_note")
+        .select("id,phone_normalized,brand,email,promotor_id,outlet_id,region,lat,lng,tagged_at,raw_qr_value,distance_meters,within_radius,outside_confirmed_at,ga_status,biometric_status,ga_note")
         .gte("tagged_at", start).lt("tagged_at", end).order("tagged_at", { ascending: false });
       const { data: pros } = await supabase.from("pts_promotor").select("id,email,full_name");
       const nameById = new Map((pros || []).map((p) => [p.id, p.full_name]));
@@ -1775,7 +1775,7 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
       if (geoF === "outside" && r.within_radius !== false) return false;
       if (gaF !== "all" && (r.ga_status || "BELUM_TERVALIDASI") !== gaF) return false;
       if (brandF !== "all" && r.brand !== brandF) return false;
-      if (s && !`${r.phone_normalized} ${r.imei} ${r.nama} ${r.email} ${r.outlet_code}`.toLowerCase().includes(s)) return false;
+      if (s && !`${r.phone_normalized} ${r.nama} ${r.email} ${r.outlet_code}`.toLowerCase().includes(s)) return false;
       return true;
     });
   }, [rows, q, geoF, gaF, brandF]);
@@ -1787,10 +1787,10 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
   }, [rows]);
 
   const download = () => {
-    const head = ["No", "Tanggal", "Jam", "MSISDN", "IMEI", "Brand", "Nama Promotor", "Email", "ID Outlet", "Branch", "Area", "Region", "Latitude", "Longitude", "Jarak ke Outlet (m)", "Dalam Radius?", "Status Validasi GA", "Biometric", "Catatan GA"];
-    const body = filtered.map((r, i) => [i + 1, fmtDate(r.tagged_at), fmtTime(r.tagged_at), r.phone_normalized, r.imei || "", r.brand || "", r.nama, r.email, r.outlet_code, r.branch, r.area, r.region, r.lat ?? "", r.lng ?? "", r.distance_meters ?? "", r.within_radius === false ? "Tidak" : "Ya", GA_STATUS_LABEL[r.ga_status] || r.ga_status, r.biometric_status || "", r.ga_note || ""]);
+    const head = ["No", "Tanggal", "Jam", "MSISDN", "Brand", "Nama Promotor", "Email", "ID Outlet", "Branch", "Area", "Region", "Latitude", "Longitude", "Jarak ke Outlet (m)", "Dalam Radius?", "Status Validasi GA", "Biometric", "Catatan GA"];
+    const body = filtered.map((r, i) => [i + 1, fmtDate(r.tagged_at), fmtTime(r.tagged_at), r.phone_normalized, r.brand || "", r.nama, r.email, r.outlet_code, r.branch, r.area, r.region, r.lat ?? "", r.lng ?? "", r.distance_meters ?? "", r.within_radius === false ? "Tidak" : "Ya", GA_STATUS_LABEL[r.ga_status] || r.ga_status, r.biometric_status || "", r.ga_note || ""]);
     const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
-    ws["!cols"] = [{ wch: 5 }, { wch: 12 }, { wch: 8 }, { wch: 16 }, { wch: 18 }, { wch: 8 }, { wch: 20 }, { wch: 26 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 20 }, { wch: 14 }, { wch: 34 }];
+    ws["!cols"] = [{ wch: 5 }, { wch: 12 }, { wch: 8 }, { wch: 16 }, { wch: 8 }, { wch: 20 }, { wch: 26 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 20 }, { wch: 14 }, { wch: 34 }];
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, `MSISDN ${period}`);
     XLSX.writeFile(wb, `PTS_MSISDN_${period}.xlsx`);
   };
@@ -1834,20 +1834,19 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
         <div style={{ overflow: "auto", maxHeight: 620 }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1440 }}>
             <thead>
-              <tr>{["No", "Tanggal", "Jam", "MSISDN", "IMEI", "Brand", "Promotor", "ID Outlet", "Branch", "Region", "Jarak (m)", "Lokasi", "Status GA", "Biometric"].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr>
+              <tr>{["No", "Tanggal", "Jam", "MSISDN", "Brand", "Promotor", "ID Outlet", "Branch", "Region", "Jarak (m)", "Lokasi", "Status GA", "Biometric"].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td className="pts-td" colSpan={14} style={{ textAlign: "center", padding: 40, color: t.mid }}><Loader2 size={20} className="spin" style={{ verticalAlign: "middle" }} /> Memuat…</td></tr>
+                <tr><td className="pts-td" colSpan={13} style={{ textAlign: "center", padding: 40, color: t.mid }}><Loader2 size={20} className="spin" style={{ verticalAlign: "middle" }} /> Memuat…</td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td className="pts-td" colSpan={14} style={{ textAlign: "center", padding: 44, color: t.mid }}><Phone size={24} style={{ opacity: .5, marginBottom: 8 }} /><br />Belum ada penjualan untuk {ymLabel(period)}.</td></tr>
+                <tr><td className="pts-td" colSpan={13} style={{ textAlign: "center", padding: 44, color: t.mid }}><Phone size={24} style={{ opacity: .5, marginBottom: 8 }} /><br />Belum ada penjualan untuk {ymLabel(period)}.</td></tr>
               ) : filtered.map((r, i) => (
                 <tr key={r.id} className="pts-row">
                   <td className="pts-td" style={{ color: t.mid }}>{i + 1}</td>
                   <td className="pts-td">{fmtDate(r.tagged_at)}</td>
                   <td className="pts-td" style={{ fontWeight: 600 }}>{fmtTime(r.tagged_at)}</td>
                   <td className="pts-td" style={{ fontFamily: "monospace", fontWeight: 700 }}>{r.phone_normalized}</td>
-                  <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 11.5, color: t.mid }}>{r.imei || "—"}</td>
                   <td className="pts-td">{r.brand ? <Chip t={t} tone={r.brand === "3ID" ? "blue" : "red"}>{r.brand}</Chip> : "—"}</td>
                   <td className="pts-td" style={{ fontWeight: 600 }}>{r.nama}</td>
                   <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 11.5 }}>{r.outlet_code || "—"}</td>

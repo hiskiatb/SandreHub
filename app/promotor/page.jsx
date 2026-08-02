@@ -21,7 +21,7 @@ import supabase from "../../lib/supabase";
 import { HubLogoLoader } from "../../components/HubLogoLoader";
 import { WhatsAppIcon } from "../../components/WhatsAppIcon";
 import { buildWaLink, fetchCallCenterSetting } from "../../lib/whatsapp";
-import { QRScannerSheet, AccessHelp, BottomSheet, Sheet, imeiValid, Spinner } from "./components";
+import { QRScannerSheet, AccessHelp, BottomSheet, Sheet, Spinner } from "./components";
 import {
   ymNow, ymLabel, pad2, fmtTime, fmtDateFull, fmtDateTime,
   normalizePhone, getPosition, checkGeoPermission,
@@ -452,7 +452,7 @@ function AppShell(p) {
   const [taken, setTaken] = useState(null);          // { phone, owner }
   const [selfClaim, setSelfClaim] = useState(null);  // { phone, sale } — nomor ini sudah di-claim SENDIRI di outlet lain
   const [moveBusy, setMoveBusy] = useState(false);
-  const [outsideConfirm, setOutsideConfirm] = useState(null); // { phone, imei, raw, distance, radius }
+  const [outsideConfirm, setOutsideConfirm] = useState(null); // { phone, raw, distance, radius }
   const [incoming, setIncoming] = useState([]);      // permintaan transfer masuk
   const [approveReq, setApproveReq] = useState(null);
   const [inboxOpen, setInboxOpen] = useState(false);
@@ -468,6 +468,11 @@ function AppShell(p) {
      biometric). `null` = tampilkan semua section seperti biasa. */
   const [historyFilter, setHistoryFilter] = useState(null);
   const openHistory = (filter = null) => { setHistoryFilter(filter); setView("history"); };
+
+  /* Kembali ke beranda — outlet yang tadi dipilih SENGAJA tidak diingat.
+     Begitu keluar dari layar Claim Penjualan, memilih outlet lagi lain kali
+     selalu diminta ulang (bukan otomatis terpilih dari sesi sebelumnya). */
+  const goHome = () => { setView("home"); setActiveOutlet(null); setBrand(null); };
 
   /* Ubah nama sendiri — hanya full_name, ID (promotor_id/user_id_3id) dikunci
      server-side (trigger) apapun yang dikirim dari sini. */
@@ -625,15 +630,15 @@ function AppShell(p) {
 
   const chooseOutlet = async (o) => { setActiveOutlet(o); setPickOutlet(false); await loadTodaySales(promotorId, o.id); };
 
-  /* Tag penjualan (QR) — via RPC pts_tag_sale (geofence-aware).
-     Payload tag sebenarnya "nomor|imei" — IMEI ikut disimpan per tagging. */
-  const tagSale = async (normalized, imei, raw, confirmOutside) => {
+  /* Tag penjualan (QR) — via RPC pts_tag_sale (geofence-aware). IMEI tidak
+     lagi diminta maupun dikirim sama sekali — tidak perlu disimpan. */
+  const tagSale = async (normalized, raw, confirmOutside) => {
     if (!activeOutlet?.id) throw new Error("Outlet aktif tidak ditemukan, pilih ulang outlet.");
     if (activeOutlet.code3id && !brand) throw new Error("Pilih brand (IM3/3ID) untuk pencapaian di outlet ini terlebih dulu.");
     const { data, error } = await supabase.rpc("pts_tag_sale", {
       p_phone: normalized, p_session: null, p_outlet: activeOutlet.id,
       p_lat: geo?.lat ?? null, p_lng: geo?.lng ?? null, p_raw: String(raw),
-      p_confirm_outside: confirmOutside, p_imei: imei || null,
+      p_confirm_outside: confirmOutside, p_imei: null,
       p_brand: activeOutlet.code3id ? brand : null,
     });
     if (error) throw error;
@@ -651,30 +656,29 @@ function AppShell(p) {
     return e.code ? `${msg} (${e.code})` : msg;
   };
 
-  const onQR = async ({ phone, imei, raw }) => {
+  const onQR = async ({ phone, raw }) => {
     setSheet(null);
     if (guardPreview()) return;
     try {
       const { normalized, valid } = normalizePhone(phone);
       if (!valid) { flash(`Nomor tidak valid: ${normalized || phone}`, "err"); return; }
-      if (!imeiValid(imei)) { flash("IMEI belum valid, periksa lagi.", "err"); return; }
       if (!activeOutlet) { flash("Pilih outlet aktif terlebih dulu.", "err"); return; }
       let g = geo;
       if (!g) { g = await refreshGeo(); if (!g) { setGeoHelp(true); return; } }
       setBusy(true);
-      const data = await tagSale(normalized, imei, raw, false);
-      await handleTagResult(data, normalized, imei, raw);
+      const data = await tagSale(normalized, raw, false);
+      await handleTagResult(data, normalized, raw);
     } catch (e) { flash("Gagal menyimpan: " + describeError(e, "onQR"), "err"); setBusy(false); }
   };
 
-  const handleTagResult = async (data, normalized, imei, raw) => {
+  const handleTagResult = async (data, normalized, raw) => {
     const st = data?.status;
     if (st === "ok") { await loadTodaySales(promotorId, activeOutlet.id); loadSummary(); setBusy(false); playSuccessTone(); setSuccess({ msisdn: normalized, at: new Date().toISOString(), brand: data?.brand || null }); return; }
     if (st === "self") { setBusy(false); setSelfClaim({ phone: normalized, sale: data?.sale || null }); return; }
     if (st === "taken" || st === "taken_race") { setBusy(false); setTaken({ phone: normalized, owner: data?.owner || null }); return; }
     if (st === "outside_radius") {
       setBusy(false);
-      setOutsideConfirm({ phone: normalized, imei, raw, distance: data?.distance_meters, radius: data?.radius_meters });
+      setOutsideConfirm({ phone: normalized, raw, distance: data?.distance_meters, radius: data?.radius_meters });
       return;
     }
     if (st === "geo_required") { setBusy(false); flash("Lokasi diperlukan untuk claim di outlet ini. Aktifkan lokasi lalu coba lagi.", "err"); setGeoHelp(true); return; }
@@ -689,8 +693,8 @@ function AppShell(p) {
     if (guardPreview()) return;
     setBusy(true);
     try {
-      const data = await tagSale(c.phone, c.imei, c.raw, true);
-      await handleTagResult(data, c.phone, c.imei, c.raw);
+      const data = await tagSale(c.phone, c.raw, true);
+      await handleTagResult(data, c.phone, c.raw);
     } catch (e) { flash("Gagal menyimpan: " + describeError(e, "confirmOutsideTag"), "err"); setBusy(false); }
   };
 
@@ -780,26 +784,35 @@ function AppShell(p) {
         </div>
       )}
 
-      {/* Header */}
+      {/* Header — pada sub-screen (claim/history) menampilkan JUDUL LAYAR,
+          bukan lagi mengulang "Selamat datang / Nama" (itu cukup di beranda
+          saja, supaya tidak terasa berulang & lebih jelas konteksnya). */}
       <div style={{ padding: `${previewMode ? "10px" : "calc(env(safe-area-inset-top,0px) + 16px)"} 18px 12px`, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: previewMode ? 34 : 0, background: "linear-gradient(180deg,rgba(244,245,247,0.92) 70%,rgba(244,245,247,0))", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", zIndex: 5, maxWidth: 560, margin: "0 auto" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
           {view !== "home" ? (
-            <IconBtn onClick={() => setView("home")} aria-label="Kembali ke beranda"><ChevronLeft size={18} /></IconBtn>
+            <>
+              <IconBtn onClick={goHome} aria-label="Kembali ke beranda"><ChevronLeft size={18} /></IconBtn>
+              <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: C.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {view === "claim" ? "Claim Penjualan" : "Riwayat Pengajuan"}
+              </span>
+            </>
           ) : (
-            <div style={{ width: 40, height: 40, borderRadius: 13, flexShrink: 0, background: C.grad, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, boxShadow: "0 6px 16px rgba(237,28,36,0.24)" }}>{initial}</div>
+            <>
+              <div style={{ width: 40, height: 40, borderRadius: 13, flexShrink: 0, background: C.grad, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, boxShadow: "0 6px 16px rgba(237,28,36,0.24)" }}>{initial}</div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12, color: C.mid, fontWeight: 600, letterSpacing: "0.02em" }}>Selamat datang</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0, marginTop: 1 }}>
+                  <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 150, color: C.hi }}>{displayName}</span>
+                  {!previewMode && (
+                    <button className="press" onClick={() => setEditProfile(true)} aria-label="Edit profil"
+                      style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, borderRadius: 8, border: `1px solid ${C.line}`, background: C.card, color: C.mid, cursor: "pointer", flexShrink: 0, boxShadow: C.sm }}>
+                      <Pencil size={11} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </>
           )}
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 12, color: C.mid, fontWeight: 600, letterSpacing: "0.02em" }}>Selamat datang</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0, marginTop: 1 }}>
-              <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 150, color: C.hi }}>{displayName}</span>
-              {!previewMode && (
-                <button className="press" onClick={() => setEditProfile(true)} aria-label="Edit profil"
-                  style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, borderRadius: 8, border: `1px solid ${C.line}`, background: C.card, color: C.mid, cursor: "pointer", flexShrink: 0, boxShadow: C.sm }}>
-                  <Pencil size={11} />
-                </button>
-              )}
-            </div>
-          </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
           <IconBtn onClick={() => setInboxOpen(true)} badge={incoming.length + notifications.filter((n) => !n.read_at).length}><Inbox size={17} /></IconBtn>
@@ -817,12 +830,9 @@ function AppShell(p) {
             period={statsPeriod} filter={historyFilter} onClearFilter={() => setHistoryFilter(null)} />
         ) : view === "claim" ? (
           <div ref={actionSectionRef} style={{ animation: "up .32s cubic-bezier(.22,1,.36,1)" }}>
-            <div style={{ marginBottom: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
               <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.lo }}>Aktivitas Hari Ini</div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 6, marginBottom: 14, flexWrap: "wrap" }}>
-                <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.03em", color: C.hi }}>Claim Penjualan</div>
-                <GeoChip geo={geo} err={geoErr} onFix={fixGeo} />
-              </div>
+              <GeoChip geo={geo} err={geoErr} onFix={fixGeo} />
             </div>
             {!activeOutlet ? (
               <OutletSelectPanel outlets={outlets} onPick={chooseOutlet} onRename={setRenamingOutlet} />
@@ -857,7 +867,7 @@ function AppShell(p) {
                 kartu (bukan dua kartu terpisah selalu tampil) supaya Claim
                 Penjualan bisa naik lebih dekat ke jempol. */}
             <ContributionCard summary={summary} target={salesTarget} periodLabel={ymLabel(statsPeriod)}
-              outletBioTotal={outletBioTotal} onNavigateHistory={openHistory} />
+              outletBioTotal={outletBioTotal} onNavigateHistory={openHistory} outlets={outlets} />
 
             {/* Ringkasan outlet — hanya pratinjau, tap untuk buka layar Claim
                 Penjualan (outlet, gerbang lokasi, dan tagging kini di layar
@@ -1435,7 +1445,6 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
                     <span style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 700, color: C.hi }}>{s.phone_normalized}</span>
                     {s.brand && <BrandChip brand={s.brand} />}
                   </div>
-                  {s.imei && <div style={{ fontSize: 10.5, fontFamily: "monospace", color: C.lo }}>IMEI {s.imei}</div>}
                 </div>
                 <span style={{ fontSize: 12, color: C.mid, fontWeight: 500 }}>{fmtTime(s.tagged_at)}</span>
                 <button className="press" onClick={() => onDelete(s)} disabled={busy} aria-label="Hapus"
@@ -1465,7 +1474,7 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
    dekat ke jempol). Animasi flip 3D cepat-tapi-mulus: kedua sisi memakai
    CSS Grid stacking (grid-area sama) supaya tinggi kontainer otomatis
    mengikuti sisi yang lebih tinggi tanpa perlu ukur manual via JS. */
-function ContributionCard({ summary, target, periodLabel, outletBioTotal, onNavigateHistory }) {
+function ContributionCard({ summary, target, periodLabel, outletBioTotal, onNavigateHistory, outlets }) {
   const [open, setOpen] = useState(false);
   const bio = summary?.bio ?? 0;
   const pct = target > 0 ? Math.min(100, Math.round((bio / target) * 100)) : 0;
@@ -1601,6 +1610,37 @@ function ContributionCard({ summary, target, periodLabel, outletBioTotal, onNavi
           ) : (
             <div style={{ fontSize: 12.5, color: C.mid, padding: "10px 2px" }}>Memuat ringkasan…</div>
           )}
+
+          {/* Outlet Anda — SELALU ditampilkan walau belum ada data pengajuan
+              sama sekali di periode ini, supaya promotor tetap tahu persis
+              outlet mana saja yang sedang dimapping ke dirinya. */}
+          {outlets && outlets.length > 0 && (
+            <div style={{ marginTop: summary?.total ? 12 : 4 }}>
+              <div style={{ height: 1, background: C.lineSoft, margin: "2px 0 10px" }} />
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 9 }}>
+                <Store size={12} color={C.lo} />
+                <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.lo }}>Outlet Anda ({outlets.length})</span>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                {outlets.map((o) => {
+                  const oname = o.name && o.name !== o.code ? o.name : o.code;
+                  return (
+                    <div key={o.code} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 9px", borderRadius: 12, background: C.sub }}>
+                      <div style={{ width: 30, height: 30, borderRadius: 9, background: "#fff", color: C.brand, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: C.sm }}><Store size={13} /></div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 800, color: C.hi, letterSpacing: "-0.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{oname}</div>
+                        <div style={{ display: "flex", gap: 5, marginTop: 3, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 9, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: BRAND.IM3.soft, color: BRAND.IM3.ink }}>IM3 {o.code}</span>
+                          {o.code3id && <span style={{ fontSize: 9, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: BRAND["3ID"].soft, color: BRAND["3ID"].ink }}>3ID {o.code3id}</span>}
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 10.5, color: C.mid, textAlign: "right", flexShrink: 0, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{[o.branch, o.area].filter(Boolean).join(" · ") || "—"}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -1700,8 +1740,6 @@ function HistoryView({ history, onDelete, promotorId, period, filter, onClearFil
 
   return (
     <div style={{ animation: "up .3s ease" }}>
-      <h2 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", marginBottom: filter?.key ? 10 : 14 }}>Riwayat Pengajuan Saya</h2>
-
       {filter?.key && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, padding: "8px 10px 8px 12px", borderRadius: 12, background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.18)" }}>
           <span style={{ fontSize: 12, fontWeight: 700, color: C.blue, flex: 1, minWidth: 0 }}>Filter: {filter.label}</span>

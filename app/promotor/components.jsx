@@ -12,18 +12,15 @@ function extractPhone(raw) {
   return normalizePhone(m ? m[0] : digits);
 }
 
-// Format tag sebenarnya: "08xxxxxxxxxx|xxxxxxxxxxxxxxx" — nomor & IMEI
-// dipisah "|". Jika tidak ada "|" (kartu lama / QR tanpa IMEI), IMEI dibiarkan
-// kosong dan wajib diisi manual sebelum lanjut.
+// Payload QR bisa berisi "08xxxxxxxxxx|xxxxxxxxxxxxxxx" (kartu lama yang
+// masih menyertakan IMEI setelah "|") — bagian setelah "|" diabaikan
+// sepenuhnya, IMEI tidak lagi dipakai/disimpan sama sekali.
 export function parseTagPayload(raw) {
   const str = String(raw ?? "");
   const i = str.indexOf("|");
   const phonePart = i >= 0 ? str.slice(0, i) : str;
-  const imeiPart = i >= 0 ? str.slice(i + 1) : "";
-  return { phone: extractPhone(phonePart), imei: imeiPart.replace(/\D/g, "") };
+  return { phone: extractPhone(phonePart) };
 }
-
-export const imeiValid = (v) => /^\d{6,20}$/.test(String(v || "").replace(/\D/g, ""));
 
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 
@@ -265,12 +262,10 @@ export function QRScannerSheet({ onDetect, onClose }) {
   const [err, setErr] = useState("");
   const [manual, setManual] = useState(false);
   const [manualVal, setManualVal] = useState("");
-  const [manualImei, setManualImei] = useState("");
   const [scanning, setScanning] = useState(false);
   const [tries, setTries] = useState(0);
   const [detected, setDetected] = useState(false);
   const [numVal, setNumVal] = useState("");
-  const [imeiVal, setImeiVal] = useState("");
   const [localErr, setLocalErr] = useState("");
   const editedRef = useRef(false);
   const lastRawRef = useRef("");
@@ -281,11 +276,11 @@ export function QRScannerSheet({ onDetect, onClose }) {
     streamRef.current = null;
   }, []);
 
-  const finish = useCallback((phone, imei, raw) => {
+  const finish = useCallback((phone, raw) => {
     if (doneRef.current) return;
     doneRef.current = true;
     stop();
-    onDetectRef.current?.({ phone, imei, raw });
+    onDetectRef.current?.({ phone, raw });
   }, [stop]);
 
   // Inisialisasi: muat jsQR → nyalakan kamera → live tracking kotak QR
@@ -293,7 +288,7 @@ export function QRScannerSheet({ onDetect, onClose }) {
     let alive = true;
     doneRef.current = false;
     lastRawRef.current = "";
-    setErr(""); setScanning(false); setDetected(false); setNumVal(""); setImeiVal("");
+    setErr(""); setScanning(false); setDetected(false); setNumVal("");
 
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
       setErr("Kamera perlu koneksi HTTPS. Gunakan input manual."); setManual(true); return;
@@ -348,14 +343,13 @@ export function QRScannerSheet({ onDetect, onClose }) {
             }
             if (code && code.data && String(code.data).trim()) {
               lastSeen = ts; setDetected(true);
-              // QR berganti (scan QR berikutnya) → perbarui nomor & IMEI ke QR terakhir
+              // QR berganti (scan QR berikutnya) → perbarui nomor ke QR terakhir
               if (code.data !== lastRawRef.current) {
                 lastRawRef.current = code.data;
                 editedRef.current = false;
                 setLocalErr("");
                 const parsed = parseTagPayload(code.data);
                 setNumVal(parsed.phone.normalized);
-                setImeiVal(parsed.imei);
               }
             } else if (ts - lastSeen > 500) {
               setDetected(false);
@@ -373,25 +367,23 @@ export function QRScannerSheet({ onDetect, onClose }) {
 
   const close = () => { stop(); onClose(); };
   const manualPhoneCheck = normalizePhone(manualVal);
-  const manualOk = manualPhoneCheck.valid && imeiValid(manualImei);
+  const manualOk = manualPhoneCheck.valid;
   // Tombol TIDAK di-disable — sebuah <button disabled> yang tersentuh di
   // mobile tidak memberi respons apapun (tidak ada event sama sekali), yang
   // dari sisi pengguna terlihat sama persis dengan "glitch". Selalu bisa
   // diketuk; kalau memang belum valid, tampilkan alasannya secara eksplisit.
   const submitManual = () => {
     if (!manualPhoneCheck.valid) { setLocalErr("Nomor HP belum valid, periksa lagi."); return; }
-    if (!imeiValid(manualImei)) { setLocalErr("IMEI belum valid, periksa lagi."); return; }
     setLocalErr("");
-    finish(manualPhoneCheck.normalized, manualImei.replace(/\D/g, ""), manualVal.trim());
+    finish(manualPhoneCheck.normalized, manualVal.trim());
   };
-  const retryCam = () => { stop(); setManual(false); setErr(""); setLocalErr(""); editedRef.current = false; setNumVal(""); setImeiVal(""); setTries((n) => n + 1); };
+  const retryCam = () => { stop(); setManual(false); setErr(""); setLocalErr(""); editedRef.current = false; setNumVal(""); setTries((n) => n + 1); };
   const numCheck = normalizePhone(numVal);
-  const scanOk = numCheck.valid && imeiValid(imeiVal);
+  const scanOk = numCheck.valid;
   const proceed = () => {
     if (!numCheck.valid) { setLocalErr("Nomor HP belum valid, periksa lagi."); return; }
-    if (!imeiValid(imeiVal)) { setLocalErr("IMEI belum valid, periksa lagi."); return; }
     setLocalErr("");
-    finish(numCheck.normalized, imeiVal.replace(/\D/g, ""), lastRawRef.current || numVal);
+    finish(numCheck.normalized, lastRawRef.current || numVal);
   };
 
   return (
@@ -423,13 +415,8 @@ export function QRScannerSheet({ onDetect, onClose }) {
           <form onSubmit={(e) => { e.preventDefault(); submitManual(); }} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div>
               <label style={{ fontSize: 12.5, fontWeight: 600, color: "#61616C" }}>Nomor HP</label>
-              <input value={manualVal} onChange={(e) => setManualVal(e.target.value)} inputMode="numeric" enterKeyHint="next" placeholder="mis. 082617837181 atau 62826…"
+              <input value={manualVal} onChange={(e) => setManualVal(e.target.value)} inputMode="numeric" enterKeyHint="done" placeholder="mis. 082617837181 atau 62826…"
                 style={{ width: "100%", height: 52, borderRadius: 13, border: "1px solid #E4E5EA", background: "#F6F7F9", color: "#17181C", fontFamily: FF, fontSize: 16, padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
-            </div>
-            <div>
-              <label style={{ fontSize: 12.5, fontWeight: 600, color: "#61616C" }}>IMEI perangkat</label>
-              <input value={manualImei} onChange={(e) => setManualImei(e.target.value)} inputMode="numeric" enterKeyHint="done" placeholder="mis. 356789102345678"
-                style={{ width: "100%", height: 52, borderRadius: 13, border: `1px solid ${manualImei && !imeiValid(manualImei) ? "#F0C2C2" : "#E4E5EA"}`, background: "#F6F7F9", color: "#17181C", fontFamily: FF, fontSize: 16, padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
             </div>
             {localErr && <div style={{ fontSize: 12.5, fontWeight: 700, color: "#DC2626", textAlign: "center" }}>{localErr}</div>}
             <button type="submit" style={{ height: 52, borderRadius: 13, border: "none", background: manualOk ? "#ED1C24" : "#E4E5EA", color: manualOk ? "#fff" : "#A2A2AD", fontFamily: FF, fontSize: 15, fontWeight: 700, cursor: "pointer", transition: "background .15s", touchAction: "manipulation" }}>Lanjut</button>
@@ -444,18 +431,8 @@ export function QRScannerSheet({ onDetect, onClose }) {
                   ? <span style={{ color: "#1A9E5A", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}><Check size={13} /> valid</span>
                   : <span style={{ color: "#B7791F", fontWeight: 700 }}>· periksa lagi</span>)}
               </label>
-              <input value={numVal} onChange={(e) => { editedRef.current = true; setNumVal(e.target.value); }} inputMode="numeric" enterKeyHint="next" placeholder="menunggu QR…"
+              <input value={numVal} onChange={(e) => { editedRef.current = true; setNumVal(e.target.value); }} inputMode="numeric" enterKeyHint="done" placeholder="menunggu QR…"
                 style={{ width: "100%", height: 52, borderRadius: 13, border: `1px solid ${numVal && !numCheck.valid ? "#F0C2C2" : "#E4E5EA"}`, background: "#F6F7F9", color: "#17181C", fontFamily: FF, fontSize: 17, fontWeight: 700, letterSpacing: "0.01em", padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
-            </div>
-            <div>
-              <label style={{ fontSize: 12, fontWeight: 700, color: "#61616C", display: "flex", alignItems: "center", gap: 6 }}>
-                IMEI perangkat
-                {imeiVal && (imeiValid(imeiVal)
-                  ? <span style={{ color: "#1A9E5A", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 3 }}><Check size={13} /> valid</span>
-                  : <span style={{ color: "#B7791F", fontWeight: 700 }}>· periksa lagi</span>)}
-              </label>
-              <input value={imeiVal} onChange={(e) => setImeiVal(e.target.value)} inputMode="numeric" enterKeyHint="done" placeholder="belum terbaca dari QR — isi manual"
-                style={{ width: "100%", height: 52, borderRadius: 13, border: `1px solid ${imeiVal && !imeiValid(imeiVal) ? "#F0C2C2" : "#E4E5EA"}`, background: "#F6F7F9", color: "#17181C", fontFamily: FF, fontSize: 17, fontWeight: 700, letterSpacing: "0.01em", padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
             </div>
             {localErr && <div style={{ fontSize: 12.5, fontWeight: 700, color: "#DC2626", textAlign: "center" }}>{localErr}</div>}
             <button type="submit"
