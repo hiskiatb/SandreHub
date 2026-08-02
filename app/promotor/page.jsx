@@ -27,15 +27,39 @@ import {
   normalizePhone, getPosition, checkGeoPermission,
 } from "./ptsClient";
 
-// PTS baru mulai berjalan Agustus 2026 — sama persis dengan PERIOD_OPTIONS di
-// PTS_Module.jsx (admin). SEBELUMNYA dihitung dari tanggal hari ini (floor
-// Juli, jalan mundur dari bulan berjalan), yang berarti sebelum tanggal 1
-// Agustus tiba, promotor sama sekali tidak bisa memilih periode Agustus
-// walau mapping-nya sudah diupload admin — selalu jatuh ke "Menunggu
-// Aktivasi" untuk bulan lama yang kosong. Daftar tetap (bukan dihitung dari
-// "sekarang") supaya konsisten dengan data yang sungguh ada.
-const PERIOD_OPTIONS = ["2026-08", "2026-09"];
-function periodOptions() { return PERIOD_OPTIONS; }
+// PTS mulai berjalan Agustus 2026 — tidak ada mapping/data sebelum bulan
+// ini. Semua daftar periode di bawah dihitung OTOMATIS dari tanggal hari
+// ini, mulai dari Agustus 2026, sehingga begitu kalender berganti bulan
+// (mis. 1 September 2026), daftar & default periode ikut maju sendiri
+// tanpa perlu update kode setiap bulan.
+const PTS_FIRST_PERIOD = "2026-08"; // PTS mulai berjalan — tidak ada data sebelum ini
+
+// Bulan berjalan sekarang, tapi tidak pernah mundur sebelum PTS_FIRST_PERIOD
+// (menjaga perilaku lama: sebelum tanggal 1 Agustus 2026 tiba, aplikasi
+// tetap menganggap "sekarang" adalah Agustus 2026 — bukan bulan sebelumnya
+// yang belum ada datanya sama sekali).
+function currentPtsPeriod() {
+  const now = new Date();
+  const ym = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}`;
+  return ym < PTS_FIRST_PERIOD ? PTS_FIRST_PERIOD : ym;
+}
+
+// Daftar periode untuk mapping outlet/assignment (dipakai di layar Menunggu
+// Aktivasi) — Agustus 2026 s.d. bulan berjalan sekarang, urut naik. Dulu ini
+// daftar TETAP yang harus ditambah manual tiap bulan baru; sekarang otomatis
+// mengikuti tanggal hari ini.
+function periodOptions() {
+  const out = [];
+  const curYm = currentPtsPeriod();
+  let y = 2026, m = 8;
+  while (true) {
+    const ym = `${y}-${pad2(m)}`;
+    out.push(ym);
+    if (ym >= curYm) break;
+    m += 1; if (m > 12) { m = 1; y += 1; }
+  }
+  return out;
+}
 
 // Selector "Lihat performa" di beranda — TERPISAH dari `period` (yang
 // mengatur mapping outlet/assignment, dipakai di layar Menunggu Aktivasi).
@@ -43,7 +67,6 @@ function periodOptions() { return PERIOD_OPTIONS; }
 // karena pencapaian bisa "pindah periode" mengikuti ga_dt hasil validasi
 // GA — bukan lagi selalu bulan tagging. Rentang: 6 bulan ke belakang s.d.
 // bulan berjalan sekarang (tidak perlu bulan depan, belum ada datanya).
-const PTS_FIRST_PERIOD = "2026-08"; // PTS mulai berjalan — tidak ada data sebelum ini
 function statsPeriodOptions() {
   const out = [];
   const now = new Date();
@@ -152,7 +175,7 @@ export default function PromotorApp() {
   const [toast, setToast] = useState(null);
   const toastTimerRef = useRef(null);
 
-  const [period, setPeriod] = useState(PERIOD_OPTIONS[0]);
+  const [period, setPeriod] = useState(currentPtsPeriod);
   // Satu-satunya selector periode yang tampil di beranda — lihat komentar
   // statsPeriodOptions() di atas. Default bulan berjalan.
   const [statsPeriod, setStatsPeriod] = useState(statsPeriodOptions()[0]);
@@ -338,12 +361,25 @@ export default function PromotorApp() {
   // Termasuk nomor yang AWALNYA diajukan promotor lain tapi hasil validasi
   // GA memindahkan kreditnya ke promotor ini (credited_promotor_id) — bukan
   // cuma yang dia tagging sendiri (promotor_id).
+  //
+  // PENTING — sinkronisasi dengan Kontribusi Anda/Riwayat/Detail Outlet:
+  // sebelumnya query ini TIDAK difilter periode sama sekali, hanya diambil
+  // "80 baris terakhir lintas semua periode & outlet". Itu sumber utama
+  // ketidaksamaan angka antara Kontribusi Anda (loadSummary, difilter
+  // `credited_period = statsPeriod`) dengan Riwayat Pengajuan & Detail
+  // Pengajuan Outlet (dulu memakai daftar 80-baris ini apa adanya) — kalau
+  // promotor sudah punya >80 transaksi sepanjang masa, transaksi lama dari
+  // periode yang sedang dilihat bisa "terdesak keluar" dari 80 baris itu
+  // oleh transaksi periode lain yang lebih baru, sehingga jumlahnya beda.
+  // Sekarang query ini memakai FILTER PERIODE YANG SAMA PERSIS dengan
+  // loadSummary, supaya ketiga tampilan selalu menunjukkan data yang identik.
   const loadHistory = useCallback(async () => {
     const { data } = await supabase.from("pts_sale").select("*")
+      .eq("credited_period", statsPeriod)
       .or(`promotor_id.eq.${promotorId},credited_promotor_id.eq.${promotorId}`)
-      .order("tagged_at", { ascending: false }).limit(80);
+      .order("tagged_at", { ascending: false }).limit(500);
     setHistory(data || []);
-  }, [promotorId]);
+  }, [promotorId, statsPeriod]);
 
   const signOut = async () => { await supabase.auth.signOut(); router.replace("/promotor/login"); };
 
@@ -845,7 +881,8 @@ function AppShell(p) {
               <TagPanel outlet={activeOutlet} sales={todaySales} soldCount={soldCount} busy={busy} geo={geo}
                 brand={brand} onBrandChange={setBrand} assignmentSrc={assignmentSrc} onRename={setRenamingOutlet}
                 onTag={() => { if (!guardPreview()) setSheet("qr"); }} onDelete={(s) => setDelSale(s)} onChangeOutlet={() => setPickOutlet(true)} multiOutlet={outlets.length > 1}
-                detail={history.filter((s) => s.outlet_id === activeOutlet.id || s.credited_outlet_id === activeOutlet.id)} promotorId={promotorId} />
+                detail={history.filter((s) => (s.outlet_id === activeOutlet.id || s.credited_outlet_id === activeOutlet.id) && s.credited_period === statsPeriod)}
+                promotorId={promotorId} periodLabel={ymLabel(statsPeriod)} />
             )}
           </div>
         ) : (
@@ -1355,7 +1392,7 @@ function GeoGatePanel({ outlet, err, onFix, onChangeOutlet }) {
   );
 }
 
-function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOutlet, onRename, multiOutlet, brand, onBrandChange, assignmentSrc, detail, promotorId }) {
+function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOutlet, onRename, multiOutlet, brand, onBrandChange, assignmentSrc, detail, promotorId, periodLabel }) {
   const needsBrand = !!outlet.code3id;
   const canTag = !needsBrand || !!brand;
   // Tema warna aktif = brand yang dipilih. Outlet single-brand tidak punya
@@ -1459,14 +1496,21 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
       </p>
 
       {/* Detail Pengajuan Outlet Ini — pengganti "kartu terjual hari ini":
-          sekarang menampilkan SELURUH pengajuan MSISDN di outlet ini
-          (bukan cuma hari ini) beserta status pastinya — dalam pengajuan,
-          tervalidasi biometric/non-biometric, atau di luar jaringan
-          outlet — supaya promotor bisa langsung lihat progres di sini
-          tanpa harus pindah ke Riwayat. */}
+          sekarang menampilkan pengajuan MSISDN di outlet ini beserta status
+          pastinya — dalam pengajuan, tervalidasi biometric/non-biometric,
+          atau di luar jaringan outlet — supaya promotor bisa langsung lihat
+          progres di sini tanpa harus pindah ke Riwayat. Discoped ke PERIODE
+          YANG SAMA dengan "Lihat performa" di beranda (statsPeriod) —
+          sebelumnya daftar ini tidak difilter periode sama sekali sehingga
+          isinya bisa beda dengan Riwayat Pengajuan untuk outlet yang sama;
+          sekarang keduanya selalu sinkron karena membaca sumber data & label
+          periode yang identik. */}
       <div style={{ background: C.card, borderRadius: 20, padding: 16, marginBottom: 14, boxShadow: C.md }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.lo, marginBottom: 12 }}>
-          <ListChecks size={13} /> Detail Pengajuan Outlet Ini ({detailRows.length})
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.lo }}>
+            <ListChecks size={13} /> Detail Pengajuan Outlet Ini ({detailRows.length})
+          </div>
+          {periodLabel && <span style={{ fontSize: 10.5, fontWeight: 700, color: C.mid, background: C.sub, borderRadius: 99, padding: "3px 9px", flexShrink: 0 }}>{periodLabel}</span>}
         </div>
         {detailRows.length > 0 && (
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 13 }}>
