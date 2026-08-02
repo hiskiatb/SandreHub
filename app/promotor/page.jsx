@@ -1480,33 +1480,24 @@ function ContributionCard({ summary, target, periodLabel, outletBioTotal, onNavi
   // TIDAK disimpan ke database apapun. null = belum ada outlet/loading.
   const sharePct = (outletBioTotal != null && outletBioTotal > 0) ? Math.round((bio / outletBioTotal) * 100) : null;
 
-  // Sisi depan & belakang boleh punya tinggi berbeda — kartu mengukur
-  // tinggi asli tiap sisi lalu meng-animasikan tinggi container mengikuti
-  // sisi yang sedang tampil, supaya tidak ada ruang kosong dipaksakan sama
-  // tinggi dengan sisi lain (beda dengan teknik CSS-grid-stack sebelumnya).
-  const frontRef = useRef(null);
-  const backRef = useRef(null);
-  const [frontH, setFrontH] = useState(null);
-  const [backH, setBackH] = useState(null);
-  useEffect(() => {
-    if (frontRef.current) setFrontH(frontRef.current.offsetHeight);
-    if (backRef.current) setBackH(backRef.current.offsetHeight);
-  }, [summary, bio, target, sharePct, open]);
-
-  const faceBase = { position: "absolute", inset: 0, backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden", borderRadius: 22, boxShadow: C.md };
+  // Kedua sisi memakai CSS Grid stacking (grid-area sama) — tinggi
+  // kontainer otomatis mengikuti sisi yang lebih tinggi, tanpa perlu ukur
+  // manual via JS (pendekatan ukur-manual sebelumnya salah: karena face-nya
+  // position:absolute, offsetHeight yang terbaca justru tinggi parent,
+  // bukan tinggi konten asli — menyebabkan kartu kolaps/terpotong).
+  const faceBase = { gridArea: "1/1", backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden", borderRadius: 22, boxShadow: C.md };
   const nav = (filter) => { if (onNavigateHistory) onNavigateHistory(filter); };
 
   return (
     <div style={{ marginBottom: 14, perspective: 1600 }}>
       <div style={{
-        position: "relative", transformStyle: "preserve-3d",
-        height: (open ? backH : frontH) ?? "auto",
-        transition: "transform .46s cubic-bezier(.34,1,.4,1), height .46s cubic-bezier(.34,1,.4,1)",
+        position: "relative", display: "grid", transformStyle: "preserve-3d",
+        transition: "transform .46s cubic-bezier(.34,1,.4,1)",
         transform: open ? "rotateY(180deg)" : "rotateY(0deg)",
       }}>
         {/* ── Depan: ringkasan target ── */}
-        <div ref={frontRef} style={{
-          ...faceBase, overflow: "hidden",
+        <div style={{
+          ...faceBase, position: "relative", overflow: "hidden",
           background: `linear-gradient(160deg, ${PAL.charcoal} 0%, #333335 100%)`,
           padding: "16px 16px 15px", pointerEvents: open ? "none" : "auto",
         }}>
@@ -1572,9 +1563,9 @@ function ContributionCard({ summary, target, periodLabel, outletBioTotal, onNavi
         {/* ── Belakang: rincian status pengajuan — setiap baris bisa ditap
             untuk langsung membuka Riwayat Pengajuan yang sudah difilter ke
             konteks/section yang sesuai. ── */}
-        <div ref={backRef} style={{
+        <div style={{
           ...faceBase, transform: "rotateY(180deg)", background: C.card,
-          padding: "14px 15px 8px", pointerEvents: open ? "auto" : "none",
+          padding: "14px 15px 12px", pointerEvents: open ? "auto" : "none",
         }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Detail Status Pengajuan</div>
