@@ -1602,7 +1602,7 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
         {/* Selector periode dipindah ke sini (kanan judul "Outlet Aktif"),
             memakai `period` (periode assignment/mapping), bukan statsPeriod
             — ganti periode di sini ikut mengganti outlet yang termapping. */}
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Outlet Aktif</div>
           {period && onPeriodChange && (
             <div style={{ position: "relative" }}>
@@ -1615,6 +1615,7 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
             </div>
           )}
         </div>
+        <div style={{ height: 1, background: C.lineSoft || C.line, margin: "10px 0" }} />
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -1642,7 +1643,7 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
           {multiOutlet && (
             <button onClick={onChangeOutlet} className="press" style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, marginLeft: 12, height: 40, padding: "0 13px", borderRadius: 12, background: C.sub, border: `1px solid ${C.line}`, cursor: "pointer", fontFamily: FF }}>
               <RefreshCcw size={15} color={C.brand} />
-              <span style={{ fontSize: 12.5, fontWeight: 700, color: C.brand }}>Ganti</span>
+              <span style={{ fontSize: 12.5, fontWeight: 700, color: C.brand }}>Pindah Outlet</span>
             </button>
           )}
         </div>
@@ -1822,26 +1823,23 @@ function ContributionCard({ summary, target, outletBioTotal, onNavigateHistory, 
             </button>
           </div>
 
-          {/* Hero stat — persentase capaian jadi angka UTAMA yang paling
-              menonjol (bukan lagi angka bio/target kecil di atas dan %
-              mungil di kanan). Ikon Target diperbesar & diberi badge
-              lingkaran ber-tema warna tier supaya kontras & gampang dibaca
-              sekilas, sesuai palet identitas (PAL). */}
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <div style={{
-              width: 60, height: 60, borderRadius: 18, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
-              background: `${tier.color}26`, border: `1.5px solid ${tier.color}55`, color: tier.color,
-            }}>
-              <Target size={28} strokeWidth={2.2} />
-            </div>
+          {/* Hero stat — kiri: jumlah RGU-GA SP Biometric tervalidasi (angka
+              absolut, paling penting bagi promotor), kanan: persentase
+              capaian terhadap target. Tanpa ikon target, murni dua angka
+              besar berdampingan supaya cepat dibaca sekilas. */}
+          <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 14 }}>
             <div style={{ minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
-                <span style={{ fontSize: 44, fontWeight: 800, letterSpacing: "-0.04em", color: "#fff", lineHeight: 1 }}>{pct}</span>
-                <span style={{ fontSize: 22, fontWeight: 800, color: tier.color, letterSpacing: "-0.02em" }}>%</span>
+              <div style={{ fontSize: 44, fontWeight: 800, letterSpacing: "-0.04em", color: "#fff", lineHeight: 1 }}>{bio}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.68)", marginTop: 6 }}>
+                RGU-GA SP Biometric <span style={{ color: "#fff" }}>tervalidasi</span>
               </div>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.68)", marginTop: 2 }}>
-                <span style={{ color: "#fff" }}>{bio}</span> / {target} RGU-GA SP Biometric
+            </div>
+            <div style={{ textAlign: "right", flexShrink: 0 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 2, justifyContent: "flex-end" }}>
+                <span style={{ fontSize: 34, fontWeight: 800, letterSpacing: "-0.03em", color: tier.color, lineHeight: 1 }}>{pct}</span>
+                <span style={{ fontSize: 18, fontWeight: 800, color: tier.color, letterSpacing: "-0.02em" }}>%</span>
               </div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.68)", marginTop: 6 }}>dari target {target}</div>
             </div>
           </div>
 
