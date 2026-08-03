@@ -32,5 +32,25 @@ export const viewport = {
 };
 
 export default function PromotorLayout({ children }) {
-  return children;
+  return (
+    <>
+      {/* App Promotor cuma didesain untuk tema terang — tapi <body> global
+          (globals.css) ikut `prefers-color-scheme: dark` DAN `data-theme`
+          dari localStorage dashboard (bisa "dark" kalau admin pernah pakai
+          dashboard dalam mode gelap di HP/browser yang sama). Kalau device
+          promotor sedang dark mode, --background jadi hampir hitam
+          (#0A0A0B) — begitu overscroll/rubber-band atau ada celah render di
+          bawah konten (mis. halaman pendek), warna hitam itu yang terlihat,
+          kesannya app "tidak fullscreen". Paksa background terang + matikan
+          overscroll bounce SELAMA di /promotor, apapun tema device/dashboard.
+          Style ini otomatis lepas begitu keluar dari /promotor. */}
+      <style>{`
+        html, body {
+          background: #F4F5F7 !important;
+          overscroll-behavior-y: none;
+        }
+      `}</style>
+      {children}
+    </>
+  );
 }
