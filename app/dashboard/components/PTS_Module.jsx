@@ -136,6 +136,37 @@ function gaCategory(ga_status) {
   if (s === "TIDAK_DITEMUKAN") return "notfound";
   return "pending";
 }
+
+// Helper export generik (dipakai di semua tab Ringkasan Aktivitas) — satu
+// pasang tombol Export Excel + Export CSV dari data head/body yang sama,
+// supaya tiap tab tak perlu menulis ulang logika XLSX/CSV masing-masing.
+function downloadXlsx(head, body, sheetName, filename) {
+  const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  XLSX.writeFile(wb, filename);
+}
+function downloadCsv(head, body, filename) {
+  const csv = Papa.unparse([head, ...body]);
+  const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function ExportButtons({ t, disabled, onExcel, onCsv }) {
+  return (
+    <>
+      <button className="pts-btn" onClick={onExcel} disabled={disabled} style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}>
+        <Download size={15} /> Excel
+      </button>
+      <button className="pts-btn" onClick={onCsv} disabled={disabled} style={{ background: t.card, color: t.mid, border: `1px solid ${t.line}` }}>
+        <Download size={15} /> CSV
+      </button>
+    </>
+  );
+}
 const GEOFENCE_SCOPES = [
   { value: "global", label: "Global (semua outlet)" },
   { value: "region", label: "Per Region" },
@@ -536,7 +567,11 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
           // Field flat (string) supaya bisa langsung difilter ala-Excel di header
           // kolom (lihat FCOLS/MFTS_TableFilter) — bukan objek turunan terpisah.
           statusPromo: vacant ? "Vacant" : (hasRealEmail && p.effective_date ? "Aktif" : "Pending"),
-          statusMap: rows.length > 0 ? "Sudah ter-mapping" : "Belum ter-mapping",
+          // Nilai per-jumlah-outlet ("Belum ter-mapping", "1 outlet", "2
+          // outlet", dst) — bukan cuma biner "Sudah/Belum" — supaya filter
+          // ala-Excel di header kolom "Status Mapping" otomatis bisa
+          // mencentang per jumlah outlet spesifik (mis. cuma yang 2 outlet).
+          statusMap: rows.length > 0 ? `${rows.length} outlet` : "Belum ter-mapping",
           statusLogin: p.auth_user_id ? "Sudah login" : "Belum login",
         };
       });
@@ -580,7 +615,7 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
     let aktif = 0, vacant = 0, pending = 0, mapped = 0, unmapped = 0, loggedIn = 0, notLoggedIn = 0;
     filtered.forEach((r) => {
       if (r.statusPromo === "Aktif") aktif++; else if (r.statusPromo === "Vacant") vacant++; else pending++;
-      if (r.statusMap === "Sudah ter-mapping") mapped++; else unmapped++;
+      if (r.statusMap !== "Belum ter-mapping") mapped++; else unmapped++;
       if (r.statusLogin === "Sudah login") loggedIn++; else notLoggedIn++;
     });
     return { total: filtered.length, aktif, vacant, pending, mapped, unmapped, loggedIn, notLoggedIn };
@@ -1360,6 +1395,47 @@ function MappingEditModal({ t, supabase, profile, period, row, outletByCode, pic
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
+  // ── Sumber Region/Branch/MC — pakai master "MC / Cluster Mapping" (dgn
+  // carry-forward otomatis kalau bulan berjalan belum diupload) supaya
+  // konsisten dgn menu MC / Cluster Mapping, bukan lagi list hardcoded/
+  // free-text terpisah. ──────────────────────────────────────────────────
+  const [mcRows, setMcRows] = useState([]);
+  const [mcLoading, setMcLoading] = useState(true);
+  const [mcSourcePeriod, setMcSourcePeriod] = useState(null);
+  const [mcCarriedForward, setMcCarriedForward] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setMcLoading(true);
+      try {
+        const res = await fetch(`/api/mc-cluster?period=${encodeURIComponent(period)}&limit=5000`);
+        const json = await res.json();
+        if (!alive) return;
+        if (json.success) {
+          setMcRows(json.data || []);
+          setMcSourcePeriod(json.source_period || period);
+          setMcCarriedForward(!!json.is_carried_forward);
+        }
+      } catch { /* biarkan fallback free-text kalau gagal fetch */ }
+      finally { if (alive) setMcLoading(false); }
+    })();
+    return () => { alive = false; };
+  }, [period]);
+
+  const regionOptionsMc = Array.from(new Set(mcRows.map((r) => r.region).filter(Boolean))).sort();
+  const branchOptionsMc = Array.from(new Set(
+    mcRows.filter((r) => !region || r.region === region).map((r) => r.branch).filter(Boolean)
+  )).sort();
+  const mcOptionsMc = Array.from(new Set(
+    mcRows.filter((r) => (!region || r.region === region) && (!branch || r.branch === branch)).map((r) => r.mc).filter(Boolean)
+  )).sort();
+  // Kalau value yg sudah tersimpan di promotor ini tidak ada di master
+  // (mis. branch/MC lama yg sudah tidak berlaku), tetap tampilkan sbg opsi
+  // supaya tidak "hilang" secara diam-diam saat modal dibuka.
+  const regionSelectOptions = region && !regionOptionsMc.includes(region) ? [...regionOptionsMc, region] : regionOptionsMc;
+  const branchSelectOptions = branch && !branchOptionsMc.includes(branch) ? [...branchOptionsMc, branch] : branchOptionsMc;
+  const mcSelectOptions = mc && !mcOptionsMc.includes(mc) ? [...mcOptionsMc, mc] : mcOptionsMc;
+
   const setSlot = (i, patch) => setSlots((prev) => prev.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
   const clearSlot = (i) => setSlot(i, { name: "", category: "", im3: "", tid: "" });
 
@@ -1461,9 +1537,11 @@ function MappingEditModal({ t, supabase, profile, period, row, outletByCode, pic
             <div><label style={lbl}>No. HP</label><input style={inp} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="08xx" /></div>
             <div>
               <label style={lbl}>Region</label>
-              <select style={inp} value={region} onChange={(e) => setRegion(e.target.value)} disabled={!!picRegion}>
+              <select style={inp} value={region}
+                onChange={(e) => { setRegion(e.target.value); setBranch(""); setMc(""); }}
+                disabled={!!picRegion}>
                 <option value="">— pilih region —</option>
-                {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                {(regionSelectOptions.length ? regionSelectOptions : REGIONS).map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
             <div><label style={lbl}>Tanggal Efektif Bekerja</label><input style={inp} type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} /></div>
@@ -1481,9 +1559,31 @@ function MappingEditModal({ t, supabase, profile, period, row, outletByCode, pic
             <span style={{ fontSize: 12.5, color: t.hi }}>Ubah Branch/MC dan sampai 4 outlet langsung di sini — tidak perlu Excel. Kalau ID Outlet (IM3/3ID) belum ada, isi Nama Outlet saja; sistem otomatis pakai kode sementara sampai ID resminya dilengkapi.</span>
           </div>
 
+          {/* Branch/MC di bawah ini ditarik dari master menu "MC / Cluster
+              Mapping" (dgn carry-forward) supaya konsisten satu sumber data. */}
+          {mcCarriedForward && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 12px", borderRadius: 9, background: "rgba(217,119,6,0.10)", border: "1px solid rgba(217,119,6,0.25)", marginBottom: 12 }}>
+              <Info size={13} color="#D97706" style={{ flexShrink: 0 }} />
+              <span style={{ fontSize: 12, fontWeight: 600, color: "#D97706" }}>
+                Data MC / Cluster Mapping periode {period} belum diupload — pilihan Branch/MC di bawah memakai data terakhir dari {mcSourcePeriod}.
+              </span>
+            </div>
+          )}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 18 }}>
-            <div><label style={lbl}>Branch</label><input style={inp} value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="mis. Bandar Lampung" /></div>
-            <div><label style={lbl}>MC</label><input style={inp} value={mc} onChange={(e) => setMc(e.target.value)} placeholder="mis. MC-Lampung Selatan" /></div>
+            <div>
+              <label style={lbl}>Branch</label>
+              <select style={inp} value={branch} onChange={(e) => { setBranch(e.target.value); setMc(""); }} disabled={mcLoading}>
+                <option value="">— pilih branch —</option>
+                {branchSelectOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={lbl}>MC</label>
+              <select style={inp} value={mc} onChange={(e) => setMc(e.target.value)} disabled={mcLoading}>
+                <option value="">— pilih MC —</option>
+                {mcSelectOptions.map((m) => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </div>
           </div>
 
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: t.mid, marginBottom: 8 }}>
@@ -1766,9 +1866,18 @@ function PromotorDetailModal({ t, row, outletById, onClose }) {
   );
 }
 
-function LeaderboardPanel({ t, period, rows, onSelectRow }) {
+const LEADERBOARD_LEVELS = [
+  { value: "region", label: "Region", icon: <MapPin size={13} /> },
+  { value: "branch", label: "Branch", icon: <Store size={13} /> },
+  { value: "mc", label: "MC", icon: <Users size={13} /> },
+  { value: "promotor", label: "Promotor", icon: <UserCheck size={13} /> },
+  { value: "outlet", label: "Outlet", icon: <Store size={13} /> },
+];
+
+function LeaderboardPanel({ t, period, rows, outletByCode, onSelectRow }) {
   const [regionF, setRegionF] = useState("all");
   const [branchF, setBranchF] = useState("all");
+  const [level, setLevel] = useState("promotor");
 
   const regionOptions = useMemo(() => [...new Set(rows.map((r) => r.region).filter(Boolean))].sort(), [rows]);
   const branchOptions = useMemo(
@@ -1807,45 +1916,99 @@ function LeaderboardPanel({ t, period, rows, onSelectRow }) {
       g.promotor += 1;
     });
     return [...m.entries()]
-      .map(([name, g]) => {
+      .map(([name, g], i) => {
         const target = g.promotor * PROMOTOR_BIO_TARGET;
-        return { name, bio: g.bio, target, pct: target ? Math.round((g.bio / target) * 100) : 0 };
+        return { name, bio: g.bio, target, promotor: g.promotor, pct: target ? Math.round((g.bio / target) * 100) : 0 };
       })
-      .sort((a, b) => b.pct - a.pct || b.bio - a.bio);
+      .sort((a, b) => b.pct - a.pct || b.bio - a.bio)
+      .map((x, i) => ({ ...x, rank: i + 1 }));
   };
   const regionAgg = useMemo(() => buildLevelAgg((r) => r.region), [ranked]);
   const branchAgg = useMemo(() => buildLevelAgg((r) => r.branch), [ranked]);
   const mcAgg = useMemo(() => buildLevelAgg((r) => r.mc), [ranked]);
 
+  // Ranking level Outlet — agregat lintas promotor per outlet, sumber dari
+  // `byOutlet` (dibangun dari data klaim, bukan dari mapping assignment) —
+  // jumlah "promotor" di sini berarti jumlah promotor yang tercatat pernah
+  // mengajukan klaim di outlet tsb periode ini (dipakai sbg pembagi target,
+  // konsisten dgn cara hitung Region/Branch/MC di atas).
+  const outletAgg = useMemo(() => {
+    const m = new Map(); // outletId -> { bio, promotorIds:Set }
+    ranked.forEach((r) => {
+      r.byOutlet.forEach((v, outletId) => {
+        if (!m.has(outletId)) m.set(outletId, { bio: 0, promotorIds: new Set() });
+        const g = m.get(outletId);
+        g.bio += v.bio;
+        g.promotorIds.add(r.id);
+      });
+    });
+    return [...m.entries()]
+      .map(([outletId, g]) => {
+        const target = g.promotorIds.size * PROMOTOR_BIO_TARGET;
+        return { outletId, bio: g.bio, promotor: g.promotorIds.size, target, pct: target ? Math.round((g.bio / target) * 100) : 0 };
+      })
+      .sort((a, b) => b.pct - a.pct || b.bio - a.bio)
+      .map((x, i) => ({ ...x, rank: i + 1 }));
+  }, [ranked]);
+  const outletById = useMemo(() => {
+    const m = new Map();
+    outletByCode.forEach((o) => { if (o?.id) m.set(o.id, o); });
+    return m;
+  }, [outletByCode]);
+
   const hasFilter = regionF !== "all" || branchF !== "all";
+
+  const levelTable = useMemo(() => {
+    if (level === "promotor") {
+      return ranked.map((r) => ({ key: r.id, rank: r.rank, name: r.nama, sub: r.outlet, bio: r.bio, promotor: 1, target: PROMOTOR_BIO_TARGET, pct: Math.round((r.bio / PROMOTOR_BIO_TARGET) * 100), raw: r }));
+    }
+    if (level === "outlet") {
+      return outletAgg.map((o) => {
+        const outlet = outletById.get(o.outletId);
+        return { key: o.outletId, rank: o.rank, name: outlet?.name || outlet?.code || "Outlet tidak dikenal", sub: outlet?.branch || "", bio: o.bio, promotor: o.promotor, target: o.target, pct: o.pct, raw: null };
+      });
+    }
+    const agg = level === "region" ? regionAgg : level === "branch" ? branchAgg : mcAgg;
+    return agg.map((a) => ({ key: a.name, rank: a.rank, name: a.name, sub: `${a.promotor} promotor`, bio: a.bio, promotor: a.promotor, target: a.target, pct: a.pct, raw: null }));
+  }, [level, ranked, outletAgg, outletById, regionAgg, branchAgg, mcAgg]);
+
+  const levelLabel = LEADERBOARD_LEVELS.find((l) => l.value === level)?.label || "";
+
+  const exportLevel = () => {
+    const head = ["Rank", levelLabel, "Keterangan", "GA SP Biometric", "Target", "% Pencapaian"];
+    const body = levelTable.map((r) => [r.rank, r.name, r.sub, r.bio, r.target, `${r.pct}%`]);
+    return { head, body };
+  };
 
   return (
     <div>
-      {/* Filter khusus tab Leaderboard — tidak memengaruhi tab Ringkasan Promotor. */}
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 18 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: t.mid }}>
-          <Filter size={13} /> Filter
+      {/* Filter wilayah — khusus tab Leaderboard, tidak memengaruhi tab Ringkasan. */}
+      <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, background: t.card, padding: "12px 14px", marginBottom: 18 }}>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: t.mid, flexShrink: 0 }}>
+            <Filter size={13} /> Filter Wilayah
+          </div>
+          <select className="pts-in pts-select" value={regionF} onChange={(e) => setRegionF(e.target.value)} style={{ height: 32, minWidth: 160 }}>
+            <option value="all">Semua Region</option>
+            {regionOptions.map((r) => <option key={r} value={r}>{r}</option>)}
+          </select>
+          <select className="pts-in pts-select" value={branchF} onChange={(e) => setBranchF(e.target.value)} style={{ height: 32, minWidth: 160 }}>
+            <option value="all">Semua Branch</option>
+            {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+          {hasFilter && (
+            <button className="pts-btn" onClick={() => { setRegionF("all"); setBranchF("all"); }} style={{ background: t.hover, color: t.mid, flexShrink: 0 }}>
+              <FilterX size={13} /> Reset
+            </button>
+          )}
         </div>
-        <select className="pts-in pts-select" value={regionF} onChange={(e) => setRegionF(e.target.value)} style={{ height: 32 }}>
-          <option value="all">Semua Region</option>
-          {regionOptions.map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
-        <select className="pts-in pts-select" value={branchF} onChange={(e) => setBranchF(e.target.value)} style={{ height: 32 }}>
-          <option value="all">Semua Branch</option>
-          {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
-        </select>
-        {hasFilter && (
-          <button className="pts-btn" onClick={() => { setRegionF("all"); setBranchF("all"); }} style={{ background: t.hover, color: t.mid }}>
-            <FilterX size={13} /> Reset
-          </button>
-        )}
       </div>
 
-      {/* Top-3 leaderboard individu + donut distribusi status, ikut filter di atas */}
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(260px,1.1fr) minmax(260px,1fr)", gap: 14, marginBottom: 20 }}>
+      {/* Ringkasan cepat: top-3 leaderboard individu + donut distribusi status, ikut filter wilayah di atas */}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(260px,1.1fr) minmax(260px,1fr)", gap: 14, marginBottom: 22 }}>
         <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: 16, background: t.card, boxShadow: t.sm }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: t.mid, marginBottom: 12, textTransform: "uppercase", letterSpacing: ".03em" }}>
-            <Trophy size={14} /> Leaderboard Pencapaian ({ymLabel(period)})
+            <Trophy size={14} /> Top 3 Promotor ({ymLabel(period)})
           </div>
           {topThree.length === 0 ? (
             <div style={{ fontSize: 12.5, color: t.mid, padding: "10px 0" }}>Belum ada klaim tervalidasi untuk cakupan filter ini.</div>
@@ -1877,26 +2040,115 @@ function LeaderboardPanel({ t, period, rows, onSelectRow }) {
         </div>
       </div>
 
-      {/* Ranking Branch & MC — dipisah dari tabel Ringkasan Promotor supaya tidak numpuk */}
-      <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: ".03em" }}>
-        <BarChart3 size={14} /> Ranking Pencapaian GA SP Biometric per Level (target {PROMOTOR_BIO_TARGET}/promotor)
+      {/* Selector level — SATU tabel ranking penuh sesuai level yang dipilih,
+          supaya rapi & tidak numpuk (Region/Branch/MC/Promotor/Outlet). */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: ".03em" }}>
+          <BarChart3 size={14} /> Ranking GA SP Biometric (target {PROMOTOR_BIO_TARGET}/promotor)
+        </div>
+        <Segmented t={t} value={level} onChange={setLevel} options={LEADERBOARD_LEVELS} />
       </div>
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
-        <AchievementBarList t={t} title="Ranking Region" icon={<MapPin size={13} />} items={regionAgg} />
-        <AchievementBarList t={t} title="Ranking Branch" icon={<Store size={13} />} items={branchAgg} />
-        <AchievementBarList t={t} title="Ranking MC (Micro Cluster)" icon={<Users size={13} />} items={mcAgg} />
+
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 9, marginBottom: 10 }}>
+        <ExportButtons t={t} disabled={!levelTable.length}
+          onExcel={() => { const { head, body } = exportLevel(); downloadXlsx(head, body, `Leaderboard ${levelLabel}`, `PTS_Leaderboard_${levelLabel}_${period}.xlsx`); }}
+          onCsv={() => { const { head, body } = exportLevel(); downloadCsv(head, body, `PTS_Leaderboard_${levelLabel}_${period}.csv`); }} />
+      </div>
+
+      <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden", boxShadow: t.sm }}>
+        <div style={{ overflow: "auto", maxHeight: 620 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640 }}>
+            <thead>
+              <tr>
+                <th className="pts-th">#</th>
+                <th className="pts-th">{levelLabel}</th>
+                <th className="pts-th">Keterangan</th>
+                <th className="pts-th" style={{ color: "#fff", background: t.green }}>★ GA SP Biometric</th>
+                <th className="pts-th">Target</th>
+                <th className="pts-th">% Pencapaian</th>
+              </tr>
+            </thead>
+            <tbody>
+              {levelTable.length === 0 ? (
+                <tr><td className="pts-td" colSpan={6} style={{ textAlign: "center", padding: 40, color: t.mid }}>Belum ada data untuk cakupan filter ini.</td></tr>
+              ) : levelTable.map((r) => (
+                <tr key={r.key} className="pts-row" onClick={() => level === "promotor" && onSelectRow(r.raw)} style={{ cursor: level === "promotor" ? "pointer" : "default" }}>
+                  <td className="pts-td" style={{ color: t.mid, fontWeight: r.rank <= 3 ? 800 : 400 }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>{r.rank <= 3 && <RankBadge rank={r.rank} />}{r.rank}</span>
+                  </td>
+                  <td className="pts-td" style={{ fontWeight: 700 }}>{r.name}</td>
+                  <td className="pts-td" style={{ color: t.mid, fontSize: 11.5 }}>{r.sub || "—"}</td>
+                  <td className="pts-td" style={{ fontWeight: 800, color: t.green, background: t.greenBg }}>{r.bio}</td>
+                  <td className="pts-td" style={{ color: t.mid }}>{r.target}</td>
+                  <td className="pts-td">
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ flex: 1, height: 6, minWidth: 60, borderRadius: 99, background: t.hover, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${Math.min(100, r.pct)}%`, borderRadius: 99, background: r.pct >= 100 ? t.green : r.pct >= 60 ? t.blue : r.pct >= 30 ? t.amber : t.red }} />
+                      </div>
+                      <span style={{ fontSize: 11.5, fontWeight: 700, color: t.hi, width: 36, textAlign: "right" }}>{r.pct}%</span>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {level === "promotor" && <div style={{ marginTop: 10, fontSize: 11.5, color: t.mid }}>Klik baris untuk lihat detail per outlet promotor tsb.</div>}
+    </div>
+  );
+}
+
+function TrendBarChart({ t, data, color }) {
+  const max = Math.max(1, ...data.map((d) => d.value));
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 120, overflowX: "auto", padding: "4px 2px" }}>
+        {data.map((d, i) => (
+          <div key={i} title={`${d.label}: ${d.value}`} style={{ flex: "0 0 auto", width: 12, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%", cursor: "default" }}>
+            <div style={{ width: "100%", height: `${Math.max(2, (d.value / max) * 100)}%`, background: color, borderRadius: "3px 3px 0 0", transition: "height .3s" }} />
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 3, padding: "2px 2px 0", overflowX: "auto" }}>
+        {data.map((d, i) => (
+          <div key={i} style={{ flex: "0 0 auto", width: 12, textAlign: "center", fontSize: 8.5, color: t.mid }}>
+            {i % 5 === 0 || i === data.length - 1 ? d.label : ""}
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
+function BrandFilterBar({ t, brandF, setBrandF }) {
+  const noneSelected = !brandF.IM3 && !brandF["3ID"];
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+      <span style={{ fontSize: 12.5, fontWeight: 700, color: t.mid, display: "flex", alignItems: "center", gap: 6 }}><Filter size={13} /> Brand:</span>
+      {["IM3", "3ID"].map((b) => (
+        <label key={b} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12.5, fontWeight: 700, color: brandF[b] ? t.hi : t.mid, padding: "4px 10px 4px 8px", borderRadius: 99, background: brandF[b] ? (b === "IM3" ? t.amberBg : t.magBg) : t.hover, border: `1px solid ${brandF[b] ? (b === "IM3" ? t.amberBd : t.magBd) : t.line}` }}>
+          <input type="checkbox" checked={brandF[b]} onChange={() => setBrandF((p) => ({ ...p, [b]: !p[b] }))} style={{ accentColor: t.brand }} />
+          {b}
+        </label>
+      ))}
+      {noneSelected && <span style={{ fontSize: 11.5, color: t.red, fontWeight: 600 }}>Pilih minimal satu brand untuk menampilkan data.</span>}
+    </div>
+  );
+}
+
 function PreviewData({ t, d, supabase, period, outletByCode }) {
-  const [mode, setMode] = useState("ringkasan");    // ringkasan | msisdn
+  const [mode, setMode] = useState("ringkasan");    // ringkasan | leaderboard | msisdn
   const [loading, setLoading] = useState(true);
-  const [rows, setRows] = useState([]);
+  const [roster, setRoster] = useState({ promotors: [], outletsByKey: new Map(), metaByKey: new Map() });
+  const [rawSales, setRawSales] = useState([]);
   const [statusF, setStatusF] = useState("all");    // all | active | not_logged_in
   const [q, setQ] = useState("");
   const [detailRow, setDetailRow] = useState(null);
+  // Filter brand — default KEDUANYA tercentang (tampilkan gabungan seperti
+  // biasa). Uncheck salah satu untuk fokus ke pencapaian brand tsb saja;
+  // seluruh angka (bio/reg/pending/dst, KPI, chart, tabel) ikut menyesuaikan.
+  const [brandF, setBrandF] = useState({ IM3: true, "3ID": true });
 
   // Kunci identitas promotor untuk pengelompokan: promotor_id (uuid, permanen)
   // bila ada, baru jatuh ke email untuk baris lama / belum tertaut ID.
@@ -1915,13 +2167,18 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
       // SFM), bukan cuma yang punya assignment bulan ini — supaya promotor
       // yang belum/tidak ter-mapping bulan ini tetap kelihatan (Status
       // Mapping: "Belum ter-mapping"), bukan hilang diam-diam.
-      const [asgRes, proRes] = await Promise.all([
+      // `tagged_at` diambil khusus untuk tren harian di dashboard — bukan
+      // untuk penentuan periode (itu tetap `credited_period`, konsisten
+      // dengan app Promotor).
+      const [asgRes, proRes, salesRes] = await Promise.all([
         supabase.rpc("pts_effective_assignment", { p_period: period }),
         supabase.from("pts_promotor").select("id,email,full_name,auth_user_id,region,effective_date,vacant"),
+        supabase.from("pts_sale")
+          .select("promotor_id,credited_promotor_id,outlet_id,credited_outlet_id,brand,ga_status,biometric_status,tagged_at")
+          .eq("credited_period", period),
       ]);
       const assignments = asgRes.data || [];
       const promotors = proRes.data || [];
-      const proById = new Map(promotors.map((p) => [p.id, p]));
 
       const outletsByKey = new Map();  // key → Set(outlet_code)
       const metaByKey = new Map();     // key → {branch, mc, region, email, full_name}
@@ -1932,85 +2189,88 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
         if (!metaByKey.has(k)) metaByKey.set(k, { branch: a.branch, mc: a.mc, region: a.region, email: a.email, full_name: a.full_name });
       });
 
-      // Klaim SP periode ini — pakai credited_period (bukan rentang tanggal
-      // dari tagged_at) supaya SELALU sinkron dengan app Promotor. Kepemilikan
-      // klaim memakai credited_promotor_id/credited_outlet_id sebagai sumber
-      // kebenaran (bisa berpindah dari promotor_id/outlet_id asal saat
-      // tagging), persis logika "Kontribusi Anda" di app Promotor: jika
-      // credited_promotor_id terisi, dialah pemilik; jika kosong, fallback ke
-      // promotor_id/outlet_id. Pencapaian ranking = klaim TERVALIDASI dengan
-      // biometric_status = BIOMETRIC (RGU-GA SP Biometric), sama seperti
-      // definisi "Kontribusi Anda" pada app Promotor.
-      const salesByPromotor = new Map();
-      const { data: sales } = await supabase.from("pts_sale")
-        .select("promotor_id,credited_promotor_id,outlet_id,credited_outlet_id,brand,ga_status,biometric_status")
-        .eq("credited_period", period);
-      (sales || []).forEach((s) => {
-        const owner = s.credited_promotor_id || s.promotor_id;
-        if (!owner) return;
-        const outletId = s.credited_outlet_id || s.outlet_id;
-        const cat = gaCategory(s.ga_status);
-        if (!salesByPromotor.has(owner)) {
-          salesByPromotor.set(owner, { total: 0, im3: 0, tid: 0, bio: 0, reg: 0, pending: 0, rejected: 0, notfound: 0, byOutlet: new Map() });
-        }
-        const agg = salesByPromotor.get(owner);
-        agg.total++;
-        if (s.brand === "IM3") agg.im3++; else if (s.brand === "3ID") agg.tid++;
-        if (cat === "validated") { if (s.biometric_status === "BIOMETRIC") agg.bio++; else agg.reg++; }
-        else if (cat === "rejected") agg.rejected++;
-        else if (cat === "notfound") agg.notfound++;
-        else agg.pending++;
-
-        if (outletId) {
-          if (!agg.byOutlet.has(outletId)) agg.byOutlet.set(outletId, { total: 0, bio: 0, reg: 0, pending: 0, rejected: 0, notfound: 0 });
-          const o = agg.byOutlet.get(outletId);
-          o.total++;
-          if (cat === "validated") { if (s.biometric_status === "BIOMETRIC") o.bio++; else o.reg++; }
-          else if (cat === "rejected") o.rejected++;
-          else if (cat === "notfound") o.notfound++;
-          else o.pending++;
-        }
-      });
-
-      // Gabungan kunci: tiap promotor roster + kunci assignment lama yang
-      // tidak tertaut promotor_id_ref (email-only, baris legacy) + promotor
-      // manapun yang punya klaim ter-credit ke dirinya periode ini (jaga-jaga
-      // bila tidak ada di roster/assignment karena alasan lain).
-      const allKeys = new Set(promotors.map((p) => p.id));
-      metaByKey.forEach((_, k) => { if (!proById.has(k)) allKeys.add(k); });
-      salesByPromotor.forEach((_, k) => allKeys.add(k));
-
-      const emptyAgg = { total: 0, im3: 0, tid: 0, bio: 0, reg: 0, pending: 0, rejected: 0, notfound: 0, byOutlet: new Map() };
-      const out = [...allKeys].map((k) => {
-        const pro = proById.get(k);
-        const meta = metaByKey.get(k);
-        const outlets = outletsByKey.get(k) || new Set();
-        const firstOutletCode = [...outlets][0] || "";
-        const outlet = outletByCode.get(String(firstOutletCode).toUpperCase());
-        const agg = salesByPromotor.get(k) || emptyAgg;
-        const hasRealEmail = !!pro?.email;
-        const promotorStatus = pro?.vacant ? "Vacant" : (hasRealEmail && pro?.effective_date ? "Aktif" : "Pending");
-        return {
-          id: k,
-          region: outlet?.region || meta?.region || pro?.region || "", branch: outlet?.branch || meta?.branch || "", mc: meta?.mc || "",
-          outletCount: outlets.size,
-          outlet: outlets.size > 1 ? `${outlets.size} outlet` : (outlet?.name || firstOutletCode || "—"), outlet_code: firstOutletCode,
-          nama: pro?.full_name || meta?.full_name || "—", email: pro?.email || meta?.email || "",
-          loginStatus: pro?.auth_user_id ? "Aktif" : "Belum Login",
-          promotorStatus,
-          total: agg.total, im3: agg.im3, tid: agg.tid,
-          bio: agg.bio, reg: agg.reg, pending: agg.pending, rejected: agg.rejected, notfound: agg.notfound,
-          byOutlet: agg.byOutlet,
-        };
-      });
-
-      setRows(out);
+      setRoster({ promotors, outletsByKey, metaByKey });
+      setRawSales(salesRes.data || []);
     } catch (e) {
-      setRows([]);
+      setRoster({ promotors: [], outletsByKey: new Map(), metaByKey: new Map() });
+      setRawSales([]);
     } finally { setLoading(false); }
-  }, [supabase, period, outletByCode]);
+  }, [supabase, period]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Kepemilikan klaim memakai credited_promotor_id/credited_outlet_id sebagai
+  // sumber kebenaran (bisa berpindah dari promotor_id/outlet_id asal saat
+  // tagging), persis logika "Kontribusi Anda" di app Promotor: jika
+  // credited_promotor_id terisi, dialah pemilik; jika kosong, fallback ke
+  // promotor_id/outlet_id. Pencapaian ranking = klaim TERVALIDASI dengan
+  // biometric_status = BIOMETRIC (RGU-GA SP Biometric). Dihitung ulang tiap
+  // kali filter brand berubah — TANPA fetch ulang ke server.
+  const rows = useMemo(() => {
+    const { promotors, outletsByKey, metaByKey } = roster;
+    const proById = new Map(promotors.map((p) => [p.id, p]));
+    const brandOk = (b) => !!brandF[b];
+
+    const salesByPromotor = new Map();
+    rawSales.forEach((s) => {
+      if (!brandOk(s.brand)) return;
+      const owner = s.credited_promotor_id || s.promotor_id;
+      if (!owner) return;
+      const outletId = s.credited_outlet_id || s.outlet_id;
+      const cat = gaCategory(s.ga_status);
+      if (!salesByPromotor.has(owner)) {
+        salesByPromotor.set(owner, { total: 0, bio: 0, reg: 0, pending: 0, rejected: 0, notfound: 0, byOutlet: new Map() });
+      }
+      const agg = salesByPromotor.get(owner);
+      agg.total++;
+      if (cat === "validated") { if (s.biometric_status === "BIOMETRIC") agg.bio++; else agg.reg++; }
+      else if (cat === "rejected") agg.rejected++;
+      else if (cat === "notfound") agg.notfound++;
+      else agg.pending++;
+
+      if (outletId) {
+        if (!agg.byOutlet.has(outletId)) agg.byOutlet.set(outletId, { total: 0, bio: 0, reg: 0, pending: 0, rejected: 0, notfound: 0 });
+        const o = agg.byOutlet.get(outletId);
+        o.total++;
+        if (cat === "validated") { if (s.biometric_status === "BIOMETRIC") o.bio++; else o.reg++; }
+        else if (cat === "rejected") o.rejected++;
+        else if (cat === "notfound") o.notfound++;
+        else o.pending++;
+      }
+    });
+
+    // Gabungan kunci: tiap promotor roster + kunci assignment lama yang
+    // tidak tertaut promotor_id_ref (email-only, baris legacy) + promotor
+    // manapun yang punya klaim ter-credit ke dirinya periode ini (jaga-jaga
+    // bila tidak ada di roster/assignment karena alasan lain).
+    const allKeys = new Set(promotors.map((p) => p.id));
+    metaByKey.forEach((_, k) => { if (!proById.has(k)) allKeys.add(k); });
+    salesByPromotor.forEach((_, k) => allKeys.add(k));
+
+    const emptyAgg = { total: 0, bio: 0, reg: 0, pending: 0, rejected: 0, notfound: 0, byOutlet: new Map() };
+    return [...allKeys].map((k) => {
+      const pro = proById.get(k);
+      const meta = metaByKey.get(k);
+      const outlets = outletsByKey.get(k) || new Set();
+      const firstOutletCode = [...outlets][0] || "";
+      const outlet = outletByCode.get(String(firstOutletCode).toUpperCase());
+      const agg = salesByPromotor.get(k) || emptyAgg;
+      const hasRealEmail = !!pro?.email;
+      const promotorStatus = pro?.vacant ? "Vacant" : (hasRealEmail && pro?.effective_date ? "Aktif" : "Pending");
+      return {
+        id: k,
+        region: outlet?.region || meta?.region || pro?.region || "", branch: outlet?.branch || meta?.branch || "", mc: meta?.mc || "",
+        outletCount: outlets.size,
+        outlet: outlets.size > 1 ? `${outlets.size} outlet` : (outlet?.name || firstOutletCode || "—"), outlet_code: firstOutletCode,
+        nama: pro?.full_name || meta?.full_name || "—", email: pro?.email || meta?.email || "",
+        loginStatus: pro?.auth_user_id ? "Aktif" : "Belum Login",
+        promotorStatus,
+        total: agg.total,
+        bio: agg.bio, reg: agg.reg, pending: agg.pending, rejected: agg.rejected, notfound: agg.notfound,
+        byOutlet: agg.byOutlet,
+      };
+    });
+  }, [roster, rawSales, brandF, outletByCode]);
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -2032,32 +2292,91 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
     const vacant = rows.filter((r) => r.promotorStatus === "Vacant").length;
     const belumMapping = rows.filter((r) => r.outletCount === 0).length;
     const total = rows.reduce((a, r) => a + r.total, 0);
-    return { promotor: rows.length, belum, vacant, belumMapping, total };
+    const bio = rows.reduce((a, r) => a + r.bio, 0);
+    const target = rows.filter((r) => r.outletCount > 0).length * PROMOTOR_BIO_TARGET;
+    const pct = target ? Math.round((bio / target) * 100) : 0;
+    return { promotor: rows.length, belum, vacant, belumMapping, total, bio, pct };
   }, [rows]);
 
-  // Leaderboard individu, ranking Region/Branch/MC, dan distribusi status
-  // sekarang dihitung di dalam <LeaderboardPanel> sendiri (tab terpisah),
-  // berbasis `rows` supaya filter Region/Branch di sana independen dari
-  // pencarian/filter status login di tab Ringkasan Promotor ini.
+  // Tren harian dalam periode berjalan — dihitung dari rawSales (ikut filter
+  // brand yang aktif), dikelompokkan per tanggal `tagged_at`.
+  const trendData = useMemo(() => {
+    const byDay = new Map(); // "YYYY-MM-DD" -> { total, bio }
+    rawSales.forEach((s) => {
+      if (!brandF[s.brand]) return;
+      const day = String(s.tagged_at || "").slice(0, 10);
+      if (!day) return;
+      if (!byDay.has(day)) byDay.set(day, { total: 0, bio: 0 });
+      const b = byDay.get(day);
+      b.total++;
+      if (gaCategory(s.ga_status) === "validated" && s.biometric_status === "BIOMETRIC") b.bio++;
+    });
+    const [y, m] = period.split("-").map(Number);
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const today = new Date();
+    const isCurrentMonth = today.getFullYear() === y && today.getMonth() + 1 === m;
+    const lastDay = isCurrentMonth ? today.getDate() : daysInMonth;
+    const out = [];
+    for (let day = 1; day <= lastDay; day++) {
+      const key = `${period}-${pad2(day)}`;
+      const v = byDay.get(key) || { total: 0, bio: 0 };
+      out.push({ label: String(day), total: v.total, bio: v.bio });
+    }
+    return out;
+  }, [rawSales, brandF, period]);
+  const [trendMetric, setTrendMetric] = useState("total"); // total | bio
+
+  // Ranking Region/Branch/MC/Promotor/Outlet, leaderboard top-3, dan
+  // distribusi status dihitung di dalam <LeaderboardPanel> sendiri (tab
+  // terpisah), berbasis `rows` (SUDAH ikut filter brand di atas).
+  const buildLevelAgg = (keyFn) => {
+    const m = new Map();
+    rows.forEach((r) => {
+      const key = keyFn(r) || "Tidak diketahui";
+      if (!m.has(key)) m.set(key, { bio: 0, promotor: 0 });
+      const g = m.get(key);
+      g.bio += r.bio;
+      g.promotor += 1;
+    });
+    return [...m.entries()]
+      .map(([name, g]) => {
+        const target = g.promotor * PROMOTOR_BIO_TARGET;
+        return { name, bio: g.bio, target, pct: target ? Math.round((g.bio / target) * 100) : 0 };
+      })
+      .sort((a, b) => b.pct - a.pct || b.bio - a.bio);
+  };
+  const regionAgg = useMemo(() => buildLevelAgg((r) => r.region), [rows]);
+  const branchAgg = useMemo(() => buildLevelAgg((r) => r.branch), [rows]);
 
   const mappingLabel = (r) => (r.outletCount === 0 ? "Belum ter-mapping" : `${r.outletCount} outlet`);
 
+  const brandSuffix = () => {
+    const on = Object.entries(brandF).filter(([, v]) => v).map(([k]) => k);
+    if (on.length === 2 || on.length === 0) return "Semua Brand";
+    return on[0];
+  };
+
+  const exportRows = () => {
+    const head = ["No", "Rank", "Region", "Branch", "MC", "Outlet", "ID Outlet", "Nama Promotor", "Email", "Status Promotor", "Status Mapping", "Status Login", "Total Pengajuan", "Dalam Pengajuan", "Total Tervalidasi", "GA SP Biometric", "% Pencapaian (target 150)", "GA SP Non-Biometric", "GA di luar Outlet"];
+    const body = filtered.map((r, i) => [i + 1, r.rank, r.region, r.branch, r.mc, r.outlet, r.outlet_code, r.nama, r.email, r.promotorStatus, mappingLabel(r), r.loginStatus, r.total, r.pending, r.bio + r.reg, r.bio, `${Math.round((r.bio / PROMOTOR_BIO_TARGET) * 100)}%`, r.reg, r.rejected + r.notfound]);
+    return { head, body };
+  };
   const exportExcel = () => {
-    const head = ["No", "Rank", "Region", "Branch", "MC", "Outlet", "ID Outlet", "Nama Promotor", "Email", "Status Promotor", "Status Mapping", "Status Login", "Total Pengajuan", "Dalam Pengajuan", "Total Tervalidasi", "GA SP Biometric", "% Pencapaian (target 150)", "GA SP Non-Biometric", "GA di luar Outlet", "IM3", "3ID"];
-    const body = filtered.map((r, i) => [i + 1, r.rank, r.region, r.branch, r.mc, r.outlet, r.outlet_code, r.nama, r.email, r.promotorStatus, mappingLabel(r), r.loginStatus, r.total, r.pending, r.bio + r.reg, r.bio, `${Math.round((r.bio / PROMOTOR_BIO_TARGET) * 100)}%`, r.reg, r.rejected + r.notfound, r.im3, r.tid]);
-    const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, `Ringkasan ${period}`);
-    XLSX.writeFile(wb, `PTS_Ringkasan_${period}.xlsx`);
+    const { head, body } = exportRows();
+    downloadXlsx(head, body, `Ringkasan ${period}`, `PTS_Ringkasan_${period}_${brandSuffix()}.xlsx`);
+  };
+  const exportCsv = () => {
+    const { head, body } = exportRows();
+    downloadCsv(head, body, `PTS_Ringkasan_${period}_${brandSuffix()}.csv`);
   };
 
   const modeToggle = (
     <div style={{ marginBottom: 16 }}>
       <Segmented t={t} value={mode} onChange={setMode}
         options={[
-          { value: "ringkasan", label: "Ringkasan Promotor", icon: <Users size={13} /> },
+          { value: "ringkasan", label: "Ringkasan", icon: <BarChart3 size={13} /> },
           { value: "leaderboard", label: "Leaderboard", icon: <Trophy size={13} /> },
-          { value: "msisdn", label: "Detail per Nomor", icon: <Phone size={13} /> },
+          { value: "msisdn", label: "Detail MSISDN", icon: <Phone size={13} /> },
         ]} />
     </div>
   );
@@ -2068,7 +2387,7 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
     return (
       <div>
         {modeToggle}
-        <LeaderboardPanel t={t} period={period} rows={rows} onSelectRow={setDetailRow} />
+        <LeaderboardPanel t={t} period={period} rows={rows} outletByCode={outletByCode} onSelectRow={setDetailRow} />
         {detailRow && <PromotorDetailModal t={t} row={detailRow} outletById={outletById} onClose={() => setDetailRow(null)} />}
       </div>
     );
@@ -2077,20 +2396,48 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
   return (
     <div>
       {modeToggle}
-      {/* Stats */}
+
+      {/* Filter brand — memengaruhi SEMUA angka di tab ini (KPI, chart, tabel) */}
+      <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 12, background: t.card, border: `1px solid ${t.line}` }}>
+        <BrandFilterBar t={t} brandF={brandF} setBrandF={setBrandF} />
+      </div>
+
+      {/* KPI cards */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
         <Stat t={t} icon={<Users size={18} />}       label="Total Promotor"   value={stats.promotor}     accent={{ fg: t.mag, bg: t.magBg, bd: t.magBd }} />
         <Stat t={t} icon={<Store size={18} />}       label="Belum ter-mapping" value={stats.belumMapping} accent={{ fg: t.blue, bg: t.blueBg, bd: t.blueBd }} />
         <Stat t={t} icon={<Ban size={18} />}         label="Vacant"           value={stats.vacant}       accent={{ fg: t.amber, bg: t.amberBg, bd: t.amberBd }} />
         <Stat t={t} icon={<UserX size={18} />}       label="Belum login"      value={stats.belum}        accent={{ fg: t.amber, bg: t.amberBg, bd: t.amberBd }} />
-        <Stat t={t} icon={<ShoppingBag size={18} />} label="Total Klaim SP"   value={stats.total}        accent={{ fg: t.green, bg: t.greenBg, bd: t.greenBd }} />
+        <Stat t={t} icon={<ShoppingBag size={18} />} label="Total Pengajuan"  value={stats.total}        accent={{ fg: t.blue, bg: t.blueBg, bd: t.blueBd }} />
+        <Stat t={t} icon={<CheckCircle2 size={18} />} label={`GA SP Biometric (${stats.pct}% target)`} value={stats.bio} accent={{ fg: t.green, bg: t.greenBg, bd: t.greenBd }} />
       </div>
 
-      {/* Visualisasi ranking (leaderboard individu, ranking Region/Branch/MC,
-          distribusi status) dipindah ke tab "Leaderboard" tersendiri — supaya
-          tab ini fokus ke tabel data mentah & tidak numpuk. */}
+      {/* Dashboard visual: tren harian + ranking Region/Branch, gaya ringkas ala BI */}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(280px,1.4fr) minmax(260px,1fr)", gap: 14, marginBottom: 20 }}>
+        <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: 16, background: t.card, boxShadow: t.sm }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: ".03em" }}>
+              <TrendingUp size={14} /> Tren Harian ({ymLabel(period)})
+            </div>
+            <Segmented t={t} value={trendMetric} onChange={setTrendMetric}
+              options={[
+                { value: "total", label: "Total Pengajuan" },
+                { value: "bio", label: "GA SP Biometric" },
+              ]} />
+          </div>
+          <TrendBarChart t={t} color={trendMetric === "bio" ? t.green : t.blue} data={trendData.map((x) => ({ label: x.label, value: trendMetric === "bio" ? x.bio : x.total }))} />
+        </div>
+        <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: 16, background: t.card, boxShadow: t.sm, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: ".03em" }}>
+            <BarChart3 size={14} /> Ranking Cepat
+          </div>
+          <AchievementBarList t={t} title="Region" icon={<MapPin size={12} />} items={regionAgg.slice(0, 4)} />
+          <AchievementBarList t={t} title="Branch" icon={<Store size={12} />} items={branchAgg.slice(0, 4)} />
+          <div style={{ fontSize: 11, color: t.mid }}>Lihat ranking lengkap (semua level, termasuk Promotor & Outlet) di tab <b>Leaderboard</b>.</div>
+        </div>
+      </div>
 
-      {/* Toolbar */}
+      {/* Toolbar tabel */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
           <Segmented t={t} value={statusF} onChange={setStatusF}
@@ -2105,16 +2452,16 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
               style={{ paddingLeft: 32, width: 240 }} />
           </div>
         </div>
-        <div style={{ display: "flex", gap: 9 }}>
+        <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
           <button className="pts-btn" onClick={load} style={{ background: t.card, color: t.mid, border: `1px solid ${t.line}` }}><RefreshCw size={14} /> Muat ulang</button>
-          <button className="pts-btn" onClick={exportExcel} disabled={!filtered.length} style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}><Download size={15} /> Export Excel</button>
+          <ExportButtons t={t} disabled={!filtered.length} onExcel={exportExcel} onCsv={exportCsv} />
         </div>
       </div>
 
       {/* Tabel ringkasan per promotor — sudah diurutkan berdasarkan rangking pencapaian */}
       <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden", boxShadow: t.sm }}>
         <div style={{ overflow: "auto", maxHeight: 620 }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1560 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1380 }}>
             <thead>
               <tr>
                 {["#", "Branch", "MC", "Outlet", "Promotor", "Email", "Status Promotor", "Status Mapping", "Status Login"].map((h) => (
@@ -2126,15 +2473,13 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
                 <th className="pts-th" style={{ color: "#fff", background: t.green, borderBottom: `1px solid ${t.green}` }}>★ GA SP Biometric</th>
                 <th className="pts-th" style={{ color: t.blue }}>GA SP Non-Biometric</th>
                 <th className="pts-th" style={{ color: t.mid }}>GA di luar Outlet</th>
-                <th className="pts-th">IM3</th>
-                <th className="pts-th">3ID</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td className="pts-td" colSpan={17} style={{ textAlign: "center", padding: 40, color: t.mid }}><Loader2 size={20} className="spin" style={{ verticalAlign: "middle" }} /> Memuat data…</td></tr>
+                <tr><td className="pts-td" colSpan={15} style={{ textAlign: "center", padding: 40, color: t.mid }}><Loader2 size={20} className="spin" style={{ verticalAlign: "middle" }} /> Memuat data…</td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td className="pts-td" colSpan={17} style={{ textAlign: "center", padding: 48, color: t.mid }}>
+                <tr><td className="pts-td" colSpan={15} style={{ textAlign: "center", padding: 48, color: t.mid }}>
                   <Store size={26} style={{ opacity: .5, marginBottom: 8 }} /><br />
                   Belum ada data untuk {ymLabel(period)}. Mapping outlet promotor terlebih dulu di tab <b>Mapping Outlet Promotor</b>.
                 </td></tr>
@@ -2179,8 +2524,6 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
                     </td>
                     <td className="pts-td" style={{ color: t.blue }}>{r.reg || "—"}</td>
                     <td className="pts-td" style={{ color: t.mid }}>{(r.rejected + r.notfound) || "—"}</td>
-                    <td className="pts-td" style={{ color: t.mid }}>{r.im3 || "—"}</td>
-                    <td className="pts-td" style={{ color: t.mid }}>{r.tid || "—"}</td>
                   </tr>
                 );
               })}
@@ -2189,7 +2532,7 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
         </div>
       </div>
       <div style={{ marginTop: 10, fontSize: 12, color: t.mid }}>
-        Menampilkan {filtered.length} baris, diurutkan berdasarkan rangking RGU-GA SP Biometric tervalidasi · Baris <b style={{ color: t.amber }}>kuning</b> = Vacant, baris abu-abu = belum ter-mapping bulan ini · Klik baris untuk detail per outlet.
+        Menampilkan {filtered.length} baris ({brandSuffix()}), diurutkan berdasarkan rangking RGU-GA SP Biometric tervalidasi · Baris <b style={{ color: t.amber }}>kuning</b> = Vacant, baris abu-abu = belum ter-mapping bulan ini · Klik baris untuk detail per outlet.
       </div>
 
       {detailRow && <PromotorDetailModal t={t} row={detailRow} outletById={outletById} onClose={() => setDetailRow(null)} />}
@@ -2256,13 +2599,21 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
     return { total: rows.length, outside, belum };
   }, [rows]);
 
-  const download = () => {
+  const exportRows = () => {
     const head = ["No", "Tanggal", "Jam", "MSISDN", "Brand", "Nama Promotor", "Email", "ID Outlet", "Branch", "Area", "Region", "Dalam Radius?", "Status Validasi GA", "Biometric", "Catatan GA"];
     const body = filtered.map((r, i) => [i + 1, fmtDate(r.tagged_at), fmtTime(r.tagged_at), r.phone_normalized, r.brand || "", r.nama, r.email, r.outlet_code, r.branch, r.area, r.region, r.within_radius === false ? "Tidak" : "Ya", GA_STATUS_LABEL[r.ga_status] || r.ga_status, r.biometric_status || "", r.ga_note || ""]);
+    return { head, body };
+  };
+  const downloadExcel = () => {
+    const { head, body } = exportRows();
     const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
     ws["!cols"] = [{ wch: 5 }, { wch: 12 }, { wch: 8 }, { wch: 16 }, { wch: 8 }, { wch: 20 }, { wch: 26 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 20 }, { wch: 14 }, { wch: 34 }];
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, `MSISDN ${period}`);
     XLSX.writeFile(wb, `PTS_MSISDN_${period}.xlsx`);
+  };
+  const downloadCsvFile = () => {
+    const { head, body } = exportRows();
+    downloadCsv(head, body, `PTS_MSISDN_${period}.csv`);
   };
 
   return (
@@ -2294,9 +2645,9 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
             <option value="3ID">3ID</option>
           </select>
         </div>
-        <div style={{ display: "flex", gap: 9 }}>
+        <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>
           <button className="pts-btn" onClick={load} style={{ background: t.card, color: t.mid, border: `1px solid ${t.line}` }}><RefreshCw size={14} /> Muat ulang</button>
-          <button className="pts-btn" onClick={download} disabled={!filtered.length} style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}><Download size={15} /> Download MSISDN</button>
+          <ExportButtons t={t} disabled={!filtered.length} onExcel={downloadExcel} onCsv={downloadCsvFile} />
         </div>
       </div>
 

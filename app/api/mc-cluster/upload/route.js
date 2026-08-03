@@ -28,16 +28,27 @@ async function requireAdmin(req) {
   return { user, role: prof.role };
 }
 
+const currentPeriod = () => new Date().toISOString().slice(0, 7); // "YYYY-MM"
+
 // ── POST — bulk CSV upload (semicolon-delimited) ──────────────────────────────
 // Expected CSV header: CIRCLE;REGION;AREA;BRANCH;MC;CLUSTER
-// Mode: "replace" (truncate + insert all) | "upsert" (insert or update by mc key)
+// Micro Cluster (acuan manpower hybrid IM3+3ID) di-AUTO-GENERATE dari kolom
+// MC apa adanya — tidak ada kolom CSV terpisah utk ini.
+// `period` (body param, format "YYYY-MM") menentukan upload ini berlaku utk
+// bulan mana — default bulan berjalan. Baris utk periode tsb SELALU
+// tersimpan sebagai baris baru (tidak menimpa bulan lain), mengikuti pola
+// per-periode pts_assignment — bulan yang belum di-upload otomatis
+// carry-forward ke upload terakhir lewat RPC mc_cluster_effective.
+// Mode: "replace" (hapus SEMUA baris periode ini, ganti dgn CSV baru) |
+// "upsert" (insert/update by mc+period, tidak menyentuh periode lain).
 export async function POST(req) {
   const auth = await requireAdmin(req);
   if (auth.error) return NextResponse.json({ success: false, message: auth.error }, { status: auth.status });
 
   try {
     const body = await req.json();
-    const { csv, mode = "upsert" } = body;
+    const { csv, mode = "upsert", period } = body;
+    const targetPeriod = (period || currentPeriod()).trim();
 
     if (!csv || typeof csv !== "string") {
       return NextResponse.json({ success: false, message: "csv diperlukan." }, { status: 400 });
@@ -68,13 +79,18 @@ export async function POST(req) {
     lines.slice(1).forEach((line, i) => {
       if (!line.trim()) return;
       const cols = line.split(";");
+      const mcClean = cols[idx.MC]?.trim().toUpperCase() || "";
       const row = {
         circle:  cols[idx.CIRCLE]?.trim().toUpperCase()  || "",
         region:  cols[idx.REGION]?.trim().toUpperCase()  || "",
         area:    cols[idx.AREA]?.trim().toUpperCase()    || "",
         branch:  cols[idx.BRANCH]?.trim().toUpperCase()  || "",
-        mc:      cols[idx.MC]?.trim().toUpperCase()      || "",
+        mc:      mcClean,
         cluster: cols[idx.CLUSTER]?.trim().toUpperCase() || "",
+        // Micro Cluster: auto-generate, ikut format MC (IM3) apa adanya —
+        // tidak lagi kolom CSV terpisah.
+        micro_cluster: mcClean || null,
+        period: targetPeriod,
         is_active: true,
       };
       const empty = requiredCols.filter(c => !row[c.toLowerCase()]);
@@ -92,10 +108,11 @@ export async function POST(req) {
     let inserted = 0;
 
     if (mode === "replace") {
+      // Hapus HANYA baris periode ini — bulan lain tidak tersentuh.
       const { error: delErr } = await supabaseAdmin
         .from("mc_cluster_mapping")
         .delete()
-        .neq("id", "00000000-0000-0000-0000-000000000000");
+        .eq("period", targetPeriod);
       if (delErr) throw delErr;
 
       const CHUNK = 100;
@@ -111,7 +128,7 @@ export async function POST(req) {
         const chunk = rows.slice(i, i + CHUNK);
         const { error } = await supabaseAdmin
           .from("mc_cluster_mapping")
-          .upsert(chunk, { onConflict: "mc", ignoreDuplicates: false });
+          .upsert(chunk, { onConflict: "mc,period", ignoreDuplicates: false });
         if (error) throw error;
         inserted += chunk.length;
       }

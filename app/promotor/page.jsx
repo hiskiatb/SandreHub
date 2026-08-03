@@ -16,6 +16,7 @@ import {
   ArrowLeftRight, Inbox, ShieldQuestion, Radar, RefreshCcw, Pencil, Check,
   Target, TrendingUp, Sparkles,
   ListChecks, ScanFace, XCircle, HelpCircle, IdCard, Circle,
+  Phone, User, Mail, Building2,
 } from "lucide-react";
 import lottie from "lottie-web";
 import successAnimData from "../../public/promotor/success-animation.json";
@@ -198,6 +199,13 @@ export default function PromotorApp() {
   const [name, setName] = useState("");
   const [promotorId, setPromotorId] = useState(null);
   const [salesTarget, setSalesTarget] = useState(150); // diset admin SPM per-promotor
+  // Info tambahan utk layar "Profil Saya" — phone bisa diedit sendiri oleh
+  // promotor (didukung RLS pts_promotor_self), sisanya read-only (dikelola admin).
+  const [phone, setPhone] = useState("");
+  const [promotorCode, setPromotorCode] = useState("");   // ID Promotor (IM3), read-only
+  const [threeId, setThreeId] = useState("");             // ID 3ID, read-only
+  const [profileRegion, setProfileRegion] = useState(""); // read-only, dikelola admin
+  const [profileStatus, setProfileStatus] = useState(""); // read-only, dikelola admin
 
   /* ── Mode Pratinjau Admin (khusus SPM Sumatera) ────────────────────────
      ?admin_preview=<pts_promotor.id> — SPM bisa melihat app ini PERSIS
@@ -312,6 +320,8 @@ export default function PromotorApp() {
       setPromotorId(target.id);
       setName(target.full_name || target.promotor_id || "Promotor");
       setSalesTarget(target.sales_target || 150);
+      setPhone(target.phone || ""); setPromotorCode(target.promotor_id || ""); setThreeId(target.user_id_3id || "");
+      setProfileRegion(target.region || ""); setProfileStatus(target.status || "");
       return;
     }
 
@@ -345,6 +355,8 @@ export default function PromotorApp() {
     setPromotorId(prof?.id || null);
     setName(prof?.full_name || googleName);
     setSalesTarget(prof?.sales_target || 150);
+    setPhone(prof?.phone || ""); setPromotorCode(prof?.promotor_id || ""); setThreeId(prof?.user_id_3id || "");
+    setProfileRegion(prof?.region || ""); setProfileStatus(prof?.status || "");
   }, [router, previewReady, previewId]);
 
   useEffect(() => { resolveIdentity(); }, [resolveIdentity]);
@@ -369,6 +381,7 @@ export default function PromotorApp() {
     await supabase.from("pts_promotor")
       .update({ region: rows[0]?.region || null, updated_at: new Date().toISOString() })
       .eq("id", promotorId);
+    setProfileRegion(rows[0]?.region || "");
 
     if (!active) { setOutlets([]); setActiveOutlet(null); setTodaySales([]); setPhase("pending"); return; }
 
@@ -588,15 +601,24 @@ function AppShell(p) {
      selalu diminta ulang (bukan otomatis terpilih dari sesi sebelumnya). */
   const goHome = () => { setView("home"); setActiveOutlet(null); setBrand(null); };
 
-  /* Ubah nama sendiri — hanya full_name, ID (promotor_id/user_id_3id) dikunci
-     server-side (trigger) apapun yang dikirim dari sini. */
-  const saveProfileName = async (val) => {
+  /* Ubah profil sendiri — hanya full_name & phone yang bisa diubah dari
+     sini, ID (promotor_id/user_id_3id) tetap dikunci server-side (trigger)
+     apapun yang dikirim dari sini. Didukung RLS pts_promotor_self. */
+  const saveProfile = async ({ name: val, phone: phoneVal }) => {
     if (previewMode) throw new Error("Mode pratinjau — tidak bisa mengubah data.");
     const trimmed = val.trim();
     if (!trimmed) throw new Error("Nama tidak boleh kosong.");
-    const { error } = await supabase.from("pts_promotor").update({ full_name: trimmed, updated_at: new Date().toISOString() }).eq("id", promotorId);
+    let normalizedPhone = "";
+    if (phoneVal && phoneVal.trim()) {
+      const { normalized, valid } = normalizePhone(phoneVal);
+      if (!valid) throw new Error("No. HP tidak valid.");
+      normalizedPhone = normalized;
+    }
+    const { error } = await supabase.from("pts_promotor")
+      .update({ full_name: trimmed, phone: normalizedPhone || null, updated_at: new Date().toISOString() })
+      .eq("id", promotorId);
     if (error) throw error;
-    setName(trimmed);
+    setName(trimmed); setPhone(normalizedPhone);
   };
 
   /* Ubah nama outlet yang sedang di-mapping ke promotor ini — RLS+trigger
@@ -963,7 +985,8 @@ function AppShell(p) {
             </>
           ) : (
             <>
-              <div style={{ width: 40, height: 40, borderRadius: 13, flexShrink: 0, background: C.grad, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, boxShadow: "0 6px 16px rgba(237,28,36,0.24)" }}>{initial}</div>
+              <div className={previewMode ? "" : "press"} onClick={previewMode ? undefined : () => setEditProfile(true)} aria-label="Profil Saya"
+                style={{ width: 40, height: 40, borderRadius: 13, flexShrink: 0, background: C.grad, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, boxShadow: "0 6px 16px rgba(237,28,36,0.24)", cursor: previewMode ? "default" : "pointer" }}>{initial}</div>
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 12, color: C.mid, fontWeight: 600, letterSpacing: "0.02em" }}>Selamat datang</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0, marginTop: 1 }}>
@@ -1114,11 +1137,14 @@ function AppShell(p) {
         <OutletPicker outlets={outlets} onPick={chooseOutlet} onClose={() => setPickOutlet(false)} onRename={setRenamingOutlet} />
       )}
 
-      {/* Edit nama saya — hanya nama, ID tidak bisa diubah dari sini */}
+      {/* Profil Saya — edit nama & no. HP sendiri, sisanya read-only
+          (dikelola admin: email, ID Promotor/3ID, region, status, target). */}
       {editProfile && (
-        <RenameSheet title="Edit Nama Saya" label="Nama Promotor" placeholder="Nama lengkap Anda"
-          initial={name} onClose={() => setEditProfile(false)}
-          onSave={async (val) => { await saveProfileName(val); flash("Nama berhasil diperbarui."); }}
+        <ProfileSheet
+          name={name} phone={phone} email={email} promotorCode={promotorCode} threeId={threeId}
+          region={profileRegion} status={profileStatus} salesTarget={salesTarget} initial={initial}
+          onClose={() => setEditProfile(false)}
+          onSave={async (vals) => { await saveProfile(vals); flash("Profil berhasil diperbarui."); }}
         />
       )}
 
@@ -2460,8 +2486,89 @@ function OutletPicker({ outlets, onPick, onClose, onRename }) {
   );
 }
 
-/* ── Sheet generik utk ganti nama (dipakai utk nama promotor & nama outlet
-   sendiri) — cuma satu field teks, tidak pernah menyentuh kolom ID apapun. ── */
+/* ── Profil Saya — layar edit profil sendiri: Nama & No. HP bisa diubah
+   (didukung RLS pts_promotor_self), sisanya read-only karena dikelola
+   admin lewat menu Roster Promotor / MC Cluster Mapping. ─────────────── */
+function ProfileSheet({ name, phone, email, promotorCode, threeId, region, status, salesTarget, initial, onClose, onSave }) {
+  const [val, setVal] = useState(name || "");
+  const [phoneVal, setPhoneVal] = useState(phone || "");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const dirty = val.trim() !== (name || "").trim() || phoneVal.trim() !== (phone || "").trim();
+
+  const submit = async () => {
+    if (!val.trim()) { setErr("Nama tidak boleh kosong."); return; }
+    setSaving(true); setErr("");
+    try {
+      await onSave({ name: val.trim(), phone: phoneVal.trim() });
+      onClose();
+    } catch (e) {
+      setErr(e?.message || "Gagal menyimpan.");
+      setSaving(false);
+    }
+  };
+
+  const statusLabel = status === "active" ? "Aktif" : status === "inactive" ? "Nonaktif" : status === "pending" ? "Menunggu penautan ID" : (status || "—");
+  const infoRow = (icon, label, value) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: `1px solid ${C.lineSoft || C.line}` }}>
+      <div style={{ width: 30, height: 30, borderRadius: 9, background: C.sub, color: C.mid, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{icon}</div>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: C.lo }}>{label}</div>
+        <div style={{ fontSize: 13.5, fontWeight: 600, color: C.hi, marginTop: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value || "—"}</div>
+      </div>
+    </div>
+  );
+
+  return (
+    <Sheet title="Profil Saya" onClose={onClose}>
+      <div style={{ padding: "0 18px calc(env(safe-area-inset-bottom,0px) + 20px)", display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 52, height: 52, borderRadius: 16, flexShrink: 0, background: C.grad, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, fontWeight: 800 }}>{initial}</div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: C.hi, letterSpacing: "-0.02em" }}>{name}</div>
+            <div style={{ fontSize: 12, color: C.mid, marginTop: 1 }}>Target GA SP Biometric: {salesTarget}/bulan</div>
+          </div>
+        </div>
+
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: C.mid, marginBottom: 8 }}>Bisa Anda ubah</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div>
+              <label style={{ fontSize: 12.5, fontWeight: 600, color: C.mid }}>Nama Promotor</label>
+              <input autoFocus value={val} onChange={(e) => setVal(e.target.value)} placeholder="Nama lengkap Anda" maxLength={120} enterKeyHint="next"
+                style={{ width: "100%", height: 50, borderRadius: 13, border: `1px solid ${C.line}`, background: C.sub, color: C.hi, fontFamily: FF, fontSize: 15, fontWeight: 600, padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
+            </div>
+            <div>
+              <label style={{ fontSize: 12.5, fontWeight: 600, color: C.mid }}>No. HP</label>
+              <input value={phoneVal} onChange={(e) => setPhoneVal(e.target.value)} placeholder="08xx-xxxx-xxxx" type="tel" enterKeyHint="done"
+                onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+                style={{ width: "100%", height: 50, borderRadius: 13, border: `1px solid ${C.line}`, background: C.sub, color: C.hi, fontFamily: FF, fontSize: 15, fontWeight: 600, padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: C.mid, marginBottom: 4 }}>Dikelola admin</div>
+          {infoRow(<Mail size={14} />, "Email", email)}
+          {infoRow(<IdCard size={14} />, "ID Promotor (IM3)", promotorCode)}
+          {infoRow(<IdCard size={14} />, "ID 3ID", threeId)}
+          {infoRow(<Building2 size={14} />, "Region", region)}
+          {infoRow(<User size={14} />, "Status", statusLabel)}
+        </div>
+
+        {err && <div style={{ fontSize: 12.5, fontWeight: 700, color: "#DC2626" }}>{err}</div>}
+        <button onClick={submit} disabled={saving || !val.trim() || !dirty} className="press"
+          style={{ height: 52, borderRadius: 13, border: "none", background: (val.trim() && dirty) ? C.brand : C.line, color: (val.trim() && dirty) ? "#fff" : C.lo, fontFamily: FF, fontSize: 15, fontWeight: 700, cursor: (val.trim() && dirty) ? "pointer" : "default", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          {saving ? <Spinner size={18} color="#fff" /> : <Check size={18} />} Simpan Perubahan
+        </button>
+      </div>
+    </Sheet>
+  );
+}
+
+/* ── Sheet generik utk ganti nama (dipakai utk nama outlet sendiri) — cuma
+   satu field teks, tidak pernah menyentuh kolom ID apapun. ─────────────── */
 function RenameSheet({ title, label, placeholder, initial, note, onClose, onSave }) {
   const [val, setVal] = useState(initial || "");
   const [saving, setSaving] = useState(false);

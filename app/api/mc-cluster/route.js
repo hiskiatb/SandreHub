@@ -28,37 +28,50 @@ async function requireAdmin(req) {
   return { user, role: prof.role };
 }
 
-// ── GET — list all mappings ───────────────────────────────────────────────────
+const currentPeriod = () => new Date().toISOString().slice(0, 7); // "YYYY-MM"
+
+// ── GET — list mapping utk periode tertentu (carry-forward otomatis) ─────────
+// Pakai RPC mc_cluster_effective(p_period): kalau bulan yang diminta belum
+// pernah di-upload, otomatis pakai upload TERAKHIR yang tersedia (mirip
+// pts_effective_assignment di Promotor Tracking System). Filter region/
+// branch/search & paginasi dilakukan di sisi server (bukan Postgres) karena
+// hasil RPC tidak bisa langsung di-chain .eq()/.range() seperti tabel biasa.
 export async function GET(req) {
   try {
     const { searchParams } = new URL(req.url);
     const region = searchParams.get("region");
     const branch = searchParams.get("branch");
     const search = searchParams.get("search");
+    const period = searchParams.get("period") || currentPeriod();
     const page   = parseInt(searchParams.get("page")  ?? "1",  10);
     const limit  = parseInt(searchParams.get("limit") ?? "50", 10);
     const offset = (page - 1) * limit;
 
-    let query = supabaseAdmin
-      .from("mc_cluster_mapping")
-      .select("*", { count: "exact" })
-      .order("region")
-      .order("branch")
-      .order("mc")
-      .range(offset, offset + limit - 1);
-
-    if (region) query = query.eq("region", region);
-    if (branch) query = query.eq("branch", branch);
-    if (search) {
-      query = query.or(
-        `mc.ilike.%${search}%,cluster.ilike.%${search}%,branch.ilike.%${search}%,region.ilike.%${search}%`
-      );
-    }
-
-    const { data, error, count } = await query;
+    const { data: allRows, error } = await supabaseAdmin.rpc("mc_cluster_effective", { p_period: period });
     if (error) throw error;
 
-    return NextResponse.json({ success: true, data, count, page, limit });
+    let rows = allRows || [];
+    if (region) rows = rows.filter((r) => r.region === region);
+    if (branch) rows = rows.filter((r) => r.branch === branch);
+    if (search) {
+      const s = search.toLowerCase();
+      rows = rows.filter((r) => [r.mc, r.cluster, r.micro_cluster, r.branch, r.region].some((v) => (v || "").toLowerCase().includes(s)));
+    }
+    rows = [...rows].sort((a, b) =>
+      (a.region || "").localeCompare(b.region || "") ||
+      (a.branch || "").localeCompare(b.branch || "") ||
+      (a.mc || "").localeCompare(b.mc || "")
+    );
+
+    const count = rows.length;
+    const paged = rows.slice(offset, offset + limit);
+    const sourcePeriod = allRows?.[0]?.source_period ?? period;
+    const isCarriedForward = allRows?.[0]?.is_carried_forward ?? false;
+
+    return NextResponse.json({
+      success: true, data: paged, count, page, limit,
+      period, source_period: sourcePeriod, is_carried_forward: isCarriedForward,
+    });
   } catch (err) {
     return NextResponse.json({ success: false, message: err.message }, { status: 500 });
   }
@@ -71,7 +84,7 @@ export async function POST(req) {
 
   try {
     const body = await req.json();
-    const { circle, region, area, branch, mc, cluster } = body;
+    const { circle, region, area, branch, mc, cluster, period } = body;
 
     if (!circle || !region || !area || !branch || !mc || !cluster) {
       return NextResponse.json(
@@ -80,6 +93,8 @@ export async function POST(req) {
       );
     }
 
+    const mcClean = mc.trim().toUpperCase();
+
     const { data, error } = await supabaseAdmin
       .from("mc_cluster_mapping")
       .insert({
@@ -87,8 +102,15 @@ export async function POST(req) {
         region:  region.trim().toUpperCase(),
         area:    area.trim().toUpperCase(),
         branch:  branch.trim().toUpperCase(),
-        mc:      mc.trim().toUpperCase(),
+        mc:      mcClean,
         cluster: cluster.trim().toUpperCase(),
+        // Micro Cluster: acuan gabungan utk manpower hybrid (pegang IM3 &
+        // 3ID) — auto-generate, ikut format MC (IM3) apa adanya, tidak lagi
+        // input manual/format CS terpisah.
+        micro_cluster: mcClean,
+        // Baris ini berlaku utk periode (bulan) tertentu — default bulan
+        // berjalan kalau tidak dikirim eksplisit dari UI.
+        period: (period || currentPeriod()).trim(),
         is_active: true,
       })
       .select()
@@ -97,7 +119,7 @@ export async function POST(req) {
     if (error) {
       if (error.code === "23505") {
         return NextResponse.json(
-          { success: false, message: `MC "${mc}" sudah terdaftar.` },
+          { success: false, message: `MC "${mc}" sudah terdaftar untuk periode ini.` },
           { status: 409 }
         );
       }
