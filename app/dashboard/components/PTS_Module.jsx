@@ -1766,6 +1766,130 @@ function PromotorDetailModal({ t, row, outletById, onClose }) {
   );
 }
 
+function LeaderboardPanel({ t, period, rows, onSelectRow }) {
+  const [regionF, setRegionF] = useState("all");
+  const [branchF, setBranchF] = useState("all");
+
+  const regionOptions = useMemo(() => [...new Set(rows.map((r) => r.region).filter(Boolean))].sort(), [rows]);
+  const branchOptions = useMemo(
+    () => [...new Set(rows.filter((r) => regionF === "all" || r.region === regionF).map((r) => r.branch).filter(Boolean))].sort(),
+    [rows, regionF]
+  );
+  // Kalau ganti region dan branch yang sedang dipilih jadi tidak relevan lagi, reset ke "Semua Branch".
+  useEffect(() => {
+    if (branchF !== "all" && !branchOptions.includes(branchF)) setBranchF("all");
+  }, [branchOptions, branchF]);
+
+  const scoped = useMemo(
+    () => rows.filter((r) => (regionF === "all" || r.region === regionF) && (branchF === "all" || r.branch === branchF)),
+    [rows, regionF, branchF]
+  );
+
+  const ranked = useMemo(() => {
+    const sorted = [...scoped].sort((a, b) => (b.bio - a.bio) || ((b.bio + b.reg) - (a.bio + a.reg)) || (b.total - a.total) || a.nama.localeCompare(b.nama));
+    return sorted.map((r, i) => ({ ...r, rank: i + 1 }));
+  }, [scoped]);
+
+  const topThree = useMemo(() => ranked.filter((r) => r.rank <= 3 && (r.bio > 0 || r.reg > 0 || r.total > 0)), [ranked]);
+
+  const statusAgg = useMemo(() => ranked.reduce((a, r) => {
+    a.validated += r.bio + r.reg; a.pending += r.pending; a.rejected += r.rejected; a.notfound += r.notfound;
+    return a;
+  }, { validated: 0, pending: 0, rejected: 0, notfound: 0 }), [ranked]);
+
+  const buildLevelAgg = (keyFn) => {
+    const m = new Map();
+    ranked.forEach((r) => {
+      const key = keyFn(r) || "Tidak diketahui";
+      if (!m.has(key)) m.set(key, { bio: 0, promotor: 0 });
+      const g = m.get(key);
+      g.bio += r.bio;
+      g.promotor += 1;
+    });
+    return [...m.entries()]
+      .map(([name, g]) => {
+        const target = g.promotor * PROMOTOR_BIO_TARGET;
+        return { name, bio: g.bio, target, pct: target ? Math.round((g.bio / target) * 100) : 0 };
+      })
+      .sort((a, b) => b.pct - a.pct || b.bio - a.bio);
+  };
+  const regionAgg = useMemo(() => buildLevelAgg((r) => r.region), [ranked]);
+  const branchAgg = useMemo(() => buildLevelAgg((r) => r.branch), [ranked]);
+  const mcAgg = useMemo(() => buildLevelAgg((r) => r.mc), [ranked]);
+
+  const hasFilter = regionF !== "all" || branchF !== "all";
+
+  return (
+    <div>
+      {/* Filter khusus tab Leaderboard — tidak memengaruhi tab Ringkasan Promotor. */}
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 18 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: t.mid }}>
+          <Filter size={13} /> Filter
+        </div>
+        <select className="pts-in pts-select" value={regionF} onChange={(e) => setRegionF(e.target.value)} style={{ height: 32 }}>
+          <option value="all">Semua Region</option>
+          {regionOptions.map((r) => <option key={r} value={r}>{r}</option>)}
+        </select>
+        <select className="pts-in pts-select" value={branchF} onChange={(e) => setBranchF(e.target.value)} style={{ height: 32 }}>
+          <option value="all">Semua Branch</option>
+          {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+        </select>
+        {hasFilter && (
+          <button className="pts-btn" onClick={() => { setRegionF("all"); setBranchF("all"); }} style={{ background: t.hover, color: t.mid }}>
+            <FilterX size={13} /> Reset
+          </button>
+        )}
+      </div>
+
+      {/* Top-3 leaderboard individu + donut distribusi status, ikut filter di atas */}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(260px,1.1fr) minmax(260px,1fr)", gap: 14, marginBottom: 20 }}>
+        <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: 16, background: t.card, boxShadow: t.sm }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: t.mid, marginBottom: 12, textTransform: "uppercase", letterSpacing: ".03em" }}>
+            <Trophy size={14} /> Leaderboard Pencapaian ({ymLabel(period)})
+          </div>
+          {topThree.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: t.mid, padding: "10px 0" }}>Belum ada klaim tervalidasi untuk cakupan filter ini.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {topThree.map((r) => (
+                <div key={r.id} onClick={() => onSelectRow(r)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 10, background: t.hover, cursor: "pointer" }}>
+                  <div style={{ width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: r.rank === 1 ? "#F6CB4333" : r.rank === 2 ? "#C9C9C933" : "#C6864233", border: `1.5px solid ${r.rank === 1 ? "#D4A017" : r.rank === 2 ? "#8C8C8C" : "#8A5A2B"}` }}>
+                    <RankBadge rank={r.rank} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.nama}</div>
+                    <div style={{ fontSize: 11, color: t.mid }}>{r.outlet}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: t.green }}>{r.bio}</div>
+                    <div style={{ fontSize: 10, color: t.mid }}>Biometric</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: 16, background: t.card, boxShadow: t.sm }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: t.mid, marginBottom: 12, textTransform: "uppercase", letterSpacing: ".03em" }}>
+            <PieChart size={14} /> Distribusi Status Klaim
+          </div>
+          <StatusDonut t={t} agg={statusAgg} />
+        </div>
+      </div>
+
+      {/* Ranking Branch & MC — dipisah dari tabel Ringkasan Promotor supaya tidak numpuk */}
+      <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: ".03em" }}>
+        <BarChart3 size={14} /> Ranking Pencapaian GA SP Biometric per Level (target {PROMOTOR_BIO_TARGET}/promotor)
+      </div>
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+        <AchievementBarList t={t} title="Ranking Region" icon={<MapPin size={13} />} items={regionAgg} />
+        <AchievementBarList t={t} title="Ranking Branch" icon={<Store size={13} />} items={branchAgg} />
+        <AchievementBarList t={t} title="Ranking MC (Micro Cluster)" icon={<Users size={13} />} items={mcAgg} />
+      </div>
+    </div>
+  );
+}
+
 function PreviewData({ t, d, supabase, period, outletByCode }) {
   const [mode, setMode] = useState("ringkasan");    // ringkasan | msisdn
   const [loading, setLoading] = useState(true);
@@ -1911,37 +2035,10 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
     return { promotor: rows.length, belum, vacant, belumMapping, total };
   }, [rows]);
 
-  const statusAgg = useMemo(() => {
-    return filtered.reduce((a, r) => {
-      a.validated += r.bio + r.reg; a.pending += r.pending; a.rejected += r.rejected; a.notfound += r.notfound;
-      return a;
-    }, { validated: 0, pending: 0, rejected: 0, notfound: 0 });
-  }, [filtered]);
-
-  const topThree = useMemo(() => filtered.filter((r) => r.rank <= 3 && (r.bio > 0 || r.reg > 0 || r.total > 0)), [filtered]);
-
-  // Pencapaian agregat per level (Region / Branch / MC) — target level =
-  // jumlah promotor terdaftar di level tsb x target individu (150 RGU-GA SP
-  // Biometric), memakai `filtered` supaya ikut filter pencarian/status aktif.
-  const buildLevelAgg = (keyFn) => {
-    const m = new Map();
-    filtered.forEach((r) => {
-      const key = keyFn(r) || "Tidak diketahui";
-      if (!m.has(key)) m.set(key, { bio: 0, promotor: 0 });
-      const g = m.get(key);
-      g.bio += r.bio;
-      g.promotor += 1;
-    });
-    return [...m.entries()]
-      .map(([name, g]) => {
-        const target = g.promotor * PROMOTOR_BIO_TARGET;
-        return { name, bio: g.bio, target, pct: target ? Math.round((g.bio / target) * 100) : 0 };
-      })
-      .sort((a, b) => b.pct - a.pct || b.bio - a.bio);
-  };
-  const regionAgg = useMemo(() => buildLevelAgg((r) => r.region), [filtered]);
-  const branchAgg = useMemo(() => buildLevelAgg((r) => r.branch), [filtered]);
-  const mcAgg = useMemo(() => buildLevelAgg((r) => r.mc), [filtered]);
+  // Leaderboard individu, ranking Region/Branch/MC, dan distribusi status
+  // sekarang dihitung di dalam <LeaderboardPanel> sendiri (tab terpisah),
+  // berbasis `rows` supaya filter Region/Branch di sana independen dari
+  // pencarian/filter status login di tab Ringkasan Promotor ini.
 
   const mappingLabel = (r) => (r.outletCount === 0 ? "Belum ter-mapping" : `${r.outletCount} outlet`);
 
@@ -1959,12 +2056,23 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
       <Segmented t={t} value={mode} onChange={setMode}
         options={[
           { value: "ringkasan", label: "Ringkasan Promotor", icon: <Users size={13} /> },
+          { value: "leaderboard", label: "Leaderboard", icon: <Trophy size={13} /> },
           { value: "msisdn", label: "Detail per Nomor", icon: <Phone size={13} /> },
         ]} />
     </div>
   );
 
   if (mode === "msisdn") return <div>{modeToggle}<MsisdnPanel t={t} supabase={supabase} period={period} outletByCode={outletByCode} /></div>;
+
+  if (mode === "leaderboard") {
+    return (
+      <div>
+        {modeToggle}
+        <LeaderboardPanel t={t} period={period} rows={rows} onSelectRow={setDetailRow} />
+        {detailRow && <PromotorDetailModal t={t} row={detailRow} outletById={outletById} onClose={() => setDetailRow(null)} />}
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -1978,51 +2086,9 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
         <Stat t={t} icon={<ShoppingBag size={18} />} label="Total Klaim SP"   value={stats.total}        accent={{ fg: t.green, bg: t.greenBg, bd: t.greenBd }} />
       </div>
 
-      {/* Visualisasi: leaderboard #1-3 + donut distribusi status */}
-      <div style={{ display: "grid", gridTemplateColumns: "minmax(260px,1.1fr) minmax(260px,1fr)", gap: 14, marginBottom: 20 }}>
-        <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: 16, background: t.card, boxShadow: t.sm }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: t.mid, marginBottom: 12, textTransform: "uppercase", letterSpacing: ".03em" }}>
-            <Trophy size={14} /> Leaderboard Pencapaian ({ymLabel(period)})
-          </div>
-          {topThree.length === 0 ? (
-            <div style={{ fontSize: 12.5, color: t.mid, padding: "10px 0" }}>Belum ada klaim tervalidasi periode ini.</div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {topThree.map((r) => (
-                <div key={r.id} onClick={() => setDetailRow(r)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 10, background: t.hover, cursor: "pointer" }}>
-                  <div style={{ width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: r.rank === 1 ? "#F6CB4333" : r.rank === 2 ? "#C9C9C933" : "#C6864233", border: `1.5px solid ${r.rank === 1 ? "#D4A017" : r.rank === 2 ? "#8C8C8C" : "#8A5A2B"}` }}>
-                    <RankBadge rank={r.rank} />
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.nama}</div>
-                    <div style={{ fontSize: 11, color: t.mid }}>{r.outlet}</div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 15, fontWeight: 800, color: t.green }}>{r.bio}</div>
-                    <div style={{ fontSize: 10, color: t.mid }}>Biometric</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-        <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: 16, background: t.card, boxShadow: t.sm }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: t.mid, marginBottom: 12, textTransform: "uppercase", letterSpacing: ".03em" }}>
-            <PieChart size={14} /> Distribusi Status Klaim
-          </div>
-          <StatusDonut t={t} agg={statusAgg} />
-        </div>
-      </div>
-
-      {/* Dashboard pencapaian per level — target tiap level = jumlah promotor x 150 GA SP Biometric */}
-      <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: ".03em" }}>
-        <BarChart3 size={14} /> Pencapaian GA SP Biometric per Level (target {PROMOTOR_BIO_TARGET}/promotor)
-      </div>
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 20 }}>
-        <AchievementBarList t={t} title="Level Region" icon={<MapPin size={13} />} items={regionAgg} />
-        <AchievementBarList t={t} title="Level Branch" icon={<Store size={13} />} items={branchAgg} />
-        <AchievementBarList t={t} title="Level MC (Micro Cluster)" icon={<Users size={13} />} items={mcAgg} />
-      </div>
+      {/* Visualisasi ranking (leaderboard individu, ranking Region/Branch/MC,
+          distribusi status) dipindah ke tab "Leaderboard" tersendiri — supaya
+          tab ini fokus ke tabel data mentah & tidak numpuk. */}
 
       {/* Toolbar */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
