@@ -157,7 +157,9 @@ export default function MappingPage() {
       if (srch)  params.set("search", srch);
       if (reg)   params.set("region", reg);
       if (br)    params.set("branch", br);
-      const res  = await fetch(`/api/mc-cluster?${params}`);
+      const res  = await fetch(`/api/mc-cluster?${params}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       const json = await res.json();
       setRows(json.data ?? []);
       setTotal(json.count ?? 0);
@@ -165,7 +167,7 @@ export default function MappingPage() {
     } finally {
       setFetching(false);
     }
-  }, [search, filterRegion, filterBranch]);
+  }, [search, filterRegion, filterBranch, token]);
 
   // ── Fetch filter options ──────────────────────────────────────────────────
   useEffect(() => {

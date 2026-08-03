@@ -18,7 +18,14 @@ async function requireSPM(req) {
 }
 
 // GET — list all with optional filters
+// SEBELUMNYA endpoint ini tidak mengecek autentikasi sama sekali — siapapun
+// yang tahu URL-nya bisa menarik seluruh sales_authority_codes (MC/cluster/
+// branch/region + kode IM3/3ID). Sekarang wajib login (requireSPM sama
+// seperti PATCH) — link yang bocor pun tidak bisa diakses tanpa token valid.
 export async function GET(req) {
+  const auth = await requireSPM(req);
+  if (auth.error) return NextResponse.json({ success: false, message: auth.error }, { status: auth.status });
+
   try {
     const { searchParams } = new URL(req.url);
     const region = searchParams.get("region");

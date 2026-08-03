@@ -36,7 +36,16 @@ const currentPeriod = () => new Date().toISOString().slice(0, 7); // "YYYY-MM"
 // pts_effective_assignment di Promotor Tracking System). Filter region/
 // branch/search & paginasi dilakukan di sisi server (bukan Postgres) karena
 // hasil RPC tidak bisa langsung di-chain .eq()/.range() seperti tabel biasa.
+// SEBELUMNYA endpoint ini tidak mengecek autentikasi sama sekali — siapapun
+// yang tahu URL-nya (bahkan tanpa login) bisa menarik seluruh data MC/
+// Cluster/Region/Branch/Area. Sekarang WAJIB requireAdmin() sama seperti
+// POST/DELETE/upload — kalau linknya bocor pun tidak bisa diakses tanpa
+// token admin yang valid. (RLS tabel mc_cluster_mapping juga sudah dikunci
+// terpisah ke role admin yang sama, jadi tidak ada jalur baca langsung lain.)
 export async function GET(req) {
+  const auth = await requireAdmin(req);
+  if (auth.error) return NextResponse.json({ success: false, message: auth.error }, { status: auth.status });
+
   try {
     const { searchParams } = new URL(req.url);
     const region = searchParams.get("region");

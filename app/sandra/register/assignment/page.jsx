@@ -92,12 +92,11 @@ export default function RegisterAssignment() {
     if (clean.length !== 8) { setErrMsg("Kode otoritas terdiri dari 8 karakter."); return; }
     setLoading(true); setErrMsg("");
     try {
-      const { data, error } = await supabase
-        .from("sdp_assignments")
-        .select("*")
-        .eq("authority_code", clean)
-        .eq("is_active", true)
-        .maybeSingle();
+      // Lewat RPC (bukan select tabel langsung) — supaya kode yang salah/
+      // belum ada tidak bisa dipakai utk enumerasi seluruh isi sdp_assignments.
+      const { data: rows, error } = await supabase
+        .rpc("sdp_validate_registration_code", { p_code: clean });
+      const data = rows?.[0] || null;
 
       if (error || !data) {
         setErrMsg("Kode otoritas tidak ditemukan atau sudah tidak aktif.");

@@ -182,7 +182,9 @@ export default function MC_ClusterMapping({ theme, profile }) {
       if (srch) params.set("search", srch);
       if (reg)  params.set("region", reg);
       if (br)   params.set("branch", br);
-      const res  = await fetch(`/api/mc-cluster?${params}`);
+      const res  = await fetch(`/api/mc-cluster?${params}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
       const json = await res.json();
       setRows(json.data ?? []);
       setTotal(json.count ?? 0);
@@ -192,20 +194,26 @@ export default function MC_ClusterMapping({ theme, profile }) {
     } finally {
       setFetching(false);
     }
-  }, [search, filterRegion, filterBranch, period]);
+  }, [search, filterRegion, filterBranch, period, token]);
 
   // ── Fetch filter options — dari data periode efektif yg sedang tampil,
   // supaya daftar Region/Branch di dropdown filter selalu relevan dgn bulan
   // yang sedang dilihat (bukan lintas semua histori bulan). ───────────────────
   const refreshFilters = useCallback(async (prd = period) => {
-    const res = await fetch(`/api/mc-cluster?period=${prd}&limit=5000`);
+    const res = await fetch(`/api/mc-cluster?period=${prd}&limit=5000`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
     const json = await res.json();
     const data = json.data || [];
     setRegions([...new Set(data.map(r => r.region))].sort());
     setBranches([...new Set(data.map(r => r.branch))].sort());
-  }, [period]);
+  }, [period, token]);
 
-  useEffect(() => { fetchRows(1, search, filterRegion, filterBranch, period); refreshFilters(period); }, [period]); // eslint-disable-line
+  // NOTE: bergantung juga ke `token` (bukan cuma `period`) — GET /api/mc-cluster
+  // sekarang wajib login (lihat catatan keamanan di api/mc-cluster/route.js),
+  // jadi call pertama saat token masih null (sebelum getSession() selesai)
+  // harus otomatis diulang begitu token tersedia, bukan cuma diam kosong.
+  useEffect(() => { fetchRows(1, search, filterRegion, filterBranch, period); refreshFilters(period); }, [period, token]); // eslint-disable-line
 
   // Auto-fill area = region
   useEffect(() => {

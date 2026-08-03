@@ -15,7 +15,7 @@ import {
   X, ChevronLeft, CalendarDays, Trash2,
   ArrowLeftRight, Inbox, ShieldQuestion, Radar, RefreshCcw, Pencil, Check,
   Target, TrendingUp, Sparkles,
-  ListChecks, ScanFace, XCircle, HelpCircle, IdCard, Circle,
+  ListChecks, ScanFace, XCircle, HelpCircle, IdCard,
   Phone, User, Mail, Building2,
 } from "lucide-react";
 import lottie from "lottie-web";
@@ -156,20 +156,6 @@ function playSuccessTone() {
   } catch { /* abaikan */ }
 }
 
-// Jarak antar dua titik (meter) — dipakai untuk cek geofence SEPENUHNYA di
-// browser (lihat tagSale di AppShell). Lat/lng device promotor tidak pernah
-// dikirim ke server; server hanya menerima hasil akhirnya (dalam radius
-// atau tidak), sesuai keputusan agar koordinat mentah tidak pernah tersimpan
-// di database.
-function haversineMeters(lat1, lng1, lat2, lng2) {
-  const R = 6371000;
-  const toRad = (d) => (d * Math.PI) / 180;
-  const dLat = toRad(lat2 - lat1);
-  const dLng = toRad(lng2 - lng1);
-  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.asin(Math.min(1, Math.sqrt(a)));
-}
-
 // Ikon animasi sukses — pakai file Lottie asli yang dilampirkan (bukan lagi
 // checkmark SVG buatan sendiri), dirender via lottie-web langsung ke sebuah
 // <div> container. Diputar sekali (loop:false) begitu overlay muncul.
@@ -283,8 +269,12 @@ export default function PromotorApp() {
 
   const loadTodaySales = useCallback(async (proId, outletId) => {
     if (!outletId) { setTodaySales([]); return; }
-    const { data } = await supabase.from("pts_sale").select("*")
+    // pts_sale_masked (bukan pts_sale langsung): view yg sudah membedakan
+    // "punya sendiri" (nomor lengkap) vs bukan (ter-mask) di level database —
+    // utk outlet sendiri ini selalu nomor lengkap karena promotor_id cocok.
+    const { data } = await supabase.from("pts_sale_masked").select("*")
       .eq("promotor_id", proId).eq("outlet_id", outletId).gte("tagged_at", todayStart())
+      .is("deleted_at", null)
       .order("tagged_at", { ascending: false });
     setTodaySales(data || []);
   }, []);
@@ -453,9 +443,10 @@ export default function PromotorApp() {
   // Sekarang query ini memakai FILTER PERIODE YANG SAMA PERSIS dengan
   // loadSummary, supaya ketiga tampilan selalu menunjukkan data yang identik.
   const loadHistory = useCallback(async () => {
-    const { data } = await supabase.from("pts_sale").select("*")
+    const { data } = await supabase.from("pts_sale_masked").select("*")
       .eq("credited_period", statsPeriod)
       .or(`promotor_id.eq.${promotorId},credited_promotor_id.eq.${promotorId}`)
+      .is("deleted_at", null)
       .order("tagged_at", { ascending: false }).limit(500);
     setHistory(data || []);
   }, [promotorId, statsPeriod]);
@@ -574,17 +565,6 @@ function AppShell(p) {
   const [brand, setBrand] = useState(null);          // brand yang dipilih utk claim di outlet dual-brand
   useEffect(() => { setBrand(null); }, [activeOutlet?.id]);
 
-  // Cache radius geofence per outlet (hasil pts_resolve_radius) — dipakai
-  // untuk validasi lokasi LOKAL di browser (lihat tagSale), supaya tidak
-  // perlu tanya server berulang-ulang untuk outlet yang sama.
-  const radiusCacheRef = useRef(new Map());
-  const resolveRadius = async (outletId) => {
-    if (radiusCacheRef.current.has(outletId)) return radiusCacheRef.current.get(outletId);
-    const { data, error } = await supabase.rpc("pts_resolve_radius", { p_outlet: outletId });
-    const r = error || data == null ? 30 : Number(data);
-    radiusCacheRef.current.set(outletId, r);
-    return r;
-  };
   const [summary, setSummary] = useState(null);      // ringkasan klaim per periode
   const [editProfile, setEditProfile] = useState(false);   // edit nama sendiri
   const [renamingOutlet, setRenamingOutlet] = useState(null); // outlet yg sedang diganti namanya
@@ -635,7 +615,7 @@ function AppShell(p) {
   };
 
   const loadIncoming = useCallback(async () => {
-    const { data } = await supabase.from("pts_transfer_request")
+    const { data } = await supabase.from("pts_transfer_request_masked")
       .select("*").ilike("from_email", email).eq("status", "pending").order("requested_at", { ascending: false });
     setIncoming(data || []);
   }, [email]);
@@ -676,7 +656,8 @@ function AppShell(p) {
     if (!promotorId) { setSummary(null); return; }
     const { data } = await supabase.from("pts_sale").select("ga_status,biometric_status,credited_transfer_type,credited_promotor_id")
       .eq("credited_period", statsPeriod)
-      .or(`promotor_id.eq.${promotorId},credited_promotor_id.eq.${promotorId}`);
+      .or(`promotor_id.eq.${promotorId},credited_promotor_id.eq.${promotorId}`)
+      .is("deleted_at", null);
     // Baris yang KREDITNYA sudah pindah ke promotor lain (diff_promotor,
     // credited_promotor_id != promotorId) tidak lagi dihitung sebagai
     // pencapaian promotor ini — hanya relevan di Riwayat sebagai catatan.
@@ -712,7 +693,8 @@ function AppShell(p) {
     const outletIds = [...new Set(outlets.map((o) => o.id).filter(Boolean))];
     if (!outletIds.length) { setOutletBioTotal(null); return; }
     const { count } = await supabase.from("pts_sale").select("id", { count: "exact", head: true })
-      .eq("credited_period", statsPeriod).eq("biometric_status", "BIOMETRIC").in("credited_outlet_id", outletIds);
+      .eq("credited_period", statsPeriod).eq("biometric_status", "BIOMETRIC").in("credited_outlet_id", outletIds)
+      .is("deleted_at", null);
     setOutletBioTotal(typeof count === "number" ? count : null);
   }, [outlets, statsPeriod]);
   useEffect(() => { loadOutletBioTotal(); }, [loadOutletBioTotal]);
@@ -769,42 +751,38 @@ function AppShell(p) {
 
   const chooseOutlet = async (o) => { setActiveOutlet(o); setPickOutlet(false); await loadTodaySales(promotorId, o.id); };
 
-  /* Tag penjualan (QR) — via RPC pts_tag_sale. Geofencing dihitung
-     SEPENUHNYA di sini (browser): jarak antara lokasi device promotor dan
-     titik outlet dibandingkan ke radius yang berlaku, dan HANYA hasilnya
-     (dalam radius atau tidak) yang dikirim ke server — koordinat mentah
-     device promotor tidak pernah lewat jaringan maupun tersimpan di
-     database. IMEI juga tidak lagi diminta/dikirim (dihapus sesi
-     sebelumnya). */
+  // Dipanggil dari kartu "Kontribusi Anda" (card 1) di beranda — tap outlet
+  // di daftar "Outlet Anda" langsung membuka layar Claim Penjualan SP dgn
+  // outlet tsb yg sudah terpilih, tidak perlu pilih outlet lagi dari nol.
+  const goToClaimWithOutlet = async (o) => { setView("claim"); await chooseOutlet(o); };
+
+  /* Tag penjualan (QR) — via RPC pts_tag_sale. Geofencing SEKARANG dihitung
+     di SERVER (bukan lagi browser): koordinat device (geo.lat/geo.lng)
+     dikirim apa adanya ke RPC, server yang menghitung jarak ke titik outlet
+     & memutuskan within_radius. Koordinatnya dipakai SEKALI oleh server utk
+     hitung lalu langsung dibuang — TIDAK PERNAH disimpan ke pts_sale (sama
+     seperti kebijakan privasi sebelumnya), cuma sekarang perhitungannya
+     tidak lagi bisa dipalsukan lewat DevTools/network intercept (harus GPS
+     device yang benar2 dipalsukan, jauh lebih sulit). IMEI juga tidak lagi
+     diminta/dikirim (dihapus sesi sebelumnya). */
   const tagSale = async (normalized, raw, confirmOutside) => {
     if (!activeOutlet?.id) throw new Error("Outlet aktif tidak ditemukan, pilih ulang outlet.");
     if (activeOutlet.code3id && !brand) throw new Error("Pilih brand (IM3/3ID) untuk pencapaian di outlet ini terlebih dulu.");
 
     const hasCoords = activeOutlet.latitude != null && activeOutlet.longitude != null
       && !(Number(activeOutlet.latitude) === 0 && Number(activeOutlet.longitude) === 0);
-    let withinRadius = null, geoAvailable = !!geo, localDistance = null, localRadius = null;
-    if (hasCoords) {
-      if (geo) {
-        localRadius = await resolveRadius(activeOutlet.id);
-        localDistance = haversineMeters(Number(activeOutlet.latitude), Number(activeOutlet.longitude), geo.lat, geo.lng);
-        withinRadius = localDistance <= localRadius;
-      } else {
-        geoAvailable = false;
-      }
-    }
+    const geoAvailable = hasCoords ? !!geo : true;
 
     const { data, error } = await supabase.rpc("pts_tag_sale", {
       p_phone: normalized, p_session: null, p_outlet: activeOutlet.id, p_raw: String(raw),
       p_confirm_outside: confirmOutside,
       p_brand: activeOutlet.code3id ? brand : null,
-      p_within_radius: withinRadius, p_geo_available: geoAvailable,
+      p_lat: geo ? geo.lat : null, p_lng: geo ? geo.lng : null, p_geo_available: geoAvailable,
     });
     if (error) throw error;
-    // Jarak/radius yang dihitung lokal ditempel di sini (bukan dari server —
-    // server tidak pernah tahu angka jaraknya) supaya dialog konfirmasi
-    // "di luar radius" tetap bisa menunjukkan info ke promotor secara
-    // sesaat, tanpa disimpan di database.
-    if (data?.status === "outside_radius") { data.distance_meters = localDistance; data.radius_meters = localRadius; }
+    // distance_meters/radius_meters (kalau status "outside_radius") sekarang
+    // datang LANGSUNG dari respons server (dihitung di sana), bukan lagi
+    // ditempel dari hasil hitungan lokal.
     return data;
   };
 
@@ -987,7 +965,7 @@ function AppShell(p) {
             <>
               <IconBtn onClick={goHome} aria-label="Kembali ke beranda"><ChevronLeft size={18} /></IconBtn>
               <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: C.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {view === "claim" ? "Claim Penjualan" : "Riwayat Pengajuan"}
+                {view === "claim" ? `Claim Penjualan SP${brand ? ` ${brand}` : ""}` : "Riwayat Pengajuan"}
               </span>
             </>
           ) : (
@@ -1078,7 +1056,8 @@ function AppShell(p) {
                 kartu (bukan dua kartu terpisah selalu tampil) supaya Claim
                 Penjualan bisa naik lebih dekat ke jempol. */}
             <ContributionCard summary={summary} target={salesTarget}
-              outletBioTotal={outletBioTotal} onNavigateHistory={openHistory} outlets={outlets} />
+              outletBioTotal={outletBioTotal} onNavigateHistory={openHistory} outlets={outlets}
+              onSelectOutlet={goToClaimWithOutlet} />
 
             {/* Ringkasan outlet — hanya pratinjau, tap untuk buka layar Claim
                 Penjualan (outlet, gerbang lokasi, dan tagging kini di layar
@@ -1174,9 +1153,9 @@ function AppShell(p) {
           <div style={{ position: "fixed", inset: 0, zIndex: 140, background: "rgba(17,18,22,0.45)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 26 }} onClick={closeModal}>
             <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 380, background: C.card, borderRadius: 24, padding: "26px 22px 20px", boxShadow: C.lg, textAlign: "center", animation: "pop .22s cubic-bezier(.22,1,.36,1)" }}>
               <div style={{ width: 60, height: 60, borderRadius: 18, margin: "0 auto 16px", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(220,38,38,0.09)", color: "#DC2626" }}><Trash2 size={25} /></div>
-              <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", color: C.hi }}>Hapus nomor ini?</div>
+              <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", color: C.hi }}>Hapus pengajuan penjualan nomor berikut?</div>
               <div style={{ fontSize: 15, fontFamily: "monospace", fontWeight: 700, color: C.hi, marginTop: 10, padding: "8px 12px", borderRadius: 10, background: C.sub, display: "inline-block" }}>{delSale.phone_normalized}</div>
-              <div style={{ fontSize: 13, color: C.mid, marginTop: 10, lineHeight: 1.5 }}>Data claim ini akan dihapus permanen dan tidak bisa dikembalikan.</div>
+              <div style={{ fontSize: 13, color: C.mid, marginTop: 10, lineHeight: 1.5 }}>Pengajuan penjualan ini akan dihapus permanen dan tidak bisa dikembalikan.</div>
               {isValidated && (
                 <div style={{ marginTop: 14, textAlign: "left", padding: "12px 14px", borderRadius: 12, background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.25)" }}>
                   <div style={{ display: "flex", gap: 8, alignItems: "flex-start", fontSize: 12.5, color: "#DC2626", fontWeight: 700, lineHeight: 1.5 }}>
@@ -1510,7 +1489,7 @@ function ClaimEntryCard({ outlet, outletsCount, soldCount, onOpen }) {
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-0.02em", color: "#fff", display: "flex", alignItems: "center", gap: 6 }}>
-          Claim Penjualan Anda <ChevronRight size={17} />
+          Claim Penjualan SP Anda <ChevronRight size={17} />
         </div>
         {outlet ? (
           <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 5, flexWrap: "wrap" }}>
@@ -1753,7 +1732,7 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
           display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
           marginBottom: 14, transition: "background .15s, color .15s",
         }}>
-        <QrCode size={20} /> Claim Penjualan{bt ? ` ${brand}` : ""} (Scan QR)
+        <QrCode size={20} /> Claim Penjualan SP{bt ? ` ${brand}` : ""} (Scan QR)
       </button>
 
       {/* Ringkasan pengajuan outlet ini — pengganti "Terjual hari ini" yang
@@ -1803,7 +1782,7 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
    dekat ke jempol). Animasi flip 3D cepat-tapi-mulus: kedua sisi memakai
    CSS Grid stacking (grid-area sama) supaya tinggi kontainer otomatis
    mengikuti sisi yang lebih tinggi tanpa perlu ukur manual via JS. */
-function ContributionCard({ summary, target, outletBioTotal, onNavigateHistory, outlets }) {
+function ContributionCard({ summary, target, outletBioTotal, onNavigateHistory, outlets, onSelectOutlet }) {
   const [open, setOpen] = useState(false);
   const bio = summary?.bio ?? 0;
   const pct = target > 0 ? Math.min(100, Math.round((bio / target) * 100)) : 0;
@@ -1935,7 +1914,9 @@ function ContributionCard({ summary, target, outletBioTotal, onNavigateHistory, 
                 {outlets.map((o) => {
                   const oname = o.name && o.name !== o.code ? o.name : o.code;
                   return (
-                    <div key={o.code} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 9px", borderRadius: 12, background: "rgba(255,255,255,0.07)" }}>
+                    <div key={o.code} onClick={onSelectOutlet ? (e) => { e.stopPropagation(); onSelectOutlet(o); } : undefined}
+                      className={onSelectOutlet ? "press" : ""}
+                      style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 9px", borderRadius: 12, background: "rgba(255,255,255,0.07)", cursor: onSelectOutlet ? "pointer" : "default" }}>
                       <div style={{ width: 28, height: 28, borderRadius: 8, background: "rgba(255,255,255,0.12)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Store size={13} /></div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontSize: 12, fontWeight: 800, color: "#fff", letterSpacing: "-0.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{oname}</div>
@@ -1945,6 +1926,7 @@ function ContributionCard({ summary, target, outletBioTotal, onNavigateHistory, 
                         </div>
                       </div>
                       {o.area && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", textAlign: "right", flexShrink: 0, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.area}</div>}
+                      {onSelectOutlet && <ChevronRight size={14} color="rgba(255,255,255,0.45)" style={{ flexShrink: 0 }} />}
                     </div>
                   );
                 })}
@@ -2284,9 +2266,10 @@ function HistoryRow({ s, promotorId, onDelete, onOpen }) {
   const gainedFromOther = s.credited_promotor_id === promotorId && s.promotor_id !== promotorId;
   const movedOutletOnly = s.credited_transfer_type === "same_promotor_diff_outlet";
   // Ikon utama baris ini disederhanakan jadi gaya "task list": tanda
-  // centang kalau sudah tervalidasi RGU-GA, lingkaran kosong kalau belum —
-  // diperbesar supaya proporsinya seimbang dengan konten teks di kanannya
-  // (sebelumnya ikon SIM card/radar 34px terasa kekecilan).
+  // centang kalau sudah tervalidasi RGU-GA, ikon SIM card kalau belum —
+  // diperbesar supaya proporsinya seimbang dengan konten teks di kanannya.
+  // Sebelumnya state "belum tervalidasi" pakai lingkaran kosong (Circle),
+  // diganti SIM card supaya konsisten dgn ikon nomor di seluruh app.
   const isValidated = categoryOf(s) === "validated";
   return (
     <div onClick={() => onOpen(s)} role="button" tabIndex={0}
@@ -2295,7 +2278,7 @@ function HistoryRow({ s, promotorId, onDelete, onOpen }) {
       background: C.card, borderRadius: 16, padding: 13, boxShadow: C.md,
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-        <span style={{ width: 44, height: 44, borderRadius: 13, background: isValidated ? "rgba(26,158,90,0.12)" : C.sub, color: isValidated ? C.green : C.lo, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{isValidated ? <CheckCircle2 size={23} /> : <Circle size={20} />}</span>
+        <span style={{ width: 44, height: 44, borderRadius: 13, background: isValidated ? "rgba(26,158,90,0.12)" : C.sub, color: isValidated ? C.green : C.lo, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{isValidated ? <CheckCircle2 size={23} /> : <SimCardIcon size={20} />}</span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
             <span style={{ fontSize: 14.5, fontWeight: 800, fontFamily: "monospace", color: C.hi }}>{s.phone_normalized}</span>

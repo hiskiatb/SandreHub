@@ -422,15 +422,14 @@ export default function RegisterPage() {
           const vd = await vr.json();
           if (!vd.valid) { setErrMsg(vd.message || "Kode Agency tidak valid."); return; }
         } else if (needsBsm) {
-          // BSM: validasi kode dari sdp_assignments (branch-scoped)
-          const { data: asmRow } = await supabase
-            .from("sdp_assignments")
-            .select("id, is_registered")
-            .eq("authority_code", codeUpper)
-            .eq("role", "bsm")
-            .eq("branch", bsm_branch)
-            .eq("is_active", true)
-            .maybeSingle();
+          // BSM: validasi kode dari sdp_assignments (branch-scoped) — lewat RPC
+          // (bukan select tabel langsung, tabel sudah dikunci dari anon) supaya
+          // kode salah tidak bisa dipakai utk enumerasi seluruh isi tabel.
+          const { data: asmRows } = await supabase
+            .rpc("sdp_validate_registration_code", { p_code: codeUpper });
+          const asmRow0 = asmRows?.[0];
+          const asmRow = asmRow0 && asmRow0.role === "bsm" && asmRow0.branch === bsm_branch
+            ? asmRow0 : null;
           if (!asmRow) {
             setErrMsg("Kode otoritas BSM tidak valid untuk branch yang dipilih. Dapatkan dari SPM Sumatera.");
             return;

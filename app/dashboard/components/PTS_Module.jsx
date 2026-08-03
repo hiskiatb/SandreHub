@@ -23,7 +23,7 @@ import {
   RefreshCw, ShoppingBag, CalendarDays,
   Loader2, Store, UserCheck, UserX, Info, Phone, IdCard, Radar,
   UploadCloud, Plus, Trash2, Save, Ban, BarChart3, ArrowLeftRight, Eye, Pencil,
-  Trophy, Medal, Award, PieChart, TrendingUp,
+  Trophy, Medal, Award, PieChart, TrendingUp, History,
 } from "lucide-react";
 import { passesRow, optionsFor, FilterTh, FilterMenu } from "./MFTS_TableFilter";
 import { WhatsAppIcon } from "../../../components/WhatsAppIcon";
@@ -265,7 +265,7 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
   // bawah), sehingga tidak ada satupun konten tab yang cocok untuk
   // dirender saat pertama masuk halaman ini (tampak kosong/blank sampai
   // promotor tap salah satu menu).
-  const [tab, setTab] = useState("promotor");           // promotor | geofence | preview | ga | claims | whatsapp
+  const [tab, setTab] = useState("promotor");           // promotor | geofence | preview | ga | claims | activitylog | whatsapp
   const [period, setPeriod] = useState(PERIOD_OPTIONS[0]);
   const [outlets, setOutlets] = useState([]);          // {code, ...}
   // Outlet fisik bisa punya ID IM3 (code) dan ID 3ID (code_3id) sekaligus —
@@ -462,6 +462,7 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
             ...(isRestrictedTabRole ? [] : [
               { value: "ga",       label: "Validasi GA",            icon: <UploadCloud size={14} /> },
               { value: "claims",   label: "Klaim Nomor",            icon: <ArrowLeftRight size={14} /> },
+              { value: "activitylog", label: "Log Aktivitas",       icon: <History size={14} /> },
               { value: "whatsapp", label: "Call Center WA",         icon: <Phone size={14} /> },
             ]),
           ]} />
@@ -472,6 +473,7 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
       {tab === "geofence" && <GeofenceSettings t={t} d={d} supabase={supabase} profile={effectiveProfile} outlets={outlets} isFullAdmin={isFullAdmin} onOutletsChanged={loadOutlets} />}
       {tab === "ga"       && <GaValidation    t={t} d={d} supabase={supabase} profile={effectiveProfile} isFullAdmin={isFullAdmin} outletByCode={outletByCode} period={period} />}
       {tab === "claims"   && <ClaimHistory    t={t} d={d} supabase={supabase} />}
+      {tab === "activitylog" && <ActivityLog  t={t} d={d} supabase={supabase} outletByCode={outletByCode} />}
       {tab === "whatsapp" && <WhatsappSettings t={t} supabase={supabase} profile={effectiveProfile} isFullAdmin={isFullAdmin} />}
     </div>
   );
@@ -1408,7 +1410,13 @@ function MappingEditModal({ t, supabase, profile, period, row, outletByCode, pic
     (async () => {
       setMcLoading(true);
       try {
-        const res = await fetch(`/api/mc-cluster?period=${encodeURIComponent(period)}&limit=5000`);
+        // GET /api/mc-cluster sekarang wajib login (data MC/Cluster/Branch/
+        // Region tidak lagi bisa ditarik anonim) — sertakan token sesi admin
+        // yang sedang dipakai dashboard ini.
+        const { data: { session } } = await supabase.auth.getSession();
+        const res = await fetch(`/api/mc-cluster?period=${encodeURIComponent(period)}&limit=5000`, {
+          headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
+        });
         const json = await res.json();
         if (!alive) return;
         if (json.success) {
@@ -1545,7 +1553,12 @@ function MappingEditModal({ t, supabase, profile, period, row, outletByCode, pic
               </select>
             </div>
             <div><label style={lbl}>Tanggal Efektif Bekerja</label><input style={inp} type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} /></div>
-            <div><label style={lbl}>Target Penjualan</label><input style={inp} type="number" min={1} value={salesTarget} onChange={(e) => setSalesTarget(e.target.value)} /></div>
+            <div>
+              <label style={lbl}>Target Penjualan{profile?.role !== "spm_sumatera" ? " — hanya SPM Sumatera" : ""}</label>
+              <input style={{ ...inp, opacity: profile?.role !== "spm_sumatera" ? 0.6 : 1, cursor: profile?.role !== "spm_sumatera" ? "not-allowed" : "text" }}
+                type="number" min={1} value={salesTarget} onChange={(e) => setSalesTarget(e.target.value)}
+                disabled={profile?.role !== "spm_sumatera"} />
+            </div>
             <div>
               <label style={lbl}>Status</label>
               <select style={inp} value={status} onChange={(e) => setStatus(e.target.value)}>
@@ -2175,7 +2188,8 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
         supabase.from("pts_promotor").select("id,email,full_name,auth_user_id,region,effective_date,vacant"),
         supabase.from("pts_sale")
           .select("promotor_id,credited_promotor_id,outlet_id,credited_outlet_id,brand,ga_status,biometric_status,tagged_at")
-          .eq("credited_period", period),
+          .eq("credited_period", period)
+          .is("deleted_at", null),
       ]);
       const assignments = asgRes.data || [];
       const promotors = proRes.data || [];
@@ -2565,9 +2579,14 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
       // pernah dikirim ke server maupun tersimpan di database (histori lama
       // juga sudah di-redact). Yang tersimpan & bisa diaudit di sini cuma
       // status akhirnya: within_radius (dalam/luar radius).
-      const { data: sales } = await supabase.from("pts_sale")
+      // pts_sale_masked (bukan pts_sale langsung): MSISDN di-mask (4 awal +
+      // **** + 4 akhir) di level database utk SEMUA sesi admin — tidak bisa
+      // dilewati query langsung ke tabel dasar karena akses kolom mentahnya
+      // sudah dicabut dari role authenticated. Raw data tetap ada di tabel,
+      // cuma bisa diambil lewat SQL Editor/pg_dump/service_role.
+      const { data: sales } = await supabase.from("pts_sale_masked")
         .select("id,phone_normalized,brand,email,promotor_id,outlet_id,region,tagged_at,raw_qr_value,within_radius,outside_confirmed_at,ga_status,biometric_status,ga_note,credited_period")
-        .eq("credited_period", period).order("tagged_at", { ascending: false });
+        .eq("credited_period", period).is("deleted_at", null).order("tagged_at", { ascending: false });
       const { data: pros } = await supabase.from("pts_promotor").select("id,email,full_name");
       const nameById = new Map((pros || []).map((p) => [p.id, p.full_name]));
       const nameByEmail = new Map((pros || []).map((p) => [(p.email || "").toLowerCase(), p.full_name]));
@@ -3146,7 +3165,7 @@ function GaValidation({ t, d, supabase, profile, isFullAdmin, period }) {
   const loadSummary = useCallback(async () => {
     setLoadingSummary(true);
     try {
-      const { data } = await supabase.from("pts_sale").select("ga_status,biometric_status,credited_transfer_type");
+      const { data } = await supabase.from("pts_sale").select("ga_status,biometric_status,credited_transfer_type").is("deleted_at", null);
       const counts = { BELUM_TERVALIDASI: 0, TERVALIDASI: 0, TERVALIDASI_LUAR_AREA: 0, TIDAK_SESUAI_OUTLET: 0, TIDAK_DITEMUKAN: 0, MENUNGGU_MAPPING_OUTLET: 0, BIOMETRIC: 0, REGULAR: 0, same_promotor_diff_outlet: 0, diff_promotor: 0 };
       (data || []).forEach((r) => {
         counts[r.ga_status] = (counts[r.ga_status] || 0) + 1;
@@ -3173,9 +3192,15 @@ function GaValidation({ t, d, supabase, profile, isFullAdmin, period }) {
      dengan koreksi biometric_status/outlet meski sebelumnya sudah
      tervalidasi). Ini pool KECIL (ribuan, bukan jutaan) — muat aman. */
   const loadPool = async () => {
-    const { data, error } = await supabase.from("pts_sale").select("phone_normalized");
+    // Akses kolom phone_normalized mentah lewat tabel langsung sudah dicabut
+    // dari role authenticated (lihat migration pts_msisdn_masking_db_level) —
+    // pool pencocokan ini SATU-SATUNYA tempat yang masih butuh nomor MENTAH
+    // (bukan buat ditampilkan, cuma buat cek Set membership terhadap file GA
+    // yang diupload), makanya lewat RPC khusus ber-role admin, bukan lagi
+    // query tabel langsung.
+    const { data, error } = await supabase.rpc("pts_ga_match_pool");
     if (error) throw error;
-    return new Set((data || []).map((r) => r.phone_normalized));
+    return new Set(data || []);
   };
 
   const resetFile = () => {
@@ -3426,7 +3451,9 @@ function ClaimHistory({ t, supabase }) {
     setLoading(true);
     try {
       const [reqRes, proRes] = await Promise.all([
-        supabase.from("pts_transfer_request").select("*").order("requested_at", { ascending: false }).limit(500),
+        // pts_transfer_request_masked: MSISDN di-mask di level database utk
+        // sesi admin (lihat pts_msisdn_masking_db_level migration).
+        supabase.from("pts_transfer_request_masked").select("*").order("requested_at", { ascending: false }).limit(500),
         supabase.from("pts_promotor").select("id,email,full_name"),
       ]);
       const proById = new Map((proRes.data || []).map((p) => [p.id, p.full_name]));
@@ -3515,6 +3542,118 @@ function ClaimHistory({ t, supabase }) {
         </div>
       </div>
       <div style={{ marginTop: 10, fontSize: 12, color: t.mid }}>{filtered.length} pengajuan.</div>
+      <style>{`.spin{animation:ptsspin 1s linear infinite}@keyframes ptsspin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
+}
+
+/* ══════════════════════════ LOG AKTIVITAS ══════════════════════════════
+   Audit trail utk pengajuan penjualan (SP) yang dihapus promotor. Sejak
+   penghapusan diubah dari hard-delete jadi SOFT-delete (deleted_at/
+   deleted_by di pts_sale, migration pts_sale_soft_delete_audit_trail),
+   baris yang dihapus TETAP ADA di database utk keperluan audit — tapi
+   otomatis disembunyikan dari semua tampilan "data aktif" (Ringkasan
+   Aktivitas, Detail MSISDN, Riwayat promotor sendiri, dst — semua sudah
+   difilter .is("deleted_at", null)). Tab ini SATU-SATUNYA tempat baris yg
+   sudah dihapus itu ditampilkan lagi, khusus utk admin. Nomor yang dihapus
+   tetap langsung bisa di-claim ulang oleh siapapun (unique index
+   pts_sale_phone_normalized_live_key cuma berlaku ke baris yang belum
+   dihapus) — soft-delete di sini TIDAK memblokir re-tagging. */
+function ActivityLog({ t, supabase, outletByCode }) {
+  const [loading, setLoading] = useState(true);
+  const [rows, setRows] = useState([]);
+  const [q, setQ] = useState("");
+
+  // outletByCode diindeks per KODE outlet, bukan id — bangun ulang index
+  // per-id di sini (pola sama dgn LeaderboardPanel) supaya bisa resolve
+  // outlet dari pts_sale.outlet_id (uuid).
+  const outletById = useMemo(() => {
+    const m = new Map();
+    outletByCode?.forEach?.((o) => { if (o?.id) m.set(o.id, o); });
+    return m;
+  }, [outletByCode]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [delRes, proRes] = await Promise.all([
+        supabase.from("pts_sale_masked")
+          .select("id,phone_normalized,brand,email,promotor_id,credited_promotor_id,outlet_id,region,tagged_at,deleted_at,deleted_by,ga_status,biometric_status,credited_period")
+          .not("deleted_at", "is", null)
+          .order("deleted_at", { ascending: false })
+          .limit(500),
+        supabase.from("pts_promotor").select("id,email,full_name"),
+      ]);
+      const nameById = new Map((proRes.data || []).map((p) => [p.id, p.full_name]));
+      const nameByEmail = new Map((proRes.data || []).map((p) => [(p.email || "").toLowerCase(), p.full_name]));
+      const nameOf = (id, email) => (id && nameById.get(id)) || nameByEmail.get((email || "").toLowerCase()) || email || "—";
+      setRows((delRes.data || []).map((r) => {
+        const o = outletById.get(r.outlet_id) || null;
+        return {
+          ...r,
+          submitter_name: nameOf(r.promotor_id, r.email),
+          deleter_name: r.deleted_by ? (nameById.get(r.deleted_by) || "—") : "—",
+          outlet_code: o?.code || "",
+          outlet_name: o?.name || "",
+        };
+      }));
+    } catch { setRows([]); } finally { setLoading(false); }
+  }, [supabase, outletById]);
+  useEffect(() => { load(); }, [load]);
+
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return rows;
+    return rows.filter((r) => `${r.phone_normalized} ${r.submitter_name} ${r.deleter_name} ${r.outlet_code}`.toLowerCase().includes(s));
+  }, [rows, q]);
+
+  const wasValidated = (r) => r.ga_status === "TERVALIDASI" || r.ga_status === "TERVALIDASI_LUAR_AREA";
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 16px", borderRadius: 12, background: t.brandBg, border: `1px solid ${t.brandBd}`, marginBottom: 18 }}>
+        <History size={17} color={t.brand} style={{ flexShrink: 0 }} />
+        <span style={{ fontSize: 13.5, color: t.hi, fontWeight: 500 }}>
+          Audit trail pengajuan penjualan SP yang dihapus promotor sendiri. Data tidak benar-benar hilang dari sistem (soft-delete) — nomor yang dihapus tetap langsung bisa di-claim ulang oleh siapapun, tapi jejaknya tetap tercatat di sini untuk keperluan audit.
+        </span>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <div style={{ position: "relative" }}>
+          <Search size={14} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: t.mid }} />
+          <input className="pts-in" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nomor / nama / outlet" style={{ paddingLeft: 32, width: 260 }} />
+        </div>
+        <button className="pts-btn" onClick={load} style={{ background: t.card, color: t.mid, border: `1px solid ${t.line}` }}><RefreshCw size={14} /> Muat ulang</button>
+      </div>
+
+      <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden", boxShadow: t.sm }}>
+        <div style={{ overflow: "auto", maxHeight: 620 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
+            <thead><tr>{["MSISDN", "Diajukan Oleh", "Outlet", "Periode", "Status Saat Dihapus", "Ditag", "Dihapus Oleh", "Dihapus Pada"].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr></thead>
+            <tbody>
+              {loading ? (
+                <tr><td className="pts-td" colSpan={8} style={{ textAlign: "center", padding: 40, color: t.mid }}><Loader2 size={20} className="spin" style={{ verticalAlign: "middle" }} /> Memuat…</td></tr>
+              ) : filtered.length === 0 ? (
+                <tr><td className="pts-td" colSpan={8} style={{ textAlign: "center", padding: 44, color: t.mid }}><History size={24} style={{ opacity: .5, marginBottom: 8 }} /><br />Belum ada pengajuan yang dihapus.</td></tr>
+              ) : filtered.map((r) => (
+                <tr key={r.id} className="pts-row">
+                  <td className="pts-td" style={{ fontFamily: "monospace", fontWeight: 700 }}>{r.phone_normalized}</td>
+                  <td className="pts-td" style={{ fontWeight: 600 }}>{r.submitter_name}</td>
+                  <td className="pts-td">{r.outlet_name || r.outlet_code || "—"}</td>
+                  <td className="pts-td" style={{ color: t.mid }}>{r.credited_period || "—"}</td>
+                  <td className="pts-td">
+                    <Chip t={t} tone={wasValidated(r) ? "green" : "amber"}>{wasValidated(r) ? "Sudah Tervalidasi" : (r.ga_status || "Belum Tervalidasi")}</Chip>
+                  </td>
+                  <td className="pts-td" style={{ color: t.mid, fontSize: 12 }}>{r.tagged_at ? `${fmtDate(r.tagged_at)} ${fmtTime(r.tagged_at)}` : "—"}</td>
+                  <td className="pts-td" style={{ fontWeight: 600 }}>{r.deleter_name}</td>
+                  <td className="pts-td" style={{ color: t.mid, fontSize: 12 }}>{r.deleted_at ? `${fmtDate(r.deleted_at)} ${fmtTime(r.deleted_at)}` : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div style={{ marginTop: 10, fontSize: 12, color: t.mid }}>{filtered.length} pengajuan dihapus.</div>
       <style>{`.spin{animation:ptsspin 1s linear infinite}@keyframes ptsspin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );

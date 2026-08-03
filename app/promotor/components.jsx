@@ -415,7 +415,7 @@ export function QRScannerSheet({ onDetect, onClose }) {
           <form onSubmit={(e) => { e.preventDefault(); submitManual(); }} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <div>
               <label style={{ fontSize: 12.5, fontWeight: 600, color: "#61616C" }}>Nomor HP</label>
-              <input value={manualVal} onChange={(e) => setManualVal(e.target.value)} inputMode="numeric" enterKeyHint="done" placeholder="mis. 082617837181 atau 62826…"
+              <input value={manualVal} onChange={(e) => setManualVal(e.target.value)} inputMode="numeric" enterKeyHint="done" placeholder="mis. 6282617837181"
                 style={{ width: "100%", height: 52, borderRadius: 13, border: "1px solid #E4E5EA", background: "#F6F7F9", color: "#17181C", fontFamily: FF, fontSize: 16, padding: "0 15px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
             </div>
             {localErr && <div style={{ fontSize: 12.5, fontWeight: 700, color: "#DC2626", textAlign: "center" }}>{localErr}</div>}
