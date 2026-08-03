@@ -215,6 +215,15 @@ export default function PromotorApp() {
   }, []);
   const previewMode = !!previewId;
   const backToDashboard = () => router.push("/dashboard");
+
+  // Daftarkan service worker PWA (scope /promotor/) supaya app ini bisa
+  // di-"Add to Home Screen"/install seperti app native. SW ini online-only
+  // (lihat public/promotor/sw.js) — tidak meng-cache data Supabase, jadi
+  // status klaim/validasi GA tetap selalu real-time.
+  useEffect(() => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.register("/promotor/sw.js", { scope: "/promotor/" }).catch(() => {});
+  }, []);
   const [outlets, setOutlets] = useState([]);      // {code,id,branch,area,region,name}
   const [assignmentSrc, setAssignmentSrc] = useState(null); // { sourcePeriod, carried, mc } — mapping ini dari bulan mana
   const [activeOutlet, setActiveOutlet] = useState(null);
@@ -1808,9 +1817,9 @@ function ContributionCard({ summary, target, outletBioTotal, onNavigateHistory, 
           padding: "16px 16px 15px", pointerEvents: open ? "none" : "auto",
         }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 13 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-              <Sparkles size={13} color={PAL.yellow} style={{ flexShrink: 0 }} />
-              <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.65)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+              <Sparkles size={15} color={PAL.yellow} style={{ flexShrink: 0 }} />
+              <span style={{ fontSize: 13.5, fontWeight: 800, letterSpacing: "0.02em", color: "rgba(255,255,255,0.9)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 Kontribusi Anda
               </span>
             </div>
