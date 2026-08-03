@@ -23,7 +23,7 @@ import {
   RefreshCw, ShoppingBag, CalendarDays,
   Loader2, Store, UserCheck, UserX, Info, Phone, IdCard, Radar,
   UploadCloud, Plus, Trash2, Save, Ban, BarChart3, ArrowLeftRight, Eye, Pencil,
-  Trophy, Medal, Award, PieChart,
+  Trophy, Medal, Award, PieChart, TrendingUp,
 } from "lucide-react";
 import { passesRow, optionsFor, FilterTh, FilterMenu } from "./MFTS_TableFilter";
 import { WhatsAppIcon } from "../../../components/WhatsAppIcon";

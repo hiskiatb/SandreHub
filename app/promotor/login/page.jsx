@@ -52,11 +52,27 @@ export default function PromotorLogin() {
   };
 
   return (
-    <div style={{ minHeight: "100svh", background: "#FFFFFF", color: "#17181C", fontFamily: FF, display: "flex", flexDirection: "column", padding: "0 28px", WebkitFontSmoothing: "antialiased" }}>
+    // Background disamakan dgn app utama (C.bg #F4F5F7, lihat page.jsx) —
+    // sebelumnya halaman ini pakai putih polos edge-to-edge, jadi terasa
+    // "putus" saat transisi login → beranda (beranda punya kanvas abu-abu +
+    // aurora, login-nya putih rata). Konten dibungkus kartu bermaxWidth
+    // sendiri (bukan lagi full-bleed) supaya di layar lebar (tablet/desktop)
+    // tidak terlihat kosong/pecah — mirip kartu 560px yang dipakai di
+    // seluruh app promotor lainnya.
+    <div style={{ minHeight: "100svh", background: "#F4F5F7", color: "#17181C", fontFamily: FF, WebkitFontSmoothing: "antialiased" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&display=swap');
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+        html,body{background:#F4F5F7 !important;overscroll-behavior-y:none}
         @keyframes pspin{to{transform:rotate(360deg)}}
+        .promotor-login-card{width:100%;max-width:420px;margin:0 auto;padding:0 24px;box-sizing:border-box}
+        @media (min-width:640px){
+          .promotor-login-card{
+            max-width:460px;margin-top:48px;padding:44px 40px 32px;
+            background:#FFFFFF;border:1px solid #E9EAEE;border-radius:24px;
+            box-shadow:0 2px 6px rgba(23,24,28,0.07), 0 20px 44px rgba(23,24,28,0.09);
+          }
+        }
       `}</style>
 
       {/* Ganti Hub */}
@@ -67,61 +83,63 @@ export default function PromotorLogin() {
         </button>
       </div>
 
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
-        {/* Logo SandraHub */}
-        <HubLogo variant="sandra" size={62} dark={false} shadow inBox />
+      <div style={{ minHeight: "100svh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "72px 0 calc(env(safe-area-inset-bottom,0px) + 24px)" }}>
+        <div className="promotor-login-card" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+          {/* Logo SandraHub */}
+          <HubLogo variant="sandra" size={62} dark={false} shadow inBox />
 
-        <h1 style={{ marginTop: 28, fontSize: 26, fontWeight: 800, letterSpacing: "-0.035em", textAlign: "center", lineHeight: 1.15, color: "#17181C" }}>
-          Login sebagai Promotor
-        </h1>
-        <div style={{ marginTop: 9, display: "inline-flex", alignItems: "center", gap: 7, fontSize: 13, color: "#6B6B76", fontWeight: 500 }}>
-          Promotor Tracking System
-          <span style={{ width: 3, height: 3, borderRadius: 99, background: "#C4C4CE" }} />
-          <span style={{ fontWeight: 700, background: "linear-gradient(90deg,#ED1C24,#C6168D)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>SandraHub</span>
-        </div>
-
-        {/* Google button */}
-        <button onClick={signIn} disabled={busy}
-          style={{
-            marginTop: 40, width: "100%", maxWidth: 360, height: 54, borderRadius: 14, cursor: busy ? "default" : "pointer",
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 12,
-            background: "#FFFFFF", color: "#1F2430", border: "1.5px solid #E4E5EA", fontFamily: FF, fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em",
-            boxShadow: "0 1px 2px rgba(23,24,28,0.05)", opacity: busy ? 0.7 : 1, transition: "border-color .15s, box-shadow .15s, transform .1s",
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#CFCFD8"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(23,24,28,0.08)"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#E4E5EA"; e.currentTarget.style.boxShadow = "0 1px 2px rgba(23,24,28,0.05)"; }}
-        >
-          {busy ? <Loader2 size={21} style={{ animation: "pspin 1s linear infinite", color: "#ED1C24" }} />
-                : <><GoogleG /> Lanjutkan dengan Google</>}
-        </button>
-      </div>
-
-      {/* Info note — satu kartu: cara masuk, lalu jalur alternatif WhatsApp
-          langsung di bawahnya (tanpa pemisah "ATAU" antar tombol). */}
-      <div style={{ marginBottom: "calc(env(safe-area-inset-bottom, 0px) + 30px)", width: "100%", maxWidth: 360, alignSelf: "center" }}>
-        {err && (
-          <div style={{ marginBottom: 12, padding: "11px 14px", borderRadius: 12, background: "#FDECEC", border: "1px solid #F5C2C2", color: "#C62828", fontSize: 12.5, fontWeight: 600, textAlign: "center" }}>{err}</div>
-        )}
-        <div style={{ borderRadius: 13, background: "#F6F7F9", border: "1px solid #ECEDF0", overflow: "hidden" }}>
-          <div style={{ display: "flex", gap: 10, padding: "13px 15px" }}>
-            <Info size={16} color="#9A9AA6" style={{ flexShrink: 0, marginTop: 1 }} />
-            <span style={{ fontSize: 12.5, color: "#6B6B76", lineHeight: 1.55 }}>
-              Gunakan akun <b style={{ color: "#3A3A44" }}>Google (Gmail)</b>. Hubungi <b style={{ color: "#3A3A44" }}>CSE/RSE</b> Anda untuk didaftarkan.
-            </span>
+          <h1 style={{ marginTop: 28, fontSize: 26, fontWeight: 800, letterSpacing: "-0.035em", textAlign: "center", lineHeight: 1.15, color: "#17181C" }}>
+            Login sebagai Promotor
+          </h1>
+          <div style={{ marginTop: 9, display: "inline-flex", alignItems: "center", gap: 7, fontSize: 13, color: "#6B6B76", fontWeight: 500 }}>
+            Promotor Tracking System
+            <span style={{ width: 3, height: 3, borderRadius: 99, background: "#C4C4CE" }} />
+            <span style={{ fontWeight: 700, background: "linear-gradient(90deg,#ED1C24,#C6168D)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>SandraHub</span>
           </div>
-          {waLink && (
-            <a href={waLink} target="_blank" rel="noopener noreferrer"
-              style={{
-                display: "flex", alignItems: "center", gap: 9, padding: "12px 15px", textDecoration: "none",
-                borderTop: "1px solid #ECEDF0", background: "#F0FBF4", color: "#128C4A",
-                fontFamily: FF, fontSize: 13, fontWeight: 700, transition: "background .15s",
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "#E4F9EB"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "#F0FBF4"; }}
-            >
-              <WhatsAppIcon size={17} /> atau Hubungi Call Center via WhatsApp
-            </a>
-          )}
+
+          {/* Google button */}
+          <button onClick={signIn} disabled={busy}
+            style={{
+              marginTop: 40, width: "100%", height: 54, borderRadius: 14, cursor: busy ? "default" : "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 12,
+              background: "#FFFFFF", color: "#1F2430", border: "1.5px solid #E4E5EA", fontFamily: FF, fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em",
+              boxShadow: "0 1px 2px rgba(23,24,28,0.05)", opacity: busy ? 0.7 : 1, transition: "border-color .15s, box-shadow .15s, transform .1s",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#CFCFD8"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(23,24,28,0.08)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#E4E5EA"; e.currentTarget.style.boxShadow = "0 1px 2px rgba(23,24,28,0.05)"; }}
+          >
+            {busy ? <Loader2 size={21} style={{ animation: "pspin 1s linear infinite", color: "#ED1C24" }} />
+                  : <><GoogleG /> Lanjutkan dengan Google</>}
+          </button>
+
+          {/* Info note — satu kartu: cara masuk, lalu jalur alternatif
+              WhatsApp langsung di bawahnya (tanpa pemisah "ATAU"). */}
+          <div style={{ marginTop: 28, width: "100%" }}>
+            {err && (
+              <div style={{ marginBottom: 12, padding: "11px 14px", borderRadius: 12, background: "#FDECEC", border: "1px solid #F5C2C2", color: "#C62828", fontSize: 12.5, fontWeight: 600, textAlign: "center" }}>{err}</div>
+            )}
+            <div style={{ borderRadius: 13, background: "#F6F7F9", border: "1px solid #ECEDF0", overflow: "hidden" }}>
+              <div style={{ display: "flex", gap: 10, padding: "13px 15px" }}>
+                <Info size={16} color="#9A9AA6" style={{ flexShrink: 0, marginTop: 1 }} />
+                <span style={{ fontSize: 12.5, color: "#6B6B76", lineHeight: 1.55 }}>
+                  Gunakan akun <b style={{ color: "#3A3A44" }}>Google (Gmail)</b>. Hubungi <b style={{ color: "#3A3A44" }}>CSE/RSE</b> Anda untuk didaftarkan.
+                </span>
+              </div>
+              {waLink && (
+                <a href={waLink} target="_blank" rel="noopener noreferrer"
+                  style={{
+                    display: "flex", alignItems: "center", gap: 9, padding: "12px 15px", textDecoration: "none",
+                    borderTop: "1px solid #ECEDF0", background: "#F0FBF4", color: "#128C4A",
+                    fontFamily: FF, fontSize: 13, fontWeight: 700, transition: "background .15s",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "#E4F9EB"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "#F0FBF4"; }}
+                >
+                  <WhatsAppIcon size={17} /> atau Hubungi Call Center via WhatsApp
+                </a>
+              )}
+            </div>
+          </div>
         </div>
       </div>
     </div>

@@ -925,18 +925,25 @@ function AppShell(p) {
     if (guardPreview()) return;
     setBusy(true);
     try {
-      // PENTING: minta baris yang terhapus balik lewat .select(). Supabase/
-      // PostgREST TIDAK menganggap "0 baris terhapus karena difilter RLS"
-      // sebagai error — `error` akan tetap null walau baris aslinya sama
-      // sekali tidak terhapus (mis. RLS menolak karena kepemilikan sale ini
-      // sudah pindah ke promotor lain via credited_promotor_id). Tanpa
-      // pengecekan ini, app pernah menampilkan "Nomor dihapus" padahal
-      // datanya masih ada — begitu nomor yang sama di-scan ulang, muncul
-      // lagi notifikasi "sudah di-claim".
-      const { data, error } = await supabase.from("pts_sale").delete().eq("id", s.id).select("id");
+      // Pakai RPC SECURITY DEFINER `pts_delete_own_sale` (bukan lagi delete
+      // langsung lewat client + RLS) — RPC ini mendefinisikan "punya saya"
+      // dgn logika yg SAMA PERSIS dgn pengecekan "self" di pts_tag_sale
+      // (promotor_id/credited_promotor_id ATAU email), jadi tidak mungkin
+      // lagi ada celah antara "boleh dihapus" vs "masih dianggap milik saya
+      // saat scan ulang". Sebelumnya delete lewat RLS client-side bisa jadi
+      // silent no-op (error tetap null) kalau promotor_id row sudah stale/
+      // tidak match — begitu nomor yang sama di-scan ulang, muncul lagi
+      // notifikasi "sudah di-claim" walau tampak sukses terhapus.
+      const { data, error } = await supabase.rpc("pts_delete_own_sale", { p_sale_id: s.id });
       if (error) throw error;
-      if (!data || data.length === 0) {
-        throw new Error("Data tidak ditemukan atau Anda tidak punya akses untuk menghapusnya. Coba muat ulang halaman.");
+      if (data?.status === "not_found") {
+        throw new Error("Data sudah tidak ada (mungkin sudah dihapus sebelumnya). Coba muat ulang halaman.");
+      }
+      if (data?.status === "forbidden") {
+        throw new Error("Anda tidak punya akses untuk menghapus data ini. Coba muat ulang halaman.");
+      }
+      if (data?.status !== "ok") {
+        throw new Error("Gagal menghapus. Coba lagi.");
       }
       if (activeOutlet) await loadTodaySales(promotorId, activeOutlet.id);
       loadSummary(); loadHistory();
