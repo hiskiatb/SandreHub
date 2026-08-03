@@ -23,6 +23,7 @@ import {
   RefreshCw, ShoppingBag, CalendarDays,
   Loader2, Store, UserCheck, UserX, Info, Phone, IdCard, Radar,
   UploadCloud, Plus, Trash2, Save, Ban, BarChart3, ArrowLeftRight, Eye, Pencil,
+  Trophy, Medal, Award, PieChart,
 } from "lucide-react";
 import { passesRow, optionsFor, FilterTh, FilterMenu } from "./MFTS_TableFilter";
 import { WhatsAppIcon } from "../../../components/WhatsAppIcon";
@@ -121,6 +122,20 @@ const GA_STATUS_LABEL = {
   TIDAK_DITEMUKAN: "Tidak Ditemukan",
 };
 const GA_STATUS_TONE = { BELUM_TERVALIDASI: "amber", TERVALIDASI: "green", TERVALIDASI_LUAR_AREA: "blue", TIDAK_SESUAI_OUTLET: "amber", TIDAK_DITEMUKAN: "red" };
+// Kategori ringkas status GA untuk agregasi Ringkasan Aktivitas (ranking &
+// donut chart). "validated" = TERVALIDASI + TERVALIDASI_LUAR_AREA.
+// Target RGU-GA SP Biometric per-promotor (default 150, sama seperti nilai
+// default `salesTarget` di app Promotor). Dipakai untuk menghitung % pencapaian
+// individu maupun agregat level Branch/MC/Region (target level = jumlah
+// promotor x 150).
+const PROMOTOR_BIO_TARGET = 150;
+function gaCategory(ga_status) {
+  const s = ga_status || "BELUM_TERVALIDASI";
+  if (s === "TERVALIDASI" || s === "TERVALIDASI_LUAR_AREA") return "validated";
+  if (s === "TIDAK_SESUAI_OUTLET") return "rejected";
+  if (s === "TIDAK_DITEMUKAN") return "notfound";
+  return "pending";
+}
 const GEOFENCE_SCOPES = [
   { value: "global", label: "Global (semua outlet)" },
   { value: "region", label: "Per Region" },
@@ -164,12 +179,62 @@ function Stat({ t, icon, label, value, accent }) {
   );
 }
 
+/* Indikator proses bertahap (step-by-step) — dipakai untuk proses yang
+   punya beberapa tahapan berurutan dan makan waktu (upload/validasi GA,
+   upload titik koordinat outlet), supaya promotor/admin bisa lihat persis
+   proses mana yang sedang berjalan, bukan cuma satu spinner generik.
+   steps: [{ key, label, sub? }] — statusnya ditentukan dari activeIndex:
+     i < activeIndex  → selesai (centang hijau)
+     i === activeIndex → sedang berjalan (spinner + progress bar opsional)
+     i > activeIndex  → belum mulai (bulat kosong, abu-abu)
+   progress (0..1, opsional) hanya dipakai untuk step yang sedang aktif. */
+function StepProgress({ t, steps, activeIndex, progress }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      {steps.map((s, i) => {
+        const done = i < activeIndex || activeIndex >= steps.length;
+        const active = i === activeIndex;
+        const pct = active && typeof progress === "number" ? Math.max(0, Math.min(1, progress)) : null;
+        return (
+          <div key={s.key} style={{ display: "flex", gap: 12, padding: "9px 2px" }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
+              <div style={{
+                width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+                background: done ? t.greenBg : active ? t.brandBg : t.sub,
+                border: `1.5px solid ${done ? t.greenBd : active ? t.brandBd : t.line}`,
+                color: done ? t.green : active ? t.brand : t.lo, transition: "all .2s",
+              }}>
+                {done ? <CheckCircle2 size={15} /> : active ? <Loader2 size={13} className="spin" /> : <span style={{ width: 6, height: 6, borderRadius: "50%", background: "currentColor" }} />}
+              </div>
+              {i < steps.length - 1 && <div style={{ width: 1.5, flex: 1, minHeight: 14, marginTop: 4, background: done ? t.greenBd : t.line }} />}
+            </div>
+            <div style={{ flex: 1, minWidth: 0, paddingBottom: i < steps.length - 1 ? 10 : 0 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: done || active ? t.hi : t.mid }}>{s.label}</div>
+              {s.sub && <div style={{ fontSize: 12, color: t.mid, marginTop: 2 }}>{s.sub}</div>}
+              {active && pct != null && (
+                <div style={{ marginTop: 8, height: 6, borderRadius: 99, background: t.sub, overflow: "hidden", maxWidth: 320 }}>
+                  <div style={{ height: "100%", width: `${Math.round(pct * 100)}%`, background: t.brand, borderRadius: 99, transition: "width .25s ease" }} />
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ══════════════════════════════════════════════════════════════════════ */
 export default function PTS_Module({ supabase, theme = "light", profile }) {
   const d = theme === "dark";
   const t = mk(d);
 
-  const [tab, setTab] = useState("upload");            // upload | promotor | preview | geofence | ga
+  // Default ke tab pertama ("promotor") — sebelumnya default-nya "upload",
+  // yang bukan salah satu value tab yang valid (lihat daftar Segmented di
+  // bawah), sehingga tidak ada satupun konten tab yang cocok untuk
+  // dirender saat pertama masuk halaman ini (tampak kosong/blank sampai
+  // promotor tap salah satu menu).
+  const [tab, setTab] = useState("promotor");           // promotor | geofence | preview | ga | claims | whatsapp
   const [period, setPeriod] = useState(PERIOD_OPTIONS[0]);
   const [outlets, setOutlets] = useState([]);          // {code, ...}
   // Outlet fisik bisa punya ID IM3 (code) dan ID 3ID (code_3id) sekaligus —
@@ -230,11 +295,31 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
   // benar-benar merepresentasikan akses aslinya (bukan tampilan salah).
   const isFullAdmin = effectiveProfile?.role === "spm_sumatera" || effectiveProfile?.role === "internal_ioh" || effectiveProfile?.role === "salesforce_mgmt_sumatera";
 
+  // Role dengan akses menu dipersempit (lihat komentar di Segmented di
+  // bawah): SFM Circle, SFM Region (semua region), dan CSE/RSE.
+  const isRestrictedTabRole = effectiveProfile?.role === "salesforce_mgmt_sumatera"
+    || effectiveProfile?.role === "cse_rse"
+    || Object.values(REGION_SFM_ROLE).includes(effectiveProfile?.role);
+
+  // Kalau tab yang sedang aktif ternyata tidak diizinkan untuk role saat ini
+  // (mis. SPM sedang di tab "Validasi GA" lalu beralih "Lihat sebagai" SFM
+  // Circle), pindahkan otomatis ke tab pertama yang diizinkan supaya tidak
+  // nyangkut di layar yang menu-nya sudah hilang dari Segmented.
+  useEffect(() => {
+    if (isRestrictedTabRole && tab !== "promotor" && tab !== "preview") setTab("promotor");
+  }, [isRestrictedTabRole, tab]);
+
   return (
     <div style={{ fontFamily: FF, color: t.hi }}>
       <style>{`
         .pts-in{font-family:${FF};font-size:13.5px;color:${t.hi};background:${t.inputBg};border:1px solid ${t.line};border-radius:9px;padding:9px 12px;outline:none;transition:border-color .15s}
         .pts-in:focus{border-color:${t.brandBd}}
+        /* Select memakai class tambahan ini supaya panah dropdown-nya tidak
+           mepet ke tepi kotak (sebelumnya .pts-in dipakai apa adanya untuk
+           <select>, jadi mengandalkan panah bawaan browser yang render-nya
+           terlalu dekat ke border). appearance:none + panah kustom via
+           background-image, dengan jarak yang konsisten dari tepi kanan. */
+        .pts-select{appearance:none;-webkit-appearance:none;-moz-appearance:none;cursor:pointer;padding-right:34px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='${encodeURIComponent(t.mid)}' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 10px center;background-size:15px}
         .pts-btn{font-family:${FF};display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:600;letter-spacing:-.01em;padding:9px 16px;border-radius:10px;cursor:pointer;border:1px solid transparent;transition:all .15s}
         .pts-btn:disabled{opacity:.5;cursor:not-allowed}
         .pts-th{position:sticky;top:0;z-index:2;background:${t.sub};font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:${t.mid};padding:11px 12px;text-align:left;white-space:nowrap;border-bottom:1px solid ${t.line}}
@@ -249,11 +334,11 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 20, flexWrap: "wrap", marginBottom: 22 }}>
         <div style={{ display: "flex", gap: 14, alignItems: "center" }}>
           <div style={{ width: 46, height: 46, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", background: t.brandBg, color: t.brand, border: `1px solid ${t.brandBd}` }}>
-            <MapPin size={22} strokeWidth={2.1} />
+            <Store size={22} strokeWidth={2.1} />
           </div>
           <div>
             <h2 style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.025em", color: t.hi, lineHeight: 1.1 }}>Promotor Tracking System</h2>
-            <p style={{ fontSize: 13, color: t.mid, marginTop: 3 }}>Mapping outlet &amp; pemantauan aktivitas Promotor{profile?.region ? ` — region ${profile.region}` : " — Sumatera"}.</p>
+            <p style={{ fontSize: 13, color: t.mid, marginTop: 3 }}>Mapping outlet &amp; pemantauan aktivitas Promotor {profile?.region ? `region ${profile.region}` : "Sumatera"}.</p>
           </div>
         </div>
 
@@ -264,25 +349,38 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
             <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
               <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: t.lo }}>Lihat sebagai</label>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                <select value={viewAs} onChange={(e) => setViewAs(e.target.value)}
-                  style={{ appearance: "none", fontFamily: FF, fontSize: 13, fontWeight: 700, color: isViewingAs ? t.amber : t.hi, background: t.card, border: `1.5px solid ${isViewingAs ? t.amberBd : t.line}`, borderRadius: 11, padding: "10px 14px", cursor: "pointer", boxShadow: t.sm }}>
-                  <option value="self">Saya sendiri (SPM Sumatera)</option>
-                  <option value="circle">SFM Circle</option>
-                  <option value="region">SFM Region</option>
-                  <option value="cse">CSE / RSE (per MC)</option>
-                </select>
-                {viewAs === "region" && (
-                  <select value={viewAsRegion} onChange={(e) => setViewAsRegion(e.target.value)}
-                    style={{ appearance: "none", fontFamily: FF, fontSize: 13, fontWeight: 600, color: t.hi, background: t.card, border: `1.5px solid ${t.amberBd}`, borderRadius: 11, padding: "10px 14px", cursor: "pointer", boxShadow: t.sm }}>
-                    {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                {/* Setiap select dibungkus wrapper relative + ikon panah
+                    sendiri (bukan andalkan panah bawaan browser yang hilang
+                    gara-gara appearance:none), dengan padding kanan yang
+                    cukup supaya panahnya tidak mepet ke tepi/teks. */}
+                <div style={{ position: "relative" }}>
+                  <select value={viewAs} onChange={(e) => setViewAs(e.target.value)}
+                    style={{ appearance: "none", fontFamily: FF, fontSize: 13, fontWeight: 700, color: isViewingAs ? t.amber : t.hi, background: t.card, border: `1.5px solid ${isViewingAs ? t.amberBd : t.line}`, borderRadius: 11, padding: "10px 34px 10px 14px", cursor: "pointer", boxShadow: t.sm }}>
+                    <option value="self">Saya sendiri (SPM Sumatera)</option>
+                    <option value="circle">SFM Circle</option>
+                    <option value="region">SFM Region</option>
+                    <option value="cse">CSE / RSE (per MC)</option>
                   </select>
+                  <ChevronDown size={14} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: isViewingAs ? t.amber : t.mid, pointerEvents: "none" }} />
+                </div>
+                {viewAs === "region" && (
+                  <div style={{ position: "relative" }}>
+                    <select value={viewAsRegion} onChange={(e) => setViewAsRegion(e.target.value)}
+                      style={{ appearance: "none", fontFamily: FF, fontSize: 13, fontWeight: 600, color: t.hi, background: t.card, border: `1.5px solid ${t.amberBd}`, borderRadius: 11, padding: "10px 34px 10px 14px", cursor: "pointer", boxShadow: t.sm }}>
+                      {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+                    </select>
+                    <ChevronDown size={14} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: t.amber, pointerEvents: "none" }} />
+                  </div>
                 )}
                 {viewAs === "cse" && (
-                  <select value={viewAsMc} onChange={(e) => setViewAsMc(e.target.value)}
-                    style={{ appearance: "none", fontFamily: FF, fontSize: 13, fontWeight: 600, color: t.hi, background: t.card, border: `1.5px solid ${t.amberBd}`, borderRadius: 11, padding: "10px 14px", cursor: "pointer", boxShadow: t.sm, maxWidth: 220 }}>
-                    {mcOptions.length === 0 && <option value="">(belum ada data MC)</option>}
-                    {mcOptions.map((mc) => <option key={mc} value={mc}>{mc}</option>)}
-                  </select>
+                  <div style={{ position: "relative" }}>
+                    <select value={viewAsMc} onChange={(e) => setViewAsMc(e.target.value)}
+                      style={{ appearance: "none", fontFamily: FF, fontSize: 13, fontWeight: 600, color: t.hi, background: t.card, border: `1.5px solid ${t.amberBd}`, borderRadius: 11, padding: "10px 34px 10px 14px", cursor: "pointer", boxShadow: t.sm, maxWidth: 220 }}>
+                      {mcOptions.length === 0 && <option value="">(belum ada data MC)</option>}
+                      {mcOptions.map((mc) => <option key={mc} value={mc}>{mc}</option>)}
+                    </select>
+                    <ChevronDown size={14} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: t.amber, pointerEvents: "none" }} />
+                  </div>
                 )}
               </div>
             </div>
@@ -294,10 +392,10 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
             <div style={{ position: "relative" }}>
               <CalendarDays size={15} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: t.brand, pointerEvents: "none" }} />
               <select value={period} onChange={(e) => setPeriod(e.target.value)}
-                style={{ appearance: "none", fontFamily: FF, fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em", color: t.hi, background: t.card, border: `1.5px solid ${t.brandBd}`, borderRadius: 11, padding: "10px 38px 10px 34px", cursor: "pointer", boxShadow: t.sm }}>
+                style={{ appearance: "none", fontFamily: FF, fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em", color: t.hi, background: t.card, border: `1.5px solid ${t.brandBd}`, borderRadius: 11, padding: "10px 40px 10px 34px", cursor: "pointer", boxShadow: t.sm }}>
                 {PERIOD_OPTIONS.map((p) => <option key={p} value={p}>{ymLabel(p)}</option>)}
               </select>
-              <ChevronDown size={15} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: t.mid, pointerEvents: "none" }} />
+              <ChevronDown size={15} style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", color: t.mid, pointerEvents: "none" }} />
             </div>
           </div>
         </div>
@@ -317,16 +415,24 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
           atur radius → pantau aktivitas → validasi GA → audit klaim.
           Roster & Mapping Outlet SENGAJA digabung jadi satu menu — identitas
           promotor dan penugasan outletnya adalah satu pekerjaan, bukan dua
-          tab terpisah yang harus bolak-balik. ───────────────────────── */}
+          tab terpisah yang harus bolak-balik.
+          Role SFM (Circle/Region) & CSE/RSE cuma perlu memantau, bukan
+          mengatur geofence/validasi GA/klaim/WA — jadi menu untuk mereka
+          dipersempit ke Promotor & Outlet + Ringkasan Aktivitas saja. Ini
+          otomatis ikut berlaku juga saat SPM memakai "Lihat sebagai" untuk
+          menyimulasikan tampilan role tsb, karena keduanya sama-sama lewat
+          effectiveProfile.role. ───────────────────────── */}
       <div style={{ marginBottom: 22 }}>
         <Segmented t={t} value={tab} onChange={setTab}
           options={[
             { value: "promotor", label: "Promotor & Outlet",        icon: <IdCard size={14} /> },
-            { value: "geofence", label: "Geofence",                 icon: <Radar size={14} /> },
+            ...(isRestrictedTabRole ? [] : [{ value: "geofence", label: "Geofence", icon: <Radar size={14} /> }]),
             { value: "preview",  label: "Ringkasan Aktivitas",      icon: <FileSpreadsheet size={14} /> },
-            { value: "ga",       label: "Validasi GA",              icon: <UploadCloud size={14} /> },
-            { value: "claims",   label: "Klaim Nomor",              icon: <ArrowLeftRight size={14} /> },
-            { value: "whatsapp", label: "Call Center WA",           icon: <Phone size={14} /> },
+            ...(isRestrictedTabRole ? [] : [
+              { value: "ga",       label: "Validasi GA",            icon: <UploadCloud size={14} /> },
+              { value: "claims",   label: "Klaim Nomor",            icon: <ArrowLeftRight size={14} /> },
+              { value: "whatsapp", label: "Call Center WA",         icon: <Phone size={14} /> },
+            ]),
           ]} />
       </div>
 
@@ -1061,7 +1167,7 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
             <Field t={t} label="Email Pribadi"><input className="pts-in" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="nama@email.com" /></Field>
             <Field t={t} label="No. HP"><input className="pts-in" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} placeholder="08xx" /></Field>
             <Field t={t} label="Region">
-              <select className="pts-in" value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })} disabled={!!picRegion}>
+              <select className="pts-in pts-select" value={form.region} onChange={(e) => setForm({ ...form, region: e.target.value })} disabled={!!picRegion}>
                 <option value="">— pilih region —</option>
                 {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
@@ -1511,16 +1617,172 @@ function Field({ t, label, children }) {
    belum pernah login (auth_user_id kosong), dan berapa SP yang sudah
    diklaim per brand (IM3/3ID). Detail per nomor MSISDN ada di sub-tampilan
    "Detail per Nomor". */
+function StatusDonut({ t, agg, size = 148 }) {
+  const segs = [
+    { key: "validated", label: "Tervalidasi", value: agg.validated, color: t.green },
+    { key: "pending", label: "Belum Tervalidasi", value: agg.pending, color: t.amber },
+    { key: "rejected", label: "Outlet Tidak Sesuai", value: agg.rejected, color: t.blue },
+    { key: "notfound", label: "Tidak Ditemukan", value: agg.notfound, color: t.red },
+  ];
+  const total = segs.reduce((a, s) => a + s.value, 0);
+  let acc = 0;
+  const stops = total
+    ? segs.map((s) => {
+        const from = (acc / total) * 360;
+        acc += s.value;
+        const to = (acc / total) * 360;
+        return { ...s, from, to };
+      })
+    : [];
+  const gradient = total
+    ? `conic-gradient(${stops.map((s) => `${s.color} ${s.from}deg ${s.to}deg`).join(", ")})`
+    : `conic-gradient(${t.line} 0deg 360deg)`;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
+      <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+        <div style={{ width: size, height: size, borderRadius: "50%", background: gradient }} />
+        <div style={{ position: "absolute", inset: size * 0.17, borderRadius: "50%", background: t.card, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ fontSize: 20, fontWeight: 800, color: t.hi }}>{total}</div>
+          <div style={{ fontSize: 10, color: t.mid, fontWeight: 600 }}>Total Klaim</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 7, minWidth: 170 }}>
+        {segs.map((s) => (
+          <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+            <span style={{ width: 9, height: 9, borderRadius: 3, background: s.color, flexShrink: 0 }} />
+            <span style={{ color: t.mid, flex: 1 }}>{s.label}</span>
+            <span style={{ fontWeight: 700, color: t.hi }}>{s.value}</span>
+            <span style={{ color: t.mid, fontSize: 11, width: 38, textAlign: "right" }}>{total ? Math.round((s.value / total) * 100) : 0}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AchievementBarList({ t, title, icon, items }) {
+  return (
+    <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: 16, background: t.card, boxShadow: t.sm, flex: 1, minWidth: 260 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: t.mid, marginBottom: 12, textTransform: "uppercase", letterSpacing: ".03em" }}>
+        {icon} {title}
+      </div>
+      {items.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: t.mid, padding: "10px 0" }}>Belum ada data.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
+          {items.map((it, i) => {
+            const barColor = it.pct >= 100 ? t.green : it.pct >= 60 ? t.blue : it.pct >= 30 ? t.amber : t.red;
+            return (
+              <div key={it.name + i}>
+                <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 4 }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 160 }}>
+                    {i === 0 && it.pct > 0 && <Trophy size={11} style={{ marginRight: 4, verticalAlign: -1 }} color="#D4A017" />}
+                    {it.name}
+                  </span>
+                  <span style={{ fontSize: 11.5, color: t.mid }}>
+                    <b style={{ color: t.green, fontSize: 12.5 }}>{it.bio}</b> / {it.target} <span style={{ color: t.mid }}>({it.pct}%)</span>
+                  </span>
+                </div>
+                <div style={{ height: 7, borderRadius: 99, background: t.hover, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${Math.min(100, it.pct)}%`, borderRadius: 99, background: barColor, transition: "width .3s" }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RankBadge({ rank }) {
+  if (rank === 1) return <Trophy size={16} color="#D4A017" fill="#F6CB43" />;
+  if (rank === 2) return <Medal size={16} color="#8C8C8C" fill="#C9C9C9" />;
+  if (rank === 3) return <Award size={16} color="#8A5A2B" fill="#C68642" />;
+  return null;
+}
+
+function PromotorDetailModal({ t, row, outletById, onClose }) {
+  if (!row) return null;
+  const outlets = [...row.byOutlet.entries()].map(([oid, v]) => ({ ...v, outlet: outletById.get(oid) }));
+  const summaryChips = [
+    { label: "Total Pengajuan", value: row.total, tone: "blue" },
+    { label: "Dalam Pengajuan", value: row.pending, tone: "amber" },
+    { label: "Total Tervalidasi", value: row.bio + row.reg, tone: "green" },
+    { label: `GA SP Biometric (${Math.round((row.bio / PROMOTOR_BIO_TARGET) * 100)}% dari target ${PROMOTOR_BIO_TARGET})`, value: row.bio, tone: "green" },
+    { label: "GA SP Non-Biometric", value: row.reg, tone: "blue" },
+    { label: "GA di luar Outlet", value: row.rejected + row.notfound, tone: "amber" },
+  ];
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: 16 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: t.card, borderRadius: 16, maxWidth: 640, width: "100%", maxHeight: "86vh", overflow: "auto", boxShadow: t.lg || "0 10px 40px rgba(0,0,0,.25)" }}>
+        <div style={{ padding: "18px 20px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, background: t.card, zIndex: 1 }}>
+          <div>
+            <div style={{ fontSize: 15.5, fontWeight: 800, color: t.hi, display: "flex", alignItems: "center", gap: 7 }}>
+              {row.rank <= 3 && <RankBadge rank={row.rank} />} {row.nama}
+              {row.rank ? <span style={{ fontSize: 11.5, fontWeight: 700, color: t.mid }}>· Peringkat #{row.rank}</span> : null}
+            </div>
+            <div style={{ fontSize: 12.5, color: t.mid, marginTop: 2 }}>{row.email}</div>
+          </div>
+          <button onClick={onClose} className="pts-btn" style={{ background: t.hover, color: t.mid, padding: "6px 8px" }}><X size={15} /></button>
+        </div>
+        <div style={{ padding: 20 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: t.mid, marginBottom: 10, textTransform: "uppercase", letterSpacing: ".03em" }}>Ringkasan Status</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 22 }}>
+            {summaryChips.map((c) => (
+              <Chip key={c.label} t={t} tone={c.tone}>{c.label}: {c.value}</Chip>
+            ))}
+          </div>
+
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: t.mid, marginBottom: 10, textTransform: "uppercase", letterSpacing: ".03em" }}>Detail per Outlet</div>
+          <div style={{ border: `1px solid ${t.line}`, borderRadius: 10, overflow: "hidden" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  {["Outlet", "Total Pengajuan", "GA SP Biometric", "GA SP Non-Biometric", "Dalam Pengajuan", "GA di luar Outlet"].map((h) => (
+                    <th key={h} className="pts-th" style={{ fontSize: 10.5 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {outlets.length === 0 ? (
+                  <tr><td className="pts-td" colSpan={6} style={{ textAlign: "center", padding: 24, color: t.mid }}>Tidak ada klaim per outlet.</td></tr>
+                ) : outlets.map((o, i) => (
+                  <tr key={i} className="pts-row">
+                    <td className="pts-td" style={{ fontWeight: 600 }}>{o.outlet?.name || o.outlet?.code_3id || "Outlet tidak dikenal"}</td>
+                    <td className="pts-td" style={{ fontWeight: 700 }}>{o.total}</td>
+                    <td className="pts-td" style={{ background: t.greenBg, color: t.green, fontWeight: 800 }}>{o.bio || "—"}</td>
+                    <td className="pts-td" style={{ color: t.blue }}>{o.reg || "—"}</td>
+                    <td className="pts-td" style={{ color: t.amber }}>{o.pending || "—"}</td>
+                    <td className="pts-td" style={{ color: t.mid }}>{(o.rejected + o.notfound) || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PreviewData({ t, d, supabase, period, outletByCode }) {
   const [mode, setMode] = useState("ringkasan");    // ringkasan | msisdn
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
   const [statusF, setStatusF] = useState("all");    // all | active | not_logged_in
   const [q, setQ] = useState("");
+  const [detailRow, setDetailRow] = useState(null);
 
   // Kunci identitas promotor untuk pengelompokan: promotor_id (uuid, permanen)
   // bila ada, baru jatuh ke email untuk baris lama / belum tertaut ID.
   const idKey = (promotorId, email) => promotorId || `e:${(email || "").toLowerCase()}`;
+
+  const outletById = useMemo(() => {
+    const m = new Map();
+    outletByCode.forEach((o) => { if (o?.id) m.set(o.id, o); });
+    return m;
+  }, [outletByCode]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1546,40 +1808,62 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
         if (!metaByKey.has(k)) metaByKey.set(k, { branch: a.branch, mc: a.mc, region: a.region, email: a.email, full_name: a.full_name });
       });
 
-      // Klaim SP periode ini per promotor_id, dipecah per brand — pakai
-      // credited_period (bukan rentang tanggal dari tagged_at) supaya
-      // SELALU sinkron dengan app Promotor (Kontribusi Anda/Riwayat/Detail
-      // Outlet semuanya sudah pakai credited_period sebagai satu-satunya
-      // sumber kebenaran periode). Sebelumnya pakai `.gte/.lt("tagged_at",...)`
-      // dengan string tanggal polos, yang dibaca sebagai UTC oleh Postgres —
-      // klaim yang ditag menjelang tengah malam WIB bisa jatuh ke bucket
-      // bulan yang salah dan "hilang" di tampilan admin walau sudah
-      // muncul & tercatat benar di app Promotor.
-      const promotorIds = promotors.map((p) => p.id);
+      // Klaim SP periode ini — pakai credited_period (bukan rentang tanggal
+      // dari tagged_at) supaya SELALU sinkron dengan app Promotor. Kepemilikan
+      // klaim memakai credited_promotor_id/credited_outlet_id sebagai sumber
+      // kebenaran (bisa berpindah dari promotor_id/outlet_id asal saat
+      // tagging), persis logika "Kontribusi Anda" di app Promotor: jika
+      // credited_promotor_id terisi, dialah pemilik; jika kosong, fallback ke
+      // promotor_id/outlet_id. Pencapaian ranking = klaim TERVALIDASI dengan
+      // biometric_status = BIOMETRIC (RGU-GA SP Biometric), sama seperti
+      // definisi "Kontribusi Anda" pada app Promotor.
       const salesByPromotor = new Map();
-      if (promotorIds.length) {
-        const { data: sales } = await supabase.from("pts_sale").select("promotor_id,brand")
-          .in("promotor_id", promotorIds).eq("credited_period", period);
-        (sales || []).forEach((s) => {
-          if (!salesByPromotor.has(s.promotor_id)) salesByPromotor.set(s.promotor_id, { total: 0, im3: 0, tid: 0 });
-          const agg = salesByPromotor.get(s.promotor_id);
-          agg.total++;
-          if (s.brand === "IM3") agg.im3++; else if (s.brand === "3ID") agg.tid++;
-        });
-      }
+      const { data: sales } = await supabase.from("pts_sale")
+        .select("promotor_id,credited_promotor_id,outlet_id,credited_outlet_id,brand,ga_status,biometric_status")
+        .eq("credited_period", period);
+      (sales || []).forEach((s) => {
+        const owner = s.credited_promotor_id || s.promotor_id;
+        if (!owner) return;
+        const outletId = s.credited_outlet_id || s.outlet_id;
+        const cat = gaCategory(s.ga_status);
+        if (!salesByPromotor.has(owner)) {
+          salesByPromotor.set(owner, { total: 0, im3: 0, tid: 0, bio: 0, reg: 0, pending: 0, rejected: 0, notfound: 0, byOutlet: new Map() });
+        }
+        const agg = salesByPromotor.get(owner);
+        agg.total++;
+        if (s.brand === "IM3") agg.im3++; else if (s.brand === "3ID") agg.tid++;
+        if (cat === "validated") { if (s.biometric_status === "BIOMETRIC") agg.bio++; else agg.reg++; }
+        else if (cat === "rejected") agg.rejected++;
+        else if (cat === "notfound") agg.notfound++;
+        else agg.pending++;
+
+        if (outletId) {
+          if (!agg.byOutlet.has(outletId)) agg.byOutlet.set(outletId, { total: 0, bio: 0, reg: 0, pending: 0, rejected: 0, notfound: 0 });
+          const o = agg.byOutlet.get(outletId);
+          o.total++;
+          if (cat === "validated") { if (s.biometric_status === "BIOMETRIC") o.bio++; else o.reg++; }
+          else if (cat === "rejected") o.rejected++;
+          else if (cat === "notfound") o.notfound++;
+          else o.pending++;
+        }
+      });
 
       // Gabungan kunci: tiap promotor roster + kunci assignment lama yang
-      // tidak tertaut promotor_id_ref (email-only, baris legacy).
+      // tidak tertaut promotor_id_ref (email-only, baris legacy) + promotor
+      // manapun yang punya klaim ter-credit ke dirinya periode ini (jaga-jaga
+      // bila tidak ada di roster/assignment karena alasan lain).
       const allKeys = new Set(promotors.map((p) => p.id));
       metaByKey.forEach((_, k) => { if (!proById.has(k)) allKeys.add(k); });
+      salesByPromotor.forEach((_, k) => allKeys.add(k));
 
+      const emptyAgg = { total: 0, im3: 0, tid: 0, bio: 0, reg: 0, pending: 0, rejected: 0, notfound: 0, byOutlet: new Map() };
       const out = [...allKeys].map((k) => {
         const pro = proById.get(k);
         const meta = metaByKey.get(k);
         const outlets = outletsByKey.get(k) || new Set();
         const firstOutletCode = [...outlets][0] || "";
         const outlet = outletByCode.get(String(firstOutletCode).toUpperCase());
-        const agg = salesByPromotor.get(k) || { total: 0, im3: 0, tid: 0 };
+        const agg = salesByPromotor.get(k) || emptyAgg;
         const hasRealEmail = !!pro?.email;
         const promotorStatus = pro?.vacant ? "Vacant" : (hasRealEmail && pro?.effective_date ? "Aktif" : "Pending");
         return {
@@ -1591,6 +1875,8 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
           loginStatus: pro?.auth_user_id ? "Aktif" : "Belum Login",
           promotorStatus,
           total: agg.total, im3: agg.im3, tid: agg.tid,
+          bio: agg.bio, reg: agg.reg, pending: agg.pending, rejected: agg.rejected, notfound: agg.notfound,
+          byOutlet: agg.byOutlet,
         };
       });
 
@@ -1604,12 +1890,17 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
 
   const filtered = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return rows.filter((r) => {
+    const f = rows.filter((r) => {
       if (statusF === "active" && r.loginStatus !== "Aktif") return false;
       if (statusF === "not_logged_in" && r.loginStatus !== "Belum Login") return false;
       if (s && !(`${r.nama} ${r.email} ${r.outlet} ${r.outlet_code}`.toLowerCase().includes(s))) return false;
       return true;
     });
+    // Sort berdasarkan rangking pencapaian: RGU-GA SP Biometric tervalidasi
+    // (agg.bio) terbanyak di atas, lalu total tervalidasi, lalu total klaim,
+    // lalu nama sebagai tie-breaker stabil.
+    const sorted = [...f].sort((a, b) => (b.bio - a.bio) || ((b.bio + b.reg) - (a.bio + a.reg)) || (b.total - a.total) || a.nama.localeCompare(b.nama));
+    return sorted.map((r, i) => ({ ...r, rank: i + 1 }));
   }, [rows, statusF, q]);
 
   const stats = useMemo(() => {
@@ -1620,11 +1911,43 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
     return { promotor: rows.length, belum, vacant, belumMapping, total };
   }, [rows]);
 
+  const statusAgg = useMemo(() => {
+    return filtered.reduce((a, r) => {
+      a.validated += r.bio + r.reg; a.pending += r.pending; a.rejected += r.rejected; a.notfound += r.notfound;
+      return a;
+    }, { validated: 0, pending: 0, rejected: 0, notfound: 0 });
+  }, [filtered]);
+
+  const topThree = useMemo(() => filtered.filter((r) => r.rank <= 3 && (r.bio > 0 || r.reg > 0 || r.total > 0)), [filtered]);
+
+  // Pencapaian agregat per level (Region / Branch / MC) — target level =
+  // jumlah promotor terdaftar di level tsb x target individu (150 RGU-GA SP
+  // Biometric), memakai `filtered` supaya ikut filter pencarian/status aktif.
+  const buildLevelAgg = (keyFn) => {
+    const m = new Map();
+    filtered.forEach((r) => {
+      const key = keyFn(r) || "Tidak diketahui";
+      if (!m.has(key)) m.set(key, { bio: 0, promotor: 0 });
+      const g = m.get(key);
+      g.bio += r.bio;
+      g.promotor += 1;
+    });
+    return [...m.entries()]
+      .map(([name, g]) => {
+        const target = g.promotor * PROMOTOR_BIO_TARGET;
+        return { name, bio: g.bio, target, pct: target ? Math.round((g.bio / target) * 100) : 0 };
+      })
+      .sort((a, b) => b.pct - a.pct || b.bio - a.bio);
+  };
+  const regionAgg = useMemo(() => buildLevelAgg((r) => r.region), [filtered]);
+  const branchAgg = useMemo(() => buildLevelAgg((r) => r.branch), [filtered]);
+  const mcAgg = useMemo(() => buildLevelAgg((r) => r.mc), [filtered]);
+
   const mappingLabel = (r) => (r.outletCount === 0 ? "Belum ter-mapping" : `${r.outletCount} outlet`);
 
   const exportExcel = () => {
-    const head = ["No", "Region", "Branch", "MC", "Outlet", "ID Outlet", "Nama Promotor", "Email", "Status Promotor", "Status Mapping", "Status Login", "Total Klaim SP", "IM3", "3ID"];
-    const body = filtered.map((r, i) => [i + 1, r.region, r.branch, r.mc, r.outlet, r.outlet_code, r.nama, r.email, r.promotorStatus, mappingLabel(r), r.loginStatus, r.total, r.im3, r.tid]);
+    const head = ["No", "Rank", "Region", "Branch", "MC", "Outlet", "ID Outlet", "Nama Promotor", "Email", "Status Promotor", "Status Mapping", "Status Login", "Total Pengajuan", "Dalam Pengajuan", "Total Tervalidasi", "GA SP Biometric", "% Pencapaian (target 150)", "GA SP Non-Biometric", "GA di luar Outlet", "IM3", "3ID"];
+    const body = filtered.map((r, i) => [i + 1, r.rank, r.region, r.branch, r.mc, r.outlet, r.outlet_code, r.nama, r.email, r.promotorStatus, mappingLabel(r), r.loginStatus, r.total, r.pending, r.bio + r.reg, r.bio, `${Math.round((r.bio / PROMOTOR_BIO_TARGET) * 100)}%`, r.reg, r.rejected + r.notfound, r.im3, r.tid]);
     const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, `Ringkasan ${period}`);
@@ -1655,6 +1978,52 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
         <Stat t={t} icon={<ShoppingBag size={18} />} label="Total Klaim SP"   value={stats.total}        accent={{ fg: t.green, bg: t.greenBg, bd: t.greenBd }} />
       </div>
 
+      {/* Visualisasi: leaderboard #1-3 + donut distribusi status */}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(260px,1.1fr) minmax(260px,1fr)", gap: 14, marginBottom: 20 }}>
+        <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: 16, background: t.card, boxShadow: t.sm }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: t.mid, marginBottom: 12, textTransform: "uppercase", letterSpacing: ".03em" }}>
+            <Trophy size={14} /> Leaderboard Pencapaian ({ymLabel(period)})
+          </div>
+          {topThree.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: t.mid, padding: "10px 0" }}>Belum ada klaim tervalidasi periode ini.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {topThree.map((r) => (
+                <div key={r.id} onClick={() => setDetailRow(r)} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 10, background: t.hover, cursor: "pointer" }}>
+                  <div style={{ width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, background: r.rank === 1 ? "#F6CB4333" : r.rank === 2 ? "#C9C9C933" : "#C6864233", border: `1.5px solid ${r.rank === 1 ? "#D4A017" : r.rank === 2 ? "#8C8C8C" : "#8A5A2B"}` }}>
+                    <RankBadge rank={r.rank} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.nama}</div>
+                    <div style={{ fontSize: 11, color: t.mid }}>{r.outlet}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: t.green }}>{r.bio}</div>
+                    <div style={{ fontSize: 10, color: t.mid }}>Biometric</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: 16, background: t.card, boxShadow: t.sm }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: t.mid, marginBottom: 12, textTransform: "uppercase", letterSpacing: ".03em" }}>
+            <PieChart size={14} /> Distribusi Status Klaim
+          </div>
+          <StatusDonut t={t} agg={statusAgg} />
+        </div>
+      </div>
+
+      {/* Dashboard pencapaian per level — target tiap level = jumlah promotor x 150 GA SP Biometric */}
+      <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: ".03em" }}>
+        <BarChart3 size={14} /> Pencapaian GA SP Biometric per Level (target {PROMOTOR_BIO_TARGET}/promotor)
+      </div>
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 20 }}>
+        <AchievementBarList t={t} title="Level Region" icon={<MapPin size={13} />} items={regionAgg} />
+        <AchievementBarList t={t} title="Level Branch" icon={<Store size={13} />} items={branchAgg} />
+        <AchievementBarList t={t} title="Level MC (Micro Cluster)" icon={<Users size={13} />} items={mcAgg} />
+      </div>
+
       {/* Toolbar */}
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
@@ -1676,32 +2045,42 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
         </div>
       </div>
 
-      {/* Tabel ringkasan per promotor */}
+      {/* Tabel ringkasan per promotor — sudah diurutkan berdasarkan rangking pencapaian */}
       <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden", boxShadow: t.sm }}>
         <div style={{ overflow: "auto", maxHeight: 620 }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1180 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1560 }}>
             <thead>
               <tr>
-                {["No", "Branch", "MC", "Outlet", "Promotor", "Email", "Status Promotor", "Status Mapping", "Status Login", "Total Klaim SP", "IM3", "3ID"].map((h) => (
+                {["#", "Branch", "MC", "Outlet", "Promotor", "Email", "Status Promotor", "Status Mapping", "Status Login"].map((h) => (
                   <th key={h} className="pts-th">{h}</th>
                 ))}
+                <th className="pts-th">Total Pengajuan</th>
+                <th className="pts-th" style={{ color: t.amber }}>Dalam Pengajuan</th>
+                <th className="pts-th" style={{ color: t.green }}>Total Tervalidasi</th>
+                <th className="pts-th" style={{ color: "#fff", background: t.green, borderBottom: `1px solid ${t.green}` }}>★ GA SP Biometric</th>
+                <th className="pts-th" style={{ color: t.blue }}>GA SP Non-Biometric</th>
+                <th className="pts-th" style={{ color: t.mid }}>GA di luar Outlet</th>
+                <th className="pts-th">IM3</th>
+                <th className="pts-th">3ID</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td className="pts-td" colSpan={12} style={{ textAlign: "center", padding: 40, color: t.mid }}><Loader2 size={20} className="spin" style={{ verticalAlign: "middle" }} /> Memuat data…</td></tr>
+                <tr><td className="pts-td" colSpan={17} style={{ textAlign: "center", padding: 40, color: t.mid }}><Loader2 size={20} className="spin" style={{ verticalAlign: "middle" }} /> Memuat data…</td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td className="pts-td" colSpan={12} style={{ textAlign: "center", padding: 48, color: t.mid }}>
+                <tr><td className="pts-td" colSpan={17} style={{ textAlign: "center", padding: 48, color: t.mid }}>
                   <Store size={26} style={{ opacity: .5, marginBottom: 8 }} /><br />
                   Belum ada data untuk {ymLabel(period)}. Mapping outlet promotor terlebih dulu di tab <b>Mapping Outlet Promotor</b>.
                 </td></tr>
-              ) : filtered.map((r, i) => {
+              ) : filtered.map((r) => {
                 const belumLogin = r.loginStatus === "Belum Login";
                 const belumMapping = r.outletCount === 0;
                 const psTone = r.promotorStatus === "Vacant" ? { bg: t.amberBg, fg: t.amber, bd: t.amberBd } : r.promotorStatus === "Aktif" ? { bg: t.greenBg, fg: t.green, bd: t.greenBd } : { bg: t.hover, fg: t.mid, bd: t.line };
                 return (
-                  <tr key={r.id} className="pts-row" style={{ background: r.promotorStatus === "Vacant" ? t.amberBg : belumMapping ? t.hover : "transparent" }}>
-                    <td className="pts-td" style={{ color: t.mid }}>{i + 1}</td>
+                  <tr key={r.id} className="pts-row" onClick={() => setDetailRow(r)} style={{ background: r.promotorStatus === "Vacant" ? t.amberBg : belumMapping ? t.hover : "transparent", cursor: "pointer" }}>
+                    <td className="pts-td" style={{ color: t.mid, fontWeight: r.rank <= 3 ? 800 : 400 }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>{r.rank <= 3 && <RankBadge rank={r.rank} />}{r.rank}</span>
+                    </td>
                     <td className="pts-td">{r.branch || "—"}</td>
                     <td className="pts-td">{r.mc || "—"}</td>
                     <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 11.5, color: t.mid }}>{r.outlet_code || "—"}</td>
@@ -1721,6 +2100,19 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
                         : <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: t.greenBg, color: t.green, border: `1px solid ${t.greenBd}` }}><UserCheck size={11} /> Aktif</span>}
                     </td>
                     <td className="pts-td" style={{ fontWeight: 700 }}>{r.total}</td>
+                    <td className="pts-td" style={{ fontWeight: 600, color: t.amber }}>{r.pending || "—"}</td>
+                    <td className="pts-td" style={{ fontWeight: 700, color: t.green }}>{r.bio + r.reg || "—"}</td>
+                    <td className="pts-td" style={{ background: t.greenBg, borderLeft: `2px solid ${t.green}`, borderRight: `2px solid ${t.green}` }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+                        <span style={{ fontWeight: 800, color: t.green, fontSize: 13.5 }}>{r.bio}</span>
+                        <span style={{ fontSize: 10.5, color: t.mid }}>/ {PROMOTOR_BIO_TARGET}</span>
+                        <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 99, background: r.bio >= PROMOTOR_BIO_TARGET ? t.green : t.card, color: r.bio >= PROMOTOR_BIO_TARGET ? "#fff" : t.green, border: `1px solid ${t.green}` }}>
+                          {Math.round((r.bio / PROMOTOR_BIO_TARGET) * 100)}%
+                        </span>
+                      </div>
+                    </td>
+                    <td className="pts-td" style={{ color: t.blue }}>{r.reg || "—"}</td>
+                    <td className="pts-td" style={{ color: t.mid }}>{(r.rejected + r.notfound) || "—"}</td>
                     <td className="pts-td" style={{ color: t.mid }}>{r.im3 || "—"}</td>
                     <td className="pts-td" style={{ color: t.mid }}>{r.tid || "—"}</td>
                   </tr>
@@ -1731,8 +2123,10 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
         </div>
       </div>
       <div style={{ marginTop: 10, fontSize: 12, color: t.mid }}>
-        Menampilkan {filtered.length} baris · Baris <b style={{ color: t.amber }}>kuning</b> = Vacant, baris abu-abu = belum ter-mapping bulan ini.
+        Menampilkan {filtered.length} baris, diurutkan berdasarkan rangking RGU-GA SP Biometric tervalidasi · Baris <b style={{ color: t.amber }}>kuning</b> = Vacant, baris abu-abu = belum ter-mapping bulan ini · Klik baris untuk detail per outlet.
       </div>
+
+      {detailRow && <PromotorDetailModal t={t} row={detailRow} outletById={outletById} onClose={() => setDetailRow(null)} />}
 
       <style>{`.spin{animation:ptsspin 1s linear infinite}@keyframes ptsspin{to{transform:rotate(360deg)}}`}</style>
     </div>
@@ -1757,8 +2151,13 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
       // Promotor dan tidak "kehilangan" klaim yang ditag menjelang tengah
       // malam WIB (tagged_at dibandingkan sebagai UTC kalau pakai string
       // tanggal polos).
+      // lat/lng/distance_meters SENGAJA tidak diambil — geofencing kini
+      // dihitung lokal di browser promotor, koordinat mentahnya tidak
+      // pernah dikirim ke server maupun tersimpan di database (histori lama
+      // juga sudah di-redact). Yang tersimpan & bisa diaudit di sini cuma
+      // status akhirnya: within_radius (dalam/luar radius).
       const { data: sales } = await supabase.from("pts_sale")
-        .select("id,phone_normalized,brand,email,promotor_id,outlet_id,region,lat,lng,tagged_at,raw_qr_value,distance_meters,within_radius,outside_confirmed_at,ga_status,biometric_status,ga_note,credited_period")
+        .select("id,phone_normalized,brand,email,promotor_id,outlet_id,region,tagged_at,raw_qr_value,within_radius,outside_confirmed_at,ga_status,biometric_status,ga_note,credited_period")
         .eq("credited_period", period).order("tagged_at", { ascending: false });
       const { data: pros } = await supabase.from("pts_promotor").select("id,email,full_name");
       const nameById = new Map((pros || []).map((p) => [p.id, p.full_name]));
@@ -1792,10 +2191,10 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
   }, [rows]);
 
   const download = () => {
-    const head = ["No", "Tanggal", "Jam", "MSISDN", "Brand", "Nama Promotor", "Email", "ID Outlet", "Branch", "Area", "Region", "Latitude", "Longitude", "Jarak ke Outlet (m)", "Dalam Radius?", "Status Validasi GA", "Biometric", "Catatan GA"];
-    const body = filtered.map((r, i) => [i + 1, fmtDate(r.tagged_at), fmtTime(r.tagged_at), r.phone_normalized, r.brand || "", r.nama, r.email, r.outlet_code, r.branch, r.area, r.region, r.lat ?? "", r.lng ?? "", r.distance_meters ?? "", r.within_radius === false ? "Tidak" : "Ya", GA_STATUS_LABEL[r.ga_status] || r.ga_status, r.biometric_status || "", r.ga_note || ""]);
+    const head = ["No", "Tanggal", "Jam", "MSISDN", "Brand", "Nama Promotor", "Email", "ID Outlet", "Branch", "Area", "Region", "Dalam Radius?", "Status Validasi GA", "Biometric", "Catatan GA"];
+    const body = filtered.map((r, i) => [i + 1, fmtDate(r.tagged_at), fmtTime(r.tagged_at), r.phone_normalized, r.brand || "", r.nama, r.email, r.outlet_code, r.branch, r.area, r.region, r.within_radius === false ? "Tidak" : "Ya", GA_STATUS_LABEL[r.ga_status] || r.ga_status, r.biometric_status || "", r.ga_note || ""]);
     const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
-    ws["!cols"] = [{ wch: 5 }, { wch: 12 }, { wch: 8 }, { wch: 16 }, { wch: 8 }, { wch: 20 }, { wch: 26 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }, { wch: 20 }, { wch: 14 }, { wch: 34 }];
+    ws["!cols"] = [{ wch: 5 }, { wch: 12 }, { wch: 8 }, { wch: 16 }, { wch: 8 }, { wch: 20 }, { wch: 26 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 20 }, { wch: 14 }, { wch: 34 }];
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, `MSISDN ${period}`);
     XLSX.writeFile(wb, `PTS_MSISDN_${period}.xlsx`);
   };
@@ -1819,11 +2218,11 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
             { value: "within", label: "Dalam radius" },
             { value: "outside", label: "Luar radius" },
           ]} />
-          <select className="pts-in" value={gaF} onChange={(e) => setGaF(e.target.value)}>
+          <select className="pts-in pts-select" value={gaF} onChange={(e) => setGaF(e.target.value)}>
             <option value="all">Semua status GA</option>
             {Object.entries(GA_STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
           </select>
-          <select className="pts-in" value={brandF} onChange={(e) => setBrandF(e.target.value)}>
+          <select className="pts-in pts-select" value={brandF} onChange={(e) => setBrandF(e.target.value)}>
             <option value="all">Semua brand</option>
             <option value="IM3">IM3</option>
             <option value="3ID">3ID</option>
@@ -1839,13 +2238,19 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
         <div style={{ overflow: "auto", maxHeight: 620 }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 1440 }}>
             <thead>
-              <tr>{["No", "Tanggal", "Jam", "MSISDN", "Brand", "Promotor", "ID Outlet", "Branch", "Region", "Latitude", "Longitude", "Jarak (m)", "Lokasi", "Status GA", "Biometric"].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr>
+              {/* Kolom Latitude/Longitude/Jarak sengaja tidak ada lagi —
+                  geofencing sekarang dihitung lokal di browser promotor,
+                  koordinat mentahnya tidak pernah dikirim/disimpan di
+                  database. Kolom "Lokasi" di bawah tetap menampilkan status
+                  akhirnya (dalam/luar radius), itu satu-satunya hal yang
+                  memang perlu diaudit di sini. */}
+              <tr>{["No", "Tanggal", "Jam", "MSISDN", "Brand", "Promotor", "ID Outlet", "Branch", "Region", "Lokasi", "Status GA", "Biometric"].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td className="pts-td" colSpan={15} style={{ textAlign: "center", padding: 40, color: t.mid }}><Loader2 size={20} className="spin" style={{ verticalAlign: "middle" }} /> Memuat…</td></tr>
+                <tr><td className="pts-td" colSpan={12} style={{ textAlign: "center", padding: 40, color: t.mid }}><Loader2 size={20} className="spin" style={{ verticalAlign: "middle" }} /> Memuat…</td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td className="pts-td" colSpan={15} style={{ textAlign: "center", padding: 44, color: t.mid }}><Phone size={24} style={{ opacity: .5, marginBottom: 8 }} /><br />Belum ada penjualan untuk {ymLabel(period)}.</td></tr>
+                <tr><td className="pts-td" colSpan={12} style={{ textAlign: "center", padding: 44, color: t.mid }}><Phone size={24} style={{ opacity: .5, marginBottom: 8 }} /><br />Belum ada penjualan untuk {ymLabel(period)}.</td></tr>
               ) : filtered.map((r, i) => (
                 <tr key={r.id} className="pts-row">
                   <td className="pts-td" style={{ color: t.mid }}>{i + 1}</td>
@@ -1857,9 +2262,6 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
                   <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 11.5 }}>{r.outlet_code || "—"}</td>
                   <td className="pts-td">{r.branch || "—"}</td>
                   <td className="pts-td">{r.region || "—"}</td>
-                  <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 11 }}>{r.lat != null ? Number(r.lat).toFixed(6) : "—"}</td>
-                  <td className="pts-td" style={{ fontFamily: "monospace", fontSize: 11 }}>{r.lng != null ? Number(r.lng).toFixed(6) : "—"}</td>
-                  <td className="pts-td" style={{ fontFamily: "monospace" }}>{r.distance_meters != null ? Math.round(r.distance_meters) : "—"}</td>
                   <td className="pts-td">
                     {r.within_radius === false
                       ? <span title={r.outside_confirmed_at ? `Dikonfirmasi ${fmtDate(r.outside_confirmed_at)} ${fmtTime(r.outside_confirmed_at)}` : ""} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: t.blueBg, color: t.blue, border: `1px solid ${t.blueBd}` }}><Radar size={11} /> Luar area</span>
@@ -1882,16 +2284,15 @@ function MsisdnPanel({ t, supabase, period, outletByCode }) {
 }
 
 /* ══════════════════════════ GEOFENCE SETTINGS ══════════════════════════
-   Radius (meter) yang dipakai untuk validasi lokasi saat tagging SP.
-   Resolusi: outlet > branch > region > global > default 30m. */
+   Radius (meter) yang dipakai untuk validasi lokasi saat tagging SP —
+   SATU standar global untuk semua outlet (tidak ada lagi pengaturan per
+   region/branch/outlet — disederhanakan supaya tidak membingungkan). */
 function GeofenceSettings({ t, d, supabase, profile, outlets, isFullAdmin, onOutletsChanged }) {
-  const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [scopeType, setScopeType] = useState("global");
-  const [scopeValue, setScopeValue] = useState("");
   const [radius, setRadius] = useState(30);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [saved, setSaved] = useState(false);
 
   // ── Upload titik outlet (BRAND + ID OUTLET + LATITUDE + LONGITUDE) ──
   // File ini hanya diproses di memori: koordinat langsung di-upsert ke
@@ -1905,6 +2306,7 @@ function GeofenceSettings({ t, d, supabase, profile, outlets, isFullAdmin, onOut
   const [coordFileName, setCoordFileName] = useState("");
   const [coordRows, setCoordRows] = useState(null);
   const [coordBusy, setCoordBusy] = useState(false);
+  const [coordProgress, setCoordProgress] = useState(null); // { done, total }
   const [coordResult, setCoordResult] = useState(null);
   const [coordErr, setCoordErr] = useState("");
 
@@ -1984,54 +2386,48 @@ function GeofenceSettings({ t, d, supabase, profile, outlets, isFullAdmin, onOut
       const byOutlet = new Map();
       coordOkRows.forEach((r) => { byOutlet.set(r.outlet_id, { latitude: r.lat, longitude: r.lng }); });
       let updated = 0;
+      const total = byOutlet.size;
+      setCoordProgress({ done: 0, total });
       for (const [outlet_id, patch] of byOutlet) {
         const { error } = await supabase.from("pts_outlet").update(patch).eq("id", outlet_id);
         if (error) throw error;
         updated++;
+        setCoordProgress({ done: updated, total });
       }
       setCoordResult({ updated, rows: coordOkRows.length, skipped: coordErrCount });
       setCoordRows(null); setCoordFileName(""); if (coordFileRef.current) coordFileRef.current.value = "";
       if (onOutletsChanged) await onOutletsChanged();
     } catch (e) {
       setCoordErr("Gagal menyimpan: " + (e?.message || e));
-    } finally { setCoordBusy(false); }
+    } finally { setCoordBusy(false); setCoordProgress(null); }
   };
 
+  // Hanya baca/tulis SATU baris (scope_type='global') — tidak ada lagi
+  // pengaturan per region/branch/outlet.
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await supabase.from("pts_geofence_setting").select("*").order("scope_type", { ascending: true });
-      setRows(data || []);
-    } catch { setRows([]); } finally { setLoading(false); }
+      const { data } = await supabase.from("pts_geofence_setting").select("*").eq("scope_type", "global").maybeSingle();
+      setRadius(data?.radius_meters ?? 30);
+    } catch { setRadius(30); } finally { setLoading(false); }
   }, [supabase]);
   useEffect(() => { load(); }, [load]);
 
-  const globalRow = rows.find((r) => r.scope_type === "global");
-  const effectiveDefault = globalRow?.radius_meters ?? 30;
-
-  const branches = useMemo(() => [...new Set(outlets.map((o) => o.branch).filter(Boolean))].sort(), [outlets]);
-  const outletCodes = useMemo(() => outlets.map((o) => o.code).filter(Boolean).sort(), [outlets]);
-
   const save = async () => {
-    setErr("");
+    setErr(""); setSaved(false);
     if (!isFullAdmin) return setErr("Hanya SPM Sumatera yang dapat mengubah radius geofence.");
-    if (scopeType !== "global" && !scopeValue.trim()) return setErr("Nilai cakupan (region/branch/kode outlet) wajib diisi.");
     if (!(Number(radius) > 0)) return setErr("Radius harus lebih dari 0 meter.");
     setBusy(true);
     try {
-      const payload = { scope_type: scopeType, scope_value: scopeType === "global" ? "" : scopeValue.trim(), radius_meters: Number(radius), updated_by: profile?.id || null, updated_at: new Date().toISOString() };
+      const payload = { scope_type: "global", scope_value: "", radius_meters: Number(radius), updated_by: profile?.id || null, updated_at: new Date().toISOString() };
       const { error } = await supabase.from("pts_geofence_setting").upsert(payload, { onConflict: "scope_type,scope_value" });
       if (error) throw error;
-      setScopeValue(""); setRadius(30);
+      setSaved(true);
       await load();
+      setTimeout(() => setSaved(false), 2500);
     } catch (e) {
       setErr("Gagal menyimpan: " + (e?.message || e));
     } finally { setBusy(false); }
-  };
-
-  const remove = async (r) => {
-    await supabase.from("pts_geofence_setting").delete().eq("id", r.id);
-    load();
   };
 
   return (
@@ -2039,7 +2435,7 @@ function GeofenceSettings({ t, d, supabase, profile, outlets, isFullAdmin, onOut
       <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 16px", borderRadius: 12, background: t.brandBg, border: `1px solid ${t.brandBd}`, marginBottom: 18 }}>
         <Radar size={17} color={t.brand} style={{ flexShrink: 0 }} />
         <span style={{ fontSize: 13.5, color: t.hi, fontWeight: 500 }}>
-          Radius maksimum jarak tagging dari titik outlet. Sistem memakai aturan paling spesifik: <b>Outlet → Branch → Region → Global</b>. Jika tidak ada aturan sama sekali, default <b>30 meter</b> dipakai. Di luar radius, tagging tetap tersimpan namun ditandai untuk evaluasi.
+          Radius maksimum jarak tagging dari titik outlet. Satu standar <b>global</b> berlaku untuk semua outlet, tidak ada pengecualian per region/branch/outlet. Di luar radius, tagging tetap tersimpan namun ditandai untuk evaluasi.
         </span>
       </div>
 
@@ -2103,6 +2499,14 @@ function GeofenceSettings({ t, d, supabase, profile, outlets, isFullAdmin, onOut
                 </button>
               </div>
             </div>
+            {coordBusy && (
+              <div style={{ marginBottom: 12, border: `1px solid ${t.line}`, borderRadius: 12, padding: "16px 18px", background: t.card, boxShadow: t.sm }}>
+                <StepProgress t={t} activeIndex={1} progress={coordProgress ? coordProgress.done / coordProgress.total : 0} steps={[
+                  { key: "read", label: "Membaca & memvalidasi file" },
+                  { key: "save", label: "Menyimpan titik koordinat ke database", sub: coordProgress ? `${coordProgress.done}/${coordProgress.total} outlet` : undefined },
+                ]} />
+              </div>
+            )}
             <div style={{ border: `1px solid ${t.line}`, borderRadius: 10, overflow: "hidden" }}>
               <div style={{ maxHeight: 260, overflow: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -2132,67 +2536,25 @@ function GeofenceSettings({ t, d, supabase, profile, outlets, isFullAdmin, onOut
         )}
       </div>
 
-      <div style={{ marginBottom: 18, padding: 18, borderRadius: 14, background: t.card, border: `1px solid ${t.line}`, boxShadow: t.sm, opacity: isFullAdmin ? 1 : .6, pointerEvents: isFullAdmin ? "auto" : "none" }}>
-        <div style={{ fontSize: 14, fontWeight: 700, color: t.hi, marginBottom: 14 }}>Atur / Tambah Radius</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-          <Field t={t} label="Cakupan">
-            <select className="pts-in" value={scopeType} onChange={(e) => { setScopeType(e.target.value); setScopeValue(""); }}>
-              {GEOFENCE_SCOPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </select>
-          </Field>
-          {scopeType === "region" && (
-            <Field t={t} label="Region">
-              <select className="pts-in" value={scopeValue} onChange={(e) => setScopeValue(e.target.value)}>
-                <option value="">— pilih region —</option>
-                {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
-              </select>
+      {/* Satu radius global saja — tidak ada lagi pilihan cakupan per
+          region/branch/outlet, supaya konsisten & tidak membingungkan. */}
+      <div style={{ padding: 18, borderRadius: 14, background: t.card, border: `1px solid ${t.line}`, boxShadow: t.sm, opacity: isFullAdmin ? 1 : .6, pointerEvents: isFullAdmin ? "auto" : "none" }}>
+        <div style={{ fontSize: 14, fontWeight: 700, color: t.hi, marginBottom: 3 }}>Radius Geofence</div>
+        <div style={{ fontSize: 12.5, color: t.mid, marginBottom: 14 }}>Berlaku untuk semua outlet, semua brand.</div>
+        {loading ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: t.mid, fontSize: 13, padding: "6px 0" }}><Loader2 size={16} className="spin" /> Memuat…</div>
+        ) : (
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 12, flexWrap: "wrap" }}>
+            <Field t={t} label="Radius (meter)">
+              <input className="pts-in" type="number" min={1} value={radius} onChange={(e) => setRadius(e.target.value)} style={{ width: 140 }} />
             </Field>
-          )}
-          {scopeType === "branch" && (
-            <Field t={t} label="Branch">
-              <select className="pts-in" value={scopeValue} onChange={(e) => setScopeValue(e.target.value)}>
-                <option value="">— pilih branch —</option>
-                {branches.map((b) => <option key={b} value={b}>{b}</option>)}
-              </select>
-            </Field>
-          )}
-          {scopeType === "outlet" && (
-            <Field t={t} label="Kode Outlet">
-              <select className="pts-in" value={scopeValue} onChange={(e) => setScopeValue(e.target.value)}>
-                <option value="">— pilih outlet —</option>
-                {outletCodes.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </Field>
-          )}
-          <Field t={t} label="Radius (meter)"><input className="pts-in" type="number" min={1} value={radius} onChange={(e) => setRadius(e.target.value)} /></Field>
-        </div>
+            <button className="pts-btn" onClick={save} disabled={busy} style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}>
+              {busy ? <Loader2 size={14} className="spin" /> : saved ? <CheckCircle2 size={14} /> : <Save size={14} />} {saved ? "Tersimpan" : "Simpan Radius"}
+            </button>
+          </div>
+        )}
         {err && <div style={{ marginTop: 12, fontSize: 12.5, color: t.red, display: "flex", alignItems: "center", gap: 6 }}><AlertTriangle size={13} />{err}</div>}
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
-          <button className="pts-btn" onClick={save} disabled={busy} style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}>{busy ? <Loader2 size={14} className="spin" /> : <Save size={14} />} Simpan Radius</button>
-        </div>
       </div>
-
-      <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden", boxShadow: t.sm }}>
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead><tr>{["Cakupan", "Nilai", "Radius (m)", "Diubah", ""].map((h) => <th key={h} className="pts-th">{h}</th>)}</tr></thead>
-          <tbody>
-            {loading ? (
-              <tr><td className="pts-td" colSpan={5} style={{ textAlign: "center", padding: 30, color: t.mid }}><Loader2 size={18} className="spin" /></td></tr>
-            ) : rows.length === 0 ? (
-              <tr><td className="pts-td" colSpan={5} style={{ textAlign: "center", padding: 30, color: t.mid }}>Belum ada aturan — semua tagging memakai default 30 meter.</td></tr>
-            ) : rows.map((r) => (
-              <tr key={r.id} className="pts-row">
-                <td className="pts-td" style={{ fontWeight: 600, textTransform: "capitalize" }}>{r.scope_type}</td>
-                <td className="pts-td">{r.scope_value || "— (semua)"}</td>
-                <td className="pts-td" style={{ fontWeight: 700 }}>{r.radius_meters} m</td>
-                <td className="pts-td" style={{ color: t.mid, fontSize: 11.5 }}>{r.updated_at ? `${fmtDate(r.updated_at)} ${fmtTime(r.updated_at)}` : "—"}</td>
-                <td className="pts-td">{isFullAdmin && <button onClick={() => remove(r)} style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.redBd}`, background: t.redBg, color: t.red, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}><Trash2 size={13} /></button>}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div style={{ marginTop: 10, fontSize: 12, color: t.mid }}>Radius default saat ini (tanpa aturan lain yang cocok): <b>{effectiveDefault} meter</b>.</div>
     </div>
   );
 }
@@ -2555,16 +2917,13 @@ function GaValidation({ t, d, supabase, profile, isFullAdmin, period }) {
       )}
 
       {phase === "scanning" && (
-        <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: "24px 22px", background: t.card, boxShadow: t.sm }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-            <Loader2 size={18} className="spin" color={t.brand} />
-            <span style={{ fontSize: 14, fontWeight: 700, color: t.hi }}>Memindai {fileName}…</span>
-          </div>
-          <div style={{ fontSize: 13, color: t.mid }}>
-            <b style={{ color: t.hi, fontVariantNumeric: "tabular-nums" }}>{scanStats.scanned.toLocaleString("id-ID")}</b> baris dipindai ·{" "}
-            <b style={{ color: t.green, fontVariantNumeric: "tabular-nums" }}>{scanStats.matched.toLocaleString("id-ID")}</b> cocok dengan pengajuan promotor
-          </div>
-          <div style={{ fontSize: 11.5, color: t.lo, marginTop: 8 }}>Diproses langsung di browser (web worker) — baris yang tidak cocok langsung dibuang, tidak disimpan.</div>
+        <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: "20px 22px", background: t.card, boxShadow: t.sm }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: t.hi, marginBottom: 4 }}>Memproses {fileName}</div>
+          <StepProgress t={t} activeIndex={0} steps={[
+            { key: "scan", label: "Memindai & mencocokkan file GA", sub: `${scanStats.scanned.toLocaleString("id-ID")} baris dipindai · ${scanStats.matched.toLocaleString("id-ID")} cocok dengan pengajuan promotor` },
+            { key: "save", label: "Validasi & simpan ke database" },
+          ]} />
+          <div style={{ fontSize: 11.5, color: t.lo, marginTop: 6 }}>Diproses langsung di browser (web worker) — baris yang tidak cocok langsung dibuang, tidak disimpan.</div>
         </div>
       )}
 
@@ -2594,6 +2953,14 @@ function GaValidation({ t, d, supabase, profile, isFullAdmin, period }) {
               </button>
             </div>
           </div>
+          {phase === "uploading" && (
+            <div style={{ marginBottom: 14, border: `1px solid ${t.line}`, borderRadius: 14, padding: "18px 20px", background: t.card, boxShadow: t.sm }}>
+              <StepProgress t={t} activeIndex={1} progress={uploadProgress ? uploadProgress.done / uploadProgress.total : 0} steps={[
+                { key: "scan", label: "Memindai & mencocokkan file GA" },
+                { key: "save", label: "Validasi & simpan ke database", sub: uploadProgress ? `Batch ${uploadProgress.done}/${uploadProgress.total}` : undefined },
+              ]} />
+            </div>
+          )}
           {matchedRows.length === 0 ? (
             <div style={{ padding: "24px 16px", textAlign: "center", color: t.mid, fontSize: 13, border: `1px solid ${t.line}`, borderRadius: 12 }}>
               Tidak ada nomor di file ini yang cocok dengan pengajuan promotor manapun.

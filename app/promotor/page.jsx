@@ -15,7 +15,7 @@ import {
   X, ChevronLeft, CalendarDays, Trash2,
   ArrowLeftRight, Inbox, ShieldQuestion, Radar, RefreshCcw, Pencil, Check,
   Target, TrendingUp, Sparkles,
-  ListChecks, ScanFace, XCircle, HelpCircle, IdCard,
+  ListChecks, ScanFace, XCircle, HelpCircle, IdCard, Circle,
 } from "lucide-react";
 import lottie from "lottie-web";
 import successAnimData from "../../public/promotor/success-animation.json";
@@ -153,6 +153,20 @@ function playSuccessTone() {
       src.start(0);
     }).catch(() => { /* abaikan — gagal decode/putar tidak boleh menghentikan alur claim */ });
   } catch { /* abaikan */ }
+}
+
+// Jarak antar dua titik (meter) — dipakai untuk cek geofence SEPENUHNYA di
+// browser (lihat tagSale di AppShell). Lat/lng device promotor tidak pernah
+// dikirim ke server; server hanya menerima hasil akhirnya (dalam radius
+// atau tidak), sesuai keputusan agar koordinat mentah tidak pernah tersimpan
+// di database.
+function haversineMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
 // Ikon animasi sukses — pakai file Lottie asli yang dilampirkan (bukan lagi
@@ -359,12 +373,17 @@ export default function PromotorApp() {
     // saat tagging (bukan diambil dari assignment).
     const outletIds = outletList.map((o) => o.id).filter(Boolean);
     if (outletIds.length) {
-      const { data: outRows } = await supabase.from("pts_outlet").select("id,code_3id,name").in("id", outletIds);
+      // latitude/longitude ikut diambil di sini — dipakai promotor app untuk
+      // menghitung geofence LOKAL di browser (lihat tagSale), bukan lagi
+      // dikirim ke server untuk dihitung di sana.
+      const { data: outRows } = await supabase.from("pts_outlet").select("id,code_3id,name,latitude,longitude").in("id", outletIds);
       const meta = new Map((outRows || []).map((r) => [r.id, r]));
       outletList.forEach((o) => {
         const m = meta.get(o.id);
         o.code3id = m?.code_3id || null;
         if (m?.name) o.name = m.name;   // nama outlet asli, bukan pakai kode sebagai fallback
+        o.latitude = m?.latitude ?? null;
+        o.longitude = m?.longitude ?? null;
       });
     }
     setOutlets(outletList);
@@ -532,6 +551,18 @@ function AppShell(p) {
   const [inboxOpen, setInboxOpen] = useState(false);
   const [brand, setBrand] = useState(null);          // brand yang dipilih utk claim di outlet dual-brand
   useEffect(() => { setBrand(null); }, [activeOutlet?.id]);
+
+  // Cache radius geofence per outlet (hasil pts_resolve_radius) — dipakai
+  // untuk validasi lokasi LOKAL di browser (lihat tagSale), supaya tidak
+  // perlu tanya server berulang-ulang untuk outlet yang sama.
+  const radiusCacheRef = useRef(new Map());
+  const resolveRadius = async (outletId) => {
+    if (radiusCacheRef.current.has(outletId)) return radiusCacheRef.current.get(outletId);
+    const { data, error } = await supabase.rpc("pts_resolve_radius", { p_outlet: outletId });
+    const r = error || data == null ? 30 : Number(data);
+    radiusCacheRef.current.set(outletId, r);
+    return r;
+  };
   const [summary, setSummary] = useState(null);      // ringkasan klaim per periode
   const [editProfile, setEditProfile] = useState(false);   // edit nama sendiri
   const [renamingOutlet, setRenamingOutlet] = useState(null); // outlet yg sedang diganti namanya
@@ -707,18 +738,42 @@ function AppShell(p) {
 
   const chooseOutlet = async (o) => { setActiveOutlet(o); setPickOutlet(false); await loadTodaySales(promotorId, o.id); };
 
-  /* Tag penjualan (QR) — via RPC pts_tag_sale (geofence-aware). IMEI tidak
-     lagi diminta maupun dikirim sama sekali — tidak perlu disimpan. */
+  /* Tag penjualan (QR) — via RPC pts_tag_sale. Geofencing dihitung
+     SEPENUHNYA di sini (browser): jarak antara lokasi device promotor dan
+     titik outlet dibandingkan ke radius yang berlaku, dan HANYA hasilnya
+     (dalam radius atau tidak) yang dikirim ke server — koordinat mentah
+     device promotor tidak pernah lewat jaringan maupun tersimpan di
+     database. IMEI juga tidak lagi diminta/dikirim (dihapus sesi
+     sebelumnya). */
   const tagSale = async (normalized, raw, confirmOutside) => {
     if (!activeOutlet?.id) throw new Error("Outlet aktif tidak ditemukan, pilih ulang outlet.");
     if (activeOutlet.code3id && !brand) throw new Error("Pilih brand (IM3/3ID) untuk pencapaian di outlet ini terlebih dulu.");
+
+    const hasCoords = activeOutlet.latitude != null && activeOutlet.longitude != null
+      && !(Number(activeOutlet.latitude) === 0 && Number(activeOutlet.longitude) === 0);
+    let withinRadius = null, geoAvailable = !!geo, localDistance = null, localRadius = null;
+    if (hasCoords) {
+      if (geo) {
+        localRadius = await resolveRadius(activeOutlet.id);
+        localDistance = haversineMeters(Number(activeOutlet.latitude), Number(activeOutlet.longitude), geo.lat, geo.lng);
+        withinRadius = localDistance <= localRadius;
+      } else {
+        geoAvailable = false;
+      }
+    }
+
     const { data, error } = await supabase.rpc("pts_tag_sale", {
-      p_phone: normalized, p_session: null, p_outlet: activeOutlet.id,
-      p_lat: geo?.lat ?? null, p_lng: geo?.lng ?? null, p_raw: String(raw),
-      p_confirm_outside: confirmOutside, p_imei: null,
+      p_phone: normalized, p_session: null, p_outlet: activeOutlet.id, p_raw: String(raw),
+      p_confirm_outside: confirmOutside,
       p_brand: activeOutlet.code3id ? brand : null,
+      p_within_radius: withinRadius, p_geo_available: geoAvailable,
     });
     if (error) throw error;
+    // Jarak/radius yang dihitung lokal ditempel di sini (bukan dari server —
+    // server tidak pernah tahu angka jaraknya) supaya dialog konfirmasi
+    // "di luar radius" tetap bisa menunjukkan info ke promotor secara
+    // sesaat, tanpa disimpan di database.
+    if (data?.status === "outside_radius") { data.distance_meters = localDistance; data.radius_meters = localRadius; }
     return data;
   };
 
@@ -854,6 +909,7 @@ function AppShell(p) {
         @keyframes pop{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
         @keyframes sheetup{from{transform:translateY(100%)}to{transform:none}}
         @keyframes auroraFloat{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-3%,2%) scale(1.06)}}
+        @keyframes shakeCard{10%,90%{transform:translateX(-1px)}20%,80%{transform:translateX(2px)}30%,50%,70%{transform:translateX(-4px)}40%,60%{transform:translateX(4px)}}
         .press{transition:transform .12s}.press:active{transform:scale(.975)}`}</style>
 
       {/* Aurora — sentuhan warna lembut di belakang konten, statis & sangat
@@ -919,33 +975,28 @@ function AppShell(p) {
             period={statsPeriod} onPeriodChange={setStatsPeriod} filter={historyFilter} />
         ) : view === "claim" ? (
           <div ref={actionSectionRef} style={{ animation: "up .32s cubic-bezier(.22,1,.36,1)" }}>
-            {/* Label "Aktivitas Hari Ini" dihilangkan — layar ini menampilkan
-                aktivitas untuk PERIODE/bulan yang dipilih, bukan cuma hari
-                ini, jadi label itu menyesatkan. Chip "Lokasi aktif" juga
-                dihilangkan dari sini — status geo tetap divalidasi di balik
-                layar (GeoGatePanel tampil jika belum ada izin lokasi), tapi
-                secara visual diganti dengan selector periode yang sama
-                seperti di beranda supaya konsisten. */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-              <div style={{ position: "relative" }}>
-                <select value={statsPeriod} onChange={(e) => setStatsPeriod(e.target.value)}
-                  style={{ appearance: "none", height: 34, borderRadius: 11, border: `1px solid ${C.brand}55`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 12.5, fontWeight: 700, padding: "0 28px 0 30px", cursor: "pointer", boxShadow: C.sm }}>
-                  {statsPeriodOptions().map((pOpt) => <option key={pOpt} value={pOpt}>{ymLabel(pOpt)}</option>)}
-                </select>
-                <CalendarDays size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.brand, pointerEvents: "none" }} />
-                <ChevronDown size={12} style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", color: C.lo, pointerEvents: "none" }} />
-              </div>
-            </div>
+            {/* Label "Aktivitas Hari Ini" & chip "Lokasi aktif" dihilangkan
+                dari sini (status geo tetap divalidasi di balik layar,
+                GeoGatePanel tampil kalau belum ada izin lokasi). Selector
+                periode PINDAH ke dalam kartu "Pilih Outlet Anda"/"Outlet
+                Aktif" di bawah (bukan lagi baris terpisah di sini) — dan
+                yang dipakai adalah `period` (periode assignment/mapping
+                outlet), BUKAN `statsPeriod` (itu cuma utk tampilan Kontribusi
+                Anda di beranda). Ini penting: ganti periode di sini akan
+                ikut mengganti daftar outlet yang termapping (lihat
+                loadPeriodAssignment yang bergantung ke `period`), sesuai
+                permintaan "mapping outlet juga berubah sesuai periode yang
+                dipilih". Default-nya selalu bulan berjalan. */}
             {!activeOutlet ? (
-              <OutletSelectPanel outlets={outlets} onPick={chooseOutlet} onRename={setRenamingOutlet} />
+              <OutletSelectPanel outlets={outlets} onPick={chooseOutlet} onRename={setRenamingOutlet} period={period} onPeriodChange={setPeriod} />
             ) : !geo ? (
               <GeoGatePanel outlet={activeOutlet} err={geoErr} onFix={fixGeo} onChangeOutlet={() => setPickOutlet(true)} />
             ) : (
               <TagPanel outlet={activeOutlet} sales={todaySales} soldCount={soldCount} busy={busy} geo={geo}
                 brand={brand} onBrandChange={setBrand} assignmentSrc={assignmentSrc} onRename={setRenamingOutlet}
                 onTag={() => { if (!guardPreview()) setSheet("qr"); }} onDelete={(s) => setDelSale(s)} onChangeOutlet={() => setPickOutlet(true)} multiOutlet={outlets.length > 1}
-                detail={history.filter((s) => (s.outlet_id === activeOutlet.id || s.credited_outlet_id === activeOutlet.id) && s.credited_period === statsPeriod)}
-                promotorId={promotorId} periodLabel={ymLabel(statsPeriod)} />
+                detail={history.filter((s) => (s.outlet_id === activeOutlet.id || s.credited_outlet_id === activeOutlet.id) && s.credited_period === period)}
+                promotorId={promotorId} periodLabel={ymLabel(period)} period={period} onPeriodChange={setPeriod} />
             )}
           </div>
         ) : (
@@ -1425,15 +1476,29 @@ function ClaimEntryCard({ outlet, outletsCount, soldCount, onOpen }) {
   );
 }
 
-function OutletSelectPanel({ outlets, onPick, onRename }) {
+function OutletSelectPanel({ outlets, onPick, onRename, period, onPeriodChange }) {
   return (
     <div>
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 13.5, color: C.mid, lineHeight: 1.5 }}>Pilih outlet tempat Anda bertugas hari ini sebelum mulai tagging.</div>
-      </div>
       <div style={{ background: C.card, borderRadius: 18, padding: 14, boxShadow: C.md }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.lo, margin: "2px 4px 12px" }}>
-          <Store size={13} /> Outlet Anda ({outlets.length})
+        {/* Judul "Pilih Outlet Anda" + selector periode di kanannya —
+            menggantikan subheading lama ("Pilih outlet tempat Anda...") yang
+            dihapus karena judul kartu ini sendiri sudah cukup jelas. Ganti
+            periode di sini akan ikut mengganti daftar outlet yang
+            termapping di bawah (default selalu bulan berjalan). */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", margin: "2px 4px 12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: C.lo }}>
+            <Store size={13} /> Pilih Outlet Anda ({outlets.length})
+          </div>
+          {period && onPeriodChange && (
+            <div style={{ position: "relative" }}>
+              <select value={period} onChange={(e) => onPeriodChange(e.target.value)}
+                style={{ appearance: "none", height: 30, borderRadius: 9, border: `1px solid ${C.brand}55`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 11.5, fontWeight: 700, padding: "0 26px 0 28px", cursor: "pointer" }}>
+                {periodOptions().map((p) => <option key={p} value={p}>{ymLabel(p)}</option>)}
+              </select>
+              <CalendarDays size={11} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: C.brand, pointerEvents: "none" }} />
+              <ChevronDown size={11} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", color: C.lo, pointerEvents: "none" }} />
+            </div>
+          )}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
           {outlets.map((o) => {
@@ -1461,7 +1526,9 @@ function OutletSelectPanel({ outlets, onPick, onRename }) {
                     <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: BRAND.IM3.soft, color: BRAND.IM3.ink }}>IM3 {o.code}</span>
                     {hasDual && <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: BRAND["3ID"].soft, color: BRAND["3ID"].ink }}>3ID {o.code3id}</span>}
                   </div>
-                  <div style={{ fontSize: 11.5, color: C.mid, marginTop: 4 }}>{[o.branch, o.area].filter(Boolean).join(" · ") || "—"}</div>
+                  {/* Branch dihilangkan — cukup area saja, supaya baris ini
+                      tidak sesak & lebih proporsional. */}
+                  {o.area && <div style={{ fontSize: 11.5, color: C.mid, marginTop: 4 }}>{o.area}</div>}
                 </div>
                 <ChevronRight size={18} color={C.lo} style={{ flexShrink: 0 }} />
               </div>
@@ -1492,13 +1559,25 @@ function GeoGatePanel({ outlet, err, onFix, onChangeOutlet }) {
   );
 }
 
-function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOutlet, onRename, multiOutlet, brand, onBrandChange, assignmentSrc, detail, promotorId, periodLabel }) {
+function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOutlet, onRename, multiOutlet, brand, onBrandChange, assignmentSrc, detail, promotorId, periodLabel, period, onPeriodChange }) {
   const needsBrand = !!outlet.code3id;
   const canTag = !needsBrand || !!brand;
   // Tema warna aktif = brand yang dipilih. Outlet single-brand tidak punya
   // pilihan, jadi tetap pakai warna netral (merah) — bukan menebak brand.
   const bt = brandTheme(brand);
   const [detailSale, setDetailSale] = useState(null);
+  // Kalau promotor coba klik Claim Penjualan padahal brand belum dipilih,
+  // kartu "Claim untuk brand" digetarkan (bukan cuma tombolnya di-disable
+  // diam-diam) supaya jelas field mana yang harus diisi dulu.
+  const [shakeBrand, setShakeBrand] = useState(false);
+  const handleTagClick = () => {
+    if (needsBrand && !brand) {
+      setShakeBrand(true);
+      setTimeout(() => setShakeBrand(false), 420);
+      return;
+    }
+    onTag();
+  };
   // Detail Pengajuan Outlet mengikuti brand yang sedang dipilih di atas
   // (kalau outlet-nya dual-brand) — belum pilih brand sama sekali =
   // tampilkan TOTAL gabungan IM3+3ID, seperti semula.
@@ -1519,11 +1598,26 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
   }, [detailRows]);
   return (
     <div style={{ animation: "up .3s ease" }}>
-      <div style={{ background: C.card, borderRadius: 18, padding: "18px 18px 16px", marginBottom: 14, boxShadow: C.md }}>
+      <div style={{ background: C.card, borderRadius: 18, padding: "16px 18px", marginBottom: 14, boxShadow: C.md }}>
+        {/* Selector periode dipindah ke sini (kanan judul "Outlet Aktif"),
+            memakai `period` (periode assignment/mapping), bukan statsPeriod
+            — ganti periode di sini ikut mengganti outlet yang termapping. */}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Outlet Aktif</div>
+          {period && onPeriodChange && (
+            <div style={{ position: "relative" }}>
+              <select value={period} onChange={(e) => onPeriodChange(e.target.value)}
+                style={{ appearance: "none", height: 28, borderRadius: 9, border: `1px solid ${C.brand}55`, background: C.card, color: C.hi, fontFamily: FF, fontSize: 11, fontWeight: 700, padding: "0 24px 0 26px", cursor: "pointer" }}>
+                {periodOptions().map((p) => <option key={p} value={p}>{ymLabel(p)}</option>)}
+              </select>
+              <CalendarDays size={10.5} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: C.brand, pointerEvents: "none" }} />
+              <ChevronDown size={10.5} style={{ position: "absolute", right: 7, top: "50%", transform: "translateY(-50%)", color: C.lo, pointerEvents: "none" }} />
+            </div>
+          )}
+        </div>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Outlet Aktif</div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.02em", color: C.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {outlet.name && outlet.name !== outlet.code ? outlet.name : outlet.code}
               </span>
@@ -1538,7 +1632,9 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
               <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: BRAND.IM3.soft, color: BRAND.IM3.ink }}>IM3 {outlet.code}</span>
               {outlet.code3id && <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: BRAND["3ID"].soft, color: BRAND["3ID"].ink }}>3ID {outlet.code3id}</span>}
             </div>
-            <div style={{ fontSize: 12, color: C.mid, marginTop: 4 }}>{[outlet.branch, outlet.area].filter(Boolean).join(" · ") || "—"}</div>
+            {/* Branch dihilangkan — area saja cukup, kartu jadi lebih ringkas
+                & proporsional. */}
+            {outlet.area && <div style={{ fontSize: 12, color: C.mid, marginTop: 4 }}>{outlet.area}</div>}
             {assignmentSrc?.carried && (
               <div style={{ fontSize: 10.5, color: C.amber, marginTop: 4, fontWeight: 600 }}>Mapping dari {ymLabel(assignmentSrc.sourcePeriod)} (belum ada update)</div>
             )}
@@ -1558,7 +1654,11 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
           Detail Pengajuan Outlet di bawah otomatis kembali menampilkan
           TOTAL gabungan kedua brand saat tidak ada yang dipilih. */}
       {needsBrand && (
-        <div style={{ background: C.card, borderRadius: 18, padding: 14, marginBottom: 14, boxShadow: C.md }}>
+        <div style={{
+          background: C.card, borderRadius: 18, padding: 14, marginBottom: 14, boxShadow: C.md,
+          animation: shakeBrand ? "shakeCard .42s ease" : undefined,
+          outline: shakeBrand ? `2px solid ${C.brand}` : "none", outlineOffset: 2,
+        }}>
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo, marginBottom: 10 }}>Claim untuk brand</div>
           <div style={{ display: "flex", gap: 8 }}>
             {["IM3", "3ID"].map((b) => {
@@ -1584,11 +1684,15 @@ function TagPanel({ outlet, sales, soldCount, busy, onTag, onDelete, onChangeOut
 
       {/* Tag penjualan — warna tombol mengikuti brand yang sedang dipilih
           (IM3 kuning/teks hitam, 3ID magenta/teks putih) supaya promotor
-          tidak salah brand. Outlet single-brand tetap merah netral. */}
-      <button onClick={onTag} disabled={busy || !canTag} className="press"
+          tidak salah brand. Outlet single-brand tetap merah netral. Tombol
+          ini SENGAJA tidak di-disable total saat brand belum dipilih — tetap
+          bisa ditekan supaya bisa memicu getaran (shake) pada kartu "Claim
+          untuk brand" di atas, memberi tahu field mana yang harus diisi
+          dulu, bukan cuma diam/tidak bereaksi. */}
+      <button onClick={handleTagClick} disabled={busy} className="press"
         style={{
           width: "100%", height: 58, borderRadius: 16, border: "none",
-          cursor: canTag ? "pointer" : "default",
+          cursor: "pointer",
           background: !canTag ? C.line : (bt ? bt.solid : C.brand),
           color: !canTag ? C.lo : (bt ? bt.onSolid : "#fff"),
           fontFamily: FF, fontSize: 16.5, fontWeight: 700,
@@ -1718,25 +1822,37 @@ function ContributionCard({ summary, target, outletBioTotal, onNavigateHistory, 
             </button>
           </div>
 
-          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 6, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 32, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff" }}>{bio}</span>
-              <span style={{ fontSize: 12.5, fontWeight: 700, color: "rgba(255,255,255,0.5)" }}>/ {target} RGU-GA SP Biometric</span>
+          {/* Hero stat — persentase capaian jadi angka UTAMA yang paling
+              menonjol (bukan lagi angka bio/target kecil di atas dan %
+              mungil di kanan). Ikon Target diperbesar & diberi badge
+              lingkaran ber-tema warna tier supaya kontras & gampang dibaca
+              sekilas, sesuai palet identitas (PAL). */}
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <div style={{
+              width: 60, height: 60, borderRadius: 18, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+              background: `${tier.color}26`, border: `1.5px solid ${tier.color}55`, color: tier.color,
+            }}>
+              <Target size={28} strokeWidth={2.2} />
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-              <Target size={11} color="rgba(255,255,255,0.5)" />
-              <span style={{ fontSize: 15, fontWeight: 800, color: tier.color }}>{pct}%</span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
+                <span style={{ fontSize: 44, fontWeight: 800, letterSpacing: "-0.04em", color: "#fff", lineHeight: 1 }}>{pct}</span>
+                <span style={{ fontSize: 22, fontWeight: 800, color: tier.color, letterSpacing: "-0.02em" }}>%</span>
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "rgba(255,255,255,0.68)", marginTop: 2 }}>
+                <span style={{ color: "#fff" }}>{bio}</span> / {target} RGU-GA SP Biometric
+              </div>
             </div>
           </div>
 
           {/* Progress target sebagai line bar bergradasi (bukan ring lagi) —
               warna gradasinya berubah mengikuti tier capaian. */}
-          <div style={{ height: 10, borderRadius: 99, background: "rgba(255,255,255,0.14)", overflow: "hidden", marginTop: 10 }}>
-            <div style={{ height: "100%", width: `${pct}%`, minWidth: pct > 0 ? 10 : 0, borderRadius: 99, background: tier.grad, transition: "width .6s cubic-bezier(.22,1,.36,1)" }} />
+          <div style={{ height: 12, borderRadius: 99, background: "rgba(255,255,255,0.14)", overflow: "hidden", marginTop: 14 }}>
+            <div style={{ height: "100%", width: `${pct}%`, minWidth: pct > 0 ? 12 : 0, borderRadius: 99, background: tier.grad, transition: "width .6s cubic-bezier(.22,1,.36,1)" }} />
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 9 }}>
-            <TrendingUp size={12} color={tier.color} />
-            <span style={{ fontSize: 12, fontWeight: 600, color: tier.color }}>{tier.label}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 10 }}>
+            <TrendingUp size={13} color={tier.color} />
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: tier.color }}>{tier.label}</span>
           </div>
 
           {/* Total pencapaian RGU-GA SP Biometric SELURUH outlet Anda (semua
@@ -1777,7 +1893,7 @@ function ContributionCard({ summary, target, outletBioTotal, onNavigateHistory, 
                           {o.code3id && <span style={{ fontSize: 9, fontWeight: 700, fontFamily: "monospace", padding: "1px 6px", borderRadius: 99, background: "rgba(198,22,141,0.28)", color: "#F0A8DE" }}>3ID {o.code3id}</span>}
                         </div>
                       </div>
-                      <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", textAlign: "right", flexShrink: 0, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{[o.branch, o.area].filter(Boolean).join(" · ") || "—"}</div>
+                      {o.area && <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", textAlign: "right", flexShrink: 0, maxWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{o.area}</div>}
                     </div>
                   );
                 })}
@@ -1795,9 +1911,12 @@ function ContributionCard({ summary, target, outletBioTotal, onNavigateHistory, 
         }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
             <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.lo }}>Detail Status Pengajuan</div>
-            <button onClick={() => setOpen(false)} className="press" aria-label="Tutup detail"
+            {/* Teks & arah panah dibuat mencerminkan tombol "Lihat Detail >"
+                di kartu depan, supaya jelas ini navigasi flip kembali (bukan
+                sekadar "tutup"). */}
+            <button onClick={() => setOpen(false)} className="press" aria-label="Kembali ke ringkasan"
               style={{ display: "flex", alignItems: "center", gap: 4, border: "none", background: C.sub, color: C.mid, borderRadius: 9, padding: "5px 9px 5px 7px", cursor: "pointer", fontFamily: FF, fontSize: 11.5, fontWeight: 700 }}>
-              <X size={12} /> Tutup
+              <ChevronLeft size={13} /> Ringkasan
             </button>
           </div>
 
@@ -2113,14 +2232,19 @@ function HistoryRow({ s, promotorId, onDelete, onOpen }) {
   const movedAway = s.promotor_id === promotorId && s.credited_promotor_id && s.credited_promotor_id !== promotorId;
   const gainedFromOther = s.credited_promotor_id === promotorId && s.promotor_id !== promotorId;
   const movedOutletOnly = s.credited_transfer_type === "same_promotor_diff_outlet";
+  // Ikon utama baris ini disederhanakan jadi gaya "task list": tanda
+  // centang kalau sudah tervalidasi RGU-GA, lingkaran kosong kalau belum —
+  // diperbesar supaya proporsinya seimbang dengan konten teks di kanannya
+  // (sebelumnya ikon SIM card/radar 34px terasa kekecilan).
+  const isValidated = categoryOf(s) === "validated";
   return (
     <div onClick={() => onOpen(s)} role="button" tabIndex={0}
       onKeyDown={(e) => { if (e.key === "Enter") onOpen(s); }} className="press" style={{
       display: "block", width: "100%", textAlign: "left", border: "none", cursor: "pointer", fontFamily: FF,
       background: C.card, borderRadius: 16, padding: 13, boxShadow: C.md,
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
-        <span style={{ width: 34, height: 34, borderRadius: 10, background: s.within_radius === false ? "rgba(37,99,235,0.1)" : "rgba(26,158,90,0.1)", color: s.within_radius === false ? C.blue : C.green, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{s.within_radius === false ? <Radar size={16} /> : <SimCardIcon size={16} />}</span>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <span style={{ width: 44, height: 44, borderRadius: 13, background: isValidated ? "rgba(26,158,90,0.12)" : C.sub, color: isValidated ? C.green : C.lo, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>{isValidated ? <CheckCircle2 size={23} /> : <Circle size={20} />}</span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
             <span style={{ fontSize: 14.5, fontWeight: 800, fontFamily: "monospace", color: C.hi }}>{s.phone_normalized}</span>
@@ -2306,7 +2430,7 @@ function OutletPicker({ outlets, onPick, onClose, onRename }) {
                     <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: "monospace", padding: "2px 7px", borderRadius: 99, background: BRAND.IM3.soft, color: BRAND.IM3.ink }}>IM3 {o.code}</span>
                     {hasDual && <span style={{ fontSize: 10.5, fontWeight: 700, fontFamily: "monospace", padding: "2px 7px", borderRadius: 99, background: BRAND["3ID"].soft, color: BRAND["3ID"].ink }}>3ID {o.code3id}</span>}
                   </div>
-                  <div style={{ fontSize: 11.5, color: C.mid, marginTop: 5 }}>{[o.branch, o.area].filter(Boolean).join(" · ") || "—"}</div>
+                  {o.area && <div style={{ fontSize: 11.5, color: C.mid, marginTop: 5 }}>{o.area}</div>}
                 </div>
                 <ChevronRight size={18} color={C.lo} style={{ flexShrink: 0 }} />
               </div>
