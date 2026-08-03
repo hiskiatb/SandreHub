@@ -903,8 +903,19 @@ function AppShell(p) {
     if (guardPreview()) return;
     setBusy(true);
     try {
-      const { error } = await supabase.from("pts_sale").delete().eq("id", s.id);
+      // PENTING: minta baris yang terhapus balik lewat .select(). Supabase/
+      // PostgREST TIDAK menganggap "0 baris terhapus karena difilter RLS"
+      // sebagai error — `error` akan tetap null walau baris aslinya sama
+      // sekali tidak terhapus (mis. RLS menolak karena kepemilikan sale ini
+      // sudah pindah ke promotor lain via credited_promotor_id). Tanpa
+      // pengecekan ini, app pernah menampilkan "Nomor dihapus" padahal
+      // datanya masih ada — begitu nomor yang sama di-scan ulang, muncul
+      // lagi notifikasi "sudah di-claim".
+      const { data, error } = await supabase.from("pts_sale").delete().eq("id", s.id).select("id");
       if (error) throw error;
+      if (!data || data.length === 0) {
+        throw new Error("Data tidak ditemukan atau Anda tidak punya akses untuk menghapusnya. Coba muat ulang halaman.");
+      }
       if (activeOutlet) await loadTodaySales(promotorId, activeOutlet.id);
       loadSummary(); loadHistory();
       flash("Nomor dihapus");
