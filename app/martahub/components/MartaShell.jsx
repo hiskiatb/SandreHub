@@ -40,7 +40,7 @@ const NAV = [
   { label: "Approval Center", icon: "check", path: "approval", route: "/martahub/approval" },
   { label: "User Management", icon: "users", path: "assignments", route: "/martahub/assignments" },
   { label: "Master Data", icon: "db", path: "master", route: "/martahub/master" },
-  { label: "POSMAT Stock", icon: "db", path: "posmat", route: "/martahub/posmat" },
+  { label: "POSM Stock", icon: "db", path: "posmat", route: "/martahub/posmat" },
   { label: "Validasi Lokasi", icon: "check", path: "validasi", route: "/martahub/validasi" },
   { label: "System Settings", icon: "settings", path: "settings", route: "/martahub/settings" },
 ];
@@ -94,15 +94,16 @@ export default function MartaShell({ active, title, subtitle, actions, children 
     });
   }, [router]);
 
-  // Badge Approval Center — jumlah nyata mh_activities status=submitted yang
-  // masuk cakupan (region×brand) pengguna, bukan angka statis.
+  // Badge Approval Center — jumlah nyata mh_activities status=plan_submitted
+  // yang masuk cakupan (region×brand) pengguna, bukan angka statis. Fase
+  // Actual sudah otomatis (trigger validasi), jadi tidak lagi dihitung di sini.
   useEffect(() => {
     const email = ctx?.session?.user?.email;
     if (!email) return;
     let cancelled = false;
     (async () => {
       const sc = await getMartaScope(email);
-      let q = supabaseMarta.from("mh_activities").select("id", { count: "exact", head: true }).eq("status", "submitted");
+      let q = supabaseMarta.from("mh_activities").select("id", { count: "exact", head: true }).eq("status", "plan_submitted");
       q = await applyMartaScope(q, sc);
       const { count } = await q;
       if (!cancelled) setPendingCount(count ?? 0);

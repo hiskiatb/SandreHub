@@ -2001,11 +2001,29 @@ function LeaderboardPanel({ t, period, rows, outletByCode, onSelectRow }) {
           <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: t.mid, flexShrink: 0 }}>
             <Filter size={13} /> Filter Wilayah
           </div>
-          <select className="pts-in pts-select" value={regionF} onChange={(e) => setRegionF(e.target.value)} style={{ height: 32, minWidth: 160 }}>
+          {/* height:32 tadinya bentrok dengan padding vertikal 9px bawaan
+              .pts-in (box-sizing:border-box global → ruang konten cuma
+              ~12px, teks jadi terpotong/meluber di bawah border, terutama
+              kelihatan saat window sempit/half-width). Fix: pakai tinggi
+              yang cukup (36px) + padding vertikal 0 supaya teks center
+              secara vertikal lewat lineHeight, dan minWidth:0 + flex:1
+              supaya select menyusut proporsional di layar sempit alih-alih
+              overflow/terpotong. */}
+          <select
+            className="pts-in pts-select"
+            value={regionF}
+            onChange={(e) => setRegionF(e.target.value)}
+            style={{ height: 36, lineHeight: "34px", padding: "0 34px 0 12px", minWidth: 0, width: 160, flex: "1 1 160px" }}
+          >
             <option value="all">Semua Region</option>
             {regionOptions.map((r) => <option key={r} value={r}>{r}</option>)}
           </select>
-          <select className="pts-in pts-select" value={branchF} onChange={(e) => setBranchF(e.target.value)} style={{ height: 32, minWidth: 160 }}>
+          <select
+            className="pts-in pts-select"
+            value={branchF}
+            onChange={(e) => setBranchF(e.target.value)}
+            style={{ height: 36, lineHeight: "34px", padding: "0 34px 0 12px", minWidth: 0, width: 160, flex: "1 1 160px" }}
+          >
             <option value="all">Semua Branch</option>
             {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
           </select>

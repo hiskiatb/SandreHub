@@ -147,6 +147,7 @@ function Body({ canManage, callerEmail }) {
         p_dsf_org_id: form.dsfOrgId || null,
         p_caller_email: callerEmail || null,
         p_mc: form.mc || null,
+        p_email: form.email || null,
       });
       if (error) throw new Error(error.message);
       setInfo("Assignment diperbarui.");
@@ -663,6 +664,7 @@ function AddModal({ onClose, onSave, existing, scope }) {
 // Edit satu assignment (email tetap; ubah role/region/brand/branch/cluster).
 function EditModal({ row, onClose, onSave, existing, scope }) {
   const [name, setName] = useState(row.full_name || "");
+  const [email, setEmail] = useState(row.email || "");
   const [role, setRole] = useState(row.role || "bme");
   const [region, setRegion] = useState(row.region || "NORTH SUMATERA");
   const [brand, setBrand] = useState(row.brand || "im3");
@@ -734,12 +736,29 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
     if (b?.region && !lockedRegion) setRegion(b.region);
   };
 
-  const canSave = name.trim() && row.email && (!isBranchRole || branchId)
+  // Ganti email diperbolehkan (§ handover/rotasi user) — data histori
+  // (aktivitas, submission, dsb) TERIKAT ke assignment_id/branch, BUKAN
+  // email, jadi begitu email diganti di sini, user baru langsung mewarisi
+  // seluruh akses & data lama tanpa kehilangan apa pun.
+  const emailKey = email.trim().toLowerCase();
+  const emailChanged = emailKey !== String(row.email || "").trim().toLowerCase();
+  // Cegah duplikat: email baru sudah punya assignment identik (role+branch+brand).
+  const emailTaken = useMemo(() => {
+    if (!emailChanged || !emailKey) return false;
+    return (existing || []).some((r) => r.id !== row.id
+      && String(r.email || "").toLowerCase() === emailKey
+      && r.role === role
+      && String(r.branch_id || "") === String(branchId || "")
+      && String(r.brand || "") === String(brand || ""));
+  }, [existing, row.id, emailKey, emailChanged, role, branchId, brand]);
+
+  const canSave = name.trim() && emailKey && !emailTaken && (!isBranchRole || branchId)
     && (needsSupervisor ? !!supervisorId : true)
     && (isDsf ? dsfOrgId.trim() : true);
   const save = () => {
     if (!canSave) return;
     onSave(row.id, {
+      email: emailKey,
       role, region: role === "spm_sumatera" ? null : region,
       fullName: name.trim().toUpperCase(),
       brand: (isTmv || hasBranchField) ? brand : null,
@@ -757,7 +776,17 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
         <div style={{ padding: "14px 18px", borderBottom: `1px solid ${T.line}`, fontWeight: 800 }}>Edit Assignment</div>
         <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 12 }}>
           <Field label="Nama *"><input value={name} onChange={(e) => setName(e.target.value.toUpperCase())} placeholder="NAMA LENGKAP" style={{ ...inp, textTransform: "uppercase" }} /></Field>
-          <Field label="Email"><input value={row.email} disabled style={{ ...inp, background: T.sub || "#F7F9FC", color: T.mid, cursor: "not-allowed" }} /></Field>
+          <Field label="Email * (bisa diganti saat handover)">
+            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nama@ioh.co.id" style={{ ...inp, ...(emailTaken ? { borderColor: T.error } : {}) }} />
+            {emailChanged && !emailTaken && (
+              <div style={{ fontSize: 11, color: T.mid, marginTop: 4 }}>
+                Slot role/branch ini akan berpindah ke <b>{emailKey}</b>. Data & histori lama tetap terikat ke assignment ini (bukan ke email), jadi tetap dapat diakses penuh oleh user baru.
+              </div>
+            )}
+            {emailTaken && (
+              <div style={{ fontSize: 11, color: T.error, marginTop: 4 }}>Email ini sudah punya assignment identik (role/branch/brand sama) — pakai email lain.</div>
+            )}
+          </Field>
           <div style={{ display: "flex", gap: 12 }}>
             <div style={{ flex: 1 }}><Field label="Role"><select value={role} onChange={(e) => { setRole(e.target.value); }} style={selectStyle}>{ROLES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field></div>
             {role !== "spm_sumatera" && (

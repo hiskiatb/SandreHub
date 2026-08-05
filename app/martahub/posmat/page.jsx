@@ -5,7 +5,7 @@
 // stok oleh MD sendiri (mengurangi saldo) adalah bagian MD Activities,
 // Fase 5, BELUM dibangun di sini.
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Package, Boxes, Target, ArrowLeft, Plus, Pencil, ShieldCheck, CheckCircle2, AlertTriangle, HelpCircle, PlayCircle, RefreshCw } from "lucide-react";
+import { Package, Boxes, Target, ArrowLeft, Plus, Pencil, ShieldCheck, CheckCircle2, AlertTriangle, HelpCircle, PlayCircle, RefreshCw, Lock } from "lucide-react";
 import MartaShell, { T } from "../components/MartaShell";
 import { FolderConnectPanel } from "../components/FolderConnect";
 import supabaseMarta from "../../../lib/supabaseMarta";
@@ -37,7 +37,7 @@ const brandLabel = (b) => (b === "tri" ? "3ID" : b === "im3" ? "IM3" : String(b 
 
 export default function PosmatStockPage() {
   return (
-    <MartaShell active="posmat" title="POSMAT Stock" subtitle="Jenis material, kuota stok per MD, dan Target Terpasang (§7).">
+    <MartaShell active="posmat" title="POSM Stock" subtitle="Jenis material, kuota stok per MD, dan Target Terpasang (§7).">
       {(ctx) => <Body email={ctx?.session?.user?.email} />}
     </MartaShell>
   );
@@ -53,18 +53,18 @@ function Body({ email }) {
   if (active === "types") return (<div><BackBtn onClick={() => setActive(null)} />
     <TypesView email={email} canManage={canManage} /></div>);
   if (active === "stock") return (<div><BackBtn onClick={() => setActive(null)} />
-    <StockView email={email} canManage={canManage} /></div>);
+    <StockView email={email} canManage={canManage} scope={scope} /></div>);
   if (active === "target") return (<div><BackBtn onClick={() => setActive(null)} />
-    <TargetView email={email} canManage={canManage} /></div>);
+    <TargetView email={email} canManage={canManage} scope={scope} /></div>);
   if (active === "validity") return (<div><BackBtn onClick={() => setActive(null)} />
     <ValidityView email={email} canManage={canManage} scope={scope} /></div>);
 
   return (
     <div style={{ maxWidth: 760 }}>
       <div style={{ fontSize: 18, fontWeight: 800, color: T.hi, marginBottom: 3 }}>Pilih menu</div>
-      <div style={{ fontSize: 13, color: T.mid, marginBottom: 18 }}>Pengelolaan material POSMAT, target pemasangan, dan Validity MSISDN.</div>
+      <div style={{ fontSize: 13, color: T.mid, marginBottom: 18 }}>Pengelolaan material POSM, target pemasangan, dan Validity MSISDN.</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
-        <MenuCard icon={Package} label="Jenis Material" desc="Master jenis POSMAT — reusable (last-used) atau consumable (sekali pakai), satuan unit."
+        <MenuCard icon={Package} label="Jenis Material" desc="Master jenis POSM — reusable (last-used) atau consumable (sekali pakai), satuan unit."
           onClick={() => setActive("types")} />
         <MenuCard icon={Boxes} label="Stok & Mutasi" desc="Tetapkan/top-up kuota bulanan per MD × jenis material, lihat saldo berjalan (carry-over tanpa batas)."
           onClick={() => setActive("stock")} />
@@ -83,7 +83,7 @@ function Body({ email }) {
 function BackBtn({ onClick }) {
   return (
     <button onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: T.mid, fontSize: 13, fontWeight: 600, padding: 0, marginBottom: 16 }}>
-      <ArrowLeft size={15} /> Kembali ke POSMAT Stock
+      <ArrowLeft size={15} /> Kembali ke POSM Stock
     </button>
   );
 }
@@ -219,7 +219,7 @@ function TypeModal({ row, email, onClose, onSaved, onError }) {
 // "BME tidak bisa isi POSMAT"). Sekarang siapa pun di branch×brand yg sama
 // berbagi 1 pool, sejalan dgn Target Terpasang yg SUDAH branch×brand sejak
 // awal.
-function StockView({ email, canManage }) {
+function StockView({ email, canManage, scope }) {
   const [types, setTypes] = useState([]);
   const [combos, setCombos] = useState([]);
   const [overview, setOverview] = useState([]);
@@ -228,6 +228,15 @@ function StockView({ email, canManage }) {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
+
+  // Scope caller (Head TMV -> region sendiri, Brand TMV -> region+brand
+  // sendiri) — SAMA PERSIS pola di assignments/page.jsx. SPM Sumatera/admin
+  // unscoped (null = bebas milih branch manapun).
+  const lockedRegion = scope && (scope.role === "head" || scope.role === "tmv") ? scope.region : null;
+  const lockedBrand = scope && scope.role === "tmv" ? scope.brand : null;
+  useEffect(() => {
+    if (lockedBrand) setForm((f) => (f.brand ? f : { ...f, brand: lockedBrand }));
+  }, [lockedBrand]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -245,9 +254,14 @@ function StockView({ email, canManage }) {
 
   const branchOptions = useMemo(() => {
     const seen = new Map();
-    for (const c of combos) if (c.branch_id && !seen.has(c.branch_id)) seen.set(c.branch_id, c.branch);
+    for (const c of combos) {
+      if (!c.branch_id) continue;
+      if (lockedRegion && c.region !== lockedRegion) continue;
+      if (lockedBrand && c.brand !== lockedBrand) continue;
+      if (!seen.has(c.branch_id)) seen.set(c.branch_id, c.branch);
+    }
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [combos]);
+  }, [combos, lockedRegion, lockedBrand]);
 
   const canSubmit = form.branchId && form.brand && form.typeId && form.month && Number(form.amount) !== 0 && !Number.isNaN(Number(form.amount)) && !saving;
 
@@ -270,6 +284,9 @@ function StockView({ email, canManage }) {
     <div style={{ maxWidth: 1000 }}>
       <div style={{ fontSize: 18, fontWeight: 800, color: T.hi, marginBottom: 3 }}>Stok & Mutasi</div>
       <div style={{ fontSize: 13, color: T.mid, marginBottom: 14 }}>Saldo milik BRANCH × BRAND (dibagikan bersama semua orang di sana, bukan per-individu) — bersifat carry-over tanpa batas, top-up menambah saldo berjalan, tidak mereset tiap bulan.</div>
+      {lockedRegion && (
+        <div style={{ ...note, marginBottom: 14 }}>Daftar branch dibatasi ke region <b>{lockedRegion}</b>{lockedBrand ? ` · brand ${brandLabel(lockedBrand)}` : ""} sesuai scope akun kamu.</div>
+      )}
 
       {canManage && (
         <div style={{ ...card, marginBottom: 14 }}>
@@ -284,11 +301,17 @@ function StockView({ email, canManage }) {
               </select>
             </Field>
             <Field label="Brand">
-              <select value={form.brand} onChange={(e) => setForm((f) => ({ ...f, brand: e.target.value }))} style={selectStyle}>
-                <option value="">— pilih brand —</option>
-                <option value="im3">IM3</option>
-                <option value="tri">3ID</option>
-              </select>
+              {lockedBrand ? (
+                <div style={{ ...inp, background: T.sub || "#F7F9FC", color: T.mid, cursor: "not-allowed", display: "flex", alignItems: "center", gap: 6 }}>
+                  {brandLabel(lockedBrand)} <Lock size={12} />
+                </div>
+              ) : (
+                <select value={form.brand} onChange={(e) => setForm((f) => ({ ...f, brand: e.target.value }))} style={selectStyle}>
+                  <option value="">— pilih brand —</option>
+                  <option value="im3">IM3</option>
+                  <option value="tri">3ID</option>
+                </select>
+              )}
             </Field>
             <Field label="Jenis Material">
               <select value={form.typeId} onChange={(e) => setForm((f) => ({ ...f, typeId: e.target.value }))} style={selectStyle}>
@@ -335,7 +358,7 @@ function StockView({ email, canManage }) {
 // ═══════════════════════════════════════════════════════════════════════════
 //  3. TARGET TERPASANG
 // ═══════════════════════════════════════════════════════════════════════════
-function TargetView({ email, canManage }) {
+function TargetView({ email, canManage, scope }) {
   const [combos, setCombos] = useState([]);
   const [targets, setTargets] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -343,6 +366,12 @@ function TargetView({ email, canManage }) {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
+
+  const lockedRegion = scope && (scope.role === "head" || scope.role === "tmv") ? scope.region : null;
+  const lockedBrand = scope && scope.role === "tmv" ? scope.brand : null;
+  useEffect(() => {
+    if (lockedBrand) setForm((f) => (f.brand ? f : { ...f, brand: lockedBrand }));
+  }, [lockedBrand]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -358,9 +387,14 @@ function TargetView({ email, canManage }) {
 
   const branchOptions = useMemo(() => {
     const seen = new Map();
-    for (const c of combos) if (c.branch_id && !seen.has(c.branch_id)) seen.set(c.branch_id, c.branch);
+    for (const c of combos) {
+      if (!c.branch_id) continue;
+      if (lockedRegion && c.region !== lockedRegion) continue;
+      if (lockedBrand && c.brand !== lockedBrand) continue;
+      if (!seen.has(c.branch_id)) seen.set(c.branch_id, c.branch);
+    }
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [combos]);
+  }, [combos, lockedRegion, lockedBrand]);
 
   const canSubmit = form.branchId && form.brand && form.month && form.qty !== "" && !Number.isNaN(Number(form.qty)) && !saving;
 
@@ -383,6 +417,9 @@ function TargetView({ email, canManage }) {
     <div style={{ maxWidth: 900 }}>
       <div style={{ fontSize: 18, fontWeight: 800, color: T.hi, marginBottom: 3 }}>Target Terpasang</div>
       <div style={{ fontSize: 13, color: T.mid, marginBottom: 14 }}>KPI jumlah pemasangan per branch × brand per periode — terpisah dari saldo stok fisik.</div>
+      {lockedRegion && (
+        <div style={{ ...note, marginBottom: 14 }}>Daftar branch dibatasi ke region <b>{lockedRegion}</b>{lockedBrand ? ` · brand ${brandLabel(lockedBrand)}` : ""} sesuai scope akun kamu.</div>
+      )}
 
       {canManage && (
         <div style={{ ...card, marginBottom: 14 }}>
@@ -396,11 +433,17 @@ function TargetView({ email, canManage }) {
               </select>
             </Field>
             <Field label="Brand">
-              <select value={form.brand} onChange={(e) => setForm((f) => ({ ...f, brand: e.target.value }))} style={selectStyle}>
-                <option value="">— pilih brand —</option>
-                <option value="im3">IM3</option>
-                <option value="tri">3ID</option>
-              </select>
+              {lockedBrand ? (
+                <div style={{ ...inp, background: T.sub || "#F7F9FC", color: T.mid, cursor: "not-allowed", display: "flex", alignItems: "center", gap: 6 }}>
+                  {brandLabel(lockedBrand)} <Lock size={12} />
+                </div>
+              ) : (
+                <select value={form.brand} onChange={(e) => setForm((f) => ({ ...f, brand: e.target.value }))} style={selectStyle}>
+                  <option value="">— pilih brand —</option>
+                  <option value="im3">IM3</option>
+                  <option value="tri">3ID</option>
+                </select>
+              )}
             </Field>
             <Field label="Bulan"><input type="month" value={monthInputValue(form.month)} onChange={(e) => setForm((f) => ({ ...f, month: e.target.value.replace("-", "") }))} style={inp} /></Field>
             <Field label="Target (jumlah)"><input type="number" min="0" value={form.qty} onChange={(e) => setForm((f) => ({ ...f, qty: e.target.value }))} style={inp} /></Field>

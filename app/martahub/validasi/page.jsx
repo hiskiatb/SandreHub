@@ -414,7 +414,7 @@ function Body({ email }) {
           </button>
         </div>
         <div style={{ color: T.mid, fontSize: 12.5, marginBottom: 12 }}>
-          Radius toleransi: <b>{mdRadius} m</b>. Pemasangan POSMAT oleh MD/BME/RGE mode Terikat Activity/Outlet menunggu rekonsiliasi — stok baru berkurang setelah langkah ini dijalankan (§8.2), terlepas hasilnya tervalidasi atau tidak cocok. Muat referensi Outlet Lat/Lng di langkah 1 dulu untuk melihat pratinjau.
+          Radius toleransi: <b>{mdRadius} m</b>. Pemasangan POSM oleh MD/BME/RGE mode Terikat Activity/Outlet menunggu rekonsiliasi — stok baru berkurang setelah langkah ini dijalankan (§8.2), terlepas hasilnya tervalidasi atau tidak cocok. Muat referensi Outlet Lat/Lng di langkah 1 dulu untuk melihat pratinjau.
         </div>
 
         {mdErr && <div style={{ ...note, marginBottom: 12, background: T.errorBg, borderColor: T.error, color: T.error }}>{mdErr}</div>}

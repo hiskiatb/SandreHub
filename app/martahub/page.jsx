@@ -513,7 +513,10 @@ export default function MartaHubDashboard() {
         if (cancelled) return;
         setScope(sc);
 
-        let pendingQ = supabaseMarta.from("mh_activities").select("id", { count: "exact", head: true }).eq("status", "submitted");
+        // Sejak fase approval Actual dihapus (validasi otomatis via trigger
+        // server), satu-satunya antrean approval manusia yang tersisa adalah
+        // 'plan_submitted' — badge ini mengikuti approvalQueueProvider mobile.
+        let pendingQ = supabaseMarta.from("mh_activities").select("id", { count: "exact", head: true }).eq("status", "plan_submitted");
         pendingQ = await applyMartaScope(pendingQ, sc);
         const { count: pending } = await pendingQ;
         if (!cancelled) setPendingCount(pending ?? 0);
