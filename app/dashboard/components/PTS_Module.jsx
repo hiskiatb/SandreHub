@@ -23,7 +23,7 @@ import {
   RefreshCw, ShoppingBag, CalendarDays,
   Loader2, Store, UserCheck, UserX, Info, Phone, IdCard, Radar,
   UploadCloud, Plus, Trash2, Save, Ban, BarChart3, ArrowLeftRight, Eye, Pencil,
-  Trophy, Medal, Award, PieChart, TrendingUp, History,
+  Trophy, Medal, Award, PieChart, TrendingUp, History, UserCog,
 } from "lucide-react";
 import { passesRow, optionsFor, FilterTh, FilterMenu } from "./MFTS_TableFilter";
 import { WhatsAppIcon } from "../../../components/WhatsAppIcon";
@@ -465,6 +465,11 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
               { value: "activitylog", label: "Log Aktivitas",       icon: <History size={14} /> },
               { value: "whatsapp", label: "Call Center WA",         icon: <Phone size={14} /> },
             ]),
+            // Mapping CSE/RSE — khusus spm_sumatera (bukan sekadar
+            // !isRestrictedTabRole), karena ini pintu masuk siapa yang boleh
+            // registrasi sebagai CSE/RSE lewat email; jangan dibuka ke role
+            // admin lain yang tidak diminta.
+            ...(effectiveProfile?.role === "spm_sumatera" ? [{ value: "csemapping", label: "Mapping CSE/RSE", icon: <UserCog size={14} /> }] : []),
           ]} />
       </div>
 
@@ -475,6 +480,163 @@ export default function PTS_Module({ supabase, theme = "light", profile }) {
       {tab === "claims"   && <ClaimHistory    t={t} d={d} supabase={supabase} />}
       {tab === "activitylog" && <ActivityLog  t={t} d={d} supabase={supabase} outletByCode={outletByCode} />}
       {tab === "whatsapp" && <WhatsappSettings t={t} supabase={supabase} profile={effectiveProfile} isFullAdmin={isFullAdmin} />}
+      {tab === "csemapping" && effectiveProfile?.role === "spm_sumatera" && <CseMappingManager t={t} supabase={supabase} />}
+    </div>
+  );
+}
+
+/* ══════════════════════ MAPPING CSE/RSE (spm_sumatera only) ══════════════
+   SPM Sumatera assign email + MC dulu di sini; orangnya baru bisa daftar
+   lewat /sandra/register/cse-rse (cukup email -> OTP -> password, tanpa
+   pilih role/kode manual). Semua CRUD lewat /api/cse-mapping (service role +
+   requireSPM di server) — tabel pts_cse_mapping sendiri tidak x diekspos
+   langsung ke client lewat RLS. */
+function CseMappingManager({ t, supabase }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [q, setQ] = useState("");
+  const [form, setForm] = useState({ id: null, email: "", full_name: "", mc: "", region: "", branch: "" });
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const authHeader = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
+  };
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const headers = await authHeader();
+      const res = await fetch(`/api/cse-mapping?limit=500${q ? `&search=${encodeURIComponent(q)}` : ""}`, { headers });
+      const json = await res.json();
+      setRows(json.success ? (json.data || []) : []);
+    } catch { setRows([]); }
+    setLoading(false);
+  }, [q]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const resetForm = () => { setForm({ id: null, email: "", full_name: "", mc: "", region: "", branch: "" }); setEditing(false); setErr(""); };
+
+  const startEdit = (r) => {
+    setForm({ id: r.id, email: r.email, full_name: r.full_name || "", mc: r.mc, region: r.region || "", branch: r.branch || "" });
+    setEditing(true); setErr("");
+  };
+
+  const save = async () => {
+    setErr("");
+    if (!form.email.trim() || !form.mc.trim()) { setErr("Email dan MC wajib diisi."); return; }
+    setBusy(true);
+    try {
+      const headers = { "Content-Type": "application/json", ...(await authHeader()) };
+      const res = await fetch("/api/cse-mapping", {
+        method: form.id ? "PATCH" : "POST",
+        headers,
+        body: JSON.stringify(form),
+      });
+      const json = await res.json();
+      if (!json.success) { setErr(json.message || "Gagal menyimpan."); return; }
+      resetForm(); await load();
+    } catch (e) { setErr(e.message || "Gagal menyimpan."); }
+    finally { setBusy(false); }
+  };
+
+  const remove = async (r) => {
+    if (r.is_registered) { alert("Mapping ini sudah dipakai untuk registrasi — nonaktifkan saja lewat toggle Aktif, jangan dihapus."); return; }
+    if (!confirm(`Hapus mapping untuk ${r.email}?`)) return;
+    const headers = { "Content-Type": "application/json", ...(await authHeader()) };
+    const res = await fetch("/api/cse-mapping", { method: "DELETE", headers, body: JSON.stringify({ id: r.id }) });
+    const json = await res.json();
+    if (!json.success) { alert(json.message || "Gagal menghapus."); return; }
+    await load();
+  };
+
+  const toggleActive = async (r) => {
+    const headers = { "Content-Type": "application/json", ...(await authHeader()) };
+    await fetch("/api/cse-mapping", { method: "PATCH", headers, body: JSON.stringify({ id: r.id, is_active: !r.is_active }) });
+    await load();
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+        <div>
+          <div style={{ fontSize: 15, fontWeight: 800, color: t.hi, display: "flex", alignItems: "center", gap: 8 }}><UserCog size={17} /> Mapping CSE/RSE</div>
+          <div style={{ fontSize: 12, color: t.mid, marginTop: 3 }}>Assign email + MC di sini — CSE/RSE baru bisa daftar lewat halaman <code>/sandra/register/cse-rse</code> kalau emailnya sudah ada di daftar ini.</div>
+        </div>
+        <div style={{ position: "relative" }}>
+          <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: t.mid }} />
+          <input className="pts-in" placeholder="Cari email/MC/nama…" value={q} onChange={(e) => setQ(e.target.value)} style={{ paddingLeft: 30, width: 220 }} />
+        </div>
+      </div>
+
+      {/* Form tambah/edit */}
+      <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: 16, background: t.card, marginBottom: 18 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: t.mid, marginBottom: 10 }}>{editing ? "Edit Mapping" : "Tambah Mapping Baru"}</div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10, marginBottom: 10 }}>
+          <input className="pts-in" placeholder="Email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
+          <input className="pts-in" placeholder="Nama (opsional, label saja)" value={form.full_name} onChange={(e) => setForm((f) => ({ ...f, full_name: e.target.value }))} />
+          <input className="pts-in" placeholder="MC (mis. MC-LAMPUNG SELATAN)" value={form.mc} onChange={(e) => setForm((f) => ({ ...f, mc: e.target.value }))} />
+          <input className="pts-in" placeholder="Region (opsional)" value={form.region} onChange={(e) => setForm((f) => ({ ...f, region: e.target.value }))} />
+          <input className="pts-in" placeholder="Branch (opsional)" value={form.branch} onChange={(e) => setForm((f) => ({ ...f, branch: e.target.value }))} />
+        </div>
+        {err && <div style={{ fontSize: 12, color: t.red, marginBottom: 10 }}>{err}</div>}
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="pts-btn" disabled={busy} onClick={save} style={{ background: t.brandBg, color: t.brand, border: `1px solid ${t.brandBd}` }}>
+            <Save size={13} /> {editing ? "Simpan Perubahan" : "Tambah"}
+          </button>
+          {editing && <button className="pts-btn" onClick={resetForm} style={{ background: t.hover, color: t.mid }}><X size={13} /> Batal</button>}
+        </div>
+      </div>
+
+      {/* Tabel mapping */}
+      <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, overflow: "hidden", background: t.card }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              <th className="pts-th">Email</th>
+              <th className="pts-th">Nama</th>
+              <th className="pts-th">MC</th>
+              <th className="pts-th">Region</th>
+              <th className="pts-th">Branch</th>
+              <th className="pts-th">Status</th>
+              <th className="pts-th">Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td className="pts-td" colSpan={7} style={{ textAlign: "center", color: t.mid }}><Loader2 size={14} className="spin" /> Memuat…</td></tr>
+            ) : rows.length === 0 ? (
+              <tr><td className="pts-td" colSpan={7} style={{ textAlign: "center", color: t.mid }}>Belum ada mapping CSE/RSE.</td></tr>
+            ) : rows.map((r) => (
+              <tr key={r.id} className="pts-row">
+                <td className="pts-td">{r.email}</td>
+                <td className="pts-td">{r.full_name || "—"}</td>
+                <td className="pts-td">{r.mc}</td>
+                <td className="pts-td">{r.region || "—"}</td>
+                <td className="pts-td">{r.branch || "—"}</td>
+                <td className="pts-td">
+                  {r.is_registered ? (
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: t.green }}><CheckCircle2 size={12} /> Sudah daftar</span>
+                  ) : (
+                    <span style={{ fontSize: 11, fontWeight: 700, color: t.amber }}>Menunggu registrasi</span>
+                  )}
+                  {!r.is_active && <div style={{ fontSize: 10.5, color: t.red, fontWeight: 700 }}>Nonaktif</div>}
+                </td>
+                <td className="pts-td">
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button className="pts-btn" onClick={() => startEdit(r)} style={{ background: t.hover, color: t.mid, padding: "6px 10px" }}><Pencil size={12} /></button>
+                    <button className="pts-btn" onClick={() => toggleActive(r)} style={{ background: t.hover, color: r.is_active ? t.amber : t.green, padding: "6px 10px" }}>{r.is_active ? "Nonaktifkan" : "Aktifkan"}</button>
+                    {!r.is_registered && <button className="pts-btn" onClick={() => remove(r)} style={{ background: t.redBg, color: t.red, padding: "6px 10px" }}><Trash2 size={12} /></button>}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -2130,24 +2292,58 @@ function LeaderboardPanel({ t, period, rows, outletByCode, onSelectRow }) {
   );
 }
 
-function TrendBarChart({ t, data, color }) {
+// Line chart kumulatif — ganti bar-per-hari yang sebelumnya statis. Nilai
+// yang diplot adalah TOTAL BERJALAN (running total) sepanjang periode,
+// bukan angka harian lepas-lepas, supaya garisnya betul-betul "bergerak"
+// naik mengikuti akumulasi pengajuan dari hari ke hari — lebih jelas
+// menunjukkan tren pertumbuhan dibanding bar harian yang naik-turun acak.
+function TrendLineChart({ t, data, color }) {
+  const W = 640, H = 150, PAD_X = 8, PAD_Y = 14;
   const max = Math.max(1, ...data.map((d) => d.value));
+  const n = data.length;
+  const stepX = n > 1 ? (W - PAD_X * 2) / (n - 1) : 0;
+  const pts = data.map((d, i) => {
+    const x = PAD_X + i * stepX;
+    const y = PAD_Y + (1 - d.value / max) * (H - PAD_Y * 2);
+    return { x, y, ...d };
+  });
+  const linePath = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+  const areaPath = pts.length
+    ? `${linePath} L ${pts[pts.length - 1].x.toFixed(1)} ${H - PAD_Y} L ${pts[0].x.toFixed(1)} ${H - PAD_Y} Z`
+    : "";
+  const gid = `trendGrad-${color.replace(/[^a-zA-Z0-9]/g, "")}`;
+  const last = pts[pts.length - 1];
+
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 120, overflowX: "auto", padding: "4px 2px" }}>
-        {data.map((d, i) => (
-          <div key={i} title={`${d.label}: ${d.value}`} style={{ flex: "0 0 auto", width: 12, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%", cursor: "default" }}>
-            <div style={{ width: "100%", height: `${Math.max(2, (d.value / max) * 100)}%`, background: color, borderRadius: "3px 3px 0 0", transition: "height .3s" }} />
-          </div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} preserveAspectRatio="none" style={{ display: "block", overflow: "visible" }}>
+        <defs>
+          <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.28" />
+            <stop offset="100%" stopColor={color} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {areaPath && <path d={areaPath} fill={`url(#${gid})`} stroke="none" />}
+        {linePath && <path d={linePath} fill="none" stroke={color} strokeWidth="2.2" strokeLinejoin="round" strokeLinecap="round" />}
+        {pts.map((p, i) => (
+          <g key={i}>
+            <circle cx={p.x} cy={p.y} r={i === pts.length - 1 ? 3.6 : 2.2} fill={i === pts.length - 1 ? color : t.card} stroke={color} strokeWidth={1.6} />
+            <title>{`${p.label}: ${p.value}`}</title>
+          </g>
         ))}
-      </div>
-      <div style={{ display: "flex", gap: 3, padding: "2px 2px 0", overflowX: "auto" }}>
+      </svg>
+      <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 2px 0" }}>
         {data.map((d, i) => (
-          <div key={i} style={{ flex: "0 0 auto", width: 12, textAlign: "center", fontSize: 8.5, color: t.mid }}>
+          <div key={i} style={{ fontSize: 8.5, color: t.mid, flex: "0 0 auto" }}>
             {i % 5 === 0 || i === data.length - 1 ? d.label : ""}
           </div>
         ))}
       </div>
+      {last && (
+        <div style={{ marginTop: 6, fontSize: 11.5, color: t.mid }}>
+          Total s/d hari ini: <b style={{ color: t.hi }}>{last.value}</b>
+        </div>
+      )}
     </div>
   );
 }
@@ -2349,10 +2545,16 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
     const isCurrentMonth = today.getFullYear() === y && today.getMonth() + 1 === m;
     const lastDay = isCurrentMonth ? today.getDate() : daysInMonth;
     const out = [];
+    let runTotal = 0, runBio = 0;
     for (let day = 1; day <= lastDay; day++) {
       const key = `${period}-${pad2(day)}`;
       const v = byDay.get(key) || { total: 0, bio: 0 };
-      out.push({ label: String(day), total: v.total, bio: v.bio });
+      runTotal += v.total; runBio += v.bio;
+      // total/bio = angka harian (untuk tooltip lama); cumTotal/cumBio =
+      // total berjalan sepanjang periode — inilah yang diplot di chart
+      // supaya garisnya "bergerak"/naik mengikuti akumulasi, bukan lompat
+      // naik-turun tiap hari.
+      out.push({ label: String(day), total: v.total, bio: v.bio, cumTotal: runTotal, cumBio: runBio });
     }
     return out;
   }, [rawSales, brandF, period]);
@@ -2449,7 +2651,7 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
         <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: 16, background: t.card, boxShadow: t.sm }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: ".03em" }}>
-              <TrendingUp size={14} /> Tren Harian ({ymLabel(period)})
+              <TrendingUp size={14} /> Tren Kumulatif ({ymLabel(period)})
             </div>
             <Segmented t={t} value={trendMetric} onChange={setTrendMetric}
               options={[
@@ -2457,7 +2659,7 @@ function PreviewData({ t, d, supabase, period, outletByCode }) {
                 { value: "bio", label: "GA SP Biometric" },
               ]} />
           </div>
-          <TrendBarChart t={t} color={trendMetric === "bio" ? t.green : t.blue} data={trendData.map((x) => ({ label: x.label, value: trendMetric === "bio" ? x.bio : x.total }))} />
+          <TrendLineChart t={t} color={trendMetric === "bio" ? t.green : t.blue} data={trendData.map((x) => ({ label: x.label, value: trendMetric === "bio" ? x.cumBio : x.cumTotal }))} />
         </div>
         <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: 16, background: t.card, boxShadow: t.sm, display: "flex", flexDirection: "column", gap: 14 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: ".03em" }}>
