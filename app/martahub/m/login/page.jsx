@@ -148,40 +148,19 @@ export default function MartaMobileLogin() {
             <div style={{ marginTop: 20, width: "100%", padding: "11px 14px", borderRadius: 12, background: "#FDECEC", border: "1px solid #F5C2C2", color: "#C62828", fontSize: 12.5, fontWeight: 600, textAlign: "center" }}>{err}</div>
           )}
 
-          {/* Google button */}
-          <button onClick={signInGoogle} disabled={busyGoogle}
-            style={{
-              marginTop: 40, width: "100%", height: 54, borderRadius: 14, cursor: busyGoogle ? "default" : "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 12,
-              background: "#FFFFFF", color: "#1F2430", border: "1.5px solid #E4E5EA", fontFamily: FF, fontSize: 15, fontWeight: 700, letterSpacing: "-0.01em",
-              boxShadow: "0 1px 2px rgba(23,24,28,0.05)", opacity: busyGoogle ? 0.7 : 1, transition: "border-color .15s, box-shadow .15s, transform .1s",
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#CFCFD8"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(23,24,28,0.08)"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#E4E5EA"; e.currentTarget.style.boxShadow = "0 1px 2px rgba(23,24,28,0.05)"; }}
-          >
-            {busyGoogle ? <Loader2 size={21} style={{ animation: "mspin 1s linear infinite", color: "#ED1C24" }} />
-                        : <><GoogleG /> Lanjutkan dengan Google</>}
-          </button>
-
-          {/* Pemisah */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", marginTop: 22 }}>
-            <div style={{ flex: 1, height: 1, background: "#ECEDF0" }} />
-            <span style={{ fontSize: 11, fontWeight: 700, color: "#B0B0BA", letterSpacing: 0.3 }}>ATAU</span>
-            <div style={{ flex: 1, height: 1, background: "#ECEDF0" }} />
-          </div>
-
-          {/* Kode email — SELALU tampil (bukan di balik toggle), karena
-              sebagian BME/RGE pakai email kantor non-Gmail (mis. Outlook)
-              yang tidak bisa lewat tombol Google di atas. */}
-          <div style={{ marginTop: 18, width: "100%" }}>
-            <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: "#8A8A96" }}>Masuk dengan Kode Email</label>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, height: 50, padding: "0 14px", borderRadius: 12, background: "#F6F7F9", border: "1.5px solid #ECEDF0", marginTop: 6 }}>
-              <Mail size={15} color="#9A9AA6" style={{ flexShrink: 0 }} />
+          {/* Email — jalur utama, SELALU tampil (bukan di balik toggle),
+              karena sebagian besar BME/RGE pakai email kantor non-Gmail
+              (mis. Outlook) yang tidak bisa lewat tombol Google. */}
+          <div style={{ marginTop: 40, width: "100%" }}>
+            <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: "#8A8A96" }}>Masuk dengan Email</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, height: 54, padding: "0 14px", borderRadius: 14, background: "#F6F7F9", border: "1.5px solid #ECEDF0", marginTop: 7 }}>
+              <Mail size={16} color="#9A9AA6" style={{ flexShrink: 0 }} />
               <input type="email" placeholder="nama@perusahaan.com" value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && sendCode()}
-                style={{ flex: 1, minWidth: 0, height: "100%", background: "transparent", border: "none", outline: "none", fontSize: 14.5, fontWeight: 500, color: "#17181C", fontFamily: FF }}
+                style={{ flex: 1, minWidth: 0, height: "100%", background: "transparent", border: "none", outline: "none", fontSize: 15, fontWeight: 500, color: "#17181C", fontFamily: FF }}
                 autoComplete="email"
+                autoFocus
               />
               {checkingEmail && <Loader2 size={14} color="#9A9AA6" style={{ animation: "mspin .9s linear infinite" }} />}
             </div>
@@ -199,13 +178,35 @@ export default function MartaMobileLogin() {
             )}
 
             <button onClick={sendCode} disabled={sendingCode}
-              style={{ marginTop: 14, width: "100%", height: 50, borderRadius: 12, border: "none", cursor: sendingCode ? "default" : "pointer",
+              style={{ marginTop: 14, width: "100%", height: 54, borderRadius: 14, border: "none", cursor: sendingCode ? "default" : "pointer",
                 background: sendingCode ? "linear-gradient(135deg,#F08D91,#F0A8CE)" : "linear-gradient(135deg,#ED1C24,#EC008C)",
-                color: "#fff", fontSize: 14.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                color: "#fff", fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                 boxShadow: sendingCode ? "none" : "0 4px 12px rgba(17,17,20,0.1)", fontFamily: FF }}>
               {sendingCode ? <Loader2 size={16} style={{ animation: "mspin .85s linear infinite" }} /> : <><span>Kirim Kode</span><ArrowRight size={14} strokeWidth={2.5} /></>}
             </button>
           </div>
+
+          {/* Pemisah */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", marginTop: 22 }}>
+            <div style={{ flex: 1, height: 1, background: "#ECEDF0" }} />
+            <span style={{ fontSize: 11, fontWeight: 700, color: "#B0B0BA", letterSpacing: 0.3 }}>ATAU</span>
+            <div style={{ flex: 1, height: 1, background: "#ECEDF0" }} />
+          </div>
+
+          {/* Google — jalur sekunder */}
+          <button onClick={signInGoogle} disabled={busyGoogle}
+            style={{
+              marginTop: 18, width: "100%", height: 50, borderRadius: 14, cursor: busyGoogle ? "default" : "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 12,
+              background: "#FFFFFF", color: "#1F2430", border: "1.5px solid #E4E5EA", fontFamily: FF, fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em",
+              boxShadow: "0 1px 2px rgba(23,24,28,0.05)", opacity: busyGoogle ? 0.7 : 1, transition: "border-color .15s, box-shadow .15s, transform .1s",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#CFCFD8"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(23,24,28,0.08)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#E4E5EA"; e.currentTarget.style.boxShadow = "0 1px 2px rgba(23,24,28,0.05)"; }}
+          >
+            {busyGoogle ? <Loader2 size={19} style={{ animation: "mspin 1s linear infinite", color: "#ED1C24" }} />
+                        : <><GoogleG /> Lanjutkan dengan Google</>}
+          </button>
 
           {/* Info note */}
           <div style={{ marginTop: 28, width: "100%" }}>
