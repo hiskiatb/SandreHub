@@ -1,0 +1,16 @@
+{
+  "name": "MartaHub",
+  "short_name": "MartaHub",
+  "description": "App plan, check-in & laporan aktivitas marketing lapangan BME/RGE Sumatera — MartaHub.",
+  "start_url": "/martahub/m",
+  "scope": "/martahub/m",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F4F5F7",
+  "theme_color": "#F4F5F7",
+  "icons": [
+    { "src": "/martahub/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/martahub/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/martahub/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

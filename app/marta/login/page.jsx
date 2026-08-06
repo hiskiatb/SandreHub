@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../../lib/supabase";
 import { canViewMarta } from "../../../lib/martaAccess";
 import { HubLogo } from "../../../components/HubLogo";
-import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, Construction } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, Construction, UserRound, ChevronRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -225,6 +225,24 @@ function MartaLoginInner() {
             </button>
           </div>
         </div>
+
+        {/* Jalur BME/RGE — akun terpisah dari admin/TMV di atas, langsung ke
+            project Supabase MartaHub sendiri (bukan lewat gerbang SandraHub).
+            Sama pola dgn kartu "Login sebagai Promotor" di /sandra/login. */}
+        <button onClick={() => router.push("/martahub/m/login")}
+          style={{ marginTop: 16, width: "100%", display: "flex", alignItems: "center", gap: 13, padding: "14px 16px", borderRadius: 14, cursor: "pointer", textAlign: "left", fontFamily: FONT,
+            background: d ? "rgba(237,28,36,0.08)" : "rgba(237,28,36,0.05)", border: `1.5px solid ${d ? "rgba(237,28,36,0.35)" : "rgba(237,28,36,0.28)"}`, transition: "transform .12s, box-shadow .15s, border-color .15s" }}
+          onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 8px 26px rgba(237,28,36,0.18)"; e.currentTarget.style.transform = "translateY(-1px)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.transform = "none"; }}>
+          <span style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", boxShadow: "0 4px 14px rgba(237,28,36,0.32)" }}>
+            <UserRound size={21} strokeWidth={2.2} />
+          </span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: "block", fontSize: 14.5, fontWeight: 800, letterSpacing: "-0.02em", color: t.hi }}>Login sebagai BME/RGE</span>
+            <span style={{ display: "block", fontSize: 12, color: t.mid, marginTop: 2 }}>Untuk tim lapangan — masuk dengan Google atau kode email</span>
+          </span>
+          <ChevronRight size={18} style={{ color: RED, flexShrink: 0 }} />
+        </button>
 
         <div style={{ marginTop: 18, textAlign: "center", fontSize: 10.5, letterSpacing: "0.12em", textTransform: "uppercase", color: t.lo, opacity: 0.35, fontWeight: 600 }}>
           © 2026 MartaHub · Marketing Sumatera
