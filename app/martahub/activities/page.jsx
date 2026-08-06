@@ -15,7 +15,7 @@ const STATUS = {
 };
 
 const fmtDate = (s) => {
-  if (!s || s.length < 10) return "—";
+  if (!s || s.length < 10) return "-";
   const [y, m, d] = s.slice(0, 10).split("-");
   const mo = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"][(+m || 1) - 1];
   return `${d} ${mo} ${y}`;
@@ -63,7 +63,7 @@ function Body({ email }) {
 
   const cats = (r) => {
     const arr = Array.isArray(r.event_categories) ? r.event_categories : [];
-    if (!arr.length) return "—";
+    if (!arr.length) return "-";
     return arr.map((c) => CAT_LABEL[c] || c).join(", ");
   };
 
@@ -71,7 +71,7 @@ function Body({ email }) {
     <div>
       {!MARTA_CONFIGURED && (
         <div style={{ ...card, borderColor: T.warning, background: T.warningBg, color: "#7a5b00", marginBottom: 16 }}>
-          Supabase MartaHub belum dikonfigurasi / project paused — data tampil kosong.
+          Supabase MartaHub belum dikonfigurasi / project paused - data tampil kosong.
         </div>
       )}
       {err && <div style={{ ...card, borderColor: T.error, background: T.errorBg, color: T.error, marginBottom: 16 }}>{err}</div>}
@@ -81,7 +81,7 @@ function Body({ email }) {
           style={{ ...inp, maxWidth: 320 }} />
         {scope && !scope.unscoped && scope.found && (
           <div style={{ alignSelf: "center", fontSize: 11, fontWeight: 700, color: T.mid, background: "#F0F4FA", border: `1px solid ${T.line}`, borderRadius: 100, padding: "2px 10px" }}>
-            Scope: {scope.region || "—"} · {(scope.brand || "—").toUpperCase()}
+            Scope: {scope.region || "-"} · {(scope.brand || "-").toUpperCase()}
           </div>
         )}
         <div style={{ marginLeft: "auto", alignSelf: "center", fontSize: 12.5, color: T.mid }}>{view.length} plan</div>
@@ -100,16 +100,16 @@ function Body({ email }) {
                 const st = STATUS[r.status] || [r.status, T.mid, "#eef1f6"];
                 return (
                   <tr key={r.id} style={{ borderTop: `1px solid ${T.line}` }}>
-                    <td style={{ padding: "10px 14px", fontWeight: 700 }}>{r.event_name || "—"}</td>
-                    <td style={{ padding: "10px 14px" }}>{r.brand ? <span style={{ fontSize: 10.5, fontWeight: 800, color: r.brand === "tri" ? T.tri : T.im3 }}>{r.brand === "tri" ? "3ID" : "IM3"}</span> : "—"}</td>
-                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.mc || "—"}</td>
-                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.site_id || "—"}</td>
+                    <td style={{ padding: "10px 14px", fontWeight: 700 }}>{r.event_name || "-"}</td>
+                    <td style={{ padding: "10px 14px" }}>{r.brand ? <span style={{ fontSize: 10.5, fontWeight: 800, color: r.brand === "tri" ? T.tri : T.im3 }}>{r.brand === "tri" ? "3ID" : "IM3"}</span> : "-"}</td>
+                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.mc || "-"}</td>
+                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.site_id || "-"}</td>
                     <td style={{ padding: "10px 14px", color: T.mid }}>{cats(r)}</td>
                     <td style={{ padding: "10px 14px", color: T.mid }}>{fmtDate(r.plan_date_start || r.plan_date)}</td>
-                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.network_category || "—"}</td>
+                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.network_category || "-"}</td>
                     <td style={{ padding: "10px 14px" }}><span style={{ fontSize: 10.5, fontWeight: 800, color: st[1], background: st[2], padding: "2px 8px", borderRadius: 999 }}>{st[0]}</span></td>
-                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.approved_by_name || r.approved_by_email || "—"}</td>
-                    <td style={{ padding: "10px 14px" }}>{r.checkin_valid == null ? "—" : r.checkin_valid ? <span style={{ color: T.success, fontWeight: 700 }}>Valid</span> : <span style={{ color: T.error, fontWeight: 700 }}>Invalid</span>}</td>
+                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.approved_by_name || r.approved_by_email || "-"}</td>
+                    <td style={{ padding: "10px 14px" }}>{r.checkin_valid == null ? "-" : r.checkin_valid ? <span style={{ color: T.success, fontWeight: 700 }}>Valid</span> : <span style={{ color: T.error, fontWeight: 700 }}>Invalid</span>}</td>
                   </tr>
                 );
               })}

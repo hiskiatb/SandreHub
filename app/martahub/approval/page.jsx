@@ -16,14 +16,14 @@ function mdPhotoUrl(path) {
 // Otorisasi nyata (bukan sekadar UI) ditegakkan di RPC mh_web_decide_plan /
 // mh_web_decide_plans_bulk (SECURITY DEFINER).
 //
-// ⚠️ HANYA SATU FASE approval manusia sekarang — fase PLAN, lewat
+// ⚠️ HANYA SATU FASE approval manusia sekarang - fase PLAN, lewat
 // mh_web_decide_plan (satu-satu) atau mh_web_decide_plans_bulk (Approve All).
 // Fase ACTUAL (dulu status 'submitted', diputuskan manual lewat
-// mh_web_decide_activity) SUDAH DIHAPUS dari alur manusia — begitu BME
+// mh_web_decide_activity) SUDAH DIHAPUS dari alur manusia - begitu BME
 // submit laporan actual, trigger server mh_validate_activity_actual otomatis
 // memvalidasi check-in terhadap site-site event ini dan langsung menuntaskan
 // status jadi 'approved' (lolos) atau 'revision_actual' (perlu ditinjau/
-// direvisi BME) — TANPA klik approve/reject manusia. Approver di sini hanya
+// direvisi BME) - TANPA klik approve/reject manusia. Approver di sini hanya
 // jadi katup pengaman manual (mh_activity_manual_override) utk status
 // 'revision_actual' yang sebenarnya valid (mis. GPS meleset).
 
@@ -31,15 +31,15 @@ const ROLE_LABEL = { admin: "Admin", head: "Head TMV", tmv: "Brand TMV", bme: "B
 const CAT_LABEL = { directSelling: "Direct Selling", jointEvent: "Joint Event", openBooth: "Open Booth", project: "Project", sponsorship: "Sponsorship", thematic: "Thematic" };
 
 const fmtDate = (s) => {
-  if (!s || s.length < 10) return "—";
+  if (!s || s.length < 10) return "-";
   const [y, m, d] = s.slice(0, 10).split("-");
   const mo = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"][(+m || 1) - 1];
   return `${d} ${mo} ${y}`;
 };
 const fmtDateTime = (s) => {
-  if (!s) return "—";
+  if (!s) return "-";
   const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "-";
   const mo = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"][d.getMonth()];
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
@@ -47,7 +47,7 @@ const fmtDateTime = (s) => {
 };
 const catLabel = (r) => {
   const arr = Array.isArray(r.event_categories) ? r.event_categories : [];
-  if (!arr.length) return "—";
+  if (!arr.length) return "-";
   return arr.map((c) => CAT_LABEL[c] || c).join(", ");
 };
 
@@ -70,8 +70,8 @@ function Body({ email }) {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  // MD Activities (§8.2/§8.3) — antrean Street Branding (mode='street',
-  // review manual, BUKAN geofencing — beda dgn mode Activity/Outlet yang
+  // MD Activities (§8.2/§8.3) - antrean Street Branding (mode='street',
+  // review manual, BUKAN geofencing - beda dgn mode Activity/Outlet yang
   // direkonsiliasi otomatis di menu Validasi Lokasi).
   const [mdStreetRows, setMdStreetRows] = useState([]);
   // dialog: { row, kind: 'plan'|'override'|'md_street', type: 'approved'|'revision_needed'|'revision_actual'|'rejected' }
@@ -79,7 +79,7 @@ function Body({ email }) {
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [actionErr, setActionErr] = useState("");
-  // Multi-select untuk "Approve All" — fase plan saja.
+  // Multi-select untuk "Approve All" - fase plan saja.
   const [selectedPlanIds, setSelectedPlanIds] = useState(() => new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkErr, setBulkErr] = useState("");
@@ -93,7 +93,7 @@ function Body({ email }) {
       let planQ = supabaseMarta.from("mh_activities").select(PENDING_COLS).eq("status", "plan_submitted").order("created_at", { ascending: true });
       planQ = await applyMartaScope(planQ, sc);
 
-      // Fase Actual TIDAK LAGI diputuskan manusia — daftar di bawah ini
+      // Fase Actual TIDAK LAGI diputuskan manusia - daftar di bawah ini
       // hanyalah katup pengaman utk item yang gagal validasi otomatis
       // (status 'revision_actual'), bukan antrean approval biasa.
       let revisionQ = supabaseMarta.from("mh_activities").select(REVISION_COLS).eq("status", "revision_actual").order("validated_at", { ascending: true });
@@ -111,7 +111,7 @@ function Body({ email }) {
       setHistory(hist || []);
       setSelectedPlanIds(new Set());
 
-      // MD Activities — Street Branding (§8.3), review manual TERPISAH dari
+      // MD Activities - Street Branding (§8.3), review manual TERPISAH dari
       // rekonsiliasi otomatis mode Activity/Outlet (menu Validasi Lokasi).
       const { data: mdStreet, error: e3 } = await supabaseMarta.rpc("mh_md_list_street_pending");
       if (e3) throw new Error(e3.message);
@@ -121,7 +121,7 @@ function Body({ email }) {
   }, [email]);
   useEffect(() => { load(); }, [load]);
 
-  // ✅ spm_sumatera ikut approver — superadmin nasional (§4.5) yang sudah jadi
+  // ✅ spm_sumatera ikut approver - superadmin nasional (§4.5) yang sudah jadi
   // approver di jalur POSMAT/rekonsiliasi, tapi dulu justru tidak bisa approve
   // Activity Plan/Laporan. Ditegakkan juga server-side di mh_web_decide_plan /
   // mh_web_decide_plans_bulk / mh_activity_manual_override.
@@ -173,7 +173,7 @@ function Body({ email }) {
     try {
       let error;
       if (dialog.kind === "md_street") {
-        // RPC ini pakai p_id/p_caller_email (bukan p_activity_id/p_email —
+        // RPC ini pakai p_id/p_caller_email (bukan p_activity_id/p_email -
         // pola baru §8.2 utk semua RPC MD Activities, konsisten dgn
         // mh_md_reconcile_batch di menu Validasi Lokasi).
         ({ error } = await supabaseMarta.rpc("mh_web_decide_md_installation", {
@@ -184,7 +184,7 @@ function Body({ email }) {
         }));
       } else if (dialog.kind === "override") {
         // Katup pengaman manual utk laporan Actual berstatus 'revision_actual'
-        // — PENGECUALIAN, bukan jalur approval normal (yang sudah dihapus).
+        // - PENGECUALIAN, bukan jalur approval normal (yang sudah dihapus).
         ({ error } = await supabaseMarta.rpc("mh_activity_manual_override", {
           p_activity_id: dialog.row.id,
           p_final_status: dialog.type === "approved" ? "approved" : "revision_actual",
@@ -226,8 +226,8 @@ function Body({ email }) {
               {!scope.found
                 ? "Email Anda belum terdaftar sebagai profil MartaHub"
                 : canApprove
-                  ? `Anda login sebagai ${ROLE_LABEL[scope.role] || scope.role}${scope.unscoped ? " — akses semua region & brand" : ` — terbatas ${regionLabel(scope.region)} · ${(scope.brand || "—").toUpperCase()}`}`
-                  : `Role Anda (${ROLE_LABEL[scope.role] || scope.role || "—"}) tidak memiliki izin approval`}
+                  ? `Anda login sebagai ${ROLE_LABEL[scope.role] || scope.role}${scope.unscoped ? " - akses semua region & brand" : ` - terbatas ${regionLabel(scope.region)} · ${(scope.brand || "-").toUpperCase()}`}`
+                  : `Role Anda (${ROLE_LABEL[scope.role] || scope.role || "-"}) tidak memiliki izin approval`}
             </div>
             <div style={{ fontSize: 11.5, color: T.mid, marginTop: 2 }}>
               {canApprove
@@ -238,7 +238,7 @@ function Body({ email }) {
         </div>
       )}
 
-      {/* Plan approval queue — SATU-SATUNYA fase approval manusia sekarang */}
+      {/* Plan approval queue - SATU-SATUNYA fase approval manusia sekarang */}
       <div style={{ ...card, padding: 0, overflow: "hidden", marginBottom: 20 }}>
         <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.line}`, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <div style={{ fontWeight: 800, fontSize: 14, flex: 1 }}>
@@ -270,10 +270,10 @@ function Body({ email }) {
                       <input type="checkbox" checked={selectedPlanIds.has(r.id)} onChange={() => togglePlanSelect(r.id)} style={{ width: 15, height: 15, cursor: "pointer" }} />
                     </td>
                   )}
-                  <td style={{ padding: "10px 14px", fontWeight: 700 }}>{r.event_name || "—"}</td>
-                  <td style={{ padding: "10px 14px" }}>{r.brand ? <span style={{ fontSize: 10.5, fontWeight: 800, color: r.brand === "tri" ? T.tri : T.im3 }}>{r.brand === "tri" ? "3ID" : "IM3"}</span> : "—"}</td>
-                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.mc || "—"}</td>
-                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.site_id || "—"}</td>
+                  <td style={{ padding: "10px 14px", fontWeight: 700 }}>{r.event_name || "-"}</td>
+                  <td style={{ padding: "10px 14px" }}>{r.brand ? <span style={{ fontSize: 10.5, fontWeight: 800, color: r.brand === "tri" ? T.tri : T.im3 }}>{r.brand === "tri" ? "3ID" : "IM3"}</span> : "-"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.mc || "-"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.site_id || "-"}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{catLabel(r)}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{r.target_sp ?? 0}/{r.target_fwa ?? 0}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{fmtDate(r.plan_date_start || r.plan_date)}</td>
@@ -293,10 +293,10 @@ function Body({ email }) {
         </div>
       </div>
 
-      {/* Katup pengaman manual — laporan Actual yang GAGAL validasi otomatis
+      {/* Katup pengaman manual - laporan Actual yang GAGAL validasi otomatis
           (status 'revision_actual'). Bukan antrean approval biasa: sebagian
           besar laporan actual sudah lolos/ditolak otomatis lewat trigger
-          server begitu BME submit — ini hanya utk kasus mis. GPS meleset. */}
+          server begitu BME submit - ini hanya utk kasus mis. GPS meleset. */}
       <div style={{ ...card, padding: 0, overflow: "hidden", marginBottom: 20 }}>
         <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.line}`, fontWeight: 800, fontSize: 14 }}>
           Perlu Ditinjau Manual (Validasi Gagal) <span style={{ color: T.mid, fontWeight: 500 }}>· {revisionRows.length}</span>
@@ -308,10 +308,10 @@ function Body({ email }) {
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", gap: 12 }}>
               <div style={{ flex: 1, minWidth: 220 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <span style={{ fontWeight: 700, fontSize: 13 }}>{r.event_name || "—"}</span>
+                  <span style={{ fontWeight: 700, fontSize: 13 }}>{r.event_name || "-"}</span>
                   {r.brand && <span style={{ fontSize: 10.5, fontWeight: 800, color: r.brand === "tri" ? T.tri : T.im3 }}>{r.brand === "tri" ? "3ID" : "IM3"}</span>}
                 </div>
-                <div style={{ fontSize: 12, color: T.mid, marginTop: 2 }}>{r.mc || "—"} · {r.site_id || "—"} · Actual SP/FWA {r.actual_sp ?? 0}/{r.actual_fwa ?? 0} (target {r.target_sp ?? 0}/{r.target_fwa ?? 0})</div>
+                <div style={{ fontSize: 12, color: T.mid, marginTop: 2 }}>{r.mc || "-"} · {r.site_id || "-"} · Actual SP/FWA {r.actual_sp ?? 0}/{r.actual_fwa ?? 0} (target {r.target_sp ?? 0}/{r.target_fwa ?? 0})</div>
                 {r.validation_note && <div style={{ fontSize: 11.5, color: T.warning, marginTop: 6, fontStyle: "italic" }}>&ldquo;{r.validation_note}&rdquo;</div>}
                 <div style={{ fontSize: 11, color: T.lo, marginTop: 4 }}>Divalidasi otomatis {fmtDateTime(r.validated_at)}</div>
               </div>
@@ -326,7 +326,7 @@ function Body({ email }) {
         ))}
       </div>
 
-      {/* Street Branding queue (§8.3) — MD Activities mode='street', ditinjau
+      {/* Street Branding queue (§8.3) - MD Activities mode='street', ditinjau
           MANUAL (bukan geofencing, karena tidak ada outlet/site referensi).
           Stok baru berkurang setelah keputusan approve/reject di sini
           (§8.2 poin 4-5), terlepas hasilnya disetujui atau ditolak. */}
@@ -340,7 +340,7 @@ function Body({ email }) {
           <div key={r.id} style={{ padding: "14px 16px", borderTop: `1px solid ${T.line}` }}>
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", gap: 12 }}>
               <div style={{ flex: 1, minWidth: 220 }}>
-                <div style={{ fontWeight: 700, fontSize: 13 }}>{r.md_full_name || r.md_email || "—"}</div>
+                <div style={{ fontWeight: 700, fontSize: 13 }}>{r.md_full_name || r.md_email || "-"}</div>
                 <div style={{ fontSize: 12, color: T.mid, marginTop: 2 }}>{r.street_description || "(tanpa deskripsi lokasi)"}</div>
                 <div style={{ fontSize: 11, color: T.lo, marginTop: 2 }}>{fmtDateTime(r.created_at)} · {r.latitude}, {r.longitude}</div>
                 {Array.isArray(r.items) && r.items.length > 0 && (
@@ -404,12 +404,12 @@ function Body({ email }) {
             </span>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-                <span style={{ fontWeight: 700, fontSize: 12.5 }}>{h.event_name || "—"}</span>
+                <span style={{ fontWeight: 700, fontSize: 12.5 }}>{h.event_name || "-"}</span>
                 {h.brand && <span style={{ fontSize: 10, fontWeight: 800, color: h.brand === "tri" ? T.tri : T.im3 }}>{h.brand === "tri" ? "3ID" : "IM3"}</span>}
-                <span style={{ fontSize: 11.5, color: T.mid }}>{h.mc || "—"} · {h.site_id || "—"}</span>
+                <span style={{ fontSize: 11.5, color: T.mid }}>{h.mc || "-"} · {h.site_id || "-"}</span>
               </div>
               <div style={{ fontSize: 11.5, color: T.lo, marginTop: 3 }}>
-                oleh <strong style={{ color: T.mid, fontWeight: 700 }}>{h.approved_by_name || h.approved_by_email || "—"}</strong> · {fmtDateTime(h.approved_at)}
+                oleh <strong style={{ color: T.mid, fontWeight: 700 }}>{h.approved_by_name || h.approved_by_email || "-"}</strong> · {fmtDateTime(h.approved_at)}
               </div>
               {(h.approval_notes || h.override_note) && <div style={{ fontSize: 12, color: T.mid, marginTop: 4, fontStyle: "italic" }}>&ldquo;{h.approval_notes || h.override_note}&rdquo;</div>}
             </div>
@@ -418,7 +418,7 @@ function Body({ email }) {
         })}
       </div>
 
-      {/* Confirm dialog — judul/label menyesuaikan kind (plan/override/md_street)
+      {/* Confirm dialog - judul/label menyesuaikan kind (plan/override/md_street)
           & type (approved/revision_needed/revision_actual/rejected) */}
       {dialog && (
         <div onClick={closeDialog} style={{ position: "fixed", inset: 0, background: "rgba(13,17,23,0.45)", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
@@ -433,11 +433,11 @@ function Body({ email }) {
                     : "Minta revisi plan ini?"}
             </div>
             <div style={{ fontSize: 12.5, color: T.mid, marginBottom: 16 }}>
-              {dialog.kind === "md_street" ? (dialog.row.md_full_name || dialog.row.md_email || "—") : `${dialog.row.event_name} · ${dialog.row.mc || "—"}`}
+              {dialog.kind === "md_street" ? (dialog.row.md_full_name || dialog.row.md_email || "-") : `${dialog.row.event_name} · ${dialog.row.mc || "-"}`}
             </div>
             {dialog.kind === "override" && (
               <div style={{ fontSize: 12, color: T.warning, marginBottom: 12, background: T.warningBg, borderRadius: 8, padding: "8px 10px" }}>
-                Ini katup pengaman manual — laporan ini sudah gagal validasi otomatis (mis. GPS check-in meleset dari site). Pastikan Anda sudah memverifikasi kehadiran BME sebelum override.
+                Ini katup pengaman manual - laporan ini sudah gagal validasi otomatis (mis. GPS check-in meleset dari site). Pastikan Anda sudah memverifikasi kehadiran BME sebelum override.
               </div>
             )}
             <label style={{ fontSize: 11.5, fontWeight: 700, color: T.mid, textTransform: "uppercase", letterSpacing: "0.03em" }}>Catatan (opsional)</label>

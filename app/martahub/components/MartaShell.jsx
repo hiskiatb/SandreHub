@@ -12,7 +12,7 @@ const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,syste
 const HEADER_H = 60; // tinggi header sidebar & topbar SAMA agar garis bawah sejajar
 const ACCENT = "linear-gradient(90deg, #ED1C24 0%, #C6168D 100%)"; // aksen atas MartaHub
 
-// Palet MartaHub (light) — identik dengan Dashboard (page.jsx).
+// Palet MartaHub (light) - identik dengan Dashboard (page.jsx).
 export const T = {
   appBg: "#F0F4FA", sidebar: "#FFFFFF", surface: "#FFFFFF", card: "#FFFFFF", hover: "#F0F4FA",
   line: "#E3E8F0", hi: "#0D1117", mid: "#4A5568", lo: "#7B8BAD",
@@ -22,7 +22,7 @@ export const T = {
   im3: "#E53935", tri: "#E23B86",
 };
 
-// Nav MartaHub — SATU sumber, dipakai Dashboard maupun semua sub-menu.
+// Nav MartaHub - SATU sumber, dipakai Dashboard maupun semua sub-menu.
 const NAV = [
   { label: "Dashboard", icon: "grid", path: "dashboard", route: "/martahub" },
   { section: "ACTIVITY" },
@@ -73,7 +73,7 @@ function Icon({ name, size = 16, color = "currentColor" }) {
 }
 
 /**
- * Shell konsisten untuk semua sub-menu MartaHub web — sidebar identik dengan Dashboard.
+ * Shell konsisten untuk semua sub-menu MartaHub web - sidebar identik dengan Dashboard.
  * Pakai: <MartaShell active="assignments" title="Assignments">{(ctx)=> ...}</MartaShell>
  * ctx = { profile, canManage, session }.
  */
@@ -94,7 +94,7 @@ export default function MartaShell({ active, title, subtitle, actions, children 
     });
   }, [router]);
 
-  // Badge Approval Center — jumlah nyata mh_activities status=plan_submitted
+  // Badge Approval Center - jumlah nyata mh_activities status=plan_submitted
   // yang masuk cakupan (region×brand) pengguna, bukan angka statis. Fase
   // Actual sudah otomatis (trigger validasi), jadi tidak lagi dihitung di sini.
   useEffect(() => {
@@ -154,7 +154,7 @@ export default function MartaShell({ active, title, subtitle, actions, children 
         .mh-btn:hover{opacity:.8}
         .mh-btn:active{transform:scale(.97)}
 
-        /* ── Standarisasi seluruh MartaHub — dropdown & tombol rapi ─────────── */
+        /* ── Standarisasi seluruh MartaHub - dropdown & tombol rapi ─────────── */
         /* Dropdown: panah kustom, jarak rapi dari tepi (tidak mepet) di semua browser */
         .mh-root select{
           -webkit-appearance:none !important; -moz-appearance:none !important; appearance:none !important;

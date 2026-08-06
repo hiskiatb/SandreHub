@@ -1,5 +1,5 @@
 // Logo WhatsApp resmi (bulatan gradasi hijau + cincin putih + gagang telepon
-// putih) — dipakai konsisten di semua tombol "Hubungi Call Center via
+// putih) - dipakai konsisten di semua tombol "Hubungi Call Center via
 // WhatsApp" (app promotor & dashboard SPM Sumatera).
 let _uid = 0;
 export function WhatsAppIcon({ size = 20 }) {

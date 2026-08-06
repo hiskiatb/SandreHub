@@ -1,10 +1,10 @@
 "use client";
 /**
- * /martahub/m/posm/stock — Kelola stok POSM (khusus approver: Head/Brand
+ * /martahub/m/posm/stock - Kelola stok POSM (khusus approver: Head/Brand
  * TMV/SPM Sumatera/Admin). Padanan `posm_stock_screen.dart` Flutter: 3 tab
  * (Ringkasan stok per cabang×brand×jenis, Kelola Jenis Material, Target
  * instalasi bulanan). Server-side role gate ditegakkan oleh RPC-nya sendiri
- * (mh_posmat_set_monthly_stock dkk) — halaman ini cuma UI, otorisasi asli
+ * (mh_posmat_set_monthly_stock dkk) - halaman ini cuma UI, otorisasi asli
  * tetap di database.
  */
 import { useEffect, useState } from "react";
@@ -119,7 +119,7 @@ export default function PosmStockPage() {
                   <Layers size={16} color="#8A8A96" style={{ flexShrink: 0 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>{t.name}</div>
-                    <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{t.category || "—"} · {t.unit} · {STOCK_MODE_LABEL[t.stock_mode] || t.stock_mode}</div>
+                    <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{t.category || "-"} · {t.unit} · {STOCK_MODE_LABEL[t.stock_mode] || t.stock_mode}</div>
                   </div>
                   {!t.active && <span style={{ fontSize: 9.5, fontWeight: 800, padding: "3px 8px", borderRadius: 999, color: "#8A8A96", background: "#F0F0F3" }}>NONAKTIF</span>}
                 </button>

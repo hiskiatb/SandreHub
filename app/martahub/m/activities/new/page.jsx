@@ -1,17 +1,17 @@
 "use client";
 /**
- * /martahub/m/activities/new — Wizard Buat Plan (web mobile), 4 langkah:
+ * /martahub/m/activities/new - Wizard Buat Plan (web mobile), 4 langkah:
  * Info → Target → Lokasi → Review. Mengikuti struktur & field yang SAMA
  * dengan create_plan_screen.dart (Flutter), diverifikasi terhadap skema
  * live mh_activities/mh_sites/mh_branches lewat MCP Supabase sebelum
  * ditulis (lihat _shared/planData.js utk resolusi branch_id & field enum).
  *
  * Mendukung MODE EDIT lewat `?edit=<id>` (draft/revision_needed yang sudah
- * ada, sama seperti `/activities/new?edit=...` di Flutter) — prefill semua
+ * ada, sama seperti `/activities/new?edit=...` di Flutter) - prefill semua
  * field + site tambahan, lalu UPDATE (bukan INSERT baris baru).
  *
  * Plan Date mendukung 3 mode (tunggal/rentang/multi), SAMA PERSIS dgn
- * `_planDateFields()` Flutter — lihat _shared/planData.js.
+ * `_planDateFields()` Flutter - lihat _shared/planData.js.
  *
  * Lokasi peta: GPS browser ("Lokasi Saya") ATAU picker peta interaktif
  * ("Pilih di Peta" → MapPickerSheet, Leaflet+OSM, padanan
@@ -28,11 +28,11 @@ import CalendarPickerSheet from "../../_shared/CalendarPickerSheet";
 import {
   resolveBranchUuid, fetchScopeSites, mcListFromSites, fetchPoiTypes, fetchActivityForEdit,
   CATEGORIES, NETWORK_OPTIONS, AREA_OPTIONS, snake, syncActivitySites, planDateFields,
+  groupContiguousDates, syncTimesByDate, allDateTimesValid, planTimeFields, timesByDateFromActivity,
   APPROVER_ROLES, fetchAssignableTargets, resolveProfileIdByEmail,
 } from "../../_shared/planData";
 
 const STEPS = ["Info", "Target", "Lokasi", "Review"];
-const DATE_MODES = [{ key: "single", label: "Tunggal" }, { key: "range", label: "Rentang" }, { key: "multi", label: "Beberapa" }];
 
 const unsnake = (s) => (s || "").split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
 
@@ -40,7 +40,7 @@ function CreatePlanWizardInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const editId = searchParams.get("edit");
-  // Tanggal awal dari Kalender (?date=yyyy-mm-dd) — hanya dipakai saat BUAT
+  // Tanggal awal dari Kalender (?date=yyyy-mm-dd) - hanya dipakai saat BUAT
   // baru (bukan mode edit, yang prefill-nya datang dari activity tersimpan).
   const prefillDate = !editId ? searchParams.get("date") : null;
   const { loading, email, userId, scope } = useMartaSession();
@@ -58,13 +58,13 @@ function CreatePlanWizardInner() {
   const [editLoading, setEditLoading] = useState(!!editId);
   const [prefilled, setPrefilled] = useState(false);
 
-  // ── "Buat Untuk" (acting-for) — hanya utk approver, mode buat baru ──
+  // ── "Buat Untuk" (acting-for) - hanya utk approver, mode buat baru ──
   const isApprover = !editId && APPROVER_ROLES.includes(scope?.role);
   const [actingFor, setActingFor] = useState(null); // row dari fetchAssignableTargets
   const [actingForOptions, setActingForOptions] = useState([]);
   const [actingForLoading, setActingForLoading] = useState(false);
   const [actingForSheet, setActingForSheet] = useState(false);
-  // Scope efektif utk site/branch — punya sendiri (BME/RGE) atau scope orang
+  // Scope efektif utk site/branch - punya sendiri (BME/RGE) atau scope orang
   // yg diwakilkan (approver via "Buat Untuk"), SAMA dgn `_effectiveOwnerId()`.
   const effectiveScope = isApprover && actingFor
     ? { branchId: actingFor.branch_id, brand: actingFor.brand, branchName: actingFor.branch_name }
@@ -73,12 +73,13 @@ function CreatePlanWizardInner() {
   // ── Step 1: Info ──
   const [categories, setCategories] = useState([]);
   const [eventName, setEventName] = useState("");
-  const [dateMode, setDateMode] = useState("single");
-  const [dates, setDates] = useState(prefillDate ? [prefillDate] : [""]); // single: [d] · range: [start,end] · multi: [d1,d2,...]
+  const [dates, setDates] = useState(prefillDate ? [prefillDate] : [""]); // tanggal terpilih, apa adanya - rentang/berpencar dideteksi otomatis
+  // Waktu WAJIB per tanggal (bukan satu waktu global) - key "yyyy-mm-dd" →
+  // {isAllDay,startTime,endTime}. Disinkron otomatis tiap `dates` berubah,
+  // supaya tiap tanggal SELALU punya entri (default Seharian) - dipakai TMV
+  // utk mengurutkan activity kalau ada beberapa di tanggal yang sama.
+  const [timesByDate, setTimesByDate] = useState(() => syncTimesByDate((prefillDate ? [prefillDate] : []).filter(Boolean), {}));
   const [multiInput, setMultiInput] = useState("");
-  const [isAllDay, setIsAllDay] = useState(true);
-  const [startTime, setStartTime] = useState("09:00");
-  const [endTime, setEndTime] = useState("17:00");
   const [mc, setMc] = useState("");
 
   // ── Step 2: Target ──
@@ -122,7 +123,7 @@ function CreatePlanWizardInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, scope, effectiveScope.branchId, effectiveScope.brand]);
 
-  // Muat daftar orang yang bisa diwakilkan ("Buat Untuk") — hanya utk
+  // Muat daftar orang yang bisa diwakilkan ("Buat Untuk") - hanya utk
   // approver, sekali saat scope siap.
   useEffect(() => {
     if (loading || !isApprover) return;
@@ -142,14 +143,14 @@ function CreatePlanWizardInner() {
   }, [loading, isApprover, scope]);
 
   // Ganti target "Buat Untuk" → site/MC yg sebelumnya dipilih sudah tidak
-  // relevan (beda branch), reset — sama seperti ganti MC manual.
+  // relevan (beda branch), reset - sama seperti ganti MC manual.
   useEffect(() => {
     if (!isApprover) return;
     setMc(""); setPrimarySite(null); setExtraSites([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actingFor?.id]);
 
-  // Muat data edit (kalau ?edit=<id>) — PARALEL dgn sites/poi di atas.
+  // Muat data edit (kalau ?edit=<id>) - PARALEL dgn sites/poi di atas.
   useEffect(() => {
     if (!editId) return;
     let alive = true;
@@ -169,7 +170,7 @@ function CreatePlanWizardInner() {
   const mcList = useMemo(() => mcListFromSites(sites), [sites]);
   const sitesInMc = useMemo(() => sites.filter((s) => s.mc === mc), [sites, mc]);
 
-  // Reset pilihan site saat MC diganti MANUAL oleh user — TIDAK dipicu saat
+  // Reset pilihan site saat MC diganti MANUAL oleh user - TIDAK dipicu saat
   // prefill mode edit mengisi `mc` (guard `prefilled`/`editId` di bawah),
   // supaya site utama/tambahan hasil prefill tidak langsung terhapus lagi.
   useEffect(() => {
@@ -177,19 +178,30 @@ function CreatePlanWizardInner() {
     setPrimarySite(null); setExtraSites([]);
   }, [mc]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Prefill semua field mode edit — sekali saja, begitu activity + daftar
+  // Prefill semua field mode edit - sekali saja, begitu activity + daftar
   // site (utk mencocokkan site_id → objek site lengkap) sudah sama-sama siap.
   useEffect(() => {
     if (!editId || prefilled || !editData || sites.length === 0) return;
     const a = editData.activity;
     setCategories((a.event_categories || []).map(unsnake));
     setEventName(a.event_name || "");
-    if (a.plan_dates_multi) { setDateMode("multi"); setDates(a.plan_dates_multi.split(",")); }
-    else if (a.plan_date_start && a.plan_date_end && a.plan_date_start !== a.plan_date_end) { setDateMode("range"); setDates([a.plan_date_start, a.plan_date_end]); }
-    else { setDateMode("single"); setDates([a.plan_date || ""]); }
-    setIsAllDay(a.is_all_day !== false);
-    if (a.start_time) setStartTime(a.start_time.slice(0, 5));
-    if (a.end_time) setEndTime(a.end_time.slice(0, 5));
+    let editDates;
+    if (a.plan_dates_multi) { editDates = a.plan_dates_multi.split(","); }
+    else if (a.plan_date_start && a.plan_date_end && a.plan_date_start !== a.plan_date_end) {
+      // Rentang tersimpan (start/end) → kembangkan jadi tiap tanggal supaya
+      // kalender bisa menampilkannya sebagai tanggal-tanggal terpilih.
+      const keys = [];
+      let d = new Date(a.plan_date_start + "T00:00:00");
+      const end = new Date(a.plan_date_end + "T00:00:00");
+      while (d <= end) { keys.push(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); }
+      editDates = keys;
+    }
+    else { editDates = [a.plan_date || ""]; }
+    setDates(editDates);
+    // Waktu per tanggal: baca `plan_date_times` (record baru) kalau ada,
+    // fallback ke is_all_day/start_time/end_time lama diterapkan ke semua
+    // tanggal (record lama, dibuat sebelum fitur per-tanggal ada).
+    setTimesByDate(timesByDateFromActivity(a, editDates.filter(Boolean)));
     setMc(a.mc || "");
     setTargetSp(String(a.target_sp ?? 25));
     setTargetFwa(String(a.target_fwa ?? 2));
@@ -243,8 +255,9 @@ function CreatePlanWizardInner() {
       if (categories.length === 0) bad.add("categories");
       if (!eventName.trim()) bad.add("eventName");
       if (validDates.length === 0) bad.add("planDate");
-      if (dateMode === "range" && validDates.length < 2) bad.add("planDate");
-      if (!isAllDay && (!startTime || !endTime || startTime >= endTime)) bad.add("timeRange");
+      // Waktu WAJIB valid utk SETIAP tanggal terpilih (bukan satu waktu
+      // global) - dipakai TMV utk urutkan activity di tanggal yang sama.
+      if (validDates.length > 0 && !allDateTimesValid(validDates, timesByDate)) bad.add("timeRange");
       if (!mc) bad.add("mc");
     }
     if (i === 2) {
@@ -259,7 +272,7 @@ function CreatePlanWizardInner() {
   const goBack = () => step === 0 ? router.back() : setStep((s) => s - 1);
 
   async function save(finalStatus) {
-    // Validasi penuh hanya utk submit — draft boleh field lokasi kosong
+    // Validasi penuh hanya utk submit - draft boleh field lokasi kosong
     // (default ke pilihan pertama), sama seperti perilaku app Flutter.
     if (finalStatus === "plan_submitted") {
       const okInfo = validateStep(0);
@@ -281,7 +294,9 @@ function CreatePlanWizardInner() {
       const effectivePoi = poiType || poiTypes[0] || "Market";
       const effectiveNetwork = network || NETWORK_OPTIONS[0];
       const effectiveArea = area || AREA_OPTIONS[0];
-      const dateFields = planDateFields(validDates.length ? validDates : [new Date().toISOString().slice(0, 10)], dateMode);
+      const effectiveDates = validDates.length ? validDates : [new Date().toISOString().slice(0, 10)];
+      const dateFields = planDateFields(effectiveDates);
+      const timeFields = planTimeFields(effectiveDates, timesByDate);
 
       const commonFields = {
         event_category: categoryCodes.join(","),
@@ -293,9 +308,7 @@ function CreatePlanWizardInner() {
         longitude: manualLng,
         address: address.trim() || null,
         ...dateFields,
-        is_all_day: isAllDay,
-        start_time: isAllDay ? null : `${startTime}:00`,
-        end_time: isAllDay ? null : `${endTime}:00`,
+        ...timeFields,
         poi_type: snake(effectivePoi),
         network_category: snake(effectiveNetwork),
         area_potential: snake(effectiveArea),
@@ -308,7 +321,7 @@ function CreatePlanWizardInner() {
 
       let activityId = editId;
       if (editId) {
-        // Update — brand/branch/pemilik TIDAK diubah (sama spt updatePlan()
+        // Update - brand/branch/pemilik TIDAK diubah (sama spt updatePlan()
         // Flutter). "Simpan Draft" TIDAK menyentuh status (biarkan apa
         // adanya, draft/revision_needed); "Ajukan Plan" set plan_submitted.
         const payload = { ...commonFields, updated_at: new Date().toISOString() };
@@ -317,7 +330,7 @@ function CreatePlanWizardInner() {
         if (error) throw error;
       } else {
         // "Buat Untuk": kedua kolom bme_user_id & created_by diisi id TARGET,
-        // bukan id approver yang membuatkannya — SAMA PERSIS dgn
+        // bukan id approver yang membuatkannya - SAMA PERSIS dgn
         // `_effectiveOwnerId()`/createPlan() Flutter (tidak ada kolom
         // "true creator" terpisah).
         const ownerId = isApprover && actingFor ? await resolveProfileIdByEmail(actingFor.email) : userId;
@@ -374,8 +387,8 @@ function CreatePlanWizardInner() {
       <div style={{ padding: "18px 20px 24px" }}>
         {step === 0 && (
           <StepInfo {...{
-            categories, toggleCategory, eventName, setEventName, dateMode, setDateMode, dates, setDates,
-            isAllDay, setIsAllDay, startTime, setStartTime, endTime, setEndTime,
+            categories, toggleCategory, eventName, setEventName, dates, setDates,
+            timesByDate, setTimesByDate,
             mc, setMc, mcList, invalid,
             branchName: effectiveScope.branchName,
             isApprover, actingFor, actingForOptions, actingForLoading, onPickActingFor: () => setActingForSheet(true),
@@ -393,7 +406,7 @@ function CreatePlanWizardInner() {
         )}
         {step === 3 && (
           <StepReview {...{
-            categories, eventName, dateMode, dates: validDates, isAllDay, startTime, endTime, mc, targetSp, targetFwa, targetRebuyPulsa, targetRebuyData, costEstimate,
+            categories, eventName, dates: validDates, timesByDate, mc, targetSp, targetFwa, targetRebuyPulsa, targetRebuyData, costEstimate,
             primarySite, extraSites, poiType, network, area, address, manualLat, manualLng,
           }} />
         )}
@@ -435,14 +448,30 @@ function CreatePlanWizardInner() {
 }
 
 // ═════════════════════════════════ Step 1 ═════════════════════════════════
-function StepInfo({ categories, toggleCategory, eventName, setEventName, dateMode, setDateMode, dates, setDates, isAllDay, setIsAllDay, startTime, setStartTime, endTime, setEndTime, mc, setMc, mcList, invalid, branchName, isApprover, actingFor, actingForOptions, actingForLoading, onPickActingFor }) {
+function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, setDates, timesByDate, setTimesByDate, mc, setMc, mcList, invalid, branchName, isApprover, actingFor, actingForOptions, actingForLoading, onPickActingFor }) {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const validDates = dates.filter(Boolean);
+  // Tidak ada mode manual - ringkasan dihitung otomatis dari keterdekatan
+  // tanggal (SAMA dgn logika penyimpanan di planDateFields).
+  const dateGroups = groupContiguousDates(validDates);
   const dateSummary =
     validDates.length === 0 ? null
-    : dateMode === "range" ? `${validDates[0]} s/d ${validDates[validDates.length - 1]}`
-    : dateMode === "multi" ? `${validDates.length} tanggal dipilih`
-    : validDates[0];
+    : dateGroups.length === 1
+      ? (dateGroups[0].length === 1 ? dateGroups[0][0] : `${dateGroups[0][0]} s/d ${dateGroups[0][dateGroups[0].length - 1]}`)
+      : `${dateGroups.length} rentang · ${validDates.length} tanggal`;
+  // Ringkasan waktu: kalau semua tanggal Seharian → "Seharian"; kalau semua
+  // sama persis (1 tanggal, atau semua tanggal punya jam identik) → tampilkan
+  // jam itu; kalau beda-beda per tanggal → tampilkan jumlah yg sudah diatur.
+  const timeSummary = (() => {
+    if (validDates.length === 0) return null;
+    const entries = validDates.map((d) => timesByDate?.[d]).filter(Boolean);
+    if (entries.length < validDates.length) return `${entries.length}/${validDates.length} tanggal diatur`;
+    if (entries.every((t) => t.isAllDay)) return "Seharian - semua tanggal";
+    const first = entries[0];
+    const allSame = entries.every((t) => t.isAllDay === first.isAllDay && t.startTime === first.startTime && t.endTime === first.endTime);
+    if (allSame) return first.isAllDay ? "Seharian" : `${first.startTime}–${first.endTime} - semua tanggal`;
+    return `Waktu berbeda per tanggal · ${validDates.length} tanggal`;
+  })();
 
   return (
     <Card>
@@ -458,7 +487,7 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dateMod
               {actingFor ? (
                 <>
                   <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{actingFor.full_name || actingFor.email}</div>
-                  <div style={{ fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{(actingFor.role || "").toUpperCase()} · {actingFor.branch_name || "—"}</div>
+                  <div style={{ fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{(actingFor.role || "").toUpperCase()} · {actingFor.branch_name || "-"}</div>
                 </>
               ) : (
                 <div style={{ fontSize: 12.5, color: "#8A8A96", fontWeight: 600 }}>Pilih BME/RGE yang diwakilkan</div>
@@ -484,63 +513,60 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dateMod
       <TextInput value={eventName} onChange={setEventName} placeholder="Contoh: Open Booth FWA" error={invalid.has("eventName")} />
       {invalid.has("eventName") && <FieldError text="Nama event wajib diisi" />}
 
-      <FieldLabel text="Plan Date" required top hint="Kalender — lihat plan yang sudah ada" />
-      <SegmentedControl options={DATE_MODES.map((d) => d.label)} value={DATE_MODES.find((d) => d.key === dateMode)?.label}
-        onChange={(label) => { const m = DATE_MODES.find((d) => d.label === label).key; setDateMode(m); setDates([]); }} />
+      <FieldLabel text="Plan Date & Waktu" required top hint="Ketuk utk atur - wajib per tanggal" />
 
-      {/* Kalender bulanan — padanan activity_calendar_sheet.dart (Flutter):
+      {/* Kalender bulanan - padanan activity_calendar_sheet.dart (Flutter):
           titik status di tanggal yg SUDAH punya plan, supaya BME/RGE bisa
-          lihat aktivitas yg sudah di-planning sebelum menambah tanggal baru. */}
+          lihat aktivitas yg sudah di-planning sebelum menambah tanggal baru.
+          Tidak ada lagi mode Tunggal/Rentang/Beberapa - tinggal tap tanggal,
+          rentang/berpencar terbentuk otomatis dari keterdekatan tanggal.
+          Begitu >1 tanggal dipilih, waktu WAJIB diatur PER TANGGAL (list ke
+          bawah di dalam sheet yg sama) - dipakai TMV utk urutkan activity
+          kalau ada beberapa di tanggal yang sama. */}
       <button onClick={() => setCalendarOpen(true)}
-        style={{ width: "100%", marginTop: 10, display: "flex", alignItems: "center", gap: 10, padding: "12px 13px", borderRadius: 12, background: "#F6F7F9", border: `1.5px solid ${invalid.has("planDate") ? "#DC2626" : "#ECEDF0"}`, cursor: "pointer", fontFamily: FF }}>
+        style={{ width: "100%", marginTop: 10, display: "flex", alignItems: "center", gap: 10, padding: "12px 13px", borderRadius: 12, background: "#F6F7F9", border: `1.5px solid ${invalid.has("planDate") || invalid.has("timeRange") ? "#DC2626" : "#ECEDF0"}`, cursor: "pointer", fontFamily: FF }}>
         <div style={{ width: 34, height: 34, borderRadius: 10, background: dateSummary ? "rgba(237,28,36,0.10)" : "#E9EAEE", color: dateSummary ? "#ED1C24" : "#9A9AA6", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <CalendarDays size={16} />
         </div>
         <div style={{ flex: 1, textAlign: "left", minWidth: 0 }}>
           {dateSummary ? (
-            <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C" }}>{dateSummary}</div>
+            <>
+              <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C" }}>{dateSummary}</div>
+              <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{timeSummary}</div>
+            </>
           ) : (
-            <div style={{ fontSize: 12.5, color: "#8A8A96", fontWeight: 600 }}>Pilih dari kalender</div>
+            <div style={{ fontSize: 12.5, color: "#8A8A96", fontWeight: 600 }}>Pilih tanggal & waktu dari kalender</div>
           )}
         </div>
         <ArrowRight size={15} color="#B0B0BA" />
       </button>
-      {dateMode === "multi" && validDates.length > 1 && (
+      {dateGroups.length > 1 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
-          {validDates.map((d) => (
-            <span key={d} style={{ fontSize: 10.5, fontWeight: 700, color: "#5A5A68", background: "#F0F0F3", borderRadius: 999, padding: "4px 9px" }}>{d}</span>
+          {dateGroups.map((g) => (
+            <span key={g[0]} style={{ fontSize: 10.5, fontWeight: 700, color: "#5A5A68", background: "#F0F0F3", borderRadius: 999, padding: "4px 9px" }}>
+              {g.length === 1 ? g[0] : `${g[0]} s/d ${g[g.length - 1]}`}
+            </span>
           ))}
         </div>
       )}
-      {invalid.has("planDate") && <FieldError text={dateMode === "range" ? "Tanggal mulai & selesai wajib diisi" : "Tanggal wajib diisi"} />}
-
-      {/* Seharian vs rentang waktu — TIDAK ada padanannya di app Flutter
-          (Flutter cuma tracking di level tanggal), fitur baru khusus web. */}
-      <FieldLabel text="Waktu" required top />
-      <SegmentedControl options={["Seharian", "Pilih Rentang Waktu"]} value={isAllDay ? "Seharian" : "Pilih Rentang Waktu"}
-        onChange={(label) => setIsAllDay(label === "Seharian")} />
-      {!isAllDay && (
-        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 10 }}>
-          <input type="time" value={startTime} onChange={(e) => setStartTime(e.target.value)}
-            style={{ ...inputBase, border: `1.5px solid ${invalid.has("timeRange") ? "#DC2626" : "#ECEDF0"}` }} />
-          <span style={{ color: "#B0B0BA", fontSize: 12, fontWeight: 700 }}>s/d</span>
-          <input type="time" value={endTime} onChange={(e) => setEndTime(e.target.value)}
-            style={{ ...inputBase, border: `1.5px solid ${invalid.has("timeRange") ? "#DC2626" : "#ECEDF0"}` }} />
-        </div>
-      )}
-      {invalid.has("timeRange") && <FieldError text="Jam mulai harus lebih awal dari jam selesai" />}
+      {invalid.has("planDate") && <FieldError text="Tanggal wajib diisi" />}
+      {invalid.has("timeRange") && <FieldError text="Waktu setiap tanggal wajib diatur & valid (jam mulai < jam selesai)" />}
 
       {calendarOpen && (
         <CalendarPickerSheet
-          mode={dateMode}
           initialDates={validDates}
+          initialTimesByDate={timesByDate}
           onClose={() => setCalendarOpen(false)}
-          onConfirm={(picked) => { setDates(picked); setCalendarOpen(false); }}
+          onConfirm={(picked, times) => {
+            setDates(picked);
+            setTimesByDate(times);
+            setCalendarOpen(false);
+          }}
         />
       )}
 
       <FieldLabel text="Branch" top />
-      <LockedField text={branchName || "—"} />
+      <LockedField text={branchName || "-"} />
 
       <FieldLabel text="Micro Cluster" required top />
       <SelectPills options={mcList} value={mc} onChange={setMc} error={invalid.has("mc")} placeholder={mcList.length === 0 ? "Tidak ada MC di scope Anda" : "Pilih micro cluster"} />
@@ -622,7 +648,7 @@ function StepLocation({ mc, sitesInMc, primarySite, setPrimarySite, extraSites, 
       </Card>
 
       <Card style={{ marginTop: 12 }}>
-        <FieldLabel text="Lokasi Acara" hint="Opsional — titik GPS event" />
+        <FieldLabel text="Lokasi Acara" hint="Opsional - titik GPS event" />
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={useMyLocation} disabled={locating}
             style={{ flex: 1, height: 46, borderRadius: 12, border: `1.5px solid ${manualLat ? "#15803D" : "#ECEDF0"}`, background: manualLat ? "rgba(21,128,61,0.06)" : "#F6F7F9", color: manualLat ? "#15803D" : "#5A5A68", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
@@ -672,26 +698,46 @@ function StepLocation({ mc, sitesInMc, primarySite, setPrimarySite, extraSites, 
 
 // ═════════════════════════════════ Step 4 ═════════════════════════════════
 function StepReview(p) {
+  const dateGroups = groupContiguousDates(p.dates);
+  const planDateSummary = p.dates.length === 0 ? "-"
+    : dateGroups.map((g) => (g.length === 1 ? g[0] : `${g[0]} s/d ${g[g.length - 1]}`)).join(", ");
   return (
     <Card>
-      <ReviewRow k="Kategori" v={p.categories.join(", ") || "—"} />
-      <ReviewRow k="Event Name" v={p.eventName || "—"} />
-      <ReviewRow k="Plan Date" v={p.dates.length === 0 ? "—" : p.dateMode === "range" ? `${p.dates[0]} s/d ${p.dates[p.dates.length - 1]}` : p.dates.join(", ")} />
-      <ReviewRow k="Waktu" v={p.isAllDay ? "Seharian" : `${p.startTime} – ${p.endTime}`} />
-      <ReviewRow k="Micro Cluster" v={p.mc || "—"} />
+      <ReviewRow k="Kategori" v={p.categories.join(", ") || "-"} />
+      <ReviewRow k="Event Name" v={p.eventName || "-"} />
+      <ReviewRow k="Plan Date" v={planDateSummary} />
+      {p.dates.length <= 1 ? (
+        <ReviewRow k="Waktu" v={(() => { const t = p.timesByDate?.[p.dates[0]]; return !t || t.isAllDay ? "Seharian" : `${t.startTime} – ${t.endTime}`; })()} />
+      ) : (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#8A8A96", marginBottom: 6 }}>Waktu per Tanggal</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {p.dates.map((d) => {
+              const t = p.timesByDate?.[d];
+              return (
+                <div key={d} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 600 }}>
+                  <span style={{ color: "#5A5A68" }}>{d}</span>
+                  <span style={{ color: "#17181C", fontWeight: 800 }}>{!t || t.isAllDay ? "Seharian" : `${t.startTime} – ${t.endTime}`}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      <ReviewRow k="Micro Cluster" v={p.mc || "-"} />
       <Divider />
       <ReviewRow k="Target SP/FWA" v={`${fmtInt(p.targetSp)}/${fmtInt(p.targetFwa)}`} />
       <ReviewRow k="Rebuy Pulsa" v={`Rp ${fmtInt(p.targetRebuyPulsa)}`} />
       <ReviewRow k="Rebuy Data" v={`Rp ${fmtInt(p.targetRebuyData)}`} />
       <ReviewRow k="Budget Cost" v={`Rp ${fmtInt(p.costEstimate)}`} />
       <Divider />
-      <ReviewRow k="Site Utama" v={p.primarySite ? p.primarySite.site_id : "—"} />
+      <ReviewRow k="Site Utama" v={p.primarySite ? p.primarySite.site_id : "-"} />
       {p.extraSites.length > 0 && <ReviewRow k="Site Tambahan" v={p.extraSites.map((s) => s.site_id).join(", ")} />}
-      <ReviewRow k="POI Type" v={p.poiType || "—"} />
-      <ReviewRow k="Network" v={p.network || "—"} />
-      <ReviewRow k="Area Potential" v={p.area || "—"} />
-      <ReviewRow k="Alamat" v={p.address || "—"} />
-      <ReviewRow k="Titik GPS" v={p.manualLat ? `${p.manualLat.toFixed(5)}, ${p.manualLng.toFixed(5)}` : "—"} />
+      <ReviewRow k="POI Type" v={p.poiType || "-"} />
+      <ReviewRow k="Network" v={p.network || "-"} />
+      <ReviewRow k="Area Potential" v={p.area || "-"} />
+      <ReviewRow k="Alamat" v={p.address || "-"} />
+      <ReviewRow k="Titik GPS" v={p.manualLat ? `${p.manualLat.toFixed(5)}, ${p.manualLng.toFixed(5)}` : "-"} />
     </Card>
   );
 }
@@ -847,7 +893,7 @@ function ActingForSheet({ options, loading, onClose, onSelect }) {
             <button key={o.id} onClick={() => onSelect(o)}
               style={{ width: "100%", textAlign: "left", padding: "12px 10px", borderRadius: 10, border: "none", background: "none", borderBottom: "1px solid #F0F0F3", cursor: "pointer" }}>
               <div style={{ fontSize: 13.5, fontWeight: 700, color: "#17181C" }}>{o.full_name || o.email}</div>
-              <div style={{ fontSize: 11.5, color: "#8A8A96", marginTop: 2 }}>{(o.role || "").toUpperCase()} · {o.branch_name || "—"}{o.brand ? ` · ${o.brand.toUpperCase()}` : ""}</div>
+              <div style={{ fontSize: 11.5, color: "#8A8A96", marginTop: 2 }}>{(o.role || "").toUpperCase()} · {o.branch_name || "-"}{o.brand ? ` · ${o.brand.toUpperCase()}` : ""}</div>
             </button>
           ))}
         </div>

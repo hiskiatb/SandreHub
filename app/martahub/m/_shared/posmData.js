@@ -1,8 +1,8 @@
-// Helper data-access utk fitur POSM (dulu disebut "POSMAT" di Flutter — nama
+// Helper data-access utk fitur POSM (dulu disebut "POSMAT" di Flutter - nama
 // tampilan disederhanakan jadi "POSM" di web atas permintaan user, tapi nama
 // tabel/RPC/kolom di database TETAP `posmat`/`md_installations`, TIDAK diganti).
 // Semua RPC di sini SAMA PERSIS dgn yg dipakai md_activity_provider.dart
-// (Flutter) — lihat komentar per fungsi utk pemetaan.
+// (Flutter) - lihat komentar per fungsi utk pemetaan.
 import supabaseMarta from "../../../../lib/supabaseMarta";
 
 export const INSTALL_MODES = [
@@ -46,7 +46,7 @@ export async function addInstallationPhoto(installationId, blob, index) {
   const { error: upErr } = await supabaseMarta.storage.from(PHOTO_BUCKET).upload(path, blob, { contentType: "image/jpeg" });
   if (upErr) throw upErr;
   const result = await rpc("mh_md_add_photo", { p_installation_id: installationId, p_storage_path: path, p_caption: null });
-  // Mirror ke Google Drive (storage utama jangka panjang) — best-effort,
+  // Mirror ke Google Drive (storage utama jangka panjang) - best-effort,
   // TIDAK PERNAH boleh menggagalkan upload utama kalau relay ini gagal.
   // Sama polanya dgn Submit Actual Report (lihat activities/[id]/submit/page.jsx).
   const photoId = result?.id || result?.[0]?.id || null;
@@ -87,12 +87,12 @@ export function decideClaimRequest(id, decision, notes) {
 // Padanan alur validasi lokasi Head TMV di Flutter: mode activity/outlet
 // direkonsiliasi BATCH (klien menghitung jarak ke titik acuan lalu kirim
 // hasilnya), mode street direview SATU-SATU (approve/reject manual, tidak
-// ada perhitungan jarak — evaluasi dari foto+deskripsi).
+// ada perhitungan jarak - evaluasi dari foto+deskripsi).
 export const fetchPendingReconcile = () => rpc("mh_md_list_pending_reconcile");
 export const fetchStreetPending = () => rpc("mh_md_list_street_pending");
 
 /** `p_caller_email` WAJIB dikirim manual (RPC ini cek role lewat email, BUKAN
- * auth.uid(), beda dgn RPC lain di app ini — sesuai definisi aslinya). */
+ * auth.uid(), beda dgn RPC lain di app ini - sesuai definisi aslinya). */
 export function reconcileBatch(results, callerEmail) {
   return rpc("mh_md_reconcile_batch", { p_results: results, p_caller_email: callerEmail });
 }
@@ -101,7 +101,7 @@ export function decideStreetInstallation(id, decision, notes, callerEmail) {
   return rpc("mh_web_decide_md_installation", { p_id: id, p_decision: decision, p_notes: notes || null, p_caller_email: callerEmail });
 }
 
-/** Haversine (meter) — SAMA PERSIS dgn helper di checkin/page.jsx & server
+/** Haversine (meter) - SAMA PERSIS dgn helper di checkin/page.jsx & server
  * mh_geo_distance_meters(), dipakai utk menghitung jarak instalasi ke site
  * (mode outlet) / titik activity (mode activity) sebelum rekonsiliasi. */
 export function haversineMeters(lat1, lon1, lat2, lon2) {
@@ -113,7 +113,7 @@ export function haversineMeters(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-/** Daftar cabang (slug+label) dari mh_profiles — sumber sama dgn yg dipakai
+/** Daftar cabang (slug+label) dari mh_profiles - sumber sama dgn yg dipakai
  * scope BME/RGE lain, dipakai utk picker branch di layar approver. */
 export async function fetchBranchOptions() {
   const { data, error } = await supabaseMarta.from("mh_profiles").select("branch_id, branch_name").not("branch_id", "is", null);

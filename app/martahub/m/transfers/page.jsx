@@ -1,6 +1,6 @@
 "use client";
 /**
- * /martahub/m/transfers — Kotak masuk permintaan transfer kepemilikan MSISDN
+ * /martahub/m/transfers - Kotak masuk permintaan transfer kepemilikan MSISDN
  * (web mobile). Padanan `msisdn_transfer_requests_screen.dart` di Flutter:
  * daftar `mh_msisdn_transfer_list_for_me()`, aksi Setujui/Tolak via RPC
  * `mh_msisdn_transfer_decide`. Sisi PENGAJUAN (saat konflik kepemilikan
@@ -135,7 +135,7 @@ function statusBadge(status) {
     approved: { label: "Disetujui", color: "#15803D", bg: "rgba(21,128,61,0.10)", icon: <CheckCircle2 size={11} /> },
     rejected: { label: "Ditolak", color: "#DC2626", bg: "rgba(220,38,38,0.10)", icon: <XCircle size={11} /> },
   };
-  return map[status] || { label: status || "—", color: "#6B7280", bg: "rgba(107,114,128,0.10)", icon: null };
+  return map[status] || { label: status || "-", color: "#6B7280", bg: "rgba(107,114,128,0.10)", icon: null };
 }
 
 function TransferCard({ r, busy, onApprove, onReject }) {
@@ -155,7 +155,7 @@ function TransferCard({ r, busy, onApprove, onReject }) {
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, padding: "10px 11px", borderRadius: 10, background: "#F7F7F9" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 9.5, color: "#B0B0BA", fontWeight: 700, textTransform: "uppercase" }}>Dari</div>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#3A3A44", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.from_name || "—"}</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "#3A3A44", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.from_name || "-"}</div>
         </div>
         <ArrowRight size={14} color="#B0B0BA" style={{ flexShrink: 0 }} />
         <div style={{ flex: 1, minWidth: 0 }}>

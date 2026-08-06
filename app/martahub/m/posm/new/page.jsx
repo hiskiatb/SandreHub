@@ -1,6 +1,6 @@
 "use client";
 /**
- * /martahub/m/posm/new — Catat instalasi materi POSM (web mobile), padanan
+ * /martahub/m/posm/new - Catat instalasi materi POSM (web mobile), padanan
  * `md_activity_create_screen.dart` Flutter: 3 mode (Terikat Activity/Outlet/
  * Street Branding), GPS wajib, daftar item (jenis + qty), foto bukti.
  */
@@ -181,7 +181,7 @@ export default function PosmNewPage() {
               <FieldLabel text="Activity" required top />
               <select value={activityId} onChange={(e) => setActivityId(e.target.value)} style={selectBase}>
                 <option value="">Pilih activity…</option>
-                {activities.map((a) => <option key={a.id} value={a.id}>{a.event_name || "—"} · {a.plan_date}</option>)}
+                {activities.map((a) => <option key={a.id} value={a.id}>{a.event_name || "-"} · {a.plan_date}</option>)}
               </select>
             </>
           )}

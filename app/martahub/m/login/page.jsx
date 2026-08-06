@@ -1,9 +1,9 @@
 "use client";
 /**
- * /martahub/m/login — Login mobile-web BME/RGE MartaHub.
+ * /martahub/m/login - Login mobile-web BME/RGE MartaHub.
  *
  * Sesi TERPISAH dari:
- *  - /marta/login (web admin/TMV — pakai project SandraHub + role bridge)
+ *  - /marta/login (web admin/TMV - pakai project SandraHub + role bridge)
  *  - App Flutter marta_hub (native)
  * Keduanya sama-sama connect ke project Supabase MartaHub sendiri lewat
  * `supabaseMarta` (lib/supabaseMarta.js), storageKey terpisah ("marta-auth-
@@ -44,7 +44,7 @@ export default function MartaMobileLogin() {
     return () => { alive = false; };
   }, [router]);
 
-  // Deteksi role dari mh_profiles sambil user mengetik email — sekadar
+  // Deteksi role dari mh_profiles sambil user mengetik email - sekadar
   // preview "Masuk sebagai ..." (sama seperti /sandra/login), TIDAK memblokir
   // pengiriman kode kalau gagal/tidak ketemu (bisa jadi belum terdaftar,
   // BME tetap boleh coba & diarahkan hubungi Marcomm Region kalau ditolak).
@@ -148,7 +148,7 @@ export default function MartaMobileLogin() {
             <div style={{ marginTop: 20, width: "100%", padding: "11px 14px", borderRadius: 12, background: "#FDECEC", border: "1px solid #F5C2C2", color: "#C62828", fontSize: 12.5, fontWeight: 600, textAlign: "center" }}>{err}</div>
           )}
 
-          {/* Email — jalur utama, SELALU tampil (bukan di balik toggle),
+          {/* Email - jalur utama, SELALU tampil (bukan di balik toggle),
               karena sebagian besar BME/RGE pakai email kantor non-Gmail
               (mis. Outlook) yang tidak bisa lewat tombol Google. */}
           <div style={{ marginTop: 40, width: "100%" }}>
@@ -193,7 +193,7 @@ export default function MartaMobileLogin() {
             <div style={{ flex: 1, height: 1, background: "#ECEDF0" }} />
           </div>
 
-          {/* Google — jalur sekunder */}
+          {/* Google - jalur sekunder */}
           <button onClick={signInGoogle} disabled={busyGoogle}
             style={{
               marginTop: 18, width: "100%", height: 50, borderRadius: 14, cursor: busyGoogle ? "default" : "pointer",

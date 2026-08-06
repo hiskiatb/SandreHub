@@ -1,7 +1,7 @@
-// Helper data-access utk Notifikasi (web mobile) — SATU SUMBER dgn Flutter:
+// Helper data-access utk Notifikasi (web mobile) - SATU SUMBER dgn Flutter:
 // baris diisi server-side (inline insert) oleh RPC mh_web_decide_activity /
 // mh_dsf_request_msisdn_transfer / mh_msisdn_transfer_decide. Web/mobile
-// HANYA baca & tandai terbaca — tidak pernah insert langsung.
+// HANYA baca & tandai terbaca - tidak pernah insert langsung.
 import supabaseMarta from "../../../../lib/supabaseMarta";
 
 export const NOTIF_TYPE_META = {
@@ -39,12 +39,12 @@ export async function markAllNotificationsRead() {
 }
 
 /** `route` yg disimpan di baris notifikasi adalah path GoRouter Flutter
- * (mis. "/msisdn-transfers", "/activities/<uuid>") — BUKAN path web ini.
+ * (mis. "/msisdn-transfers", "/activities/<uuid>") - BUKAN path web ini.
  * Terjemahkan ke padanan /martahub/m/** sebelum dipakai router.push(). */
 export function translateNotifRoute(route) {
   if (!route) return null;
   if (route === "/msisdn-transfers") return "/martahub/m/transfers";
   const actMatch = route.match(/^\/activities\/([0-9a-f-]{36})$/i);
   if (actMatch) return `/martahub/m/activities/${actMatch[1]}`;
-  return null; // route dikenal tapi tidak ada padanan web — jangan navigasi ke path Flutter
+  return null; // route dikenal tapi tidak ada padanan web - jangan navigasi ke path Flutter
 }

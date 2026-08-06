@@ -5,18 +5,18 @@ import MartaShell, { T, FONT } from "../components/MartaShell";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../lib/martaScope";
 
-// Label field Cluster/MC berbeda per brand — konvensi yg sudah ada di spec
+// Label field Cluster/MC berbeda per brand - konvensi yg sudah ada di spec
 // (IM3 disebut "MC", 3ID disebut "Cluster"), keduanya sama-sama kolom
 // mh_assignments.mc/mh_sites.mc. MIRROR mobile assignments_provider.dart.
 const mcLabelForBrand = (brand) => (brand === "tri" ? "Cluster" : "MC");
 
 // ✅ "Head" → "Head TMV" dan "TMV" → "Brand TMV" adalah relabel tampilan saja
-// (MARTAHUB_ACTIVITY_USER_SPEC.md §4.5) — nilai role di database (head/tmv)
+// (MARTAHUB_ACTIVITY_USER_SPEC.md §4.5) - nilai role di database (head/tmv)
 // TIDAK berubah. Role tl_dsf/dsf/md/spm_sumatera baru (§4.2/§4.5).
-// ✅ dse/gse/ae/promotor/cse_rse/bsm ditambahkan (§ POSMAT semua level) — role
+// ✅ dse/gse/ae/promotor/cse_rse/bsm ditambahkan (§ POSMAT semua level) - role
 // baru khusus pencatat POSMAT, branch-scoped spt bme/rge, TANPA atasan.
 // `mh_profiles.role`/`mh_assignments.role` TIDAK LAGI dibatasi enum CHECK di
-// database (cuma validasi format) — role baru ke depannya CUKUP ditambah di
+// database (cuma validasi format) - role baru ke depannya CUKUP ditambah di
 // sini, TANPA migrasi DB.
 const ROLES = [
   ["spm_sumatera", "SPM Sumatera (Superadmin Nasional)"],
@@ -40,7 +40,7 @@ const ROLE_LABEL = Object.fromEntries(ROLES);
 const REGION_LABEL = Object.fromEntries(REGIONS);
 
 // Role yang atasannya diisi lewat `supervisor_assignment_id` (§4.2/§4.5a),
-// bukan lewat region/brand/branch manual — nilai = role atasan yang valid.
+// bukan lewat region/brand/branch manual - nilai = role atasan yang valid.
 const SUPERVISOR_ROLES_FOR = {
   bme: ["tmv"], rge: ["tmv"],
   tl_dsf: ["bme", "rge"], md: ["bme", "rge"],
@@ -69,7 +69,7 @@ function Body({ canManage, callerEmail }) {
   const [editRow, setEditRow] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
-  // Scope caller (Head/Brand TMV) — membatasi Region/Brand yg boleh dipilih
+  // Scope caller (Head/Brand TMV) - membatasi Region/Brand yg boleh dipilih
   // saat Tambah/Edit assignment (§ region-brand-branch-cluster tl_dsf/dsf/md).
   const [scope, setScope] = useState(null);
   useEffect(() => {
@@ -106,7 +106,7 @@ function Body({ canManage, callerEmail }) {
       let ok = 0;
       for (const form of items) {
         const email = form.email.trim().toLowerCase();
-        // Coverage urban/rural ditiadakan — BME & RGE fungsional identik (label saja).
+        // Coverage urban/rural ditiadakan - BME & RGE fungsional identik (label saja).
         // Tulis lewat RPC SECURITY DEFINER: menghindari RLS (web pakai anon bridge).
         const { error } = await supabaseMarta.rpc("mh_assign_user", {
           p_email: email,
@@ -176,7 +176,7 @@ function Body({ canManage, callerEmail }) {
     <div>
       {!MARTA_CONFIGURED && (
         <div style={{ ...card, borderColor: T.warning, background: T.warningBg, color: "#7a5b00", marginBottom: 16 }}>
-          Supabase MartaHub belum dikonfigurasi / project paused — data tampil kosong. Set env & restore project untuk data live.
+          Supabase MartaHub belum dikonfigurasi / project paused - data tampil kosong. Set env & restore project untuk data live.
         </div>
       )}
       {err && <div style={{ ...card, borderColor: T.error, background: T.errorBg, color: T.error, marginBottom: 16 }}>{err}</div>}
@@ -240,17 +240,17 @@ function Body({ canManage, callerEmail }) {
                     {r.dsf_org_id && <span style={{ color: T.lo, fontWeight: 500, marginLeft: 8, fontSize: 11 }}>ID: {r.dsf_org_id}</span>}
                   </td>
                   <td style={{ padding: "10px 14px", color: T.hi, fontWeight: 600 }}>{ROLE_LABEL[r.role] || r.role}</td>
-                  <td style={{ padding: "10px 14px", color: T.mid, fontSize: 12 }}>{sup ? (sup.full_name || sup.email) : "—"}</td>
-                  <td style={{ padding: "10px 14px", color: T.mid }}>{REGION_LABEL[r.region] || r.region || "—"}</td>
-                  <td style={{ padding: "10px 14px" }}>{r.brand ? badge(r.brand === "tri" ? "3ID" : "IM3", r.brand === "tri" ? T.tri : T.im3, "#fff0f4") : "—"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid, fontSize: 12 }}>{sup ? (sup.full_name || sup.email) : "-"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{REGION_LABEL[r.region] || r.region || "-"}</td>
+                  <td style={{ padding: "10px 14px" }}>{r.brand ? badge(r.brand === "tri" ? "3ID" : "IM3", r.brand === "tri" ? T.tri : T.im3, "#fff0f4") : "-"}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>
-                    {r.branch_name || r.branch_id || "—"}
+                    {r.branch_name || r.branch_id || "-"}
                     {r.mc && <span style={{ color: T.lo, fontSize: 11.5, marginLeft: 6 }}>· {r.mc}</span>}
                   </td>
                   <td style={{ padding: "10px 14px" }}>{r.logged_in ? badge("Aktif", T.success, T.successBg) : badge("Menunggu login", "#8a5b00", T.warningBg)}</td>
                   <td style={{ padding: "10px 14px", textAlign: "right", whiteSpace: "nowrap" }}>
                     {canManage && <button onClick={() => setEditRow(r)} style={{ ...btn, marginRight: 6 }}>Edit</button>}
-                    {canManage && <button onClick={() => setConfirmState({ title: "Hapus assignment?", message: `Akses ${r.email} untuk scope ini dihapus permanen & user tak bisa masuk lagi. Jika ada pengganti, cukup assign email baru ke branch/brand yang sama — data sebelumnya tetap dapat diakses karena terikat ke branch, bukan orang.`, confirmLabel: "Hapus", onConfirm: () => removeAssignment(r.id) })} style={{ ...btn, color: T.error, border: `1px solid ${T.error}44` }}>Hapus</button>}
+                    {canManage && <button onClick={() => setConfirmState({ title: "Hapus assignment?", message: `Akses ${r.email} untuk scope ini dihapus permanen & user tak bisa masuk lagi. Jika ada pengganti, cukup assign email baru ke branch/brand yang sama - data sebelumnya tetap dapat diakses karena terikat ke branch, bukan orang.`, confirmLabel: "Hapus", onConfirm: () => removeAssignment(r.id) })} style={{ ...btn, color: T.error, border: `1px solid ${T.error}44` }}>Hapus</button>}
                   </td>
                 </tr>
               );})}
@@ -269,7 +269,7 @@ function Body({ canManage, callerEmail }) {
 
 // Tampilan pohon hierarki (§4.2/§4.5a): SPM Sumatera → Head TMV (per region)
 // → Brand TMV (region × brand) → BME/RGE → TL DSF/MD → DSF. Head↔Brand TMV
-// dicocokkan lewat kesamaan `region` (bukan supervisor_assignment_id — lihat
+// dicocokkan lewat kesamaan `region` (bukan supervisor_assignment_id - lihat
 // §4.5a); level di bawahnya lewat `supervisor_assignment_id`.
 function HierarchyTree({ rows }) {
   const spm = rows.filter((r) => r.role === "spm_sumatera");
@@ -377,25 +377,25 @@ function AddModal({ onClose, onSave, existing, scope }) {
   const [loading, setLoading] = useState(false);
   const [supervisorId, setSupervisorId] = useState("");
   const [dsfOrgId, setDsfOrgId] = useState("");
-  // Branch × Cluster/MC tunggal — khusus tl_dsf/dsf/md (beda dari bme/rge yg
+  // Branch × Cluster/MC tunggal - khusus tl_dsf/dsf/md (beda dari bme/rge yg
   // pakai multi-select `selected` di atas, krn 1 org role ini = 1 branch).
   const [branchId, setBranchId] = useState("");
   const [branchName, setBranchName] = useState("");
   const [mc, setMc] = useState("");
   const [mcOptions, setMcOptions] = useState([]);
-  // Mirror UserAssignment.isBranchRole (mobile assignments_provider.dart) —
+  // Mirror UserAssignment.isBranchRole (mobile assignments_provider.dart) -
   // 6 role POSMAT baru diperlakukan sama persis spt bme/rge.
   const isBranchRole = ["bme", "rge", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"].includes(role);
   const isTmv = role === "tmv";
   const isDsf = role === "dsf";
-  // tl_dsf/md/dsf SEKARANG py region/brand/branch sendiri (opsional) — dipilih
+  // tl_dsf/md/dsf SEKARANG py region/brand/branch sendiri (opsional) - dipilih
   // di sini scope-constrained ke caller (lockedRegion/lockedBrand di bawah),
   // beda dgn kalau dibuat via "Kelola Tim" BME/TL DSF sendiri yg otomatis ikut.
   const isPureHierarchyRole = role === "tl_dsf" || role === "md" || role === "dsf";
   const needsSupervisor = isHierarchyRole(role);
 
   // Scope caller (Head TMV → region sendiri, Brand TMV → region+brand sendiri
-  // persis) — SPM Sumatera/admin unscoped (null = bebas).
+  // persis) - SPM Sumatera/admin unscoped (null = bebas).
   const lockedRegion = scope && (scope.role === "head" || scope.role === "tmv") ? scope.region : null;
   const lockedBrand = scope && scope.role === "tmv" ? scope.brand : null;
   useEffect(() => {
@@ -404,7 +404,7 @@ function AddModal({ onClose, onSave, existing, scope }) {
   }, [lockedRegion, lockedBrand]);
 
   // Daftar Cluster/MC unik untuk branch+brand terpilih (mh_sites), khusus
-  // tl_dsf/dsf/md — MIRROR pola mcListForBranchProvider mobile.
+  // tl_dsf/dsf/md - MIRROR pola mcListForBranchProvider mobile.
   useEffect(() => {
     let on = true;
     if (!branchId || !brand) { setMcOptions([]); return; }
@@ -418,7 +418,7 @@ function AddModal({ onClose, onSave, existing, scope }) {
     return () => { on = false; };
   }, [branchId, brand]);
 
-  // Branch unik utk brand terpilih — picker branch TUNGGAL tl_dsf/dsf/md
+  // Branch unik utk brand terpilih - picker branch TUNGGAL tl_dsf/dsf/md
   // (beda dari `branches` di bawah yg multi-brand utk grid bme/rge).
   const pureBranches = useMemo(() => {
     const seen = new Set(); const arr = [];
@@ -487,7 +487,7 @@ function AddModal({ onClose, onSave, existing, scope }) {
   const save = () => {
     if (!canSave) return;
     if (isPureHierarchyRole) {
-      // tl_dsf / md / dsf — region/brand scope-constrained ke caller, branch
+      // tl_dsf / md / dsf - region/brand scope-constrained ke caller, branch
       // & cluster/MC opsional, atasan wajib.
       onSave([{
         email: emailKey, fullName: name.trim().toUpperCase(), role,
@@ -584,14 +584,14 @@ function AddModal({ onClose, onSave, existing, scope }) {
             <>
               <Field label="Branch (opsional)">
                 <select value={branchId} onChange={(e) => pickPureBranch(e.target.value)} style={selectStyle}>
-                  <option value="">— pilih branch —</option>
+                  <option value="">- pilih branch -</option>
                   {pureBranches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch}</option>)}
                 </select>
               </Field>
               {branchId && mcOptions.length > 0 && (
                 <Field label={`${mcLabelForBrand(brand)} (opsional)`}>
                   <select value={mc} onChange={(e) => setMc(e.target.value)} style={selectStyle}>
-                    <option value="">— pilih {mcLabelForBrand(brand)} —</option>
+                    <option value="">- pilih {mcLabelForBrand(brand)} -</option>
                     {mcOptions.map((m) => <option key={m} value={m}>{m}</option>)}
                   </select>
                 </Field>
@@ -602,13 +602,13 @@ function AddModal({ onClose, onSave, existing, scope }) {
           {needsSupervisor && (
             <Field label={`Atasan Langsung ${SUPERVISOR_ROLES_FOR[role].map((r) => ROLE_LABEL[r]).join(" / ")} *`}>
               <select value={supervisorId} onChange={(e) => setSupervisorId(e.target.value)} style={selectStyle}>
-                <option value="">— pilih atasan —</option>
+                <option value="">- pilih atasan -</option>
                 {supervisorOptions.map((s) => (
                   <option key={s.id} value={s.id}>{s.full_name || s.email} ({ROLE_LABEL[s.role] || s.role}{s.branch_name ? ` · ${s.branch_name}` : ""})</option>
                 ))}
               </select>
               {supervisorOptions.length === 0 && (
-                <div style={{ fontSize: 11, color: T.warning, marginTop: 4 }}>Belum ada assignment {SUPERVISOR_ROLES_FOR[role].map((r) => ROLE_LABEL[r]).join("/")} yang bisa dipilih sebagai atasan — buat itu dulu.</div>
+                <div style={{ fontSize: 11, color: T.warning, marginTop: 4 }}>Belum ada assignment {SUPERVISOR_ROLES_FOR[role].map((r) => ROLE_LABEL[r]).join("/")} yang bisa dipilih sebagai atasan - buat itu dulu.</div>
               )}
             </Field>
           )}
@@ -676,12 +676,12 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
   const [loading, setLoading] = useState(false);
   const [supervisorId, setSupervisorId] = useState(row.supervisor_assignment_id || "");
   const [dsfOrgId, setDsfOrgId] = useState(row.dsf_org_id || "");
-  // Mirror UserAssignment.isBranchRole (mobile assignments_provider.dart) —
+  // Mirror UserAssignment.isBranchRole (mobile assignments_provider.dart) -
   // 6 role POSMAT baru diperlakukan sama persis spt bme/rge.
   const isBranchRole = ["bme", "rge", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"].includes(role);
   const isTmv = role === "tmv";
   const isDsf = role === "dsf";
-  // tl_dsf/md/dsf SEKARANG py region/brand/branch sendiri (opsional) — lihat
+  // tl_dsf/md/dsf SEKARANG py region/brand/branch sendiri (opsional) - lihat
   // catatan sama di AddModal.
   const isPureHierarchyRole = role === "tl_dsf" || role === "md" || role === "dsf";
   const hasBranchField = isBranchRole || isPureHierarchyRole;
@@ -693,7 +693,7 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
       .sort((a, b) => String(a.full_name || a.email).localeCompare(String(b.full_name || b.email)));
   }, [existing, role, row.id]);
 
-  // Scope caller (Head/Brand TMV) — sama persis AddModal.
+  // Scope caller (Head/Brand TMV) - sama persis AddModal.
   const lockedRegion = scope && (scope.role === "head" || scope.role === "tmv") ? scope.region : null;
   const lockedBrand = scope && scope.role === "tmv" ? scope.brand : null;
 
@@ -716,7 +716,7 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
     return arr;
   }, [data, brand]);
 
-  // Daftar Cluster/MC unik untuk branch+brand terpilih — sama persis AddModal.
+  // Daftar Cluster/MC unik untuk branch+brand terpilih - sama persis AddModal.
   useEffect(() => {
     let on = true;
     if (!branchId || !brand) { setMcOptions([]); return; }
@@ -736,7 +736,7 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
     if (b?.region && !lockedRegion) setRegion(b.region);
   };
 
-  // Ganti email diperbolehkan (§ handover/rotasi user) — data histori
+  // Ganti email diperbolehkan (§ handover/rotasi user) - data histori
   // (aktivitas, submission, dsb) TERIKAT ke assignment_id/branch, BUKAN
   // email, jadi begitu email diganti di sini, user baru langsung mewarisi
   // seluruh akses & data lama tanpa kehilangan apa pun.
@@ -784,7 +784,7 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
               </div>
             )}
             {emailTaken && (
-              <div style={{ fontSize: 11, color: T.error, marginTop: 4 }}>Email ini sudah punya assignment identik (role/branch/brand sama) — pakai email lain.</div>
+              <div style={{ fontSize: 11, color: T.error, marginTop: 4 }}>Email ini sudah punya assignment identik (role/branch/brand sama) - pakai email lain.</div>
             )}
           </Field>
           <div style={{ display: "flex", gap: 12 }}>
@@ -817,7 +817,7 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
           {hasBranchField && (
             <Field label={isBranchRole ? "Branch" : "Branch (opsional)"}>
               <select value={branchId} onChange={(e) => pickBranch(e.target.value)} style={selectStyle} disabled={loading}>
-                <option value="">{loading ? "Memuat branch…" : "— pilih branch —"}</option>
+                <option value="">{loading ? "Memuat branch…" : "- pilih branch -"}</option>
                 {branches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch}</option>)}
               </select>
             </Field>
@@ -825,7 +825,7 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
           {hasBranchField && branchId && mcOptions.length > 0 && (
             <Field label={`${mcLabelForBrand(brand)} (opsional)`}>
               <select value={mc} onChange={(e) => setMc(e.target.value)} style={selectStyle}>
-                <option value="">— pilih {mcLabelForBrand(brand)} —</option>
+                <option value="">- pilih {mcLabelForBrand(brand)} -</option>
                 {mcOptions.map((m) => <option key={m} value={m}>{m}</option>)}
               </select>
             </Field>
@@ -833,7 +833,7 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
           {needsSupervisor && (
             <Field label={`Atasan Langsung ${SUPERVISOR_ROLES_FOR[role].map((r) => ROLE_LABEL[r]).join(" / ")} *`}>
               <select value={supervisorId} onChange={(e) => setSupervisorId(e.target.value)} style={selectStyle}>
-                <option value="">— pilih atasan —</option>
+                <option value="">- pilih atasan -</option>
                 {supervisorOptions.map((s) => (
                   <option key={s.id} value={s.id}>{s.full_name || s.email} ({ROLE_LABEL[s.role] || s.role}{s.branch_name ? ` · ${s.branch_name}` : ""})</option>
                 ))}

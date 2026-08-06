@@ -16,13 +16,13 @@ export const STATUS_META = {
 };
 
 export function statusMeta(status) {
-  return STATUS_META[status] || { label: status || "—", color: "#6B7280", bg: "rgba(107,114,128,0.10)" };
+  return STATUS_META[status] || { label: status || "-", color: "#6B7280", bg: "rgba(107,114,128,0.10)" };
 }
 
 export const MONTHS = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"];
 
 export function fmtDate(s) {
-  if (!s || s.length < 10) return "—";
+  if (!s || s.length < 10) return "-";
   const [y, m, d] = s.slice(0, 10).split("-");
   return `${d} ${MONTHS[(+m || 1) - 1]} ${y}`;
 }

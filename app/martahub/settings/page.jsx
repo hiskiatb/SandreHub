@@ -10,7 +10,7 @@ const ROLE_LABEL = {
   bme: "BME", rge: "RGE", tl_dsf: "TL DSF", dsf: "DSF", md: "MD",
 };
 
-// Role yang boleh mengubah setting radius (lihat mh_set_setting di database —
+// Role yang boleh mengubah setting radius (lihat mh_set_setting di database -
 // harus disamakan kalau daftar role di sana berubah).
 const CAN_EDIT_SETTINGS_ROLES = ["head", "tmv", "spm_sumatera", "admin"];
 
@@ -41,7 +41,7 @@ function Body({ email, profile }) {
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
       {!MARTA_CONFIGURED && (
         <div style={{ ...card, gridColumn: "1 / -1", borderColor: T.warning, background: T.warningBg, color: "#7a5b00" }}>
-          Supabase MartaHub belum dikonfigurasi (env <code>NEXT_PUBLIC_MARTA_SUPABASE_URL</code> / project paused) — beberapa fitur tidak akan berfungsi.
+          Supabase MartaHub belum dikonfigurasi (env <code>NEXT_PUBLIC_MARTA_SUPABASE_URL</code> / project paused) - beberapa fitur tidak akan berfungsi.
         </div>
       )}
       {err && <div style={{ ...card, gridColumn: "1 / -1", borderColor: T.error, background: T.errorBg, color: T.error }}>{err}</div>}
@@ -49,9 +49,9 @@ function Body({ email, profile }) {
       {/* Akun */}
       <div style={card}>
         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 14 }}>Akun</div>
-        <Row label="Email" value={email || "—"} />
+        <Row label="Email" value={email || "-"} />
         <Row label="Login via" value="SandraHub (auth gate bersama)" />
-        <Row label="Role akses admin panel" value={profile?.role || "—"} />
+        <Row label="Role akses admin panel" value={profile?.role || "-"} />
       </div>
 
       {/* Scope MartaHub */}
@@ -60,18 +60,18 @@ function Body({ email, profile }) {
         {loading ? (
           <div style={{ color: T.lo, fontSize: 12.5 }}>Memuat…</div>
         ) : !scope || !scope.found ? (
-          <div style={{ fontSize: 12.5, color: T.warning }}>Email ini belum terdaftar sebagai profil di <code>mh_profiles</code> — dashboard/monitoring akan tampil kosong sampai ditambahkan Admin MartaHub.</div>
+          <div style={{ fontSize: 12.5, color: T.warning }}>Email ini belum terdaftar sebagai profil di <code>mh_profiles</code> - dashboard/monitoring akan tampil kosong sampai ditambahkan Admin MartaHub.</div>
         ) : (
           <>
-            <Row label="Nama" value={scope.fullName || "—"} />
-            <Row label="Role MartaHub" value={ROLE_LABEL[scope.role] || scope.role || "—"} />
-            <Row label="Cakupan" value={scope.unscoped ? "Semua Region × Brand" : `${regionLabel(scope.region)} · ${(scope.brand || "—").toUpperCase()}`} />
+            <Row label="Nama" value={scope.fullName || "-"} />
+            <Row label="Role MartaHub" value={ROLE_LABEL[scope.role] || scope.role || "-"} />
+            <Row label="Cakupan" value={scope.unscoped ? "Semua Region × Brand" : `${regionLabel(scope.region)} · ${(scope.brand || "-").toUpperCase()}`} />
             {scope.branchName && <Row label="Cabang" value={scope.branchName} />}
           </>
         )}
       </div>
 
-      {/* Radius Validasi — §0.2 Lapis 1 (Check-In) & §8.2 poin 7 (MD Activities) */}
+      {/* Radius Validasi - §0.2 Lapis 1 (Check-In) & §8.2 poin 7 (MD Activities) */}
       <div style={{ ...card, gridColumn: "1 / -1" }}>
         <RadiusSettings canEdit={CAN_EDIT_SETTINGS_ROLES.includes(scope?.role)} email={email} />
       </div>
@@ -89,10 +89,10 @@ function Body({ email, profile }) {
       {/* Tentang sistem */}
       <div style={{ ...card, gridColumn: "1 / -1" }}>
         <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 14 }}>Tentang Sistem</div>
-        <Row label="Modul" value="MartaHub — Admin & TMV Console" />
+        <Row label="Modul" value="MartaHub - Admin & TMV Console" />
         <Row label="Sumber data" value="Supabase (mh_activities, mh_profiles, mh_branches, mh_assignments)" last />
         <div style={{ marginTop: 10, padding: "10px 12px", borderRadius: 9, background: "#F0F4FA", fontSize: 12, color: T.mid, lineHeight: 1.5 }}>
-          Pengaturan RBAC penuh (kelola role/region/brand per pengguna) belum tersedia di halaman ini — dikerjakan pada iterasi berikutnya. Gunakan Master Data / User Management untuk pengelolaan saat ini.
+          Pengaturan RBAC penuh (kelola role/region/brand per pengguna) belum tersedia di halaman ini - dikerjakan pada iterasi berikutnya. Gunakan Master Data / User Management untuk pengelolaan saat ini.
         </div>
       </div>
     </div>
@@ -127,7 +127,7 @@ function RadiusSettings({ canEdit, email }) {
     setSaving(key); setErr(""); setSavedKey("");
     try {
       // p_caller_email: web tidak punya sesi Supabase Auth asli ke project
-      // MartaHub (login lewat SandraHub) — auth.uid() di server SELALU null
+      // MartaHub (login lewat SandraHub) - auth.uid() di server SELALU null
       // utk panggilan web, jadi role diverifikasi lewat email sesi SandraHub
       // yang sudah nyata terautentikasi (pola sama dgn getMartaScope(email)).
       const { error } = await supabaseMarta.rpc("mh_set_setting", { p_key: key, p_value: num, p_caller_email: email });
@@ -142,7 +142,7 @@ function RadiusSettings({ canEdit, email }) {
     <>
       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Radius Validasi Lokasi</div>
       <div style={{ fontSize: 12, color: T.mid, marginBottom: 14, lineHeight: 1.5 }}>
-        Dipakai untuk Check-In (evidence vs titik event Plan) dan validasi lokasi MD Activities (evidence pemasangan vs Site) — lihat MARTAHUB_ACTIVITY_USER_SPEC.md §0.2 &amp; §8.2. Dua radius ini independen satu sama lain.
+        Dipakai untuk Check-In (evidence vs titik event Plan) dan validasi lokasi MD Activities (evidence pemasangan vs Site) - lihat MARTAHUB_ACTIVITY_USER_SPEC.md §0.2 &amp; §8.2. Dua radius ini independen satu sama lain.
       </div>
       {err && <div style={{ fontSize: 12, color: T.error, marginBottom: 10 }}>{err}</div>}
       {loading ? (
@@ -214,7 +214,7 @@ function RadiusField({ label, value, onChange, onSave, saving, saved, canEdit })
   );
 }
 
-// Bobot skor leaderboard — 4 bobot pertama menyusun "achievement_pct" (idealnya
+// Bobot skor leaderboard - 4 bobot pertama menyusun "achievement_pct" (idealnya
 // jumlah = 1), 3 bobot terakhir menyusun "final_score" dari achievement/produktivitas/geo
 // (idealnya jumlah = 1 juga). Dipakai langsung oleh view mh_leaderboard_summary.
 const WEIGHT_FIELDS = [
@@ -341,7 +341,7 @@ function LeaderboardWeightsSettings({ canEdit, email }) {
 
 // Jenis SP (dan produk lain seperti FWA ke depannya) beserta harga satuannya.
 // Harga di sini dipakai untuk menghitung revenue yang digenerate tiap activity
-// (lihat view mh_activity_revenue_summary) — TIDAK memengaruhi skor leaderboard.
+// (lihat view mh_activity_revenue_summary) - TIDAK memengaruhi skor leaderboard.
 function ProductTypesSettings({ canEdit, email }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -416,7 +416,7 @@ function ProductTypesSettings({ canEdit, email }) {
             {!loading && rows.map((r) => (
               <tr key={r.id} style={{ borderTop: `1px solid ${T.line}` }}>
                 <td style={{ padding: "8px 10px", textTransform: "uppercase", fontWeight: 700 }}>{r.category}</td>
-                <td style={{ padding: "8px 10px", color: T.mid }}>{r.brand || "—"}</td>
+                <td style={{ padding: "8px 10px", color: T.mid }}>{r.brand || "-"}</td>
                 <td style={{ padding: "8px 10px" }}>{r.name}</td>
                 <td style={{ padding: "8px 10px" }}>Rp{Number(r.unit_price).toLocaleString("id-ID")}</td>
                 <td style={{ padding: "8px 10px", color: r.active ? T.success : T.lo }}>{r.active ? "Aktif" : "Nonaktif"}</td>

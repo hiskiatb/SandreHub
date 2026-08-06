@@ -1,6 +1,6 @@
 "use client";
 /**
- * /martahub/m/posm — Hub POSM (dulu "POSMAT" di Flutter, nama tampilan
+ * /martahub/m/posm - Hub POSM (dulu "POSMAT" di Flutter, nama tampilan
  * disederhanakan jadi "POSM") utk BME/RGE & tim lapangan: progress target
  * cabang bulan ini, ringkasan stok per jenis material, riwayat instalasi
  * yang sudah dicatat, + jalur pengajuan klaim stok (khusus role BME).
@@ -68,7 +68,7 @@ export default function PosmHubPage() {
             <div style={{ fontSize: 10.5, fontWeight: 700, opacity: 0.85, textTransform: "uppercase", letterSpacing: 0.4 }}>Target Instalasi Bulan Ini · {progress.branch_name}</div>
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 8 }}>
               <div style={{ fontSize: 28, fontWeight: 800 }}>{fmtInt(progress.achieved_qty)}</div>
-              <div style={{ fontSize: 12.5, opacity: 0.85, fontWeight: 600 }}>/ target {progress.target_qty != null ? fmtInt(progress.target_qty) : "—"}</div>
+              <div style={{ fontSize: 12.5, opacity: 0.85, fontWeight: 600 }}>/ target {progress.target_qty != null ? fmtInt(progress.target_qty) : "-"}</div>
             </div>
             {pct != null && (
               <div style={{ marginTop: 10, height: 7, borderRadius: 999, background: "rgba(255,255,255,0.25)", overflow: "hidden" }}>

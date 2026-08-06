@@ -1,6 +1,6 @@
 "use client";
 /**
- * /martahub/m/activities/[id] — Halaman Detail Aktivitas penuh (web mobile).
+ * /martahub/m/activities/[id] - Halaman Detail Aktivitas penuh (web mobile).
  * Padanan `plan_detail_screen.dart` di Flutter: ringkasan plan, target vs
  * actual, galeri foto dokumentasi, daftar MSISDN per kategori, riwayat
  * approval/validasi/edit-request, dan multi-site.
@@ -58,7 +58,7 @@ export default function ActivityDetailPage() {
         const photoDocs = (docs || []).filter((d) => d.file_type === "photo");
         if (photoDocs.length) {
           // Lewat proxy media-view (Google Drive kalau sudah dimirror, fallback
-          // Storage kalau belum) — browser tidak pernah lihat link Drive-nya.
+          // Storage kalau belum) - browser tidak pernah lihat link Drive-nya.
           const withUrls = await Promise.all(
             photoDocs.map(async (d) => {
               try {
@@ -139,7 +139,7 @@ export default function ActivityDetailPage() {
                 {a.brand.toLowerCase() === "tri" ? "3ID" : "IM3"}
               </span>
             )}
-            <div style={{ marginTop: 3, fontSize: 18, fontWeight: 800, color: "#17181C", lineHeight: 1.25 }}>{a.event_name || "—"}</div>
+            <div style={{ marginTop: 3, fontSize: 18, fontWeight: 800, color: "#17181C", lineHeight: 1.25 }}>{a.event_name || "-"}</div>
           </div>
           <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 800, padding: "6px 11px", borderRadius: 999, color: meta.color, background: meta.bg, whiteSpace: "nowrap" }}>{meta.label}</span>
         </div>
@@ -164,12 +164,12 @@ export default function ActivityDetailPage() {
         <SectionCard title="Informasi Plan" icon={<Calendar size={14} />}>
           <RowKV label="Tanggal" value={dateLabel} />
           <RowKV label="Waktu" value={a.is_all_day === false && a.start_time && a.end_time ? `${a.start_time.slice(0, 5)} – ${a.end_time.slice(0, 5)}` : "Seharian"} />
-          <RowKV label="Micro Cluster" value={a.mc || "—"} />
-          <RowKV label="Site Utama" value={a.site_id || "—"} />
+          <RowKV label="Micro Cluster" value={a.mc || "-"} />
+          <RowKV label="Site Utama" value={a.site_id || "-"} />
           {extraSites.length > 0 && <RowKV label="Site Tambahan" value={extraSites.join(", ")} />}
-          <RowKV label="POI" value={a.poi_type || "—"} />
-          <RowKV label="Kekuatan Sinyal" value={a.network_category || "—"} />
-          <RowKV label="Potensi Area" value={a.area_potential || "—"} />
+          <RowKV label="POI" value={a.poi_type || "-"} />
+          <RowKV label="Kekuatan Sinyal" value={a.network_category || "-"} />
+          <RowKV label="Potensi Area" value={a.area_potential || "-"} />
           {a.address && <RowKV label="Alamat" value={a.address} />}
         </SectionCard>
 
@@ -183,11 +183,11 @@ export default function ActivityDetailPage() {
 
         {/* Target vs Actual */}
         <SectionCard title="Target vs Actual" icon={<CheckCircle2 size={14} />}>
-          <MetricRow label="SP" target={fmtInt(a.target_sp)} actual={a.actual_sp == null ? "—" : fmtInt(a.actual_sp)} />
-          <MetricRow label="FWA" target={fmtInt(a.target_fwa)} actual={a.actual_fwa == null ? "—" : fmtInt(a.actual_fwa)} />
-          <MetricRow label="Rebuy Pulsa" target={fmtRp(a.target_rebuy_pulsa)} actual={a.actual_rebuy_pulsa == null ? "—" : fmtRp(a.actual_rebuy_pulsa)} />
-          <MetricRow label="Rebuy Data" target={fmtRp(a.target_rebuy_data)} actual={a.actual_rebuy_data == null ? "—" : fmtRp(a.actual_rebuy_data)} />
-          <MetricRow label="Cost" target={fmtRp(a.cost_estimate)} actual={a.cost_actual == null ? "—" : fmtRp(a.cost_actual)} />
+          <MetricRow label="SP" target={fmtInt(a.target_sp)} actual={a.actual_sp == null ? "-" : fmtInt(a.actual_sp)} />
+          <MetricRow label="FWA" target={fmtInt(a.target_fwa)} actual={a.actual_fwa == null ? "-" : fmtInt(a.actual_fwa)} />
+          <MetricRow label="Rebuy Pulsa" target={fmtRp(a.target_rebuy_pulsa)} actual={a.actual_rebuy_pulsa == null ? "-" : fmtRp(a.actual_rebuy_pulsa)} />
+          <MetricRow label="Rebuy Data" target={fmtRp(a.target_rebuy_data)} actual={a.actual_rebuy_data == null ? "-" : fmtRp(a.actual_rebuy_data)} />
+          <MetricRow label="Cost" target={fmtRp(a.cost_estimate)} actual={a.cost_actual == null ? "-" : fmtRp(a.cost_actual)} />
           {a.insight && (
             <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #F0F0F3" }}>
               <div style={{ fontSize: 10, color: "#B0B0BA", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 4 }}>Insight</div>
@@ -233,7 +233,7 @@ export default function ActivityDetailPage() {
             {editReqs.map((r) => (
               <div key={r.id} style={{ padding: "9px 0", borderBottom: "1px solid #F0F0F3" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: "#17181C" }}>{r.requested_by_name || "—"}</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#17181C" }}>{r.requested_by_name || "-"}</div>
                   <EditReqBadge status={r.status} />
                 </div>
                 {r.reason && <div style={{ marginTop: 3, fontSize: 11.5, color: "#8A8A96" }}>{r.reason}</div>}
@@ -437,7 +437,7 @@ function ValidationBadge({ status }) {
     invalid: { label: "Tidak Valid", color: "#DC2626", bg: "rgba(220,38,38,0.10)" },
     duplicate: { label: "Duplikat", color: "#DC2626", bg: "rgba(220,38,38,0.10)" },
   };
-  const m = map[status] || { label: status || "—", color: "#6B7280", bg: "rgba(107,114,128,0.10)" };
+  const m = map[status] || { label: status || "-", color: "#6B7280", bg: "rgba(107,114,128,0.10)" };
   return <span style={{ fontSize: 9.5, fontWeight: 800, padding: "3px 8px", borderRadius: 999, color: m.color, background: m.bg }}>{m.label}</span>;
 }
 
@@ -447,7 +447,7 @@ function EditReqBadge({ status }) {
     approved: { label: "Disetujui", color: "#15803D", bg: "rgba(21,128,61,0.10)", icon: <CheckCircle2 size={10} /> },
     rejected: { label: "Ditolak", color: "#DC2626", bg: "rgba(220,38,38,0.10)", icon: <XCircle size={10} /> },
   };
-  const m = map[status] || { label: status || "—", color: "#6B7280", bg: "rgba(107,114,128,0.10)", icon: null };
+  const m = map[status] || { label: status || "-", color: "#6B7280", bg: "rgba(107,114,128,0.10)", icon: null };
   return (
     <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 9.5, fontWeight: 800, padding: "3px 8px", borderRadius: 999, color: m.color, background: m.bg }}>
       {m.icon} {m.label}

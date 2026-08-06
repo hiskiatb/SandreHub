@@ -17,7 +17,7 @@ const STATUS_COLOR = {
 };
 
 const fmtDate = (s) => {
-  if (!s || s.length < 10) return "—";
+  if (!s || s.length < 10) return "-";
   const [y, m, d] = s.slice(0, 10).split("-");
   const mo = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"][(+m || 1) - 1];
   return `${d} ${mo} ${y}`;
@@ -106,7 +106,7 @@ function Body({ email }) {
         ))}
         {scope && !scope.unscoped && scope.found && (
           <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: T.mid, background: "#F0F4FA", border: `1px solid ${T.line}`, borderRadius: 100, padding: "3px 10px" }}>
-            Scope: {scope.region || "—"} · {(scope.brand || "—").toUpperCase()}
+            Scope: {scope.region || "-"} · {(scope.brand || "-").toUpperCase()}
           </span>
         )}
       </div>
@@ -124,14 +124,14 @@ function Body({ email }) {
                 const st = STATUS_COLOR[r.status] || [T.mid, "#eef1f6"];
                 return (
                   <tr key={r.id} style={{ borderTop: `1px solid ${T.line}` }}>
-                    <td style={{ padding: "10px 14px", fontWeight: 700 }}>{r.event_name || "—"}</td>
-                    <td style={{ padding: "10px 14px" }}>{r.brand ? <span style={{ fontSize: 10.5, fontWeight: 800, color: r.brand === "tri" ? T.tri : T.im3 }}>{r.brand === "tri" ? "3ID" : "IM3"}</span> : "—"}</td>
-                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.mc || "—"}</td>
-                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.site_id || "—"}</td>
+                    <td style={{ padding: "10px 14px", fontWeight: 700 }}>{r.event_name || "-"}</td>
+                    <td style={{ padding: "10px 14px" }}>{r.brand ? <span style={{ fontSize: 10.5, fontWeight: 800, color: r.brand === "tri" ? T.tri : T.im3 }}>{r.brand === "tri" ? "3ID" : "IM3"}</span> : "-"}</td>
+                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.mc || "-"}</td>
+                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.site_id || "-"}</td>
                     <td style={{ padding: "10px 14px", color: T.mid }}>{fmtDate(r.plan_date)}</td>
                     <td style={{ padding: "10px 14px", color: T.mid }}>{fmtDate(r.actual_date)}</td>
                     <td style={{ padding: "10px 14px" }}><span style={{ fontSize: 10.5, fontWeight: 800, color: st[0], background: st[1], padding: "2px 8px", borderRadius: 999 }}>{STATUS_LABEL[r.status] || r.status || "Draft"}</span></td>
-                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.approved_by_name || r.approved_by_email || "—"}</td>
+                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.approved_by_name || r.approved_by_email || "-"}</td>
                     <td style={{ padding: "10px 14px" }}>{fmtBool(r.checkin_valid ?? r.geo_compliant)}</td>
                   </tr>
                 );
@@ -145,7 +145,7 @@ function Body({ email }) {
 }
 
 function fmtBool(v) {
-  if (v === null || v === undefined) return <span style={{ color: T.lo }}>—</span>;
+  if (v === null || v === undefined) return <span style={{ color: T.lo }}>-</span>;
   return v ? <span style={{ color: T.success, fontWeight: 700 }}>✓ Ya</span> : <span style={{ color: T.error, fontWeight: 700 }}>✗ Tidak</span>;
 }
 

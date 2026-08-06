@@ -1,6 +1,6 @@
 "use client";
 /**
- * /martahub/m/revoked — Akses dilepas (web mobile). Padanan `revoked_screen.dart`
+ * /martahub/m/revoked - Akses dilepas (web mobile). Padanan `revoked_screen.dart`
  * di Flutter: tidak ada jalur self-service recheck, hanya info + logout.
  */
 import { useEffect, Suspense } from "react";

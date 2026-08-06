@@ -1,6 +1,6 @@
 "use client";
 /**
- * /martahub/m/verify — Verifikasi kode 6 digit yang dikirim dari
+ * /martahub/m/verify - Verifikasi kode 6 digit yang dikirim dari
  * /martahub/m/login (jalur email OTP, alternatif dari Google). Menyamai
  * `email_login_screen.dart` di app Flutter (verifyOTP → session), tapi
  * lewat supabaseMarta (project MartaHub sendiri, BUKAN SandraHub).

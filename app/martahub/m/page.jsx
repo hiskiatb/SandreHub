@@ -1,8 +1,8 @@
 "use client";
 /**
- * /martahub/m — Beranda sesi mobile-web MartaHub (BME/RGE).
+ * /martahub/m - Beranda sesi mobile-web MartaHub (BME/RGE).
  *
- * Padanan `dashboard_screen.dart` (Flutter) — sebelumnya versi web ini cuma
+ * Padanan `dashboard_screen.dart` (Flutter) - sebelumnya versi web ini cuma
  * kartu ringkasan sederhana; direstrukturisasi supaya elemen yang sudah
  * dikembangkan di Flutter tidak "hilang" saat migrasi ke web:
  *   1. Kartu ACHIEVEMENT dgn selector bulan + progress bar + kuadran
@@ -11,38 +11,50 @@
  *      padanan `_MissionCarousel` Flutter.
  *   3. Grid "Menu" (Buat Plan/Aktivitas/Peta/Leaderboard/Transfer/Profil,
  *      +Approval khusus approver), padanan `_quickActions()` Flutter.
- * "Peta" masih ditandai SEGERA — belum ada padanan web-nya (map di Flutter
+ * "Peta" masih ditandai SEGERA - belum ada padanan web-nya (map di Flutter
  * sendiri cuma scatter-plot custom, bukan basemap asli). Notifikasi sudah
  * punya inbox penuh di /martahub/m/notifications.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  LogOut, MapPin, Building2, ChevronRight, Sparkles, ArrowLeftRight, Bell,
-  CalendarPlus, ListChecks, Map as MapIcon, Trophy, User2, ShieldCheck, ClipboardCheck, Lightbulb, PackageCheck,
+  LogOut, MapPin, Building2, ChevronRight, Bell,
+  CalendarPlus, ListChecks, Map as MapIcon, Trophy, ShieldCheck, ClipboardCheck, Lightbulb, PackageCheck,
 } from "lucide-react";
 import supabaseMarta from "../../../lib/supabaseMarta";
-import { HubLogo } from "../../../components/HubLogo";
+import { applyMartaScope } from "../../../lib/martaScope";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "./_shared/MobileShell";
-import { statusMeta, fmtDate, fmtInt, MONTHS } from "./_shared/activityUi";
+import { statusMeta, fmtDate, fmtInt } from "./_shared/activityUi";
 import { APPROVER_ROLES } from "./_shared/planData";
 import { fetchUnreadCount } from "./_shared/notifData";
 
 const ROLE_LABEL = { bme: "BME", rge: "RGE", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
-const ACTIVITY_COLS = "id,event_name,brand,event_category,plan_date,status,checkin_valid,target_sp,target_fwa,actual_sp,actual_fwa,cost_actual,actual_rev_3m,created_at";
+const ACTIVITY_COLS = "id,event_name,brand,branch_id,event_category,plan_date,status,checkin_valid,target_sp,target_fwa,actual_sp,actual_fwa,cost_actual,actual_rev_3m,created_at,site_id";
 
 const TIPS = [
   "Check-in tepat di lokasi site supaya validasi laporan otomatis lolos tanpa perlu ditinjau manual.",
-  "Upload minimal 2 foto dokumentasi yang jelas saat mengisi laporan actual — ini wajib sebelum bisa dikirim.",
-  "Nomor MSISDN yang sudah tercatat di plan lain akan otomatis ditandai konflik — ajukan transfer lewat menu Transfer MSISDN.",
+  "Upload minimal 2 foto dokumentasi yang jelas saat mengisi laporan actual - ini wajib sebelum bisa dikirim.",
+  "Nomor MSISDN yang sudah tercatat di plan lain akan otomatis ditandai konflik - ajukan transfer langsung dari layar konflik tersebut.",
 ];
+
+// Nama bulan lengkap khusus selector periode Home (MONTHS di activityUi.js
+// sengaja tetap disingkat krn dipakai tampilan lain yg ruangnya lebih sempit).
+const MONTHS_FULL = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+
+// MartaHub mobile mulai dipakai Agustus 2026 - jangan tampilkan bulan
+// sebelum itu di selector periode (tidak ada data plan sebelum tanggal
+// ini, jadi cuma bikin daftar panjang isinya kosong semua).
+const LAUNCH_YEAR = 2026, LAUNCH_MONTH = 7; // Agustus = index 7
 
 function monthOptions() {
   const now = new Date();
+  const launch = new Date(LAUNCH_YEAR, LAUNCH_MONTH, 1);
+  const cursor = now < launch ? launch : now;
+  const span = (cursor.getFullYear() - LAUNCH_YEAR) * 12 + (cursor.getMonth() - LAUNCH_MONTH);
   const opts = [];
-  for (let i = 0; i < 12; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    opts.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, label: `${MONTHS[d.getMonth()]} ${d.getFullYear()}` });
+  for (let i = 0; i <= span; i++) {
+    const d = new Date(LAUNCH_YEAR, LAUNCH_MONTH + span - i, 1);
+    opts.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, label: `${MONTHS_FULL[d.getMonth()]} ${d.getFullYear()}` });
   }
   return opts;
 }
@@ -55,8 +67,11 @@ export default function MartaMobileHome() {
   const [pendingTransfers, setPendingTransfers] = useState(0);
   const [pendingApprovals, setPendingApprovals] = useState(0);
   const [unreadNotifs, setUnreadNotifs] = useState(0);
+  const [branchMap, setBranchMap] = useState(() => new Map());
   const months = useMemo(monthOptions, []);
   const [monthKey, setMonthKey] = useState(months[0].key);
+  const [branchFilter, setBranchFilter] = useState("");
+  const [brandFilter, setBrandFilter] = useState("");
 
   const isApprover = APPROVER_ROLES.includes(scope?.role);
 
@@ -91,7 +106,21 @@ export default function MartaMobileHome() {
     return () => { alive = false; };
   }, [loading]);
 
-  // Hitung antrean approval hanya utk approver — query ringan terpisah,
+  // Nama cabang utk filter - hanya diperlukan role unscoped (admin/head/
+  // spm_sumatera), yg baris aktivitasnya lintas cabang.
+  useEffect(() => {
+    if (loading || !scope?.unscoped) return;
+    let alive = true;
+    (async () => {
+      try {
+        const { data } = await supabaseMarta.from("mh_branches").select("id,name");
+        if (alive && data) setBranchMap(new Map(data.map((b) => [b.id, b.name])));
+      } catch { /* best-effort */ }
+    })();
+    return () => { alive = false; };
+  }, [loading, scope?.unscoped]);
+
+  // Hitung antrean approval hanya utk approver - query ringan terpisah,
   // TIDAK men-scope ulang mh_activities_for_me (yg utk approver mengembalikan
   // baris orang lain, bukan miliknya sendiri).
   useEffect(() => {
@@ -99,16 +128,19 @@ export default function MartaMobileHome() {
     let alive = true;
     (async () => {
       try {
-        const { count } = await supabaseMarta
-          .from("mh_activities")
-          .select("id", { count: "exact", head: true })
-          .in("status", ["plan_submitted", "revision_actual"]);
+        // Discope ke region×brand approver (sama persis dgn query di
+        // /martahub/m/approval) - sebelumnya query ini TIDAK di-scope, jadi
+        // badge-nya bisa lebih besar dari isi Approval Center yg sebenarnya
+        // (approver brand/region tertentu tapi badge menghitung nasional).
+        let q = supabaseMarta.from("mh_activities").select("id", { count: "exact", head: true }).in("status", ["plan_submitted", "revision_actual"]);
+        q = await applyMartaScope(q, scope);
+        const { count } = await q;
         if (alive) setPendingApprovals(count || 0);
       } catch { /* best-effort */ }
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, isApprover]);
+  }, [loading, isApprover, scope]);
 
   const signOut = async () => {
     await supabaseMarta.auth.signOut();
@@ -117,7 +149,21 @@ export default function MartaMobileHome() {
 
   if (loading) return <MobileShell active="home"><ShellSpinner /></MobileShell>;
 
-  const monthRows = (rows || []).filter((r) => (r.plan_date || "").slice(0, 7) === monthKey);
+  const branchOptions = scope?.unscoped
+    ? Array.from(new Set((rows || []).map((r) => r.branch_id).filter(Boolean)))
+        .map((id) => ({ value: id, label: branchMap.get(id) || id }))
+        .sort((a, b) => a.label.localeCompare(b.label))
+    : [];
+  const brandOptions = scope?.unscoped
+    ? Array.from(new Set((rows || []).map((r) => r.brand).filter(Boolean)))
+        .map((b) => ({ value: b, label: b.toUpperCase() }))
+        .sort((a, b) => a.label.localeCompare(b.label))
+    : [];
+
+  const scopedRows = (rows || []).filter((r) =>
+    (!branchFilter || r.branch_id === branchFilter) && (!brandFilter || r.brand === brandFilter)
+  );
+  const monthRows = scopedRows.filter((r) => (r.plan_date || "").slice(0, 7) === monthKey);
   const targetSp = monthRows.reduce((s, r) => s + (r.target_sp || 0), 0);
   const actualSp = monthRows.reduce((s, r) => s + (r.actual_sp || 0), 0);
   const costTotal = monthRows.reduce((s, r) => s + (r.cost_actual || 0), 0);
@@ -128,7 +174,7 @@ export default function MartaMobileHome() {
   const planCount = monthRows.length;
   const actualCount = monthRows.filter((r) => r.actual_sp != null).length;
 
-  // Kartu "Mission" — aksi paling relevan berikutnya: butuh check-in dulu >
+  // Kartu "Mission" - aksi paling relevan berikutnya: butuh check-in dulu >
   // butuh isi laporan actual > lihat plan mendatang terdekat > kosong.
   const needsCheckin = (rows || []).find((r) => (r.status === "draft" || r.status === "approved") && r.checkin_valid == null);
   const needsReport = (rows || []).find((r) => r.checkin_valid != null && r.actual_sp == null);
@@ -141,25 +187,20 @@ export default function MartaMobileHome() {
     <MobileShell active="home">
       <div style={{ padding: "calc(env(safe-area-inset-top,0px) + 20px) 20px 4px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
-            <HubLogo variant="marta" size={38} dark={false} shadow inBox />
-            <div>
-              <div style={{ fontSize: 12, color: "#8A8A96", fontWeight: 600 }}>{greeting()},</div>
-              <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {scope?.fullName || email}
-              </div>
+          <div>
+            <div style={{ fontSize: 12, color: "#8A8A96", fontWeight: 600 }}>{greeting()},</div>
+            <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {scope?.fullName || email}
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button onClick={() => router.push("/martahub/m/transfers")}
-              style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, background: "#FFFFFF", border: "1px solid #E4E5EA", borderRadius: 11, cursor: "pointer", color: "#8A8A96" }}>
-              <ArrowLeftRight size={15} />
-              {pendingTransfers > 0 && <Badge n={pendingTransfers} />}
-            </button>
+            {/* Transfer MSISDN tidak lagi punya akses terpisah - permintaan yg
+                ditujukan ke "yang bersangkutan" (pemilik nomor saat ini) masuk
+                lewat inbox Notifikasi yang sama, badge-nya digabung di sini. */}
             <button onClick={() => router.push("/martahub/m/notifications")}
               style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, background: "#FFFFFF", border: "1px solid #E4E5EA", borderRadius: 11, cursor: "pointer", color: "#8A8A96" }}>
               <Bell size={15} />
-              {unreadNotifs > 0 && <Badge n={unreadNotifs} />}
+              {(unreadNotifs + pendingTransfers) > 0 && <Badge n={unreadNotifs + pendingTransfers} />}
             </button>
             <button onClick={signOut}
               style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, background: "#FFFFFF", border: "1px solid #E4E5EA", borderRadius: 11, cursor: "pointer", color: "#8A8A96" }}>
@@ -168,47 +209,78 @@ export default function MartaMobileHome() {
           </div>
         </div>
 
-        {/* Scope — sampai di sini authState sudah pasti 'active' (lihat
+        {/* Scope - sampai di sini authState sudah pasti 'active' (lihat
             useMartaSession di MobileShell.jsx, yg redirect ke /pending atau
-            /revoked lebih dulu kalau belum aktif). */}
-        <div style={{ marginTop: 16, display: "flex", flexWrap: "wrap", gap: 8 }}>
-          {(scope?.branchName || scope?.region) && <Pill icon={Building2} text={scope.branchName || scope.region} />}
-          {scope?.brand && <Pill icon={MapPin} text={scope.brand.toUpperCase()} />}
-        </div>
-      </div>
-
-      {/* ACHIEVEMENT card */}
-      <div style={{ padding: "18px 20px 0" }}>
-        <div style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 20, padding: 18 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ fontSize: 10.5, fontWeight: 800, color: "#8A8A96", letterSpacing: 0.6, textTransform: "uppercase" }}>Achievement</div>
-            <div style={{ position: "relative" }}>
-              <select value={monthKey} onChange={(e) => setMonthKey(e.target.value)}
-                style={{ appearance: "none", WebkitAppearance: "none", background: "#F6F7F9", border: "1px solid #ECEDF0", borderRadius: 999, padding: "6px 26px 6px 12px", fontSize: 11.5, fontWeight: 700, color: "#3A3A44", fontFamily: FF, cursor: "pointer" }}>
-                {months.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
-              </select>
-              <ChevronRight size={12} style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%) rotate(90deg)", color: "#8A8A96", pointerEvents: "none" }} />
+            /revoked lebih dulu kalau belum aktif). Untuk role unscoped
+            (admin/head/spm_sumatera) diganti jadi filter branch & brand yg
+            bisa dipilih, bukan cuma label statis. */}
+        {scope?.unscoped ? (
+          // 70/30: Cabang jauh lebih sering dipakai utk menyempitkan cakupan
+          // (banyak pilihan, nama panjang) drpd Brand (cuma 2 pilihan) - jadi
+          // dikasih ruang lebih besar. Brand ditampilkan sbg tag warna
+          // (spt IM3/3ID di kartu lain), bukan field dropdown penuh.
+          <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
+            <div style={{ flex: "7 1 0%", minWidth: 0 }}>
+              <FilterSelect icon={Building2} value={branchFilter} onChange={setBranchFilter} placeholder="Semua Cabang" options={branchOptions} fullWidth />
+            </div>
+            <div style={{ flex: "3 1 0%", minWidth: 0 }}>
+              <BrandTagSelect value={brandFilter} onChange={setBrandFilter} options={brandOptions} />
             </div>
           </div>
+        ) : (
+          <div style={{ marginTop: 16, display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {(scope?.branchName || scope?.region) && <Pill icon={Building2} text={scope.branchName || scope.region} />}
+            {scope?.brand && <Pill icon={MapPin} text={scope.brand.toUpperCase()} />}
+          </div>
+        )}
+      </div>
 
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 12 }}>
-            <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: "-0.03em", color: "#17181C" }}>{achievementPct}%</div>
-            <div style={{ fontSize: 12.5, color: "#8A8A96", fontWeight: 600 }}>dari target bulan ini</div>
+      {/* ACHIEVEMENT card - panel gelap premium: gradasi multi-stop (bukan
+          abu flat), sheen halus di sudut, teks persentase gradient, quad
+          stat dipisah hairline vertikal spt kartu fintech. Palet: abu
+          #4A4A50, merah #E63325, kuning #F5CD46, teal #57C2AC, ungu #B32E85,
+          pink #EC1E79. */}
+      <div style={{ padding: "18px 20px 0" }}>
+        <div style={{
+          position: "relative", borderRadius: 22, padding: "20px 18px 18px",
+          background: "linear-gradient(150deg,#38383E 0%,#4A4A50 100%)",
+          border: "1px solid rgba(255,255,255,0.06)",
+          boxShadow: "0 8px 20px rgba(17,17,20,0.16), 0 2px 5px rgba(17,17,20,0.1)",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <div style={{ width: 5, height: 5, borderRadius: 99, background: "linear-gradient(135deg,#E63325,#EC1E79)" }} />
+              <div style={{ fontSize: 10.5, fontWeight: 800, color: "rgba(255,255,255,0.6)", letterSpacing: 1, textTransform: "uppercase" }}>Achievement</div>
+            </div>
+            <MonthSelect value={monthKey} onChange={setMonthKey} options={months} />
           </div>
 
-          <div style={{ marginTop: 12, height: 8, borderRadius: 999, background: "#F0F0F3", overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${Math.min(achievementPct, 100)}%`, borderRadius: 999, background: BRAND, transition: "width .3s" }} />
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
-            <span style={{ fontSize: 10.5, color: "#B0B0BA", fontWeight: 600 }}>{achievementPct}%</span>
-            <span style={{ fontSize: 10.5, color: "#B0B0BA", fontWeight: 600 }}>Target 100%</span>
+          <div style={{ position: "relative", display: "flex", alignItems: "baseline", gap: 8, marginTop: 18 }}>
+            <div style={{
+              fontSize: 42, fontWeight: 800, letterSpacing: "-0.035em", lineHeight: 1,
+              fontVariantNumeric: "tabular-nums",
+              background: "linear-gradient(120deg,#FFFFFF 0%,#F7D9E8 55%,#EC1E79 100%)",
+              WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text",
+            }}>{achievementPct}%</div>
+            <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.55)", fontWeight: 600 }}>dari target bulan ini</div>
           </div>
 
-          <div style={{ display: "flex", marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F3" }}>
-            <QuadStat label="Plan" value={fmtInt(planCount)} />
-            <QuadStat label="Actual" value={fmtInt(actualCount)} valueColor="#C2187C" />
-            <QuadStat label="Productivity" value={productivityPct != null ? `${productivityPct}%` : "—"} valueColor="#1A9E90" />
-            <QuadStat label="Cost Ratio" value={costRatioPct != null ? `${costRatioPct}%` : "—"} valueColor="#1A9E90" />
+          <div style={{ marginTop: 16, height: 9, borderRadius: 999, background: "rgba(0,0,0,0.25)", overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${Math.min(achievementPct, 100)}%`, borderRadius: 999, background: "linear-gradient(90deg,#E63325,#EC1E79)", transition: "width .3s" }} />
+          </div>
+          <div style={{ position: "relative", display: "flex", justifyContent: "space-between", marginTop: 7 }}>
+            <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.45)", fontWeight: 600 }}>{achievementPct}%</span>
+            <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.45)", fontWeight: 600 }}>Target 100%</span>
+          </div>
+
+          <div style={{ position: "relative", display: "flex", marginTop: 18, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.09)" }}>
+            <QuadStat dark dot="#FFFFFF" label="Plan" value={fmtInt(planCount)} />
+            <QuadDivider />
+            <QuadStat dark dot="#EC1E79" label="Actual" value={fmtInt(actualCount)} valueColor="#F286B4" />
+            <QuadDivider />
+            <QuadStat dark dot="#57C2AC" label="Productivity" value={productivityPct != null ? `${productivityPct}%` : "-"} valueColor="#7FD9C6" />
+            <QuadDivider />
+            <QuadStat dark dot="#F5CD46" label="Cost Ratio" value={costRatioPct != null ? `${costRatioPct}%` : "-"} valueColor="#F5CD46" />
           </div>
         </div>
       </div>
@@ -222,20 +294,23 @@ export default function MartaMobileHome() {
         />
       </div>
 
-      {/* Menu grid */}
+      {/* Menu grid - tiap ikon dikasih warna aksen berbeda dari palet yg sama
+          dgn kartu Achievement (bukan seragam merah-pink semua), supaya
+          menu lebih gampang di-scan sekilas & terasa lebih "dirancang".
+          Notifikasi & Profil SENGAJA tidak diulang di sini - keduanya
+          sudah punya akses permanen sendiri (Notifikasi lewat ikon lonceng
+          di header, Profil lewat tab bawah "Profil"), jadi Menu ini cuma
+          isi aksi yg belum ada jalan pintas lain. */}
       <div style={{ padding: "22px 20px 0" }}>
         <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.01em", marginBottom: 12 }}>Menu</div>
-        <div style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 20, padding: "18px 12px" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", rowGap: 18 }}>
-            <MenuItem icon={CalendarPlus} label="Buat Plan" onClick={() => router.push("/martahub/m/activities/new")} />
-            <MenuItem icon={ListChecks} label="Aktivitas" onClick={() => router.push("/martahub/m/activities")} />
-            <MenuItem icon={MapIcon} label="Peta" segera />
-            <MenuItem icon={Trophy} label="Leaderboard" onClick={() => router.push("/martahub/m/leaderboard")} />
-            <MenuItem icon={ArrowLeftRight} label="Transfer" onClick={() => router.push("/martahub/m/transfers")} badge={pendingTransfers} />
-            <MenuItem icon={PackageCheck} label="POSM" onClick={() => router.push(isApprover ? "/martahub/m/posm/stock" : "/martahub/m/posm")} />
-            {isApprover && <MenuItem icon={ShieldCheck} label="Approval" onClick={() => router.push("/martahub/approval")} badge={pendingApprovals} />}
-            <MenuItem icon={Bell} label="Notifikasi" onClick={() => router.push("/martahub/m/notifications")} badge={unreadNotifs} />
-            <MenuItem icon={User2} label="Profil" onClick={() => router.push("/martahub/m/profile")} />
+        <div style={{ background: "#FFFFFF", border: "1px solid #EDEDF1", borderRadius: 22, padding: "20px 12px", boxShadow: "0 6px 16px rgba(17,17,20,0.05), 0 1px 3px rgba(17,17,20,0.03)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", rowGap: 20 }}>
+            <MenuItem icon={CalendarPlus} label="Buat Plan" color={BRAND} onClick={() => router.push("/martahub/m/activities/new")} />
+            <MenuItem icon={ListChecks} label="Aktivitas" color="#57C2AC" onClick={() => router.push("/martahub/m/activities")} />
+            <MenuItem icon={MapIcon} label="Peta" color="#1A9E90" onClick={() => router.push("/martahub/m/map")} />
+            <MenuItem icon={Trophy} label="Leaderboard" color="#F5CD46" onClick={() => router.push("/martahub/m/leaderboard")} />
+            <MenuItem icon={PackageCheck} label="POSM" color="#B32E85" onClick={() => router.push(isApprover ? "/martahub/m/posm/stock" : "/martahub/m/posm")} />
+            {isApprover && <MenuItem icon={ShieldCheck} label="Approval" color="#E63325" onClick={() => router.push("/martahub/m/approval")} badge={pendingApprovals} />}
           </div>
         </div>
       </div>
@@ -293,21 +368,107 @@ function Pill({ icon: Icon, text }) {
   );
 }
 
-function QuadStat({ label, value, valueColor }) {
+/** Pill berbentuk <select> - dipakai role unscoped (admin/head/spm_sumatera)
+ * utk memfilter dashboard Home per cabang/brand.
+ * Sebelumnya <select> aslinya cuma selebar teksnya sendiri di dalam pill -
+ * jadi area yg kelihatan "bisa ditekan" (pill putih) lebih besar dari area
+ * yg BENERAN merespons tap (cuma teks + panah kecil). Sekarang <select>
+ * ditumpuk transparan menutupi SELURUH pill (teknik overlay), jadi tap di
+ * mana saja di dalam pill pasti membuka pilihan - bukan cuma pas di teks. */
+function FilterSelect({ icon: Icon, value, onChange, placeholder, options, fullWidth }) {
+  const selected = options.find((o) => o.value === value);
   return (
-    <div style={{ flex: 1, textAlign: "center" }}>
-      <div style={{ fontSize: 10, color: "#B0B0BA", fontWeight: 600 }}>{label}</div>
-      <div style={{ marginTop: 4, fontSize: 15, fontWeight: 800, color: valueColor || "#17181C" }}>{value}</div>
+    <div style={{
+      position: "relative", display: fullWidth ? "flex" : "inline-flex", width: fullWidth ? "100%" : undefined,
+      boxSizing: "border-box", alignItems: "center", gap: 7,
+      minHeight: 40, padding: "0 34px 0 14px", borderRadius: 999,
+      background: value ? "#FDECEC" : "#FFFFFF", border: `1.5px solid ${value ? "#ED1C24" : "#E4E5EA"}`,
+    }}>
+      <Icon size={13} color={value ? "#ED1C24" : "#8A8A96"} style={{ flexShrink: 0 }} />
+      <span style={{ fontSize: 12.5, fontWeight: 700, color: value ? "#C62828" : "#3A3A44", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: fullWidth ? 1 : undefined, maxWidth: fullWidth ? undefined : 150 }}>
+        {selected ? selected.label : placeholder}
+      </span>
+      <ChevronRight size={12} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%) rotate(90deg)", color: value ? "#ED1C24" : "#8A8A96", pointerEvents: "none" }} />
+      <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={placeholder}
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 16 }}>
+        <option value="">{placeholder}</option>
+        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
     </div>
   );
 }
 
-function MenuItem({ icon: Icon, label, onClick, segera, badge }) {
+/** Brand ditampilkan sbg tag warna kecil (spt badge IM3/3ID di kartu lain
+ * di app ini) - bukan field dropdown penuh, krn cuma 2 pilihan brand. */
+const BRAND_TAG_COLORS = { im3: "#E53935", tri: "#E23B86" };
+function BrandTagSelect({ value, onChange, options }) {
+  const selected = options.find((o) => o.value === value);
+  const color = selected ? (BRAND_TAG_COLORS[selected.value] || "#5A5A68") : "#8A8A96";
+  return (
+    <div style={{
+      position: "relative", display: "flex", alignItems: "center", justifyContent: "center", width: "100%", boxSizing: "border-box",
+      minHeight: 40, padding: "0 10px", borderRadius: 999,
+      background: value ? `${color}14` : "#FFFFFF", border: `1.5px solid ${value ? color : "#E4E5EA"}`,
+    }}>
+      <span style={{ fontSize: 12, fontWeight: 800, color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        {selected ? selected.label : "Brand"}
+      </span>
+      <select value={value} onChange={(e) => onChange(e.target.value)} aria-label="Brand"
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 16 }}>
+        <option value="">Semua Brand</option>
+        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+    </div>
+  );
+}
+
+/** Select periode Achievement - ditumpuk transparan (overlay) di atas label
+ * yg selebar TEKS TERPILIH SAJA (bukan native <select> polos yg di banyak
+ * browser lebar sendiri mengikuti opsi TERPANJANG dalam daftar, jadi
+ * nyisain banyak ruang kosong pas opsi yg lagi aktif pendek, mis. "Mei
+ * 2026" tapi lebarnya tetap segede "September 2026"). */
+function MonthSelect({ value, onChange, options }) {
+  const selected = options.find((o) => o.key === value);
+  return (
+    <div style={{ position: "relative", display: "inline-flex", alignItems: "center" }}>
+      <div style={{ display: "inline-flex", alignItems: "center", minHeight: 36, padding: "9px 30px 9px 14px", borderRadius: 999, background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.14)" }}>
+        <span style={{ fontSize: 11.5, fontWeight: 700, color: "#FFFFFF", whiteSpace: "nowrap" }}>{selected?.label}</span>
+      </div>
+      <ChevronRight size={12} style={{ position: "absolute", right: 11, top: "50%", transform: "translateY(-50%) rotate(90deg)", color: "rgba(255,255,255,0.6)", pointerEvents: "none" }} />
+      <select value={value} onChange={(e) => onChange(e.target.value)} aria-label="Periode"
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 16 }}>
+        {options.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function QuadStat({ label, value, valueColor, dark, dot }) {
+  return (
+    <div style={{ flex: 1, textAlign: "center" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
+        {dot && <span style={{ width: 4, height: 4, borderRadius: 99, background: dot, opacity: 0.85 }} />}
+        <div style={{ fontSize: 9.5, color: dark ? "rgba(255,255,255,0.5)" : "#B0B0BA", fontWeight: 700, letterSpacing: 0.2 }}>{label}</div>
+      </div>
+      <div style={{ marginTop: 5, fontSize: 15.5, fontWeight: 800, color: valueColor || (dark ? "#FFFFFF" : "#17181C") }}>{value}</div>
+    </div>
+  );
+}
+
+function QuadDivider() {
+  return <div style={{ width: 1, alignSelf: "stretch", background: "rgba(255,255,255,0.08)" }} />;
+}
+
+function MenuItem({ icon: Icon, label, onClick, segera, badge, color = BRAND }) {
+  const bg = color.startsWith("linear-gradient") ? color : `linear-gradient(150deg, ${color}, ${color}CC)`;
+  // Shadow tipis & rapat (bukan blur besar/menyebar spt glow) - cuma
+  // ngangkat ikon dari kartu, warnanya ikut aksennya.
+  const shadowColor = color.startsWith("linear-gradient") ? "rgba(237,28,36,0.2)" : `${color}30`;
   return (
     <button onClick={segera ? undefined : onClick} disabled={segera}
       style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7, background: "none", border: "none", cursor: segera ? "default" : "pointer", fontFamily: FF, padding: 0 }}>
-      <div style={{ position: "relative", width: 52, height: 52, borderRadius: "50%", background: segera ? "#D8D9E0" : BRAND, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: segera ? "none" : "0 4px 12px rgba(17,17,20,0.1)" }}>
-        <Icon size={22} color="#fff" strokeWidth={2.1} />
+      <div style={{ position: "relative", width: 50, height: 50, borderRadius: 15, background: segera ? "#EDEDF1" : bg, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: segera ? "none" : `0 3px 8px ${shadowColor}` }}>
+        <Icon size={21} color={segera ? "#B0B0BA" : "#fff"} strokeWidth={2.1} />
         {badge > 0 && <Badge n={badge} />}
       </div>
       <span style={{ fontSize: 11, fontWeight: 700, color: segera ? "#B0B0BA" : "#3A3A44", textAlign: "center", lineHeight: 1.3 }}>{label}</span>
@@ -318,30 +479,58 @@ function MenuItem({ icon: Icon, label, onClick, segera, badge }) {
 
 function MissionCarousel({ needsCheckin, needsReport, upcoming, isApprover, pendingApprovals, draftCount, router }) {
   const [page, setPage] = useState(0);
+  const trackRef = useRef(null);
+  const pausedRef = useRef(false);
 
   let missionCard;
   if (needsCheckin) {
-    missionCard = { badge: "AKTIVITAS · CHECK IN", accent: "#1A9E90", title: needsCheckin.event_name || "Check In", subtitle: "Plan siap — lakukan check-in di lokasi site.", action: () => router.push(`/martahub/m/activities/${needsCheckin.id}/checkin`) };
+    missionCard = { badge: "AKTIVITAS · CHECK IN", accent: "#1A9E90", title: needsCheckin.event_name || "Check In", subtitle: "Plan siap - lakukan check-in di lokasi site.", cta: "Check-in Sekarang", action: () => router.push(`/martahub/m/activities/${needsCheckin.id}/checkin`) };
   } else if (needsReport) {
-    missionCard = { badge: "AKTIVITAS · LAPORAN", accent: "#C2187C", title: needsReport.event_name || "Isi Laporan", subtitle: "Check-in selesai — lengkapi laporan actual sekarang.", action: () => router.push(`/martahub/m/activities/${needsReport.id}/submit`) };
+    missionCard = { badge: "AKTIVITAS · LAPORAN", accent: "#C2187C", title: needsReport.event_name || "Isi Laporan", subtitle: "Check-in selesai - lengkapi laporan actual sekarang.", cta: "Isi Laporan", action: () => router.push(`/martahub/m/activities/${needsReport.id}/submit`) };
   } else if (upcoming) {
-    missionCard = { badge: "AKTIVITAS · MENDATANG", accent: "#ED1C24", title: upcoming.event_name || "Plan Mendatang", subtitle: `Dijadwalkan ${fmtDate(upcoming.plan_date)}.`, action: () => router.push(`/martahub/m/activities/${upcoming.id}`) };
+    // Lokasi ikut ditampilkan (site_id plan) - sebelumnya cuma tanggal,
+    // padahal ini kartu "mendatang" yg paling relevan utk tahu KE MANA.
+    missionCard = { badge: "AKTIVITAS · MENDATANG", accent: "#ED1C24", title: upcoming.event_name || "Plan Mendatang", subtitle: `${fmtDate(upcoming.plan_date)}${upcoming.site_id ? ` · ${upcoming.site_id}` : ""}`, cta: "Lihat Detail", action: () => router.push(`/martahub/m/activities/${upcoming.id}`) };
   } else {
-    missionCard = { badge: "AKTIVITAS", accent: "#8A8A96", title: "Belum ada plan", subtitle: "Mulai buat plan aktivitas pertama Anda.", action: () => router.push("/martahub/m/activities/new") };
+    missionCard = { badge: "AKTIVITAS", accent: "#6B6B76", title: "Belum ada plan", subtitle: "Mulai buat plan aktivitas pertama Anda.", cta: "Buat Plan Sekarang", action: () => router.push("/martahub/m/activities/new") };
   }
 
   const approvalCard = isApprover
-    ? { badge: "APPROVAL", accent: "#B45309", title: pendingApprovals > 0 ? `${pendingApprovals} menunggu persetujuan` : "Tidak ada antrean", subtitle: pendingApprovals > 0 ? "Ada plan/report yang perlu ditinjau." : "Semua plan & report sudah diputuskan.", action: () => router.push("/martahub/approval") }
-    : { badge: "ACTIVITY · DRAFT", accent: "#1A9E90", title: draftCount > 0 ? `${draftCount} draft belum lengkap` : "Belum ada draft", subtitle: draftCount > 0 ? "Lanjutkan draft yang tersimpan sebelum diajukan." : "Plan yang disimpan sebagai draft tampil di sini.", action: () => router.push("/martahub/m/activities?tab=draft") };
+    ? { badge: "APPROVAL", accent: "#B45309", title: pendingApprovals > 0 ? `${pendingApprovals} menunggu persetujuan` : "Tidak ada antrean", subtitle: pendingApprovals > 0 ? "Ada plan/report yang perlu ditinjau." : "Semua plan & report sudah diputuskan.", cta: pendingApprovals > 0 ? "Tinjau Sekarang" : "Lihat Detail", action: () => router.push("/martahub/m/approval") }
+    : { badge: "ACTIVITY · DRAFT", accent: "#1A9E90", title: draftCount > 0 ? `${draftCount} draft belum lengkap` : "Belum ada draft", subtitle: draftCount > 0 ? "Lanjutkan draft yang tersimpan sebelum diajukan." : "Plan yang disimpan sebagai draft tampil di sini.", cta: draftCount > 0 ? "Lanjutkan Draft" : "Buat Plan", action: () => router.push("/martahub/m/activities?tab=draft") };
 
-  const tipsCard = { badge: "TIPS", accent: "#8A8A96", title: "Tips MartaHub", subtitle: TIPS[new Date().getDate() % TIPS.length], action: null };
+  const tipsCard = { badge: "TIPS", accent: "#6B6B76", title: "Tips MartaHub", subtitle: TIPS[new Date().getDate() % TIPS.length], cta: null, action: null };
 
   const cards = [missionCard, approvalCard, tipsCard];
 
+  // Auto-swipe tiap 5 detik - berhenti sebentar kalau user lagi sentuh/geser
+  // sendiri (pausedRef), supaya tidak "berebut" kontrol dgn scroll manual.
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const id = setInterval(() => {
+      if (pausedRef.current) return;
+      const next = (page + 1) % cards.length;
+      el.scrollTo({ left: next * el.clientWidth, behavior: "smooth" });
+      setPage(next);
+    }, 5000);
+    return () => clearInterval(id);
+  }, [page, cards.length]);
+
   return (
     <div>
+      {/* Sembunyikan scrollbar horizontal bawaan browser - itu yg kelihatan
+          spt "garis hitam" tebal di bawah kartu; indikator posisi kita
+          sendiri (titik-titik di bawah) sudah cukup, tidak perlu dobel. */}
+      <style>{`.mh-carousel-track{scrollbar-width:none;-ms-overflow-style:none}.mh-carousel-track::-webkit-scrollbar{display:none;height:0;width:0}`}</style>
       <div
+        ref={trackRef}
+        className="mh-carousel-track"
         onScroll={(e) => { const i = Math.round(e.currentTarget.scrollLeft / e.currentTarget.clientWidth); if (i !== page) setPage(i); }}
+        onTouchStart={() => { pausedRef.current = true; }}
+        onTouchEnd={() => { setTimeout(() => { pausedRef.current = false; }, 4000); }}
+        onMouseDown={() => { pausedRef.current = true; }}
+        onMouseUp={() => { setTimeout(() => { pausedRef.current = false; }, 4000); }}
         style={{ display: "flex", overflowX: "auto", scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch", gap: 0, paddingBottom: 2 }}
       >
         {cards.map((c, i) => (
@@ -359,22 +548,45 @@ function MissionCarousel({ needsCheckin, needsReport, upcoming, isApprover, pend
   );
 }
 
-function CarouselCard({ badge, accent, title, subtitle, action }) {
+// Tinggi kartu carousel DISAMAKAN persis (bukan cuma "kebetulan mirip") -
+// ketiga konsep (Aktivitas/Approval-Draft/Tips) pakai struktur identik:
+// header (ikon+badge+judul+subjudul, dibatasi 2 baris) lalu footer CTA yg
+// nempel di bawah lewat marginTop:"auto", dibungkus minHeight tetap supaya
+// kartu tanpa CTA (Tips) tetap sama tingginya dgn yg lain.
+const CAROUSEL_CARD_MIN_H = 148;
+
+function CarouselCard({ badge, accent, title, subtitle, action, cta }) {
   const Icon = badge?.includes("APPROVAL") ? ClipboardCheck : badge?.includes("TIPS") ? Lightbulb : ListChecks;
   return (
     <button onClick={action || undefined} disabled={!action}
-      style={{ width: "100%", textAlign: "left", background: "#FFFFFF", border: "1px solid #E9EAEE", borderLeft: `4px solid ${accent}`, borderRadius: 18, padding: "16px 16px", cursor: action ? "pointer" : "default", fontFamily: FF, display: "flex", alignItems: "center", gap: 12 }}>
-      <div style={{ flexShrink: 0, width: 42, height: 42, borderRadius: 12, background: `${accent}1A`, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <Icon size={19} color={accent} />
-      </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <span style={{ fontSize: 9.5, fontWeight: 800, color: accent, letterSpacing: 0.4 }}>{badge}</span>
+      style={{
+        width: "100%", minHeight: CAROUSEL_CARD_MIN_H, boxSizing: "border-box",
+        textAlign: "left", cursor: action ? "pointer" : "default", fontFamily: FF,
+        display: "flex", flexDirection: "column", borderRadius: 20, padding: "16px 16px",
+        background: `linear-gradient(135deg, ${accent}14 0%, #FFFFFF 55%)`,
+        border: `1px solid ${accent}30`,
+        boxShadow: "0 4px 14px rgba(17,17,20,0.05), 0 1px 2px rgba(17,17,20,0.03)",
+      }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
+        <div style={{ flexShrink: 0, width: 44, height: 44, borderRadius: 13, background: `linear-gradient(150deg, ${accent}, ${accent}CC)`, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 4px 10px ${accent}33` }}>
+          <Icon size={19} color="#fff" />
         </div>
-        <div style={{ marginTop: 3, fontSize: 14, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</div>
-        <div style={{ marginTop: 2, fontSize: 11.5, color: "#8A8A96", lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{subtitle}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ fontSize: 9.5, fontWeight: 800, color: accent, letterSpacing: 0.5 }}>{badge}</span>
+          <div style={{ marginTop: 3, fontSize: 14, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</div>
+          <div style={{ marginTop: 2, fontSize: 11.5, color: "#4A4A55", lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{subtitle}</div>
+        </div>
       </div>
-      {action && <ChevronRight size={16} color="#C4C4CE" style={{ flexShrink: 0 }} />}
+
+      {/* CTA eksplisit, selalu nempel di bawah kartu - dipakai supaya jelas
+          bisa ditap utk lihat detail/riwayat, bukan cuma chevron kecil yg
+          gampang kelewat. */}
+      {action && cta && (
+        <div style={{ marginTop: "auto", paddingTop: 12, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 5 }}>
+          <span style={{ fontSize: 12, fontWeight: 800, color: accent }}>{cta}</span>
+          <ChevronRight size={14} color={accent} />
+        </div>
+      )}
     </button>
   );
 }
@@ -387,7 +599,7 @@ function ActivityRow({ r }) {
       style={{ textAlign: "left", width: "100%", background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 16, padding: "13px 14px", cursor: "pointer", fontFamily: FF }}>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.event_name || "—"}</div>
+          <div style={{ fontSize: 13.5, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.event_name || "-"}</div>
           <div style={{ marginTop: 3, fontSize: 11.5, color: "#8A8A96", fontWeight: 600 }}>{fmtDate(r.plan_date)} · Target {fmtInt(r.target_sp)}/{fmtInt(r.target_fwa)} SP/FWA</div>
         </div>
         <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 800, padding: "4px 9px", borderRadius: 999, color: meta.color, background: meta.bg, whiteSpace: "nowrap" }}>

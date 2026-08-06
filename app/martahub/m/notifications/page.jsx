@@ -1,9 +1,9 @@
 "use client";
 /**
- * /martahub/m/notifications — Inbox notifikasi (web mobile), padanan
+ * /martahub/m/notifications - Inbox notifikasi (web mobile), padanan
  * `notifications_screen.dart` Flutter. Sumber data: `mh_notifications`,
  * diisi server-side (inline insert) oleh RPC lain saat ada kejadian relevan
- * (permintaan/keputusan transfer MSISDN, dst — lihat _shared/notifData.js) —
+ * (permintaan/keputusan transfer MSISDN, dst - lihat _shared/notifData.js) -
  * halaman ini HANYA baca & tandai terbaca, tidak pernah insert langsung.
  * SAMA PERSIS dgn Flutter: membuka halaman ini otomatis menandai SEMUA
  * notifikasi sebagai terbaca.
@@ -50,7 +50,7 @@ export default function NotificationsPage() {
         if (!alive) return;
         setRows(data);
         // Membuka inbox = tandai semua terbaca, SAMA PERSIS dgn initState()
-        // notifications_screen.dart Flutter — best-effort, tidak menahan render.
+        // notifications_screen.dart Flutter - best-effort, tidak menahan render.
         markAllNotificationsRead().catch(() => {});
       } catch (e) {
         if (alive) setErr(e.message || "Gagal memuat notifikasi");

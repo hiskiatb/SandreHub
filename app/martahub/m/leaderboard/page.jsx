@@ -1,6 +1,6 @@
 "use client";
 /**
- * /martahub/m/leaderboard — Peringkat BME/RGE (web mobile), padanan
+ * /martahub/m/leaderboard - Peringkat BME/RGE (web mobile), padanan
  * `leaderboard_screen.dart` di Flutter. Baca langsung dari view
  * `mh_leaderboard_summary` (skor sudah dihitung server-side dari bobot di
  * mh_settings), difilter ke scope brand/region user seperti Flutter.
@@ -153,10 +153,10 @@ function LeaderRow({ r, isMe }) {
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {r.user_name || "—"} {isMe && <span style={{ color: "#ED1C24" }}>(Anda)</span>}
+          {r.user_name || "-"} {isMe && <span style={{ color: "#ED1C24" }}>(Anda)</span>}
         </div>
         <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color: "#8A8A96", fontWeight: 600 }}>
-          <MapPin size={10} /> {r.branch_name || "—"} · {fmtInt(r.total_activities)} aktivitas
+          <MapPin size={10} /> {r.branch_name || "-"} · {fmtInt(r.total_activities)} aktivitas
         </div>
       </div>
       <div style={{ flexShrink: 0, textAlign: "right" }}>

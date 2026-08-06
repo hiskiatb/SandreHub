@@ -1,7 +1,7 @@
 "use client";
-// Menu "POSMAT Stock" (§7, §9) — kelola master jenis material, kuota stok
+// Menu "POSMAT Stock" (§7, §9) - kelola master jenis material, kuota stok
 // bulanan per MD (carry-over tanpa batas), dan Target Terpasang (KPI per
-// branch×brand). Web-only (dikonfirmasi §7: form web biasa) — pemakaian
+// branch×brand). Web-only (dikonfirmasi §7: form web biasa) - pemakaian
 // stok oleh MD sendiri (mengurangi saldo) adalah bagian MD Activities,
 // Fase 5, BELUM dibangun di sini.
 import { useState, useEffect, useCallback, useMemo } from "react";
@@ -33,7 +33,7 @@ function guessCol(columns, guesses) {
   }
   return "";
 }
-const brandLabel = (b) => (b === "tri" ? "3ID" : b === "im3" ? "IM3" : String(b || "—").toUpperCase());
+const brandLabel = (b) => (b === "tri" ? "3ID" : b === "im3" ? "IM3" : String(b || "-").toUpperCase());
 
 export default function PosmatStockPage() {
   return (
@@ -64,17 +64,17 @@ function Body({ email }) {
       <div style={{ fontSize: 18, fontWeight: 800, color: T.hi, marginBottom: 3 }}>Pilih menu</div>
       <div style={{ fontSize: 13, color: T.mid, marginBottom: 18 }}>Pengelolaan material POSM, target pemasangan, dan Validity MSISDN.</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
-        <MenuCard icon={Package} label="Jenis Material" desc="Master jenis POSM — reusable (last-used) atau consumable (sekali pakai), satuan unit."
+        <MenuCard icon={Package} label="Jenis Material" desc="Master jenis POSM - reusable (last-used) atau consumable (sekali pakai), satuan unit."
           onClick={() => setActive("types")} />
         <MenuCard icon={Boxes} label="Stok & Mutasi" desc="Tetapkan/top-up kuota bulanan per MD × jenis material, lihat saldo berjalan (carry-over tanpa batas)."
           onClick={() => setActive("stock")} />
-        <MenuCard icon={Target} label="Target Terpasang" desc="KPI jumlah pemasangan per branch × brand per periode — terpisah dari kuota stok fisik."
+        <MenuCard icon={Target} label="Target Terpasang" desc="KPI jumlah pemasangan per branch × brand per periode - terpisah dari kuota stok fisik."
           onClick={() => setActive("target")} />
         <MenuCard icon={ShieldCheck} label="Validity" desc="Cocokkan MSISDN yang disubmit di Activity Report terhadap data tervalidasi (raw lokal, §9.3)."
           onClick={() => setActive("validity")} />
       </div>
       {!canManage && scope && (
-        <div style={{ ...note, marginTop: 16 }}>Mode lihat saja — hanya Head TMV, Brand TMV, atau SPM Sumatera yang dapat mengubah data di sini.</div>
+        <div style={{ ...note, marginTop: 16 }}>Mode lihat saja - hanya Head TMV, Brand TMV, atau SPM Sumatera yang dapat mengubah data di sini.</div>
       )}
     </div>
   );
@@ -139,7 +139,7 @@ function TypesView({ email, canManage }) {
             {rows.map((r) => (
               <tr key={r.id} style={{ borderTop: `1px solid ${T.line}` }}>
                 <td style={{ padding: "8px 12px", fontWeight: 700, color: T.hi }}>{r.name}</td>
-                <td style={{ padding: "8px 12px", color: T.mid }}>{r.category || "—"}</td>
+                <td style={{ padding: "8px 12px", color: T.mid }}>{r.category || "-"}</td>
                 <td style={{ padding: "8px 12px" }}>
                   <span style={{ ...pill, color: r.stock_mode === "reusable" ? T.blue : T.primary, background: r.stock_mode === "reusable" ? T.blueBg : "#FFF0F0" }}>
                     {r.stock_mode === "reusable" ? "Reusable" : "Consumable"}
@@ -213,7 +213,7 @@ function TypeModal({ row, email, onClose, onSaved, onError }) {
 // ═══════════════════════════════════════════════════════════════════════════
 //  2. STOK & MUTASI
 // ═══════════════════════════════════════════════════════════════════════════
-// ✅ Stok jadi shared pool per Branch×Brand (bukan lagi per-MD individu) —
+// ✅ Stok jadi shared pool per Branch×Brand (bukan lagi per-MD individu) -
 // sebelum ini top-up CUMA bisa ditarget ke assignment ber-role 'md', jadi
 // BME/RGE/role lain TIDAK PERNAH bisa punya saldo sama sekali (akar masalah
 // "BME tidak bisa isi POSMAT"). Sekarang siapa pun di branch×brand yg sama
@@ -230,7 +230,7 @@ function StockView({ email, canManage, scope }) {
   const [ok, setOk] = useState("");
 
   // Scope caller (Head TMV -> region sendiri, Brand TMV -> region+brand
-  // sendiri) — SAMA PERSIS pola di assignments/page.jsx. SPM Sumatera/admin
+  // sendiri) - SAMA PERSIS pola di assignments/page.jsx. SPM Sumatera/admin
   // unscoped (null = bebas milih branch manapun).
   const lockedRegion = scope && (scope.role === "head" || scope.role === "tmv") ? scope.region : null;
   const lockedBrand = scope && scope.role === "tmv" ? scope.brand : null;
@@ -283,7 +283,7 @@ function StockView({ email, canManage, scope }) {
   return (
     <div style={{ maxWidth: 1000 }}>
       <div style={{ fontSize: 18, fontWeight: 800, color: T.hi, marginBottom: 3 }}>Stok & Mutasi</div>
-      <div style={{ fontSize: 13, color: T.mid, marginBottom: 14 }}>Saldo milik BRANCH × BRAND (dibagikan bersama semua orang di sana, bukan per-individu) — bersifat carry-over tanpa batas, top-up menambah saldo berjalan, tidak mereset tiap bulan.</div>
+      <div style={{ fontSize: 13, color: T.mid, marginBottom: 14 }}>Saldo milik BRANCH × BRAND (dibagikan bersama semua orang di sana, bukan per-individu) - bersifat carry-over tanpa batas, top-up menambah saldo berjalan, tidak mereset tiap bulan.</div>
       {lockedRegion && (
         <div style={{ ...note, marginBottom: 14 }}>Daftar branch dibatasi ke region <b>{lockedRegion}</b>{lockedBrand ? ` · brand ${brandLabel(lockedBrand)}` : ""} sesuai scope akun kamu.</div>
       )}
@@ -296,7 +296,7 @@ function StockView({ email, canManage, scope }) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px,1fr))", gap: 10 }}>
             <Field label="Branch">
               <select value={form.branchId} onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))} style={selectStyle}>
-                <option value="">— pilih branch —</option>
+                <option value="">- pilih branch -</option>
                 {branchOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
               </select>
             </Field>
@@ -307,7 +307,7 @@ function StockView({ email, canManage, scope }) {
                 </div>
               ) : (
                 <select value={form.brand} onChange={(e) => setForm((f) => ({ ...f, brand: e.target.value }))} style={selectStyle}>
-                  <option value="">— pilih brand —</option>
+                  <option value="">- pilih brand -</option>
                   <option value="im3">IM3</option>
                   <option value="tri">3ID</option>
                 </select>
@@ -315,7 +315,7 @@ function StockView({ email, canManage, scope }) {
             </Field>
             <Field label="Jenis Material">
               <select value={form.typeId} onChange={(e) => setForm((f) => ({ ...f, typeId: e.target.value }))} style={selectStyle}>
-                <option value="">— pilih jenis —</option>
+                <option value="">- pilih jenis -</option>
                 {types.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.unit})</option>)}
               </select>
             </Field>
@@ -416,7 +416,7 @@ function TargetView({ email, canManage, scope }) {
   return (
     <div style={{ maxWidth: 900 }}>
       <div style={{ fontSize: 18, fontWeight: 800, color: T.hi, marginBottom: 3 }}>Target Terpasang</div>
-      <div style={{ fontSize: 13, color: T.mid, marginBottom: 14 }}>KPI jumlah pemasangan per branch × brand per periode — terpisah dari saldo stok fisik.</div>
+      <div style={{ fontSize: 13, color: T.mid, marginBottom: 14 }}>KPI jumlah pemasangan per branch × brand per periode - terpisah dari saldo stok fisik.</div>
       {lockedRegion && (
         <div style={{ ...note, marginBottom: 14 }}>Daftar branch dibatasi ke region <b>{lockedRegion}</b>{lockedBrand ? ` · brand ${brandLabel(lockedBrand)}` : ""} sesuai scope akun kamu.</div>
       )}
@@ -428,7 +428,7 @@ function TargetView({ email, canManage, scope }) {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px,1fr))", gap: 10 }}>
             <Field label="Branch">
               <select value={form.branchId} onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))} style={selectStyle}>
-                <option value="">— pilih branch —</option>
+                <option value="">- pilih branch -</option>
                 {branchOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
               </select>
             </Field>
@@ -439,7 +439,7 @@ function TargetView({ email, canManage, scope }) {
                 </div>
               ) : (
                 <select value={form.brand} onChange={(e) => setForm((f) => ({ ...f, brand: e.target.value }))} style={selectStyle}>
-                  <option value="">— pilih brand —</option>
+                  <option value="">- pilih brand -</option>
                   <option value="im3">IM3</option>
                   <option value="tri">3ID</option>
                 </select>
@@ -473,7 +473,7 @@ function TargetView({ email, canManage, scope }) {
                   <td style={{ padding: "8px 12px", color: T.mid }}>{monthLabel(r.month)}</td>
                   <td style={{ padding: "8px 12px", fontWeight: 800, color: T.hi }}>{r.target_qty}</td>
                   <td style={{ padding: "8px 12px", fontWeight: 800, color: met ? T.success : T.mid }}>{achieved}{r.target_qty > 0 ? ` (${Math.round((achieved / r.target_qty) * 100)}%)` : ""}</td>
-                  <td style={{ padding: "8px 12px", color: T.mid }}>{r.updated_by_name || "—"}</td>
+                  <td style={{ padding: "8px 12px", color: T.mid }}>{r.updated_by_name || "-"}</td>
                 </tr>
               );
             })}
@@ -485,14 +485,14 @@ function TargetView({ email, canManage, scope }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  4. VALIDITY MSISDN (§9.3) — cocokkan MSISDN yang disubmit di Activity
+//  4. VALIDITY MSISDN (§9.3) - cocokkan MSISDN yang disubmit di Activity
 //  Report (DSF Sales Entry, §4.2 poin 7) terhadap file raw tervalidasi
 //  (MSISDN/org_id) yang dipegang Head TMV/Brand TMV/SPM Sumatera secara
-//  LOKAL — berkas mentah TIDAK PERNAH terkirim ke server (§0.2/§9.1), pola
+//  LOKAL - berkas mentah TIDAK PERNAH terkirim ke server (§0.2/§9.1), pola
 //  IDENTIK dengan "Validasi Lokasi" (Fase 3): <input type=file> biasa,
 //  metadata pemetaan kolom diingat via mh_local_folder_links (purpose
 //  berbeda: 'validity_msisdn'). MSISDN adalah kunci pencocokan UTAMA;
-//  org_id dicek sebagai atribut terpisah (§9.3) — kalau raw punya org_id
+//  org_id dicek sebagai atribut terpisah (§9.3) - kalau raw punya org_id
 //  beda dari yang disubmit, hasilnya 'org_mismatch' + matched_org_id
 //  (nilai yang seharusnya), BUKAN auto-correct (user/atasan yang koreksi
 //  manual, keputusan spec eksplisit).
@@ -512,7 +512,7 @@ function ValidityView({ email, canManage, scope }) {
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState(null);
   const [err, setErr] = useState("");
-  // "Hubungkan Folder" — HANYA referensi folder yang diingat (IndexedDB
+  // "Hubungkan Folder" - HANYA referensi folder yang diingat (IndexedDB
   // perangkat ini), isi file selalu dibaca ulang dari disk (§0.2).
   const folderSource = useFolderConnection(VALIDITY_PURPOSE, VALIDITY_EXT, onFile);
 
@@ -576,7 +576,7 @@ function ValidityView({ email, canManage, scope }) {
     finally { setSavingMap(false); }
   }
 
-  // ── Pratinjau: 3 kemungkinan hasil (§9.3) — tidak ditemukan / valid / org_mismatch.
+  // ── Pratinjau: 3 kemungkinan hasil (§9.3) - tidak ditemukan / valid / org_mismatch.
   const preview = useMemo(() => {
     if (!referenceMap) return [];
     return rows.map((r) => {
@@ -613,19 +613,19 @@ function ValidityView({ email, canManage, scope }) {
   if (!canManage && scope) {
     return (
       <div style={note}>
-        Sub-menu ini khusus Head TMV, Brand TMV, atau SPM Sumatera — role Anda saat ini ({scope.role || "tidak terdaftar"}) tidak memiliki akses menjalankan rekonsiliasi Validity.
+        Sub-menu ini khusus Head TMV, Brand TMV, atau SPM Sumatera - role Anda saat ini ({scope.role || "tidak terdaftar"}) tidak memiliki akses menjalankan rekonsiliasi Validity.
       </div>
     );
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 1040 }}>
-      <div style={{ fontSize: 18, fontWeight: 800, color: T.hi, marginBottom: -6 }}>Validity — Rekonsiliasi MSISDN</div>
+      <div style={{ fontSize: 18, fontWeight: 800, color: T.hi, marginBottom: -6 }}>Validity - Rekonsiliasi MSISDN</div>
       <div style={{ ...card, background: "linear-gradient(135deg,#FFF5F7,#FFFFFF)", borderColor: T.primaryBd }}>
         <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
           <HelpCircle size={18} color={T.primaryD} style={{ flexShrink: 0, marginTop: 1 }} />
           <div style={{ fontSize: 12.5, color: T.mid, lineHeight: 1.6 }}>
-            <b style={{ color: T.hi }}>§9.3:</b> mencocokkan MSISDN yang disubmit di Activity Report terhadap berkas raw tervalidasi (MSISDN + org_id) yang Anda muat dari berkas lokal — berkas ini TIDAK PERNAH terkirim ke server, hanya hasil pencocokan yang disimpan. MSISDN dipakai sebagai kunci pencocokan utama; org_id dicek terpisah — kalau tidak cocok, sistem menandai &ldquo;org_id seharusnya X&rdquo; sebagai catatan, BUKAN auto-koreksi.
+            <b style={{ color: T.hi }}>§9.3:</b> mencocokkan MSISDN yang disubmit di Activity Report terhadap berkas raw tervalidasi (MSISDN + org_id) yang Anda muat dari berkas lokal - berkas ini TIDAK PERNAH terkirim ke server, hanya hasil pencocokan yang disimpan. MSISDN dipakai sebagai kunci pencocokan utama; org_id dicek terpisah - kalau tidak cocok, sistem menandai &ldquo;org_id seharusnya X&rdquo; sebagai catatan, BUKAN auto-koreksi.
           </div>
         </div>
       </div>
@@ -634,7 +634,7 @@ function ValidityView({ email, canManage, scope }) {
         <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>1. Muat Berkas Raw Tervalidasi</div>
         <div style={{ color: T.mid, fontSize: 12.5, marginBottom: 12 }}>
           Hubungkan folder berisi berkas MSISDN + org_id tervalidasi (.xlsx/.xls/.csv). {savedMapping?.fileName && (
-            <span>Pemetaan kolom terakhir sudah diingat dari <b>{savedMapping.fileName}</b> — otomatis dipakai lagi untuk berkas baru.</span>
+            <span>Pemetaan kolom terakhir sudah diingat dari <b>{savedMapping.fileName}</b> - otomatis dipakai lagi untuk berkas baru.</span>
           )}
         </div>
         <FolderConnectPanel t={T} source={folderSource} color={T.primary} acceptAttr=".xlsx,.xls,.csv" extLabel=".xlsx/.xls/.csv" />
@@ -649,7 +649,7 @@ function ValidityView({ email, canManage, scope }) {
                   <div style={{ fontSize: 11.5, fontWeight: 700, color: T.hi, marginBottom: 5 }}>{label} {required && <span style={{ color: T.error }}>*</span>}</div>
                   <select value={mapping[k]} onChange={(e) => setMapping((m) => ({ ...m, [k]: e.target.value }))}
                     style={{ ...selectStyle, borderColor: required && !mapping[k] ? T.error : T.line }}>
-                    <option value="">— pilih kolom —</option>
+                    <option value="">- pilih kolom -</option>
                     {table.displayColumns.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </label>
@@ -673,13 +673,13 @@ function ValidityView({ email, canManage, scope }) {
           </button>
         </div>
         <div style={{ color: T.mid, fontSize: 12.5, marginBottom: 12 }}>
-          {rows.length} MSISDN menunggu validasi (dari semua Activity Report — sub-menu ini belum discope per region/brand, lihat progress tracker).
+          {rows.length} MSISDN menunggu validasi (dari semua Activity Report - sub-menu ini belum discope per region/brand, lihat progress tracker).
         </div>
 
         {err && <div style={{ ...note, marginBottom: 12, background: T.errorBg, borderColor: T.error, color: T.error }}>{err}</div>}
         {result && (
           <div style={{ ...note, marginBottom: 12, background: T.successBg, borderColor: T.success, color: "#155724" }}>
-            Selesai — {result.total} MSISDN diproses: <b>{result.valid} tervalidasi</b>, <b>{result.mismatch} org_id tidak cocok</b>, <b>{result.notFound} tidak ditemukan</b>.
+            Selesai - {result.total} MSISDN diproses: <b>{result.valid} tervalidasi</b>, <b>{result.mismatch} org_id tidak cocok</b>, <b>{result.notFound} tidak ditemukan</b>.
           </div>
         )}
 
@@ -700,10 +700,10 @@ function ValidityView({ email, canManage, scope }) {
               )}
               {preview.map((p) => (
                 <tr key={p.id} style={{ borderTop: `1px solid ${T.line}` }}>
-                  <td style={{ padding: "8px 12px", fontWeight: 700, color: T.hi }}>{p.activity_name || "—"}</td>
-                  <td style={{ padding: "8px 12px", color: T.mid }}>{p.submitted_by_name || "—"}</td>
+                  <td style={{ padding: "8px 12px", fontWeight: 700, color: T.hi }}>{p.activity_name || "-"}</td>
+                  <td style={{ padding: "8px 12px", color: T.mid }}>{p.submitted_by_name || "-"}</td>
                   <td style={{ padding: "8px 12px", color: T.mid }}>{p.msisdn}</td>
-                  <td style={{ padding: "8px 12px", color: T.mid }}>{p.org_id || "—"}</td>
+                  <td style={{ padding: "8px 12px", color: T.mid }}>{p.org_id || "-"}</td>
                   <td style={{ padding: "8px 12px" }}><ValidityPill status={p.newStatus} matchedOrgId={p.matchedOrgId} /></td>
                 </tr>
               ))}
@@ -768,7 +768,7 @@ function monthInputValue(yyyymm) {
 }
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"];
 function monthLabel(yyyymm) {
-  if (!/^\d{6}$/.test(String(yyyymm || ""))) return String(yyyymm || "—");
+  if (!/^\d{6}$/.test(String(yyyymm || ""))) return String(yyyymm || "-");
   return `${MONTH_NAMES[parseInt(yyyymm.slice(4, 6), 10) - 1]} ${yyyymm.slice(0, 4)}`;
 }
 

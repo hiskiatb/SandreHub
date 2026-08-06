@@ -227,7 +227,7 @@ function LineChart({ data, labels, color, height = 140 }) {
 }
 
 // ─── Real data: mh_activities → bentuk KPI/Chart/Table Dashboard ─────────────
-// (Menggantikan MOCK statis — dihitung dari baris mh_activities asli yang
+// (Menggantikan MOCK statis - dihitung dari baris mh_activities asli yang
 // sudah discope per TMV via lib/martaScope.js. Formula ikut §9 MARTAHUB_SPEC.md:
 //   Achievement % = Σactual_sp / Σtarget_sp × 100
 //   Productivity % = Σrevenue / Σcost × 100  (revenue=actual_rev_3m, cost=cost_actual ?? cost_estimate)
@@ -260,11 +260,11 @@ function fmtRupiah(n) {
 function pctStr(n) { return `${Math.round(n || 0)}%`; }
 function sumBy(rows, fn) { return rows.reduce((s, r) => s + (fn(r) || 0), 0); }
 // Achievement % resmi = Σactual_sp ÷ Σtarget RESMI (mh_activity_target, di-set
-// TMV/Brand TMV per Branch×Brand×Bulan) — BUKAN lagi Σtarget yang BME
+// TMV/Brand TMV per Branch×Brand×Bulan) - BUKAN lagi Σtarget yang BME
 // declare sendiri per-plan (r.target_sp). Target per-plan BME TETAP dipakai
 // utk kolom "Achievement" per-baris di tabel Recent Activity (metrik BEDA:
-// progress event itu sendiri vs rencana BME sendiri) — jangan disatukan.
-// `ctx` wajib: { branchSlugMap, activityTargets } — lihat lib/activityTarget.js
+// progress event itu sendiri vs rencana BME sendiri) - jangan disatukan.
+// `ctx` wajib: { branchSlugMap, activityTargets } - lihat lib/activityTarget.js
 // utk jembatan branch_id v1(uuid)->v2(slug) & carry-forward bulan terdekat.
 function achievementPct(rows, ctx) {
   const a = sumBy(rows, (r) => r.actual_sp);
@@ -359,7 +359,7 @@ function computeDashboardData(rows, branchMap, branchSlugMap, activityTargets) {
     monthKeys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
   }
   // Satu lintasan per bulan menghasilkan seluruh 6 seri (dipakai trend chart
-  // besar DAN sparkline mini per-KPI) — hindari re-filter rows 6× terpisah.
+  // besar DAN sparkline mini per-KPI) - hindari re-filter rows 6× terpisah.
   const monthlyRowsByKey = monthKeys.map((k) => rows.filter((r) => monthKeyOf(r.plan_date) === k));
   const series = {
     count: monthlyRowsByKey.map((rs) => rs.length),
@@ -393,7 +393,7 @@ function computeDashboardData(rows, branchMap, branchSlugMap, activityTargets) {
     const rev = r.actual_rev_3m ?? 0;
     const cost = r.cost_actual ?? r.cost_estimate ?? 0;
     // Sengaja pakai r.target_sp (target internal per-event, BME isi sendiri
-    // saat Create Plan) — BEDA dari KPI "Achievement %" di atas yang sekarang
+    // saat Create Plan) - BEDA dari KPI "Achievement %" di atas yang sekarang
     // pakai target RESMI dari mh_activity_target. Ini progress event itu
     // sendiri vs rencana BME sendiri, bukan vs target Branch×Brand resmi.
     const ach = r.target_sp ? ((r.actual_sp ?? 0) / r.target_sp) * 100 : null;
@@ -420,10 +420,10 @@ function computeDashboardData(rows, branchMap, branchSlugMap, activityTargets) {
   return { kpis, achieveTrend, productivTrend, eventCategory, networkCat, activities, currentMonthLabel: monthLabel(curKey), currentCount: curRows.length };
 }
 
-// Rute nyata (dari NAV_ROUTES) — sebelumnya tombol-tombol ini tidak punya
+// Rute nyata (dari NAV_ROUTES) - sebelumnya tombol-tombol ini tidak punya
 // onClick sama sekali (murni dekoratif, klaim aksi yang tidak terjadi apa-apa).
 // "Check In (GPS)"/"Upload Document" dihapus dari sini: itu alur mobile-only
-// (Check-in & upload foto activity report), web tidak punya halaman utk itu —
+// (Check-in & upload foto activity report), web tidak punya halaman utk itu -
 // menampilkannya di sini akan menjanjikan sesuatu yang tidak bisa dilakukan.
 const QUICK_ACTIONS = [
   { label: "Plan Activity", sub: "Buat plan baru", icon: "calendar", color: "#ED1C24", route: "activities" },
@@ -454,7 +454,7 @@ export default function MartaHubDashboard() {
   const [rawActivities, setRawActivities] = useState([]);
   const [branchMap, setBranchMap] = useState(() => new Map());
   // branch_id v1 (uuid, mh_branches) -> slug(nama) v2 (text, sama seperti
-  // mh_sites/mh_activity_target) — jembatan utk hitung Achievement % dari
+  // mh_sites/mh_activity_target) - jembatan utk hitung Achievement % dari
   // target resmi TMV (lib/activityTarget.js, diverifikasi 100% match).
   const [branchSlugMap, setBranchSlugMap] = useState(() => new Map());
   const [activityTargets, setActivityTargets] = useState([]);
@@ -468,7 +468,7 @@ export default function MartaHubDashboard() {
     [rawActivities, branchMap, branchSlugMap, activityTargets]
   );
 
-  // Titik Activity Map — data ASLI dari mh_activities (evidence, boleh tampil
+  // Titik Activity Map - data ASLI dari mh_activities (evidence, boleh tampil
   // apa adanya sesuai §0.2), MENGGANTIKAN 10 pin kota contoh yang sebelumnya
   // di-hardcode di SumatraMap.jsx (bukan dari database sama sekali).
   const mapActivities = useMemo(() => rawActivities
@@ -515,7 +515,7 @@ export default function MartaHubDashboard() {
 
         // Sejak fase approval Actual dihapus (validasi otomatis via trigger
         // server), satu-satunya antrean approval manusia yang tersisa adalah
-        // 'plan_submitted' — badge ini mengikuti approvalQueueProvider mobile.
+        // 'plan_submitted' - badge ini mengikuti approvalQueueProvider mobile.
         let pendingQ = supabaseMarta.from("mh_activities").select("id", { count: "exact", head: true }).eq("status", "plan_submitted");
         pendingQ = await applyMartaScope(pendingQ, sc);
         const { count: pending } = await pendingQ;
@@ -528,7 +528,7 @@ export default function MartaHubDashboard() {
         }
 
         // Target resmi Achievement % (mh_activity_target, di-set TMV/Brand TMV
-        // via Master Data > Target Aktivitas) — tabel kecil, org-wide, RLS
+        // via Master Data > Target Aktivitas) - tabel kecil, org-wide, RLS
         // select-all, dibaca langsung tanpa RPC (pola sama mh_posmat_target).
         const { data: targets, error: targetErr } = await supabaseMarta
           .from("mh_activity_target")
@@ -741,7 +741,7 @@ export default function MartaHubDashboard() {
           </div>
           <div style={{ flex: 1 }} />
 
-          {/* Bell — jumlah nyata dari antrean Approval (pendingCount), bukan dot dekoratif */}
+          {/* Bell - jumlah nyata dari antrean Approval (pendingCount), bukan dot dekoratif */}
           <button className="mh-btn" onClick={() => router.push("/martahub/approval")} title={pendingCount ? `${pendingCount} menunggu persetujuan` : "Tidak ada yang menunggu persetujuan"} style={{ position: "relative" }}>
             <div style={{ padding: 8, borderRadius: 9, border: `1.5px solid ${t.line}`, background: t.hover, display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Icon name="bell" size={17} color={t.mid} />
@@ -774,11 +774,11 @@ export default function MartaHubDashboard() {
           )}
           {scope && !scope.unscoped && !scope.found && (
             <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 10, background: t.warningBg, border: `1px solid ${C.warning}30`, color: C.warning, fontSize: 12, fontWeight: 600 }}>
-              Email Anda belum terdaftar sebagai profil MartaHub (mh_profiles) — dashboard menampilkan data kosong.
+              Email Anda belum terdaftar sebagai profil MartaHub (mh_profiles) - dashboard menampilkan data kosong.
             </div>
           )}
 
-          {/* ── Briefing — periode nyata + status approval nyata (data pendingCount
+          {/* ── Briefing - periode nyata + status approval nyata (data pendingCount
                sebelumnya sudah di-fetch tapi tidak pernah ditampilkan di konten). ── */}
           <div className="mh-brief">
             <div style={{ fontSize: 13, color: t.mid }}>
@@ -802,7 +802,7 @@ export default function MartaHubDashboard() {
             )}
           </div>
 
-          {/* ── KPI — 2 metrik utama (hero, dgn sparkline besar) + 4 pendukung ── */}
+          {/* ── KPI - 2 metrik utama (hero, dgn sparkline besar) + 4 pendukung ── */}
           <div className="mh-kpi-hero">
             {data.kpis.filter((k) => k.hero).map((kpi, i) => (
               <div key={i} className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: "18px 20px" }}>
@@ -869,7 +869,7 @@ export default function MartaHubDashboard() {
               </div>
             </div>
 
-            {/* Activity Map — filter layer sesungguhnya (status/site/wilayah) ada
+            {/* Activity Map - filter layer sesungguhnya (status/site/wilayah) ada
                 di dalam MapCard sendiri (tombol tune), tidak diduplikasi di sini. */}
             <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, marginBottom: 12 }}>Activity Map</div>
@@ -953,12 +953,12 @@ export default function MartaHubDashboard() {
           </div>
 
           {/* ── Recent Activity ──────────────────────────────────────────────
-               Ringkasan saja (bukan tabel detail 14-kolom seperti sebelumnya) —
+               Ringkasan saja (bukan tabel detail 14-kolom seperti sebelumnya) -
                detail penuh & filter lanjutan sudah ada di menu Activity
                Monitoring tersendiri; dashboard cukup menampilkan yang perlu
                diketahui sekilas + jalan pintas ke sana. Tab status diperbaiki:
                "Validated" sebelumnya tidak pernah cocok dgn status manapun
-               (bug lama — tab itu selalu kosong), diganti "Rejected" yg nyata. */}
+               (bug lama - tab itu selalu kosong), diganti "Rejected" yg nyata. */}
           <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, overflow: "hidden" }}>
             {/* Header */}
             <div style={{ padding: "16px 20px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>

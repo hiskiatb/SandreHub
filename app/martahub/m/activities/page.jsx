@@ -1,6 +1,6 @@
 "use client";
 /**
- * /martahub/m/activities — Daftar aktivitas BME/RGE dengan tab filter status,
+ * /martahub/m/activities - Daftar aktivitas BME/RGE dengan tab filter status,
  * data dari `mh_activities_for_me()` (RPC scoping sama dgn app Flutter).
  */
 import { useEffect, useMemo, useState, Suspense } from "react";
@@ -160,10 +160,10 @@ function ActivityCard({ r, onOpen }) {
                 {r.brand.toLowerCase() === "tri" ? "3ID" : "IM3"}
               </span>
             )}
-            <div style={{ fontSize: 13.5, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.event_name || "—"}</div>
+            <div style={{ fontSize: 13.5, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.event_name || "-"}</div>
           </div>
           <div style={{ marginTop: 4, fontSize: 11.5, color: "#8A8A96", fontWeight: 600 }}>
-            {r.mc || "—"} {r.site_id ? `· ${r.site_id}` : ""} · {fmtDate(r.plan_date)}
+            {r.mc || "-"} {r.site_id ? `· ${r.site_id}` : ""} · {fmtDate(r.plan_date)}
           </div>
         </div>
         <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 800, padding: "4px 9px", borderRadius: 999, color: meta.color, background: meta.bg, whiteSpace: "nowrap" }}>
@@ -172,7 +172,7 @@ function ActivityCard({ r, onOpen }) {
       </div>
       <div style={{ display: "flex", gap: 16, marginTop: 11, paddingTop: 11, borderTop: "1px solid #F0F0F3" }}>
         <MetricPair label="Target SP/FWA" value={`${fmtInt(r.target_sp)}/${fmtInt(r.target_fwa)}`} />
-        <MetricPair label="Actual SP/FWA" value={r.actual_sp == null ? "—" : `${fmtInt(r.actual_sp)}/${fmtInt(r.actual_fwa)}`} />
+        <MetricPair label="Actual SP/FWA" value={r.actual_sp == null ? "-" : `${fmtInt(r.actual_sp)}/${fmtInt(r.actual_fwa)}`} />
       </div>
     </button>
   );
@@ -191,7 +191,7 @@ function DetailSheet({ r, onClose }) {
   const router = useRouter();
   const meta = statusMeta(r.status);
 
-  // Satu aksi kontekstual utama per status — mengikuti percabangan yang sama
+  // Satu aksi kontekstual utama per status - mengikuti percabangan yang sama
   // dgn `_ActivityCard._buildBottom()` di Flutter (activity_list_screen.dart),
   // disederhanakan ke SATU tombol dominan per status alih-alih replikasi
   // penuh semua sub-kasus (mis. "plan belum lengkap" utk draft).
@@ -209,7 +209,7 @@ function DetailSheet({ r, onClose }) {
   }
 
   // Draft juga bisa langsung dilanjutkan ke wizard edit (mis. belum sempat
-  // isi lokasi lengkap) — ditawarkan sbg aksi SEKUNDER, tidak menggantikan
+  // isi lokasi lengkap) - ditawarkan sbg aksi SEKUNDER, tidak menggantikan
   // Check In yang sudah jadi aksi utama utk draft yang plan-nya sudah lengkap.
   const secondaryEdit = r.status === "draft" ? { label: "Edit Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${r.id}`) } : null;
 
@@ -218,15 +218,15 @@ function DetailSheet({ r, onClose }) {
       <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, margin: "0 auto", background: "#FFFFFF", borderRadius: "22px 22px 0 0", padding: "10px 22px calc(env(safe-area-inset-bottom,0px) + 22px)", fontFamily: FF }}>
         <div style={{ width: 40, height: 4, borderRadius: 3, background: "#E4E5EA", margin: "6px auto 16px" }} />
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-          <div style={{ fontSize: 17, fontWeight: 800, color: "#17181C" }}>{r.event_name || "—"}</div>
+          <div style={{ fontSize: 17, fontWeight: 800, color: "#17181C" }}>{r.event_name || "-"}</div>
           <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 800, padding: "5px 10px", borderRadius: 999, color: meta.color, background: meta.bg }}>{meta.label}</span>
         </div>
         <div style={{ marginTop: 6, fontSize: 12.5, color: "#8A8A96", fontWeight: 600 }}>
-          {r.mc || "—"} {r.site_id ? `· ${r.site_id}` : ""} · {fmtDate(r.plan_date)}
+          {r.mc || "-"} {r.site_id ? `· ${r.site_id}` : ""} · {fmtDate(r.plan_date)}
         </div>
         <div style={{ display: "flex", gap: 24, marginTop: 18, paddingTop: 16, borderTop: "1px solid #F0F0F3" }}>
           <MetricPair label="Target SP/FWA" value={`${fmtInt(r.target_sp)}/${fmtInt(r.target_fwa)}`} />
-          <MetricPair label="Actual SP/FWA" value={r.actual_sp == null ? "—" : `${fmtInt(r.actual_sp)}/${fmtInt(r.actual_fwa)}`} />
+          <MetricPair label="Actual SP/FWA" value={r.actual_sp == null ? "-" : `${fmtInt(r.actual_sp)}/${fmtInt(r.actual_fwa)}`} />
         </div>
         {r.validation_note && (
           <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 10, background: meta.bg, color: meta.color, fontSize: 11.5, fontWeight: 600, lineHeight: 1.5 }}>

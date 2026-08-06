@@ -5,7 +5,7 @@ import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { MapPin, ChevronRight, ChevronLeft, Users, Info } from "lucide-react";
 
 // ═════════════════════════════════════════════════════════════════════════════
-// Skor Geo Compliance (§8.3, Fase 8) — dihitung ON-THE-FLY di database (bukan
+// Skor Geo Compliance (§8.3, Fase 8) - dihitung ON-THE-FLY di database (bukan
 // tabel tersimpan), pooled SAMA RATA (tanpa bobot beda) dari 3 sumber evidence
 // yang SUDAH direkonsiliasi: status "event tervalidasi" (§0.2/§9.2), MD
 // Activities mode Activity/Outlet (§8.2), dan review manual Street Branding
@@ -27,7 +27,7 @@ function pctColor(pct) {
 
 export default function GeoCompliancePage() {
   return (
-    <MartaShell active="geo-compliance" title="Skor Geo Compliance" subtitle="Kepatuhan lokasi evidence — berjenjang dari lapangan sampai nasional (§8.3).">
+    <MartaShell active="geo-compliance" title="Skor Geo Compliance" subtitle="Kepatuhan lokasi evidence - berjenjang dari lapangan sampai nasional (§8.3).">
       {(ctx) => <Body email={ctx?.session?.user?.email} />}
     </MartaShell>
   );
@@ -147,13 +147,13 @@ function Body({ email }) {
                   strokeLinecap="round" />
               </svg>
               <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, fontWeight: 800, color: T.hi }}>
-                {node?.pct == null ? "—" : `${node.pct}%`}
+                {node?.pct == null ? "-" : `${node.pct}%`}
               </div>
             </div>
             <div>
               <div style={{ fontSize: 11, fontWeight: 700, color: T.lo, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 4 }}>
                 <MapPin size={12} style={{ display: "inline", marginRight: 4, verticalAlign: -1 }} />
-                Geo Compliance — {current.name}
+                Geo Compliance - {current.name}
               </div>
               <div style={{ fontSize: 13, color: T.mid }}>
                 {node ? <><b style={{ color: T.hi }}>{node.valid_count}</b> valid dari <b style={{ color: T.hi }}>{node.total_count}</b> evidence direkonsiliasi bulan ini.</> : "Tidak ada data."}
@@ -186,12 +186,12 @@ function Body({ email }) {
                 <tr key={c.assignment_id} onClick={() => drillInto(c)} style={{ borderTop: `1px solid ${T.line}`, cursor: "pointer" }}
                   onMouseEnter={(e) => (e.currentTarget.style.background = "#F7F9FC")}
                   onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}>
-                  <td style={{ padding: "10px 14px", fontWeight: 700, color: T.hi }}>{c.full_name || "—"}</td>
+                  <td style={{ padding: "10px 14px", fontWeight: 700, color: T.hi }}>{c.full_name || "-"}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{ROLE_LABEL[c.role] || c.role}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{c.valid_count}/{c.total_count}</td>
                   <td style={{ padding: "10px 14px" }}>
                     <span style={{ fontSize: 10.5, fontWeight: 800, color: pctColor(c.pct), background: `${pctColor(c.pct)}1A`, padding: "2px 8px", borderRadius: 999 }}>
-                      {c.pct == null ? "—" : `${c.pct}%`}
+                      {c.pct == null ? "-" : `${c.pct}%`}
                     </span>
                   </td>
                   <td style={{ padding: "10px 14px", textAlign: "right" }}><ChevronRight size={15} color={T.lo} /></td>

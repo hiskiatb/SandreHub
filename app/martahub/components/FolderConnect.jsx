@@ -1,9 +1,9 @@
 "use client";
-// Panel "Hubungkan Folder" generik — dipakai fitur mana pun yang perlu baca
+// Panel "Hubungkan Folder" generik - dipakai fitur mana pun yang perlu baca
 // SATU file dari folder lokal secara berkala (Validasi Lokasi/Outlet Lat/Lng
 // Master, Validity MSISDN, dst.), sumber dari lib/useFolderConnection.js.
 // Gaya visual konsisten dengan ConnectSourceSection di SumatraMap.jsx (fitur
-// peta) — tapi generik, tidak terikat konsep layer peta.
+// peta) - tapi generik, tidak terikat konsep layer peta.
 import { periodFromName, periodKeyFromName } from "../../../lib/geoImport";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -46,7 +46,7 @@ export function FolderConnectPanel({ t, source, color = "#ED1C24", acceptAttr, e
         <Icon name="folder" size={15} color={gradient ? "#fff" : color} /> {busy ? "Memproses…" : "Pilih berkas (perangkat ini)"}
       </button>
       <div style={{ fontSize: 10, color: t.lo, lineHeight: 1.55, marginTop: 8 }}>
-        Browser ini tidak mendukung &ldquo;Hubungkan Folder&rdquo; (butuh Chrome/Edge) — pilih berkas manual tiap sesi, tetap diproses 100% lokal, tidak pernah dikirim ke server.
+        Browser ini tidak mendukung &ldquo;Hubungkan Folder&rdquo; (butuh Chrome/Edge) - pilih berkas manual tiap sesi, tetap diproses 100% lokal, tidak pernah dikirim ke server.
       </div>
     </>);
   } else if (!folder) {
@@ -55,7 +55,7 @@ export function FolderConnectPanel({ t, source, color = "#ED1C24", acceptAttr, e
         <Icon name="folder" size={15} color={gradient ? "#fff" : color} /> {busy ? "Memproses…" : "Hubungkan Folder"}
       </button>
       <div style={{ fontSize: 10, color: t.lo, lineHeight: 1.55, marginTop: 8 }}>
-        Pilih folder yang berisi berkas {extLabel} — periode terdeteksi otomatis dari nama file. Sesi berikutnya tinggal beri izin ulang, bukan pilih ulang dari nol.
+        Pilih folder yang berisi berkas {extLabel} - periode terdeteksi otomatis dari nama file. Sesi berikutnya tinggal beri izin ulang, bukan pilih ulang dari nol.
       </div>
     </>);
   } else if (folder.needsPermission) {

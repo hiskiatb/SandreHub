@@ -46,14 +46,14 @@ function Body() {
               {!loading && rows.map((r, i) => (
                 <tr key={r.id || i} style={{ borderTop: `1px solid ${T.line}` }}>
                   <td style={{ padding: "10px 14px", fontWeight: 800 }}>{medal(i)}</td>
-                  <td style={{ padding: "10px 14px", fontWeight: 700 }}>{r.user_name || r.user_id || "—"}</td>
-                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.branch_id || "—"}</td>
-                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.brand || "—"}</td>
+                  <td style={{ padding: "10px 14px", fontWeight: 700 }}>{r.user_name || r.user_id || "-"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.branch_id || "-"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.brand || "-"}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{r.total_activities ?? 0}</td>
-                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.achievement_pct != null ? `${Math.round(r.achievement_pct)}%` : "—"}</td>
-                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.productivity_pct != null ? `${Math.round(r.productivity_pct)}%` : "—"}</td>
-                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.geo_compliance != null ? `${Math.round(r.geo_compliance)}%` : "—"}</td>
-                  <td style={{ padding: "10px 14px", fontWeight: 800 }}>{r.final_score != null ? Math.round(r.final_score) : "—"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.achievement_pct != null ? `${Math.round(r.achievement_pct)}%` : "-"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.productivity_pct != null ? `${Math.round(r.productivity_pct)}%` : "-"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.geo_compliance != null ? `${Math.round(r.geo_compliance)}%` : "-"}</td>
+                  <td style={{ padding: "10px 14px", fontWeight: 800 }}>{r.final_score != null ? Math.round(r.final_score) : "-"}</td>
                 </tr>
               ))}
             </tbody>

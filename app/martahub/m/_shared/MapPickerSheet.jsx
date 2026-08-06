@@ -1,12 +1,12 @@
 "use client";
 /**
- * MapPickerSheet — picker peta interaktif (web mobile), padanan
+ * MapPickerSheet - picker peta interaktif (web mobile), padanan
  * `location_picker_screen.dart` di Flutter. Pakai Leaflet + tile OpenStreetMap
  * (TANPA API key, sama seperti alasan Flutter pakai flutter_map bukan
- * google_maps_flutter — lihat pubspec.yaml komentar). Pola "pin diam di
+ * google_maps_flutter - lihat pubspec.yaml komentar). Pola "pin diam di
  * tengah, peta yang digeser" (bukan marker draggable), reverse-geocode via
  * Nominatim (gratis, tanpa key) di-debounce 500ms setelah peta berhenti
- * bergerak — SAMA PERSIS dgn `_onSettled()` Flutter.
+ * bergerak - SAMA PERSIS dgn `_onSettled()` Flutter.
  */
 import { useEffect, useRef, useState } from "react";
 import { X, Crosshair, Search, Check, Loader2, MapPin } from "lucide-react";
@@ -16,7 +16,7 @@ const LEAFLET_CSS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
 const LEAFLET_JS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
 
 let leafletLoadPromise = null;
-function loadLeaflet() {
+export function loadLeaflet() {
   if (typeof window === "undefined") return Promise.reject(new Error("no window"));
   if (window.L) return Promise.resolve(window.L);
   if (leafletLoadPromise) return leafletLoadPromise;
@@ -186,7 +186,7 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
             )}
           </div>
         )}
-        {/* Center pin — diam di tengah, peta yang digeser di bawahnya */}
+        {/* Center pin - diam di tengah, peta yang digeser di bawahnya */}
         {ready && (
           <div style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%,-100%)", pointerEvents: "none", zIndex: 5 }}>
             <MapPin size={38} color="#ED1C24" fill="#ED1C24" fillOpacity={0.15} strokeWidth={2.2} />

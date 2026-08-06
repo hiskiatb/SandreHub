@@ -2,7 +2,7 @@
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,sans-serif`;
 
-// Single stylesheet — dark handled via [data-theme="dark"] selector.
+// Single stylesheet - dark handled via [data-theme="dark"] selector.
 // Class names never change between SSR and client → no hydration mismatch.
 const ANIMS = `
   @keyframes hl-spring-in {
@@ -49,7 +49,7 @@ const ANIMS = `
   .hl-bar-fill   { position:absolute; inset:0; border-radius:99px; background:#ED1C24; transform-origin:left center; animation:hl-bar 1.4s cubic-bezier(0.4,0,0.6,1) 0.9s infinite; }
   .hl-loader     { animation:hl-name-up 0.4s ease 1.0s both; }
 
-  /* ── dark overrides (no keyframe redeclaration needed — same animations) ── */
+  /* ── dark overrides (no keyframe redeclaration needed - same animations) ── */
   [data-theme="dark"] .hl-shimmer-wrap::after {
     background:linear-gradient(105deg,transparent 30%,rgba(255,255,255,0.45) 50%,transparent 70%);
   }
@@ -59,7 +59,7 @@ const ANIMS = `
 `;
 
 /**
- * Unified animated loading screen — works for both light and dark themes.
+ * Unified animated loading screen - works for both light and dark themes.
  * CSS [data-theme="dark"] selectors handle dark styling, so SSR and client
  * always render the same class names → no hydration mismatch.
  */
@@ -100,7 +100,7 @@ export function HubLogoLoader({ variant = "marta", logoSize = 88 }) {
   );
 }
 
-/** @deprecated Use HubLogoLoader — it handles dark mode automatically via CSS */
+/** @deprecated Use HubLogoLoader - it handles dark mode automatically via CSS */
 export function HubLogoLoaderDark({ variant = "marta", logoSize = 88 }) {
   return <HubLogoLoader variant={variant} logoSize={logoSize} />;
 }

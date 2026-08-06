@@ -10,7 +10,7 @@ import {
 } from "../../../lib/folderHandles";
 import "leaflet/dist/leaflet.css";
 
-// Email sesi (SandraHub, sama seperti gerbang akses MartaHub §0.1) — dipakai
+// Email sesi (SandraHub, sama seperti gerbang akses MartaHub §0.1) - dipakai
 // hanya untuk mencatat SIAPA terakhir memproses file lokal (audit ringan di
 // status metadata), bukan untuk otentikasi ke project MartaHub.
 async function currentEmail() {
@@ -21,7 +21,7 @@ async function currentEmail() {
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const C = { success: "#2E7D32", warning: "#F57F17", error: "#C62828", errorL: "#FFEBEE" };
 
-// Warna titik Activity Map, by status mh_activities (BUKAN pin contoh lagi —
+// Warna titik Activity Map, by status mh_activities (BUKAN pin contoh lagi -
 // data selalu dioper dari luar via prop `activityPoints`, dari mh_activities
 // asli). Dipertahankan longgar (fallback abu) supaya status baru/tak dikenal
 // tidak pernah bikin titik hilang dari peta.
@@ -156,9 +156,9 @@ async function paintOverlays(map, fgRef, layers, { expanded, appBg }) {
   }
 }
 
-// ── Activity Map — titik ASLI dari mh_activities (evidence, §0.2) ────────────
+// ── Activity Map - titik ASLI dari mh_activities (evidence, §0.2) ────────────
 // Dioper dari luar via prop `activityPoints` (page.jsx query mh_activities
-// terscope TMV) — komponen ini TIDAK query apa pun sendiri, murni render.
+// terscope TMV) - komponen ini TIDAK query apa pun sendiri, murni render.
 async function paintActivities(map, ref, points, { expanded } = {}) {
   if (!map || !map._container) return;
   const L = (await import("leaflet")).default;
@@ -285,7 +285,7 @@ async function paintSites(map, ref, siteArr, { outline = false } = {}) {
   if (!map.getPane("siteOutlinePane")) { map.createPane("siteOutlinePane"); map.getPane("siteOutlinePane").style.zIndex = 635; }
   const renderer = L.canvas({ padding: 0.4, pane: "sitesPane" });
   const grp = L.layerGroup();
-  // Outline area titik terfilter (dibuat dari convex hull) — hanya saat filter aktif.
+  // Outline area titik terfilter (dibuat dari convex hull) - hanya saat filter aktif.
   if (outline && siteArr.length >= 3) {
     const hull = convexHull(siteArr.map((s) => [s.lng, s.lat]));
     if (hull.length >= 3) {
@@ -348,7 +348,7 @@ function I({ name, size = 15, color = "currentColor" }) {
   return icons[name] || null;
 }
 
-// Legend Activity Map — status asli mh_activities (ganti "Produktivitas
+// Legend Activity Map - status asli mh_activities (ganti "Produktivitas
 // Tinggi/Sedang/Rendah" lama yang cuma cocok utk 10 pin contoh yang sudah
 // dihapus). Disembunyikan otomatis kalau tidak ada titik activity sama sekali
 // supaya tidak menampilkan legend kosong/menyesatkan.
@@ -369,21 +369,21 @@ function MapLegend({ t, show = true }) {
 
 // ── Hook: kelola layer batas wilayah ──────────────────────────────────────────
 // Sumber tampilan = cache lokal (IndexedDB), 100% di device ini. TIDAK ADA lagi
-// payload (geojson/koordinat site) yang tersimpan di server mana pun — hanya
+// payload (geojson/koordinat site) yang tersimpan di server mana pun - hanya
 // STATUS metadata (nama file, periode, jumlah fitur, siapa/kapan) yang dicatat
 // di project MartaHub (mh_map_layer_status) supaya perangkat lain tahu file
 // mana yang perlu di-connect ulang secara lokal. Lihat lib/territoryStore.js.
 //
-// TIDAK ADA tombol "upload" — dua jalur pengisian data, keduanya 100% lokal:
-//  1. "Hubungkan Folder" (File System Access API, Chrome/Edge) — user pilih
+// TIDAK ADA tombol "upload" - dua jalur pengisian data, keduanya 100% lokal:
+//  1. "Hubungkan Folder" (File System Access API, Chrome/Edge) - user pilih
 //     folder SEKALI, browser mengingat *referensi* foldernya (bukan isinya)
 //     di IndexedDB perangkat ini. Sesi berikutnya (mis. setelah logout/login)
-//     tinggal klik "Berikan Izin Ulang" kalau browser sudah lupa izinnya —
+//     tinggal klik "Berikan Izin Ulang" kalau browser sudah lupa izinnya -
 //     tidak pernah otomatis/silent, selalu perlu klik eksplisit user.
 //  2. Fallback file-picker biasa (browser yang tidak dukung File System Access
-//     API, mis. Firefox/Safari) — pilih file manual tiap sesi, seperti semula.
+//     API, mis. Firefox/Safari) - pilih file manual tiap sesi, seperti semula.
 // Di KEDUA jalur: isi file (geojson/koordinat) diproses di browser & disimpan
-// HANYA di IndexedDB lokal — tidak pernah dikirim ke server mana pun (§0.2).
+// HANYA di IndexedDB lokal - tidak pernah dikirim ke server mana pun (§0.2).
 export function useGeoLayers() {
   const fileRef = useRef(null);
   const [layers, setLayers] = useState([]);      // yang ditampilkan (parsed, cache lokal)
@@ -395,7 +395,7 @@ export function useGeoLayers() {
   const siteFileRef = useRef(null);
   const [sites, setSites] = useState([]);         // record { id,name,period,sites:[],count,total,visible,ts }
 
-  // ── Folder link — HANYA referensi folder (FileSystemDirectoryHandle) di
+  // ── Folder link - HANYA referensi folder (FileSystemDirectoryHandle) di
   // IndexedDB perangkat ini, TIDAK PERNAH isinya. Lihat lib/folderHandles.js.
   const territoryHandleRef = useRef(null);
   const sitesHandleRef = useRef(null);
@@ -415,7 +415,7 @@ export function useGeoLayers() {
   }
 
   // Satu jalur proses File, dipakai baik dari folder-link maupun fallback
-  // <input type=file> — supaya perilaku (parsing, simpan lokal, catat status)
+  // <input type=file> - supaya perilaku (parsing, simpan lokal, catat status)
   // konsisten dari mana pun File-nya berasal.
   async function processFile(kind, file) {
     setBusy(true); setErr(""); setStatus(""); setProgress(1);
@@ -456,7 +456,7 @@ export function useGeoLayers() {
     } catch (e) { setErr("Gagal membaca file dari folder: " + (e.message || e)); }
   }
 
-  // Klik "Hubungkan Folder" — HARUS dipanggil langsung dari user-gesture.
+  // Klik "Hubungkan Folder" - HARUS dipanggil langsung dari user-gesture.
   async function connectFolder(kind) {
     if (!supportsFolderLink) return;
     setErr("");
@@ -473,7 +473,7 @@ export function useGeoLayers() {
     } catch (e) { if (e?.name !== "AbortError") setErr("Gagal menghubungkan folder: " + (e.message || e)); }
   }
 
-  // Klik "Berikan Izin Ulang" — HARUS dipanggil langsung dari user-gesture,
+  // Klik "Berikan Izin Ulang" - HARUS dipanggil langsung dari user-gesture,
   // biasanya setelah sesi baru (logout/login) & browser sudah lupa izinnya.
   async function reauthorizeFolder(kind) {
     const handleRef = kind === "territory" ? territoryHandleRef : sitesHandleRef;
@@ -481,7 +481,7 @@ export function useGeoLayers() {
     const handle = handleRef.current;
     if (!handle) return;
     const ok = await ensurePermission(handle);
-    if (!ok) { setErr("Izin folder ditolak — data tidak bisa dibaca sampai izin diberikan."); return; }
+    if (!ok) { setErr("Izin folder ditolak - data tidak bisa dibaca sampai izin diberikan."); return; }
     setFolder((f) => ({ ...(f || {}), needsPermission: false }));
     const files = await scanFolder(kind);
     const rec = await getFolderHandle(kind);
@@ -491,7 +491,7 @@ export function useGeoLayers() {
 
   // Scan ulang folder yang SUDAH terhubung (mis. isi file periode yang sedang
   // aktif baru saja diganti) tanpa perlu connect folder dari nol. SENGAJA
-  // memuat ulang periode yang sedang aktif (bukan lompat ke file terbaru) —
+  // memuat ulang periode yang sedang aktif (bukan lompat ke file terbaru) -
   // supaya "Refresh" tidak diam-diam mengganti pilihan periode user (§UX).
   async function refreshFolder(kind) {
     const current = kind === "territory" ? territoryFolder : sitesFolder;
@@ -511,7 +511,7 @@ export function useGeoLayers() {
 
   useEffect(() => {
     (async () => {
-      // 1) Muat cache lokal (kalau ada) — cepat, tampil instan, satu-satunya sumber payload.
+      // 1) Muat cache lokal (kalau ada) - cepat, tampil instan, satu-satunya sumber payload.
       let localLayers = [];
       try {
         const rows = await idbAll();
@@ -527,14 +527,14 @@ export function useGeoLayers() {
       } catch { /* noop */ }
       try { setSites((await idbAllSites() || []).sort((a, b) => (b.ts || 0) - (a.ts || 0))); } catch { /* noop */ }
 
-      // 2) Status organisasi (metadata saja) — TIDAK ada payload untuk dimuat balik;
+      // 2) Status organisasi (metadata saja) - TIDAK ada payload untuk dimuat balik;
       //    kalau device ini kosong, status dipakai untuk tampilkan "belum tersambung".
       await refreshStatus();
 
-      // 3) Folder yang sudah pernah dihubungkan di perangkat ini (kalau ada) —
+      // 3) Folder yang sudah pernah dihubungkan di perangkat ini (kalau ada) -
       //    cek izin TANPA meminta (aman di luar user-gesture); kalau izin masih
       //    berlaku, langsung scan+muat lagi. Kalau tidak, tampilkan status
-      //    "perlu izin ulang" — TIDAK pernah minta izin otomatis/silent.
+      //    "perlu izin ulang" - TIDAK pernah minta izin otomatis/silent.
       if (supportsFolderLink) {
         try {
           const tRec = await getFolderHandle("territory");
@@ -589,13 +589,13 @@ export function useGeoLayers() {
 }
 
 // ── Baris status ringkas 1 kind ("connected" / "disconnected" / "none") ──────
-// "connected"    = ada data di cache lokal perangkat INI (localCount > 0) — ini
+// "connected"    = ada data di cache lokal perangkat INI (localCount > 0) - ini
 //                  yang benar-benar menentukan apa yang tampil di peta, TERLEPAS
 //                  dari ada/tidaknya status organisasi (mis. status baru dihapus
-//                  tapi cache lokal browser belum ikut dibersihkan — kasus nyata
+//                  tapi cache lokal browser belum ikut dibersihkan - kasus nyata
 //                  yang bikin strip & peta kelihatan kontradiktif kalau dicek
 //                  cuma dari statusRow).
-// "disconnected" = TIDAK ada cache lokal, tapi organisasi pernah catat status —
+// "disconnected" = TIDAK ada cache lokal, tapi organisasi pernah catat status -
 //                  kasus paling umum: ganti laptop/browser, karena payload
 //                  memang TIDAK PERNAH disimpan di server (§0.2).
 // "none"         = benar-benar kosong (lokal maupun organisasi).
@@ -612,9 +612,9 @@ export function LayerStatusRow({ t, label, dotColor, localCount, localInfo, stat
       <div style={{ flex: 1, minWidth: 0, fontSize: compact ? 10.5 : 11, color: t.mid, lineHeight: 1.45 }}>
         <b style={{ color: t.hi }}>{label}</b>
         {state === "connected" && (
-          <> · <span style={{ color: C.success, fontWeight: 700 }}>Tersambung (perangkat ini)</span> — {statusRow ? <>{statusRow.period ? `${statusRow.period} · ` : ""}{statusRow.file_name}{who ? ` · ${who}` : ""} · {fmtWhen(statusRow.updated_at)}</> : <>{localName || "data lokal"} <i>(belum tercatat status organisasi)</i></>}</>
+          <> · <span style={{ color: C.success, fontWeight: 700 }}>Tersambung (perangkat ini)</span> - {statusRow ? <>{statusRow.period ? `${statusRow.period} · ` : ""}{statusRow.file_name}{who ? ` · ${who}` : ""} · {fmtWhen(statusRow.updated_at)}</> : <>{localName || "data lokal"} <i>(belum tercatat status organisasi)</i></>}</>
         )}
-        {state === "disconnected" && <> · <span style={{ color: "#8a5b00", fontWeight: 700 }}>Belum tersambung di perangkat ini</span> — terakhir {statusRow.period ? `${statusRow.period} · ` : ""}<b>{statusRow.file_name}</b>{who ? ` oleh ${who}` : ""} ({fmtWhen(statusRow.updated_at)}). Pilih file yang sama untuk tampil di peta ini.</>}
+        {state === "disconnected" && <> · <span style={{ color: "#8a5b00", fontWeight: 700 }}>Belum tersambung di perangkat ini</span> - terakhir {statusRow.period ? `${statusRow.period} · ` : ""}<b>{statusRow.file_name}</b>{who ? ` oleh ${who}` : ""} ({fmtWhen(statusRow.updated_at)}). Pilih file yang sama untuk tampil di peta ini.</>}
         {state === "none" && <> · Belum ada data.</>}
       </div>
       {canManage && state !== "connected" && (
@@ -633,7 +633,7 @@ export function LayerStatusRow({ t, label, dotColor, localCount, localInfo, stat
 
 // ── Panel kelola layer (dipakai modal & halaman penuh) ────────────────────────
 // ── Jalur pengisian data (Hubungkan Folder ATAU fallback file-picker) ────────
-// Tidak ada "upload" — connect folder cuma menyimpan REFERENSI folder secara
+// Tidak ada "upload" - connect folder cuma menyimpan REFERENSI folder secara
 // lokal (lib/folderHandles.js), isi file tidak pernah dikirim ke server mana
 // pun (§0.2). Dipakai untuk section Batas Wilayah & Titik Site (parameterized
 // by `kind`) supaya perilakunya konsisten.
@@ -654,7 +654,7 @@ function ConnectSourceSection({ t, geo, kind, color, acceptAttr, gradient }) {
         <I name="upload" size={15} color={gradient ? "#fff" : color} /> {busy ? `Memproses… ${progress}%` : (hasLocal ? "Perbarui berkas (perangkat ini)" : "Pilih berkas (perangkat ini)")}
       </button>
       <div style={{ fontSize: 10, color: t.lo, lineHeight: 1.55, margin: "8px 0" }}>
-        Browser ini tidak mendukung &ldquo;Hubungkan Folder&rdquo; (butuh Chrome/Edge) — pilih berkas manual, tetap diproses 100% lokal, tidak pernah dikirim ke server.
+        Browser ini tidak mendukung &ldquo;Hubungkan Folder&rdquo; (butuh Chrome/Edge) - pilih berkas manual, tetap diproses 100% lokal, tidak pernah dikirim ke server.
       </div>
     </>);
   }
@@ -665,7 +665,7 @@ function ConnectSourceSection({ t, geo, kind, color, acceptAttr, gradient }) {
         <I name="folder" size={15} color={gradient ? "#fff" : color} /> {busy ? `Memproses… ${progress}%` : "Hubungkan Folder"}
       </button>
       <div style={{ fontSize: 10, color: t.lo, lineHeight: 1.55, margin: "8px 0" }}>
-        Pilih folder yang berisi berkas {kind === "territory" ? "batas wilayah (.zip/.kml/.kmz/.geojson)" : "titik site (.xlsx/.xls/.csv)"} — periode terdeteksi otomatis dari nama file, bisa diganti kapan saja setelah terhubung.
+        Pilih folder yang berisi berkas {kind === "territory" ? "batas wilayah (.zip/.kml/.kmz/.geojson)" : "titik site (.xlsx/.xls/.csv)"} - periode terdeteksi otomatis dari nama file, bisa diganti kapan saja setelah terhubung.
       </div>
     </>);
   }
@@ -681,7 +681,7 @@ function ConnectSourceSection({ t, geo, kind, color, acceptAttr, gradient }) {
     </>);
   }
 
-  // Turunkan periode dari nama tiap file (murni tampilan — TIDAK disimpan di
+  // Turunkan periode dari nama tiap file (murni tampilan - TIDAK disimpan di
   // mana pun selain hasil parse-nya sendiri, sesuai "yang disimpan hanya path
   // foldernya"). Urut: yang punya periode dulu (terbaru→terlama), sisanya
   // (nama tak terdeteksi) diurut by lastModified.
@@ -764,7 +764,7 @@ export function LayerPanel({ t, geo, style, canManage = false }) {
       {err && <div style={{ fontSize: 11, color: C.error, background: C.errorL, border: `1px solid ${C.error}30`, borderRadius: 8, padding: "7px 9px", marginTop: 8 }}>{err}</div>}
       {canManage && (
         <div style={{ fontSize: 10, color: t.lo, lineHeight: 1.55, margin: "10px 0" }}>
-          <I name="shield" size={11} color={C.success} /> Isi file diproses & disimpan <b>100% lokal di perangkat ini</b> — tidak pernah dikirim ke server. Hanya nama file & referensi folder yang diingat, supaya sesi berikutnya tinggal beri izin ulang, bukan pilih ulang dari nol. Peta menampilkan wilayah <b>Sumatera</b>.
+          <I name="shield" size={11} color={C.success} /> Isi file diproses & disimpan <b>100% lokal di perangkat ini</b> - tidak pernah dikirim ke server. Hanya nama file & referensi folder yang diingat, supaya sesi berikutnya tinggal beri izin ulang, bukan pilih ulang dari nol. Peta menampilkan wilayah <b>Sumatera</b>.
         </div>
       )}
 
@@ -782,7 +782,7 @@ export function LayerPanel({ t, geo, style, canManage = false }) {
       )}
       {canManage && (
         <div style={{ fontSize: 10, color: t.lo, lineHeight: 1.55, margin: "8px 0" }}>
-          Excel (.xlsb / .xlsx / .csv) berisi koordinat site — diproses <b>100% lokal</b>, tidak pernah dikirim ke server. Titik di luar Sumatera diabaikan.
+          Excel (.xlsb / .xlsx / .csv) berisi koordinat site - diproses <b>100% lokal</b>, tidak pernah dikirim ke server. Titik di luar Sumatera diabaikan.
         </div>
       )}
     </div>
@@ -802,7 +802,7 @@ export function MapCard({ t, dark, height = 260, canManage = false, activityPoin
   const activityRef = useRef(activityPoints); activityRef.current = activityPoints;
 
   // Bangun ulang sekali setelah layout dashboard benar-benar settle (meniru efek
-  // toggle tema) — memastikan peta tampil di render pertama tanpa perlu di-toggle.
+  // toggle tema) - memastikan peta tampil di render pertama tanpa perlu di-toggle.
   useEffect(() => {
     const id = setTimeout(() => setBoot((b) => b + 1), 350);
     return () => clearTimeout(id);
@@ -845,7 +845,7 @@ export function MapCard({ t, dark, height = 260, canManage = false, activityPoin
   useEffect(() => { if (bigMapRef.current) paintSites(bigMapRef.current, bigSitesFgRef, siteData); }, [siteData]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (bigMapRef.current) paintActivities(bigMapRef.current, bigActivitiesFgRef, activityPoints, { expanded: true }); }, [activityPoints]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Shortcut "connect ulang" langsung di dashboard — laptop/browser berbeda
+  // Shortcut "connect ulang" langsung di dashboard - laptop/browser berbeda
   // berarti IndexedDB lokal kosong walau organisasi sudah pernah upload
   // (payload memang tidak pernah ke server, §0.2). Klik "Hubungkan" membuka
   // modal (LayerPanel di dalamnya sudah punya tombol upload yang berfungsi).

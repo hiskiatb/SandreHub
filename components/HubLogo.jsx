@@ -1,15 +1,15 @@
 "use client";
 
 /**
- * HubLogo — real PNG image logos
+ * HubLogo - real PNG image logos
  *
  * Props:
  *   variant : "sandra" | "marta"
- *   size    : number (px) — height of the logo box
- *   dark    : boolean — dark background context (Sandra uses dark-slate bg, Marta stays white)
- *   shadow  : boolean — drop-shadow (default true)
- *   inBox   : boolean — wrap in rounded-square box (default true)
- *   markOnly: boolean — show wide wordmark instead of square icon (default false)
+ *   size    : number (px) - height of the logo box
+ *   dark    : boolean - dark background context (Sandra uses dark-slate bg, Marta stays white)
+ *   shadow  : boolean - drop-shadow (default true)
+ *   inBox   : boolean - wrap in rounded-square box (default true)
+ *   markOnly: boolean - show wide wordmark instead of square icon (default false)
  */
 
 /** Background colours */
@@ -34,7 +34,7 @@ export function HubLogo({
 }) {
   const isMarta = variant === "marta";
 
-  // Square icon — Sandra always light bg; Marta respects dark prop
+  // Square icon - Sandra always light bg; Marta respects dark prop
   const iconSrc = (dark && isMarta)
     ? "/logos/marta-icon-dark.png"
     : (isMarta ? "/logos/marta-icon.png" : "/logos/sandra-icon.png");
@@ -47,7 +47,7 @@ export function HubLogo({
 
   const alt = isMarta ? "MartaHub" : "SandraHub";
 
-  /* ── Wide wordmark mode — no box ───────────────────────────────────── */
+  /* ── Wide wordmark mode - no box ───────────────────────────────────── */
   if (markOnly) {
     return (
       <img
@@ -70,14 +70,14 @@ export function HubLogo({
     );
   }
 
-  /* ── Square icon — with or without box ─────────────────────────────── */
+  /* ── Square icon - with or without box ─────────────────────────────── */
   const radius = size * 0.225;
   const shadowFilter = shadow
     ? "drop-shadow(0px 2px 8px rgba(0,0,0,0.14)) drop-shadow(0px 6px 22px rgba(0,0,0,0.09))"
     : undefined;
 
   if (!inBox) {
-    // No box — icon PNG already has baked-in bg, just show with shadow
+    // No box - icon PNG already has baked-in bg, just show with shadow
     return (
       <img
         src={iconSrc}
@@ -98,7 +98,7 @@ export function HubLogo({
     );
   }
 
-  /* inBox=true: CSS box around the icon — always light bg */
+  /* inBox=true: CSS box around the icon - always light bg */
   const bg     = BG.light;
   const border = BORDER.light;
 
@@ -135,7 +135,7 @@ export function HubLogo({
   );
 }
 
-/** Convenience alias — square icon only */
+/** Convenience alias - square icon only */
 export function HubIcon({
   variant = "marta",
   size    = 40,

@@ -1,11 +1,15 @@
 "use client";
 /**
- * /martahub/m/profile — Profil BME/RGE (web mobile), padanan `profile_screen.dart`
- * di Flutter: identitas, scope penugasan, akses ke Transfer MSISDN, dan Keluar.
+ * /martahub/m/profile - Profil BME/RGE (web mobile), padanan `profile_screen.dart`
+ * di Flutter: identitas, informasi akun, scope penugasan, dan Keluar.
+ *
+ * Transfer MSISDN SENGAJA tidak lagi jadi baris menu di sini - permintaan
+ * transfer yg ditujukan ke pengguna ini sudah masuk lewat inbox Notifikasi
+ * (badge digabung di Home), jadi tidak perlu jalan pintas kedua di sini.
  */
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, LogOut, Mail, Building2, MapPin, Sparkles, ArrowLeftRight, Target, TrendingUp, ChevronRight, Hash } from "lucide-react";
+import { ArrowLeft, LogOut, Mail, Building2, MapPin, Sparkles, Target, TrendingUp, ChevronRight, Hash, User2 } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { fmtInt } from "../_shared/activityUi";
@@ -48,14 +52,14 @@ export default function ProfilePage() {
         <BackBar router={router} />
 
         {/* Header card */}
-        <div style={{ marginTop: 16, borderRadius: 20, background: BRAND, padding: "22px 20px", color: "#fff", boxShadow: "0 6px 18px rgba(17,17,20,0.12)", position: "relative", overflow: "hidden" }}>
+        <div style={{ marginTop: 16, borderRadius: 20, background: BRAND, padding: "22px 20px", color: "#fff", boxShadow: "0 8px 20px rgba(17,17,20,0.14), 0 2px 5px rgba(17,17,20,0.08)", position: "relative", overflow: "hidden" }}>
           <div style={{ position: "absolute", right: -30, top: -30, width: 120, height: 120, borderRadius: "50%", background: "rgba(255,255,255,0.08)" }} />
           <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
             <div style={{ width: 52, height: 52, borderRadius: "50%", background: "rgba(255,255,255,0.18)", border: "2px solid rgba(255,255,255,0.5)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, flexShrink: 0 }}>
               {initials(scope?.fullName || email)}
             </div>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 16, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{scope?.fullName || "—"}</div>
+              <div style={{ fontSize: 16, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{scope?.fullName || "-"}</div>
               <div style={{ marginTop: 3, display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, opacity: 0.9, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 <Mail size={11} /> {email}
               </div>
@@ -70,23 +74,31 @@ export default function ProfilePage() {
           )}
         </div>
 
-        {/* Scope info — authState sudah pasti 'active' di titik ini (lihat
-            catatan redirect di useMartaSession, MobileShell.jsx). */}
-        <SectionCard title="Penugasan">
-          <RowKV icon={<Sparkles size={13} />} label="Peran" value={ROLE_LABEL[scope?.role] || scope?.role} />
-          {scope?.brand && <RowKV icon={<Building2 size={13} />} label="Brand" value={scope.brand.toUpperCase()} />}
-          {scope?.branchName && <RowKV icon={<MapPin size={13} />} label="Cabang" value={scope.branchName} />}
-          {scope?.region && <RowKV icon={<MapPin size={13} />} label="Region" value={scope.region} />}
+        {/* Informasi akun - identitas dasar, terpisah dari scope penugasan
+            di bawahnya supaya tidak tercampur "siapa saya" vs "di mana saya
+            ditugaskan". */}
+        <SectionCard title="Informasi Akun">
+          <RowKV icon={<User2 size={13} />} label="Nama Lengkap" value={scope?.fullName || "-"} />
+          <RowKV icon={<Mail size={13} />} label="Email" value={email} />
+          <RowKV icon={<Sparkles size={13} />} label="Peran" value={ROLE_LABEL[scope?.role] || scope?.role || "-"} />
         </SectionCard>
 
-        {/* Menu */}
-        <div style={{ marginTop: 14, background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 16, overflow: "hidden" }}>
-          <MenuRow icon={<ArrowLeftRight size={16} />} label="Transfer MSISDN" onTap={() => router.push("/martahub/m/transfers")} />
+        {/* Scope info - authState sudah pasti 'active' di titik ini (lihat
+            catatan redirect di useMartaSession, MobileShell.jsx). */}
+        {(scope?.brand || scope?.branchName || scope?.region) && (
+          <SectionCard title="Penugasan">
+            {scope?.brand && <RowKV icon={<Building2 size={13} />} label="Brand" value={scope.brand.toUpperCase()} />}
+            {scope?.branchName && <RowKV icon={<MapPin size={13} />} label="Cabang" value={scope.branchName} />}
+            {scope?.region && <RowKV icon={<MapPin size={13} />} label="Region" value={scope.region} />}
+          </SectionCard>
+        )}
+
+        <div style={{ marginTop: 14, background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 16, overflow: "hidden", boxShadow: "0 4px 12px rgba(17,17,20,0.04)" }}>
           <MenuRow icon={<Hash size={16} />} label="Semua Aktivitas" onTap={() => router.push("/martahub/m/activities")} last />
         </div>
 
         <button onClick={signOut}
-          style={{ width: "100%", marginTop: 14, height: 48, borderRadius: 14, border: "1px solid #F7C6C9", background: "#FFF5F6", color: "#DC2626", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          style={{ width: "100%", marginTop: 14, height: 48, borderRadius: 14, border: "1px solid #F7C6C9", background: "#FFF5F6", color: "#DC2626", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 4px 12px rgba(220,38,38,0.06)" }}>
           <LogOut size={15} /> Keluar
         </button>
 
@@ -121,7 +133,7 @@ function MiniStat({ icon: Icon, label, value }) {
 
 function SectionCard({ title, children }) {
   return (
-    <div style={{ marginTop: 14, background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 16, padding: "14px 15px" }}>
+    <div style={{ marginTop: 14, background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 16, padding: "14px 15px", boxShadow: "0 4px 12px rgba(17,17,20,0.04)" }}>
       <div style={{ fontSize: 11, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 10 }}>{title}</div>
       {children}
     </div>

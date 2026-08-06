@@ -1,6 +1,6 @@
 "use client";
 /**
- * /martahub/m/posm/claims — Inbox persetujuan klaim stok POSM (khusus
+ * /martahub/m/posm/claims - Inbox persetujuan klaim stok POSM (khusus
  * approver). Padanan `posmat_claim_review_screen.dart` Flutter.
  */
 import { useEffect, useState } from "react";
@@ -103,7 +103,7 @@ function ClaimCard({ r, busy, onApprove, onReject }) {
     <div style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 16, padding: "14px 15px", fontFamily: FF }}>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 800, color: "#17181C" }}>{r.requested_by_name || "—"}</div>
+          <div style={{ fontSize: 13.5, fontWeight: 800, color: "#17181C" }}>{r.requested_by_name || "-"}</div>
           <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{r.branch_id} · {(r.brand || "").toUpperCase()} · {r.month}</div>
         </div>
         <span style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 3, fontSize: 9.5, fontWeight: 800, padding: "4px 9px", borderRadius: 999, color: badge.color, background: badge.bg }}>

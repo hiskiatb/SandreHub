@@ -200,7 +200,7 @@ function LayerPanel({ t, geo, style }) {
         </div>
       )}
       <div style={{ fontSize: 10, color: t.lo, lineHeight: 1.55, margin: "10px 0" }}>
-        <I name="check" size={11} color={C.success} /> Diproses <b>di perangkat ini</b> — tidak dikirim ke server. Disimpan lokal, bisa dihapus kapan saja. Format: .zip (SHP), .kml, .kmz, .geojson · maks 200 MB · hanya wilayah Sumatera.
+        <I name="check" size={11} color={C.success} /> Diproses <b>di perangkat ini</b> - tidak dikirim ke server. Disimpan lokal, bisa dihapus kapan saja. Format: .zip (SHP), .kml, .kmz, .geojson · maks 200 MB · hanya wilayah Sumatera.
       </div>
       {err && <div style={{ fontSize: 11, color: C.error, background: C.errorL, border: `1px solid ${C.error}30`, borderRadius: 8, padding: "7px 9px", marginBottom: 8 }}>{err}</div>}
       {layers.length === 0 ? (

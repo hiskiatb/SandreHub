@@ -1,4 +1,4 @@
-// Helper utk menampilkan foto lewat proxy Edge Function `media-view` —
+// Helper utk menampilkan foto lewat proxy Edge Function `media-view` -
 // browser TIDAK PERNAH memanggil Google Drive langsung / melihat link-nya.
 // Function itu yang mengambil bytes dari Drive (kalau sudah dimirror) atau
 // dari Supabase Storage (fallback, foto lama/belum sempat dimirror) lalu

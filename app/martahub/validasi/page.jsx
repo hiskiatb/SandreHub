@@ -1,20 +1,20 @@
 "use client";
 // Menu "Validasi Lokasi Event" (§0.2 poin 3 Lapis 2, §9.2 Outlet Lat/Lng
-// Master) — Head TMV/Brand TMV/SPM Sumatera mencocokkan titik event Plan
+// Master) - Head TMV/Brand TMV/SPM Sumatera mencocokkan titik event Plan
 // (evidence, dari cloud) terhadap referensi lat/lng outlet resmi (reference,
-// TIDAK PERNAH diunggah ke cloud — hanya HASIL pencocokan yang di-push).
+// TIDAK PERNAH diunggah ke cloud - hanya HASIL pencocokan yang di-push).
 //
 // Keputusan teknis (dicatat di MARTAHUB_DEV_PROGRESS.md, Fase 3 lalu diupgrade
 // Housekeeping #7): sekarang pakai "Hubungkan Folder" (File System Access API,
-// lib/useFolderConnection.js — pola sama dgn SumatraMap.jsx utk Batas Wilayah/
+// lib/useFolderConnection.js - pola sama dgn SumatraMap.jsx utk Batas Wilayah/
 // Titik Site), fallback <input type="file"> biasa di browser tanpa dukungan
-// (Firefox/Safari). Baca & pencocokan tetap 100% di browser — file mentah
+// (Firefox/Safari). Baca & pencocokan tetap 100% di browser - file mentah
 // TIDAK PERNAH terkirim ke server (§0.2), hanya HASIL pencocokan yang
 // di-push. Yang "diingat": (a) REFERENSI FOLDER (IndexedDB perangkat ini,
-// lib/folderHandles.js — bukan isinya) supaya sesi berikutnya tinggal beri
+// lib/folderHandles.js - bukan isinya) supaya sesi berikutnya tinggal beri
 // izin ulang, bukan pilih folder dari nol; (b) METADATA pemetaan kolom (nama
 // file terakhir, kolom mana = site_id/lat/lng) lewat mh_local_folder_links
-// (SECURITY DEFINER, per-email) — tidak berubah dari desain Fase 3.
+// (SECURITY DEFINER, per-email) - tidak berubah dari desain Fase 3.
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { CheckCircle2, AlertTriangle, HelpCircle, PlayCircle, RefreshCw } from "lucide-react";
 import MartaShell, { T } from "../components/MartaShell";
@@ -29,7 +29,7 @@ const OUTLET_MASTER_EXT = /\.(xlsx|xls|csv)$/i;
 const CAN_RUN_ROLES = ["head", "tmv", "spm_sumatera", "admin"];
 const PURPOSE = "outlet_master";
 
-// Haversine — jarak dua titik lat/lng dalam meter.
+// Haversine - jarak dua titik lat/lng dalam meter.
 function distanceMeters(lat1, lng1, lat2, lng2) {
   const R = 6371000;
   const toRad = (d) => (d * Math.PI) / 180;
@@ -68,14 +68,14 @@ function Body({ email }) {
   const [radius, setRadius] = useState(200);
   const [mdRadius, setMdRadius] = useState(150);
 
-  // Berkas referensi (in-memory, sesi ini saja — TIDAK pernah terkirim ke server).
+  // Berkas referensi (in-memory, sesi ini saja - TIDAK pernah terkirim ke server).
   const [file, setFile] = useState(null);
   const [matrix, setMatrix] = useState(null);
   const [headerIdx, setHeaderIdx] = useState(0);
   const [mapping, setMapping] = useState({ site_id: "", latitude: "", longitude: "" });
   const [readErr, setReadErr] = useState("");
   const [savingMap, setSavingMap] = useState(false);
-  // "Hubungkan Folder" — HANYA referensi folder yang diingat (IndexedDB
+  // "Hubungkan Folder" - HANYA referensi folder yang diingat (IndexedDB
   // perangkat ini), isi file selalu dibaca ulang dari disk. Dipanggil tiap
   // kali ada berkas baru siap dibaca (folder ATAU fallback pilih manual).
   const folderSource = useFolderConnection(PURPOSE, OUTLET_MASTER_EXT, onFile);
@@ -88,11 +88,11 @@ function Body({ email }) {
   const [result, setResult] = useState(null);
   const [err, setErr] = useState("");
 
-  // MD Activities (§8.2) — pemasangan mode Activity/Outlet menunggu
+  // MD Activities (§8.2) - pemasangan mode Activity/Outlet menunggu
   // rekonsiliasi, pakai REFERENSI YANG SAMA (referenceMap) dgn Lapis 2 event
   // di atas, tapi radius & tabel target BEDA (mh_md_installations, bukan
   // mh_activities). Mode 'activity' tidak punya site_id di baris instalasi
-  // sendiri — site_id-nya ikut activity terkait (activitySiteMap).
+  // sendiri - site_id-nya ikut activity terkait (activitySiteMap).
   const [mdRows, setMdRows] = useState([]);
   const [activitySiteMap, setActivitySiteMap] = useState({});
   const [loadingMd, setLoadingMd] = useState(true);
@@ -249,7 +249,7 @@ function Body({ email }) {
     finally { setRunning(false); }
   }
 
-  // ── MD Activities (mode Activity/Outlet) — pratinjau & jalankan ────────────
+  // ── MD Activities (mode Activity/Outlet) - pratinjau & jalankan ────────────
   const mdPreview = useMemo(() => {
     if (!referenceMap) return [];
     return mdRows.map((r) => {
@@ -290,7 +290,7 @@ function Body({ email }) {
   if (!canRun && scope) {
     return (
       <div style={note}>
-        Halaman ini khusus Head TMV, Brand TMV, atau SPM Sumatera — role Anda saat ini ({scope.role || "tidak terdaftar"}) tidak memiliki akses menjalankan rekonsiliasi.
+        Halaman ini khusus Head TMV, Brand TMV, atau SPM Sumatera - role Anda saat ini ({scope.role || "tidak terdaftar"}) tidak memiliki akses menjalankan rekonsiliasi.
       </div>
     );
   }
@@ -301,7 +301,7 @@ function Body({ email }) {
         <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
           <HelpCircle size={18} color={T.primaryD} style={{ flexShrink: 0, marginTop: 1 }} />
           <div style={{ fontSize: 12.5, color: T.mid, lineHeight: 1.6 }}>
-            <b style={{ color: T.hi }}>Lapis 2 (§0.2/§9.2):</b> menu ini mencocokkan titik event Plan (evidence) terhadap referensi lat/lng outlet resmi yang Anda muat dari berkas lokal — berkas ini TIDAK PERNAH terkirim ke server, hanya hasil pencocokan (status &ldquo;tervalidasi&rdquo;) yang disimpan. Ini terpisah dari Check-In (Lapis 1, instan) yang sudah berjalan seperti biasa.
+            <b style={{ color: T.hi }}>Lapis 2 (§0.2/§9.2):</b> menu ini mencocokkan titik event Plan (evidence) terhadap referensi lat/lng outlet resmi yang Anda muat dari berkas lokal - berkas ini TIDAK PERNAH terkirim ke server, hanya hasil pencocokan (status &ldquo;tervalidasi&rdquo;) yang disimpan. Ini terpisah dari Check-In (Lapis 1, instan) yang sudah berjalan seperti biasa.
           </div>
         </div>
       </div>
@@ -311,7 +311,7 @@ function Body({ email }) {
         <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>1. Muat Referensi Outlet Lat/Lng</div>
         <div style={{ color: T.mid, fontSize: 12.5, marginBottom: 12 }}>
           Hubungkan folder berisi berkas Site ID + lat/lng resmi (.xlsx/.xls/.csv). {savedMapping?.fileName && (
-            <span>Pemetaan kolom terakhir sudah diingat dari <b>{savedMapping.fileName}</b> — otomatis dipakai lagi untuk berkas baru.</span>
+            <span>Pemetaan kolom terakhir sudah diingat dari <b>{savedMapping.fileName}</b> - otomatis dipakai lagi untuk berkas baru.</span>
           )}
         </div>
         <FolderConnectPanel t={T} source={folderSource} color={T.primary} acceptAttr=".xlsx,.xls,.csv" extLabel=".xlsx/.xls/.csv" />
@@ -326,7 +326,7 @@ function Body({ email }) {
                   <div style={{ fontSize: 11.5, fontWeight: 700, color: T.hi, marginBottom: 5 }}>{label} <span style={{ color: T.error }}>*</span></div>
                   <select value={mapping[k]} onChange={(e) => setMapping((m) => ({ ...m, [k]: e.target.value }))}
                     style={{ ...selectStyle, borderColor: !mapping[k] ? T.error : T.line }}>
-                    <option value="">— pilih kolom —</option>
+                    <option value="">- pilih kolom -</option>
                     {table.displayColumns.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </label>
@@ -357,7 +357,7 @@ function Body({ email }) {
         {err && <div style={{ ...note, marginBottom: 12, background: T.errorBg, borderColor: T.error, color: T.error }}>{err}</div>}
         {result && (
           <div style={{ ...note, marginBottom: 12, background: T.successBg, borderColor: T.success, color: "#155724" }}>
-            Selesai — {result.total} activity diproses: <b>{result.valid} tervalidasi</b>, <b>{result.mismatch} tidak cocok</b>.
+            Selesai - {result.total} activity diproses: <b>{result.valid} tervalidasi</b>, <b>{result.mismatch} tidak cocok</b>.
           </div>
         )}
 
@@ -380,12 +380,12 @@ function Body({ email }) {
                 const cur = statusMap[p.id];
                 return (
                   <tr key={p.id} style={{ borderTop: `1px solid ${T.line}` }}>
-                    <td style={{ padding: "8px 12px", fontWeight: 700, color: T.hi }}>{p.event_name || "—"}</td>
+                    <td style={{ padding: "8px 12px", fontWeight: 700, color: T.hi }}>{p.event_name || "-"}</td>
                     <td style={{ padding: "8px 12px", color: T.mid }}>{p.site_id}</td>
                     <td style={{ padding: "8px 12px" }}>
                       <StatusPill status={cur?.status || "pending"} />
                     </td>
-                    <td style={{ padding: "8px 12px", color: T.mid }}>{p.dist == null ? "—" : `${p.dist.toFixed(0)} m`}</td>
+                    <td style={{ padding: "8px 12px", color: T.mid }}>{p.dist == null ? "-" : `${p.dist.toFixed(0)} m`}</td>
                     <td style={{ padding: "8px 12px" }}><StatusPill status={p.newStatus} /></td>
                   </tr>
                 );
@@ -402,9 +402,9 @@ function Body({ email }) {
         </div>
       </div>
 
-      {/* Rekonsiliasi MD Activities (§8.2) — mode Activity/Outlet, pakai
+      {/* Rekonsiliasi MD Activities (§8.2) - mode Activity/Outlet, pakai
           REFERENSI YANG SAMA dari langkah 1 di atas, radius terpisah
-          (md_activity_radius_meters). Mode Street Branding TIDAK di sini —
+          (md_activity_radius_meters). Mode Street Branding TIDAK di sini -
           itu ditinjau manual di Approval Center (bukan geofencing). */}
       <div style={card}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
@@ -414,13 +414,13 @@ function Body({ email }) {
           </button>
         </div>
         <div style={{ color: T.mid, fontSize: 12.5, marginBottom: 12 }}>
-          Radius toleransi: <b>{mdRadius} m</b>. Pemasangan POSM oleh MD/BME/RGE mode Terikat Activity/Outlet menunggu rekonsiliasi — stok baru berkurang setelah langkah ini dijalankan (§8.2), terlepas hasilnya tervalidasi atau tidak cocok. Muat referensi Outlet Lat/Lng di langkah 1 dulu untuk melihat pratinjau.
+          Radius toleransi: <b>{mdRadius} m</b>. Pemasangan POSM oleh MD/BME/RGE mode Terikat Activity/Outlet menunggu rekonsiliasi - stok baru berkurang setelah langkah ini dijalankan (§8.2), terlepas hasilnya tervalidasi atau tidak cocok. Muat referensi Outlet Lat/Lng di langkah 1 dulu untuk melihat pratinjau.
         </div>
 
         {mdErr && <div style={{ ...note, marginBottom: 12, background: T.errorBg, borderColor: T.error, color: T.error }}>{mdErr}</div>}
         {mdResult && (
           <div style={{ ...note, marginBottom: 12, background: T.successBg, borderColor: T.success, color: "#155724" }}>
-            Selesai — {mdResult.total} pemasangan diproses: <b>{mdResult.valid} tervalidasi</b>, <b>{mdResult.mismatch} tidak cocok</b>.
+            Selesai - {mdResult.total} pemasangan diproses: <b>{mdResult.valid} tervalidasi</b>, <b>{mdResult.mismatch} tidak cocok</b>.
           </div>
         )}
 
@@ -441,10 +441,10 @@ function Body({ email }) {
               )}
               {mdPreview.map((p) => (
                 <tr key={p.id} style={{ borderTop: `1px solid ${T.line}` }}>
-                  <td style={{ padding: "8px 12px", fontWeight: 700, color: T.hi }}>{p.md_full_name || p.md_email || "—"}</td>
+                  <td style={{ padding: "8px 12px", fontWeight: 700, color: T.hi }}>{p.md_full_name || p.md_email || "-"}</td>
                   <td style={{ padding: "8px 12px", color: T.mid }}>{p.mode === "activity" ? "Terikat Activity" : "Terikat Outlet"}</td>
-                  <td style={{ padding: "8px 12px", color: T.mid }}>{p.mode === "activity" ? (p.activity_name || "—") : (p.site_id || "—")}</td>
-                  <td style={{ padding: "8px 12px", color: T.mid }}>{p.dist == null ? "—" : `${p.dist.toFixed(0)} m`}</td>
+                  <td style={{ padding: "8px 12px", color: T.mid }}>{p.mode === "activity" ? (p.activity_name || "-") : (p.site_id || "-")}</td>
+                  <td style={{ padding: "8px 12px", color: T.mid }}>{p.dist == null ? "-" : `${p.dist.toFixed(0)} m`}</td>
                   <td style={{ padding: "8px 12px" }}><StatusPill status={p.newStatus} /></td>
                 </tr>
               ))}

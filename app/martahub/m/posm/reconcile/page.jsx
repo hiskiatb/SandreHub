@@ -1,6 +1,6 @@
 "use client";
 /**
- * /martahub/m/posm/reconcile — Rekonsiliasi lokasi instalasi POSM (khusus
+ * /martahub/m/posm/reconcile - Rekonsiliasi lokasi instalasi POSM (khusus
  * approver: Head/Brand TMV/SPM Sumatera/Admin). Dua alur berbeda, SAMA
  * PERSIS dgn RPC aslinya (lihat _shared/posmData.js):
  *   - Terikat Activity/Outlet → dihitung BATCH: jarak instalasi ke titik
@@ -89,7 +89,7 @@ function GeoReconcileTab({ email }) {
         const hasCoords = i.latitude != null && i.longitude != null && targetLat != null && targetLng != null;
         const distance = hasCoords ? Math.round(haversineMeters(Number(i.latitude), Number(i.longitude), targetLat, targetLng)) : null;
         const autoStatus = !hasCoords ? "mismatch" : distance <= r ? "valid" : "mismatch";
-        return { ...i, target_label: target ? (target.site_name || target.event_name || i.site_id || i.activity_id) : "—", distance, hasCoords, autoStatus };
+        return { ...i, target_label: target ? (target.site_name || target.event_name || i.site_id || i.activity_id) : "-", distance, hasCoords, autoStatus };
       });
       setRows(computed);
     } catch (e) {
@@ -110,7 +110,7 @@ function GeoReconcileTab({ email }) {
       const results = rows.map((r) => ({
         installation_id: r.id,
         status: statusFor(r),
-        matched_site_id: r.mode === "outlet" ? r.site_id : (r.target_label !== "—" ? null : null),
+        matched_site_id: r.mode === "outlet" ? r.site_id : (r.target_label !== "-" ? null : null),
         distance_meters: r.distance,
         note: r.hasCoords ? null : "Site/activity tidak memiliki koordinat referensi",
       }));
@@ -136,7 +136,7 @@ function GeoReconcileTab({ email }) {
       ) : (
         <>
           <div style={{ fontSize: 11.5, color: "#8A8A96", fontWeight: 600, marginBottom: 10 }}>
-            Radius toleransi {radius} m. Status dihitung otomatis dari jarak ke site/activity — bisa ditimpa manual sebelum diproses.
+            Radius toleransi {radius} m. Status dihitung otomatis dari jarak ke site/activity - bisa ditimpa manual sebelum diproses.
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {rows.map((r) => {
@@ -149,7 +149,7 @@ function GeoReconcileTab({ email }) {
                       <Icon size={15} />
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>{r.md_full_name || "—"}</div>
+                      <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>{r.md_full_name || "-"}</div>
                       <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.target_label}</div>
                       <div style={{ marginTop: 4, fontSize: 10.5, color: "#B0B0BA", fontWeight: 600 }}>
                         {r.hasCoords ? `Jarak ${fmtInt(r.distance)} m` : "Tidak ada koordinat acuan"} · {new Date(r.created_at).toLocaleDateString("id-ID")}
@@ -243,7 +243,7 @@ function StreetReviewTab({ email }) {
                   <Navigation size={15} />
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>{r.md_full_name || "—"}</div>
+                  <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>{r.md_full_name || "-"}</div>
                   <div style={{ marginTop: 2, fontSize: 11.5, color: "#5A5A68", fontWeight: 600 }}>{r.street_description}</div>
                   <div style={{ marginTop: 4, fontSize: 10.5, color: "#B0B0BA", fontWeight: 600 }}>{new Date(r.created_at).toLocaleString("id-ID")}</div>
                 </div>

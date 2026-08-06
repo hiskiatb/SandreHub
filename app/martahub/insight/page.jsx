@@ -17,7 +17,7 @@ function geoPct(rows) {
   return (ok / tracked.length) * 100;
 }
 const fmtDate = (s) => {
-  if (!s || s.length < 10) return "—";
+  if (!s || s.length < 10) return "-";
   const [y, m, d] = s.slice(0, 10).split("-");
   const mo = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"][(+m || 1) - 1];
   return `${d} ${mo} ${y}`;
@@ -89,7 +89,7 @@ function Body({ email }) {
       {loading && <div style={{ ...card, marginBottom: 16, textAlign: "center", color: T.lo }}>Memuat…</div>}
       {scope && !scope.unscoped && scope.found && (
         <div style={{ display: "inline-block", marginBottom: 14, fontSize: 11, fontWeight: 700, color: T.mid, background: "#F0F4FA", border: `1px solid ${T.line}`, borderRadius: 100, padding: "3px 10px" }}>
-          Scope: {scope.region || "—"} · {(scope.brand || "—").toUpperCase()}
+          Scope: {scope.region || "-"} · {(scope.brand || "-").toUpperCase()}
         </div>
       )}
 
@@ -104,7 +104,7 @@ function Body({ email }) {
         {notes.map((n) => (
           <div key={n.id} style={{ padding: "12px 16px", borderBottom: `1px solid ${T.line}` }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-              <span style={{ fontWeight: 700, fontSize: 12.5 }}>{n.event_name || "—"}</span>
+              <span style={{ fontWeight: 700, fontSize: 12.5 }}>{n.event_name || "-"}</span>
               <span style={{ fontSize: 11, color: T.lo }}>{fmtDate(n.plan_date)}</span>
             </div>
             <div style={{ fontSize: 12.5, color: T.mid }}>{n.insight}</div>

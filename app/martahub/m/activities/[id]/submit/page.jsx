@@ -1,14 +1,14 @@
 "use client";
 /**
- * /martahub/m/activities/[id]/submit — Submit Laporan Actual (web mobile),
+ * /martahub/m/activities/[id]/submit - Submit Laporan Actual (web mobile),
  * setara submit_actual_screen.dart. Cakupan iterasi ini:
  *   - MSISDN per jenis (SP/FWA): ketik manual (SEMUA browser) + scan kamera
- *     via BarcodeDetector API (Chrome/Edge/Android — TIDAK tersedia di
+ *     via BarcodeDetector API (Chrome/Edge/Android - TIDAK tersedia di
  *     Safari/iOS, tombol scan otomatis disembunyikan bila tidak didukung,
  *     manual entry tetap jalur utama yang selalu berfungsi).
  *   - Cek kepemilikan MSISDN (mh_dsf_check_msisdn_owner) + ajukan
  *     pemindahan (mh_dsf_request_msisdn_transfer) kalau nomor sudah ditag
- *     org lain — SAMA PERSIS dgn alur Flutter, bukan disederhanakan.
+ *     org lain - SAMA PERSIS dgn alur Flutter, bukan disederhanakan.
  *   - Rebuy Pulsa/Data, Cost Actual, Insight.
  *   - submitActual() → status 'pending_validation' → trigger server
  *     otomatis memutuskan approved/revision_actual (TIDAK ada approval
@@ -30,7 +30,7 @@ const MIN_PHOTOS = 2;
 const PHOTO_BUCKET = "mh-photos";
 
 /** Kompres gambar ke maksimal ~1MB via canvas (setara compressToMaxSize di
- * Flutter) — jalan sepenuhnya di browser, tidak butuh server. */
+ * Flutter) - jalan sepenuhnya di browser, tidak butuh server. */
 function compressImage(file, maxDim = 1600, quality = 0.82) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -74,7 +74,7 @@ export default function SubmitActualPage() {
   const [costActual, setCostActual] = useState("0");
   const [insight, setInsight] = useState("");
 
-  // Dokumentasi foto — WAJIB minimal 2 sebelum bisa kirim (sama persis
+  // Dokumentasi foto - WAJIB minimal 2 sebelum bisa kirim (sama persis
   // dgn `_minPhotos`/`_docsValid` di submit_actual_screen.dart Flutter).
   const [photos, setPhotos] = useState([]); // {file, previewUrl}
   const [uploadProgress, setUploadProgress] = useState(null); // {done, total}
@@ -142,7 +142,7 @@ export default function SubmitActualPage() {
     const typeObj = types[cat].find((t) => t.id === typeId);
     setMsisdnErr((e) => ({ ...e, [cat]: null }));
 
-    // Cek kepemilikan — kalau sudah ditag di event lain, tawarkan pemindahan
+    // Cek kepemilikan - kalau sudah ditag di event lain, tawarkan pemindahan
     // alih-alih langsung menambahkan (mencegah double-count SP/FWA).
     try {
       const { data: ownerRows } = await supabaseMarta.rpc("mh_dsf_check_msisdn_owner", { p_msisdn: norm });
@@ -152,7 +152,7 @@ export default function SubmitActualPage() {
         return;
       }
     } catch {
-      // best-effort — kalau cek gagal, tetap lanjut tambahkan (jangan blokir input)
+      // best-effort - kalau cek gagal, tetap lanjut tambahkan (jangan blokir input)
     }
 
     let tagLat = null, tagLng = null;
@@ -216,7 +216,7 @@ export default function SubmitActualPage() {
       }).eq("id", activityId).select("status,validation_status,validation_note").single();
       if (error) throw error;
 
-      // Upload foto dokumentasi — SETELAH laporan pokok tersimpan (kalau
+      // Upload foto dokumentasi - SETELAH laporan pokok tersimpan (kalau
       // upload sebagian gagal, laporan tetap tersubmit; sama spt Flutter).
       setUploadProgress({ done: 0, total: photos.length });
       for (let i = 0; i < photos.length; i++) {
@@ -231,7 +231,7 @@ export default function SubmitActualPage() {
         setUploadProgress({ done: i + 1, total: photos.length });
       }
 
-      // Kirim entries per kelompok kategori+jenis — best-effort, laporan
+      // Kirim entries per kelompok kategori+jenis - best-effort, laporan
       // pokok TETAP tersubmit walau bagian ini gagal (sama spt Flutter).
       for (const cat of ["sp", "fwa"]) {
         const byType = new Map();
@@ -272,7 +272,7 @@ export default function SubmitActualPage() {
             {validated ? "Laporan tervalidasi otomatis" : "Laporan perlu ditinjau"}
           </div>
           <div style={{ marginTop: 8, fontSize: 13, color: "#6B6B76", lineHeight: 1.6 }}>
-            {result.validation_note || (validated ? "Check-in cocok dengan site event ini." : "Titik check-in tidak cocok dengan site manapun di event ini — approver bisa meninjau manual.")}
+            {result.validation_note || (validated ? "Check-in cocok dengan site event ini." : "Titik check-in tidak cocok dengan site manapun di event ini - approver bisa meninjau manual.")}
           </div>
           <button onClick={() => router.replace(`/martahub/m/activities?open=${activityId}`)}
             style={{ marginTop: 26, width: "100%", height: 48, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>
@@ -335,7 +335,7 @@ export default function SubmitActualPage() {
           <TextInput value={insight} onChange={setInsight} placeholder="Catatan/insight dari lapangan…" multiline />
         </Card>
 
-        {/* Dokumentasi Foto — WAJIB minimal MIN_PHOTOS sebelum bisa kirim */}
+        {/* Dokumentasi Foto - WAJIB minimal MIN_PHOTOS sebelum bisa kirim */}
         <Card>
           <FieldLabel text="Dokumentasi Foto" required hint={`Minimal ${MIN_PHOTOS} foto · ${photos.length} terpilih`} />
           <div style={{ display: "flex", gap: 8 }}>
@@ -405,7 +405,7 @@ function SalesSection({ cat, label, types, selectedType, onSelectType, input, on
 
       <FieldLabel text="Jenis" top />
       {types.length === 0 ? (
-        <LockedField text="Belum ada jenis untuk brand Anda — hubungi admin" muted />
+        <LockedField text="Belum ada jenis untuk brand Anda - hubungi admin" muted />
       ) : (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           {types.map((t) => (
@@ -447,7 +447,7 @@ function SalesSection({ cat, label, types, selectedType, onSelectType, input, on
               <span key={p.msisdn} style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 999, background: "#FFF7ED", border: "1px solid #FDE1B8", fontSize: 12, fontWeight: 700, color: "#17181C" }}>{p.msisdn}</span>
             ))}
           </div>
-          <div style={{ marginTop: 6, fontSize: 11, color: "#8A8A96" }}>Belum dihitung ke SP/FWA — akan aktif otomatis setelah disetujui pemilik sebelumnya.</div>
+          <div style={{ marginTop: 6, fontSize: 11, color: "#8A8A96" }}>Belum dihitung ke SP/FWA - akan aktif otomatis setelah disetujui pemilik sebelumnya.</div>
         </div>
       )}
 
@@ -466,7 +466,7 @@ function MsisdnCard({ entry, onRemove }) {
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C", fontVariantNumeric: "tabular-nums" }}>{entry.msisdn}</div>
-        <div style={{ fontSize: 10.5, color: "#8A8A96", fontWeight: 600 }}>{entry.typeName || "—"}{entry.tagLat != null ? " · lokasi tercatat" : ""}</div>
+        <div style={{ fontSize: 10.5, color: "#8A8A96", fontWeight: 600 }}>{entry.typeName || "-"}{entry.tagLat != null ? " · lokasi tercatat" : ""}</div>
       </div>
       <button onClick={onRemove} style={{ width: 32, height: 32, borderRadius: 9, border: "none", background: "transparent", color: "#DC2626", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <Trash2 size={15} />
@@ -485,7 +485,7 @@ function ConflictSheet({ conflict, onClose, onConfirm }) {
           <div style={{ fontSize: 15.5, fontWeight: 800 }}>Nomor sudah ditag orang lain</div>
         </div>
         <div style={{ marginTop: 10, fontSize: 13, color: "#5A5A68", lineHeight: 1.6 }}>
-          Nomor <b>{conflict.msisdn}</b> sudah ditandai oleh <b>{conflict.owner.owner_name}</b> pada &ldquo;{conflict.owner.event_name}&rdquo;. Anda bisa mengajukan pemindahan kepemilikan ke event ini — akan aktif setelah disetujui pemilik sebelumnya.
+          Nomor <b>{conflict.msisdn}</b> sudah ditandai oleh <b>{conflict.owner.owner_name}</b> pada &ldquo;{conflict.owner.event_name}&rdquo;. Anda bisa mengajukan pemindahan kepemilikan ke event ini - akan aktif setelah disetujui pemilik sebelumnya.
         </div>
         <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
           <button onClick={onClose} style={{ flex: 1, height: 48, borderRadius: 12, border: "1.5px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 13.5, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>Batal</button>

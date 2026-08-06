@@ -62,7 +62,7 @@ export default function LeaderboardPage() {
         {/* Preview banner */}
         <div style={{ background: "linear-gradient(135deg,#EEF4FF,#F0F7FF)", border: "1px solid #BDD1FF", borderRadius: 12, padding: "14px 18px", marginBottom: 24, display: "flex", alignItems: "center", gap: 12 }}>
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#1565C0", flexShrink: 0 }} />
-          <span style={{ fontSize: 13, color: "#1565C0", fontWeight: 600 }}>Preview data — Leaderboard real-time akan tersedia setelah integrasi Supabase selesai.</span>
+          <span style={{ fontSize: 13, color: "#1565C0", fontWeight: 600 }}>Preview data - Leaderboard real-time akan tersedia setelah integrasi Supabase selesai.</span>
         </div>
 
         {/* Podium top 3 */}

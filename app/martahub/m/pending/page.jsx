@@ -1,8 +1,8 @@
 "use client";
 /**
- * /martahub/m/pending — Menunggu penetapan branch/role (web mobile).
+ * /martahub/m/pending - Menunggu penetapan branch/role (web mobile).
  * Padanan `pending_screen.dart` di Flutter: ditampilkan saat baris
- * mh_profiles belum ada, atau status/role belum aktif (default aman —
+ * mh_profiles belum ada, atau status/role belum aktif (default aman -
  * lihat authState di lib/martaScope.js).
  */
 import { useEffect, useState, Suspense } from "react";
@@ -85,7 +85,7 @@ function PendingInner() {
               background: "linear-gradient(135deg,#ED1C24,#EC008C)", color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF,
               display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 4px 12px rgba(17,17,20,0.1)" }}>
             {checking ? <Loader2 size={16} style={{ animation: "mspin .85s linear infinite" }} /> : <RefreshCw size={15} />}
-            Saya sudah di-assign — cek ulang
+            Saya sudah di-assign - cek ulang
           </button>
 
           <button onClick={signOut}

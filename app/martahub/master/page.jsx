@@ -14,7 +14,7 @@ import { passesRow, optionsFor, FilterTh, FilterMenu } from "../../dashboard/com
 
 export default function MasterDataPage() {
   return (
-    <MartaShell active="master" title="Master Data" subtitle="Data bulanan MartaHub — List Site (branch BME/RGE) & Batas Wilayah.">
+    <MartaShell active="master" title="Master Data" subtitle="Data bulanan MartaHub - List Site (branch BME/RGE) & Batas Wilayah.">
       {(ctx) => <Body canManage={ctx?.canManage} email={ctx?.session?.user?.email} />}
     </MartaShell>
   );
@@ -94,12 +94,12 @@ function Body({ canManage, email }) {
         />
         <MenuCard
           icon={TargetIcon} label="Target Aktivitas"
-          desc="Target SP/FWA/Revenue per Branch × Brand × Bulan, ditetapkan TMV/Brand TMV — jadi acuan Achievement % di Dashboard."
+          desc="Target SP/FWA/Revenue per Branch × Brand × Bulan, ditetapkan TMV/Brand TMV - jadi acuan Achievement % di Dashboard."
           onClick={() => setActive("activity_target")}
         />
         <MenuCard
           icon={Tag} label="Jenis SP & FWA"
-          desc="Master jenis SP & FWA beserta harga per unit — dipakai mobile utk menghitung Revenue otomatis dari MSISDN yang dicatat DSF/TL DSF/BME."
+          desc="Master jenis SP & FWA beserta harga per unit - dipakai mobile utk menghitung Revenue otomatis dari MSISDN yang dicatat DSF/TL DSF/BME."
           onClick={() => setActive("sp_fwa_types")}
         />
       </div>
@@ -107,7 +107,7 @@ function Body({ canManage, email }) {
   );
 }
 
-// ── Jenis SP & FWA — master jenis + harga per unit (Revenue otomatis mobile) ──
+// ── Jenis SP & FWA - master jenis + harga per unit (Revenue otomatis mobile) ──
 function SpFwaTypesView({ email, canManage, onBack }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -130,9 +130,9 @@ function SpFwaTypesView({ email, canManage, onBack }) {
         {canManage && <button onClick={() => setEditing({})} style={{ ...pbtn, marginLeft: "auto" }}><Plus size={15} /> Tambah</button>}
       </div>
       <div style={{ color: T.mid, fontSize: 12.5, marginBottom: 14 }}>
-        Harga per unit di sini dipakai mobile utk menghitung <b>Revenue otomatis</b> saat DSF/TL DSF/BME mencatat MSISDN SP/FWA di Activity Report — bukan lagi angka manual.
+        Harga per unit di sini dipakai mobile utk menghitung <b>Revenue otomatis</b> saat DSF/TL DSF/BME mencatat MSISDN SP/FWA di Activity Report - bukan lagi angka manual.
       </div>
-      {!canManage && <div style={{ ...note, marginBottom: 14 }}>Mode lihat saja — hanya Head TMV / Brand TMV / SPM Sumatera yang bisa mengubah jenis & harga.</div>}
+      {!canManage && <div style={{ ...note, marginBottom: 14 }}>Mode lihat saja - hanya Head TMV / Brand TMV / SPM Sumatera yang bisa mengubah jenis & harga.</div>}
       {err && <div style={{ ...note, marginBottom: 12, background: T.errorBg, borderColor: T.error, color: T.error }}>{err}</div>}
       <div style={{ ...card, padding: 0, overflow: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
@@ -243,7 +243,7 @@ function Field({ label, children }) {
   );
 }
 
-// ── Target Aktivitas — bulk-entry per Brand+Bulan, carry-forward otomatis ────
+// ── Target Aktivitas - bulk-entry per Brand+Bulan, carry-forward otomatis ────
 function ActivityTargetView({ email, canManage, onBack }) {
   const [scope, setScope] = useState(null);
   const [combos, setCombos] = useState([]);
@@ -286,7 +286,7 @@ function ActivityTargetView({ email, canManage, onBack }) {
     return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
   }, [scopedCombos, brand]);
 
-  // Prefill tiap ganti brand/bulan — carry-forward dari target bulan terdekat
+  // Prefill tiap ganti brand/bulan - carry-forward dari target bulan terdekat
   // sebelumnya kalau bulan ini belum pernah diset (lib/activityTarget.js,
   // dipakai ULANG persis sama oleh Dashboard utk hitung Achievement %).
   useEffect(() => {
@@ -334,11 +334,11 @@ function ActivityTargetView({ email, canManage, onBack }) {
       <BackBtn onClick={onBack} />
       <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>Target Aktivitas</div>
       <div style={{ color: T.mid, fontSize: 12.5, marginBottom: 14 }}>
-        Target resmi SP / FWA / Revenue per Branch × Brand × Bulan — jadi acuan <b>Achievement %</b> di Dashboard. Target per-event yang BME isi sendiri saat Create Plan tetap ada (alat bantu planning BME), tapi Achievement % resmi dihitung dari target di sini.
+        Target resmi SP / FWA / Revenue per Branch × Brand × Bulan - jadi acuan <b>Achievement %</b> di Dashboard. Target per-event yang BME isi sendiri saat Create Plan tetap ada (alat bantu planning BME), tapi Achievement % resmi dihitung dari target di sini.
       </div>
 
       {!canManage ? (
-        <div style={note}>Mode lihat saja — hanya Head TMV / Brand TMV / SPM Sumatera yang bisa mengubah target.</div>
+        <div style={note}>Mode lihat saja - hanya Head TMV / Brand TMV / SPM Sumatera yang bisa mengubah target.</div>
       ) : (
         <>
           <div style={{ display: "flex", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
@@ -502,11 +502,11 @@ function ListSiteView({ canManage, history, currentMonth, onBack, onImported }) 
               </div>
               {!isCurrent && (
                 <div style={{ ...note, marginTop: 12 }}>
-                  {period < currentMonth ? "Periode historis" : "Periode mendatang"} — {monthLabel(period)}. Pastikan file memang untuk bulan ini.
+                  {period < currentMonth ? "Periode historis" : "Periode mendatang"} - {monthLabel(period)}. Pastikan file memang untuk bulan ini.
                 </div>
               )}
               {periodUploaded && (
-                <div style={{ ...note, marginTop: 10, background: T.warningBg }}>Bulan {monthLabel(period)} sudah pernah diupload — import baru akan menimpa.</div>
+                <div style={{ ...note, marginTop: 10, background: T.warningBg }}>Bulan {monthLabel(period)} sudah pernah diupload - import baru akan menimpa.</div>
               )}
             </>
           ) : (
@@ -515,7 +515,7 @@ function ListSiteView({ canManage, history, currentMonth, onBack, onImported }) 
           )}
         </div>
       ) : (
-        <div style={{ ...note, marginBottom: 14 }}>Mode lihat saja — hanya Admin yang dapat mengunggah.</div>
+        <div style={{ ...note, marginBottom: 14 }}>Mode lihat saja - hanya Admin yang dapat mengunggah.</div>
       )}
 
       <SitesBrowser refreshKey={browserKey} expectedTotal={history[0]?.rows} />
@@ -570,7 +570,7 @@ function UploadStep({ period, onChangePeriod, onDone }) {
           {val && <span style={{ fontSize: 10, fontWeight: 700, color: T.success }}>✓</span>}
         </div>
         <select value={val} onChange={(e) => setMapping((m) => ({ ...m, [f.key]: e.target.value }))} style={{ ...selectStyle, borderColor: f.required && !val ? T.error : T.line }}>
-          <option value="">— pilih kolom —</option>
+          <option value="">- pilih kolom -</option>
           {opts.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
       </label>
@@ -630,10 +630,10 @@ function UploadStep({ period, onChangePeriod, onDone }) {
           </div>
         </div>
 
-        {/* Cocokkan kolom — semua field, auto-match dari header */}
+        {/* Cocokkan kolom - semua field, auto-match dari header */}
         <div style={{ margin: "18px 0 3px", fontSize: 11.5, fontWeight: 800, color: T.mid, textTransform: "uppercase" }}>Cocokkan Kolom</div>
         <div style={{ fontSize: 12, color: T.mid, marginBottom: 6 }}>Kolom yang dibutuhkan dicocokkan otomatis dari header (pola “like” nama kolom). Ubah bila ada yang meleset. Semua kolom asli tetap disimpan.</div>
-        <div style={{ ...note, marginBottom: 10 }}>Koordinat (Lat/Long) <b>sengaja tidak diimpor di sini</b> — data referensi lokasi dikelola lokal lewat menu <b>Batas Wilayah (Peta)</b> di Master Data atau <b>Validasi Lokasi</b>, tidak pernah lewat upload List Site ini.</div>
+        <div style={{ ...note, marginBottom: 10 }}>Koordinat (Lat/Long) <b>sengaja tidak diimpor di sini</b> - data referensi lokasi dikelola lokal lewat menu <b>Batas Wilayah (Peta)</b> di Master Data atau <b>Validasi Lokasi</b>, tidak pernah lewat upload List Site ini.</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px,1fr))", gap: 10 }}>
           {TARGET_FIELDS.map(fieldSelect)}
         </div>
@@ -663,7 +663,7 @@ function UploadStep({ period, onChangePeriod, onDone }) {
   );
 }
 
-// Kolom tabel — nama yang disepakati (bukan nama kolom mentah).
+// Kolom tabel - nama yang disepakati (bukan nama kolom mentah).
 const COLUMNS = [
   { key: "site_id", label: "Site ID", strong: true },
   { key: "site_name", label: "Site Name" },
@@ -679,7 +679,7 @@ const FCOLS = COLUMNS.map((c) => [c.key, c.label]);
 const FT_T = { card: "#FFFFFF", line: T.line, sub: "#F5F6F9", hi: T.hi, mid: T.mid, lo: T.lo, teal: T.primary, tealBg: "#FFF0F0" };
 const MAX_ROWS = 1000;
 
-// ── Browser hasil — filter ala-Excel per kolom (konsep sama spt Pemenuhan Manpower) ──
+// ── Browser hasil - filter ala-Excel per kolom (konsep sama spt Pemenuhan Manpower) ──
 function SitesBrowser({ refreshKey, expectedTotal }) {
   const [allSites, setAllSites] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -818,7 +818,7 @@ function SitesBrowser({ refreshKey, expectedTotal }) {
             {!loading && shown.length === 0 && <tr><td colSpan={COLUMNS.length} style={{ padding: 22, textAlign: "center", color: T.lo }}>Tidak ada data yang cocok.</td></tr>}
             {!loading && shown.map((s, i) => (
               <tr key={`${s.site_id}-${i}`} style={{ borderTop: `1px solid ${T.line}` }}>
-                {COLUMNS.map((c) => { const v = s[c.key]; return <td key={c.key} style={{ padding: "8px 12px", color: c.strong ? T.hi : T.mid, fontWeight: c.strong ? 700 : 400 }}>{v == null || v === "" ? "—" : String(v)}</td>; })}
+                {COLUMNS.map((c) => { const v = s[c.key]; return <td key={c.key} style={{ padding: "8px 12px", color: c.strong ? T.hi : T.mid, fontWeight: c.strong ? 700 : 400 }}>{v == null || v === "" ? "-" : String(v)}</td>; })}
               </tr>
             ))}
           </tbody>
@@ -826,7 +826,7 @@ function SitesBrowser({ refreshKey, expectedTotal }) {
       </div>
       {!loading && filtered.length > MAX_ROWS && (
         <div style={{ padding: "8px 16px", fontSize: 11.5, color: T.lo, borderTop: `1px solid ${T.line}` }}>
-          Menampilkan {MAX_ROWS.toLocaleString()} dari {filtered.length.toLocaleString()} baris — gunakan filter kolom untuk mempersempit.
+          Menampilkan {MAX_ROWS.toLocaleString()} dari {filtered.length.toLocaleString()} baris - gunakan filter kolom untuk mempersempit.
         </div>
       )}
 
@@ -840,7 +840,7 @@ function SitesBrowser({ refreshKey, expectedTotal }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  STRUKTUR BRANCH & BRAND — pohon Region → Brand → Branch + akun termapping.
+//  STRUKTUR BRANCH & BRAND - pohon Region → Brand → Branch + akun termapping.
 //  Sumber struktur: mh_branch_brand_list. Akun: mh_list_assignments.
 // ═══════════════════════════════════════════════════════════════════════════
 const nb = (s) => String(s ?? "").trim().toLowerCase();       // normalize brand
@@ -874,13 +874,13 @@ function HierarchyView() {
     const norm = (s) => String(s ?? "").trim();
     const regions = new Map();
     const getRegion = (name) => {
-      const key = name || "—";
+      const key = name || "-";
       if (!regions.has(key)) regions.set(key, { region: key, brands: new Map() });
       return regions.get(key);
     };
     for (const c of combos) {
       if (!c.branch_id || !c.brand) continue;
-      const region = norm(c.region) || "—";
+      const region = norm(c.region) || "-";
       const brand = nb(c.brand);
       const rNode = getRegion(region);
       if (!rNode.brands.has(brand)) rNode.brands.set(brand, { brand, tmv: [], branches: new Map() });
@@ -894,7 +894,7 @@ function HierarchyView() {
     for (const a of assigns) {
       const brand = nb(a.brand);
       if (a.role === "tmv") {
-        const rNode = regions.get(norm(a.region) || "—"); if (!rNode) continue;
+        const rNode = regions.get(norm(a.region) || "-"); if (!rNode) continue;
         const brNode = rNode.brands.get(brand); if (!brNode) continue;
         brNode.tmv.push(a);
       } else if (a.role === "bme" || a.role === "rge") {
@@ -950,7 +950,7 @@ function HierarchyView() {
   return (
     <div style={{ maxWidth: 920 }}>
       <div style={{ fontSize: 18, fontWeight: 800, color: T.hi, marginBottom: 3 }}>Struktur Branch & Brand</div>
-      <div style={{ fontSize: 13, color: T.mid, marginBottom: 14 }}>Hirarki wilayah & pemetaan akun. Badge <b>Kosong</b> menandai branch×brand yang belum punya petugas lapangan. BME/RGE hanya label — fungsinya sama.</div>
+      <div style={{ fontSize: 13, color: T.mid, marginBottom: 14 }}>Hirarki wilayah & pemetaan akun. Badge <b>Kosong</b> menandai branch×brand yang belum punya petugas lapangan. BME/RGE hanya label - fungsinya sama.</div>
 
       {heads.length > 0 && (
         <div style={{ ...card, marginBottom: 12, display: "flex", alignItems: "center", gap: 12, background: "linear-gradient(135deg,#FFF5F7,#FFFFFF)", borderColor: T.primaryBd }}>
@@ -1048,7 +1048,7 @@ function BranchRow({ bn }) {
       <div style={{ display: "flex", gap: 16, marginTop: 8, flexWrap: "wrap" }}>
         <span style={{ fontSize: 10, fontWeight: 800, color: T.lo, textTransform: "uppercase", letterSpacing: ".04em", alignSelf: "center" }}>Petugas Lapangan</span>
         {bn.bme.length === 0 && bn.rge.length === 0
-          ? <span style={{ fontSize: 11.5, color: T.lo, fontStyle: "italic" }}>— belum ada —</span>
+          ? <span style={{ fontSize: 11.5, color: T.lo, fontStyle: "italic" }}>- belum ada -</span>
           : <>
               {bn.bme.map((a) => <AccountChip key={a.id} a={a} tag="BME" />)}
               {bn.rge.map((a) => <AccountChip key={a.id} a={a} tag="RGE" />)}

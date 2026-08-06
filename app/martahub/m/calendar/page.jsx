@@ -1,10 +1,10 @@
 "use client";
 /**
- * /martahub/m/calendar — Kalender aktivitas BME/RGE (web mobile), menggantikan
+ * /martahub/m/calendar - Kalender aktivitas BME/RGE (web mobile), menggantikan
  * slot Leaderboard di bottom nav. Pilih tanggal → lihat plan yang sudah ada
  * di tanggal itu → langsung "Buat Plan" baru dgn tanggal tsb ter-prefill.
  * Data dari RPC `mh_activity_calendar_for_me` (scoping hierarki sama dgn
- * CalendarPickerSheet di wizard Create Plan — lihat _shared/CalendarPickerSheet.jsx).
+ * CalendarPickerSheet di wizard Create Plan - lihat _shared/CalendarPickerSheet.jsx).
  */
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -185,9 +185,9 @@ export default function CalendarPage() {
                     style={{ textAlign: "left", width: "100%", background: "none", border: "none", padding: "13px 14px", cursor: "pointer", fontFamily: FF }}>
                     <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 13.5, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.event_name || "—"}</div>
+                        <div style={{ fontSize: 13.5, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.event_name || "-"}</div>
                         <div style={{ marginTop: 3, fontSize: 11.5, color: "#8A8A96", fontWeight: 600 }}>
-                          {a.mc || "—"} {a.site_id ? `· ${a.site_id}` : ""} · Target {fmtInt(a.target_sp)}/{fmtInt(a.target_fwa)} SP/FWA
+                          {a.mc || "-"} {a.site_id ? `· ${a.site_id}` : ""} · Target {fmtInt(a.target_sp)}/{fmtInt(a.target_fwa)} SP/FWA
                         </div>
                       </div>
                       <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
@@ -220,7 +220,7 @@ export default function CalendarPage() {
         )}
       </div>
 
-      {/* FAB Buat Plan — tanggal terpilih ikut ter-prefill di wizard */}
+      {/* FAB Buat Plan - tanggal terpilih ikut ter-prefill di wizard */}
       <div style={{ position: "fixed", left: 0, right: 0, bottom: 96, zIndex: 45, pointerEvents: "none" }}>
         <div style={{ maxWidth: 480, margin: "0 auto", display: "flex", justifyContent: "flex-end", padding: "0 20px" }}>
           <button onClick={() => router.push(`/martahub/m/activities/new?date=${selected}`)}

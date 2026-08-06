@@ -1,9 +1,9 @@
 "use client";
 /**
- * /martahub/m/activities/[id]/checkin — Check-In GPS (web mobile), setara
+ * /martahub/m/activities/[id]/checkin - Check-In GPS (web mobile), setara
  * checkin_screen.dart. Pakai browser Geolocation API (bukan plugin native),
  * radius validasi dibaca dari `mh_get_settings` (checkin_radius_meters,
- * default 100m — SAMA dgn app Flutter), dan menulis lewat RPC
+ * default 100m - SAMA dgn app Flutter), dan menulis lewat RPC
  * `mh_activity_checkin` yang SAMA PERSIS dipakai Flutter (satu sumber
  * kebenaran validasi di server).
  */
@@ -145,7 +145,7 @@ export default function CheckinPage() {
             <div style={{ display: "flex", gap: 8 }}>
               <StatusCell valid={valid} />
               <VDivider />
-              <MiniKV k="Akurasi" v={pos?.accuracy != null ? `${Math.round(pos.accuracy)} m` : "—"} />
+              <MiniKV k="Akurasi" v={pos?.accuracy != null ? `${Math.round(pos.accuracy)} m` : "-"} />
               <VDivider />
               <MiniKV k="Radius" v={`${radius} m`} />
             </div>
@@ -153,11 +153,11 @@ export default function CheckinPage() {
 
           <div style={{ height: 1, background: "#F0F0F3", margin: "16px 0" }} />
 
-          <RowKV k="Latitude" v={pos ? pos.latitude.toFixed(6) : "—"} />
-          <RowKV k="Longitude" v={pos ? pos.longitude.toFixed(6) : "—"} />
+          <RowKV k="Latitude" v={pos ? pos.latitude.toFixed(6) : "-"} />
+          <RowKV k="Longitude" v={pos ? pos.longitude.toFixed(6) : "-"} />
           {dist != null && <RowKV k="Jarak dari plan" v={`${dist.toFixed(0)} m`} />}
-          <RowKV k="Site" v={activity?.site_id || "—"} />
-          <RowKV k="Alamat" v={activity?.address || "—"} />
+          <RowKV k="Site" v={activity?.site_id || "-"} />
+          <RowKV k="Alamat" v={activity?.address || "-"} />
 
           {!locating && (
             <button onClick={locate}
