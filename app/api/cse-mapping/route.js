@@ -1,14 +1,18 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  { auth: { persistSession: false, autoRefreshToken: false } }
-);
+// Dibuat lazy (bukan di top-level module) supaya Next.js tidak mengevaluasi
+// createClient() saat build/"Collecting page data" — kalau env belum ke-set
+// di lingkungan build itu akan langsung crash ("supabaseUrl is required").
+function getSupabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
 
 // ── Auth helper — cuma spm_sumatera yang boleh kelola mapping CSE/RSE ──────
-async function requireSPM(req) {
+async function requireSPM(req, supabaseAdmin) {
   const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
   if (!token) return { error: "Autentikasi diperlukan.", status: 401 };
   const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
@@ -20,7 +24,10 @@ async function requireSPM(req) {
 
 // GET — list mapping (search + pagination)
 export async function GET(req) {
-  const auth = await requireSPM(req);
+  const supabaseAdmin = getSupabaseAdmin();
+  if (!supabaseAdmin) return NextResponse.json({ error: "Konfigurasi server belum lengkap." }, { status: 500 });
+
+  const auth = await requireSPM(req, supabaseAdmin);
   if (auth.error) return NextResponse.json({ success: false, message: auth.error }, { status: auth.status });
 
   try {
@@ -48,7 +55,10 @@ export async function GET(req) {
 
 // POST — tambah mapping baru
 export async function POST(req) {
-  const auth = await requireSPM(req);
+  const supabaseAdmin = getSupabaseAdmin();
+  if (!supabaseAdmin) return NextResponse.json({ error: "Konfigurasi server belum lengkap." }, { status: 500 });
+
+  const auth = await requireSPM(req, supabaseAdmin);
   if (auth.error) return NextResponse.json({ success: false, message: auth.error }, { status: auth.status });
 
   try {
@@ -90,7 +100,10 @@ export async function POST(req) {
 
 // PATCH — edit mapping (email/mc/full_name/region/branch/is_active)
 export async function PATCH(req) {
-  const auth = await requireSPM(req);
+  const supabaseAdmin = getSupabaseAdmin();
+  if (!supabaseAdmin) return NextResponse.json({ error: "Konfigurasi server belum lengkap." }, { status: 500 });
+
+  const auth = await requireSPM(req, supabaseAdmin);
   if (auth.error) return NextResponse.json({ success: false, message: auth.error }, { status: auth.status });
 
   try {
@@ -130,7 +143,10 @@ export async function PATCH(req) {
 // DELETE — hapus mapping (hanya kalau belum diregister; kalau sudah, minta
 // nonaktifkan lewat is_active supaya tidak memutus akun yang sudah jalan)
 export async function DELETE(req) {
-  const auth = await requireSPM(req);
+  const supabaseAdmin = getSupabaseAdmin();
+  if (!supabaseAdmin) return NextResponse.json({ error: "Konfigurasi server belum lengkap." }, { status: 500 });
+
+  const auth = await requireSPM(req, supabaseAdmin);
   if (auth.error) return NextResponse.json({ success: false, message: auth.error }, { status: auth.status });
 
   try {

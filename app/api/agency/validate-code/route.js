@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  { auth: { persistSession: false, autoRefreshToken: false } }
-);
+// Dibuat lazy (bukan di top-level module) supaya Next.js tidak mengevaluasi
+// createClient() saat build/"Collecting page data" — kalau env belum ke-set
+// di lingkungan build itu akan langsung crash ("supabaseUrl is required")
+// walau env-nya sebenarnya ada di runtime produksi.
+function getSupabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
 
 // POST /api/agency/validate-code  { code }
 // Validasi kode registrasi agency tanpa perlu login (service role).
@@ -15,6 +20,11 @@ export async function POST(req) {
     const clean = String(code ?? "").trim();
     if (!clean) {
       return NextResponse.json({ valid: false, message: "Kode kosong." }, { status: 400 });
+    }
+
+    const supabaseAdmin = getSupabaseAdmin();
+    if (!supabaseAdmin) {
+      return NextResponse.json({ valid: false, message: "Konfigurasi server belum lengkap." }, { status: 500 });
     }
 
     const { data, error } = await supabaseAdmin

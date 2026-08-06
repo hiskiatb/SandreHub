@@ -1,17 +1,21 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  { auth: { persistSession: false, autoRefreshToken: false } }
-);
+// Dibuat lazy (bukan di top-level module) supaya Next.js tidak mengevaluasi
+// createClient() saat build/"Collecting page data" — kalau env belum ke-set
+// di lingkungan build itu akan langsung crash ("supabaseUrl is required").
+function getSupabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper: find auth user by email — direct auth.users query (more reliable
 // than listUsers which has pagination limits and can miss entries).
 // ─────────────────────────────────────────────────────────────────────────────
-async function findAuthUserByEmail(email) {
+async function findAuthUserByEmail(supabaseAdmin, email) {
   try {
     // Primary: query auth schema directly with service role
     const { data, error } = await supabaseAdmin
@@ -40,7 +44,7 @@ async function findAuthUserByEmail(email) {
 // do an emergency orphan-cleanup and retry exactly once.
 // This handles the race condition where the pre-check missed the orphan.
 // ─────────────────────────────────────────────────────────────────────────────
-async function createAuthUser(email, password, metadata) {
+async function createAuthUser(supabaseAdmin, email, password, metadata) {
   const payload = {
     email,
     password,
@@ -58,7 +62,7 @@ async function createAuthUser(email, password, metadata) {
   if (isDbError) {
     console.warn("⚠️ createUser database error — emergency orphan cleanup…");
     try {
-      const orphan = await findAuthUserByEmail(email);
+      const orphan = await findAuthUserByEmail(supabaseAdmin, email);
       if (orphan?.id) {
         await supabaseAdmin.auth.admin.deleteUser(orphan.id);
         console.log("🧹 Emergency orphan removed:", orphan.id);
@@ -105,6 +109,9 @@ function friendlyAuthError(raw = "") {
 // POST /api/verify-otp
 // ─────────────────────────────────────────────────────────────────────────────
 export async function POST(req) {
+  const supabaseAdmin = getSupabaseAdmin();
+  if (!supabaseAdmin) return NextResponse.json({ error: "Konfigurasi server belum lengkap." }, { status: 500 });
+
   try {
     const body = await req.json();
     const {
@@ -152,7 +159,7 @@ export async function POST(req) {
     // createUser will always return "Database error creating new user".
     //
     try {
-      const existing = await findAuthUserByEmail(cleanEmail);
+      const existing = await findAuthUserByEmail(supabaseAdmin, cleanEmail);
 
       if (existing) {
         // Check if a complete profile already exists
@@ -183,6 +190,7 @@ export async function POST(req) {
 
     // ── 3. Create auth user (auto-retries on database error) ──────────────
     const { data: authData, error: authError } = await createAuthUser(
+      supabaseAdmin,
       cleanEmail,
       password,
       { full_name, username, role, partner_name }

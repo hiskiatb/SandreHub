@@ -1,13 +1,17 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  { auth: { persistSession: false, autoRefreshToken: false } }
-);
+// Dibuat lazy (bukan di top-level module) supaya Next.js tidak mengevaluasi
+// createClient() saat build/"Collecting page data" — kalau env belum ke-set
+// di lingkungan build itu akan langsung crash ("supabaseUrl is required").
+function getSupabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
 
-async function requireSPM(req) {
+async function requireSPM(req, supabaseAdmin) {
   const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
   if (!token) return { error: "Autentikasi diperlukan.", status: 401 };
   const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
@@ -23,7 +27,10 @@ async function requireSPM(req) {
 // branch/region + kode IM3/3ID). Sekarang wajib login (requireSPM sama
 // seperti PATCH) — link yang bocor pun tidak bisa diakses tanpa token valid.
 export async function GET(req) {
-  const auth = await requireSPM(req);
+  const supabaseAdmin = getSupabaseAdmin();
+  if (!supabaseAdmin) return NextResponse.json({ error: "Konfigurasi server belum lengkap." }, { status: 500 });
+
+  const auth = await requireSPM(req, supabaseAdmin);
   if (auth.error) return NextResponse.json({ success: false, message: auth.error }, { status: auth.status });
 
   try {
@@ -55,7 +62,10 @@ export async function GET(req) {
 
 // PATCH — update im3_code / id3_code / label / is_active for a row
 export async function PATCH(req) {
-  const auth = await requireSPM(req);
+  const supabaseAdmin = getSupabaseAdmin();
+  if (!supabaseAdmin) return NextResponse.json({ error: "Konfigurasi server belum lengkap." }, { status: 500 });
+
+  const auth = await requireSPM(req, supabaseAdmin);
   if (auth.error) return NextResponse.json({ success: false, message: auth.error }, { status: auth.status });
 
   try {

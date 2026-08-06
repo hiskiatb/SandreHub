@@ -1,16 +1,23 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  { auth: { persistSession: false, autoRefreshToken: false } }
-);
+// Dibuat lazy (bukan di top-level module) supaya Next.js tidak mengevaluasi
+// createClient() saat build/"Collecting page data" — kalau env belum ke-set
+// di lingkungan build itu akan langsung crash ("supabaseUrl is required").
+function getSupabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
 
 // ── GET — look up an authority code without registering it ────────────────────
 // Used by Flutter to auto-detect brand / region / branch from a single code.
 // Returns: { success, data: { bu_type, brand, area, branch, authority_code } }
 export async function GET(req) {
+  const supabaseAdmin = getSupabaseAdmin();
+  if (!supabaseAdmin) return NextResponse.json({ error: "Konfigurasi server belum lengkap." }, { status: 500 });
+
   try {
     const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
     if (!token) return NextResponse.json({ success: false, message: "Autentikasi diperlukan." }, { status: 401 });
@@ -61,6 +68,9 @@ export async function GET(req) {
 }
 
 export async function POST(req) {
+  const supabaseAdmin = getSupabaseAdmin();
+  if (!supabaseAdmin) return NextResponse.json({ error: "Konfigurasi server belum lengkap." }, { status: 500 });
+
   try {
     // ── 1. Authenticate via JWT ───────────────────────────────────────────
     const authHeader = req.headers.get("authorization") ?? "";

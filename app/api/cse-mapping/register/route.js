@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  { auth: { persistSession: false, autoRefreshToken: false } }
-);
+// Dibuat lazy (bukan di top-level module) supaya Next.js tidak mengevaluasi
+// createClient() saat build/"Collecting page data" — kalau env belum ke-set
+// di lingkungan build itu akan langsung crash ("supabaseUrl is required").
+function getSupabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
 
 // POST /api/cse-mapping/register  { step: "check" | "verify", email, otp?, password?, full_name? }
 // Alur khusus CSE/RSE: SPM Sumatera assign email+MC dulu di menu Mapping
@@ -14,6 +18,9 @@ const supabaseAdmin = createClient(
 // email sudah dipetakan & belum dipakai lalu kirim OTP; step "verify"
 // memvalidasi OTP, membuat akun+password, dan mengunci mapping ke akun itu.
 export async function POST(req) {
+  const supabaseAdmin = getSupabaseAdmin();
+  if (!supabaseAdmin) return NextResponse.json({ error: "Konfigurasi server belum lengkap." }, { status: 500 });
+
   try {
     const body = await req.json();
     const step = body?.step;

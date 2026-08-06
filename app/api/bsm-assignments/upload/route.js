@@ -1,14 +1,18 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  { auth: { persistSession: false, autoRefreshToken: false } }
-);
+// Dibuat lazy (bukan di top-level module) supaya Next.js tidak mengevaluasi
+// createClient() saat build/"Collecting page data" — kalau env belum ke-set
+// di lingkungan build itu akan langsung crash ("supabaseUrl is required").
+function getSupabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
 
 // ── Auth helper ───────────────────────────────────────────────────────────────
-async function requireAdmin(req) {
+async function requireAdmin(req, supabaseAdmin) {
   const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
   if (!token) return { error: "Autentikasi diperlukan.", status: 401 };
 
@@ -48,7 +52,10 @@ function generateBSMCode() {
 //   • Existing (bu_type, branch, role=bsm) → update area + label only; authority_code UNCHANGED
 //   • New combination → auto-generate authority_code and insert
 export async function POST(req) {
-  const auth = await requireAdmin(req);
+  const supabaseAdmin = getSupabaseAdmin();
+  if (!supabaseAdmin) return NextResponse.json({ error: "Konfigurasi server belum lengkap." }, { status: 500 });
+
+  const auth = await requireAdmin(req, supabaseAdmin);
   if (auth.error) {
     return NextResponse.json({ success: false, message: auth.error }, { status: auth.status });
   }
