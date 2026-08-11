@@ -874,6 +874,37 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
     } finally { setVacantBusy(null); }
   };
 
+  /* ── Reset Login (ganti akun Gmail) ──────────────────────────────────────
+     Identitas promotor dipegang oleh `pts_promotor.id` (permanen — riwayat
+     tagging/penjualan & pasangan ID Promotor IM3/3ID terikat ke sini),
+     `auth_user_id` cuma penanda akun Google MANA yang sedang tertaut.
+     app/promotor/page.jsx (resolveIdentity) hanya mau meng-klaim ulang
+     sebuah baris via pencocokan email KALAU `auth_user_id` masih kosong —
+     jadi kalau admin cuma ganti kolom Email di form edit (saveForm di atas)
+     TANPA reset ini, Gmail baru TIDAK akan pernah ter-klaim ke baris yang
+     sama (dia malah akan bikin baris pts_promotor baru, promotor_id lama
+     jadi yatim) — itu persis skenario "2 akun kelink ke 1" yang dilaporkan.
+     Alur yang benar kalau orangnya ganti: 1) admin update kolom Email ke
+     Gmail orang baru (lewat Edit Data), 2) klik Reset Login di sini, 3)
+     orang baru login pakai Gmail itu → otomatis ter-klaim ke baris/ID
+     Promotor yang SAMA, riwayat & pasangan ID IM3/3ID tetap lengket. */
+  const [resettingLogin, setResettingLogin] = useState(null);
+  const [resetLoginBusy, setResetLoginBusy] = useState(false);
+  const [resetLoginErr, setResetLoginErr] = useState("");
+  const resetPromotorLogin = async (r) => {
+    setResetLoginBusy(true); setResetLoginErr("");
+    try {
+      const { error } = await supabase.from("pts_promotor")
+        .update({ auth_user_id: null, updated_at: new Date().toISOString() })
+        .eq("id", r.id);
+      if (error) throw error;
+      setResettingLogin(null);
+      await load();
+    } catch (e) {
+      setResetLoginErr("Gagal reset login: " + (e?.message || e));
+    } finally { setResetLoginBusy(false); }
+  };
+
   /* ── Hapus Promotor ────────────────────────────────────────────────────
      pts_assignment.promotor_id_ref → pts_promotor.id pakai delete_rule
      NO ACTION (bukan cascade) — kalau promotor punya mapping outlet di
@@ -1445,6 +1476,12 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
                             {vacantBusy === r.id ? <Loader2 size={13} className="spin" /> : r.vacant ? <UserCheck size={13} /> : <Ban size={13} />}
                           </button>
                         )}
+                        {canManagePromotor(r) && r.auth_user_id && (
+                          <button onClick={() => { setResettingLogin(r); setResetLoginErr(""); }} title="Reset Login — lepas akun Gmail lama supaya bisa diklaim akun baru (ID Promotor & riwayat tetap)"
+                            style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.blueBd}`, background: t.blueBg, color: t.blue, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                            <UserCog size={13} />
+                          </button>
+                        )}
                         {canManagePromotor(r) && (
                           <button onClick={() => { setDeletingPromotor(r); setDeleteErr(""); }} title="Hapus Data — hapus promotor ini"
                             style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.redBd}`, background: t.redBg, color: t.red, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -1513,6 +1550,12 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
         <MappingEditModal t={t} supabase={supabase} profile={profile} period={period} row={editingMapping} outletByCode={outletByCode} picRegion={picRegion}
           onClose={() => setEditingMapping(null)}
           onSaved={async () => { setEditingMapping(null); await onOutletsNeeded(); await load(); }} />
+      )}
+
+      {resettingLogin && (
+        <ResetLoginModal t={t} row={resettingLogin} busy={resetLoginBusy} err={resetLoginErr}
+          onClose={() => { if (!resetLoginBusy) { setResettingLogin(null); setResetLoginErr(""); } }}
+          onConfirm={() => resetPromotorLogin(resettingLogin)} />
       )}
 
       {deletingPromotor && (
@@ -1791,6 +1834,63 @@ function MappingEditModal({ t, supabase, profile, period, row, outletByCode, pic
           <button onClick={onClose} className="pts-btn" style={{ background: t.sub, color: t.mid, border: `1px solid ${t.line}` }}>Batal</button>
           <button onClick={save} disabled={saving} className="pts-btn" style={{ background: t.brand, color: "#fff", boxShadow: t.sm }}>
             {saving ? <Loader2 size={15} className="spin" /> : <CheckCircle2 size={15} />} Simpan
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ══════════════════════ RESET LOGIN (ganti akun Gmail) ═══════════════════
+   Melepas tautan `auth_user_id` supaya slot ini bisa diklaim akun Google
+   BARU — dipakai saat orang yang pegang promotor ini berganti. ID Promotor,
+   pasangan ID 3ID, dan seluruh riwayat tagging/penjualan TIDAK ikut hilang
+   (semua terikat ke `pts_promotor.id`, bukan ke akun Google). Kalau email
+   di data ini masih email orang LAMA, ingatkan admin utk update dulu lewat
+   Edit Data sebelum orang baru mencoba login. */
+function ResetLoginModal({ t, row, busy, err, onClose, onConfirm }) {
+  return (
+    <div onClick={busy ? undefined : onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.5)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 460, background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, boxShadow: t.md }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "20px 20px 0" }}>
+          <div style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: t.blueBg, color: t.blue, border: `1px solid ${t.blueBd}` }}>
+            <UserCog size={19} />
+          </div>
+          <div>
+            <div style={{ fontSize: 15.5, fontWeight: 700, color: t.hi }}>Reset Login</div>
+            <div style={{ fontSize: 12.5, color: t.mid, marginTop: 1 }}>Lepas akun Gmail yang sekarang tertaut ke promotor ini.</div>
+          </div>
+        </div>
+
+        <div style={{ padding: 20 }}>
+          <div style={{ padding: "12px 14px", borderRadius: 10, background: t.sub, border: `1px solid ${t.line}`, marginBottom: 14 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: t.hi }}>{row.full_name || "(nama belum diisi)"}</div>
+            <div style={{ fontSize: 12, color: t.mid, marginTop: 2, fontFamily: "monospace" }}>{row.promotor_id || "—"}{row.user_id_3id ? ` · ${row.user_id_3id}` : ""}</div>
+            <div style={{ fontSize: 12, color: t.mid, marginTop: 2 }}>Email saat ini: <b style={{ color: t.hi }}>{row.email || "belum diisi"}</b></div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, padding: "11px 14px", borderRadius: 10, background: t.blueBg, border: `1px solid ${t.blueBd}`, marginBottom: 12 }}>
+            <Info size={16} color={t.blue} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span style={{ fontSize: 12.5, color: t.hi, lineHeight: 1.55 }}>
+              <b>ID Promotor, ID 3ID, dan seluruh riwayat tagging/penjualan TIDAK hilang</b> — semuanya tetap terikat ke ID Promotor ini, bukan ke akun Gmail.
+              Setelah direset, siapa pun yang login pakai Gmail yang cocok dengan email di atas akan otomatis mengklaim ulang slot ini.
+            </span>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, padding: "11px 14px", borderRadius: 10, background: t.amberBg, border: `1px solid ${t.amberBd}` }}>
+            <AlertTriangle size={16} color={t.amber} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span style={{ fontSize: 12.5, color: t.hi, lineHeight: 1.55 }}>
+              Kalau orangnya berganti, pastikan kolom <b>Email</b> di atas sudah diubah ke Gmail orang yang baru (lewat tombol Edit Data) <b>sebelum</b> orang itu mencoba login — kalau belum, dia tidak akan bisa mengklaim slot ini.
+            </span>
+          </div>
+
+          {err && <div style={{ marginTop: 12, display: "flex", gap: 8, fontSize: 12.5, color: t.red }}><AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />{err}</div>}
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 9, padding: "14px 20px", borderTop: `1px solid ${t.line}` }}>
+          <button onClick={onClose} disabled={busy} className="pts-btn" style={{ background: t.sub, color: t.mid, border: `1px solid ${t.line}` }}>Batal</button>
+          <button onClick={onConfirm} disabled={busy} className="pts-btn" style={{ background: t.blue, color: "#fff", boxShadow: t.sm }}>
+            {busy ? <Loader2 size={15} className="spin" /> : <UserCog size={15} />} Reset Login
           </button>
         </div>
       </div>
