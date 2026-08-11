@@ -1661,10 +1661,31 @@ function MappingEditModal({ t, supabase, profile, period, row, outletByCode, pic
     if (!(Number(salesTarget) > 0)) { setErr("Target Penjualan harus lebih dari 0."); return; }
     setSaving(true);
     try {
-      // 0) Simpan data diri promotor dulu
+      // 0) Simpan data diri promotor dulu.
+      //
+      // Identitas login (app/promotor/page.jsx → resolveIdentity) mengaitkan
+      // slot ini ke SATU akun Google via `auth_user_id` — begitu terklaim,
+      // klaim ulang berikutnya lewat email HANYA berjalan kalau `auth_user_id`
+      // masih kosong. Jadi kalau Email di sini diganti (mis. orangnya
+      // berganti) TANPA melepas `auth_user_id` lama, Gmail yang baru tidak
+      // akan pernah bisa masuk ke slot ini — dan Gmail LAMA yang justru akan
+      // terus muncul di sini setiap kali login. Ini pernah terjadi nyata
+      // (promotor "Januar Halibi" vs akun SPM yang dipakai testing).
+      //
+      // Perbaikan: begitu Email BERUBAH dari nilai tersimpan sebelumnya
+      // (`row.email`) dan slot ini sudah pernah diklaim (`row.auth_user_id`
+      // terisi), `auth_user_id` OTOMATIS dilepas di update yang SAMA — tidak
+      // perlu lagi langkah manual terpisah. Identitas login jadi SELALU
+      // mengikuti email yang PALING TERAKHIR disimpan di sini. Ini 100% aman:
+      // ID Promotor, ID 3ID, dan seluruh riwayat tagging/penjualan sama
+      // sekali TIDAK tersentuh (semua terikat ke `pts_promotor.id`, bukan ke
+      // `auth_user_id`/email) — yang lepas cuma tautan akun Google lama.
+      const normalizedEmail = email.trim().toLowerCase() || null;
+      const emailChanged = (row.email || "").toLowerCase() !== (normalizedEmail || "");
       const identityPayload = {
-        full_name: fullName.trim(), email: email.trim().toLowerCase() || null, phone: phone.trim() || null,
+        full_name: fullName.trim(), email: normalizedEmail, phone: phone.trim() || null,
         region: region || null, effective_date: effectiveDate || null, status, sales_target: Number(salesTarget),
+        ...(emailChanged && row.auth_user_id ? { auth_user_id: null } : {}),
       };
       const { error: idErr } = await supabase.from("pts_promotor").update(identityPayload).eq("id", row.id);
       if (idErr) throw idErr;
@@ -1746,7 +1767,15 @@ function MappingEditModal({ t, supabase, profile, period, row, outletByCode, pic
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: t.mid, marginBottom: 8 }}>Data Promotor</div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 18 }}>
             <div><label style={lbl}>Nama Promotor *</label><input style={inp} value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Nama lengkap" /></div>
-            <div><label style={lbl}>Email Pribadi</label><input style={inp} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nama@email.com" /></div>
+            <div>
+              <label style={lbl}>Email Pribadi</label>
+              <input style={inp} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nama@email.com" />
+              {row.auth_user_id && email.trim().toLowerCase() !== (row.email || "").toLowerCase() && (
+                <div style={{ marginTop: 5, fontSize: 11, color: t.blue, lineHeight: 1.5 }}>
+                  Email diubah — akun Gmail lama otomatis dilepas saat disimpan. ID Promotor & riwayat tetap aman, Gmail baru langsung bisa login.
+                </div>
+              )}
+            </div>
             <div><label style={lbl}>No. HP</label><input style={inp} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="08xx" /></div>
             <div>
               <label style={lbl}>Region</label>
