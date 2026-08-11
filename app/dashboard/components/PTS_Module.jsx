@@ -818,6 +818,28 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
         const { error } = await supabase.from("pts_promotor").update(payload).eq("id", form.id);
         if (error) throw error;
       } else {
+        // Sebelum insert baris baru: cek dulu apakah email ini SUDAH dipakai
+        // baris lain — bisa terjadi walau promotor lama sudah "dihapus" di
+        // sini, karena begitu promotor login pakai akun Google dgn email yg
+        // sama, app Promotor otomatis bikin baris "pending" baru supaya akun
+        // Google itu tetap bisa masuk (lihat resolveIdentity() di app/promotor/page.jsx).
+        // Baris "pending" itu ada auth_user_id-nya (akun Google sudah tertaut)
+        // tapi belum ada ID Promotor — jadi ini AMAN dipakai ulang: isi data
+        // baru KE baris itu (bukan bikin baris duplikat) supaya tautan akun
+        // Google-nya tidak putus & promotor tidak perlu login ulang.
+        if (payload.email) {
+          const { data: existing } = await supabase.from("pts_promotor")
+            .select("id,promotor_id,auth_user_id").ilike("email", payload.email).maybeSingle();
+          if (existing) {
+            if (existing.promotor_id) {
+              throw new Error(`Email ini sudah dipakai promotor lain (ID ${existing.promotor_id}). Gunakan email lain, atau edit data promotor tsb langsung.`);
+            }
+            const { error } = await supabase.from("pts_promotor").update(payload).eq("id", existing.id);
+            if (error) throw error;
+            await load(); cancel();
+            return;
+          }
+        }
         const { error } = await supabase.from("pts_promotor").insert(payload);
         if (error) throw error;
       }
