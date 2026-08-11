@@ -7,14 +7,21 @@
  *   2. Cache app-shell statis (ikon, manifest) supaya load pertama setelah
  *      install lebih cepat, TANPA menyimpan/cache respons Supabase — data
  *      (status plan, validasi, dsb) harus selalu real-time.
+ *
+ * v2 — perbaikan bug yang sama seperti public/promotor/sw.js: HTML shell
+ * (`/martahub/m`) sebelumnya cache-first bareng ikon/manifest, jadi HP yang
+ * sudah install app ini bisa memuat HTML LAMA setelah deploy baru (merujuk
+ * chunk JS yang sudah tidak ada di server) → "This page couldn't load".
+ * Sekarang HTML shell NETWORK-FIRST, cache cuma fallback kalau offline.
  */
-const CACHE_NAME = "martahub-m-shell-v1";
-const SHELL_ASSETS = [
-  "/martahub/m",
+const CACHE_NAME = "martahub-m-shell-v2";
+const CACHE_FIRST_ASSETS = [
   "/martahub/manifest.webmanifest",
   "/martahub/icon-192.png",
   "/martahub/icon-512.png",
 ];
+const NETWORK_FIRST_ASSETS = ["/martahub/m"];
+const SHELL_ASSETS = [...NETWORK_FIRST_ASSETS, ...CACHE_FIRST_ASSETS];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -41,9 +48,25 @@ self.addEventListener("fetch", (event) => {
   // pernah dari cache — status plan/validasi/transfer harus real-time.
   if (url.origin !== self.location.origin) return;
 
-  // Hanya cache-first untuk app-shell statis (ikon/manifest); halaman &
-  // script lain tetap network-first supaya update terbaru selalu terpakai.
-  if (SHELL_ASSETS.some((a) => url.pathname === a)) {
+  // HTML shell: NETWORK-FIRST — selalu coba versi terbaru dari server dulu
+  // (deploy baru langsung kepakai), simpan ke cache sekalian, cache cuma
+  // dipakai kalau network benar-benar gagal (offline).
+  if (NETWORK_FIRST_ASSETS.some((a) => url.pathname === a)) {
+    event.respondWith(
+      fetch(request)
+        .then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)).catch(() => {});
+          return res;
+        })
+        .catch(() => caches.match(request))
+    );
+    return;
+  }
+
+  // Ikon/manifest: cache-first (statis, jarang berubah, aman utk kecepatan
+  // load pertama & syarat "installable" PWA).
+  if (CACHE_FIRST_ASSETS.some((a) => url.pathname === a)) {
     event.respondWith(
       caches.match(request).then((cached) => cached || fetch(request))
     );
