@@ -959,23 +959,38 @@ function AppShell(p) {
       {/* Header — pada sub-screen (claim/history) menampilkan JUDUL LAYAR,
           bukan lagi mengulang "Selamat datang / Nama" (itu cukup di beranda
           saja, supaya tidak terasa berulang & lebih jelas konteksnya). */}
-      <div style={{ padding: `${previewMode ? "10px" : "calc(env(safe-area-inset-top,0px) + 16px)"} 18px 12px`, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: previewMode ? 34 : 0, background: "linear-gradient(180deg,rgba(244,245,247,0.92) 70%,rgba(244,245,247,0))", backdropFilter: "blur(10px)", WebkitBackdropFilter: "blur(10px)", zIndex: 5, maxWidth: 560, margin: "0 auto" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+      <div style={{
+        padding: `${previewMode ? "10px" : "calc(env(safe-area-inset-top,0px) + 16px)"} 18px 14px`,
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        position: "sticky", top: previewMode ? 34 : 0, zIndex: 5, maxWidth: 560, margin: "0 auto",
+        // Glass SELALU aktif (tidak bergantung state JS/scroll listener yg
+        // ternyata tidak selalu jalan konsisten di semua konteks/webview -
+        // itu penyebab header sebelumnya kadang transparan penuh & konten di
+        // baliknya keliatan tembus/tabrakan pas discroll). Background buram
+        // solid dari awal = dijamin selalu kebaca & selalu nempel di atas,
+        // efek "kaca" tetap dapat lewat blur, tanpa titik gagal tambahan.
+        background: "rgba(244,245,247,0.86)",
+        backdropFilter: "blur(18px) saturate(1.5)",
+        WebkitBackdropFilter: "blur(18px) saturate(1.5)",
+        borderBottom: "1px solid rgba(23,24,28,0.06)",
+        boxShadow: "0 6px 20px rgba(23,24,28,0.05)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
           {view !== "home" ? (
             <>
               <IconBtn onClick={goHome} aria-label="Kembali ke beranda"><ChevronLeft size={18} /></IconBtn>
-              <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: C.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+              <span style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.03em", color: C.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                 {view === "claim" ? `Claim Penjualan SP${brand ? ` ${brand}` : ""}` : "Riwayat Pengajuan"}
               </span>
             </>
           ) : (
             <>
               <div className={previewMode ? "" : "press"} onClick={previewMode ? undefined : () => setEditProfile(true)} aria-label="Profil Saya"
-                style={{ width: 40, height: 40, borderRadius: 13, flexShrink: 0, background: C.grad, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 800, boxShadow: "0 6px 16px rgba(237,28,36,0.24)", cursor: previewMode ? "default" : "pointer" }}>{initial}</div>
+                style={{ width: 44, height: 44, borderRadius: 14, flexShrink: 0, background: C.grad, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, fontWeight: 800, boxShadow: "0 6px 16px rgba(237,28,36,0.24)", cursor: previewMode ? "default" : "pointer" }}>{initial}</div>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 12, color: C.mid, fontWeight: 600, letterSpacing: "0.02em" }}>Selamat datang</div>
+                <div style={{ fontSize: 13, color: C.mid, fontWeight: 600, letterSpacing: "0.02em" }}>Selamat datang</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0, marginTop: 1 }}>
-                  <span style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 150, color: C.hi }}>{displayName}</span>
+                  <span style={{ fontSize: 21, fontWeight: 800, letterSpacing: "-0.03em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 170, color: C.hi }}>{displayName}</span>
                   {!previewMode && (
                     <button className="press" onClick={() => setEditProfile(true)} aria-label="Edit profil"
                       style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, borderRadius: 8, border: `1px solid ${C.line}`, background: C.card, color: C.mid, cursor: "pointer", flexShrink: 0, boxShadow: C.sm }}>

@@ -20,6 +20,7 @@ import { Mail, Info, Loader2, ArrowLeft, ArrowRight, ShieldCheck } from "lucide-
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../../lib/martaScope";
 import { HubLogo } from "../../../../components/HubLogo";
+import { MartaSplash } from "../_shared/MobileShell";
 
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const ROLE_LABEL = { bme: "BME", rge: "RGE", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
@@ -91,14 +92,7 @@ export default function MartaMobileLogin() {
     }
   };
 
-  if (checking) {
-    return (
-      <div style={{ minHeight: "100svh", display: "flex", alignItems: "center", justifyContent: "center", background: "#F4F5F7" }}>
-        <Loader2 size={24} color="#ED1C24" style={{ animation: "mspin 1s linear infinite" }} />
-        <style>{`@keyframes mspin{to{transform:rotate(360deg)}}`}</style>
-      </div>
-    );
-  }
+  if (checking) return <MartaSplash />;
 
   return (
     <div style={{ minHeight: "100svh", background: "#F4F5F7", color: "#17181C", fontFamily: FF, WebkitFontSmoothing: "antialiased" }}>

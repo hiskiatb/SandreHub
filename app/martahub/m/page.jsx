@@ -20,10 +20,11 @@ import { useRouter } from "next/navigation";
 import {
   LogOut, MapPin, Building2, ChevronRight, Bell,
   CalendarPlus, ListChecks, Map as MapIcon, Trophy, ShieldCheck, ClipboardCheck, Lightbulb, PackageCheck,
+  Target, CheckCircle2, Gauge, Wallet, Tags, LayoutDashboard,
 } from "lucide-react";
 import supabaseMarta from "../../../lib/supabaseMarta";
 import { applyMartaScope } from "../../../lib/martaScope";
-import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "./_shared/MobileShell";
+import MobileShell, { useMartaSession, ShellSpinner, MartaSplash, FF, BRAND } from "./_shared/MobileShell";
 import { statusMeta, fmtDate, fmtInt } from "./_shared/activityUi";
 import { APPROVER_ROLES } from "./_shared/planData";
 import { fetchUnreadCount } from "./_shared/notifData";
@@ -131,7 +132,7 @@ export default function MartaMobileHome() {
         // Discope ke region×brand approver (sama persis dgn query di
         // /martahub/m/approval) - sebelumnya query ini TIDAK di-scope, jadi
         // badge-nya bisa lebih besar dari isi Approval Center yg sebenarnya
-        // (approver brand/region tertentu tapi badge menghitung nasional).
+        // (approver brand/region tertentu tapi badge menghitung Sumatera).
         let q = supabaseMarta.from("mh_activities").select("id", { count: "exact", head: true }).in("status", ["plan_submitted", "revision_actual"]);
         q = await applyMartaScope(q, scope);
         const { count } = await q;
@@ -147,7 +148,7 @@ export default function MartaMobileHome() {
     router.replace("/martahub/m/login");
   };
 
-  if (loading) return <MobileShell active="home"><ShellSpinner /></MobileShell>;
+  if (loading) return <MartaSplash />;
 
   const branchOptions = scope?.unscoped
     ? Array.from(new Set((rows || []).map((r) => r.branch_id).filter(Boolean)))
@@ -185,7 +186,19 @@ export default function MartaMobileHome() {
 
   return (
     <MobileShell active="home">
-      <div style={{ padding: "calc(env(safe-area-inset-top,0px) + 20px) 20px 4px" }}>
+      {/* Header (sapaan/nama + Notifikasi/Keluar) STICKY dgn glass blur -
+          sebelumnya ikut tergulung ke atas bareng konten krn cuma div biasa
+          tanpa position:sticky sama sekali. Background buram SELALU aktif
+          (bukan bergantung state scroll JS) supaya dijamin selalu solid &
+          menempel di atas, sama seperti perbaikan di app Promotor. Filter
+          Cabang/Brand SENGAJA dibiarkan di luar (scroll normal), cuma baris
+          nama+ikon yang perlu selalu terlihat. */}
+      <div style={{
+        position: "sticky", top: 0, zIndex: 20, maxWidth: 480, margin: "0 auto",
+        padding: "calc(env(safe-area-inset-top,0px) + 20px) 20px 12px",
+        background: "rgba(244,245,247,0.86)", backdropFilter: "blur(18px) saturate(1.5)", WebkitBackdropFilter: "blur(18px) saturate(1.5)",
+        borderBottom: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 6px 20px rgba(23,24,28,0.05)",
+      }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
             <div style={{ fontSize: 12, color: "#8A8A96", fontWeight: 600 }}>{greeting()},</div>
@@ -208,7 +221,9 @@ export default function MartaMobileHome() {
             </button>
           </div>
         </div>
+      </div>
 
+      <div style={{ padding: "0 20px 4px" }}>
         {/* Scope - sampai di sini authState sudah pasti 'active' (lihat
             useMartaSession di MobileShell.jsx, yg redirect ke /pending atau
             /revoked lebih dulu kalau belum aktif). Untuk role unscoped
@@ -274,13 +289,13 @@ export default function MartaMobileHome() {
           </div>
 
           <div style={{ position: "relative", display: "flex", marginTop: 18, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.09)" }}>
-            <QuadStat dark dot="#FFFFFF" label="Plan" value={fmtInt(planCount)} />
+            <QuadStat dark icon={Target} dot="#FFFFFF" label="Plan" value={fmtInt(planCount)} />
             <QuadDivider />
-            <QuadStat dark dot="#EC1E79" label="Actual" value={fmtInt(actualCount)} valueColor="#F286B4" />
+            <QuadStat dark icon={CheckCircle2} dot="#EC1E79" label="Actual" value={fmtInt(actualCount)} valueColor="#F286B4" />
             <QuadDivider />
-            <QuadStat dark dot="#57C2AC" label="Productivity" value={productivityPct != null ? `${productivityPct}%` : "-"} valueColor="#7FD9C6" />
+            <QuadStat dark icon={Gauge} dot="#57C2AC" label="Productivity" value={productivityPct != null ? `${productivityPct}%` : "-"} valueColor="#7FD9C6" />
             <QuadDivider />
-            <QuadStat dark dot="#F5CD46" label="Cost Ratio" value={costRatioPct != null ? `${costRatioPct}%` : "-"} valueColor="#F5CD46" />
+            <QuadStat dark icon={Wallet} dot="#F5CD46" label="Cost Ratio" value={costRatioPct != null ? `${costRatioPct}%` : "-"} valueColor="#F5CD46" />
           </div>
         </div>
       </div>
@@ -311,6 +326,12 @@ export default function MartaMobileHome() {
             <MenuItem icon={Trophy} label="Leaderboard" color="#F5CD46" onClick={() => router.push("/martahub/m/leaderboard")} />
             <MenuItem icon={PackageCheck} label="POSM" color="#B32E85" onClick={() => router.push(isApprover ? "/martahub/m/posm/stock" : "/martahub/m/posm")} />
             {isApprover && <MenuItem icon={ShieldCheck} label="Approval" color="#E63325" onClick={() => router.push("/martahub/m/approval")} badge={pendingApprovals} />}
+            {/* Management View - KHUSUS spm_sumatera (bukan approver lain),
+                satu-satunya role yg benar-benar mengelola seluruh Sumatera
+                tanpa batas region/brand. Beda dari Approval (yg soal
+                memutuskan plan/laporan masuk) - ini soal pemantauan +
+                edit tim secara total. */}
+            {scope?.role === "spm_sumatera" && <MenuItem icon={LayoutDashboard} label="Management" color="#38383E" onClick={() => router.push("/martahub/m/management")} />}
           </div>
         </div>
       </div>
@@ -399,17 +420,32 @@ function FilterSelect({ icon: Icon, value, onChange, placeholder, options, fullW
 }
 
 /** Brand ditampilkan sbg tag warna kecil (spt badge IM3/3ID di kartu lain
- * di app ini) - bukan field dropdown penuh, krn cuma 2 pilihan brand. */
+ * di app ini) - bukan field dropdown penuh, krn cuma 2 pilihan brand.
+ * Belum ada logo brand asli (aset gambar) yg bisa dipakai di sini, jadi
+ * "ikon"-nya berupa lencana huruf singkat bertinta warna brand masing²
+ * (IM3 = merah, Tri = pink) - tetap kebaca sekilas persis logo, tanpa
+ * bergantung ke file gambar eksternal. Placeholder "Brand" (belum pilih)
+ * pakai ikon Tags generik dari lucide. */
 const BRAND_TAG_COLORS = { im3: "#E53935", tri: "#E23B86" };
+const BRAND_TAG_INITIAL = { im3: "i3", tri: "3" };
 function BrandTagSelect({ value, onChange, options }) {
   const selected = options.find((o) => o.value === value);
   const color = selected ? (BRAND_TAG_COLORS[selected.value] || "#5A5A68") : "#8A8A96";
+  const initial = selected ? (BRAND_TAG_INITIAL[selected.value] || selected.label?.[0] || "?") : null;
   return (
     <div style={{
-      position: "relative", display: "flex", alignItems: "center", justifyContent: "center", width: "100%", boxSizing: "border-box",
+      position: "relative", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, width: "100%", boxSizing: "border-box",
       minHeight: 40, padding: "0 10px", borderRadius: 999,
       background: value ? `${color}14` : "#FFFFFF", border: `1.5px solid ${value ? color : "#E4E5EA"}`,
     }}>
+      {selected ? (
+        <span style={{
+          width: 16, height: 16, borderRadius: 5, flexShrink: 0, background: color, color: "#fff",
+          fontSize: 8.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", letterSpacing: -0.2,
+        }}>{initial}</span>
+      ) : (
+        <Tags size={12} color={color} strokeWidth={2.2} style={{ flexShrink: 0 }} />
+      )}
       <span style={{ fontSize: 12, fontWeight: 800, color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
         {selected ? selected.label : "Brand"}
       </span>
@@ -443,13 +479,24 @@ function MonthSelect({ value, onChange, options }) {
   );
 }
 
-function QuadStat({ label, value, valueColor, dark, dot }) {
+/** Tiap kuadran kini punya ikon sendiri yg mencerminkan artinya (bukan cuma
+ * titik warna generik): Plan = Target (rencana yg dibidik), Actual =
+ * CheckCircle2 (yg sudah tercapai/tervalidasi), Productivity = Gauge
+ * (kecepatan/efisiensi kerja), Cost Ratio = Wallet (efisiensi biaya) -
+ * ditaruh dlm badge bulat tipis bertinta warna dot-nya masing-masing. */
+function QuadStat({ label, value, valueColor, dark, dot, icon: Icon }) {
   return (
     <div style={{ flex: 1, textAlign: "center" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-        {dot && <span style={{ width: 4, height: 4, borderRadius: 99, background: dot, opacity: 0.85 }} />}
-        <div style={{ fontSize: 9.5, color: dark ? "rgba(255,255,255,0.5)" : "#B0B0BA", fontWeight: 700, letterSpacing: 0.2 }}>{label}</div>
-      </div>
+      {Icon && (
+        <div style={{
+          width: 22, height: 22, borderRadius: 8, margin: "0 auto 6px",
+          background: dark ? `${dot}26` : `${dot}1A`,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <Icon size={12} color={dot} strokeWidth={2.4} />
+        </div>
+      )}
+      <div style={{ fontSize: 9.5, color: dark ? "rgba(255,255,255,0.5)" : "#B0B0BA", fontWeight: 700, letterSpacing: 0.2 }}>{label}</div>
       <div style={{ marginTop: 5, fontSize: 15.5, fontWeight: 800, color: valueColor || (dark ? "#FFFFFF" : "#17181C") }}>{value}</div>
     </div>
   );
@@ -552,8 +599,10 @@ function MissionCarousel({ needsCheckin, needsReport, upcoming, isApprover, pend
 // ketiga konsep (Aktivitas/Approval-Draft/Tips) pakai struktur identik:
 // header (ikon+badge+judul+subjudul, dibatasi 2 baris) lalu footer CTA yg
 // nempel di bawah lewat marginTop:"auto", dibungkus minHeight tetap supaya
-// kartu tanpa CTA (Tips) tetap sama tingginya dgn yg lain.
-const CAROUSEL_CARD_MIN_H = 148;
+// kartu tanpa CTA (Tips) tetap sama tingginya dgn yg lain. Diperkecil sejak
+// CTA dipadatkan jadi chevron bulat sejajar ikon (bukan baris terpisah di
+// bawah lagi) - kartu jadi tidak makan tempat tinggi.
+const CAROUSEL_CARD_MIN_H = 92;
 
 function CarouselCard({ badge, accent, title, subtitle, action, cta }) {
   const Icon = badge?.includes("APPROVAL") ? ClipboardCheck : badge?.includes("TIPS") ? Lightbulb : ListChecks;
@@ -562,12 +611,12 @@ function CarouselCard({ badge, accent, title, subtitle, action, cta }) {
       style={{
         width: "100%", minHeight: CAROUSEL_CARD_MIN_H, boxSizing: "border-box",
         textAlign: "left", cursor: action ? "pointer" : "default", fontFamily: FF,
-        display: "flex", flexDirection: "column", borderRadius: 20, padding: "16px 16px",
+        display: "flex", flexDirection: "column", justifyContent: "center", borderRadius: 20, padding: "14px 16px",
         background: `linear-gradient(135deg, ${accent}14 0%, #FFFFFF 55%)`,
         border: `1px solid ${accent}30`,
         boxShadow: "0 4px 14px rgba(17,17,20,0.05), 0 1px 2px rgba(17,17,20,0.03)",
       }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 13, flex: 1 }}>
         <div style={{ flexShrink: 0, width: 44, height: 44, borderRadius: 13, background: `linear-gradient(150deg, ${accent}, ${accent}CC)`, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 4px 10px ${accent}33` }}>
           <Icon size={19} color="#fff" />
         </div>
@@ -576,17 +625,15 @@ function CarouselCard({ badge, accent, title, subtitle, action, cta }) {
           <div style={{ marginTop: 3, fontSize: 14, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</div>
           <div style={{ marginTop: 2, fontSize: 11.5, color: "#4A4A55", lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{subtitle}</div>
         </div>
+        {/* CTA dipadatkan jadi chevron saja di kanan, sejajar dgn ikon+teks
+            (bukan baris terpisah di bawah) - supaya tinggi kartu tidak
+            membengkak & tidak makan tempat, tapi masih jelas bisa ditap. */}
+        {action && cta && (
+          <div style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 999, background: `${accent}14`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <ChevronRight size={15} color={accent} />
+          </div>
+        )}
       </div>
-
-      {/* CTA eksplisit, selalu nempel di bawah kartu - dipakai supaya jelas
-          bisa ditap utk lihat detail/riwayat, bukan cuma chevron kecil yg
-          gampang kelewat. */}
-      {action && cta && (
-        <div style={{ marginTop: "auto", paddingTop: 12, display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 5 }}>
-          <span style={{ fontSize: 12, fontWeight: 800, color: accent }}>{cta}</span>
-          <ChevronRight size={14} color={accent} />
-        </div>
-      )}
     </button>
   );
 }

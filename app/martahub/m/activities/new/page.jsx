@@ -59,16 +59,36 @@ function CreatePlanWizardInner() {
   const [prefilled, setPrefilled] = useState(false);
 
   // ── "Buat Untuk" (acting-for) - hanya utk approver, mode buat baru ──
+  // Sekarang MULTI-SELECT (satu BME/RGE bisa punya lebih dari satu baris
+  // assignment kalau dia pegang beberapa branch - dulu cuma bisa pilih satu
+  // baris/branch sekaligus, sekarang bisa dicentang semuanya sekaligus).
   const isApprover = !editId && APPROVER_ROLES.includes(scope?.role);
-  const [actingFor, setActingFor] = useState(null); // row dari fetchAssignableTargets
+  const [actingForList, setActingForList] = useState([]); // rows dari fetchAssignableTargets
+  const actingFor = actingForList[0] || null; // representatif (utk resolve owner/branch utama)
   const [actingForOptions, setActingForOptions] = useState([]);
   const [actingForLoading, setActingForLoading] = useState(false);
   const [actingForSheet, setActingForSheet] = useState(false);
+  const actingForKey = actingForList.map((a) => a.id).join(",");
+
   // Scope efektif utk site/branch - punya sendiri (BME/RGE) atau scope orang
-  // yg diwakilkan (approver via "Buat Untuk"), SAMA dgn `_effectiveOwnerId()`.
+  // yg diwakilkan (approver via "Buat Untuk"). Kalau beberapa branch
+  // dipilih sekaligus, `branchIds` dipakai utk gabungkan daftar site dari
+  // SEMUA branch terpilih, `branchName` (primer, tunggal) tetap dipakai
+  // utk resolve UUID branch saat simpan, `branchNameDisplay` (gabungan,
+  // dipisah koma) utk ditampilkan ke pengguna.
+  const effectiveBranchIds = isApprover && actingForList.length
+    ? Array.from(new Set(actingForList.map((a) => a.branch_id).filter(Boolean)))
+    : (scope?.branchId ? [scope.branchId] : []);
   const effectiveScope = isApprover && actingFor
-    ? { branchId: actingFor.branch_id, brand: actingFor.brand, branchName: actingFor.branch_name }
-    : { branchId: scope?.branchId, brand: scope?.brand, branchName: scope?.branchName };
+    ? {
+        branchId: actingFor.branch_id, branchIds: effectiveBranchIds, brand: actingFor.brand,
+        branchName: actingFor.branch_name,
+        branchNameDisplay: Array.from(new Set(actingForList.map((a) => a.branch_name).filter(Boolean))).join(", "),
+      }
+    : {
+        branchId: scope?.branchId, branchIds: effectiveBranchIds, brand: scope?.brand,
+        branchName: scope?.branchName, branchNameDisplay: scope?.branchName,
+      };
 
   // ── Step 1: Info ──
   const [categories, setCategories] = useState([]);
@@ -106,12 +126,17 @@ function CreatePlanWizardInner() {
     (async () => {
       setDataLoading(true);
       try {
-        const [siteRows, poi] = await Promise.all([
-          fetchScopeSites(effectiveScope.branchId, effectiveScope.brand),
+        // Kalau beberapa branch dipilih sekaligus (multi "Buat Untuk"),
+        // ambil site dari SEMUA branch itu lalu gabung (dedup by site_id) -
+        // supaya step Lokasi bisa pilih site dari branch manapun yg dipilih.
+        const [siteLists, poi] = await Promise.all([
+          Promise.all(effectiveScope.branchIds.map((id) => fetchScopeSites(id, effectiveScope.brand))),
           fetchPoiTypes(),
         ]);
         if (!alive) return;
-        setSites(siteRows);
+        const merged = []; const seen = new Set();
+        for (const list of siteLists) for (const s of list) { if (!seen.has(s.site_id)) { seen.add(s.site_id); merged.push(s); } }
+        setSites(merged);
         setPoiTypes(poi);
       } catch (e) {
         if (alive) setErr(e.message || "Gagal memuat data referensi");
@@ -121,7 +146,7 @@ function CreatePlanWizardInner() {
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, scope, effectiveScope.branchId, effectiveScope.brand]);
+  }, [loading, scope, effectiveScope.branchIds.join(","), effectiveScope.brand]);
 
   // Muat daftar orang yang bisa diwakilkan ("Buat Untuk") - hanya utk
   // approver, sekali saat scope siap.
@@ -148,7 +173,7 @@ function CreatePlanWizardInner() {
     if (!isApprover) return;
     setMc(""); setPrimarySite(null); setExtraSites([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [actingFor?.id]);
+  }, [actingForKey]);
 
   // Muat data edit (kalau ?edit=<id>) - PARALEL dgn sites/poi di atas.
   useEffect(() => {
@@ -251,7 +276,7 @@ function CreatePlanWizardInner() {
   function validateStep(i) {
     const bad = new Set();
     if (i === 0) {
-      if (isApprover && !actingFor) bad.add("actingFor");
+      if (isApprover && actingForList.length === 0) bad.add("actingFor");
       if (categories.length === 0) bad.add("categories");
       if (!eventName.trim()) bad.add("eventName");
       if (validDates.length === 0) bad.add("planDate");
@@ -366,18 +391,15 @@ function CreatePlanWizardInner() {
           <button onClick={goBack} style={{ width: 34, height: 34, borderRadius: 10, background: "#FFFFFF", border: "1px solid #E4E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
             <ArrowLeft size={16} />
           </button>
-          <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "-0.01em" }}>{editId ? "Edit Plan" : "Buat Plan Baru"}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, letterSpacing: "-0.01em" }}>{editId ? "Edit Plan" : "Buat Plan Baru"}</div>
+          </div>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: "#B0B0BA", letterSpacing: 0.3, flexShrink: 0 }}>
+            LANGKAH {step + 1}/{STEPS.length}
+          </div>
         </div>
 
-        {/* Step indicator */}
-        <div style={{ display: "flex", gap: 6, marginTop: 18 }}>
-          {STEPS.map((s, i) => (
-            <div key={s} style={{ flex: 1 }}>
-              <div style={{ height: 4, borderRadius: 3, background: i <= step ? "#ED1C24" : "#E9EAEE" }} />
-              <div style={{ marginTop: 6, fontSize: 10.5, fontWeight: i === step ? 800 : 600, color: i === step ? "#17181C" : "#B0B0BA" }}>{s}</div>
-            </div>
-          ))}
-        </div>
+        <WizardStepper steps={STEPS} current={step} onStepClick={(i) => setStep(i)} />
       </div>
 
       {err && (
@@ -390,8 +412,8 @@ function CreatePlanWizardInner() {
             categories, toggleCategory, eventName, setEventName, dates, setDates,
             timesByDate, setTimesByDate,
             mc, setMc, mcList, invalid,
-            branchName: effectiveScope.branchName,
-            isApprover, actingFor, actingForOptions, actingForLoading, onPickActingFor: () => setActingForSheet(true),
+            branchName: effectiveScope.branchNameDisplay,
+            isApprover, actingFor, actingForList, actingForOptions, actingForLoading, onPickActingFor: () => setActingForSheet(true),
           }} />
         )}
         {step === 1 && (
@@ -439,8 +461,9 @@ function CreatePlanWizardInner() {
         <ActingForSheet
           options={actingForOptions}
           loading={actingForLoading}
+          initialSelected={actingForList}
           onClose={() => setActingForSheet(false)}
-          onSelect={(t) => { setActingFor(t); setActingForSheet(false); }}
+          onConfirm={(list) => { setActingForList(list); setActingForSheet(false); }}
         />
       )}
     </MobileShell>
@@ -448,7 +471,7 @@ function CreatePlanWizardInner() {
 }
 
 // ═════════════════════════════════ Step 1 ═════════════════════════════════
-function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, setDates, timesByDate, setTimesByDate, mc, setMc, mcList, invalid, branchName, isApprover, actingFor, actingForOptions, actingForLoading, onPickActingFor }) {
+function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, setDates, timesByDate, setTimesByDate, mc, setMc, mcList, invalid, branchName, isApprover, actingFor, actingForList, actingForOptions, actingForLoading, onPickActingFor }) {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const validDates = dates.filter(Boolean);
   // Tidak ada mode manual - ringkasan dihitung otomatis dari keterdekatan
@@ -487,10 +510,14 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
               {actingFor ? (
                 <>
                   <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{actingFor.full_name || actingFor.email}</div>
-                  <div style={{ fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{(actingFor.role || "").toUpperCase()} · {actingFor.branch_name || "-"}</div>
+                  {/* Lebih dari satu branch dipilih (BME/RGE yg sama, beberapa
+                      branch sekaligus) - digabung koma di sini. */}
+                  <div style={{ fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>
+                    {(actingFor.role || "").toUpperCase()} · {actingForList.map((a) => a.branch_name).filter(Boolean).join(", ") || "-"}
+                  </div>
                 </>
               ) : (
-                <div style={{ fontSize: 12.5, color: "#8A8A96", fontWeight: 600 }}>Pilih BME/RGE yang diwakilkan</div>
+                <div style={{ fontSize: 12.5, color: "#8A8A96", fontWeight: 600 }}>Pilih BME/RGE yang diwakilkan (bisa lebih dari satu branch)</div>
               )}
             </div>
           </button>
@@ -565,8 +592,8 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
         />
       )}
 
-      <FieldLabel text="Branch" top />
-      <LockedField text={branchName || "-"} />
+      <FieldLabel text="Branch" required top />
+      <LockedField text={branchName || "-"} muted />
 
       <FieldLabel text="Micro Cluster" required top />
       <SelectPills options={mcList} value={mc} onChange={setMc} error={invalid.has("mc")} placeholder={mcList.length === 0 ? "Tidak ada MC di scope Anda" : "Pilih micro cluster"} />
@@ -749,6 +776,64 @@ function Card({ children, style }) {
   return <div style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 18, padding: 16, ...style }}>{children}</div>;
 }
 function Divider() { return <div style={{ height: 1, background: "#F0F0F3", margin: "12px 0" }} />; }
+
+/** Stepper wizard - pengganti progress bar polos lama. Bulatan bernomor +
+ * garis penghubung yang terisi mengikuti kemajuan, tanda centang utk langkah
+ * yang sudah dilewati, dan langkah yang sudah dilewati BISA diketuk utk
+ * kembali langsung (skip-forward tetap tidak boleh - harus lewat tombol
+ * Lanjut supaya validasi tiap langkah tetap jalan). Setiap kolom "mandiri"
+ * (garis-kiri + bulatan + garis-kanan + label ada dalam satu flex:1 yang
+ * sama) supaya label selalu presisi di tengah bulatannya sendiri, tidak
+ * meleset walau lebar kolom antar langkah berbeda-beda.  */
+function WizardStepper({ steps, current, onStepClick }) {
+  return (
+    <div style={{ marginTop: 16, display: "flex" }}>
+      {steps.map((label, i) => {
+        const done = i < current;
+        const active = i === current;
+        const clickable = done;
+        const leftFilled = i > 0 && i <= current;
+        const rightFilled = i < steps.length - 1 && i < current;
+        return (
+          <div key={label} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", width: "100%" }}>
+              <StepLine visible={i > 0} filled={leftFilled} />
+              <button
+                onClick={() => clickable && onStepClick(i)}
+                disabled={!clickable}
+                aria-label={label}
+                style={{
+                  width: active ? 28 : 24, height: active ? 28 : 24, borderRadius: "50%", flexShrink: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center", padding: 0, border: "none",
+                  cursor: clickable ? "pointer" : "default",
+                  background: done || active ? BRAND : "#FFFFFF",
+                  boxShadow: active ? "0 0 0 4px rgba(237,28,36,0.14)" : done ? "none" : "inset 0 0 0 1.5px #E4E5EA",
+                  transition: "width .22s cubic-bezier(.34,1.56,.64,1), height .22s cubic-bezier(.34,1.56,.64,1), background .2s, box-shadow .2s",
+                }}>
+                {done ? <Check size={12} color="#fff" strokeWidth={3.2} />
+                      : <span style={{ fontSize: active ? 12.5 : 11, fontWeight: 800, color: active ? "#fff" : "#C4C4CE", fontFamily: FF }}>{i + 1}</span>}
+              </button>
+              <StepLine visible={i < steps.length - 1} filled={rightFilled} />
+            </div>
+            <span style={{
+              marginTop: 7, fontSize: 10, fontWeight: active ? 800 : 700, letterSpacing: 0.1, whiteSpace: "nowrap",
+              color: active ? "#17181C" : done ? "#6B6B76" : "#C4C4CE", transition: "color .2s",
+            }}>
+              {label}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+function StepLine({ visible, filled }) {
+  return (
+    <div style={{ flex: 1, height: 2.5, margin: "0 3px", borderRadius: 2, background: "#E9EAEE", position: "relative", overflow: "hidden", visibility: visible ? "visible" : "hidden" }}>
+      <div style={{ position: "absolute", inset: 0, borderRadius: 2, background: BRAND, transform: `scaleX(${filled ? 1 : 0})`, transformOrigin: "left", transition: "transform .35s cubic-bezier(.4,0,.2,1)" }} />
+    </div>
+  );
+}
 function FieldLabel({ text, required, hint, top }) {
   return (
     <div style={{ display: "flex", alignItems: "center", marginTop: top ? 16 : 0, marginBottom: 7 }}>
@@ -874,28 +959,75 @@ function SitePickerSheet({ items, onClose, onSelect }) {
   );
 }
 
-function ActingForSheet({ options, loading, onClose, onSelect }) {
+function ActingForSheet({ options, loading, initialSelected, onClose, onConfirm }) {
   const [q, setQ] = useState("");
+  const [selected, setSelected] = useState(() => new Set((initialSelected || []).map((o) => o.id)));
   const filtered = options.filter((o) => !q.trim() || (o.full_name || "").toLowerCase().includes(q.toLowerCase()) || (o.email || "").toLowerCase().includes(q.toLowerCase()));
+
+  // Sekali satu baris dipilih, kunci ke email yang sama saja - beberapa
+  // branch dari ORANG yang sama boleh dipilih sekaligus, tapi tidak boleh
+  // mencampur dua orang berbeda dalam satu "Buat Untuk".
+  const firstSelected = options.find((o) => selected.has(o.id));
+  const lockedEmail = firstSelected?.email || null;
+
+  const toggle = (o) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(o.id)) {
+        next.delete(o.id);
+      } else {
+        if (lockedEmail && o.email !== lockedEmail) return prev; // beda orang, abaikan
+        next.add(o.id);
+      }
+      return next;
+    });
+  };
+
+  const confirm = () => {
+    const list = options.filter((o) => selected.has(o.id));
+    onConfirm(list);
+  };
+
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(23,24,28,0.45)", zIndex: 70, display: "flex", alignItems: "flex-end" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, margin: "0 auto", maxHeight: "75vh", display: "flex", flexDirection: "column", background: "#FFFFFF", borderRadius: "22px 22px 0 0", fontFamily: FF }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, margin: "0 auto", maxHeight: "80vh", display: "flex", flexDirection: "column", background: "#FFFFFF", borderRadius: "22px 22px 0 0", fontFamily: FF }}>
         <div style={{ width: 40, height: 4, borderRadius: 3, background: "#E4E5EA", margin: "10px auto 4px" }} />
         <div style={{ padding: "10px 20px" }}>
           <div style={{ fontSize: 15, fontWeight: 800 }}>Buat Untuk</div>
+          <div style={{ fontSize: 11.5, color: "#8A8A96", marginTop: 2 }}>Bisa pilih lebih dari satu branch untuk orang yang sama.</div>
           <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama atau email…"
             style={{ ...inputBase, marginTop: 10, height: 42 }} />
         </div>
-        <div style={{ overflowY: "auto", padding: "0 20px 20px" }}>
+        <div style={{ overflowY: "auto", padding: "0 20px 12px", flex: 1 }}>
           {loading && <div style={{ padding: "24px 0", textAlign: "center", color: "#8A8A96", fontSize: 12.5 }}>Memuat…</div>}
           {!loading && filtered.length === 0 && <div style={{ padding: "24px 0", textAlign: "center", color: "#8A8A96", fontSize: 12.5 }}>Tidak ada orang yang cocok.</div>}
-          {filtered.map((o) => (
-            <button key={o.id} onClick={() => onSelect(o)}
-              style={{ width: "100%", textAlign: "left", padding: "12px 10px", borderRadius: 10, border: "none", background: "none", borderBottom: "1px solid #F0F0F3", cursor: "pointer" }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700, color: "#17181C" }}>{o.full_name || o.email}</div>
-              <div style={{ fontSize: 11.5, color: "#8A8A96", marginTop: 2 }}>{(o.role || "").toUpperCase()} · {o.branch_name || "-"}{o.brand ? ` · ${o.brand.toUpperCase()}` : ""}</div>
-            </button>
-          ))}
+          {filtered.map((o) => {
+            const isSel = selected.has(o.id);
+            const disabled = !isSel && lockedEmail && o.email !== lockedEmail;
+            return (
+              <button key={o.id} onClick={() => !disabled && toggle(o)} disabled={disabled}
+                style={{ width: "100%", textAlign: "left", padding: "12px 10px", borderRadius: 10, border: "none",
+                  background: isSel ? "rgba(237,28,36,0.06)" : "none",
+                  borderBottom: "1px solid #F0F0F3", cursor: disabled ? "not-allowed" : "pointer",
+                  display: "flex", alignItems: "center", gap: 10, opacity: disabled ? 0.4 : 1 }}>
+                <div style={{ width: 20, height: 20, borderRadius: 6, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                  background: isSel ? BRAND : "#FFFFFF", border: isSel ? "none" : "1.5px solid #D8D9E0" }}>
+                  {isSel && <Check size={13} color="#FFFFFF" strokeWidth={3} />}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 700, color: "#17181C" }}>{o.full_name || o.email}</div>
+                  <div style={{ fontSize: 11.5, color: "#8A8A96", marginTop: 2 }}>{(o.role || "").toUpperCase()} · {o.branch_name || "-"}{o.brand ? ` · ${o.brand.toUpperCase()}` : ""}</div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ padding: "12px 20px 20px", borderTop: "1px solid #F0F0F3" }}>
+          <button onClick={confirm} disabled={selected.size === 0}
+            style={{ width: "100%", height: 46, borderRadius: 12, border: "none", fontFamily: FF, fontSize: 14, fontWeight: 800, color: "#FFFFFF",
+              background: selected.size === 0 ? "#D8D9E0" : BRAND, cursor: selected.size === 0 ? "not-allowed" : "pointer" }}>
+            Pilih {selected.size > 0 ? `(${selected.size})` : ""}
+          </button>
         </div>
       </div>
     </div>

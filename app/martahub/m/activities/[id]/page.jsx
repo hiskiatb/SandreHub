@@ -10,6 +10,7 @@ import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft, MapPin, Calendar, Tag, Image as ImageIcon, Phone,
   CheckCircle2, XCircle, Clock, FileText, ChevronRight, Layers, Trash2, AlertTriangle, Loader2,
+  CardSim, Router, Wallet, SignalHigh, Receipt,
 } from "lucide-react";
 import supabaseMarta from "../../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../_shared/MobileShell";
@@ -25,6 +26,7 @@ export default function ActivityDetailPage() {
   const { loading: sessionLoading, userId } = useMartaSession();
   const [a, setA] = useState(null);
   const [extraSites, setExtraSites] = useState([]);
+  const [siteNames, setSiteNames] = useState({}); // site_id -> site_name (mh_sites), utk label di list gabungan
   const [photos, setPhotos] = useState([]);
   const [entries, setEntries] = useState([]);
   const [editReqs, setEditReqs] = useState([]);
@@ -54,6 +56,16 @@ export default function ActivityDetailPage() {
         setExtraSites((sites || []).map((s) => s.site_id));
         setEntries(sales || []);
         setEditReqs(edits || []);
+
+        // Nama site (bukan cuma kode) - dipakai di list gabungan Site Utama +
+        // Site Tambahan, biar bukan teks kode doang.
+        const allSiteIds = Array.from(new Set([act?.site_id, ...(sites || []).map((s) => s.site_id)].filter(Boolean)));
+        if (allSiteIds.length > 0) {
+          const { data: siteRows } = await supabaseMarta.from("mh_sites").select("site_id,site_name").in("site_id", allSiteIds);
+          const map = {};
+          (siteRows || []).forEach((s) => { map[s.site_id] = s.site_name; });
+          if (alive) setSiteNames(map);
+        }
 
         const photoDocs = (docs || []).filter((d) => d.file_type === "photo");
         if (photoDocs.length) {
@@ -119,6 +131,13 @@ export default function ActivityDetailPage() {
   const dateLabel = planDateLabel(a);
   const spEntries = entries.filter((e) => e.category === "sp");
   const fwaEntries = entries.filter((e) => e.category === "fwa");
+  // "Aktual" yg ditampilkan HANYA nomor yg sudah tervalidasi (validation_status
+  // === 'valid') - nomor yg masih "menunggu validasi" belum dihitung ke
+  // target actual, tapi tetap kelihatan statusnya (bukan hilang begitu saja).
+  const spValid = spEntries.filter((e) => e.validation_status === "valid").length;
+  const spPending = spEntries.filter((e) => e.validation_status === "pending").length;
+  const fwaValid = fwaEntries.filter((e) => e.validation_status === "valid").length;
+  const fwaPending = fwaEntries.filter((e) => e.validation_status === "pending").length;
 
   let action = null;
   if (a.status === "revision_needed") action = { label: "Revisi Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${a.id}`) };
@@ -135,7 +154,7 @@ export default function ActivityDetailPage() {
         <div style={{ marginTop: 14, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
           <div style={{ minWidth: 0 }}>
             {a.brand && (
-              <span style={{ fontSize: 10.5, fontWeight: 800, color: a.brand.toLowerCase() === "tri" ? "#ED1C24" : "#F97316" }}>
+              <span style={{ fontSize: 10.5, fontWeight: 800, color: a.brand.toLowerCase() === "tri" ? "#E23B86" : "#E53935" }}>
                 {a.brand.toLowerCase() === "tri" ? "3ID" : "IM3"}
               </span>
             )}
@@ -160,36 +179,45 @@ export default function ActivityDetailPage() {
           </div>
         )}
 
-        {/* Info card */}
-        <SectionCard title="Informasi Plan" icon={<Calendar size={14} />}>
+        {/* Info card - site TIDAK lagi disebut di sini sbg teks (Site
+            Utama/Site Tambahan terpisah) - semua site sekarang satu list
+            gabungan di section "Site" di bawah, lengkap dgn labelnya. */}
+        <SectionCard title="Informasi Plan" icon={<Calendar size={13} />} accent="#2563EB">
           <RowKV label="Tanggal" value={dateLabel} />
           <RowKV label="Waktu" value={a.is_all_day === false && a.start_time && a.end_time ? `${a.start_time.slice(0, 5)} – ${a.end_time.slice(0, 5)}` : "Seharian"} />
           <RowKV label="Micro Cluster" value={a.mc || "-"} />
-          <RowKV label="Site Utama" value={a.site_id || "-"} />
-          {extraSites.length > 0 && <RowKV label="Site Tambahan" value={extraSites.join(", ")} />}
           <RowKV label="POI" value={a.poi_type || "-"} />
           <RowKV label="Kekuatan Sinyal" value={a.network_category || "-"} />
           <RowKV label="Potensi Area" value={a.area_potential || "-"} />
           {a.address && <RowKV label="Alamat" value={a.address} />}
         </SectionCard>
 
-        {/* Multi-site */}
-        {extraSites.length > 0 && (
-          <SectionCard title={`Site (${extraSites.length + 1})`} icon={<Layers size={14} />}>
-            <SiteChipRow label="Utama" value={a.site_id} />
-            {extraSites.map((s, i) => <SiteChipRow key={s} label={`Site ${i + 2}`} value={s} />)}
+        {/* Site - satu list gabungan (Utama + Tambahan sekaligus), tiap
+            baris berupa kartu dgn badge label + nama site, bukan cuma
+            teks kode yg digabung koma spt sebelumnya. */}
+        {a.site_id && (
+          <SectionCard title={`Site (${extraSites.length + 1})`} icon={<Layers size={13} />} accent="#7C3AED">
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <SiteCard label="Utama" siteId={a.site_id} siteName={siteNames[a.site_id]} primary />
+              {extraSites.map((s, i) => <SiteCard key={s} label={`Site ${i + 2}`} siteId={s} siteName={siteNames[s]} />)}
+            </div>
           </SectionCard>
         )}
 
-        {/* Target vs Actual */}
-        <SectionCard title="Target vs Actual" icon={<CheckCircle2 size={14} />}>
-          <MetricRow label="SP" target={fmtInt(a.target_sp)} actual={a.actual_sp == null ? "-" : fmtInt(a.actual_sp)} />
-          <MetricRow label="FWA" target={fmtInt(a.target_fwa)} actual={a.actual_fwa == null ? "-" : fmtInt(a.actual_fwa)} />
-          <MetricRow label="Rebuy Pulsa" target={fmtRp(a.target_rebuy_pulsa)} actual={a.actual_rebuy_pulsa == null ? "-" : fmtRp(a.actual_rebuy_pulsa)} />
-          <MetricRow label="Rebuy Data" target={fmtRp(a.target_rebuy_data)} actual={a.actual_rebuy_data == null ? "-" : fmtRp(a.actual_rebuy_data)} />
-          <MetricRow label="Cost" target={fmtRp(a.cost_estimate)} actual={a.cost_actual == null ? "-" : fmtRp(a.cost_actual)} />
+        {/* Target vs Actual - grid tile berikon, senada dgn report tile di
+            halaman Laporan Actual (CardSim/Router/Wallet/SignalHigh/Receipt) */}
+        <SectionCard title="Target vs Actual" icon={<CheckCircle2 size={13} />} accent="#15803D">
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <MetricTile icon={CardSim} accent="#DB2777" label="SP" target={fmtInt(a.target_sp)} actual={entries.length ? fmtInt(spValid) : (a.actual_sp == null ? "-" : fmtInt(a.actual_sp))} pending={spPending} />
+            <MetricTile icon={Router} accent="#2563EB" label="FWA" target={fmtInt(a.target_fwa)} actual={entries.length ? fmtInt(fwaValid) : (a.actual_fwa == null ? "-" : fmtInt(a.actual_fwa))} pending={fwaPending} />
+            <MetricTile icon={Wallet} accent="#B45309" label="Rebuy Pulsa" target={fmtRp(a.target_rebuy_pulsa)} actual={a.actual_rebuy_pulsa == null ? "-" : fmtRp(a.actual_rebuy_pulsa)} />
+            <MetricTile icon={SignalHigh} accent="#0D9488" label="Rebuy Data" target={fmtRp(a.target_rebuy_data)} actual={a.actual_rebuy_data == null ? "-" : fmtRp(a.actual_rebuy_data)} />
+            <div style={{ gridColumn: "1 / -1" }}>
+              <MetricTile icon={Receipt} accent="#7C3AED" label="Cost" target={fmtRp(a.cost_estimate)} actual={a.cost_actual == null ? "-" : fmtRp(a.cost_actual)} />
+            </div>
+          </div>
           {a.insight && (
-            <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #F0F0F3" }}>
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #F0F0F3" }}>
               <div style={{ fontSize: 10, color: "#B0B0BA", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 4 }}>Insight</div>
               <div style={{ fontSize: 12.5, color: "#3A3A44", lineHeight: 1.55 }}>{a.insight}</div>
             </div>
@@ -198,7 +226,7 @@ export default function ActivityDetailPage() {
 
         {/* Check-in info */}
         {a.checkin_at && (
-          <SectionCard title="Check In" icon={<MapPin size={14} />}>
+          <SectionCard title="Check In" icon={<MapPin size={13} />} accent="#EA580C">
             <RowKV label="Status" value={a.checkin_valid ? "Valid (dalam radius)" : "Di luar radius"} valueColor={a.checkin_valid ? "#15803D" : "#DC2626"} />
             {a.checkin_distance != null && <RowKV label="Jarak" value={`${Math.round(a.checkin_distance)} meter`} />}
             <RowKV label="Waktu" value={new Date(a.checkin_at).toLocaleString("id-ID")} />
@@ -207,11 +235,11 @@ export default function ActivityDetailPage() {
 
         {/* Photos */}
         {photos.length > 0 && (
-          <SectionCard title={`Dokumentasi Foto (${photos.length})`} icon={<ImageIcon size={14} />}>
+          <SectionCard title={`Dokumentasi Foto (${photos.length})`} icon={<ImageIcon size={13} />} accent="#DB2777">
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
               {photos.map((p) => (
                 <button key={p.id} onClick={() => setLightbox(p.url)}
-                  style={{ padding: 0, border: "none", cursor: "pointer", aspectRatio: "1", borderRadius: 10, overflow: "hidden", background: "#F0F0F3" }}>
+                  style={{ padding: 0, border: "none", cursor: "pointer", aspectRatio: "1", borderRadius: 12, overflow: "hidden", background: "#F0F0F3" }}>
                   <img src={p.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
                 </button>
               ))}
@@ -221,7 +249,7 @@ export default function ActivityDetailPage() {
 
         {/* MSISDN lists */}
         {(spEntries.length > 0 || fwaEntries.length > 0) && (
-          <SectionCard title="Nomor Terdaftar" icon={<Phone size={14} />}>
+          <SectionCard title="Nomor Terdaftar" icon={<Phone size={13} />} accent="#0D9488">
             {spEntries.length > 0 && <MsisdnGroup label={`SP (${spEntries.length})`} list={spEntries} />}
             {fwaEntries.length > 0 && <MsisdnGroup label={`FWA (${fwaEntries.length})`} list={fwaEntries} />}
           </SectionCard>
@@ -229,7 +257,7 @@ export default function ActivityDetailPage() {
 
         {/* History */}
         {editReqs.length > 0 && (
-          <SectionCard title="Riwayat Pengajuan Revisi" icon={<FileText size={14} />}>
+          <SectionCard title="Riwayat Pengajuan Revisi" icon={<FileText size={13} />} accent="#6B7280">
             {editReqs.map((r) => (
               <div key={r.id} style={{ padding: "9px 0", borderBottom: "1px solid #F0F0F3" }}>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
@@ -249,7 +277,7 @@ export default function ActivityDetailPage() {
         )}
 
         {(a.approved_by_name || a.override_by_name) && (
-          <SectionCard title="Persetujuan" icon={<CheckCircle2 size={14} />}>
+          <SectionCard title="Persetujuan" icon={<CheckCircle2 size={13} />} accent="#15803D">
             {a.approved_by_name && <RowKV label="Disetujui oleh" value={a.approved_by_name} />}
             {a.approved_at && <RowKV label="Tanggal" value={new Date(a.approved_at).toLocaleString("id-ID")} />}
             {a.override_by_name && <RowKV label="Override oleh" value={a.override_by_name} />}
@@ -374,12 +402,17 @@ function BackBar({ router }) {
   );
 }
 
-function SectionCard({ title, icon, children }) {
+function SectionCard({ title, icon, accent = "#5A5A68", children }) {
   return (
-    <div style={{ marginTop: 14, background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 16, padding: "14px 15px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10, color: "#5A5A68" }}>
-        {icon}
-        <div style={{ fontSize: 11.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3 }}>{title}</div>
+    <div style={{
+      marginTop: 14, background: "#FFFFFF", border: "1px solid #EDEDF1", borderRadius: 20, padding: "16px",
+      boxShadow: "0 6px 16px rgba(17,17,20,0.05), 0 1px 3px rgba(17,17,20,0.03)",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 12 }}>
+        <div style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 9, background: `${accent}1A`, color: accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          {icon}
+        </div>
+        <div style={{ fontSize: 11.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3, color: "#3A3A44" }}>{title}</div>
       </div>
       {children}
     </div>
@@ -395,22 +428,41 @@ function RowKV({ label, value, valueColor }) {
   );
 }
 
-function SiteChipRow({ label, value }) {
+/** Satu baris = satu kartu site (bukan teks polos) - badge label (Utama/
+ * Site N) + kode site + nama site (kalau ada di `mh_sites`). */
+function SiteCard({ label, siteId, siteName, primary }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "8px 0" }}>
-      <span style={{ fontSize: 9.5, fontWeight: 800, color: "#fff", background: "#9A9AA6", borderRadius: 6, padding: "3px 7px" }}>{label}</span>
-      <span style={{ fontSize: 12.5, fontWeight: 700, color: "#17181C" }}>{value}</span>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#F8F8FA", border: "1px solid #EFEFF2", borderRadius: 13, padding: "9px 11px" }}>
+      <span style={{
+        flexShrink: 0, fontSize: 9.5, fontWeight: 800, borderRadius: 7, padding: "4px 9px",
+        color: primary ? "#fff" : "#7C3AED",
+        background: primary ? "#7C3AED" : "rgba(124,58,237,0.12)",
+      }}>{label}</span>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>{siteId}</div>
+        {siteName && <div style={{ marginTop: 1, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{siteName}</div>}
+      </div>
     </div>
   );
 }
 
-function MetricRow({ label, target, actual }) {
+/** Tile target vs actual - senada dgn ReportTile di halaman Laporan Actual
+ * (icon chip berwarna + label + target muted + actual tebal). */
+function MetricTile({ icon: Icon, accent, label, target, actual, pending }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "7px 0", borderBottom: "1px solid #F7F7F9" }}>
-      <div style={{ fontSize: 12, color: "#8A8A96", fontWeight: 600 }}>{label}</div>
-      <div style={{ display: "flex", gap: 14 }}>
-        <div style={{ fontSize: 12, color: "#B0B0BA", fontWeight: 600 }}>Target {target}</div>
-        <div style={{ fontSize: 12.5, color: "#17181C", fontWeight: 800 }}>{actual}</div>
+    <div style={{ borderRadius: 14, background: "#F8F8FA", border: "1px solid #EFEFF2", padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 9, background: `${accent}1A`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Icon size={14} color={accent} />
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.3, textTransform: "uppercase", color: "#B0B0BA" }}>{label} · Target {target}</div>
+        <div style={{ marginTop: 1, fontSize: 14, fontWeight: 800, color: "#17181C" }}>{actual}</div>
+        {/* Nomor yg masih menunggu validasi TIDAK ikut dihitung ke actual di
+            atas, tapi tetap disebut di sini supaya tidak "hilang" begitu
+            saja dari mata pengguna. */}
+        {pending > 0 && (
+          <div style={{ marginTop: 1, fontSize: 9.5, fontWeight: 700, color: "#B45309" }}>+{pending} menunggu validasi</div>
+        )}
       </div>
     </div>
   );
@@ -433,7 +485,7 @@ function MsisdnGroup({ label, list }) {
 function ValidationBadge({ status }) {
   const map = {
     valid: { label: "Valid", color: "#15803D", bg: "rgba(21,128,61,0.10)" },
-    pending: { label: "Menunggu", color: "#B45309", bg: "rgba(180,83,9,0.10)" },
+    pending: { label: "Menunggu Validasi", color: "#B45309", bg: "rgba(180,83,9,0.10)" },
     invalid: { label: "Tidak Valid", color: "#DC2626", bg: "rgba(220,38,38,0.10)" },
     duplicate: { label: "Duplikat", color: "#DC2626", bg: "rgba(220,38,38,0.10)" },
   };

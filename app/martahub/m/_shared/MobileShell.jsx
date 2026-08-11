@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 import { Home, ListChecks, CalendarDays, User2 } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../../lib/martaScope";
+import { HubLogoLoader } from "../../../../components/HubLogoLoader";
 
 export const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 export const BRAND = "linear-gradient(135deg,#ED1C24,#EC008C)";
@@ -124,6 +125,21 @@ export function ShellSpinner() {
   return (
     <div style={{ minHeight: "60vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{ width: 24, height: 24, border: "2.5px solid #ECEDF0", borderTopColor: "#ED1C24", borderRadius: "50%", animation: "mspin 0.8s linear infinite" }} />
+    </div>
+  );
+}
+
+/** Splash boot penuh-layar - dipakai HANYA di gerbang boot (cek sesi login &
+ * loading data awal Beranda), sama persis polanya dgn `Splash()` di
+ * app/promotor/page.jsx (phase==="loading") tapi logo/varian MartaHub.
+ * Bukan pengganti ShellSpinner - spinner kecil tetap dipakai utk loading
+ * dalam-app (sub-halaman yg shell/nav-nya sudah tampil). */
+export function MartaSplash() {
+  return (
+    <div className="mh-splash" style={{ minHeight: "100svh", background: "#F4F5F7", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FF }}>
+      {/* Paksa kontras terang walau <html data-theme="dark"> terbawa dari dashboard */}
+      <style>{`.mh-splash .hl-name-text{color:#17181C !important}.mh-splash .hl-sub-text{color:#9A9AA6 !important}`}</style>
+      <HubLogoLoader variant="marta" logoSize={76} />
     </div>
   );
 }

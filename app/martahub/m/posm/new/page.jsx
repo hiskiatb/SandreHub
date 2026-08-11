@@ -6,32 +6,13 @@
  */
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Crosshair, Loader2, Plus, X, Camera, ImagePlus, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, Crosshair, Loader2, Plus, X, Camera, ImagePlus, Images, CheckCircle2 } from "lucide-react";
 import supabaseMarta from "../../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../_shared/MobileShell";
 import { fetchScopeSites } from "../../_shared/planData";
 import { INSTALL_MODES, fetchMyAvailableTypes, submitInstallation, addInstallationPhoto } from "../../_shared/posmData";
-
-function compressImage(file, maxDim = 1600, quality = 0.82) {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      let { width, height } = img;
-      if (width > maxDim || height > maxDim) {
-        const scale = maxDim / Math.max(width, height);
-        width = Math.round(width * scale); height = Math.round(height * scale);
-      }
-      const canvas = document.createElement("canvas");
-      canvas.width = width; canvas.height = height;
-      canvas.getContext("2d").drawImage(img, 0, 0, width, height);
-      canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("Gagal memproses gambar")), "image/jpeg", quality);
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("Gagal membaca gambar")); };
-    img.src = url;
-  });
-}
+import { compressToMaxBytes } from "../../_shared/imageTools";
+import PhotoCollageSheet from "../../_shared/PhotoCollageSheet";
 
 export default function PosmNewPage() {
   const router = useRouter();
@@ -51,6 +32,7 @@ export default function PosmNewPage() {
   const [available, setAvailable] = useState(null);
   const [items, setItems] = useState([]);
   const [photos, setPhotos] = useState([]);
+  const [collageOpen, setCollageOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const [done, setDone] = useState(false);
@@ -101,6 +83,10 @@ export default function PosmNewPage() {
   function removePhoto(i) {
     setPhotos((prev) => { URL.revokeObjectURL(prev[i].previewUrl); return prev.filter((_, idx) => idx !== i); });
   }
+  function addCollagePhoto(blob, previewUrl) {
+    setPhotos((prev) => [...prev, { file: blob, previewUrl, isCollage: true }]);
+    setCollageOpen(false);
+  }
 
   async function submit() {
     setErr("");
@@ -118,7 +104,7 @@ export default function PosmNewPage() {
       });
       for (let i = 0; i < photos.length; i++) {
         try {
-          const blob = await compressImage(photos[i].file);
+          const blob = await compressToMaxBytes(photos[i].file);
           await addInstallationPhoto(ins.id, blob, i);
         } catch { /* best-effort per foto */ }
       }
@@ -244,8 +230,9 @@ export default function PosmNewPage() {
         {/* Photos */}
         <Card>
           <FieldLabel text="Foto Bukti" hint={`${photos.length} foto`} />
-          <PhotoPicker photos={photos} onAdd={addPhotoFiles} onRemove={removePhoto} />
+          <PhotoPicker photos={photos} onAdd={addPhotoFiles} onRemove={removePhoto} onCollage={() => setCollageOpen(true)} />
         </Card>
+        {collageOpen && <PhotoCollageSheet onClose={() => setCollageOpen(false)} onDone={addCollagePhoto} />}
 
         {/* Note */}
         <Card>
@@ -266,7 +253,7 @@ export default function PosmNewPage() {
   );
 }
 
-function PhotoPicker({ photos, onAdd, onRemove }) {
+function PhotoPicker({ photos, onAdd, onRemove, onCollage }) {
   return (
     <div>
       <div style={{ display: "flex", gap: 8 }}>
@@ -279,11 +266,22 @@ function PhotoPicker({ photos, onAdd, onRemove }) {
           <input type="file" accept="image/*" multiple hidden onChange={(e) => { onAdd(e.target.files); e.target.value = ""; }} />
         </label>
       </div>
+      {/* Kolase - gabung beberapa foto jadi satu, konsep dari app Flutter
+          yang dikembalikan lagi di sini. */}
+      <button onClick={onCollage}
+        style={{ width: "100%", height: 40, marginTop: 8, borderRadius: 11, border: "none", background: "linear-gradient(135deg, rgba(237,28,36,0.10), rgba(236,0,140,0.10))", color: "#C6168D", fontSize: 12, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+        <Images size={15} /> Buat Kolase Foto
+      </button>
       {photos.length > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 12 }}>
           {photos.map((p, i) => (
             <div key={i} style={{ position: "relative", aspectRatio: "1", borderRadius: 12, overflow: "hidden", background: "#F0F0F3" }}>
               <img src={p.previewUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              {p.isCollage && (
+                <span style={{ position: "absolute", bottom: 5, left: 5, display: "flex", alignItems: "center", gap: 3, fontSize: 8.5, fontWeight: 800, color: "#fff", background: "rgba(0,0,0,0.55)", borderRadius: 999, padding: "2px 6px" }}>
+                  <Images size={9} /> Kolase
+                </span>
+              )}
               <button onClick={() => onRemove(i)} style={{ position: "absolute", top: 5, right: 5, width: 22, height: 22, borderRadius: "50%", background: "rgba(0,0,0,0.55)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
                 <X size={13} color="#fff" />
               </button>

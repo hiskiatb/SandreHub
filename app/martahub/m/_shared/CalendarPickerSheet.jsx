@@ -346,12 +346,16 @@ function DateTimeRow({ date, time, otherCount, editingField, onToggleAllDay, onO
 
       {!time.isAllDay && (
         <div style={{ padding: "0 13px 12px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
             <button onClick={() => onOpenField("start")} style={{ flex: 1, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
               <div style={{ fontSize: 9.5, fontWeight: 800, color: "#B0B0BA", textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 4 }}>Mulai</div>
               <TimePill text={time.startTime.replace(":", ".")} active={editingField === "start"} />
             </button>
-            <div style={{ width: 12, height: 1.5, background: "#D8D9E0", marginTop: 14 }} />
+            {/* Simbol penghubung - disejajarkan ke tengah tinggi pil jam
+                (bukan tengah seluruh kolom termasuk label) lewat
+                alignItems:"flex-end" di baris + marginBottom setengah tinggi
+                pil, supaya selalu pas walau ukuran font berubah. */}
+            <div style={{ width: 10, height: 1.5, borderRadius: 1, background: "#D8D9E0", marginBottom: 13, flexShrink: 0 }} />
             <button onClick={() => onOpenField("end")} style={{ flex: 1, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
               <div style={{ fontSize: 9.5, fontWeight: 800, color: "#B0B0BA", textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 4 }}>Berakhir</div>
               <TimePill text={time.endTime.replace(":", ".")} active={editingField === "end"} danger={invalid} />
@@ -395,6 +399,10 @@ function WheelColumn({ values, selected, onChange }) {
   const ref = useRef(null);
   const settleRef = useRef(null);
   const didInit = useRef(false);
+  // Indeks terakhir yg sudah "digetarkan" - supaya getar cuma nyala SEKALI
+  // per baris yg dilewati (bukan tiap event scroll, yg bisa berkali-kali
+  // per baris), persis rasanya roda jam/menit di Jam/Alarm iPhone.
+  const lastTickIdx = useRef(values.indexOf(selected));
 
   useEffect(() => {
     if (didInit.current || !ref.current) return;
@@ -411,6 +419,16 @@ function WheelColumn({ values, selected, onChange }) {
   }
 
   function handleScroll() {
+    if (!ref.current) return;
+    // Getar tipis (3ms) SETIAP baris terlewati selagi menggulir - inilah
+    // "tick" halus yg dirasakan, bukan cuma sekali di akhir. Catatan: Web
+    // Vibration API hanya jalan di Android/Chrome, otomatis no-op di
+    // Safari iOS (keterbatasan platform, bukan bug).
+    const liveIdx = Math.round(ref.current.scrollTop / WHEEL_ITEM_H);
+    if (liveIdx !== lastTickIdx.current) {
+      lastTickIdx.current = liveIdx;
+      if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(3);
+    }
     if (settleRef.current) clearTimeout(settleRef.current);
     settleRef.current = setTimeout(() => {
       if (!ref.current) return;

@@ -41,11 +41,19 @@ const REGION_LABEL = Object.fromEntries(REGIONS);
 
 // Role yang atasannya diisi lewat `supervisor_assignment_id` (§4.2/§4.5a),
 // bukan lewat region/brand/branch manual - nilai = role atasan yang valid.
+// bme/rge sekarang boleh langsung di bawah "head" (Head TMV, region-only,
+// SEMUA brand) juga - bukan cuma "tmv" (Brand TMV) spt sebelumnya. Ini
+// dipakai DUA arah: dropdown "Atasan Langsung" di form bme/rge sendiri,
+// DAN picker multi-select "BME/RGE di bawah ini" di form tmv/head (lihat
+// `SubordinatePicker`) - satu sumber kebenaran utk role atasan yg valid.
 const SUPERVISOR_ROLES_FOR = {
-  bme: ["tmv"], rge: ["tmv"],
+  bme: ["tmv", "head"], rge: ["tmv", "head"],
   tl_dsf: ["bme", "rge"], md: ["bme", "rge"],
   dsf: ["tl_dsf"],
 };
+// Role yang BISA jadi "atasan langsung" bme/rge lewat picker multi-select
+// (bukan cuma tmv brand-scoped, head region-scoped juga boleh).
+const isSupervisorCapableRole = (role) => role === "tmv" || role === "head";
 const isHierarchyRole = (role) => Object.prototype.hasOwnProperty.call(SUPERVISOR_ROLES_FOR, role);
 
 const badge = (txt, c, bg) => <span style={{ fontSize: 10.5, fontWeight: 800, color: c, background: bg, border: `1px solid ${c}33`, padding: "2px 8px", borderRadius: 999, whiteSpace: "nowrap" }}>{txt}</span>;
@@ -94,16 +102,44 @@ function Body({ canManage, callerEmail }) {
       if (a.error) throw new Error(a.error.message);
       setRows(a.data || []);
       setPending(p.data || []);
-    } catch (e) { setErr(e.message || "Gagal memuat"); }
+      return a.data || []; // dikembalikan supaya caller (mis. addAssignments) bisa langsung pakai data segar tanpa menunggu state re-render
+    } catch (e) { setErr(e.message || "Gagal memuat"); return []; }
     finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  // Set/lepas atasan utk sekumpulan bme/rge sekaligus - dipakai saat picker
+  // multi-select "BME/RGE di bawah ini" di form tmv/head disimpan. Tiap baris
+  // ditulis ulang lewat mh_update_assignment dgn SEMUA field aslinya utuh,
+  // cuma p_supervisor_assignment_id yg berubah (jadi id tmv/head ini utk yg
+  // baru dicentang, null utk yg baru dilepas).
+  async function linkSubordinates(newSupervisorId, addedIds = [], removedIds = [], fromRows) {
+    const byId = new Map((fromRows || rows).map((r) => [r.id, r]));
+    const jobs = [];
+    const writeJob = (r, supervisorAssignmentId) => supabaseMarta.rpc("mh_update_assignment", {
+      p_id: r.id, p_role: r.role, p_region: r.region || null, p_brand: r.brand || null,
+      p_branch_id: r.branch_id || null, p_branch_name: r.branch_name || null, p_full_name: r.full_name || null,
+      p_supervisor_assignment_id: supervisorAssignmentId, p_dsf_org_id: r.dsf_org_id || null,
+      p_caller_email: callerEmail || null, p_mc: r.mc || null, p_email: r.email || null,
+    });
+    for (const id of addedIds) { const r = byId.get(id); if (r) jobs.push(writeJob(r, newSupervisorId)); }
+    for (const id of removedIds) { const r = byId.get(id); if (r) jobs.push(writeJob(r, null)); }
+    if (jobs.length === 0) return;
+    const results = await Promise.all(jobs);
+    const failed = results.find((r) => r.error);
+    if (failed?.error) throw new Error(failed.error.message);
+  }
+
   // Simpan satu / banyak assignment sekaligus (BME/RGE bisa pilih banyak branch×brand).
-  async function addAssignments(items) {
+  // `subordinateIds` (opsional) - dipakai KHUSUS saat role tmv/head: daftar
+  // id bme/rge yg langsung ditautkan sbg bawahan begitu assignment tmv/head
+  // ini selesai dibuat (baru dapat id-nya SETELAH insert, makanya di-link
+  // belakangan, bukan bareng payload insert).
+  async function addAssignments(items, subordinateIds) {
     setErr(""); setInfo("");
     try {
       let ok = 0;
+      let lastForm = null;
       for (const form of items) {
         const email = form.email.trim().toLowerCase();
         // Coverage urban/rural ditiadakan - BME & RGE fungsional identik (label saja).
@@ -125,14 +161,28 @@ function Body({ canManage, callerEmail }) {
         });
         if (error) throw new Error(error.message);
         ok += 1;
+        lastForm = { ...form, email };
+      }
+      setShowAdd(false);
+      const freshRows = await load();
+
+      if (subordinateIds?.length && lastForm && isSupervisorCapableRole(lastForm.role)) {
+        const created = freshRows.find((r) => r.role === lastForm.role && r.email === lastForm.email
+          && String(r.region || "") === String(lastForm.region || "") && String(r.brand || "") === String(lastForm.brand || ""));
+        if (created) {
+          await linkSubordinates(created.id, subordinateIds, [], freshRows);
+          await load();
+        }
       }
       setInfo(ok === 1 ? "1 assignment tersimpan." : `${ok} assignment tersimpan.`);
-      setShowAdd(false);
-      await load();
     } catch (e) { setErr(e.message); }
   }
 
-  async function updateAssignment(id, form) {
+  // `subChanges` (opsional) - { added, removed } id bme/rge, dipakai KHUSUS
+  // saat mengedit assignment role tmv/head lewat picker "BME/RGE di bawah
+  // ini" (lihat SubordinatePicker) - ditautkan/dilepas SETELAH update baris
+  // tmv/head-nya sendiri berhasil.
+  async function updateAssignment(id, form, subChanges) {
     setErr(""); setInfo("");
     try {
       const { error } = await supabaseMarta.rpc("mh_update_assignment", {
@@ -150,6 +200,11 @@ function Body({ canManage, callerEmail }) {
         p_email: form.email || null,
       });
       if (error) throw new Error(error.message);
+
+      if (subChanges && (subChanges.added?.length || subChanges.removed?.length)) {
+        await linkSubordinates(id, subChanges.added, subChanges.removed);
+      }
+
       setInfo("Assignment diperbarui.");
       setEditRow(null);
       await load();
@@ -320,6 +375,10 @@ function HierarchyTree({ rows }) {
         <div key={h.id}>
           <NodeLine r={h} depth={spm.length ? 1 : 0} roleColor={T.primaryD} />
           {tmvOfRegion(h.region).map((tmv) => renderTmvSubtree(tmv, (spm.length ? 1 : 0) + 1))}
+          {/* bme/rge yg atasannya LANGSUNG Head TMV ini (bukan lewat Brand
+              TMV) - baru dimungkinkan sejak Head TMV bisa punya bawahan
+              bme/rge sendiri lintas-brand di region-nya. */}
+          {childrenOf(h.id).filter((r) => r.role === "bme" || r.role === "rge").map((bme) => renderBmeSubtree(bme, (spm.length ? 1 : 0) + 1))}
         </div>
       ))}
       {(() => {
@@ -377,6 +436,10 @@ function AddModal({ onClose, onSave, existing, scope }) {
   const [loading, setLoading] = useState(false);
   const [supervisorId, setSupervisorId] = useState("");
   const [dsfOrgId, setDsfOrgId] = useState("");
+  // Bawahan bme/rge yg dipilih SEKALIGUS (multi) saat bikin tmv/head baru -
+  // ditautkan (set supervisor_assignment_id) SETELAH assignment ini
+  // tersimpan & dapat id (lihat addAssignments di Body).
+  const [subSelected, setSubSelected] = useState(new Set());
   // Branch × Cluster/MC tunggal - khusus tl_dsf/dsf/md (beda dari bme/rge yg
   // pakai multi-select `selected` di atas, krn 1 org role ini = 1 branch).
   const [branchId, setBranchId] = useState("");
@@ -418,29 +481,37 @@ function AddModal({ onClose, onSave, existing, scope }) {
     return () => { on = false; };
   }, [branchId, brand]);
 
-  // Branch unik utk brand terpilih - picker branch TUNGGAL tl_dsf/dsf/md
-  // (beda dari `branches` di bawah yg multi-brand utk grid bme/rge).
-  const pureBranches = useMemo(() => {
-    const seen = new Set(); const arr = [];
-    for (const r of branchRows) {
-      if (r.brand !== brand || !r.branch_id || seen.has(r.branch_id)) continue;
-      seen.add(r.branch_id); arr.push(r);
-    }
-    arr.sort((a, b) => String(a.branch).localeCompare(String(b.branch)));
-    return arr;
-  }, [branchRows, brand]);
-
-  const pickPureBranch = (id) => {
-    const b = pureBranches.find((x) => x.branch_id === id);
-    setBranchId(id); setBranchName(b?.branch || ""); setMc("");
-    if (b?.region && !lockedRegion) setRegion(b.region);
-  };
   const supervisorOptions = useMemo(() => {
     const wanted = SUPERVISOR_ROLES_FOR[role];
     if (!wanted) return [];
-    return (existing || []).filter((r) => wanted.includes(r.role))
+    let list = (existing || []).filter((r) => wanted.includes(r.role));
+    // tl_dsf/md/dsf - atasan HARUS di region+brand yg sama dgn role ini
+    // (branch role ini nanti otomatis ikut branch si atasan, bukan dipilih
+    // manual lagi - lihat pickSupervisor).
+    if (isPureHierarchyRole) list = list.filter((r) => r.region === region && r.brand === brand);
+    return list.sort((a, b) => String(a.full_name || a.email).localeCompare(String(b.full_name || b.email)));
+  }, [existing, role, isPureHierarchyRole, region, brand]);
+
+  // Pilih atasan → branch WAJIB ikut branch si atasan (RGE/BME/TL DSF yg
+  // dipilih), bukan dipilih terpisah lagi - "wajib dipilih, menyesuaikan ke
+  // branch yang [atasan] pilih".
+  const pickSupervisor = (id) => {
+    setSupervisorId(id);
+    const sup = supervisorOptions.find((s) => s.id === id);
+    setBranchId(sup?.branch_id || "");
+    setBranchName(sup?.branch_name || "");
+    setMc("");
+  };
+
+  // Kandidat bme/rge yg BOLEH jadi bawahan tmv/head ini - "pastikan yang di
+  // under dia": Head TMV (region-only) → semua bme/rge di REGION yg sama
+  // (brand bebas). Brand TMV → bme/rge region SAMA & brand SAMA persis.
+  const subCandidates = useMemo(() => {
+    if (!isSupervisorCapableRole(role)) return [];
+    return (existing || []).filter((r) => (r.role === "bme" || r.role === "rge") && r.region === region && (role === "head" || r.brand === brand))
       .sort((a, b) => String(a.full_name || a.email).localeCompare(String(b.full_name || b.email)));
-  }, [existing, role]);
+  }, [existing, role, region, brand]);
+  const toggleSub = (id) => setSubSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
   // Semua kombinasi branch × brand dari Master Data (mh_sites aktif).
   useEffect(() => {
@@ -482,6 +553,7 @@ function AddModal({ onClose, onSave, existing, scope }) {
   const canSave = name.trim() && emailKey
     && (isBranchRole ? selected.size > 0 : true)
     && (needsSupervisor ? !!supervisorId : true)
+    && (isPureHierarchyRole ? !!branchId : true)
     && (isDsf ? dsfOrgId.trim() : true);
 
   const save = () => {
@@ -513,7 +585,7 @@ function AddModal({ onClose, onSave, existing, scope }) {
         email: emailKey, fullName: name.trim().toUpperCase(), role, region: role === "spm_sumatera" ? null : region,
         brand: isTmv ? brand : null, branchId: null, branchName: null,
         supervisorAssignmentId: null, dsfOrgId: null,
-      }]);
+      }], isSupervisorCapableRole(role) ? [...subSelected] : undefined);
     }
   };
 
@@ -549,7 +621,7 @@ function AddModal({ onClose, onSave, existing, scope }) {
           <div style={{ display: "flex", gap: 12 }}>
             <div style={{ flex: 1 }}>
               <Field label="Role">
-                <select value={role} onChange={(e) => { setRole(e.target.value); setSelected(new Set()); setSupervisorId(""); setDsfOrgId(""); setBranchId(""); setBranchName(""); setMc(""); }} style={selectStyle}>
+                <select value={role} onChange={(e) => { setRole(e.target.value); setSelected(new Set()); setSupervisorId(""); setDsfOrgId(""); setBranchId(""); setBranchName(""); setMc(""); setSubSelected(new Set()); }} style={selectStyle}>
                   {ROLES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
               </Field>
@@ -580,13 +652,32 @@ function AddModal({ onClose, onSave, existing, scope }) {
             </Field>
           )}
 
+          {needsSupervisor && (
+            <Field label={`Atasan Langsung ${SUPERVISOR_ROLES_FOR[role].map((r) => ROLE_LABEL[r]).join(" / ")} *`}>
+              <select value={supervisorId} onChange={(e) => pickSupervisor(e.target.value)} style={selectStyle}>
+                <option value="">- pilih atasan -</option>
+                {supervisorOptions.map((s) => (
+                  <option key={s.id} value={s.id}>{s.full_name || s.email} ({ROLE_LABEL[s.role] || s.role}{s.branch_name ? ` · ${s.branch_name}` : ""})</option>
+                ))}
+              </select>
+              {supervisorOptions.length === 0 && (
+                <div style={{ fontSize: 11, color: T.warning, marginTop: 4 }}>Belum ada assignment {SUPERVISOR_ROLES_FOR[role].map((r) => ROLE_LABEL[r]).join("/")} yang cocok region/brand-nya - buat itu dulu.</div>
+              )}
+            </Field>
+          )}
+
+          {/* Branch WAJIB tapi tidak dipilih manual lagi - otomatis
+              menyesuaikan branch milik atasan yg dipilih di atas. */}
           {isPureHierarchyRole && (
             <>
-              <Field label="Branch (opsional)">
-                <select value={branchId} onChange={(e) => pickPureBranch(e.target.value)} style={selectStyle}>
-                  <option value="">- pilih branch -</option>
-                  {pureBranches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch}</option>)}
-                </select>
+              <Field label="Branch * (ikut atasan)">
+                {branchId ? (
+                  <div style={{ ...inp, background: T.sub || "#F7F9FC", color: T.mid, cursor: "not-allowed", display: "flex", alignItems: "center", gap: 6 }}>
+                    {branchName || branchId} <Lock size={12} />
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 11.5, color: T.warning }}>Pilih atasan dulu - branch otomatis mengikuti.</div>
+                )}
               </Field>
               {branchId && mcOptions.length > 0 && (
                 <Field label={`${mcLabelForBrand(brand)} (opsional)`}>
@@ -598,19 +689,8 @@ function AddModal({ onClose, onSave, existing, scope }) {
               )}
             </>
           )}
-
-          {needsSupervisor && (
-            <Field label={`Atasan Langsung ${SUPERVISOR_ROLES_FOR[role].map((r) => ROLE_LABEL[r]).join(" / ")} *`}>
-              <select value={supervisorId} onChange={(e) => setSupervisorId(e.target.value)} style={selectStyle}>
-                <option value="">- pilih atasan -</option>
-                {supervisorOptions.map((s) => (
-                  <option key={s.id} value={s.id}>{s.full_name || s.email} ({ROLE_LABEL[s.role] || s.role}{s.branch_name ? ` · ${s.branch_name}` : ""})</option>
-                ))}
-              </select>
-              {supervisorOptions.length === 0 && (
-                <div style={{ fontSize: 11, color: T.warning, marginTop: 4 }}>Belum ada assignment {SUPERVISOR_ROLES_FOR[role].map((r) => ROLE_LABEL[r]).join("/")} yang bisa dipilih sebagai atasan - buat itu dulu.</div>
-              )}
-            </Field>
+          {isSupervisorCapableRole(role) && (
+            <SubordinatePicker candidates={subCandidates} selected={subSelected} onToggle={toggleSub} region={region} brandLabel={role === "tmv" ? (BRAND_LABEL[brand] || brand) : null} />
           )}
           {isDsf && (
             <Field label="ID DSF * (dipakai sebagai org_id di Validity MSISDN)">
@@ -676,6 +756,11 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
   const [loading, setLoading] = useState(false);
   const [supervisorId, setSupervisorId] = useState(row.supervisor_assignment_id || "");
   const [dsfOrgId, setDsfOrgId] = useState(row.dsf_org_id || "");
+  // Bawahan bme/rge yg SUDAH tertaut ke assignment ini (supervisor_assignment_id
+  // === row.id) - jadi centang awal picker, bukan mulai kosong.
+  const [subSelected, setSubSelected] = useState(() => new Set(
+    (existing || []).filter((r) => (r.role === "bme" || r.role === "rge") && r.supervisor_assignment_id === row.id).map((r) => r.id)
+  ));
   // Mirror UserAssignment.isBranchRole (mobile assignments_provider.dart) -
   // 6 role POSMAT baru diperlakukan sama persis spt bme/rge.
   const isBranchRole = ["bme", "rge", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"].includes(role);
@@ -689,9 +774,32 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
   const supervisorOptions = useMemo(() => {
     const wanted = SUPERVISOR_ROLES_FOR[role];
     if (!wanted) return [];
-    return (existing || []).filter((r) => wanted.includes(r.role) && r.id !== row.id)
+    let list = (existing || []).filter((r) => wanted.includes(r.role) && r.id !== row.id);
+    // tl_dsf/md/dsf - atasan HARUS di region+brand yg sama; branch role ini
+    // otomatis ikut branch si atasan (lihat pickSupervisor).
+    if (isPureHierarchyRole) list = list.filter((r) => r.region === region && r.brand === brand);
+    return list.sort((a, b) => String(a.full_name || a.email).localeCompare(String(b.full_name || b.email)));
+  }, [existing, role, row.id, isPureHierarchyRole, region, brand]);
+
+  // Pilih atasan → branch role ini WAJIB ikut branch si atasan, bukan
+  // dipilih manual lagi - sama persis AddModal.
+  const pickSupervisor = (id) => {
+    setSupervisorId(id);
+    if (!isPureHierarchyRole) return;
+    const sup = supervisorOptions.find((s) => s.id === id);
+    setBranchId(sup?.branch_id || "");
+    setBranchName(sup?.branch_name || "");
+    setMc("");
+  };
+
+  // Kandidat bme/rge yg boleh jadi bawahan - sama aturannya dgn AddModal:
+  // Head TMV → region sama (brand bebas), Brand TMV → region+brand sama persis.
+  const subCandidates = useMemo(() => {
+    if (!isSupervisorCapableRole(role)) return [];
+    return (existing || []).filter((r) => (r.role === "bme" || r.role === "rge") && r.id !== row.id && r.region === region && (role === "head" || r.brand === brand))
       .sort((a, b) => String(a.full_name || a.email).localeCompare(String(b.full_name || b.email)));
-  }, [existing, role, row.id]);
+  }, [existing, role, region, brand, row.id]);
+  const toggleSub = (id) => setSubSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
 
   // Scope caller (Head/Brand TMV) - sama persis AddModal.
   const lockedRegion = scope && (scope.role === "head" || scope.role === "tmv") ? scope.region : null;
@@ -754,9 +862,18 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
 
   const canSave = name.trim() && emailKey && !emailTaken && (!isBranchRole || branchId)
     && (needsSupervisor ? !!supervisorId : true)
+    && (isPureHierarchyRole ? !!branchId : true)
     && (isDsf ? dsfOrgId.trim() : true);
   const save = () => {
     if (!canSave) return;
+    let subChanges;
+    if (isSupervisorCapableRole(role)) {
+      const prevLinked = new Set((existing || []).filter((r) => (r.role === "bme" || r.role === "rge") && r.supervisor_assignment_id === row.id).map((r) => r.id));
+      subChanges = {
+        added: [...subSelected].filter((id) => !prevLinked.has(id)),
+        removed: [...prevLinked].filter((id) => !subSelected.has(id)),
+      };
+    }
     onSave(row.id, {
       email: emailKey,
       role, region: role === "spm_sumatera" ? null : region,
@@ -767,7 +884,7 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
       mc: mc || null,
       supervisorAssignmentId: needsSupervisor ? supervisorId : null,
       dsfOrgId: isDsf ? dsfOrgId.trim() : null,
-    });
+    }, subChanges);
   };
 
   return (
@@ -814,12 +931,41 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
               )}
             </Field>
           )}
-          {hasBranchField && (
-            <Field label={isBranchRole ? "Branch" : "Branch (opsional)"}>
+          {/* bme/rge/dst (isBranchRole, TANPA konsep atasan) - branch tetap
+              dipilih manual spt sebelumnya. */}
+          {isBranchRole && (
+            <Field label="Branch">
               <select value={branchId} onChange={(e) => pickBranch(e.target.value)} style={selectStyle} disabled={loading}>
                 <option value="">{loading ? "Memuat branch…" : "- pilih branch -"}</option>
                 {branches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch}</option>)}
               </select>
+            </Field>
+          )}
+
+          {/* tl_dsf/md/dsf - pilih atasan DULU, branch WAJIB tapi otomatis
+              ikut branch si atasan (bukan dipilih manual lagi). */}
+          {needsSupervisor && (
+            <Field label={`Atasan Langsung ${SUPERVISOR_ROLES_FOR[role].map((r) => ROLE_LABEL[r]).join(" / ")} *`}>
+              <select value={supervisorId} onChange={(e) => pickSupervisor(e.target.value)} style={selectStyle}>
+                <option value="">- pilih atasan -</option>
+                {supervisorOptions.map((s) => (
+                  <option key={s.id} value={s.id}>{s.full_name || s.email} ({ROLE_LABEL[s.role] || s.role}{s.branch_name ? ` · ${s.branch_name}` : ""})</option>
+                ))}
+              </select>
+              {supervisorOptions.length === 0 && (
+                <div style={{ fontSize: 11, color: T.warning, marginTop: 4 }}>Belum ada assignment {SUPERVISOR_ROLES_FOR[role].map((r) => ROLE_LABEL[r]).join("/")} yang cocok region/brand-nya - buat itu dulu.</div>
+              )}
+            </Field>
+          )}
+          {isPureHierarchyRole && (
+            <Field label="Branch * (ikut atasan)">
+              {branchId ? (
+                <div style={{ ...inp, background: T.sub || "#F7F9FC", color: T.mid, cursor: "not-allowed", display: "flex", alignItems: "center", gap: 6 }}>
+                  {branchName || branchId} <Lock size={12} />
+                </div>
+              ) : (
+                <div style={{ fontSize: 11.5, color: T.warning }}>Pilih atasan dulu - branch otomatis mengikuti.</div>
+              )}
             </Field>
           )}
           {hasBranchField && branchId && mcOptions.length > 0 && (
@@ -830,15 +976,8 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
               </select>
             </Field>
           )}
-          {needsSupervisor && (
-            <Field label={`Atasan Langsung ${SUPERVISOR_ROLES_FOR[role].map((r) => ROLE_LABEL[r]).join(" / ")} *`}>
-              <select value={supervisorId} onChange={(e) => setSupervisorId(e.target.value)} style={selectStyle}>
-                <option value="">- pilih atasan -</option>
-                {supervisorOptions.map((s) => (
-                  <option key={s.id} value={s.id}>{s.full_name || s.email} ({ROLE_LABEL[s.role] || s.role}{s.branch_name ? ` · ${s.branch_name}` : ""})</option>
-                ))}
-              </select>
-            </Field>
+          {isSupervisorCapableRole(role) && (
+            <SubordinatePicker candidates={subCandidates} selected={subSelected} onToggle={toggleSub} region={region} brandLabel={role === "tmv" ? (BRAND_LABEL[brand] || brand) : null} />
           )}
           {isDsf && (
             <Field label="ID DSF * (dipakai sebagai org_id di Validity MSISDN)">
@@ -851,6 +990,47 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
           <button onClick={save} disabled={!canSave} style={{ ...pbtn, opacity: canSave ? 1 : 0.5, cursor: canSave ? "pointer" : "not-allowed" }}>Simpan <Check size={15} /></button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Multi-select bme/rge utk jadi bawahan langsung role tmv/head - dipakai
+ * bareng di AddModal & EditModal. Kandidat sudah difilter caller sesuai
+ * scope (Head TMV: region sama; Brand TMV: region+brand sama persis). */
+function SubordinatePicker({ candidates, selected, onToggle, region, brandLabel }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11.5, fontWeight: 700, color: T.mid, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>
+        BME/RGE di Bawah Ini · {REGION_LABEL[region] || region}{brandLabel ? ` · ${brandLabel}` : " · semua brand"}
+      </div>
+      <div style={{ border: `1px solid ${T.line}`, borderRadius: 10, maxHeight: 240, overflowY: "auto" }}>
+        {candidates.length === 0 && (
+          <div style={{ padding: 14, fontSize: 12, color: T.lo }}>Belum ada BME/RGE di region{brandLabel ? " & brand" : ""} ini.</div>
+        )}
+        {candidates.map((c, i) => {
+          const isSel = selected.has(c.id);
+          return (
+            <button key={c.id} type="button" onClick={() => onToggle(c.id)}
+              style={{
+                width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 10, padding: "9px 12px",
+                borderTop: i ? `1px solid ${T.line}` : "none", borderLeft: "none", borderRight: "none", borderBottom: "none",
+                background: isSel ? (T.hover || "#F6F3FE") : "#fff", cursor: "pointer", fontFamily: FONT,
+              }}>
+              <div style={{
+                flexShrink: 0, width: 18, height: 18, borderRadius: 5, display: "flex", alignItems: "center", justifyContent: "center",
+                background: isSel ? GRAD : "#fff", border: isSel ? "1px solid transparent" : `1.5px solid ${T.line}`,
+              }}>
+                {isSel && <Check size={12} color="#fff" />}
+              </div>
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: T.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{c.full_name || c.email}</div>
+                <div style={{ fontSize: 11, color: T.lo }}>{ROLE_LABEL[c.role] || c.role}{c.branch_name ? ` · ${c.branch_name}` : ""} · {BRAND_LABEL[c.brand] || c.brand}</div>
+              </div>
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 11, color: T.lo, marginTop: 6 }}>{selected.size} dipilih</div>
     </div>
   );
 }
