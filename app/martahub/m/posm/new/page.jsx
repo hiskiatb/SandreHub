@@ -9,14 +9,20 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Crosshair, Loader2, Plus, X, Camera, ImagePlus, Images, CheckCircle2 } from "lucide-react";
 import supabaseMarta from "../../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../_shared/MobileShell";
-import { fetchScopeSites } from "../../_shared/planData";
-import { INSTALL_MODES, fetchMyAvailableTypes, submitInstallation, addInstallationPhoto } from "../../_shared/posmData";
+import { fetchScopeSites, APPROVER_ROLES } from "../../_shared/planData";
+import { INSTALL_MODES, fetchMyAvailableTypes, fetchAvailableTypesForBranch, fetchBranchOptions, submitInstallation, addInstallationPhoto } from "../../_shared/posmData";
 import { compressToMaxBytes } from "../../_shared/imageTools";
 import PhotoCollageSheet from "../../_shared/PhotoCollageSheet";
+
+const BRAND_CHOICES = [{ key: "im3", label: "IM3" }, { key: "tri", label: "Tri" }];
 
 export default function PosmNewPage() {
   const router = useRouter();
   const { loading: sessionLoading, scope } = useMartaSession();
+  // Head TMV/Brand TMV/SPM Sumatera/Admin tidak punya branch tetap sendiri -
+  // sama seperti Create Plan wizard, mereka dapat picker branch tujuan
+  // sendiri (+ brand kalau scope mereka juga tidak fixed ke satu brand).
+  const isApprover = APPROVER_ROLES.includes(scope?.role);
 
   const [mode, setMode] = useState("activity");
   const [activities, setActivities] = useState([]);
@@ -29,6 +35,10 @@ export default function PosmNewPage() {
   const [locating, setLocating] = useState(false);
   const [note, setNote] = useState("");
 
+  const [targetBranchId, setTargetBranchId] = useState("");
+  const [targetBrand, setTargetBrand] = useState("");
+  const [branchOptions, setBranchOptions] = useState([]);
+
   const [available, setAvailable] = useState(null);
   const [items, setItems] = useState([]);
   const [photos, setPhotos] = useState([]);
@@ -37,18 +47,52 @@ export default function PosmNewPage() {
   const [err, setErr] = useState("");
   const [done, setDone] = useState(false);
 
+  // Branch & brand yang SEBENARNYA dipakai utk site list + stok tersedia:
+  // approver pakai pilihan manual mereka, BME/RGE dkk pakai scope sendiri
+  // (perilaku lama, tidak berubah).
+  const effBranchId = isApprover ? targetBranchId : scope?.branchId;
+  const effBrand = isApprover ? (scope?.brand || targetBrand) : scope?.brand;
+
+  // Daftar activity (tidak tergantung branch - dari mh_activities_for_me).
   useEffect(() => {
     if (sessionLoading || !scope?.found) return;
     let alive = true;
     (async () => {
       try {
-        const [{ data: acts }, siteRows, avail] = await Promise.all([
-          supabaseMarta.rpc("mh_activities_for_me").select("id,event_name,plan_date,status").order("created_at", { ascending: false }).limit(100),
-          fetchScopeSites(scope.branchId, scope.brand),
-          fetchMyAvailableTypes(),
-        ]);
+        const { data: acts } = await supabaseMarta.rpc("mh_activities_for_me").select("id,event_name,plan_date,status").order("created_at", { ascending: false }).limit(100);
         if (!alive) return;
         setActivities(acts || []);
+      } catch (e) {
+        if (alive) setErr(e.message || "Gagal memuat data referensi");
+      }
+    })();
+    return () => { alive = false; };
+  }, [sessionLoading, scope]);
+
+  // Pilihan branch utk approver - dibatasi ke region mereka sendiri (kecuali
+  // scope unscoped spt admin/SPM Sumatera → semua cabang nasional).
+  useEffect(() => {
+    if (sessionLoading || !isApprover) return;
+    let alive = true;
+    fetchBranchOptions(scope?.unscoped ? undefined : (scope?.region || undefined))
+      .then((rows) => { if (alive) setBranchOptions(rows || []); })
+      .catch((e) => { if (alive) setErr(e.message || "Gagal memuat daftar branch"); });
+    return () => { alive = false; };
+  }, [sessionLoading, isApprover, scope]);
+
+  // Site + jenis material tersedia - tergantung branch+brand EFEKTIF, jadi
+  // baru jalan setelah approver selesai memilih branch (& brand kalau perlu).
+  useEffect(() => {
+    if (sessionLoading || !scope?.found) return;
+    if (!effBranchId || !effBrand) { setSites([]); setAvailable([]); return; }
+    let alive = true;
+    (async () => {
+      try {
+        const [siteRows, avail] = await Promise.all([
+          fetchScopeSites(effBranchId, effBrand),
+          isApprover ? fetchAvailableTypesForBranch(effBranchId, effBrand) : fetchMyAvailableTypes(),
+        ]);
+        if (!alive) return;
         setSites(siteRows || []);
         setAvailable(avail || []);
       } catch (e) {
@@ -56,7 +100,7 @@ export default function PosmNewPage() {
       }
     })();
     return () => { alive = false; };
-  }, [sessionLoading, scope]);
+  }, [sessionLoading, scope, isApprover, effBranchId, effBrand]);
 
   function useMyLocation() {
     if (!navigator.geolocation) { setErr("Browser ini tidak mendukung geolocation."); return; }
@@ -90,6 +134,8 @@ export default function PosmNewPage() {
 
   async function submit() {
     setErr("");
+    if (isApprover && !targetBranchId) { setErr("Pilih branch tujuan pemasangan dulu."); return; }
+    if (isApprover && !effBrand) { setErr("Pilih brand dulu."); return; }
     if (mode === "activity" && !activityId) { setErr("Pilih activity terlebih dulu."); return; }
     if (mode === "outlet" && !siteId) { setErr("Pilih outlet/site terlebih dulu."); return; }
     if (mode === "street" && !streetDesc.trim()) { setErr("Isi deskripsi lokasi street branding."); return; }
@@ -101,6 +147,8 @@ export default function PosmNewPage() {
     try {
       const ins = await submitInstallation({
         mode, activityId, siteId, streetDescription: streetDesc.trim(), lat, lng, note: note.trim(), items,
+        branchId: isApprover ? effBranchId : undefined,
+        brand: isApprover ? effBrand : undefined,
       });
       for (let i = 0; i < photos.length; i++) {
         try {
@@ -150,6 +198,32 @@ export default function PosmNewPage() {
       {err && <div style={{ margin: "14px 20px 0", padding: "10px 12px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 12, fontWeight: 600 }}>{err}</div>}
 
       <div style={{ padding: "16px 20px 120px", display: "flex", flexDirection: "column", gap: 12 }}>
+        {/* Branch tujuan - HANYA utk approver (Head/Brand TMV/SPM Sumatera/
+            Admin) yg tidak punya branch tetap sendiri. Stok yang dipakai akan
+            mengurangi alokasi branch yang dipilih di sini. */}
+        {isApprover && (
+          <Card>
+            <FieldLabel text="Pasang di Branch" required hint="Stok ikut branch ini" />
+            <select value={targetBranchId} onChange={(e) => { setTargetBranchId(e.target.value); setSiteId(""); setItems([]); }} style={selectBase}>
+              <option value="">Pilih branch tujuan…</option>
+              {branchOptions.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}
+            </select>
+            {!scope?.brand && (
+              <>
+                <FieldLabel text="Brand" required top />
+                <div style={{ display: "flex", gap: 8 }}>
+                  {BRAND_CHOICES.map((b) => (
+                    <button key={b.key} onClick={() => { setTargetBrand(b.key); setSiteId(""); setItems([]); }}
+                      style={{ flex: 1, height: 40, borderRadius: 10, border: targetBrand === b.key ? "none" : "1.5px solid #ECEDF0", background: targetBrand === b.key ? BRAND : "#F6F7F9", color: targetBrand === b.key ? "#fff" : "#5A5A68", fontSize: 12.5, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>
+                      {b.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </Card>
+        )}
+
         {/* Mode */}
         <Card>
           <FieldLabel text="Mode Instalasi" required />
@@ -174,8 +248,8 @@ export default function PosmNewPage() {
           {mode === "outlet" && (
             <>
               <FieldLabel text="Outlet / Site" required top />
-              <select value={siteId} onChange={(e) => setSiteId(e.target.value)} style={selectBase}>
-                <option value="">Pilih site…</option>
+              <select value={siteId} onChange={(e) => setSiteId(e.target.value)} disabled={isApprover && !effBranchId} style={selectBase}>
+                <option value="">{isApprover && !effBranchId ? "Pilih branch dulu…" : "Pilih site…"}</option>
                 {sites.map((s) => <option key={s.site_id} value={s.site_id}>{s.site_id}{s.site_name ? ` · ${s.site_name}` : ""}</option>)}
               </select>
             </>
@@ -209,7 +283,11 @@ export default function PosmNewPage() {
                 + {t.name}
               </button>
             ))}
-            {available.length === 0 && <div style={{ fontSize: 11.5, color: "#B0B0BA" }}>Belum ada jenis material terdaftar di cabang Anda.</div>}
+            {available.length === 0 && (
+              <div style={{ fontSize: 11.5, color: "#B0B0BA" }}>
+                {isApprover && !effBranchId ? "Pilih branch tujuan dulu di atas." : "Belum ada jenis material terdaftar di branch ini."}
+              </div>
+            )}
           </div>
           {items.length > 0 && (
             <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>

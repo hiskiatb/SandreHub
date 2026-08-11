@@ -8,9 +8,10 @@
  */
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Plus, PackageCheck, MapPin, Navigation, Milestone, CheckCircle2, Clock, XCircle, PackagePlus } from "lucide-react";
+import { ArrowLeft, Plus, PackageCheck, MapPin, Navigation, Milestone, CheckCircle2, Clock, XCircle, PackagePlus, Layers, ChevronRight } from "lucide-react";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { fmtInt } from "../_shared/activityUi";
+import { APPROVER_ROLES } from "../_shared/planData";
 import {
   fetchMyBranchProgress, fetchMyTypeSummary, fetchMyInstallations, fetchMyAvailableTypes,
   submitClaimRequest, STOCK_MODE_LABEL, INSTALL_MODES,
@@ -28,6 +29,7 @@ export default function PosmHubPage() {
   const [claimSheet, setClaimSheet] = useState(false);
 
   const canClaim = scope?.role === "bme"; // server-enforced juga (lihat mh_posmat_bme_submit_claim_request)
+  const isApprover = APPROVER_ROLES.includes(scope?.role);
 
   useEffect(() => {
     if (sessionLoading) return;
@@ -60,6 +62,26 @@ export default function PosmHubPage() {
       </div>
 
       {err && <div style={{ margin: "14px 20px 0", padding: "10px 12px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 12, fontWeight: 600 }}>{err}</div>}
+
+      {/* Kelola Stok - approver (Head/Brand TMV/SPM Sumatera/Admin) tidak
+          punya branch tetap sendiri jadi kartu Progress/Stok Cabang di bawah
+          biasanya kosong utk mereka; quick-link ini gantikan akses yang dulu
+          didapat lewat menu Beranda langsung ke /posm/stock. */}
+      {isApprover && (
+        <div style={{ padding: "16px 20px 0" }}>
+          <button onClick={() => router.push("/martahub/m/posm/stock")}
+            style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "13px 14px", borderRadius: 14, border: "1px solid #E9EAEE", background: "#FFFFFF", cursor: "pointer", textAlign: "left", fontFamily: FF }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(179,46,133,0.10)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Layers size={16} color="#B32E85" />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>Kelola Stok &amp; Target</div>
+              <div style={{ fontSize: 10.5, color: "#8A8A96", fontWeight: 600 }}>Stok tiap branch, jenis material &amp; target bulanan</div>
+            </div>
+            <ChevronRight size={16} color="#B0B0BA" />
+          </button>
+        </div>
+      )}
 
       {/* Progress cabang bulan ini */}
       {progress && (

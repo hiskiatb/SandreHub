@@ -26,7 +26,7 @@ export const fetchMyAvailableTypes = () => rpc("mh_posmat_my_available_types");
 export const fetchMyInstallations = () => rpc("mh_md_list_my_installations");
 export const fetchMyClaimRequests = () => rpc("mh_posmat_my_claim_requests");
 
-export function submitInstallation({ mode, activityId, siteId, streetDescription, lat, lng, companionAssignmentId, note, items }) {
+export function submitInstallation({ mode, activityId, siteId, streetDescription, lat, lng, companionAssignmentId, note, items, branchId, brand }) {
   return rpc("mh_md_submit_installation", {
     p_mode: mode,
     p_activity_id: mode === "activity" ? activityId : null,
@@ -37,8 +37,20 @@ export function submitInstallation({ mode, activityId, siteId, streetDescription
     p_companion_assignment_id: companionAssignmentId || null,
     p_note: note || null,
     p_items: items.map((i) => ({ posmat_type_id: i.posmat_type_id, qty: Number(i.qty) })),
+    // Override branch/brand tujuan - dipakai approver (Head/Brand TMV dkk)
+    // yang TIDAK punya branch tetap sendiri, supaya bisa pilih mau pasang
+    // di branch mana & stok yang dikonsumsi mengurangi alokasi branch itu.
+    // NULL (default) = BME/RGE biasa, perilaku lama (branch ikut perekam).
+    p_branch_id: branchId || null,
+    p_brand: brand || null,
   });
 }
+
+/** Saldo stok utk branch+brand APAPUN (bukan cuma milik pemanggil) - dipakai
+ * approver saat memilih branch tujuan pemasangan supaya langsung lihat
+ * jenis material apa saja yang tersedia di branch tsb. */
+export const fetchAvailableTypesForBranch = (branchId, brand) =>
+  rpc("mh_posmat_available_types_for_branch", { p_branch_id: branchId, p_brand: brand });
 
 const PHOTO_BUCKET = "mh-photos"; // SAMA dgn `_photoBucket` md_activity_provider.dart Flutter
 export async function addInstallationPhoto(installationId, blob, index) {
@@ -114,9 +126,14 @@ export function haversineMeters(lat1, lon1, lat2, lon2) {
 }
 
 /** Daftar cabang (slug+label) dari mh_profiles - sumber sama dgn yg dipakai
- * scope BME/RGE lain, dipakai utk picker branch di layar approver. */
-export async function fetchBranchOptions() {
-  const { data, error } = await supabaseMarta.from("mh_profiles").select("branch_id, branch_name").not("branch_id", "is", null);
+ * scope BME/RGE lain, dipakai utk picker branch di layar approver.
+ * @param {string} [region] - kalau diisi, cuma cabang di region itu (dipakai
+ *   utk TMV/Head TMV yang scope-nya dibatasi 1 region - tanpa ini, admin/
+ *   SPM Sumatera yang unscoped tetap dapat semua cabang nasional). */
+export async function fetchBranchOptions(region) {
+  let q = supabaseMarta.from("mh_profiles").select("branch_id, branch_name, region").not("branch_id", "is", null);
+  if (region) q = q.eq("region", region);
+  const { data, error } = await q;
   if (error) throw error;
   const map = new Map();
   for (const r of data || []) if (r.branch_id && !map.has(r.branch_id)) map.set(r.branch_id, r.branch_name || r.branch_id);

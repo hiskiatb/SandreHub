@@ -324,7 +324,12 @@ export default function MartaMobileHome() {
             <MenuItem icon={ListChecks} label="Aktivitas" color="#57C2AC" onClick={() => router.push("/martahub/m/activities")} />
             <MenuItem icon={MapIcon} label="Peta" color="#1A9E90" onClick={() => router.push("/martahub/m/map")} />
             <MenuItem icon={Trophy} label="Leaderboard" color="#F5CD46" onClick={() => router.push("/martahub/m/leaderboard")} />
-            <MenuItem icon={PackageCheck} label="POSM" color="#B32E85" onClick={() => router.push(isApprover ? "/martahub/m/posm/stock" : "/martahub/m/posm")} />
+            {/* Sama seperti Aktivitas - SEMUA role masuk ke hub POSM yang
+                sama (termasuk Head/Brand TMV), bukan langsung dialihkan ke
+                Kelola Stok. Mereka bisa "Catat" instalasi & pilih sendiri
+                mau pasang di branch mana; akses Kelola Stok tetap ada lewat
+                quick-link di dalam hub POSM (lihat posm/page.jsx). */}
+            <MenuItem icon={PackageCheck} label="POSM" color="#B32E85" onClick={() => router.push("/martahub/m/posm")} />
             {isApprover && <MenuItem icon={ShieldCheck} label="Approval" color="#E63325" onClick={() => router.push("/martahub/m/approval")} badge={pendingApprovals} />}
             {/* Management View - KHUSUS spm_sumatera (bukan approver lain),
                 satu-satunya role yg benar-benar mengelola seluruh Sumatera
