@@ -1422,7 +1422,11 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
                 {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
             </Field>
-            <Field t={t} label="Tanggal Efektif Bekerja"><input className="pts-in" type="date" value={form.effective_date} onChange={(e) => setForm({ ...form, effective_date: e.target.value })} /></Field>
+            <Field t={t} label="Tanggal Efektif Bekerja">
+              <div className="pts-in" style={{ display: "flex", alignItems: "center", color: t.mid, background: t.sub, cursor: "default" }}>
+                {form.effective_date ? fmtDate(form.effective_date) : "— (otomatis terisi begitu Email Pribadi diisi)"}
+              </div>
+            </Field>
             <Field t={t} label={`Target Penjualan (SP/bulan)${profile?.role !== "spm_sumatera" ? " — hanya SPM Sumatera" : ""}`}>
               <input className="pts-in" type="number" min={1} value={form.sales_target}
                 disabled={profile?.role !== "spm_sumatera"}
@@ -1806,7 +1810,12 @@ function MappingEditModal({ t, supabase, profile, period, row, outletByCode, pic
                 {(regionSelectOptions.length ? regionSelectOptions : REGIONS).map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
             </div>
-            <div><label style={lbl}>Tanggal Efektif Bekerja</label><input style={inp} type="date" value={effectiveDate} onChange={(e) => setEffectiveDate(e.target.value)} /></div>
+            <div>
+              <label style={lbl}>Tanggal Efektif Bekerja</label>
+              <div style={{ ...inp, display: "flex", alignItems: "center", color: t.mid, background: t.sub, cursor: "default" }}>
+                {effectiveDate ? fmtDate(effectiveDate) : "— (otomatis terisi begitu Email Pribadi diisi)"}
+              </div>
+            </div>
             <div>
               <label style={lbl}>Target Penjualan{profile?.role !== "spm_sumatera" ? " — hanya SPM Sumatera" : ""}</label>
               <input style={{ ...inp, opacity: profile?.role !== "spm_sumatera" ? 0.6 : 1, cursor: profile?.role !== "spm_sumatera" ? "not-allowed" : "text" }}
