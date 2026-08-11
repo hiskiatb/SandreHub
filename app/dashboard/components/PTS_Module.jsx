@@ -818,30 +818,28 @@ function PromotorOutletManager({ t, d, supabase, profile, period, outletByCode, 
         const { error } = await supabase.from("pts_promotor").update(payload).eq("id", form.id);
         if (error) throw error;
       } else {
-        // Sebelum insert baris baru: cek dulu apakah email ini SUDAH dipakai
-        // baris lain — bisa terjadi walau promotor lama sudah "dihapus" di
-        // sini, karena begitu promotor login pakai akun Google dgn email yg
-        // sama, app Promotor otomatis bikin baris "pending" baru supaya akun
-        // Google itu tetap bisa masuk (lihat resolveIdentity() di app/promotor/page.jsx).
-        // Baris "pending" itu ada auth_user_id-nya (akun Google sudah tertaut)
-        // tapi belum ada ID Promotor — jadi ini AMAN dipakai ulang: isi data
-        // baru KE baris itu (bukan bikin baris duplikat) supaya tautan akun
-        // Google-nya tidak putus & promotor tidak perlu login ulang.
-        if (payload.email) {
-          const { data: existing } = await supabase.from("pts_promotor")
-            .select("id,promotor_id,auth_user_id").ilike("email", payload.email).maybeSingle();
-          if (existing) {
-            if (existing.promotor_id) {
-              throw new Error(`Email ini sudah dipakai promotor lain (ID ${existing.promotor_id}). Gunakan email lain, atau edit data promotor tsb langsung.`);
-            }
-            const { error } = await supabase.from("pts_promotor").update(payload).eq("id", existing.id);
-            if (error) throw error;
-            await load(); cancel();
-            return;
-          }
-        }
-        const { error } = await supabase.from("pts_promotor").insert(payload);
+        // Baris baru: lewat RPC (server-side, SECURITY DEFINER) — bukan
+        // insert langsung. Alasannya: email/ID Promotor yang tampak "belum
+        // dipakai" di layar Roster bisa saja sebenarnya sudah dipakai baris
+        // "pending" yang TIDAK KELIHATAN oleh akun kita (RLS scope region/
+        // cluster) — misalnya begitu promotor login pakai akun Google dgn
+        // email yg sama setelah data lamanya dihapus, app Promotor otomatis
+        // bikin baris "pending" baru (lihat resolveIdentity() di
+        // app/promotor/page.jsx) supaya akun Google itu tetap bisa masuk.
+        // Cek dari klien tidak bisa diandalkan (baris itu tersembunyi dari
+        // kita), jadi pengecekan+klaim baris pending dilakukan di server
+        // lewat pts_admin_upsert_promotor, yang bisa melihat SEMUA baris.
+        const { data, error } = await supabase.rpc("pts_admin_upsert_promotor", {
+          p_promotor_id: payload.promotor_id, p_full_name: payload.full_name, p_email: payload.email,
+          p_phone: payload.phone, p_region: payload.region, p_effective_date: payload.effective_date,
+          p_status: payload.status, p_sales_target: payload.sales_target,
+        });
         if (error) throw error;
+        if (data?.status === "forbidden") throw new Error("Anda tidak punya akses menambah promotor ini.");
+        if (data?.status === "duplicate_promotor_id") throw new Error(`ID Promotor ini sudah dipakai (email: ${data.email || "-"}).`);
+        if (data?.status === "email_taken") throw new Error(`Email ini sudah dipakai promotor lain (ID ${data.promotor_id}). Gunakan email lain, atau edit data promotor tsb langsung.`);
+        if (data?.status === "conflict") throw new Error("ID Promotor atau email sudah dipakai. Coba data lain.");
+        if (data?.status !== "created" && data?.status !== "claimed") throw new Error("Gagal menyimpan.");
       }
       await load(); cancel();
     } catch (e) {
