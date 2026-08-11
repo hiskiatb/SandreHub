@@ -460,6 +460,7 @@ export default function PromotorApp() {
   return (
     <AppShell
       name={name} setName={setName} email={email} uid={uid} promotorId={promotorId} salesTarget={salesTarget}
+      phone={phone} setPhone={setPhone} promotorCode={promotorCode} threeId={threeId} profileRegion={profileRegion} profileStatus={profileStatus}
       period={period} setPeriod={setPeriod} statsPeriod={statsPeriod} setStatsPeriod={setStatsPeriod}
       outlets={outlets} setOutlets={setOutlets} assignmentSrc={assignmentSrc}
       activeOutlet={activeOutlet} setActiveOutlet={setActiveOutlet}
@@ -543,7 +544,7 @@ function Pending({ email, period, setPeriod, onReload, onSignOut, previewMode, o
 
 /* ══════════════════ App Shell ══════════════════ */
 function AppShell(p) {
-  const { name, setName, email, promotorId, salesTarget, period, setPeriod, statsPeriod, setStatsPeriod, outlets, setOutlets, assignmentSrc, activeOutlet, setActiveOutlet, todaySales, loadTodaySales, geo, geoErr, refreshGeo, view, setView, history, loadHistory, onSignOut, flash, toast, previewMode, onBack, waLink } = p;
+  const { name, setName, email, promotorId, salesTarget, phone, setPhone, promotorCode, threeId, profileRegion, profileStatus, period, setPeriod, statsPeriod, setStatsPeriod, outlets, setOutlets, assignmentSrc, activeOutlet, setActiveOutlet, todaySales, loadTodaySales, geo, geoErr, refreshGeo, view, setView, history, loadHistory, onSignOut, flash, toast, previewMode, onBack, waLink } = p;
   // Semua aksi tulis dikunci saat Mode Pratinjau Admin — dipanggil di awal
   // tiap handler supaya tidak ada satupun jalur yang lolos.
   const guardPreview = () => { if (previewMode) { flash("Mode pratinjau — tidak bisa melakukan aksi ini.", "err"); return true; } return false; };
