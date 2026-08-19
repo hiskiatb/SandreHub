@@ -11,6 +11,115 @@ import { HubLogoLoader, HubLogoLoaderDark } from "../../components/HubLogoLoader
 import { MapCard } from "./components/SumatraMap";
 import { slug, monthKeyYYYYMM, nearestPriorTarget } from "../../lib/activityTarget";
 
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║ MOCK DASHBOARD DATA - HANYA UNTUK VISUALISASI, HAPUS KAPAN SAJA          ║
+// ║ Set USE_MOCK_DASHBOARD_DATA = false (atau hapus seluruh blok ini + baris ║
+// ║ pemanggilannya di useEffect, cari "MOCK_ACTIVITIES") untuk kembali ke    ║
+// ║ data asli mh_activities/mh_activity_target/mh_md_installations. Tidak    ║
+// ║ menyentuh database sama sekali - murni override state lokal di browser  ║
+// ║ SETELAH fetch asli selesai, jadi aman dihapus tanpa efek samping.        ║
+// ║ branch_id di MOCK_ACTIVITIES pakai UUID mh_branches ASLI (MEDAN/ACEH/    ║
+// ║ PEKANBARU/PADANG/PALEMBANG/BANDAR LAMPUNG) supaya nama cabang & region   ║
+// ║ tetap tampil benar lewat branchMap/scoping yang sudah ada.               ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+const USE_MOCK_DASHBOARD_DATA = true;
+const MOCK_BRANCHES = [
+  { id: "61b44f8c-2af6-4cf3-a450-9ca695aad1ae", name: "MEDAN", lat: 3.5952, lng: 98.6722 },
+  { id: "6444e7cf-e2bb-4cfd-81d0-c18c7c1d5ceb", name: "ACEH", lat: 5.5483, lng: 95.3238 },
+  { id: "8d3177d7-4a0e-44b6-80c7-e4b53ea95742", name: "PEKANBARU", lat: 0.5071, lng: 101.4478 },
+  { id: "04fc17ac-43de-4ec9-b960-5f27530775c8", name: "PADANG", lat: -0.9471, lng: 100.4172 },
+  { id: "1afd6760-2f2a-4784-b424-a5ee180d7006", name: "PALEMBANG", lat: -2.9761, lng: 104.7754 },
+  { id: "785db1f7-283d-498d-9025-ec8764a973c5", name: "BANDAR LAMPUNG", lat: -5.4292, lng: 105.2610 },
+];
+const MB = Object.fromEntries(MOCK_BRANCHES.map((b) => [b.name, b]));
+const MOCK_ACTIVITIES = [
+  { id: "mock-1", status: "approved", brand: "IM3", branch_id: MB.MEDAN.id, plan_date: "2026-08-03", actual_date: "2026-08-03", event_category: "directSelling", event_categories: null, network_category: "strong", target_sp: 14, target_fwa: 8, actual_sp: 15, actual_fwa: 9, cost_estimate: 4200000, cost_actual: 4200000, actual_rev_3m: 9800000, checkin_valid: true, geo_compliant: true, event_name: "Direct Selling Plaza Medan Fair", mc: "MC-01", created_at: "2026-08-03T09:15:00+07:00", latitude: MB.MEDAN.lat + 0.04, longitude: MB.MEDAN.lng - 0.03 },
+  { id: "mock-2", status: "approved", brand: "IM3", branch_id: MB.MEDAN.id, plan_date: "2026-08-10", actual_date: "2026-08-10", event_category: "sponsorship", event_categories: null, network_category: "medium", target_sp: 10, target_fwa: 6, actual_sp: 9, actual_fwa: 5, cost_estimate: 3100000, cost_actual: 3100000, actual_rev_3m: 6400000, checkin_valid: true, geo_compliant: true, event_name: "Sponsorship Festival Kuliner Medan", mc: "MC-02", created_at: "2026-08-10T10:00:00+07:00", latitude: MB.MEDAN.lat - 0.02, longitude: MB.MEDAN.lng + 0.05 },
+  { id: "mock-3", status: "plan_submitted", brand: "TRI", branch_id: MB.MEDAN.id, plan_date: "2026-08-17", actual_date: null, event_category: "thematic", event_categories: null, network_category: "medium", target_sp: 12, target_fwa: 7, actual_sp: null, actual_fwa: null, cost_estimate: 3800000, cost_actual: null, actual_rev_3m: null, checkin_valid: null, geo_compliant: null, event_name: "Thematic Ramadan Preview Medan", mc: "MC-01", created_at: "2026-08-17T08:30:00+07:00", latitude: MB.MEDAN.lat + 0.01, longitude: MB.MEDAN.lng + 0.02 },
+
+  { id: "mock-4", status: "approved", brand: "IM3", branch_id: MB.ACEH.id, plan_date: "2026-08-02", actual_date: "2026-08-02", event_category: "openBooth", event_categories: null, network_category: "strong", target_sp: 9, target_fwa: 5, actual_sp: 10, actual_fwa: 6, cost_estimate: 2800000, cost_actual: 2800000, actual_rev_3m: 7200000, checkin_valid: true, geo_compliant: true, event_name: "Open Booth Simpang Lima Banda Aceh", mc: "MC-03", created_at: "2026-08-02T09:00:00+07:00", latitude: MB.ACEH.lat + 0.03, longitude: MB.ACEH.lng - 0.02 },
+  { id: "mock-5", status: "approved", brand: "TRI", branch_id: MB.ACEH.id, plan_date: "2026-08-08", actual_date: "2026-08-08", event_category: "jointEvent", event_categories: null, network_category: "strong", target_sp: 16, target_fwa: 9, actual_sp: 14, actual_fwa: 8, cost_estimate: 5200000, cost_actual: 5200000, actual_rev_3m: 11000000, checkin_valid: true, geo_compliant: true, event_name: "Joint Event Kampus Unsyiah", mc: "MC-04", created_at: "2026-08-08T09:30:00+07:00", latitude: MB.ACEH.lat - 0.03, longitude: MB.ACEH.lng + 0.04 },
+  { id: "mock-6", status: "draft", brand: "IM3", branch_id: MB.ACEH.id, plan_date: "2026-08-19", actual_date: null, event_category: "project", event_categories: null, network_category: "weak", target_sp: 20, target_fwa: 12, actual_sp: null, actual_fwa: null, cost_estimate: 6000000, cost_actual: null, actual_rev_3m: null, checkin_valid: null, geo_compliant: null, event_name: "Project Perluasan Jaringan Aceh Besar", mc: "MC-03", created_at: "2026-08-19T07:45:00+07:00", latitude: MB.ACEH.lat + 0.02, longitude: MB.ACEH.lng + 0.01 },
+
+  { id: "mock-7", status: "approved", brand: "TRI", branch_id: MB.PEKANBARU.id, plan_date: "2026-08-05", actual_date: "2026-08-05", event_category: "directSelling", event_categories: null, network_category: "medium", target_sp: 11, target_fwa: 6, actual_sp: 12, actual_fwa: 7, cost_estimate: 3400000, cost_actual: 3400000, actual_rev_3m: 8300000, checkin_valid: true, geo_compliant: true, event_name: "Direct Selling Mal SKA Pekanbaru", mc: "MC-05", created_at: "2026-08-05T09:10:00+07:00", latitude: MB.PEKANBARU.lat + 0.03, longitude: MB.PEKANBARU.lng - 0.03 },
+  { id: "mock-8", status: "revision_needed", brand: "IM3", branch_id: MB.PEKANBARU.id, plan_date: "2026-08-12", actual_date: "2026-08-12", event_category: "sponsorship", event_categories: null, network_category: "weak", target_sp: 8, target_fwa: 4, actual_sp: 5, actual_fwa: 2, cost_estimate: 2500000, cost_actual: 2500000, actual_rev_3m: 3100000, checkin_valid: false, geo_compliant: false, event_name: "Sponsorship Car Free Day Pekanbaru", mc: "MC-06", created_at: "2026-08-12T09:20:00+07:00", latitude: MB.PEKANBARU.lat - 0.02, longitude: MB.PEKANBARU.lng + 0.02 },
+  { id: "mock-9", status: "approved", brand: "TRI", branch_id: MB.PEKANBARU.id, plan_date: "2026-08-15", actual_date: "2026-08-15", event_category: "thematic", event_categories: null, network_category: "strong", target_sp: 13, target_fwa: 7, actual_sp: 13, actual_fwa: 7, cost_estimate: 4000000, cost_actual: 4000000, actual_rev_3m: 9500000, checkin_valid: true, geo_compliant: true, event_name: "Thematic Kemerdekaan Pekanbaru", mc: "MC-05", created_at: "2026-08-15T09:05:00+07:00", latitude: MB.PEKANBARU.lat + 0.01, longitude: MB.PEKANBARU.lng + 0.04 },
+
+  { id: "mock-10", status: "approved", brand: "TRI", branch_id: MB.PADANG.id, plan_date: "2026-08-04", actual_date: "2026-08-04", event_category: "openBooth", event_categories: null, network_category: "medium", target_sp: 10, target_fwa: 6, actual_sp: 11, actual_fwa: 6, cost_estimate: 3200000, cost_actual: 3200000, actual_rev_3m: 7600000, checkin_valid: true, geo_compliant: true, event_name: "Open Booth Pasar Raya Padang", mc: "MC-07", created_at: "2026-08-04T09:00:00+07:00", latitude: MB.PADANG.lat + 0.03, longitude: MB.PADANG.lng - 0.02 },
+  { id: "mock-11", status: "approved", brand: "IM3", branch_id: MB.PADANG.id, plan_date: "2026-08-11", actual_date: "2026-08-11", event_category: "jointEvent", event_categories: null, network_category: "strong", target_sp: 15, target_fwa: 8, actual_sp: 15, actual_fwa: 8, cost_estimate: 4900000, cost_actual: 4900000, actual_rev_3m: 12200000, checkin_valid: true, geo_compliant: true, event_name: "Joint Event Kampus Unand", mc: "MC-08", created_at: "2026-08-11T09:15:00+07:00", latitude: MB.PADANG.lat - 0.03, longitude: MB.PADANG.lng + 0.03 },
+  { id: "mock-12", status: "plan_submitted", brand: "TRI", branch_id: MB.PADANG.id, plan_date: "2026-08-18", actual_date: null, event_category: "project", event_categories: null, network_category: "medium", target_sp: 18, target_fwa: 10, actual_sp: null, actual_fwa: null, cost_estimate: 5500000, cost_actual: null, actual_rev_3m: null, checkin_valid: null, geo_compliant: null, event_name: "Project Ekspansi Kawasan Kuranji", mc: "MC-07", created_at: "2026-08-18T08:00:00+07:00", latitude: MB.PADANG.lat + 0.02, longitude: MB.PADANG.lng + 0.01 },
+
+  { id: "mock-13", status: "approved", brand: "IM3", branch_id: MB.PALEMBANG.id, plan_date: "2026-08-06", actual_date: "2026-08-06", event_category: "directSelling", event_categories: null, network_category: "strong", target_sp: 12, target_fwa: 7, actual_sp: 13, actual_fwa: 7, cost_estimate: 3700000, cost_actual: 3700000, actual_rev_3m: 8900000, checkin_valid: true, geo_compliant: true, event_name: "Direct Selling Jakabaring Palembang", mc: "MC-09", created_at: "2026-08-06T09:10:00+07:00", latitude: MB.PALEMBANG.lat + 0.03, longitude: MB.PALEMBANG.lng - 0.02 },
+  { id: "mock-14", status: "approved", brand: "TRI", branch_id: MB.PALEMBANG.id, plan_date: "2026-08-13", actual_date: "2026-08-13", event_category: "sponsorship", event_categories: null, network_category: "medium", target_sp: 9, target_fwa: 5, actual_sp: 8, actual_fwa: 5, cost_estimate: 2900000, cost_actual: 2900000, actual_rev_3m: 6100000, checkin_valid: true, geo_compliant: true, event_name: "Sponsorship Turnamen Futsal Palembang", mc: "MC-10", created_at: "2026-08-13T09:30:00+07:00", latitude: MB.PALEMBANG.lat - 0.02, longitude: MB.PALEMBANG.lng + 0.03 },
+  { id: "mock-15", status: "rejected", brand: "IM3", branch_id: MB.PALEMBANG.id, plan_date: "2026-08-16", actual_date: "2026-08-16", event_category: "thematic", event_categories: null, network_category: "weak", target_sp: 14, target_fwa: 8, actual_sp: 6, actual_fwa: 3, cost_estimate: 4300000, cost_actual: 4300000, actual_rev_3m: 2800000, checkin_valid: false, geo_compliant: false, event_name: "Thematic Ramadan Pasar Cinde", mc: "MC-09", created_at: "2026-08-16T09:20:00+07:00", latitude: MB.PALEMBANG.lat + 0.01, longitude: MB.PALEMBANG.lng + 0.02 },
+
+  { id: "mock-16", status: "approved", brand: "IM3", branch_id: MB["BANDAR LAMPUNG"].id, plan_date: "2026-08-07", actual_date: "2026-08-07", event_category: "openBooth", event_categories: null, network_category: "strong", target_sp: 11, target_fwa: 6, actual_sp: 12, actual_fwa: 6, cost_estimate: 3500000, cost_actual: 3500000, actual_rev_3m: 8700000, checkin_valid: true, geo_compliant: true, event_name: "Open Booth Mal Boemi Kedaton", mc: "MC-11", created_at: "2026-08-07T09:05:00+07:00", latitude: MB["BANDAR LAMPUNG"].lat + 0.03, longitude: MB["BANDAR LAMPUNG"].lng - 0.02 },
+  { id: "mock-17", status: "approved", brand: "TRI", branch_id: MB["BANDAR LAMPUNG"].id, plan_date: "2026-08-14", actual_date: "2026-08-14", event_category: "jointEvent", event_categories: null, network_category: "strong", target_sp: 17, target_fwa: 9, actual_sp: 16, actual_fwa: 9, cost_estimate: 5400000, cost_actual: 5400000, actual_rev_3m: 12800000, checkin_valid: true, geo_compliant: true, event_name: "Joint Event Kampus Unila", mc: "MC-12", created_at: "2026-08-14T09:15:00+07:00", latitude: MB["BANDAR LAMPUNG"].lat - 0.03, longitude: MB["BANDAR LAMPUNG"].lng + 0.03 },
+  { id: "mock-18", status: "approved", brand: "IM3", branch_id: MB["BANDAR LAMPUNG"].id, plan_date: "2026-08-19", actual_date: "2026-08-19", event_category: "project", event_categories: null, network_category: "medium", target_sp: 10, target_fwa: 5, actual_sp: 11, actual_fwa: 6, cost_estimate: 3300000, cost_actual: 3300000, actual_rev_3m: 7900000, checkin_valid: true, geo_compliant: true, event_name: "Project Perluasan Way Halim", mc: "MC-11", created_at: "2026-08-19T08:50:00+07:00", latitude: MB["BANDAR LAMPUNG"].lat + 0.01, longitude: MB["BANDAR LAMPUNG"].lng + 0.01 },
+
+  // Baris Maret-Juli 2026 - HANYA supaya Achievement/Productivity Trend (6
+  // bulan terakhir) tidak rata datar lalu melonjak di bulan terakhir (semua
+  // data asli memang baru mulai Agustus 2026, lihat MIN_MONTH_KEY). Sengaja
+  // rasio target/actual & revenue/cost dibuat naik-turun tiap bulan (BUKAN
+  // satu arah/monoton) supaya dua kurva punya bentuk berbeda satu sama
+  // lain - achievement% & productivity% dua metrik independen di dunia nyata.
+  { id: "mock-19", status: "approved", brand: "IM3", branch_id: MB.MEDAN.id, plan_date: "2026-03-05", actual_date: "2026-03-05", event_category: "directSelling", event_categories: null, network_category: "medium", target_sp: 16, target_fwa: 9, actual_sp: 9, actual_fwa: 5, cost_estimate: 3000000, cost_actual: 3000000, actual_rev_3m: 3600000, checkin_valid: true, geo_compliant: true, event_name: "Direct Selling Medan Mall (Mar)", mc: "MC-01", created_at: "2026-03-05T09:00:00+07:00", latitude: MB.MEDAN.lat + 0.02, longitude: MB.MEDAN.lng - 0.01 },
+  { id: "mock-20", status: "approved", brand: "TRI", branch_id: MB.PEKANBARU.id, plan_date: "2026-03-18", actual_date: "2026-03-18", event_category: "sponsorship", event_categories: null, network_category: "weak", target_sp: 10, target_fwa: 5, actual_sp: 6, actual_fwa: 3, cost_estimate: 2200000, cost_actual: 2200000, actual_rev_3m: 2500000, checkin_valid: true, geo_compliant: true, event_name: "Sponsorship Pekanbaru Run (Mar)", mc: "MC-05", created_at: "2026-03-18T09:00:00+07:00", latitude: MB.PEKANBARU.lat - 0.02, longitude: MB.PEKANBARU.lng + 0.02 },
+
+  { id: "mock-21", status: "approved", brand: "IM3", branch_id: MB.PADANG.id, plan_date: "2026-04-08", actual_date: "2026-04-08", event_category: "openBooth", event_categories: null, network_category: "medium", target_sp: 14, target_fwa: 8, actual_sp: 10, actual_fwa: 6, cost_estimate: 3800000, cost_actual: 3800000, actual_rev_3m: 3300000, checkin_valid: true, geo_compliant: true, event_name: "Open Booth Padang Plaza (Apr)", mc: "MC-07", created_at: "2026-04-08T09:00:00+07:00", latitude: MB.PADANG.lat + 0.02, longitude: MB.PADANG.lng - 0.02 },
+  { id: "mock-22", status: "approved", brand: "TRI", branch_id: MB.PALEMBANG.id, plan_date: "2026-04-20", actual_date: "2026-04-20", event_category: "jointEvent", event_categories: null, network_category: "medium", target_sp: 12, target_fwa: 7, actual_sp: 9, actual_fwa: 5, cost_estimate: 2600000, cost_actual: 2600000, actual_rev_3m: 2900000, checkin_valid: true, geo_compliant: true, event_name: "Joint Event Kampus Sriwijaya (Apr)", mc: "MC-10", created_at: "2026-04-20T09:00:00+07:00", latitude: MB.PALEMBANG.lat - 0.02, longitude: MB.PALEMBANG.lng + 0.02 },
+
+  { id: "mock-23", status: "approved", brand: "IM3", branch_id: MB["BANDAR LAMPUNG"].id, plan_date: "2026-05-06", actual_date: "2026-05-06", event_category: "thematic", event_categories: null, network_category: "weak", target_sp: 13, target_fwa: 7, actual_sp: 7, actual_fwa: 4, cost_estimate: 3400000, cost_actual: 3400000, actual_rev_3m: 5600000, checkin_valid: true, geo_compliant: true, event_name: "Thematic Ramadan Lampung (Mei)", mc: "MC-11", created_at: "2026-05-06T09:00:00+07:00", latitude: MB["BANDAR LAMPUNG"].lat + 0.02, longitude: MB["BANDAR LAMPUNG"].lng - 0.02 },
+  { id: "mock-24", status: "approved", brand: "TRI", branch_id: MB.ACEH.id, plan_date: "2026-05-22", actual_date: "2026-05-22", event_category: "project", event_categories: null, network_category: "strong", target_sp: 11, target_fwa: 6, actual_sp: 6, actual_fwa: 3, cost_estimate: 2100000, cost_actual: 2100000, actual_rev_3m: 3800000, checkin_valid: true, geo_compliant: true, event_name: "Project Ekspansi Aceh Besar (Mei)", mc: "MC-03", created_at: "2026-05-22T09:00:00+07:00", latitude: MB.ACEH.lat - 0.02, longitude: MB.ACEH.lng + 0.02 },
+
+  { id: "mock-25", status: "approved", brand: "TRI", branch_id: MB.MEDAN.id, plan_date: "2026-06-09", actual_date: "2026-06-09", event_category: "directSelling", event_categories: null, network_category: "strong", target_sp: 15, target_fwa: 8, actual_sp: 12, actual_fwa: 7, cost_estimate: 4000000, cost_actual: 4000000, actual_rev_3m: 4600000, checkin_valid: true, geo_compliant: true, event_name: "Direct Selling Medan Fair (Jun)", mc: "MC-02", created_at: "2026-06-09T09:00:00+07:00", latitude: MB.MEDAN.lat + 0.02, longitude: MB.MEDAN.lng + 0.02 },
+  { id: "mock-26", status: "approved", brand: "IM3", branch_id: MB.PEKANBARU.id, plan_date: "2026-06-24", actual_date: "2026-06-24", event_category: "sponsorship", event_categories: null, network_category: "strong", target_sp: 9, target_fwa: 5, actual_sp: 8, actual_fwa: 4, cost_estimate: 2300000, cost_actual: 2300000, actual_rev_3m: 2500000, checkin_valid: true, geo_compliant: true, event_name: "Sponsorship Komunitas Pekanbaru (Jun)", mc: "MC-06", created_at: "2026-06-24T09:00:00+07:00", latitude: MB.PEKANBARU.lat - 0.02, longitude: MB.PEKANBARU.lng - 0.02 },
+
+  { id: "mock-27", status: "approved", brand: "TRI", branch_id: MB.PADANG.id, plan_date: "2026-07-07", actual_date: "2026-07-07", event_category: "openBooth", event_categories: null, network_category: "weak", target_sp: 17, target_fwa: 9, actual_sp: 9, actual_fwa: 5, cost_estimate: 3600000, cost_actual: 3600000, actual_rev_3m: 6300000, checkin_valid: true, geo_compliant: true, event_name: "Open Booth Pasar Raya (Jul)", mc: "MC-07", created_at: "2026-07-07T09:00:00+07:00", latitude: MB.PADANG.lat + 0.02, longitude: MB.PADANG.lng + 0.02 },
+  { id: "mock-28", status: "approved", brand: "IM3", branch_id: MB.PALEMBANG.id, plan_date: "2026-07-21", actual_date: "2026-07-21", event_category: "jointEvent", event_categories: null, network_category: "weak", target_sp: 10, target_fwa: 5, actual_sp: 6, actual_fwa: 3, cost_estimate: 2400000, cost_actual: 2400000, actual_rev_3m: 4900000, checkin_valid: true, geo_compliant: true, event_name: "Joint Event Jakabaring (Jul)", mc: "MC-09", created_at: "2026-07-21T09:00:00+07:00", latitude: MB.PALEMBANG.lat - 0.02, longitude: MB.PALEMBANG.lng - 0.02 },
+];
+// Target resmi (mh_activity_target) per branch(slug)×brand×bulan - dipakai
+// achievementPct(). branch_id di sini SLUG (bukan uuid), diturunkan dari
+// nama cabang lewat slug() yang sama dipakai kode asli (lib/activityTarget.js).
+const MOCK_ACTIVITY_TARGETS = [
+  { branch_id: slug("MEDAN"), brand: "IM3", month: "202608", target_sp: 28, target_fwa: 16, target_revenue: 20000000 },
+  { branch_id: slug("MEDAN"), brand: "TRI", month: "202608", target_sp: 14, target_fwa: 8, target_revenue: 10000000 },
+  { branch_id: slug("ACEH"), brand: "IM3", month: "202608", target_sp: 12, target_fwa: 7, target_revenue: 9000000 },
+  { branch_id: slug("ACEH"), brand: "TRI", month: "202608", target_sp: 18, target_fwa: 10, target_revenue: 13000000 },
+  { branch_id: slug("PEKANBARU"), brand: "TRI", month: "202608", target_sp: 28, target_fwa: 15, target_revenue: 19000000 },
+  { branch_id: slug("PEKANBARU"), brand: "IM3", month: "202608", target_sp: 10, target_fwa: 5, target_revenue: 6000000 },
+  { branch_id: slug("PADANG"), brand: "TRI", month: "202608", target_sp: 13, target_fwa: 7, target_revenue: 9000000 },
+  { branch_id: slug("PADANG"), brand: "IM3", month: "202608", target_sp: 16, target_fwa: 9, target_revenue: 13000000 },
+  { branch_id: slug("PALEMBANG"), brand: "IM3", month: "202608", target_sp: 22, target_fwa: 12, target_revenue: 15000000 },
+  { branch_id: slug("PALEMBANG"), brand: "TRI", month: "202608", target_sp: 10, target_fwa: 6, target_revenue: 7000000 },
+  { branch_id: slug("BANDAR LAMPUNG"), brand: "IM3", month: "202608", target_sp: 24, target_fwa: 13, target_revenue: 17000000 },
+  { branch_id: slug("BANDAR LAMPUNG"), brand: "TRI", month: "202608", target_sp: 19, target_fwa: 10, target_revenue: 14000000 },
+  // Target Maret-Juli 2026 - pasangan persis dgn baris mock-19..mock-28 di
+  // atas, supaya Achievement Trend 6 bulan tidak nol di bulan-bulan itu.
+  { branch_id: slug("MEDAN"), brand: "IM3", month: "202603", target_sp: 16, target_fwa: 9, target_revenue: 4000000 },
+  { branch_id: slug("PEKANBARU"), brand: "TRI", month: "202603", target_sp: 10, target_fwa: 5, target_revenue: 2800000 },
+  { branch_id: slug("PADANG"), brand: "IM3", month: "202604", target_sp: 14, target_fwa: 8, target_revenue: 4200000 },
+  { branch_id: slug("PALEMBANG"), brand: "TRI", month: "202604", target_sp: 12, target_fwa: 7, target_revenue: 3300000 },
+  { branch_id: slug("BANDAR LAMPUNG"), brand: "IM3", month: "202605", target_sp: 13, target_fwa: 7, target_revenue: 3700000 },
+  { branch_id: slug("ACEH"), brand: "TRI", month: "202605", target_sp: 11, target_fwa: 6, target_revenue: 3100000 },
+  { branch_id: slug("MEDAN"), brand: "TRI", month: "202606", target_sp: 15, target_fwa: 8, target_revenue: 4500000 },
+  { branch_id: slug("PEKANBARU"), brand: "IM3", month: "202606", target_sp: 9, target_fwa: 5, target_revenue: 2600000 },
+  { branch_id: slug("PADANG"), brand: "TRI", month: "202607", target_sp: 17, target_fwa: 9, target_revenue: 5100000 },
+  { branch_id: slug("PALEMBANG"), brand: "IM3", month: "202607", target_sp: 10, target_fwa: 5, target_revenue: 2900000 },
+];
+// Titik instalasi POSM (mh_md_installations) - branch_id SLUG (sama seperti
+// mh_sites/mh_posmat_stock), dipakai layer POSM di Activity Map.
+const MOCK_POSM = [
+  { id: "mock-posm-1", mode: "outlet", site_id: "MDN-OUT-014", street_description: null, branch_id: slug("MEDAN"), brand: "im3", location_status: "valid", created_at: "2026-08-03T11:00:00+07:00", latitude: MB.MEDAN.lat - 0.05, longitude: MB.MEDAN.lng + 0.02 },
+  { id: "mock-posm-2", mode: "street", site_id: null, street_description: "Jl. Sisingamangaraja, Medan", branch_id: slug("MEDAN"), brand: "tri", location_status: "pending", created_at: "2026-08-11T11:00:00+07:00", latitude: MB.MEDAN.lat + 0.06, longitude: MB.MEDAN.lng - 0.04 },
+  { id: "mock-posm-3", mode: "outlet", site_id: "ACH-OUT-002", street_description: null, branch_id: slug("ACEH"), brand: "im3", location_status: "valid", created_at: "2026-08-05T11:00:00+07:00", latitude: MB.ACEH.lat + 0.04, longitude: MB.ACEH.lng + 0.03 },
+  { id: "mock-posm-4", mode: "outlet", site_id: "PKU-OUT-021", street_description: null, branch_id: slug("PEKANBARU"), brand: "tri", location_status: "valid", created_at: "2026-08-09T11:00:00+07:00", latitude: MB.PEKANBARU.lat - 0.04, longitude: MB.PEKANBARU.lng + 0.05 },
+  { id: "mock-posm-5", mode: "street", site_id: null, street_description: "Jl. Khatib Sulaiman, Padang", branch_id: slug("PADANG"), brand: "im3", location_status: "pending", created_at: "2026-08-12T11:00:00+07:00", latitude: MB.PADANG.lat + 0.05, longitude: MB.PADANG.lng - 0.03 },
+  { id: "mock-posm-6", mode: "outlet", site_id: "PLB-OUT-030", street_description: null, branch_id: slug("PALEMBANG"), brand: "tri", location_status: "valid", created_at: "2026-08-14T11:00:00+07:00", latitude: MB.PALEMBANG.lat - 0.03, longitude: MB.PALEMBANG.lng + 0.04 },
+  { id: "mock-posm-7", mode: "outlet", site_id: "TLK-OUT-008", street_description: null, branch_id: slug("BANDAR LAMPUNG"), brand: "im3", location_status: "valid", created_at: "2026-08-17T11:00:00+07:00", latitude: MB["BANDAR LAMPUNG"].lat + 0.03, longitude: MB["BANDAR LAMPUNG"].lng + 0.02 },
+  { id: "mock-posm-8", mode: "street", site_id: null, street_description: "Jl. Sudirman, Bandar Lampung", branch_id: slug("BANDAR LAMPUNG"), brand: "tri", location_status: "mismatch", created_at: "2026-08-19T11:00:00+07:00", latitude: MB["BANDAR LAMPUNG"].lat - 0.05, longitude: MB["BANDAR LAMPUNG"].lng - 0.02 },
+];
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const C = {
@@ -306,6 +415,39 @@ function TrendChart({ data, labels, color, height = 140, suffix = "%" }) {
           <span key={i} style={{ fontSize: 9.5, color: "currentColor", opacity: i === hoverI ? 0.9 : 0.42, fontWeight: i === hoverI ? 800 : 600, transition: "opacity .12s" }}>{l}</span>
         ))}
       </div>
+    </div>
+  );
+}
+
+// Ringkasan Tertinggi/Rata-rata/Bulan Ini di bawah tiap TrendChart - kartu
+// chart-nya di-stretch grid setinggi kartu Activity Map di sebelahnya (lihat
+// .mh-charts), jadi tanpa ini ruang di bawah kurva selalu kosong. marginTop
+// "auto" pada wrapper-nya (dipasang di pemanggil, card jadi flex column)
+// yang mendorongnya nempel ke dasar kartu, ngisi ruang itu, bukan cuma
+// duduk pas-pasan di bawah kurva.
+function TrendStatFooter({ t, data, labels, color, suffix = "%" }) {
+  if (!data || data.length === 0) return null;
+  let peakIdx = 0;
+  for (let i = 1; i < data.length; i++) if (data[i] > data[peakIdx]) peakIdx = i;
+  const avg = Math.round(data.reduce((s, v) => s + v, 0) / data.length);
+  const latest = data[data.length - 1];
+  const prev = data.length > 1 ? data[data.length - 2] : latest;
+  const delta = latest - prev;
+  const deltaColor = delta >= 0 ? C.success : C.error;
+  const cell = (label, value, sub, subColor) => (
+    <div style={{ flex: 1, textAlign: "center" }}>
+      <div style={{ fontSize: 9, fontWeight: 700, color: t.lo, textTransform: "uppercase", letterSpacing: 0.3 }}>{label}</div>
+      <div style={{ marginTop: 4, fontSize: 15, fontWeight: 800, color: t.hi, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      {sub && <div style={{ marginTop: 2, fontSize: 9.5, fontWeight: 600, color: subColor || t.lo }}>{sub}</div>}
+    </div>
+  );
+  return (
+    <div style={{ marginTop: "auto", paddingTop: 16, borderTop: `1px solid ${t.line}`, display: "flex" }}>
+      {cell("Tertinggi", `${data[peakIdx]}${suffix}`, labels[peakIdx], color)}
+      <div style={{ width: 1, alignSelf: "stretch", background: t.line }} />
+      {cell("Rata-rata", `${avg}${suffix}`, "6 bulan terakhir")}
+      <div style={{ width: 1, alignSelf: "stretch", background: t.line }} />
+      {cell(labels[labels.length - 1], `${latest}${suffix}`, `${delta >= 0 ? "+" : ""}${delta}${suffix} vs bulan lalu`, deltaColor)}
     </div>
   );
 }
@@ -699,6 +841,18 @@ export default function MartaHubDashboard() {
           const { data: posmRows, error: posmErr } = await pq;
           if (!cancelled && !posmErr) setRawPosm(posmRows || []);
         } catch { /* best-effort, layer POSM opsional */ }
+
+        // ── MOCK DASHBOARD DATA - lihat blok besar di dekat import atas
+        // file (MOCK_ACTIVITIES dkk) - override HANYA di state lokal
+        // browser, dijalankan paling akhir supaya menang dari fetch asli
+        // di atas. Hapus 4 baris ini + blok konstanta MOCK_* utk kembali
+        // ke data asli.
+        if (!cancelled && USE_MOCK_DASHBOARD_DATA) {
+          setRawActivities(MOCK_ACTIVITIES);
+          setActivityTargets(MOCK_ACTIVITY_TARGETS);
+          setRawPosm(MOCK_POSM);
+          setPendingCount(2);
+        }
       } catch (e) {
         if (!cancelled) setDataErr(e.message);
       }
@@ -1033,7 +1187,7 @@ export default function MartaHubDashboard() {
           <motion.div className="mh-charts"
             initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-60px" }} transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}>
             {/* Achievement Trend */}
-            <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20 }}>
+            <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20, display: "flex", flexDirection: "column" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>Achievement Trend</div>
                 <span style={{ fontSize: 10, fontWeight: 700, color: t.lo, background: t.hover, borderRadius: 6, padding: "3px 8px" }}>6 Bulan Terakhir</span>
@@ -1041,10 +1195,11 @@ export default function MartaHubDashboard() {
               <div style={{ color: t.lo }}>
                 <TrendChart data={data.achieveTrend.data} labels={data.achieveTrend.labels} color={C.primary} height={130} />
               </div>
+              <TrendStatFooter t={t} data={data.achieveTrend.data} labels={data.achieveTrend.labels} color={C.primary} />
             </div>
 
             {/* Productivity Trend */}
-            <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20 }}>
+            <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20, display: "flex", flexDirection: "column" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>Productivity Trend</div>
                 <span style={{ fontSize: 10, fontWeight: 700, color: t.lo, background: t.hover, borderRadius: 6, padding: "3px 8px" }}>6 Bulan Terakhir</span>
@@ -1052,6 +1207,7 @@ export default function MartaHubDashboard() {
               <div style={{ color: t.lo }}>
                 <TrendChart data={data.productivTrend.data} labels={data.productivTrend.labels} color={C.primaryD} height={130} />
               </div>
+              <TrendStatFooter t={t} data={data.productivTrend.data} labels={data.productivTrend.labels} color={C.primaryD} />
             </div>
 
             {/* Activity Map - filter layer sesungguhnya (status/site/wilayah) ada

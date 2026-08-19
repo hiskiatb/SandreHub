@@ -29,6 +29,43 @@ import { statusMeta, fmtDate, fmtInt, isDraftIncomplete } from "./_shared/activi
 import { APPROVER_ROLES, ADDABLE_ROLES_FOR, BRAND_DISPLAY } from "./_shared/planData";
 import { fetchUnreadCount } from "./_shared/notifData";
 
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║ MOCK DASHBOARD DATA - HANYA UNTUK VISUALISASI, HAPUS KAPAN SAJA          ║
+// ║ Set USE_MOCK_HOME_DATA = false (atau hapus blok ini + baris             ║
+// ║ pemanggilannya di useEffect, cari "MOCK_HOME_ACTIVITIES") utk kembali    ║
+// ║ ke data asli mh_activities_for_me. Tidak menyentuh database sama sekali ║
+// ║ - murni override state lokal browser SETELAH fetch asli selesai.        ║
+// ║ branch_id pakai UUID mh_branches ASLI (sama dgn mock dashboard web)     ║
+// ║ supaya nama cabang tetap tampil benar utk role unscoped (admin/head/    ║
+// ║ spm_sumatera) yang filternya baca dari branchMap.                       ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+const USE_MOCK_HOME_DATA = true;
+const MOCK_HOME_BRANCHES = {
+  MEDAN: "61b44f8c-2af6-4cf3-a450-9ca695aad1ae",
+  ACEH: "6444e7cf-e2bb-4cfd-81d0-c18c7c1d5ceb",
+  PEKANBARU: "8d3177d7-4a0e-44b6-80c7-e4b53ea95742",
+  PADANG: "04fc17ac-43de-4ec9-b960-5f27530775c8",
+  PALEMBANG: "1afd6760-2f2a-4784-b424-a5ee180d7006",
+  "BANDAR LAMPUNG": "785db1f7-283d-498d-9025-ec8764a973c5",
+};
+const MHB = MOCK_HOME_BRANCHES;
+const MOCK_HOME_ACTIVITIES = [
+  { id: "mock-h1", event_name: "Direct Selling Plaza Medan Fair", brand: "IM3", branch_id: MHB.MEDAN, mc: "MC-01", event_category: "directSelling", event_categories: null, plan_date: "2026-08-03", plan_date_start: null, plan_dates_multi: null, poi_type: "mall", status: "approved", checkin_valid: true, target_sp: 14, target_fwa: 8, actual_sp: 15, actual_fwa: 9, cost_actual: 4200000, actual_rev_3m: 9800000, created_at: "2026-08-03T09:15:00+07:00", site_id: "MDN-014" },
+  { id: "mock-h2", event_name: "Sponsorship Festival Kuliner Aceh", brand: "TRI", branch_id: MHB.ACEH, mc: "MC-02", event_category: "sponsorship", event_categories: null, plan_date: "2026-08-06", plan_date_start: null, plan_dates_multi: null, poi_type: "outdoor", status: "approved", checkin_valid: true, target_sp: 10, target_fwa: 6, actual_sp: 9, actual_fwa: 5, cost_actual: 3100000, actual_rev_3m: 6400000, created_at: "2026-08-06T10:00:00+07:00", site_id: "ACH-002" },
+  { id: "mock-h3", event_name: "Thematic Ramadan Preview Pekanbaru", brand: "IM3", branch_id: MHB.PEKANBARU, mc: "MC-05", event_category: "thematic", event_categories: null, plan_date: "2026-08-17", plan_date_start: null, plan_dates_multi: null, poi_type: "mall", status: "plan_submitted", checkin_valid: null, target_sp: 12, target_fwa: 7, actual_sp: null, actual_fwa: null, cost_actual: null, actual_rev_3m: null, created_at: "2026-08-17T08:30:00+07:00", site_id: "PKU-021" },
+  { id: "mock-h4", event_name: "Joint Event Kampus Unand Padang", brand: "TRI", branch_id: MHB.PADANG, mc: "MC-08", event_category: "jointEvent", event_categories: null, plan_date: "2026-08-11", plan_date_start: null, plan_dates_multi: null, poi_type: "kampus", status: "approved", checkin_valid: true, target_sp: 15, target_fwa: 8, actual_sp: 15, actual_fwa: 8, cost_actual: 4900000, actual_rev_3m: 12200000, created_at: "2026-08-11T09:15:00+07:00", site_id: "PDG-007" },
+  // Draft sengaja belum lengkap (tanpa site_id/poi_type) - biar banner
+  // "draft belum selesai" di Beranda ikut ter-mockup, bukan cuma daftar biasa.
+  { id: "mock-h5", event_name: "Project Perluasan Jaringan Aceh Besar", brand: "IM3", branch_id: MHB.ACEH, mc: null, event_category: "project", event_categories: null, plan_date: "2026-08-19", plan_date_start: null, plan_dates_multi: null, poi_type: null, status: "draft", checkin_valid: null, target_sp: 20, target_fwa: 12, actual_sp: null, actual_fwa: null, cost_actual: null, actual_rev_3m: null, created_at: "2026-08-19T07:45:00+07:00", site_id: null },
+  { id: "mock-h6", event_name: "Direct Selling Jakabaring Palembang", brand: "IM3", branch_id: MHB.PALEMBANG, mc: "MC-09", event_category: "directSelling", event_categories: null, plan_date: "2026-08-06", plan_date_start: null, plan_dates_multi: null, poi_type: "outdoor", status: "approved", checkin_valid: true, target_sp: 12, target_fwa: 7, actual_sp: 13, actual_fwa: 7, cost_actual: 3700000, actual_rev_3m: 8900000, created_at: "2026-08-06T09:10:00+07:00", site_id: "PLB-030" },
+  { id: "mock-h7", event_name: "Joint Event Kampus Unila Lampung", brand: "TRI", branch_id: MHB["BANDAR LAMPUNG"], mc: "MC-12", event_category: "jointEvent", event_categories: null, plan_date: "2026-08-14", plan_date_start: null, plan_dates_multi: null, poi_type: "kampus", status: "approved", checkin_valid: true, target_sp: 17, target_fwa: 9, actual_sp: 16, actual_fwa: 9, cost_actual: 5400000, actual_rev_3m: 12800000, created_at: "2026-08-14T09:15:00+07:00", site_id: "TLK-008" },
+  // Approved tapi belum check-in - dipakai kartu Mission ("Plan siap -
+  // lakukan check-in") supaya carousel Beranda tidak jatuh ke state kosong.
+  { id: "mock-h8", event_name: "Open Booth Simpang Lima Aceh", brand: "IM3", branch_id: MHB.ACEH, mc: "MC-03", event_category: "openBooth", event_categories: null, plan_date: "2026-08-19", plan_date_start: null, plan_dates_multi: null, poi_type: "outdoor", status: "approved", checkin_valid: null, target_sp: 9, target_fwa: 5, actual_sp: null, actual_fwa: null, cost_actual: null, actual_rev_3m: null, created_at: "2026-08-19T07:00:00+07:00", site_id: "ACH-018" },
+  { id: "mock-h9", event_name: "Sponsorship Car Free Day Pekanbaru", brand: "TRI", branch_id: MHB.PEKANBARU, mc: "MC-06", event_category: "sponsorship", event_categories: null, plan_date: "2026-08-12", plan_date_start: null, plan_dates_multi: null, poi_type: "outdoor", status: "plan_submitted", checkin_valid: null, target_sp: 8, target_fwa: 4, actual_sp: null, actual_fwa: null, cost_actual: null, actual_rev_3m: null, created_at: "2026-08-12T09:20:00+07:00", site_id: "PKU-011" },
+  { id: "mock-h10", event_name: "Project Perluasan Way Halim Lampung", brand: "IM3", branch_id: MHB["BANDAR LAMPUNG"], mc: "MC-11", event_category: "project", event_categories: null, plan_date: "2026-08-19", plan_date_start: null, plan_dates_multi: null, poi_type: "outdoor", status: "approved", checkin_valid: true, target_sp: 10, target_fwa: 5, actual_sp: 11, actual_fwa: 6, cost_actual: 3300000, actual_rev_3m: 7900000, created_at: "2026-08-19T08:50:00+07:00", site_id: "TLK-021" },
+];
+
 const ROLE_LABEL = { bme: "BME", rge: "RGE", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
 // mc/poi_type/event_categories/plan_date_start/plan_dates_multi ditambahkan
 // supaya "draft belum lengkap" di Beranda pakai definisi yg SAMA PERSIS dgn
@@ -84,7 +121,7 @@ export default function MartaMobileHome() {
   useEffect(() => {
     if (loading) return;
     let alive = true;
-    (async () => {
+    const activitiesFetch = (async () => {
       try {
         const { data, error } = await supabaseMarta
           .rpc("mh_activities_for_me")
@@ -97,18 +134,32 @@ export default function MartaMobileHome() {
         if (alive) setErr(e.message || "Gagal memuat aktivitas");
       }
     })();
-    (async () => {
+    const transfersFetch = (async () => {
       try {
         const { data } = await supabaseMarta.rpc("mh_msisdn_transfer_list_for_me");
         if (alive) setPendingTransfers((data || []).filter((t) => t.status === "pending").length);
       } catch { /* best-effort */ }
     })();
-    (async () => {
+    const notifsFetch = (async () => {
       try {
         const n = await fetchUnreadCount();
         if (alive) setUnreadNotifs(n || 0);
       } catch { /* best-effort */ }
     })();
+    // ── MOCK DASHBOARD DATA - lihat blok besar dekat import atas file
+    // (MOCK_HOME_ACTIVITIES dkk). Override HANYA state lokal browser,
+    // ditunggu lewat Promise.allSettled supaya BENAR-BENAR jalan setelah
+    // fetch asli di atas selesai (bukan race/setTimeout tebakan). Hapus
+    // blok ini + baris pemanggilannya utk kembali ke data asli.
+    if (USE_MOCK_HOME_DATA) {
+      Promise.allSettled([activitiesFetch, transfersFetch, notifsFetch]).then(() => {
+        if (!alive) return;
+        setRows(MOCK_HOME_ACTIVITIES);
+        setErr("");
+        setPendingTransfers(1);
+        setUnreadNotifs(3);
+      });
+    }
     return () => { alive = false; };
   }, [loading]);
 
