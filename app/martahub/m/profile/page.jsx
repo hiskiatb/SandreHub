@@ -13,6 +13,7 @@ import { ArrowLeft, LogOut, Mail, Building2, MapPin, Sparkles, Target, TrendingU
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { fmtInt } from "../_shared/activityUi";
+import { BRAND_DISPLAY } from "../_shared/planData";
 
 const ROLE_LABEL = { bme: "BME", rge: "RGE", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
 
@@ -87,7 +88,7 @@ export default function ProfilePage() {
             catatan redirect di useMartaSession, MobileShell.jsx). */}
         {(scope?.brand || scope?.branchName || scope?.region) && (
           <SectionCard title="Penugasan">
-            {scope?.brand && <RowKV icon={<Building2 size={13} />} label="Brand" value={scope.brand.toUpperCase()} />}
+            {scope?.brand && <RowKV icon={<Building2 size={13} />} label="Brand" value={BRAND_DISPLAY[scope.brand] || scope.brand.toUpperCase()} />}
             {scope?.branchName && <RowKV icon={<MapPin size={13} />} label="Cabang" value={scope.branchName} />}
             {scope?.region && <RowKV icon={<MapPin size={13} />} label="Region" value={scope.region} />}
           </SectionCard>

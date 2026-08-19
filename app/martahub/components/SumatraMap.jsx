@@ -27,6 +27,9 @@ const C = { success: "#2E7D32", warning: "#F57F17", error: "#C62828", errorL: "#
 // tidak pernah bikin titik hilang dari peta.
 const ACTIVITY_STATUS_COLOR = { approved: C.success, submitted: C.warning, plan_submitted: "#0277BD", revision_needed: C.error, rejected: C.error, draft: "#7B8BAD" };
 const SUMATRA_BOUNDS = [[-6.6, 94.4], [6.7, 107.1]]; // seluruh Pulau Sumatera
+// Warna titik POSM - SAMA PERSIS dgn POSM_COLOR di mobile map
+// (app/martahub/m/map/page.jsx) supaya konsisten lintas platform.
+const POSM_COLOR = "#B32E85";
 
 // ── Choropleth helpers ────────────────────────────────────────────────────────
 const CHORO = ["#7C9CF2", "#63D3A6", "#F6C650", "#EE8C6B", "#9C7BE0", "#67C6E3", "#E38FC0", "#59B89B", "#EAA15C", "#8FB4D6"];
@@ -172,6 +175,37 @@ async function paintActivities(map, ref, points, { expanded } = {}) {
     const icon = L.divIcon({ className: "", html: `<div style="width:${sz}px;height:${sz}px;border-radius:50%;background:${c}26;border:2px solid ${c}"></div>`, iconSize: [sz, sz], iconAnchor: [sz / 2, sz / 2] });
     const m = L.marker([p.lat, p.lng], { icon, pane: "activityPane" });
     const label = [esc(p.name || "Activity"), p.branch, p.status].filter(Boolean).join(" · ");
+    m.bindTooltip(label, { direction: "top", offset: [0, -sz / 2] });
+    grp.addLayer(m);
+  });
+  grp.addTo(map);
+  ref.current = grp;
+}
+
+// ── Titik POSM - lokasi instalasi materi POSM (mh_md_installations,
+// latitude/longitude) ────────────────────────────────────────────────────────
+// Dioper dari luar via prop `posmPoints` (page.jsx query mh_md_installations
+// terscope TMV lewat applyMartaScopeSlug, KARENA branch_id-nya slug text -
+// beda dgn mh_activities yang uuid, lihat catatan di lib/martaScope.js) -
+// komponen ini murni render, sama pola dgn paintActivities di atas.
+async function paintPosm(map, ref, points, { expanded } = {}) {
+  if (!map || !map._container) return;
+  const L = (await import("leaflet")).default;
+  if (ref.current) { try { map.removeLayer(ref.current); } catch { /* noop */ } ref.current = null; }
+  if (!points || !points.length) return;
+  if (!map.getPane("posmPane")) { map.createPane("posmPane"); map.getPane("posmPane").style.zIndex = 655; }
+  const grp = L.layerGroup();
+  const sz = expanded ? 20 : 16;
+  points.forEach((p) => {
+    const c = POSM_COLOR;
+    // Diamond (rotated square) - beda bentuk dari lingkaran Activity supaya
+    // dua layer tetap gampang dibedakan sekilas walau warnanya beririsan.
+    const icon = L.divIcon({
+      className: "", iconSize: [sz, sz], iconAnchor: [sz / 2, sz / 2],
+      html: `<div style="width:${sz}px;height:${sz}px;transform:rotate(45deg);background:${c}30;border:2px solid ${c};"></div>`,
+    });
+    const m = L.marker([p.lat, p.lng], { icon, pane: "posmPane" });
+    const label = [esc(p.name || "Instalasi POSM"), p.branch, p.mode].filter(Boolean).join(" · ");
     m.bindTooltip(label, { direction: "top", offset: [0, -sz / 2] });
     grp.addLayer(m);
   });
@@ -352,17 +386,25 @@ function I({ name, size = 15, color = "currentColor" }) {
 // Tinggi/Sedang/Rendah" lama yang cuma cocok utk 10 pin contoh yang sudah
 // dihapus). Disembunyikan otomatis kalau tidak ada titik activity sama sekali
 // supaya tidak menampilkan legend kosong/menyesatkan.
-function MapLegend({ t, show = true }) {
-  if (!show) return null;
+function MapLegend({ t, show = true, showPosm = false }) {
+  if (!show && !showPosm) return null;
   return (
     <div style={{ position: "absolute", bottom: 12, left: 12, zIndex: 500, background: t.card, borderRadius: 10, padding: "9px 13px", display: "flex", flexDirection: "column", gap: 5, border: `1px solid ${t.line}`, boxShadow: "0 4px 16px rgba(0,0,0,0.14)" }}>
-      <div style={{ fontSize: 9.5, fontWeight: 800, color: t.mid, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 1 }}>Status Activity</div>
-      {[["Approved", C.success], ["Menunggu", C.warning], ["Ditolak/Revisi", C.error]].map(([l, c]) => (
-        <div key={l} style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <div style={{ width: 9, height: 9, borderRadius: "50%", background: c }} />
-          <span style={{ fontSize: 10.5, color: t.mid }}>{l}</span>
+      {show && (<>
+        <div style={{ fontSize: 9.5, fontWeight: 800, color: t.mid, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 1 }}>Status Activity</div>
+        {[["Approved", C.success], ["Menunggu", C.warning], ["Ditolak/Revisi", C.error]].map(([l, c]) => (
+          <div key={l} style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <div style={{ width: 9, height: 9, borderRadius: "50%", background: c }} />
+            <span style={{ fontSize: 10.5, color: t.mid }}>{l}</span>
+          </div>
+        ))}
+      </>)}
+      {showPosm && (
+        <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: show ? 3 : 0 }}>
+          <div style={{ width: 9, height: 9, transform: "rotate(45deg)", background: `${POSM_COLOR}30`, border: `1.5px solid ${POSM_COLOR}` }} />
+          <span style={{ fontSize: 10.5, color: t.mid }}>Instalasi POSM</span>
         </div>
-      ))}
+      )}
     </div>
   );
 }
@@ -790,9 +832,9 @@ export function LayerPanel({ t, geo, style, canManage = false }) {
 }
 
 // ── Kartu peta (dashboard): preview → modal ───────────────────────────────────
-export function MapCard({ t, dark, height = 260, canManage = false, activityPoints = [] }) {
-  const boxRef = useRef(null), mapRef = useRef(null), fgRef = useRef(null), sitesFgRef = useRef(null), activitiesFgRef = useRef(null);
-  const bigRef = useRef(null), bigMapRef = useRef(null), bigFgRef = useRef(null), bigSitesFgRef = useRef(null), bigActivitiesFgRef = useRef(null);
+export function MapCard({ t, dark, height = 260, canManage = false, activityPoints = [], posmPoints = [] }) {
+  const boxRef = useRef(null), mapRef = useRef(null), fgRef = useRef(null), sitesFgRef = useRef(null), activitiesFgRef = useRef(null), posmFgRef = useRef(null);
+  const bigRef = useRef(null), bigMapRef = useRef(null), bigFgRef = useRef(null), bigSitesFgRef = useRef(null), bigActivitiesFgRef = useRef(null), bigPosmFgRef = useRef(null);
   const [expanded, setExpanded] = useState(false);
   const [boot, setBoot] = useState(0);
   const geo = useGeoLayers();
@@ -800,6 +842,7 @@ export function MapCard({ t, dark, height = 260, canManage = false, activityPoin
   const layersRef = useRef(layers); layersRef.current = layers; // selalu terbaru (hindari race saat build async)
   const siteRef = useRef(siteData); siteRef.current = siteData;
   const activityRef = useRef(activityPoints); activityRef.current = activityPoints;
+  const posmRef = useRef(posmPoints); posmRef.current = posmPoints;
 
   // Bangun ulang sekali setelah layout dashboard benar-benar settle (meniru efek
   // toggle tema) - memastikan peta tampil di render pertama tanpa perlu di-toggle.
@@ -814,16 +857,18 @@ export function MapCard({ t, dark, height = 260, canManage = false, activityPoin
       if (!boxRef.current || mapRef.current) return;
       const map = await buildBaseMap(boxRef.current, { dark, expanded: false, interactive: true });
       if (!map) return; if (cancelled) { map.remove(); return; }
-      mapRef.current = map; fgRef.current = null; sitesFgRef.current = null; activitiesFgRef.current = null;
+      mapRef.current = map; fgRef.current = null; sitesFgRef.current = null; activitiesFgRef.current = null; posmFgRef.current = null;
       await paintOverlays(map, fgRef, layersRef.current, { expanded: false, appBg: t.appBg });
       paintSites(map, sitesFgRef, siteRef.current);
       paintActivities(map, activitiesFgRef, activityRef.current, { expanded: false });
+      paintPosm(map, posmFgRef, posmRef.current, { expanded: false });
     })();
-    return () => { cancelled = true; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; fgRef.current = null; sitesFgRef.current = null; activitiesFgRef.current = null; } };
+    return () => { cancelled = true; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; fgRef.current = null; sitesFgRef.current = null; activitiesFgRef.current = null; posmFgRef.current = null; } };
   }, [dark, boot]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (mapRef.current) paintOverlays(mapRef.current, fgRef, layers, { expanded: false, appBg: t.appBg }); }, [layers]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (mapRef.current) paintSites(mapRef.current, sitesFgRef, siteData); }, [siteData]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (mapRef.current) paintActivities(mapRef.current, activitiesFgRef, activityPoints, { expanded: false }); }, [activityPoints]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (mapRef.current) paintPosm(mapRef.current, posmFgRef, posmPoints, { expanded: false }); }, [posmPoints]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!expanded) return;
@@ -834,16 +879,18 @@ export function MapCard({ t, dark, height = 260, canManage = false, activityPoin
       if (!bigRef.current || bigMapRef.current) return;
       const map = await buildBaseMap(bigRef.current, { dark, expanded: true });
       if (!map) return; if (cancelled) { map.remove(); return; }
-      bigMapRef.current = map; bigFgRef.current = null; bigSitesFgRef.current = null; bigActivitiesFgRef.current = null;
+      bigMapRef.current = map; bigFgRef.current = null; bigSitesFgRef.current = null; bigActivitiesFgRef.current = null; bigPosmFgRef.current = null;
       await paintOverlays(map, bigFgRef, layersRef.current, { expanded: true, appBg: t.appBg });
       paintSites(map, bigSitesFgRef, siteRef.current);
       paintActivities(map, bigActivitiesFgRef, activityRef.current, { expanded: true });
+      paintPosm(map, bigPosmFgRef, posmRef.current, { expanded: true });
     })();
-    return () => { cancelled = true; window.removeEventListener("keydown", onKey); if (bigMapRef.current) { bigMapRef.current.remove(); bigMapRef.current = null; bigFgRef.current = null; bigSitesFgRef.current = null; bigActivitiesFgRef.current = null; } };
+    return () => { cancelled = true; window.removeEventListener("keydown", onKey); if (bigMapRef.current) { bigMapRef.current.remove(); bigMapRef.current = null; bigFgRef.current = null; bigSitesFgRef.current = null; bigActivitiesFgRef.current = null; bigPosmFgRef.current = null; } };
   }, [expanded, dark]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (bigMapRef.current) paintOverlays(bigMapRef.current, bigFgRef, layers, { expanded: true, appBg: t.appBg }); }, [layers]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (bigMapRef.current) paintSites(bigMapRef.current, bigSitesFgRef, siteData); }, [siteData]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (bigMapRef.current) paintActivities(bigMapRef.current, bigActivitiesFgRef, activityPoints, { expanded: true }); }, [activityPoints]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (bigMapRef.current) paintPosm(bigMapRef.current, bigPosmFgRef, posmPoints, { expanded: true }); }, [posmPoints]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Shortcut "connect ulang" langsung di dashboard - laptop/browser berbeda
   // berarti IndexedDB lokal kosong walau organisasi sudah pernah upload
@@ -866,7 +913,7 @@ export function MapCard({ t, dark, height = 260, canManage = false, activityPoin
       )}
       <div style={{ position: "relative", width: "100%", height, borderRadius: 12, overflow: "hidden", border: `1px solid ${t.line}`, isolation: "isolate" }}>
         <div ref={boxRef} style={{ position: "absolute", inset: 0, zIndex: 0 }} />
-        <MapLegend t={t} show={activityPoints.length > 0} />
+        <MapLegend t={t} show={activityPoints.length > 0} showPosm={posmPoints.length > 0} />
         {layers.length > 0 && (
           <div style={{ position: "absolute", top: 10, left: 10, zIndex: 650, fontSize: 10, fontWeight: 700, color: "#fff", background: "linear-gradient(135deg,#ED1C24,#C6168D)", borderRadius: 999, padding: "3px 9px" }}>{layers.length} batas wilayah</div>
         )}
@@ -899,7 +946,7 @@ export function MapCard({ t, dark, height = 260, canManage = false, activityPoin
               <button onClick={() => setExpanded(false)} title="Tutup" style={{ width: 32, height: 32, borderRadius: 9, background: t.hover, border: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "center", color: t.mid, cursor: "pointer" }}><I name="close" size={16} color={t.mid} /></button>
             </div>
             <div ref={bigRef} style={{ position: "absolute", inset: 0, zIndex: 0 }} />
-            <MapLegend t={t} show={activityPoints.length > 0} />
+            <MapLegend t={t} show={activityPoints.length > 0} showPosm={posmPoints.length > 0} />
             <LayerPanel t={t} geo={geo} canManage={canManage} style={{ position: "absolute", top: 56, right: 14, zIndex: 700, width: 264, maxHeight: "calc(100% - 76px)", overflowY: "auto" }} />
           </div>
         </div>
@@ -909,13 +956,14 @@ export function MapCard({ t, dark, height = 260, canManage = false, activityPoin
 }
 
 // ── Peta penuh (halaman Map Intelligence) ─────────────────────────────────────
-export default function MapFull({ t, dark, canManage = false, activityPoints = [] }) {
-  const boxRef = useRef(null), mapRef = useRef(null), fgRef = useRef(null), sitesFgRef = useRef(null), activitiesFgRef = useRef(null);
+export default function MapFull({ t, dark, canManage = false, activityPoints = [], posmPoints = [] }) {
+  const boxRef = useRef(null), mapRef = useRef(null), fgRef = useRef(null), sitesFgRef = useRef(null), activitiesFgRef = useRef(null), posmFgRef = useRef(null);
   const geo = useGeoLayers();
   const { layers, siteData } = geo;
   const layersRef = useRef(layers); layersRef.current = layers;
   const siteRef = useRef(siteData); siteRef.current = siteData;
   const activityRef = useRef(activityPoints); activityRef.current = activityPoints;
+  const posmRef = useRef(posmPoints); posmRef.current = posmPoints;
 
   useEffect(() => {
     let cancelled = false;
@@ -923,21 +971,23 @@ export default function MapFull({ t, dark, canManage = false, activityPoints = [
       if (!boxRef.current || mapRef.current) return;
       const map = await buildBaseMap(boxRef.current, { dark, expanded: true });
       if (!map) return; if (cancelled) { map.remove(); return; }
-      mapRef.current = map; fgRef.current = null; sitesFgRef.current = null; activitiesFgRef.current = null;
+      mapRef.current = map; fgRef.current = null; sitesFgRef.current = null; activitiesFgRef.current = null; posmFgRef.current = null;
       await paintOverlays(map, fgRef, layersRef.current, { expanded: true, appBg: t.appBg });
       paintSites(map, sitesFgRef, siteRef.current);
       paintActivities(map, activitiesFgRef, activityRef.current, { expanded: true });
+      paintPosm(map, posmFgRef, posmRef.current, { expanded: true });
     })();
-    return () => { cancelled = true; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; fgRef.current = null; sitesFgRef.current = null; activitiesFgRef.current = null; } };
+    return () => { cancelled = true; if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; fgRef.current = null; sitesFgRef.current = null; activitiesFgRef.current = null; posmFgRef.current = null; } };
   }, [dark]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (mapRef.current) paintOverlays(mapRef.current, fgRef, layers, { expanded: true, appBg: t.appBg }); }, [layers]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (mapRef.current) paintSites(mapRef.current, sitesFgRef, siteData); }, [siteData]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { if (mapRef.current) paintActivities(mapRef.current, activitiesFgRef, activityPoints, { expanded: true }); }, [activityPoints]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (mapRef.current) paintPosm(mapRef.current, posmFgRef, posmPoints, { expanded: true }); }, [posmPoints]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", minHeight: 0, borderRadius: 14, overflow: "hidden", border: `1px solid ${t.line}`, isolation: "isolate" }}>
       <div ref={boxRef} style={{ position: "absolute", inset: 0, zIndex: 0 }} />
-      <MapLegend t={t} show={activityPoints.length > 0} />
+      <MapLegend t={t} show={activityPoints.length > 0} showPosm={posmPoints.length > 0} />
       <LayerPanel t={t} geo={geo} canManage={canManage} style={{ position: "absolute", top: 14, right: 14, zIndex: 700, width: 280, maxHeight: "calc(100% - 28px)", overflowY: "auto" }} />
     </div>
   );

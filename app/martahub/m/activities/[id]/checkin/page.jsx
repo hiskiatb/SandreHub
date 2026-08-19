@@ -73,6 +73,27 @@ export default function CheckinPage() {
   if (loading || loadingDetail) return <MobileShell active="activities"><ShellSpinner /></MobileShell>;
   if (err && !activity) return <MobileShell active="activities"><div style={{ padding: 40, textAlign: "center", color: "#C62828", fontSize: 13 }}>{err}</div></MobileShell>;
 
+  // Guard sisi klien - halaman ini bisa dibuka langsung lewat URL, jadi
+  // sembunyikan Check In dari daftar/detail saja TIDAK CUKUP. Baru sah
+  // check-in setelah plan disetujui TMV (status "approved"); draft/status
+  // lain (menunggu approval, revisi, dst.) belum boleh.
+  if (activity && activity.status !== "approved") {
+    return (
+      <MobileShell active="activities">
+        <div style={{ padding: "60px 20px", textAlign: "center" }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: "#17181C" }}>Belum bisa Check In</div>
+          <div style={{ marginTop: 6, fontSize: 12.5, color: "#8A8A96", lineHeight: 1.5 }}>
+            Plan ini belum disetujui TMV{activity.status === "draft" ? " - lengkapi & ajukan dulu sebelum check-in." : "."}
+          </div>
+          <button onClick={() => router.push(`/martahub/m/activities/${activityId}`)}
+            style={{ marginTop: 18, padding: "10px 20px", borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
+            Lihat Detail Plan
+          </button>
+        </div>
+      </MobileShell>
+    );
+  }
+
   const planLat = activity?.latitude != null ? Number(activity.latitude) : null;
   const planLng = activity?.longitude != null ? Number(activity.longitude) : null;
   const dist = pos && planLat != null && planLng != null ? haversineMeters(pos.latitude, pos.longitude, planLat, planLng) : null;

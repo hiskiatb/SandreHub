@@ -1,10 +1,11 @@
 "use client";
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { motion } from "motion/react";
 import { supabase } from "../../lib/supabase";
 import { guardMarta, isMartaAdmin } from "../../lib/martaAccess";
 import { supabaseMarta } from "../../lib/supabaseMarta";
-import { getMartaScope, applyMartaScope } from "../../lib/martaScope";
+import { getMartaScope, applyMartaScope, applyMartaScopeSlug } from "../../lib/martaScope";
 import { HubLogo } from "../../components/HubLogo";
 import { HubLogoLoader, HubLogoLoaderDark } from "../../components/HubLogoLoader";
 import { MapCard } from "./components/SumatraMap";
@@ -68,6 +69,8 @@ const NAV = [
   { label: "Approval Center", icon: "check", path: "approval" },
   { label: "User Management", icon: "users", path: "assignments", route: "/martahub/assignments" },
   { label: "Master Data", icon: "db", path: "master" },
+  { label: "POSM Stock", icon: "db", path: "posmat" },
+  { label: "Validasi Lokasi", icon: "check", path: "validasi" },
   { label: "System Settings", icon: "settings", path: "settings" },
 ];
 
@@ -84,6 +87,8 @@ const NAV_ROUTES = {
   "geo-compliance": "/martahub/geo-compliance",
   approval: "/martahub/approval",
   master: "/martahub/master",
+  posmat: "/martahub/posmat",
+  validasi: "/martahub/validasi",
   assignments: "/martahub/assignments",
   settings: "/martahub/settings",
 };
@@ -116,6 +121,8 @@ function Icon({ name, size = 16, color = "currentColor" }) {
     eye:      <svg style={s} viewBox="0 0 24 24" {...p}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>,
     dots:     <svg style={s} viewBox="0 0 24 24" {...p}><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>,
     chevD:    <svg style={s} viewBox="0 0 24 24" {...p}><polyline points="6 9 12 15 18 9"/></svg>,
+    chevL:    <svg style={s} viewBox="0 0 24 24" {...p}><polyline points="15 18 9 12 15 6"/></svg>,
+    chevR:    <svg style={s} viewBox="0 0 24 24" {...p}><polyline points="9 18 15 12 9 6"/></svg>,
     menu:     <svg style={s} viewBox="0 0 24 24" {...p}><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>,
     close:      <svg style={s} viewBox="0 0 24 24" {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
     panelClose: <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><path d="M16 15l-3-3 3-3"/></svg>,
@@ -183,43 +190,120 @@ function DonutChart({ data, size = 140, strokeW = 22 }) {
   );
 }
 
-// ─── Line Chart ───────────────────────────────────────────────────────────────
-function LineChart({ data, labels, color, height = 140 }) {
-  if (!data || data.length < 2) return null;
-  const w = 340, h = height, padX = 0, padY = 8;
-  const max = Math.max(...data) * 1.1, min = 0;
+// ─── Trend Chart ──────────────────────────────────────────────────────────────
+// Versi premium menggantikan LineChart lama (polyline lurus + label statis):
+// kurva halus (Catmull-Rom → Bezier), animasi "menggambar" garis via motion,
+// glow lembut di stroke, gridline + skala Y, dan tooltip interaktif saat hover
+// (crosshair + titik highlight) - pola umum dashboard analytics kelas atas.
+function catmullRomPath(points) {
+  if (points.length < 2) return "";
+  let d = `M${points[0][0]},${points[0][1]}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i - 1] || points[i];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[i + 2] || p2;
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6;
+    const c1y = p1[1] + (p2[1] - p0[1]) / 6;
+    const c2x = p2[0] - (p3[0] - p1[0]) / 6;
+    const c2y = p2[1] - (p3[1] - p1[1]) / 6;
+    d += ` C${c1x},${c1y} ${c2x},${c2y} ${p2[0]},${p2[1]}`;
+  }
+  return d;
+}
+
+function TrendChart({ data, labels, color, height = 140, suffix = "%" }) {
+  const [hoverI, setHoverI] = useState(null);
+  const svgRef = useRef(null);
+  const uid = useMemo(() => color.replace("#", ""), [color]);
+
+  if (!data || data.length < 2) {
+    return <div style={{ height, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, color: "currentColor", opacity: 0.4 }}>Belum cukup data.</div>;
+  }
+
+  const w = 480, h = height, padX = 8, padTop = 20, padBottom = 20;
+  const plotH = h - padTop - padBottom;
+  const max = Math.max(...data, 1) * 1.18;
+  const min = 0;
   const xStep = (w - padX * 2) / (data.length - 1);
-  const yScale = (v) => h - padY - ((v - min) / (max - min || 1)) * (h - padY * 2);
-  const pts = data.map((v, i) => `${padX + i * xStep},${yScale(v)}`).join(" ");
-  const areaD = `M${padX},${h} L${data.map((v, i) => `${padX + i * xStep},${yScale(v)}`).join(" L")} L${padX + (data.length - 1) * xStep},${h} Z`;
+  const yScale = (v) => padTop + plotH - ((v - min) / (max - min || 1)) * plotH;
+  const points = data.map((v, i) => [padX + i * xStep, yScale(v)]);
+  const linePath = catmullRomPath(points);
+  const areaPath = `${linePath} L${points[points.length - 1][0]},${padTop + plotH} L${points[0][0]},${padTop + plotH} Z`;
+  const last = points[points.length - 1];
+  const hp = hoverI != null ? points[hoverI] : null;
+
+  const handleMove = (e) => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const relX = ((e.clientX - rect.left) / rect.width) * w;
+    let idx = Math.round((relX - padX) / xStep);
+    idx = Math.max(0, Math.min(data.length - 1, idx));
+    setHoverI(idx);
+  };
+
   return (
     <div style={{ position: "relative" }}>
-      <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ overflow: "visible" }}>
+      <svg ref={svgRef} width="100%" viewBox={`0 0 ${w} ${h}`} style={{ overflow: "visible", display: "block", cursor: "crosshair" }}
+        onMouseMove={handleMove} onMouseLeave={() => setHoverI(null)}>
         <defs>
-          <linearGradient id={`lg-${color.replace("#","")}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity="0.20"/>
-            <stop offset="100%" stopColor={color} stopOpacity="0"/>
+          <linearGradient id={`tg-${uid}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.32" />
+            <stop offset="55%" stopColor={color} stopOpacity="0.08" />
+            <stop offset="100%" stopColor={color} stopOpacity="0" />
           </linearGradient>
+          <filter id={`glow-${uid}`} x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
         </defs>
-        {/* Grid lines */}
-        {[25, 50, 75, 100].map(pct => {
-          const y = yScale(max * pct / 110);
-          return <line key={pct} x1={padX} y1={y} x2={w - padX} y2={y} stroke="currentColor" strokeOpacity="0.06" strokeWidth="1" strokeDasharray="4 4"/>;
+
+        {[0.25, 0.5, 0.75, 1].map((f) => {
+          const y = padTop + plotH * (1 - f);
+          return (
+            <g key={f}>
+              <line x1={padX} y1={y} x2={w - padX} y2={y} stroke="currentColor" strokeOpacity="0.07" strokeWidth="1" strokeDasharray="3 5" />
+              <text x={w - padX} y={y - 4} textAnchor="end" fontSize="8.5" fill="currentColor" opacity="0.35" fontWeight="700">{Math.round(max * f)}{suffix}</text>
+            </g>
+          );
         })}
-        <path d={areaD} fill={`url(#lg-${color.replace("#","")})`}/>
-        <polyline points={pts} fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
-        {data.map((v, i) => (
-          <circle key={i} cx={padX + i * xStep} cy={yScale(v)} r="3.5" fill={color} stroke="white" strokeWidth="1.5"/>
+
+        <motion.path d={areaPath} fill={`url(#tg-${uid})`}
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.7, delay: 0.35 }} />
+
+        <motion.path d={linePath} fill="none" stroke={color} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"
+          filter={`url(#glow-${uid})`}
+          initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 1.1, ease: [0.22, 1, 0.36, 1] }} />
+
+        {hp && <line x1={hp[0]} y1={padTop} x2={hp[0]} y2={padTop + plotH} stroke={color} strokeOpacity="0.32" strokeWidth="1" strokeDasharray="3 3" />}
+
+        {points.map((p, i) => (
+          <circle key={i} cx={p[0]} cy={p[1]} r={i === hoverI ? 5 : 3} fill={i === hoverI ? color : "white"}
+            stroke={color} strokeWidth={i === hoverI ? 0 : 2} style={{ transition: "r .12s" }} />
         ))}
-        {/* Value labels */}
-        {data.map((v, i) => (
-          <text key={i} x={padX + i * xStep} y={yScale(v) - 10} textAnchor="middle" fontSize="9" fill={color} fontWeight="700">{v}%</text>
-        ))}
+
+        <motion.circle cx={last[0]} cy={last[1]} r="7" fill={color} fillOpacity="0.18"
+          animate={{ scale: [1, 1.7, 1], opacity: [0.5, 0, 0.5] }} transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+          style={{ transformOrigin: `${last[0]}px ${last[1]}px` }} />
       </svg>
-      {/* X labels */}
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+
+      {hp && (
+        <div style={{
+          position: "absolute", left: `${(hp[0] / w) * 100}%`, top: `${Math.max(0, (hp[1] / h) * 100 - 20)}%`,
+          transform: "translate(-50%, -100%)", background: color, color: "#fff", fontSize: 11, fontWeight: 800,
+          padding: "5px 10px", borderRadius: 9, whiteSpace: "nowrap", pointerEvents: "none", boxShadow: `0 6px 16px ${color}55`, zIndex: 5,
+        }}>
+          {data[hoverI]}{suffix}
+          <div style={{ fontSize: 9, fontWeight: 600, opacity: 0.85 }}>{labels[hoverI]}</div>
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
         {labels.map((l, i) => (
-          <span key={i} style={{ fontSize: 9.5, color: "currentColor", opacity: 0.45 }}>{l}</span>
+          <span key={i} style={{ fontSize: 9.5, color: "currentColor", opacity: i === hoverI ? 0.9 : 0.42, fontWeight: i === hoverI ? 800 : 600, transition: "opacity .12s" }}>{l}</span>
         ))}
       </div>
     </div>
@@ -240,6 +324,22 @@ const NET_COLORS = { strong: "#2E7D32", medium: "#F57F17", weak: "#C62828" };
 const STATUS_LABELS = { draft: "Draft", planned: "Planned", checked_in: "Checked In", submitted: "Submitted", approved: "Approved", rejected: "Rejected", revisionRequired: "Revision Required", inProgress: "In Progress", done: "Done", completed: "Completed", cancelled: "Cancelled" };
 const STATUS_COLORS = { draft: "#7B8BAD", planned: "#0277BD", checked_in: "#0277BD", submitted: "#F57F17", approved: "#2E7D32", rejected: "#C62828", revisionRequired: "#C62828", inProgress: "#F57F17", done: "#2E7D32", completed: "#2E7D32", cancelled: "#7B8BAD" };
 const MONTH_ABBR = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
+const MONTH_FULL = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+// Data mh_activities di-reset & mulai kembali dari Agustus 2026 - jadi month
+// picker dashboard (dan window fetch datanya) tidak perlu/boleh mundur lebih
+// jauh dari ini; batas atas selalu bulan berjalan (dihitung dari `now`).
+const MIN_MONTH_KEY = "2026-08";
+function pad2(n) { return String(n).padStart(2, "0"); }
+function ymKey(y, m) { return `${y}-${pad2(m)}`; } // m: 1-12
+function keyAddMonths(key, delta) {
+  const [y, m] = key.split("-").map(Number);
+  const total = y * 12 + (m - 1) + delta;
+  return ymKey(Math.floor(total / 12), (total % 12) + 1);
+}
+function monthLabelFull(key) {
+  const [y, m] = key.split("-").map(Number);
+  return `${MONTH_FULL[(m || 1) - 1]} ${y}`;
+}
 
 function titleCase(s) {
   if (!s) return "-";
@@ -328,13 +428,14 @@ function breakdown(list, labelOf, colorOf) {
 
 const EMPTY_DASHBOARD = { kpis: [], achieveTrend: { data: [], labels: [] }, productivTrend: { data: [], labels: [] }, eventCategory: [], networkCat: [], activities: [], currentMonthLabel: "", currentCount: 0 };
 
-function computeDashboardData(rows, branchMap, branchSlugMap, activityTargets) {
+function computeDashboardData(rows, branchMap, branchSlugMap, activityTargets, selectedMonthKey) {
   if (!rows) return EMPTY_DASHBOARD;
   const targetCtx = { branchSlugMap: branchSlugMap || new Map(), activityTargets: activityTargets || [] };
-  const now = new Date();
-  const curKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const prevD = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const prevKey = `${prevD.getFullYear()}-${String(prevD.getMonth() + 1).padStart(2, "0")}`;
+  // Bulan yang dilihat sekarang datang dari month picker (default: bulan
+  // berjalan) - BUKAN selalu `new Date()` seperti sebelumnya, supaya user
+  // bisa geser ke bulan lain (dibatasi >= Agustus 2026, lihat MIN_MONTH_KEY).
+  const curKey = selectedMonthKey || MIN_MONTH_KEY;
+  const prevKey = keyAddMonths(curKey, -1);
   const prevLabel = monthLabel(prevKey);
 
   const curRows = rows.filter((r) => monthKeyOf(r.plan_date) === curKey);
@@ -354,10 +455,7 @@ function computeDashboardData(rows, branchMap, branchSlugMap, activityTargets) {
   const sub = (d, unit) => `${d >= 0 ? "+" : ""}${d.toFixed(1)}${unit} vs ${prevLabel}`;
 
   const monthKeys = [];
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    monthKeys.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
-  }
+  for (let i = 5; i >= 0; i--) monthKeys.push(keyAddMonths(curKey, -i));
   // Satu lintasan per bulan menghasilkan seluruh 6 seri (dipakai trend chart
   // besar DAN sparkline mini per-KPI) - hindari re-filter rows 6× terpisah.
   const monthlyRowsByKey = monthKeys.map((k) => rows.filter((r) => monthKeyOf(r.plan_date) === k));
@@ -452,6 +550,7 @@ export default function MartaHubDashboard() {
   const [scope, setScope] = useState(null);
   const [pendingCount, setPendingCount] = useState(null);
   const [rawActivities, setRawActivities] = useState([]);
+  const [rawPosm, setRawPosm] = useState([]);
   const [branchMap, setBranchMap] = useState(() => new Map());
   // branch_id v1 (uuid, mh_branches) -> slug(nama) v2 (text, sama seperti
   // mh_sites/mh_activity_target) - jembatan utk hitung Achievement % dari
@@ -459,14 +558,32 @@ export default function MartaHubDashboard() {
   const [branchSlugMap, setBranchSlugMap] = useState(() => new Map());
   const [activityTargets, setActivityTargets] = useState([]);
   const [dataErr, setDataErr] = useState(null);
+  // Tanggal berjalan utk topbar - refresh tiap menit, cukup utk display kalender.
+  const [now, setNow] = useState(() => new Date());
+  // Bulan yang sedang dilihat di dashboard (month picker) - default bulan
+  // berjalan, tapi tak boleh mundur sebelum MIN_MONTH_KEY (Agustus 2026,
+  // titik data mh_activities direset & mulai lagi dari nol).
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const d = new Date();
+    const k = ymKey(d.getFullYear(), d.getMonth() + 1);
+    return k < MIN_MONTH_KEY ? MIN_MONTH_KEY : k;
+  });
 
   const t = mk(dark);
 
   // Bentuk KPI/chart/table dari baris mh_activities asli (sudah discope TMV)
   const data = useMemo(
-    () => computeDashboardData(rawActivities, branchMap, branchSlugMap, activityTargets),
-    [rawActivities, branchMap, branchSlugMap, activityTargets]
+    () => computeDashboardData(rawActivities, branchMap, branchSlugMap, activityTargets, selectedMonth),
+    [rawActivities, branchMap, branchSlugMap, activityTargets, selectedMonth]
   );
+
+  // Batas month picker: bawah tetap MIN_MONTH_KEY, atas mengikuti bulan
+  // berjalan (tidak bisa lihat bulan depan yang datanya belum ada).
+  const nowMonthKey = ymKey(now.getFullYear(), now.getMonth() + 1);
+  const canPrevMonth = selectedMonth > MIN_MONTH_KEY;
+  const canNextMonth = selectedMonth < nowMonthKey;
+  const goPrevMonth = () => canPrevMonth && setSelectedMonth((k) => keyAddMonths(k, -1));
+  const goNextMonth = () => canNextMonth && setSelectedMonth((k) => keyAddMonths(k, 1));
 
   // Titik Activity Map - data ASLI dari mh_activities (evidence, boleh tampil
   // apa adanya sesuai §0.2), MENGGANTIKAN 10 pin kota contoh yang sebelumnya
@@ -483,6 +600,19 @@ export default function MartaHubDashboard() {
         color: STATUS_COLORS[statusKey] || "#7B8BAD",
       };
     }), [rawActivities, branchMap]);
+
+  // Titik POSM utk layer kedua di Activity Map - branch_id-nya slug text
+  // (mis. "bandar-lampung"), bukan uuid mh_branches, jadi nama cabang di sini
+  // diturunkan langsung dari slug-nya (bukan lookup ke branchMap yang keyed
+  // by uuid) - cukup utk label tooltip peta.
+  const mapPosm = useMemo(() => rawPosm
+    .filter((r) => Number.isFinite(r.latitude) && Number.isFinite(r.longitude))
+    .map((r) => ({
+      lat: r.latitude, lng: r.longitude,
+      name: r.mode === "activity" ? "Instalasi POSM" : r.mode === "outlet" ? (r.site_id || "POSM Outlet") : (r.street_description || "Street Branding"),
+      branch: r.branch_id ? r.branch_id.replace(/-/g, " ").toUpperCase() : null,
+      mode: r.mode,
+    })), [rawPosm]);
 
   // Filter Recent Activity berdasarkan tab status
   const filteredActivities = activeTab === "All"
@@ -535,10 +665,12 @@ export default function MartaHubDashboard() {
           .select("branch_id,brand,month,target_sp,target_fwa,target_revenue");
         if (!cancelled && !targetErr && targets) setActivityTargets(targets);
 
-        const since = new Date();
-        since.setMonth(since.getMonth() - 5);
-        since.setDate(1);
-        const sinceISO = since.toISOString().slice(0, 10);
+        // Data mh_activities direset & mulai lagi dari Agustus 2026 (lihat
+        // MIN_MONTH_KEY) - jadi fetch selalu dari titik itu, BUKAN rolling
+        // "5 bulan dari hari ini" seperti sebelumnya (supaya month picker
+        // yang mundur sampai Agustus tetap dapat datanya, sekaligus tidak
+        // pernah menarik histori dari sebelum reset).
+        const sinceISO = `${MIN_MONTH_KEY}-01`;
 
         let q = supabaseMarta
           .from("mh_activities")
@@ -550,6 +682,23 @@ export default function MartaHubDashboard() {
         if (cancelled) return;
         if (error) throw new Error(error.message);
         setRawActivities(rows || []);
+
+        // Titik instalasi POSM (mh_md_installations) utk layer kedua di
+        // Activity Map - branch_id di sini SLUG TEXT (bukan uuid mh_branches
+        // seperti mh_activities), jadi scoping-nya lewat applyMartaScopeSlug
+        // (lihat lib/martaScope.js). Best-effort: gagal di sini tidak boleh
+        // menjatuhkan data activity yang sudah berhasil dimuat.
+        try {
+          let pq = supabaseMarta
+            .from("mh_md_installations")
+            .select("id,mode,site_id,street_description,branch_id,brand,location_status,created_at,latitude,longitude")
+            .not("latitude", "is", null).not("longitude", "is", null)
+            .order("created_at", { ascending: false })
+            .limit(500);
+          pq = await applyMartaScopeSlug(pq, sc);
+          const { data: posmRows, error: posmErr } = await pq;
+          if (!cancelled && !posmErr) setRawPosm(posmRows || []);
+        } catch { /* best-effort, layer POSM opsional */ }
       } catch (e) {
         if (!cancelled) setDataErr(e.message);
       }
@@ -571,6 +720,11 @@ export default function MartaHubDashboard() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
   const handleLogout = async () => {
     await supabase.auth.signOut();
     router.push("/marta/login");
@@ -582,6 +736,7 @@ export default function MartaHubDashboard() {
   const displayName = profile?.full_name || user?.email?.split("@")[0] || "Pengguna";
   const initial = (profile?.full_name || user?.email || "M").trim()[0]?.toUpperCase() || "M";
   const roleLabel = profile?.role === "spm_sumatera" ? "SPM Sumatera" : (profile?.role || "");
+  const todayLabel = now.toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
   const SIDEBAR_W = collapsed ? 64 : 240;
 
@@ -737,7 +892,13 @@ export default function MartaHubDashboard() {
           </button>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: t.hi }}>Dashboard</div>
-            <div className="mh-hide-sm" style={{ fontSize: 11, color: t.lo, marginTop: 1 }}>{data.currentMonthLabel}</div>
+            <div className="mh-hide-sm" style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2 }}>
+              <Icon name="calendar" size={11} color={t.lo} />
+              <span style={{ fontSize: 11, color: t.lo, fontWeight: 600, whiteSpace: "nowrap" }}>{todayLabel}</span>
+              {data.currentMonthLabel && (
+                <span style={{ fontSize: 11, color: t.lo, opacity: 0.75, whiteSpace: "nowrap" }}>· Periode {data.currentMonthLabel}</span>
+              )}
+            </div>
           </div>
           <div style={{ flex: 1 }} />
 
@@ -781,8 +942,24 @@ export default function MartaHubDashboard() {
           {/* ── Briefing - periode nyata + status approval nyata (data pendingCount
                sebelumnya sudah di-fetch tapi tidak pernah ditampilkan di konten). ── */}
           <div className="mh-brief">
+            {/* Month picker - default bulan berjalan, tak bisa mundur sebelum
+                Agustus 2026 (titik data direset) atau maju melewati hari ini. */}
+            <div style={{ display: "flex", alignItems: "center", gap: 2, background: t.card, border: `1px solid ${t.line}`, borderRadius: 100, padding: 3 }}>
+              <button className="mh-btn" onClick={goPrevMonth} disabled={!canPrevMonth} title="Bulan sebelumnya"
+                style={{ width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", opacity: canPrevMonth ? 1 : 0.28, cursor: canPrevMonth ? "pointer" : "default" }}>
+                <Icon name="chevL" size={14} color={t.mid} />
+              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 8px", fontSize: 12.5, fontWeight: 800, color: t.hi, whiteSpace: "nowrap" }}>
+                <Icon name="calendar" size={13} color={C.primary} />
+                {monthLabelFull(selectedMonth)}
+              </div>
+              <button className="mh-btn" onClick={goNextMonth} disabled={!canNextMonth} title="Bulan berikutnya"
+                style={{ width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", opacity: canNextMonth ? 1 : 0.28, cursor: canNextMonth ? "pointer" : "default" }}>
+                <Icon name="chevR" size={14} color={t.mid} />
+              </button>
+            </div>
             <div style={{ fontSize: 13, color: t.mid }}>
-              Ringkasan <b style={{ color: t.hi }}>{data.currentMonthLabel}</b> · <b style={{ color: t.hi }}>{data.currentCount}</b> activity tercatat
+              <b style={{ color: t.hi }}>{data.currentCount}</b> activity tercatat
             </div>
             <div style={{ flex: 1 }} />
             {pendingCount != null && (
@@ -805,8 +982,13 @@ export default function MartaHubDashboard() {
           {/* ── KPI - 2 metrik utama (hero, dgn sparkline besar) + 4 pendukung ── */}
           <div className="mh-kpi-hero">
             {data.kpis.filter((k) => k.hero).map((kpi, i) => (
-              <div key={i} className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: "18px 20px" }}>
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+              <motion.div key={i} className="mh-card"
+                initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45, delay: i * 0.07, ease: [0.22, 1, 0.36, 1] }}
+                style={{ position: "relative", overflow: "hidden", background: dark ? `linear-gradient(135deg, ${kpi.color}22 0%, ${t.card} 60%)` : `linear-gradient(135deg, ${kpi.color}12 0%, ${t.card} 60%)`, border: `1px solid ${t.line}`, borderRadius: 16, padding: "18px 20px" }}>
+                <div style={{ position: "absolute", right: -14, top: -14, opacity: dark ? 0.10 : 0.07, pointerEvents: "none" }}>
+                  <Icon name={kpi.icon} size={104} color={kpi.color} />
+                </div>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, position: "relative" }}>
                   <div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
                       <div style={{ width: 32, height: 32, borderRadius: 9, background: kpi.color + "16", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -824,12 +1006,14 @@ export default function MartaHubDashboard() {
                     <Sparkline data={kpi.spark} color={kpi.color} height={46} />
                   </div>
                 </div>
-              </div>
+              </motion.div>
             ))}
           </div>
           <div className="mh-kpi-secondary">
             {data.kpis.filter((k) => !k.hero).map((kpi, i) => (
-              <div key={i} className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 16 }}>
+              <motion.div key={i} className="mh-card"
+                initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.14 + i * 0.05, ease: [0.22, 1, 0.36, 1] }}
+                style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 16 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 10 }}>
                   <div style={{ width: 30, height: 30, borderRadius: 8, background: kpi.color + "16", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     <Icon name={kpi.icon} size={15} color={kpi.color} />
@@ -841,12 +1025,13 @@ export default function MartaHubDashboard() {
                   <span style={{ fontSize: 9.5, color: kpi.trend === "up" ? C.success : C.error, fontWeight: 800 }}>{kpi.trend === "up" ? "▲" : "▼"}</span>
                   <span style={{ fontSize: 10, color: kpi.trend === "up" ? C.success : C.error, fontWeight: 600 }}>{kpi.sub}</span>
                 </div>
-              </div>
+              </motion.div>
             ))}
           </div>
 
           {/* ── Charts Row ────────────────────────────────────────────────── */}
-          <div className="mh-charts">
+          <motion.div className="mh-charts"
+            initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-60px" }} transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}>
             {/* Achievement Trend */}
             <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
@@ -854,7 +1039,7 @@ export default function MartaHubDashboard() {
                 <span style={{ fontSize: 10, fontWeight: 700, color: t.lo, background: t.hover, borderRadius: 6, padding: "3px 8px" }}>6 Bulan Terakhir</span>
               </div>
               <div style={{ color: t.lo }}>
-                <LineChart data={data.achieveTrend.data} labels={data.achieveTrend.labels} color={C.primary} height={130} />
+                <TrendChart data={data.achieveTrend.data} labels={data.achieveTrend.labels} color={C.primary} height={130} />
               </div>
             </div>
 
@@ -865,7 +1050,7 @@ export default function MartaHubDashboard() {
                 <span style={{ fontSize: 10, fontWeight: 700, color: t.lo, background: t.hover, borderRadius: 6, padding: "3px 8px" }}>6 Bulan Terakhir</span>
               </div>
               <div style={{ color: t.lo }}>
-                <LineChart data={data.productivTrend.data} labels={data.productivTrend.labels} color={C.primaryD} height={130} />
+                <TrendChart data={data.productivTrend.data} labels={data.productivTrend.labels} color={C.primaryD} height={130} />
               </div>
             </div>
 
@@ -873,12 +1058,13 @@ export default function MartaHubDashboard() {
                 di dalam MapCard sendiri (tombol tune), tidak diduplikasi di sini. */}
             <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, marginBottom: 12 }}>Activity Map</div>
-              <MapCard t={t} dark={dark} canManage={isMartaAdmin(profile?.role)} activityPoints={mapActivities} />
+              <MapCard t={t} dark={dark} canManage={isMartaAdmin(profile?.role)} activityPoints={mapActivities} posmPoints={mapPosm} />
             </div>
-          </div>
+          </motion.div>
 
           {/* ── Donut Charts Row ──────────────────────────────────────────── */}
-          <div className="mh-donuts">
+          <motion.div className="mh-donuts"
+            initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-60px" }} transition={{ duration: 0.5, delay: 0.05, ease: [0.22, 1, 0.36, 1] }}>
             {/* Activity Category */}
             <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, marginBottom: 16 }}>Activity Category Contribution</div>
@@ -932,10 +1118,12 @@ export default function MartaHubDashboard() {
                 </div>
               </div>
             </div>
-          </div>
+          </motion.div>
 
           {/* ── Quick Actions ─────────────────────────────────────────────── */}
-          <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: "16px 20px", marginBottom: 16 }}>
+          <motion.div
+            initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-60px" }} transition={{ duration: 0.5, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+            style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: "16px 20px", marginBottom: 16 }}>
             <div className="mh-qa">
               {QUICK_ACTIONS.map((a, i) => (
                 <button key={i} className="mh-btn mh-qa-btn" onClick={() => router.push(NAV_ROUTES[a.route])}
@@ -950,7 +1138,7 @@ export default function MartaHubDashboard() {
                 </button>
               ))}
             </div>
-          </div>
+          </motion.div>
 
           {/* ── Recent Activity ──────────────────────────────────────────────
                Ringkasan saja (bukan tabel detail 14-kolom seperti sebelumnya) -
@@ -959,7 +1147,9 @@ export default function MartaHubDashboard() {
                diketahui sekilas + jalan pintas ke sana. Tab status diperbaiki:
                "Validated" sebelumnya tidak pernah cocok dgn status manapun
                (bug lama - tab itu selalu kosong), diganti "Rejected" yg nyata. */}
-          <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, overflow: "hidden" }}>
+          <motion.div
+            initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-60px" }} transition={{ duration: 0.5, delay: 0.12, ease: [0.22, 1, 0.36, 1] }}
+            style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, overflow: "hidden" }}>
             {/* Header */}
             <div style={{ padding: "16px 20px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: t.hi }}>Recent Activity</div>
@@ -1015,7 +1205,7 @@ export default function MartaHubDashboard() {
                 </button>
               </div>
             )}
-          </div>
+          </motion.div>
         </div>
       </div>
     </div>

@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import MartaShell, { T, FONT } from "../components/MartaShell";
+import MartaShell, { T, FONT, brandLabel } from "../components/MartaShell";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { getMartaScope, applyMartaScope, regionLabel } from "../../../lib/martaScope";
 
@@ -226,7 +226,7 @@ function Body({ email }) {
               {!scope.found
                 ? "Email Anda belum terdaftar sebagai profil MartaHub"
                 : canApprove
-                  ? `Anda login sebagai ${ROLE_LABEL[scope.role] || scope.role}${scope.unscoped ? " - akses semua region & brand" : ` - terbatas ${regionLabel(scope.region)} · ${(scope.brand || "-").toUpperCase()}`}`
+                  ? `Anda login sebagai ${ROLE_LABEL[scope.role] || scope.role}${scope.unscoped ? " - akses semua region & brand" : ` - terbatas ${regionLabel(scope.region)} · ${brandLabel(scope.brand)}`}`
                   : `Role Anda (${ROLE_LABEL[scope.role] || scope.role || "-"}) tidak memiliki izin approval`}
             </div>
             <div style={{ fontSize: 11.5, color: T.mid, marginTop: 2 }}>
@@ -271,7 +271,7 @@ function Body({ email }) {
                     </td>
                   )}
                   <td style={{ padding: "10px 14px", fontWeight: 700 }}>{r.event_name || "-"}</td>
-                  <td style={{ padding: "10px 14px" }}>{r.brand ? <span style={{ fontSize: 10.5, fontWeight: 800, color: r.brand === "tri" ? T.tri : T.im3 }}>{r.brand === "tri" ? "3ID" : "IM3"}</span> : "-"}</td>
+                  <td style={{ padding: "10px 14px" }}>{r.brand ? <span style={{ fontSize: 10.5, fontWeight: 800, color: String(r.brand).toLowerCase() === "tri" ? T.tri : T.im3 }}>{brandLabel(r.brand)}</span> : "-"}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{r.mc || "-"}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{r.site_id || "-"}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{catLabel(r)}</td>
@@ -309,7 +309,7 @@ function Body({ email }) {
               <div style={{ flex: 1, minWidth: 220 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <span style={{ fontWeight: 700, fontSize: 13 }}>{r.event_name || "-"}</span>
-                  {r.brand && <span style={{ fontSize: 10.5, fontWeight: 800, color: r.brand === "tri" ? T.tri : T.im3 }}>{r.brand === "tri" ? "3ID" : "IM3"}</span>}
+                  {r.brand && <span style={{ fontSize: 10.5, fontWeight: 800, color: String(r.brand).toLowerCase() === "tri" ? T.tri : T.im3 }}>{brandLabel(r.brand)}</span>}
                 </div>
                 <div style={{ fontSize: 12, color: T.mid, marginTop: 2 }}>{r.mc || "-"} · {r.site_id || "-"} · Actual SP/FWA {r.actual_sp ?? 0}/{r.actual_fwa ?? 0} (target {r.target_sp ?? 0}/{r.target_fwa ?? 0})</div>
                 {r.validation_note && <div style={{ fontSize: 11.5, color: T.warning, marginTop: 6, fontStyle: "italic" }}>&ldquo;{r.validation_note}&rdquo;</div>}
@@ -405,7 +405,7 @@ function Body({ email }) {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
                 <span style={{ fontWeight: 700, fontSize: 12.5 }}>{h.event_name || "-"}</span>
-                {h.brand && <span style={{ fontSize: 10, fontWeight: 800, color: h.brand === "tri" ? T.tri : T.im3 }}>{h.brand === "tri" ? "3ID" : "IM3"}</span>}
+                {h.brand && <span style={{ fontSize: 10, fontWeight: 800, color: String(h.brand).toLowerCase() === "tri" ? T.tri : T.im3 }}>{brandLabel(h.brand)}</span>}
                 <span style={{ fontSize: 11.5, color: T.mid }}>{h.mc || "-"} · {h.site_id || "-"}</span>
               </div>
               <div style={{ fontSize: 11.5, color: T.lo, marginTop: 3 }}>

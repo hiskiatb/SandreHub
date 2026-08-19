@@ -22,6 +22,19 @@ export const T = {
   im3: "#E53935", tri: "#E23B86",
 };
 
+// Satu sumber kebenaran label brand utk SEMUA halaman desktop MartaHub -
+// nilai mentah di database SELALU "im3"/"tri" (lowercase), TAPI ke pengguna
+// harus selalu tampil "IM3"/"3ID" (brand "tri" TIDAK PERNAH ditampilkan
+// sebagai "TRI" atau "Tri"). Sebelum helper ini ada, banyak halaman memakai
+// `(brand||"-").toUpperCase()` yang salah mengubah "tri" jadi "TRI" alih-
+// alih "3ID" - itulah bug yang diperbaiki dengan mengganti SEMUA pemakaian
+// pola itu ke brandLabel() ini.
+export const BRAND_LABEL = { im3: "IM3", tri: "3ID" };
+export function brandLabel(brand) {
+  if (!brand) return "-";
+  return BRAND_LABEL[String(brand).toLowerCase()] || String(brand).toUpperCase();
+}
+
 // Nav MartaHub - SATU sumber, dipakai Dashboard maupun semua sub-menu.
 const NAV = [
   { label: "Dashboard", icon: "grid", path: "dashboard", route: "/martahub" },

@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../../lib/supabase";
 import { canViewMarta } from "../../../lib/martaAccess";
 import { HubLogo } from "../../../components/HubLogo";
-import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, Construction, UserRound, ChevronRight } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, UserRound, ChevronRight } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -29,6 +29,12 @@ function MartaLoginInner() {
   const router       = useRouter();
   const searchParams = useSearchParams();
   const [d, setD]    = useState(true);
+  // Sama pola dgn /sandra/login: email dulu (satu langkah), password baru
+  // muncul di langkah berikutnya - BUKAN dua field sekaligus di satu layar
+  // spt sebelumnya. Halaman ini tetap KHUSUS SPM Sumatera (tidak digabung
+  // dgn jalur OTP BME/RGE di /martahub/m/login - itu sengaja dipisah biar
+  // bisa dibuatkan shortcut PWA sendiri).
+  const [stage, setStage] = useState("email"); // email | password
   const [form,     setForm]     = useState({ email: "", password: "" });
   const [errors,   setErrors]   = useState([]);
   const [errMsg,   setErrMsg]   = useState("");
@@ -60,10 +66,21 @@ function MartaLoginInner() {
     setErrMsg("");
   };
 
+  // Langkah 1 - validasi format email saja lalu lanjut ke password. Tidak
+  // ada lookup role di sini (halaman ini memang cuma utk SPM Sumatera).
+  const handleEmailNext = () => {
+    setErrMsg(""); setErrors([]);
+    const email = form.email.trim().toLowerCase();
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setErrors(["email"]); setErrMsg("Masukkan email yang valid."); return;
+    }
+    setStage("password");
+  };
+
+  // Langkah 2 - login sesungguhnya (password, sesi SandraHub).
   const handleLogin = async () => {
     setErrMsg(""); setErrors([]);
-    const empty = ["email", "password"].filter(k => !form[k]);
-    if (empty.length) { setErrors(empty); setErrMsg("Harap isi email dan kata sandi."); return; }
+    if (!form.password) { setErrors(["password"]); setErrMsg("Masukkan kata sandi."); return; }
     setLoading(true);
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
@@ -150,28 +167,12 @@ function MartaLoginInner() {
                 <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.04em", color: t.hi, lineHeight: 1.1 }}>
                   Marta<span style={{ background: `linear-gradient(90deg,${RED},${MAGA})`, WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Hub</span>
                 </div>
-                <div style={{ marginTop: 5, display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 8px", borderRadius: 999, background: d ? "rgba(245,158,11,0.14)" : "rgba(217,119,6,0.10)", border: `1px solid ${d ? "rgba(245,158,11,0.32)" : "rgba(217,119,6,0.28)"}` }}>
-                  <Construction size={11} color={d ? "#FBBF24" : "#B45309"} strokeWidth={2.4} />
-                  <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", color: d ? "#FBBF24" : "#B45309" }}>Dalam Pengembangan</span>
-                </div>
+                <div style={{ marginTop: 3, fontSize: 11, fontWeight: 600, letterSpacing: "0.14em", textTransform: "uppercase", color: t.mid }}>Marketing Sumatera</div>
               </div>
             </div>
 
-            {/* Heading */}
-            <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 17, fontWeight: 700, color: t.hi, letterSpacing: "-0.02em" }}>Masuk ke Akun</div>
-              <div style={{ marginTop: 3, fontSize: 13, color: t.mid }}>Selamat datang kembali</div>
-            </div>
-
-            {/* Dev notice */}
-            <div style={{ marginBottom: 18, padding: "10px 13px", borderRadius: 10, background: d ? "rgba(245,158,11,0.10)" : "rgba(217,119,6,0.07)", border: `1px solid ${d ? "rgba(245,158,11,0.26)" : "rgba(217,119,6,0.22)"}`, display: "flex", alignItems: "flex-start", gap: 9 }}>
-              <Construction size={15} color={d ? "#FBBF24" : "#B45309"} strokeWidth={2.2} style={{ flexShrink: 0, marginTop: 1 }} />
-              <span style={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: d ? "#FBBF24" : "#B45309" }}>
-                MartaHub masih tahap awal. Gunakan akun SandraHub Anda — akses saat ini khusus <b>SPM Sumatera</b>.
-              </span>
-            </div>
-
-            {/* Error */}
+            {/* Error - dibagikan kedua stage, di luar AnimatePresence mode="wait"
+                di bawah supaya tidak ikut ditransisikan bareng stage. */}
             <AnimatePresence>
               {errMsg && (
                 <motion.div key="err" initial={{ opacity: 0, height: 0, marginBottom: 0 }} animate={{ opacity: 1, height: "auto", marginBottom: 14 }} exit={{ opacity: 0, height: 0, marginBottom: 0 }} transition={{ duration: 0.18 }}
@@ -181,48 +182,72 @@ function MartaLoginInner() {
               )}
             </AnimatePresence>
 
-            {/* Fields */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {/* Stage - sama persis pola /sandra/login: email dulu (satu
+                langkah), password baru muncul di langkah berikutnya, bukan
+                dua field sekaligus di satu layar. */}
+            <AnimatePresence mode="wait">
+              {stage === "email" ? (
+                <motion.div key="stage-email" initial={{ opacity: 0, x: -14 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -14 }} transition={{ duration: 0.22 }}>
+                  {/* Heading */}
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 17, fontWeight: 700, color: t.hi, letterSpacing: "-0.02em" }}>Masuk ke Akun</div>
+                    <div style={{ marginTop: 3, fontSize: 13, color: t.mid }}>Selamat datang kembali</div>
+                  </div>
 
-              {/* Email */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: t.mid }}>Email</label>
-                <div style={{ ...fieldStyle, borderColor: errors.includes("email") ? "rgba(220,38,38,0.5)" : t.line }}
-                  onFocusCapture={e => e.currentTarget.style.borderColor = RED}
-                  onBlurCapture={e => e.currentTarget.style.borderColor = errors.includes("email") ? "rgba(220,38,38,0.5)" : t.line}>
-                  <Mail size={14} color={t.lo} style={{ flexShrink: 0 }} />
-                  <input type="email" placeholder="nama@ioh.co.id" value={form.email} onChange={e => up("email", e.target.value)} onKeyDown={e => e.key === "Enter" && handleLogin()} style={inputStyle} autoComplete="email" />
-                </div>
-              </div>
-
-              {/* Password */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-                <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: t.mid }}>Kata Sandi</label>
-                <div style={{ ...fieldStyle, borderColor: errors.includes("password") ? "rgba(220,38,38,0.5)" : t.line }}
-                  onFocusCapture={e => e.currentTarget.style.borderColor = RED}
-                  onBlurCapture={e => e.currentTarget.style.borderColor = errors.includes("password") ? "rgba(220,38,38,0.5)" : t.line}>
-                  <Lock size={14} color={t.lo} style={{ flexShrink: 0 }} />
-                  <input type={showPw ? "text" : "password"} placeholder="Kata sandi" value={form.password} onChange={e => up("password", e.target.value)} onKeyDown={e => e.key === "Enter" && handleLogin()} style={inputStyle} autoComplete="current-password" />
-                  <button type="button" onClick={() => setShowPw(p => !p)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", flexShrink: 0, color: showPw ? RED : t.lo }}>
-                    {showPw ? <EyeOff size={14} /> : <Eye size={14} />}
+                  <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: t.mid }}>Email</label>
+                  <div style={{ ...fieldStyle, marginTop: 5, borderColor: errors.includes("email") ? "rgba(220,38,38,0.5)" : t.line }}
+                    onFocusCapture={e => e.currentTarget.style.borderColor = MAGA}
+                    onBlurCapture={e => e.currentTarget.style.borderColor = errors.includes("email") ? "rgba(220,38,38,0.5)" : t.line}>
+                    <Mail size={14} color={t.lo} style={{ flexShrink: 0 }} />
+                    <input type="email" placeholder="nama@ioh.co.id" value={form.email} onChange={e => up("email", e.target.value)} onKeyDown={e => e.key === "Enter" && handleEmailNext()} style={inputStyle} autoComplete="email" autoFocus />
+                  </div>
+                  <button onClick={handleEmailNext}
+                    style={{ marginTop: 20, width: "100%", height: 46, borderRadius: 10, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: `0 4px 18px rgba(237,28,36,0.25)`, cursor: "pointer", fontFamily: FONT }}>
+                    <span>Lanjutkan</span><ArrowRight size={14} strokeWidth={2.5} />
                   </button>
-                </div>
-              </div>
-            </div>
+                </motion.div>
+              ) : (
+                <motion.div key="stage-password" initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 14 }} transition={{ duration: 0.22 }}>
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 17, fontWeight: 700, color: t.hi, letterSpacing: "-0.02em" }}>Masukkan Kata Sandi</div>
+                    <div style={{ marginTop: 3, fontSize: 13, color: t.mid }}>Akun SandraHub Anda (khusus SPM Sumatera)</div>
+                  </div>
 
-            {/* Submit */}
-            <button onClick={handleLogin} disabled={loading}
-              style={{ marginTop: 20, width: "100%", height: 46, borderRadius: 10, border: "none", background: loading ? `${RED}55` : `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: loading ? "none" : `0 4px 18px rgba(237,28,36,0.25)`, cursor: loading ? "not-allowed" : "pointer", fontFamily: FONT, transition: "opacity 0.15s" }}>
-              {loading ? <Loader2 size={16} style={{ animation: "spin .85s linear infinite" }} /> : <><span>Masuk ke MartaHub</span><ArrowRight size={14} strokeWidth={2.5} /></>}
-            </button>
-          </div>
+                  {/* Email + ganti */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderRadius: 10, background: t.fieldBg, border: `1px solid ${t.line}`, marginBottom: 16 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                      <Mail size={14} color={t.lo} style={{ flexShrink: 0 }} />
+                      <span style={{ fontSize: 13.5, fontWeight: 600, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{form.email}</span>
+                    </span>
+                    <button onClick={() => { setStage("email"); setForm(f => ({ ...f, password: "" })); setErrMsg(""); setErrors([]); }} style={{ background: "none", border: "none", cursor: "pointer", color: RED, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, flexShrink: 0 }}>Ganti</button>
+                  </div>
 
-          {/* Footer */}
-          <div style={{ padding: "12px 28px", borderTop: `1px solid ${t.line}`, background: d ? "rgba(255,255,255,0.018)" : "rgba(0,0,0,0.018)", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-            <span style={{ fontSize: 13, color: t.mid }}>Pakai akun SandraHub Anda.</span>
-            <button onClick={() => router.push("/sandra/login")} style={{ fontSize: 13, fontWeight: 700, border: "none", padding: 0, cursor: "pointer", background: "none", color: RED, fontFamily: FONT }}>
-              Login SandraHub
-            </button>
+                  <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: t.mid }}>Kata Sandi</label>
+                  <div style={{ ...fieldStyle, marginTop: 5, borderColor: errors.includes("password") ? "rgba(220,38,38,0.5)" : t.line }}
+                    onFocusCapture={e => e.currentTarget.style.borderColor = MAGA}
+                    onBlurCapture={e => e.currentTarget.style.borderColor = errors.includes("password") ? "rgba(220,38,38,0.5)" : t.line}>
+                    <Lock size={14} color={t.lo} style={{ flexShrink: 0 }} />
+                    {/* fontFamily saat masih tersamar (type="password") SENGAJA
+                        dipaksa ke font sistem, BUKAN font kustom "DM Sans" -
+                        beberapa browser (WebKit/Safari) gagal menggambar titik
+                        penyamar (•) kalau font-family-nya webfont kustom yang
+                        belum/tidak dikenali utk glyph tsb, hasilnya field
+                        terlihat KOSONG walau sudah diketik, baru kelihatan
+                        isinya setelah tombol mata ditekan. Begitu direveal jadi
+                        teks biasa (type="text"), font kustom aman dipakai lagi. */}
+                    <input type={showPw ? "text" : "password"} placeholder="Kata sandi" value={form.password} onChange={e => up("password", e.target.value)} onKeyDown={e => e.key === "Enter" && handleLogin()} style={{ ...inputStyle, fontFamily: showPw ? FONT : "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" }} autoComplete="current-password" autoFocus />
+                    <button type="button" onClick={() => setShowPw(p => !p)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", flexShrink: 0, color: showPw ? RED : t.lo }}>
+                      {showPw ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+
+                  <button onClick={handleLogin} disabled={loading}
+                    style={{ marginTop: 20, width: "100%", height: 46, borderRadius: 10, border: "none", background: loading ? `${RED}55` : `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: loading ? "none" : `0 4px 18px rgba(237,28,36,0.25)`, cursor: loading ? "not-allowed" : "pointer", fontFamily: FONT }}>
+                    {loading ? <Loader2 size={16} style={{ animation: "spin .85s linear infinite" }} /> : <><span>Masuk ke MartaHub</span><ArrowRight size={14} strokeWidth={2.5} /></>}
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
 
@@ -253,7 +278,7 @@ function MartaLoginInner() {
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&display=swap');
         *, *::before, *::after { box-sizing:border-box; margin:0; padding:0 }
         body { margin:0 }
-        input::placeholder { opacity:0.4 }
+        input::placeholder { color:${t.mid}; opacity:0.85 }
         input::-ms-reveal, input::-ms-clear { display:none }
         input::-webkit-credentials-auto-fill-button { visibility:hidden }
         input[type="password"]::-webkit-textfield-decoration-container { display:none }

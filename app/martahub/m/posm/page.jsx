@@ -8,28 +8,44 @@
  */
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Plus, PackageCheck, MapPin, Navigation, Milestone, CheckCircle2, Clock, XCircle, PackagePlus, Layers, ChevronRight } from "lucide-react";
+import { ArrowLeft, Plus, PackageCheck, MapPin, Navigation, Milestone, CheckCircle2, Clock, XCircle, PackagePlus, Package, Layers, ChevronRight, Loader2, Camera, ImagePlus, ImageOff, History } from "lucide-react";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { fmtInt } from "../_shared/activityUi";
 import { APPROVER_ROLES } from "../_shared/planData";
+import { compressToMaxBytes } from "../_shared/imageTools";
 import {
   fetchMyBranchProgress, fetchMyTypeSummary, fetchMyInstallations, fetchMyAvailableTypes,
-  submitClaimRequest, STOCK_MODE_LABEL, INSTALL_MODES,
+  submitClaimRequest, setMonthlyStock, listTypes, currentMonthKey, fetchStockEntries,
+  uploadPosmatStockPhoto, posmatStockPhotoUrl, STOCK_MODE_LABEL, INSTALL_MODES,
 } from "../_shared/posmData";
+
+const fmtRupiah = (v) => v == null ? null : `Rp${Number(v).toLocaleString("id-ID", { maximumFractionDigits: 0 })}`;
 
 const MODE_ICON = { activity: Milestone, outlet: MapPin, street: Navigation };
 
 export default function PosmHubPage() {
   const router = useRouter();
-  const { loading: sessionLoading, scope } = useMartaSession();
+  const { loading: sessionLoading, scope, email } = useMartaSession();
   const [progress, setProgress] = useState(null);
   const [types, setTypes] = useState([]);
   const [installs, setInstalls] = useState(null);
   const [err, setErr] = useState("");
   const [claimSheet, setClaimSheet] = useState(false);
+  const [topUpSheet, setTopUpSheet] = useState(false);
+  const [historyType, setHistoryType] = useState(null); // null closed, else {posmat_type_id, name}
 
   const canClaim = scope?.role === "bme"; // server-enforced juga (lihat mh_posmat_bme_submit_claim_request)
+  // BME/RGE boleh langsung catat stok masuk milik cabang sendiri (mis. baru
+  // selesai cetak materi POSM) - server-enforced di mh_posmat_set_monthly_stock
+  // (hanya cabang+brand sendiri, jumlah harus positif - lihat migrasi
+  // allow_bme_rge_self_branch_posmat_topup).
+  const canTopUp = ["bme", "rge"].includes(scope?.role);
   const isApprover = APPROVER_ROLES.includes(scope?.role);
+
+  async function reloadStockData() {
+    const [p, t] = await Promise.all([fetchMyBranchProgress(), fetchMyTypeSummary()]);
+    setProgress(p); setTypes(t || []);
+  }
 
   useEffect(() => {
     if (sessionLoading) return;
@@ -101,28 +117,41 @@ export default function PosmHubPage() {
         </div>
       )}
 
-      {/* Stok per jenis */}
+      {/* Stok per jenis - ketuk kartu utk lihat riwayat top-up (biaya & foto
+          dokumentasi tiap entri). */}
       {types.length > 0 && (
         <div style={{ padding: "16px 20px 0" }}>
           <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10 }}>Stok Cabang</div>
           <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
             {types.map((t) => (
-              <div key={t.posmat_type_id} style={{ flexShrink: 0, minWidth: 118, background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 14, padding: "11px 12px" }}>
+              <button key={t.posmat_type_id} onClick={() => setHistoryType({ posmat_type_id: t.posmat_type_id, name: t.name })}
+                style={{ flexShrink: 0, minWidth: 118, textAlign: "left", background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 14, padding: "11px 12px", cursor: "pointer", fontFamily: FF }}>
                 <div style={{ fontSize: 11.5, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.name}</div>
                 <div style={{ marginTop: 5, fontSize: 17, fontWeight: 800, color: "#ED1C24" }}>{fmtInt(t.balance)}</div>
                 <div style={{ fontSize: 9.5, color: "#B0B0BA", fontWeight: 700 }}>{t.unit} · {STOCK_MODE_LABEL[t.stock_mode] || t.stock_mode}</div>
-              </div>
+                {t.avg_unit_cost != null && (
+                  <div style={{ marginTop: 4, fontSize: 9.5, color: "#5A5A68", fontWeight: 700 }}>~{fmtRupiah(t.avg_unit_cost)}/{t.unit}</div>
+                )}
+              </button>
             ))}
           </div>
         </div>
       )}
 
-      {canClaim && (
-        <div style={{ padding: "14px 20px 0" }}>
-          <button onClick={() => setClaimSheet(true)}
-            style={{ width: "100%", height: 46, borderRadius: 13, border: "1.5px solid #ECEDF0", background: "#F6F7F9", color: "#5A5A68", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-            <PackagePlus size={15} /> Ajukan Klaim Stok
-          </button>
+      {(canTopUp || canClaim) && (
+        <div style={{ padding: "14px 20px 0", display: "flex", gap: 8 }}>
+          {canTopUp && (
+            <button onClick={() => setTopUpSheet(true)}
+              style={{ flex: 1, height: 46, borderRadius: 13, border: "none", background: BRAND, color: "#fff", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              <Package size={15} /> Tambah Stok
+            </button>
+          )}
+          {canClaim && (
+            <button onClick={() => setClaimSheet(true)}
+              style={{ flex: 1, height: 46, borderRadius: 13, border: "1.5px solid #ECEDF0", background: "#F6F7F9", color: "#5A5A68", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              <PackagePlus size={15} /> Ajukan Klaim Stok
+            </button>
+          )}
         </div>
       )}
 
@@ -153,6 +182,22 @@ export default function PosmHubPage() {
 
       {claimSheet && (
         <ClaimRequestSheet onClose={() => setClaimSheet(false)} onSubmitted={() => setClaimSheet(false)} />
+      )}
+
+      {topUpSheet && (
+        <TopUpMyStockSheet
+          scope={scope}
+          callerEmail={email}
+          onClose={() => setTopUpSheet(false)}
+          onSaved={async () => { setTopUpSheet(false); try { await reloadStockData(); } catch { /* noop - kartu stok refresh saat halaman dibuka lagi */ } }}
+        />
+      )}
+
+      {historyType && (
+        <StockHistorySheet
+          type={historyType} scope={scope} callerEmail={email}
+          onClose={() => setHistoryType(null)}
+        />
       )}
     </MobileShell>
   );
@@ -287,6 +332,207 @@ function ClaimRequestSheet({ onClose, onSubmitted }) {
             style={{ width: "100%", height: 48, borderRadius: 13, border: "none", cursor: busy ? "default" : "pointer", background: busy ? "#F0A8A8" : BRAND, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF }}>
             {busy ? "Mengirim…" : "Kirim Pengajuan"}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const fieldLabel = { fontSize: 11, fontWeight: 700, color: "#8A8A96", marginTop: 14, marginBottom: 6 };
+const fieldInput = { width: "100%", height: 44, padding: "0 12px", borderRadius: 11, border: "1.5px solid #ECEDF0", fontSize: 13, fontFamily: FF, outline: "none", boxSizing: "border-box", background: "#fff" };
+
+/** Sheet pencatatan stok masuk langsung oleh BME/RGE (mis. baru selesai
+ * cetak materi POSM) - beda dgn ClaimRequestSheet di atas yang butuh
+ * approval, ini LANGSUNG menambah stok cabang sendiri (server tetap
+ * validasi: cabang+brand harus milik pemanggil & jumlah harus positif -
+ * lihat mh_posmat_set_monthly_stock). */
+function TopUpMyStockSheet({ scope, callerEmail, onClose, onSaved }) {
+  const [types, setTypes] = useState(null);
+  const [posmatTypeId, setPosmatTypeId] = useState("");
+  const [amount, setAmount] = useState("");
+  const [unitCost, setUnitCost] = useState("");
+  const [photo, setPhoto] = useState(null); // { file, previewUrl }
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    listTypes()
+      .then((d) => {
+        if (!alive) return;
+        const active = (d || []).filter((t) => t.active);
+        setTypes(active);
+        setPosmatTypeId(active[0]?.id || "");
+      })
+      .catch((e) => { if (alive) setErr(e.message); });
+    return () => { alive = false; };
+  }, []);
+
+  function pickPhoto(file) {
+    if (!file) return;
+    setPhoto((prev) => { if (prev) URL.revokeObjectURL(prev.previewUrl); return { file, previewUrl: URL.createObjectURL(file) }; });
+  }
+  function removePhoto() {
+    setPhoto((prev) => { if (prev) URL.revokeObjectURL(prev.previewUrl); return null; });
+  }
+
+  async function submit() {
+    if (!posmatTypeId) { setErr("Pilih jenis material."); return; }
+    if (!amount || Number(amount) <= 0) { setErr("Jumlah harus lebih dari nol."); return; }
+    setBusy(true); setErr("");
+    try {
+      let photoPath = null;
+      if (photo) {
+        const blob = await compressToMaxBytes(photo.file);
+        photoPath = await uploadPosmatStockPhoto(blob);
+      }
+      await setMonthlyStock({
+        branchId: scope?.branch_id, brand: scope?.brand, posmatTypeId,
+        month: currentMonthKey(), amount, note: note.trim() || null, callerEmail,
+        unitCost, photoPath,
+      });
+      onSaved();
+    } catch (e) {
+      setErr(e.message || "Gagal menyimpan stok"); setBusy(false);
+    }
+  }
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(23,24,28,0.45)", zIndex: 70, display: "flex", alignItems: "flex-end" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, margin: "0 auto", maxHeight: "85vh", display: "flex", flexDirection: "column", background: "#FFFFFF", borderRadius: "22px 22px 0 0", fontFamily: FF }}>
+        <div style={{ width: 40, height: 4, borderRadius: 3, background: "#E4E5EA", margin: "10px auto 4px" }} />
+        <div style={{ padding: "8px 20px 0", fontSize: 15, fontWeight: 800 }}>Tambah Stok</div>
+        <div style={{ padding: "4px 20px 0", fontSize: 11.5, color: "#8A8A96" }}>
+          Catat materi POSM yang baru Anda cetak/terima sebagai stok masuk cabang {scope?.branch_name || "Anda"}.
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "12px 20px" }}>
+          {err && <div style={{ marginBottom: 4, padding: "9px 11px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 11.5, fontWeight: 600 }}>{err}</div>}
+
+          {types === null ? (
+            <ShellSpinner />
+          ) : types.length === 0 ? (
+            <div style={{ fontSize: 11.5, color: "#B0B0BA", marginTop: 8 }}>Belum ada jenis material POSM terdaftar. Hubungi admin.</div>
+          ) : (
+            <>
+              <div style={fieldLabel}>Jenis Material</div>
+              <select value={posmatTypeId} onChange={(e) => setPosmatTypeId(e.target.value)} style={fieldInput}>
+                {types.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.unit})</option>)}
+              </select>
+
+              <div style={fieldLabel}>Jumlah</div>
+              <input type="number" min="1" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" style={fieldInput} />
+
+              <div style={fieldLabel}>Biaya per Satuan (opsional)</div>
+              <input type="number" min="0" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} placeholder="Rp 0" style={fieldInput} />
+
+              <div style={fieldLabel}>Foto Materi (opsional)</div>
+              <SinglePhotoField photo={photo} onPick={pickPhoto} onRemove={removePhoto} />
+
+              <div style={fieldLabel}>Catatan (opsional)</div>
+              <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Mis. hasil cetak 19 Agustus 2026" rows={2}
+                style={{ ...fieldInput, height: "auto", padding: "10px 12px", resize: "vertical" }} />
+            </>
+          )}
+        </div>
+
+        <div style={{ padding: "10px 20px calc(env(safe-area-inset-bottom,0px) + 16px)", borderTop: "1px solid #F0F0F3" }}>
+          <button onClick={submit} disabled={busy || types === null || types.length === 0}
+            style={{ width: "100%", height: 48, borderRadius: 13, border: "none", cursor: busy ? "default" : "pointer", background: busy ? "#F0A8A8" : BRAND, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            {busy && <Loader2 size={15} style={{ animation: "mspin .85s linear infinite" }} />}
+            {busy ? "Menyimpan…" : "Simpan Stok"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Picker foto TUNGGAL (beda dgn PhotoPicker multi-foto+kolase di Catat
+ * Instalasi) - stok cuma butuh SATU foto bukti materi, jadi UI-nya
+ * sesederhana mungkin: 2 tombol (kamera/galeri) + satu thumbnail. */
+function SinglePhotoField({ photo, onPick, onRemove }) {
+  if (photo) {
+    return (
+      <div style={{ position: "relative", width: 96, height: 96, borderRadius: 12, overflow: "hidden", background: "#F0F0F3" }}>
+        <img src={photo.previewUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <button onClick={onRemove} type="button"
+          style={{ position: "absolute", top: 5, right: 5, width: 22, height: 22, borderRadius: "50%", background: "rgba(0,0,0,0.55)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+          <XCircle size={13} color="#fff" />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", gap: 8 }}>
+      <label style={{ flex: 1, height: 42, borderRadius: 11, border: "1.5px solid #ECEDF0", background: "#F6F7F9", color: "#5A5A68", fontSize: 12, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+        <Camera size={15} /> Ambil Foto
+        <input type="file" accept="image/*" capture="environment" hidden onChange={(e) => { onPick(e.target.files?.[0]); e.target.value = ""; }} />
+      </label>
+      <label style={{ flex: 1, height: 42, borderRadius: 11, border: "1.5px solid #ECEDF0", background: "#F6F7F9", color: "#5A5A68", fontSize: 12, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+        <ImagePlus size={15} /> Dari Galeri
+        <input type="file" accept="image/*" hidden onChange={(e) => { onPick(e.target.files?.[0]); e.target.value = ""; }} />
+      </label>
+    </div>
+  );
+}
+
+/** Riwayat transaksi top-up stok per jenis material - tempat foto & biaya
+ * per entri sebenarnya terlihat (kartu Stok Cabang cuma tampilkan agregat). */
+function StockHistorySheet({ type, scope, callerEmail, onClose }) {
+  const [entries, setEntries] = useState(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    fetchStockEntries({ branchId: scope?.branch_id, brand: scope?.brand, posmatTypeId: type.posmat_type_id, callerEmail })
+      .then((d) => { if (alive) setEntries(d || []); })
+      .catch((e) => { if (alive) setErr(e.message); });
+    return () => { alive = false; };
+  }, [type.posmat_type_id, scope?.branch_id, scope?.brand, callerEmail]);
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(23,24,28,0.45)", zIndex: 70, display: "flex", alignItems: "flex-end" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, margin: "0 auto", maxHeight: "85vh", display: "flex", flexDirection: "column", background: "#FFFFFF", borderRadius: "22px 22px 0 0", fontFamily: FF }}>
+        <div style={{ width: 40, height: 4, borderRadius: 3, background: "#E4E5EA", margin: "10px auto 4px" }} />
+        <div style={{ padding: "8px 20px 0", display: "flex", alignItems: "center", gap: 7 }}>
+          <History size={16} color="#5A5A68" />
+          <div style={{ fontSize: 15, fontWeight: 800 }}>Riwayat Stok · {type.name}</div>
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "12px 20px 24px" }}>
+          {err && <div style={{ marginBottom: 10, padding: "9px 11px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 11.5, fontWeight: 600 }}>{err}</div>}
+          {entries === null ? (
+            <ShellSpinner />
+          ) : entries.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "30px 20px", color: "#8A8A96", fontSize: 12 }}>Belum ada transaksi stok.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {entries.map((e) => (
+                <div key={e.id} style={{ display: "flex", gap: 10, padding: "11px 12px", borderRadius: 14, border: "1px solid #E9EAEE" }}>
+                  {e.photo_path ? (
+                    <img src={posmatStockPhotoUrl(e.photo_path)} alt="" style={{ width: 52, height: 52, borderRadius: 10, objectFit: "cover", flexShrink: 0, background: "#F0F0F3" }} />
+                  ) : (
+                    <div style={{ width: 52, height: 52, borderRadius: 10, background: "#F0F0F3", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <ImageOff size={16} color="#C4C4CE" />
+                    </div>
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: Number(e.amount) < 0 ? "#DC2626" : "#15803D" }}>
+                        {Number(e.amount) > 0 ? "+" : ""}{fmtInt(e.amount)}
+                      </span>
+                      <span style={{ fontSize: 10, color: "#B0B0BA", fontWeight: 600, flexShrink: 0 }}>{new Date(e.created_at).toLocaleDateString("id-ID")}</span>
+                    </div>
+                    {e.unit_cost != null && <div style={{ marginTop: 2, fontSize: 11, color: "#5A5A68", fontWeight: 600 }}>Biaya: {fmtRupiah(e.unit_cost)}/satuan</div>}
+                    {e.note && <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96" }}>{e.note}</div>}
+                    <div style={{ marginTop: 2, fontSize: 10, color: "#B0B0BA" }}>oleh {e.created_by_name || "-"}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

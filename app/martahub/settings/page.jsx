@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import MartaShell, { T, FONT } from "../components/MartaShell";
+import MartaShell, { T, FONT, brandLabel } from "../components/MartaShell";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { getMartaScope, regionLabel } from "../../../lib/martaScope";
 
@@ -65,7 +65,7 @@ function Body({ email, profile }) {
           <>
             <Row label="Nama" value={scope.fullName || "-"} />
             <Row label="Role MartaHub" value={ROLE_LABEL[scope.role] || scope.role || "-"} />
-            <Row label="Cakupan" value={scope.unscoped ? "Semua Region × Brand" : `${regionLabel(scope.region)} · ${(scope.brand || "-").toUpperCase()}`} />
+            <Row label="Cakupan" value={scope.unscoped ? "Semua Region × Brand" : `${regionLabel(scope.region)} · ${brandLabel(scope.brand)}`} />
             {scope.branchName && <Row label="Cabang" value={scope.branchName} />}
           </>
         )}
@@ -416,7 +416,7 @@ function ProductTypesSettings({ canEdit, email }) {
             {!loading && rows.map((r) => (
               <tr key={r.id} style={{ borderTop: `1px solid ${T.line}` }}>
                 <td style={{ padding: "8px 10px", textTransform: "uppercase", fontWeight: 700 }}>{r.category}</td>
-                <td style={{ padding: "8px 10px", color: T.mid }}>{r.brand || "-"}</td>
+                <td style={{ padding: "8px 10px", color: T.mid }}>{brandLabel(r.brand)}</td>
                 <td style={{ padding: "8px 10px" }}>{r.name}</td>
                 <td style={{ padding: "8px 10px" }}>Rp{Number(r.unit_price).toLocaleString("id-ID")}</td>
                 <td style={{ padding: "8px 10px", color: r.active ? T.success : T.lo }}>{r.active ? "Aktif" : "Nonaktif"}</td>
@@ -438,11 +438,28 @@ function ProductTypesSettings({ canEdit, email }) {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr 1fr auto", gap: 10, alignItems: "end" }}>
           <div>
             <div style={{ fontSize: 11.5, color: T.mid, marginBottom: 4 }}>Kategori</div>
-            <input value={form.category} onChange={(e) => setForm((s) => ({ ...s, category: e.target.value }))} placeholder="sp / fwa" style={inputStyle} />
+            {/* Dulu input teks bebas - sekarang dropdown, PERSIS mengikuti
+                CHECK constraint mh_product_types_category_check di DB
+                (cuma 'sp'/'fwa' yang valid) supaya tidak bisa lagi mengetik
+                nilai yang bakal ditolak Postgres. */}
+            <select value={form.category} onChange={(e) => setForm((s) => ({ ...s, category: e.target.value }))} style={inputStyle}>
+              <option value="sp">SP</option>
+              <option value="fwa">FWA</option>
+            </select>
           </div>
           <div>
             <div style={{ fontSize: 11.5, color: T.mid, marginBottom: 4 }}>Brand</div>
-            <input value={form.brand} onChange={(e) => setForm((s) => ({ ...s, brand: e.target.value }))} placeholder="im3 / 3" style={inputStyle} />
+            {/* Sama - dulu placeholder-nya "im3 / 3" (SALAH, menyesatkan -
+                constraint mh_product_types_brand_check cuma izinkan 'im3'
+                atau 'tri', BUKAN '3'), makanya update sebelumnya gagal
+                dgn error "violates check constraint ...brand_check".
+                Sekarang dropdown, kosong = berlaku utk semua brand (p_brand
+                dikirim null, CHECK constraint otomatis lolos utk NULL). */}
+            <select value={form.brand} onChange={(e) => setForm((s) => ({ ...s, brand: e.target.value }))} style={inputStyle}>
+              <option value="">Semua Brand</option>
+              <option value="im3">IM3</option>
+              <option value="tri">3ID</option>
+            </select>
           </div>
           <div>
             <div style={{ fontSize: 11.5, color: T.mid, marginBottom: 4 }}>Nama</div>

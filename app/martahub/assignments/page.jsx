@@ -38,6 +38,16 @@ const REGIONS = [["NORTH SUMATERA", "NORTH SUMATERA"], ["CENTRAL SUMATERA", "CEN
 const BRANDS = [["im3", "IM3"], ["tri", "3ID (TRI)"]];
 const ROLE_LABEL = Object.fromEntries(ROLES);
 const REGION_LABEL = Object.fromEntries(REGIONS);
+// spm_sumatera TIDAK BOLEH dikelola (tambah/edit/hapus) dari User Management
+// - identitasnya berasal dari pendaftaran SandraHub (tabel profiles di
+// project TraceHub, lihat lib/martaAccess.js), dan DB sekarang menolak keras
+// mh_delete_assignment utk baris ini (migrasi mh_super_admins_from_sandrahub
+// di project MartaHub). ROLES (di atas) tetap dipertahankan utuh utk lookup
+// label (ROLE_LABEL dipakai di banyak tempat termasuk baris spm_sumatera
+// lama yg mungkin masih ada di data), tapi dropdown Tambah/Edit & daftar yg
+// ditampilkan HARUS pakai daftar/role terfilter di bawah ini.
+const SELECTABLE_ROLES = ROLES.filter(([v]) => v !== "spm_sumatera");
+const isProtectedRole = (role) => role === "spm_sumatera";
 
 // Role yang atasannya diisi lewat `supervisor_assignment_id` (§4.2/§4.5a),
 // bukan lewat region/brand/branch manual - nilai = role atasan yang valid.
@@ -85,6 +95,10 @@ function Body({ canManage, callerEmail }) {
     getMartaScope(callerEmail).then((s) => { if (on) setScope(s); });
     return () => { on = false; };
   }, [callerEmail]);
+
+  // spm_sumatera disaring dari SEMUA yang dirender/dikelola di halaman ini
+  // (tabel, hierarki, dropdown Tambah/Edit) - lihat catatan isProtectedRole.
+  const visibleRows = useMemo(() => rows.filter((r) => !isProtectedRole(r.role)), [rows]);
 
   function copyEmail(u) {
     navigator.clipboard?.writeText(u.email);
@@ -256,10 +270,13 @@ function Body({ canManage, callerEmail }) {
         </div>
       )}
 
-      {/* Assignments table / hierarki */}
+      {/* Assignments table / hierarki - spm_sumatera SENGAJA disaring dari
+          apa pun yg ditampilkan/dikelola di sini (lihat isProtectedRole di
+          atas) - identitasnya berasal dari pendaftaran SandraHub, bukan baris
+          mh_assignments yg bisa diedit/dihapus lewat User Management. */}
       <div style={{ ...card, padding: 0, overflow: "hidden" }}>
         <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.line}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-          <div style={{ fontWeight: 800, fontSize: 14 }}>Daftar Assignment <span style={{ color: T.mid, fontWeight: 500 }}>· {rows.length}</span></div>
+          <div style={{ fontWeight: 800, fontSize: 14 }}>Daftar Assignment <span style={{ color: T.mid, fontWeight: 500 }}>· {visibleRows.length}</span></div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ display: "flex", border: `1px solid ${T.line}`, borderRadius: 9, overflow: "hidden" }}>
               <button onClick={() => setViewMode("table")} style={{ ...btn, border: "none", borderRadius: 0, background: viewMode === "table" ? T.hover || "#F0F2F5" : "#fff", fontWeight: viewMode === "table" ? 800 : 600 }}>Tabel</button>
@@ -274,7 +291,7 @@ function Body({ canManage, callerEmail }) {
             {loading ? (
               <div style={{ padding: 26, textAlign: "center", color: T.lo }}>Memuat…</div>
             ) : (
-              <HierarchyTree rows={rows} />
+              <HierarchyTree rows={visibleRows} />
             )}
           </div>
         ) : (
@@ -285,8 +302,8 @@ function Body({ canManage, callerEmail }) {
             </tr></thead>
             <tbody>
               {loading && <tr><td colSpan={8} style={{ padding: 26, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
-              {!loading && rows.length === 0 && <tr><td colSpan={8} style={{ padding: 26, textAlign: "center", color: T.lo }}>Belum ada assignment.</td></tr>}
-              {!loading && rows.map((r) => {
+              {!loading && visibleRows.length === 0 && <tr><td colSpan={8} style={{ padding: 26, textAlign: "center", color: T.lo }}>Belum ada assignment.</td></tr>}
+              {!loading && visibleRows.map((r) => {
                 const sup = r.supervisor_assignment_id ? rows.find((x) => x.id === r.supervisor_assignment_id) : null;
                 return (
                 <tr key={r.id} style={{ borderTop: `1px solid ${T.line}` }}>
@@ -315,8 +332,8 @@ function Body({ canManage, callerEmail }) {
         )}
       </div>
 
-      {showAdd && <AddModal onClose={() => setShowAdd(false)} onSave={addAssignments} existing={rows} scope={scope} />}
-      {editRow && <EditModal row={editRow} onClose={() => setEditRow(null)} onSave={updateAssignment} existing={rows} scope={scope} />}
+      {showAdd && <AddModal onClose={() => setShowAdd(false)} onSave={addAssignments} existing={visibleRows} scope={scope} />}
+      {editRow && <EditModal row={editRow} onClose={() => setEditRow(null)} onSave={updateAssignment} existing={visibleRows} scope={scope} />}
       {confirmState && <ConfirmModal {...confirmState} onClose={() => setConfirmState(null)} />}
     </div>
   );
@@ -622,7 +639,7 @@ function AddModal({ onClose, onSave, existing, scope }) {
             <div style={{ flex: 1 }}>
               <Field label="Role">
                 <select value={role} onChange={(e) => { setRole(e.target.value); setSelected(new Set()); setSupervisorId(""); setDsfOrgId(""); setBranchId(""); setBranchName(""); setMc(""); setSubSelected(new Set()); }} style={selectStyle}>
-                  {ROLES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  {SELECTABLE_ROLES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
               </Field>
             </div>
@@ -905,7 +922,7 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
             )}
           </Field>
           <div style={{ display: "flex", gap: 12 }}>
-            <div style={{ flex: 1 }}><Field label="Role"><select value={role} onChange={(e) => { setRole(e.target.value); }} style={selectStyle}>{ROLES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field></div>
+            <div style={{ flex: 1 }}><Field label="Role"><select value={role} onChange={(e) => { setRole(e.target.value); }} style={selectStyle}>{SELECTABLE_ROLES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field></div>
             {role !== "spm_sumatera" && (
               <div style={{ flex: 1 }}>
                 <Field label="Region">

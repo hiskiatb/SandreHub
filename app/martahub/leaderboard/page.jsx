@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import MartaShell, { T } from "../components/MartaShell";
+import MartaShell, { T, brandLabel } from "../components/MartaShell";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 
 export default function LeaderboardPage() {
@@ -47,8 +47,8 @@ function Body() {
                 <tr key={r.id || i} style={{ borderTop: `1px solid ${T.line}` }}>
                   <td style={{ padding: "10px 14px", fontWeight: 800 }}>{medal(i)}</td>
                   <td style={{ padding: "10px 14px", fontWeight: 700 }}>{r.user_name || r.user_id || "-"}</td>
-                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.branch_id || "-"}</td>
-                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.brand || "-"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{r.branch_name || r.branch_id || "-"}</td>
+                  <td style={{ padding: "10px 14px", color: T.mid }}>{brandLabel(r.brand)}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{r.total_activities ?? 0}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{r.achievement_pct != null ? `${Math.round(r.achievement_pct)}%` : "-"}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{r.productivity_pct != null ? `${Math.round(r.productivity_pct)}%` : "-"}</td>

@@ -26,25 +26,55 @@ const NAV_ITEMS = [
   { key: "profile", label: "Profil", icon: User2, href: "/martahub/m/profile" },
 ];
 
-/** Hook sesi bersama - cek login, ambil scope MartaHub sekali. Redirect ke
- * login otomatis kalau tidak ada sesi. */
+// ── Cache sesi (di luar komponen, level modul) ──────────────────────────────
+// useMartaSession() dipanggil di SETIAP halaman /martahub/m/** (tiap halaman
+// mengkomposisi <MobileShell active="...">). Sebelumnya hook ini SELALU
+// mengulang dari nol tiap kali halaman baru di-mount: getSession() lalu
+// getMartaScope() (query mh_profiles sungguhan lewat jaringan) - berurutan,
+// tidak ada yang dirender sampai keduanya selesai. Akibatnya tiap kali
+// pindah menu (Home → Aktivitas → Kalender dst) splash/spinner nongol lagi,
+// padahal scope (role/branch/brand) praktis TIDAK PERNAH berubah di tengah
+// sesi yang sama. Cache modul ini (pola sama dgn _branchMapPromise di
+// lib/martaScope.js) menyimpan hasil resolusi terakhir; kalau masih segar
+// (< SESSION_TTL_MS) dipakai LANGSUNG lewat initializer useState - render
+// pertama halaman yang baru dibuka sudah punya data, TANPA splash - sambil
+// tetap diverifikasi ulang diam-diam di background (stale-while-revalidate)
+// supaya perubahan asli (role dicabut dll) tetap kepakai dlm waktu wajar.
+const SESSION_TTL_MS = 90_000;
+let _sessionCache = null; // { email, userId, scope, ts }
+
+// Logout HARUS membuang cache ini (jangan sampai sesi user berikutnya di tab
+// yang sama "mewarisi" scope user sebelumnya) - dipasang sekali di sini lewat
+// listener alih-alih mengubah tiap tombol Keluar di berbagai halaman.
+supabaseMarta.auth.onAuthStateChange((event) => {
+  if (event === "SIGNED_OUT") _sessionCache = null;
+});
+
+/** Hook sesi bersama - cek login, ambil scope MartaHub (di-cache sebentar,
+ * lihat catatan di atas). Redirect ke login otomatis kalau tidak ada sesi. */
 export function useMartaSession() {
   const router = useRouter();
-  const [state, setState] = useState({ loading: true, email: null, userId: null, scope: null });
+  const [state, setState] = useState(() =>
+    _sessionCache
+      ? { loading: false, email: _sessionCache.email, userId: _sessionCache.userId, scope: _sessionCache.scope }
+      : { loading: true, email: null, userId: null, scope: null }
+  );
 
   useEffect(() => {
     let alive = true;
     (async () => {
       const { data: { session } } = await supabaseMarta.auth.getSession();
-      if (!session) { router.replace("/martahub/m/login"); return; }
+      if (!session) { _sessionCache = null; router.replace("/martahub/m/login"); return; }
       if (!alive) return;
-      const scope = await getMartaScope(session.user.email);
+      const cacheFresh = _sessionCache && _sessionCache.email === session.user.email && (Date.now() - _sessionCache.ts) < SESSION_TTL_MS;
+      const scope = cacheFresh ? _sessionCache.scope : await getMartaScope(session.user.email);
       if (!alive) return;
       // Baris profil ada tapi belum aktif (menunggu assign / dilepas) → jangan
       // masuk shell utama sama sekali, arahkan ke halaman status khusus -
       // SAMA PERSIS dgn routing /pending & /revoked di app Flutter.
-      if (scope.authState === "revoked") { router.replace(`/martahub/m/revoked?email=${encodeURIComponent(session.user.email)}`); return; }
-      if (scope.authState === "pending") { router.replace(`/martahub/m/pending?email=${encodeURIComponent(session.user.email)}`); return; }
+      if (scope.authState === "revoked") { _sessionCache = null; router.replace(`/martahub/m/revoked?email=${encodeURIComponent(session.user.email)}`); return; }
+      if (scope.authState === "pending") { _sessionCache = null; router.replace(`/martahub/m/pending?email=${encodeURIComponent(session.user.email)}`); return; }
+      _sessionCache = { email: session.user.email, userId: session.user.id, scope, ts: Date.now() };
       if (alive) setState({ loading: false, email: session.user.email, userId: session.user.id, scope });
     })();
     return () => { alive = false; };

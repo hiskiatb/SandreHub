@@ -9,6 +9,7 @@ import { ArrowLeft, PackagePlus, CheckCircle2, XCircle, Clock, Loader2 } from "l
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../_shared/MobileShell";
 import { fmtInt } from "../../_shared/activityUi";
 import { fetchClaimRequests, decideClaimRequest } from "../../_shared/posmData";
+import { BRAND_DISPLAY } from "../../_shared/planData";
 
 const TABS = [{ key: "pending", label: "Menunggu" }, { key: "approved", label: "Disetujui" }, { key: "rejected", label: "Ditolak" }];
 
@@ -104,7 +105,7 @@ function ClaimCard({ r, busy, onApprove, onReject }) {
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ fontSize: 13.5, fontWeight: 800, color: "#17181C" }}>{r.requested_by_name || "-"}</div>
-          <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{r.branch_id} · {(r.brand || "").toUpperCase()} · {r.month}</div>
+          <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{r.branch_id} · {BRAND_DISPLAY[r.brand] || (r.brand || "").toUpperCase()} · {r.month}</div>
         </div>
         <span style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 3, fontSize: 9.5, fontWeight: 800, padding: "4px 9px", borderRadius: 999, color: badge.color, background: badge.bg }}>
           <BadgeIcon size={10} /> {badge.label}

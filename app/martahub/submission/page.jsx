@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
-import MartaShell, { T } from "../components/MartaShell";
+import MartaShell, { T, brandLabel } from "../components/MartaShell";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { getMartaScope, applyMartaScope } from "../../../lib/martaScope";
 
@@ -48,7 +48,7 @@ function Body({ email }) {
       {!MARTA_CONFIGURED && <div style={{ ...card, borderColor: T.warning, background: T.warningBg, color: "#7a5b00", marginBottom: 16 }}>Supabase MartaHub belum dikonfigurasi / project paused.</div>}
       {scope && !scope.unscoped && scope.found && (
         <div style={{ display: "inline-block", marginBottom: 10, fontSize: 11, fontWeight: 700, color: T.mid, background: "#F0F4FA", border: `1px solid ${T.line}`, borderRadius: 100, padding: "2px 10px" }}>
-          Scope: {scope.region || "-"} · {(scope.brand || "-").toUpperCase()}
+          Scope: {scope.region || "-"} · {brandLabel(scope.brand)}
         </div>
       )}
       <div style={{ ...card, padding: 0, overflow: "hidden" }}>
@@ -63,7 +63,7 @@ function Body({ email }) {
               {!loading && rows.map((r) => (
                 <tr key={r.id} style={{ borderTop: `1px solid ${T.line}` }}>
                   <td style={{ padding: "10px 14px", fontWeight: 700 }}>{r.event_name || "-"}</td>
-                  <td style={{ padding: "10px 14px" }}>{r.brand ? <span style={{ fontSize: 10.5, fontWeight: 800, color: r.brand === "tri" ? T.tri : T.im3 }}>{r.brand === "tri" ? "3ID" : "IM3"}</span> : "-"}</td>
+                  <td style={{ padding: "10px 14px" }}>{r.brand ? <span style={{ fontSize: 10.5, fontWeight: 800, color: String(r.brand).toLowerCase() === "tri" ? T.tri : T.im3 }}>{brandLabel(r.brand)}</span> : "-"}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{r.mc || "-"}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{r.site_id || "-"}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{fmtDate(r.plan_date_start || r.plan_date)}</td>

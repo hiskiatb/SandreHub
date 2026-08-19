@@ -18,19 +18,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  LogOut, MapPin, Building2, ChevronRight, Bell,
+  LogOut, Building2, ChevronRight, Bell,
   CalendarPlus, ListChecks, Map as MapIcon, Trophy, ShieldCheck, ClipboardCheck, Lightbulb, PackageCheck,
-  Target, CheckCircle2, Gauge, Wallet, Tags, LayoutDashboard,
+  Target, CheckCircle2, Gauge, Wallet, Tags, LayoutDashboard, UserCog, FileEdit,
 } from "lucide-react";
 import supabaseMarta from "../../../lib/supabaseMarta";
-import { applyMartaScope } from "../../../lib/martaScope";
+import { applyMartaScope, loadBranchMap } from "../../../lib/martaScope";
 import MobileShell, { useMartaSession, ShellSpinner, MartaSplash, FF, BRAND } from "./_shared/MobileShell";
-import { statusMeta, fmtDate, fmtInt } from "./_shared/activityUi";
-import { APPROVER_ROLES } from "./_shared/planData";
+import { statusMeta, fmtDate, fmtInt, isDraftIncomplete } from "./_shared/activityUi";
+import { APPROVER_ROLES, ADDABLE_ROLES_FOR, BRAND_DISPLAY } from "./_shared/planData";
 import { fetchUnreadCount } from "./_shared/notifData";
 
 const ROLE_LABEL = { bme: "BME", rge: "RGE", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
-const ACTIVITY_COLS = "id,event_name,brand,branch_id,event_category,plan_date,status,checkin_valid,target_sp,target_fwa,actual_sp,actual_fwa,cost_actual,actual_rev_3m,created_at,site_id";
+// mc/poi_type/event_categories/plan_date_start/plan_dates_multi ditambahkan
+// supaya "draft belum lengkap" di Beranda pakai definisi yg SAMA PERSIS dgn
+// halaman detail & daftar Aktivitas (lihat isDraftIncomplete di activityUi.js).
+const ACTIVITY_COLS = "id,event_name,brand,branch_id,mc,event_category,event_categories,plan_date,plan_date_start,plan_dates_multi,poi_type,status,checkin_valid,target_sp,target_fwa,actual_sp,actual_fwa,cost_actual,actual_rev_3m,created_at,site_id";
 
 const TIPS = [
   "Check-in tepat di lokasi site supaya validasi laporan otomatis lolos tanpa perlu ditinjau manual.",
@@ -73,6 +76,8 @@ export default function MartaMobileHome() {
   const [monthKey, setMonthKey] = useState(months[0].key);
   const [branchFilter, setBranchFilter] = useState("");
   const [brandFilter, setBrandFilter] = useState("");
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
 
   const isApprover = APPROVER_ROLES.includes(scope?.role);
 
@@ -108,14 +113,17 @@ export default function MartaMobileHome() {
   }, [loading]);
 
   // Nama cabang utk filter - hanya diperlukan role unscoped (admin/head/
-  // spm_sumatera), yg baris aktivitasnya lintas cabang.
+  // spm_sumatera), yg baris aktivitasnya lintas cabang. Pakai loadBranchMap()
+  // yang sudah di-cache di lib/martaScope.js (dipakai bareng applyMartaScope
+  // di bawah) - sebelumnya halaman ini query mh_branches sendiri, padahal
+  // isinya sama persis dgn yang sudah/akan diambil helper itu.
   useEffect(() => {
     if (loading || !scope?.unscoped) return;
     let alive = true;
     (async () => {
       try {
-        const { data } = await supabaseMarta.from("mh_branches").select("id,name");
-        if (alive && data) setBranchMap(new Map(data.map((b) => [b.id, b.name])));
+        const map = await loadBranchMap();
+        if (alive) setBranchMap(new Map(Array.from(map, ([id, b]) => [id, b.name])));
       } catch { /* best-effort */ }
     })();
     return () => { alive = false; };
@@ -143,7 +151,11 @@ export default function MartaMobileHome() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, isApprover, scope]);
 
+  // Keluar sekarang WAJIB lewat konfirmasi dulu (LogoutConfirmSheet) -
+  // sebelumnya satu tap langsung logout, gampang kepencet tidak sengaja
+  // krn posisinya persis sebelah ikon Notifikasi di header.
   const signOut = async () => {
+    setLoggingOut(true);
     await supabaseMarta.auth.signOut();
     router.replace("/martahub/m/login");
   };
@@ -157,12 +169,18 @@ export default function MartaMobileHome() {
     : [];
   const brandOptions = scope?.unscoped
     ? Array.from(new Set((rows || []).map((r) => r.brand).filter(Boolean)))
-        .map((b) => ({ value: b, label: b.toUpperCase() }))
+        .map((b) => ({ value: b, label: BRAND_DISPLAY[b] || b.toUpperCase() }))
         .sort((a, b) => a.label.localeCompare(b.label))
     : [];
 
+  // Perbandingan brand HARUS case-insensitive - rows di sini datang dari
+  // mh_activities (brand disimpan "IM3"/"TRI", huruf besar), sedangkan
+  // brandFilter utk role scoped (bme/rge/tmv dst) berasal dari scope.brand
+  // (mh_profiles, "im3"/"tri" huruf kecil). Tanpa .toLowerCase() di sini,
+  // memilih filter brand pada role scoped akan selalu menampilkan 0 hasil
+  // krn "IM3" !== "im3".
   const scopedRows = (rows || []).filter((r) =>
-    (!branchFilter || r.branch_id === branchFilter) && (!brandFilter || r.brand === brandFilter)
+    (!branchFilter || r.branch_id === branchFilter) && (!brandFilter || (r.brand || "").toLowerCase() === brandFilter.toLowerCase())
   );
   const monthRows = scopedRows.filter((r) => (r.plan_date || "").slice(0, 7) === monthKey);
   const targetSp = monthRows.reduce((s, r) => s + (r.target_sp || 0), 0);
@@ -177,11 +195,20 @@ export default function MartaMobileHome() {
 
   // Kartu "Mission" - aksi paling relevan berikutnya: butuh check-in dulu >
   // butuh isi laporan actual > lihat plan mendatang terdekat > kosong.
-  const needsCheckin = (rows || []).find((r) => (r.status === "draft" || r.status === "approved") && r.checkin_valid == null);
+  // Draft BELUM boleh diminta check-in (belum diajukan/disetujui TMV) -
+  // sebelumnya disamakan dgn "approved" jadi plan yang masih draft/belum
+  // selesai muncul seolah "Plan siap - lakukan check-in". Draft yang belum
+  // lengkap sudah dinudge lewat approvalCard "Lanjutkan Draft" di bawah.
+  const needsCheckin = (rows || []).find((r) => r.status === "approved" && r.checkin_valid == null);
   const needsReport = (rows || []).find((r) => r.checkin_valid != null && r.actual_sp == null);
   const upcoming = (rows || []).filter((r) => r.plan_date && r.plan_date >= new Date().toISOString().slice(0, 10)).sort((a, b) => (a.plan_date > b.plan_date ? 1 : -1))[0];
 
   const draftCount = (rows || []).filter((r) => r.status === "draft").length;
+  // "Belum diselesaikan" = draft yg field wajib wizard-nya masih kosong
+  // (definisi SAMA PERSIS dgn kartu Aktivitas & redirect otomatis di halaman
+  // detail) - dipakai banner khusus di bawah supaya infonya jelas & tidak
+  // terkubur di dalam carousel yg auto-geser.
+  const draftIncompleteCount = (rows || []).filter((r) => r.status === "draft" && isDraftIncomplete(r)).length;
   const recent = (rows || []).slice(0, 5);
 
   return (
@@ -200,13 +227,13 @@ export default function MartaMobileHome() {
         borderBottom: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 6px 20px rgba(23,24,28,0.05)",
       }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div>
+          <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 12, color: "#8A8A96", fontWeight: 600 }}>{greeting()},</div>
-            <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em", maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", maxWidth: 230, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {scope?.fullName || email}
             </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             {/* Transfer MSISDN tidak lagi punya akses terpisah - permintaan yg
                 ditujukan ke "yang bersangkutan" (pemilik nomor saat ini) masuk
                 lewat inbox Notifikasi yang sama, badge-nya digabung di sini. */}
@@ -215,8 +242,12 @@ export default function MartaMobileHome() {
               <Bell size={15} />
               {(unreadNotifs + pendingTransfers) > 0 && <Badge n={unreadNotifs + pendingTransfers} />}
             </button>
-            <button onClick={signOut}
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, background: "#FFFFFF", border: "1px solid #E4E5EA", borderRadius: 11, cursor: "pointer", color: "#8A8A96" }}>
+            {/* Keluar - sengaja diberi warna merah (beda dari Notifikasi)
+                supaya aksi destruktif ini langsung terlihat beda tegas,
+                dan sekarang butuh konfirmasi (LogoutConfirmSheet) dulu -
+                bukan langsung logout begitu ditap. */}
+            <button onClick={() => setLogoutConfirmOpen(true)}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, background: "#FDECEC", border: "1px solid #F6C6C6", borderRadius: 11, cursor: "pointer", color: "#ED1C24" }}>
               <LogOut size={15} />
             </button>
           </div>
@@ -226,29 +257,76 @@ export default function MartaMobileHome() {
       <div style={{ padding: "0 20px 4px" }}>
         {/* Scope - sampai di sini authState sudah pasti 'active' (lihat
             useMartaSession di MobileShell.jsx, yg redirect ke /pending atau
-            /revoked lebih dulu kalau belum aktif). Untuk role unscoped
-            (admin/head/spm_sumatera) diganti jadi filter branch & brand yg
-            bisa dipilih, bukan cuma label statis. */}
-        {scope?.unscoped ? (
-          // 70/30: Cabang jauh lebih sering dipakai utk menyempitkan cakupan
-          // (banyak pilihan, nama panjang) drpd Brand (cuma 2 pilihan) - jadi
-          // dikasih ruang lebih besar. Brand ditampilkan sbg tag warna
-          // (spt IM3/3ID di kartu lain), bukan field dropdown penuh.
-          <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
-            <div style={{ flex: "7 1 0%", minWidth: 0 }}>
-              <FilterSelect icon={Building2} value={branchFilter} onChange={setBranchFilter} placeholder="Semua Cabang" options={branchOptions} fullWidth />
-            </div>
-            <div style={{ flex: "3 1 0%", minWidth: 0 }}>
-              <BrandTagSelect value={brandFilter} onChange={setBrandFilter} options={brandOptions} />
-            </div>
+            /revoked lebih dulu kalau belum aktif). Cabang & Brand SEKARANG
+            SELALU dirender lewat komponen select yg sama persis (bukan
+            berbeda antara role unscoped vs scoped seperti sebelumnya) -
+            bedanya cuma DAFTAR OPSI: role unscoped (admin/head/spm_sumatera)
+            dapat daftar penuh dari data & benar-benar bisa memfilter, role
+            scoped (BME/RGE dst) cuma dikasih satu opsi (cabang/brand
+            miliknya sendiri) sehingga field otomatis tampil non-interaktif
+            (abu-abu, tanpa panah) - user langsung paham itu TIDAK BISA
+            ditekan utk diganti, bukan cuma dropdown kosong yg mubazir. */}
+        <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
+          <div style={{ flex: "7 1 0%", minWidth: 0 }}>
+            <FilterSelect
+              icon={Building2}
+              value={branchFilter}
+              onChange={setBranchFilter}
+              placeholder="Semua Cabang"
+              options={scope?.unscoped ? branchOptions : ((scope?.branchName || scope?.region) ? [{ value: "self", label: scope.branchName || scope.region }] : [])}
+              fullWidth
+            />
           </div>
-        ) : (
-          <div style={{ marginTop: 16, display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {(scope?.branchName || scope?.region) && <Pill icon={Building2} text={scope.branchName || scope.region} />}
-            {scope?.brand && <Pill icon={MapPin} text={scope.brand.toUpperCase()} />}
+          <div style={{ flex: "3 1 0%", minWidth: 0 }}>
+            <BrandTagSelect
+              value={brandFilter}
+              onChange={setBrandFilter}
+              options={scope?.unscoped ? brandOptions : (scope?.brand ? [{ value: scope.brand, label: BRAND_DISPLAY[scope.brand] || scope.brand.toUpperCase() }] : [])}
+            />
           </div>
-        )}
+        </div>
       </div>
+
+      {logoutConfirmOpen && (
+        <LogoutConfirmSheet
+          loading={loggingOut}
+          onCancel={() => setLogoutConfirmOpen(false)}
+          onConfirm={signOut}
+        />
+      )}
+
+      {/* Banner draft belum selesai - SENGAJA elemen berdiri sendiri yg
+          SELALU terlihat (bukan dikubur di dalam MissionCarousel yg
+          auto-geser tiap 5 detik & bisa saja user tidak sedang melihat
+          kartu itu), supaya jumlah draft yg belum lengkap langsung jelas
+          begitu buka Beranda. Hanya utk non-approver (approver melihat
+          antrean approval-nya sendiri lewat carousel, bukan draft miliknya). */}
+      {!isApprover && draftIncompleteCount > 0 && (
+        <div style={{ padding: "16px 20px 0" }}>
+          <button onClick={() => router.push("/martahub/m/activities?tab=draft")}
+            style={{
+              width: "100%", display: "flex", alignItems: "center", gap: 12, textAlign: "left", cursor: "pointer", fontFamily: FF,
+              padding: "14px 15px", borderRadius: 18, border: "1px solid #FED7AA",
+              background: "linear-gradient(135deg, #FFF7ED 0%, #FFFBF5 65%)",
+              boxShadow: "0 4px 14px rgba(194,65,12,0.08)",
+            }}>
+            <div style={{ flexShrink: 0, width: 42, height: 42, borderRadius: 13, background: "linear-gradient(150deg,#F97316,#EA580C)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 10px rgba(234,88,12,0.28)" }}>
+              <FileEdit size={19} color="#fff" />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 800, color: "#9A3412" }}>
+                {draftIncompleteCount} draft belum selesai
+              </div>
+              <div style={{ marginTop: 2, fontSize: 11.5, color: "#B45309", fontWeight: 600, lineHeight: 1.4 }}>
+                Lengkapi &amp; ajukan plan sebelum tanggal acara terlewat.
+              </div>
+            </div>
+            <div style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 999, background: "rgba(234,88,12,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <ChevronRight size={15} color="#EA580C" />
+            </div>
+          </button>
+        </div>
+      )}
 
       {/* ACHIEVEMENT card - panel gelap premium: gradasi multi-stop (bukan
           abu flat), sheen halus di sudut, teks persentase gradient, quad
@@ -337,6 +415,14 @@ export default function MartaMobileHome() {
                 memutuskan plan/laporan masuk) - ini soal pemantauan +
                 edit tim secara total. */}
             {scope?.role === "spm_sumatera" && <MenuItem icon={LayoutDashboard} label="Management" color="#38383E" onClick={() => router.push("/martahub/m/management")} />}
+            {/* User Management - halaman terpisah dari Management View,
+                dibuka utk role yg punya "bawahan" utk dikelola (lihat
+                ADDABLE_ROLES_FOR di planData.js: spm_sumatera/admin/head/
+                tmv/bme/rge/tl_dsf). dsf/md/dst di bawah tl_dsf tidak dapat
+                menu ini krn mereka tidak mengelola siapa pun. */}
+            {Object.prototype.hasOwnProperty.call(ADDABLE_ROLES_FOR, scope?.role) && (
+              <MenuItem icon={UserCog} label="User Management" color="#7C3AED" onClick={() => router.push("/martahub/m/user-management")} />
+            )}
           </div>
         </div>
       </div>
@@ -386,40 +472,44 @@ function Badge({ n }) {
   );
 }
 
-function Pill({ icon: Icon, text }) {
-  return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 999, background: "#FFFFFF", border: "1px solid #E9EAEE", fontSize: 12, fontWeight: 700, color: "#3A3A44" }}>
-      <Icon size={12.5} color="#8A8A96" /> {text}
-    </div>
-  );
-}
-
-/** Pill berbentuk <select> - dipakai role unscoped (admin/head/spm_sumatera)
- * utk memfilter dashboard Home per cabang/brand.
- * Sebelumnya <select> aslinya cuma selebar teksnya sendiri di dalam pill -
- * jadi area yg kelihatan "bisa ditekan" (pill putih) lebih besar dari area
- * yg BENERAN merespons tap (cuma teks + panah kecil). Sekarang <select>
- * ditumpuk transparan menutupi SELURUH pill (teknik overlay), jadi tap di
- * mana saja di dalam pill pasti membuka pilihan - bukan cuma pas di teks. */
+/** Pill berbentuk <select> - dipakai utk filter Cabang di Home. Sekarang
+ * SELALU dipakai baik role unscoped (opsi banyak, benar-benar interaktif)
+ * maupun scoped (cuma 1 opsi - cabang miliknya sendiri, otomatis terkunci).
+ * Panah kanan HANYA muncul kalau options.length > 1 (baru benar-benar ada
+ * pilihan lain utk dibuat) - kalau cuma 1 opsi, field beralih ke gaya
+ * non-interaktif (abu-abu, tanpa overlay <select> sama sekali, cursor
+ * default) supaya jelas terlihat SEKALI PANDANG bahwa field ini terkunci,
+ * bukan dropdown kosong yg terlihat sama tapi ternyata tidak bisa apa-apa.
+ * Saat interaktif, <select> ditumpuk transparan menutupi SELURUH pill
+ * (overlay), jadi tap di mana saja di dalam pill membuka pilihan. */
 function FilterSelect({ icon: Icon, value, onChange, placeholder, options, fullWidth }) {
   const selected = options.find((o) => o.value === value);
+  const interactive = options.length > 1;
+  const label = selected ? selected.label : (options.length === 1 ? options[0].label : placeholder);
+  const active = interactive && !!value;
   return (
     <div style={{
       position: "relative", display: fullWidth ? "flex" : "inline-flex", width: fullWidth ? "100%" : undefined,
       boxSizing: "border-box", alignItems: "center", gap: 7,
-      minHeight: 40, padding: "0 34px 0 14px", borderRadius: 999,
-      background: value ? "#FDECEC" : "#FFFFFF", border: `1.5px solid ${value ? "#ED1C24" : "#E4E5EA"}`,
+      minHeight: 40, padding: interactive ? "0 34px 0 14px" : "0 14px", borderRadius: 999,
+      background: !interactive ? "#F4F5F7" : (active ? "#FDECEC" : "#FFFFFF"),
+      border: `1.5px solid ${!interactive ? "#E9EAEE" : (active ? "#ED1C24" : "#E4E5EA")}`,
+      cursor: interactive ? "pointer" : "default",
     }}>
-      <Icon size={13} color={value ? "#ED1C24" : "#8A8A96"} style={{ flexShrink: 0 }} />
-      <span style={{ fontSize: 12.5, fontWeight: 700, color: value ? "#C62828" : "#3A3A44", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: fullWidth ? 1 : undefined, maxWidth: fullWidth ? undefined : 150 }}>
-        {selected ? selected.label : placeholder}
+      <Icon size={13} color={!interactive ? "#B0B0BA" : (active ? "#ED1C24" : "#8A8A96")} style={{ flexShrink: 0 }} />
+      <span style={{ fontSize: 12.5, fontWeight: 700, color: !interactive ? "#9A9AA6" : (active ? "#C62828" : "#3A3A44"), whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: fullWidth ? 1 : undefined, maxWidth: fullWidth ? undefined : 150 }}>
+        {label}
       </span>
-      <ChevronRight size={12} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%) rotate(90deg)", color: value ? "#ED1C24" : "#8A8A96", pointerEvents: "none" }} />
-      <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={placeholder}
-        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 16 }}>
-        <option value="">{placeholder}</option>
-        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
+      {interactive && (
+        <ChevronRight size={12} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%) rotate(90deg)", color: active ? "#ED1C24" : "#8A8A96", pointerEvents: "none" }} />
+      )}
+      {interactive && (
+        <select value={value} onChange={(e) => onChange(e.target.value)} aria-label={placeholder}
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 16 }}>
+          <option value="">{placeholder}</option>
+          {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      )}
     </div>
   );
 }
@@ -433,32 +523,83 @@ function FilterSelect({ icon: Icon, value, onChange, placeholder, options, fullW
  * pakai ikon Tags generik dari lucide. */
 const BRAND_TAG_COLORS = { im3: "#E53935", tri: "#E23B86" };
 const BRAND_TAG_INITIAL = { im3: "i3", tri: "3" };
+/** Sama seperti FilterSelect - mengikuti pola interaktif/terkunci yg sama:
+ * panah HANYA muncul kalau options.length > 1, kalau cuma 1 opsi (brand
+ * tunggal miliknya sendiri, role scoped) badge & teks otomatis diredupkan
+ * jadi abu-abu netral (bukan warna brand) dan overlay <select> dilepas sama
+ * sekali - jelas kelihatan itu cuma informasi, bukan tombol yg bisa ditekan. */
 function BrandTagSelect({ value, onChange, options }) {
+  const interactive = options.length > 1;
   const selected = options.find((o) => o.value === value);
-  const color = selected ? (BRAND_TAG_COLORS[selected.value] || "#5A5A68") : "#8A8A96";
-  const initial = selected ? (BRAND_TAG_INITIAL[selected.value] || selected.label?.[0] || "?") : null;
+  const effective = selected || (options.length === 1 ? options[0] : null);
+  const color = interactive && effective ? (BRAND_TAG_COLORS[effective.value] || "#5A5A68") : "#9A9AA6";
+  const initial = effective ? (BRAND_TAG_INITIAL[effective.value] || effective.label?.[0] || "?") : null;
   return (
     <div style={{
       position: "relative", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, width: "100%", boxSizing: "border-box",
-      minHeight: 40, padding: "0 10px", borderRadius: 999,
-      background: value ? `${color}14` : "#FFFFFF", border: `1.5px solid ${value ? color : "#E4E5EA"}`,
+      minHeight: 40, padding: interactive ? "0 22px 0 10px" : "0 10px", borderRadius: 999,
+      background: !interactive ? "#F4F5F7" : (value ? `${color}14` : "#FFFFFF"),
+      border: `1.5px solid ${!interactive ? "#E9EAEE" : (value ? color : "#E4E5EA")}`,
+      cursor: interactive ? "pointer" : "default",
     }}>
-      {selected ? (
+      {effective ? (
         <span style={{
-          width: 16, height: 16, borderRadius: 5, flexShrink: 0, background: color, color: "#fff",
+          width: 16, height: 16, borderRadius: 5, flexShrink: 0, background: interactive ? color : "#B0B0BA", color: "#fff",
           fontSize: 8.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", letterSpacing: -0.2,
         }}>{initial}</span>
       ) : (
         <Tags size={12} color={color} strokeWidth={2.2} style={{ flexShrink: 0 }} />
       )}
       <span style={{ fontSize: 12, fontWeight: 800, color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-        {selected ? selected.label : "Brand"}
+        {effective ? effective.label : "Brand"}
       </span>
-      <select value={value} onChange={(e) => onChange(e.target.value)} aria-label="Brand"
-        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 16 }}>
-        <option value="">Semua Brand</option>
-        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
+      {interactive && (
+        <ChevronRight size={11} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%) rotate(90deg)", color, pointerEvents: "none" }} />
+      )}
+      {interactive && (
+        <select value={value} onChange={(e) => onChange(e.target.value)} aria-label="Brand"
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 16 }}>
+          <option value="">Semua Brand</option>
+          {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      )}
+    </div>
+  );
+}
+
+/** Bottom sheet konfirmasi Keluar - dipanggil dari tombol Keluar merah di
+ * header, mencegah logout tidak sengaja (posisinya persis sebelah ikon
+ * Notifikasi). Bisa dibatalkan lewat tombol Batal ATAU tap backdrop, sama
+ * seperti pola konfirmasi/detail lain di app ini (mis. ActivityDetailPopup). */
+function LogoutConfirmSheet({ onCancel, onConfirm, loading }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center", fontFamily: FF }}>
+      <div onClick={loading ? undefined : onCancel} style={{ position: "absolute", inset: 0, background: "rgba(23,24,28,0.45)" }} />
+      <div style={{
+        position: "relative", width: "100%", maxWidth: 480, boxSizing: "border-box",
+        background: "#FFFFFF", borderRadius: "24px 24px 0 0",
+        padding: "22px 20px calc(env(safe-area-inset-bottom,0px) + 20px)",
+        boxShadow: "0 -10px 32px rgba(17,17,20,0.16)",
+      }}>
+        <div style={{ width: 38, height: 4, borderRadius: 99, background: "#E4E5EA", margin: "0 auto 18px" }} />
+        <div style={{ width: 52, height: 52, borderRadius: 16, background: "#FDECEC", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
+          <LogOut size={22} color="#ED1C24" />
+        </div>
+        <div style={{ fontSize: 16, fontWeight: 800, textAlign: "center", color: "#17181C" }}>Keluar dari akun?</div>
+        <div style={{ marginTop: 6, fontSize: 12.5, color: "#8A8A96", textAlign: "center", lineHeight: 1.5 }}>
+          Anda perlu login kembali untuk mengakses MartaHub.
+        </div>
+        <div style={{ marginTop: 20, display: "flex", gap: 10 }}>
+          <button onClick={onCancel} disabled={loading}
+            style={{ flex: 1, padding: "13px 0", borderRadius: 14, background: "#F4F5F7", border: "1px solid #E4E5EA", fontSize: 13.5, fontWeight: 800, color: "#3A3A44", cursor: loading ? "default" : "pointer", fontFamily: FF }}>
+            Batal
+          </button>
+          <button onClick={onConfirm} disabled={loading}
+            style={{ flex: 1, padding: "13px 0", borderRadius: 14, background: "#ED1C24", border: "none", fontSize: 13.5, fontWeight: 800, color: "#FFFFFF", cursor: loading ? "default" : "pointer", opacity: loading ? 0.75 : 1, fontFamily: FF }}>
+            {loading ? "Memproses..." : "Ya, Keluar"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

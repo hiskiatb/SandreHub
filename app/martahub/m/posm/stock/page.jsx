@@ -9,19 +9,23 @@
  */
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, PackageCheck, Plus, X, Loader2, Layers, Target as TargetIcon, PackagePlus, ClipboardCheck } from "lucide-react";
+import { ArrowLeft, PackageCheck, Plus, X, XCircle, Loader2, Layers, Target as TargetIcon, PackagePlus, ClipboardCheck, Camera, ImagePlus, ImageOff, History, ChevronRight } from "lucide-react";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../_shared/MobileShell";
 import { fmtInt } from "../../_shared/activityUi";
+import { compressToMaxBytes } from "../../_shared/imageTools";
 import {
   fetchStockOverview, listTypes, listTargets, setMonthlyStock, setTarget, upsertType,
-  fetchBranchOptions, STOCK_MODE_LABEL, currentMonthKey,
+  fetchBranchOptions, fetchStockEntries, uploadPosmatStockPhoto, posmatStockPhotoUrl,
+  STOCK_MODE_LABEL, currentMonthKey,
 } from "../../_shared/posmData";
+import { BRAND_DISPLAY } from "../../_shared/planData";
 
 const TABS = [{ key: "stock", label: "Stok" }, { key: "types", label: "Jenis" }, { key: "target", label: "Target" }];
+const fmtRupiah = (v) => v == null ? null : `Rp${Number(v).toLocaleString("id-ID", { maximumFractionDigits: 0 })}`;
 
 export default function PosmStockPage() {
   const router = useRouter();
-  const { loading: sessionLoading } = useMartaSession();
+  const { loading: sessionLoading, email, scope } = useMartaSession();
   const [tab, setTab] = useState("stock");
   const [overview, setOverview] = useState(null);
   const [types, setTypes] = useState(null);
@@ -31,10 +35,15 @@ export default function PosmStockPage() {
   const [topUpSheet, setTopUpSheet] = useState(false);
   const [typeSheet, setTypeSheet] = useState(null); // null closed, {} new, {...} edit
   const [targetSheet, setTargetSheet] = useState(false);
+  const [historyRow, setHistoryRow] = useState(null); // null closed, else overview row
 
   async function loadAll() {
     try {
-      const [o, t, tg, b] = await Promise.all([fetchStockOverview(), listTypes(), listTargets(), fetchBranchOptions()]);
+      // Head/Brand TMV dibatasi cabang di region sendiri (sama persis dgn
+      // scoping mh_branches di fetchAssignableGroups) - SPM Sumatera/Admin
+      // unscoped tetap dapat semua cabang nasional.
+      const branchRegion = ["head", "tmv"].includes(scope?.role) ? scope?.region : null;
+      const [o, t, tg, b] = await Promise.all([fetchStockOverview(), listTypes(), listTargets(), fetchBranchOptions(branchRegion)]);
       setOverview(o || []); setTypes(t || []); setTargets(tg || []); setBranches(b || []);
     } catch (e) {
       setErr(e.message || "Gagal memuat data POSM");
@@ -88,22 +97,27 @@ export default function PosmStockPage() {
             <ActionButton icon={Plus} label="Top Up Stok" onClick={() => setTopUpSheet(true)} />
             <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
               {overview.length === 0 ? <EmptyNote text="Belum ada data stok." /> : overview.map((r, i) => (
-                <div key={i} style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 14, padding: "12px 14px" }}>
+                <button key={i} onClick={() => setHistoryRow(r)}
+                  style={{ textAlign: "left", width: "100%", background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 14, padding: "12px 14px", cursor: "pointer", fontFamily: FF }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>{r.type_name}</div>
-                      <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{r.branch_name} · {(r.brand || "").toUpperCase()} · {STOCK_MODE_LABEL[r.stock_mode] || r.stock_mode}</div>
+                      <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{r.branch_name} · {BRAND_DISPLAY[r.brand] || (r.brand || "").toUpperCase()} · {STOCK_MODE_LABEL[r.stock_mode] || r.stock_mode}</div>
                     </div>
-                    <div style={{ textAlign: "right", flexShrink: 0 }}>
-                      <div style={{ fontSize: 16, fontWeight: 800, color: "#ED1C24" }}>{fmtInt(r.balance)}</div>
-                      <div style={{ fontSize: 9.5, color: "#B0B0BA", fontWeight: 700 }}>{r.unit}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                      <div style={{ textAlign: "right" }}>
+                        <div style={{ fontSize: 16, fontWeight: 800, color: "#ED1C24" }}>{fmtInt(r.balance)}</div>
+                        <div style={{ fontSize: 9.5, color: "#B0B0BA", fontWeight: 700 }}>{r.unit}</div>
+                      </div>
+                      <ChevronRight size={15} color="#C4C4CE" />
                     </div>
                   </div>
                   <div style={{ marginTop: 8, display: "flex", gap: 14, fontSize: 10.5, color: "#B0B0BA", fontWeight: 600 }}>
                     <span>Masuk: {fmtInt(r.total_topup)}</span>
                     <span>Terpakai: {fmtInt(r.total_consumed)}</span>
+                    {r.avg_unit_cost != null && <span>~{fmtRupiah(r.avg_unit_cost)}/{r.unit}</span>}
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </>
@@ -137,7 +151,7 @@ export default function PosmStockPage() {
                 return (
                   <div key={t.id} style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 14, padding: "12px 14px" }}>
                     <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>{t.branch_name} · {(t.brand || "").toUpperCase()}</div>
+                      <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>{t.branch_name} · {BRAND_DISPLAY[t.brand] || (t.brand || "").toUpperCase()}</div>
                       <div style={{ fontSize: 11, color: "#8A8A96", fontWeight: 700 }}>{t.month}</div>
                     </div>
                     <div style={{ marginTop: 6, fontSize: 11.5, color: "#5A5A68", fontWeight: 600 }}>{fmtInt(t.achieved_qty)} / {fmtInt(t.target_qty)} ({pct}%)</div>
@@ -152,9 +166,10 @@ export default function PosmStockPage() {
         )}
       </div>
 
-      {topUpSheet && <TopUpSheet branches={branches} types={types} onClose={() => setTopUpSheet(false)} onSaved={() => { setTopUpSheet(false); loadAll(); }} />}
-      {typeSheet && <TypeSheet type={typeSheet} onClose={() => setTypeSheet(null)} onSaved={() => { setTypeSheet(null); loadAll(); }} />}
-      {targetSheet && <TargetSheet branches={branches} onClose={() => setTargetSheet(false)} onSaved={() => { setTargetSheet(false); loadAll(); }} />}
+      {topUpSheet && <TopUpSheet branches={branches} types={types} callerEmail={email} onClose={() => setTopUpSheet(false)} onSaved={() => { setTopUpSheet(false); loadAll(); }} />}
+      {typeSheet && <TypeSheet type={typeSheet} callerEmail={email} onClose={() => setTypeSheet(null)} onSaved={() => { setTypeSheet(null); loadAll(); }} />}
+      {targetSheet && <TargetSheet branches={branches} callerEmail={email} onClose={() => setTargetSheet(false)} onSaved={() => { setTargetSheet(false); loadAll(); }} />}
+      {historyRow && <StockHistorySheet row={historyRow} callerEmail={email} onClose={() => setHistoryRow(null)} />}
     </MobileShell>
   );
 }
@@ -208,21 +223,36 @@ function SheetShell({ title, onClose, children, onSubmit, busy, submitLabel }) {
   );
 }
 
-function TopUpSheet({ branches, types, onClose, onSaved }) {
+function TopUpSheet({ branches, types, callerEmail, onClose, onSaved }) {
   const [branchId, setBranchId] = useState(branches[0]?.branch_id || "");
   const [brand, setBrand] = useState("im3");
   const [posmatTypeId, setPosmatTypeId] = useState(types[0]?.id || "");
   const [month, setMonth] = useState(currentMonthKey());
   const [amount, setAmount] = useState("");
+  const [unitCost, setUnitCost] = useState("");
+  const [photo, setPhoto] = useState(null); // { file, previewUrl }
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+
+  function pickPhoto(file) {
+    if (!file) return;
+    setPhoto((prev) => { if (prev) URL.revokeObjectURL(prev.previewUrl); return { file, previewUrl: URL.createObjectURL(file) }; });
+  }
+  function removePhoto() {
+    setPhoto((prev) => { if (prev) URL.revokeObjectURL(prev.previewUrl); return null; });
+  }
 
   async function submit() {
     if (!branchId || !posmatTypeId || !amount) { setErr("Lengkapi semua field wajib."); return; }
     setBusy(true); setErr("");
     try {
-      await setMonthlyStock({ branchId, brand, posmatTypeId, month, amount, note: note.trim() });
+      let photoPath = null;
+      if (photo) {
+        const blob = await compressToMaxBytes(photo.file);
+        photoPath = await uploadPosmatStockPhoto(blob);
+      }
+      await setMonthlyStock({ branchId, brand, posmatTypeId, month, amount, note: note.trim(), callerEmail, unitCost, photoPath });
       onSaved();
     } catch (e) {
       setErr(e.message || "Gagal menyimpan stok"); setBusy(false);
@@ -239,7 +269,7 @@ function TopUpSheet({ branches, types, onClose, onSaved }) {
       <Label text="Brand" />
       <select value={brand} onChange={(e) => setBrand(e.target.value)} style={selectBase}>
         <option value="im3">IM3</option>
-        <option value="tri">Tri</option>
+        <option value="tri">3ID</option>
       </select>
       <Label text="Jenis Material" />
       <select value={posmatTypeId} onChange={(e) => setPosmatTypeId(e.target.value)} style={selectBase}>
@@ -249,13 +279,107 @@ function TopUpSheet({ branches, types, onClose, onSaved }) {
       <input value={month} onChange={(e) => setMonth(e.target.value)} placeholder="202608" style={selectBase} />
       <Label text="Jumlah Top Up" />
       <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} style={selectBase} />
+      <Label text="Biaya per Satuan (opsional)" />
+      <input type="number" min="0" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} placeholder="Rp 0" style={selectBase} />
+      <Label text="Foto Materi (opsional)" />
+      <SinglePhotoField photo={photo} onPick={pickPhoto} onRemove={removePhoto} />
       <Label text="Catatan (opsional)" />
       <input value={note} onChange={(e) => setNote(e.target.value)} style={selectBase} />
     </SheetShell>
   );
 }
 
-function TypeSheet({ type, onClose, onSaved }) {
+/** Picker foto TUNGGAL - stok cuma butuh SATU foto bukti materi (beda dgn
+ * PhotoPicker multi-foto+kolase di Catat Instalasi). */
+function SinglePhotoField({ photo, onPick, onRemove }) {
+  if (photo) {
+    return (
+      <div style={{ position: "relative", width: 96, height: 96, borderRadius: 12, overflow: "hidden", background: "#F0F0F3" }}>
+        <img src={photo.previewUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        <button onClick={onRemove} type="button"
+          style={{ position: "absolute", top: 5, right: 5, width: 22, height: 22, borderRadius: "50%", background: "rgba(0,0,0,0.55)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+          <XCircle size={13} color="#fff" />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: "flex", gap: 8 }}>
+      <label style={{ flex: 1, height: 42, borderRadius: 11, border: "1.5px solid #ECEDF0", background: "#F6F7F9", color: "#5A5A68", fontSize: 12, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+        <Camera size={15} /> Ambil Foto
+        <input type="file" accept="image/*" capture="environment" hidden onChange={(e) => { onPick(e.target.files?.[0]); e.target.value = ""; }} />
+      </label>
+      <label style={{ flex: 1, height: 42, borderRadius: 11, border: "1.5px solid #ECEDF0", background: "#F6F7F9", color: "#5A5A68", fontSize: 12, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+        <ImagePlus size={15} /> Dari Galeri
+        <input type="file" accept="image/*" hidden onChange={(e) => { onPick(e.target.files?.[0]); e.target.value = ""; }} />
+      </label>
+    </div>
+  );
+}
+
+/** Riwayat transaksi top-up stok per branch×brand×jenis - tempat approver
+ * lihat foto & biaya per entri (bukan cuma saldo agregat di list utama). */
+function StockHistorySheet({ row, callerEmail, onClose }) {
+  const [entries, setEntries] = useState(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    fetchStockEntries({ branchId: row.branch_id, brand: row.brand, posmatTypeId: row.posmat_type_id, callerEmail })
+      .then((d) => { if (alive) setEntries(d || []); })
+      .catch((e) => { if (alive) setErr(e.message); });
+    return () => { alive = false; };
+  }, [row.branch_id, row.brand, row.posmat_type_id, callerEmail]);
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(23,24,28,0.45)", zIndex: 70, display: "flex", alignItems: "flex-end" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, margin: "0 auto", maxHeight: "85vh", display: "flex", flexDirection: "column", background: "#FFFFFF", borderRadius: "22px 22px 0 0", fontFamily: FF }}>
+        <div style={{ width: 40, height: 4, borderRadius: 3, background: "#E4E5EA", margin: "10px auto 4px" }} />
+        <div style={{ padding: "8px 20px 0", display: "flex", alignItems: "center", gap: 7 }}>
+          <History size={16} color="#5A5A68" />
+          <div style={{ fontSize: 15, fontWeight: 800 }}>Riwayat Stok · {row.type_name}</div>
+        </div>
+        <div style={{ padding: "2px 20px 0", fontSize: 11, color: "#8A8A96" }}>{row.branch_name} · {BRAND_DISPLAY[row.brand] || (row.brand || "").toUpperCase()}</div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "12px 20px 24px" }}>
+          {err && <div style={{ marginBottom: 10, padding: "9px 11px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 11.5, fontWeight: 600 }}>{err}</div>}
+          {entries === null ? (
+            <ShellSpinner />
+          ) : entries.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "30px 20px", color: "#8A8A96", fontSize: 12 }}>Belum ada transaksi stok.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {entries.map((e) => (
+                <div key={e.id} style={{ display: "flex", gap: 10, padding: "11px 12px", borderRadius: 14, border: "1px solid #E9EAEE" }}>
+                  {e.photo_path ? (
+                    <img src={posmatStockPhotoUrl(e.photo_path)} alt="" style={{ width: 52, height: 52, borderRadius: 10, objectFit: "cover", flexShrink: 0, background: "#F0F0F3" }} />
+                  ) : (
+                    <div style={{ width: 52, height: 52, borderRadius: 10, background: "#F0F0F3", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <ImageOff size={16} color="#C4C4CE" />
+                    </div>
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ fontSize: 13, fontWeight: 800, color: Number(e.amount) < 0 ? "#DC2626" : "#15803D" }}>
+                        {Number(e.amount) > 0 ? "+" : ""}{fmtInt(e.amount)}
+                      </span>
+                      <span style={{ fontSize: 10, color: "#B0B0BA", fontWeight: 600, flexShrink: 0 }}>{new Date(e.created_at).toLocaleDateString("id-ID")}</span>
+                    </div>
+                    {e.unit_cost != null && <div style={{ marginTop: 2, fontSize: 11, color: "#5A5A68", fontWeight: 600 }}>Biaya: {fmtRupiah(e.unit_cost)}/satuan</div>}
+                    {e.note && <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96" }}>{e.note}</div>}
+                    <div style={{ marginTop: 2, fontSize: 10, color: "#B0B0BA" }}>oleh {e.created_by_name || "-"}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TypeSheet({ type, callerEmail, onClose, onSaved }) {
   const isEdit = !!type.id;
   const [name, setName] = useState(type.name || "");
   const [category, setCategory] = useState(type.category || "");
@@ -269,7 +393,7 @@ function TypeSheet({ type, onClose, onSaved }) {
     if (!name.trim() || !unit.trim()) { setErr("Nama & satuan wajib diisi."); return; }
     setBusy(true); setErr("");
     try {
-      await upsertType({ id: type.id, name: name.trim(), category: category.trim() || null, stockMode, unit: unit.trim(), active });
+      await upsertType({ id: type.id, name: name.trim(), category: category.trim() || null, stockMode, unit: unit.trim(), active, callerEmail });
       onSaved();
     } catch (e) {
       setErr(e.message || "Gagal menyimpan jenis material"); setBusy(false);
@@ -303,7 +427,7 @@ function TypeSheet({ type, onClose, onSaved }) {
   );
 }
 
-function TargetSheet({ branches, onClose, onSaved }) {
+function TargetSheet({ branches, callerEmail, onClose, onSaved }) {
   const [branchId, setBranchId] = useState(branches[0]?.branch_id || "");
   const [brand, setBrand] = useState("im3");
   const [month, setMonth] = useState(currentMonthKey());
@@ -317,7 +441,7 @@ function TargetSheet({ branches, onClose, onSaved }) {
     setBusy(true); setErr("");
     try {
       const branchName = branches.find((b) => b.branch_id === branchId)?.branch_name || branchId;
-      await setTarget({ branchId, branchName, brand, month, targetQty, note: note.trim() });
+      await setTarget({ branchId, branchName, brand, month, targetQty, note: note.trim(), callerEmail });
       onSaved();
     } catch (e) {
       setErr(e.message || "Gagal menyimpan target"); setBusy(false);
@@ -334,7 +458,7 @@ function TargetSheet({ branches, onClose, onSaved }) {
       <Label text="Brand" />
       <select value={brand} onChange={(e) => setBrand(e.target.value)} style={selectBase}>
         <option value="im3">IM3</option>
-        <option value="tri">Tri</option>
+        <option value="tri">3ID</option>
       </select>
       <Label text="Bulan (yyyymm)" />
       <input value={month} onChange={(e) => setMonth(e.target.value)} placeholder="202608" style={selectBase} />

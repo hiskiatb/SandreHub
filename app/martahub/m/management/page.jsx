@@ -6,17 +6,15 @@
  *
  * Kenapa halaman terpisah dari Approval Center (/martahub/m/approval):
  * Approval Center itu soal MEMUTUSKAN plan/laporan yang masuk (aksinya
- * approve/revisi). Management View ini soal MEMANTAU & MENGELOLA seluruh
- * sistem secara total: ringkasan performa Sumatera, ranking tiap cabang,
- * dan tim BME/RGE (termasuk aksi EDIT penugasan) - sesuai permintaan
- * "tampilkan secara total, ada aksi edit juga".
+ * approve/revisi). Management View ini soal MEMANTAU seluruh sistem secara
+ * total: ringkasan performa Sumatera & ranking tiap cabang.
  *
  * Sama seperti /martahub/m/approval, halaman ini memakai sesi MartaHub
  * (`supabaseMarta` via `useMartaSession()`), BUKAN sesi SandraHub - supaya
  * TIDAK jatuh ke jebakan `guardMarta()` desktop yang butuh sesi lain
  * (bug yang sama yang pernah bikin menu Approval mobile error).
  *
- * 3 tab:
+ * 2 tab:
  *   1. Ringkasan  - KPI Sumatera (Plan/Actual/Achievement/Cost Ratio),
  *      dipecah per cabang, bulan berjalan bisa diganti. Sumber data SAMA
  *      dgn kartu Achievement di Home (`mh_activities_for_me`, yang utk role
@@ -25,31 +23,26 @@
  *   2. Leaderboard - ranking cabang/brand, query `mh_leaderboard_summary`
  *      (view yang sama dipakai /martahub/m/leaderboard), tanpa filter scope
  *      krn spm_sumatera memang harus lihat semua.
- *   3. Tim - daftar seluruh BME/RGE/dsb (`mh_list_assignments` RPC, tanpa
- *      filter - sudah mengembalikan semua utk role manapun yg memanggil,
- *      TAPI cuma spm_sumatera yang diberi tombol Edit/Hapus di sini) +
- *      antrean akun baru (`mh_profiles` status='pending'). Aksi EDIT lewat
- *      `mh_update_assignment`, Tolak Pending lewat `mh_dismiss_pending`,
- *      Hapus lewat `mh_delete_assignment` - RPC yang SAMA PERSIS dipakai
- *      desktop /martahub/assignments, supaya perilakunya konsisten.
  *
- * Sengaja TIDAK menyertakan form "Tambah Penugasan Baru" penuh (field
- * supervisor/dsf_org masih spesifik ke alur desktop yang lebih panjang) -
- * pembuatan penugasan baru tetap lewat desktop Assignments, di sini fokus
- * ke pemantauan + edit/hapus yang datanya sudah ada.
+ * Tab "User Management" yang dulu ada di sini SUDAH DIPINDAH jadi halaman
+ * mandiri /martahub/m/user-management (grid branch×brand + tambah/edit yang
+ * lebih lengkap, dibuka utk 7 role: spm_sumatera/admin/head/tmv/bme/rge/
+ * tl_dsf) - jangan dikembalikan ke sini, cukup arahkan pengguna ke halaman
+ * itu (lihat menu Home).
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeft, LayoutDashboard, Trophy, Users, Target, CheckCircle2, Gauge, Wallet,
-  Search, Pencil, Trash2, X, Check, Loader2, ChevronDown, UserX, Building2,
+  ArrowLeft, LayoutDashboard, Trophy, Target, CheckCircle2, Gauge, Wallet,
+  Search, Building2, ChevronDown, X,
 } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
+import { loadBranchMap } from "../../../../lib/martaScope";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { fmtInt } from "../_shared/activityUi";
+import { BRAND_DISPLAY } from "../_shared/planData";
 
 const ACTIVITY_COLS = "id,event_name,brand,branch_id,plan_date,status,target_sp,actual_sp,cost_actual,actual_rev_3m";
-const ROLE_LABEL = { spm_sumatera: "SPM Sumatera", head: "Head TMV", tmv: "Brand TMV", bme: "BME", rge: "RGE", tl_dsf: "TL DSF", dsf: "DSF", md: "MD", dse: "DSE", gse: "GSE", ae: "AE", promotor: "Promotor", cse_rse: "CSE/RSE", bsm: "BSM", admin: "Admin" };
 const MONTH_NAMES_FULL = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 const LAUNCH_YEAR = 2026, LAUNCH_MONTH = 7; // Agustus 2026 - sama dgn Home
 
@@ -69,12 +62,11 @@ function monthOptions() {
 const TABS = [
   { key: "ringkasan", label: "Ringkasan", icon: LayoutDashboard },
   { key: "leaderboard", label: "Leaderboard", icon: Trophy },
-  { key: "tim", label: "Tim", icon: Users },
 ];
 
 export default function ManagementPage() {
   const router = useRouter();
-  const { loading: sessionLoading, email, scope } = useMartaSession();
+  const { loading: sessionLoading, scope } = useMartaSession();
   const [tab, setTab] = useState("ringkasan");
 
   const isAllowed = !!(scope?.found && scope.role === "spm_sumatera");
@@ -91,7 +83,7 @@ export default function ManagementPage() {
           </button>
           <div style={{ marginTop: 60, textAlign: "center" }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: "#3A3A44" }}>Halaman ini khusus SPM Sumatera</div>
-            <div style={{ marginTop: 6, fontSize: 12.5, color: "#8A8A96" }}>Role Anda ({ROLE_LABEL[scope?.role] || scope?.role || "-"}) tidak punya akses ke Management View.</div>
+            <div style={{ marginTop: 6, fontSize: 12.5, color: "#8A8A96" }}>Role Anda ({scope?.role || "-"}) tidak punya akses ke Management View.</div>
           </div>
         </div>
       </MobileShell>
@@ -134,7 +126,6 @@ export default function ManagementPage() {
       <div style={{ padding: "16px 20px 40px" }}>
         {tab === "ringkasan" && <RingkasanTab />}
         {tab === "leaderboard" && <LeaderboardTab />}
-        {tab === "tim" && <TimTab callerEmail={email} />}
       </div>
     </MobileShell>
   );
@@ -153,15 +144,20 @@ function RingkasanTab() {
     let alive = true;
     (async () => {
       try {
-        const { data, error } = await supabaseMarta.rpc("mh_activities_for_me").select(ACTIVITY_COLS).limit(5000);
+        // Turun dari limit(5000) - jarang sekali histori aktivitas se-Sumatera
+        // sedekat itu, dan filter bulan tetap dilakukan di client (bukan
+        // server) supaya ganti bulan di selector instan tanpa fetch ulang.
+        const { data, error } = await supabaseMarta.rpc("mh_activities_for_me").select(ACTIVITY_COLS).limit(1500);
         if (error) throw error;
         if (alive) setRows(data || []);
       } catch (e) { if (alive) setErr(e.message || "Gagal memuat data"); }
     })();
     (async () => {
       try {
-        const { data } = await supabaseMarta.from("mh_branches").select("id,name");
-        if (alive && data) setBranchMap(new Map(data.map((b) => [b.id, b.name])));
+        // loadBranchMap() sudah di-cache (lib/martaScope.js) - dipakai bareng
+        // halaman lain (Home dll), jangan query mh_branches sendiri lagi.
+        const map = await loadBranchMap();
+        if (alive) setBranchMap(new Map(Array.from(map, ([id, b]) => [id, b.name])));
       } catch { /* best-effort */ }
     })();
     return () => { alive = false; };
@@ -318,7 +314,7 @@ function LeaderboardTab() {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.user_name || "-"}</div>
                 <div style={{ marginTop: 1, fontSize: 11, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {r.branch_name || "-"} · {(r.brand || "-").toUpperCase()} · {r.total_activities ?? 0} aktivitas
+                  {r.branch_name || "-"} · {BRAND_DISPLAY[r.brand] || (r.brand ? r.brand.toUpperCase() : "-")} · {r.total_activities ?? 0} aktivitas
                 </div>
               </div>
               <div style={{ textAlign: "right", flexShrink: 0 }}>
@@ -329,227 +325,6 @@ function LeaderboardTab() {
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-// ═══════════════════════════════ Tab: Tim ══════════════════════════════════
-
-function TimTab({ callerEmail }) {
-  const [rows, setRows] = useState(null);
-  const [pending, setPending] = useState([]);
-  const [err, setErr] = useState("");
-  const [q, setQ] = useState("");
-  const [roleFilter, setRoleFilter] = useState("");
-  const [editRow, setEditRow] = useState(null);
-  const [busyId, setBusyId] = useState(null);
-
-  const load = useCallback(async () => {
-    setErr("");
-    try {
-      const [{ data: a, error: e1 }, { data: p, error: e2 }] = await Promise.all([
-        supabaseMarta.rpc("mh_list_assignments"),
-        supabaseMarta.from("mh_profiles").select("id,email,full_name,status").eq("status", "pending"),
-      ]);
-      if (e1) throw e1;
-      if (e2) throw e2;
-      setRows(a || []);
-      setPending(p || []);
-    } catch (e) { setErr(e.message || "Gagal memuat tim"); }
-  }, []);
-
-  useEffect(() => { load(); }, [load]);
-
-  const roleOptions = useMemo(() => Array.from(new Set((rows || []).map((r) => r.role).filter(Boolean))).sort(), [rows]);
-  const filtered = (rows || []).filter((r) => {
-    if (roleFilter && r.role !== roleFilter) return false;
-    if (!q.trim()) return true;
-    const t = q.toLowerCase();
-    return (r.full_name || "").toLowerCase().includes(t) || (r.email || "").toLowerCase().includes(t) || (r.branch_name || "").toLowerCase().includes(t);
-  });
-
-  async function dismissPending(id) {
-    setBusyId(id);
-    try {
-      const { error } = await supabaseMarta.rpc("mh_dismiss_pending", { p_id: id, p_caller_email: callerEmail });
-      if (error) throw error;
-      await load();
-    } catch (e) { setErr(e.message || "Gagal menolak akun"); }
-    finally { setBusyId(null); }
-  }
-
-  async function deleteAssignment(id) {
-    setBusyId(id);
-    try {
-      const { error } = await supabaseMarta.rpc("mh_delete_assignment", { p_id: id, p_caller_email: callerEmail });
-      if (error) throw error;
-      await load();
-    } catch (e) { setErr(e.message || "Gagal menghapus penugasan"); }
-    finally { setBusyId(null); }
-  }
-
-  if (rows === null && !err) return <ShellSpinner />;
-
-  return (
-    <div>
-      {err && <Notice color="#C62828" bg="#FDECEC">{err}</Notice>}
-
-      {pending.length > 0 && (
-        <>
-          <div style={{ fontSize: 13.5, fontWeight: 800 }}>Akun Menunggu Aktivasi ({pending.length})</div>
-          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-            {pending.map((p) => (
-              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#FFFBF0", border: "1px solid #F5E0A8", borderRadius: 14, padding: "12px 14px" }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.full_name || p.email}</div>
-                  <div style={{ marginTop: 1, fontSize: 11, color: "#8A8A96" }}>{p.email}</div>
-                </div>
-                <button onClick={() => dismissPending(p.id)} disabled={busyId === p.id}
-                  style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 5, height: 32, padding: "0 11px", borderRadius: 9, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#8A8A96", fontSize: 11.5, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
-                  {busyId === p.id ? <Loader2 size={12} style={{ animation: "mspin .85s linear infinite" }} /> : <UserX size={12} />} Tolak
-                </button>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-
-      <div style={{ marginTop: pending.length > 0 ? 20 : 0, fontSize: 13.5, fontWeight: 800 }}>Semua Tim ({rows?.length ?? 0})</div>
-      <SearchBox value={q} onChange={setQ} placeholder="Cari nama, email, atau cabang…" />
-      <div style={{ display: "flex", gap: 6, marginTop: 8, overflowX: "auto" }}>
-        <RoleChip active={!roleFilter} label="Semua" onClick={() => setRoleFilter("")} />
-        {roleOptions.map((r) => <RoleChip key={r} active={roleFilter === r} label={ROLE_LABEL[r] || r} onClick={() => setRoleFilter(r)} />)}
-      </div>
-
-      {filtered.length === 0 ? (
-        <EmptyState text="Tidak ada hasil" />
-      ) : (
-        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-          {filtered.map((r) => (
-            <div key={r.id} style={{ display: "flex", alignItems: "center", gap: 10, background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 14, padding: "12px 14px" }}>
-              <div style={{
-                width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
-                background: r.logged_in ? "#15803D" : "#B0B0BA",
-              }} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.full_name || r.email}</div>
-                <div style={{ marginTop: 1, fontSize: 10.5, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {ROLE_LABEL[r.role] || r.role} · {r.branch_name || r.region || "-"} · {(r.brand || "-").toUpperCase()}
-                </div>
-              </div>
-              <button onClick={() => setEditRow(r)}
-                style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 9, border: "1px solid #E4E5EA", background: "#F6F7F9", color: "#5A5A68", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-                <Pencil size={13} />
-              </button>
-              <button onClick={() => deleteAssignment(r.id)} disabled={busyId === r.id}
-                style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 9, border: "1px solid #F3C6C6", background: "#FDECEC", color: "#DC2626", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-                {busyId === r.id ? <Loader2 size={12} style={{ animation: "mspin .85s linear infinite" }} /> : <Trash2 size={13} />}
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {editRow && (
-        <EditAssignmentSheet row={editRow} callerEmail={callerEmail} onClose={() => setEditRow(null)}
-          onSaved={() => { setEditRow(null); load(); }} />
-      )}
-    </div>
-  );
-}
-
-function RoleChip({ active, label, onClick }) {
-  return (
-    <button onClick={onClick}
-      style={{ flexShrink: 0, padding: "6px 12px", borderRadius: 999, background: active ? "#17181C" : "#F6F7F9", border: `1px solid ${active ? "#17181C" : "#E9EAEE"}`, color: active ? "#fff" : "#5A5A68", fontSize: 11, fontWeight: 700, fontFamily: FF, cursor: "pointer", whiteSpace: "nowrap" }}>
-      {label}
-    </button>
-  );
-}
-
-/** Sheet edit penugasan - RPC `mh_update_assignment` SAMA PERSIS dgn yg
- * dipakai desktop /martahub/assignments, cuma field yg paling sering
- * diubah dari mobile yg ditampilkan (role/branch/brand/region/mc). Field
- * lain (supervisor_assignment_id/dsf_org_id) dikirim apa adanya (tidak
- * diubah) supaya tidak merusak relasi yg sudah ada. */
-function EditAssignmentSheet({ row, callerEmail, onClose, onSaved }) {
-  const [role, setRole] = useState(row.role || "");
-  const [region, setRegion] = useState(row.region || "");
-  const [brand, setBrand] = useState(row.brand || "");
-  const [branchId, setBranchId] = useState(row.branch_id || "");
-  const [branchName, setBranchName] = useState(row.branch_name || "");
-  const [mc, setMc] = useState(row.mc || "");
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState("");
-
-  async function save() {
-    setSaving(true); setErr("");
-    try {
-      const { error } = await supabaseMarta.rpc("mh_update_assignment", {
-        p_id: row.id, p_role: role || null, p_region: region || null, p_brand: brand || null,
-        p_branch_id: branchId || null, p_branch_name: branchName || null, p_full_name: row.full_name || null,
-        p_supervisor_assignment_id: row.supervisor_assignment_id || null, p_dsf_org_id: row.dsf_org_id || null,
-        p_caller_email: callerEmail, p_mc: mc || null, p_email: row.email || null,
-      });
-      if (error) throw error;
-      onSaved();
-    } catch (e) { setErr(e.message || "Gagal menyimpan"); }
-    finally { setSaving(false); }
-  }
-
-  return (
-    <div onClick={() => !saving && onClose()}
-      style={{ position: "fixed", inset: 0, background: "rgba(13,17,23,0.45)", zIndex: 400, display: "flex", alignItems: "flex-end" }}>
-      <div onClick={(e) => e.stopPropagation()}
-        style={{ background: "#fff", borderRadius: "20px 20px 0 0", padding: "20px 20px calc(env(safe-area-inset-bottom,0px) + 20px)", width: "100%", fontFamily: FF, maxHeight: "82vh", overflowY: "auto", boxShadow: "0 -10px 30px rgba(0,0,0,0.12)" }}>
-        <div style={{ width: 36, height: 4, borderRadius: 99, background: "#E4E5EA", margin: "0 auto 16px" }} />
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ fontSize: 15, fontWeight: 800, color: "#17181C" }}>Edit Penugasan</div>
-          <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 9, border: "none", background: "#F6F7F9", color: "#5A5A68", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={14} /></button>
-        </div>
-        <div style={{ marginTop: 2, fontSize: 12, color: "#8A8A96" }}>{row.full_name || row.email}</div>
-
-        <EditField label="Role">
-          <select value={role} onChange={(e) => setRole(e.target.value)} style={fieldInputStyle}>
-            {Object.entries(ROLE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-        </EditField>
-        <EditField label="Region"><input value={region} onChange={(e) => setRegion(e.target.value)} style={fieldInputStyle} placeholder="mis. lampung" /></EditField>
-        <EditField label="Brand">
-          <select value={brand} onChange={(e) => setBrand(e.target.value)} style={fieldInputStyle}>
-            <option value="">-</option>
-            <option value="im3">IM3</option>
-            <option value="tri">Tri</option>
-          </select>
-        </EditField>
-        <EditField label="Branch ID (slug)"><input value={branchId} onChange={(e) => setBranchId(e.target.value)} style={fieldInputStyle} placeholder="mis. bandar-lampung" /></EditField>
-        <EditField label="Nama Cabang"><input value={branchName} onChange={(e) => setBranchName(e.target.value)} style={fieldInputStyle} placeholder="mis. Bandar Lampung" /></EditField>
-        <EditField label="Micro Cluster"><input value={mc} onChange={(e) => setMc(e.target.value)} style={fieldInputStyle} /></EditField>
-
-        {err && <div style={{ marginTop: 10, fontSize: 12, color: "#C62828" }}>{err}</div>}
-
-        <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
-          <button onClick={onClose} disabled={saving}
-            style={{ flex: 1, height: 46, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
-            Batal
-          </button>
-          <button onClick={save} disabled={saving}
-            style={{ flex: 1, height: 46, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer", opacity: saving ? 0.75 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-            {saving ? <Loader2 size={14} style={{ animation: "mspin .85s linear infinite" }} /> : <Check size={14} />} Simpan
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const fieldInputStyle = { width: "100%", height: 44, padding: "0 12px", borderRadius: 11, border: "1.5px solid #ECEDF0", background: "#F6F7F9", fontSize: 13, fontFamily: FF, outline: "none", boxSizing: "border-box" };
-
-function EditField({ label, children }) {
-  return (
-    <div style={{ marginTop: 12 }}>
-      <label style={{ display: "block", marginBottom: 6, fontSize: 10.5, fontWeight: 700, color: "#8A8A96", textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</label>
-      {children}
     </div>
   );
 }

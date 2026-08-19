@@ -24,8 +24,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, CheckCircle2, Loader2, MapPin, ImageOff } from "lucide-react";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../../lib/supabaseMarta";
-import { getMartaScope, applyMartaScope, regionLabel } from "../../../../lib/martaScope";
+import { applyMartaScope, regionLabel } from "../../../../lib/martaScope";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
+import { BRAND_DISPLAY } from "../_shared/planData";
 
 const ROLE_LABEL = { admin: "Admin", head: "Head TMV", tmv: "Brand TMV", bme: "BME", rge: "RGE", spm_sumatera: "SPM Sumatera" };
 const CAN_APPROVE_ROLES = ["admin", "head", "tmv", "spm_sumatera"];
@@ -47,8 +48,12 @@ function mdPhotoUrl(path) {
 
 export default function MobileApprovalPage() {
   const router = useRouter();
-  const { loading: sessionLoading, email } = useMartaSession();
-  const [scope, setScope] = useState(null);
+  // scope diambil LANGSUNG dari useMartaSession() (sudah di-resolve sekali di
+  // sana, dan sekarang di-cache lintas navigasi - lihat MobileShell.jsx) -
+  // sebelumnya halaman ini query ulang getMartaScope(email) sendiri di load(),
+  // duplikasi round-trip mh_profiles yang sama persis dgn yang MobileShell
+  // baru saja lakukan.
+  const { loading: sessionLoading, email, scope } = useMartaSession();
   const [tab, setTab] = useState("plan");
   const [planRows, setPlanRows] = useState([]);
   const [revisionRows, setRevisionRows] = useState([]);
@@ -62,16 +67,13 @@ export default function MobileApprovalPage() {
   const [busyRowId, setBusyRowId] = useState(null);
 
   const load = useCallback(async () => {
-    if (!email) return;
+    if (!email || !scope) return;
     setLoading(true); setErr("");
     try {
-      const sc = await getMartaScope(email);
-      setScope(sc);
-
-      let planQ = supabaseMarta.from("mh_activities").select(PENDING_COLS).eq("status", "plan_submitted").order("created_at", { ascending: true });
-      planQ = await applyMartaScope(planQ, sc);
-      let revisionQ = supabaseMarta.from("mh_activities").select(REVISION_COLS).eq("status", "revision_actual").order("validated_at", { ascending: true });
-      revisionQ = await applyMartaScope(revisionQ, sc);
+      let planQ = supabaseMarta.from("mh_activities").select(PENDING_COLS).eq("status", "plan_submitted").order("created_at", { ascending: true }).limit(300);
+      planQ = await applyMartaScope(planQ, scope);
+      let revisionQ = supabaseMarta.from("mh_activities").select(REVISION_COLS).eq("status", "revision_actual").order("validated_at", { ascending: true }).limit(300);
+      revisionQ = await applyMartaScope(revisionQ, scope);
 
       const [{ data: plans, error: e0 }, { data: revisions, error: e1 }, { data: street, error: e2 }] = await Promise.all([
         planQ, revisionQ, supabaseMarta.rpc("mh_md_list_street_pending"),
@@ -84,7 +86,7 @@ export default function MobileApprovalPage() {
       setStreetRows(street || []);
     } catch (e) { setErr(e.message || "Gagal memuat"); }
     finally { setLoading(false); }
-  }, [email]);
+  }, [email, scope]);
 
   useEffect(() => { if (!sessionLoading) load(); }, [sessionLoading, load]);
 
@@ -152,7 +154,7 @@ export default function MobileApprovalPage() {
         <div style={{ marginTop: 14, fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em" }}>Approval Center</div>
         <div style={{ marginTop: 3, fontSize: 12.5, color: "#8A8A96" }}>
           {scope?.found
-            ? `${ROLE_LABEL[scope.role] || scope.role}${scope.unscoped ? " · semua region & brand" : ` · ${regionLabel(scope.region)} · ${(scope.brand || "-").toUpperCase()}`}`
+            ? `${ROLE_LABEL[scope.role] || scope.role}${scope.unscoped ? " · semua region & brand" : ` · ${regionLabel(scope.region)} · ${BRAND_DISPLAY[scope.brand] || (scope.brand ? scope.brand.toUpperCase() : "-")}`}`
             : "Memuat scope…"}
         </div>
 
@@ -267,7 +269,11 @@ function EmptyState({ text }) {
 
 function BrandTag({ brand }) {
   if (!brand) return null;
-  const isTri = brand === "tri";
+  // mh_activities.brand disimpan "IM3"/"TRI" (huruf besar - beda dari
+  // mh_assignments/mh_profiles.brand yg "im3"/"tri" huruf kecil), jadi
+  // perbandingan HARUS case-insensitive di sini supaya 3ID tidak salah
+  // tampil sbg "IM3".
+  const isTri = String(brand).toLowerCase() === "tri";
   return <span style={{ fontSize: 10, fontWeight: 800, color: isTri ? "#E23B86" : "#E53935" }}>{isTri ? "3ID" : "IM3"}</span>;
 }
 

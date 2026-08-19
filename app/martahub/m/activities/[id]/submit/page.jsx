@@ -2,10 +2,11 @@
 /**
  * /martahub/m/activities/[id]/submit - Submit Laporan Actual (web mobile),
  * setara submit_actual_screen.dart. Cakupan iterasi ini:
- *   - MSISDN per jenis (SP/FWA): ketik manual (SEMUA browser) + scan kamera
- *     via BarcodeDetector API (Chrome/Edge/Android - TIDAK tersedia di
- *     Safari/iOS, tombol scan otomatis disembunyikan bila tidak didukung,
- *     manual entry tetap jalur utama yang selalu berfungsi).
+ *   - MSISDN per jenis (SP/FWA): ketik manual + scan kamera QR kartu SIM
+ *     via jsQR (decoder JS murni, SEMUA browser termasuk Safari/iOS - lihat
+ *     _shared/QrScanSheet.jsx; sebelumnya pakai BarcodeDetector API native
+ *     yg cuma didukung Chrome/Edge Android, jadi tombol scan otomatis
+ *     hilang/"belum aktif" di banyak perangkat lain).
  *   - Cek kepemilikan MSISDN (mh_dsf_check_msisdn_owner) + ajukan
  *     pemindahan (mh_dsf_request_msisdn_transfer) kalau nomor sudah ditag
  *     org lain - SAMA PERSIS dgn alur Flutter, bukan disederhanakan.
@@ -22,6 +23,9 @@ import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../../
 import { isValidMsisdn, normalizeMsisdn } from "../../../_shared/msisdn";
 import { compressToMaxBytes } from "../../../_shared/imageTools";
 import PhotoCollageSheet from "../../../_shared/PhotoCollageSheet";
+import QrScanSheet from "../../../_shared/QrScanSheet";
+import OrgIdBar from "../../../_shared/OrgIdBar";
+import { fetchSalesEntries, deleteSalesEntry } from "../../../_shared/planData";
 
 const CATS = [
   { key: "sp", label: "Catat Penjualan SP", icon: CardSim },
@@ -53,9 +57,15 @@ export default function SubmitActualPage() {
   const [dataLoading, setDataLoading] = useState(true);
   const [err, setErr] = useState("");
 
-  const [orgId, setOrgId] = useState("");
+  // Satu event bisa dicatat oleh BEBERAPA org_id sekaligus (mis. TL/Head
+  // mencatatkan penjualan beberapa DSF di bawahnya dari satu device) - lihat
+  // _shared/OrgIdBar.jsx & komentar mh_dsf_submit_sales_entries() di DB.
+  // ownOrgId = org_id profil sendiri (auto-seed chip pertama), activeOrgId =
+  // org_id yg sedang "aktif" dipilih, distempel ke entry baru yg ditambahkan.
+  const [ownOrgId, setOwnOrgId] = useState("");
+  const [activeOrgId, setActiveOrgId] = useState("");
   const [selectedType, setSelectedType] = useState({ sp: null, fwa: null });
-  const [entries, setEntries] = useState({ sp: [], fwa: [] }); // {msisdn, typeId, typeName}
+  const [entries, setEntries] = useState({ sp: [], fwa: [] }); // {msisdn, typeId, typeName, orgId}
   const [pendingTransfers, setPendingTransfers] = useState({ sp: [], fwa: [] });
   const [msisdnInput, setMsisdnInput] = useState({ sp: "", fwa: "" });
   const [msisdnErr, setMsisdnErr] = useState({ sp: null, fwa: null });
@@ -104,8 +114,6 @@ export default function SubmitActualPage() {
   const [result, setResult] = useState(null);
   const [draftReady, setDraftReady] = useState(false); // baru mulai autosave SETELAH draft lama (kalau ada) selesai dibaca
 
-  const scanSupported = typeof window !== "undefined" && "BarcodeDetector" in window;
-
   useEffect(() => {
     if (loading) return;
     let alive = true;
@@ -124,7 +132,7 @@ export default function SubmitActualPage() {
         // Jenis SP/FWA tidak lagi dipilih manual oleh DSF - otomatis pakai
         // jenis pertama yg aktif utk brand ybs (transparan di belakang layar).
         setSelectedType({ sp: sp?.[0]?.id || null, fwa: fwa?.[0]?.id || null });
-        if (profile?.dsf_org_id) setOrgId(profile.dsf_org_id);
+        if (profile?.dsf_org_id) setOwnOrgId(profile.dsf_org_id);
 
         // Site yg dipilih sebelumnya (waktu Create Plan/Check-In) - tampilkan
         // nama site-nya (bukan cuma kode) di hero, kalau tersedia.
@@ -144,6 +152,11 @@ export default function SubmitActualPage() {
         // Pulihkan draft (kalau ada) SEBELUM autosave dinyalakan - jadi kalau
         // DSF keluar di tengah pencatatan lalu kembali ke halaman ini,
         // MSISDN/rebuy/cost/insight yg sudah diketik langsung muncul lagi.
+        // Draft ini cuma utk nomor yg BELUM tersimpan di DB (localStorage,
+        // per-perangkat) - lihat blok fetchSalesEntries() di bawah utk nomor
+        // yg SUDAH tercatat (mis. di-booking sebelum event lewat Catat
+        // Penjualan di wizard Buat Plan, atau revisi laporan yg dikirim
+        // ulang) - keduanya digabung supaya tidak ada nomor yg "hilang".
         try {
           const raw = localStorage.getItem(draftKey(activityId));
           if (raw) {
@@ -155,6 +168,32 @@ export default function SubmitActualPage() {
             if (d.insight != null) setInsight(d.insight);
           }
         } catch { /* draft rusak/kosong - abaikan, mulai dari kosong */ }
+
+        // Nomor yang SUDAH tercatat di DB utk activity ini - baik dari sesi
+        // Isi Laporan sebelumnya (mis. status revision_actual, kirim ulang)
+        // maupun dari Catat Penjualan di wizard Buat Plan sebelum event.
+        // Ditandai `persisted:true` supaya hapusnya lewat deleteSalesEntry()
+        // (RPC) bukan cuma dibuang dari state lokal, dan supaya submit()
+        // tidak mengirim ulang nomor yang sudah ada.
+        try {
+          const rows = await fetchSalesEntries(activityId);
+          const byCat = { sp: [], fwa: [] };
+          for (const r of rows) {
+            if (r.category !== "sp" && r.category !== "fwa") continue;
+            const typeList = r.category === "sp" ? sp : fwa;
+            const typeObj = (typeList || []).find((t) => t.id === r.product_type_id);
+            byCat[r.category].push({
+              id: r.id, msisdn: r.msisdn, typeId: r.product_type_id, typeName: typeObj?.name,
+              taggedAt: r.tagged_at, orgId: r.org_id, persisted: true,
+            });
+          }
+          if (alive) {
+            setEntries((prev) => ({
+              sp: [...byCat.sp, ...prev.sp.filter((e) => !byCat.sp.some((p) => p.msisdn === e.msisdn))],
+              fwa: [...byCat.fwa, ...prev.fwa.filter((e) => !byCat.fwa.some((p) => p.msisdn === e.msisdn))],
+            }));
+          }
+        } catch { /* best-effort - jangan blokir halaman kalau gagal muat nomor lama */ }
       } catch (e) {
         if (alive) setErr(e.message || "Gagal memuat aktivitas");
       } finally {
@@ -182,14 +221,17 @@ export default function SubmitActualPage() {
   }
 
   async function addMsisdn(cat, rawMsisdn) {
-    // Jenis & ORG ID sudah diisi otomatis di belakang layar - DSF cukup
-    // fokus memasukkan nomor MSISDN saja.
+    // Jenis sudah diisi otomatis di belakang layar - DSF cukup fokus
+    // memasukkan nomor MSISDN, tapi ORG ID Aktif WAJIB dipilih dulu (bisa
+    // beda-beda per nomor kalau event ini dicatat oleh beberapa org_id).
+    if (!activeOrgId.trim()) { setMsisdnErr((e) => ({ ...e, [cat]: "Pilih ORG ID Aktif dulu sebelum tagging nomor." })); return; }
     const typeId = selectedType[cat];
     const norm = normalizeMsisdn(rawMsisdn);
     if (!isValidMsisdn(norm)) { setMsisdnErr((e) => ({ ...e, [cat]: 'Format MSISDN tidak valid - wajib diawali "62".' })); return; }
     if (isDuplicateLocal(cat, norm)) { setMsisdnErr((e) => ({ ...e, [cat]: "Nomor ini sudah ditambahkan." })); return; }
 
     const typeObj = types[cat].find((t) => t.id === typeId);
+    const entryOrgId = activeOrgId.trim();
     setMsisdnErr((e) => ({ ...e, [cat]: null }));
 
     // Cek kepemilikan - kalau sudah ditag di event lain, tawarkan pemindahan
@@ -198,22 +240,17 @@ export default function SubmitActualPage() {
       const { data: ownerRows } = await supabaseMarta.rpc("mh_dsf_check_msisdn_owner", { p_msisdn: norm });
       const owner = ownerRows && ownerRows.length > 0 ? ownerRows[0] : null;
       if (owner) {
-        setConflict({ category: cat, typeId, typeName: typeObj?.name, msisdn: norm, owner });
+        setConflict({ category: cat, typeId, typeName: typeObj?.name, msisdn: norm, owner, orgId: entryOrgId });
         return;
       }
     } catch {
       // best-effort - kalau cek gagal, tetap lanjut tambahkan (jangan blokir input)
     }
 
-    let tagLat = null, tagLng = null;
-    if (navigator.geolocation) {
-      try {
-        const pos = await new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 6000 }));
-        tagLat = pos.coords.latitude; tagLng = pos.coords.longitude;
-      } catch { /* best-effort */ }
-    }
-
-    setEntries((prev) => ({ ...prev, [cat]: [...prev[cat], { msisdn: norm, typeId, typeName: typeObj?.name, taggedAt: new Date().toISOString(), tagLat, tagLng }] }));
+    // Longlat saat tagging TIDAK dicatat lagi - tidak pernah benar-benar
+    // dipakai utk validasi apa pun (beda dgn check-in yg divalidasi jarak ke
+    // site), jadi cuma menambah izin lokasi yg diminta tanpa manfaat nyata.
+    setEntries((prev) => ({ ...prev, [cat]: [...prev[cat], { msisdn: norm, typeId, typeName: typeObj?.name, taggedAt: new Date().toISOString(), orgId: entryOrgId }] }));
     setMsisdnInput((prev) => ({ ...prev, [cat]: "" }));
   }
 
@@ -225,7 +262,7 @@ export default function SubmitActualPage() {
         p_to_activity_id: activityId,
         p_category: conflict.category,
         p_product_type_id: conflict.typeId,
-        p_org_id: orgId.trim(),
+        p_org_id: conflict.orgId,
       });
       setPendingTransfers((prev) => ({ ...prev, [conflict.category]: [...prev[conflict.category], { msisdn: conflict.msisdn }] }));
       setConflict(null);
@@ -234,8 +271,23 @@ export default function SubmitActualPage() {
     }
   }
 
-  function removeEntry(cat, msisdn) {
+  // Hapus HARUS mudah walau nomornya sudah diclaim/tersimpan di DB (bukan
+  // cuma yg belum disimpan) - msisdn UNIQUE global di tabel, jadi menghapus
+  // adalah satu-satunya cara membebaskan nomor yg salah catat. Optimistic:
+  // langsung hilang dari layar, di-rollback (+ pesan error) kalau RPC-nya
+  // ternyata gagal (mis. bukan pencatat/pemilik plan-nya).
+  async function removeEntry(cat, msisdn) {
+    const entry = entries[cat].find((e) => e.msisdn === msisdn);
+    if (!entry) return;
     setEntries((prev) => ({ ...prev, [cat]: prev[cat].filter((e) => e.msisdn !== msisdn) }));
+    if (entry.persisted && entry.id) {
+      try {
+        await deleteSalesEntry(entry.id);
+      } catch (e) {
+        setEntries((prev) => ({ ...prev, [cat]: [...prev[cat], entry] }));
+        setErr(e.message || "Gagal menghapus nomor");
+      }
+    }
   }
 
   function addRebuyEntry() {
@@ -299,22 +351,29 @@ export default function SubmitActualPage() {
         setUploadProgress({ done: i + 1, total: photos.length });
       }
 
-      // Kirim entries per kelompok kategori+jenis - best-effort, laporan
-      // pokok TETAP tersubmit walau bagian ini gagal (sama spt Flutter).
+      // Kirim entries per kelompok kategori+jenis+org_id - best-effort,
+      // laporan pokok TETAP tersubmit walau bagian ini gagal (sama spt
+      // Flutter). Dikelompokkan per org_id juga (bukan cuma typeId) krn satu
+      // event bisa dicatat oleh beberapa org_id sekaligus (lihat OrgIdBar) -
+      // mh_dsf_submit_sales_entries cuma menerima SATU p_org_id per panggilan.
       for (const cat of ["sp", "fwa"]) {
-        const byType = new Map();
-        for (const e of entries[cat]) {
-          if (!byType.has(e.typeId)) byType.set(e.typeId, []);
-          byType.get(e.typeId).push(e);
+        const byGroup = new Map();
+        // `persisted` = sudah tercatat di DB sebelumnya (dimuat lewat
+        // fetchSalesEntries) - JANGAN dikirim ulang, cuma entry baru yang
+        // belum tersimpan yang perlu di-submit di sini.
+        for (const e of entries[cat].filter((e) => !e.persisted)) {
+          const key = `${e.typeId}|${e.orgId}`;
+          if (!byGroup.has(key)) byGroup.set(key, { typeId: e.typeId, orgId: e.orgId, list: [] });
+          byGroup.get(key).list.push(e);
         }
-        for (const [typeId, list] of byType) {
+        for (const { typeId, orgId: groupOrgId, list } of byGroup.values()) {
           try {
             await supabaseMarta.rpc("mh_dsf_submit_sales_entries", {
               p_activity_id: activityId,
-              p_org_id: orgId.trim(),
+              p_org_id: groupOrgId,
               p_category: cat,
               p_product_type_id: typeId,
-              p_entries: list.map((e) => ({ msisdn: e.msisdn, imei: null, tagged_at: e.taggedAt, tag_lat: e.tagLat, tag_lng: e.tagLng })),
+              p_entries: list.map((e) => ({ msisdn: e.msisdn, imei: null, tagged_at: e.taggedAt })),
             });
           } catch { /* best-effort, lanjut kelompok berikutnya */ }
         }
@@ -425,6 +484,13 @@ export default function SubmitActualPage() {
           <FolderClock size={11} /> Draft MSISDN, rebuy & catatan tersimpan otomatis di perangkat ini
         </div>
 
+        {/* ORG ID Aktif - satu kontrol dipakai bareng utk kategori SP & FWA
+            di bawahnya (persis pola Tagging Nomor di wizard Buat Plan):
+            pilih/tambah org_id di sini dulu, baru scan/catat nomornya. */}
+        <Card accent>
+          <OrgIdBar value={activeOrgId} onChange={setActiveOrgId} ownOrgId={ownOrgId} ownLabel={scope?.fullName} />
+        </Card>
+
         {CATS.map((c) => (
           <SalesSection key={c.key} cat={c.key} label={c.label} icon={c.icon}
             types={types[c.key]} selectedType={selectedType[c.key]} onSelectType={(v) => setSelectedType((s) => ({ ...s, [c.key]: v }))}
@@ -432,8 +498,7 @@ export default function SubmitActualPage() {
             onAdd={() => addMsisdn(c.key, msisdnInput[c.key])}
             entries={entries[c.key]} onRemove={(m) => removeEntry(c.key, m)}
             pending={pendingTransfers[c.key]} error={msisdnErr[c.key]}
-            scanSupported={scanSupported}
-            onScanResult={(text) => addMsisdn(c.key, text)}
+            onScanResult={(msisdn) => addMsisdn(c.key, msisdn)}
           />
         ))}
 
@@ -538,7 +603,7 @@ export default function SubmitActualPage() {
 }
 
 // ═══════════════════════════════ Sections ══════════════════════════════════
-function SalesSection({ cat, label, icon, types, selectedType, onSelectType, input, onInputChange, onAdd, entries, onRemove, pending, error, scanSupported, onScanResult }) {
+function SalesSection({ cat, label, icon, types, selectedType, onSelectType, input, onInputChange, onAdd, entries, onRemove, pending, error, onScanResult }) {
   const [scanning, setScanning] = useState(false);
   const total = entries.length;
 
@@ -556,11 +621,9 @@ function SalesSection({ cat, label, icon, types, selectedType, onSelectType, inp
           onKeyDown={(e) => e.key === "Enter" && onAdd()}
           placeholder="Contoh: 628123456789"
           style={{ flex: 1, minWidth: 0, height: 46, padding: "0 14px", borderRadius: 12, background: "#F6F7F9", border: "1.5px solid #ECEDF0", fontSize: 13.5, fontFamily: FF, color: "#17181C", outline: "none" }} />
-        {scanSupported && (
-          <button onClick={() => setScanning(true)} style={{ width: 46, height: 46, borderRadius: 12, background: "#F6F7F9", border: "1.5px solid #ECEDF0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
-            <QrCode size={17} />
-          </button>
-        )}
+        <button onClick={() => setScanning(true)} style={{ width: 46, height: 46, borderRadius: 12, background: "#F6F7F9", border: "1.5px solid #ECEDF0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
+          <QrCode size={17} />
+        </button>
         <button onClick={onAdd} style={{ width: 46, height: 46, borderRadius: 12, background: BRAND, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 4px 12px rgba(237,28,36,0.25)" }}>
           <Plus size={18} color="#fff" />
         </button>
@@ -587,8 +650,12 @@ function SalesSection({ cat, label, icon, types, selectedType, onSelectType, inp
         </div>
       )}
 
-      {scanning && scanSupported && (
-        <ScanSheet onClose={() => setScanning(false)} onResult={(text) => { setScanning(false); onScanResult(text); }} />
+      {scanning && (
+        <QrScanSheet
+          title={`Scan QR Kartu SIM · ${label}`}
+          onClose={() => setScanning(false)}
+          onDetect={(msisdn) => { setScanning(false); onScanResult(msisdn); }}
+        />
       )}
     </Card>
   );
@@ -725,8 +792,15 @@ function MsisdnCard({ entry, onRemove }) {
         <MapPin size={15} color="#ED1C24" />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C", fontVariantNumeric: "tabular-nums" }}>{entry.msisdn}</div>
-        <div style={{ fontSize: 10.5, color: "#8A8A96", fontWeight: 600 }}>{entry.typeName || "-"}{entry.tagLat != null ? " · lokasi tercatat" : ""}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: "#17181C", fontVariantNumeric: "tabular-nums" }}>{entry.msisdn}</span>
+          {/* Badge org_id - satu event bisa dicatat oleh beberapa org_id
+              sekaligus, jadi tetap jelas nomor mana milik org_id mana. */}
+          {entry.orgId && (
+            <span style={{ fontSize: 9.5, fontWeight: 800, color: "#C6168D", background: "rgba(198,22,141,0.09)", borderRadius: 999, padding: "2px 6px", flexShrink: 0 }}>{entry.orgId}</span>
+          )}
+        </div>
+        <div style={{ fontSize: 10.5, color: "#8A8A96", fontWeight: 600 }}>{entry.typeName || "-"}</div>
       </div>
       <button onClick={onRemove} style={{ width: 32, height: 32, borderRadius: 9, border: "none", background: "transparent", color: "#DC2626", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <Trash2 size={15} />
@@ -781,45 +855,6 @@ function ConflictSheet({ conflict, onClose, onConfirm }) {
           <button onClick={onConfirm} style={{ flex: 1.2, height: 48, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>Ajukan Pemindahan</button>
         </div>
       </div>
-    </div>
-  );
-}
-
-function ScanSheet({ onClose, onResult }) {
-  const videoRef = useRef(null);
-  const [scanErr, setScanErr] = useState("");
-
-  useEffect(() => {
-    let stream, detector, raf, stopped = false;
-    (async () => {
-      try {
-        detector = new window.BarcodeDetector({ formats: ["qr_code", "code_128", "ean_13"] });
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-        if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
-        const tick = async () => {
-          if (stopped || !videoRef.current) return;
-          try {
-            const codes = await detector.detect(videoRef.current);
-            if (codes.length > 0) { onResult(codes[0].rawValue); return; }
-          } catch { /* frame belum siap */ }
-          raf = requestAnimationFrame(tick);
-        };
-        tick();
-      } catch (e) {
-        setScanErr("Tidak bisa mengakses kamera. Pastikan izin kamera diaktifkan.");
-      }
-    })();
-    return () => { stopped = true; if (raf) cancelAnimationFrame(raf); if (stream) stream.getTracks().forEach((t) => t.stop()); };
-  }, [onResult]);
-
-  return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 80, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: "90%", maxWidth: 360, aspectRatio: "1", borderRadius: 20, overflow: "hidden", position: "relative", background: "#000" }}>
-        <video ref={videoRef} muted playsInline style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-        <div style={{ position: "absolute", inset: 24, border: "2px solid rgba(255,255,255,0.8)", borderRadius: 16 }} />
-      </div>
-      {scanErr && <div style={{ marginTop: 16, color: "#F87171", fontSize: 12.5, fontWeight: 600, textAlign: "center", maxWidth: 280 }}>{scanErr}</div>}
-      <button onClick={onClose} style={{ marginTop: 20, padding: "10px 22px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.3)", background: "rgba(255,255,255,0.08)", color: "#fff", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>Tutup</button>
     </div>
   );
 }

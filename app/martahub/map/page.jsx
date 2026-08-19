@@ -2,9 +2,16 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { guardMarta } from "../../../lib/martaAccess";
+import { getMartaScope, applyMartaScope, applyMartaScopeSlug } from "../../../lib/martaScope";
+import { supabaseMarta } from "../../../lib/supabaseMarta";
 import { HubLogo } from "../../../components/HubLogo";
 import { HubLogoLoader } from "../../../components/HubLogoLoader";
 import MapFull from "../components/SumatraMap";
+
+// Sama seperti dashboard (app/martahub/page.jsx) - data mh_activities direset
+// & mulai lagi dari Agustus 2026, jadi fetch peta di sini juga dibatasi dari
+// titik yang sama (bukan rolling window dari hari ini).
+const MIN_MONTH_KEY = "2026-08";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const mk = (d) => ({
@@ -34,13 +41,53 @@ export default function MapIntelligencePage() {
   const [dark, setDark] = useState(false);
   const [loading, setLoading] = useState(true);
   const [canManage, setCanManage] = useState(false);
+  const [activityPoints, setActivityPoints] = useState([]);
+  const [posmPoints, setPosmPoints] = useState([]);
   const t = mk(dark);
 
   useEffect(() => {
     const saved = typeof window !== "undefined" ? localStorage.getItem("hub-theme") : null;
     if (saved) setDark(saved !== "light");
     else if (typeof window !== "undefined") setDark(window.matchMedia("(prefers-color-scheme: dark)").matches);
-    guardMarta(router, "/martahub/map").then((res) => { if (res.ok) { setCanManage(!!res.canManage); setLoading(false); } });
+    guardMarta(router, "/martahub/map").then((res) => {
+      if (!res.ok) return;
+      setCanManage(!!res.canManage);
+      setLoading(false);
+      const email = res.profile?.email || res.session?.user?.email;
+      if (!email) return;
+      (async () => {
+        try {
+          const sc = await getMartaScope(email);
+
+          // Titik Activity (mh_activities.branch_id = uuid mh_branches.id)
+          const sinceISO = `${MIN_MONTH_KEY}-01`;
+          let aq = supabaseMarta.from("mh_activities")
+            .select("id,status,event_name,branch_id,plan_date,latitude,longitude")
+            .gte("plan_date", sinceISO).not("latitude", "is", null).not("longitude", "is", null)
+            .order("plan_date", { ascending: false }).limit(1000);
+          aq = await applyMartaScope(aq, sc);
+          const { data: aRows, error: aErr } = await aq;
+          if (!aErr) setActivityPoints((aRows || []).map((r) => ({
+            lat: r.latitude, lng: r.longitude, name: r.event_name || "Aktivitas", statusKey: r.status || "draft",
+          })));
+
+          // Titik POSM (mh_md_installations.branch_id = slug text - scoping
+          // beda jalur, lihat applyMartaScopeSlug di lib/martaScope.js).
+          let pq = supabaseMarta.from("mh_md_installations")
+            .select("id,mode,site_id,street_description,branch_id,brand,created_at,latitude,longitude")
+            .not("latitude", "is", null).not("longitude", "is", null)
+            .order("created_at", { ascending: false }).limit(1000);
+          pq = await applyMartaScopeSlug(pq, sc);
+          const { data: pRows, error: pErr } = await pq;
+          if (!pErr) setPosmPoints((pRows || []).map((r) => ({
+            lat: r.latitude, lng: r.longitude,
+            name: r.mode === "activity" ? "Instalasi POSM" : r.mode === "outlet" ? (r.site_id || "POSM Outlet") : (r.street_description || "Street Branding"),
+            branch: r.branch_id ? r.branch_id.replace(/-/g, " ").toUpperCase() : null,
+            mode: r.mode,
+          })));
+        } catch { /* best-effort - peta tetap tampil tanpa titik kalau gagal */ }
+      })();
+    });
   }, [router]);
 
   const toggle = () => { const n = !dark; setDark(n); localStorage.setItem("hub-theme", n ? "dark" : "light"); };
@@ -88,7 +135,7 @@ export default function MapIntelligencePage() {
 
       {/* Peta penuh */}
       <div style={{ flex: 1, minHeight: 0, padding: 16 }}>
-        <MapFull t={t} dark={dark} canManage={canManage} />
+        <MapFull t={t} dark={dark} canManage={canManage} activityPoints={activityPoints} posmPoints={posmPoints} />
       </div>
     </div>
   );

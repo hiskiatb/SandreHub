@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
-import MartaShell, { T } from "../components/MartaShell";
+import MartaShell, { T, brandLabel } from "../components/MartaShell";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { getMartaScope, applyMartaScope } from "../../../lib/martaScope";
 
@@ -106,7 +106,7 @@ function Body({ email }) {
         ))}
         {scope && !scope.unscoped && scope.found && (
           <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 700, color: T.mid, background: "#F0F4FA", border: `1px solid ${T.line}`, borderRadius: 100, padding: "3px 10px" }}>
-            Scope: {scope.region || "-"} · {(scope.brand || "-").toUpperCase()}
+            Scope: {scope.region || "-"} · {brandLabel(scope.brand)}
           </span>
         )}
       </div>
@@ -125,7 +125,7 @@ function Body({ email }) {
                 return (
                   <tr key={r.id} style={{ borderTop: `1px solid ${T.line}` }}>
                     <td style={{ padding: "10px 14px", fontWeight: 700 }}>{r.event_name || "-"}</td>
-                    <td style={{ padding: "10px 14px" }}>{r.brand ? <span style={{ fontSize: 10.5, fontWeight: 800, color: r.brand === "tri" ? T.tri : T.im3 }}>{r.brand === "tri" ? "3ID" : "IM3"}</span> : "-"}</td>
+                    <td style={{ padding: "10px 14px" }}>{r.brand ? <span style={{ fontSize: 10.5, fontWeight: 800, color: String(r.brand).toLowerCase() === "tri" ? T.tri : T.im3 }}>{brandLabel(r.brand)}</span> : "-"}</td>
                     <td style={{ padding: "10px 14px", color: T.mid }}>{r.mc || "-"}</td>
                     <td style={{ padding: "10px 14px", color: T.mid }}>{r.site_id || "-"}</td>
                     <td style={{ padding: "10px 14px", color: T.mid }}>{fmtDate(r.plan_date)}</td>

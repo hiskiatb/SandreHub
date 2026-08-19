@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
-import MartaShell, { T } from "../components/MartaShell";
+import MartaShell, { T, brandLabel } from "../components/MartaShell";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { getMartaScope, applyMartaScope } from "../../../lib/martaScope";
 
@@ -113,7 +113,7 @@ function Body({ email }) {
         </div>
         {scope && !scope.unscoped && scope.found && (
           <span style={{ fontSize: 11, fontWeight: 700, color: T.mid, background: "#F0F4FA", border: `1px solid ${T.line}`, borderRadius: 100, padding: "3px 10px" }}>
-            Scope: {scope.region || "-"} · {(scope.brand || "-").toUpperCase()}
+            Scope: {scope.region || "-"} · {brandLabel(scope.brand)}
           </span>
         )}
       </div>

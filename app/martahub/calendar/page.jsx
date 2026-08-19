@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
-import MartaShell, { T, FONT } from "../components/MartaShell";
+import MartaShell, { T, FONT, brandLabel } from "../components/MartaShell";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../lib/martaScope";
 
@@ -93,7 +93,7 @@ function Body({ email }) {
         <div style={{ marginLeft: "auto", fontSize: 12.5, color: T.mid }}>{rows.length} kegiatan bulan ini</div>
         {scope && !scope.unscoped && scope.found && (
           <span style={{ fontSize: 11, fontWeight: 700, color: T.mid, background: "#F0F4FA", border: `1px solid ${T.line}`, borderRadius: 100, padding: "3px 10px" }}>
-            Scope: {scope.region || "-"} · {(scope.brand || "-").toUpperCase()}
+            Scope: {scope.region || "-"} · {brandLabel(scope.brand)}
           </span>
         )}
       </div>
@@ -142,7 +142,7 @@ function Body({ email }) {
                 <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", background: STATUS_COLOR[e.status] || T.mid, borderRadius: 999, padding: "2px 9px" }}>{e.status || "draft"}</span>
                 <span style={{ fontWeight: 700, fontSize: 13 }}>{e.event_name || "-"}</span>
                 <span style={{ color: T.mid, fontSize: 12 }}>{e.mc || "-"} · {e.site_id || "-"}</span>
-                {e.brand && <span style={{ marginLeft: "auto", fontSize: 10.5, fontWeight: 800, color: e.brand === "tri" ? T.tri : T.im3 }}>{e.brand === "tri" ? "3ID" : "IM3"}</span>}
+                {e.brand && <span style={{ marginLeft: "auto", fontSize: 10.5, fontWeight: 800, color: String(e.brand).toLowerCase() === "tri" ? T.tri : T.im3 }}>{brandLabel(e.brand)}</span>}
               </div>
             ))}
           </div>

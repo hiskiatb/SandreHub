@@ -9,17 +9,21 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft, MapPin, Calendar, Tag, Image as ImageIcon, Phone,
-  CheckCircle2, XCircle, Clock, FileText, ChevronRight, Layers, Trash2, AlertTriangle, Loader2,
+  CheckCircle2, XCircle, Clock, FileText, ChevronRight, Layers, Trash2,
   CardSim, Router, Wallet, SignalHigh, Receipt,
 } from "lucide-react";
 import supabaseMarta from "../../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../_shared/MobileShell";
-import { statusMeta, fmtDate, fmtInt, fmtRp } from "../../_shared/activityUi";
-import { deletePlanImpact, deletePlan } from "../../_shared/planData";
+import { statusMeta, fmtDate, fmtInt, fmtRp, isDraftIncomplete } from "../../_shared/activityUi";
 import { fetchAuthedPhotoBlobUrl } from "../../_shared/mediaProxy";
+import DeleteActivitySheet from "../../_shared/DeleteActivitySheet";
 
 const A_COLS = "id,event_name,event_category,event_categories,brand,mc,site_id,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,poi_type,network_category,area_potential,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,target_rev_3m,cost_estimate,expected_outcome,actual_sp,actual_fwa,actual_rebuy_pulsa,actual_rebuy_data,actual_rev_3m,cost_actual,insight,checkin_valid,checkin_distance,checkin_at,approved_by_name,approved_at,approval_notes,validation_status,validation_note,validated_at,override_status,override_by_name,override_at,override_note,created_at,created_by";
 
+// Sama seperti syarat "siap diajukan" step Info + Lokasi di wizard Create
+// Plan (new/page.jsx validateStep) - dipakai utk deteksi draft yang masih
+// bolong (MC/site/POI/dst. belum diisi) supaya langsung dilempar ke wizard
+// alih-alih ditampilkan sbg halaman detail read-only dulu.
 export default function ActivityDetailPage() {
   const { id: activityId } = useParams();
   const router = useRouter();
@@ -32,11 +36,7 @@ export default function ActivityDetailPage() {
   const [editReqs, setEditReqs] = useState([]);
   const [err, setErr] = useState("");
   const [lightbox, setLightbox] = useState(null);
-  const [deleteSheet, setDeleteSheet] = useState(null); // {impact} | null
-  const [deleteLoading, setDeleteLoading] = useState(false);
-  const [deleteBusy, setDeleteBusy] = useState(false);
-  const [deleteErr, setDeleteErr] = useState("");
-  const [confirmText, setConfirmText] = useState("");
+  const [showDeleteSheet, setShowDeleteSheet] = useState(false);
 
   useEffect(() => {
     if (sessionLoading || !activityId) return;
@@ -90,30 +90,23 @@ export default function ActivityDetailPage() {
     return () => { alive = false; };
   }, [sessionLoading, activityId]);
 
-  async function openDeleteSheet() {
-    setDeleteErr(""); setConfirmText(""); setDeleteLoading(true); setDeleteSheet({ impact: null });
-    try {
-      const impact = await deletePlanImpact(activityId);
-      setDeleteSheet({ impact });
-    } catch (e) {
-      setDeleteErr(e.message || "Gagal memeriksa dampak hapus");
-    } finally {
-      setDeleteLoading(false);
+  // Draft yang PUNYA SENDIRI & belum lengkap - jangan tampilkan halaman
+  // detail read-only ini dulu (cuma bikin ekstra tap "Lanjutkan Plan" utk
+  // sampai ke wizard), langsung lempar ke wizard edit supaya lanjut mengisi
+  // dari step yang masih kurang. Dibatasi HANYA punya sendiri (`created_by
+  // === userId`) - draft orang lain yang sedang ditinjau (mis. TMV lihat
+  // draft BME dari Approval/Calendar) TETAP tampil sbg halaman detail biasa,
+  // jangan dilempar paksa ke form edit yang bukan miliknya.
+  const [redirectingToEdit, setRedirectingToEdit] = useState(false);
+  useEffect(() => {
+    if (!a || !userId || a.created_by !== userId || a.status !== "draft") return;
+    if (isDraftIncomplete(a)) {
+      setRedirectingToEdit(true);
+      router.replace(`/martahub/m/activities/new?edit=${activityId}`);
     }
-  }
+  }, [a, userId, activityId, router]);
 
-  async function confirmDelete() {
-    setDeleteBusy(true); setDeleteErr("");
-    try {
-      await deletePlan(activityId);
-      router.replace("/martahub/m/activities");
-    } catch (e) {
-      setDeleteErr(e.message || "Gagal menghapus plan");
-      setDeleteBusy(false);
-    }
-  }
-
-  if (sessionLoading || (!a && !err)) return <MobileShell active="activities"><ShellSpinner /></MobileShell>;
+  if (sessionLoading || (!a && !err) || redirectingToEdit) return <MobileShell active="activities"><ShellSpinner /></MobileShell>;
 
   if (err) {
     return (
@@ -139,10 +132,15 @@ export default function ActivityDetailPage() {
   const fwaValid = fwaEntries.filter((e) => e.validation_status === "valid").length;
   const fwaPending = fwaEntries.filter((e) => e.validation_status === "pending").length;
 
+  // Draft = belum diajukan/disetujui TMV - BELUM boleh langsung Check In
+  // (sebelumnya disamakan dgn "approved", jadi plan yang masih draft bisa
+  // check-in padahal belum tentu lengkap/disetujui). Aksi utama draft
+  // sekarang melengkapi & mengajukan plan lewat wizard edit yang sama.
   let action = null;
   if (a.status === "revision_needed") action = { label: "Revisi Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${a.id}`) };
-  else if ((a.status === "draft" || a.status === "approved") && a.checkin_valid == null) action = { label: "Check In", onTap: () => router.push(`/martahub/m/activities/${a.id}/checkin`) };
-  else if ((a.status === "draft" || a.status === "approved") && a.checkin_valid != null) action = { label: "Isi Laporan Actual", onTap: () => router.push(`/martahub/m/activities/${a.id}/submit`) };
+  else if (a.status === "draft") action = { label: "Lanjutkan Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${a.id}`) };
+  else if (a.status === "approved" && a.checkin_valid == null) action = { label: "Check In", onTap: () => router.push(`/martahub/m/activities/${a.id}/checkin`) };
+  else if (a.status === "approved" && a.checkin_valid != null) action = { label: "Isi Laporan Actual", onTap: () => router.push(`/martahub/m/activities/${a.id}/submit`) };
   else if (a.status === "revision_actual") action = { label: "Revisi & Kirim Ulang", onTap: () => router.push(`/martahub/m/activities/${a.id}/submit`) };
 
   return (
@@ -285,7 +283,7 @@ export default function ActivityDetailPage() {
         )}
 
         {userId && a.created_by === userId && (
-          <button onClick={openDeleteSheet}
+          <button onClick={() => setShowDeleteSheet(true)}
             style={{ width: "100%", marginTop: 14, height: 46, borderRadius: 13, border: "1px solid #F7C6C9", background: "#FFF5F6", color: "#DC2626", fontSize: 12.5, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             <Trash2 size={15} /> Hapus Plan
           </button>
@@ -309,87 +307,15 @@ export default function ActivityDetailPage() {
         </div>
       )}
 
-      {deleteSheet && (
-        <div onClick={() => !deleteBusy && setDeleteSheet(null)} style={{ position: "fixed", inset: 0, background: "rgba(23,24,28,0.45)", zIndex: 70, display: "flex", alignItems: "flex-end" }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, margin: "0 auto", background: "#FFFFFF", borderRadius: "22px 22px 0 0", padding: "10px 22px calc(env(safe-area-inset-bottom,0px) + 22px)", fontFamily: FF }}>
-            <div style={{ width: 40, height: 4, borderRadius: 3, background: "#E4E5EA", margin: "6px auto 16px" }} />
-
-            {deleteLoading ? (
-              <div style={{ padding: "24px 0" }}><ShellSpinner /></div>
-            ) : !deleteSheet.impact ? (
-              <div style={{ padding: "10px 12px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 12, fontWeight: 600 }}>{deleteErr}</div>
-            ) : deleteSheet.impact.blocking_installations > 0 ? (
-              <>
-                <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                  <AlertTriangle size={20} color="#DC2626" />
-                  <div style={{ fontSize: 15.5, fontWeight: 800, color: "#17181C" }}>Tidak Bisa Dihapus</div>
-                </div>
-                <div style={{ marginTop: 10, fontSize: 12.5, color: "#5A5A68", lineHeight: 1.6 }}>
-                  Plan ini masih memiliki {deleteSheet.impact.blocking_installations} instalasi POSMAT terkait. Selesaikan atau pindahkan instalasi tersebut terlebih dahulu sebelum menghapus plan.
-                </div>
-                <button onClick={() => setDeleteSheet(null)}
-                  style={{ width: "100%", marginTop: 16, height: 48, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#17181C", fontSize: 13.5, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
-                  Mengerti
-                </button>
-              </>
-            ) : (
-              <>
-                <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                  <Trash2 size={20} color="#DC2626" />
-                  <div style={{ fontSize: 15.5, fontWeight: 800, color: "#17181C" }}>Hapus Plan?</div>
-                </div>
-                <div style={{ marginTop: 10, fontSize: 12.5, color: "#5A5A68", lineHeight: 1.6 }}>
-                  "{deleteSheet.impact.event_name || a.event_name}" akan dihapus permanen beserta data terkait:
-                </div>
-                <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 8 }}>
-                  {deleteSheet.impact.sales_entries > 0 && <ImpactPill label={`${deleteSheet.impact.sales_entries} nomor MSISDN`} />}
-                  {deleteSheet.impact.documents > 0 && <ImpactPill label={`${deleteSheet.impact.documents} dokumen/foto`} />}
-                  {deleteSheet.impact.approvals > 0 && <ImpactPill label={`${deleteSheet.impact.approvals} riwayat approval`} />}
-                  {deleteSheet.impact.posmat_movements > 0 && <ImpactPill label={`${deleteSheet.impact.posmat_movements} mutasi POSMAT`} />}
-                </div>
-
-                {deleteSheet.impact.needs_strong_confirm ? (
-                  <div style={{ marginTop: 16 }}>
-                    <div style={{ fontSize: 11.5, color: "#8A8A96", fontWeight: 600, marginBottom: 7 }}>
-                      Plan ini sudah masuk status <b>{statusMeta(deleteSheet.impact.status).label}</b>. Ketik <b>HAPUS</b> untuk konfirmasi.
-                    </div>
-                    <input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder="HAPUS"
-                      style={{ width: "100%", height: 44, borderRadius: 11, border: "1px solid #E4E5EA", padding: "0 13px", fontSize: 13.5, fontFamily: FF, outline: "none" }} />
-                  </div>
-                ) : null}
-
-                {deleteErr && (
-                  <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 12, fontWeight: 600 }}>{deleteErr}</div>
-                )}
-
-                <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
-                  <button onClick={() => setDeleteSheet(null)} disabled={deleteBusy}
-                    style={{ flex: 1, height: 48, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 13.5, fontWeight: 700, fontFamily: FF, cursor: deleteBusy ? "default" : "pointer" }}>
-                    Batal
-                  </button>
-                  <button onClick={confirmDelete}
-                    disabled={deleteBusy || (deleteSheet.impact.needs_strong_confirm && confirmText.trim().toUpperCase() !== "HAPUS")}
-                    style={{
-                      flex: 1.3, height: 48, borderRadius: 12, border: "none", cursor: "pointer", color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF,
-                      background: (deleteBusy || (deleteSheet.impact.needs_strong_confirm && confirmText.trim().toUpperCase() !== "HAPUS")) ? "#D8D9E0" : "#DC2626",
-                      display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
-                    }}>
-                    {deleteBusy ? <Loader2 size={15} style={{ animation: "mspin .85s linear infinite" }} /> : <Trash2 size={15} />}
-                    Hapus
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+      {showDeleteSheet && (
+        <DeleteActivitySheet
+          activityId={activityId}
+          activityName={a.event_name}
+          onClose={() => setShowDeleteSheet(false)}
+          onDeleted={() => router.replace("/martahub/m/activities")}
+        />
       )}
     </MobileShell>
-  );
-}
-
-function ImpactPill({ label }) {
-  return (
-    <span style={{ fontSize: 10.5, fontWeight: 700, color: "#5A5A68", background: "#F0F0F3", borderRadius: 999, padding: "5px 10px" }}>{label}</span>
   );
 }
 

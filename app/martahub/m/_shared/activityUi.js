@@ -36,3 +36,14 @@ export function fmtRp(n) {
   if (n == null) return "Rp 0";
   return `Rp ${Number(n).toLocaleString("id-ID")}`;
 }
+
+// Draft dianggap "belum lengkap" kalau salah satu field wajib wizard belum
+// terisi - SATU sumber kebenaran dipakai baik oleh halaman detail (redirect
+// otomatis ke wizard) maupun kartu daftar Aktivitas & banner Beranda (badge
+// "Belum Lengkap"/hitungan draft belum selesai), supaya definisi "lengkap"
+// tidak diam-diam berbeda antar layar.
+export function isDraftIncomplete(a) {
+  const categories = Array.isArray(a.event_categories) && a.event_categories.length ? a.event_categories : (a.event_category ? a.event_category.split(",").filter(Boolean) : []);
+  const hasDate = !!(a.plan_date || a.plan_date_start || a.plan_dates_multi);
+  return !(categories.length > 0 && !!(a.event_name || "").trim() && hasDate && !!a.mc && !!a.site_id && !!a.poi_type);
+}

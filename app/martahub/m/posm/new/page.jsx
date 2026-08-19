@@ -14,7 +14,7 @@ import { INSTALL_MODES, fetchMyAvailableTypes, fetchAvailableTypesForBranch, fet
 import { compressToMaxBytes } from "../../_shared/imageTools";
 import PhotoCollageSheet from "../../_shared/PhotoCollageSheet";
 
-const BRAND_CHOICES = [{ key: "im3", label: "IM3" }, { key: "tri", label: "Tri" }];
+const BRAND_CHOICES = [{ key: "im3", label: "IM3" }, { key: "tri", label: "3ID" }];
 
 export default function PosmNewPage() {
   const router = useRouter();
