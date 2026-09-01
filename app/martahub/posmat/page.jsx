@@ -1,43 +1,20 @@
 "use client";
-// Menu "POSMAT Stock" (§7, §9) - kelola master jenis material, kuota stok
-// bulanan per MD (carry-over tanpa batas), dan Target Terpasang (KPI per
-// branch×brand). Web-only (dikonfirmasi §7: form web biasa) - pemakaian
-// stok oleh MD sendiri (mengurangi saldo) adalah bagian MD Activities,
-// Fase 5, BELUM dibangun di sini.
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { Package, Boxes, Target, ArrowLeft, Plus, Pencil, ShieldCheck, CheckCircle2, AlertTriangle, HelpCircle, PlayCircle, RefreshCw, Lock } from "lucide-react";
+// Menu "POSMAT Stock" - Plan POSM (Register Installment Plan). Jenis
+// Material, Stok & Mutasi, dan Validity MSISDN sudah dihapus dari CMS ini
+// atas permintaan user (2026-08-31) - RPC & tabel DB-nya tidak disentuh,
+// yang dihapus cuma UI-nya di halaman ini.
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Package, ArrowLeft, Plus, Pencil, AlertTriangle, Loader2, Upload } from "lucide-react";
 import MartaShell, { T } from "../components/MartaShell";
-import { FolderConnectPanel } from "../components/FolderConnect";
 import supabaseMarta from "../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../lib/martaScope";
-import { readWorkbook, deriveTable } from "../../../lib/martaSiteImport";
-import { useFolderConnection } from "../../../lib/useFolderConnection";
-
-const VALIDITY_EXT = /\.(xlsx|xls|csv)$/i;
 
 const CAN_MANAGE_ROLES = ["head", "tmv", "spm_sumatera", "admin"];
-const VALIDITY_PURPOSE = "validity_msisdn";
-
-const _norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-function guessCol(columns, guesses) {
-  for (const g of guesses) {
-    const ng = _norm(g);
-    const hit = columns.find((c) => _norm(c) === ng);
-    if (hit) return hit;
-  }
-  for (const g of guesses) {
-    const ng = _norm(g);
-    if (ng.length < 3) continue;
-    const hit = columns.find((c) => _norm(c).includes(ng));
-    if (hit) return hit;
-  }
-  return "";
-}
 const brandLabel = (b) => (b === "tri" ? "3ID" : b === "im3" ? "IM3" : String(b || "-").toUpperCase());
 
 export default function PosmatStockPage() {
   return (
-    <MartaShell active="posmat" title="POSM Stock" subtitle="Jenis material, kuota stok per MD, dan Target Terpasang (§7).">
+    <MartaShell active="posmat" title="Plan POSM" subtitle="Register Installment Plan per branch x brand.">
       {(ctx) => <Body email={ctx?.session?.user?.email} />}
     </MartaShell>
   );
@@ -45,703 +22,781 @@ export default function PosmatStockPage() {
 
 function Body({ email }) {
   const [scope, setScope] = useState(null);
-  const [active, setActive] = useState(null); // null | 'types' | 'stock' | 'target' | 'validity'
 
   useEffect(() => { if (email) getMartaScope(email).then(setScope); }, [email]);
   const canManage = CAN_MANAGE_ROLES.includes(scope?.role);
 
-  if (active === "types") return (<div><BackBtn onClick={() => setActive(null)} />
-    <TypesView email={email} canManage={canManage} /></div>);
-  if (active === "stock") return (<div><BackBtn onClick={() => setActive(null)} />
-    <StockView email={email} canManage={canManage} scope={scope} /></div>);
-  if (active === "target") return (<div><BackBtn onClick={() => setActive(null)} />
-    <TargetView email={email} canManage={canManage} scope={scope} /></div>);
-  if (active === "validity") return (<div><BackBtn onClick={() => setActive(null)} />
-    <ValidityView email={email} canManage={canManage} scope={scope} /></div>);
-
   return (
-    <div style={{ maxWidth: 760 }}>
-      <div style={{ fontSize: 18, fontWeight: 800, color: T.hi, marginBottom: 3 }}>Pilih menu</div>
-      <div style={{ fontSize: 13, color: T.mid, marginBottom: 18 }}>Pengelolaan material POSM, target pemasangan, dan Validity MSISDN.</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
-        <MenuCard icon={Package} label="Jenis Material" desc="Master jenis POSM - reusable (last-used) atau consumable (sekali pakai), satuan unit."
-          onClick={() => setActive("types")} />
-        <MenuCard icon={Boxes} label="Stok & Mutasi" desc="Tetapkan/top-up kuota bulanan per MD × jenis material, lihat saldo berjalan (carry-over tanpa batas)."
-          onClick={() => setActive("stock")} />
-        <MenuCard icon={Target} label="Target Terpasang" desc="KPI jumlah pemasangan per branch × brand per periode - terpisah dari kuota stok fisik."
-          onClick={() => setActive("target")} />
-        <MenuCard icon={ShieldCheck} label="Validity" desc="Cocokkan MSISDN yang disubmit di Activity Report terhadap data tervalidasi (raw lokal, §9.3)."
-          onClick={() => setActive("validity")} />
-      </div>
+    <div>
+      <style>{"@keyframes mh-spin { to { transform: rotate(360deg); } }"}</style>
       {!canManage && scope && (
-        <div style={{ ...note, marginTop: 16 }}>Mode lihat saja - hanya Head TMV, Brand TMV, atau SPM Sumatera yang dapat mengubah data di sini.</div>
+        <div style={{ ...note, marginBottom: 16 }}>Mode lihat saja - hanya Head TMV, Brand TMV, atau SPM Sumatera yang dapat mengubah data di sini.</div>
       )}
-    </div>
-  );
-}
-
-function BackBtn({ onClick }) {
-  return (
-    <button onClick={onClick} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: T.mid, fontSize: 13, fontWeight: 600, padding: 0, marginBottom: 16 }}>
-      <ArrowLeft size={15} /> Kembali ke POSM Stock
-    </button>
-  );
-}
-
-function MenuCard({ icon: Icon, label, desc, onClick }) {
-  const [hover, setHover] = useState(false);
-  return (
-    <div onClick={onClick} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
-      style={{ ...card, cursor: "pointer", display: "flex", alignItems: "flex-start", gap: 14, borderColor: hover ? "#D8DEE8" : T.line, boxShadow: hover ? "0 6px 18px rgba(0,0,0,.07)" : "none", transform: hover ? "translateY(-1px)" : "none", transition: "all .15s" }}>
-      <div style={{ width: 44, height: 44, borderRadius: 12, flexShrink: 0, background: "#FFF0F0", border: "1px solid #F6D9D9", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <Icon size={20} color={T.primary} />
-      </div>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontSize: 15, fontWeight: 800, color: T.hi, marginBottom: 3 }}>{label}</div>
-        <div style={{ fontSize: 12.5, color: T.mid, lineHeight: 1.5 }}>{desc}</div>
-      </div>
+      <PlanView email={email} canManage={canManage} scope={scope} />
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  1. JENIS MATERIAL
+//  PLAN POSM (Register Installment Plan) - menggantikan total Stok & Mutasi +
+//  Target Terpasang lama. Sama persis pola RPC dgn mobile (mh_posm_*), cuma
+//  UI-nya versi desktop. Region SUMATERA_REGIONS HARUS sama persis dgn
+//  mh_sites.region (lihat komentar REGIONS di planData.js mobile).
 // ═══════════════════════════════════════════════════════════════════════════
-function TypesView({ email, canManage }) {
-  const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState(null); // null=tutup, {}=baru, {...}=edit
+const PLAN_CATEGORIES = [
+  { key: "retailer_installment", label: "Retailer Installment" },
+  { key: "outdoor_installment", label: "Outdoor Installment" },
+  { key: "customer_activation", label: "Customer Activation" },
+];
+const PLAN_CATEGORY_LABEL = Object.fromEntries(PLAN_CATEGORIES.map((c) => [c.key, c.label]));
+const SUMATERA_REGIONS = ["NORTH SUMATERA", "CENTRAL SUMATERA", "SOUTH SUMATERA"];
+const PLAN_STATUS_META = {
+  draft: { label: "Draft", color: T.lo, bg: "#F1F2F5" },
+  active: { label: "Aktif", color: T.success, bg: T.successBg },
+  closed: { label: "Selesai", color: T.mid, bg: "#F1F2F5" },
+};
+const PLAN_VISUAL_BUCKET = "mh-photos";
+function planVisualUrl(path) {
+  if (!path) return null;
+  return supabaseMarta.storage.from(PLAN_VISUAL_BUCKET).getPublicUrl(path).data.publicUrl;
+}
+
+function PlanView({ email, canManage, scope }) {
+  const [plans, setPlans] = useState(null);
+  const [selected, setSelected] = useState(null); // null=list, {...}=detail
+  const [formOpen, setFormOpen] = useState(false);
+  const [openingId, setOpeningId] = useState(null);
   const [err, setErr] = useState("");
 
+  async function openPlan(id) {
+    setOpeningId(id); setErr("");
+    try {
+      const { data, error } = await supabaseMarta.rpc("mh_posm_get_plan", { p_plan_id: id });
+      if (error) throw error;
+      setSelected(data);
+    } catch (e) { setErr(e.message || "Gagal membuka Plan"); }
+    finally { setOpeningId(null); }
+  }
+
   const load = useCallback(async () => {
-    setLoading(true);
-    const { data, error } = await supabaseMarta.rpc("mh_posmat_list_types");
-    if (!error) setRows(data || []);
-    setLoading(false);
+    const { data, error } = await supabaseMarta.rpc("mh_posm_list_plans", { p_category: null, p_brand: null, p_status: null });
+    if (error) setErr(error.message); else setPlans(data || []);
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  if (formOpen) {
+    return <PlanCreateWizard email={email} scope={scope} onClose={() => setFormOpen(false)}
+      onSaved={async (plan) => {
+        setFormOpen(false); await load();
+        const { data } = await supabaseMarta.rpc("mh_posm_get_plan", { p_plan_id: plan.id });
+        if (data) setSelected(data);
+      }} />;
+  }
+
+  if (selected) {
+    return <PlanDetail plan={selected} email={email} canManage={canManage} scope={scope}
+      onBack={() => { setSelected(null); load(); }} onChanged={(p) => setSelected(p)} />;
+  }
+
   return (
-    <div style={{ maxWidth: 860 }}>
+    <div style={{ maxWidth: 980 }}>
       <div style={{ display: "flex", alignItems: "center", marginBottom: 14 }}>
-        <div style={{ fontSize: 18, fontWeight: 800, color: T.hi }}>Jenis Material</div>
-        {canManage && <button onClick={() => setEditing({})} style={{ ...pbtn, marginLeft: "auto" }}><Plus size={15} /> Tambah</button>}
+        <div style={{ fontSize: 18, fontWeight: 800, color: T.hi }}>Plan POSM</div>
+        {canManage && <button onClick={() => setFormOpen(true)} style={{ ...pbtn, marginLeft: "auto" }}><Plus size={15} /> Plan Baru</button>}
       </div>
       {err && <div style={{ ...note, marginBottom: 12, background: T.errorBg, borderColor: T.error, color: T.error }}>{err}</div>}
-      <div style={{ ...card, padding: 0, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-          <thead><tr style={{ background: "#F7F9FC", color: T.mid }}>
-            {["Nama", "Kategori", "Sifat Stok", "Satuan", "Status", ""].map((h) => <th key={h} style={{ padding: "8px 12px", textAlign: "left" }}>{h}</th>)}
-          </tr></thead>
-          <tbody>
-            {loading && <tr><td colSpan={6} style={{ padding: 20, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
-            {!loading && rows.length === 0 && <tr><td colSpan={6} style={{ padding: 20, textAlign: "center", color: T.lo }}>Belum ada jenis material.</td></tr>}
-            {rows.map((r) => (
-              <tr key={r.id} style={{ borderTop: `1px solid ${T.line}` }}>
-                <td style={{ padding: "8px 12px", fontWeight: 700, color: T.hi }}>{r.name}</td>
-                <td style={{ padding: "8px 12px", color: T.mid }}>{r.category || "-"}</td>
-                <td style={{ padding: "8px 12px" }}>
-                  <span style={{ ...pill, color: r.stock_mode === "reusable" ? T.blue : T.primary, background: r.stock_mode === "reusable" ? T.blueBg : "#FFF0F0" }}>
-                    {r.stock_mode === "reusable" ? "Reusable" : "Consumable"}
-                  </span>
-                </td>
-                <td style={{ padding: "8px 12px", color: T.mid }}>{r.unit}</td>
-                <td style={{ padding: "8px 12px" }}>
-                  <span style={{ ...pill, color: r.active ? T.success : T.lo, background: r.active ? T.successBg : "#F1F2F5" }}>{r.active ? "Aktif" : "Nonaktif"}</span>
-                </td>
-                <td style={{ padding: "8px 12px", textAlign: "right" }}>
-                  {canManage && <button onClick={() => setEditing(r)} style={iconBtn}><Pencil size={14} /></button>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
 
-      {editing && (
-        <TypeModal row={editing} email={email} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} onError={setErr} />
+      {plans === null ? (
+        <div style={card}><Spinner /></div>
+      ) : plans.length === 0 ? (
+        <div style={{ ...card, textAlign: "center", color: T.lo }}>Belum ada Plan POSM. Buat Plan pertama untuk mulai atur target &amp; alokasi.</div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
+          {plans.map((p) => {
+            const st = PLAN_STATUS_META[p.status] || PLAN_STATUS_META.draft;
+            const url = planVisualUrl(p.visual_path);
+            const pct = p.total_qty > 0 ? Math.min(100, Math.round((p.total_installed / p.total_qty) * 100)) : 0;
+            const isOpening = openingId === p.id;
+            return (
+              <div key={p.id} onClick={() => !openingId && openPlan(p.id)}
+                style={{ ...card, position: "relative", cursor: openingId ? "default" : "pointer", display: "flex", gap: 12, opacity: openingId && !isOpening ? 0.55 : 1, transition: "opacity .15s" }}>
+                {isOpening && (
+                  <div style={{ position: "absolute", inset: 0, background: "rgba(255,255,255,0.75)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <Loader2 size={18} color={T.primary} style={{ animation: "mh-spin .8s linear infinite" }} />
+                  </div>
+                )}
+                <div style={{ width: 56, height: 56, borderRadius: 10, background: "#F1F2F5", flexShrink: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {url ? <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Package size={18} color={T.lo} />}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 800, color: T.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                  <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 5 }}>
+                    <span style={{ ...pill, color: "#B32E85", background: "rgba(179,46,133,0.10)" }}>{PLAN_CATEGORY_LABEL[p.category] || p.category}</span>
+                    <span style={{ ...pill, color: T.hi, background: "#F1F2F5" }}>{brandLabel(p.brand)}</span>
+                    <span style={{ ...pill, color: st.color, background: st.bg }}>{st.label}</span>
+                  </div>
+                  <div style={{ marginTop: 5, fontSize: 11, color: T.lo }}>{p.period_from} – {p.period_to}</div>
+                  <div style={{ marginTop: 4, fontSize: 11, color: T.mid, fontWeight: 600 }}>{p.material_count} material · {p.branch_count} branch · {p.total_installed}/{p.total_qty} ({pct}%)</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
+
     </div>
   );
 }
 
-function TypeModal({ row, email, onClose, onSaved, onError }) {
-  const isNew = !row.id;
-  const [name, setName] = useState(row.name || "");
-  const [category, setCategory] = useState(row.category || "");
-  const [stockMode, setStockMode] = useState(row.stock_mode || "consumable");
-  const [unit, setUnit] = useState(row.unit || "pcs");
-  const [activeFlag, setActiveFlag] = useState(row.active ?? true);
+function PlanFormModal({ email, onClose, onSaved, plan }) {
+  const isEdit = !!plan;
+  const [name, setName] = useState(plan?.name || "");
+  const [category, setCategory] = useState(plan?.category || PLAN_CATEGORIES[0].key);
+  const [brand, setBrand] = useState(plan?.brand || "im3");
+  const [periodFrom, setPeriodFrom] = useState(plan?.period_from || "");
+  const [periodTo, setPeriodTo] = useState(plan?.period_to || "");
+  const [status, setStatus] = useState(plan?.status || "active");
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState(plan?.visual_path ? planVisualUrl(plan.visual_path) : "");
   const [saving, setSaving] = useState(false);
-  const canSave = name.trim() && !saving;
+  const [err, setErr] = useState("");
+
+  function pickFile(f) {
+    if (!f) return;
+    setFile(f);
+    setPreview(URL.createObjectURL(f));
+  }
 
   async function save() {
-    setSaving(true);
+    if (!name.trim()) { setErr("Nama Plan wajib diisi."); return; }
+    if (!periodFrom || !periodTo) { setErr("Period From & To wajib diisi."); return; }
+    if (periodTo < periodFrom) { setErr("Period To harus setelah Period From."); return; }
+    setSaving(true); setErr("");
     try {
-      const { error } = await supabaseMarta.rpc("mh_posmat_upsert_type", {
-        p_id: row.id || null, p_name: name.trim(), p_category: category.trim() || null,
-        p_stock_mode: stockMode, p_unit: unit.trim() || "pcs", p_active: activeFlag, p_caller_email: email,
+      let visualPath = plan?.visual_path || null;
+      if (file) {
+        const path = `posm-plan-visual/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${(file.name.split(".").pop() || "jpg")}`;
+        const { error: upErr } = await supabaseMarta.storage.from(PLAN_VISUAL_BUCKET).upload(path, file, { contentType: file.type || "image/jpeg" });
+        if (upErr) throw upErr;
+        visualPath = path;
+      }
+      const { data, error } = await supabaseMarta.rpc("mh_posm_upsert_plan", {
+        p_id: plan?.id || null, p_name: name.trim(), p_category: category, p_brand: brand, p_visual_path: visualPath,
+        p_period_from: periodFrom, p_period_to: periodTo, p_status: status, p_caller_email: email,
       });
       if (error) throw error;
-      onSaved();
-    } catch (e) { onError(e.message || "Gagal menyimpan"); onClose(); }
+      onSaved(data);
+    } catch (e) { setErr(e.message || "Gagal menyimpan Plan"); }
     finally { setSaving(false); }
   }
 
   return (
-    <Modal onClose={onClose} title={isNew ? "Tambah Jenis Material" : "Edit Jenis Material"}>
-      <Field label="Nama *"><input value={name} onChange={(e) => setName(e.target.value)} style={inp} placeholder="Mis. Neon Box" /></Field>
-      <Field label="Kategori"><input value={category} onChange={(e) => setCategory(e.target.value)} style={inp} placeholder="Mis. Branding" /></Field>
-      <Field label="Sifat Stok">
-        <select value={stockMode} onChange={(e) => setStockMode(e.target.value)} style={selectStyle}>
-          <option value="consumable">Consumable (sekali pakai)</option>
-          <option value="reusable">Reusable (berpindah, last-used)</option>
+    <Modal onClose={onClose} title={isEdit ? "Edit Plan POSM" : "Plan POSM Baru"}>
+      {err && <div style={{ ...note, marginBottom: 12, background: T.errorBg, borderColor: T.error, color: T.error }}>{err}</div>}
+      <Field label="Visual">
+        <label style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: 120, borderRadius: 10, border: `1.5px dashed ${T.line}`, background: "#F7F9FC", cursor: "pointer", overflow: "hidden" }}>
+          {preview ? <img src={preview} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : (
+                <span style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, fontSize: 12, color: T.lo }}>
+                  <Upload size={22} color={T.lo} />
+                  Klik untuk unggah visual (ukuran bebas)
+                </span>
+              )}
+          <input type="file" accept="image/*" hidden onChange={(e) => pickFile(e.target.files?.[0])} />
+        </label>
+      </Field>
+      <Field label="Nama Plan *"><input value={name} onChange={(e) => setName(e.target.value)} style={inp} placeholder="Contoh: Outdoor Q3 Sumatera Utara" /></Field>
+      <Field label="Category *">
+        <select value={category} onChange={(e) => setCategory(e.target.value)} style={selectStyle}>
+          {PLAN_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
         </select>
       </Field>
-      <Field label="Satuan"><input value={unit} onChange={(e) => setUnit(e.target.value)} style={inp} placeholder="pcs / set / roll" /></Field>
-      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: T.mid, marginTop: 4 }}>
-        <input type="checkbox" checked={activeFlag} onChange={(e) => setActiveFlag(e.target.checked)} /> Aktif (muncul di daftar pilihan MD)
-      </label>
+      <Field label="Brand *">
+        <select value={brand} onChange={(e) => setBrand(e.target.value)} style={selectStyle}>
+          <option value="im3">IM3</option>
+          <option value="tri">3ID</option>
+        </select>
+      </Field>
+      <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ flex: 1 }}><Field label="Period From *"><input type="date" value={periodFrom} onChange={(e) => setPeriodFrom(e.target.value)} style={inp} /></Field></div>
+        <div style={{ flex: 1 }}><Field label="Period To *"><input type="date" value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} style={inp} /></Field></div>
+      </div>
+      {isEdit && (
+        <Field label="Status">
+          <select value={status} onChange={(e) => setStatus(e.target.value)} style={selectStyle}>
+            <option value="draft">Draft</option>
+            <option value="active">Aktif</option>
+            <option value="closed">Selesai</option>
+          </select>
+        </Field>
+      )}
       <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end", gap: 10 }}>
         <button onClick={onClose} style={btn}>Batal</button>
-        <button onClick={save} disabled={!canSave} style={{ ...pbtn, ...(!canSave ? disabledPbtn : {}) }}>{saving ? "Menyimpan…" : "Simpan"}</button>
+        <button onClick={save} disabled={saving} style={{ ...pbtn, ...(saving ? disabledPbtn : {}) }}>{saving ? "Menyimpan…" : "Simpan"}</button>
       </div>
     </Modal>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  2. STOK & MUTASI
-// ═══════════════════════════════════════════════════════════════════════════
-// ✅ Stok jadi shared pool per Branch×Brand (bukan lagi per-MD individu) -
-// sebelum ini top-up CUMA bisa ditarget ke assignment ber-role 'md', jadi
-// BME/RGE/role lain TIDAK PERNAH bisa punya saldo sama sekali (akar masalah
-// "BME tidak bisa isi POSMAT"). Sekarang siapa pun di branch×brand yg sama
-// berbagi 1 pool, sejalan dgn Target Terpasang yg SUDAH branch×brand sejak
-// awal.
-function StockView({ email, canManage, scope }) {
-  const [types, setTypes] = useState([]);
-  const [combos, setCombos] = useState([]);
-  const [overview, setOverview] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState({ branchId: "", brand: "", typeId: "", month: currentYYYYMM(), amount: "", note: "" });
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState("");
-  const [ok, setOk] = useState("");
 
-  // Scope caller (Head TMV -> region sendiri, Brand TMV -> region+brand
-  // sendiri) - SAMA PERSIS pola di assignments/page.jsx. SPM Sumatera/admin
-  // unscoped (null = bebas milih branch manapun).
-  const lockedRegion = scope && (scope.role === "head" || scope.role === "tmv") ? scope.region : null;
-  const lockedBrand = scope && scope.role === "tmv" ? scope.brand : null;
-  useEffect(() => {
-    if (lockedBrand) setForm((f) => (f.brand ? f : { ...f, brand: lockedBrand }));
-  }, [lockedBrand]);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    const [t, bb, o] = await Promise.all([
-      supabaseMarta.rpc("mh_posmat_list_types"),
-      supabaseMarta.rpc("mh_branch_brand_list"),
-      supabaseMarta.rpc("mh_posmat_stock_overview"),
-    ]);
-    setTypes((t.data || []).filter((x) => x.active));
-    setCombos(bb.data || []);
-    setOverview(o.data || []);
-    setLoading(false);
-  }, []);
-  useEffect(() => { load(); }, [load]);
-
-  const branchOptions = useMemo(() => {
-    const seen = new Map();
-    for (const c of combos) {
-      if (!c.branch_id) continue;
-      if (lockedRegion && c.region !== lockedRegion) continue;
-      if (lockedBrand && c.brand !== lockedBrand) continue;
-      if (!seen.has(c.branch_id)) seen.set(c.branch_id, c.branch);
-    }
-    return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [combos, lockedRegion, lockedBrand]);
-
-  const canSubmit = form.branchId && form.brand && form.typeId && form.month && Number(form.amount) !== 0 && !Number.isNaN(Number(form.amount)) && !saving;
-
-  async function submit() {
-    setSaving(true); setErr(""); setOk("");
-    try {
-      const { error } = await supabaseMarta.rpc("mh_posmat_set_monthly_stock", {
-        p_branch_id: form.branchId, p_brand: form.brand, p_posmat_type_id: form.typeId, p_month: form.month,
-        p_amount: Number(form.amount), p_note: form.note.trim() || null, p_caller_email: email,
-      });
-      if (error) throw error;
-      setOk("Top-up stok tersimpan.");
-      setForm((f) => ({ ...f, amount: "", note: "" }));
-      load();
-    } catch (e) { setErr(e.message || "Gagal menyimpan"); }
-    finally { setSaving(false); }
-  }
-
-  return (
-    <div style={{ maxWidth: 1000 }}>
-      <div style={{ fontSize: 18, fontWeight: 800, color: T.hi, marginBottom: 3 }}>Stok & Mutasi</div>
-      <div style={{ fontSize: 13, color: T.mid, marginBottom: 14 }}>Saldo milik BRANCH × BRAND (dibagikan bersama semua orang di sana, bukan per-individu) - bersifat carry-over tanpa batas, top-up menambah saldo berjalan, tidak mereset tiap bulan.</div>
-      {lockedRegion && (
-        <div style={{ ...note, marginBottom: 14 }}>Daftar branch dibatasi ke region <b>{lockedRegion}</b>{lockedBrand ? ` · brand ${brandLabel(lockedBrand)}` : ""} sesuai scope akun kamu.</div>
-      )}
-
-      {canManage && (
-        <div style={{ ...card, marginBottom: 14 }}>
-          <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 10 }}>Top-up Kuota</div>
-          {err && <div style={{ ...note, marginBottom: 10, background: T.errorBg, borderColor: T.error, color: T.error }}>{err}</div>}
-          {ok && <div style={{ ...note, marginBottom: 10, background: T.successBg, borderColor: T.success, color: "#155724" }}>{ok}</div>}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px,1fr))", gap: 10 }}>
-            <Field label="Branch">
-              <select value={form.branchId} onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))} style={selectStyle}>
-                <option value="">- pilih branch -</option>
-                {branchOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-              </select>
-            </Field>
-            <Field label="Brand">
-              {lockedBrand ? (
-                <div style={{ ...inp, background: T.sub || "#F7F9FC", color: T.mid, cursor: "not-allowed", display: "flex", alignItems: "center", gap: 6 }}>
-                  {brandLabel(lockedBrand)} <Lock size={12} />
-                </div>
-              ) : (
-                <select value={form.brand} onChange={(e) => setForm((f) => ({ ...f, brand: e.target.value }))} style={selectStyle}>
-                  <option value="">- pilih brand -</option>
-                  <option value="im3">IM3</option>
-                  <option value="tri">3ID</option>
-                </select>
-              )}
-            </Field>
-            <Field label="Jenis Material">
-              <select value={form.typeId} onChange={(e) => setForm((f) => ({ ...f, typeId: e.target.value }))} style={selectStyle}>
-                <option value="">- pilih jenis -</option>
-                {types.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.unit})</option>)}
-              </select>
-            </Field>
-            <Field label="Bulan"><input type="month" value={monthInputValue(form.month)} onChange={(e) => setForm((f) => ({ ...f, month: e.target.value.replace("-", "") }))} style={inp} /></Field>
-            <Field label="Jumlah (+/-)"><input type="number" value={form.amount} onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))} style={inp} placeholder="Mis. 50" /></Field>
-          </div>
-          <Field label="Catatan"><input value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} style={{ ...inp, marginTop: 6 }} placeholder="Opsional" /></Field>
-          <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
-            <button onClick={submit} disabled={!canSubmit} style={{ ...pbtn, ...(!canSubmit ? disabledPbtn : {}) }}>{saving ? "Menyimpan…" : "Simpan Top-up"}</button>
-          </div>
-        </div>
-      )}
-
-      <div style={{ ...card, padding: 0, overflow: "hidden" }}>
-        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.line}`, fontWeight: 800, fontSize: 14 }}>Saldo Berjalan per Branch × Brand × Jenis Material</div>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-          <thead><tr style={{ background: "#F7F9FC", color: T.mid }}>
-            {["Branch", "Brand", "Jenis Material", "Top-up", "Terpakai", "Saldo"].map((h) => <th key={h} style={{ padding: "8px 12px", textAlign: "left" }}>{h}</th>)}
-          </tr></thead>
-          <tbody>
-            {loading && <tr><td colSpan={6} style={{ padding: 20, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
-            {!loading && overview.length === 0 && <tr><td colSpan={6} style={{ padding: 20, textAlign: "center", color: T.lo }}>Belum ada stok tercatat.</td></tr>}
-            {overview.map((r, i) => (
-              <tr key={`${r.branch_id}-${r.brand}-${r.posmat_type_id}-${i}`} style={{ borderTop: `1px solid ${T.line}` }}>
-                <td style={{ padding: "8px 12px", fontWeight: 700, color: T.hi }}>{r.branch_name || r.branch_id}</td>
-                <td style={{ padding: "8px 12px", color: T.mid }}>{brandLabel(r.brand)}</td>
-                <td style={{ padding: "8px 12px", color: T.mid }}>{r.type_name}</td>
-                <td style={{ padding: "8px 12px", color: T.mid }}>{Number(r.total_topup).toLocaleString()} {r.unit}</td>
-                <td style={{ padding: "8px 12px", color: T.mid }}>{Number(r.total_consumed).toLocaleString()} {r.unit}</td>
-                <td style={{ padding: "8px 12px", fontWeight: 800, color: Number(r.balance) > 0 ? T.success : T.error }}>{Number(r.balance).toLocaleString()} {r.unit}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  3. TARGET TERPASANG
-// ═══════════════════════════════════════════════════════════════════════════
-function TargetView({ email, canManage, scope }) {
-  const [combos, setCombos] = useState([]);
-  const [targets, setTargets] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [form, setForm] = useState({ branchId: "", brand: "", month: currentYYYYMM(), qty: "", note: "" });
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState("");
-  const [ok, setOk] = useState("");
-
-  const lockedRegion = scope && (scope.role === "head" || scope.role === "tmv") ? scope.region : null;
-  const lockedBrand = scope && scope.role === "tmv" ? scope.brand : null;
-  useEffect(() => {
-    if (lockedBrand) setForm((f) => (f.brand ? f : { ...f, brand: lockedBrand }));
-  }, [lockedBrand]);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    const [bb, tg] = await Promise.all([
-      supabaseMarta.rpc("mh_branch_brand_list"),
-      supabaseMarta.rpc("mh_posmat_list_targets"),
-    ]);
-    setCombos(bb.data || []);
-    setTargets(tg.data || []);
-    setLoading(false);
-  }, []);
-  useEffect(() => { load(); }, [load]);
-
-  const branchOptions = useMemo(() => {
-    const seen = new Map();
-    for (const c of combos) {
-      if (!c.branch_id) continue;
-      if (lockedRegion && c.region !== lockedRegion) continue;
-      if (lockedBrand && c.brand !== lockedBrand) continue;
-      if (!seen.has(c.branch_id)) seen.set(c.branch_id, c.branch);
-    }
-    return [...seen.entries()].sort((a, b) => a[1].localeCompare(b[1]));
-  }, [combos, lockedRegion, lockedBrand]);
-
-  const canSubmit = form.branchId && form.brand && form.month && form.qty !== "" && !Number.isNaN(Number(form.qty)) && !saving;
-
-  async function submit() {
-    setSaving(true); setErr(""); setOk("");
-    try {
-      const branchName = branchOptions.find(([id]) => id === form.branchId)?.[1] || null;
-      const { error } = await supabaseMarta.rpc("mh_posmat_set_target", {
-        p_branch_id: form.branchId, p_branch_name: branchName, p_brand: form.brand, p_month: form.month,
-        p_target_qty: Number(form.qty), p_note: form.note.trim() || null, p_caller_email: email,
-      });
-      if (error) throw error;
-      setOk("Target tersimpan.");
-      load();
-    } catch (e) { setErr(e.message || "Gagal menyimpan"); }
-    finally { setSaving(false); }
-  }
-
-  return (
-    <div style={{ maxWidth: 900 }}>
-      <div style={{ fontSize: 18, fontWeight: 800, color: T.hi, marginBottom: 3 }}>Target Terpasang</div>
-      <div style={{ fontSize: 13, color: T.mid, marginBottom: 14 }}>KPI jumlah pemasangan per branch × brand per periode - terpisah dari saldo stok fisik.</div>
-      {lockedRegion && (
-        <div style={{ ...note, marginBottom: 14 }}>Daftar branch dibatasi ke region <b>{lockedRegion}</b>{lockedBrand ? ` · brand ${brandLabel(lockedBrand)}` : ""} sesuai scope akun kamu.</div>
-      )}
-
-      {canManage && (
-        <div style={{ ...card, marginBottom: 14 }}>
-          {err && <div style={{ ...note, marginBottom: 10, background: T.errorBg, borderColor: T.error, color: T.error }}>{err}</div>}
-          {ok && <div style={{ ...note, marginBottom: 10, background: T.successBg, borderColor: T.success, color: "#155724" }}>{ok}</div>}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px,1fr))", gap: 10 }}>
-            <Field label="Branch">
-              <select value={form.branchId} onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))} style={selectStyle}>
-                <option value="">- pilih branch -</option>
-                {branchOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-              </select>
-            </Field>
-            <Field label="Brand">
-              {lockedBrand ? (
-                <div style={{ ...inp, background: T.sub || "#F7F9FC", color: T.mid, cursor: "not-allowed", display: "flex", alignItems: "center", gap: 6 }}>
-                  {brandLabel(lockedBrand)} <Lock size={12} />
-                </div>
-              ) : (
-                <select value={form.brand} onChange={(e) => setForm((f) => ({ ...f, brand: e.target.value }))} style={selectStyle}>
-                  <option value="">- pilih brand -</option>
-                  <option value="im3">IM3</option>
-                  <option value="tri">3ID</option>
-                </select>
-              )}
-            </Field>
-            <Field label="Bulan"><input type="month" value={monthInputValue(form.month)} onChange={(e) => setForm((f) => ({ ...f, month: e.target.value.replace("-", "") }))} style={inp} /></Field>
-            <Field label="Target (jumlah)"><input type="number" min="0" value={form.qty} onChange={(e) => setForm((f) => ({ ...f, qty: e.target.value }))} style={inp} /></Field>
-          </div>
-          <Field label="Catatan"><input value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} style={{ ...inp, marginTop: 6 }} placeholder="Opsional" /></Field>
-          <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
-            <button onClick={submit} disabled={!canSubmit} style={{ ...pbtn, ...(!canSubmit ? disabledPbtn : {}) }}>{saving ? "Menyimpan…" : "Simpan Target"}</button>
-          </div>
-        </div>
-      )}
-
-      <div style={{ ...card, padding: 0, overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-          <thead><tr style={{ background: "#F7F9FC", color: T.mid }}>
-            {["Branch", "Brand", "Bulan", "Target", "Tercapai", "Diubah oleh"].map((h) => <th key={h} style={{ padding: "8px 12px", textAlign: "left" }}>{h}</th>)}
-          </tr></thead>
-          <tbody>
-            {loading && <tr><td colSpan={6} style={{ padding: 20, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
-            {!loading && targets.length === 0 && <tr><td colSpan={6} style={{ padding: 20, textAlign: "center", color: T.lo }}>Belum ada target diset.</td></tr>}
-            {targets.map((r) => {
-              const achieved = Number(r.achieved_qty || 0);
-              const met = r.target_qty > 0 && achieved >= r.target_qty;
-              return (
-                <tr key={r.id} style={{ borderTop: `1px solid ${T.line}` }}>
-                  <td style={{ padding: "8px 12px", fontWeight: 700, color: T.hi }}>{r.branch_name || r.branch_id}</td>
-                  <td style={{ padding: "8px 12px", color: T.mid }}>{brandLabel(r.brand)}</td>
-                  <td style={{ padding: "8px 12px", color: T.mid }}>{monthLabel(r.month)}</td>
-                  <td style={{ padding: "8px 12px", fontWeight: 800, color: T.hi }}>{r.target_qty}</td>
-                  <td style={{ padding: "8px 12px", fontWeight: 800, color: met ? T.success : T.mid }}>{achieved}{r.target_qty > 0 ? ` (${Math.round((achieved / r.target_qty) * 100)}%)` : ""}</td>
-                  <td style={{ padding: "8px 12px", color: T.mid }}>{r.updated_by_name || "-"}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════
-//  4. VALIDITY MSISDN (§9.3) - cocokkan MSISDN yang disubmit di Activity
-//  Report (DSF Sales Entry, §4.2 poin 7) terhadap file raw tervalidasi
-//  (MSISDN/org_id) yang dipegang Head TMV/Brand TMV/SPM Sumatera secara
-//  LOKAL - berkas mentah TIDAK PERNAH terkirim ke server (§0.2/§9.1), pola
-//  IDENTIK dengan "Validasi Lokasi" (Fase 3): <input type=file> biasa,
-//  metadata pemetaan kolom diingat via mh_local_folder_links (purpose
-//  berbeda: 'validity_msisdn'). MSISDN adalah kunci pencocokan UTAMA;
-//  org_id dicek sebagai atribut terpisah (§9.3) - kalau raw punya org_id
-//  beda dari yang disubmit, hasilnya 'org_mismatch' + matched_org_id
-//  (nilai yang seharusnya), BUKAN auto-correct (user/atasan yang koreksi
-//  manual, keputusan spec eksplisit).
-// ═══════════════════════════════════════════════════════════════════════════
-function ValidityView({ email, canManage, scope }) {
-  const [savedMapping, setSavedMapping] = useState(null);
-
+// Wizard "Plan POSM Baru" - Info + pilih Material + set qty alokasi per
+// branch untuk MASING-MASING material yang dipilih, sekaligus dalam 1 form
+// (2026-08-31, atas permintaan user: sebelumnya Info/Material/Alokasi harus
+// disimpan bertahap lewat 3 tab terpisah setelah Plan dibuat). Kolom qty
+// dinamis mengikuti material yang dicentang - tiap branch bisa punya qty
+// berbeda per material.
+function PlanCreateWizard({ email, scope, onClose, onSaved }) {
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState(PLAN_CATEGORIES[0].key);
+  const [brand, setBrand] = useState("im3");
+  const [periodFrom, setPeriodFrom] = useState("");
+  const [periodTo, setPeriodTo] = useState("");
   const [file, setFile] = useState(null);
-  const [matrix, setMatrix] = useState(null);
-  const [headerIdx, setHeaderIdx] = useState(0);
-  const [mapping, setMapping] = useState({ msisdn: "", org_id: "" });
-  const [readErr, setReadErr] = useState("");
-  const [savingMap, setSavingMap] = useState(false);
+  const [preview, setPreview] = useState("");
 
-  const [rows, setRows] = useState([]);
-  const [loadingRows, setLoadingRows] = useState(true);
-  const [running, setRunning] = useState(false);
-  const [result, setResult] = useState(null);
+  const [catalog, setCatalog] = useState(null);
+  const [materialId, setMaterialId] = useState(null); // 1 Plan = 1 material
+  const [branches, setBranches] = useState(null);
+  const [qty, setQty] = useState({}); // key: branchId -> qty
+
+  const [saving, setSaving] = useState(false);
+  const [progress, setProgress] = useState("");
   const [err, setErr] = useState("");
-  // "Hubungkan Folder" - HANYA referensi folder yang diingat (IndexedDB
-  // perangkat ini), isi file selalu dibaca ulang dari disk (§0.2).
-  const folderSource = useFolderConnection(VALIDITY_PURPOSE, VALIDITY_EXT, onFile);
 
-  const load = useCallback(async () => {
-    if (!email) return;
-    const { data: link } = await supabaseMarta.rpc("mh_get_folder_link", { p_purpose: VALIDITY_PURPOSE, p_caller_email: email });
-    if (link && link.fileName) {
-      setSavedMapping(link);
-      if (link.columnMapping) setMapping((m) => ({ ...m, ...link.columnMapping }));
-    }
-    setLoadingRows(true);
-    try {
-      const { data, error } = await supabaseMarta.rpc("mh_msisdn_list_pending_reconcile");
-      if (error) throw new Error(error.message);
-      setRows(data || []);
-    } catch (e) { setErr(e.message || "Gagal memuat data MSISDN"); }
-    finally { setLoadingRows(false); }
-  }, [email]);
-  useEffect(() => { load(); }, [load]);
+  // Branch yang muncul di tabel alokasi tergantung siapa yang bikin Plan ini:
+  // Head TMV / Brand TMV cuma lihat branch di region mereka sendiri, role
+  // yang lebih tinggi (SPM Sumatera/admin) lihat semua branch se-Sumatera -
+  // sama persis batasan yang sudah dipakai di tab Alokasi (PlanAlokasiTab).
+  const isRegionRestricted = scope && ["head", "tmv"].includes(scope.role);
+  const allowedRegions = isRegionRestricted && scope.region ? [scope.region] : SUMATERA_REGIONS;
 
-  async function onFile(f) {
-    setFile(f); setMatrix(null); setReadErr(""); setHeaderIdx(0); setResult(null);
-    if (!f) return;
-    try {
-      const parsed = await readWorkbook(f);
-      setMatrix(parsed.matrix);
-    } catch (e) { setReadErr(e.message || "Gagal membaca berkas."); }
-  }
-
-  const table = useMemo(() => (matrix ? deriveTable(matrix, headerIdx) : null), [matrix, headerIdx]);
   useEffect(() => {
-    if (!table) return;
-    setMapping((m) => ({
-      msisdn: m.msisdn || guessCol(table.displayColumns, ["msisdn", "nomor", "no hp", "phone"]),
-      org_id: m.org_id || guessCol(table.displayColumns, ["org id", "org_id", "id dsf", "dsf id"]),
-    }));
-  }, [table]);
-
-  // Referensi msisdn -> org_id dari berkas raw yang sedang dimuat sesi ini.
-  const referenceMap = useMemo(() => {
-    if (!table || !mapping.msisdn) return null;
-    const m = new Map();
-    for (const r of table.rows) {
-      const msisdn = String(r[mapping.msisdn] ?? "").trim();
-      const orgId = mapping.org_id ? String(r[mapping.org_id] ?? "").trim() || null : null;
-      if (msisdn) m.set(msisdn, orgId);
-    }
-    return m;
-  }, [table, mapping]);
-
-  async function saveMapping() {
-    if (!file || !mapping.msisdn) return;
-    setSavingMap(true);
-    try {
-      await supabaseMarta.rpc("mh_save_folder_link", {
-        p_purpose: VALIDITY_PURPOSE, p_folder_name: null, p_file_name: file.name,
-        p_column_mapping: mapping, p_caller_email: email,
+    supabaseMarta.rpc("mh_posmat_list_types").then(({ data, error }) => { if (!error) setCatalog(data || []); else setErr(error.message); });
+    supabaseMarta.from("mh_sites").select("branch_id, branch, region").eq("active", true).in("region", allowedRegions).not("branch_id", "is", null)
+      .then(({ data, error }) => {
+        if (error) { setErr(error.message); return; }
+        const map = new Map();
+        for (const r of data || []) if (r.branch_id && !map.has(r.branch_id)) map.set(r.branch_id, { branch_id: r.branch_id, branch_name: r.branch || r.branch_id, region: r.region });
+        const rows = Array.from(map.values()).sort((a, b) => a.region === b.region ? a.branch_name.localeCompare(b.branch_name) : a.region.localeCompare(b.region));
+        setBranches(rows);
       });
-      setSavedMapping({ fileName: file.name, columnMapping: mapping, updatedAt: new Date().toISOString() });
-    } catch (e) { setErr(e.message || "Gagal menyimpan mapping"); }
-    finally { setSavingMap(false); }
+  }, []);
+
+  function pickFile(f) {
+    if (!f) return;
+    setFile(f);
+    setPreview(URL.createObjectURL(f));
   }
 
-  // ── Pratinjau: 3 kemungkinan hasil (§9.3) - tidak ditemukan / valid / org_mismatch.
-  const preview = useMemo(() => {
-    if (!referenceMap) return [];
-    return rows.map((r) => {
-      const submitted = String(r.msisdn ?? "").trim();
-      if (!referenceMap.has(submitted)) {
-        return { ...r, newStatus: "not_found", matchedOrgId: null };
-      }
-      const rawOrgId = referenceMap.get(submitted);
-      const same = String(rawOrgId || "").trim().toLowerCase() === String(r.org_id || "").trim().toLowerCase();
-      return { ...r, newStatus: same ? "valid" : "org_mismatch", matchedOrgId: same ? null : rawOrgId };
-    });
-  }, [rows, referenceMap]);
+  function setQtyFor(branchId, val) {
+    setQty((prev) => ({ ...prev, [branchId]: val }));
+  }
 
-  async function runReconcile() {
-    if (!preview.length) return;
-    setRunning(true); setErr(""); setResult(null);
+  const selectedMaterial = useMemo(() => (catalog || []).find((t) => t.id === materialId) || null, [catalog, materialId]);
+
+  async function save() {
+    if (!name.trim()) { setErr("Nama Plan wajib diisi."); return; }
+    if (!periodFrom || !periodTo) { setErr("Period From & To wajib diisi."); return; }
+    if (periodTo < periodFrom) { setErr("Period To harus setelah Period From."); return; }
+    setSaving(true); setErr("");
+    let createdPlan = null;
     try {
-      const payload = preview.map((p) => ({
-        entry_id: p.id,
-        status: p.newStatus,
-        matched_org_id: p.matchedOrgId,
-        note: p.newStatus === "org_mismatch" ? `org_id seharusnya: ${p.matchedOrgId}` : null,
-      }));
-      const { data, error } = await supabaseMarta.rpc("mh_msisdn_reconcile_batch", { p_results: payload, p_caller_email: email });
-      if (error) throw new Error(error.message);
-      const valid = preview.filter((p) => p.newStatus === "valid").length;
-      const notFound = preview.filter((p) => p.newStatus === "not_found").length;
-      setResult({ total: data ?? payload.length, valid, notFound, mismatch: payload.length - valid - notFound });
-      await load();
-    } catch (e) { setErr(e.message || "Gagal menjalankan rekonsiliasi"); }
-    finally { setRunning(false); }
-  }
+      setProgress("Menyimpan info Plan…");
+      let visualPath = null;
+      if (file) {
+        const path = `posm-plan-visual/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${(file.name.split(".").pop() || "jpg")}`;
+        const { error: upErr } = await supabaseMarta.storage.from(PLAN_VISUAL_BUCKET).upload(path, file, { contentType: file.type || "image/jpeg" });
+        if (upErr) throw upErr;
+        visualPath = path;
+      }
+      const { data: plan, error: planErr } = await supabaseMarta.rpc("mh_posm_upsert_plan", {
+        p_id: null, p_name: name.trim(), p_category: category, p_brand: brand, p_visual_path: visualPath,
+        p_period_from: periodFrom, p_period_to: periodTo, p_status: "active", p_caller_email: email,
+      });
+      if (planErr) throw planErr;
+      createdPlan = plan;
 
-  if (!canManage && scope) {
-    return (
-      <div style={note}>
-        Sub-menu ini khusus Head TMV, Brand TMV, atau SPM Sumatera - role Anda saat ini ({scope.role || "tidak terdaftar"}) tidak memiliki akses menjalankan rekonsiliasi Validity.
-      </div>
-    );
+      if (materialId) {
+        setProgress("Menyimpan Material…");
+        const { error: matErr } = await supabaseMarta.rpc("mh_posm_set_plan_materials", { p_plan_id: plan.id, p_posmat_type_ids: [materialId], p_caller_email: email });
+        if (matErr) throw matErr;
+
+        setProgress("Menyimpan alokasi…");
+        const allocations = (branches || [])
+          .map((b) => ({ branch_id: b.branch_id, branch_name: b.branch_name, region: b.region, qty: Number(qty[b.branch_id]) || 0 }))
+          .filter((a) => a.qty > 0);
+        if (allocations.length > 0) {
+          const { error: allocErr } = await supabaseMarta.rpc("mh_posm_set_allocations_batch", { p_plan_id: plan.id, p_posmat_type_id: materialId, p_allocations: allocations, p_caller_email: email });
+          if (allocErr) throw allocErr;
+        }
+      }
+      onSaved(createdPlan);
+    } catch (e) {
+      setErr((e.message || "Gagal menyimpan Plan") + (createdPlan ? " - Plan sudah dibuat, lengkapi sisanya lewat tab Material/Alokasi." : ""));
+      if (createdPlan) onSaved(createdPlan);
+    } finally { setSaving(false); setProgress(""); }
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 1040 }}>
-      <div style={{ fontSize: 18, fontWeight: 800, color: T.hi, marginBottom: -6 }}>Validity - Rekonsiliasi MSISDN</div>
-      <div style={{ ...card, background: "linear-gradient(135deg,#FFF5F7,#FFFFFF)", borderColor: T.primaryBd }}>
-        <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-          <HelpCircle size={18} color={T.primaryD} style={{ flexShrink: 0, marginTop: 1 }} />
-          <div style={{ fontSize: 12.5, color: T.mid, lineHeight: 1.6 }}>
-            <b style={{ color: T.hi }}>§9.3:</b> mencocokkan MSISDN yang disubmit di Activity Report terhadap berkas raw tervalidasi (MSISDN + org_id) yang Anda muat dari berkas lokal - berkas ini TIDAK PERNAH terkirim ke server, hanya hasil pencocokan yang disimpan. MSISDN dipakai sebagai kunci pencocokan utama; org_id dicek terpisah - kalau tidak cocok, sistem menandai &ldquo;org_id seharusnya X&rdquo; sebagai catatan, BUKAN auto-koreksi.
+    <div style={{ maxWidth: 1180 }}>
+      <button onClick={onClose} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: T.mid, fontSize: 13, fontWeight: 600, padding: 0, marginBottom: 14 }}>
+        <ArrowLeft size={15} /> Kembali ke daftar Plan
+      </button>
+      <div style={{ fontSize: 18, fontWeight: 800, color: T.hi, marginBottom: 16 }}>Plan POSM Baru</div>
+      {err && <div style={{ ...note, marginBottom: 12, background: T.errorBg, borderColor: T.error, color: T.error }}>{err}</div>}
+
+      <div style={{ ...card, marginBottom: 14 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20 }}>
+        <div>
+          <Field label="Visual">
+            <label style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: 96, borderRadius: 10, border: `1.5px dashed ${T.line}`, background: "#F7F9FC", cursor: "pointer", overflow: "hidden" }}>
+              {preview ? <img src={preview} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : (
+                <span style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, fontSize: 12, color: T.lo }}>
+                  <Upload size={22} color={T.lo} />
+                  Klik untuk unggah visual
+                </span>
+              )}
+              <input type="file" accept="image/*" hidden onChange={(e) => pickFile(e.target.files?.[0])} />
+            </label>
+          </Field>
+          <Field label="Nama Plan *"><input value={name} onChange={(e) => setName(e.target.value)} style={inp} placeholder="Contoh: Outdoor Q3 Sumatera Utara" /></Field>
+        </div>
+        <div>
+          <Field label="Category *">
+            <select value={category} onChange={(e) => setCategory(e.target.value)} style={selectStyle}>
+              {PLAN_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+            </select>
+          </Field>
+          <Field label="Brand *">
+            <select value={brand} onChange={(e) => setBrand(e.target.value)} style={selectStyle}>
+              <option value="im3">IM3</option>
+              <option value="tri">3ID</option>
+            </select>
+          </Field>
+          <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ flex: 1 }}><Field label="Period From *"><input type="date" value={periodFrom} onChange={(e) => setPeriodFrom(e.target.value)} style={inp} /></Field></div>
+            <div style={{ flex: 1 }}><Field label="Period To *"><input type="date" value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} style={inp} /></Field></div>
           </div>
+        </div>
+        <div>
+          <Field label="Material - 1 Plan cuma 1 material">
+            {catalog === null ? <Spinner small label="Memuat material…" /> : (
+              <MaterialPicker catalog={catalog} setCatalog={setCatalog} selectedId={materialId} onSelect={setMaterialId} email={email} />
+            )}
+          </Field>
+          <div style={{ fontSize: 11, color: T.lo, marginTop: -4 }}>Butuh material lain? Buat Plan POSM terpisah.</div>
         </div>
       </div>
 
-      <div style={card}>
-        <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>1. Muat Berkas Raw Tervalidasi</div>
-        <div style={{ color: T.mid, fontSize: 12.5, marginBottom: 12 }}>
-          Hubungkan folder berisi berkas MSISDN + org_id tervalidasi (.xlsx/.xls/.csv). {savedMapping?.fileName && (
-            <span>Pemetaan kolom terakhir sudah diingat dari <b>{savedMapping.fileName}</b> - otomatis dipakai lagi untuk berkas baru.</span>
+      {materialId && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: T.hi, marginBottom: 8 }}>
+            Alokasi qty "{selectedMaterial?.name}" per branch ({branches?.length ?? 0} branch) - isi berapa unit dialokasikan ke tiap branch. Kosongkan/0 kalau branch itu tidak dapat alokasi.
+          </div>
+          {branches === null ? <Spinner small label="Memuat branch…" /> : (
+            <div style={{ border: `1px solid ${T.line}`, borderRadius: 10, overflow: "auto", maxHeight: 380 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead>
+                  <tr style={{ background: "#F7F9FC", color: T.mid, position: "sticky", top: 0 }}>
+                    <th style={{ padding: "8px 12px", textAlign: "left" }}>Branch</th>
+                    <th style={{ padding: "8px 12px", textAlign: "left" }}>Region</th>
+                    <th style={{ padding: "8px 12px", textAlign: "right", minWidth: 140 }}>
+                      Qty
+                      <button type="button" onClick={() => {
+                        const v = window.prompt(`Isi qty sama utk semua branch - material "${selectedMaterial?.name}":`, "0");
+                        if (v == null) return;
+                        const n = Number(v) || 0;
+                        setQty((prev) => { const nx = { ...prev }; for (const b of branches) nx[b.branch_id] = n; return nx; });
+                      }} style={{ marginLeft: 8, background: "none", border: "none", color: T.primary, fontSize: 10.5, fontWeight: 700, cursor: "pointer", padding: 0 }}>isi semua</button>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {branches.map((b) => (
+                    <tr key={b.branch_id} style={{ borderTop: `1px solid ${T.line}` }}>
+                      <td style={{ padding: "7px 12px", fontWeight: 700, color: T.hi }}>{b.branch_name}</td>
+                      <td style={{ padding: "7px 12px", color: T.lo, fontSize: 11.5 }}>{b.region}</td>
+                      <td style={{ padding: "6px 10px", textAlign: "right" }}>
+                        <input type="number" min="0" value={qty[b.branch_id] ?? ""} placeholder="0"
+                          onChange={(e) => setQtyFor(b.branch_id, e.target.value)}
+                          style={{ ...inp, width: 110, textAlign: "right", padding: "6px 10px" }} />
+                      </td>
+                    </tr>
+                  ))}
+                  {branches.length === 0 && <tr><td colSpan={3} style={{ padding: 16, textAlign: "center", color: T.lo }}>Tidak ada branch aktif.</td></tr>}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
-        <FolderConnectPanel t={T} source={folderSource} color={T.primary} acceptAttr=".xlsx,.xls,.csv" extLabel=".xlsx/.xls/.csv" />
-        {readErr && <div style={{ ...note, marginTop: 10, background: T.errorBg, borderColor: T.error, color: T.error }}>{readErr}</div>}
+      )}
 
-        {table && (
-          <div style={{ marginTop: 16 }}>
-            <div style={{ fontSize: 11.5, fontWeight: 800, color: T.mid, textTransform: "uppercase", marginBottom: 8 }}>Petakan Kolom</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px,1fr))", gap: 10 }}>
-              {[["msisdn", "MSISDN", true], ["org_id", "Org ID", false]].map(([k, label, required]) => (
-                <label key={k} style={{ display: "block" }}>
-                  <div style={{ fontSize: 11.5, fontWeight: 700, color: T.hi, marginBottom: 5 }}>{label} {required && <span style={{ color: T.error }}>*</span>}</div>
-                  <select value={mapping[k]} onChange={(e) => setMapping((m) => ({ ...m, [k]: e.target.value }))}
-                    style={{ ...selectStyle, borderColor: required && !mapping[k] ? T.error : T.line }}>
-                    <option value="">- pilih kolom -</option>
-                    {table.displayColumns.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </label>
-              ))}
-            </div>
-            <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={muted}>{referenceMap ? `${referenceMap.size.toLocaleString()} MSISDN siap dipakai.` : "Lengkapi kolom MSISDN dulu."}</span>
-              <button onClick={saveMapping} disabled={savingMap || !referenceMap} style={{ ...btn, marginLeft: "auto", ...((savingMap || !referenceMap) ? disabledBtn : {}) }}>
-                {savingMap ? "Menyimpan…" : "Ingat Pemetaan Ini"}
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
-      <div style={card}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-          <div style={{ fontWeight: 800, fontSize: 15 }}>2. Jalankan Rekonsiliasi</div>
-          <button onClick={load} style={{ ...linkBtn, marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5 }}>
-            <RefreshCw size={13} /> Muat ulang
-          </button>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, paddingBottom: 24 }}>
+        <div style={{ fontSize: 11.5, color: T.lo }}>{saving ? progress : ""}</div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onClose} disabled={saving} style={btn}>Batal</button>
+          <button onClick={save} disabled={saving} style={{ ...pbtn, ...(saving ? disabledPbtn : {}) }}>{saving ? "Menyimpan…" : "Simpan"}</button>
         </div>
-        <div style={{ color: T.mid, fontSize: 12.5, marginBottom: 12 }}>
-          {rows.length} MSISDN menunggu validasi (dari semua Activity Report - sub-menu ini belum discope per region/brand, lihat progress tracker).
-        </div>
+      </div>
+    </div>
+  );
+}
 
-        {err && <div style={{ ...note, marginBottom: 12, background: T.errorBg, borderColor: T.error, color: T.error }}>{err}</div>}
-        {result && (
-          <div style={{ ...note, marginBottom: 12, background: T.successBg, borderColor: T.success, color: "#155724" }}>
-            Selesai - {result.total} MSISDN diproses: <b>{result.valid} tervalidasi</b>, <b>{result.mismatch} org_id tidak cocok</b>, <b>{result.notFound} tidak ditemukan</b>.
-          </div>
+
+
+// Combobox Material (nama, tag, +Add more) - menggantikan checkbox grid lama
+// (2026-08-31, atas permintaan user - ikut pola sederhana yang dicontohkan:
+// 1 input, klik buka dropdown daftar material + tombol "+Add more Material"
+// utk bikin jenis material baru langsung dari sini tanpa halaman terpisah).
+function MaterialPicker({ catalog, setCatalog, selectedId, onSelect, email, disabled }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [err, setErr] = useState("");
+  const wrapRef = useRef(null);
+
+  useEffect(() => {
+    function onDocClick(e) { if (wrapRef.current && !wrapRef.current.contains(e.target)) { setOpen(false); setAdding(false); } }
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, []);
+
+  const selected = (catalog || []).find((t) => t.id === selectedId) || null;
+  const filtered = (catalog || []).filter((t) => t.active !== false && t.name.toLowerCase().includes(q.trim().toLowerCase()));
+
+  function pick(id) {
+    onSelect(id);
+    setOpen(false); setQ(""); setAdding(false);
+  }
+
+  async function createMaterial() {
+    const nm = (newName.trim() || q.trim());
+    if (!nm) return;
+    setCreating(true); setErr("");
+    try {
+      const { data, error } = await supabaseMarta.rpc("mh_posmat_upsert_type", {
+        p_id: null, p_name: nm.toUpperCase(), p_category: null, p_stock_mode: "consumable", p_unit: "pcs", p_active: true, p_caller_email: email,
+      });
+      if (error) throw error;
+      setCatalog((prev) => [...(prev || []), data]);
+      pick(data.id);
+    } catch (e) { setErr(e.message || "Gagal menambah material"); }
+    finally { setCreating(false); }
+  }
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <div onClick={() => !disabled && setOpen((o) => !o)}
+        style={{ ...inp, minHeight: 44, height: "auto", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6, cursor: disabled ? "default" : "pointer", borderColor: open ? T.primary : T.line }}>
+        {selected ? (
+          <span style={{ fontSize: 13, fontWeight: 700, color: T.hi }}>{selected.name}</span>
+        ) : (
+          <span style={{ color: T.lo }}>Pilih material yang didaftarkan di Plan ini…</span>
         )}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {selected && !disabled && (
+            <span onClick={(e) => { e.stopPropagation(); onSelect(null); }} style={{ cursor: "pointer", color: T.lo, fontWeight: 800, fontSize: 15, lineHeight: 1 }}>×</span>
+          )}
+          <span style={{ color: T.lo, fontSize: 11 }}>▾</span>
+        </div>
+      </div>
 
-        <div style={{ overflow: "auto", maxHeight: 420, border: `1px solid ${T.line}`, borderRadius: 10 }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, whiteSpace: "nowrap" }}>
-            <thead>
-              <tr style={{ background: "#F7F9FC", color: T.mid }}>
-                {["Activity", "Disubmit Oleh", "MSISDN", "Org ID Disubmit", "Status Baru (pratinjau)"].map((h) => (
-                  <th key={h} style={{ padding: "8px 12px", textAlign: "left", fontWeight: 700 }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
+      {open && !disabled && (
+        <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "#fff", border: `1px solid ${T.line}`, borderRadius: 12, boxShadow: "0 12px 32px rgba(0,0,0,0.16)", zIndex: 30, maxHeight: 360, display: "flex", flexDirection: "column" }}>
+          <div style={{ padding: 10, borderBottom: `1px solid ${T.line}` }}>
+            <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari material…" style={{ ...inp, padding: "8px 10px" }} />
+          </div>
+          {err && <div style={{ padding: "8px 12px", fontSize: 11.5, color: T.error }}>{err}</div>}
+          <div style={{ overflow: "auto", flex: 1 }}>
+            {filtered.map((t) => {
+              const on = t.id === selectedId;
+              return (
+                <div key={t.id} onClick={() => pick(t.id)}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", fontSize: 12.5, fontWeight: 600, color: T.hi, cursor: "pointer", background: on ? "#FFF5F5" : "#fff" }}>
+                  <span style={{ width: 16, height: 16, borderRadius: 999, border: `1.5px solid ${on ? T.primary : T.line}`, background: on ? T.primary : "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    {on && <span style={{ width: 7, height: 7, borderRadius: 999, background: "#fff" }} />}
+                  </span>
+                  <span>{t.name}</span>
+                </div>
+              );
+            })}
+            {filtered.length === 0 && (catalog || []).length > 0 && (
+              <div style={{ padding: 14, textAlign: "center", fontSize: 12, color: T.lo }}>Tidak ada material bernama "{q}".</div>
+            )}
+            {(catalog || []).length === 0 && <div style={{ padding: 14, textAlign: "center", fontSize: 12, color: T.lo }}>Belum ada material.</div>}
+          </div>
+          <div style={{ borderTop: `1px solid ${T.line}` }}>
+            {!adding ? (
+              <div onClick={() => setAdding(true)} style={{ padding: "10px 12px", fontSize: 12.5, fontWeight: 700, color: T.primary, cursor: "pointer" }}>+ Add more Material{q.trim() ? ` "${q.trim().toUpperCase()}"` : ""}</div>
+            ) : (
+              <div style={{ display: "flex", gap: 6, padding: "8px 10px" }}>
+                <input autoFocus value={newName} onChange={(e) => setNewName(e.target.value)} placeholder={q.trim() ? q.trim().toUpperCase() : "Nama material baru"}
+                  onKeyDown={(e) => { if (e.key === "Enter") createMaterial(); }}
+                  style={{ ...inp, padding: "6px 9px", fontSize: 12.5 }} />
+                <button onClick={createMaterial} disabled={creating || (!newName.trim() && !q.trim())} style={{ ...pbtn, padding: "6px 10px", fontSize: 11.5 }}>{creating ? "…" : "Tambah"}</button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+const PLAN_TABS = [{ key: "info", label: "Info" }, { key: "material", label: "Material" }, { key: "alokasi", label: "Alokasi" }];
+
+function PlanDetail({ plan, email, canManage, scope, onBack, onChanged }) {
+  const [tab, setTab] = useState("info");
+  const [editOpen, setEditOpen] = useState(false);
+  const st = PLAN_STATUS_META[plan.status] || PLAN_STATUS_META.draft;
+  const url = planVisualUrl(plan.visual_path);
+
+  async function refresh() {
+    const { data } = await supabaseMarta.rpc("mh_posm_get_plan", { p_plan_id: plan.id });
+    if (data) onChanged(data);
+  }
+
+  return (
+    <div style={{ maxWidth: 980 }}>
+      <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: T.mid, fontSize: 13, fontWeight: 600, padding: 0, marginBottom: 14 }}>
+        <ArrowLeft size={15} /> Kembali ke daftar Plan
+      </button>
+      <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 16 }}>
+        <div style={{ width: 56, height: 56, borderRadius: 10, background: "#F1F2F5", flexShrink: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          {url ? <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Package size={18} color={T.lo} />}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: T.hi }}>{plan.name}</div>
+          <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
+            <span style={{ ...pill, color: "#B32E85", background: "rgba(179,46,133,0.10)" }}>{PLAN_CATEGORY_LABEL[plan.category] || plan.category}</span>
+            <span style={{ ...pill, color: T.hi, background: "#F1F2F5" }}>{brandLabel(plan.brand)}</span>
+            <span style={{ ...pill, color: st.color, background: st.bg }}>{st.label}</span>
+            <span style={{ fontSize: 11, color: T.lo }}>{plan.period_from} – {plan.period_to}</span>
+          </div>
+        </div>
+        {canManage && <button onClick={() => setEditOpen(true)} style={btn}><Pencil size={14} /> Edit</button>}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+        {PLAN_TABS.map((t) => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            style={{ padding: "7px 14px", borderRadius: 999, border: `1px solid ${tab === t.key ? T.hi : T.line}`, background: tab === t.key ? T.hi : "#fff", color: tab === t.key ? "#fff" : T.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "info" && (
+        <div style={card}>
+          <div style={{ fontSize: 12.5, color: T.mid, lineHeight: 1.8 }}>
+            <div><b>Dibuat oleh:</b> {plan.created_by_name || "-"}</div>
+            <div><b>Dibuat:</b> {new Date(plan.created_at).toLocaleString("id-ID")}</div>
+            <div><b>Status:</b> {st.label} - ubah lewat tombol Edit di atas.</div>
+          </div>
+        </div>
+      )}
+      {tab === "material" && <PlanMaterialTab plan={plan} email={email} canManage={canManage} onSaved={refresh} />}
+      {tab === "alokasi" && <PlanAlokasiTab plan={plan} email={email} canManage={canManage} scope={scope} onSaved={refresh} />}
+
+      {editOpen && (
+        <PlanFormModal email={email} plan={plan} onClose={() => setEditOpen(false)}
+          onSaved={async () => { setEditOpen(false); await refresh(); }} />
+      )}
+    </div>
+  );
+}
+
+function PlanMaterialTab({ plan, email, canManage, onSaved }) {
+  const [catalog, setCatalog] = useState(null);
+  const [selectedId, setSelectedId] = useState(plan.materials[0]?.posmat_type_id || null); // 1 Plan = 1 material
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    supabaseMarta.rpc("mh_posmat_list_types").then(({ data, error }) => { if (!error) setCatalog(data || []); else setErr(error.message); });
+  }, []);
+
+  async function save() {
+    setSaving(true); setErr("");
+    try {
+      const { error } = await supabaseMarta.rpc("mh_posm_set_plan_materials", { p_plan_id: plan.id, p_posmat_type_ids: selectedId ? [selectedId] : [], p_caller_email: email });
+      if (error) throw error;
+      await onSaved();
+    } catch (e) { setErr(e.message || "Gagal menyimpan"); }
+    finally { setSaving(false); }
+  }
+
+  if (catalog === null) return <div style={card}><Spinner /></div>;
+
+  return (
+    <div style={card}>
+      {err && <div style={{ ...note, marginBottom: 12, background: T.errorBg, borderColor: T.error, color: T.error }}>{err}</div>}
+      <div style={{ fontSize: 11.5, fontWeight: 700, color: T.hi, marginBottom: 10 }}>Material Plan ini - kalau sudah punya alokasi terpasang, tidak bisa diganti ke material lain dari sini (kurangi dulu qty-nya di tab Alokasi).</div>
+      <MaterialPicker catalog={catalog} setCatalog={setCatalog} selectedId={selectedId} onSelect={setSelectedId} email={email} disabled={!canManage} />
+      {canManage && (
+        <button onClick={save} disabled={saving} style={{ ...pbtn, marginTop: 14, ...(saving ? disabledPbtn : {}) }}>{saving ? "Menyimpan…" : "Simpan Material"}</button>
+      )}
+    </div>
+  );
+}
+
+function PlanAlokasiTab({ plan, email, canManage, scope, onSaved }) {
+  const isRestricted = scope && ["head", "tmv"].includes(scope.role);
+  const [materialId, setMaterialId] = useState(plan.materials[0]?.posmat_type_id || "");
+  const [region, setRegion] = useState(isRestricted ? scope.region : SUMATERA_REGIONS[0]);
+  const [branches, setBranches] = useState(null);
+  const [qtyMap, setQtyMap] = useState({});
+  const [remap, setRemap] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState(false);
+
+  const allocByBranch = useMemo(() => {
+    const m = {};
+    for (const a of plan.allocations) if (a.posmat_type_id === materialId) m[a.branch_id] = a;
+    return m;
+  }, [plan.allocations, materialId]);
+  const remapByBranch = useMemo(() => Object.fromEntries(remap.map((r) => [r.old_branch_id, r])), [remap]);
+
+  useEffect(() => { supabaseMarta.rpc("mh_posm_list_branch_remap").then(({ data }) => setRemap(data || [])); }, []);
+
+  useEffect(() => {
+    if (!region) return;
+    let alive = true;
+    (async () => {
+      const { data, error } = await supabaseMarta.from("mh_sites").select("branch_id, branch, region").eq("active", true).eq("region", region).not("branch_id", "is", null);
+      if (!alive) return;
+      if (error) { setErr(error.message); return; }
+      const map = new Map();
+      for (const r of data || []) if (r.branch_id && !map.has(r.branch_id)) map.set(r.branch_id, r.branch || r.branch_id);
+      const rows = Array.from(map, ([branch_id, branch_name]) => ({ branch_id, branch_name })).sort((a, b) => a.branch_name.localeCompare(b.branch_name));
+      setBranches(rows);
+      const init = {};
+      for (const b of rows) init[b.branch_id] = allocByBranch[b.branch_id]?.qty ?? 0;
+      setQtyMap(init);
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [region, materialId]);
+
+  async function save() {
+    if (!materialId) { setErr("Pilih material dulu."); return; }
+    setSaving(true); setErr(""); setOk(false);
+    try {
+      const allocations = (branches || []).map((b) => ({ branch_id: b.branch_id, branch_name: b.branch_name, region, qty: Number(qtyMap[b.branch_id]) || 0 }));
+      const { error } = await supabaseMarta.rpc("mh_posm_set_allocations_batch", { p_plan_id: plan.id, p_posmat_type_id: materialId, p_allocations: allocations, p_caller_email: email });
+      if (error) throw error;
+      setOk(true);
+      await onSaved();
+    } catch (e) { setErr(e.message || "Gagal menyimpan alokasi"); }
+    finally { setSaving(false); }
+  }
+
+  async function handleMove(alloc) {
+    const info = remapByBranch[alloc.branch_id];
+    if (!info) return;
+    const qtyStr = window.prompt(`Pindahkan sisa alokasi "${alloc.branch_name}" ke "${info.new_branch_name}". Jumlah alokasi baru?`, String(Math.max(alloc.qty - alloc.installed_qty, 0)));
+    if (qtyStr == null) return;
+    const { error } = await supabaseMarta.rpc("mh_posm_move_allocation", {
+      p_allocation_id: alloc.id, p_new_branch_id: info.new_branch_id, p_new_branch_name: info.new_branch_name,
+      p_new_region: region, p_new_qty: Number(qtyStr) || 0, p_caller_email: email,
+    });
+    if (error) setErr(error.message); else await onSaved();
+  }
+
+  if (plan.materials.length === 0) {
+    return <div style={{ ...card, color: T.lo }}>Pilih material dulu di tab Material sebelum mengatur alokasi.</div>;
+  }
+
+  return (
+    <div style={card}>
+      {err && <div style={{ ...note, marginBottom: 12, background: T.errorBg, borderColor: T.error, color: T.error }}>{err}</div>}
+      {ok && <div style={{ ...note, marginBottom: 12, background: T.successBg, borderColor: T.success, color: T.success }}>Alokasi tersimpan.</div>}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
+        <div style={{ flex: 1 }}>
+          <Field label="Material">
+            <select value={materialId} onChange={(e) => setMaterialId(e.target.value)} style={selectStyle}>
+              {plan.materials.map((m) => <option key={m.posmat_type_id} value={m.posmat_type_id}>{m.name}</option>)}
+            </select>
+          </Field>
+        </div>
+        <div style={{ flex: 1 }}>
+          <Field label="Region">
+            <select value={region} onChange={(e) => setRegion(e.target.value)} disabled={isRestricted} style={selectStyle}>
+              {SUMATERA_REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </Field>
+        </div>
+      </div>
+
+      {branches === null ? (
+        <Spinner label="Memuat branch…" />
+      ) : (
+        <div style={{ border: `1px solid ${T.line}`, borderRadius: 10, overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+            <thead><tr style={{ background: "#F7F9FC", color: T.mid }}>
+              <th style={{ padding: "8px 12px", textAlign: "left" }}>Branch</th>
+              <th style={{ padding: "8px 12px", textAlign: "left" }}>Terpasang</th>
+              <th style={{ padding: "8px 12px", textAlign: "right" }}>Alokasi</th>
+            </tr></thead>
             <tbody>
-              {loadingRows && <tr><td colSpan={5} style={{ padding: 20, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
-              {!loadingRows && rows.length === 0 && <tr><td colSpan={5} style={{ padding: 20, textAlign: "center", color: T.lo }}>Tidak ada MSISDN yang menunggu validasi.</td></tr>}
-              {!loadingRows && preview.length === 0 && rows.length > 0 && (
-                <tr><td colSpan={5} style={{ padding: 20, textAlign: "center", color: T.lo }}>Muat berkas raw dulu (langkah 1) untuk melihat pratinjau.</td></tr>
-              )}
-              {preview.map((p) => (
-                <tr key={p.id} style={{ borderTop: `1px solid ${T.line}` }}>
-                  <td style={{ padding: "8px 12px", fontWeight: 700, color: T.hi }}>{p.activity_name || "-"}</td>
-                  <td style={{ padding: "8px 12px", color: T.mid }}>{p.submitted_by_name || "-"}</td>
-                  <td style={{ padding: "8px 12px", color: T.mid }}>{p.msisdn}</td>
-                  <td style={{ padding: "8px 12px", color: T.mid }}>{p.org_id || "-"}</td>
-                  <td style={{ padding: "8px 12px" }}><ValidityPill status={p.newStatus} matchedOrgId={p.matchedOrgId} /></td>
-                </tr>
-              ))}
+              {branches.map((b) => {
+                const existing = allocByBranch[b.branch_id];
+                const info = remapByBranch[b.branch_id];
+                return (
+                  <tr key={b.branch_id} style={{ borderTop: `1px solid ${T.line}` }}>
+                    <td style={{ padding: "8px 12px", fontWeight: 700, color: T.hi }}>
+                      {b.branch_name}
+                      {info && (
+                        <button onClick={() => handleMove(existing)} disabled={!existing}
+                          style={{ marginLeft: 8, background: "none", border: "none", cursor: existing ? "pointer" : "default", color: "#B8860B", fontSize: 10.5, fontWeight: 700 }}>
+                          <AlertTriangle size={10} style={{ marginRight: 3, verticalAlign: -1 }} />
+                          Digabung ke "{info.new_branch_name}" - pindahkan
+                        </button>
+                      )}
+                    </td>
+                    <td style={{ padding: "8px 12px", color: T.mid }}>{existing?.installed_qty || 0}</td>
+                    <td style={{ padding: "8px 12px", textAlign: "right" }}>
+                      <input type="number" min="0" disabled={!canManage} value={qtyMap[b.branch_id] ?? 0}
+                        onChange={(e) => setQtyMap((prev) => ({ ...prev, [b.branch_id]: e.target.value }))}
+                        style={{ ...inp, width: 90, textAlign: "right" }} />
+                    </td>
+                  </tr>
+                );
+              })}
+              {branches.length === 0 && <tr><td colSpan={3} style={{ padding: 16, textAlign: "center", color: T.lo }}>Tidak ada branch di region ini.</td></tr>}
             </tbody>
           </table>
         </div>
+      )}
 
-        <div style={{ marginTop: 14, display: "flex", justifyContent: "flex-end" }}>
-          <button onClick={runReconcile} disabled={running || !preview.length}
-            style={{ ...pbtn, ...((running || !preview.length) ? disabledPbtn : {}) }}>
-            <PlayCircle size={15} /> {running ? "Memproses…" : `Jalankan Rekonsiliasi (${preview.length})`}
-          </button>
-        </div>
-      </div>
+      {canManage && (
+        <button onClick={save} disabled={saving || branches === null} style={{ ...pbtn, marginTop: 14, ...(saving ? disabledPbtn : {}) }}>
+          {saving ? "Menyimpan…" : "Simpan Alokasi Region Ini"}
+        </button>
+      )}
     </div>
   );
 }
 
-function ValidityPill({ status, matchedOrgId }) {
-  const map = {
-    valid: { t: "Tervalidasi", c: T.success, bg: T.successBg, icon: <CheckCircle2 size={12} /> },
-    not_found: { t: "Tidak Ditemukan", c: T.error, bg: T.errorBg, icon: <AlertTriangle size={12} /> },
-    org_mismatch: { t: `Org ID salah${matchedOrgId ? ` (harusnya ${matchedOrgId})` : ""}`, c: "#8a5b00", bg: T.warningBg, icon: <AlertTriangle size={12} /> },
-    pending: { t: "Menunggu Validasi", c: "#8a5b00", bg: T.warningBg, icon: <HelpCircle size={12} /> },
-  };
-  const s = map[status] || map.pending;
+function Spinner({ label = "Memuat…", small }) {
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 700, padding: "3px 9px", borderRadius: 999, color: s.c, background: s.bg, border: `1px solid ${s.c}33` }}>
-      {s.icon} {s.t}
-    </span>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: small ? 10 : 24, color: T.lo, fontSize: 12.5, fontWeight: 600 }}>
+      <Loader2 size={small ? 13 : 16} style={{ animation: "mh-spin .8s linear infinite" }} />
+      {label}
+    </div>
   );
 }
 
 // ── Bits bersama ─────────────────────────────────────────────────────────────
-function Modal({ title, onClose, children }) {
+function Modal({ title, onClose, children, wide }) {
   return (
     <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 20, width: 420, maxWidth: "92vw", maxHeight: "86vh", overflow: "auto" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 20, width: wide ? 1180 : 420, maxWidth: "96vw", maxHeight: "90vh", overflow: "auto" }}>
         <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 14 }}>{title}</div>
         {children}
       </div>

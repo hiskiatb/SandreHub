@@ -47,11 +47,47 @@ let _sessionCache = null; // { email, userId, scope, ts }
 // yang sama "mewarisi" scope user sebelumnya) - dipasang sekali di sini lewat
 // listener alih-alih mengubah tiap tombol Keluar di berbagai halaman.
 supabaseMarta.auth.onAuthStateChange((event) => {
-  if (event === "SIGNED_OUT") _sessionCache = null;
+  if (event === "SIGNED_OUT") { _sessionCache = null; try { sessionStorage.removeItem(LOGIN_LOGGED_KEY); } catch { /* noop */ } }
 });
+
+// ── Log aktivitas: login & logout ───────────────────────────────────────────
+// Dicatat SEKALI per tab/sesi browser (bukan tiap kali useMartaSession
+// dipanggil ulang di tiap halaman - itu bisa berkali-kali dlm satu sesi
+// login yg sama). Ditandai lewat sessionStorage (bukan _sessionCache yg
+// TTL-nya cuma 90 detik) supaya tidak tercatat "login" berulang cuma krn
+// pindah-pindah menu/tab lama dibuka lagi.
+const LOGIN_LOGGED_KEY = "mh_login_logged_uid";
+
+function logMartaLogin(userId) {
+  try {
+    if (sessionStorage.getItem(LOGIN_LOGGED_KEY) === userId) return;
+    sessionStorage.setItem(LOGIN_LOGGED_KEY, userId);
+  } catch { /* sessionStorage tidak tersedia - tetap coba catat sekali */ }
+  supabaseMarta.rpc("mh_log_activity", { p_action: "login" }).then(({ error }) => {
+    if (error) console.warn("[MartaHub] gagal mencatat log login:", error.message);
+  });
+}
+
+/** Dipanggil dari tombol Keluar (profile/pending/revoked) SEBELUM
+ * auth.signOut() - setelah signOut, auth.uid() sudah kosong jadi RPC tidak
+ * bisa lagi mengenali siapa yg logout. Best-effort: kegagalan di sini TIDAK
+ * boleh menghalangi proses keluar itu sendiri. */
+export async function logMartaLogout() {
+  try {
+    await supabaseMarta.rpc("mh_log_activity", { p_action: "logout" });
+  } catch { /* best-effort, jangan sampai memblokir logout */ }
+}
 
 /** Hook sesi bersama - cek login, ambil scope MartaHub (di-cache sebentar,
  * lihat catatan di atas). Redirect ke login otomatis kalau tidak ada sesi. */
+// Dipanggil setelah user berhasil ganti nama sendiri (mh_set_my_name) -
+// supaya _sessionCache langsung ikut update, biar kalau pindah halaman lain
+// (tanpa reload penuh) nama baru sudah kepakai, bukan nama lama sampai TTL
+// cache habis / re-login.
+export function updateCachedFullName(name) {
+  if (_sessionCache) _sessionCache = { ..._sessionCache, scope: { ..._sessionCache.scope, fullName: name } };
+}
+
 export function useMartaSession() {
   const router = useRouter();
   const [state, setState] = useState(() =>
@@ -62,6 +98,7 @@ export function useMartaSession() {
 
   useEffect(() => {
     let alive = true;
+    let channel = null;
     (async () => {
       const { data: { session } } = await supabaseMarta.auth.getSession();
       if (!session) { _sessionCache = null; router.replace("/martahub/m/login"); return; }
@@ -76,8 +113,34 @@ export function useMartaSession() {
       if (scope.authState === "pending") { _sessionCache = null; router.replace(`/martahub/m/pending?email=${encodeURIComponent(session.user.email)}`); return; }
       _sessionCache = { email: session.user.email, userId: session.user.id, scope, ts: Date.now() };
       if (alive) setState({ loading: false, email: session.user.email, userId: session.user.id, scope });
+      logMartaLogin(session.user.id);
+
+      // ── Auto sign-out real-time ────────────────────────────────────────
+      // Kalau admin MENGHAPUS penugasan user ini di User Management saat
+      // sesi ini masih terbuka (mis. di tab/HP lain), mh_delete_assignment
+      // langsung memanggil mh_rebind_email → baris mh_profiles user ini
+      // diturunkan (role='pending', status='revoked') SAAT ITU JUGA. Tanpa
+      // ini, sesi yang sudah terbuka baru "sadar" kalau kebetulan pindah
+      // halaman lagi (useMartaSession dipanggil ulang). Berlangganan
+      // perubahan baris mh_profiles milik user INI sendiri (filter id
+      // = auth.uid()-nya) supaya begitu baris itu berubah jadi tidak aktif,
+      // sesi langsung di-sign-out paksa & diarahkan ke login - real-time,
+      // tanpa perlu refresh manual.
+      try {
+        channel = supabaseMarta
+          .channel(`mh-profile-guard-${session.user.id}`)
+          .on("postgres_changes", { event: "UPDATE", schema: "public", table: "mh_profiles", filter: `id=eq.${session.user.id}` }, async (payload) => {
+            const row = payload.new || {};
+            if (row.status !== "active" || row.role === "pending") {
+              _sessionCache = null;
+              try { await supabaseMarta.auth.signOut(); } catch { /* noop */ }
+              router.replace(`/martahub/m/login?revoked=1`);
+            }
+          })
+          .subscribe();
+      } catch { /* realtime opsional - kegagalan di sini tidak boleh menghalangi sesi normal */ }
     })();
-    return () => { alive = false; };
+    return () => { alive = false; if (channel) { try { supabaseMarta.removeChannel(channel); } catch { /* noop */ } } };
   }, [router]);
 
   return state;
@@ -151,10 +214,32 @@ export default function MobileShell({ active, children }) {
   );
 }
 
-export function ShellSpinner() {
+/** Loading utk KONTEN SATU HALAMAN PENUH (list utama halaman itu sendiri
+ * masih kosong) - mengambil tinggi cukup besar spy tidak "meloncat" begitu
+ * data datang, TAPI tetap di dalam MobileShell (nav bawah & header tetap
+ * kelihatan, bukan overlay yg menutup seluruh layar). Utk loading di DALAM
+ * section kecil yg halamannya sendiri sudah terlihat (mis. satu blok
+ * "Aktivitas Terbaru" di Beranda, isi satu kartu, dst) pakai InlineSpinner
+ * di bawah - jangan pakai ini, minHeight-nya kegedean utk konteks kecil. */
+export function ShellSpinner({ minHeight = "50vh", label }) {
   return (
-    <div style={{ minHeight: "60vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div style={{ width: 24, height: 24, border: "2.5px solid #ECEDF0", borderTopColor: "#ED1C24", borderRadius: "50%", animation: "mspin 0.8s linear infinite" }} />
+    <div style={{ minHeight, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10 }}>
+      <div style={{ width: 22, height: 22, border: "2.5px solid #ECEDF0", borderTopColor: "#ED1C24", borderRadius: "50%", animation: "mspin 0.8s linear infinite" }} />
+      {label && <div style={{ fontSize: 12, fontWeight: 600, color: "#9A9AA6" }}>{label}</div>}
+    </div>
+  );
+}
+
+/** Loading MINIMALIS utk konteks yg lebih kecil dari satu halaman penuh:
+ * satu section/blok di dalam halaman yg sisanya sudah tampil (mis. daftar
+ * "Aktivitas Terbaru" di Beranda saat difilter ulang, isi satu tab/kartu),
+ * atau ditaruh inline di samping teks lain. TIDAK PERNAH menutup layar -
+ * cuma ambil ruang seperlunya (padding kecil, bukan minHeight besar). */
+export function InlineSpinner({ label = "Memuat…", size = 16, align = "center" }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: align === "center" ? "center" : "flex-start", gap: 8, padding: "14px 0", color: "#9A9AA6" }}>
+      <div style={{ width: size, height: size, border: "2px solid #ECEDF0", borderTopColor: "#ED1C24", borderRadius: "50%", animation: "mspin 0.8s linear infinite", flexShrink: 0 }} />
+      {label && <span style={{ fontSize: 12, fontWeight: 600 }}>{label}</span>}
     </div>
   );
 }

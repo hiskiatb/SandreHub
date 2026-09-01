@@ -1,7 +1,9 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
-import { X, MapPin, Image as ImageIcon, Phone, FileText, Layers } from "lucide-react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { X, MapPin, Image as ImageIcon, Phone, FileText, Layers, Search, Download, RotateCcw } from "lucide-react";
+import * as XLSX from "xlsx";
 import MartaShell, { T, FONT, brandLabel } from "../components/MartaShell";
+import ExcelFilter from "../components/ExcelFilter";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { getMartaScope, applyMartaScope } from "../../../lib/martaScope";
 
@@ -25,6 +27,15 @@ const fmtDate = (s) => {
 };
 const fmtInt = (n) => (n == null ? "-" : Number(n).toLocaleString("id-ID"));
 const fmtRp = (n) => (n == null ? "-" : `Rp${Number(n).toLocaleString("id-ID")}`);
+const rebuySum = (a, b) => { const x = Number(a || 0) + Number(b || 0); return x || null; };
+const pctVal = (actual, target) => (!target ? null : (Number(actual || 0) / Number(target)) * 100);
+const pctLabel = (actual, target) => { const v = pctVal(actual, target); return v == null ? "-" : `${Math.round(v)}%`; };
+const MONTHS_ID = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+const monthLabel = (dateStr) => {
+  if (!dateStr || dateStr.length < 7) return "-";
+  const [y, m] = dateStr.slice(0, 7).split("-");
+  return `${MONTHS_ID[(+m || 1) - 1]} ${y}`;
+};
 
 // Bucket foto POSM/aktivitas - SAMA PERSIS dgn pola yg sudah dipakai
 // app/martahub/approval/page.jsx (mdPhotoUrl) - bucket publik, jadi cukup
@@ -36,9 +47,14 @@ function photoUrl(path) {
 
 const DETAIL_COLS = "id,event_name,event_category,event_categories,brand,mc,branch_id,site_id,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,poi_type,network_category,area_potential,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,target_rev_3m,cost_estimate,expected_outcome,actual_sp,actual_fwa,actual_rebuy_pulsa,actual_rebuy_data,actual_rev_3m,cost_actual,insight,checkin_valid,checkin_distance,checkin_at,approved_by_name,approved_by_email,approved_at,approval_notes,validation_status,validation_note,validated_at,override_status,override_by_name,override_at,override_note,created_at";
 
+// Kolom list mh_activities untuk tabel Excel-style di bawah - lebih ringkas
+// dari DETAIL_COLS (dipakai modal) tapi mencakup semua field yg diminta utk
+// tabel Activity Plan (target/actual/ACV/cost ratio/insight/dokumentasi).
+const LIST_COLS = "id,event_name,brand,mc,branch_id,event_categories,event_category,plan_date_start,plan_date,actual_date,site_id,network_category,area_potential,poi_type,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,target_rev_3m,cost_estimate,actual_sp,actual_fwa,actual_rebuy_pulsa,actual_rebuy_data,actual_rev_3m,cost_actual,insight,checkin_valid,created_by,created_at";
+
 export default function ActivityPlanPage() {
   return (
-    <MartaShell active="activities" title="Activity Plan" subtitle="Rencana kegiatan yang dibuat BME/RGE di lapangan.">
+    <MartaShell active="activities" title="Activity Plan" subtitle="Rencana, submission, & monitoring aktivitas - satu tempat, dari plan sampai selesai.">
       {(ctx) => <Body email={ctx?.session?.user?.email} />}
     </MartaShell>
   );
@@ -46,11 +62,16 @@ export default function ActivityPlanPage() {
 
 function Body({ email }) {
   const [rows, setRows] = useState([]);
+  const [branchMap, setBranchMap] = useState({});
+  const [profileMap, setProfileMap] = useState({});
+  const [docCountMap, setDocCountMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
   const [scope, setScope] = useState(null);
   const [detailId, setDetailId] = useState(null);
+  const [colFilters, setColFilters] = useState({});
+  const [sortState, setSortState] = useState({ key: null, dir: "asc" });
 
   const load = useCallback(async () => {
     setLoading(true); setErr("");
@@ -59,29 +80,208 @@ function Body({ email }) {
       setScope(sc);
       let query = supabaseMarta
         .from("mh_activities")
-        .select("id, event_name, brand, mc, branch_id, event_categories, plan_date_start, plan_date, site_id, network_category, area_potential, status, checkin_valid, created_at, approved_by_name, approved_by_email")
+        .select(LIST_COLS)
         .order("created_at", { ascending: false })
-        .limit(500);
+        .limit(1000);
       query = await applyMartaScope(query, sc);
       const { data, error } = await query;
       if (error) throw new Error(error.message);
-      setRows(data || []);
+      const list = data || [];
+      setRows(list);
+
+      const [{ data: branches }, { data: profiles }] = await Promise.all([
+        supabaseMarta.from("mh_branches").select("id, name"),
+        supabaseMarta.from("mh_profiles").select("id, full_name"),
+      ]);
+      setBranchMap(Object.fromEntries((branches || []).map((b) => [b.id, b.name])));
+      setProfileMap(Object.fromEntries((profiles || []).map((p) => [p.id, p.full_name])));
+
+      const ids = list.map((r) => r.id);
+      if (ids.length) {
+        const { data: docs } = await supabaseMarta.from("mh_documents").select("activity_id, file_type").in("activity_id", ids).eq("file_type", "photo");
+        const counts = {};
+        (docs || []).forEach((d) => { counts[d.activity_id] = (counts[d.activity_id] || 0) + 1; });
+        setDocCountMap(counts);
+      } else {
+        setDocCountMap({});
+      }
     } catch (e) { setErr(e.message || "Gagal memuat"); }
     finally { setLoading(false); }
   }, [email]);
   useEffect(() => { load(); }, [load]);
 
-  const term = q.trim().toLowerCase();
-  const view = rows.filter((r) => !term ||
-    (r.event_name || "").toLowerCase().includes(term) ||
-    (r.mc || "").toLowerCase().includes(term) ||
-    (r.site_id || "").toLowerCase().includes(term));
-
-  const cats = (r) => {
-    const arr = Array.isArray(r.event_categories) ? r.event_categories : [];
+  const cats = useCallback((r) => {
+    const arr = Array.isArray(r.event_categories) && r.event_categories.length ? r.event_categories : (r.event_category ? [r.event_category] : []);
     if (!arr.length) return "-";
     return arr.map((c) => CAT_LABEL[c] || c).join(", ");
+  }, []);
+
+  // ── Definisi kolom - SATU sumber utk header, filter (kolom berlabel
+  //    filter:true dapat dropdown ExcelFilter Excel-style), sort, dan render
+  //    sel. Urutan PERSIS sesuai daftar kolom yang diminta. ─────────────────
+  const COLUMNS = useMemo(() => [
+    { key: "no", label: "No.", width: 46 },
+    { key: "month", label: "Month", width: 118, filter: true, get: (r) => monthLabel(r.plan_date_start || r.plan_date) },
+    { key: "brand", label: "Brand", width: 66, filter: true, get: (r) => brandLabel(r.brand), badgeBrand: true },
+    { key: "branch", label: "Branch", width: 140, filter: true, get: (r) => branchMap[r.branch_id] || "-" },
+    { key: "brandBranch", label: "Brand_Branch", width: 160, filter: true, get: (r) => `${brandLabel(r.brand)} - ${branchMap[r.branch_id] || "-"}` },
+    { key: "mc", label: "Micro Cluster", width: 120, filter: true, get: (r) => r.mc || "-" },
+    { key: "creator", label: "BME/RGE", width: 150, filter: true, get: (r) => profileMap[r.created_by] || "-" },
+    { key: "planDate", label: "Plan Date", width: 100, filter: true, get: (r) => fmtDate(r.plan_date_start || r.plan_date), sortVal: (r) => r.plan_date_start || r.plan_date || "" },
+    { key: "actualDate", label: "Actual Date", width: 100, filter: true, get: (r) => fmtDate(r.actual_date), sortVal: (r) => r.actual_date || "" },
+    { key: "eventCategory", label: "Event Category", width: 160, filter: true, get: (r) => cats(r) },
+    { key: "status", label: "Status", width: 150, filter: true, get: (r) => (STATUS[r.status] || [r.status])[0], badgeStatus: true },
+    { key: "network", label: "Network Category", width: 130, filter: true, get: (r) => r.network_category || "-" },
+    { key: "eventName", label: "Event Name", width: 230, filter: true, get: (r) => r.event_name || "-" },
+    { key: "areaPotential", label: "Area Potential", width: 120, filter: true, get: (r) => r.area_potential || "-" },
+    { key: "siteId", label: "Site ID", width: 100, filter: true, get: (r) => r.site_id || "-" },
+    { key: "long", label: "Long", width: 90, filter: true, get: (r) => (r.longitude ?? "-"), raw: (r) => r.longitude, numeric: true },
+    { key: "lat", label: "Lat", width: 90, filter: true, get: (r) => (r.latitude ?? "-"), raw: (r) => r.latitude, numeric: true },
+    { key: "poi", label: "POI", width: 110, filter: true, get: (r) => r.poi_type || "-" },
+    { key: "address", label: "Address", width: 240, filter: true, get: (r) => r.address || "-" },
+    { key: "targetSp", label: "Target_SP", width: 92, filter: true, get: (r) => fmtInt(r.target_sp), raw: (r) => r.target_sp, numeric: true },
+    { key: "targetFwa", label: "Target_FWA", width: 96, filter: true, get: (r) => fmtInt(r.target_fwa), raw: (r) => r.target_fwa, numeric: true },
+    { key: "targetRebuy", label: "Target_Rebuy", width: 110, filter: true, get: (r) => fmtRp(rebuySum(r.target_rebuy_pulsa, r.target_rebuy_data)), raw: (r) => rebuySum(r.target_rebuy_pulsa, r.target_rebuy_data), numeric: true },
+    { key: "targetRev", label: "Target_Rev (3M)", width: 130, filter: true, get: (r) => fmtRp(r.target_rev_3m), raw: (r) => r.target_rev_3m, numeric: true },
+    { key: "costEstimate", label: "Cost Estimate", width: 120, filter: true, get: (r) => fmtRp(r.cost_estimate), raw: (r) => r.cost_estimate, numeric: true },
+    { key: "actualSp", label: "Actual_SP", width: 92, filter: true, get: (r) => fmtInt(r.actual_sp), raw: (r) => r.actual_sp, numeric: true },
+    { key: "actualFwa", label: "Actual_FWA", width: 96, filter: true, get: (r) => fmtInt(r.actual_fwa), raw: (r) => r.actual_fwa, numeric: true },
+    { key: "actualRebuy", label: "Actual_Rebuy", width: 110, filter: true, get: (r) => fmtRp(rebuySum(r.actual_rebuy_pulsa, r.actual_rebuy_data)), raw: (r) => rebuySum(r.actual_rebuy_pulsa, r.actual_rebuy_data), numeric: true },
+    { key: "actualRev", label: "Actual_Rev (3M)", width: 130, filter: true, get: (r) => fmtRp(r.actual_rev_3m), raw: (r) => r.actual_rev_3m, numeric: true },
+    { key: "costActual", label: "Cost Actual", width: 120, filter: true, get: (r) => fmtRp(r.cost_actual), raw: (r) => r.cost_actual, numeric: true },
+    { key: "acvSp", label: "Acv_SP", width: 84, filter: true, get: (r) => pctLabel(r.actual_sp, r.target_sp), raw: (r) => pctVal(r.actual_sp, r.target_sp), numeric: true, acv: true },
+    { key: "acvFwa", label: "ACV_FWA", width: 84, filter: true, get: (r) => pctLabel(r.actual_fwa, r.target_fwa), raw: (r) => pctVal(r.actual_fwa, r.target_fwa), numeric: true, acv: true },
+    { key: "acvRebuy", label: "ACV_Rebuy", width: 92, filter: true, get: (r) => pctLabel(rebuySum(r.actual_rebuy_pulsa, r.actual_rebuy_data), rebuySum(r.target_rebuy_pulsa, r.target_rebuy_data)), raw: (r) => pctVal(rebuySum(r.actual_rebuy_pulsa, r.actual_rebuy_data), rebuySum(r.target_rebuy_pulsa, r.target_rebuy_data)), numeric: true, acv: true },
+    { key: "costRatio", label: "Cost Ratio", width: 92, filter: true, get: (r) => pctLabel(r.cost_actual, r.cost_estimate), raw: (r) => pctVal(r.cost_actual, r.cost_estimate), numeric: true, acv: true, invertGood: true },
+    { key: "insight", label: "Insight (Optional)", width: 220, filter: true, get: (r) => r.insight || "-" },
+    { key: "documentation", label: "Documentation", width: 120, filter: true, get: (r) => (docCountMap[r.id] ? `${docCountMap[r.id]} foto` : "-") },
+  ], [branchMap, profileMap, docCountMap, cats]);
+
+  const FILTER_COLS = useMemo(() => COLUMNS.filter((c) => c.filter), [COLUMNS]);
+
+  const term = q.trim().toLowerCase();
+  const searchFiltered = useMemo(() => {
+    if (!term) return rows;
+    return rows.filter((r) =>
+      (r.event_name || "").toLowerCase().includes(term) ||
+      (r.mc || "").toLowerCase().includes(term) ||
+      (r.site_id || "").toLowerCase().includes(term) ||
+      (r.address || "").toLowerCase().includes(term) ||
+      (branchMap[r.branch_id] || "").toLowerCase().includes(term) ||
+      (profileMap[r.created_by] || "").toLowerCase().includes(term)
+    );
+  }, [rows, term, branchMap, profileMap]);
+
+  // ── Chained faceted filter options - utk tiap kolom filter, opsi dihitung
+  //    dari data yg SUDAH terfilter oleh kolom filter LAIN (bukan dirinya
+  //    sendiri) + pencarian teks. Persis prinsip yg dipakai ExcelFilter di
+  //    SandraHub (PNL_ControlCenter): pilihan yg ditampilkan selalu relevan
+  //    dgn kombinasi filter aktif saat ini, bukan daftar statis semua data. */
+  const filterOptionsMap = useMemo(() => {
+    const map = {};
+    for (const col of FILTER_COLS) {
+      let list = searchFiltered;
+      for (const oc of FILTER_COLS) {
+        if (oc.key === col.key) continue;
+        const sel = colFilters[oc.key];
+        if (sel && sel.length) list = list.filter((r) => sel.includes(oc.get(r)));
+      }
+      const uniq = [...new Set(list.map(col.get).filter((v) => v && v !== "-"))].sort((a, b) => String(a).localeCompare(String(b), "id"));
+      map[col.key] = uniq.map((v) => ({ value: v, label: v }));
+    }
+    return map;
+  }, [FILTER_COLS, searchFiltered, colFilters]);
+
+  const filteredRows = useMemo(() => {
+    let list = searchFiltered;
+    for (const col of FILTER_COLS) {
+      const sel = colFilters[col.key];
+      if (sel && sel.length) list = list.filter((r) => sel.includes(col.get(r)));
+    }
+    if (sortState.key) {
+      const col = COLUMNS.find((c) => c.key === sortState.key);
+      if (col) {
+        const valFn = col.raw || col.sortVal || col.get;
+        const dir = sortState.dir === "asc" ? 1 : -1;
+        list = [...list].sort((a, b) => {
+          const av = valFn(a), bv = valFn(b);
+          if (typeof av === "number" || typeof bv === "number") return dir * ((av ?? -Infinity) - (bv ?? -Infinity));
+          return dir * String(av ?? "").localeCompare(String(bv ?? ""), "id");
+        });
+      }
+    }
+    return list;
+  }, [searchFiltered, colFilters, sortState, FILTER_COLS, COLUMNS]);
+
+  // ── Ringkasan KPI + status quick-filter (menggantikan menu terpisah
+  //    "Activity Monitoring" & "Activity Submission" - keduanya cuma
+  //    potongan/tampilan lain dari tabel mh_activities yang sama ini, jadi
+  //    disatukan langsung di sini: pantauan cepat DAN detail per baris ada
+  //    di satu tempat). Dihitung dari filteredRows supaya ikut mengikuti
+  //    filter/pencarian yang sedang aktif. ─────────────────────────────────
+  const kpiStats = useMemo(() => {
+    const total = filteredRows.length;
+    const geoTracked = filteredRows.filter((r) => r.checkin_valid !== null && r.checkin_valid !== undefined);
+    const geoOk = geoTracked.filter((r) => r.checkin_valid === true).length;
+    const withTarget = filteredRows.filter((r) => r.target_sp);
+    const achSum = withTarget.reduce((s, r) => s + (r.actual_sp ?? 0), 0);
+    const tgtSum = withTarget.reduce((s, r) => s + (r.target_sp ?? 0), 0);
+    return {
+      total,
+      geoPct: geoTracked.length ? Math.round((geoOk / geoTracked.length) * 100) : null,
+      geoN: geoTracked.length,
+      achPct: tgtSum > 0 ? Math.round((achSum / tgtSum) * 100) : null,
+    };
+  }, [filteredRows]);
+
+  const statusStatusCounts = useMemo(() => {
+    const m = new Map();
+    for (const r of rows) { const lbl = (STATUS[r.status] || [r.status])[0]; m.set(lbl, (m.get(lbl) || 0) + 1); }
+    return m;
+  }, [rows]);
+  const statusChips = useMemo(() => Object.entries(STATUS).map(([, v]) => v[0]).filter((lbl, i, arr) => arr.indexOf(lbl) === i && statusStatusCounts.has(lbl)), [statusStatusCounts]);
+  const selectedStatuses = colFilters.status || [];
+  const toggleStatusChip = (lbl) => {
+    setColFilters((p) => {
+      const cur = p.status || [];
+      const next = cur.includes(lbl) ? cur.filter((v) => v !== lbl) : [...cur, lbl];
+      const n = { ...p };
+      if (next.length) n.status = next; else delete n.status;
+      return n;
+    });
   };
+
+  const activeFilterCount = Object.values(colFilters).reduce((n, v) => n + (v?.length ? 1 : 0), 0);
+  const hasAnyFilter = activeFilterCount > 0 || !!term;
+  const clearAllFilters = () => { setColFilters({}); setQ(""); setSortState({ key: null, dir: "asc" }); };
+  const [searchFocus, setSearchFocus] = useState(false);
+
+  // ── Export .xlsx - PERSIS mengikuti hasil filter yang sedang aktif
+  //    (search + semua kolom filter + urutan sort), bukan seluruh data
+  //    mentah. Kolom numerik/ACV diekspor sbg angka (bukan teks "Rp…"/"%")
+  //    supaya bisa langsung dipakai rumus di Excel. ──────────────────────
+  const exportXlsx = useCallback(() => {
+    const headers = COLUMNS.map((c) => c.label);
+    const aoa = [headers, ...filteredRows.map((r, i) => COLUMNS.map((c) => {
+      if (c.key === "no") return i + 1;
+      if (c.numeric && c.raw) {
+        const v = c.raw(r);
+        return v == null ? "" : Math.round(v * 100) / 100;
+      }
+      const v = c.get(r);
+      return v === "-" ? "" : v;
+    }))];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!cols"] = COLUMNS.map((c) => ({ wch: Math.max(10, Math.round((c.width || 100) / 7)) }));
+    ws["!freeze"] = { xSplit: 0, ySplit: 1 };
+    ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: aoa.length - 1, c: headers.length - 1 } }) };
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Activity Plan");
+    const stamp = new Date().toISOString().slice(0, 10);
+    XLSX.writeFile(wb, `MartaHub_Activity_Plan_${stamp}.xlsx`);
+  }, [COLUMNS, filteredRows]);
+
+  const T_FILTER = { hi: T.hi, mid: T.mid, lo: T.lo, blue: T.primary, blueBg: T.primaryBg };
 
   return (
     <div>
@@ -92,45 +292,140 @@ function Body({ email }) {
       )}
       {err && <div style={{ ...card, borderColor: T.error, background: T.errorBg, color: T.error, marginBottom: 16 }}>{err}</div>}
 
-      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari event / MC / site…"
-          style={{ ...inp, maxWidth: 320 }} />
+      {/* KPI strip - pantauan cepat (dulu di menu "Activity Monitoring"
+          terpisah), sekarang langsung di atas tabel Activity Plan supaya
+          "pantau sekaligus lihat detail" bisa dalam satu layar. */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 12 }}>
+        <Kpi label="Total Plan" value={String(kpiStats.total)} color={T.blue} />
+        <Kpi label="Achievement %" value={kpiStats.achPct == null ? "-" : `${kpiStats.achPct}%`} color={T.success} />
+        <Kpi label="Geo Compliance" value={kpiStats.geoPct == null ? "-" : `${kpiStats.geoPct}%`} sub={kpiStats.geoN ? `${kpiStats.geoN} tercatat` : "belum ada check-in"} color="#0D9488" />
+      </div>
+
+      {/* Status quick-filter - chip ini & dropdown filter kolom "Status" di
+          header tabel SALING TERHUBUNG (sama-sama nulis ke colFilters.status),
+          jadi klik chip di sini otomatis kelihatan juga sebagai filter aktif
+          di kolom Status, dan sebaliknya. Menggantikan chip serupa yang dulu
+          cuma ada di halaman "Activity Monitoring" terpisah. */}
+      {statusChips.length > 0 && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          {statusChips.map((lbl) => {
+            const on = selectedStatuses.includes(lbl);
+            return (
+              <button key={lbl} onClick={() => toggleStatusChip(lbl)} className="mh-btn"
+                style={{ padding: "5px 13px", borderRadius: 100, fontSize: 11.5, fontWeight: 700, cursor: "pointer",
+                  border: `1.5px solid ${on ? "transparent" : T.line}`,
+                  background: on ? "linear-gradient(135deg,#ED1C24 0%,#C6168D 100%)" : "#fff",
+                  color: on ? "#fff" : T.mid }}>
+                {lbl} <span style={{ opacity: 0.75 }}>· {statusStatusCounts.get(lbl) || 0}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+        {/* Search - dibungkus div supaya bisa taruh ikon + tombol clear di
+            dalam kotaknya sendiri, dgn ring fokus yg jelas (bukan <input>
+            polos spt sebelumnya). */}
+        <div style={{
+          position: "relative", display: "flex", alignItems: "center", width: 320, maxWidth: "100%",
+          background: "#fff", border: `1.5px solid ${searchFocus ? T.primary : T.line}`, borderRadius: 11,
+          boxShadow: searchFocus ? `0 0 0 3px ${T.primaryBg}` : "none", transition: "border-color .15s, box-shadow .15s",
+        }}>
+          <Search size={15} color={searchFocus ? T.primary : T.lo} style={{ position: "absolute", left: 11, pointerEvents: "none" }} />
+          <input
+            value={q} onChange={(e) => setQ(e.target.value)}
+            onFocus={() => setSearchFocus(true)} onBlur={() => setSearchFocus(false)}
+            placeholder="Cari event, branch, MC, BME/RGE, site, alamat…"
+            style={{ width: "100%", padding: "9px 34px 9px 34px", border: "none", outline: "none", background: "transparent", fontSize: 13, color: T.hi, fontFamily: FONT, borderRadius: 11, boxSizing: "border-box" }}
+          />
+          {q && (
+            <button onClick={() => setQ("")} title="Bersihkan pencarian"
+              style={{ position: "absolute", right: 8, width: 20, height: 20, borderRadius: "50%", border: "none", background: "#F0F4FA", color: T.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+              <X size={12} />
+            </button>
+          )}
+        </div>
+
         {scope && !scope.unscoped && scope.found && (
-          <div style={{ alignSelf: "center", fontSize: 11, fontWeight: 700, color: T.mid, background: "#F0F4FA", border: `1px solid ${T.line}`, borderRadius: 100, padding: "2px 10px" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: T.mid, background: "#F0F4FA", border: `1px solid ${T.line}`, borderRadius: 100, padding: "2px 10px" }}>
             Scope: {scope.region || "-"} · {brandLabel(scope.brand)}
           </div>
         )}
-        <div style={{ marginLeft: "auto", alignSelf: "center", fontSize: 12.5, color: T.mid }}>{view.length} plan</div>
+
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 12.5, color: T.mid }}>
+            <b style={{ color: T.hi }}>{filteredRows.length}</b> dari {rows.length} plan
+            {activeFilterCount > 0 && <span style={{ marginLeft: 6, fontWeight: 700, color: T.primary }}>· {activeFilterCount} filter aktif</span>}
+          </div>
+
+          <button onClick={clearAllFilters} disabled={!hasAnyFilter} title="Hapus pencarian & semua filter kolom"
+            style={{ ...btn, opacity: hasAnyFilter ? 1 : 0.4, cursor: hasAnyFilter ? "pointer" : "default", color: T.mid }}>
+            <RotateCcw size={13} /> Clear All Filter
+          </button>
+
+          <button onClick={exportXlsx} disabled={loading || filteredRows.length === 0} title="Export data sesuai filter yang sedang diterapkan"
+            style={{ ...btn, opacity: (loading || filteredRows.length === 0) ? 0.5 : 1, cursor: (loading || filteredRows.length === 0) ? "default" : "pointer", background: "linear-gradient(135deg,#1E8E3E,#0F6B2C)", borderColor: "transparent", color: "#fff" }}>
+            <Download size={13} /> Export .xlsx
+          </button>
+        </div>
       </div>
 
       <div style={{ ...card, padding: 0, overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
-            <thead><tr style={{ background: "#F7F9FC", color: T.mid, textAlign: "left" }}>
-              {["Event", "Brand", "MC", "Site", "Kategori", "Tanggal", "Network", "Status", "Diputuskan Oleh", "Check-in"].map((h) => <th key={h} style={{ padding: "9px 14px", fontSize: 11, fontWeight: 800, textTransform: "uppercase" }}>{h}</th>)}
-            </tr></thead>
+        <div style={{ overflowX: "auto", maxHeight: "72vh", overflowY: "auto" }}>
+          <table style={{ borderCollapse: "collapse", fontSize: 12.5, whiteSpace: "nowrap" }}>
+            <thead>
+              <tr style={{ background: "#F7F9FC", color: T.mid, textAlign: "left" }}>
+                {COLUMNS.map((col) => {
+                  const isSorted = sortState.key === col.key;
+                  const filterConfig = col.filter ? {
+                    options: filterOptionsMap[col.key] || [],
+                    selected: colFilters[col.key] || [],
+                    onApply: (vals) => setColFilters((p) => ({ ...p, [col.key]: vals })),
+                    onClear: () => setColFilters((p) => { const n = { ...p }; delete n[col.key]; return n; }),
+                    sortDir: isSorted ? sortState.dir : null,
+                    onSort: (dir) => setSortState({ key: col.key, dir }),
+                  } : null;
+                  return (
+                    <th key={col.key} style={{ position: "sticky", top: 0, zIndex: 5, width: col.width, minWidth: col.width, padding: "9px 10px", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", color: isSorted ? T.primary : T.mid, background: "#F7F9FC", borderBottom: `1px solid ${T.line}`, borderRight: `1px solid ${T.line}` }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                        <span onClick={() => !col.filter && col.key !== "no" && setSortState((s) => ({ key: col.key, dir: s.key === col.key && s.dir === "asc" ? "desc" : "asc" }))}
+                          style={{ overflow: "hidden", textOverflow: "ellipsis", cursor: col.key === "no" ? "default" : "pointer" }} title={col.label}>
+                          {col.label}{isSorted && !col.filter ? (sortState.dir === "asc" ? " ▲" : " ▼") : ""}
+                        </span>
+                        {filterConfig && <ExcelFilter {...filterConfig} t={T_FILTER} d={false} />}
+                      </div>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
             <tbody>
-              {loading && <tr><td colSpan={10} style={{ padding: 26, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
-              {!loading && view.length === 0 && <tr><td colSpan={10} style={{ padding: 26, textAlign: "center", color: T.lo }}>Belum ada activity plan.</td></tr>}
-              {!loading && view.map((r) => {
-                const st = STATUS[r.status] || [r.status, T.mid, "#eef1f6"];
-                return (
-                  <tr key={r.id} onClick={() => setDetailId(r.id)} style={{ borderTop: `1px solid ${T.line}`, cursor: "pointer" }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = "#F7F9FC"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
-                    <td style={{ padding: "10px 14px", fontWeight: 700 }}>{r.event_name || "-"}</td>
-                    <td style={{ padding: "10px 14px" }}>{r.brand ? <span style={{ fontSize: 10.5, fontWeight: 800, color: String(r.brand).toLowerCase() === "tri" ? T.tri : T.im3 }}>{brandLabel(r.brand)}</span> : "-"}</td>
-                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.mc || "-"}</td>
-                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.site_id || "-"}</td>
-                    <td style={{ padding: "10px 14px", color: T.mid }}>{cats(r)}</td>
-                    <td style={{ padding: "10px 14px", color: T.mid }}>{fmtDate(r.plan_date_start || r.plan_date)}</td>
-                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.network_category || "-"}</td>
-                    <td style={{ padding: "10px 14px" }}><span style={{ fontSize: 10.5, fontWeight: 800, color: st[1], background: st[2], padding: "2px 8px", borderRadius: 999 }}>{st[0]}</span></td>
-                    <td style={{ padding: "10px 14px", color: T.mid }}>{r.approved_by_name || r.approved_by_email || "-"}</td>
-                    <td style={{ padding: "10px 14px" }}>{r.checkin_valid == null ? "-" : r.checkin_valid ? <span style={{ color: T.success, fontWeight: 700 }}>Valid</span> : <span style={{ color: T.error, fontWeight: 700 }}>Invalid</span>}</td>
-                  </tr>
-                );
-              })}
+              {loading && <tr><td colSpan={COLUMNS.length} style={{ padding: 26, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
+              {!loading && filteredRows.length === 0 && <tr><td colSpan={COLUMNS.length} style={{ padding: 26, textAlign: "center", color: T.lo }}>Tidak ada activity plan untuk filter saat ini.</td></tr>}
+              {!loading && filteredRows.map((r, i) => (
+                <tr key={r.id} onClick={() => setDetailId(r.id)} style={{ borderTop: `1px solid ${T.line}`, cursor: "pointer" }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "#F7F9FC"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                  {COLUMNS.map((col) => {
+                    if (col.key === "no") return <td key="no" style={{ padding: "8px 10px", color: T.lo, borderRight: `1px solid ${T.line}` }}>{i + 1}</td>;
+                    if (col.badgeStatus) {
+                      const st = STATUS[r.status] || [r.status, T.mid, "#eef1f6"];
+                      return <td key={col.key} style={{ padding: "8px 10px", borderRight: `1px solid ${T.line}` }}><span style={{ fontSize: 10, fontWeight: 800, color: st[1], background: st[2], padding: "2px 8px", borderRadius: 999 }}>{st[0]}</span></td>;
+                    }
+                    if (col.badgeBrand) {
+                      return <td key={col.key} style={{ padding: "8px 10px", borderRight: `1px solid ${T.line}` }}>{r.brand ? <span style={{ fontSize: 10.5, fontWeight: 800, color: String(r.brand).toLowerCase() === "tri" ? T.tri : T.im3 }}>{brandLabel(r.brand)}</span> : "-"}</td>;
+                    }
+                    if (col.acv) {
+                      const v = col.raw(r);
+                      const good = v == null ? null : (col.invertGood ? v <= 100 : v >= 100);
+                      return <td key={col.key} style={{ padding: "8px 10px", borderRight: `1px solid ${T.line}`, fontWeight: 700, color: good == null ? T.mid : good ? T.success : T.warning }}>{col.get(r)}</td>;
+                    }
+                    if (col.key === "eventName") return <td key={col.key} title={r.event_name} style={{ padding: "8px 10px", fontWeight: 700, color: T.hi, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", borderRight: `1px solid ${T.line}` }}>{col.get(r)}</td>;
+                    return <td key={col.key} style={{ padding: "8px 10px", color: T.mid, borderRight: `1px solid ${T.line}`, textAlign: col.numeric ? "right" : "left" }}>{col.get(r)}</td>;
+                  })}
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -426,6 +721,17 @@ function MsisdnList({ label, list }) {
               : badge(e.validation_status || "-", T.error, T.errorBg)}
         </div>
       ))}
+    </div>
+  );
+}
+
+function Kpi({ label, value, sub, color }) {
+  return (
+    <div style={{ ...card, position: "relative", overflow: "hidden" }}>
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: color }} />
+      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.04em", color: T.lo, textTransform: "uppercase", marginBottom: 8 }}>{label}</div>
+      <div style={{ fontSize: 22, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
+      {sub && <div style={{ fontSize: 10.5, color: T.lo, marginTop: 6 }}>{sub}</div>}
     </div>
   );
 }

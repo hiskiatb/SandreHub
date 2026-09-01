@@ -9,8 +9,8 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Crosshair, Loader2, Plus, X, Camera, ImagePlus, Images, CheckCircle2 } from "lucide-react";
 import supabaseMarta from "../../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../_shared/MobileShell";
-import { fetchScopeSites, APPROVER_ROLES } from "../../_shared/planData";
-import { INSTALL_MODES, fetchMyAvailableTypes, fetchAvailableTypesForBranch, fetchBranchOptions, submitInstallation, addInstallationPhoto } from "../../_shared/posmData";
+import { fetchScopeSites, APPROVER_ROLES, BRAND_DISPLAY } from "../../_shared/planData";
+import { INSTALL_MODES, fetchBranchOptions, fetchPlansForBranch, submitInstallation, addInstallationPhoto, posmPlanVisualUrl } from "../../_shared/posmData";
 import { compressToMaxBytes } from "../../_shared/imageTools";
 import PhotoCollageSheet from "../../_shared/PhotoCollageSheet";
 
@@ -39,7 +39,8 @@ export default function PosmNewPage() {
   const [targetBrand, setTargetBrand] = useState("");
   const [branchOptions, setBranchOptions] = useState([]);
 
-  const [available, setAvailable] = useState(null);
+  const [plans, setPlans] = useState(null);
+  const [planId, setPlanId] = useState("");
   const [items, setItems] = useState([]);
   const [photos, setPhotos] = useState([]);
   const [collageOpen, setCollageOpen] = useState(false);
@@ -80,27 +81,34 @@ export default function PosmNewPage() {
     return () => { alive = false; };
   }, [sessionLoading, isApprover, scope]);
 
-  // Site + jenis material tersedia - tergantung branch+brand EFEKTIF, jadi
-  // baru jalan setelah approver selesai memilih branch (& brand kalau perlu).
+  // Site + Plan POSM aktif yang punya alokasi di branch+brand EFEKTIF - baru
+  // jalan setelah approver selesai memilih branch (& brand kalau perlu).
+  // Material yang bisa dipilih SEKARANG mengikuti Plan yang dipilih user
+  // (bukan lagi katalog global per branch), sesuai rombak total POSM.
   useEffect(() => {
     if (sessionLoading || !scope?.found) return;
-    if (!effBranchId || !effBrand) { setSites([]); setAvailable([]); return; }
+    if (!effBranchId || !effBrand) { setSites([]); setPlans([]); setPlanId(""); return; }
     let alive = true;
     (async () => {
       try {
-        const [siteRows, avail] = await Promise.all([
+        const [siteRows, planRows] = await Promise.all([
           fetchScopeSites(effBranchId, effBrand),
-          isApprover ? fetchAvailableTypesForBranch(effBranchId, effBrand) : fetchMyAvailableTypes(),
+          fetchPlansForBranch(effBranchId, effBrand),
         ]);
         if (!alive) return;
         setSites(siteRows || []);
-        setAvailable(avail || []);
+        setPlans(planRows || []);
+        setPlanId("");
+        setItems([]);
       } catch (e) {
         if (alive) setErr(e.message || "Gagal memuat data referensi");
       }
     })();
     return () => { alive = false; };
   }, [sessionLoading, scope, isApprover, effBranchId, effBrand]);
+
+  const selectedPlan = (plans || []).find((p) => p.id === planId) || null;
+  const available = selectedPlan ? selectedPlan.materials.filter((m) => m.qty > (m.installed_qty || 0)) : [];
 
   function useMyLocation() {
     if (!navigator.geolocation) { setErr("Browser ini tidak mendukung geolocation."); return; }
@@ -136,6 +144,7 @@ export default function PosmNewPage() {
     setErr("");
     if (isApprover && !targetBranchId) { setErr("Pilih branch tujuan pemasangan dulu."); return; }
     if (isApprover && !effBrand) { setErr("Pilih brand dulu."); return; }
+    if (!planId) { setErr("Pilih Plan POSM terlebih dulu."); return; }
     if (mode === "activity" && !activityId) { setErr("Pilih activity terlebih dulu."); return; }
     if (mode === "outlet" && !siteId) { setErr("Pilih outlet/site terlebih dulu."); return; }
     if (mode === "street" && !streetDesc.trim()) { setErr("Isi deskripsi lokasi street branding."); return; }
@@ -149,6 +158,7 @@ export default function PosmNewPage() {
         mode, activityId, siteId, streetDescription: streetDesc.trim(), lat, lng, note: note.trim(), items,
         branchId: isApprover ? effBranchId : undefined,
         brand: isApprover ? effBrand : undefined,
+        planId,
       });
       for (let i = 0; i < photos.length; i++) {
         try {
@@ -164,7 +174,7 @@ export default function PosmNewPage() {
     }
   }
 
-  if (sessionLoading || available === null) return <MobileShell active="home"><ShellSpinner /></MobileShell>;
+  if (sessionLoading || plans === null) return <MobileShell active="home"><ShellSpinner /></MobileShell>;
 
   if (done) {
     return (
@@ -273,6 +283,33 @@ export default function PosmNewPage() {
           </button>
         </Card>
 
+        {/* Plan POSM */}
+        <Card>
+          <FieldLabel text="Plan POSM" required hint={plans.length === 0 ? "Tidak ada Plan aktif" : `${plans.length} tersedia`} />
+          {plans.length === 0 ? (
+            <div style={{ fontSize: 11.5, color: "#B0B0BA" }}>
+              {!effBranchId || !effBrand ? "Pilih branch tujuan dulu di atas." : "Belum ada Plan POSM aktif dengan alokasi di branch ini."}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {plans.map((p) => (
+                <button key={p.id} onClick={() => { setPlanId(p.id); setItems([]); }}
+                  style={{ display: "flex", gap: 10, alignItems: "center", textAlign: "left", padding: "10px 12px", borderRadius: 12, border: planId === p.id ? "1.5px solid #ED1C24" : "1.5px solid #ECEDF0", background: planId === p.id ? "rgba(237,28,36,0.05)" : "#FFFFFF", cursor: "pointer", fontFamily: FF }}>
+                  <div style={{ width: 34, height: 34, borderRadius: 9, background: "#F0F0F3", flexShrink: 0, overflow: "hidden" }}>
+                    {posmPlanVisualUrl(p.visual_path) && <img src={posmPlanVisualUrl(p.visual_path)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                    <div style={{ fontSize: 10, color: p.in_period ? "#8A8A96" : "#B8860B", fontWeight: 700 }}>
+                      {p.period_from} - {p.period_to}{!p.in_period && " · Di luar periode"}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </Card>
+
         {/* Items */}
         <Card>
           <FieldLabel text="Jenis Material" required hint={`${items.length} dipilih`} />
@@ -285,7 +322,7 @@ export default function PosmNewPage() {
             ))}
             {available.length === 0 && (
               <div style={{ fontSize: 11.5, color: "#B0B0BA" }}>
-                {isApprover && !effBranchId ? "Pilih branch tujuan dulu di atas." : "Belum ada jenis material terdaftar di branch ini."}
+                {!planId ? "Pilih Plan POSM dulu di atas." : "Semua material di Plan ini sudah mencapai alokasi."}
               </div>
             )}
           </div>

@@ -22,7 +22,7 @@ import { slug, monthKeyYYYYMM, nearestPriorTarget } from "../../lib/activityTarg
 // ║ PEKANBARU/PADANG/PALEMBANG/BANDAR LAMPUNG) supaya nama cabang & region   ║
 // ║ tetap tampil benar lewat branchMap/scoping yang sudah ada.               ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
-const USE_MOCK_DASHBOARD_DATA = true;
+const USE_MOCK_DASHBOARD_DATA = false;
 const MOCK_BRANCHES = [
   { id: "61b44f8c-2af6-4cf3-a450-9ca695aad1ae", name: "MEDAN", lat: 3.5952, lng: 98.6722 },
   { id: "6444e7cf-e2bb-4cfd-81d0-c18c7c1d5ceb", name: "ACEH", lat: 5.5483, lng: 95.3238 },
@@ -165,13 +165,10 @@ const NAV = [
   { label: "Dashboard", icon: "grid", path: "dashboard" },
   { section: "ACTIVITY" },
   { label: "Activity Plan", icon: "calendar", path: "activities" },
-  { label: "Activity Submission", icon: "send", path: "submission" },
-  { label: "Activity Monitoring", icon: "monitor", path: "monitoring" },
   { label: "Calendar", icon: "cal", path: "calendar" },
   { section: "INTELLIGENCE" },
   { label: "Map Intelligence", icon: "map", path: "map" },
-  { label: "Productivity Analytics", icon: "chart", path: "analytics" },
-  { label: "Performance Insight", icon: "insight", path: "insight" },
+  { label: "Analytics", icon: "chart", path: "analytics" },
   { label: "Leaderboard", icon: "trophy", path: "leaderboard" },
   { label: "Geo Compliance", icon: "pin", path: "geo-compliance" },
   { section: "MANAGEMENT" },
@@ -211,7 +208,7 @@ function Icon({ name, size = 16, color = "currentColor" }) {
     calendar: <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
     send:     <svg style={s} viewBox="0 0 24 24" {...p}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>,
     monitor:  <svg style={s} viewBox="0 0 24 24" {...p}><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>,
-    cal:      <svg style={s} viewBox="0 0 24 24" {...p}><circle cx="12" cy="12" r="10"/><line x1="12" y1="6" x2="12" y2="12"/><line x1="12" y1="12" x2="16" y2="14"/></svg>,
+    cal:      <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><circle cx="15.5" cy="15.5" r="1.6" fill={color} stroke="none"/></svg>,
     map:      <svg style={s} viewBox="0 0 24 24" {...p}><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>,
     chart:    <svg style={s} viewBox="0 0 24 24" {...p}><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
     insight:  <svg style={s} viewBox="0 0 24 24" {...p}><path d="M2 20h20M6 20V10M10 20V4M14 20V12M18 20V8"/></svg>,
@@ -673,6 +670,13 @@ const QUICK_ACTIONS = [
   { label: "Approval Center", sub: "Tinjau persetujuan", icon: "check", color: "#E65100", route: "approval" },
 ];
 
+// Cache user/profile di scope modul - SAMA persis pola di MartaShell.jsx:
+// tanpa ini, tiap kali user balik ke Dashboard dari halaman lain, seluruh
+// shell (termasuk sidebar) dibongkar & diganti layar loading penuh dulu
+// sampai guardMarta() selesai lagi dari nol - itu penyebab "layar
+// membeku sejenak" saat pindah menu, bukan cuma soal kurang indikator.
+let _marlaDashCache = null;
+
 // ─── Main Component ────────────────────────────────────────────────────────────
 export default function MartaHubDashboard() {
   const router = useRouter();
@@ -685,9 +689,9 @@ export default function MartaHubDashboard() {
   const [mobile, setMobile] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeNav, setActiveNav] = useState("dashboard");
-  const [user, setUser] = useState(null);
-  const [profile, setProfile] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(_marlaDashCache?.user || null);
+  const [profile, setProfile] = useState(_marlaDashCache?.profile || null);
+  const [loading, setLoading] = useState(!_marlaDashCache);
   const [activeTab, setActiveTab] = useState("All");
   const [scope, setScope] = useState(null);
   const [pendingCount, setPendingCount] = useState(null);
@@ -769,6 +773,7 @@ export default function MartaHubDashboard() {
     else setDark(window.matchMedia("(prefers-color-scheme: dark)").matches);
     guardMarta(router, "/martahub").then((res) => {
       if (!res.ok) return; // guard sudah redirect
+      _marlaDashCache = { user: res.session.user, profile: res.profile };
       setUser(res.session.user);
       setProfile(res.profile);
       setLoading(false);
@@ -910,13 +915,44 @@ export default function MartaHubDashboard() {
         ::-webkit-scrollbar-thumb{background:${dark ? "#1E2435" : "#D1DBF0"};border-radius:99px}
         .mh-nav{transition:background .15s,color .15s}
         .mh-nav:hover{background:${t.hover} !important}
-        .mh-card{transition:box-shadow .2s,transform .2s}
-        .mh-card:hover{box-shadow:0 8px 24px rgba(0,0,0,0.08) !important;transform:translateY(-1px)}
+        .mh-card{transition:box-shadow .22s,transform .22s,border-color .22s}
+        .mh-card:hover{box-shadow:${dark ? "0 14px 34px rgba(0,0,0,0.45)" : "0 14px 34px rgba(20,30,60,0.10)"} !important;transform:translateY(-2px);border-color:${dark ? "rgba(237,28,36,0.30)" : "rgba(237,28,36,0.22)"} !important}
         .mh-btn{transition:opacity .14s,transform .1s;cursor:pointer;border:none;background:none;font-family:${FONT}}
         .mh-btn:hover{opacity:.8}
         .mh-btn:active{transform:scale(.97)}
         .mh-row:hover td{background:${t.hover} !important}
         @keyframes mh-pulse{0%,100%{opacity:1}50%{opacity:0.5}}
+        @keyframes mh-float{0%,100%{transform:translate(0,0)}50%{transform:translate(-10px,10px)}}
+        @keyframes mh-shine{0%{background-position:-200% 0}100%{background-position:200% 0}}
+
+        /* ── Hero banner ────────────────────────────────────────────────── */
+        .mh-hero{
+          position:relative;overflow:hidden;border-radius:22px;margin-bottom:20px;
+          padding:26px 28px;
+          background:${dark
+            ? "linear-gradient(120deg,#1A0A14 0%,#2A0A1E 45%,#160A16 100%)"
+            : "linear-gradient(120deg,#ED1C24 0%,#D91E6E 55%,#C6168D 100%)"};
+          border:1px solid ${dark ? "rgba(237,28,36,0.28)" : "transparent"};
+          box-shadow:${dark ? "0 18px 46px rgba(150,10,40,0.20)" : "0 18px 46px rgba(196,20,90,0.28)"};
+        }
+        .mh-hero::before{
+          content:"";position:absolute;inset:0;pointer-events:none;
+          background-image:radial-gradient(circle at 1px 1px, rgba(255,255,255,0.16) 1px, transparent 1.6px);
+          background-size:20px 20px;opacity:${dark ? 0.35 : 0.5};
+        }
+        .mh-hero-orb{position:absolute;border-radius:50%;filter:blur(2px);pointer-events:none;animation:mh-float 9s ease-in-out infinite}
+        .mh-hero-shine{
+          background:linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.5) 50%, rgba(255,255,255,0) 100%);
+          background-size:200% 100%;-webkit-background-clip:text;background-clip:text;
+        }
+        .mh-section-label{display:flex;align-items:center;gap:8px;margin:4px 0 12px}
+        .mh-section-label .bar{width:3px;height:14px;border-radius:99px;background:linear-gradient(180deg,#ED1C24,#C6168D)}
+        .mh-hero-stat{
+          background:${dark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.16)"};
+          border:1px solid ${dark ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.30)"};
+          backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
+          border-radius:14px;padding:12px 16px;flex:1;min-width:128px;
+        }
 
         /* ── Standarisasi dropdown & tombol ────────────────────────────────── */
         .mh-root select{
@@ -932,13 +968,14 @@ export default function MartaHubDashboard() {
         .mh-content{padding:20px 24px 40px}
         .mh-brief{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
         .mh-kpi-hero{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
-        .mh-kpi-secondary{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
-        .mh-charts{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:16px;margin-bottom:16px}
-        .mh-donuts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+        .mh-kpi-secondary{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
+        .mh-charts{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:16px;margin-bottom:20px}
+        .mh-donuts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
         .mh-qa{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
         .mh-qa-btn{transition:transform .15s,box-shadow .15s}
-        .mh-qa-btn:hover{transform:translateY(-2px)}
+        .mh-qa-btn:hover{transform:translateY(-3px)}
         .leaflet-container{background:${t.hover}}
+        .mh-hero-stats{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
 
         /* Laptop / half-screen */
         @media (max-width:1200px){
@@ -959,12 +996,14 @@ export default function MartaHubDashboard() {
           .mh-topbar{padding:0 14px !important;gap:10px !important}
           .mh-hide-sm{display:none !important}
           .mh-qa{grid-template-columns:repeat(2,1fr)}
+          .mh-hero{padding:20px 18px}
         }
         @media (max-width:400px){
           .mh-kpi-secondary{grid-template-columns:1fr}
         }
         @media (prefers-reduced-motion: reduce){
           .mh-qa-btn, .mh-card{transition:none !important}
+          .mh-hero-orb{animation:none !important}
         }
       `}</style>
 
@@ -1093,64 +1132,97 @@ export default function MartaHubDashboard() {
             </div>
           )}
 
-          {/* ── Briefing - periode nyata + status approval nyata (data pendingCount
-               sebelumnya sudah di-fetch tapi tidak pernah ditampilkan di konten). ── */}
-          <div className="mh-brief">
-            {/* Month picker - default bulan berjalan, tak bisa mundur sebelum
-                Agustus 2026 (titik data direset) atau maju melewati hari ini. */}
-            <div style={{ display: "flex", alignItems: "center", gap: 2, background: t.card, border: `1px solid ${t.line}`, borderRadius: 100, padding: 3 }}>
-              <button className="mh-btn" onClick={goPrevMonth} disabled={!canPrevMonth} title="Bulan sebelumnya"
-                style={{ width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", opacity: canPrevMonth ? 1 : 0.28, cursor: canPrevMonth ? "pointer" : "default" }}>
-                <Icon name="chevL" size={14} color={t.mid} />
-              </button>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 8px", fontSize: 12.5, fontWeight: 800, color: t.hi, whiteSpace: "nowrap" }}>
-                <Icon name="calendar" size={13} color={C.primary} />
-                {monthLabelFull(selectedMonth)}
-              </div>
-              <button className="mh-btn" onClick={goNextMonth} disabled={!canNextMonth} title="Bulan berikutnya"
-                style={{ width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", opacity: canNextMonth ? 1 : 0.28, cursor: canNextMonth ? "pointer" : "default" }}>
-                <Icon name="chevR" size={14} color={t.mid} />
-              </button>
-            </div>
-            <div style={{ fontSize: 13, color: t.mid }}>
-              <b style={{ color: t.hi }}>{data.currentCount}</b> activity tercatat
-            </div>
-            <div style={{ flex: 1 }} />
-            {pendingCount != null && (
-              pendingCount > 0 ? (
-                <button className="mh-btn" onClick={() => router.push("/martahub/approval")}
-                  style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 12px", borderRadius: 100, background: t.warningBg, border: `1px solid ${C.warning}40` }}>
-                  <Icon name="bell" size={13} color={C.warning} />
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#8a5b00" }}>{pendingCount} menunggu persetujuan</span>
-                  <Icon name="arrow" size={12} color="#8a5b00" />
-                </button>
-              ) : (
-                <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "6px 12px", borderRadius: 100, background: t.successBg }}>
-                  <Icon name="check" size={13} color={C.success} />
-                  <span style={{ fontSize: 12, fontWeight: 700, color: C.success }}>Semua approval sudah diproses</span>
+          {/* ── Hero banner - sapaan personal + ringkasan periode & approval,
+               menggantikan brief bar polos sebelumnya dengan headline yang
+               langsung memberi konteks "apa yang perlu saya tahu hari ini". ── */}
+          <motion.div className="mh-hero"
+            initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}>
+            <div className="mh-hero-orb" style={{ width: 260, height: 260, top: -90, right: -60, background: "radial-gradient(circle,rgba(255,255,255,0.18) 0%,transparent 70%)" }} />
+            <div className="mh-hero-orb" style={{ width: 180, height: 180, bottom: -70, left: "38%", background: "radial-gradient(circle,rgba(255,255,255,0.10) 0%,transparent 70%)", animationDelay: "-4s" }} />
+            <div style={{ position: "relative", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 20, flexWrap: "wrap" }}>
+              <div style={{ minWidth: 240 }}>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 800, letterSpacing: "0.14em", textTransform: "uppercase", color: "rgba(255,255,255,0.82)", background: "rgba(255,255,255,0.14)", border: "1px solid rgba(255,255,255,0.22)", borderRadius: 100, padding: "4px 10px", marginBottom: 12 }}>
+                  <Icon name="grid" size={11} color="#fff" /> MartaHub Command Center
                 </div>
-              )
-            )}
-          </div>
+                <h1 style={{ margin: 0, fontSize: 25, fontWeight: 800, letterSpacing: "-0.03em", color: "#fff", lineHeight: 1.2 }}>
+                  Selamat datang, {displayName.split(" ")[0]} 👋
+                </h1>
+                <div style={{ marginTop: 6, fontSize: 12.5, color: "rgba(255,255,255,0.85)", fontWeight: 500, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <span>{roleLabel || "MartaHub"}</span>
+                  <span style={{ opacity: 0.5 }}>·</span>
+                  <span>{todayLabel}</span>
+                </div>
+              </div>
+
+              {/* Month picker - default bulan berjalan, tak bisa mundur sebelum
+                  Agustus 2026 (titik data direset) atau maju melewati hari ini. */}
+              <div style={{ display: "flex", alignItems: "center", gap: 2, background: "rgba(255,255,255,0.14)", border: "1px solid rgba(255,255,255,0.24)", backdropFilter: "blur(10px)", borderRadius: 100, padding: 3 }}>
+                <button className="mh-btn" onClick={goPrevMonth} disabled={!canPrevMonth} title="Bulan sebelumnya"
+                  style={{ width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", opacity: canPrevMonth ? 1 : 0.35, cursor: canPrevMonth ? "pointer" : "default" }}>
+                  <Icon name="chevL" size={14} color="#fff" />
+                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 8px", fontSize: 12.5, fontWeight: 800, color: "#fff", whiteSpace: "nowrap" }}>
+                  <Icon name="calendar" size={13} color="#fff" />
+                  {monthLabelFull(selectedMonth)}
+                </div>
+                <button className="mh-btn" onClick={goNextMonth} disabled={!canNextMonth} title="Bulan berikutnya"
+                  style={{ width: 26, height: 26, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", opacity: canNextMonth ? 1 : 0.35, cursor: canNextMonth ? "pointer" : "default" }}>
+                  <Icon name="chevR" size={14} color="#fff" />
+                </button>
+              </div>
+            </div>
+
+            {/* Ringkasan cepat - activity tercatat & status approval nyata (data
+                pendingCount sebelumnya sudah di-fetch tapi tidak pernah
+                ditampilkan di konten). */}
+            <div className="mh-hero-stats">
+              <div className="mh-hero-stat">
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.7)", marginBottom: 4 }}>Activity Tercatat</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: "#fff", fontVariantNumeric: "tabular-nums" }}>{data.currentCount}</div>
+              </div>
+              {pendingCount != null && (
+                <div className="mh-hero-stat" style={{ display: "flex", alignItems: "center", gap: 10, cursor: pendingCount > 0 ? "pointer" : "default" }} onClick={() => pendingCount > 0 && router.push("/martahub/approval")}>
+                  <div style={{ width: 32, height: 32, borderRadius: 9, background: pendingCount > 0 ? "rgba(255,255,255,0.20)" : "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <Icon name={pendingCount > 0 ? "bell" : "check"} size={15} color="#fff" />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.7)", marginBottom: 2 }}>Approval</div>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, color: "#fff" }}>
+                      {pendingCount > 0 ? `${pendingCount} menunggu persetujuan` : "Semua sudah diproses"}
+                    </div>
+                  </div>
+                  {pendingCount > 0 && <Icon name="arrow" size={13} color="rgba(255,255,255,0.85)" />}
+                </div>
+              )}
+              {data.currentMonthLabel && (
+                <div className="mh-hero-stat">
+                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.7)", marginBottom: 4 }}>Periode Aktif</div>
+                  <div style={{ fontSize: 13.5, fontWeight: 800, color: "#fff" }}>{data.currentMonthLabel}</div>
+                </div>
+              )}
+            </div>
+          </motion.div>
 
           {/* ── KPI - 2 metrik utama (hero, dgn sparkline besar) + 4 pendukung ── */}
+          <div className="mh-section-label"><span className="bar" /><span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", color: t.lo }}>Ringkasan Performa</span></div>
           <div className="mh-kpi-hero">
             {data.kpis.filter((k) => k.hero).map((kpi, i) => (
               <motion.div key={i} className="mh-card"
                 initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.45, delay: i * 0.07, ease: [0.22, 1, 0.36, 1] }}
-                style={{ position: "relative", overflow: "hidden", background: dark ? `linear-gradient(135deg, ${kpi.color}22 0%, ${t.card} 60%)` : `linear-gradient(135deg, ${kpi.color}12 0%, ${t.card} 60%)`, border: `1px solid ${t.line}`, borderRadius: 16, padding: "18px 20px" }}>
-                <div style={{ position: "absolute", right: -14, top: -14, opacity: dark ? 0.10 : 0.07, pointerEvents: "none" }}>
-                  <Icon name={kpi.icon} size={104} color={kpi.color} />
+                style={{ position: "relative", overflow: "hidden", background: dark ? `linear-gradient(135deg, ${kpi.color}22 0%, ${t.card} 60%)` : `linear-gradient(135deg, ${kpi.color}12 0%, ${t.card} 60%)`, border: `1px solid ${t.line}`, borderRadius: 18, padding: "20px 22px" }}>
+                <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: `linear-gradient(90deg, ${kpi.color} 0%, transparent 100%)` }} />
+                <div style={{ position: "absolute", right: -18, top: -18, opacity: dark ? 0.10 : 0.06, pointerEvents: "none" }}>
+                  <Icon name={kpi.icon} size={116} color={kpi.color} />
                 </div>
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, position: "relative" }}>
                   <div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                      <div style={{ width: 32, height: 32, borderRadius: 9, background: kpi.color + "16", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        <Icon name={kpi.icon} size={16} color={kpi.color} />
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                      <div style={{ width: 34, height: 34, borderRadius: 10, background: `linear-gradient(135deg, ${kpi.color}, ${kpi.color}CC)`, boxShadow: `0 4px 12px ${kpi.color}40`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        <Icon name={kpi.icon} size={16} color="#fff" />
                       </div>
                       <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: "0.03em", color: t.mid }}>{kpi.label}</div>
                     </div>
-                    <div style={{ fontSize: 34, fontWeight: 800, letterSpacing: "-0.03em", color: t.hi, lineHeight: 1, marginBottom: 8, fontVariantNumeric: "tabular-nums" }}>{kpi.value}</div>
+                    <div style={{ fontSize: 36, fontWeight: 800, letterSpacing: "-0.03em", color: t.hi, lineHeight: 1, marginBottom: 8, fontVariantNumeric: "tabular-nums" }}>{kpi.value}</div>
                     <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
                       <span style={{ fontSize: 10, color: kpi.trend === "up" ? C.success : C.error, fontWeight: 800 }}>{kpi.trend === "up" ? "▲" : "▼"}</span>
                       <span style={{ fontSize: 11, color: kpi.trend === "up" ? C.success : C.error, fontWeight: 600 }}>{kpi.sub}</span>
@@ -1169,7 +1241,7 @@ export default function MartaHubDashboard() {
                 initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.14 + i * 0.05, ease: [0.22, 1, 0.36, 1] }}
                 style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 16 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 10 }}>
-                  <div style={{ width: 30, height: 30, borderRadius: 8, background: kpi.color + "16", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <div style={{ width: 30, height: 30, borderRadius: 9, background: `linear-gradient(135deg, ${kpi.color}22, ${kpi.color}0D)`, border: `1px solid ${kpi.color}30`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     <Icon name={kpi.icon} size={15} color={kpi.color} />
                   </div>
                   <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.03em", color: t.mid, lineHeight: 1.3 }}>{kpi.label}</div>
@@ -1184,10 +1256,11 @@ export default function MartaHubDashboard() {
           </div>
 
           {/* ── Charts Row ────────────────────────────────────────────────── */}
+          <div className="mh-section-label"><span className="bar" /><span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", color: t.lo }}>Tren & Sebaran Wilayah</span></div>
           <motion.div className="mh-charts"
             initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-60px" }} transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}>
             {/* Achievement Trend */}
-            <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20, display: "flex", flexDirection: "column" }}>
+            <div className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: 20, display: "flex", flexDirection: "column" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>Achievement Trend</div>
                 <span style={{ fontSize: 10, fontWeight: 700, color: t.lo, background: t.hover, borderRadius: 6, padding: "3px 8px" }}>6 Bulan Terakhir</span>
@@ -1199,7 +1272,7 @@ export default function MartaHubDashboard() {
             </div>
 
             {/* Productivity Trend */}
-            <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20, display: "flex", flexDirection: "column" }}>
+            <div className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: 20, display: "flex", flexDirection: "column" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
                 <div style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>Productivity Trend</div>
                 <span style={{ fontSize: 10, fontWeight: 700, color: t.lo, background: t.hover, borderRadius: 6, padding: "3px 8px" }}>6 Bulan Terakhir</span>
@@ -1212,17 +1285,18 @@ export default function MartaHubDashboard() {
 
             {/* Activity Map - filter layer sesungguhnya (status/site/wilayah) ada
                 di dalam MapCard sendiri (tombol tune), tidak diduplikasi di sini. */}
-            <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20 }}>
+            <div className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: 20 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, marginBottom: 12 }}>Activity Map</div>
               <MapCard t={t} dark={dark} canManage={isMartaAdmin(profile?.role)} activityPoints={mapActivities} posmPoints={mapPosm} />
             </div>
           </motion.div>
 
           {/* ── Donut Charts Row ──────────────────────────────────────────── */}
+          <div className="mh-section-label"><span className="bar" /><span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", color: t.lo }}>Komposisi Aktivitas</span></div>
           <motion.div className="mh-donuts"
             initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-60px" }} transition={{ duration: 0.5, delay: 0.05, ease: [0.22, 1, 0.36, 1] }}>
             {/* Activity Category */}
-            <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20 }}>
+            <div className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: 20 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, marginBottom: 16 }}>Activity Category Contribution</div>
               <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
                 <div style={{ position: "relative", flexShrink: 0 }}>
@@ -1250,7 +1324,7 @@ export default function MartaHubDashboard() {
             </div>
 
             {/* Network Category */}
-            <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 20 }}>
+            <div className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: 20 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, marginBottom: 16 }}>Network Category Performance</div>
               <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
                 <div style={{ flexShrink: 0 }}>
@@ -1276,26 +1350,6 @@ export default function MartaHubDashboard() {
             </div>
           </motion.div>
 
-          {/* ── Quick Actions ─────────────────────────────────────────────── */}
-          <motion.div
-            initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-60px" }} transition={{ duration: 0.5, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
-            style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: "16px 20px", marginBottom: 16 }}>
-            <div className="mh-qa">
-              {QUICK_ACTIONS.map((a, i) => (
-                <button key={i} className="mh-btn mh-qa-btn" onClick={() => router.push(NAV_ROUTES[a.route])}
-                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderRadius: 10, background: a.color + "14", border: `1px solid ${a.color}30`, textAlign: "left", cursor: "pointer" }}>
-                  <div style={{ width: 36, height: 36, borderRadius: 10, background: a.color, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <Icon name={a.icon} size={17} color="white" />
-                  </div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: a.color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.label}</div>
-                    <div style={{ fontSize: 10.5, color: a.color, opacity: 0.75, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{a.sub}</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </motion.div>
-
           {/* ── Recent Activity ──────────────────────────────────────────────
                Ringkasan saja (bukan tabel detail 14-kolom seperti sebelumnya) -
                detail penuh & filter lanjutan sudah ada di menu Activity
@@ -1303,9 +1357,10 @@ export default function MartaHubDashboard() {
                diketahui sekilas + jalan pintas ke sana. Tab status diperbaiki:
                "Validated" sebelumnya tidak pernah cocok dgn status manapun
                (bug lama - tab itu selalu kosong), diganti "Rejected" yg nyata. */}
-          <motion.div
+          <div className="mh-section-label"><span className="bar" /><span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", color: t.lo }}>Aktivitas Terbaru</span></div>
+          <motion.div className="mh-card"
             initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-60px" }} transition={{ duration: 0.5, delay: 0.12, ease: [0.22, 1, 0.36, 1] }}
-            style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, overflow: "hidden" }}>
+            style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, overflow: "hidden" }}>
             {/* Header */}
             <div style={{ padding: "16px 20px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: t.hi }}>Recent Activity</div>

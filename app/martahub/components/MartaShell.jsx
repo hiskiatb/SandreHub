@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { guardMarta } from "../../../lib/martaAccess";
 import { HubLogo } from "../../../components/HubLogo";
@@ -40,13 +40,10 @@ const NAV = [
   { label: "Dashboard", icon: "grid", path: "dashboard", route: "/martahub" },
   { section: "ACTIVITY" },
   { label: "Activity Plan", icon: "calendar", path: "activities", route: "/martahub/activities" },
-  { label: "Activity Submission", icon: "send", path: "submission", route: "/martahub/submission" },
-  { label: "Activity Monitoring", icon: "monitor", path: "monitoring", route: "/martahub/monitoring" },
   { label: "Calendar", icon: "cal", path: "calendar", route: "/martahub/calendar" },
   { section: "INTELLIGENCE" },
   { label: "Map Intelligence", icon: "map", path: "map", route: "/martahub/map" },
-  { label: "Productivity Analytics", icon: "chart", path: "analytics", route: "/martahub/analytics" },
-  { label: "Performance Insight", icon: "insight", path: "insight", route: "/martahub/insight" },
+  { label: "Analytics", icon: "chart", path: "analytics", route: "/martahub/analytics" },
   { label: "Leaderboard", icon: "trophy", path: "leaderboard", route: "/martahub/leaderboard" },
   { label: "Geo Compliance", icon: "pin", path: "geo-compliance", route: "/martahub/geo-compliance" },
   { section: "MANAGEMENT" },
@@ -54,6 +51,7 @@ const NAV = [
   { label: "User Management", icon: "users", path: "assignments", route: "/martahub/assignments" },
   { label: "Master Data", icon: "db", path: "master", route: "/martahub/master" },
   { label: "POSM Stock", icon: "db", path: "posmat", route: "/martahub/posmat" },
+  { label: "Gallery", icon: "gallery", path: "gallery", route: "/martahub/gallery" },
   { label: "Validasi Lokasi", icon: "check", path: "validasi", route: "/martahub/validasi" },
   { label: "System Settings", icon: "settings", path: "settings", route: "/martahub/settings" },
 ];
@@ -66,7 +64,7 @@ function Icon({ name, size = 16, color = "currentColor" }) {
     calendar: <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>,
     send:     <svg style={s} viewBox="0 0 24 24" {...p}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>,
     monitor:  <svg style={s} viewBox="0 0 24 24" {...p}><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>,
-    cal:      <svg style={s} viewBox="0 0 24 24" {...p}><circle cx="12" cy="12" r="10"/><line x1="12" y1="6" x2="12" y2="12"/><line x1="12" y1="12" x2="16" y2="14"/></svg>,
+    cal:      <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><circle cx="15.5" cy="15.5" r="1.6" fill={color} stroke="none"/></svg>,
     map:      <svg style={s} viewBox="0 0 24 24" {...p}><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>,
     chart:    <svg style={s} viewBox="0 0 24 24" {...p}><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
     insight:  <svg style={s} viewBox="0 0 24 24" {...p}><path d="M2 20h20M6 20V10M10 20V4M14 20V12M18 20V8"/></svg>,
@@ -81,9 +79,15 @@ function Icon({ name, size = 16, color = "currentColor" }) {
     close:      <svg style={s} viewBox="0 0 24 24" {...p}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>,
     panelClose: <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><path d="M16 15l-3-3 3-3"/></svg>,
     panelOpen:  <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><path d="M14 9l3 3-3 3"/></svg>,
+    gallery:    <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>,
   };
   return icons[name] || null;
 }
+
+
+// Cache ctx (profile/session) di scope modul - dipakai lintas navigasi
+// client-side dalam 1 sesi browser (reset otomatis kalau full reload).
+let _martaCtxCache = null;
 
 /**
  * Shell konsisten untuk semua sub-menu MartaHub web - sidebar identik dengan Dashboard.
@@ -92,19 +96,32 @@ function Icon({ name, size = 16, color = "currentColor" }) {
  */
 export default function MartaShell({ active, title, subtitle, actions, children }) {
   const router = useRouter();
-  const [ctx, setCtx] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [ctx, setCtx] = useState(_martaCtxCache);
+  const [loading, setLoading] = useState(!_martaCtxCache);
+  const [isPending, startNavTransition] = useTransition();
+  const navigate = (path) => startNavTransition(() => router.push(path));
   const [mobile, setMobile] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  // Hover-to-peek: saat sidebar TERTUTUP (collapsed), hover mouse di atasnya
+  // otomatis "membuka" tampilannya sementara (visuallyCollapsed=false) TANPA
+  // mengubah state collapsed asli. Begitu salah satu menu diklik dalam mode
+  // peek ini, langsung ditutup lagi (lihat onClick nav item) - tapi kalau
+  // sidebar memang sedang dibuka permanen (collapsed=false), klik menu tidak
+  // menutupnya sama sekali.
+  const [hoverExpanded, setHoverExpanded] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pendingCount, setPendingCount] = useState(null);
 
   useEffect(() => {
+    let cancelled = false;
     guardMarta(router, typeof window !== "undefined" ? window.location.pathname : "/martahub").then((res) => {
-      if (!res.ok) return;
-      setCtx({ profile: res.profile, canManage: res.canManage, session: res.session });
+      if (cancelled || !res.ok) return;
+      const next = { profile: res.profile, canManage: res.canManage, session: res.session };
+      _martaCtxCache = next;
+      setCtx(next);
       setLoading(false);
     });
+    return () => { cancelled = true; };
   }, [router]);
 
   // Badge Approval Center - jumlah nyata mh_activities status=plan_submitted
@@ -143,7 +160,11 @@ export default function MartaShell({ active, title, subtitle, actions, children 
   const displayName = ctx?.profile?.full_name || ctx?.session?.user?.email?.split("@")[0] || "Pengguna";
   const initial = (ctx?.profile?.full_name || ctx?.session?.user?.email || "M").trim()[0]?.toUpperCase() || "M";
   const roleLabel = ctx?.profile?.role === "spm_sumatera" ? "SPM Sumatera" : (ctx?.profile?.role || "");
-  const SIDEBAR_W = collapsed ? 64 : 240;
+  // Lebar & tampilan sidebar ikut visuallyCollapsed (bukan collapsed mentah),
+  // supaya hover-peek di atas benar-benar melebarkan sidebar & memunculkan
+  // label menu, persis seperti mode "dibuka" biasa.
+  const visuallyCollapsed = collapsed && !hoverExpanded;
+  const SIDEBAR_W = visuallyCollapsed ? 64 : 240;
 
   if (loading) {
     return (
@@ -181,6 +202,7 @@ export default function MartaShell({ active, title, subtitle, actions, children 
         .mh-root select::-ms-expand{display:none !important;}
         /* Tombol: satu baris, ikon & teks tak turun ke baris kedua */
         .mh-root button{ white-space:nowrap; }
+        @keyframes mh-nav-bar { 0% { left: -40%; } 100% { left: 100%; } }
       `}</style>
 
       {/* Backdrop drawer mobile */}
@@ -191,60 +213,88 @@ export default function MartaShell({ active, title, subtitle, actions, children 
       {/* ── SIDEBAR (identik Dashboard) ─────────────────────────────────────── */}
       <div style={ mobile
         ? { width: 240, background: T.sidebar, borderRight: `1px solid ${T.line}`, display: "flex", flexDirection: "column", position: "fixed", top: 0, left: 0, height: "100vh", overflow: "hidden", zIndex: 300, transform: drawerOpen ? "translateX(0)" : "translateX(-100%)", transition: "transform .25s cubic-bezier(.4,0,.2,1)", boxShadow: drawerOpen ? "0 0 40px rgba(0,0,0,0.3)" : "none" }
-        : { width: SIDEBAR_W, minHeight: "100vh", background: T.sidebar, borderRight: `1px solid ${T.line}`, display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh", overflow: "hidden", transition: "width .22s cubic-bezier(.4,0,.2,1)", flexShrink: 0 } }>
-        {/* Logo */}
-        <div style={{ height: HEADER_H, flexShrink: 0, padding: collapsed ? 0 : "0 16px", display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 10, borderBottom: `1px solid ${T.line}`, cursor: "pointer", position: "relative", background: "linear-gradient(135deg, #FFF5F5 0%, #FFFFFF 100%)" }} onClick={() => router.push("/")}>
+        : { width: SIDEBAR_W, minHeight: "100vh", background: T.sidebar, borderRight: `1px solid ${T.line}`, display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh", overflow: "hidden", transition: "width .22s cubic-bezier(.4,0,.2,1)", flexShrink: 0 } }
+        onMouseEnter={() => { if (!mobile && collapsed) setHoverExpanded(true); }}
+        onMouseLeave={() => { if (!mobile) setHoverExpanded(false); }}>
+        {/* Logo - posisi ikon TETAP (padding kiri fixed, tidak pernah pindah/
+            recenter), cuma teks "MartaHub" yang fade in/out & baru muncul
+            SETELAH transisi lebar sidebar (width .22s) hampir selesai, biar
+            tidak numpuk/glitch dgn animasi lebar yg masih berjalan. */}
+        <div style={{ height: HEADER_H, flexShrink: 0, padding: "0 13px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${T.line}`, cursor: "pointer", position: "relative", background: "linear-gradient(135deg, #FFF5F5 0%, #FFFFFF 100%)", overflow: "hidden" }} onClick={() => navigate("/")}>
           <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: ACCENT }} />
-          <div style={{ width: 38, height: 38, flexShrink: 0, margin: collapsed ? "0 auto" : 0 }}>
+          <div style={{ width: 38, height: 38, flexShrink: 0 }}>
             <HubLogo variant="marta" size={38} shadow={false} />
           </div>
-          {!collapsed && (
-            <div>
-              <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: "-0.04em", color: T.hi, lineHeight: 1 }}>
-                Marta<span style={{ background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Hub</span>
-              </div>
-            </div>
-          )}
+          <div style={{
+            fontSize: 21, fontWeight: 800, letterSpacing: "-0.04em", color: T.hi, lineHeight: 1, whiteSpace: "nowrap",
+            opacity: visuallyCollapsed ? 0 : 1,
+            transition: visuallyCollapsed ? "opacity .12s ease" : "opacity .16s ease .14s",
+          }}>
+            Marta<span style={{ background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Hub</span>
+          </div>
         </div>
 
-        {/* Nav */}
+        {/* Nav - sama prinsipnya: posisi ikon fixed, label & badge fade-in
+            dgn delay supaya "nongol"-nya setelah sidebar selesai melebar. */}
         <div style={{ flex: 1, overflowY: "auto", padding: "10px 8px" }}>
           {NAV.map((item, i) => {
             if (item.section) return (
-              !collapsed ? <div key={i} style={{ padding: "14px 8px 6px", fontSize: 9.5, fontWeight: 700, letterSpacing: "0.14em", color: T.lo, textTransform: "uppercase" }}>{item.section}</div>
-              : <div key={i} style={{ height: 1, background: T.line, margin: "10px 8px" }} />
+              <div key={i} style={{ height: 26, display: "flex", alignItems: "center", padding: "0 8px", overflow: "hidden" }}>
+                <span style={{
+                  fontSize: 9.5, fontWeight: 700, letterSpacing: "0.14em", color: T.lo, textTransform: "uppercase", whiteSpace: "nowrap",
+                  opacity: visuallyCollapsed ? 0 : 1,
+                  transition: visuallyCollapsed ? "opacity .12s ease" : "opacity .16s ease .14s",
+                }}>{item.section}</span>
+              </div>
             );
             const on = active === item.path;
             return (
-              <div key={i} className="mh-nav" onClick={() => { if (mobile) setDrawerOpen(false); router.push(item.route || `/martahub/${item.path}`); }}
-                style={{ display: "flex", alignItems: "center", gap: 10, padding: collapsed ? "10px 0" : "9px 10px", borderRadius: 9, cursor: "pointer", marginBottom: 1, justifyContent: collapsed ? "center" : "flex-start", background: on ? "rgba(237,28,36,0.08)" : "transparent", position: "relative" }}
-                title={collapsed ? item.label : undefined}>
+              <div key={i} className="mh-nav" onClick={() => { if (mobile) setDrawerOpen(false); else if (collapsed) setHoverExpanded(false); navigate(item.route || `/martahub/${item.path}`); }}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 9, cursor: "pointer", marginBottom: 1, background: on ? "rgba(237,28,36,0.08)" : "transparent", position: "relative", overflow: "hidden" }}
+                title={visuallyCollapsed ? item.label : undefined}>
                 <span style={{ color: on ? T.primary : T.lo, flexShrink: 0 }}><Icon name={item.icon} size={17} color={on ? T.primary : T.lo} /></span>
-                {!collapsed && <span style={{ fontSize: 13, fontWeight: on ? 700 : 500, color: on ? T.primary : T.mid, flex: 1 }}>{item.label}</span>}
-                {!collapsed && item.path === "approval" && !!pendingCount && <span style={{ fontSize: 10, fontWeight: 700, color: "white", background: T.error, borderRadius: 100, padding: "1px 6px", minWidth: 18, textAlign: "center" }}>{pendingCount}</span>}
+                <span style={{
+                  fontSize: 13, fontWeight: on ? 700 : 500, color: on ? T.primary : T.mid, flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                  opacity: visuallyCollapsed ? 0 : 1,
+                  transition: visuallyCollapsed ? "opacity .1s ease" : "opacity .16s ease .14s",
+                }}>{item.label}</span>
+                {item.path === "approval" && !!pendingCount && (
+                  <span style={{
+                    fontSize: 10, fontWeight: 700, color: "white", background: T.error, borderRadius: 100, padding: "1px 6px", minWidth: 18, textAlign: "center", flexShrink: 0,
+                    opacity: visuallyCollapsed ? 0 : 1,
+                    transition: visuallyCollapsed ? "opacity .1s ease" : "opacity .16s ease .14s",
+                  }}>{pendingCount}</span>
+                )}
                 {on && <div style={{ position: "absolute", left: 0, top: "20%", bottom: "20%", width: 3, background: T.primary, borderRadius: "0 3px 3px 0" }} />}
               </div>
             );
           })}
         </div>
 
-        {/* User */}
-        <div style={{ borderTop: `1px solid ${T.line}`, padding: collapsed ? "12px 0" : "12px 12px" }}>
-          {!collapsed && (
-            <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ width: 34, height: 34, borderRadius: "50%", background: `linear-gradient(135deg,${T.primary},${T.primaryD})`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <span style={{ fontSize: 13, fontWeight: 800, color: "white" }}>{initial}</span>
-              </div>
-              <div style={{ flex: 1, overflow: "hidden" }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: T.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{displayName}</div>
-                <div style={{ fontSize: 10, color: T.lo, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{roleLabel}</div>
-              </div>
+        {/* User - avatar SELALU tampil (posisi fixed), cuma nama/role & label
+            "Sign Out" yang fade-in belakangan supaya tidak glitch. */}
+        <div style={{ borderTop: `1px solid ${T.line}`, padding: "12px 12px" }}>
+          <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 10, overflow: "hidden" }}>
+            <div style={{ width: 34, height: 34, borderRadius: "50%", background: `linear-gradient(135deg,${T.primary},${T.primaryD})`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: "white" }}>{initial}</span>
             </div>
-          )}
+            <div style={{
+              flex: 1, minWidth: 0, overflow: "hidden",
+              opacity: visuallyCollapsed ? 0 : 1,
+              transition: visuallyCollapsed ? "opacity .1s ease" : "opacity .16s ease .14s",
+            }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: T.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{displayName}</div>
+              <div style={{ fontSize: 10, color: T.lo, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{roleLabel}</div>
+            </div>
+          </div>
           <button className="mh-btn" onClick={handleLogout}
-            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 8, padding: collapsed ? "8px 0" : "8px 10px", borderRadius: 8, color: T.lo, fontSize: 12, fontWeight: 600 }}>
+            style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, color: T.lo, fontSize: 12, fontWeight: 600, overflow: "hidden" }}>
             <Icon name="logout" size={15} color={T.lo} />
-            {!collapsed && "Sign Out"}
+            <span style={{
+              whiteSpace: "nowrap",
+              opacity: visuallyCollapsed ? 0 : 1,
+              transition: visuallyCollapsed ? "opacity .1s ease" : "opacity .16s ease .14s",
+            }}>Sign Out</span>
           </button>
         </div>
       </div>
@@ -253,6 +303,11 @@ export default function MartaShell({ active, title, subtitle, actions, children 
       <main style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
         <header style={{ height: HEADER_H, flexShrink: 0, padding: "0 26px", borderBottom: `1px solid ${T.line}`, background: T.surface, display: "flex", alignItems: "center", gap: 14, position: "sticky", top: 0, zIndex: 100 }}>
           <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: ACCENT }} />
+          {isPending && (
+            <div style={{ position: "absolute", bottom: -2, left: 0, right: 0, height: 2, overflow: "hidden", background: "rgba(237,28,36,0.12)", zIndex: 101 }}>
+              <div style={{ position: "absolute", top: 0, bottom: 0, width: "40%", background: ACCENT, borderRadius: 2, animation: "mh-nav-bar 1s ease-in-out infinite" }} />
+            </div>
+          )}
           <button className="mh-btn" onClick={toggleNav} title={collapsed ? "Buka sidebar" : "Tutup sidebar"} style={{ padding: 6, borderRadius: 7, color: T.mid }}>
             <Icon name={mobile ? (drawerOpen ? "close" : "menu") : (collapsed ? "panelOpen" : "panelClose")} size={18} color={T.mid} />
           </button>
@@ -260,6 +315,21 @@ export default function MartaShell({ active, title, subtitle, actions, children 
             <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: T.hi }}>{title}</div>
           </div>
           <div style={{ flex: 1 }} />
+          {ctx?.profile?.role === "spm_sumatera" && (
+            <a href="https://drive.google.com/drive/folders/1zhG0tWeTrFsI22piYeeEuUcOqWoJIPGo" target="_blank" rel="noopener noreferrer"
+              className="mh-btn" title="Buka folder Google Drive dokumentasi POSM"
+              style={{ display: "flex", alignItems: "center", gap: 7, padding: "7px 12px", borderRadius: 9, border: `1px solid ${T.line}`, color: T.mid, fontSize: 12.5, fontWeight: 700, textDecoration: "none" }}>
+              <svg width="15" height="15" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg">
+                <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
+                <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z" fill="#00ac47"/>
+                <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" fill="#ea4335"/>
+                <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
+                <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/>
+                <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
+              </svg>
+              Google Drive
+            </a>
+          )}
           {actions}
         </header>
         <div style={{ flex: 1, padding: "22px 26px 60px" }}>

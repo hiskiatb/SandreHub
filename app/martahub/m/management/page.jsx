@@ -103,7 +103,7 @@ export default function ManagementPage() {
           <ArrowLeft size={16} /> Beranda
         </button>
         <div style={{ marginTop: 12, fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em" }}>Management View</div>
-        <div style={{ marginTop: 3, fontSize: 12.5, color: "#8A8A96" }}>Seluruh Sumatera - semua region, brand & cabang</div>
+        <div style={{ marginTop: 3, fontSize: 12.5, color: "#8A8A96" }}>Seluruh Sumatera - semua region, brand & Branch</div>
 
         <div style={{ display: "flex", gap: 8, marginTop: 14, paddingBottom: 12, overflowX: "auto" }}>
           {TABS.map((t) => {
@@ -231,7 +231,7 @@ function RingkasanTab() {
         </div>
       </div>
 
-      <div style={{ marginTop: 20, fontSize: 13.5, fontWeight: 800 }}>Per Cabang</div>
+      <div style={{ marginTop: 20, fontSize: 13.5, fontWeight: 800 }}>PER BRANCH</div>
       {perBranch.length === 0 ? (
         <EmptyState text="Belum ada plan di bulan ini" />
       ) : (
@@ -299,7 +299,7 @@ function LeaderboardTab() {
   return (
     <div>
       {err && <Notice color="#C62828" bg="#FDECEC">{err}</Notice>}
-      <SearchBox value={q} onChange={setQ} placeholder="Cari nama, cabang, atau region…" />
+      <SearchBox value={q} onChange={setQ} placeholder="Cari nama, Branch, atau region…" />
       {filtered.length === 0 ? (
         <EmptyState text="Tidak ada hasil" />
       ) : (

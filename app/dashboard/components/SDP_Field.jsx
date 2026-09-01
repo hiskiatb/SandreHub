@@ -94,14 +94,18 @@ function Sel({ value, onChange, opts, t, minWidth = 130 }) {
 }
 
 /* ══════════════════════════════════════════════════════════════ */
-export default function SDP_Field({ supabase, theme = "light", profile, readOnly = false, lockRegion = null, onExit, helpText }) {
+export default function SDP_Field({ supabase, theme = "light", profile, readOnly = false, lockRegion = null, onExit, helpText, periodExt = null, setPeriodExt = null, impersonate = null }) {
   const d = theme === "dark";
   const t = mk(d);
   const role = profile?.role || "";
   const canApprove = !readOnly && APPROVAL_ROLES.includes(role);
   const canEditCse = !readOnly && role === "cse_rse";
   const periods = useMemo(() => buildPeriods(), []);
-  const [period, setPeriod] = useState(periods[0]);
+  // Periode dipertahankan di induk (SDP_StatusForm) agar konsisten dengan
+  // Home saat berpindah menu — bukan reset ke bulan berjalan.
+  const [periodLocal, setPeriodLocal] = useState(periodExt || periods[0]);
+  const period = periodExt || periodLocal;
+  const setPeriod = (v) => { setPeriodLocal(v); setPeriodExt?.(v); };
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState([]);
   const [err, setErr] = useState("");
@@ -126,7 +130,17 @@ export default function SDP_Field({ supabase, theme = "light", profile, readOnly
       // 2) scoped master — inilah satu-satunya tempat "cakupan" per role diatur.
       let master = [];
       const base = supabase.from("sdp_master").select("*").eq("period", period);
-      if (role === "cse_rse") {
+      if (impersonate) {
+        // Pratinjau SPM "Lihat sebagai": scope dari cluster/branch/region
+        // terpilih langsung, LEWATI sales_access_codes (itu milik akun SPM,
+        // bukan akun yang dipratinjaukan).
+        let q = base;
+        if (impersonate.cluster) q = q.eq("cluster", impersonate.cluster);
+        else if (impersonate.branch) q = q.eq("branch", impersonate.branch);
+        else if (impersonate.region) q = q.eq("region", impersonate.region);
+        const { data } = await guard(q); master = data || [];
+        if (impersonate.brand) master = master.filter((r) => brandOfCluster(r.cluster) === impersonate.brand);
+      } else if (role === "cse_rse") {
         const { data: codes } = await supabase.from("sales_access_codes").select("scope_value")
           .eq("user_id", profile.id).eq("role", "cse_rse").eq("is_registered", true).eq("is_active", true);
         const clusters = [...new Set((codes || []).map((c) => c.scope_value).filter(Boolean))];
@@ -157,7 +171,10 @@ export default function SDP_Field({ supabase, theme = "light", profile, readOnly
 
       setRows(master.map((r) => {
         const m = monthly.get(r.sdp_id) || null;
-        const region = r.cluster ? (regionMap.get(r.cluster) || "") : "";
+        // sdp_master sudah punya kolom region sendiri (terisi benar dari Territory
+        // Upload) — pakai itu duluan. mc_cluster_mapping cuma fallback, karena
+        // separuh cluster tidak ada di tabel itu (region jadi kosong kalau diandalkan).
+        const region = r.region || (r.cluster ? (regionMap.get(r.cluster) || "") : "");
         return {
           ...r,
           region,
@@ -168,7 +185,7 @@ export default function SDP_Field({ supabase, theme = "light", profile, readOnly
         };
       }));
     } catch (e) { setErr(e?.message || String(e)); setRows([]); } finally { setLoading(false); }
-  }, [supabase, period, role, profile?.id]);
+  }, [supabase, period, role, profile?.id, impersonate?.cluster, impersonate?.branch, impersonate?.brand, impersonate?.region]);
   useEffect(() => { load(); }, [load]);
 
   // ── Opsi filter wilayah bertingkat (mengikuti data yang sudah ter-scope) ──

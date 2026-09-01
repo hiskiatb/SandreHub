@@ -26,7 +26,7 @@ export const fetchMyAvailableTypes = () => rpc("mh_posmat_my_available_types");
 export const fetchMyInstallations = () => rpc("mh_md_list_my_installations");
 export const fetchMyClaimRequests = () => rpc("mh_posmat_my_claim_requests");
 
-export function submitInstallation({ mode, activityId, siteId, streetDescription, lat, lng, companionAssignmentId, note, items, branchId, brand }) {
+export function submitInstallation({ mode, activityId, siteId, streetDescription, lat, lng, companionAssignmentId, note, items, branchId, brand, planId }) {
   return rpc("mh_md_submit_installation", {
     p_mode: mode,
     p_activity_id: mode === "activity" ? activityId : null,
@@ -43,6 +43,9 @@ export function submitInstallation({ mode, activityId, siteId, streetDescription
     // NULL (default) = BME/RGE biasa, perilaku lama (branch ikut perekam).
     p_branch_id: branchId || null,
     p_brand: brand || null,
+    // Plan POSM yang sedang dikerjakan - wajib dipilih dulu di /posm/new
+    // sebelum daftar material muncul (lihat mh_posm_plans_available_for_branch).
+    p_plan_id: planId || null,
   });
 }
 
@@ -76,7 +79,6 @@ export function submitClaimRequest(items, note) {
 // ── Approver (Head/Brand TMV/SPM Sumatera/Admin) ────────────────────────
 export const fetchStockOverview = () => rpc("mh_posmat_stock_overview");
 export const listTypes = () => rpc("mh_posmat_list_types");
-export const listTargets = () => rpc("mh_posmat_list_targets");
 export const fetchClaimRequests = (status) => rpc("mh_posmat_list_claim_requests", { p_status: status });
 
 /** `p_caller_email` WAJIB dikirim manual - RPC ini cek role/scope lewat
@@ -116,10 +118,6 @@ export async function uploadPosmatStockPhoto(blob) {
 export function posmatStockPhotoUrl(path) {
   if (!path) return null;
   return supabaseMarta.storage.from(POSMAT_STOCK_PHOTO_BUCKET).getPublicUrl(path).data.publicUrl;
-}
-
-export function setTarget({ branchId, branchName, brand, month, targetQty, note, callerEmail }) {
-  return rpc("mh_posmat_set_target", { p_branch_id: branchId, p_branch_name: branchName, p_brand: brand, p_month: month, p_target_qty: Number(targetQty), p_note: note || null, p_caller_email: callerEmail });
 }
 
 export function upsertType({ id, name, category, stockMode, unit, active, callerEmail }) {
@@ -183,3 +181,60 @@ export function currentMonthKey() {
   const d = new Date();
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
+
+
+// ── Plan POSM (Register Installment Plan) - menggantikan Target lama ────
+export const PLAN_CATEGORIES = [
+  { key: "retailer_installment", label: "Retailer Installment" },
+  { key: "outdoor_installment", label: "Outdoor Installment" },
+  { key: "customer_activation", label: "Customer Activation" },
+];
+
+const PLAN_VISUAL_BUCKET = "mh-photos";
+export async function uploadPosmPlanVisual(blob) {
+  const path = `posm-plan-visual/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.jpg`;
+  const { error } = await supabaseMarta.storage.from(PLAN_VISUAL_BUCKET).upload(path, blob, { contentType: blob.type || "image/jpeg" });
+  if (error) throw error;
+  return path;
+}
+export function posmPlanVisualUrl(path) {
+  if (!path) return null;
+  return supabaseMarta.storage.from(PLAN_VISUAL_BUCKET).getPublicUrl(path).data.publicUrl;
+}
+
+export function upsertPlan({ id, name, category, brand, visualPath, periodFrom, periodTo, status, callerEmail }) {
+  return rpc("mh_posm_upsert_plan", {
+    p_id: id || null, p_name: name, p_category: category, p_brand: brand, p_visual_path: visualPath || null,
+    p_period_from: periodFrom, p_period_to: periodTo, p_status: status || "active", p_caller_email: callerEmail,
+  });
+}
+export const listPlans = ({ category, brand, status } = {}) =>
+  rpc("mh_posm_list_plans", { p_category: category || null, p_brand: brand || null, p_status: status || null });
+export const getPlan = (planId) => rpc("mh_posm_get_plan", { p_plan_id: planId });
+export function setPlanMaterials(planId, posmatTypeIds, callerEmail) {
+  return rpc("mh_posm_set_plan_materials", { p_plan_id: planId, p_posmat_type_ids: posmatTypeIds, p_caller_email: callerEmail });
+}
+export function setAllocationsBatch({ planId, posmatTypeId, allocations, callerEmail }) {
+  return rpc("mh_posm_set_allocations_batch", {
+    p_plan_id: planId, p_posmat_type_id: posmatTypeId,
+    p_allocations: allocations.map((a) => ({ branch_id: a.branch_id, branch_name: a.branch_name, region: a.region, qty: Number(a.qty) || 0 })),
+    p_caller_email: callerEmail,
+  });
+}
+export function setBranchRemap({ oldBranchId, oldBranchName, newBranchId, newBranchName, note, callerEmail }) {
+  return rpc("mh_posm_set_branch_remap", {
+    p_old_branch_id: oldBranchId, p_old_branch_name: oldBranchName, p_new_branch_id: newBranchId,
+    p_new_branch_name: newBranchName, p_note: note || null, p_caller_email: callerEmail,
+  });
+}
+export function moveAllocation({ allocationId, newBranchId, newBranchName, newRegion, newQty, callerEmail }) {
+  return rpc("mh_posm_move_allocation", {
+    p_allocation_id: allocationId, p_new_branch_id: newBranchId, p_new_branch_name: newBranchName,
+    p_new_region: newRegion, p_new_qty: Number(newQty) || 0, p_caller_email: callerEmail,
+  });
+}
+/** Plan aktif yang punya alokasi di branch+brand ini - dipakai BME/RGE utk
+ * pilih Plan sebelum pilih material di /posm/new. */
+export const fetchPlansForBranch = (branchId, brand) =>
+  rpc("mh_posm_plans_available_for_branch", { p_branch_id: branchId, p_brand: brand });
+export const listBranchRemap = () => rpc("mh_posm_list_branch_remap");

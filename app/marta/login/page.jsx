@@ -251,8 +251,12 @@ function MartaLoginInner() {
           </div>
         </div>
 
-        {/* Jalur BME/RGE — akun terpisah dari admin/TMV di atas, langsung ke
-            project Supabase MartaHub sendiri (bukan lewat gerbang SandraHub).
+        {/* Jalur MartaHub Mobile — dulu khusus BME/RGE, sekarang jalur login
+            ini juga dipakai TMV & SPM Sumatera dari perangkat mobile (akun
+            terpisah dari CMS admin di atas, langsung ke project Supabase
+            MartaHub sendiri, bukan lewat gerbang SandraHub). Fitur yang
+            tampil di dalamnya tetap menyesuaikan role masing-masing
+            (lihat ADDABLE_ROLES_FOR di app/martahub/m/_shared/planData.js).
             Sama pola dgn kartu "Login sebagai Promotor" di /sandra/login. */}
         <button onClick={() => router.push("/martahub/m/login")}
           style={{ marginTop: 16, width: "100%", display: "flex", alignItems: "center", gap: 13, padding: "14px 16px", borderRadius: 14, cursor: "pointer", textAlign: "left", fontFamily: FONT,
@@ -263,8 +267,7 @@ function MartaLoginInner() {
             <UserRound size={21} strokeWidth={2.2} />
           </span>
           <span style={{ flex: 1, minWidth: 0 }}>
-            <span style={{ display: "block", fontSize: 14.5, fontWeight: 800, letterSpacing: "-0.02em", color: t.hi }}>Login sebagai BME/RGE</span>
-            <span style={{ display: "block", fontSize: 12, color: t.mid, marginTop: 2 }}>Untuk tim lapangan — masuk dengan Google atau kode email</span>
+            <span style={{ display: "block", fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em", color: t.hi }}>Login MartaHub Mobile</span>
           </span>
           <ChevronRight size={18} style={{ color: RED, flexShrink: 0 }} />
         </button>

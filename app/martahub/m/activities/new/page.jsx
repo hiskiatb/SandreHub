@@ -698,7 +698,7 @@ function CreatePlanWizardInner() {
         const ownerId = isApprover && actingFor && actingFor.email ? await resolveProfileIdByEmail(actingFor.email) : (isPlaceholderTarget ? null : userId);
         if (isApprover && actingFor && actingFor.email && !ownerId) throw new Error("Profil target tidak ditemukan. Coba pilih ulang.");
         const resolvedBranchId = await resolveBranchUuid(effectiveScope.branchId, effectiveScope.branchName);
-        if (!resolvedBranchId) throw new Error(`Cabang "${effectiveScope.branchName || effectiveScope.branchId}" tidak ditemukan di master data cabang.`);
+        if (!resolvedBranchId) throw new Error(`Branch "${effectiveScope.branchName || effectiveScope.branchId}" tidak ditemukan di master data Branch.`);
         const { data: inserted, error } = await supabaseMarta.from("mh_activities").insert({
           bme_user_id: ownerId,
           created_by: isPlaceholderTarget ? userId : ownerId,
@@ -778,11 +778,12 @@ function CreatePlanWizardInner() {
             <ArrowLeft size={16} />
           </button>
           <div style={{ flex: 1, minWidth: 0 }}>
+            {/* Subjudul nama langkah (mis. "Info") SENGAJA dihapus - sudah
+                kebaca jelas dari label di bawah stepper-nya sendiri, jadi
+                menampilkannya dua kali di sini cuma bikin header lebih
+                penuh tanpa nambah informasi. */}
             <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-0.02em", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {editId ? "Edit Plan" : "Buat Plan Baru"}
-            </div>
-            <div style={{ fontSize: 11.5, color: "#8A8A96", fontWeight: 600, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {STEPS[step]}
             </div>
           </div>
           <div style={{

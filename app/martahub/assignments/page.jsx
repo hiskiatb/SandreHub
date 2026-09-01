@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { AlertTriangle, Plus, Check, Copy, Lock } from "lucide-react";
+import { AlertTriangle, Plus, Check, Copy, Lock, Save, UserX, Building2, MapPin, Crown, Loader2, Pencil, UserPlus, History, LogIn, LogOut, UserCog, Search } from "lucide-react";
 import MartaShell, { T, FONT } from "../components/MartaShell";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../lib/martaScope";
@@ -68,6 +68,53 @@ const isHierarchyRole = (role) => Object.prototype.hasOwnProperty.call(SUPERVISO
 
 const badge = (txt, c, bg) => <span style={{ fontSize: 10.5, fontWeight: 800, color: c, background: bg, border: `1px solid ${c}33`, padding: "2px 8px", borderRadius: 999, whiteSpace: "nowrap" }}>{txt}</span>;
 
+// Format "terakhir aktif" (last_login_at) relatif spy gampang dibaca sekilas
+// - "Baru saja" utk beberapa detik terakhir, naik ke menit/jam/hari, jatuh ke
+// tanggal biasa kalau sudah lebih dari seminggu. null/undefined = belum
+// pernah login sama sekali (akun baru yg belum pernah masuk MartaHub).
+function formatLastActive(ts) {
+  if (!ts) return null;
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return null;
+  const diffMs = Date.now() - d.getTime();
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return "Baru saja";
+  if (min < 60) return `${min} menit lalu`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} jam lalu`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day} hari lalu`;
+  return d.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+}
+
+// Label + warna per jenis aksi di Log Aktivitas - dipakai desktop & (via
+// pola yg sama) mobile.
+const ACTION_META = {
+  login: { label: "Login", color: "#0F6E56", bg: "rgba(15,110,86,0.1)" },
+  logout: { label: "Logout", color: "#5A5A68", bg: "#F0F0F3" },
+  assign_create: { label: "Tambah Assignment", color: "#185FA5", bg: "rgba(24,95,165,0.1)" },
+  assign_update: { label: "Ubah Assignment", color: "#B45309", bg: "rgba(180,83,9,0.1)" },
+  assign_delete: { label: "Hapus Assignment", color: "#C62828", bg: "#FDECEC" },
+  name_change: { label: "Ganti Nama", color: "#7C3AED", bg: "rgba(124,58,237,0.1)" },
+};
+
+// Brand pop utk tampilan Kartu (org-hierarchy, spt mobile) - kuning IM3 &
+// magenta 3ID sengaja lebih terang/kontras drpd T.im3/T.tri (dipakai badge
+// tabel lama) supaya dua brand ini tidak ketuker sekilas pandang.
+const BRAND_COLOR_POP = { im3: "#EAB308", tri: "#D946EF" };
+// Warna per role BME/RGE/MD/DSF/TL DSF - dipakai avatar & badge kecil di
+// kartu, konsisten dgn palet mobile (app/martahub/m/user-management).
+const ROLE_COLOR_CARD = { bme: "#ED1C24", rge: "#EC008C", md: "#185FA5", dsf: "#B45309", tl_dsf: "#B45309" };
+const toBranchSlug = (name) => (name || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-+|-+$)/g, "");
+// Role lain (selain BME/RGE/MD/DSF) yang bisa langsung ditambah di bawah
+// BME/RGE lewat kartu cabang - SEMUA role branch-scoped yg ada di ROLES,
+// bukan cuma MD/DSF. Ditampilkan lewat toggle "+ Role lain" spy default
+// tidak penuh, tapi begitu dibuka SEMUA jenis role bisa diisi > 1 orang.
+const BRANCH_SUBROLES = ROLES.map(([v]) => v).filter((v) => !["spm_sumatera", "head", "tmv", "bme", "rge", "md", "dsf"].includes(v));
+// Semua role "executor" di bawah BME/RGE (MD, DSF, + role cabang lain) -
+// digabung jadi satu daftar pilihan utk tombol "+ Tambahkan Executor".
+const EXECUTOR_ROLES = ["md", "dsf", ...BRANCH_SUBROLES];
+
 export default function AssignmentsPage() {
   return (
     <MartaShell active="assignments" title="User Management">
@@ -77,8 +124,9 @@ export default function AssignmentsPage() {
 }
 
 function Body({ canManage, callerEmail }) {
-  const [viewMode, setViewMode] = useState("table"); // "table" | "tree"
+  const [viewMode, setViewMode] = useState("cards"); // "cards" | "table" | "tree"
   const [rows, setRows] = useState([]);
+  const [branches, setBranches] = useState([]); // mh_branches - dipakai grid Kartu (org-hierarchy)
   const [pending, setPending] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -121,6 +169,98 @@ function Body({ canManage, callerEmail }) {
     finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let on = true;
+    supabaseMarta.from("mh_branches").select("id,name,region").eq("active", true).then(({ data }) => { if (on) setBranches(data || []); });
+    return () => { on = false; };
+  }, []);
+
+  // Susun ulang `visibleRows` (SUDAH difilter spm_sumatera) jadi struktur
+  // Circle Sumatera → 3 Region → cabang×brand - SAMA PERSIS logika
+  // fetchOrgHierarchy (app/martahub/m/_shared/planData.js) dipakai mobile,
+  // cuma di sini dibangun dari `rows` yg SUDAH ter-load (bukan RPC terpisah)
+  // spy satu sumber data dgn tabel/hierarki di halaman yg sama.
+  const orgTree = useMemo(() => {
+    const people = visibleRows;
+    function roleSlot(role, region, brand) {
+      return people.filter((p) => p.role === role && !p.branch_id
+        && (region === null ? !p.region : p.region === region)
+        && (brand === null ? !p.brand : (p.brand || "").toLowerCase() === brand));
+    }
+    function roleTriplet(region) {
+      return { head: roleSlot("head", region, null), tmvIm3: roleSlot("tmv", region, "im3"), tmvTri: roleSlot("tmv", region, "tri") };
+    }
+    function branchGroups(branchesInRegion) {
+      const groups = [];
+      for (const b of branchesInRegion) {
+        const slug = toBranchSlug(b.name);
+        for (const brand of ["im3", "tri"]) {
+          const combo = people.filter((p) => (p.branch_id === slug || p.branch_id === b.id) && (p.brand || "").toLowerCase() === brand);
+          const byRole = new Map();
+          for (const p of combo) { if (!byRole.has(p.role)) byRole.set(p.role, []); byRole.get(p.role).push(p); }
+          groups.push({ branchId: b.id, branchSlug: slug, branchName: b.name, region: b.region, brand, byRole });
+        }
+      }
+      return groups;
+    }
+    return {
+      circle: roleTriplet(null),
+      regions: REGIONS.map(([key, label]) => ({
+        key, label,
+        ...roleTriplet(key),
+        branches: branchGroups(branches.filter((b) => b.region === key)),
+      })),
+    };
+  }, [visibleRows, branches]);
+
+  // Simpan satu assignment langsung dari kartu "siap-isi" (spt mobile) -
+  // membungkus addAssignments yg sudah ada supaya banner info/error &
+  // refresh data konsisten dgn jalur Tambah/Edit lama.
+  async function quickAssign({ targetEmail, fullName, role, region, brand, branchSlug, branchName, dsfOrgId }) {
+    await addAssignments([{ email: targetEmail, fullName, role, region, brand, branchId: branchSlug, branchName, dsfOrgId }]);
+  }
+
+  // Sama spt mobile - pengguna tidak boleh menghapus assignment/akun
+  // miliknya sendiri (RPC mh_delete_assignment sudah menolak ini di server,
+  // ini lapis UX supaya tidak perlu gagal dulu baru tahu). Dipakai kartu
+  // MAUPUN baris tabel.
+  function requestRemove(row) {
+    if (row.email && callerEmail && row.email.toLowerCase() === callerEmail.toLowerCase()) return;
+    setConfirmState({
+      title: "Hapus assignment?",
+      message: `Akses ${row.email} untuk scope ini dihapus permanen & user tak bisa masuk lagi. Jika ada pengganti, cukup assign email baru ke branch/brand yang sama - data sebelumnya tetap dapat diakses karena terikat ke branch, bukan orang.`,
+      confirmLabel: "Hapus",
+      onConfirm: () => removeAssignment(row.id),
+    });
+  }
+
+  // Edit email/nama dari kartu (spt "siap-isi" tapi utk baris yg SUDAH ada
+  // orangnya) - lewat mh_update_assignment yg sama dipakai EditModal tabel,
+  // SEMUA field lain (role/region/brand/branch_id/supervisor/dsf_org_id/mc)
+  // dikirim balik PERSIS spt semula (lihat cardEditSave di bawah) supaya
+  // ganti email/nama TIDAK PERNAH memindah atau menghapus data cabang/role -
+  // data memang terikat ke baris assignment (branch×role), bukan ke akun
+  // emailnya, jadi ganti email di sini murni relabel "siapa" yg pegang baris
+  // yg sama, bukan bikin baris baru.
+  const [cardEditRow, setCardEditRow] = useState(null);
+  // TIDAK memakai `updateAssignment` di atas krn fungsi itu menelan error-nya
+  // sendiri (cuma menaruh di banner halaman, tidak melempar) - CardEditModal
+  // perlu error itu DILEMPAR supaya modal-nya sendiri yg menampilkan &
+  // TETAP TERBUKA saat gagal, alih-alih diam-diam tertutup spt sukses.
+  async function cardEditSave(row, { email, fullName }) {
+    const { error } = await supabaseMarta.rpc("mh_update_assignment", {
+      p_id: row.id,
+      p_role: row.role, p_region: row.region || null, p_brand: row.brand || null,
+      p_branch_id: row.branch_id || null, p_branch_name: row.branch_name || null,
+      p_full_name: fullName, p_email: email,
+      p_supervisor_assignment_id: row.supervisor_assignment_id || null,
+      p_dsf_org_id: row.dsf_org_id || null,
+      p_caller_email: callerEmail || null, p_mc: row.mc || null,
+    });
+    if (error) throw new Error(error.message);
+    setInfo("Assignment diperbarui.");
+    await load();
+  }
 
   // Set/lepas atasan utk sekumpulan bme/rge sekaligus - dipakai saat picker
   // multi-select "BME/RGE di bawah ini" di form tmv/head disimpan. Tiap baris
@@ -279,14 +419,20 @@ function Body({ canManage, callerEmail }) {
           <div style={{ fontWeight: 800, fontSize: 14 }}>Daftar Assignment <span style={{ color: T.mid, fontWeight: 500 }}>· {visibleRows.length}</span></div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ display: "flex", border: `1px solid ${T.line}`, borderRadius: 9, overflow: "hidden" }}>
+              <button onClick={() => setViewMode("cards")} style={{ ...btn, border: "none", borderRadius: 0, background: viewMode === "cards" ? T.hover || "#F0F2F5" : "#fff", fontWeight: viewMode === "cards" ? 800 : 600 }}>Kartu</button>
               <button onClick={() => setViewMode("table")} style={{ ...btn, border: "none", borderRadius: 0, background: viewMode === "table" ? T.hover || "#F0F2F5" : "#fff", fontWeight: viewMode === "table" ? 800 : 600 }}>Tabel</button>
               <button onClick={() => setViewMode("tree")} style={{ ...btn, border: "none", borderRadius: 0, background: viewMode === "tree" ? T.hover || "#F0F2F5" : "#fff", fontWeight: viewMode === "tree" ? 800 : 600 }}>Hierarki</button>
+              <button onClick={() => setViewMode("log")} style={{ ...btn, border: "none", borderRadius: 0, background: viewMode === "log" ? T.hover || "#F0F2F5" : "#fff", fontWeight: viewMode === "log" ? 800 : 600, display: "flex", alignItems: "center", gap: 5 }}><History size={13} /> Log Aktivitas</button>
             </div>
             {canManage && <button onClick={() => setShowAdd(true)} style={pbtn}>Tambah <Plus size={15} /></button>}
           </div>
         </div>
 
-        {viewMode === "tree" ? (
+        {viewMode === "cards" ? (
+          <CardsView orgTree={orgTree} canManage={canManage} callerEmail={callerEmail} onAdd={quickAssign} onRemove={requestRemove} onEdit={setCardEditRow} loading={loading} />
+        ) : viewMode === "log" ? (
+          <ActivityLogView callerEmail={callerEmail} />
+        ) : viewMode === "tree" ? (
           <div style={{ padding: 16 }}>
             {loading ? (
               <div style={{ padding: 26, textAlign: "center", color: T.lo }}>Memuat…</div>
@@ -298,11 +444,11 @@ function Body({ canManage, callerEmail }) {
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
             <thead><tr style={{ background: "#F7F9FC", color: T.mid, textAlign: "left" }}>
-              {["Email", "Role", "Atasan", "Region", "Brand", "Branch", "Status", ""].map((h) => <th key={h} style={{ padding: "9px 14px", fontSize: 11, fontWeight: 800, textTransform: "uppercase" }}>{h}</th>)}
+              {["Email", "Role", "Atasan", "Region", "Brand", "Branch", "Status", "Terakhir Aktif", ""].map((h) => <th key={h} style={{ padding: "9px 14px", fontSize: 11, fontWeight: 800, textTransform: "uppercase" }}>{h}</th>)}
             </tr></thead>
             <tbody>
-              {loading && <tr><td colSpan={8} style={{ padding: 26, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
-              {!loading && visibleRows.length === 0 && <tr><td colSpan={8} style={{ padding: 26, textAlign: "center", color: T.lo }}>Belum ada assignment.</td></tr>}
+              {loading && <tr><td colSpan={9} style={{ padding: 26, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
+              {!loading && visibleRows.length === 0 && <tr><td colSpan={9} style={{ padding: 26, textAlign: "center", color: T.lo }}>Belum ada assignment.</td></tr>}
               {!loading && visibleRows.map((r) => {
                 const sup = r.supervisor_assignment_id ? rows.find((x) => x.id === r.supervisor_assignment_id) : null;
                 return (
@@ -320,9 +466,18 @@ function Body({ canManage, callerEmail }) {
                     {r.mc && <span style={{ color: T.lo, fontSize: 11.5, marginLeft: 6 }}>· {r.mc}</span>}
                   </td>
                   <td style={{ padding: "10px 14px" }}>{r.logged_in ? badge("Aktif", T.success, T.successBg) : badge("Menunggu login", "#8a5b00", T.warningBg)}</td>
+                  <td style={{ padding: "10px 14px", fontSize: 12 }}>
+                    {formatLastActive(r.last_login_at) || <span style={{ color: T.lo, fontStyle: "italic" }}>Belum pernah login</span>}
+                  </td>
                   <td style={{ padding: "10px 14px", textAlign: "right", whiteSpace: "nowrap" }}>
                     {canManage && <button onClick={() => setEditRow(r)} style={{ ...btn, marginRight: 6 }}>Edit</button>}
-                    {canManage && <button onClick={() => setConfirmState({ title: "Hapus assignment?", message: `Akses ${r.email} untuk scope ini dihapus permanen & user tak bisa masuk lagi. Jika ada pengganti, cukup assign email baru ke branch/brand yang sama - data sebelumnya tetap dapat diakses karena terikat ke branch, bukan orang.`, confirmLabel: "Hapus", onConfirm: () => removeAssignment(r.id) })} style={{ ...btn, color: T.error, border: `1px solid ${T.error}44` }}>Hapus</button>}
+                    {canManage && (
+                      String(r.email || "").toLowerCase() === String(callerEmail || "").toLowerCase() ? (
+                        <span title="Anda tidak bisa menghapus akun sendiri" style={{ ...btn, color: T.lo, cursor: "default", opacity: 0.6 }}>Hapus</span>
+                      ) : (
+                        <button onClick={() => requestRemove(r)} style={{ ...btn, color: T.error, border: `1px solid ${T.error}44` }}>Hapus</button>
+                      )
+                    )}
                   </td>
                 </tr>
               );})}
@@ -335,6 +490,13 @@ function Body({ canManage, callerEmail }) {
       {showAdd && <AddModal onClose={() => setShowAdd(false)} onSave={addAssignments} existing={visibleRows} scope={scope} />}
       {editRow && <EditModal row={editRow} onClose={() => setEditRow(null)} onSave={updateAssignment} existing={visibleRows} scope={scope} />}
       {confirmState && <ConfirmModal {...confirmState} onClose={() => setConfirmState(null)} />}
+      {cardEditRow && (
+        <CardEditModal row={cardEditRow} callerEmail={callerEmail}
+          onClose={() => setCardEditRow(null)}
+          onSaved={() => setCardEditRow(null)}
+          onSave={(fields) => cardEditSave(cardEditRow, fields)}
+          onDelete={() => { setCardEditRow(null); requestRemove(cardEditRow); }} />
+      )}
     </div>
   );
 }
@@ -435,6 +597,159 @@ function ConfirmModal({ title, message, confirmLabel = "Hapus", danger = true, o
           <button onClick={() => { onConfirm(); onClose(); }} style={{ ...btn, background: danger ? T.error : T.primary, color: "#fff", border: `1px solid ${danger ? T.error : T.primary}` }}>{confirmLabel}</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Edit email/nama satu baris assignment dari kartu - dipanggil dari
+ * pensil di SlotRow. SENGAJA hanya mengganti email/full_name lewat
+ * mh_update_assignment (baris `updateAssignment` yg sudah ada, dipanggil
+ * lewat cardEditSave di Body) sambil mengirim balik role/region/brand/
+ * branch_id/branch_name/supervisor/dsf_org_id/mc PERSIS spt semula - data
+ * (cabang, role, riwayat) memang menempel ke BARIS assignment itu sendiri,
+ * bukan ke akun emailnya, jadi ganti email di sini TIDAK PERNAH memindah,
+ * menduplikasi, atau menghapus data - cuma relabel "siapa" yg pegang baris
+ * yg sama. Tombol Hapus di dalam modal ini memakai jalur sama (requestRemove)
+ * spt kartu, termasuk larangan hapus akun sendiri.
+ */
+function CardEditModal({ row, callerEmail, onClose, onSave, onSaved, onDelete }) {
+  const [email, setEmail] = useState(row.email || "");
+  const [fullName, setFullName] = useState(row.full_name || "");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const isSelf = !!(callerEmail && row.email && row.email.toLowerCase() === callerEmail.toLowerCase());
+
+  async function submit() {
+    if (!email.trim() || !fullName.trim()) { setErr("Email & nama wajib diisi."); return; }
+    setSaving(true); setErr("");
+    try {
+      await onSave({ email: email.trim().toLowerCase(), fullName: fullName.trim() });
+      onSaved();
+    } catch (e) { setErr(e.message || "Gagal menyimpan"); setSaving(false); }
+  }
+
+  return (
+    <div onClick={saving ? undefined : onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 95, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, fontFamily: FONT }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 420, background: "#fff", borderRadius: 16, border: `1px solid ${T.line}`, overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,.25)" }}>
+        <div style={{ padding: 20 }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: T.hi, marginBottom: 4 }}>Edit Assignment</div>
+          <div style={{ fontSize: 12, color: T.mid, marginBottom: 16 }}>
+            {ROLE_LABEL[row.role] || row.role} · {REGION_LABEL[row.region] || row.region || "-"}{row.branch_name ? ` · ${row.branch_name}` : ""}{row.brand ? ` · ${row.brand === "tri" ? "3ID" : "IM3"}` : ""}
+            <br />Ganti email/nama tidak akan memindah atau menghapus data - tetap baris/role/cabang yang sama.
+          </div>
+          <Field label="Email"><input value={email} onChange={(e) => setEmail(e.target.value)} style={inp} disabled={saving} /></Field>
+          <div style={{ marginTop: 12 }} />
+          <Field label="Nama Lengkap"><input value={fullName} onChange={(e) => setFullName(e.target.value.toUpperCase())} style={{ ...inp, textTransform: "uppercase" }} disabled={saving} /></Field>
+          {err && <div style={{ marginTop: 10, fontSize: 12, color: T.error }}>{err}</div>}
+        </div>
+        <div style={{ padding: "12px 18px", borderTop: `1px solid ${T.line}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          {isSelf ? (
+            <span title="Anda tidak bisa menghapus akun sendiri" style={{ ...btn, color: T.lo, cursor: "default", opacity: 0.6 }}>Hapus</span>
+          ) : (
+            <button onClick={onDelete} disabled={saving} style={{ ...btn, color: T.error, border: `1px solid ${T.error}44` }}>Hapus</button>
+          )}
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={onClose} disabled={saving} style={btn}>Batal</button>
+            <button onClick={submit} disabled={saving} style={pbtn}>{saving ? "Menyimpan…" : "Simpan"}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Log Aktivitas - audit trail: siapa melakukan apa, kapan, ke siapa/posisi
+ * apa. Scoping-nya PERSIS ditegakkan di server (mh_list_audit_log): SPM
+ * Sumatera/Admin lihat SEMUA aktivitas; Head/Brand TMV cuma lihat aktivitas
+ * di region (+brand utk TMV) miliknya; BME/RGE/TL DSF cuma lihat aktivitas
+ * diri sendiri + tim langsung mereka - jadi caller di sini TIDAK PERNAH
+ * melihat lebih dari yg diizinkan, apa pun filter di UI. */
+function ActivityLogView({ callerEmail }) {
+  const [logs, setLogs] = useState(null);
+  const [err, setErr] = useState("");
+  const [q, setQ] = useState("");
+  const [actionFilter, setActionFilter] = useState("all");
+
+  const load = useCallback(async () => {
+    setErr("");
+    try {
+      const { data, error } = await supabaseMarta.rpc("mh_list_audit_log", { p_limit: 300, p_caller_email: callerEmail || null });
+      if (error) throw error;
+      setLogs(data || []);
+    } catch (e) { setErr(e.message || "Gagal memuat log aktivitas"); }
+  }, [callerEmail]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const filtered = useMemo(() => {
+    let list = logs || [];
+    if (actionFilter !== "all") list = list.filter((l) => l.action === actionFilter);
+    const t = q.trim().toLowerCase();
+    if (t) {
+      list = list.filter((l) =>
+        (l.actor_full_name || "").toLowerCase().includes(t) || (l.actor_email || "").toLowerCase().includes(t) ||
+        (l.target_full_name || "").toLowerCase().includes(t) || (l.target_email || "").toLowerCase().includes(t) ||
+        (l.detail || "").toLowerCase().includes(t)
+      );
+    }
+    return list;
+  }, [logs, actionFilter, q]);
+
+  return (
+    <div style={{ padding: 16 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+        <div style={{ position: "relative", flex: "1 1 220px" }}>
+          <Search size={14} color={T.lo} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama, email, atau detail…"
+            style={{ ...inp, paddingLeft: 32 }} />
+        </div>
+        <select value={actionFilter} onChange={(e) => setActionFilter(e.target.value)} style={{ ...selectStyle, flex: "0 1 200px" }}>
+          <option value="all">Semua aksi</option>
+          {Object.entries(ACTION_META).map(([k, m]) => <option key={k} value={k}>{m.label}</option>)}
+        </select>
+      </div>
+
+      {err && <div style={{ padding: "10px 14px", borderRadius: 10, background: T.errorBg, color: T.error, fontSize: 12.5, fontWeight: 600, marginBottom: 12 }}>{err}</div>}
+
+      {logs === null ? (
+        <div style={{ padding: 26, textAlign: "center", color: T.lo }}>Memuat…</div>
+      ) : filtered.length === 0 ? (
+        <div style={{ padding: 26, textAlign: "center", color: T.lo }}>Belum ada aktivitas tercatat.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+          {filtered.map((l) => {
+            const meta = ACTION_META[l.action] || { label: l.action, color: T.mid, bg: T.hover || "#F0F0F3" };
+            const Icon = l.action === "login" ? LogIn : l.action === "logout" ? LogOut : l.action === "assign_delete" ? UserX : l.action === "name_change" ? Pencil : UserCog;
+            const isSelfAction = ["login", "logout", "name_change"].includes(l.action);
+            return (
+              <div key={l.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 12, border: `1px solid ${T.line}`, background: "#fff" }}>
+                <div style={{ width: 30, height: 30, borderRadius: 9, background: meta.bg, color: meta.color, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <Icon size={14} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 800, letterSpacing: 0.2, padding: "1px 7px", borderRadius: 999, color: meta.color, background: meta.bg }}>{meta.label}</span>
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: T.hi }}>{l.actor_full_name || l.actor_email}</span>
+                    {!isSelfAction && l.target_email && (l.target_email !== l.actor_email) && (
+                      <>
+                        <span style={{ color: T.lo, fontSize: 11 }}>→</span>
+                        <span style={{ fontSize: 12.5, color: T.mid, fontWeight: 600 }}>{l.target_full_name || l.target_email}</span>
+                      </>
+                    )}
+                  </div>
+                  {l.detail && <div style={{ marginTop: 3, fontSize: 12, color: T.mid }}>{l.detail}</div>}
+                  <div style={{ marginTop: 3, fontSize: 10.5, color: T.lo, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <span>{new Date(l.created_at).toLocaleString("id-ID", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                    {l.region && <span>· {titleCaseRegion(l.region)}</span>}
+                    {l.brand && <span>· {l.brand === "tri" ? "3ID" : "IM3"}</span>}
+                    {l.branch_name && <span>· {l.branch_name}</span>}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -1063,3 +1378,364 @@ const pbtn = { ...btn, background: GRAD, color: "#fff", border: "none", padding:
 const inp = { width: "100%", padding: "9px 11px", borderRadius: 9, border: `1px solid ${T.line}`, background: "#fff", color: T.hi, fontSize: 13, fontFamily: FONT, outline: "none", boxSizing: "border-box" };
 const CHEV = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%236B7280' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>";
 const selectStyle = { ...inp, appearance: "none", WebkitAppearance: "none", MozAppearance: "none", cursor: "pointer", backgroundImage: `url("${CHEV}")`, backgroundRepeat: "no-repeat", backgroundPosition: "right 11px center", backgroundSize: "13px", paddingRight: 32 };
+
+// ═══════════════════════ Tampilan Kartu (org-hierarchy, spt mobile) ═══════
+// Circle Sumatera → 3 Region → cabang×brand, BME/RGE digabung jadi satu
+// daftar (bukan role yg beda, cuma brand/cabang yg membedakan), MD & DSF
+// ditampilkan bertingkat langsung di bawahnya - SATU SUMBER visual dgn
+// app/martahub/m/user-management/page.jsx (mobile), cuma disusun ulang jadi
+// grid responsif (auto-fit) utk layar lebar alih-alih ditumpuk vertikal.
+function CardsView({ orgTree, canManage, callerEmail, onAdd, onRemove, onEdit, loading }) {
+  // Pilih SATU region dulu sebelum kartunya ditampilkan - menampilkan
+  // ketiga region sekaligus (spt semula) bikin halaman terlalu penuh/
+  // berantakan krn tiap region sudah berisi banyak cabang×brand. null =
+  // belum pilih apa pun -> tampilkan pilihan region saja dulu.
+  const [activeRegion, setActiveRegion] = useState(null);
+  if (loading || !orgTree) return <div style={{ padding: 26, textAlign: "center", color: T.lo }}>Memuat…</div>;
+  const selected = activeRegion ? orgTree.regions.find((r) => r.key === activeRegion) : null;
+  return (
+    <div style={{ padding: 16 }}>
+      <CircleCard circle={orgTree.circle} canManage={canManage} callerEmail={callerEmail} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} />
+
+      <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11.5, fontWeight: 800, color: T.mid, textTransform: "uppercase", letterSpacing: "0.04em", marginRight: 2 }}>Region</span>
+        {orgTree.regions.map((region) => (
+          <button key={region.key} onClick={() => setActiveRegion(region.key)}
+            style={{
+              padding: "7px 14px", borderRadius: 999, fontSize: 12.5, fontWeight: 800, fontFamily: FONT, cursor: "pointer",
+              border: `1.5px solid ${activeRegion === region.key ? T.primary : T.line}`,
+              background: activeRegion === region.key ? T.primaryBg : "#fff",
+              color: activeRegion === region.key ? T.primary : T.mid,
+            }}>
+            {titleCaseRegion(region.label)}
+          </button>
+        ))}
+      </div>
+
+      {selected ? (
+        <div style={{ marginTop: 14 }}>
+          <RegionCard region={selected} canManage={canManage} callerEmail={callerEmail} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} />
+        </div>
+      ) : (
+        <div style={{ marginTop: 14, padding: "34px 20px", textAlign: "center", color: T.lo, background: "#fff", border: `1px dashed ${T.line}`, borderRadius: 16, fontSize: 13 }}>
+          Pilih salah satu region di atas untuk melihat & mengelola Head TMV, Brand TMV, dan cabangnya.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CircleCard({ circle, canManage, callerEmail, onAdd, onRemove, onEdit }) {
+  return (
+    <div style={{ background: "#FFFFFF", border: "1.5px solid #E7D9F7", borderRadius: 16, overflow: "hidden", boxShadow: "0 4px 14px rgba(124,58,237,0.08)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", background: "linear-gradient(135deg,#F5F0FE,#FBF8FF)" }}>
+        <div style={{ width: 38, height: 38, borderRadius: 11, background: "linear-gradient(150deg,#7C3AED,#A78BFA)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 3px 8px rgba(124,58,237,0.3)" }}>
+          <Crown size={18} color="#fff" />
+        </div>
+        <div>
+          <div style={{ fontSize: 14.5, fontWeight: 800, color: T.hi }}>Circle Sumatera</div>
+          <div style={{ marginTop: 1, fontSize: 11.5, color: T.mid, fontWeight: 600 }}>Slot Head TMV & Brand TMV se-Sumatera</div>
+        </div>
+      </div>
+      <div style={{ padding: "12px 18px 16px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "4px 22px" }}>
+        <SlotRow title="Head Trade Marketing & Visibility Sumatera" role="head" people={circle.head} canAdd={canManage && circle.head.length === 0} single
+          context={{ region: null, brand: null, branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} />
+        <SlotRow title="Trade Marketing & Visibility IM3 Sumatera" role="tmv" people={circle.tmvIm3} canAdd={canManage && circle.tmvIm3.length === 0} single
+          context={{ region: null, brand: "im3", branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} accent={BRAND_COLOR_POP.im3} />
+        <SlotRow title="Trade Marketing & Visibility 3ID Sumatera" role="tmv" people={circle.tmvTri} canAdd={canManage && circle.tmvTri.length === 0} single
+          context={{ region: null, brand: "tri", branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} accent={BRAND_COLOR_POP.tri} />
+      </div>
+    </div>
+  );
+}
+
+const titleCaseRegion = (s) => (s || "").toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());
+
+function RegionCard({ region, canManage, callerEmail, onAdd, onRemove, onEdit }) {
+  // Gabungkan kombo cabang×brand jadi satu blok per cabang (IM3 & 3ID
+  // bersebelahan), sama spt mobile.
+  const branchGroups = useMemo(() => {
+    const byBranch = new Map();
+    for (const g of region.branches) {
+      if (!byBranch.has(g.branchId)) byBranch.set(g.branchId, { branchId: g.branchId, branchName: g.branchName, combos: [] });
+      byBranch.get(g.branchId).combos.push(g);
+    }
+    return Array.from(byBranch.values());
+  }, [region.branches]);
+
+  return (
+    <div style={{ background: "#FFFFFF", border: `1px solid ${T.line}`, borderRadius: 16, overflow: "hidden", boxShadow: "0 2px 8px rgba(17,17,20,0.05)", display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 16px", borderBottom: `1px solid ${T.line}` }}>
+        <div style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(15,110,86,0.09)", color: "#0F6E56", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <MapPin size={15} />
+        </div>
+        <div style={{ fontSize: 14, fontWeight: 800, color: T.hi }}>Region {titleCaseRegion(region.label)}</div>
+      </div>
+      <div style={{ padding: "12px 16px 16px" }}>
+        <SlotRow title="Head TMV" role="head" people={region.head} canAdd={canManage && region.head.length === 0} single
+          context={{ region: region.key, brand: null, branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} />
+        <SlotRow title="TMV IM3" role="tmv" people={region.tmvIm3} canAdd={canManage && region.tmvIm3.length === 0} single
+          context={{ region: region.key, brand: "im3", branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} accent={BRAND_COLOR_POP.im3} />
+        <SlotRow title="TMV 3ID" role="tmv" people={region.tmvTri} canAdd={canManage && region.tmvTri.length === 0} single
+          context={{ region: region.key, brand: "tri", branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} accent={BRAND_COLOR_POP.tri} />
+
+        <div style={{ marginTop: 14, fontSize: 11, fontWeight: 800, color: T.mid, textTransform: "uppercase", letterSpacing: "0.04em", display: "flex", alignItems: "center", gap: 6 }}>
+          <Building2 size={12} /> BRANCH ({branchGroups.length})
+        </div>
+        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+          {branchGroups.map((b) => (
+            <BranchCard key={b.branchId} branchName={b.branchName} combos={b.combos} canAdd={canManage}
+              onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BranchCard({ branchName, combos, canAdd, onAdd, onRemove, onEdit, callerEmail }) {
+  return (
+    <div style={{ background: "#FBFBFC", border: `1px solid ${T.line}`, borderRadius: 13, padding: "10px 12px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+        <Building2 size={13} color={T.mid} style={{ flexShrink: 0 }} />
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: T.hi }}>{branchName}</span>
+      </div>
+      {combos.map((combo) => {
+        const brandColor = BRAND_COLOR_POP[combo.brand] || T.mid;
+        const bmeRge = [...(combo.byRole?.get("bme") || []), ...(combo.byRole?.get("rge") || [])];
+        // Semua "executor" di bawah BME/RGE (MD, DSF, TL DSF, DSE, GSE, AE,
+        // Promotor, CSE/RSE, BSM) - ditampilkan sbg daftar per role yg SUDAH
+        // terisi, penambahan orang baru (role apa pun, boleh dobel) lewat
+        // satu tombol "+ Tambahkan Executor" di bawah, bukan lagi baris
+        // tambah terpisah per role.
+        const executorRows = EXECUTOR_ROLES.map((r) => [r, combo.byRole?.get(r) || []]).filter(([, list]) => list.length > 0);
+        const ctx = { region: combo.region, brand: combo.brand, branchSlug: combo.branchSlug, branchName: combo.branchName };
+        return (
+          <div key={combo.brand} style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${T.line}` }}>
+            <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.2, padding: "2px 7px", borderRadius: 999, color: brandColor, background: `${brandColor}17` }}>
+              {combo.brand === "tri" ? "3ID" : "IM3"}
+            </span>
+            {/* BME/RGE - hanya 1 slot per cabang×brand */}
+            <SlotRow title="BME / RGE" role="bme" mixedRoles people={bmeRge} canAdd={canAdd && bmeRge.length === 0} single
+              context={ctx} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} compact />
+            {executorRows.map(([r, list]) => (
+              <SlotRow key={r} title={`${ROLE_LABEL[r] || r} (di bawah BME/RGE)`} role={r} people={list} canAdd={false}
+                context={ctx} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} compact nested />
+            ))}
+            {canAdd && <AddExecutorButton ctx={ctx} onAdd={onAdd} />}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Tombol "+ Tambahkan Executor" - satu pintu masuk utk menambah SIAPA PUN
+ * di bawah BME/RGE (MD, DSF, TL DSF, DSE, GSE, AE, Promotor, CSE/RSE, BSM).
+ * Klik -> modal: pilih role dulu (grid pill), baru isi email/nama (+ORG ID
+ * kalau DSF). Menggantikan baris tambah terpisah per-role + toggle "role
+ * lain" yg lama, supaya kartu cabang tetap ringkas & rapi. */
+function AddExecutorButton({ ctx, onAdd }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button onClick={() => setOpen(true)} type="button"
+        style={{
+          marginTop: 9, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+          padding: "9px 12px", borderRadius: 10, border: `1.5px dashed ${T.primary}66`, background: T.primaryBg,
+          color: T.primary, fontSize: 11.5, fontWeight: 800, fontFamily: FONT, cursor: "pointer", transition: "background .15s, border-color .15s",
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.borderColor = T.primary; }}
+        onMouseLeave={(e) => { e.currentTarget.style.background = T.primaryBg; e.currentTarget.style.borderColor = `${T.primary}66`; }}>
+        <UserPlus size={13} /> Tambahkan Executor
+      </button>
+      {open && <ExecutorPickerModal ctx={ctx} onAdd={onAdd} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+/** Modal pilih-role + isi data utk AddExecutorButton. Role dipilih lewat
+ * grid pill (bukan <select> polos) supaya jelas kelihatan semua opsi
+ * sekaligus, dgn label singkat & warna aksen per role. */
+function ExecutorPickerModal({ ctx, onAdd, onClose }) {
+  const [role, setRole] = useState(null);
+  const [emailInput, setEmailInput] = useState("");
+  const [name, setName] = useState("");
+  const [orgId, setOrgId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const needsOrgId = role === "dsf";
+  const ready = !!(role && emailInput.trim() && name.trim() && (!needsOrgId || orgId.trim()));
+
+  async function submit() {
+    if (!ready || saving) return;
+    setSaving(true); setErr("");
+    try {
+      await onAdd({ targetEmail: emailInput.trim(), fullName: name.trim(), role, dsfOrgId: needsOrgId ? orgId.trim() : undefined, ...ctx });
+      onClose();
+    } catch (e) { setErr(e.message || "Gagal menyimpan"); setSaving(false); }
+  }
+
+  return (
+    <div onClick={saving ? undefined : onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 95, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, fontFamily: FONT }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 440, background: "#fff", borderRadius: 16, border: `1px solid ${T.line}`, overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,.25)" }}>
+        <div style={{ padding: "16px 20px", background: "linear-gradient(135deg,#FFF5F5,#FDF2F8)", borderBottom: `1px solid ${T.line}`, display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 9, background: GRAD, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <UserPlus size={15} color="#fff" />
+          </div>
+          <div>
+            <div style={{ fontSize: 14.5, fontWeight: 800, color: T.hi }}>Tambahkan Executor</div>
+            <div style={{ fontSize: 11, color: T.mid, fontWeight: 600 }}>{ctx.branchName} · {ctx.brand === "tri" ? "3ID" : "IM3"} · di bawah BME/RGE</div>
+          </div>
+        </div>
+
+        <div style={{ padding: 20 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: T.mid, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>1. Pilih Role</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(96px, 1fr))", gap: 7, marginBottom: 18 }}>
+            {EXECUTOR_ROLES.map((r) => {
+              const active = role === r;
+              const rColor = ROLE_COLOR_CARD[r] || T.primary;
+              return (
+                <button key={r} type="button" onClick={() => setRole(r)}
+                  style={{
+                    padding: "9px 8px", borderRadius: 10, fontSize: 11.5, fontWeight: 800, fontFamily: FONT, cursor: "pointer", textAlign: "center",
+                    border: `1.5px solid ${active ? rColor : T.line}`, background: active ? `${rColor}17` : "#fff", color: active ? rColor : T.mid,
+                    transition: "background .15s, border-color .15s",
+                  }}>
+                  {ROLE_LABEL[r] || r}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ fontSize: 11, fontWeight: 800, color: T.mid, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 8 }}>2. Data Orang</div>
+          <Field label="Email"><input value={emailInput} onChange={(e) => setEmailInput(e.target.value)} placeholder="nama@ioh.co.id" style={inp} disabled={saving} /></Field>
+          <div style={{ marginTop: 12 }} />
+          <Field label="Nama Lengkap"><input value={name} onChange={(e) => setName(e.target.value.toUpperCase())} placeholder="NAMA LENGKAP" style={{ ...inp, textTransform: "uppercase" }} disabled={saving} /></Field>
+          {needsOrgId && (
+            <>
+              <div style={{ marginTop: 12 }} />
+              <Field label="ORG ID"><input value={orgId} onChange={(e) => setOrgId(e.target.value)} placeholder="ORG ID" style={inp} disabled={saving} /></Field>
+            </>
+          )}
+          {err && <div style={{ marginTop: 12, fontSize: 12, color: T.error }}>{err}</div>}
+        </div>
+
+        <div style={{ padding: "12px 18px", borderTop: `1px solid ${T.line}`, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <button onClick={onClose} disabled={saving} style={btn}>Batal</button>
+          <button onClick={submit} disabled={saving || !ready} title={!role ? "Pilih role dulu" : !ready ? "Isi email & nama dulu" : "Simpan"}
+            style={{ ...pbtn, opacity: saving || !ready ? 0.55 : 1, cursor: saving || !ready ? "default" : "pointer" }}>
+            {saving ? <Loader2 size={13} style={{ animation: "cardspin .85s linear infinite" }} /> : <Save size={13} />} Simpan
+          </button>
+        </div>
+        <style>{`@keyframes cardspin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    </div>
+  );
+}
+
+/** Baris "siap-isi" satu posisi/role - inti kartu, port dari
+ * InlineRoleRow (mobile) ke palet desktop (T/FONT). */
+function SlotRow({ title, role, mixedRoles, people, canAdd, context, onAdd, onRemove, onEdit, callerEmail, compact, nested, needsOrgId, accent, single }) {
+  return (
+    <div style={{ marginTop: compact ? 6 : 10, ...(nested ? { marginLeft: 14, paddingLeft: 10, borderLeft: `2px solid ${T.line}` } : {}) }}>
+      <div style={{ fontSize: compact ? 10 : 10.5, fontWeight: 700, color: accent || T.mid, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+        {title}
+        {single && people.length > 0 && (
+          <span style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: 0.2, padding: "1px 6px", borderRadius: 999, color: T.success, background: T.successBg, textTransform: "none" }}>Slot terisi</span>
+        )}
+      </div>
+      {people.length === 0 && !canAdd && (
+        <div style={{ fontSize: 12, color: T.lo, fontStyle: "italic", padding: "4px 2px" }}>Belum ada</div>
+      )}
+      {people.map((p) => {
+        const isSelf = !!(callerEmail && p.email && p.email.toLowerCase() === callerEmail.toLowerCase());
+        const pColor = ROLE_COLOR_CARD[p.role] || accent || T.mid;
+        return (
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 9, background: T.hover || "#F6F7F9", borderRadius: 11, padding: "7px 10px", marginBottom: 5 }}>
+            <div style={{ width: 28, height: 28, borderRadius: "50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10.5, fontWeight: 800, color: pColor, background: `${pColor}17` }}>
+              {(p.full_name || p.email || "?").trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?"}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: T.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
+                {p.full_name || "-"}
+                {mixedRoles && <span style={{ flexShrink: 0, fontSize: 8.5, fontWeight: 800, padding: "1px 6px", borderRadius: 999, color: pColor, background: `${pColor}17` }}>{ROLE_LABEL[p.role] || p.role}</span>}
+                {isSelf && <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 999, color: T.success, background: T.successBg }}>Anda</span>}
+              </div>
+              <div style={{ fontSize: 10.5, color: T.mid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.email}</div>
+              <div style={{ marginTop: 1, fontSize: 9.5, fontWeight: 600, color: p.last_login_at ? T.lo : "#B45309" }}>
+                {p.last_login_at ? `Terakhir aktif: ${formatLastActive(p.last_login_at)}` : "Belum pernah login"}
+              </div>
+            </div>
+            <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 5 }}>
+              {onEdit && (
+                <button onClick={() => onEdit(p)} title="Edit email/nama" style={{ width: 25, height: 25, borderRadius: 8, border: `1px solid ${T.line}`, background: "#fff", color: T.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                  <Pencil size={11} />
+                </button>
+              )}
+              {isSelf ? (
+                <div title="Anda tidak bisa menghapus akun sendiri" style={{ width: 25, height: 25, borderRadius: 8, border: `1px solid ${T.line}`, background: "#fff", color: "#C7C7CF", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <UserX size={12} />
+                </div>
+              ) : (
+                <button onClick={() => onRemove(p)} title="Hapus" style={{ width: 25, height: 25, borderRadius: 8, border: `1px solid ${T.error}44`, background: T.errorBg, color: T.error, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                  <UserX size={12} />
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })}
+      {canAdd && (
+        <QuickAddRow needsOrgId={needsOrgId}
+          onSave={(targetEmail, fullName, orgId) => onAdd({ targetEmail, fullName, role, dsfOrgId: orgId, ...context })} />
+      )}
+    </div>
+  );
+}
+
+/** Baris Email + Nama (+ ORG ID utk DSF) + tombol Simpan - ikon Save,
+ * disabled sampai wajib-isi terpenuhi. Port dari InlineAddRow (mobile). */
+function QuickAddRow({ onSave, needsOrgId }) {
+  const [emailInput, setEmailInput] = useState("");
+  const [name, setName] = useState("");
+  const [orgId, setOrgId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const ready = !!(emailInput.trim() && name.trim() && (!needsOrgId || orgId.trim()));
+
+  async function submit() {
+    if (!ready || saving) return;
+    setSaving(true); setErr("");
+    try {
+      await onSave(emailInput.trim(), name.trim(), needsOrgId ? orgId.trim() : undefined);
+      setEmailInput(""); setName(""); setOrgId("");
+    } catch (e) { setErr(e.message || "Gagal menyimpan"); }
+    finally { setSaving(false); }
+  }
+
+  const miniInput = { minWidth: 0, height: 34, padding: "0 10px", borderRadius: 9, border: `1.5px dashed ${T.line}`, background: "#FBFBFC", fontSize: 12, fontFamily: FONT, outline: "none", boxSizing: "border-box" };
+
+  return (
+    <div style={{ marginBottom: 5 }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <input value={emailInput} onChange={(e) => setEmailInput(e.target.value)} placeholder="Email"
+          onKeyDown={(e) => e.key === "Enter" && submit()} style={{ ...miniInput, flex: "1 1 150px" }} />
+        <input value={name} onChange={(e) => setName(e.target.value.toUpperCase())} placeholder="NAMA LENGKAP"
+          onKeyDown={(e) => e.key === "Enter" && submit()} style={{ ...miniInput, flex: "1 1 130px", textTransform: "uppercase" }} />
+        {needsOrgId && (
+          <input value={orgId} onChange={(e) => setOrgId(e.target.value)} placeholder="ORG ID"
+            onKeyDown={(e) => e.key === "Enter" && submit()} style={{ ...miniInput, flex: "1 1 90px" }} />
+        )}
+        <button onClick={submit} disabled={saving || !ready} title={!ready ? "Isi email & nama dulu" : "Simpan"}
+          style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 9, border: "none", background: ready ? GRAD : "#DCDDE3", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: saving || !ready ? "default" : "pointer", opacity: saving ? 0.75 : 1, transition: "background .15s" }}>
+          {saving ? <Loader2 size={13} style={{ animation: "cardspin .85s linear infinite" }} /> : <Save size={13} />}
+        </button>
+      </div>
+      {err && <div style={{ marginTop: 4, fontSize: 10.5, color: T.error }}>{err}</div>}
+      <style>{`@keyframes cardspin { to { transform: rotate(360deg); } }`}</style>
+    </div>
+  );
+}

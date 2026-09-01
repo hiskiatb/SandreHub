@@ -9,18 +9,18 @@
  */
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, PackageCheck, Plus, X, XCircle, Loader2, Layers, Target as TargetIcon, PackagePlus, ClipboardCheck, Camera, ImagePlus, ImageOff, History, ChevronRight } from "lucide-react";
+import { ArrowLeft, PackageCheck, Plus, X, XCircle, Loader2, Layers, PackagePlus, ClipboardCheck, Camera, ImagePlus, ImageOff, History, ChevronRight } from "lucide-react";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../_shared/MobileShell";
 import { fmtInt } from "../../_shared/activityUi";
 import { compressToMaxBytes } from "../../_shared/imageTools";
 import {
-  fetchStockOverview, listTypes, listTargets, setMonthlyStock, setTarget, upsertType,
+  fetchStockOverview, listTypes, setMonthlyStock, upsertType,
   fetchBranchOptions, fetchStockEntries, uploadPosmatStockPhoto, posmatStockPhotoUrl,
   STOCK_MODE_LABEL, currentMonthKey,
 } from "../../_shared/posmData";
 import { BRAND_DISPLAY } from "../../_shared/planData";
 
-const TABS = [{ key: "stock", label: "Stok" }, { key: "types", label: "Jenis" }, { key: "target", label: "Target" }];
+const TABS = [{ key: "stock", label: "Stok" }, { key: "types", label: "Jenis" }];
 const fmtRupiah = (v) => v == null ? null : `Rp${Number(v).toLocaleString("id-ID", { maximumFractionDigits: 0 })}`;
 
 export default function PosmStockPage() {
@@ -29,12 +29,10 @@ export default function PosmStockPage() {
   const [tab, setTab] = useState("stock");
   const [overview, setOverview] = useState(null);
   const [types, setTypes] = useState(null);
-  const [targets, setTargets] = useState(null);
   const [branches, setBranches] = useState([]);
   const [err, setErr] = useState("");
   const [topUpSheet, setTopUpSheet] = useState(false);
   const [typeSheet, setTypeSheet] = useState(null); // null closed, {} new, {...} edit
-  const [targetSheet, setTargetSheet] = useState(false);
   const [historyRow, setHistoryRow] = useState(null); // null closed, else overview row
 
   async function loadAll() {
@@ -43,8 +41,8 @@ export default function PosmStockPage() {
       // scoping mh_branches di fetchAssignableGroups) - SPM Sumatera/Admin
       // unscoped tetap dapat semua cabang nasional.
       const branchRegion = ["head", "tmv"].includes(scope?.role) ? scope?.region : null;
-      const [o, t, tg, b] = await Promise.all([fetchStockOverview(), listTypes(), listTargets(), fetchBranchOptions(branchRegion)]);
-      setOverview(o || []); setTypes(t || []); setTargets(tg || []); setBranches(b || []);
+      const [o, t, b] = await Promise.all([fetchStockOverview(), listTypes(), fetchBranchOptions(branchRegion)]);
+      setOverview(o || []); setTypes(t || []); setBranches(b || []);
     } catch (e) {
       setErr(e.message || "Gagal memuat data POSM");
     }
@@ -142,33 +140,10 @@ export default function PosmStockPage() {
           </>
         )}
 
-        {tab === "target" && (
-          <>
-            <ActionButton icon={TargetIcon} label="Set Target Bulanan" onClick={() => setTargetSheet(true)} />
-            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-              {targets.length === 0 ? <EmptyNote text="Belum ada target diset." /> : targets.map((t) => {
-                const pct = t.target_qty > 0 ? Math.round((t.achieved_qty / t.target_qty) * 100) : 0;
-                return (
-                  <div key={t.id} style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 14, padding: "12px 14px" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>{t.branch_name} · {BRAND_DISPLAY[t.brand] || (t.brand || "").toUpperCase()}</div>
-                      <div style={{ fontSize: 11, color: "#8A8A96", fontWeight: 700 }}>{t.month}</div>
-                    </div>
-                    <div style={{ marginTop: 6, fontSize: 11.5, color: "#5A5A68", fontWeight: 600 }}>{fmtInt(t.achieved_qty)} / {fmtInt(t.target_qty)} ({pct}%)</div>
-                    <div style={{ marginTop: 6, height: 6, borderRadius: 999, background: "#F0F0F3", overflow: "hidden" }}>
-                      <div style={{ height: "100%", width: `${Math.min(pct, 100)}%`, background: BRAND }} />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </>
-        )}
       </div>
 
       {topUpSheet && <TopUpSheet branches={branches} types={types} callerEmail={email} onClose={() => setTopUpSheet(false)} onSaved={() => { setTopUpSheet(false); loadAll(); }} />}
       {typeSheet && <TypeSheet type={typeSheet} callerEmail={email} onClose={() => setTypeSheet(null)} onSaved={() => { setTypeSheet(null); loadAll(); }} />}
-      {targetSheet && <TargetSheet branches={branches} callerEmail={email} onClose={() => setTargetSheet(false)} onSaved={() => { setTargetSheet(false); loadAll(); }} />}
       {historyRow && <StockHistorySheet row={historyRow} callerEmail={email} onClose={() => setHistoryRow(null)} />}
     </MobileShell>
   );
@@ -262,7 +237,7 @@ function TopUpSheet({ branches, types, callerEmail, onClose, onSaved }) {
   return (
     <SheetShell title="Top Up Stok Bulanan" onClose={onClose} onSubmit={submit} busy={busy} submitLabel="Simpan Stok">
       {err && <div style={{ padding: "9px 11px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 11.5, fontWeight: 600, marginBottom: 4 }}>{err}</div>}
-      <Label text="Cabang" />
+      <Label text="BRANCH" />
       <select value={branchId} onChange={(e) => setBranchId(e.target.value)} style={selectBase}>
         {branches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}
       </select>
@@ -427,45 +402,3 @@ function TypeSheet({ type, callerEmail, onClose, onSaved }) {
   );
 }
 
-function TargetSheet({ branches, callerEmail, onClose, onSaved }) {
-  const [branchId, setBranchId] = useState(branches[0]?.branch_id || "");
-  const [brand, setBrand] = useState("im3");
-  const [month, setMonth] = useState(currentMonthKey());
-  const [targetQty, setTargetQty] = useState("");
-  const [note, setNote] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-
-  async function submit() {
-    if (!branchId || !targetQty) { setErr("Lengkapi semua field wajib."); return; }
-    setBusy(true); setErr("");
-    try {
-      const branchName = branches.find((b) => b.branch_id === branchId)?.branch_name || branchId;
-      await setTarget({ branchId, branchName, brand, month, targetQty, note: note.trim(), callerEmail });
-      onSaved();
-    } catch (e) {
-      setErr(e.message || "Gagal menyimpan target"); setBusy(false);
-    }
-  }
-
-  return (
-    <SheetShell title="Set Target Instalasi Bulanan" onClose={onClose} onSubmit={submit} busy={busy} submitLabel="Simpan Target">
-      {err && <div style={{ padding: "9px 11px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 11.5, fontWeight: 600, marginBottom: 4 }}>{err}</div>}
-      <Label text="Cabang" />
-      <select value={branchId} onChange={(e) => setBranchId(e.target.value)} style={selectBase}>
-        {branches.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}
-      </select>
-      <Label text="Brand" />
-      <select value={brand} onChange={(e) => setBrand(e.target.value)} style={selectBase}>
-        <option value="im3">IM3</option>
-        <option value="tri">3ID</option>
-      </select>
-      <Label text="Bulan (yyyymm)" />
-      <input value={month} onChange={(e) => setMonth(e.target.value)} placeholder="202608" style={selectBase} />
-      <Label text="Target (qty instalasi)" />
-      <input type="number" value={targetQty} onChange={(e) => setTargetQty(e.target.value)} style={selectBase} />
-      <Label text="Catatan (opsional)" />
-      <input value={note} onChange={(e) => setNote(e.target.value)} style={selectBase} />
-    </SheetShell>
-  );
-}

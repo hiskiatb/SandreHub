@@ -62,13 +62,16 @@ function VerifyInner() {
     try {
       const { error } = await supabaseMarta.auth.verifyOtp({ email, token: code, type: "email" });
       if (error) throw error;
+      // SENGAJA tidak setBusy(false) di sini - biarkan overlay loading tetap
+      // tampil sampai router.replace benar-benar pindah halaman (komponen
+      // unmount), supaya tidak ada jeda "kosong" yang bikin user ragu apa
+      // kodenya kepakai atau belum.
       router.replace("/martahub/m");
     } catch (e) {
+      setBusy(false);
       setErr("Kode salah atau sudah kedaluwarsa. Coba lagi.");
       setDigits(["", "", "", "", "", ""]);
       inputs.current[0]?.focus();
-    } finally {
-      setBusy(false);
     }
   };
 
@@ -124,35 +127,49 @@ function VerifyInner() {
           <div style={{ marginTop: 8, fontSize: 13, color: "#6B6B76", textAlign: "center", lineHeight: 1.5 }}>
             Kode 6 digit sudah dikirim ke<br /><b style={{ color: "#3A3A44" }}>{email}</b>
           </div>
+          <button onClick={() => router.push("/martahub/m/login")} disabled={busy}
+            style={{ marginTop: 8, background: "none", border: "none", cursor: busy ? "default" : "pointer", color: busy ? "#D5D5DC" : "#8A8A96", fontSize: 12, fontWeight: 700, fontFamily: FF, textDecoration: "underline", textUnderlineOffset: 2 }}>
+            Ganti email
+          </button>
 
           {err && (
             <div style={{ marginTop: 18, width: "100%", padding: "11px 14px", borderRadius: 12, background: "#FDECEC", border: "1px solid #F5C2C2", color: "#C62828", fontSize: 12.5, fontWeight: 600, textAlign: "center" }}>{err}</div>
           )}
 
-          <div style={{ display: "flex", gap: 8, marginTop: 28 }} onPaste={onPaste}>
-            {digits.map((d, i) => (
-              <input
-                key={i}
-                ref={(el) => (inputs.current[i] = el)}
-                className="otp-box"
-                inputMode="numeric"
-                maxLength={1}
-                value={d}
-                disabled={busy}
-                onChange={(e) => onDigit(i, e.target.value)}
-                onKeyDown={(e) => onKeyDown(i, e)}
-              />
-            ))}
+          <div style={{ position: "relative", marginTop: 28 }}>
+            <div style={{ display: "flex", gap: 8, opacity: busy ? 0.35 : 1, transition: "opacity .15s" }} onPaste={onPaste}>
+              {digits.map((d, i) => (
+                <input
+                  key={i}
+                  ref={(el) => (inputs.current[i] = el)}
+                  className="otp-box"
+                  inputMode="numeric"
+                  maxLength={1}
+                  value={d}
+                  disabled={busy}
+                  onChange={(e) => onDigit(i, e.target.value)}
+                  onKeyDown={(e) => onKeyDown(i, e)}
+                />
+              ))}
+            </div>
+            {/* Overlay loading - jelas kelihatan tepat di atas kotak kode,
+                bukan cuma teks kecil di bawah yg gampang terlewat, supaya
+                begitu 6 digit terisi user langsung tahu kodenya SEDANG
+                dicek (bukan diam/macet), sampai berhasil pindah halaman
+                atau muncul pesan gagal. */}
+            {busy && (
+              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Loader2 size={22} style={{ animation: "mspin .8s linear infinite", color: "#ED1C24" }} />
+              </div>
+            )}
           </div>
 
-          {busy && (
-            <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 8, color: "#6B6B76", fontSize: 13, fontWeight: 600 }}>
-              <Loader2 size={15} style={{ animation: "mspin .9s linear infinite", color: "#ED1C24" }} /> Memverifikasi…
-            </div>
-          )}
+          <div style={{ marginTop: 18, minHeight: 20, display: "flex", alignItems: "center", gap: 8, color: "#6B6B76", fontSize: 13, fontWeight: 600 }}>
+            {busy && <>Memverifikasi kode…</>}
+          </div>
 
-          <button onClick={resend} disabled={resending || cooldown > 0}
-            style={{ marginTop: 22, background: "none", border: "none", cursor: resending || cooldown > 0 ? "default" : "pointer", color: cooldown > 0 ? "#B0B0BA" : "#ED1C24", fontSize: 13, fontWeight: 700, fontFamily: FF }}>
+          <button onClick={resend} disabled={resending || cooldown > 0 || busy}
+            style={{ marginTop: 4, background: "none", border: "none", cursor: resending || cooldown > 0 || busy ? "default" : "pointer", color: cooldown > 0 || busy ? "#B0B0BA" : "#ED1C24", fontSize: 13, fontWeight: 700, fontFamily: FF }}>
             {cooldown > 0 ? `Kirim ulang dalam ${cooldown}s` : resending ? "Mengirim…" : "Kirim ulang kode"}
           </button>
         </div>

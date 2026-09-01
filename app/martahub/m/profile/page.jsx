@@ -9,9 +9,9 @@
  */
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, LogOut, Mail, Building2, MapPin, Sparkles, Target, TrendingUp, ChevronRight, Hash, User2 } from "lucide-react";
+import { ArrowLeft, LogOut, Mail, Building2, MapPin, Sparkles, Target, TrendingUp, ChevronRight, Hash, User2, Pencil, Loader2, Save } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
-import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
+import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, updateCachedFullName } from "../_shared/MobileShell";
 import { fmtInt } from "../_shared/activityUi";
 import { BRAND_DISPLAY } from "../_shared/planData";
 
@@ -27,6 +27,12 @@ export default function ProfilePage() {
   const router = useRouter();
   const { loading, email, userId, scope } = useMartaSession();
   const [stats, setStats] = useState(null);
+  // Nama yg baru saja diganti sendiri lewat EditNameSheet - override di atas
+  // scope.fullName spy tampilan langsung ikut berubah tanpa nunggu re-fetch
+  // scope penuh (mh_set_my_name sendiri sudah simpan ke server).
+  const [nameOverride, setNameOverride] = useState(null);
+  const [editingName, setEditingName] = useState(false);
+  const fullName = nameOverride ?? scope?.fullName;
 
   useEffect(() => {
     if (loading || !userId) return;
@@ -41,6 +47,7 @@ export default function ProfilePage() {
   }, [loading, userId]);
 
   const signOut = async () => {
+    await logMartaLogout();
     await supabaseMarta.auth.signOut();
     router.replace("/martahub/m/login");
   };
@@ -57,10 +64,10 @@ export default function ProfilePage() {
           <div style={{ position: "absolute", right: -30, top: -30, width: 120, height: 120, borderRadius: "50%", background: "rgba(255,255,255,0.08)" }} />
           <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
             <div style={{ width: 52, height: 52, borderRadius: "50%", background: "rgba(255,255,255,0.18)", border: "2px solid rgba(255,255,255,0.5)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, flexShrink: 0 }}>
-              {initials(scope?.fullName || email)}
+              {initials(fullName || email)}
             </div>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 16, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{scope?.fullName || "-"}</div>
+              <div style={{ fontSize: 16, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fullName || "-"}</div>
               <div style={{ marginTop: 3, display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, opacity: 0.9, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 <Mail size={11} /> {email}
               </div>
@@ -79,7 +86,8 @@ export default function ProfilePage() {
             di bawahnya supaya tidak tercampur "siapa saya" vs "di mana saya
             ditugaskan". */}
         <SectionCard title="Informasi Akun">
-          <RowKV icon={<User2 size={13} />} label="Nama Lengkap" value={scope?.fullName || "-"} />
+          <RowKV icon={<User2 size={13} />} label="Nama Lengkap" value={fullName || "-"}
+            onEdit={() => setEditingName(true)} />
           <RowKV icon={<Mail size={13} />} label="Email" value={email} />
           <RowKV icon={<Sparkles size={13} />} label="Peran" value={ROLE_LABEL[scope?.role] || scope?.role || "-"} />
         </SectionCard>
@@ -88,8 +96,8 @@ export default function ProfilePage() {
             catatan redirect di useMartaSession, MobileShell.jsx). */}
         {(scope?.brand || scope?.branchName || scope?.region) && (
           <SectionCard title="Penugasan">
-            {scope?.brand && <RowKV icon={<Building2 size={13} />} label="Brand" value={BRAND_DISPLAY[scope.brand] || scope.brand.toUpperCase()} />}
-            {scope?.branchName && <RowKV icon={<MapPin size={13} />} label="Cabang" value={scope.branchName} />}
+            {scope?.brand && <RowKV icon={<Building2 size={13} />} label="BRAND" value={BRAND_DISPLAY[scope.brand] || scope.brand.toUpperCase()} />}
+            {scope?.branchName && <RowKV icon={<MapPin size={13} />} label="BRANCH" value={scope.branchName} />}
             {scope?.region && <RowKV icon={<MapPin size={13} />} label="Region" value={scope.region} />}
           </SectionCard>
         )}
@@ -107,6 +115,12 @@ export default function ProfilePage() {
           MartaHub · IOH Sumatera
         </div>
       </div>
+
+      {editingName && (
+        <EditNameSheet currentName={fullName}
+          onClose={() => setEditingName(false)}
+          onSaved={(newName) => { setNameOverride(newName); updateCachedFullName(newName); setEditingName(false); }} />
+      )}
     </MobileShell>
   );
 }
@@ -141,12 +155,74 @@ function SectionCard({ title, children }) {
   );
 }
 
-function RowKV({ icon, label, value }) {
+function RowKV({ icon, label, value, onEdit }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "6px 0" }}>
       <span style={{ color: "#8A8A96", display: "flex" }}>{icon}</span>
       <span style={{ fontSize: 12, color: "#8A8A96", fontWeight: 600, flex: 1 }}>{label}</span>
       <span style={{ fontSize: 12.5, color: "#17181C", fontWeight: 700 }}>{value}</span>
+      {onEdit && (
+        <button onClick={onEdit} title="Ubah nama"
+          style={{ marginLeft: 2, width: 24, height: 24, borderRadius: 7, border: "1px solid #ECEDF0", background: "#F6F7F9", color: "#5A5A68", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+          <Pencil size={11} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Bottom sheet ganti nama sendiri - dipanggil dari baris "Nama Lengkap" di
+ * Informasi Akun. Lewat RPC mh_set_my_name (SECURITY DEFINER) yg SUDAH ada
+ * di server: update mh_profiles.full_name milik user ybs + ikut update
+ * mh_assignments.full_name utk semua baris dgn email yg sama - jadi nama di
+ * SEMUA posisi/role dia (kalau lebih dari satu) ikut ganti, tanpa memindah
+ * atau menghapus assignment/role apa pun. */
+function EditNameSheet({ currentName, onClose, onSaved }) {
+  const [name, setName] = useState(currentName || "");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  async function submit() {
+    const trimmed = name.trim();
+    if (!trimmed) { setErr("Nama tidak boleh kosong."); return; }
+    setSaving(true); setErr("");
+    try {
+      const { error } = await supabaseMarta.rpc("mh_set_my_name", { p_name: trimmed });
+      if (error) throw error;
+      onSaved(trimmed.toUpperCase());
+    } catch (e) { setErr(e.message || "Gagal menyimpan nama"); setSaving(false); }
+  }
+
+  return (
+    <div onClick={saving ? undefined : onClose} style={{ position: "fixed", inset: 0, background: "rgba(13,17,23,0.5)", zIndex: 500, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: "#FFFFFF", borderRadius: "20px 20px 0 0", padding: "20px 20px calc(env(safe-area-inset-bottom,0px) + 20px)", fontFamily: FF, boxShadow: "0 -10px 30px rgba(0,0,0,0.14)" }}>
+        <div style={{ width: 36, height: 4, borderRadius: 99, background: "#E4E5EA", margin: "0 auto 16px" }} />
+        <div style={{ width: 48, height: 48, borderRadius: 14, background: "#F6F7F9", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 12px" }}>
+          <User2 size={21} color="#5A5A68" />
+        </div>
+        <div style={{ fontSize: 15, fontWeight: 800, color: "#17181C", textAlign: "center" }}>Ubah Nama Lengkap</div>
+        <div style={{ marginTop: 5, fontSize: 12, color: "#8A8A96", textAlign: "center", lineHeight: 1.5 }}>
+          Nama baru berlaku di semua posisi/role Anda - email, role, Branch & data lain tetap sama.
+        </div>
+
+        <div style={{ marginTop: 18 }}>
+          <input value={name} onChange={(e) => setName(e.target.value.toUpperCase())} placeholder="NAMA LENGKAP" disabled={saving} autoFocus
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+            style={{ width: "100%", height: 50, padding: "0 14px", borderRadius: 13, border: "1.5px solid #ECEDF0", background: "#F6F7F9", fontSize: 14, fontWeight: 600, color: "#17181C", fontFamily: FF, outline: "none", boxSizing: "border-box", textTransform: "uppercase" }} />
+        </div>
+        {err && <div style={{ marginTop: 10, fontSize: 12, color: "#C62828", textAlign: "center", fontWeight: 600 }}>{err}</div>}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+          <button onClick={onClose} disabled={saving}
+            style={{ flex: 1, height: 48, borderRadius: 13, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: saving ? "default" : "pointer" }}>
+            Batal
+          </button>
+          <button onClick={submit} disabled={saving}
+            style={{ flex: 1, height: 48, borderRadius: 13, border: "none", background: BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: saving ? "default" : "pointer", opacity: saving ? 0.75 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            {saving ? <Loader2 size={14} style={{ animation: "mspin .85s linear infinite" }} /> : <Save size={14} />} Simpan
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

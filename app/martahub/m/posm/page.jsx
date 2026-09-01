@@ -74,7 +74,7 @@ export default function PosmHubPage() {
           <PackageCheck size={19} color="#ED1C24" />
           <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em" }}>POSM</div>
         </div>
-        <div style={{ marginTop: 3, fontSize: 12.5, color: "#8A8A96", fontWeight: 500 }}>Instalasi materi POSM lapangan &amp; stok cabang</div>
+        <div style={{ marginTop: 3, fontSize: 12.5, color: "#8A8A96", fontWeight: 500 }}>Instalasi materi POSM lapangan &amp; stok Branch</div>
       </div>
 
       {err && <div style={{ margin: "14px 20px 0", padding: "10px 12px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 12, fontWeight: 600 }}>{err}</div>}
@@ -85,14 +85,14 @@ export default function PosmHubPage() {
           didapat lewat menu Beranda langsung ke /posm/stock. */}
       {isApprover && (
         <div style={{ padding: "16px 20px 0" }}>
-          <button onClick={() => router.push("/martahub/m/posm/stock")}
+          <button onClick={() => router.push("/martahub/m/posm/plans")}
             style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "13px 14px", borderRadius: 14, border: "1px solid #E9EAEE", background: "#FFFFFF", cursor: "pointer", textAlign: "left", fontFamily: FF }}>
             <div style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(179,46,133,0.10)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
               <Layers size={16} color="#B32E85" />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>Kelola Stok &amp; Target</div>
-              <div style={{ fontSize: 10.5, color: "#8A8A96", fontWeight: 600 }}>Stok tiap branch, jenis material &amp; target bulanan</div>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>Kelola Plan POSM</div>
+              <div style={{ fontSize: 10.5, color: "#8A8A96", fontWeight: 600 }}>Register Installment Plan, visual, periode &amp; alokasi per branch</div>
             </div>
             <ChevronRight size={16} color="#B0B0BA" />
           </button>
@@ -121,7 +121,7 @@ export default function PosmHubPage() {
           dokumentasi tiap entri). */}
       {types.length > 0 && (
         <div style={{ padding: "16px 20px 0" }}>
-          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10 }}>Stok Cabang</div>
+          <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10 }}>STOK BRANCH</div>
           <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 4 }}>
             {types.map((t) => (
               <button key={t.posmat_type_id} onClick={() => setHistoryType({ posmat_type_id: t.posmat_type_id, name: t.name })}
@@ -244,6 +244,11 @@ function InstallCard({ ins }) {
           <BadgeIcon size={10} /> {badge.label}
         </span>
       </div>
+      {ins.plan_id && ins.in_period === false && (
+        <div style={{ marginTop: 8, fontSize: 9.5, fontWeight: 800, color: "#B8860B", background: "rgba(184,134,11,0.10)", display: "inline-block", padding: "3px 8px", borderRadius: 999 }}>
+          Di luar periode Plan
+        </div>
+      )}
     </div>
   );
 }
@@ -303,7 +308,7 @@ function ClaimRequestSheet({ onClose, onSubmitted }) {
                     + {t.name}
                   </button>
                 ))}
-                {available.length === 0 && <div style={{ fontSize: 11.5, color: "#B0B0BA" }}>Belum ada jenis material terdaftar di cabang Anda.</div>}
+                {available.length === 0 && <div style={{ fontSize: 11.5, color: "#B0B0BA" }}>Belum ada jenis material terdaftar di Branch Anda.</div>}
               </div>
 
               {items.length > 0 && (
@@ -404,7 +409,7 @@ function TopUpMyStockSheet({ scope, callerEmail, onClose, onSaved }) {
         <div style={{ width: 40, height: 4, borderRadius: 3, background: "#E4E5EA", margin: "10px auto 4px" }} />
         <div style={{ padding: "8px 20px 0", fontSize: 15, fontWeight: 800 }}>Tambah Stok</div>
         <div style={{ padding: "4px 20px 0", fontSize: 11.5, color: "#8A8A96" }}>
-          Catat materi POSM yang baru Anda cetak/terima sebagai stok masuk cabang {scope?.branch_name || "Anda"}.
+          Catat materi POSM yang baru Anda cetak/terima sebagai stok masuk Branch {scope?.branch_name || "Anda"}.
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", padding: "12px 20px" }}>

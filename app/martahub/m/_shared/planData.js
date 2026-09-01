@@ -301,11 +301,20 @@ const toSlug = (name) => (name || "").trim().toLowerCase().replace(/[^a-z0-9]+/g
 // mh_bme_assign_member utk bme/rge, mh_tl_dsf_assign_dsf utk tl_dsf) - bukan
 // aturan baru, cuma dicerminkan di UI supaya pilihan yg ditampilkan sudah
 // sesuai sebelum submit (RPC tetap jadi penjaga akhir di server).
+// Semua role "executor" di bawah BME/RGE (MD, DSF, + role cabang lain) -
+// dipakai tombol gabungan "+ Tambahkan Executor" di User Management (mobile
+// & desktop), opsi yg ditawarkan ke satu caller tetap disaring lagi lewat
+// ADDABLE_ROLES_FOR di bawah.
+export const EXECUTOR_ROLES = ["md", "dsf", "tl_dsf", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"];
+
 export const ADDABLE_ROLES_FOR = {
   spm_sumatera: ["head", "tmv", "bme", "rge", "tl_dsf", "md", "dsf", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"],
   admin: ["head", "tmv", "bme", "rge", "tl_dsf", "md", "dsf", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"],
-  head: ["bme", "rge"],
-  tmv: ["bme", "rge"],
+  // Head TMV & Brand TMV boleh langsung men-set MD/DSF utk region mereka
+  // sendiri (bukan cuma lewat BME/RGE) - sesuai tingkatan hirarki, atasan
+  // boleh mengisi posisi di bawah bawahannya juga, bukan cuma satu level.
+  head: ["tmv", "bme", "rge", "md", "dsf"],
+  tmv: ["bme", "rge", "md", "dsf"],
   bme: ["tl_dsf", "md", "dse", "gse", "ae", "promotor", "cse_rse", "bsm", "dsf"],
   rge: ["tl_dsf", "md", "dse", "gse", "ae", "promotor", "cse_rse", "bsm", "dsf"],
   tl_dsf: ["dsf"],

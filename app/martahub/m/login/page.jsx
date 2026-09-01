@@ -1,6 +1,8 @@
 "use client";
 /**
- * /martahub/m/login - Login mobile-web BME/RGE MartaHub.
+ * /martahub/m/login - Login mobile-web MartaHub (BME/RGE, TMV, & SPM
+ * Sumatera sama-sama masuk lewat sini - fitur yg tampil sesudahnya
+ * menyesuaikan role masing-masing, lihat ADDABLE_ROLES_FOR di planData.js).
  *
  * Sesi TERPISAH dari:
  *  - /marta/login (web admin/TMV - pakai project SandraHub + role bridge)
@@ -129,14 +131,9 @@ export default function MartaMobileLogin() {
         <div className="marta-login-card" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
           <HubLogo variant="marta" size={62} dark={false} shadow inBox />
 
-          <h1 style={{ marginTop: 28, fontSize: 26, fontWeight: 800, letterSpacing: "-0.035em", textAlign: "center", lineHeight: 1.15, color: "#17181C" }}>
-            Masuk ke MartaHub
+          <h1 style={{ marginTop: 26, fontSize: 25, fontWeight: 800, letterSpacing: "-0.035em", textAlign: "center", lineHeight: 1.15, color: "#17181C" }}>
+            Login MartaHub Mobile
           </h1>
-          <div style={{ marginTop: 9, display: "inline-flex", alignItems: "center", gap: 7, fontSize: 13, color: "#6B6B76", fontWeight: 500 }}>
-            Untuk BME / RGE lapangan
-            <span style={{ width: 3, height: 3, borderRadius: 99, background: "#C4C4CE" }} />
-            <span style={{ fontWeight: 700, background: "linear-gradient(90deg,#ED1C24,#EC008C)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Marketing Sumatera</span>
-          </div>
 
           {err && (
             <div style={{ marginTop: 20, width: "100%", padding: "11px 14px", borderRadius: 12, background: "#FDECEC", border: "1px solid #F5C2C2", color: "#C62828", fontSize: 12.5, fontWeight: 600, textAlign: "center" }}>{err}</div>
@@ -145,7 +142,7 @@ export default function MartaMobileLogin() {
           {/* Email - jalur utama, SELALU tampil (bukan di balik toggle),
               karena sebagian besar BME/RGE pakai email kantor non-Gmail
               (mis. Outlook) yang tidak bisa lewat tombol Google. */}
-          <div style={{ marginTop: 40, width: "100%" }}>
+          <div style={{ marginTop: 34, width: "100%" }}>
             <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: "#8A8A96" }}>Masuk dengan Email</label>
             <div style={{ display: "flex", alignItems: "center", gap: 10, height: 54, padding: "0 14px", borderRadius: 14, background: "#F6F7F9", border: "1.5px solid #ECEDF0", marginTop: 7 }}>
               <Mail size={16} color="#9A9AA6" style={{ flexShrink: 0 }} />

@@ -10,6 +10,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Clock, Copy, Check, RefreshCw, LogOut, Loader2 } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../../lib/martaScope";
+import { logMartaLogout } from "../_shared/MobileShell";
 import { HubLogo } from "../../../../components/HubLogo";
 
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -47,6 +48,7 @@ function PendingInner() {
   };
 
   const signOut = async () => {
+    await logMartaLogout();
     await supabaseMarta.auth.signOut();
     router.replace("/martahub/m/login");
   };

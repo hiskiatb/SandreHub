@@ -72,7 +72,7 @@ export default function LeaderboardPage() {
 
         <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
           {[
-            { key: "branch", label: scope?.branchName || "Cabang" },
+            { key: "branch", label: scope?.branchName || "BRANCH" },
             { key: "region", label: scope?.region || "Region" },
             { key: "all", label: "Semua" },
           ].map((t) => {

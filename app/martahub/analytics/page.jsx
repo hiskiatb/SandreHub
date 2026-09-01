@@ -13,16 +13,39 @@ function productivityPct(rows) {
   const rev = sumBy(rows, (r) => r.actual_rev_3m);
   return cost > 0 ? (rev / cost) * 100 : 0;
 }
+function achievementPct(rows) {
+  const t = sumBy(rows, (r) => r.target_sp);
+  const a = sumBy(rows, (r) => r.actual_sp);
+  return t > 0 ? (a / t) * 100 : 0;
+}
+function geoPct(rows) {
+  const tracked = rows.filter((r) => (r.checkin_valid !== null && r.checkin_valid !== undefined) || (r.geo_compliant !== null && r.geo_compliant !== undefined));
+  if (!tracked.length) return null;
+  const ok = tracked.filter((r) => (r.checkin_valid ?? r.geo_compliant) === true).length;
+  return (ok / tracked.length) * 100;
+}
 function rowCategory(r) {
   const arr = Array.isArray(r.event_categories) ? r.event_categories : null;
   const key = (arr && arr[0]) || r.event_category || "others";
   return { key, label: CAT_LABEL[key] || key };
 }
 function monthKeyOf(d) { return d ? String(d).slice(0, 7) : null; }
+const fmtDate = (s) => {
+  if (!s || s.length < 10) return "-";
+  const [y, m, d] = s.slice(0, 10).split("-");
+  const mo = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"][(+m || 1) - 1];
+  return `${d} ${mo} ${y}`;
+};
+
+// ── Kolom query DIGABUNG dari dua menu lama (Productivity Analytics +
+// Performance Insight, sekarang jadi SATU menu ini) - satu fetch, satu
+// dataset dipakai bersama utk trend productivity, ranking cabang, DAN
+// catatan insight lapangan. ────────────────────────────────────────────
+const COLS = "id,event_name,branch_id,event_category,event_categories,plan_date,cost_estimate,cost_actual,actual_rev_3m,target_sp,actual_sp,checkin_valid,geo_compliant,insight,status";
 
 export default function AnalyticsPage() {
   return (
-    <MartaShell active="analytics" title="Productivity Analytics" subtitle="Rasio revenue terhadap biaya, per cabang & kategori kegiatan.">
+    <MartaShell active="analytics" title="Analytics" subtitle="Productivity Analytics & Performance Insight - satu menu, dua bagian.">
       {(ctx) => <Body email={ctx?.session?.user?.email} />}
     </MartaShell>
   );
@@ -47,7 +70,7 @@ function Body({ email }) {
       const since = new Date(); since.setMonth(since.getMonth() - 5); since.setDate(1);
       let q = supabaseMarta
         .from("mh_activities")
-        .select("id, branch_id, event_category, event_categories, plan_date, cost_estimate, cost_actual, actual_rev_3m")
+        .select(COLS)
         .gte("plan_date", since.toISOString().slice(0, 10))
         .order("plan_date", { ascending: false });
       q = await applyMartaScope(q, sc);
@@ -99,11 +122,31 @@ function Body({ email }) {
   }, [rows]);
   const byCategoryMax = Math.max(100, ...byCategory.map((c) => c.value));
 
+  // ── Dari Performance Insight (menu lama) - ranking achievement per cabang
+  // + catatan insight lapangan, pakai dataset (rows) yang sama dgn di atas. ──
+  const ranked = useMemo(() => {
+    const m = new Map();
+    for (const r of rows) {
+      const key = r.branch_id || "unassigned";
+      if (!m.has(key)) m.set(key, []);
+      m.get(key).push(r);
+    }
+    return [...m.entries()]
+      .map(([id, list]) => ({ id, name: branchMap.get(id) || "Belum ditetapkan", ach: achievementPct(list), geo: geoPct(list), n: list.length }))
+      .filter((b) => b.n > 0)
+      .sort((a, b) => b.ach - a.ach);
+  }, [rows, branchMap]);
+  const top5 = ranked.slice(0, 5);
+  const bottom5 = [...ranked].slice(-5).reverse();
+  const notes = useMemo(() => rows.filter((r) => r.insight && r.insight.trim()).slice(0, 12), [rows]);
+
   return (
     <div>
       {!MARTA_CONFIGURED && <div style={{ ...card, borderColor: T.warning, background: T.warningBg, color: "#7a5b00", marginBottom: 16 }}>Supabase MartaHub belum dikonfigurasi / project paused.</div>}
       {err && <div style={{ ...card, borderColor: T.error, background: T.errorBg, color: T.error, marginBottom: 16 }}>{err}</div>}
       {loading && <div style={{ ...card, marginBottom: 16, textAlign: "center", color: T.lo }}>Memuat…</div>}
+
+      <SectionHeading label="Productivity Analytics" desc="Rasio revenue terhadap biaya, per cabang & kategori kegiatan." />
 
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
         <div style={{ ...card, flex: "0 0 200px" }}>
@@ -132,7 +175,7 @@ function Body({ email }) {
         </div>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
         {/* By branch */}
         <div style={card}>
           <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 14 }}>Productivity per Cabang</div>
@@ -167,6 +210,61 @@ function Body({ email }) {
           ))}
         </div>
       </div>
+
+      {/* ── Dari Performance Insight (menu lama, sekarang bagian dari
+          halaman ini): ranking achievement Top/Bottom 5 cabang + catatan
+          insight lapangan. ──────────────────────────────────────────── */}
+      <SectionHeading label="Performance Insight" desc="Ranking cabang & catatan lapangan terbaru." />
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+        <RankCard title="Top 5 Achievement" rows={top5} color={T.success} empty="Belum cukup data." />
+        <RankCard title="Perlu Perhatian (Bottom 5)" rows={bottom5} color={T.error} empty="Belum cukup data." />
+      </div>
+
+      <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.line}`, fontWeight: 800, fontSize: 13.5 }}>Catatan / Insight Lapangan Terbaru</div>
+        {notes.length === 0 && <div style={{ padding: 22, textAlign: "center", color: T.lo, fontSize: 12.5 }}>Belum ada catatan insight dari lapangan.</div>}
+        {notes.map((n) => (
+          <div key={n.id} style={{ padding: "12px 16px", borderBottom: `1px solid ${T.line}` }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+              <span style={{ fontWeight: 700, fontSize: 12.5 }}>{n.event_name || "-"}</span>
+              <span style={{ fontSize: 11, color: T.lo }}>{fmtDate(n.plan_date)}</span>
+            </div>
+            <div style={{ fontSize: 12.5, color: T.mid }}>{n.insight}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SectionHeading({ label, desc }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "4px 0 14px" }}>
+      <div style={{ width: 4, height: 20, borderRadius: 99, background: "linear-gradient(180deg,#ED1C24,#C6168D)", flexShrink: 0 }} />
+      <div>
+        <div style={{ fontSize: 15, fontWeight: 800, color: T.hi, lineHeight: 1.2 }}>{label}</div>
+        <div style={{ fontSize: 11.5, color: T.lo, marginTop: 2 }}>{desc}</div>
+      </div>
+    </div>
+  );
+}
+
+function RankCard({ title, rows, color, empty }) {
+  return (
+    <div style={card}>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>{title}</div>
+      {rows.length === 0 && <div style={{ color: T.lo, fontSize: 12.5, padding: "8px 0" }}>{empty}</div>}
+      {rows.map((b, i) => (
+        <div key={b.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: i === 0 ? "none" : `1px solid ${T.line}` }}>
+          <div style={{ width: 22, height: 22, borderRadius: "50%", background: "#F0F4FA", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10.5, fontWeight: 800, color: T.mid, flexShrink: 0 }}>{i + 1}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: T.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{b.name}</div>
+            <div style={{ fontSize: 10.5, color: T.lo }}>{b.n} aktivitas{b.geo != null ? ` · Geo ${Math.round(b.geo)}%` : ""}</div>
+          </div>
+          <div style={{ fontSize: 14, fontWeight: 800, color }}>{Math.round(b.ach)}%</div>
+        </div>
+      ))}
     </div>
   );
 }

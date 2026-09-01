@@ -24,9 +24,9 @@ import {
 } from "lucide-react";
 import supabaseMarta from "../../../lib/supabaseMarta";
 import { applyMartaScope, loadBranchMap } from "../../../lib/martaScope";
-import MobileShell, { useMartaSession, ShellSpinner, MartaSplash, FF, BRAND } from "./_shared/MobileShell";
+import MobileShell, { useMartaSession, ShellSpinner, InlineSpinner, MartaSplash, FF, BRAND } from "./_shared/MobileShell";
 import { statusMeta, fmtDate, fmtInt, isDraftIncomplete } from "./_shared/activityUi";
-import { APPROVER_ROLES, ADDABLE_ROLES_FOR, BRAND_DISPLAY } from "./_shared/planData";
+import { APPROVER_ROLES, ADDABLE_ROLES_FOR, BRAND_DISPLAY, BRANDS } from "./_shared/planData";
 import { fetchUnreadCount } from "./_shared/notifData";
 
 // ╔══════════════════════════════════════════════════════════════════════════╗
@@ -39,7 +39,7 @@ import { fetchUnreadCount } from "./_shared/notifData";
 // ║ supaya nama cabang tetap tampil benar utk role unscoped (admin/head/    ║
 // ║ spm_sumatera) yang filternya baca dari branchMap.                       ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
-const USE_MOCK_HOME_DATA = true;
+const USE_MOCK_HOME_DATA = false;
 const MOCK_HOME_BRANCHES = {
   MEDAN: "61b44f8c-2af6-4cf3-a450-9ca695aad1ae",
   ACEH: "6444e7cf-e2bb-4cfd-81d0-c18c7c1d5ceb",
@@ -163,22 +163,32 @@ export default function MartaMobileHome() {
     return () => { alive = false; };
   }, [loading]);
 
-  // Nama cabang utk filter - hanya diperlukan role unscoped (admin/head/
-  // spm_sumatera), yg baris aktivitasnya lintas cabang. Pakai loadBranchMap()
-  // yang sudah di-cache di lib/martaScope.js (dipakai bareng applyMartaScope
-  // di bawah) - sebelumnya halaman ini query mh_branches sendiri, padahal
-  // isinya sama persis dgn yang sudah/akan diambil helper itu.
+  // Nama cabang utk filter - diperlukan siapa pun yg baris aktivitasnya
+  // lintas cabang: admin/spm_sumatera (nasional), Head TMV (satu region,
+  // tapi banyak cabang di dalamnya), maupun Brand TMV (region sendiri, tapi
+  // brand-nya sendiri sudah terkunci - lihat canBrowseBranches/canBrowseBrands
+  // di bawah). BME/RGE/TL DSF dst TETAP terkunci ke satu cabang saja, jadi
+  // TIDAK perlu peta ini. Pakai loadBranchMap() yang sudah di-cache di
+  // lib/martaScope.js (dipakai bareng applyMartaScope di bawah).
+  const canBrowseBranches = !!(scope?.unscoped || scope?.role === "head" || scope?.role === "tmv");
+  const canBrowseBrands = !!(scope?.unscoped || scope?.role === "head");
   useEffect(() => {
-    if (loading || !scope?.unscoped) return;
+    if (loading || !canBrowseBranches) return;
     let alive = true;
     (async () => {
       try {
+        // SIMPAN utuh {name, region} (bukan cuma nama) - dipakai branchOptions
+        // di bawah utk menyaring cabang sesuai region Head/Brand TMV. Sebelumnya
+        // opsi dibangun dari baris AKTIVITAS yg sudah ada (rows), jadi akun yg
+        // belum pernah/baru sedikit ada aktivitas (mis. bulan ini masih 0%)
+        // opsinya ikut kosong -> field kelihatan terkunci padahal harusnya bisa
+        // dipilih. Sekarang diambil LANGSUNG dari master data mh_branches.
         const map = await loadBranchMap();
-        if (alive) setBranchMap(new Map(Array.from(map, ([id, b]) => [id, b.name])));
+        if (alive) setBranchMap(map);
       } catch { /* best-effort */ }
     })();
     return () => { alive = false; };
-  }, [loading, scope?.unscoped]);
+  }, [loading, canBrowseBranches]);
 
   // Hitung antrean approval hanya utk approver - query ringan terpisah,
   // TIDAK men-scope ulang mh_activities_for_me (yg utk approver mengembalikan
@@ -213,15 +223,20 @@ export default function MartaMobileHome() {
 
   if (loading) return <MartaSplash />;
 
-  const branchOptions = scope?.unscoped
-    ? Array.from(new Set((rows || []).map((r) => r.branch_id).filter(Boolean)))
-        .map((id) => ({ value: id, label: branchMap.get(id) || id }))
+  // Opsi filter Branch/Brand dibangun dari MASTER DATA (mh_branches lewat
+  // branchMap, & daftar brand tetap), BUKAN dari `rows` (baris aktivitas yg
+  // sudah ada) - sebelumnya dibangun dari rows, jadi akun yg belum/baru
+  // sedikit aktivitas (mis. achievement masih 0%) opsinya ikut kosong dan
+  // field kelihatan terkunci abu-abu padahal harusnya bisa dipilih (spm_
+  // sumatera/admin selalu; Head TMV & Brand TMV disaring ke region sendiri).
+  const branchOptions = canBrowseBranches
+    ? Array.from(branchMap.entries())
+        .filter(([, b]) => scope?.unscoped || b.region === scope?.region)
+        .map(([id, b]) => ({ value: id, label: b.name }))
         .sort((a, b) => a.label.localeCompare(b.label))
     : [];
-  const brandOptions = scope?.unscoped
-    ? Array.from(new Set((rows || []).map((r) => r.brand).filter(Boolean)))
-        .map((b) => ({ value: b, label: BRAND_DISPLAY[b] || b.toUpperCase() }))
-        .sort((a, b) => a.label.localeCompare(b.label))
+  const brandOptions = canBrowseBrands
+    ? BRANDS.map((b) => ({ value: b, label: BRAND_DISPLAY[b] || b.toUpperCase() }))
     : [];
 
   // Perbandingan brand HARUS case-insensitive - rows di sini datang dari
@@ -323,8 +338,9 @@ export default function MartaMobileHome() {
               icon={Building2}
               value={branchFilter}
               onChange={setBranchFilter}
-              placeholder="Semua Cabang"
-              options={scope?.unscoped ? branchOptions : ((scope?.branchName || scope?.region) ? [{ value: "self", label: scope.branchName || scope.region }] : [])}
+              placeholder="SEMUA BRANCH"
+              prefixLabel="BRANCH"
+              options={canBrowseBranches ? branchOptions : ((scope?.branchName || scope?.region) ? [{ value: "self", label: scope.branchName || scope.region }] : [])}
               fullWidth
             />
           </div>
@@ -332,7 +348,7 @@ export default function MartaMobileHome() {
             <BrandTagSelect
               value={brandFilter}
               onChange={setBrandFilter}
-              options={scope?.unscoped ? brandOptions : (scope?.brand ? [{ value: scope.brand, label: BRAND_DISPLAY[scope.brand] || scope.brand.toUpperCase() }] : [])}
+              options={canBrowseBrands ? brandOptions : (scope?.brand ? [{ value: scope.brand, label: BRAND_DISPLAY[scope.brand] || scope.brand.toUpperCase() }] : [])}
             />
           </div>
         </div>
@@ -390,10 +406,15 @@ export default function MartaMobileHome() {
           background: "linear-gradient(150deg,#38383E 0%,#4A4A50 100%)",
           border: "1px solid rgba(255,255,255,0.06)",
           boxShadow: "0 8px 20px rgba(17,17,20,0.16), 0 2px 5px rgba(17,17,20,0.1)",
+          opacity: rows === null && !err ? 0.55 : 1, transition: "opacity .2s",
         }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-              <div style={{ width: 5, height: 5, borderRadius: 99, background: "linear-gradient(135deg,#E63325,#EC1E79)" }} />
+              {rows === null && !err ? (
+                <div style={{ width: 10, height: 10, border: "1.5px solid rgba(255,255,255,0.25)", borderTopColor: "#EC1E79", borderRadius: "50%", animation: "mspin 0.8s linear infinite" }} />
+              ) : (
+                <div style={{ width: 5, height: 5, borderRadius: 99, background: "linear-gradient(135deg,#E63325,#EC1E79)" }} />
+              )}
               <div style={{ fontSize: 10.5, fontWeight: 800, color: "rgba(255,255,255,0.6)", letterSpacing: 1, textTransform: "uppercase" }}>Achievement</div>
             </div>
             <MonthSelect value={monthKey} onChange={setMonthKey} options={months} />
@@ -491,7 +512,7 @@ export default function MartaMobileHome() {
         {err && <div style={{ marginTop: 12, padding: "10px 12px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 12, fontWeight: 600 }}>{err}</div>}
 
         {rows === null && !err ? (
-          <div style={{ marginTop: 14 }}><ShellSpinner /></div>
+          <InlineSpinner label="Memuat aktivitas…" />
         ) : recent.length === 0 ? (
           <div style={{ marginTop: 14, textAlign: "center", padding: "32px 20px", background: "#FFFFFF", border: "1px dashed #D8D9E0", borderRadius: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#3A3A44" }}>Belum ada aktivitas</div>
@@ -533,11 +554,15 @@ function Badge({ n }) {
  * bukan dropdown kosong yg terlihat sama tapi ternyata tidak bisa apa-apa.
  * Saat interaktif, <select> ditumpuk transparan menutupi SELURUH pill
  * (overlay), jadi tap di mana saja di dalam pill membuka pilihan. */
-function FilterSelect({ icon: Icon, value, onChange, placeholder, options, fullWidth }) {
+function FilterSelect({ icon: Icon, value, onChange, placeholder, options, fullWidth, prefixLabel }) {
   const selected = options.find((o) => o.value === value);
   const interactive = options.length > 1;
   const label = selected ? selected.label : (options.length === 1 ? options[0].label : placeholder);
   const active = interactive && !!value;
+  // Kata depan ("Cabang") SEBELUM nilainya - tanpa ini badge cuma nampilin
+  // nama cabang polos (mis. "ACEH") yg ambigu itu label field apa, apalagi
+  // di sebelah badge Brand yg juga cuma satu kata.
+  const showPrefix = prefixLabel && (selected || options.length === 1);
   return (
     <div style={{
       position: "relative", display: fullWidth ? "flex" : "inline-flex", width: fullWidth ? "100%" : undefined,
@@ -549,6 +574,7 @@ function FilterSelect({ icon: Icon, value, onChange, placeholder, options, fullW
     }}>
       <Icon size={13} color={!interactive ? "#B0B0BA" : (active ? "#ED1C24" : "#8A8A96")} style={{ flexShrink: 0 }} />
       <span style={{ fontSize: 12.5, fontWeight: 700, color: !interactive ? "#9A9AA6" : (active ? "#C62828" : "#3A3A44"), whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: fullWidth ? 1 : undefined, maxWidth: fullWidth ? undefined : 150 }}>
+        {showPrefix && <span style={{ fontWeight: 600, opacity: 0.68 }}>{prefixLabel} </span>}
         {label}
       </span>
       {interactive && (
@@ -568,12 +594,11 @@ function FilterSelect({ icon: Icon, value, onChange, placeholder, options, fullW
 /** Brand ditampilkan sbg tag warna kecil (spt badge IM3/3ID di kartu lain
  * di app ini) - bukan field dropdown penuh, krn cuma 2 pilihan brand.
  * Belum ada logo brand asli (aset gambar) yg bisa dipakai di sini, jadi
- * "ikon"-nya berupa lencana huruf singkat bertinta warna brand masing²
- * (IM3 = merah, Tri = pink) - tetap kebaca sekilas persis logo, tanpa
- * bergantung ke file gambar eksternal. Placeholder "Brand" (belum pilih)
- * pakai ikon Tags generik dari lucide. */
+ * "ikon"-nya berupa TITIK POLOS bertinta warna brand masing² (IM3 = merah,
+ * Tri = pink) - SENGAJA bukan lencana huruf ("i3"/"3") spt sebelumnya,
+ * krn itu kebaca kayak singkatan asing yg membingungkan, bukan lambang.
+ * Placeholder "Brand" (belum pilih) pakai ikon Tags generik dari lucide. */
 const BRAND_TAG_COLORS = { im3: "#E53935", tri: "#E23B86" };
-const BRAND_TAG_INITIAL = { im3: "i3", tri: "3" };
 /** Sama seperti FilterSelect - mengikuti pola interaktif/terkunci yg sama:
  * panah HANYA muncul kalau options.length > 1, kalau cuma 1 opsi (brand
  * tunggal miliknya sendiri, role scoped) badge & teks otomatis diredupkan
@@ -584,25 +609,21 @@ function BrandTagSelect({ value, onChange, options }) {
   const selected = options.find((o) => o.value === value);
   const effective = selected || (options.length === 1 ? options[0] : null);
   const color = interactive && effective ? (BRAND_TAG_COLORS[effective.value] || "#5A5A68") : "#9A9AA6";
-  const initial = effective ? (BRAND_TAG_INITIAL[effective.value] || effective.label?.[0] || "?") : null;
   return (
     <div style={{
-      position: "relative", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, width: "100%", boxSizing: "border-box",
+      position: "relative", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", boxSizing: "border-box",
       minHeight: 40, padding: interactive ? "0 22px 0 10px" : "0 10px", borderRadius: 999,
       background: !interactive ? "#F4F5F7" : (value ? `${color}14` : "#FFFFFF"),
       border: `1.5px solid ${!interactive ? "#E9EAEE" : (value ? color : "#E4E5EA")}`,
       cursor: interactive ? "pointer" : "default",
     }}>
       {effective ? (
-        <span style={{
-          width: 16, height: 16, borderRadius: 5, flexShrink: 0, background: interactive ? color : "#B0B0BA", color: "#fff",
-          fontSize: 8.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", letterSpacing: -0.2,
-        }}>{initial}</span>
+        <span style={{ width: 9, height: 9, borderRadius: "50%", flexShrink: 0, background: interactive ? color : "#B0B0BA" }} />
       ) : (
         <Tags size={12} color={color} strokeWidth={2.2} style={{ flexShrink: 0 }} />
       )}
       <span style={{ fontSize: 12, fontWeight: 800, color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-        {effective ? effective.label : "Brand"}
+        {effective ? <><span style={{ fontWeight: 600, opacity: 0.68 }}>BRAND </span>{effective.label}</> : "BRAND"}
       </span>
       {interactive && (
         <ChevronRight size={11} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%) rotate(90deg)", color, pointerEvents: "none" }} />

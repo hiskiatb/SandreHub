@@ -92,7 +92,7 @@ export default function SDP_Home({ supabase, theme = "light", profile, onNavigat
     const guard = (p) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error("Koneksi timeout. Coba lagi.")), 20000))]);
     try {
       let master = [];
-      const base = supabase.from("sdp_master").select("sdp_id,cluster,branch,sdp_name,pt_name,sdp_type,area").eq("period", period);
+      const base = supabase.from("sdp_master").select("sdp_id,cluster,branch,sdp_name,pt_name,sdp_type,area,region").eq("period", period);
       if (impersonate) {
         // Pratinjau SPM "Lihat sebagai": muat data langsung dari scope terpilih
         // (lewati sales_access_codes yang milik akun SPM).
@@ -128,7 +128,10 @@ export default function SDP_Home({ supabase, theme = "light", profile, onNavigat
         const m = monthly.get(r.sdp_id) || null;
         return {
           sdp_id: r.sdp_id, name: r.sdp_name || r.sdp_id, ptName: r.pt_name || r.sdp_name || "—",
-          cluster: r.cluster || "", branch: r.branch || "", region: r.cluster ? (regionMap.get(r.cluster) || "") : "",
+          cluster: r.cluster || "", branch: r.branch || "",
+          // sdp_master sudah punya kolom region sendiri; mc_cluster_mapping cuma
+          // fallback (separuh cluster tidak ada di tabel mapping itu).
+          region: r.region || (r.cluster ? (regionMap.get(r.cluster) || "") : ""),
           status: statusOf(m, openIds.has(r.sdp_id)), ts: m?.terminate_status || null, updatedAt: m?.updated_at || null,
         };
       }));

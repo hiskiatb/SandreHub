@@ -557,7 +557,8 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile: real
     return (
       <div className="sdp-root sdp-view" style={{ fontFamily: FF }}>
         <SDP_Field supabase={supabase} theme={theme} profile={profile} readOnly={readOnly} lockRegion={lockRegion}
-          onExit={() => setActiveMenu(null)} helpText={HELP.field} />
+          onExit={() => setActiveMenu(null)} helpText={HELP.field}
+          periodExt={sdpPeriod} setPeriodExt={setSdpPeriod} impersonate={impersonate} />
       </div>
     );
   }
