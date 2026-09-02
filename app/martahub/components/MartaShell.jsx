@@ -39,20 +39,22 @@ export function brandLabel(brand) {
 const NAV = [
   { label: "Dashboard", icon: "grid", path: "dashboard", route: "/martahub" },
   { section: "ACTIVITY" },
-  { label: "Activity Plan", icon: "calendar", path: "activities", route: "/martahub/activities" },
+  { label: "Activity Plan", icon: "clipboard", path: "activities", route: "/martahub/activities" },
   { label: "Calendar", icon: "cal", path: "calendar", route: "/martahub/calendar" },
   { section: "INTELLIGENCE" },
   { label: "Map Intelligence", icon: "map", path: "map", route: "/martahub/map" },
   { label: "Analytics", icon: "chart", path: "analytics", route: "/martahub/analytics" },
   { label: "Leaderboard", icon: "trophy", path: "leaderboard", route: "/martahub/leaderboard" },
   { label: "Geo Compliance", icon: "pin", path: "geo-compliance", route: "/martahub/geo-compliance" },
+  { section: "POSM" },
+  { label: "POSM", icon: "posm", path: "posmat", route: "/martahub/posmat" },
   { section: "MANAGEMENT" },
   { label: "Approval Center", icon: "check", path: "approval", route: "/martahub/approval" },
   { label: "User Management", icon: "users", path: "assignments", route: "/martahub/assignments" },
   { label: "Master Data", icon: "db", path: "master", route: "/martahub/master" },
-  { label: "POSM Stock", icon: "db", path: "posmat", route: "/martahub/posmat" },
   { label: "Gallery", icon: "gallery", path: "gallery", route: "/martahub/gallery" },
   { label: "Validasi Lokasi", icon: "check", path: "validasi", route: "/martahub/validasi" },
+  { label: "Validasi MSISDN", icon: "sim", path: "msisdn-validation", route: "/martahub/msisdn-validation" },
   { label: "System Settings", icon: "settings", path: "settings", route: "/martahub/settings" },
 ];
 
@@ -80,6 +82,9 @@ function Icon({ name, size = 16, color = "currentColor" }) {
     panelClose: <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><path d="M16 15l-3-3 3-3"/></svg>,
     panelOpen:  <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><path d="M14 9l3 3-3 3"/></svg>,
     gallery:    <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>,
+    posm:       <svg style={s} viewBox="0 0 24 24" {...p}><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>,
+    clipboard: <svg style={s} viewBox="0 0 24 24" {...p}><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="16" y2="15"/><line x1="8" y1="19" x2="12" y2="19"/></svg>,
+    sim:       <svg style={s} viewBox="0 0 24 24" {...p}><path d="M15 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z"/><path d="M15 2v5h5"/><path d="M9 13h6M9 17h4"/></svg>,
   };
   return icons[name] || null;
 }
@@ -239,30 +244,37 @@ export default function MartaShell({ active, title, subtitle, actions, children 
         <div style={{ flex: 1, overflowY: "auto", padding: "10px 8px" }}>
           {NAV.map((item, i) => {
             if (item.section) return (
-              <div key={i} style={{ height: 26, display: "flex", alignItems: "center", padding: "0 8px", overflow: "hidden" }}>
+              <div key={i} style={{ height: 26, display: "flex", alignItems: "center", padding: "0 8px", overflow: "hidden", position: "relative" }}>
                 <span style={{
                   fontSize: 9.5, fontWeight: 700, letterSpacing: "0.14em", color: T.lo, textTransform: "uppercase", whiteSpace: "nowrap",
                   opacity: visuallyCollapsed ? 0 : 1,
-                  transition: visuallyCollapsed ? "opacity .12s ease" : "opacity .16s ease .14s",
+                  transition: visuallyCollapsed ? "opacity .1s ease" : "opacity .16s ease .14s",
                 }}>{item.section}</span>
+                <div style={{
+                  position: "absolute", left: 10, right: 10, top: "50%", height: 1, background: T.line,
+                  opacity: visuallyCollapsed ? 1 : 0,
+                  transition: visuallyCollapsed ? "opacity .16s ease .14s" : "opacity .1s ease",
+                }} />
               </div>
             );
             const on = active === item.path;
             return (
               <div key={i} className="mh-nav" onClick={() => { if (mobile) setDrawerOpen(false); else if (collapsed) setHoverExpanded(false); navigate(item.route || `/martahub/${item.path}`); }}
-                style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 9, cursor: "pointer", marginBottom: 1, background: on ? "rgba(237,28,36,0.08)" : "transparent", position: "relative", overflow: "hidden" }}
+                style={{ display: "flex", alignItems: "center", gap: visuallyCollapsed ? 0 : 10, padding: "9px 10px", borderRadius: 9, cursor: "pointer", marginBottom: 1, background: on ? "rgba(237,28,36,0.08)" : "transparent", position: "relative", overflow: "hidden", transition: "gap .18s cubic-bezier(.4,0,.2,1)" }}
                 title={visuallyCollapsed ? item.label : undefined}>
-                <span style={{ color: on ? T.primary : T.lo, flexShrink: 0 }}><Icon name={item.icon} size={17} color={on ? T.primary : T.lo} /></span>
+                <span style={{ width: 28, flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", color: on ? T.primary : T.lo }}><Icon name={item.icon} size={17} color={on ? T.primary : T.lo} /></span>
                 <span style={{
-                  fontSize: 13, fontWeight: on ? 700 : 500, color: on ? T.primary : T.mid, flex: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                  fontSize: 13, fontWeight: on ? 700 : 500, color: on ? T.primary : T.mid, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                  flex: visuallyCollapsed ? "0 0 0" : "1 1 auto", maxWidth: visuallyCollapsed ? 0 : 200,
                   opacity: visuallyCollapsed ? 0 : 1,
-                  transition: visuallyCollapsed ? "opacity .1s ease" : "opacity .16s ease .14s",
+                  transition: visuallyCollapsed ? "opacity .1s ease, max-width .18s cubic-bezier(.4,0,.2,1)" : "opacity .16s ease .14s, max-width .18s cubic-bezier(.4,0,.2,1)",
                 }}>{item.label}</span>
                 {item.path === "approval" && !!pendingCount && (
                   <span style={{
-                    fontSize: 10, fontWeight: 700, color: "white", background: T.error, borderRadius: 100, padding: "1px 6px", minWidth: 18, textAlign: "center", flexShrink: 0,
+                    fontSize: 10, fontWeight: 700, color: "white", background: T.error, borderRadius: 100, textAlign: "center", flexShrink: 0,
+                    padding: visuallyCollapsed ? 0 : "1px 6px", minWidth: visuallyCollapsed ? 0 : 18, maxWidth: visuallyCollapsed ? 0 : 40, overflow: "hidden",
                     opacity: visuallyCollapsed ? 0 : 1,
-                    transition: visuallyCollapsed ? "opacity .1s ease" : "opacity .16s ease .14s",
+                    transition: visuallyCollapsed ? "opacity .1s ease, max-width .18s ease, padding .18s ease, min-width .18s ease" : "opacity .16s ease .14s, max-width .18s ease, padding .18s ease, min-width .18s ease",
                   }}>{pendingCount}</span>
                 )}
                 {on && <div style={{ position: "absolute", left: 0, top: "20%", bottom: "20%", width: 3, background: T.primary, borderRadius: "0 3px 3px 0" }} />}

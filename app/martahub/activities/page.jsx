@@ -1,9 +1,10 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { X, MapPin, Image as ImageIcon, Phone, FileText, Layers, Search, Download, RotateCcw } from "lucide-react";
-import * as XLSX from "xlsx";
+import { X, Search, Download, RotateCcw, Wallet, FileCheck2, CardSim, Router as RouterIcon, TrendingUp, Banknote, Percent, RefreshCw, Loader2, Settings2 } from "lucide-react";
+import ExcelJS from "exceljs";
 import MartaShell, { T, FONT, brandLabel } from "../components/MartaShell";
 import ExcelFilter from "../components/ExcelFilter";
+import { ActivityDetailModal } from "../components/ActivityDetail";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { getMartaScope, applyMartaScope } from "../../../lib/martaScope";
 
@@ -12,12 +13,36 @@ const CAT_LABEL = {
   project: "Project", sponsorship: "Sponsorship", thematic: "Thematic",
 };
 const STATUS = {
-  draft: ["Draft", T.mid, "#eef1f6"], submitted: ["Planned", T.blue, T.blueBg],
+  draft: ["Draft", T.mid, "#eef1f6"], submitted: ["Laporan Masuk", T.blue, T.blueBg],
   approved: ["Disetujui", T.success, T.successBg], rejected: ["Ditolak", T.error, T.errorBg],
   completed: ["Selesai", T.success, T.successBg], inProgress: ["Berlangsung", T.warning, T.warningBg],
   plan_submitted: ["Menunggu Approval", T.blue, T.blueBg], revision_needed: ["Revisi Plan", T.warning, T.warningBg],
-  pending_validation: ["Menunggu Validasi", T.blue, T.blueBg], revision_actual: ["Revisi Report", T.warning, T.warningBg],
+  pending_validation: ["Menunggu Validasi", T.blue, T.blueBg],
+  revision_actual: ["Perlu Perbaikan Lokasi/Bukti", T.warning, T.warningBg],
 };
+
+// Status "approved" (Plan disetujui) mencakup 3 fase operasional berbeda yang
+// dulu numpuk jadi satu label "Disetujui" - dipecah berdasarkan tanggal
+// plan_date vs hari ini (murni tampilan, TIDAK mengubah kolom status di DB):
+//   - belum sampai plan_date  -> "Menunggu Hari-H"
+//   - hari ini persis plan_date -> "Hari-H / Berlangsung"
+//   - sudah lewat plan_date tapi laporan aktual belum disubmit -> "Terlambat Lapor"
+// Begitu laporan aktual disubmit, status DB pindah ke 'submitted' dst, jadi
+// fungsi ini otomatis tidak lagi dipakai utk activity itu.
+function deriveStatusInfo(r) {
+  if (r?.status === "approved") {
+    const planDateStr = r.plan_date_start || r.plan_date;
+    if (planDateStr) {
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const planDate = new Date(planDateStr.slice(0, 10)); planDate.setHours(0, 0, 0, 0);
+      const diffDays = Math.round((today - planDate) / 86400000);
+      if (diffDays < 0) return ["Menunggu Hari-H", T.blue, T.blueBg];
+      if (diffDays === 0) return ["Hari-H / Berlangsung", T.warning, T.warningBg];
+      return ["Terlambat Lapor", T.error, T.errorBg];
+    }
+  }
+  return STATUS[r?.status] || [r?.status, T.mid, "#eef1f6"];
+}
 
 const fmtDate = (s) => {
   if (!s || s.length < 10) return "-";
@@ -26,6 +51,28 @@ const fmtDate = (s) => {
   return `${d} ${mo} ${y}`;
 };
 const fmtInt = (n) => (n == null ? "-" : Number(n).toLocaleString("id-ID"));
+// Label seragam utk kolom bertipe "tag" (POI, Event Category, Network Category):
+// SEMUA HURUF BESAR, underscore diganti spasi (bukan "urban_area" tapi "URBAN AREA").
+const fmtTag = (s) => (s ? String(s).replace(/_/g, " ").toUpperCase() : "-");
+
+// Badge brand - SOLID & "pop", bukan teks warna transparan spt sebelumnya:
+// IM3 = kuning solid + teks HITAM (kontras tinggi, sesuai identitas IM3),
+// 3ID = magenta solid + teks putih. Dipakai di kolom Brand tabel & header
+// modal detail supaya brand langsung kebaca sekilas dari jauh.
+function BrandBadge({ brand }) {
+  if (!brand) return <span style={{ color: T.lo }}>-</span>;
+  const isTri = String(brand).toLowerCase() === "tri";
+  const bg = isTri ? "#E6007E" : "#FFC700";
+  const fg = isTri ? "#fff" : "#1A1300";
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", fontSize: 10.5, fontWeight: 800,
+      color: fg, background: bg, padding: "3px 9px", borderRadius: 7, letterSpacing: "0.02em",
+    }}>
+      {brandLabel(brand)}
+    </span>
+  );
+}
 const fmtRp = (n) => (n == null ? "-" : `Rp${Number(n).toLocaleString("id-ID")}`);
 const rebuySum = (a, b) => { const x = Number(a || 0) + Number(b || 0); return x || null; };
 const pctVal = (actual, target) => (!target ? null : (Number(actual || 0) / Number(target)) * 100);
@@ -50,7 +97,7 @@ const DETAIL_COLS = "id,event_name,event_category,event_categories,brand,mc,bran
 // Kolom list mh_activities untuk tabel Excel-style di bawah - lebih ringkas
 // dari DETAIL_COLS (dipakai modal) tapi mencakup semua field yg diminta utk
 // tabel Activity Plan (target/actual/ACV/cost ratio/insight/dokumentasi).
-const LIST_COLS = "id,event_name,brand,mc,branch_id,event_categories,event_category,plan_date_start,plan_date,actual_date,site_id,network_category,area_potential,poi_type,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,target_rev_3m,cost_estimate,actual_sp,actual_fwa,actual_rebuy_pulsa,actual_rebuy_data,actual_rev_3m,cost_actual,insight,checkin_valid,created_by,created_at";
+const LIST_COLS = "id,event_name,brand,mc,branch_id,event_categories,event_category,plan_date_start,plan_date,actual_date,site_id,network_category,area_potential,poi_type,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,target_rev_3m,cost_estimate,actual_sp,actual_fwa,actual_rebuy_pulsa,actual_rebuy_data,actual_rev_3m,cost_actual,insight,checkin_valid,created_by,bme_user_id,created_at";
 
 export default function ActivityPlanPage() {
   return (
@@ -65,13 +112,17 @@ function Body({ email }) {
   const [branchMap, setBranchMap] = useState({});
   const [profileMap, setProfileMap] = useState({});
   const [docCountMap, setDocCountMap] = useState({});
+  const [docPhotoMap, setDocPhotoMap] = useState({}); // activity_id -> storage_path foto pertama (utk thumbnail export)
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
   const [scope, setScope] = useState(null);
   const [detailId, setDetailId] = useState(null);
   const [colFilters, setColFilters] = useState({});
   const [sortState, setSortState] = useState({ key: null, dir: "asc" });
+  const [lbMap, setLbMap] = useState({}); // user_id -> { achievement_pct, productivity_pct }
+  const [showKpiConfig, setShowKpiConfig] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true); setErr("");
@@ -89,21 +140,29 @@ function Body({ email }) {
       const list = data || [];
       setRows(list);
 
-      const [{ data: branches }, { data: profiles }] = await Promise.all([
+      const [{ data: branches }, { data: profiles }, { data: lbRows }] = await Promise.all([
         supabaseMarta.from("mh_branches").select("id, name"),
         supabaseMarta.from("mh_profiles").select("id, full_name"),
+        supabaseMarta.from("mh_leaderboard_summary").select("user_id, achievement_pct, productivity_pct"),
       ]);
       setBranchMap(Object.fromEntries((branches || []).map((b) => [b.id, b.name])));
       setProfileMap(Object.fromEntries((profiles || []).map((p) => [p.id, p.full_name])));
+      setLbMap(Object.fromEntries((lbRows || []).map((l) => [l.user_id, l])));
 
       const ids = list.map((r) => r.id);
       if (ids.length) {
-        const { data: docs } = await supabaseMarta.from("mh_documents").select("activity_id, file_type").in("activity_id", ids).eq("file_type", "photo");
+        const { data: docs } = await supabaseMarta.from("mh_documents").select("activity_id, file_type, storage_path, created_at").in("activity_id", ids).eq("file_type", "photo").order("created_at");
         const counts = {};
-        (docs || []).forEach((d) => { counts[d.activity_id] = (counts[d.activity_id] || 0) + 1; });
+        const firstPhoto = {};
+        (docs || []).forEach((d) => {
+          counts[d.activity_id] = (counts[d.activity_id] || 0) + 1;
+          if (!firstPhoto[d.activity_id]) firstPhoto[d.activity_id] = d.storage_path;
+        });
         setDocCountMap(counts);
+        setDocPhotoMap(firstPhoto);
       } else {
         setDocCountMap({});
+        setDocPhotoMap({});
       }
     } catch (e) { setErr(e.message || "Gagal memuat"); }
     finally { setLoading(false); }
@@ -113,7 +172,7 @@ function Body({ email }) {
   const cats = useCallback((r) => {
     const arr = Array.isArray(r.event_categories) && r.event_categories.length ? r.event_categories : (r.event_category ? [r.event_category] : []);
     if (!arr.length) return "-";
-    return arr.map((c) => CAT_LABEL[c] || c).join(", ");
+    return arr.map((c) => fmtTag(CAT_LABEL[c] || c)).join(", ");
   }, []);
 
   // ── Definisi kolom - SATU sumber utk header, filter (kolom berlabel
@@ -121,37 +180,37 @@ function Body({ email }) {
   //    sel. Urutan PERSIS sesuai daftar kolom yang diminta. ─────────────────
   const COLUMNS = useMemo(() => [
     { key: "no", label: "No.", width: 46 },
+    { key: "status", label: "Status", width: 150, filter: true, get: (r) => deriveStatusInfo(r)[0], badgeStatus: true },
     { key: "month", label: "Month", width: 118, filter: true, get: (r) => monthLabel(r.plan_date_start || r.plan_date) },
     { key: "brand", label: "Brand", width: 66, filter: true, get: (r) => brandLabel(r.brand), badgeBrand: true },
     { key: "branch", label: "Branch", width: 140, filter: true, get: (r) => branchMap[r.branch_id] || "-" },
-    { key: "brandBranch", label: "Brand_Branch", width: 160, filter: true, get: (r) => `${brandLabel(r.brand)} - ${branchMap[r.branch_id] || "-"}` },
+    { key: "brandBranch", label: "Brand Branch", width: 160, filter: true, get: (r) => `${brandLabel(r.brand)} - ${branchMap[r.branch_id] || "-"}` },
     { key: "mc", label: "Micro Cluster", width: 120, filter: true, get: (r) => r.mc || "-" },
     { key: "creator", label: "BME/RGE", width: 150, filter: true, get: (r) => profileMap[r.created_by] || "-" },
     { key: "planDate", label: "Plan Date", width: 100, filter: true, get: (r) => fmtDate(r.plan_date_start || r.plan_date), sortVal: (r) => r.plan_date_start || r.plan_date || "" },
     { key: "actualDate", label: "Actual Date", width: 100, filter: true, get: (r) => fmtDate(r.actual_date), sortVal: (r) => r.actual_date || "" },
     { key: "eventCategory", label: "Event Category", width: 160, filter: true, get: (r) => cats(r) },
-    { key: "status", label: "Status", width: 150, filter: true, get: (r) => (STATUS[r.status] || [r.status])[0], badgeStatus: true },
-    { key: "network", label: "Network Category", width: 130, filter: true, get: (r) => r.network_category || "-" },
+    { key: "network", label: "Network Category", width: 130, filter: true, get: (r) => fmtTag(r.network_category) },
     { key: "eventName", label: "Event Name", width: 230, filter: true, get: (r) => r.event_name || "-" },
-    { key: "areaPotential", label: "Area Potential", width: 120, filter: true, get: (r) => r.area_potential || "-" },
+    { key: "areaPotential", label: "Area Potential", width: 120, filter: true, get: (r) => fmtTag(r.area_potential) },
     { key: "siteId", label: "Site ID", width: 100, filter: true, get: (r) => r.site_id || "-" },
-    { key: "long", label: "Long", width: 90, filter: true, get: (r) => (r.longitude ?? "-"), raw: (r) => r.longitude, numeric: true },
-    { key: "lat", label: "Lat", width: 90, filter: true, get: (r) => (r.latitude ?? "-"), raw: (r) => r.latitude, numeric: true },
-    { key: "poi", label: "POI", width: 110, filter: true, get: (r) => r.poi_type || "-" },
+    { key: "long", label: "Long", width: 90, filter: true, get: (r) => (r.longitude != null ? String(r.longitude) : "-"), raw: (r) => r.longitude, numeric: true },
+    { key: "lat", label: "Lat", width: 90, filter: true, get: (r) => (r.latitude != null ? String(r.latitude) : "-"), raw: (r) => r.latitude, numeric: true },
+    { key: "poi", label: "POI", width: 110, filter: true, get: (r) => fmtTag(r.poi_type) },
     { key: "address", label: "Address", width: 240, filter: true, get: (r) => r.address || "-" },
-    { key: "targetSp", label: "Target_SP", width: 92, filter: true, get: (r) => fmtInt(r.target_sp), raw: (r) => r.target_sp, numeric: true },
-    { key: "targetFwa", label: "Target_FWA", width: 96, filter: true, get: (r) => fmtInt(r.target_fwa), raw: (r) => r.target_fwa, numeric: true },
-    { key: "targetRebuy", label: "Target_Rebuy", width: 110, filter: true, get: (r) => fmtRp(rebuySum(r.target_rebuy_pulsa, r.target_rebuy_data)), raw: (r) => rebuySum(r.target_rebuy_pulsa, r.target_rebuy_data), numeric: true },
-    { key: "targetRev", label: "Target_Rev (3M)", width: 130, filter: true, get: (r) => fmtRp(r.target_rev_3m), raw: (r) => r.target_rev_3m, numeric: true },
+    { key: "targetSp", label: "Target SP", width: 92, filter: true, get: (r) => fmtInt(r.target_sp), raw: (r) => r.target_sp, numeric: true },
+    { key: "targetFwa", label: "Target FWA", width: 96, filter: true, get: (r) => fmtInt(r.target_fwa), raw: (r) => r.target_fwa, numeric: true },
+    { key: "targetRebuy", label: "Target Rebuy", width: 110, filter: true, get: (r) => fmtRp(rebuySum(r.target_rebuy_pulsa, r.target_rebuy_data)), raw: (r) => rebuySum(r.target_rebuy_pulsa, r.target_rebuy_data), numeric: true },
+    { key: "targetRev", label: "Target Rev (3M)", width: 130, filter: true, get: (r) => fmtRp(r.target_rev_3m), raw: (r) => r.target_rev_3m, numeric: true },
     { key: "costEstimate", label: "Cost Estimate", width: 120, filter: true, get: (r) => fmtRp(r.cost_estimate), raw: (r) => r.cost_estimate, numeric: true },
-    { key: "actualSp", label: "Actual_SP", width: 92, filter: true, get: (r) => fmtInt(r.actual_sp), raw: (r) => r.actual_sp, numeric: true },
-    { key: "actualFwa", label: "Actual_FWA", width: 96, filter: true, get: (r) => fmtInt(r.actual_fwa), raw: (r) => r.actual_fwa, numeric: true },
-    { key: "actualRebuy", label: "Actual_Rebuy", width: 110, filter: true, get: (r) => fmtRp(rebuySum(r.actual_rebuy_pulsa, r.actual_rebuy_data)), raw: (r) => rebuySum(r.actual_rebuy_pulsa, r.actual_rebuy_data), numeric: true },
-    { key: "actualRev", label: "Actual_Rev (3M)", width: 130, filter: true, get: (r) => fmtRp(r.actual_rev_3m), raw: (r) => r.actual_rev_3m, numeric: true },
+    { key: "actualSp", label: "Actual SP", width: 92, filter: true, get: (r) => fmtInt(r.actual_sp), raw: (r) => r.actual_sp, numeric: true },
+    { key: "actualFwa", label: "Actual FWA", width: 96, filter: true, get: (r) => fmtInt(r.actual_fwa), raw: (r) => r.actual_fwa, numeric: true },
+    { key: "actualRebuy", label: "Actual Rebuy", width: 110, filter: true, get: (r) => fmtRp(rebuySum(r.actual_rebuy_pulsa, r.actual_rebuy_data)), raw: (r) => rebuySum(r.actual_rebuy_pulsa, r.actual_rebuy_data), numeric: true },
+    { key: "actualRev", label: "Actual Rev (3M)", width: 130, filter: true, get: (r) => fmtRp(r.actual_rev_3m), raw: (r) => r.actual_rev_3m, numeric: true },
     { key: "costActual", label: "Cost Actual", width: 120, filter: true, get: (r) => fmtRp(r.cost_actual), raw: (r) => r.cost_actual, numeric: true },
-    { key: "acvSp", label: "Acv_SP", width: 84, filter: true, get: (r) => pctLabel(r.actual_sp, r.target_sp), raw: (r) => pctVal(r.actual_sp, r.target_sp), numeric: true, acv: true },
-    { key: "acvFwa", label: "ACV_FWA", width: 84, filter: true, get: (r) => pctLabel(r.actual_fwa, r.target_fwa), raw: (r) => pctVal(r.actual_fwa, r.target_fwa), numeric: true, acv: true },
-    { key: "acvRebuy", label: "ACV_Rebuy", width: 92, filter: true, get: (r) => pctLabel(rebuySum(r.actual_rebuy_pulsa, r.actual_rebuy_data), rebuySum(r.target_rebuy_pulsa, r.target_rebuy_data)), raw: (r) => pctVal(rebuySum(r.actual_rebuy_pulsa, r.actual_rebuy_data), rebuySum(r.target_rebuy_pulsa, r.target_rebuy_data)), numeric: true, acv: true },
+    { key: "acvSp", label: "ACV SP", width: 84, filter: true, get: (r) => pctLabel(r.actual_sp, r.target_sp), raw: (r) => pctVal(r.actual_sp, r.target_sp), numeric: true, acv: true },
+    { key: "acvFwa", label: "ACV FWA", width: 84, filter: true, get: (r) => pctLabel(r.actual_fwa, r.target_fwa), raw: (r) => pctVal(r.actual_fwa, r.target_fwa), numeric: true, acv: true },
+    { key: "acvRebuy", label: "ACV Rebuy", width: 92, filter: true, get: (r) => pctLabel(rebuySum(r.actual_rebuy_pulsa, r.actual_rebuy_data), rebuySum(r.target_rebuy_pulsa, r.target_rebuy_data)), raw: (r) => pctVal(rebuySum(r.actual_rebuy_pulsa, r.actual_rebuy_data), rebuySum(r.target_rebuy_pulsa, r.target_rebuy_data)), numeric: true, acv: true },
     { key: "costRatio", label: "Cost Ratio", width: 92, filter: true, get: (r) => pctLabel(r.cost_actual, r.cost_estimate), raw: (r) => pctVal(r.cost_actual, r.cost_estimate), numeric: true, acv: true, invertGood: true },
     { key: "insight", label: "Insight (Optional)", width: 220, filter: true, get: (r) => r.insight || "-" },
     { key: "documentation", label: "Documentation", width: 120, filter: true, get: (r) => (docCountMap[r.id] ? `${docCountMap[r.id]} foto` : "-") },
@@ -187,7 +246,7 @@ function Body({ email }) {
         if (sel && sel.length) list = list.filter((r) => sel.includes(oc.get(r)));
       }
       const uniq = [...new Set(list.map(col.get).filter((v) => v && v !== "-"))].sort((a, b) => String(a).localeCompare(String(b), "id"));
-      map[col.key] = uniq.map((v) => ({ value: v, label: v }));
+      map[col.key] = uniq.map((v) => ({ value: v, label: String(v) }));
     }
     return map;
   }, [FILTER_COLS, searchFiltered, colFilters]);
@@ -221,25 +280,60 @@ function Body({ email }) {
   //    filter/pencarian yang sedang aktif. ─────────────────────────────────
   const kpiStats = useMemo(() => {
     const total = filteredRows.length;
-    const geoTracked = filteredRows.filter((r) => r.checkin_valid !== null && r.checkin_valid !== undefined);
-    const geoOk = geoTracked.filter((r) => r.checkin_valid === true).length;
-    const withTarget = filteredRows.filter((r) => r.target_sp);
-    const achSum = withTarget.reduce((s, r) => s + (r.actual_sp ?? 0), 0);
-    const tgtSum = withTarget.reduce((s, r) => s + (r.target_sp ?? 0), 0);
+
+    // Achievement & Productivity - rata-rata dari mh_leaderboard_summary
+    // (dihitung server-side dari bobot mh_settings.leaderboard_weights),
+    // discope ke BME/RGE yang punya activity di filteredRows saat ini.
+    const bmeIds = Array.from(new Set(filteredRows.map((r) => r.bme_user_id).filter(Boolean)));
+    const lbEntries = bmeIds.map((id) => lbMap[id]).filter(Boolean);
+    const avgAchievement = lbEntries.length
+      ? lbEntries.reduce((s, e) => s + (Number(e.achievement_pct) || 0), 0) / lbEntries.length
+      : null;
+    const avgProductivity = lbEntries.length
+      ? lbEntries.reduce((s, e) => s + (Number(e.productivity_pct) || 0), 0) / lbEntries.length
+      : null;
+
+    // "Pengajuan" = target yg diajukan BME saat plan; "Tervalidasi" = actual
+    // yg sudah direalisasikan/tervalidasi saat laporan disubmit. Ditampilkan
+    // sbg ANGKA TOTAL (bukan %) sesuai permintaan - lebih mudah dibaca cepat.
+    const sumPair = (tKey, aKey) => {
+      const withTarget = filteredRows.filter((r) => r[tKey]);
+      const tgt = withTarget.reduce((s, r) => s + (r[tKey] ?? 0), 0);
+      const act = withTarget.reduce((s, r) => s + (r[aKey] ?? 0), 0);
+      return { tgt, act, n: withTarget.length };
+    };
+    const sp = sumPair("target_sp", "actual_sp");
+    const fwa = sumPair("target_fwa", "actual_fwa");
+
+    const actualRebuy = filteredRows.reduce((s, r) => s + (rebuySum(r.actual_rebuy_pulsa, r.actual_rebuy_data) ?? 0), 0);
+    const actualRev3m = filteredRows.reduce((s, r) => s + (r.actual_rev_3m ?? 0), 0);
+    const targetRev3m = filteredRows.reduce((s, r) => s + (r.target_rev_3m ?? 0), 0);
+    const totalCostActual = filteredRows.reduce((s, r) => s + (r.cost_actual ?? 0), 0);
+
+    const withBudget = filteredRows.filter((r) => r.cost_estimate);
+    const budgetEst = withBudget.reduce((s, r) => s + (r.cost_estimate ?? 0), 0);
+    const budgetAct = withBudget.reduce((s, r) => s + (r.cost_actual ?? 0), 0);
+    const costRatioPct = budgetEst > 0 ? Math.round((budgetAct / budgetEst) * 100) : null;
+
+    const actualSubmittedCount = filteredRows.filter((r) => r.actual_date).length;
+
     return {
       total,
-      geoPct: geoTracked.length ? Math.round((geoOk / geoTracked.length) * 100) : null,
-      geoN: geoTracked.length,
-      achPct: tgtSum > 0 ? Math.round((achSum / tgtSum) * 100) : null,
+      spTervalidasi: sp.act, spPengajuan: sp.tgt,
+      fwaTervalidasi: fwa.act, fwaPengajuan: fwa.tgt,
+      actualRebuy, actualRev3m, targetRev3m, totalCostActual, budgetEst,
+      costRatioPct, costOverBudget: budgetAct > budgetEst,
+      actualSubmittedCount,
+      avgAchievement, avgProductivity,
     };
-  }, [filteredRows]);
+  }, [filteredRows, lbMap]);
 
   const statusStatusCounts = useMemo(() => {
     const m = new Map();
-    for (const r of rows) { const lbl = (STATUS[r.status] || [r.status])[0]; m.set(lbl, (m.get(lbl) || 0) + 1); }
+    for (const r of rows) { const lbl = deriveStatusInfo(r)[0]; m.set(lbl, (m.get(lbl) || 0) + 1); }
     return m;
   }, [rows]);
-  const statusChips = useMemo(() => Object.entries(STATUS).map(([, v]) => v[0]).filter((lbl, i, arr) => arr.indexOf(lbl) === i && statusStatusCounts.has(lbl)), [statusStatusCounts]);
+  const statusChips = useMemo(() => Array.from(statusStatusCounts.keys()), [statusStatusCounts]);
   const selectedStatuses = colFilters.status || [];
   const toggleStatusChip = (lbl) => {
     setColFilters((p) => {
@@ -255,36 +349,137 @@ function Body({ email }) {
   const hasAnyFilter = activeFilterCount > 0 || !!term;
   const clearAllFilters = () => { setColFilters({}); setQ(""); setSortState({ key: null, dir: "asc" }); };
   const [searchFocus, setSearchFocus] = useState(false);
+  const [showSuggest, setShowSuggest] = useState(false);
+
+  // ── Saran pencarian - dibangun dari nilai unik yg SUDAH ada di data
+  //    (event, branch, MC, BME/RGE, site, alamat - field yg sama persis dgn
+  //    yg dicocokkan searchFiltered di atas), difilter oleh ketikan saat
+  //    ini, maks 8 item, tanpa duplikat. ─────────────────────────────────
+  const searchSuggestions = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    if (!term) return [];
+    const pool = [];
+    for (const r of rows) {
+      if (r.event_name) pool.push({ label: r.event_name, kind: "Event" });
+      const branch = branchMap[r.branch_id];
+      if (branch) pool.push({ label: branch, kind: "Branch" });
+      if (r.mc) pool.push({ label: r.mc, kind: "MC" });
+      const creator = profileMap[r.created_by];
+      if (creator) pool.push({ label: creator, kind: "BME/RGE" });
+      if (r.site_id) pool.push({ label: r.site_id, kind: "Site" });
+      if (r.address) pool.push({ label: r.address, kind: "Alamat" });
+    }
+    const seen = new Set();
+    const out = [];
+    for (const item of pool) {
+      const key = `${item.kind}:${item.label}`;
+      if (seen.has(key)) continue;
+      if (!item.label.toLowerCase().includes(term)) continue;
+      if (item.label.toLowerCase() === term) continue; // sudah persis diketik, tak perlu disarankan
+      seen.add(key);
+      out.push(item);
+      if (out.length >= 8) break;
+    }
+    return out;
+  }, [q, rows, branchMap, profileMap]);
 
   // ── Export .xlsx - PERSIS mengikuti hasil filter yang sedang aktif
   //    (search + semua kolom filter + urutan sort), bukan seluruh data
   //    mentah. Kolom numerik/ACV diekspor sbg angka (bukan teks "Rp…"/"%")
-  //    supaya bisa langsung dipakai rumus di Excel. ──────────────────────
-  const exportXlsx = useCallback(() => {
-    const headers = COLUMNS.map((c) => c.label);
-    const aoa = [headers, ...filteredRows.map((r, i) => COLUMNS.map((c) => {
-      if (c.key === "no") return i + 1;
-      if (c.numeric && c.raw) {
-        const v = c.raw(r);
-        return v == null ? "" : Math.round(v * 100) / 100;
+  //    supaya bisa langsung dipakai rumus di Excel.
+  //    Catatan (2026-09):
+  //    - Long/Lat DULU dibulatkan 2 desimal spt kolom uang/ACV lain -> data
+  //      GPS jadi keliru sampai ratusan meter. Sekarang diekspor APA ADANYA
+  //      (presisi penuh), tidak lewat pembulatan generik.
+  //    - Kolom Documentation DULU cuma teks "N foto". Sekarang foto PERTAMA
+  //      tiap activity di-embed langsung sbg thumbnail di sel-nya (pakai
+  //      ExcelJS, bukan lib `xlsx` yg tidak bisa taruh gambar di cell) -
+  //      supaya kelihatan langsung tanpa buka link satu-satu.
+  const exportXlsx = useCallback(async () => {
+    setExporting(true);
+    try {
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet("Activity Plan", { views: [{ state: "frozen", ySplit: 1 }] });
+
+      ws.columns = COLUMNS.map((c) => ({
+        header: c.label,
+        width: Math.max(10, Math.round((c.width || 100) / 7)),
+      }));
+      ws.getRow(1).font = { bold: true };
+      ws.getRow(1).alignment = { vertical: "middle" };
+
+      const docCol = COLUMNS.findIndex((c) => c.key === "documentation") + 1; // 1-based utk ExcelJS
+      const THUMB_PX = 54;
+
+      // Baris teks dulu (cepat, sinkron) - gambar ditempel belakangan per baris
+      filteredRows.forEach((r, i) => {
+        const rowValues = COLUMNS.map((c) => {
+          if (c.key === "no") return i + 1;
+          if (c.key === "documentation") return ""; // diisi gambar, bukan teks
+          if (c.key === "long" || c.key === "lat") {
+            const v = c.raw(r);
+            return v == null ? "" : v; // presisi penuh, TIDAK dibulatkan
+          }
+          if (c.numeric && c.raw) {
+            const v = c.raw(r);
+            return v == null ? "" : Math.round(v * 100) / 100;
+          }
+          const v = c.get(r);
+          return v === "-" ? "" : v;
+        });
+        ws.addRow(rowValues);
+      });
+
+      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: filteredRows.length + 1, column: COLUMNS.length } };
+
+      // Ambil & tempel thumbnail foto pertama tiap activity yg punya dokumentasi.
+      // Jalan paralel (Promise.allSettled) supaya 1 foto gagal load tidak
+      // menggagalkan seluruh export.
+      if (docCol > 0) {
+        await Promise.allSettled(filteredRows.map(async (r, i) => {
+          const path = docPhotoMap[r.id];
+          if (!path) return;
+          try {
+            const url = photoUrl(path);
+            const res = await fetch(url);
+            if (!res.ok) return;
+            const buffer = await res.arrayBuffer();
+            const ext = (path.split(".").pop() || "jpeg").toLowerCase();
+            const extension = ["png", "jpeg", "jpg", "gif"].includes(ext) ? (ext === "jpg" ? "jpeg" : ext) : "jpeg";
+            const imageId = wb.addImage({ buffer, extension });
+            const rowIdx = i + 1; // 0-based row index di bawah header (baris data ke-1 = index 1 di sheet)
+            ws.getRow(rowIdx + 1).height = Math.max(ws.getRow(rowIdx + 1).height || 0, THUMB_PX * 0.78);
+            ws.addImage(imageId, {
+              tl: { col: docCol - 1 + 0.05, row: rowIdx + 0.05 },
+              ext: { width: THUMB_PX, height: THUMB_PX },
+              editAs: "oneCell",
+            });
+          } catch { /* lewati foto yg gagal diambil, baris lain tetap lanjut */ }
+        }));
       }
-      const v = c.get(r);
-      return v === "-" ? "" : v;
-    }))];
-    const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws["!cols"] = COLUMNS.map((c) => ({ wch: Math.max(10, Math.round((c.width || 100) / 7)) }));
-    ws["!freeze"] = { xSplit: 0, ySplit: 1 };
-    ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: aoa.length - 1, c: headers.length - 1 } }) };
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Activity Plan");
-    const stamp = new Date().toISOString().slice(0, 10);
-    XLSX.writeFile(wb, `MartaHub_Activity_Plan_${stamp}.xlsx`);
-  }, [COLUMNS, filteredRows]);
+
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const stamp = new Date().toISOString().slice(0, 10);
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `MartaHub_Activity_Plan_${stamp}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+    } catch (e) {
+      alert(e.message || "Gagal export .xlsx");
+    } finally {
+      setExporting(false);
+    }
+  }, [COLUMNS, filteredRows, docPhotoMap]);
 
   const T_FILTER = { hi: T.hi, mid: T.mid, lo: T.lo, blue: T.primary, blueBg: T.primaryBg };
 
   return (
     <div>
+      <style>{"@keyframes mh-spin { to { transform: rotate(360deg); } }"}</style>
       {!MARTA_CONFIGURED && (
         <div style={{ ...card, borderColor: T.warning, background: T.warningBg, color: "#7a5b00", marginBottom: 16 }}>
           Supabase MartaHub belum dikonfigurasi / project paused - data tampil kosong.
@@ -292,13 +487,28 @@ function Body({ email }) {
       )}
       {err && <div style={{ ...card, borderColor: T.error, background: T.errorBg, color: T.error, marginBottom: 16 }}>{err}</div>}
 
+      {showKpiConfig && <KpiConfigModal email={email} canEdit={scope?.role === "spm_sumatera"} onClose={() => setShowKpiConfig(false)} />}
+
       {/* KPI strip - pantauan cepat (dulu di menu "Activity Monitoring"
           terpisah), sekarang langsung di atas tabel Activity Plan supaya
           "pantau sekaligus lihat detail" bisa dalam satu layar. */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10, marginBottom: 12 }}>
-        <Kpi label="Total Plan" value={String(kpiStats.total)} color={T.blue} />
-        <Kpi label="Achievement %" value={kpiStats.achPct == null ? "-" : `${kpiStats.achPct}%`} color={T.success} />
-        <Kpi label="Geo Compliance" value={kpiStats.geoPct == null ? "-" : `${kpiStats.geoPct}%`} sub={kpiStats.geoN ? `${kpiStats.geoN} tercatat` : "belum ada check-in"} color="#0D9488" />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(172px,1fr))", gap: 14, marginBottom: 18 }}>
+        <Kpi label="Total SP Tervalidasi" value={<KpiRatio main={fmtInt(kpiStats.spTervalidasi)} suffix={` / ${fmtInt(kpiStats.spPengajuan)} pengajuan`} />}
+          sub={<KpiSubRow icon={RefreshCw} label="Rebuy SP" value={fmtRp(kpiStats.actualRebuy)} />}
+          icon={CardSim} color={T.success} />
+        <Kpi label="Total FWA Tervalidasi" value={<KpiRatio main={fmtInt(kpiStats.fwaTervalidasi)} suffix={` / ${fmtInt(kpiStats.fwaPengajuan)} pengajuan`} />}
+          sub={<KpiSubRow icon={RefreshCw} label="Rebuy FWA" value={fmtRp(kpiStats.actualRebuy)} />}
+          icon={RouterIcon} color={T.success} />
+        <Kpi label="Total Revenue" value={fmtRp(kpiStats.actualRev3m)}
+          sub={<KpiSubRow label="Total Revenue (3M)" value={fmtRp(kpiStats.actualRev3m)} />}
+          icon={Banknote} color={T.blue} />
+        <Kpi label="Total Cost Actual" value={fmtRp(kpiStats.totalCostActual)}
+          sub={<KpiSubRow label="Cost Ratio" value={kpiStats.costRatioPct == null ? "-" : `${kpiStats.costRatioPct}%`} />}
+          icon={Wallet} color={T.warning} />
+        <Kpi label="Laporan Actual" value={<KpiRatio main={String(kpiStats.actualSubmittedCount)} suffix={` / ${kpiStats.total} plan`} />}
+          sub={<AchProdSubRow achievement={kpiStats.avgAchievement} productivity={kpiStats.avgProductivity}
+            canConfig={scope?.role === "spm_sumatera"} onConfig={() => setShowKpiConfig(true)} />}
+          icon={FileCheck2} color="#7C3AED" />
       </div>
 
       {/* Status quick-filter - chip ini & dropdown filter kolom "Status" di
@@ -328,24 +538,54 @@ function Body({ email }) {
             dalam kotaknya sendiri, dgn ring fokus yg jelas (bukan <input>
             polos spt sebelumnya). */}
         <div style={{
-          position: "relative", display: "flex", alignItems: "center", width: 320, maxWidth: "100%",
+          position: "relative", display: "flex", alignItems: "center", width: 360, maxWidth: "100%",
           background: "#fff", border: `1.5px solid ${searchFocus ? T.primary : T.line}`, borderRadius: 11,
-          boxShadow: searchFocus ? `0 0 0 3px ${T.primaryBg}` : "none", transition: "border-color .15s, box-shadow .15s",
+          boxShadow: searchFocus ? `0 0 0 3px ${T.primaryBg}` : "0 1px 2px rgba(13,17,23,0.04)", transition: "border-color .15s, box-shadow .15s",
         }}>
-          <Search size={15} color={searchFocus ? T.primary : T.lo} style={{ position: "absolute", left: 11, pointerEvents: "none" }} />
+          <Search size={15} color={searchFocus ? T.primary : T.lo} style={{ position: "absolute", left: 12, pointerEvents: "none" }} />
           <input
-            value={q} onChange={(e) => setQ(e.target.value)}
-            onFocus={() => setSearchFocus(true)} onBlur={() => setSearchFocus(false)}
-            placeholder="Cari event, branch, MC, BME/RGE, site, alamat…"
-            style={{ width: "100%", padding: "9px 34px 9px 34px", border: "none", outline: "none", background: "transparent", fontSize: 13, color: T.hi, fontFamily: FONT, borderRadius: 11, boxSizing: "border-box" }}
+            value={q} onChange={(e) => { setQ(e.target.value); setShowSuggest(true); }}
+            onFocus={() => { setSearchFocus(true); setShowSuggest(true); }}
+            onBlur={() => { setSearchFocus(false); setTimeout(() => setShowSuggest(false), 120); }}
+            onKeyDown={(e) => { if (e.key === "Escape") { setShowSuggest(false); e.currentTarget.blur(); } }}
+            placeholder="Cari Activity Plan"
+            style={{ width: "100%", padding: "9px 34px 9px 36px", border: "none", outline: "none", background: "transparent", fontSize: 13, color: T.hi, fontFamily: FONT, borderRadius: 11, boxSizing: "border-box" }}
           />
           {q && (
-            <button onClick={() => setQ("")} title="Bersihkan pencarian"
+            <button onClick={() => { setQ(""); setShowSuggest(false); }} title="Bersihkan pencarian"
               style={{ position: "absolute", right: 8, width: 20, height: 20, borderRadius: "50%", border: "none", background: "#F0F4FA", color: T.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
               <X size={12} />
             </button>
           )}
+
+          {showSuggest && searchSuggestions.length > 0 && (
+            <div style={{
+              position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 30,
+              background: "#fff", border: `1px solid ${T.line}`, borderRadius: 12,
+              boxShadow: "0 12px 32px rgba(13,17,23,0.14)", overflow: "hidden",
+            }}>
+              {searchSuggestions.map((sug, i) => (
+                <div key={`${sug.kind}-${sug.label}-${i}`}
+                  onMouseDown={(e) => { e.preventDefault(); setQ(sug.label); setShowSuggest(false); }}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                    padding: "8px 12px", fontSize: 12.5, color: T.hi, cursor: "pointer",
+                    borderTop: i > 0 ? `1px solid ${T.line}` : "none",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "#F7F9FC"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "#fff"; }}>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sug.label}</span>
+                  <span style={{ fontSize: 9.5, fontWeight: 800, color: T.lo, background: "#F0F4FA", padding: "2px 7px", borderRadius: 999, flexShrink: 0, textTransform: "uppercase", letterSpacing: "0.03em" }}>{sug.kind}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
+
+        <button onClick={load} disabled={loading} title="Muat ulang data"
+          style={{ ...btn, opacity: loading ? 0.6 : 1, cursor: loading ? "default" : "pointer", color: T.mid, flexShrink: 0 }}>
+          {loading ? <Loader2 size={13} style={{ animation: "mh-spin .8s linear infinite" }} /> : <RefreshCw size={13} />} Refresh
+        </button>
 
         {scope && !scope.unscoped && scope.found && (
           <div style={{ fontSize: 11, fontWeight: 700, color: T.mid, background: "#F0F4FA", border: `1px solid ${T.line}`, borderRadius: 100, padding: "2px 10px" }}>
@@ -364,9 +604,9 @@ function Body({ email }) {
             <RotateCcw size={13} /> Clear All Filter
           </button>
 
-          <button onClick={exportXlsx} disabled={loading || filteredRows.length === 0} title="Export data sesuai filter yang sedang diterapkan"
-            style={{ ...btn, opacity: (loading || filteredRows.length === 0) ? 0.5 : 1, cursor: (loading || filteredRows.length === 0) ? "default" : "pointer", background: "linear-gradient(135deg,#1E8E3E,#0F6B2C)", borderColor: "transparent", color: "#fff" }}>
-            <Download size={13} /> Export .xlsx
+          <button onClick={exportXlsx} disabled={loading || exporting || filteredRows.length === 0} title="Export data sesuai filter yang sedang diterapkan"
+            style={{ ...btn, opacity: (loading || exporting || filteredRows.length === 0) ? 0.5 : 1, cursor: (loading || exporting || filteredRows.length === 0) ? "default" : "pointer", background: "linear-gradient(135deg,#1E8E3E,#0F6B2C)", borderColor: "transparent", color: "#fff" }}>
+            <Download size={13} /> {exporting ? "Menyiapkan file…" : "Export .xlsx"}
           </button>
         </div>
       </div>
@@ -388,7 +628,7 @@ function Body({ email }) {
                   } : null;
                   return (
                     <th key={col.key} style={{ position: "sticky", top: 0, zIndex: 5, width: col.width, minWidth: col.width, padding: "9px 10px", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", color: isSorted ? T.primary : T.mid, background: "#F7F9FC", borderBottom: `1px solid ${T.line}`, borderRight: `1px solid ${T.line}` }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: col.key === "brand" ? "center" : "space-between", gap: 6 }}>
                         <span onClick={() => !col.filter && col.key !== "no" && setSortState((s) => ({ key: col.key, dir: s.key === col.key && s.dir === "asc" ? "desc" : "asc" }))}
                           style={{ overflow: "hidden", textOverflow: "ellipsis", cursor: col.key === "no" ? "default" : "pointer" }} title={col.label}>
                           {col.label}{isSorted && !col.filter ? (sortState.dir === "asc" ? " ▲" : " ▼") : ""}
@@ -410,11 +650,11 @@ function Body({ email }) {
                   {COLUMNS.map((col) => {
                     if (col.key === "no") return <td key="no" style={{ padding: "8px 10px", color: T.lo, borderRight: `1px solid ${T.line}` }}>{i + 1}</td>;
                     if (col.badgeStatus) {
-                      const st = STATUS[r.status] || [r.status, T.mid, "#eef1f6"];
+                      const st = deriveStatusInfo(r);
                       return <td key={col.key} style={{ padding: "8px 10px", borderRight: `1px solid ${T.line}` }}><span style={{ fontSize: 10, fontWeight: 800, color: st[1], background: st[2], padding: "2px 8px", borderRadius: 999 }}>{st[0]}</span></td>;
                     }
                     if (col.badgeBrand) {
-                      return <td key={col.key} style={{ padding: "8px 10px", borderRight: `1px solid ${T.line}` }}>{r.brand ? <span style={{ fontSize: 10.5, fontWeight: 800, color: String(r.brand).toLowerCase() === "tri" ? T.tri : T.im3 }}>{brandLabel(r.brand)}</span> : "-"}</td>;
+                      return <td key={col.key} style={{ padding: "8px 10px", borderRight: `1px solid ${T.line}`, textAlign: "center" }}><div style={{ display: "flex", justifyContent: "center" }}><BrandBadge brand={r.brand} /></div></td>;
                     }
                     if (col.acv) {
                       const v = col.raw(r);
@@ -431,7 +671,11 @@ function Body({ email }) {
         </div>
       </div>
 
-      {detailId && <ActivityDetailModal id={detailId} onClose={() => setDetailId(null)} />}
+      {detailId && (
+        <ActivityDetailModal id={detailId} onClose={() => setDetailId(null)} email={email}
+          canDelete={scope?.role === "spm_sumatera"}
+          onDeleted={(deletedId) => setRows((prev) => prev.filter((r) => r.id !== deletedId))} />
+      )}
     </div>
   );
 }
@@ -441,297 +685,243 @@ function Body({ email }) {
  * punya ini - ringkasan plan, target vs actual, site, foto dokumentasi,
  * daftar MSISDN, & riwayat pengajuan revisi, supaya admin/TMV/Head bisa
  * "tracking dengan mudah" tanpa perlu buka app Flutter/mobile-web terpisah. */
-function ActivityDetailModal({ id, onClose }) {
-  const [a, setA] = useState(null);
-  const [extraSites, setExtraSites] = useState([]);
-  const [siteNames, setSiteNames] = useState({});
-  const [branchName, setBranchName] = useState(null);
-  const [photos, setPhotos] = useState([]);
-  const [entries, setEntries] = useState([]);
-  const [editReqs, setEditReqs] = useState([]);
+// Kartu ringkasan - dirancang "premium tapi minimalis": tanpa strip warna
+// tebal/angka warna-warni yg ramai, aksen warna cuma di chip ikon (gradient
+// halus + border tipis), angka utama SATU warna tinta gelap netral, shadow
+// lembut berlapis (bukan garis tegas) + sedikit lift saat hover.
+function KpiRatio({ main, suffix }) {
+  return (
+    <>
+      {main}
+      <span style={{ fontSize: 13, fontWeight: 600, color: T.lo, marginLeft: 4 }}>{suffix}</span>
+    </>
+  );
+}
+
+// Card gabungan Achievement + Productivity - dua nilai (rata2 achievement_pct
+// & productivity_pct dari view mh_leaderboard_summary, discope ke BME yang
+// muncul di filteredRows saat ini) plus tombol buka KpiConfigModal untuk
+// atur bobot rumusnya (hanya SPM Sumatera yang boleh mengubah).
+function AchProdSubRow({ achievement, productivity, canConfig, onConfig }) {
+  const fmtPct = (v) => (v == null ? "-" : `${v.toFixed(0)}%`);
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 11, fontWeight: 500, color: T.lo }}>
+      <span>
+        %ACH = <span style={{ color: T.mid, fontWeight: 700 }}>{fmtPct(achievement)}</span>
+        {"  |  "}
+        %PROD = <span style={{ color: T.mid, fontWeight: 700 }}>{fmtPct(productivity)}</span>
+      </span>
+      <button
+        onClick={onConfig}
+        title={canConfig ? "Konfigurasi rumus perhitungan" : "Lihat rumus perhitungan"}
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, borderRadius: 6, flexShrink: 0,
+          border: `1px solid ${T.line}`, background: "#fff", color: T.mid, cursor: "pointer",
+        }}
+      >
+        <Settings2 size={11} />
+      </button>
+    </div>
+  );
+}
+
+const KPI_CONFIG_FIELDS = [
+  { group: "Komposisi Skor Akhir", keys: [
+    { key: "w_achievement", label: "Achievement" },
+    { key: "w_productivity", label: "Produktivitas" },
+    { key: "w_geo", label: "Geo Compliance" },
+  ] },
+];
+const KPI_CONFIG_DEFAULTS = { w_achievement: 0.6, w_productivity: 0.2, w_geo: 0.2 };
+
+// Modal konfigurasi rumus Achievement & Productivity - baca/tulis langsung
+// ke mh_settings.leaderboard_weights (key yang sama dipakai mh_leaderboard_summary
+// & halaman Settings > Bobot Skor Leaderboard, supaya tidak ada 2 sumber rumus
+// yang beda utk angka yang sama). Tiap metrik punya toggle on/off - off = bobot
+// disimpan 0 (otomatis dikeluarkan dari rata2 tertimbang di view), tapi nilai
+// bobot sebelumnya diingat di form supaya gampang dinyalakan lagi.
+function KpiConfigModal({ email, canEdit, onClose }) {
+  const [values, setValues] = useState(KPI_CONFIG_DEFAULTS);
+  const [enabled, setEnabled] = useState(() => {
+    const e = {};
+    for (const g of KPI_CONFIG_FIELDS) for (const f of g.keys) e[f.key] = true;
+    return e;
+  });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
-  const [lightbox, setLightbox] = useState(null);
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    setA(null); setErr(""); setPhotos([]); setEntries([]); setEditReqs([]); setExtraSites([]); setSiteNames({}); setBranchName(null);
     (async () => {
+      setLoading(true); setErr("");
       try {
-        const [{ data: act, error: e1 }, { data: sites }, { data: docs }, { data: sales }, { data: edits }] = await Promise.all([
-          supabaseMarta.from("mh_activities").select(DETAIL_COLS).eq("id", id).single(),
-          supabaseMarta.from("mh_activity_sites").select("site_id, is_primary").eq("activity_id", id).eq("is_primary", false),
-          supabaseMarta.from("mh_documents").select("id, storage_path, file_type, created_at").eq("activity_id", id).order("created_at"),
-          supabaseMarta.from("mh_dsf_sales_entries").select("id, category, msisdn, validation_status").eq("activity_id", id).order("created_at"),
-          supabaseMarta.from("mh_activity_edit_requests").select("id, status, reason, requested_by_name, decided_by_name, decision_notes, created_at, decided_at").eq("activity_id", id).order("created_at", { ascending: false }),
-        ]);
-        if (e1) throw e1;
+        const { data, error } = await supabaseMarta.rpc("mh_get_settings");
+        if (error) throw error;
+        const w = { ...KPI_CONFIG_DEFAULTS, ...(data?.leaderboard_weights || {}) };
         if (!alive) return;
-        setA(act);
-        setExtraSites((sites || []).map((s) => s.site_id));
-        setEntries(sales || []);
-        setEditReqs(edits || []);
-        setPhotos((docs || []).filter((d) => d.file_type === "photo").map((d) => ({ ...d, url: photoUrl(d.storage_path) })));
-
-        const allSiteIds = Array.from(new Set([act?.site_id, ...(sites || []).map((s) => s.site_id)].filter(Boolean)));
-        if (allSiteIds.length > 0) {
-          const { data: siteRows } = await supabaseMarta.from("mh_sites").select("site_id,site_name").in("site_id", allSiteIds);
-          const map = {};
-          (siteRows || []).forEach((s) => { map[s.site_id] = s.site_name; });
-          if (alive) setSiteNames(map);
-        }
-        if (act?.branch_id) {
-          const { data: b } = await supabaseMarta.from("mh_branches").select("name").eq("id", act.branch_id).maybeSingle();
-          if (alive) setBranchName(b?.name || null);
-        }
-      } catch (e) {
-        if (alive) setErr(e.message || "Gagal memuat detail aktivitas");
-      }
+        setValues(w);
+        const e = {};
+        for (const g of KPI_CONFIG_FIELDS) for (const f of g.keys) e[f.key] = Number(w[f.key]) > 0;
+        setEnabled(e);
+      } catch (ex) { if (alive) setErr(ex.message || "Gagal memuat konfigurasi"); }
+      finally { if (alive) setLoading(false); }
     })();
     return () => { alive = false; };
-  }, [id]);
+  }, []);
 
-  const st = a ? (STATUS[a.status] || [a.status, T.mid, "#eef1f6"]) : null;
-  const categories = a ? (Array.isArray(a.event_categories) && a.event_categories.length ? a.event_categories : (a.event_category ? [a.event_category] : [])) : [];
-  const spEntries = entries.filter((e) => e.category === "sp");
-  const fwaEntries = entries.filter((e) => e.category === "fwa");
+  function setField(key, raw) { setValues((s) => ({ ...s, [key]: raw })); }
+  function toggle(key) {
+    setEnabled((s) => {
+      const next = !s[key];
+      if (!next) setValues((v) => ({ ...v, [key]: 0 }));
+      else setValues((v) => ({ ...v, [key]: v[key] && Number(v[key]) > 0 ? v[key] : (KPI_CONFIG_DEFAULTS[key] ?? 0.2) }));
+      return { ...s, [key]: next };
+    });
+  }
+
+  async function save() {
+    const cleaned = {};
+    for (const g of KPI_CONFIG_FIELDS) for (const f of g.keys) {
+      const n = enabled[f.key] ? Number(values[f.key]) : 0;
+      if (Number.isNaN(n) || n < 0) { setErr(`Bobot ${f.label} harus angka >= 0`); return; }
+      cleaned[f.key] = n;
+    }
+    setSaving(true); setErr(""); setSaved(false);
+    try {
+      const { error } = await supabaseMarta.rpc("mh_set_setting", { p_key: "leaderboard_weights", p_value: cleaned, p_caller_email: email });
+      if (error) throw error;
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (ex) { setErr(ex.message || "Gagal menyimpan konfigurasi"); }
+    finally { setSaving(false); }
+  }
+
+  const sumOf = (keys) => keys.reduce((acc, f) => acc + (enabled[f.key] ? (Number(values[f.key]) || 0) : 0), 0);
 
   return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 90, display: "flex", alignItems: "center", justifyContent: "center", padding: 16, fontFamily: FONT }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 680, maxHeight: "88vh", background: "#fff", borderRadius: 16, border: `1px solid ${T.line}`, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        {!a && !err ? (
-          <div style={{ padding: 40, textAlign: "center", color: T.lo }}>Memuat…</div>
-        ) : err ? (
-          <div style={{ padding: 20 }}>
-            <div style={{ padding: "10px 12px", borderRadius: 10, background: T.errorBg, color: T.error, fontSize: 12.5, fontWeight: 600 }}>{err}</div>
-            <button onClick={onClose} style={{ ...btn, marginTop: 14 }}>Tutup</button>
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,12,20,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: 16 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 520, maxWidth: "100%", maxHeight: "88vh", overflowY: "auto", background: "#fff", borderRadius: 18, boxShadow: "0 24px 64px rgba(13,17,23,0.22)" }}>
+        <div style={{ padding: "18px 22px", borderBottom: `1px solid ${T.line}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div>
+            <div style={{ fontSize: 15.5, fontWeight: 800, color: T.hi, letterSpacing: "-0.01em" }}>Konfigurasi Achievement & Produktivitas</div>
+            <div style={{ fontSize: 11.5, color: T.lo, marginTop: 3 }}>Rumus ini berlaku global - dipakai juga oleh Leaderboard.</div>
           </div>
-        ) : (
-          <>
-            <div style={{ padding: "16px 20px", borderBottom: `1px solid ${T.line}`, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-              <div style={{ minWidth: 0 }}>
-                {a.brand && (
-                  <span style={{ fontSize: 10.5, fontWeight: 800, color: String(a.brand).toLowerCase() === "tri" ? T.tri : T.im3 }}>
-                    {brandLabel(a.brand)}
-                  </span>
-                )}
-                <div style={{ marginTop: 3, fontSize: 17, fontWeight: 800, color: T.hi }}>{a.event_name || "-"}</div>
-                <div style={{ marginTop: 4, fontSize: 11.5, color: T.lo }}>Dibuat {a.created_at ? new Date(a.created_at).toLocaleString("id-ID") : "-"}</div>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-                <span style={{ fontSize: 10.5, fontWeight: 800, color: st[1], background: st[2], padding: "4px 10px", borderRadius: 999, whiteSpace: "nowrap" }}>{st[0]}</span>
-                <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 9, border: "none", background: "#F0F4FA", color: T.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><X size={14} /></button>
-              </div>
-            </div>
-
-            <div style={{ padding: "16px 20px", overflowY: "auto" }}>
-              {categories.length > 0 && (
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14 }}>
-                  {categories.map((c, i) => (
-                    <span key={i} style={{ fontSize: 11, fontWeight: 700, color: T.mid, background: "#F0F4FA", borderRadius: 999, padding: "3px 10px" }}>{CAT_LABEL[c] || c}</span>
-                  ))}
-                </div>
-              )}
-
-              {(a.validation_note || a.override_note || a.approval_notes) && (
-                <div style={{ marginBottom: 14, padding: "10px 13px", borderRadius: 10, background: st[2], color: st[1], fontSize: 12, fontWeight: 600, lineHeight: 1.5 }}>
-                  {a.validation_note || a.override_note || a.approval_notes}
-                </div>
-              )}
-
-              <DetailSection title="Informasi Plan">
-                <KVGrid>
-                  <KV label="Branch" value={branchName || "-"} />
-                  <KV label="Micro Cluster" value={a.mc || "-"} />
-                  <KV label="Tanggal" value={planDateLabel(a)} />
-                  <KV label="Waktu" value={a.is_all_day === false && a.start_time && a.end_time ? `${a.start_time.slice(0, 5)} – ${a.end_time.slice(0, 5)}` : "Seharian"} />
-                  <KV label="POI" value={a.poi_type || "-"} />
-                  <KV label="Kekuatan Sinyal" value={a.network_category || "-"} />
-                  <KV label="Potensi Area" value={a.area_potential || "-"} />
-                  {a.address && <KV label="Alamat" value={a.address} span2 />}
-                </KVGrid>
-              </DetailSection>
-
-              {a.site_id && (
-                <DetailSection title={`Site (${extraSites.length + 1})`} icon={<Layers size={13} />}>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    <div style={{ fontSize: 12.5, color: T.hi }}><b>Utama:</b> {a.site_id}{siteNames[a.site_id] ? ` · ${siteNames[a.site_id]}` : ""}</div>
-                    {extraSites.map((s, i) => (
-                      <div key={s} style={{ fontSize: 12.5, color: T.hi }}><b>Site {i + 2}:</b> {s}{siteNames[s] ? ` · ${siteNames[s]}` : ""}</div>
-                    ))}
+          <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 9, border: "none", background: "#F1F2F5", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <X size={15} />
+          </button>
+        </div>
+        <div style={{ padding: "18px 22px" }}>
+          {err && <div style={{ fontSize: 12, color: T.error, marginBottom: 12 }}>{err}</div>}
+          {loading ? (
+            <div style={{ color: T.lo, fontSize: 12.5 }}>Memuat…</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+              {KPI_CONFIG_FIELDS.map((g) => (
+                <div key={g.group}>
+                  <div style={{ fontSize: 11.5, fontWeight: 700, color: T.mid, marginBottom: 10, display: "flex", justifyContent: "space-between" }}>
+                    <span>{g.group}</span>
+                    <span style={{ color: Math.abs(sumOf(g.keys) - 1) < 0.001 ? T.success : T.warning }}>Total: {sumOf(g.keys).toFixed(2)}</span>
                   </div>
-                </DetailSection>
-              )}
-
-              <DetailSection title="Target vs Actual">
-                <div style={{ overflowX: "auto" }}>
-                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                    <thead><tr style={{ color: T.mid, textAlign: "left" }}>
-                      {["Metrik", "Target", "Actual"].map((h) => <th key={h} style={{ padding: "4px 10px 4px 0", fontSize: 10.5, fontWeight: 800, textTransform: "uppercase" }}>{h}</th>)}
-                    </tr></thead>
-                    <tbody>
-                      <MetricRow label="SP" target={fmtInt(a.target_sp)} actual={entries.length ? fmtInt(spEntries.filter((e) => e.validation_status === "valid").length) : fmtInt(a.actual_sp)} />
-                      <MetricRow label="FWA" target={fmtInt(a.target_fwa)} actual={entries.length ? fmtInt(fwaEntries.filter((e) => e.validation_status === "valid").length) : fmtInt(a.actual_fwa)} />
-                      <MetricRow label="Rebuy Pulsa" target={fmtRp(a.target_rebuy_pulsa)} actual={fmtRp(a.actual_rebuy_pulsa)} />
-                      <MetricRow label="Rebuy Data" target={fmtRp(a.target_rebuy_data)} actual={fmtRp(a.actual_rebuy_data)} />
-                      <MetricRow label="Revenue 3 Bulan" target={fmtRp(a.target_rev_3m)} actual={fmtRp(a.actual_rev_3m)} />
-                      <MetricRow label="Cost" target={fmtRp(a.cost_estimate)} actual={fmtRp(a.cost_actual)} />
-                    </tbody>
-                  </table>
-                </div>
-                {a.insight && (
-                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: `1px solid ${T.line}` }}>
-                    <div style={{ fontSize: 10.5, fontWeight: 700, color: T.lo, textTransform: "uppercase", marginBottom: 4 }}>Insight</div>
-                    <div style={{ fontSize: 12.5, color: T.hi, lineHeight: 1.55 }}>{a.insight}</div>
-                  </div>
-                )}
-              </DetailSection>
-
-              {a.checkin_at && (
-                <DetailSection title="Check In" icon={<MapPin size={13} />}>
-                  <KVGrid>
-                    <KV label="Status" value={a.checkin_valid ? "Valid (dalam radius)" : "Di luar radius"} valueColor={a.checkin_valid ? T.success : T.error} />
-                    {a.checkin_distance != null && <KV label="Jarak" value={`${Math.round(a.checkin_distance)} meter`} />}
-                    <KV label="Waktu" value={new Date(a.checkin_at).toLocaleString("id-ID")} span2 />
-                  </KVGrid>
-                </DetailSection>
-              )}
-
-              {photos.length > 0 && (
-                <DetailSection title={`Dokumentasi Foto (${photos.length})`} icon={<ImageIcon size={13} />}>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8 }}>
-                    {photos.map((p) => (
-                      <button key={p.id} onClick={() => setLightbox(p.url)}
-                        style={{ padding: 0, border: "none", cursor: "pointer", aspectRatio: "1", borderRadius: 10, overflow: "hidden", background: "#F0F4FA" }}>
-                        <img src={p.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                      </button>
-                    ))}
-                  </div>
-                </DetailSection>
-              )}
-
-              {(spEntries.length > 0 || fwaEntries.length > 0) && (
-                <DetailSection title="Nomor Terdaftar" icon={<Phone size={13} />}>
-                  {spEntries.length > 0 && <MsisdnList label={`SP (${spEntries.length})`} list={spEntries} />}
-                  {fwaEntries.length > 0 && <MsisdnList label={`FWA (${fwaEntries.length})`} list={fwaEntries} />}
-                </DetailSection>
-              )}
-
-              {editReqs.length > 0 && (
-                <DetailSection title="Riwayat Pengajuan Revisi" icon={<FileText size={13} />}>
-                  {editReqs.map((r) => (
-                    <div key={r.id} style={{ padding: "8px 0", borderBottom: `1px solid ${T.line}` }}>
-                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: T.hi }}>{r.requested_by_name || "-"}</div>
-                        {badge(
-                          r.status === "approved" ? "Disetujui" : r.status === "rejected" ? "Ditolak" : "Menunggu",
-                          r.status === "approved" ? T.success : r.status === "rejected" ? T.error : T.warning,
-                          r.status === "approved" ? T.successBg : r.status === "rejected" ? T.errorBg : T.warningBg
-                        )}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {g.keys.map((f) => (
+                      <div key={f.key} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <label style={{ display: "flex", alignItems: "center", gap: 6, width: 130, fontSize: 12, color: T.mid, cursor: canEdit ? "pointer" : "default" }}>
+                          <input type="checkbox" checked={enabled[f.key]} disabled={!canEdit} onChange={() => toggle(f.key)} />
+                          {f.label}
+                        </label>
+                        <input
+                          type="number" step="0.05" min="0" max="1"
+                          value={values[f.key]}
+                          disabled={!canEdit || !enabled[f.key]}
+                          onChange={(e) => setField(f.key, e.target.value)}
+                          style={{
+                            flex: 1, padding: "7px 10px", borderRadius: 8, border: `1px solid ${T.line}`,
+                            fontSize: 12.5, fontFamily: FONT, color: T.hi,
+                            background: (canEdit && enabled[f.key]) ? "#fff" : "#F0F2F5",
+                          }}
+                        />
                       </div>
-                      {r.reason && <div style={{ marginTop: 3, fontSize: 11.5, color: T.lo }}>{r.reason}</div>}
-                      <div style={{ marginTop: 3, fontSize: 10.5, color: T.lo }}>{new Date(r.created_at).toLocaleString("id-ID")}</div>
-                      {r.decision_notes && (
-                        <div style={{ marginTop: 5, fontSize: 11.5, color: T.mid, background: "#F7F9FC", borderRadius: 8, padding: "6px 9px" }}>
-                          {r.decided_by_name ? `${r.decided_by_name}: ` : ""}{r.decision_notes}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </DetailSection>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {!canEdit && (
+                <div style={{ fontSize: 11.5, color: T.lo, background: "#F7F8FA", padding: "10px 12px", borderRadius: 9 }}>
+                  Hanya SPM Sumatera yang bisa mengubah rumus ini. Kamu bisa melihat konfigurasi saat ini di atas.
+                </div>
               )}
-
-              {(a.approved_by_name || a.override_by_name) && (
-                <DetailSection title="Persetujuan">
-                  <KVGrid>
-                    {a.approved_by_name && <KV label="Disetujui oleh" value={a.approved_by_name} />}
-                    {a.approved_at && <KV label="Tanggal" value={new Date(a.approved_at).toLocaleString("id-ID")} />}
-                    {a.override_by_name && <KV label="Override oleh" value={a.override_by_name} />}
-                  </KVGrid>
-                </DetailSection>
+              <div style={{ fontSize: 11.5, color: T.lo, lineHeight: 1.5, background: "#F7F8FA", padding: "10px 12px", borderRadius: 9 }}>
+                <b>Achievement</b> = Total Actual Revenue ÷ Total Target Revenue × 100.<br/>
+                <b>Produktivitas</b> = Total Actual Revenue ÷ Total Cost Actual × 100.<br/>
+                <b>Geo Compliance</b> = % nomor MSISDN (SP/FWA) yang sudah divalidasi "Valid" terhadap site GA, dari menu Validasi MSISDN.<br/>
+                Kedua rasio di atas tidak dibatasi (tidak di-cap 150%) - bobot di atas hanya menentukan komposisi Final Score.
+              </div>
+              {canEdit && (
+                <div>
+                  <button onClick={save} disabled={saving} style={{
+                    padding: "9px 18px", borderRadius: 9, border: "none", fontSize: 12.5, fontWeight: 700,
+                    background: saved ? T.success : T.primary, color: "#fff", cursor: saving ? "default" : "pointer", opacity: saving ? 0.7 : 1,
+                  }}>
+                    {saving ? "..." : saved ? "Tersimpan" : "Simpan Konfigurasi"}
+                  </button>
+                </div>
               )}
             </div>
-          </>
-        )}
+          )}
+        </div>
       </div>
+    </div>
+  );
+}
 
-      {lightbox && (
-        <div onClick={(e) => { e.stopPropagation(); setLightbox(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.88)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
-          <img src={lightbox} alt="" style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 8 }} />
+function KpiSubRow({ icon: Icon, label, value }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 11, fontWeight: 500, color: T.lo }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+        {Icon && <Icon size={10.5} strokeWidth={2.2} />}
+        {label}
+      </span>
+      <span style={{ color: T.mid, fontWeight: 700 }}>{value}</span>
+    </div>
+  );
+}
+
+function Kpi({ label, value, sub, color, icon: Icon }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        position: "relative", background: "#fff", border: `1px solid ${T.line}`, borderRadius: 16,
+        padding: "17px 18px", boxShadow: hover
+          ? "0 2px 4px rgba(13,17,23,0.05), 0 12px 26px rgba(13,17,23,0.07)"
+          : "0 1px 2px rgba(13,17,23,0.03), 0 6px 16px rgba(13,17,23,0.035)",
+        transform: hover ? "translateY(-2px)" : "translateY(0)",
+        transition: "transform .18s ease, box-shadow .18s ease",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+        {Icon && (
+          <div style={{
+            width: 34, height: 34, borderRadius: 11, flexShrink: 0,
+            background: `linear-gradient(135deg, ${color}24, ${color}0a)`,
+            border: `1px solid ${color}2b`,
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <Icon size={16} color={color} strokeWidth={2.2} />
+          </div>
+        )}
+        <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.05em", color: T.lo, textTransform: "uppercase" }}>{label}</div>
+      </div>
+      <div style={{ fontSize: 24, fontWeight: 800, color: T.hi, lineHeight: 1, letterSpacing: "-0.01em" }}>{value}</div>
+      {sub && (
+        <div style={{ marginTop: 10, paddingTop: 9, borderTop: `1px dashed ${T.line}`, display: "flex", flexDirection: "column", gap: 5 }}>
+          {sub}
         </div>
       )}
-    </div>
-  );
-}
-
-function planDateLabel(a) {
-  if (a.plan_dates_multi) {
-    const parts = a.plan_dates_multi.split(",").filter(Boolean);
-    return `${parts.length} tanggal (${fmtDate(parts[0])}${parts.length > 1 ? ` – ${fmtDate(parts[parts.length - 1])}` : ""})`;
-  }
-  if (a.plan_date_start && a.plan_date_end) return `${fmtDate(a.plan_date_start)} – ${fmtDate(a.plan_date_end)}`;
-  return fmtDate(a.plan_date);
-}
-
-function DetailSection({ title, icon, children }) {
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
-        {icon}
-        <div style={{ fontSize: 11, fontWeight: 800, color: T.mid, textTransform: "uppercase", letterSpacing: "0.04em" }}>{title}</div>
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function KVGrid({ children }) {
-  return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 20px" }}>{children}</div>;
-}
-
-function KV({ label, value, valueColor, span2 }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", gap: 10, gridColumn: span2 ? "1 / -1" : "auto" }}>
-      <span style={{ fontSize: 12, color: T.lo }}>{label}</span>
-      <span style={{ fontSize: 12.5, fontWeight: 700, color: valueColor || T.hi, textAlign: "right" }}>{value}</span>
-    </div>
-  );
-}
-
-function MetricRow({ label, target, actual }) {
-  return (
-    <tr style={{ borderTop: `1px solid ${T.line}` }}>
-      <td style={{ padding: "6px 10px 6px 0", color: T.hi, fontWeight: 600 }}>{label}</td>
-      <td style={{ padding: "6px 10px 6px 0", color: T.mid }}>{target}</td>
-      <td style={{ padding: "6px 10px 6px 0", color: T.hi, fontWeight: 700 }}>{actual}</td>
-    </tr>
-  );
-}
-
-function MsisdnList({ label, list }) {
-  return (
-    <div style={{ marginBottom: 8 }}>
-      <div style={{ fontSize: 10.5, fontWeight: 700, color: T.lo, textTransform: "uppercase", marginBottom: 4 }}>{label}</div>
-      {list.map((e) => (
-        <div key={e.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "5px 0", borderBottom: `1px solid ${T.line}` }}>
-          <span style={{ fontSize: 12.5, fontWeight: 600, color: T.hi, fontVariantNumeric: "tabular-nums" }}>{e.msisdn}</span>
-          {e.validation_status === "valid"
-            ? badge("Valid", T.success, T.successBg)
-            : e.validation_status === "pending"
-              ? badge("Menunggu Validasi", T.warning, T.warningBg)
-              : badge(e.validation_status || "-", T.error, T.errorBg)}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Kpi({ label, value, sub, color }) {
-  return (
-    <div style={{ ...card, position: "relative", overflow: "hidden" }}>
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: color }} />
-      <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.04em", color: T.lo, textTransform: "uppercase", marginBottom: 8 }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 800, color, lineHeight: 1 }}>{value}</div>
-      {sub && <div style={{ fontSize: 10.5, color: T.lo, marginTop: 6 }}>{sub}</div>}
     </div>
   );
 }
@@ -739,4 +929,3 @@ function Kpi({ label, value, sub, color }) {
 const card = { background: T.card, border: `1px solid ${T.line}`, borderRadius: 12, padding: 14, fontSize: 13 };
 const inp = { width: "100%", padding: "9px 12px", borderRadius: 9, border: `1px solid ${T.line}`, background: "#fff", color: T.hi, fontSize: 13, fontFamily: FONT, outline: "none", boxSizing: "border-box" };
 const btn = { padding: "8px 13px", borderRadius: 9, border: `1px solid ${T.line}`, background: "#fff", color: T.hi, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 };
-const badge = (txt, c, bg) => <span style={{ fontSize: 10.5, fontWeight: 800, color: c, background: bg, border: `1px solid ${c}33`, padding: "2px 8px", borderRadius: 999, whiteSpace: "nowrap" }}>{txt}</span>;

@@ -1,5 +1,6 @@
 "use client";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useRouter } from "next/navigation";
 import { UploadCloud, Map as MapIcon, ChevronRight, ChevronDown, ArrowLeft, CheckCircle2, AlertTriangle, Clock, Network, Search, Store, UserCheck, UserX, Target as TargetIcon, Tag, Plus, Pencil } from "lucide-react";
 import MartaShell, { T } from "../components/MartaShell";
 import { useGeoLayers, LayerPanel } from "../components/SumatraMap";
@@ -23,6 +24,7 @@ export default function MasterDataPage() {
 const mtT = { card: "#FFFFFF", line: T.line, hi: T.hi, mid: T.mid, lo: T.lo, hover: "#F0F4FA" };
 
 function Body({ canManage, email }) {
+  const router = useRouter();
   const geo = useGeoLayers();
   const [active, setActive] = useState(null); // null | 'list_site' | 'territory' | 'activity_target'
   const [history, setHistory] = useState([]);
@@ -101,6 +103,11 @@ function Body({ canManage, email }) {
           icon={Tag} label="Jenis SP & FWA"
           desc="Master jenis SP & FWA beserta harga per unit - dipakai mobile utk menghitung Revenue otomatis dari MSISDN yang dicatat DSF/TL DSF/BME."
           onClick={() => setActive("sp_fwa_types")}
+        />
+        <MenuCard
+          icon={Store} label="Mapping Outlet POSM"
+          desc="Upload mapping Outlet-to-DSE bulanan per brand (IM3/3ID) - dipakai fitur Retailer Installment (mobile) utk pencarian outlet per Branch."
+          onClick={() => router.push("/martahub/posmat/mapping")}
         />
       </div>
     </div>

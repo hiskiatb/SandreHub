@@ -56,6 +56,9 @@ export const fetchAvailableTypesForBranch = (branchId, brand) =>
   rpc("mh_posmat_available_types_for_branch", { p_branch_id: branchId, p_brand: brand });
 
 const PHOTO_BUCKET = "mh-photos"; // SAMA dgn `_photoBucket` md_activity_provider.dart Flutter
+export function installPhotoUrl(path) {
+  return supabaseMarta.storage.from(PHOTO_BUCKET).getPublicUrl(path).data.publicUrl;
+}
 export async function addInstallationPhoto(installationId, blob, index) {
   const path = `${installationId}/${Date.now()}_${index}.jpg`;
   const { error: upErr } = await supabaseMarta.storage.from(PHOTO_BUCKET).upload(path, blob, { contentType: "image/jpeg" });
@@ -238,3 +241,124 @@ export function moveAllocation({ allocationId, newBranchId, newBranchName, newRe
 export const fetchPlansForBranch = (branchId, brand) =>
   rpc("mh_posm_plans_available_for_branch", { p_branch_id: branchId, p_brand: brand });
 export const listBranchRemap = () => rpc("mh_posm_list_branch_remap");
+
+// ── Mapping Outlet-to-DSE (Retailer Installment) ─────────────────────────
+/** Cari outlet dari mapping bulanan (upload lewat CMS desktop) - server
+ * otomatis fallback ke bulan sebelumnya kalau mapping bulan berjalan belum
+ * tersedia (lihat mh_outlet_mapping_search). `p_branch_name` dicocokkan
+ * `ilike` ke `Branch Name` dari file mapping (mis. "MEDAN"), BUKAN branch_id
+ * slug - supaya tidak perlu tabel resolve tambahan. */
+export const searchOutletMapping = ({ brand, branchName, q, category, periodMonth, limit }) =>
+  rpc("mh_outlet_mapping_search", { p_brand: brand, p_branch_name: branchName, p_q: q || null, p_category: category || null, p_period_month: periodMonth || null, p_limit: limit || 60 });
+
+export const fetchOutletCategories = ({ brand, branchName, periodMonth }) =>
+  rpc("mh_outlet_mapping_categories", { p_brand: brand, p_branch_name: branchName, p_period_month: periodMonth || null });
+
+export const fetchOutletMappingPeriods = () => rpc("mh_outlet_mapping_periods", {});
+
+export function clearOutletMapping({ periodMonth, callerEmail }) {
+  return rpc("mh_outlet_mapping_clear", { p_period_month: periodMonth, p_caller_email: callerEmail });
+}
+export function insertOutletMappingBatch({ periodMonth, rows, callerEmail }) {
+  return rpc("mh_outlet_mapping_insert_batch", { p_period_month: periodMonth, p_rows: rows, p_caller_email: callerEmail });
+}
+/** Preview PENUH (semua baris, tanpa ringkas) utk satu periode - dipakai
+ * panel preview di CMS Mapping Outlet setelah data sudah ada di database. */
+/** mh_outlet_mapping_list_full menerima p_limit/p_offset LANGSUNG di dalam
+ * function-nya (bukan lewat Range header PostgREST) - jadi tiap halaman
+ * adalah query independen yang murah (lihat migrasi outlet_mapping_fast_
+ * pagination) dan AMAN diambil PARALEL, bukan cuma satu-satu berurutan.
+ * Halaman pertama diambil sendirian dulu (drpd langsung render), lalu
+ * halaman berikutnya diambil paralel (default 6 sekaligus) - hasil tetap
+ * di-flush ke `onPage(chunk, loadedSoFar)` SESUAI URUTAN halaman (bukan
+ * urutan selesainya network) supaya baris di tabel tidak berantakan.
+ * `totalHint` (dari mh_outlet_mapping_periods.outlet_count) dipakai supaya
+ * tahu kapan berhenti tanpa perlu nunggu satu halaman kosong balik dulu. */
+export async function fetchOutletMappingFull(periodMonth, { onPage, pageSize = 1000, concurrency = 6, totalHint } = {}) {
+  const all = [];
+  const pending = new Map(); // pageIdx -> rows, utk hasil yg datang duluan sebelum gilirannya
+  let nextFlush = 0;
+  function flushReady() {
+    while (pending.has(nextFlush)) {
+      const rows = pending.get(nextFlush);
+      pending.delete(nextFlush);
+      all.push(...rows);
+      onPage?.(rows, all.length);
+      nextFlush++;
+    }
+  }
+
+  async function fetchPage(pageIdx) {
+    const { data, error } = await supabaseMarta.rpc("mh_outlet_mapping_list_full", {
+      p_period_month: periodMonth, p_limit: pageSize, p_offset: pageIdx * pageSize,
+    });
+    if (error) throw error;
+    return data || [];
+  }
+
+  const first = await fetchPage(0);
+  pending.set(0, first);
+  flushReady();
+  if (first.length < pageSize) return all; // semua data muat di 1 halaman
+
+  const maxPages = totalHint ? Math.ceil(totalHint / pageSize) : Infinity;
+  let nextToFetch = 1;
+  let stop = false;
+
+  async function worker() {
+    while (!stop) {
+      const idx = nextToFetch++;
+      if (idx >= maxPages) return;
+      const rows = await fetchPage(idx);
+      if (rows.length < pageSize) stop = true; // halaman terakhir ditemukan
+      pending.set(idx, rows);
+      flushReady();
+    }
+  }
+
+  await Promise.all(Array.from({ length: concurrency }, worker));
+  flushReady();
+  return all;
+}
+
+/** Submit pemasangan Retailer Installment - beda dari submitInstallation()
+ * biasa (mode outlet lama pakai mh_sites), ini pakai outlet dari mapping
+ * DSE (nama+kode saja, tanpa site_id/koordinat referensi). */
+export function submitRetailerInstallation({ planId, outletCode, outletName, branchName, mc, note, items, lat, lng }) {
+  return rpc("mh_md_submit_retailer_installation", {
+    p_plan_id: planId, p_outlet_code: outletCode, p_outlet_name: outletName, p_branch_name: branchName, p_mc: mc || null,
+    p_note: note || null, p_items: items.map((i) => ({ posmat_type_id: i.posmat_type_id, qty: Number(i.qty) })),
+    p_lat: lat, p_lng: lng,
+  });
+}
+
+// ── Revisi Retailer Installment (CMS minta perbaikan, BME perbaiki dari HP
+// tanpa harus kembali ke lokasi - titik GPS asli TETAP dipakai, cuma
+// material/qty/catatan/foto yang bisa diubah, dan HANYA saat CMS sudah
+// menandai review_status='revision_needed'). ──────────────────────────────
+export const getInstallationForEdit = (id) => rpc("mh_md_get_installation_for_edit", { p_id: id });
+export function updateRetailerInstallation({ id, items, note }) {
+  return rpc("mh_md_update_retailer_installation", {
+    p_id: id, p_items: items.map((i) => ({ posmat_type_id: i.posmat_type_id, qty: Number(i.qty) })), p_note: note || null,
+  });
+}
+export const deleteInstallationPhoto = (photoId) => rpc("mh_md_delete_installation_photo", { p_photo_id: photoId });
+
+// ── Laporan Penjualan (Customer Activation) ───────────────────────────────
+export const CUSTOMER_ACTIVATION_SALES_CATEGORIES = [
+  { key: "sp", label: "SP (Perdana)" },
+  { key: "fwa", label: "FWA" },
+  { key: "voucher", label: "Voucher" },
+  { key: "rebuy_fwa", label: "Rebuy FWA" },
+  { key: "rebuy_sp", label: "Rebuy SP" },
+];
+
+/** Simpan baris Laporan Penjualan (dinamis, banyak baris per kategori) utk
+ * satu instalasi Customer Activation - dipanggil SETELAH submitInstallation
+ * berhasil (butuh installation_id). `entries`: [{category, msisdn?, qty, amount}]. */
+export function addCustomerActivationSales(installationId, entries) {
+  return rpc("mh_customer_activation_add_sales", { p_installation_id: installationId, p_entries: entries });
+}
+export const listCustomerActivationSales = (installationId) => rpc("mh_customer_activation_list_sales", { p_installation_id: installationId });
+
+

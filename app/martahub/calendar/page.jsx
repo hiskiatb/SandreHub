@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import MartaShell, { T, FONT, brandLabel } from "../components/MartaShell";
+import { ActivityDetailModal } from "../components/ActivityDetail";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../lib/martaScope";
 
@@ -29,6 +30,7 @@ function Body({ email }) {
   const [err, setErr] = useState("");
   const [scope, setScope] = useState(null);
   const [selected, setSelected] = useState(null);
+  const [detailId, setDetailId] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true); setErr("");
@@ -138,7 +140,10 @@ function Body({ email }) {
           <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.line}`, fontWeight: 800, fontSize: 13.5 }}>Kegiatan {selected}</div>
           <div>
             {selectedEvents.map((e) => (
-              <div key={e.id} style={{ padding: "10px 16px", borderBottom: `1px solid ${T.line}`, display: "flex", alignItems: "center", gap: 10 }}>
+              <div key={e.id} onClick={() => setDetailId(e.id)}
+                style={{ padding: "10px 16px", borderBottom: `1px solid ${T.line}`, display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}
+                onMouseEnter={(ev) => { ev.currentTarget.style.background = "#F7F9FC"; }}
+                onMouseLeave={(ev) => { ev.currentTarget.style.background = "transparent"; }}>
                 <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", background: STATUS_COLOR[e.status] || T.mid, borderRadius: 999, padding: "2px 9px" }}>{e.status || "draft"}</span>
                 <span style={{ fontWeight: 700, fontSize: 13 }}>{e.event_name || "-"}</span>
                 <span style={{ color: T.mid, fontSize: 12 }}>{e.mc || "-"} · {e.site_id || "-"}</span>
@@ -147,6 +152,12 @@ function Body({ email }) {
             ))}
           </div>
         </div>
+      )}
+
+      {detailId && (
+        <ActivityDetailModal id={detailId} onClose={() => setDetailId(null)} email={email}
+          canDelete={scope?.role === "spm_sumatera"}
+          onDeleted={() => { setDetailId(null); load(); }} />
       )}
     </div>
   );

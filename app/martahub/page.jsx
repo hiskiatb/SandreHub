@@ -164,19 +164,22 @@ const mk = (d) => ({
 const NAV = [
   { label: "Dashboard", icon: "grid", path: "dashboard" },
   { section: "ACTIVITY" },
-  { label: "Activity Plan", icon: "calendar", path: "activities" },
+  { label: "Activity Plan", icon: "clipboard", path: "activities" },
   { label: "Calendar", icon: "cal", path: "calendar" },
   { section: "INTELLIGENCE" },
   { label: "Map Intelligence", icon: "map", path: "map" },
   { label: "Analytics", icon: "chart", path: "analytics" },
   { label: "Leaderboard", icon: "trophy", path: "leaderboard" },
   { label: "Geo Compliance", icon: "pin", path: "geo-compliance" },
+  { section: "POSM" },
+  { label: "POSM", icon: "posm", path: "posmat" },
   { section: "MANAGEMENT" },
   { label: "Approval Center", icon: "check", path: "approval" },
   { label: "User Management", icon: "users", path: "assignments", route: "/martahub/assignments" },
   { label: "Master Data", icon: "db", path: "master" },
-  { label: "POSM Stock", icon: "db", path: "posmat" },
+  { label: "Gallery", icon: "gallery", path: "gallery" },
   { label: "Validasi Lokasi", icon: "check", path: "validasi" },
+  { label: "Validasi MSISDN", icon: "sim", path: "msisdn-validation" },
   { label: "System Settings", icon: "settings", path: "settings" },
 ];
 
@@ -194,7 +197,9 @@ const NAV_ROUTES = {
   approval: "/martahub/approval",
   master: "/martahub/master",
   posmat: "/martahub/posmat",
+  gallery: "/martahub/gallery",
   validasi: "/martahub/validasi",
+  "msisdn-validation": "/martahub/msisdn-validation",
   assignments: "/martahub/assignments",
   settings: "/martahub/settings",
 };
@@ -241,6 +246,10 @@ function Icon({ name, size = 16, color = "currentColor" }) {
     trendUp:  <svg style={s} viewBox="0 0 24 24" {...p}><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>,
     money:    <svg style={s} viewBox="0 0 24 24" {...p}><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>,
     percent:  <svg style={s} viewBox="0 0 24 24" {...p}><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>,
+    clipboard: <svg style={s} viewBox="0 0 24 24" {...p}><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="16" y2="15"/><line x1="8" y1="19" x2="12" y2="19"/></svg>,
+    posm:      <svg style={s} viewBox="0 0 24 24" {...p}><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>,
+    sim:       <svg style={s} viewBox="0 0 24 24" {...p}><path d="M15 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z"/><path d="M15 2v5h5"/><path d="M9 13h6M9 17h4"/></svg>,
+    gallery:   <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>,
   };
   return icons[name] || null;
 }
@@ -686,6 +695,9 @@ export default function MartaHubDashboard() {
       : false
   );
   const [collapsed, setCollapsed] = useState(false);
+  // Hover-to-peek: saat sidebar TERTUTUP (collapsed), hover mouse di atasnya
+  // sementara melebarkannya tanpa mengubah state collapsed asli.
+  const [hoverExpanded, setHoverExpanded] = useState(false);
   const [mobile, setMobile] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [activeNav, setActiveNav] = useState("dashboard");
@@ -897,7 +909,8 @@ export default function MartaHubDashboard() {
   const roleLabel = profile?.role === "spm_sumatera" ? "SPM Sumatera" : (profile?.role || "");
   const todayLabel = now.toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
-  const SIDEBAR_W = collapsed ? 64 : 240;
+  const visuallyCollapsed = collapsed && !hoverExpanded;
+  const SIDEBAR_W = visuallyCollapsed ? 64 : 240;
 
   if (loading) return (
     <div style={{ minHeight:"100vh", display:"flex", alignItems:"center", justifyContent:"center", background:"var(--background,#F4F4F7)" }}>
@@ -1015,38 +1028,66 @@ export default function MartaHubDashboard() {
       {/* ── SIDEBAR ─────────────────────────────────────────────────────────── */}
       <div style={ mobile
         ? { width: 240, background: t.sidebar, borderRight: `1px solid ${t.line}`, display: "flex", flexDirection: "column", position: "fixed", top: 0, left: 0, height: "100vh", overflow: "hidden", zIndex: 300, transform: drawerOpen ? "translateX(0)" : "translateX(-100%)", transition: "transform .25s cubic-bezier(.4,0,.2,1)", boxShadow: drawerOpen ? "0 0 40px rgba(0,0,0,0.3)" : "none" }
-        : { width: SIDEBAR_W, minHeight: "100vh", background: t.sidebar, borderRight: `1px solid ${t.line}`, display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh", overflow: "hidden", transition: "width .22s cubic-bezier(.4,0,.2,1)", flexShrink: 0 } }>
-        {/* Logo */}
-        <div style={{ height: 60, flexShrink: 0, padding: collapsed ? 0 : "0 16px", display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 10, borderBottom: `1px solid ${t.line}`, cursor: "pointer", position: "relative" }} onClick={() => router.push("/")}>
+        : { width: SIDEBAR_W, minHeight: "100vh", background: t.sidebar, borderRight: `1px solid ${t.line}`, display: "flex", flexDirection: "column", position: "sticky", top: 0, height: "100vh", overflow: "hidden", transition: "width .22s cubic-bezier(.4,0,.2,1)", flexShrink: 0 } }
+        onMouseEnter={() => { if (!mobile && collapsed) setHoverExpanded(true); }}
+        onMouseLeave={() => { if (!mobile) setHoverExpanded(false); }}>
+        {/* Logo - posisi ikon TETAP (padding kiri fixed), cuma teks "MartaHub"
+            yang fade in/out dgn delay setelah transisi lebar sidebar hampir
+            selesai, biar tidak numpuk/glitch dgn animasi lebar yg berjalan -
+            style identik dgn sidebar menu lain (MartaShell). */}
+        <div style={{ height: 60, flexShrink: 0, padding: "0 13px", display: "flex", alignItems: "center", gap: 10, borderBottom: `1px solid ${t.line}`, cursor: "pointer", position: "relative", overflow: "hidden" }} onClick={() => router.push("/")}>
           <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg, #ED1C24 0%, #C6168D 100%)" }} />
-          <div style={{ width: 38, height: 38, flexShrink: 0, margin: collapsed ? "0 auto" : 0 }}>
+          <div style={{ width: 38, height: 38, flexShrink: 0 }}>
             <HubLogo variant="marta" size={38} shadow={false} />
           </div>
-          {!collapsed && (
-            <div>
-              <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: "-0.04em", color: t.hi, lineHeight: 1 }}>
-                Marta<span style={{ background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Hub</span>
-              </div>
-            </div>
-          )}
+          <div style={{
+            fontSize: 21, fontWeight: 800, letterSpacing: "-0.04em", color: t.hi, lineHeight: 1, whiteSpace: "nowrap",
+            opacity: visuallyCollapsed ? 0 : 1,
+            transition: visuallyCollapsed ? "opacity .12s ease" : "opacity .16s ease .14s",
+          }}>
+            Marta<span style={{ background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text" }}>Hub</span>
+          </div>
         </div>
 
-        {/* Nav */}
+        {/* Nav - sama prinsipnya: posisi ikon fixed, label & badge fade-in
+            dgn delay supaya "nongol"-nya setelah sidebar selesai melebar. */}
         <div style={{ flex: 1, overflowY: "auto", padding: "10px 8px" }}>
           {NAV.map((item, i) => {
             if (item.section) return (
-              !collapsed ? <div key={i} style={{ padding: "14px 8px 6px", fontSize: 9.5, fontWeight: 700, letterSpacing: "0.14em", color: t.lo, textTransform: "uppercase" }}>{item.section}</div>
-              : <div key={i} style={{ height: 1, background: t.line, margin: "10px 8px" }} />
+              <div key={i} style={{ height: 26, display: "flex", alignItems: "center", padding: "0 8px", overflow: "hidden", position: "relative" }}>
+                <span style={{
+                  fontSize: 9.5, fontWeight: 700, letterSpacing: "0.14em", color: t.lo, textTransform: "uppercase", whiteSpace: "nowrap",
+                  opacity: visuallyCollapsed ? 0 : 1,
+                  transition: visuallyCollapsed ? "opacity .1s ease" : "opacity .16s ease .14s",
+                }}>{item.section}</span>
+                <div style={{
+                  position: "absolute", left: 10, right: 10, top: "50%", height: 1, background: t.line,
+                  opacity: visuallyCollapsed ? 1 : 0,
+                  transition: visuallyCollapsed ? "opacity .16s ease .14s" : "opacity .1s ease",
+                }} />
+              </div>
             );
             const active = activeNav === item.path;
             return (
-              <div key={i} className="mh-nav" onClick={() => { const r = NAV_ROUTES[item.path]; if (r) { router.push(r); } else { setActiveNav(item.path); if (mobile) setDrawerOpen(false); } }}
-                style={{ display: "flex", alignItems: "center", gap: 10, padding: collapsed ? "10px 0" : "9px 10px", borderRadius: 9, cursor: "pointer", marginBottom: 1, justifyContent: collapsed ? "center" : "flex-start", background: active ? (dark ? "rgba(237,28,36,0.18)" : "rgba(237,28,36,0.08)") : "transparent", position: "relative" }}
-                title={collapsed ? item.label : undefined}
+              <div key={i} className="mh-nav" onClick={() => { if (mobile) setDrawerOpen(false); else if (collapsed) setHoverExpanded(false); const r = NAV_ROUTES[item.path]; if (r) { router.push(r); } else { setActiveNav(item.path); } }}
+                style={{ display: "flex", alignItems: "center", gap: visuallyCollapsed ? 0 : 10, padding: "9px 10px", borderRadius: 9, cursor: "pointer", marginBottom: 1, background: active ? (dark ? "rgba(237,28,36,0.18)" : "rgba(237,28,36,0.08)") : "transparent", position: "relative", overflow: "hidden", transition: "gap .18s cubic-bezier(.4,0,.2,1)" }}
+                title={visuallyCollapsed ? item.label : undefined}
               >
-                <span style={{ color: active ? C.primary : t.lo, flexShrink: 0 }}><Icon name={item.icon} size={17} color={active ? C.primary : t.lo} /></span>
-                {!collapsed && <span style={{ fontSize: 13, fontWeight: active ? 700 : 500, color: active ? C.primary : t.mid, flex: 1 }}>{item.label}</span>}
-                {!collapsed && item.path === "approval" && !!pendingCount && <span style={{ fontSize: 10, fontWeight: 700, color: "white", background: C.error, borderRadius: 100, padding: "1px 6px", minWidth: 18, textAlign: "center" }}>{pendingCount}</span>}
+                <span style={{ width: 28, flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", color: active ? C.primary : t.lo }}><Icon name={item.icon} size={17} color={active ? C.primary : t.lo} /></span>
+                <span style={{
+                  fontSize: 13, fontWeight: active ? 700 : 500, color: active ? C.primary : t.mid, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                  flex: visuallyCollapsed ? "0 0 0" : "1 1 auto", maxWidth: visuallyCollapsed ? 0 : 200,
+                  opacity: visuallyCollapsed ? 0 : 1,
+                  transition: visuallyCollapsed ? "opacity .1s ease, max-width .18s cubic-bezier(.4,0,.2,1)" : "opacity .16s ease .14s, max-width .18s cubic-bezier(.4,0,.2,1)",
+                }}>{item.label}</span>
+                {item.path === "approval" && !!pendingCount && (
+                  <span style={{
+                    fontSize: 10, fontWeight: 700, color: "white", background: C.error, borderRadius: 100, textAlign: "center", flexShrink: 0,
+                    padding: visuallyCollapsed ? 0 : "1px 6px", minWidth: visuallyCollapsed ? 0 : 18, maxWidth: visuallyCollapsed ? 0 : 40, overflow: "hidden",
+                    opacity: visuallyCollapsed ? 0 : 1,
+                    transition: visuallyCollapsed ? "opacity .1s ease, max-width .18s ease, padding .18s ease, min-width .18s ease" : "opacity .16s ease .14s, max-width .18s ease, padding .18s ease, min-width .18s ease",
+                  }}>{pendingCount}</span>
+                )}
                 {active && <div style={{ position: "absolute", left: 0, top: "20%", bottom: "20%", width: 3, background: C.primary, borderRadius: "0 3px 3px 0" }} />}
               </div>
             );
@@ -1054,22 +1095,32 @@ export default function MartaHubDashboard() {
         </div>
 
         {/* User */}
-        <div style={{ borderTop: `1px solid ${t.line}`, padding: collapsed ? "12px 0" : "12px 12px" }}>
-          {!collapsed && user && (
-            <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 10 }}>
+        {/* User - avatar SELALU tampil (posisi fixed), cuma nama/role & label
+            "Sign Out" yang fade-in belakangan supaya tidak glitch. */}
+        <div style={{ borderTop: `1px solid ${t.line}`, padding: "12px 12px" }}>
+          {user && (
+            <div style={{ marginBottom: 10, display: "flex", alignItems: "center", gap: 10, overflow: "hidden" }}>
               <div style={{ width: 34, height: 34, borderRadius: "50%", background: `linear-gradient(135deg,${C.primary},${C.primaryD})`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                 <span style={{ fontSize: 13, fontWeight: 800, color: "white" }}>{initial}</span>
               </div>
-              <div style={{ flex: 1, overflow: "hidden" }}>
+              <div style={{
+                flex: 1, minWidth: 0, overflow: "hidden",
+                opacity: visuallyCollapsed ? 0 : 1,
+                transition: visuallyCollapsed ? "opacity .1s ease" : "opacity .16s ease .14s",
+              }}>
                 <div style={{ fontSize: 12, fontWeight: 700, color: t.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{displayName}</div>
                 <div style={{ fontSize: 10, color: t.lo, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{roleLabel}</div>
               </div>
             </div>
           )}
           <button className="mh-btn" onClick={handleLogout}
-            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: collapsed ? "center" : "flex-start", gap: 8, padding: collapsed ? "8px 0" : "8px 10px", borderRadius: 8, color: t.lo, fontSize: 12, fontWeight: 600 }}>
+            style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, color: t.lo, fontSize: 12, fontWeight: 600, overflow: "hidden" }}>
             <Icon name="logout" size={15} color={t.lo} />
-            {!collapsed && "Sign Out"}
+            <span style={{
+              whiteSpace: "nowrap",
+              opacity: visuallyCollapsed ? 0 : 1,
+              transition: visuallyCollapsed ? "opacity .1s ease" : "opacity .16s ease .14s",
+            }}>Sign Out</span>
           </button>
         </div>
       </div>

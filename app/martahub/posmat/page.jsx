@@ -4,8 +4,10 @@
 // atas permintaan user (2026-08-31) - RPC & tabel DB-nya tidak disentuh,
 // yang dihapus cuma UI-nya di halaman ini.
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { Package, ArrowLeft, Plus, Pencil, AlertTriangle, Loader2, Upload } from "lucide-react";
+import { Package, ArrowLeft, Plus, Pencil, AlertTriangle, Loader2, Upload, Download, RefreshCw } from "lucide-react";
+import * as XLSX from "xlsx";
 import MartaShell, { T } from "../components/MartaShell";
+import ExcelFilter from "../components/ExcelFilter";
 import supabaseMarta from "../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../lib/martaScope";
 
@@ -99,7 +101,7 @@ function PlanView({ email, canManage, scope }) {
   }
 
   return (
-    <div style={{ maxWidth: 980 }}>
+    <div style={{ width: "100%" }}>
       <div style={{ display: "flex", alignItems: "center", marginBottom: 14 }}>
         <div style={{ fontSize: 18, fontWeight: 800, color: T.hi }}>Plan POSM</div>
         {canManage && <button onClick={() => setFormOpen(true)} style={{ ...pbtn, marginLeft: "auto" }}><Plus size={15} /> Plan Baru</button>}
@@ -144,10 +146,204 @@ function PlanView({ email, canManage, scope }) {
         </div>
       )}
 
+      <PosmRawDataTable />
     </div>
   );
 }
 
+// ── Raw Data POSM: seluruh baris alokasi (Plan x Branch x Material) lintas
+// Plan, siap di-export .xlsx - dipakai buat cek/rekap manual di luar app.
+function PosmRawDataTable() {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  const [q, setQ] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [colFilters, setColFilters] = useState({});
+  const [sortState, setSortState] = useState({ key: null, dir: "asc" });
+
+  const load = useCallback(async () => {
+    setErr("");
+    const { data, error } = await supabaseMarta.rpc("mh_posm_list_raw_allocations");
+    if (error) setErr(error.message); else setRows(data || []);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const T_FILTER = { hi: T.hi, mid: T.mid, lo: T.lo, blue: T.primary, blueBg: T.primaryBg };
+
+  const COLUMNS = useMemo(() => [
+    { key: "plan", label: "Plan", width: 200, filter: true, get: (r) => r.plan_name || "-" },
+    { key: "category", label: "Category", width: 140, filter: true, get: (r) => PLAN_CATEGORY_LABEL[r.category] || r.category || "-" },
+    { key: "brand", label: "Brand", width: 80, filter: true, get: (r) => brandLabel(r.brand) },
+    { key: "status", label: "Status", width: 100, filter: true, get: (r) => (PLAN_STATUS_META[r.status] || PLAN_STATUS_META.draft).label },
+    { key: "period", label: "Period", width: 170, filter: true, get: (r) => `${r.period_from || "-"} – ${r.period_to || "-"}` },
+    { key: "region", label: "Region", width: 140, filter: true, get: (r) => r.region || "-" },
+    { key: "branch", label: "Branch", width: 150, filter: true, get: (r) => r.branch_name || "-" },
+    { key: "material", label: "Material", width: 170, filter: true, get: (r) => r.material_name || "-" },
+    { key: "qty", label: "Qty Alokasi", width: 110, numeric: true, filter: true, get: (r) => r.qty ?? 0 },
+    { key: "installed", label: "Qty Terpasang", width: 120, numeric: true, filter: true, get: (r) => r.installed_qty ?? 0 },
+    { key: "sisa", label: "Sisa", width: 90, numeric: true, filter: true, get: (r) => Math.max(0, (r.qty || 0) - (r.installed_qty || 0)) },
+  ], []);
+
+  const FILTER_COLS = useMemo(() => COLUMNS.filter((c) => c.filter), [COLUMNS]);
+
+  const searchFiltered = useMemo(() => {
+    if (!rows) return [];
+    const term = q.trim().toLowerCase();
+    if (!term) return rows;
+    return rows.filter((r) => COLUMNS.some((c) => String(c.get(r)).toLowerCase().includes(term)));
+  }, [rows, q, COLUMNS]);
+
+  const filterOptionsMap = useMemo(() => {
+    const map = {};
+    for (const col of FILTER_COLS) {
+      let list = searchFiltered;
+      for (const oc of FILTER_COLS) {
+        if (oc.key === col.key) continue;
+        const sel = colFilters[oc.key];
+        if (sel && sel.length) list = list.filter((r) => sel.includes(oc.get(r)));
+      }
+      const uniq = [...new Set(list.map(col.get).filter((v) => v && v !== "-"))].sort((a, b) => String(a).localeCompare(String(b), "id"));
+      map[col.key] = uniq.map((v) => ({ value: v, label: String(v) }));
+    }
+    return map;
+  }, [FILTER_COLS, searchFiltered, colFilters]);
+
+  const filtered = useMemo(() => {
+    let list = searchFiltered;
+    for (const col of FILTER_COLS) {
+      const sel = colFilters[col.key];
+      if (sel && sel.length) list = list.filter((r) => sel.includes(col.get(r)));
+    }
+    if (sortState.key) {
+      const col = COLUMNS.find((c) => c.key === sortState.key);
+      if (col?.get) {
+        list = [...list].sort((a, b) => {
+          const va = col.get(a), vb = col.get(b);
+          const cmp = col.numeric ? (Number(va) - Number(vb)) : String(va).localeCompare(String(vb), "id", { numeric: true });
+          return sortState.dir === "asc" ? cmp : -cmp;
+        });
+      }
+    }
+    return list;
+  }, [searchFiltered, colFilters, FILTER_COLS, sortState, COLUMNS]);
+
+  const activeFilterCount = Object.values(colFilters).filter((v) => v && v.length).length;
+  const clearAllFilters = () => { setColFilters({}); setQ(""); };
+
+  function exportXlsx() {
+    if (!filtered.length) return;
+    setExporting(true);
+    try {
+      const data = filtered.map((r) => ({
+        "Plan": r.plan_name,
+        "Category": PLAN_CATEGORY_LABEL[r.category] || r.category,
+        "Brand": brandLabel(r.brand),
+        "Status": PLAN_STATUS_META[r.status]?.label || r.status,
+        "Period From": r.period_from,
+        "Period To": r.period_to,
+        "Region": r.region,
+        "Branch": r.branch_name,
+        "Material": r.material_name,
+        "Qty Alokasi": r.qty,
+        "Qty Terpasang": r.installed_qty,
+        "Sisa": Math.max(0, (r.qty || 0) - (r.installed_qty || 0)),
+        "Updated At": r.updated_at ? new Date(r.updated_at).toLocaleString("id-ID") : "",
+      }));
+      const ws = XLSX.utils.json_to_sheet(data);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Raw Data POSM");
+      XLSX.writeFile(wb, `raw_data_posm_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } finally { setExporting(false); }
+  }
+
+  return (
+    <div style={{ marginTop: 24 }}>
+      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+        <div style={{ fontSize: 15, fontWeight: 800, color: T.hi }}>Raw Data POSM</div>
+        <div style={{ fontSize: 11.5, color: T.lo }}>{rows === null ? "" : `${filtered.length} baris`}</div>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari plan, branch, material…"
+            style={{ ...inp, width: 240, padding: "7px 11px", fontSize: 12.5 }} />
+          <button onClick={clearAllFilters} disabled={!activeFilterCount && !q} title="Hapus pencarian & semua filter kolom"
+            style={{ ...btn, padding: "8px 12px", opacity: (activeFilterCount || q) ? 1 : 0.4, cursor: (activeFilterCount || q) ? "pointer" : "default" }}>
+            Clear Filter{activeFilterCount ? ` (${activeFilterCount})` : ""}
+          </button>
+          <button onClick={load} title="Muat ulang" style={{ ...btn, padding: "8px 10px" }}><RefreshCw size={13} /></button>
+          <button onClick={exportXlsx} disabled={!filtered.length || exporting}
+            style={{ ...pbtn, opacity: (!filtered.length || exporting) ? 0.5 : 1, cursor: (!filtered.length || exporting) ? "default" : "pointer" }}>
+            <Download size={14} /> {exporting ? "Menyiapkan…" : "Export .xlsx"}
+          </button>
+        </div>
+      </div>
+
+      {err && <div style={{ ...note, marginBottom: 12, background: T.errorBg, borderColor: T.error, color: T.error }}>{err}</div>}
+
+      <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+        <div style={{ overflowX: "auto", maxHeight: "72vh", overflowY: "auto" }}>
+          {rows === null ? (
+            <div style={{ padding: 24 }}><Spinner /></div>
+          ) : (
+            <table style={{ borderCollapse: "collapse", fontSize: 12.5, whiteSpace: "nowrap" }}>
+              <thead>
+                <tr style={{ background: "#F7F9FC", color: T.mid, textAlign: "left" }}>
+                  {COLUMNS.map((col) => {
+                    const isSorted = sortState.key === col.key;
+                    const filterConfig = col.filter ? {
+                      options: filterOptionsMap[col.key] || [],
+                      selected: colFilters[col.key] || [],
+                      onApply: (vals) => setColFilters((p) => ({ ...p, [col.key]: vals })),
+                      onClear: () => setColFilters((p) => { const n = { ...p }; delete n[col.key]; return n; }),
+                      sortDir: isSorted ? sortState.dir : null,
+                      onSort: (dir) => setSortState({ key: col.key, dir }),
+                    } : null;
+                    return (
+                      <th key={col.key} style={{ position: "sticky", top: 0, zIndex: 5, width: col.width, minWidth: col.width, padding: "9px 10px", fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.02em", color: isSorted ? T.primary : T.mid, background: "#F7F9FC", borderBottom: `1px solid ${T.line}`, borderRight: `1px solid ${T.line}` }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: col.numeric ? "flex-end" : "space-between", gap: 6 }}>
+                          <span onClick={() => !col.filter && setSortState((s) => ({ key: col.key, dir: s.key === col.key && s.dir === "asc" ? "desc" : "asc" }))}
+                            style={{ overflow: "hidden", textOverflow: "ellipsis", cursor: "pointer" }} title={col.label}>
+                            {col.label}{isSorted && !col.filter ? (sortState.dir === "asc" ? " ▲" : " ▼") : ""}
+                          </span>
+                          {filterConfig && <ExcelFilter {...filterConfig} t={T_FILTER} d={false} />}
+                        </div>
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.length === 0 && (
+                  <tr><td colSpan={COLUMNS.length} style={{ padding: 20, textAlign: "center", color: T.lo }}>Belum ada data alokasi POSM.</td></tr>
+                )}
+                {filtered.map((r, i) => {
+                  const sisa = Math.max(0, (r.qty || 0) - (r.installed_qty || 0));
+                  return (
+                    <tr key={`${r.plan_id}_${r.branch_id}_${i}`} style={{ borderTop: `1px solid ${T.line}` }}>
+                      <td style={{ padding: "7px 12px", fontWeight: 700, color: T.hi, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", borderRight: `1px solid ${T.line}` }}>{r.plan_name}</td>
+                      <td style={{ padding: "7px 12px", color: T.mid, borderRight: `1px solid ${T.line}` }}>{PLAN_CATEGORY_LABEL[r.category] || r.category}</td>
+                      <td style={{ padding: "7px 12px", color: T.mid, borderRight: `1px solid ${T.line}` }}>{brandLabel(r.brand)}</td>
+                      <td style={{ padding: "7px 12px", borderRight: `1px solid ${T.line}` }}>
+                        <span style={{ ...pill, color: (PLAN_STATUS_META[r.status] || PLAN_STATUS_META.draft).color, background: (PLAN_STATUS_META[r.status] || PLAN_STATUS_META.draft).bg }}>
+                          {(PLAN_STATUS_META[r.status] || PLAN_STATUS_META.draft).label}
+                        </span>
+                      </td>
+                      <td style={{ padding: "7px 12px", color: T.lo, fontSize: 11.5, borderRight: `1px solid ${T.line}` }}>{r.period_from} – {r.period_to}</td>
+                      <td style={{ padding: "7px 12px", color: T.mid, borderRight: `1px solid ${T.line}` }}>{r.region}</td>
+                      <td style={{ padding: "7px 12px", fontWeight: 700, color: T.hi, borderRight: `1px solid ${T.line}` }}>{r.branch_name}</td>
+                      <td style={{ padding: "7px 12px", color: T.mid, borderRight: `1px solid ${T.line}` }}>{r.material_name}</td>
+                      <td style={{ padding: "7px 12px", textAlign: "right", fontWeight: 700, color: T.hi, borderRight: `1px solid ${T.line}` }}>{r.qty}</td>
+                      <td style={{ padding: "7px 12px", textAlign: "right", color: T.success, fontWeight: 700, borderRight: `1px solid ${T.line}` }}>{r.installed_qty}</td>
+                      <td style={{ padding: "7px 12px", textAlign: "right", color: sisa > 0 ? T.warning : T.lo, fontWeight: 700 }}>{sisa}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 function PlanFormModal({ email, onClose, onSaved, plan }) {
   const isEdit = !!plan;
   const [name, setName] = useState(plan?.name || "");
@@ -158,6 +354,7 @@ function PlanFormModal({ email, onClose, onSaved, plan }) {
   const [status, setStatus] = useState(plan?.status || "active");
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(plan?.visual_path ? planVisualUrl(plan.visual_path) : "");
+  const [showPreview, setShowPreview] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
@@ -169,8 +366,9 @@ function PlanFormModal({ email, onClose, onSaved, plan }) {
 
   async function save() {
     if (!name.trim()) { setErr("Nama Plan wajib diisi."); return; }
+    if (!file && !plan?.visual_path) { setErr("Visual wajib diunggah."); return; }
     if (!periodFrom || !periodTo) { setErr("Period From & To wajib diisi."); return; }
-    if (periodTo < periodFrom) { setErr("Period To harus setelah Period From."); return; }
+    if (periodTo <= periodFrom) { setErr("Period To harus lebih besar dari Period From."); return; }
     setSaving(true); setErr("");
     try {
       let visualPath = plan?.visual_path || null;
@@ -193,18 +391,31 @@ function PlanFormModal({ email, onClose, onSaved, plan }) {
   return (
     <Modal onClose={onClose} title={isEdit ? "Edit Plan POSM" : "Plan POSM Baru"}>
       {err && <div style={{ ...note, marginBottom: 12, background: T.errorBg, borderColor: T.error, color: T.error }}>{err}</div>}
-      <Field label="Visual">
-        <label style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: 120, borderRadius: 10, border: `1.5px dashed ${T.line}`, background: "#F7F9FC", cursor: "pointer", overflow: "hidden" }}>
-          {preview ? <img src={preview} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : (
-                <span style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, fontSize: 12, color: T.lo }}>
-                  <Upload size={22} color={T.lo} />
-                  Klik untuk unggah visual (ukuran bebas)
-                </span>
-              )}
-          <input type="file" accept="image/*" hidden onChange={(e) => pickFile(e.target.files?.[0])} />
-        </label>
+      <Field label="Visual *">
+        {preview ? (
+          <div style={{ position: "relative", width: "100%", height: 120, borderRadius: 10, border: `1.5px solid ${T.line}`, background: "#F7F9FC", overflow: "hidden" }}>
+            <img src={preview} alt="" onClick={() => setShowPreview(true)} style={{ width: "100%", height: "100%", objectFit: "contain", cursor: "zoom-in" }} />
+            <label style={{ position: "absolute", right: 6, bottom: 6, display: "flex", alignItems: "center", gap: 5, padding: "5px 9px", borderRadius: 8, background: "rgba(255,255,255,0.92)", border: `1px solid ${T.line}`, fontSize: 11, fontWeight: 700, color: T.hi, cursor: "pointer" }}>
+              <Upload size={12} /> Ganti
+              <input type="file" accept="image/*" hidden onChange={(e) => pickFile(e.target.files?.[0])} />
+            </label>
+          </div>
+        ) : (
+          <label style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: 120, borderRadius: 10, border: `1.5px dashed ${T.line}`, background: "#F7F9FC", cursor: "pointer", overflow: "hidden" }}>
+            <span style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, fontSize: 12, color: T.lo }}>
+              <Upload size={22} color={T.lo} />
+              Klik untuk unggah visual (ukuran bebas)
+            </span>
+            <input type="file" accept="image/*" hidden onChange={(e) => pickFile(e.target.files?.[0])} />
+          </label>
+        )}
       </Field>
-      <Field label="Nama Plan *"><input value={name} onChange={(e) => setName(e.target.value)} style={inp} placeholder="Contoh: Outdoor Q3 Sumatera Utara" /></Field>
+      {showPreview && preview && (
+        <div onClick={() => setShowPreview(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, cursor: "zoom-out" }}>
+          <img src={preview} alt="" style={{ maxWidth: "92vw", maxHeight: "92vh", objectFit: "contain", borderRadius: 8 }} />
+        </div>
+      )}
+      <Field label="Nama Plan *"><input value={name} onChange={(e) => setName(e.target.value)} style={inp} placeholder="Masukkan Nama Plan" /></Field>
       <Field label="Category *">
         <select value={category} onChange={(e) => setCategory(e.target.value)} style={selectStyle}>
           {PLAN_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
@@ -252,10 +463,11 @@ function PlanCreateWizard({ email, scope, onClose, onSaved }) {
   const [periodTo, setPeriodTo] = useState("");
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState("");
+  const [showPreview, setShowPreview] = useState(false);
 
   const [catalog, setCatalog] = useState(null);
   const [materialId, setMaterialId] = useState(null); // 1 Plan = 1 material
-  const [branches, setBranches] = useState(null);
+  const [branchRows, setBranchRows] = useState(null); // raw mh_branch_brand_list
   const [qty, setQty] = useState({}); // key: branchId -> qty
 
   const [saving, setSaving] = useState(false);
@@ -271,15 +483,32 @@ function PlanCreateWizard({ email, scope, onClose, onSaved }) {
 
   useEffect(() => {
     supabaseMarta.rpc("mh_posmat_list_types").then(({ data, error }) => { if (!error) setCatalog(data || []); else setErr(error.message); });
-    supabaseMarta.from("mh_sites").select("branch_id, branch, region").eq("active", true).in("region", allowedRegions).not("branch_id", "is", null)
+    // Sama seperti "Tambah Assignment" (User Management): tarik kombinasi
+    // branch x brand lewat RPC mh_branch_brand_list (SECURITY DEFINER),
+    // bukan query langsung ke mh_sites - RLS mh_sites butuh sesi Supabase
+    // Auth asli (auth.uid()), yang tidak dipakai app ini, sehingga query
+    // langsung selalu balik kosong ("Tidak ada branch aktif").
+    supabaseMarta.rpc("mh_branch_brand_list")
       .then(({ data, error }) => {
         if (error) { setErr(error.message); return; }
-        const map = new Map();
-        for (const r of data || []) if (r.branch_id && !map.has(r.branch_id)) map.set(r.branch_id, { branch_id: r.branch_id, branch_name: r.branch || r.branch_id, region: r.region });
-        const rows = Array.from(map.values()).sort((a, b) => a.region === b.region ? a.branch_name.localeCompare(b.branch_name) : a.region.localeCompare(b.region));
-        setBranches(rows);
+        setBranchRows(data || []);
       });
   }, []);
+
+  // Branch alokasi mengikuti Brand yang SUDAH dipilih di form (tidak perlu
+  // pilih brand lagi per branch) - cukup filter kombinasi branch x brand
+  // ke brand terpilih saja.
+  const branches = useMemo(() => {
+    if (branchRows === null) return null;
+    const map = new Map();
+    for (const r of branchRows) {
+      if (!r.branch_id || !r.brand) continue;
+      if (r.brand !== brand) continue;
+      if (!allowedRegions.includes(r.region)) continue;
+      if (!map.has(r.branch_id)) map.set(r.branch_id, { branch_id: r.branch_id, branch_name: r.branch || r.branch_id, region: r.region });
+    }
+    return Array.from(map.values()).sort((a, b) => a.region === b.region ? a.branch_name.localeCompare(b.branch_name) : a.region.localeCompare(b.region));
+  }, [branchRows, brand, allowedRegions.join(",")]);
 
   function pickFile(f) {
     if (!f) return;
@@ -295,8 +524,10 @@ function PlanCreateWizard({ email, scope, onClose, onSaved }) {
 
   async function save() {
     if (!name.trim()) { setErr("Nama Plan wajib diisi."); return; }
+    if (!file) { setErr("Visual wajib diunggah."); return; }
+    if (!materialId) { setErr("Material wajib dipilih."); return; }
     if (!periodFrom || !periodTo) { setErr("Period From & To wajib diisi."); return; }
-    if (periodTo < periodFrom) { setErr("Period To harus setelah Period From."); return; }
+    if (periodTo <= periodFrom) { setErr("Period To harus lebih besar dari Period From."); return; }
     setSaving(true); setErr("");
     let createdPlan = null;
     try {
@@ -337,7 +568,7 @@ function PlanCreateWizard({ email, scope, onClose, onSaved }) {
   }
 
   return (
-    <div style={{ maxWidth: 1180 }}>
+    <div style={{ width: "100%" }}>
       <button onClick={onClose} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: T.mid, fontSize: 13, fontWeight: 600, padding: 0, marginBottom: 14 }}>
         <ArrowLeft size={15} /> Kembali ke daftar Plan
       </button>
@@ -347,18 +578,31 @@ function PlanCreateWizard({ email, scope, onClose, onSaved }) {
       <div style={{ ...card, marginBottom: 14 }}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20 }}>
         <div>
-          <Field label="Visual">
-            <label style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: 96, borderRadius: 10, border: `1.5px dashed ${T.line}`, background: "#F7F9FC", cursor: "pointer", overflow: "hidden" }}>
-              {preview ? <img src={preview} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} /> : (
+          <Field label="Visual *">
+            {preview ? (
+              <div style={{ position: "relative", width: "100%", height: 96, borderRadius: 10, border: `1.5px solid ${T.line}`, background: "#F7F9FC", overflow: "hidden" }}>
+                <img src={preview} alt="" onClick={() => setShowPreview(true)} style={{ width: "100%", height: "100%", objectFit: "contain", cursor: "zoom-in" }} />
+                <label style={{ position: "absolute", right: 5, bottom: 5, display: "flex", alignItems: "center", gap: 5, padding: "4px 8px", borderRadius: 8, background: "rgba(255,255,255,0.92)", border: `1px solid ${T.line}`, fontSize: 10.5, fontWeight: 700, color: T.hi, cursor: "pointer" }}>
+                  <Upload size={11} /> Ganti
+                  <input type="file" accept="image/*" hidden onChange={(e) => pickFile(e.target.files?.[0])} />
+                </label>
+              </div>
+            ) : (
+              <label style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: 96, borderRadius: 10, border: `1.5px dashed ${T.line}`, background: "#F7F9FC", cursor: "pointer", overflow: "hidden" }}>
                 <span style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, fontSize: 12, color: T.lo }}>
                   <Upload size={22} color={T.lo} />
                   Klik untuk unggah visual
                 </span>
-              )}
-              <input type="file" accept="image/*" hidden onChange={(e) => pickFile(e.target.files?.[0])} />
-            </label>
+                <input type="file" accept="image/*" hidden onChange={(e) => pickFile(e.target.files?.[0])} />
+              </label>
+            )}
           </Field>
-          <Field label="Nama Plan *"><input value={name} onChange={(e) => setName(e.target.value)} style={inp} placeholder="Contoh: Outdoor Q3 Sumatera Utara" /></Field>
+          {showPreview && preview && (
+            <div onClick={() => setShowPreview(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, cursor: "zoom-out" }}>
+              <img src={preview} alt="" style={{ maxWidth: "92vw", maxHeight: "92vh", objectFit: "contain", borderRadius: 8 }} />
+            </div>
+          )}
+          <Field label="Nama Plan *"><input value={name} onChange={(e) => setName(e.target.value)} style={inp} placeholder="Masukkan Nama Plan" /></Field>
         </div>
         <div>
           <Field label="Category *">
@@ -378,12 +622,11 @@ function PlanCreateWizard({ email, scope, onClose, onSaved }) {
           </div>
         </div>
         <div>
-          <Field label="Material - 1 Plan cuma 1 material">
+          <Field label="Material *">
             {catalog === null ? <Spinner small label="Memuat material…" /> : (
               <MaterialPicker catalog={catalog} setCatalog={setCatalog} selectedId={materialId} onSelect={setMaterialId} email={email} />
             )}
           </Field>
-          <div style={{ fontSize: 11, color: T.lo, marginTop: -4 }}>Butuh material lain? Buat Plan POSM terpisah.</div>
         </div>
       </div>
 
@@ -494,13 +737,13 @@ function MaterialPicker({ catalog, setCatalog, selectedId, onSelect, email, disa
         {selected ? (
           <span style={{ fontSize: 13, fontWeight: 700, color: T.hi }}>{selected.name}</span>
         ) : (
-          <span style={{ color: T.lo }}>Pilih material yang didaftarkan di Plan ini…</span>
+          <span style={{ color: T.lo }}>Pilih Material</span>
         )}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {selected && !disabled && (
             <span onClick={(e) => { e.stopPropagation(); onSelect(null); }} style={{ cursor: "pointer", color: T.lo, fontWeight: 800, fontSize: 15, lineHeight: 1 }}>×</span>
           )}
-          <span style={{ color: T.lo, fontSize: 11 }}>▾</span>
+          <img src={CHEV} alt="" style={{ width: 13, height: 13, flexShrink: 0 }} />
         </div>
       </div>
 
@@ -547,11 +790,12 @@ function MaterialPicker({ catalog, setCatalog, selectedId, onSelect, email, disa
 }
 
 
-const PLAN_TABS = [{ key: "info", label: "Info" }, { key: "material", label: "Material" }, { key: "alokasi", label: "Alokasi" }];
+const PLAN_TABS = [{ key: "info", label: "Info" }, { key: "material", label: "Material" }, { key: "alokasi", label: "Alokasi" }, { key: "instalasi", label: "Instalasi" }];
 
 function PlanDetail({ plan, email, canManage, scope, onBack, onChanged }) {
   const [tab, setTab] = useState("info");
   const [editOpen, setEditOpen] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const st = PLAN_STATUS_META[plan.status] || PLAN_STATUS_META.draft;
   const url = planVisualUrl(plan.visual_path);
 
@@ -566,7 +810,7 @@ function PlanDetail({ plan, email, canManage, scope, onBack, onChanged }) {
         <ArrowLeft size={15} /> Kembali ke daftar Plan
       </button>
       <div style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 16 }}>
-        <div style={{ width: 56, height: 56, borderRadius: 10, background: "#F1F2F5", flexShrink: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div onClick={() => url && setShowPreview(true)} style={{ width: 56, height: 56, borderRadius: 10, background: "#F1F2F5", flexShrink: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", cursor: url ? "zoom-in" : "default" }}>
           {url ? <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <Package size={18} color={T.lo} />}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -601,11 +845,187 @@ function PlanDetail({ plan, email, canManage, scope, onBack, onChanged }) {
       )}
       {tab === "material" && <PlanMaterialTab plan={plan} email={email} canManage={canManage} onSaved={refresh} />}
       {tab === "alokasi" && <PlanAlokasiTab plan={plan} email={email} canManage={canManage} scope={scope} onSaved={refresh} />}
+      {tab === "instalasi" && <PlanInstallationsTab plan={plan} email={email} canManage={canManage} />}
 
       {editOpen && (
         <PlanFormModal email={email} plan={plan} onClose={() => setEditOpen(false)}
           onSaved={async () => { setEditOpen(false); await refresh(); }} />
       )}
+      {showPreview && url && (
+        <div onClick={() => setShowPreview(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, cursor: "zoom-out" }}>
+          <img src={url} alt="" style={{ maxWidth: "92vw", maxHeight: "92vh", objectFit: "contain", borderRadius: 8 }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Tab "Instalasi" - daftar Retailer Installment utk Plan ini, dgn hasil
+// validasi geofence yang SUDAH TERSIMPAN (dihitung SEKALI server-side saat
+// BME submit - lihat mh_md_submit_retailer_installation di migrasi
+// retailer_install_auto_geofence). CMS di sini HANYA MEMBACA kolom
+// location_status/location_distance_meters, TIDAK PERNAH menghitung ulang
+// jarak tiap kali tab dibuka/refresh - supaya tidak boros.
+const GEOFENCE_META = {
+  valid: { label: "Dalam Radius", color: T.success, bg: T.successBg },
+  mismatch: { label: "Di Luar Radius", color: T.error, bg: T.errorBg },
+  no_reference: { label: "Tanpa Titik Referensi", color: T.lo, bg: "#F1F2F5" },
+};
+const REVIEW_META = {
+  revision_needed: { label: "Diminta Revisi", color: T.error, bg: T.errorBg },
+  revised: { label: "Sudah Diperbaiki", color: T.success, bg: T.successBg },
+};
+function installPhotoUrl(path) {
+  return supabaseMarta.storage.from("mh-photos").getPublicUrl(path).data.publicUrl;
+}
+function PlanInstallationsTab({ plan, email, canManage }) {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  const [busyId, setBusyId] = useState(null);
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [revisionFor, setRevisionFor] = useState(null); // id instalasi yg lagi diisi alasan revisi
+  const [revisionNote, setRevisionNote] = useState("");
+
+  const load = useCallback(async () => {
+    setErr("");
+    const { data, error } = await supabaseMarta.rpc("mh_posm_list_plan_installations", { p_plan_id: plan.id });
+    if (error) { setErr(error.message || "Gagal memuat instalasi"); return; }
+    setRows(data || []);
+  }, [plan.id]);
+  useEffect(() => { load(); }, [load]);
+
+  function openRevision(id) { setRevisionFor(id); setRevisionNote(""); }
+
+  async function submitRevision() {
+    if (!revisionNote.trim()) return;
+    setBusyId(revisionFor);
+    try {
+      const { error } = await supabaseMarta.rpc("mh_web_request_retailer_revision", {
+        p_id: revisionFor, p_notes: revisionNote.trim(), p_caller_email: email,
+      });
+      if (error) throw new Error(error.message);
+      setRevisionFor(null); setRevisionNote("");
+      await load();
+    } catch (e) { setErr(e.message || "Gagal meminta revisi"); }
+    finally { setBusyId(null); }
+  }
+
+  const filtered = (rows || []).filter((r) => {
+    if (filterStatus === "all") return true;
+    if (filterStatus === "flagged") return r.review_status === "revision_needed";
+    if (filterStatus === "revised") return r.review_status === "revised";
+    return !r.review_status;
+  });
+  const mismatchCount = (rows || []).filter((r) => r.location_status === "mismatch").length;
+  const flaggedCount = (rows || []).filter((r) => r.review_status === "revision_needed").length;
+
+  return (
+    <div>
+      <div style={{ ...card, marginBottom: 14, display: "flex", alignItems: "flex-start", gap: 10 }}>
+        <div style={{ fontSize: 12, color: T.mid, lineHeight: 1.7 }}>
+          Validasi lokasi (jarak titik pemasangan ke titik outlet resmi di Mapping Outlet) dihitung <b>otomatis satu kali</b> saat BME submit, lalu hasilnya disimpan permanen - tidak dihitung ulang setiap kali halaman ini dibuka.
+          {mismatchCount > 0 && <> <b style={{ color: T.error }}>{mismatchCount} pemasangan</b> di luar radius toleransi.</>}
+          {" "}Kalau ada yang mencurigakan atau salah input, klik <b>Minta Revisi</b> - BME bisa perbaiki dari HP tanpa harus datang lagi ke lokasi.
+        </div>
+      </div>
+
+      {err && <div style={{ ...card, borderColor: T.error, background: T.errorBg, color: T.error, marginBottom: 14 }}>{err}</div>}
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+        {[["all", "Semua"], ["pending", "Belum Ditinjau"], ["flagged", `Diminta Revisi${flaggedCount > 0 ? ` (${flaggedCount})` : ""}`], ["revised", "Sudah Diperbaiki"]].map(([k, label]) => (
+          <button key={k} onClick={() => setFilterStatus(k)}
+            style={{ padding: "6px 12px", borderRadius: 999, border: `1px solid ${filterStatus === k ? T.hi : T.line}`, background: filterStatus === k ? T.hi : "#fff", color: filterStatus === k ? "#fff" : T.mid, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {rows === null && <div style={{ ...card, textAlign: "center", color: T.lo }}>Memuat…</div>}
+      {rows !== null && filtered.length === 0 && <div style={{ ...card, textAlign: "center", color: T.lo }}>Belum ada Retailer Installment untuk Plan ini.</div>}
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {filtered.map((r) => {
+          const geo = GEOFENCE_META[r.location_status] || { label: r.location_status || "-", color: T.lo, bg: "#F1F2F5" };
+          const rv = REVIEW_META[r.review_status] || { label: "Belum Ditinjau", color: T.lo, bg: "#F1F2F5" };
+          return (
+            <div key={r.id} style={{ ...card, padding: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13.5, fontWeight: 800, color: T.hi }}>{(r.outlet_name || "-").toUpperCase()}</div>
+                  <div style={{ fontSize: 11, color: T.mid, marginTop: 2 }}>ID {r.outlet_code} · {r.branch_name}{r.mc ? ` · ${r.mc}` : ""}</div>
+                  <div style={{ fontSize: 11, color: T.lo, marginTop: 2 }}>{r.recorder_name} · {new Date(r.created_at).toLocaleString("id-ID")}</div>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 5, alignItems: "flex-end" }}>
+                  <span style={{ ...pill, color: geo.color, background: geo.bg }}>
+                    {geo.label}{r.location_distance_meters != null ? ` · ${Math.round(r.location_distance_meters)}m` : ""}
+                  </span>
+                  <span style={{ ...pill, color: rv.color, background: rv.bg }}>{rv.label}</span>
+                </div>
+              </div>
+
+              {r.location_note && <div style={{ marginTop: 8, fontSize: 11.5, color: T.mid }}>{r.location_note}</div>}
+
+              {r.items?.length > 0 && (
+                <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {r.items.map((it, i) => (
+                    <span key={i} style={{ fontSize: 11, fontWeight: 700, color: T.hi, background: "#F1F2F5", borderRadius: 999, padding: "3px 10px" }}>
+                      {it.name} × {it.qty} {it.unit}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {r.note && <div style={{ marginTop: 8, fontSize: 11.5, color: T.mid, fontStyle: "italic" }}>"{r.note}"</div>}
+
+              {r.photos?.length > 0 && (
+                <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {r.photos.map((ph) => (
+                    <a key={ph.id} href={installPhotoUrl(ph.storage_path)} target="_blank" rel="noreferrer"
+                      style={{ width: 56, height: 56, borderRadius: 8, overflow: "hidden", display: "block", background: "#F1F2F5" }}>
+                      <img src={installPhotoUrl(ph.storage_path)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    </a>
+                  ))}
+                </div>
+              )}
+
+              {r.review_status === "revision_needed" && r.review_notes && (
+                <div style={{ marginTop: 10, padding: "9px 11px", borderRadius: 10, background: T.errorBg, color: T.error, fontSize: 11.5, fontWeight: 600, lineHeight: 1.6 }}>
+                  <b>Alasan revisi:</b> {r.review_notes}
+                </div>
+              )}
+
+              {canManage && !r.review_status && revisionFor !== r.id && (
+                <div style={{ marginTop: 12 }}>
+                  <button onClick={() => openRevision(r.id)}
+                    style={{ ...btn, background: "#fff", color: T.error, borderColor: T.error }}>
+                    Minta Revisi
+                  </button>
+                </div>
+              )}
+              {canManage && revisionFor === r.id && (
+                <div style={{ marginTop: 12 }}>
+                  <textarea value={revisionNote} onChange={(e) => setRevisionNote(e.target.value)} rows={2} autoFocus
+                    placeholder="Jelaskan apa yang mencurigakan/salah - mis. jumlah material tidak sesuai foto, salah pilih outlet, dll."
+                    style={{ width: "100%", padding: "8px 10px", borderRadius: 9, border: `1px solid ${T.line}`, fontSize: 12.5, fontFamily: "inherit", resize: "vertical", boxSizing: "border-box" }} />
+                  <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+                    <button onClick={submitRevision} disabled={busyId === r.id || !revisionNote.trim()}
+                      style={{ ...btn, background: T.error, color: "#fff", borderColor: T.error, opacity: (busyId === r.id || !revisionNote.trim()) ? 0.6 : 1 }}>
+                      {busyId === r.id ? "Mengirim…" : "Kirim Permintaan Revisi"}
+                    </button>
+                    <button onClick={() => setRevisionFor(null)} disabled={busyId === r.id} style={btn}>Batal</button>
+                  </div>
+                </div>
+              )}
+              {r.reviewed_by_name && (
+                <div style={{ marginTop: 10, fontSize: 10.5, color: T.lo }}>
+                  Revisi diminta oleh {r.reviewed_by_name} · {new Date(r.reviewed_at).toLocaleString("id-ID")}
+                  {r.review_status === "revised" && " · sudah diperbaiki BME"}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -718,7 +1138,7 @@ function PlanAlokasiTab({ plan, email, canManage, scope, onSaved }) {
       {ok && <div style={{ ...note, marginBottom: 12, background: T.successBg, borderColor: T.success, color: T.success }}>Alokasi tersimpan.</div>}
       <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
         <div style={{ flex: 1 }}>
-          <Field label="Material">
+          <Field label="Material *">
             <select value={materialId} onChange={(e) => setMaterialId(e.target.value)} style={selectStyle}>
               {plan.materials.map((m) => <option key={m.posmat_type_id} value={m.posmat_type_id}>{m.name}</option>)}
             </select>
@@ -805,9 +1225,13 @@ function Modal({ title, onClose, children, wide }) {
 }
 
 function Field({ label, children }) {
+  const isReq = typeof label === "string" && label.trim().endsWith("*");
+  const labelText = isReq ? label.trim().slice(0, -1).trim() : label;
   return (
     <label style={{ display: "block", marginBottom: 10 }}>
-      <div style={{ fontSize: 11.5, fontWeight: 700, color: T.hi, marginBottom: 5 }}>{label}</div>
+      <div style={{ fontSize: 11.5, fontWeight: 700, color: T.hi, marginBottom: 5 }}>
+        {labelText}{isReq && <span style={{ color: T.error, marginLeft: 3 }}>*</span>}
+      </div>
       {children}
     </label>
   );

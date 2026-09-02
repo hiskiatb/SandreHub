@@ -218,19 +218,13 @@ function RadiusField({ label, value, onChange, onSave, saving, saved, canEdit })
 // jumlah = 1), 3 bobot terakhir menyusun "final_score" dari achievement/produktivitas/geo
 // (idealnya jumlah = 1 juga). Dipakai langsung oleh view mh_leaderboard_summary.
 const WEIGHT_FIELDS = [
-  { group: "Komposisi Achievement (per metrik target)", keys: [
-    { key: "w_sp", label: "SP" },
-    { key: "w_fwa", label: "FWA" },
-    { key: "w_rebuy", label: "Rebuy" },
-    { key: "w_revenue", label: "Revenue 3M" },
-  ] },
   { group: "Komposisi Skor Akhir (final_score)", keys: [
     { key: "w_achievement", label: "Achievement" },
     { key: "w_productivity", label: "Produktivitas" },
     { key: "w_geo", label: "Geo Compliance" },
   ] },
 ];
-const DEFAULT_WEIGHTS = { w_sp: 0.3, w_fwa: 0.3, w_rebuy: 0.2, w_revenue: 0.2, w_achievement: 0.6, w_productivity: 0.2, w_geo: 0.2 };
+const DEFAULT_WEIGHTS = { w_achievement: 0.6, w_productivity: 0.2, w_geo: 0.2 };
 
 function LeaderboardWeightsSettings({ canEdit, email }) {
   const [values, setValues] = useState(DEFAULT_WEIGHTS);
@@ -279,7 +273,8 @@ function LeaderboardWeightsSettings({ canEdit, email }) {
     <>
       <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Bobot Skor Leaderboard</div>
       <div style={{ fontSize: 12, color: T.mid, marginBottom: 14, lineHeight: 1.5 }}>
-        Menentukan seberapa besar tiap metrik memengaruhi peringkat BME di halaman Leaderboard. Idealnya jumlah bobot dalam satu kelompok = 1 (100%).
+        Menentukan seberapa besar tiap metrik memengaruhi peringkat BME di halaman Leaderboard. Idealnya jumlah bobot = 1 (100%).<br/>
+        Achievement = Total Actual Revenue ÷ Total Target Revenue × 100. Produktivitas = Total Actual Revenue ÷ Total Cost Actual × 100 (keduanya tidak di-cap). Geo Compliance = % MSISDN tervalidasi "Valid" di menu Validasi MSISDN.
       </div>
       {err && <div style={{ fontSize: 12, color: T.error, marginBottom: 10 }}>{err}</div>}
       {loading ? (
