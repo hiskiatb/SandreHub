@@ -576,6 +576,27 @@ function breakdown(list, labelOf, colorOf) {
 
 const EMPTY_DASHBOARD = { kpis: [], achieveTrend: { data: [], labels: [] }, productivTrend: { data: [], labels: [] }, eventCategory: [], networkCat: [], activities: [], currentMonthLabel: "", currentCount: 0 };
 
+// ─── Section heading - chip ikon ber-aksen + label, versi desktop dari pola
+// SectionCard mobile (chip 26-28px berwarna aksen di samping judul), dipakai
+// utk section utama dashboard maupun header tiap kartu chart/tabel supaya
+// bahasa visualnya konsisten dgn mobile & ActivityDetail. Murni presentasi -
+// tidak menyentuh data/props apapun selain warna & label yang sudah ada.
+function SectionHeading({ icon, color, t, children, size = 22, iconSize = 12 }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+      <div style={{
+        width: size, height: size, borderRadius: size * 0.42, flexShrink: 0,
+        background: `linear-gradient(135deg, ${color}26, ${color}12)`,
+        border: `1px solid ${color}38`,
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <Icon name={icon} size={iconSize} color={color} />
+      </div>
+      {children}
+    </div>
+  );
+}
+
 function computeDashboardData(rows, branchMap, branchSlugMap, activityTargets, selectedMonthKey) {
   if (!rows) return EMPTY_DASHBOARD;
   const targetCtx = { branchSlugMap: branchSlugMap || new Map(), activityTargets: activityTargets || [] };
@@ -940,8 +961,8 @@ export default function MartaHubDashboard() {
 
         /* ── Hero banner ────────────────────────────────────────────────── */
         .mh-hero{
-          position:relative;overflow:hidden;border-radius:22px;margin-bottom:20px;
-          padding:26px 28px;
+          position:relative;overflow:hidden;border-radius:24px;margin-bottom:28px;
+          padding:28px 30px;
           background:${dark
             ? "linear-gradient(120deg,#1A0A14 0%,#2A0A1E 45%,#160A16 100%)"
             : "linear-gradient(120deg,#ED1C24 0%,#D91E6E 55%,#C6168D 100%)"};
@@ -958,13 +979,13 @@ export default function MartaHubDashboard() {
           background:linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.5) 50%, rgba(255,255,255,0) 100%);
           background-size:200% 100%;-webkit-background-clip:text;background-clip:text;
         }
-        .mh-section-label{display:flex;align-items:center;gap:8px;margin:4px 0 12px}
+        .mh-section-label{display:flex;align-items:center;gap:8px;margin:8px 0 14px}
         .mh-section-label .bar{width:3px;height:14px;border-radius:99px;background:linear-gradient(180deg,#ED1C24,#C6168D)}
         .mh-hero-stat{
           background:${dark ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.16)"};
           border:1px solid ${dark ? "rgba(255,255,255,0.10)" : "rgba(255,255,255,0.30)"};
           backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);
-          border-radius:14px;padding:12px 16px;flex:1;min-width:128px;
+          border-radius:16px;padding:13px 16px;flex:1;min-width:128px;
         }
 
         /* ── Standarisasi dropdown & tombol ────────────────────────────────── */
@@ -978,12 +999,15 @@ export default function MartaHubDashboard() {
         .mh-root button{ white-space:nowrap; }
 
         /* ── Responsive grids ── */
-        .mh-content{padding:20px 24px 40px}
+        /* Konten dipusatkan dgn max-width di layar besar (monitor lebar) -
+           mengikuti bahasa desain mobile (card2 rapi, tidak melebar tanpa
+           batas dari tepi ke tepi) tanpa mengubah struktur/data apapun. */
+        .mh-content{padding:20px 24px 40px;max-width:1560px;margin:0 auto}
         .mh-brief{display:flex;align-items:center;gap:12px;margin-bottom:18px;flex-wrap:wrap}
         .mh-kpi-hero{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
-        .mh-kpi-secondary{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
-        .mh-charts{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:16px;margin-bottom:20px}
-        .mh-donuts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+        .mh-kpi-secondary{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:32px}
+        .mh-charts{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:16px;margin-bottom:32px}
+        .mh-donuts{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:32px}
         .mh-qa{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
         .mh-qa-btn{transition:transform .15s,box-shadow .15s}
         .mh-qa-btn:hover{transform:translateY(-3px)}
@@ -1255,7 +1279,11 @@ export default function MartaHubDashboard() {
           </motion.div>
 
           {/* ── KPI - 2 metrik utama (hero, dgn sparkline besar) + 4 pendukung ── */}
-          <div className="mh-section-label"><span className="bar" /><span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", color: t.lo }}>Ringkasan Performa</span></div>
+          <div className="mh-section-label">
+            <SectionHeading icon="trophy" color={C.primary} t={t}>
+              <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", color: t.lo }}>Ringkasan Performa</span>
+            </SectionHeading>
+          </div>
           <div className="mh-kpi-hero">
             {data.kpis.filter((k) => k.hero).map((kpi, i) => (
               <motion.div key={i} className="mh-card"
@@ -1290,7 +1318,7 @@ export default function MartaHubDashboard() {
             {data.kpis.filter((k) => !k.hero).map((kpi, i) => (
               <motion.div key={i} className="mh-card"
                 initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.14 + i * 0.05, ease: [0.22, 1, 0.36, 1] }}
-                style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 16 }}>
+                style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 18, padding: 16 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 10 }}>
                   <div style={{ width: 30, height: 30, borderRadius: 9, background: `linear-gradient(135deg, ${kpi.color}22, ${kpi.color}0D)`, border: `1px solid ${kpi.color}30`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                     <Icon name={kpi.icon} size={15} color={kpi.color} />
@@ -1307,14 +1335,20 @@ export default function MartaHubDashboard() {
           </div>
 
           {/* ── Charts Row ────────────────────────────────────────────────── */}
-          <div className="mh-section-label"><span className="bar" /><span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", color: t.lo }}>Tren & Sebaran Wilayah</span></div>
+          <div className="mh-section-label">
+            <SectionHeading icon="chart" color={C.primaryD} t={t}>
+              <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", color: t.lo }}>Tren & Sebaran Wilayah</span>
+            </SectionHeading>
+          </div>
           <motion.div className="mh-charts"
             initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-60px" }} transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}>
             {/* Achievement Trend */}
-            <div className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: 20, display: "flex", flexDirection: "column" }}>
+            <div className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 20, padding: 20, display: "flex", flexDirection: "column" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>Achievement Trend</div>
-                <span style={{ fontSize: 10, fontWeight: 700, color: t.lo, background: t.hover, borderRadius: 6, padding: "3px 8px" }}>6 Bulan Terakhir</span>
+                <SectionHeading icon="trophy" color={C.primary} t={t} size={26} iconSize={13}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>Achievement Trend</div>
+                </SectionHeading>
+                <span style={{ fontSize: 10, fontWeight: 700, color: t.lo, background: t.hover, borderRadius: 100, padding: "3px 10px" }}>6 Bulan Terakhir</span>
               </div>
               <div style={{ color: t.lo }}>
                 <TrendChart data={data.achieveTrend.data} labels={data.achieveTrend.labels} color={C.primary} height={130} />
@@ -1323,10 +1357,12 @@ export default function MartaHubDashboard() {
             </div>
 
             {/* Productivity Trend */}
-            <div className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: 20, display: "flex", flexDirection: "column" }}>
+            <div className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 20, padding: 20, display: "flex", flexDirection: "column" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>Productivity Trend</div>
-                <span style={{ fontSize: 10, fontWeight: 700, color: t.lo, background: t.hover, borderRadius: 6, padding: "3px 8px" }}>6 Bulan Terakhir</span>
+                <SectionHeading icon="trendUp" color={C.primaryD} t={t} size={26} iconSize={13}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>Productivity Trend</div>
+                </SectionHeading>
+                <span style={{ fontSize: 10, fontWeight: 700, color: t.lo, background: t.hover, borderRadius: 100, padding: "3px 10px" }}>6 Bulan Terakhir</span>
               </div>
               <div style={{ color: t.lo }}>
                 <TrendChart data={data.productivTrend.data} labels={data.productivTrend.labels} color={C.primaryD} height={130} />
@@ -1336,20 +1372,29 @@ export default function MartaHubDashboard() {
 
             {/* Activity Map - filter layer sesungguhnya (status/site/wilayah) ada
                 di dalam MapCard sendiri (tombol tune), tidak diduplikasi di sini. */}
-            <div className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: 20 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, marginBottom: 12 }}>Activity Map</div>
+            <div className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 20, padding: 20 }}>
+              <SectionHeading icon="map" color="#0277BD" t={t} size={26} iconSize={13}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>Activity Map</div>
+              </SectionHeading>
+              <div style={{ marginTop: 12 }} />
               <MapCard t={t} dark={dark} canManage={isMartaAdmin(profile?.role)} activityPoints={mapActivities} posmPoints={mapPosm} />
             </div>
           </motion.div>
 
           {/* ── Donut Charts Row ──────────────────────────────────────────── */}
-          <div className="mh-section-label"><span className="bar" /><span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", color: t.lo }}>Komposisi Aktivitas</span></div>
+          <div className="mh-section-label">
+            <SectionHeading icon="insight" color="#7B1FA2" t={t}>
+              <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", color: t.lo }}>Komposisi Aktivitas</span>
+            </SectionHeading>
+          </div>
           <motion.div className="mh-donuts"
             initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-60px" }} transition={{ duration: 0.5, delay: 0.05, ease: [0.22, 1, 0.36, 1] }}>
             {/* Activity Category */}
-            <div className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: 20 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, marginBottom: 16 }}>Activity Category Contribution</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
+            <div className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 20, padding: 20 }}>
+              <SectionHeading icon="insight" color="#7B1FA2" t={t} size={26} iconSize={13}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>Activity Category Contribution</div>
+              </SectionHeading>
+              <div style={{ display: "flex", alignItems: "center", gap: 24, marginTop: 16 }}>
                 <div style={{ position: "relative", flexShrink: 0 }}>
                   <DonutChart data={data.eventCategory} size={130} strokeW={20} />
                   <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
@@ -1375,9 +1420,11 @@ export default function MartaHubDashboard() {
             </div>
 
             {/* Network Category */}
-            <div className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: 20 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, marginBottom: 16 }}>Network Category Performance</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
+            <div className="mh-card" style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 20, padding: 20 }}>
+              <SectionHeading icon="hub" color="#00695C" t={t} size={26} iconSize={13}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>Network Category Performance</div>
+              </SectionHeading>
+              <div style={{ display: "flex", alignItems: "center", gap: 24, marginTop: 16 }}>
                 <div style={{ flexShrink: 0 }}>
                   <DonutChart data={data.networkCat} size={130} strokeW={20} />
                 </div>
@@ -1408,13 +1455,19 @@ export default function MartaHubDashboard() {
                diketahui sekilas + jalan pintas ke sana. Tab status diperbaiki:
                "Validated" sebelumnya tidak pernah cocok dgn status manapun
                (bug lama - tab itu selalu kosong), diganti "Rejected" yg nyata. */}
-          <div className="mh-section-label"><span className="bar" /><span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", color: t.lo }}>Aktivitas Terbaru</span></div>
+          <div className="mh-section-label">
+            <SectionHeading icon="clipboard" color="#0277BD" t={t}>
+              <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", color: t.lo }}>Aktivitas Terbaru</span>
+            </SectionHeading>
+          </div>
           <motion.div className="mh-card"
             initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, margin: "-60px" }} transition={{ duration: 0.5, delay: 0.12, ease: [0.22, 1, 0.36, 1] }}
-            style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, overflow: "hidden" }}>
+            style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 20, overflow: "hidden" }}>
             {/* Header */}
             <div style={{ padding: "16px 20px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: t.hi }}>Recent Activity</div>
+              <SectionHeading icon="clipboard" color="#0277BD" t={t} size={28} iconSize={14}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: t.hi }}>Recent Activity</div>
+              </SectionHeading>
               <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                 {["All", "Draft", "Submitted", "Approved", "Rejected"].map(tab => (
                   <button key={tab} className="mh-btn" onClick={() => setActiveTab(tab)}
