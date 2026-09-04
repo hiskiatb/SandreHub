@@ -26,7 +26,7 @@ const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
 // Margin kanan & bawah FAB "Buat Plan" - SATU angka dipakai utk keduanya
 // (bukan dua nilai beda) spy jaraknya ke tepi kolom & ke navbar keliatan
 // simetris/rapi.
-const FAB_MARGIN = 12; // dirapatkan ke navbar (sebelumnya 20) - kelihatan terlalu jauh, terutama di layar lebih luas
+const FAB_MARGIN = 16; // jarak kanan == jarak bawah ke navbar (simetris), samakan dgn calendar/page.jsx
 
 const TABS = [
   { key: "all", label: "Semua" },
