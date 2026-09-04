@@ -1122,11 +1122,22 @@ function CreatePlanWizardInner() {
           tetap di header kanan atas (aksi sekunder, terpisah dari alur
           linear Lanjut/Submit ini). */}
       <div ref={actionBarRef} style={{
-        position: "fixed", left: 0, right: 0, bottom: "env(safe-area-inset-bottom,0px)", zIndex: 45,
-        background: "rgba(244,245,247,0.92)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
-        borderTop: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 -4px 16px rgba(23,24,28,0.05)",
+        position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 45,
+        // Bar-nya sendiri (background blur/border/shadow) DIBATASI ke
+        // maxWidth yg sama dgn konten (bukan cuma tombolnya doang) - dulu
+        // cuma div dalam yg dibatasi 480px, bar-nya sendiri full-bleed
+        // selebar viewport, jadi kelihatan aneh melebar di layar
+        // tablet/desktop yg lebih luas. Sekarang dibungkus jadi satu kotak
+        // utuh yg lengket ke bawah TAPI tetap dibatasi lebar konten.
+        display: "flex", justifyContent: "center",
       }}>
-        <div style={{ maxWidth: 480, margin: "0 auto", padding: "12px 20px 14px" }}>
+        <div style={{
+          width: "100%", maxWidth: 480,
+          background: "rgba(244,245,247,0.92)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
+          borderTop: "1px solid rgba(23,24,28,0.06)", borderLeft: "1px solid rgba(23,24,28,0.06)", borderRight: "1px solid rgba(23,24,28,0.06)",
+          boxShadow: "0 -4px 16px rgba(23,24,28,0.05)",
+          padding: "12px 20px calc(env(safe-area-inset-bottom,0px) + 14px)",
+        }}>
           {step === 3 ? (
             <button onClick={() => save("plan_submitted")} disabled={saving}
               style={{ width: "100%", height: 52, borderRadius: 14, border: "none", background: BRAND, color: "#fff", fontSize: 14.5, fontWeight: 800, fontFamily: FF, cursor: saving ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 4px 14px rgba(17,17,20,0.11)" }}>

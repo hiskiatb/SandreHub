@@ -117,7 +117,7 @@ export default function CalendarPage() {
       <div style={{ maxWidth: 480, margin: "0 auto", position: "relative", height: 0 }}>
         <button onClick={goCreatePlan} aria-label={dayActs.length === 0 ? "Buat Plan" : "Tambah Plan"}
           style={{
-            pointerEvents: "auto", position: "absolute", right: 20, bottom: 20,
+            pointerEvents: "auto", position: "absolute", right: 20, bottom: 12,
             display: "flex", alignItems: "center", gap: 7,
             padding: "13px 18px", borderRadius: 999, border: "none", background: BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer",
             boxShadow: "0 8px 20px rgba(17,17,20,0.22)",

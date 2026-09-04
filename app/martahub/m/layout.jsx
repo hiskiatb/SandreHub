@@ -1,6 +1,6 @@
 export const metadata = {
   title: "MartaHub",
-  description: "Plan, check-in & laporan aktivitas marketing lapangan BME/RGE Sumatera - MartaHub.",
+  description: "Plan & laporan aktivitas marketing lapangan BME/RGE Sumatera - MartaHub.",
   manifest: "/martahub/manifest.webmanifest",
   appleWebApp: {
     capable: true,

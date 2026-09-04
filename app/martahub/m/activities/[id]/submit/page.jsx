@@ -665,7 +665,7 @@ export default function SubmitActualPage() {
             {validated ? "Laporan tervalidasi otomatis" : "Laporan perlu ditinjau"}
           </div>
           <div style={{ marginTop: 8, fontSize: 13, color: "#6B6B76", lineHeight: 1.6 }}>
-            {result.validation_note || (validated ? "Check-in cocok dengan site event ini." : "Titik check-in tidak cocok dengan site manapun di event ini - approver bisa meninjau manual.")}
+            {result.validation_note || (validated ? "Titik lokasi cocok dengan site event ini." : "Titik lokasi tidak cocok dengan site manapun di event ini - approver bisa meninjau manual.")}
           </div>
           <button onClick={() => router.replace(`/martahub/m/activities?open=${activityId}`)}
             style={{ marginTop: 26, width: "100%", height: 48, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>
@@ -1025,11 +1025,19 @@ export default function SubmitActualPage() {
           ConfirmSubmitSheet) sebelum benar2 terkirim, plus dicek dulu apa
           semua hari plan ini sudah berjalan (daysRemaining). */}
       <div ref={actionBarRef} style={{
-        position: "fixed", left: 0, right: 0, bottom: "env(safe-area-inset-bottom,0px)", zIndex: 45,
-        background: "rgba(244,245,247,0.92)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
-        borderTop: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 -4px 16px rgba(23,24,28,0.05)",
+        position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 45,
+        // Sama spt wizard Buat Plan - bar dibungkus supaya DIBATASI maxWidth
+        // (bukan cuma tombolnya), jadi tidak melebar full-bleed di layar
+        // lebih luas (tablet/desktop).
+        display: "flex", justifyContent: "center",
       }}>
-        <div style={{ maxWidth: 480, margin: "0 auto", padding: "12px 20px 14px" }}>
+        <div style={{
+          width: "100%", maxWidth: 480,
+          background: "rgba(244,245,247,0.92)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
+          borderTop: "1px solid rgba(23,24,28,0.06)", borderLeft: "1px solid rgba(23,24,28,0.06)", borderRight: "1px solid rgba(23,24,28,0.06)",
+          boxShadow: "0 -4px 16px rgba(23,24,28,0.05)",
+          padding: "12px 20px calc(env(safe-area-inset-bottom,0px) + 14px)",
+        }}>
           {isLastTab && daysRemaining && (
             <div style={{ display: "flex", alignItems: "flex-start", gap: 7, marginBottom: 9, padding: "9px 11px", borderRadius: 11, background: "rgba(180,83,9,0.08)" }}>
               <AlertTriangle size={13.5} color="#B45309" style={{ flexShrink: 0, marginTop: 1 }} />

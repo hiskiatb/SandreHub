@@ -26,7 +26,7 @@ const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
 // Margin kanan & bawah FAB "Buat Plan" - SATU angka dipakai utk keduanya
 // (bukan dua nilai beda) spy jaraknya ke tepi kolom & ke navbar keliatan
 // simetris/rapi.
-const FAB_MARGIN = 20;
+const FAB_MARGIN = 12; // dirapatkan ke navbar (sebelumnya 20) - kelihatan terlalu jauh, terutama di layar lebih luas
 
 const TABS = [
   { key: "all", label: "Semua" },
@@ -666,14 +666,11 @@ function DetailSheet({ r, userId, onClose, onRequestDelete }) {
   // Plan SEKARANG TIDAK PERLU approval TMV lagi - "plan_submitted" (atau
   // "approved" utk plan lama) sudah cukup utk lanjut, TIDAK perlu menunggu
   // keputusan approver. Yang menentukan aksinya cuma TANGGAL EVENT: sebelum
-  // tiba → masih boleh Edit Plan, begitu tiba → Check In/Isi Laporan Actual
-  // (SAMA PERSIS dgn logika di halaman detail [id]/page.jsx).
+  // tiba → masih boleh Edit Plan, begitu tiba → langsung Isi Laporan Actual
+  // (Check In DIHAPUS - tidak lagi jadi langkah terpisah, SAMA PERSIS dgn
+  // logika di halaman detail [id]/page.jsx).
   let action = null;
-  let editAction = null; // aksi sekunder "Edit Plan" - HANYA terisi di fase
-  // "sudah tiba tanggal event tapi belum check-in", supaya user tetap bisa
-  // koreksi plan sebelum dia benar2 checked-in di lokasi (lihat prompt
-  // "Sudah berada di lokasi event?" di bawah).
-  let checkinPrompt = false;
+  let editAction = null;
   if (r.status === "revision_needed") {
     action = { label: "Revisi Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${r.id}`) };
   } else if (r.status === "draft") {
@@ -681,14 +678,8 @@ function DetailSheet({ r, userId, onClose, onRequestDelete }) {
   } else if (isReady && !eventArrived) {
     action = { label: "Edit Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${r.id}`) };
   } else if (isReady && eventArrived) {
-    if (r.checkin_valid == null) {
-      checkinPrompt = true;
-      action = { label: "Check In", onTap: () => router.push(`/martahub/m/activities/${r.id}/checkin`) };
-      editAction = { label: "Edit Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${r.id}`) };
-    } else {
-      const hasActualDraft = !!r.actual_draft_saved_at && r.actual_sp == null;
-      action = { label: hasActualDraft ? "Lanjutkan Laporan Actual" : "Isi Laporan Actual", onTap: () => router.push(`/martahub/m/activities/${r.id}/submit`) };
-    }
+    const hasActualDraft = !!r.actual_draft_saved_at && r.actual_sp == null;
+    action = { label: hasActualDraft ? "Lanjutkan Laporan Actual" : "Isi Laporan Actual", onTap: () => router.push(`/martahub/m/activities/${r.id}/submit`) };
   } else if (r.status === "revision_actual") {
     action = { label: "Revisi & Kirim Ulang", onTap: () => router.push(`/martahub/m/activities/${r.id}/submit`) };
   }
@@ -708,14 +699,7 @@ function DetailSheet({ r, userId, onClose, onRequestDelete }) {
             {r.validation_note}
           </div>
         )}
-        {checkinPrompt && (
-          <div style={{ marginTop: 16, padding: "11px 13px", borderRadius: 13, background: "#FFF7ED", border: "1px solid #FED7AA", display: "flex", alignItems: "center", gap: 9 }}>
-            <MapPin size={16} color="#C2410C" style={{ flexShrink: 0 }} />
-            <div style={{ fontSize: 12, fontWeight: 700, color: "#9A3412", flex: 1 }}>Sudah berada di lokasi event?</div>
-          </div>
-        )}
-
-        <div style={{ marginTop: checkinPrompt ? 10 : 16, display: "flex", gap: 10 }}>
+        <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
           <button onClick={onClose}
             style={{ flex: 1, height: 48, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 13.5, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
             Tutup
@@ -723,7 +707,7 @@ function DetailSheet({ r, userId, onClose, onRequestDelete }) {
           {action && (
             <button onClick={action.onTap}
               style={{ flex: 1.4, height: 48, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
-              {action.label} {checkinPrompt && <ChevronRight size={15} />}
+              {action.label}
             </button>
           )}
         </div>

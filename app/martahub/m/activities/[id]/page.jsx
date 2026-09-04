@@ -425,15 +425,6 @@ export default function ActivityDetailPage() {
           )}
         </SectionCard>
 
-        {/* Check-in info */}
-        {a.checkin_at && (
-          <SectionCard title="Check In" icon={<MapPin size={13} />} accent="#EA580C">
-            <RowKV label="Status" value={a.checkin_valid ? "Valid (dalam radius)" : "Di luar radius"} valueColor={a.checkin_valid ? "#15803D" : "#DC2626"} />
-            {a.checkin_distance != null && <RowKV label="Jarak" value={`${Math.round(a.checkin_distance)} meter`} />}
-            <RowKV label="Waktu" value={new Date(a.checkin_at).toLocaleString("id-ID")} />
-          </SectionCard>
-        )}
-
         {/* Photos */}
         {photos.length > 0 && (
           <SectionCard title={`Dokumentasi Foto (${photos.length})`} icon={<ImageIcon size={13} />} accent="#DB2777">

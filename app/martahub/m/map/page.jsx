@@ -299,7 +299,7 @@ export default function MartaMapPage() {
             <div style={{ background: "#FFFFFF", borderRadius: 16, padding: "18px 20px", boxShadow: "0 6px 20px rgba(23,24,28,0.1)", border: "1px dashed #D8D9E0" }}>
               <MapPinIcon size={20} color="#B0B0BA" style={{ margin: "0 auto" }} />
               <div style={{ marginTop: 8, fontSize: 12.5, fontWeight: 700, color: "#3A3A44" }}>Belum ada titik lokasi</div>
-              <div style={{ marginTop: 3, fontSize: 11, color: "#8A8A96" }}>Lokasi akan muncul setelah check-in aktivitas atau instalasi POSM dicatat.</div>
+              <div style={{ marginTop: 3, fontSize: 11, color: "#8A8A96" }}>Lokasi akan muncul setelah titik GPS aktivitas atau instalasi POSM dicatat.</div>
             </div>
           </div>
         )}

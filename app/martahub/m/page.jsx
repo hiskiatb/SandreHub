@@ -78,7 +78,7 @@ const ACTIVITY_COLS = "id,event_name,brand,branch_id,mc,event_category,event_cat
 // Semua tips dijaga MAKSIMAL 2 baris di kartu carousel (WebkitLineClamp:2
 // di CarouselCard) - kalimat sengaja dipadatkan spy tidak terpotong.
 const TIPS = [
-  "Check-in tepat di lokasi site supaya validasi laporan otomatis lolos tanpa perlu ditinjau manual.",
+  "Isi laporan actual tepat di lokasi site (pakai \"Perbaiki Titik GPS\") supaya validasi laporan otomatis lolos tanpa perlu ditinjau manual.",
   "Upload foto dokumentasi yang jelas saat isi laporan actual - mempercepat proses validasi.",
   "Nomor MSISDN yang sudah tercatat di plan lain akan otomatis ditandai konflik - ajukan transfer langsung dari layar konflik tersebut.",
   "Plan belum lengkap otomatis tersimpan sbg draft - lanjutkan kapan saja dari menu Aktivitas.",
@@ -259,14 +259,11 @@ export default function MartaMobileHome() {
   const planCount = monthRows.length;
   const actualCount = monthRows.filter((r) => r.actual_sp != null).length;
 
-  // Kartu "Mission" - aksi paling relevan berikutnya: butuh check-in dulu >
-  // butuh isi laporan actual > lihat plan mendatang terdekat > kosong.
-  // Draft BELUM boleh diminta check-in (belum diajukan/disetujui TMV) -
-  // sebelumnya disamakan dgn "approved" jadi plan yang masih draft/belum
-  // selesai muncul seolah "Plan siap - lakukan check-in". Draft yang belum
-  // lengkap sudah dinudge lewat approvalCard "Lanjutkan Draft" di bawah.
-  const needsCheckin = (rows || []).find((r) => r.status === "approved" && r.checkin_valid == null);
-  const needsReport = (rows || []).find((r) => r.checkin_valid != null && r.actual_sp == null);
+  // Kartu "Mission" - aksi paling relevan berikutnya: butuh isi laporan
+  // actual > lihat plan mendatang terdekat > kosong. Check-in DIHAPUS
+  // (bukan lagi bagian dari alur - laporan actual langsung bisa diisi
+  // begitu plan approved, tanpa perlu check-in GPS di lokasi dulu).
+  const needsReport = (rows || []).find((r) => r.status === "approved" && r.actual_sp == null);
   const upcoming = (rows || []).filter((r) => r.plan_date && r.plan_date >= new Date().toISOString().slice(0, 10)).sort((a, b) => (a.plan_date > b.plan_date ? 1 : -1))[0];
 
   const draftCount = (rows || []).filter((r) => r.status === "draft").length;
@@ -420,7 +417,7 @@ export default function MartaMobileHome() {
       {/* Carousel: Mission / Draft / Tips */}
       <div style={{ marginTop: 18 }}>
         <MissionCarousel
-          needsCheckin={needsCheckin} needsReport={needsReport} upcoming={upcoming}
+          needsReport={needsReport} upcoming={upcoming}
           isApprover={isApprover} pendingApprovals={pendingApprovals} draftCount={draftCount}
           router={router}
         />
@@ -660,16 +657,14 @@ function MenuItem({ icon: Icon, label, onClick, segera, badge, color = BRAND }) 
   );
 }
 
-function MissionCarousel({ needsCheckin, needsReport, upcoming, isApprover, pendingApprovals, draftCount, router }) {
+function MissionCarousel({ needsReport, upcoming, isApprover, pendingApprovals, draftCount, router }) {
   const [page, setPage] = useState(0);
   const trackRef = useRef(null);
   const pausedRef = useRef(false);
 
   let missionCard;
-  if (needsCheckin) {
-    missionCard = { badge: "AKTIVITAS · CHECK IN", accent: "#1A9E90", title: needsCheckin.event_name || "Check In", subtitle: "Plan siap - lakukan check-in di lokasi site.", cta: "Check-in Sekarang", action: () => router.push(`/martahub/m/activities/${needsCheckin.id}/checkin`) };
-  } else if (needsReport) {
-    missionCard = { badge: "AKTIVITAS · LAPORAN", accent: "#C2187C", title: needsReport.event_name || "Isi Laporan", subtitle: "Check-in selesai - lengkapi laporan actual sekarang.", cta: "Isi Laporan", action: () => router.push(`/martahub/m/activities/${needsReport.id}/submit`) };
+  if (needsReport) {
+    missionCard = { badge: "AKTIVITAS · LAPORAN", accent: "#C2187C", title: needsReport.event_name || "Isi Laporan", subtitle: "Plan sudah disetujui - lengkapi laporan actual sekarang.", cta: "Isi Laporan", action: () => router.push(`/martahub/m/activities/${needsReport.id}/submit`) };
   } else if (upcoming) {
     // Lokasi ikut ditampilkan (site_id plan) - sebelumnya cuma tanggal,
     // padahal ini kartu "mendatang" yg paling relevan utk tahu KE MANA.
