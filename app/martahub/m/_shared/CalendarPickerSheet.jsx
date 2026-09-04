@@ -597,7 +597,9 @@ function ActivityDetailPopup({ activity: a, onClose }) {
           revenueLabel={a.actual_rev_3m != null ? "Total Revenue Actual" : "Estimasi Total Revenue"}
           revenueValue={a.actual_rev_3m != null ? fmtRp(a.actual_rev_3m) : (a.target_rev_3m > 0 ? fmtRp(a.target_rev_3m) : "-")}
           costRatioValue={a.actual_rev_3m != null
-            ? `${((Number(a.cost_actual ?? a.cost_estimate) || 0) / a.actual_rev_3m * 100).toFixed(1)}%`
+            ? (a.actual_rev_3m > 0
+                ? `${((Number(a.cost_actual ?? a.cost_estimate) || 0) / a.actual_rev_3m * 100).toFixed(1)}%`
+                : (Number(a.cost_actual ?? a.cost_estimate) > 0 ? "-" : "0.0%"))
             : (a.target_rev_3m > 0 ? `${((Number(a.cost_estimate) || 0) / a.target_rev_3m * 100).toFixed(1)}%` : "-")}
         />
 

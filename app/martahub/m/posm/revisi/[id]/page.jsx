@@ -185,7 +185,7 @@ export default function RevisiInstallPage() {
           </button>
           <div style={{ fontSize: 16, fontWeight: 800, flex: 1, minWidth: 0 }}>Perbaiki Pemasangan</div>
           <button onClick={requestSubmit} disabled={busy} type="button"
-            style={{ width: 40, height: 40, borderRadius: 12, border: "none", cursor: busy ? "default" : "pointer", background: busy ? "#F0A8A8" : BRAND, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: busy ? "none" : "0 3px 10px rgba(237,28,36,0.28)" }}>
+            style={{ width: 40, height: 40, borderRadius: 12, border: "none", cursor: busy ? "default" : "pointer", background: BRAND, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 3px 10px rgba(237,28,36,0.28)" }}>
             {busy ? <Loader2 size={16} style={{ animation: "mspin .85s linear infinite" }} /> : <Send size={16} />}
           </button>
         </div>
@@ -320,12 +320,12 @@ export default function RevisiInstallPage() {
               <b>{items.length}</b> jenis material · total <b>{items.reduce((s, i) => s + (Number(i.qty) || 0), 0)}</b> unit. Titik lokasi tidak berubah.
             </div>
             <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
-              <button onClick={() => setShowConfirm(false)} disabled={busy}
-                style={{ flex: 1, height: 48, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 13.5, fontWeight: 700, fontFamily: FF, cursor: busy ? "default" : "pointer" }}>
+              <button onClick={() => setShowConfirm(false)}
+                style={{ flex: 1, height: 48, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 13.5, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
                 Batal
               </button>
               <button onClick={submit} disabled={busy}
-                style={{ flex: 1.3, height: 48, borderRadius: 12, border: "none", cursor: busy ? "default" : "pointer", background: busy ? "#F0A8A8" : BRAND, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+                style={{ flex: 1.3, height: 48, borderRadius: 12, border: "none", cursor: busy ? "default" : "pointer", background: BRAND, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
                 {busy ? <Loader2 size={15} style={{ animation: "mspin .85s linear infinite" }} /> : <Send size={15} />}
                 {busy ? "Mengirim…" : "Ya, Kirim"}
               </button>

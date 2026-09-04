@@ -644,7 +644,9 @@ function ActivityMetricsBlock({ r, expanded }) {
         revenueLabel={r.actual_rev_3m != null ? "Total Revenue Actual" : "Estimasi Total Revenue"}
         revenueValue={r.actual_rev_3m != null ? fmtRp(r.actual_rev_3m) : (r.target_rev_3m > 0 ? fmtRp(r.target_rev_3m) : "-")}
         costRatioValue={r.actual_rev_3m != null
-          ? `${((Number(r.cost_actual ?? r.cost_estimate) || 0) / r.actual_rev_3m * 100).toFixed(1)}%`
+          ? (r.actual_rev_3m > 0
+              ? `${((Number(r.cost_actual ?? r.cost_estimate) || 0) / r.actual_rev_3m * 100).toFixed(1)}%`
+              : (Number(r.cost_actual ?? r.cost_estimate) > 0 ? "-" : "0.0%"))
           : (r.target_rev_3m > 0 ? `${((Number(r.cost_estimate) || 0) / r.target_rev_3m * 100).toFixed(1)}%` : "-")}
       />
     </div>
@@ -697,7 +699,12 @@ function DetailSheet({ r, userId, onClose, onRequestDelete }) {
           {r.mc || "-"} {r.site_id ? `· ${r.site_id}` : ""} · {fmtDate(r.plan_date)}
         </div>
         <ActivityMetricsBlock r={r} />
-        {r.validation_note && (
+        {/* Catatan validasi HANYA ditampilkan utk status yg benar2 perlu
+            perhatian (revisi/ditolak) - status "approved" skrg SELALU
+            dapat catatan generik "Laporan actual dikirim" (sejak validasi
+            check-in dihapus), jadi menampilkannya di sini cuma jadi noise
+            duplikat dgn pill status "Selesai" di atas. */}
+        {r.validation_note && ["revision_needed", "revision_actual", "rejected"].includes(r.status) && (
           <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 10, background: meta.bg, color: meta.color, fontSize: 11.5, fontWeight: 600, lineHeight: 1.5 }}>
             {r.validation_note}
           </div>

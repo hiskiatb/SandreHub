@@ -710,23 +710,33 @@ export default function SubmitActualPage() {
 
       // Upload foto dokumentasi - SETELAH laporan pokok tersimpan (kalau
       // upload sebagian gagal, laporan tetap tersubmit; sama spt Flutter).
+      // BEDA dgn versi lama: sekarang error insert ke mh_documents JUGA
+      // dicek (dulu tidak, jadi foto yg ke-upload ke storage tapi gagal
+      // ditautkan ke mh_documents hilang tanpa jejak), dan jumlah foto yg
+      // benar2 gagal (storage ATAU insert) dihitung supaya bisa ditunjukkan
+      // ke DSF di layar sukses - jangan lagi diam2 dianggap semua berhasil.
       setUploadProgress({ done: 0, total: photos.length });
+      let photoFailCount = 0;
       for (let i = 0; i < photos.length; i++) {
         try {
           const blob = await compressToMaxBytes(photos[i].file);
           const path = `${activityId}/${Date.now()}_${i}.jpg`;
           const { error: upErr } = await supabaseMarta.storage.from(PHOTO_BUCKET).upload(path, blob, { contentType: "image/jpeg" });
           if (upErr) throw upErr;
-          await supabaseMarta.from("mh_documents").insert({ activity_id: activityId, uploader_id: userId, storage_path: path, file_type: "photo" });
+          const { error: docErr } = await supabaseMarta.from("mh_documents").insert({ activity_id: activityId, uploader_id: userId, storage_path: path, file_type: "photo" });
+          if (docErr) throw docErr;
           supabaseMarta.functions.invoke("media-relay", { body: { bucket: PHOTO_BUCKET, path } }).catch(() => {});
-        } catch { /* best-effort per foto, lanjut foto berikutnya */ }
+        } catch (photoErr) {
+          photoFailCount++;
+          console.error("[submit] gagal simpan foto dokumentasi:", photoErr);
+        }
         setUploadProgress({ done: i + 1, total: photos.length });
       }
 
       await persistNewEntries();
 
       try { localStorage.removeItem(draftKey(activityId)); } catch { /* best-effort */ }
-      setResult(data);
+      setResult({ ...data, photoFailCount, photoTotal: photos.length });
     } catch (e) {
       setErr(e.message || "Gagal mengirim laporan");
     } finally {
@@ -740,25 +750,7 @@ export default function SubmitActualPage() {
     // tanpa cabang "perlu ditinjau". Review GA (SP/FWA/Rebuy) kalau
     // diperlukan sekarang jadi urusan terpisah di sisi CMS, bukan gate
     // yang memblokir DSF di sini.
-    return (
-      <MobileShell active="activities" hideNav>
-        <div style={{ padding: "60px 24px", textAlign: "center" }}>
-          <div style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(21,128,61,0.1)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto" }}>
-            <CheckCircle2 size={30} color="#15803D" />
-          </div>
-          <div style={{ marginTop: 18, fontSize: 17, fontWeight: 800, color: "#17181C" }}>
-            Laporan Actual Terkirim
-          </div>
-          <div style={{ marginTop: 8, fontSize: 13, color: "#6B6B76", lineHeight: 1.6 }}>
-            Laporan actual event ini sudah berhasil dikirim.
-          </div>
-          <button onClick={() => router.replace(`/martahub/m/activities?open=${activityId}`)}
-            style={{ marginTop: 26, width: "100%", height: 48, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>
-            Selesai
-          </button>
-        </div>
-      </MobileShell>
-    );
+    return <SubmitSuccessScreen result={result} onDone={() => router.replace(`/martahub/m/activities?open=${activityId}`)} />;
   }
 
   const rebuyGrandTotal = rebuySpTotal + rebuyFwaTotal;
@@ -981,7 +973,7 @@ export default function SubmitActualPage() {
               }}>
               <MapIcon size={13} /> {gpsCorrected ? "Ubah di Peta" : "Pilih di Peta"}
             </button>
-            <button onClick={fixGpsToCurrentLocation} disabled={gpsFixing}
+            <button onClick={fixGpsToCurrentLocation}
               style={{
                 flex: 1, height: 40, borderRadius: 11, border: "1.5px solid #E4E5EA",
                 background: "#FFFFFF", color: "#5A5A68",
@@ -1148,8 +1140,8 @@ export default function SubmitActualPage() {
           )}
           <div style={{ display: "flex", gap: 9 }}>
             {!isFirstTab && (
-              <button onClick={goPrevTab} disabled={saving || savingDraft}
-                style={{ flex: "0 0 auto", height: 52, padding: "0 18px", borderRadius: 14, border: "1.5px solid #DADBE2", cursor: (saving || savingDraft) ? "default" : "pointer", background: "#fff", color: "#3A3A44", fontSize: 13.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              <button onClick={goPrevTab}
+                style={{ flex: "0 0 auto", height: 52, padding: "0 18px", borderRadius: 14, border: "1.5px solid #DADBE2", cursor: "pointer", background: "#fff", color: "#3A3A44", fontSize: 13.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                 <ArrowLeft size={15} /> Sebelumnya
               </button>
             )}
@@ -1160,13 +1152,13 @@ export default function SubmitActualPage() {
               </button>
             ) : daysRemaining ? (
               <button onClick={saveDraft} disabled={saving || savingDraft}
-                style={{ flex: 1, height: 52, borderRadius: 14, border: "none", cursor: (saving || savingDraft) ? "default" : "pointer", background: (saving || savingDraft) ? "#D8D9E0" : "#B45309", color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                style={{ flex: 1, height: 52, borderRadius: 14, border: "none", cursor: (saving || savingDraft) ? "default" : "pointer", background: "#B45309", color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                 {savingDraft ? <Loader2 size={16} style={{ animation: "mspin .85s linear infinite" }} /> : <FolderClock size={16} />}
                 {savingDraft ? "Menyimpan…" : "Simpan sbg Draft"}
               </button>
             ) : (
               <button onClick={handleSubmitClick} disabled={saving || savingDraft}
-                style={{ flex: 1, height: 52, borderRadius: 14, border: "none", cursor: (saving || savingDraft) ? "default" : "pointer", background: (saving || savingDraft) ? "#D8D9E0" : BRAND, color: "#fff", fontSize: 14.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, boxShadow: (saving || savingDraft) ? "none" : "0 4px 14px rgba(17,17,20,0.11)" }}>
+                style={{ flex: 1, height: 52, borderRadius: 14, border: "none", cursor: (saving || savingDraft) ? "default" : "pointer", background: BRAND, color: "#fff", fontSize: 14.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, boxShadow: "0 4px 14px rgba(17,17,20,0.11)" }}>
                 {saving ? <Loader2 size={17} style={{ animation: "mspin .85s linear infinite" }} /> : <CheckCircle2 size={18} />}
                 {saving ? (uploadProgress ? `Mengunggah foto ${uploadProgress.done}/${uploadProgress.total}…` : "Mengirim…") : "Kirim Laporan Actual"}
               </button>
@@ -1693,4 +1685,85 @@ function Chip({ active, onClick, label }) {
 }
 function LockedField({ text, muted }) {
   return <div style={{ ...inputBase, display: "flex", alignItems: "center", background: muted ? "#F6F7F9" : "rgba(237,28,36,0.06)", color: muted ? "#B0B0BA" : "#5A5A68", border: "none" }}>{text}</div>;
+}
+
+// ═══════════════════════ Layar sukses submit ═══════════════════════════════
+/** Ditampilkan begitu laporan actual berhasil dikirim. Animasi centang +
+ * "ding" singkat (disintesis via Web Audio, tidak perlu file audio
+ * terpisah) - mirip penanda "selesai mentag" di aplikasi tracking promotor
+ * lain (SandraHub) yg jadi acuan DSF. Selalu ditengah layar (flex center
+ * penuh, bukan cuma padding atas spt sebelumnya) supaya konsisten di semua
+ * tinggi layar device. Kalau ada foto dokumentasi yg gagal tersimpan
+ * (photoFailCount > 0 - lihat submit()), tampilkan peringatan kecil di
+ * bawah pesan sukses, JANGAN diam2 dianggap semua berhasil. */
+function SubmitSuccessScreen({ result, onDone }) {
+  const photoFailCount = result?.photoFailCount || 0;
+  const photoTotal = result?.photoTotal || 0;
+  const hasPhotoIssue = photoFailCount > 0;
+
+  useEffect(() => {
+    // Nada sukses pendek (dua nada naik, ~0.3s) disintesis langsung lewat
+    // Web Audio API - tidak butuh file .mp3/.wav terpisah, jadi tidak
+    // nambah ukuran bundle & tidak ada request network. Best-effort murni:
+    // browser lama/izin autoplay yg diblokir cukup dilewati diam2 (bukan
+    // bagian penting dari alur, cuma polesan).
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const now = ctx.currentTime;
+      [[880, now, 0.11], [1318.5, now + 0.1, 0.22]].forEach(([freq, start, dur]) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.22, start + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(start);
+        osc.stop(start + dur + 0.02);
+      });
+      const closeTimer = setTimeout(() => ctx.close().catch(() => {}), 700);
+      return () => clearTimeout(closeTimer);
+    } catch { /* best-effort - polesan, jangan sampai mengganggu alur submit */ }
+  }, []);
+
+  return (
+    <MobileShell active="activities" hideNav>
+      <div style={{ minHeight: "calc(100vh - 0px)", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
+        <div style={{ textAlign: "center", maxWidth: 340, width: "100%" }}>
+          <div className="mh-success-pop" style={{ width: 76, height: 76, borderRadius: "50%", background: "rgba(21,128,61,0.1)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto" }}>
+            <CheckCircle2 size={36} color="#15803D" className="mh-success-check" />
+          </div>
+          <div style={{ marginTop: 20, fontSize: 18, fontWeight: 800, color: "#17181C" }}>
+            Laporan Actual Terkirim
+          </div>
+          <div style={{ marginTop: 8, fontSize: 13, color: "#6B6B76", lineHeight: 1.6 }}>
+            Laporan actual event ini sudah berhasil dikirim.
+          </div>
+          {hasPhotoIssue && (
+            <div style={{ marginTop: 14, display: "flex", alignItems: "flex-start", gap: 7, padding: "10px 12px", borderRadius: 11, background: "rgba(180,83,9,0.08)", textAlign: "left" }}>
+              <AlertTriangle size={14} color="#B45309" style={{ flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 11.5, fontWeight: 600, color: "#8A6D00", lineHeight: 1.45 }}>
+                {photoFailCount === photoTotal
+                  ? `Laporan tersimpan, tapi ${photoFailCount} foto dokumentasi gagal diunggah - coba tambahkan lagi lewat halaman detail aktivitas.`
+                  : `Laporan tersimpan, tapi ${photoFailCount} dari ${photoTotal} foto dokumentasi gagal diunggah - sisanya sudah tersimpan.`}
+              </span>
+            </div>
+          )}
+          <button onClick={onDone}
+            style={{ marginTop: 26, width: "100%", height: 48, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>
+            Selesai
+          </button>
+        </div>
+      </div>
+      <style>{`
+        @keyframes mh-success-pop { 0% { transform: scale(0.4); opacity: 0; } 60% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); } }
+        @keyframes mh-success-check { 0% { transform: scale(0.5); opacity: 0; } 50% { transform: scale(1.2); opacity: 1; } 100% { transform: scale(1); } }
+        .mh-success-pop { animation: mh-success-pop 0.42s cubic-bezier(.34,1.56,.64,1) both; }
+        .mh-success-check { animation: mh-success-check 0.5s 0.15s cubic-bezier(.34,1.56,.64,1) both; }
+      `}</style>
+    </MobileShell>
+  );
 }

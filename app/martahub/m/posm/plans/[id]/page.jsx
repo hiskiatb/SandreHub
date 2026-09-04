@@ -123,7 +123,7 @@ function InfoTab({ plan, callerEmail, onSaved }) {
       <Label text="Period To" top />
       <input type="date" value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} style={selectBase} />
       <button onClick={save} disabled={busy}
-        style={{ marginTop: 16, width: "100%", height: 46, borderRadius: 13, border: "none", cursor: busy ? "default" : "pointer", background: busy ? "#F0A8A8" : BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+        style={{ marginTop: 16, width: "100%", height: 46, borderRadius: 13, border: "none", cursor: busy ? "default" : "pointer", background: BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
         {busy && <Loader2 size={15} style={{ animation: "mspin .85s linear infinite" }} />}
         {busy ? "Menyimpan…" : "Simpan"}
       </button>
@@ -178,7 +178,7 @@ function MaterialTab({ plan, callerEmail, onSaved }) {
         {catalog.length === 0 && <div style={{ fontSize: 11.5, color: "#B0B0BA" }}>Belum ada jenis material di katalog.</div>}
       </div>
       <button onClick={save} disabled={busy}
-        style={{ marginTop: 16, width: "100%", height: 46, borderRadius: 13, border: "none", cursor: busy ? "default" : "pointer", background: busy ? "#F0A8A8" : BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+        style={{ marginTop: 16, width: "100%", height: 46, borderRadius: 13, border: "none", cursor: busy ? "default" : "pointer", background: BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
         {busy && <Loader2 size={15} style={{ animation: "mspin .85s linear infinite" }} />}
         {busy ? "Menyimpan…" : "Simpan Material"}
       </button>
@@ -296,7 +296,7 @@ function AlokasiTab({ plan, scope, callerEmail, remapByBranch, onSaved }) {
       )}
 
       <button onClick={save} disabled={busy || branches === null}
-        style={{ marginTop: 16, width: "100%", height: 46, borderRadius: 13, border: "none", cursor: busy ? "default" : "pointer", background: busy ? "#F0A8A8" : BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+        style={{ marginTop: 16, width: "100%", height: 46, borderRadius: 13, border: "none", cursor: busy ? "default" : "pointer", background: BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
         {busy && <Loader2 size={15} style={{ animation: "mspin .85s linear infinite" }} />}
         {busy ? "Menyimpan…" : "Simpan Alokasi Region Ini"}
       </button>

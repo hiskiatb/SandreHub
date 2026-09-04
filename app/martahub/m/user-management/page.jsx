@@ -693,12 +693,12 @@ function ExecutorPickerSheet({ ctx, executorOptions, onClose, onSave }) {
         {err && <div style={{ marginTop: 10, fontSize: 12, color: "#C62828" }}>{err}</div>}
 
         <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
-          <button onClick={onClose} disabled={saving}
-            style={{ flex: 1, height: 46, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: saving ? "default" : "pointer" }}>
+          <button onClick={onClose}
+            style={{ flex: 1, height: 46, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
             Batal
           </button>
           <button onClick={submit} disabled={saving || !ready} title={!role ? "Pilih role dulu" : !ready ? "Isi email & nama dulu" : "Simpan"}
-            style={{ flex: 1, height: 46, borderRadius: 12, border: "none", background: ready ? BRAND : "#DCDDE3", color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: saving || !ready ? "default" : "pointer", opacity: saving ? 0.75 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            style={{ flex: 1, height: 46, borderRadius: 12, border: "none", background: ready ? BRAND : "#DCDDE3", color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: saving || !ready ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             {saving ? <Loader2 size={14} style={{ animation: "mspin .85s linear infinite" }} /> : <Save size={14} />} Simpan
           </button>
         </div>
@@ -802,7 +802,7 @@ function InlineAddRow({ onSave, needsOrgId }) {
             onKeyDown={(e) => e.key === "Enter" && submit()} style={{ ...miniInputStyle, flex: "1 1 90px" }} />
         )}
         <button onClick={submit} disabled={saving || !ready} title={!ready ? "Isi email & nama dulu" : "Simpan"}
-          style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 10, border: "none", background: ready ? BRAND : "#DCDDE3", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: saving || !ready ? "default" : "pointer", opacity: saving ? 0.75 : 1, transition: "background .15s" }}>
+          style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 10, border: "none", background: ready ? BRAND : "#DCDDE3", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: saving || !ready ? "default" : "pointer", transition: "background .15s" }}>
           {saving ? <Loader2 size={13} style={{ animation: "mspin .85s linear infinite" }} /> : <Save size={14} />}
         </button>
       </div>
@@ -859,12 +859,12 @@ function RemoveConfirmSheet({ person, loading, err, onCancel, onConfirm }) {
         </div>
         {err && <div style={{ marginTop: 10, fontSize: 12, color: "#C62828", textAlign: "center", fontWeight: 600 }}>{err}</div>}
         <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
-          <button onClick={onCancel} disabled={loading}
-            style={{ flex: 1, height: 46, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: loading ? "default" : "pointer" }}>
+          <button onClick={onCancel}
+            style={{ flex: 1, height: 46, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
             Batal
           </button>
           <button onClick={onConfirm} disabled={loading}
-            style={{ flex: 1, height: 46, borderRadius: 12, border: "none", background: "#ED1C24", color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: loading ? "default" : "pointer", opacity: loading ? 0.75 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            style={{ flex: 1, height: 46, borderRadius: 12, border: "none", background: "#ED1C24", color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: loading ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             {loading ? <Loader2 size={14} style={{ animation: "mspin .85s linear infinite" }} /> : <UserX size={14} />} Hapus
           </button>
         </div>
@@ -1024,12 +1024,12 @@ function AddTeamMemberForm({ scope, addableRoles, onClose, onSaved }) {
         {err && <div style={{ marginTop: 10, fontSize: 12, color: "#C62828" }}>{err}</div>}
 
         <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
-          <button onClick={onClose} disabled={saving}
+          <button onClick={onClose}
             style={{ flex: 1, height: 46, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
             Batal
           </button>
           <button onClick={save} disabled={saving}
-            style={{ flex: 1, height: 46, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer", opacity: saving ? 0.75 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            style={{ flex: 1, height: 46, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             {saving ? <Loader2 size={14} style={{ animation: "mspin .85s linear infinite" }} /> : <Check size={14} />} Simpan
           </button>
         </div>

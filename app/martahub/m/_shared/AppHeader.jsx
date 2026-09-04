@@ -130,7 +130,7 @@ function LogoutConfirmSheet({ onCancel, onConfirm, loading }) {
             Batal
           </button>
           <button onClick={onConfirm} disabled={loading}
-            style={{ flex: 1, padding: "13px 0", borderRadius: 14, background: "#ED1C24", border: "none", fontSize: 13.5, fontWeight: 800, color: "#FFFFFF", cursor: loading ? "default" : "pointer", opacity: loading ? 0.75 : 1, fontFamily: FF }}>
+            style={{ flex: 1, padding: "13px 0", borderRadius: 14, background: "#ED1C24", border: "none", fontSize: 13.5, fontWeight: 800, color: "#FFFFFF", cursor: loading ? "default" : "pointer", fontFamily: FF }}>
             {loading ? "Memproses..." : "Ya, Keluar"}
           </button>
         </div>

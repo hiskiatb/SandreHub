@@ -186,10 +186,10 @@ export default function DeleteActivitySheet({ activityId, activityName, onClose,
               </button>
               <button onClick={confirmDelete} disabled={busy || !confirmOk}
                 style={{
-                  flex: 1.3, height: 48, borderRadius: 12, border: "none", cursor: (busy || !confirmOk) ? "default" : "pointer", color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF,
-                  background: (busy || !confirmOk) ? "#D8D9E0" : "#DC2626",
+                  flex: 1.3, height: 48, borderRadius: 12, border: "none", cursor: !confirmOk ? "default" : "pointer", color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF,
+                  background: !confirmOk ? "#D8D9E0" : "#DC2626",
                   display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
-                  boxShadow: (busy || !confirmOk) ? "none" : "0 4px 12px rgba(220,38,38,0.25)",
+                  boxShadow: !confirmOk ? "none" : "0 4px 12px rgba(220,38,38,0.25)",
                 }}>
                 {busy ? <Loader2 size={15} style={{ animation: "mspin .85s linear infinite" }} /> : <Trash2 size={15} />}
                 {needsStrong ? "Ya, Hapus Permanen" : "Hapus Plan"}

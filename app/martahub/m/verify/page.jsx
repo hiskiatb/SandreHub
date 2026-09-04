@@ -127,8 +127,8 @@ function VerifyInner() {
           <div style={{ marginTop: 8, fontSize: 13, color: "#6B6B76", textAlign: "center", lineHeight: 1.5 }}>
             Kode 6 digit sudah dikirim ke<br /><b style={{ color: "#3A3A44" }}>{email}</b>
           </div>
-          <button onClick={() => router.push("/martahub/m/login")} disabled={busy}
-            style={{ marginTop: 8, background: "none", border: "none", cursor: busy ? "default" : "pointer", color: busy ? "#D5D5DC" : "#8A8A96", fontSize: 12, fontWeight: 700, fontFamily: FF, textDecoration: "underline", textUnderlineOffset: 2 }}>
+          <button onClick={() => router.push("/martahub/m/login")}
+            style={{ marginTop: 8, background: "none", border: "none", cursor: "pointer", color: "#8A8A96", fontSize: 12, fontWeight: 700, fontFamily: FF, textDecoration: "underline", textUnderlineOffset: 2 }}>
             Ganti email
           </button>
 

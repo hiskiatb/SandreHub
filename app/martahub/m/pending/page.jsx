@@ -82,7 +82,7 @@ function PendingInner() {
             </button>
           )}
 
-          <button onClick={recheck} disabled={checking}
+          <button onClick={recheck}
             style={{ marginTop: 22, width: "100%", height: 50, borderRadius: 13, border: "none", cursor: checking ? "default" : "pointer",
               background: "linear-gradient(135deg,#ED1C24,#EC008C)", color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF,
               display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 4px 12px rgba(17,17,20,0.1)" }}>

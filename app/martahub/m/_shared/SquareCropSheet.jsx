@@ -82,7 +82,7 @@ export default function SquareCropSheet({ file, onCancel, onConfirm }) {
     <div style={{ position: "fixed", inset: 0, zIndex: 600, background: "rgba(13,17,23,0.92)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: FF, padding: 20 }}>
       <div style={{ width: "100%", maxWidth: 360, display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <div style={{ color: "#fff", fontSize: 14, fontWeight: 800 }}>Atur Posisi Foto</div>
-        <button onClick={onCancel} disabled={busy}
+        <button onClick={onCancel}
           style={{ width: 30, height: 30, borderRadius: 9, border: "none", background: "rgba(255,255,255,0.14)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
           <X size={14} />
         </button>
@@ -128,7 +128,7 @@ export default function SquareCropSheet({ file, onCancel, onConfirm }) {
         <input type="range" min={MIN_SCALE} max={MAX_SCALE} step={0.01} value={scale}
           onChange={(e) => onScaleChange(e.target.value)}
           style={{ flex: 1, accentColor: "#EC008C" }} />
-        <button onClick={() => setRotation((r) => (r + 90) % 360)} disabled={busy}
+        <button onClick={() => setRotation((r) => (r + 90) % 360)}
           style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 10, border: "none", background: "rgba(255,255,255,0.14)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}
           title="Putar">
           <RotateCw size={15} />
@@ -136,12 +136,12 @@ export default function SquareCropSheet({ file, onCancel, onConfirm }) {
       </div>
 
       <div style={{ width: "100%", maxWidth: 360, marginTop: 18, display: "flex", gap: 10 }}>
-        <button onClick={onCancel} disabled={busy}
+        <button onClick={onCancel}
           style={{ flex: 1, height: 48, borderRadius: 13, border: "1px solid rgba(255,255,255,0.22)", background: "transparent", color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
           <RefreshCw size={14} /> Ambil Ulang
         </button>
         <button onClick={confirm} disabled={busy || !display}
-          style={{ flex: 1, height: 48, borderRadius: 13, border: "none", background: busy ? "#8A8A96" : "linear-gradient(135deg,#ED1C24,#EC008C)", color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: busy ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+          style={{ flex: 1, height: 48, borderRadius: 13, border: "none", background: "linear-gradient(135deg,#ED1C24,#EC008C)", color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: busy ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
           {busy ? <Loader2 size={15} style={{ animation: "mspin .85s linear infinite" }} /> : <Check size={15} />}
           Gunakan Foto Ini
         </button>

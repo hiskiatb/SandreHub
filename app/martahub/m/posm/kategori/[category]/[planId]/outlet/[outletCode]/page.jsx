@@ -225,7 +225,7 @@ export default function OutletInstallPage() {
           {/* Tombol kirim di ujung kanan header, bukan bar bawah - selalu
               terlihat tanpa memakan ruang scroll, dgn ikon Send. */}
           <button onClick={requestSubmit} disabled={busy} type="button"
-            style={{ width: 40, height: 40, borderRadius: 12, border: "none", cursor: busy ? "default" : "pointer", background: busy ? "#F0A8A8" : BRAND, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: busy ? "none" : "0 3px 10px rgba(237,28,36,0.28)" }}>
+            style={{ width: 40, height: 40, borderRadius: 12, border: "none", cursor: busy ? "default" : "pointer", background: BRAND, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 3px 10px rgba(237,28,36,0.28)" }}>
             {busy ? <Loader2 size={16} style={{ animation: "mspin .85s linear infinite" }} /> : <Send size={16} />}
           </button>
         </div>
@@ -269,14 +269,14 @@ export default function OutletInstallPage() {
                 <MapPin size={15} color="#15803D" />
               </div>
               <div style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 700, color: "#17181C" }}>{lat.toFixed(6)}, {lng.toFixed(6)}</div>
-              <button onClick={useMyLocation} disabled={locating} type="button"
+              <button onClick={useMyLocation} type="button"
                 style={{ background: "none", border: "none", cursor: "pointer", color: "#5A5A68", display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, fontFamily: FF }}>
                 {locating ? <Loader2 size={13} style={{ animation: "mspin .85s linear infinite" }} /> : <Crosshair size={13} />} Ulangi
               </button>
             </div>
           ) : (
             <div>
-              <button onClick={useMyLocation} disabled={locating} type="button"
+              <button onClick={useMyLocation} type="button"
                 style={{ width: "100%", height: 42, borderRadius: 11, border: "1.5px solid #ECEDF0", background: "#F6F7F9", color: "#5A5A68", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                 {locating ? <Loader2 size={14} style={{ animation: "mspin .85s linear infinite" }} /> : <Crosshair size={14} />} {locating ? "Mengambil lokasi…" : "Ambil Lokasi GPS"}
               </button>
@@ -434,12 +434,12 @@ function SubmitConfirmSheet({ outletName, itemsCount, totalQty, photosCount, bus
         </div>
 
         <div style={{ marginTop: 16, display: "flex", gap: 10 }}>
-          <button onClick={onCancel} disabled={busy}
-            style={{ flex: 1, height: 48, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 13.5, fontWeight: 700, fontFamily: FF, cursor: busy ? "default" : "pointer" }}>
+          <button onClick={onCancel}
+            style={{ flex: 1, height: 48, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 13.5, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
             Batal
           </button>
           <button onClick={onConfirm} disabled={busy}
-            style={{ flex: 1.3, height: 48, borderRadius: 12, border: "none", cursor: busy ? "default" : "pointer", background: busy ? "#F0A8A8" : BRAND, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+            style={{ flex: 1.3, height: 48, borderRadius: 12, border: "none", cursor: busy ? "default" : "pointer", background: BRAND, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
             {busy ? <Loader2 size={15} style={{ animation: "mspin .85s linear infinite" }} /> : <Send size={15} />}
             {busy ? "Mengirim…" : "Ya, Kirim"}
           </button>

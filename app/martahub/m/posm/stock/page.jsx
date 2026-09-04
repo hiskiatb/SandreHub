@@ -188,7 +188,7 @@ function SheetShell({ title, onClose, children, onSubmit, busy, submitLabel }) {
         <div style={{ flex: 1, overflowY: "auto", padding: "6px 20px" }}>{children}</div>
         <div style={{ padding: "10px 20px calc(env(safe-area-inset-bottom,0px) + 16px)", borderTop: "1px solid #F0F0F3" }}>
           <button onClick={onSubmit} disabled={busy}
-            style={{ width: "100%", height: 48, borderRadius: 13, border: "none", cursor: busy ? "default" : "pointer", background: busy ? "#F0A8A8" : BRAND, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            style={{ width: "100%", height: 48, borderRadius: 13, border: "none", cursor: busy ? "default" : "pointer", background: BRAND, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             {busy && <Loader2 size={15} style={{ animation: "mspin .85s linear infinite" }} />}
             {busy ? "Menyimpan…" : submitLabel}
           </button>

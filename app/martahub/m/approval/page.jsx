@@ -257,12 +257,12 @@ export default function MobileApprovalPage() {
               style={{ width: "100%", marginTop: 7, padding: "11px 13px", borderRadius: 12, border: "1.5px solid #ECEDF0", background: "#F6F7F9", fontSize: 13, fontFamily: FF, resize: "vertical", outline: "none", boxSizing: "border-box" }} />
             {actionErr && <div style={{ marginTop: 10, fontSize: 12, color: "#C62828" }}>{actionErr}</div>}
             <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
-              <button onClick={() => setDialog(null)} disabled={submitting}
+              <button onClick={() => setDialog(null)}
                 style={{ flex: 1, height: 46, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
                 Batal
               </button>
               <button onClick={confirmDecision} disabled={submitting}
-                style={{ flex: 1, height: 46, borderRadius: 12, border: "none", background: "#C62828", color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer", opacity: submitting ? 0.7 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                style={{ flex: 1, height: 46, borderRadius: 12, border: "none", background: "#C62828", color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                 {submitting ? <Loader2 size={14} style={{ animation: "mspin .85s linear infinite" }} /> : "Ya, Lanjutkan"}
               </button>
             </div>
@@ -300,11 +300,11 @@ function ApproveRejectRow({ canApprove, busy, onApprove, approveLabel = "Setujui
   return (
     <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
       <button onClick={onReject} disabled={busy}
-        style={{ flex: 1, height: 42, borderRadius: 11, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
+        style={{ flex: 1, height: 42, borderRadius: 11, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: busy ? "default" : "pointer" }}>
         {rejectLabel}
       </button>
       <button onClick={onApprove} disabled={busy}
-        style={{ flex: 1.3, height: 42, borderRadius: 11, border: "none", background: BRAND, color: "#fff", fontSize: 12.5, fontWeight: 800, fontFamily: FF, cursor: busy ? "default" : "pointer", opacity: busy ? 0.75 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+        style={{ flex: 1.3, height: 42, borderRadius: 11, border: "none", background: BRAND, color: "#fff", fontSize: 12.5, fontWeight: 800, fontFamily: FF, cursor: busy ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
         {busy ? <Loader2 size={14} style={{ animation: "mspin .85s linear infinite" }} /> : <CheckCircle2 size={14} />}
         {approveLabel}
       </button>
@@ -328,7 +328,7 @@ function PlanCard({ r, canApprove, busy, onRevise }) {
       <div style={{ marginTop: 4, fontSize: 11.5, color: "#8A8A96" }}>Target {r.target_sp ?? 0}/{r.target_fwa ?? 0} SP/FWA</div>
       {canApprove && (
         <button onClick={onRevise} disabled={busy}
-          style={{ width: "100%", marginTop: 12, height: 40, borderRadius: 11, border: "1px solid #FBD9B4", background: "#FFF7ED", color: "#C2410C", fontSize: 12.5, fontWeight: 800, fontFamily: FF, cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+          style={{ width: "100%", marginTop: 12, height: 40, borderRadius: 11, border: "1px solid #FBD9B4", background: "#FFF7ED", color: "#C2410C", fontSize: 12.5, fontWeight: 800, fontFamily: FF, cursor: busy ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
           {busy ? <Loader2 size={14} style={{ animation: "mspin .85s linear infinite" }} /> : <MessageSquareWarning size={14} />}
           Perlu Revisi
         </button>

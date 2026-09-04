@@ -182,8 +182,8 @@ function RevokedInner() {
               )}
 
               <div style={{ marginTop: 22, display: "flex", gap: 8 }}>
-                <button onClick={refresh} disabled={refreshing}
-                  style={{ flex: 1, height: 48, borderRadius: 13, border: "1px solid #E4E5EA", background: "#FAFAFB", color: "#3A3A44", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: refreshing ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "background .15s, border-color .15s", opacity: refreshing ? 0.7 : 1 }}
+                <button onClick={refresh}
+                  style={{ flex: 1, height: 48, borderRadius: 13, border: "1px solid #E4E5EA", background: "#FAFAFB", color: "#3A3A44", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: refreshing ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "background .15s, border-color .15s" }}
                   onMouseEnter={(e) => { if (!refreshing) { e.currentTarget.style.background = "#F0F0F3"; e.currentTarget.style.borderColor = "#DADAE0"; } }}
                   onMouseLeave={(e) => { e.currentTarget.style.background = "#FAFAFB"; e.currentTarget.style.borderColor = "#E4E5EA"; }}>
                   <RefreshCw size={14} style={refreshing ? { animation: "revokedSpin .8s linear infinite" } : undefined} /> Refresh

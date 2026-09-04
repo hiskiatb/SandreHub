@@ -293,7 +293,7 @@ export default function PosmNewPage() {
         {/* GPS */}
         <Card id="field-geo" error={invalid.has("geo")}>
           <FieldLabel text="Titik GPS" required hint="Wajib diambil di lokasi" />
-          <button onClick={useMyLocation} disabled={locating}
+          <button onClick={useMyLocation}
             style={{ width: "100%", height: 46, borderRadius: 12, border: `1.5px solid ${lat ? "#15803D" : "#ECEDF0"}`, background: lat ? "rgba(21,128,61,0.06)" : "#F6F7F9", color: lat ? "#15803D" : "#5A5A68", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             {locating ? <Loader2 size={15} style={{ animation: "mspin .85s linear infinite" }} /> : <Crosshair size={15} />}
             {locating ? "Mencari lokasi…" : lat ? `Titik ditandai · ${lat.toFixed(5)}, ${lng.toFixed(5)}` : "Ambil Titik GPS"}

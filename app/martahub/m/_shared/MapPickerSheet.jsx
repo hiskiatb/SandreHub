@@ -381,8 +381,8 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
             tombol saling tindih/rebutan tempat di pojok yg sama. Sekarang
             keduanya di pojok terpisah, tidak akan pernah tabrakan. */}
         {ready && (
-          <button onClick={useMyLocation} disabled={locating}
-            style={{ position: "absolute", left: 12, bottom: 12, width: 44, height: 44, borderRadius: "50%", background: "#FFFFFF", border: "1px solid #E4E5EA", boxShadow: "0 2px 10px rgba(23,24,28,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: locating ? "default" : "pointer", zIndex: 6 }}>
+          <button onClick={useMyLocation}
+            style={{ position: "absolute", left: 12, bottom: 12, width: 44, height: 44, borderRadius: "50%", background: "#FFFFFF", border: "1px solid #E4E5EA", boxShadow: "0 2px 10px rgba(23,24,28,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 6 }}>
             {locating ? <Loader2 size={18} color="#ED1C24" style={{ animation: "mspin .9s linear infinite" }} /> : <Crosshair size={18} color="#5A5A68" />}
           </button>
         )}

@@ -114,6 +114,7 @@ function Body({ email }) {
   const [profileMap, setProfileMap] = useState({});
   const [docCountMap, setDocCountMap] = useState({});
   const [docPhotoMap, setDocPhotoMap] = useState({}); // activity_id -> storage_path foto pertama (utk thumbnail export)
+  const [docDriveMap, setDocDriveMap] = useState({}); // activity_id -> Google Drive file id foto pertama (mh_documents.external_ref, diisi Edge Function media-relay) - utk link "Buka di Drive" saat export .xlsx
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [err, setErr] = useState("");
@@ -152,18 +153,26 @@ function Body({ email }) {
 
       const ids = list.map((r) => r.id);
       if (ids.length) {
-        const { data: docs } = await supabaseMarta.from("mh_documents").select("activity_id, file_type, storage_path, created_at").in("activity_id", ids).eq("file_type", "photo").order("created_at");
+        const { data: docs } = await supabaseMarta.from("mh_documents").select("activity_id, file_type, storage_path, external_ref, created_at").in("activity_id", ids).eq("file_type", "photo").order("created_at");
         const counts = {};
         const firstPhoto = {};
+        const firstDrive = {};
         (docs || []).forEach((d) => {
           counts[d.activity_id] = (counts[d.activity_id] || 0) + 1;
           if (!firstPhoto[d.activity_id]) firstPhoto[d.activity_id] = d.storage_path;
+          // external_ref = Google Drive file id (diisi async oleh Edge Function
+          // media-relay setelah foto berhasil di-mirror ke Drive) - bisa null
+          // kalau mirror-nya gagal/belum jalan, makanya diambil per-baris (bukan
+          // cuma dari foto pertama yg storage_path-nya kepakai utk thumbnail).
+          if (!firstDrive[d.activity_id] && d.external_ref) firstDrive[d.activity_id] = d.external_ref;
         });
         setDocCountMap(counts);
         setDocPhotoMap(firstPhoto);
+        setDocDriveMap(firstDrive);
       } else {
         setDocCountMap({});
         setDocPhotoMap({});
+        setDocDriveMap({});
       }
     } catch (e) { setErr(e.message || "Gagal memuat"); }
     finally { setLoading(false); }
@@ -215,6 +224,7 @@ function Body({ email }) {
     { key: "costRatio", label: "Cost Ratio", width: 92, filter: true, get: (r) => pctLabel(r.cost_actual, r.cost_estimate), raw: (r) => pctVal(r.cost_actual, r.cost_estimate), numeric: true, acv: true, invertGood: true },
     { key: "insight", label: "Insight (Optional)", width: 220, filter: true, get: (r) => r.insight || "-" },
     { key: "documentation", label: "Documentation", width: 120, filter: true, get: (r) => (docCountMap[r.id] ? `${docCountMap[r.id]} foto` : "-") },
+    { key: "drive_link", label: "Link Google Drive", width: 140, get: (r) => (docDriveMap[r.id] ? "Buka di Drive" : "-") },
   ], [branchMap, profileMap, docCountMap, cats]);
 
   const FILTER_COLS = useMemo(() => COLUMNS.filter((c) => c.filter), [COLUMNS]);
@@ -410,6 +420,7 @@ function Body({ email }) {
       ws.getRow(1).alignment = { vertical: "middle" };
 
       const docCol = COLUMNS.findIndex((c) => c.key === "documentation") + 1; // 1-based utk ExcelJS
+      const driveCol = COLUMNS.findIndex((c) => c.key === "drive_link") + 1;
       const THUMB_PX = 54;
 
       // Baris teks dulu (cepat, sinkron) - gambar ditempel belakangan per baris
@@ -417,6 +428,7 @@ function Body({ email }) {
         const rowValues = COLUMNS.map((c) => {
           if (c.key === "no") return i + 1;
           if (c.key === "documentation") return ""; // diisi gambar, bukan teks
+          if (c.key === "drive_link") return ""; // diisi hyperlink di bawah, bukan teks polos
           if (c.key === "long" || c.key === "lat") {
             const v = c.raw(r);
             return v == null ? "" : v; // presisi penuh, TIDAK dibulatkan
@@ -428,7 +440,15 @@ function Body({ email }) {
           const v = c.get(r);
           return v === "-" ? "" : v;
         });
-        ws.addRow(rowValues);
+        const row = ws.addRow(rowValues);
+        // Link "Buka di Drive" - klik langsung buka foto di Google Drive
+        // (mh_documents.external_ref, diisi Edge Function media-relay).
+        // Kalau belum sempat ke-mirror (mis. kredensial Drive lagi
+        // bermasalah), sel dibiarkan kosong, bukan link mati.
+        if (driveCol > 0 && docDriveMap[r.id]) {
+          row.getCell(driveCol).value = { text: "Buka di Drive", hyperlink: `https://drive.google.com/file/d/${docDriveMap[r.id]}/view` };
+          row.getCell(driveCol).font = { color: { argb: "FF2563EB" }, underline: true };
+        }
       });
 
       ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: filteredRows.length + 1, column: COLUMNS.length } };
@@ -474,7 +494,7 @@ function Body({ email }) {
     } finally {
       setExporting(false);
     }
-  }, [COLUMNS, filteredRows, docPhotoMap]);
+  }, [COLUMNS, filteredRows, docPhotoMap, docDriveMap]);
 
   const T_FILTER = { hi: T.hi, mid: T.mid, lo: T.lo, blue: T.primary, blueBg: T.primaryBg };
 

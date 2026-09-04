@@ -305,7 +305,7 @@ export default function MartaMapPage() {
         )}
 
         {/* My location */}
-        <button onClick={useMyLocation} disabled={locating}
+        <button onClick={useMyLocation}
           style={{ position: "absolute", right: 14, bottom: sheetOpen ? 200 : 96, width: 42, height: 42, borderRadius: "50%", background: "#FFFFFF", border: "1px solid #E4E5EA", boxShadow: "0 2px 10px rgba(23,24,28,0.12)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 20, transition: "bottom .2s" }}>
           {locating ? <Loader2 size={17} color="#ED1C24" style={{ animation: "mspin .9s linear infinite" }} /> : <Crosshair size={17} color="#5A5A68" />}
         </button>

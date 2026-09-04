@@ -170,9 +170,9 @@ export default function MartaMobileLogin() {
 
             <button onClick={sendCode} disabled={sendingCode}
               style={{ marginTop: 14, width: "100%", height: 54, borderRadius: 14, border: "none", cursor: sendingCode ? "default" : "pointer",
-                background: sendingCode ? "linear-gradient(135deg,#F08D91,#F0A8CE)" : "linear-gradient(135deg,#ED1C24,#EC008C)",
+                background: "linear-gradient(135deg,#ED1C24,#EC008C)",
                 color: "#fff", fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                boxShadow: sendingCode ? "none" : "0 4px 12px rgba(17,17,20,0.1)", fontFamily: FF }}>
+                boxShadow: "0 4px 12px rgba(17,17,20,0.1)", fontFamily: FF }}>
               {sendingCode ? <Loader2 size={16} style={{ animation: "mspin .85s linear infinite" }} /> : <><span>Kirim Kode</span><ArrowRight size={14} strokeWidth={2.5} /></>}
             </button>
           </div>
@@ -190,7 +190,7 @@ export default function MartaMobileLogin() {
               marginTop: 18, width: "100%", height: 50, borderRadius: 14, cursor: busyGoogle ? "default" : "pointer",
               display: "flex", alignItems: "center", justifyContent: "center", gap: 12,
               background: "#FFFFFF", color: "#1F2430", border: "1.5px solid #E4E5EA", fontFamily: FF, fontSize: 14, fontWeight: 700, letterSpacing: "-0.01em",
-              boxShadow: "0 1px 2px rgba(23,24,28,0.05)", opacity: busyGoogle ? 0.7 : 1, transition: "border-color .15s, box-shadow .15s, transform .1s",
+              boxShadow: "0 1px 2px rgba(23,24,28,0.05)", transition: "border-color .15s, box-shadow .15s, transform .1s",
             }}
             onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#CFCFD8"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(23,24,28,0.08)"; }}
             onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#E4E5EA"; e.currentTarget.style.boxShadow = "0 1px 2px rgba(23,24,28,0.05)"; }}

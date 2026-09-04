@@ -173,14 +173,14 @@ export default function OutdoorPasangPage() {
                 <MapPin size={15} color="#15803D" />
               </div>
               <div style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 700, color: "#17181C" }}>{lat.toFixed(6)}, {lng.toFixed(6)}</div>
-              <button onClick={useMyLocation} disabled={locating} type="button"
+              <button onClick={useMyLocation} type="button"
                 style={{ background: "none", border: "none", cursor: "pointer", color: "#5A5A68", display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, fontFamily: FF }}>
                 {locating ? <Loader2 size={13} style={{ animation: "mspin .85s linear infinite" }} /> : <Crosshair size={13} />} Ulangi
               </button>
             </div>
           ) : (
             <div>
-              <button onClick={useMyLocation} disabled={locating} type="button"
+              <button onClick={useMyLocation} type="button"
                 style={{ width: "100%", height: 42, borderRadius: 11, border: "1.5px solid #ECEDF0", background: "#F6F7F9", color: "#5A5A68", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                 {locating ? <Loader2 size={14} style={{ animation: "mspin .85s linear infinite" }} /> : <Crosshair size={14} />} {locating ? "Mengambil lokasi…" : "Ambil Lokasi GPS"}
               </button>
@@ -327,7 +327,7 @@ export default function OutdoorPasangPage() {
       <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, padding: "10px 20px calc(env(safe-area-inset-bottom,0px) + 16px)", background: "#FFFFFF", borderTop: "1px solid #F0F0F3" }}>
         <div style={{ maxWidth: 480, margin: "0 auto" }}>
           <button onClick={submit} disabled={busy}
-            style={{ width: "100%", height: 48, borderRadius: 13, border: "none", cursor: busy ? "default" : "pointer", background: busy ? "#F0A8A8" : BRAND, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            style={{ width: "100%", height: 48, borderRadius: 13, border: "none", cursor: busy ? "default" : "pointer", background: BRAND, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             {busy && <Loader2 size={15} style={{ animation: "mspin .85s linear infinite" }} />}
             {busy ? "Menyimpan…" : "Submit POSM"}
           </button>

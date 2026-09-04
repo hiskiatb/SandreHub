@@ -1183,7 +1183,7 @@ function CreatePlanWizardInner() {
               {saving ? <Loader2 size={17} style={{ animation: "mspin .85s linear infinite" }} /> : <><Send size={17} /> Submit Plan</>}
             </button>
           ) : (
-            <button onClick={goNext} disabled={saving}
+            <button onClick={goNext}
               style={{ width: "100%", height: 52, borderRadius: 14, border: "none", background: BRAND, color: "#fff", fontSize: 14.5, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 4px 14px rgba(17,17,20,0.11)" }}>
               Lanjut <ArrowRight size={17} />
             </button>
@@ -1682,7 +1682,7 @@ function TagCategorySection({ cat, label, accent, input, onInputChange, onAdd, o
         <button onClick={() => setScanning(true)} style={{ flexShrink: 0, width: 44, height: 44, borderRadius: 11, background: `${accent}14`, border: `1.5px solid ${accent}33`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: accent }}>
           <QrCode size={17} />
         </button>
-        <button onClick={onAdd} disabled={busy} style={{ flexShrink: 0, width: 44, height: 44, borderRadius: 11, background: "linear-gradient(135deg,#ED1C24,#C6168D)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
+        <button onClick={onAdd} disabled={busy} style={{ flexShrink: 0, width: 44, height: 44, borderRadius: 11, background: "linear-gradient(135deg,#ED1C24,#C6168D)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: busy ? "default" : "pointer" }}>
           {busy ? <Loader2 size={17} color="#fff" style={{ animation: "mspin .85s linear infinite" }} /> : <Plus size={17} color="#fff" />}
         </button>
       </div>
@@ -2242,12 +2242,12 @@ function LeaveConfirmSheet({ saving, onCancel, onDiscard, onSaveAndLeave }) {
             {saving ? <Loader2 size={16} style={{ animation: "mspin .85s linear infinite" }} /> : <Save size={16} />}
             {saving ? "Menyimpan…" : "Simpan Draft & Kembali"}
           </button>
-          <button onClick={onDiscard} disabled={saving}
-            style={{ width: "100%", height: 46, borderRadius: 13, border: "1.5px solid #F3C6C6", background: "#FFFFFF", color: "#DC2626", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: saving ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <button onClick={onDiscard}
+            style={{ width: "100%", height: 46, borderRadius: 13, border: "1.5px solid #F3C6C6", background: "#FFFFFF", color: "#DC2626", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             <Trash2 size={15} /> Buang Perubahan
           </button>
-          <button onClick={onCancel} disabled={saving}
-            style={{ width: "100%", height: 44, borderRadius: 13, border: "none", background: "none", color: "#8A8A96", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: saving ? "default" : "pointer" }}>
+          <button onClick={onCancel}
+            style={{ width: "100%", height: 44, borderRadius: 13, border: "none", background: "none", color: "#8A8A96", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
             Lanjut Mengisi
           </button>
         </div>

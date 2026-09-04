@@ -127,11 +127,11 @@ function ClaimCard({ r, busy, onApprove, onReject }) {
       {r.status === "pending" && (
         <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
           <button onClick={onReject} disabled={busy}
-            style={{ flex: 1, height: 42, borderRadius: 11, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
+            style={{ flex: 1, height: 42, borderRadius: 11, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: busy ? "default" : "pointer" }}>
             Tolak
           </button>
           <button onClick={onApprove} disabled={busy}
-            style={{ flex: 1.3, height: 42, borderRadius: 11, border: "none", background: BRAND, color: "#fff", fontSize: 12.5, fontWeight: 800, fontFamily: FF, cursor: busy ? "default" : "pointer", opacity: busy ? 0.75 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            style={{ flex: 1.3, height: 42, borderRadius: 11, border: "none", background: BRAND, color: "#fff", fontSize: 12.5, fontWeight: 800, fontFamily: FF, cursor: busy ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             {busy ? <Loader2 size={14} style={{ animation: "mspin .85s linear infinite" }} /> : <CheckCircle2 size={14} />}
             Setujui
           </button>
