@@ -671,22 +671,22 @@ function DetailSheet({ r, userId, onClose, onRequestDelete }) {
   // tiba → masih boleh Edit Plan, begitu tiba → langsung Isi Laporan Actual
   // (Check In DIHAPUS - tidak lagi jadi langkah terpisah, SAMA PERSIS dgn
   // logika di halaman detail [id]/page.jsx).
+  // Gate tanggal/status DIHAPUS - Edit Plan & Isi/Edit Laporan Actual
+  // sekarang dua tombol independen yg SELALU tersedia begitu plan-nya
+  // sudah bukan draft, sama seperti halaman detail [id]/page.jsx.
   let action = null;
-  let editAction = null;
+  let editPlanAction = null;
+  let editActualAction = null;
   if (r.status === "revision_needed") {
     action = { label: "Revisi Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${r.id}`) };
   } else if (r.status === "draft") {
     action = { label: "Lanjutkan Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${r.id}`) };
-  } else if (isReady && !eventArrived) {
-    action = { label: "Edit Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${r.id}`) };
-  } else if (isReady && eventArrived) {
-    // Sheet ini cuma ringkasan plan (baru dibuat / berjalan) - baik belum
-    // ada laporan actual SAMA SEKALI maupun sudah ada draft-nya, tombol
-    // "Isi/Lanjutkan Laporan Actual" TIDAK ditampilkan di sini lagi (biar
-    // tidak dobel dgn entry point resminya di list Aktivitas/Beranda).
-    // Sengaja dibiarkan `action = null` (Tutup + Hapus Plan saja).
-  } else if (r.status === "revision_actual") {
-    action = { label: "Revisi & Kirim Ulang", onTap: () => router.push(`/martahub/m/activities/${r.id}/submit`) };
+  } else {
+    editPlanAction = { label: "Edit Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${r.id}`) };
+    editActualAction = {
+      label: r.actual_sp == null ? "Isi Laporan Actual" : "Edit Laporan Actual",
+      onTap: () => router.push(`/martahub/m/activities/${r.id}/submit`),
+    };
   }
 
   return (
@@ -722,11 +722,24 @@ function DetailSheet({ r, userId, onClose, onRequestDelete }) {
           )}
         </div>
 
-        {editAction && (
-          <button onClick={editAction.onTap}
-            style={{ width: "100%", marginTop: 10, height: 42, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#3A3A44", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
-            <Pencil size={13} /> {editAction.label}
-          </button>
+        {/* Edit Plan & Isi/Edit Laporan Actual - dua tombol independen,
+            SELALU tersedia begitu plan bukan lagi draft (tidak digantung ke
+            tanggal event/status lagi). */}
+        {(editPlanAction || editActualAction) && (
+          <div style={{ marginTop: 10, display: "flex", gap: 10 }}>
+            {editPlanAction && (
+              <button onClick={editPlanAction.onTap}
+                style={{ flex: 1, height: 44, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#3A3A44", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+                <Pencil size={13} /> {editPlanAction.label}
+              </button>
+            )}
+            {editActualAction && (
+              <button onClick={editActualAction.onTap}
+                style={{ flex: 1, height: 44, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontSize: 12.5, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+                {editActualAction.label}
+              </button>
+            )}
+          </div>
         )}
 
         {/* Hapus juga tersedia "di dalamnya" (quick-view sheet), bukan cuma

@@ -99,7 +99,7 @@ const DETAIL_COLS = "id,event_name,event_category,event_categories,brand,mc,bran
 // Kolom list mh_activities untuk tabel Excel-style di bawah - lebih ringkas
 // dari DETAIL_COLS (dipakai modal) tapi mencakup semua field yg diminta utk
 // tabel Activity Plan (target/actual/ACV/cost ratio/insight/dokumentasi).
-const LIST_COLS = "id,event_name,brand,mc,branch_id,event_categories,event_category,plan_date_start,plan_date,actual_date,site_id,network_category,area_potential,poi_type,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,target_rev_3m,cost_estimate,actual_sp,actual_fwa,actual_rebuy_pulsa,actual_rebuy_data,actual_rev_3m,cost_actual,insight,checkin_valid,created_by,bme_user_id,created_at";
+const LIST_COLS = "id,event_name,brand,mc,branch_id,event_categories,event_category,plan_date_start,plan_date,actual_date,site_id,actual_site_id,network_category,area_potential,poi_type,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,target_rev_3m,cost_estimate,actual_sp,actual_fwa,actual_rebuy_pulsa,actual_rebuy_data,actual_rev_3m,cost_actual,insight,checkin_valid,created_by,bme_user_id,created_at";
 
 export default function ActivityPlanPage() {
   return (
@@ -204,7 +204,8 @@ function Body({ email }) {
     { key: "network", label: "Network Category", width: 130, filter: true, get: (r) => unsnake(r.network_category) },
     { key: "eventName", label: "Event Name", width: 230, filter: true, get: (r) => r.event_name || "-" },
     { key: "areaPotential", label: "Area Potential", width: 120, filter: true, get: (r) => unsnake(r.area_potential) },
-    { key: "siteId", label: "Site ID", width: 100, filter: true, get: (r) => r.site_id || "-" },
+    { key: "siteId", label: "Site Plan", width: 100, filter: true, get: (r) => r.site_id || "-" },
+    { key: "actualSiteId", label: "Site Actual", width: 100, filter: true, get: (r) => r.actual_site_id || "-" },
     { key: "long", label: "Long", width: 90, filter: true, get: (r) => (r.longitude != null ? String(r.longitude) : "-"), raw: (r) => r.longitude, numeric: true },
     { key: "lat", label: "Lat", width: 90, filter: true, get: (r) => (r.latitude != null ? String(r.latitude) : "-"), raw: (r) => r.latitude, numeric: true },
     { key: "poi", label: "POI", width: 110, filter: true, get: (r) => unsnake(r.poi_type) },

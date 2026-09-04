@@ -805,7 +805,7 @@ function PlanDetail({ plan, email, canManage, scope, onBack, onChanged }) {
   }
 
   return (
-    <div style={{ maxWidth: 980 }}>
+    <div style={{ maxWidth: 1600, width: "100%" }}>
       <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: T.mid, fontSize: 13, fontWeight: 600, padding: 0, marginBottom: 14 }}>
         <ArrowLeft size={15} /> Kembali ke daftar Plan
       </button>

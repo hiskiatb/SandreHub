@@ -199,21 +199,23 @@ export default function ActivityDetailPage() {
   const eventArrived = eventDate ? eventDate <= new Date().toISOString().slice(0, 10) : false;
   // approved sekarang berarti "actual selesai & valid", bukan lagi
   // "plan disetujui" - gate approval plan sudah dihapus (lihat activityUi.js).
-  const READY_STATUSES = new Set(["plan_submitted"]);
+  // Gate tanggal/status utk edit plan & isi actual DIHAPUS - Plan sekarang
+  // BOLEH diedit kapan saja (bahkan setelah actual disetujui), & Laporan
+  // Actual BOLEH diisi/diedit kapan saja begitu plan-nya sudah diajukan
+  // (tidak perlu menunggu tanggal event tiba lagi). Draft/revisi_needed
+  // masih pakai SATU tombol khusus krn plan-nya belum tuntas diajukan.
   let action = null;
-  let editAction = null; // "Edit Plan" sekunder - masih boleh muncul berdampingan
-  // sampai tanggal event tiba, spy plan tetap bisa dikoreksi sebelum hari-H.
-  // Check In DIHAPUS - dulu wajib check-in dulu di lokasi sebelum bisa Isi
-  // Laporan Actual, SEKARANG begitu tanggal event tiba langsung bisa Isi
-  // Laporan Actual. Validasi "benar2 di lokasi" dipindah ke DALAM form
-  // laporan itu sendiri lewat tombol "Perbaiki Titik GPS" (submit/page.jsx) -
-  // kalau pengguna memang sedang di lokasi event, longlat bisa dikoreksi
-  // persis di situ saat mengisi laporan, tanpa perlu langkah terpisah dulu.
+  let editPlanAction = null;
+  let editActualAction = null;
   if (a.status === "revision_needed") action = { label: "Revisi Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${a.id}`) };
   else if (a.status === "draft") action = { label: "Lanjutkan Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${a.id}`) };
-  else if (READY_STATUSES.has(a.status) && !eventArrived) action = { label: "Edit Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${a.id}`) };
-  else if (READY_STATUSES.has(a.status) && eventArrived) action = { label: "Isi Laporan Actual", onTap: () => router.push(`/martahub/m/activities/${a.id}/submit`) };
-  else if (a.status === "revision_actual") action = { label: "Revisi & Kirim Ulang", onTap: () => router.push(`/martahub/m/activities/${a.id}/submit`) };
+  else {
+    editPlanAction = { label: "Edit Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${a.id}`) };
+    editActualAction = {
+      label: a.actual_sp == null ? "Isi Laporan Actual" : "Edit Laporan Actual",
+      onTap: () => router.push(`/martahub/m/activities/${a.id}/submit`),
+    };
+  }
 
   return (
     <MobileShell active="activities" hideNav>
@@ -263,7 +265,7 @@ export default function ActivityDetailPage() {
                 {/* Status pill DIHAPUS dari sini - sudah ada di kartu header
                     (satu status yg diakui, activityStage()), tidak perlu
                     diulang lagi di menu spy tidak terasa dobel. */}
-                {userId && a.created_by === userId && a.actual_sp == null && a.status !== "approved" && (
+                {userId && a.created_by === userId && (
                   <button onClick={() => { setMenuOpen(false); router.push(`/martahub/m/activities/new?edit=${a.id}`); }}
                     style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "8px 6px", border: "none", background: "none", cursor: "pointer", fontFamily: FF, borderRadius: 9, color: "#3A3A44", fontSize: 12.5, fontWeight: 700 }}>
                     <Pencil size={14} /> Edit Plan
@@ -485,7 +487,7 @@ export default function ActivityDetailPage() {
           di baliknya (mis. kartu Estimasi Revenue yg gelap) keliatan
           "menembus" jadi kayak bayangan gelap nempel di atas navbar. Pola
           SAMA PERSIS dgn action bar wizard Buat Plan (new/page.jsx). */}
-      {action && (
+      {(action || editPlanAction || editActualAction) && (
         // Halaman ini TIDAK punya bottom navbar (hideNav) - bar aksi ini
         // jadi satu2nya elemen fixed di bawah, jadi lengket persis di tepi
         // bawah layar (cuma dikurangi safe-area-inset-bottom), bukan lagi
@@ -507,17 +509,33 @@ export default function ActivityDetailPage() {
             boxShadow: "0 -4px 16px rgba(23,24,28,0.05)",
             padding: "12px 20px calc(env(safe-area-inset-bottom,0px) + 14px)",
           }}>
-            <button onClick={action.onTap}
-              style={{ width: "100%", height: 50, borderRadius: 14, border: "none", cursor: "pointer", background: BRAND, color: "#fff", fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 14px rgba(17,17,20,0.11)" }}>
-              <span style={{ fontSize: 13.5, fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>
-                {action.label} <ChevronRight size={16} />
-              </span>
-            </button>
-            {editAction && (
-              <button onClick={editAction.onTap}
-                style={{ width: "100%", marginTop: 9, height: 42, borderRadius: 13, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#3A3A44", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
-                <Pencil size={13} /> {editAction.label}
+            {action && (
+              <button onClick={action.onTap}
+                style={{ width: "100%", height: 50, borderRadius: 14, border: "none", cursor: "pointer", background: BRAND, color: "#fff", fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 14px rgba(17,17,20,0.11)" }}>
+                <span style={{ fontSize: 13.5, fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>
+                  {action.label} <ChevronRight size={16} />
+                </span>
               </button>
+            )}
+            {/* Plan sekarang selalu bisa diedit, & Laporan Actual selalu
+                bisa diisi/diedit begitu plan-nya sudah diajukan - dua
+                tombol independen berdampingan (bukan lagi satu tombol
+                gabungan yg gantung ke tanggal event). */}
+            {(editPlanAction || editActualAction) && (
+              <div style={{ display: "flex", gap: 9 }}>
+                {editPlanAction && (
+                  <button onClick={editPlanAction.onTap}
+                    style={{ flex: 1, height: 50, borderRadius: 14, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#3A3A44", fontSize: 12.5, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+                    <Pencil size={13} /> {editPlanAction.label}
+                  </button>
+                )}
+                {editActualAction && (
+                  <button onClick={editActualAction.onTap}
+                    style={{ flex: 1, height: 50, borderRadius: 14, border: "none", cursor: "pointer", background: BRAND, color: "#fff", fontSize: 12.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: "0 4px 14px rgba(17,17,20,0.11)" }}>
+                    {editActualAction.label} <ChevronRight size={16} />
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>

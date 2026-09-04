@@ -247,6 +247,12 @@ export default function SubmitActualPage() {
         ]);
         if (e1) throw e1;
         if (!alive) return;
+        // Seed site ACTUAL dari site PLAN begitu halaman ini dibuka
+        // pertama kali (idempotent - no-op kalau site actual sudah ada).
+        // Halaman ini sekarang bisa diakses kapan saja (bahkan setelah
+        // approved), jadi seeding dilakukan setiap kali dibuka, bukan cuma
+        // sekali di alur lama.
+        try { await supabaseMarta.rpc("mh_seed_activity_actual_sites", { p_activity_id: activityId }); } catch { /* best-effort */ }
         setActivity(a);
         if (a?.actual_draft_saved_at) setDraftSavedAt(a.actual_draft_saved_at);
         if (a?.latitude != null) setGpsLat(a.latitude);
@@ -267,7 +273,7 @@ export default function SubmitActualPage() {
         // Site yg dipilih sebelumnya (waktu Create Plan/Check-In) - tampilkan
         // nama site-nya (bukan cuma kode) di hero, kalau tersedia.
         try {
-          const { data: extraSites } = await supabaseMarta.from("mh_activity_sites").select("site_id").eq("activity_id", activityId);
+          const { data: extraSites } = await supabaseMarta.from("mh_activity_sites").select("site_id").eq("activity_id", activityId).eq("site_kind", "actual");
           const siteIds = Array.from(new Set([a?.site_id, ...(extraSites || []).map((s) => s.site_id)].filter(Boolean)));
           if (siteIds.length > 0) {
             const { data: siteRowsData } = await supabaseMarta.from("mh_sites").select("site_id,site_name,mc,branch_id").in("site_id", siteIds);
@@ -762,7 +768,7 @@ export default function SubmitActualPage() {
   async function addSite(s) {
     setAddingSite(true);
     try {
-      await supabaseMarta.rpc("mh_activity_add_site", { p_activity_id: activityId, p_site_id: s.site_id });
+      await supabaseMarta.rpc("mh_activity_add_actual_site", { p_activity_id: activityId, p_site_id: s.site_id });
       setSiteLabels((prev) => [...prev, s.site_name ? `${s.site_id} · ${s.site_name}` : s.site_id]);
       setSiteRows((prev) => [...prev, s]);
       setSiteCandidates((prev) => prev.filter((x) => x.site_id !== s.site_id));

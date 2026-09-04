@@ -17,7 +17,7 @@
 import { useState, useEffect } from "react";
 import {
   X, MapPin, Image as ImageIcon, Phone, FileText, Layers, Info,
-  Target as TargetIcon, CheckCircle2, Clock, XCircle, Tag, Trash2, Calendar,
+  Target as TargetIcon, CheckCircle2, Clock, XCircle, Tag, Trash2, Calendar, Pencil,
 } from "lucide-react";
 import { T, FONT, brandLabel } from "./MartaShell";
 import supabaseMarta from "../../../lib/supabaseMarta";
@@ -98,7 +98,7 @@ async function fetchAuthedPhotoBlobUrl(kind, id) {
   return URL.createObjectURL(blob);
 }
 
-export const DETAIL_COLS = "id,event_name,event_category,event_categories,brand,mc,branch_id,site_id,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,poi_type,network_category,area_potential,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,target_rev_3m,cost_estimate,expected_outcome,actual_sp,actual_fwa,actual_rebuy_pulsa,actual_rebuy_data,actual_rev_3m,cost_actual,insight,checkin_valid,checkin_distance,checkin_at,approved_by_name,approved_by_email,approved_at,approval_notes,validation_status,validation_note,validated_at,override_status,override_by_name,override_at,override_note,created_at";
+export const DETAIL_COLS = "id,event_name,event_category,event_categories,brand,mc,branch_id,site_id,actual_site_id,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,poi_type,network_category,area_potential,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,target_rev_3m,cost_estimate,expected_outcome,actual_sp,actual_fwa,actual_rebuy_pulsa,actual_rebuy_data,actual_rev_3m,cost_actual,insight,checkin_valid,checkin_distance,checkin_at,approved_by_name,approved_by_email,approved_at,approval_notes,validation_status,validation_note,validated_at,override_status,override_by_name,override_at,override_note,created_at";
 
 const btn = { padding: "9px 15px", borderRadius: 11, border: `1px solid ${T.line}`, background: "#fff", color: T.hi, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 };
 
@@ -107,7 +107,8 @@ const btn = { padding: "9px 15px", borderRadius: 11, border: `1px solid ${T.line
 // kepencet tidak sengaja - aksi ini permanen (hard delete row mh_activities).
 export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }) {
   const [a, setA] = useState(null);
-  const [extraSites, setExtraSites] = useState([]);
+  const [planSites, setPlanSites] = useState([]);
+  const [actualSites, setActualSites] = useState([]);
   const [siteNames, setSiteNames] = useState({});
   const [branchName, setBranchName] = useState(null);
   const [photos, setPhotos] = useState([]);
@@ -120,12 +121,12 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }
 
   useEffect(() => {
     let alive = true;
-    setA(null); setErr(""); setPhotos([]); setEntries([]); setEditReqs([]); setExtraSites([]); setSiteNames({}); setBranchName(null);
+    setA(null); setErr(""); setPhotos([]); setEntries([]); setEditReqs([]); setPlanSites([]); setActualSites([]); setSiteNames({}); setBranchName(null);
     (async () => {
       try {
         const [{ data: act, error: e1 }, { data: sites }, { data: docs }, { data: sales }, { data: edits }] = await Promise.all([
           supabaseMarta.from("mh_activities").select(DETAIL_COLS).eq("id", id).single(),
-          supabaseMarta.from("mh_activity_sites").select("site_id, is_primary").eq("activity_id", id).eq("is_primary", false),
+          supabaseMarta.from("mh_activity_sites").select("site_id, is_primary, site_kind").eq("activity_id", id).eq("is_primary", false),
           supabaseMarta.from("mh_documents").select("id, storage_path, file_type, created_at").eq("activity_id", id).order("created_at"),
           supabaseMarta.from("mh_dsf_sales_entries").select("id, category, msisdn, validation_status").eq("activity_id", id).order("created_at"),
           supabaseMarta.from("mh_activity_edit_requests").select("id, status, reason, requested_by_name, decided_by_name, decision_notes, created_at, decided_at").eq("activity_id", id).order("created_at", { ascending: false }),
@@ -133,7 +134,8 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }
         if (e1) throw e1;
         if (!alive) return;
         setA(act);
-        setExtraSites((sites || []).map((s) => s.site_id));
+        setPlanSites((sites || []).filter((s) => s.site_kind !== "actual").map((s) => s.site_id));
+        setActualSites((sites || []).filter((s) => s.site_kind === "actual").map((s) => s.site_id));
         setEntries(sales || []);
         setEditReqs(edits || []);
         const photoDocs = (docs || []).filter((d) => d.file_type === "photo");
@@ -149,7 +151,7 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }
           setPhotos([]);
         }
 
-        const allSiteIds = Array.from(new Set([act?.site_id, ...(sites || []).map((s) => s.site_id)].filter(Boolean)));
+        const allSiteIds = Array.from(new Set([act?.site_id, act?.actual_site_id, ...(sites || []).map((s) => s.site_id)].filter(Boolean)));
         if (allSiteIds.length > 0) {
           const { data: siteRows } = await supabaseMarta.from("mh_sites").select("site_id,site_name").in("site_id", allSiteIds);
           const map = {};
@@ -247,6 +249,18 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }
               </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
                 {canDelete && (
+                  <button onClick={() => window.open(`${window.location.origin}/martahub/m/activities/new?edit=${a.id}`, "_blank")} title="Edit Plan"
+                    style={{ height: 36, padding: "0 12px", borderRadius: 11, border: "1px solid #E4E5EA", background: "#fff", color: "#3A3A44", display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: FONT }}>
+                    <Pencil size={14} /> Edit Plan
+                  </button>
+                )}
+                {canDelete && (
+                  <button onClick={() => window.open(`${window.location.origin}/martahub/m/activities/${a.id}/submit`, "_blank")} title="Isi/Edit Laporan Actual"
+                    style={{ height: 36, padding: "0 12px", borderRadius: 11, border: "1px solid #E4E5EA", background: "#fff", color: "#3A3A44", display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: FONT }}>
+                    <FileText size={14} /> {a.actual_sp == null ? "Isi Laporan Actual" : "Edit Laporan Actual"}
+                  </button>
+                )}
+                {canDelete && (
                   <button onClick={() => setConfirmDelete(true)} title="Hapus Activity Plan"
                     style={{ width: 36, height: 36, borderRadius: 11, border: `1px solid ${T.error}44`, background: T.errorBg, color: T.error, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
                     <Trash2 size={15} />
@@ -302,10 +316,10 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }
                   </SectionCard>
 
                   {a.site_id ? (
-                    <SectionCard title={`Site (${extraSites.length + 1})`} icon={<Layers size={13} />} accent="#7C3AED">
+                    <SectionCard title={`Site Plan (${planSites.length + 1})`} icon={<Layers size={13} />} accent="#7C3AED">
                       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                         <SiteRow label="Site 1" siteId={a.site_id} siteName={siteNames[a.site_id]} />
-                        {extraSites.map((s, i) => <SiteRow key={s} label={`Site ${i + 2}`} siteId={s} siteName={siteNames[s]} />)}
+                        {planSites.map((s, i) => <SiteRow key={s} label={`Site ${i + 2}`} siteId={s} siteName={siteNames[s]} />)}
                       </div>
                       {a.checkin_at && (
                         <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #F0F0F3" }}>
@@ -319,6 +333,20 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }
                           <div style={{ marginTop: 4, fontSize: 11, color: "#8A8A96" }}>{new Date(a.checkin_at).toLocaleString("id-ID")}</div>
                         </div>
                       )}
+                    </SectionCard>
+                  ) : <div />}
+
+                  {/* Site Actual - baru ada begitu Laporan Actual mulai
+                      diisi (di-seed dari Site Plan lewat
+                      mh_seed_activity_actual_sites saat halaman submit
+                      dibuka pertama kali) - dipisah dari Site Plan krn bisa
+                      berbeda (misal ganti lokasi saat eksekusi). */}
+                  {(a.actual_site_id || actualSites.length > 0) ? (
+                    <SectionCard title={`Site Actual (${a.actual_site_id ? actualSites.length + 1 : actualSites.length})`} icon={<Layers size={13} />} accent="#DB2777">
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {a.actual_site_id && <SiteRow label="Site 1" siteId={a.actual_site_id} siteName={siteNames[a.actual_site_id]} />}
+                        {actualSites.map((s, i) => <SiteRow key={s} label={`Site ${i + (a.actual_site_id ? 2 : 1)}`} siteId={s} siteName={siteNames[s]} />)}
+                      </div>
                     </SectionCard>
                   ) : <div />}
                 </div>

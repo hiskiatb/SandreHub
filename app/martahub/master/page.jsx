@@ -1,7 +1,7 @@
 "use client";
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { UploadCloud, Map as MapIcon, ChevronRight, ChevronDown, ArrowLeft, CheckCircle2, AlertTriangle, Clock, Network, Search, Store, UserCheck, UserX, Target as TargetIcon, Tag, Plus, Pencil } from "lucide-react";
+import { UploadCloud, Map as MapIcon, ChevronRight, ChevronDown, ArrowLeft, CheckCircle2, AlertTriangle, Clock, Network, Search, Store, UserCheck, UserX, Target as TargetIcon, Tag, Plus, Pencil, Calendar, Database } from "lucide-react";
 import MartaShell, { T } from "../components/MartaShell";
 import { useGeoLayers, LayerPanel } from "../components/SumatraMap";
 import supabaseMarta from "../../../lib/supabaseMarta";
@@ -26,8 +26,9 @@ const mtT = { card: "#FFFFFF", line: T.line, hi: T.hi, mid: T.mid, lo: T.lo, hov
 function Body({ canManage, email }) {
   const router = useRouter();
   const geo = useGeoLayers();
-  const [active, setActive] = useState(null); // null | 'list_site' | 'territory' | 'activity_target'
+  const [active, setActive] = useState(null); // null | 'site_data' | 'territory' | 'activity_target'
   const [history, setHistory] = useState([]);
+  const [siteDataPeriod, setSiteDataPeriod] = useState(null); // period awal saat lompat dari Upload -> Data per Periode
   const currentMonth = currentYYYYMM();
 
   const loadHistory = useCallback(async () => { setHistory(await fetchImportHistory()); }, []);
@@ -36,9 +37,9 @@ function Body({ canManage, email }) {
   const uploadedThisMonth = history.some((h) => h.period === currentMonth);
   const latest = history[0] || null;
 
-  if (active === "list_site") {
-    return <ListSiteView canManage={canManage} history={history} currentMonth={currentMonth}
-      onBack={() => setActive(null)} onImported={loadHistory} />;
+  if (active === "site_data") {
+    return <SiteDataByPeriodView canManage={canManage} history={history} currentMonth={currentMonth}
+      initialPeriod={siteDataPeriod} onBack={() => setActive(null)} onImported={loadHistory} />;
   }
   if (active === "territory") {
     return (
@@ -74,9 +75,9 @@ function Body({ canManage, email }) {
       <div style={{ fontSize: 13, color: T.mid, marginBottom: 18 }}>Data yang perlu diperbarui tiap bulan.</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
         <MenuCard
-          icon={UploadCloud} label="List Site (Branch BME/RGE)"
-          desc="Upload List Site bulanan → penentuan branch untuk assignment BME/RGE."
-          onClick={() => setActive("list_site")}
+          icon={Database} label="Data Site (Branch BME/RGE)"
+          desc={`Lihat & filter data List Site per periode (Site ID, Branch, Kabupaten, Kecamatan, dst) - upload data baru lewat tombol "+ Upload Data Site" di dalamnya.`}
+          onClick={() => { setSiteDataPeriod(null); setActive("site_data"); }}
           status={
             uploadedThisMonth
               ? { ok: true, text: `Bulan ini (${monthLabel(currentMonth)}) sudah diupload` }
@@ -130,7 +131,7 @@ function SpFwaTypesView({ email, canManage, onBack }) {
   useEffect(() => { load(); }, [load]);
 
   return (
-    <div style={{ maxWidth: 860 }}>
+    <div style={{ maxWidth: 1600, width: "100%" }}>
       <BackBtn onClick={onBack} />
       <div style={{ display: "flex", alignItems: "center", marginBottom: 6 }}>
         <div style={{ fontSize: 18, fontWeight: 800, color: T.hi }}>Jenis SP & FWA</div>
@@ -337,7 +338,7 @@ function ActivityTargetView({ email, canManage, onBack }) {
   const disabledPbtn = { background: "#F1F2F5", color: T.lo, boxShadow: "none", cursor: "not-allowed" };
 
   return (
-    <div style={{ maxWidth: 900 }}>
+    <div style={{ maxWidth: 1600, width: "100%" }}>
       <BackBtn onClick={onBack} />
       <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>Target Aktivitas</div>
       <div style={{ color: T.mid, fontSize: 12.5, marginBottom: 14 }}>
@@ -455,83 +456,87 @@ function MenuCard({ icon: Icon, label, desc, onClick, status, sub }) {
   );
 }
 
-// ── List Site view (wizard: pilih bulan → upload → import) ────────────────────
-function ListSiteView({ canManage, history, currentMonth, onBack, onImported }) {
+// ── Modal Upload Data Site (wizard: pilih bulan → upload → import) - dibuka
+// dari tombol "+ Upload Data Site" di dalam view "Data Site", BUKAN menu
+// terpisah lagi. ──
+function UploadSiteModal({ canManage, history, currentMonth, onClose, onImported, onViewPeriod }) {
   const now = new Date();
   const years = [now.getFullYear() - 1, now.getFullYear()];
   const [selYear, setSelYear] = useState(now.getFullYear());
   const [selMonth, setSelMonth] = useState(now.getMonth() + 1);
   const period = `${selYear}${String(selMonth).padStart(2, "0")}`;
   const [confirmed, setConfirmed] = useState(false);
-  const [browserKey, setBrowserKey] = useState(0);
 
   const uploadedSet = useMemo(() => new Set(history.map((h) => h.period)), [history]);
   const periodUploaded = uploadedSet.has(period);
   const isCurrent = period === currentMonth;
 
   return (
-    <div style={{ maxWidth: 1040 }}>
-      <BackBtn onClick={onBack} />
-
-      {/* Status bulan ini */}
-      <div style={{ ...card, marginBottom: 14, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-        {uploadedSet.has(currentMonth) ? (
-          <span style={{ ...statusPill, background: T.successBg, color: T.success, borderColor: T.success + "40" }}>
-            <CheckCircle2 size={13} /> Bulan ini ({monthLabel(currentMonth)}) sudah diupload
-          </span>
-        ) : (
-          <span style={{ ...statusPill, background: T.warningBg, color: "#8a5b00", borderColor: "#F0E3B0" }}>
-            <AlertTriangle size={13} /> Bulan ini ({monthLabel(currentMonth)}) belum diupload
-          </span>
-        )}
-        {history[0] && <span style={{ fontSize: 12, color: T.lo, display: "inline-flex", alignItems: "center", gap: 5 }}>
-          <Clock size={12} /> Terakhir: {monthLabel(history[0].period)} · {new Date(history[0].uploaded_at).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })}
-        </span>}
-      </div>
-
-      {canManage ? (
-        <div style={{ ...card, marginBottom: 14 }}>
-          {/* Step 1: pilih bulan */}
-          {!confirmed ? (
-            <>
-              <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>1. Pilih Bulan Data</div>
-              <div style={{ color: T.mid, fontSize: 12.5, marginBottom: 14 }}>Tentukan periode file List Site. Data disimpan per bulan; bulan yang sama akan ditimpa.</div>
-              <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                <select value={selMonth} onChange={(e) => setSelMonth(+e.target.value)} style={{ ...selectStyle, width: 150 }}>
-                  {MONTH_NAMES.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
-                </select>
-                <select value={selYear} onChange={(e) => setSelYear(+e.target.value)} style={{ ...selectStyle, width: 110 }}>
-                  {years.map((y) => <option key={y} value={y}>{y}</option>)}
-                </select>
-                <button onClick={() => setConfirmed(true)} style={{ ...pbtn, marginLeft: "auto" }}>
-                  Konfirmasi {monthLabel(period)} <ChevronRight size={15} />
-                </button>
-              </div>
-              {!isCurrent && (
-                <div style={{ ...note, marginTop: 12 }}>
-                  {period < currentMonth ? "Periode historis" : "Periode mendatang"} - {monthLabel(period)}. Pastikan file memang untuk bulan ini.
-                </div>
-              )}
-              {periodUploaded && (
-                <div style={{ ...note, marginTop: 10, background: T.warningBg }}>Bulan {monthLabel(period)} sudah pernah diupload - import baru akan menimpa.</div>
-              )}
-            </>
-          ) : (
-            <UploadStep period={period} onChangePeriod={() => setConfirmed(false)}
-              onDone={() => { onImported?.(); setBrowserKey((k) => k + 1); }} />
-          )}
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(13,17,23,.5)", zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center", padding: "4vh 20px" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, padding: 22, width: 640, maxWidth: "94vw", maxHeight: "90vh", overflow: "auto" }}>
+        <div style={{ display: "flex", alignItems: "center", marginBottom: 14 }}>
+          <div style={{ fontWeight: 800, fontSize: 16 }}>Upload Data Site</div>
+          <button onClick={onClose} style={{ ...linkBtn, marginLeft: "auto", fontSize: 13 }}>✕ Tutup</button>
         </div>
-      ) : (
-        <div style={{ ...note, marginBottom: 14 }}>Mode lihat saja - hanya Admin yang dapat mengunggah.</div>
-      )}
 
-      <SitesBrowser refreshKey={browserKey} expectedTotal={history[0]?.rows} />
+        {/* Status bulan ini */}
+        <div style={{ ...card, marginBottom: 14, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          {uploadedSet.has(currentMonth) ? (
+            <span style={{ ...statusPill, background: T.successBg, color: T.success, borderColor: T.success + "40" }}>
+              <CheckCircle2 size={13} /> Bulan ini ({monthLabel(currentMonth)}) sudah diupload
+            </span>
+          ) : (
+            <span style={{ ...statusPill, background: T.warningBg, color: "#8a5b00", borderColor: "#F0E3B0" }}>
+              <AlertTriangle size={13} /> Bulan ini ({monthLabel(currentMonth)}) belum diupload
+            </span>
+          )}
+          {history[0] && <span style={{ fontSize: 12, color: T.lo, display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <Clock size={12} /> Terakhir: {monthLabel(history[0].period)} · {new Date(history[0].uploaded_at).toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })}
+          </span>}
+        </div>
+
+        {canManage ? (
+          <>
+            {/* Step 1: pilih bulan */}
+            {!confirmed ? (
+              <>
+                <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>1. Pilih Bulan Data</div>
+                <div style={{ color: T.mid, fontSize: 12.5, marginBottom: 14 }}>Tentukan periode file List Site. Data disimpan per bulan; bulan yang sama akan ditimpa.</div>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                  <select value={selMonth} onChange={(e) => setSelMonth(+e.target.value)} style={{ ...selectStyle, width: 150 }}>
+                    {MONTH_NAMES.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+                  </select>
+                  <select value={selYear} onChange={(e) => setSelYear(+e.target.value)} style={{ ...selectStyle, width: 110 }}>
+                    {years.map((y) => <option key={y} value={y}>{y}</option>)}
+                  </select>
+                  <button onClick={() => setConfirmed(true)} style={{ ...pbtn, marginLeft: "auto" }}>
+                    Konfirmasi {monthLabel(period)} <ChevronRight size={15} />
+                  </button>
+                </div>
+                {!isCurrent && (
+                  <div style={{ ...note, marginTop: 12 }}>
+                    {period < currentMonth ? "Periode historis" : "Periode mendatang"} - {monthLabel(period)}. Pastikan file memang untuk bulan ini.
+                  </div>
+                )}
+                {periodUploaded && (
+                  <div style={{ ...note, marginTop: 10, background: T.warningBg }}>Bulan {monthLabel(period)} sudah pernah diupload - import baru akan menimpa.</div>
+                )}
+              </>
+            ) : (
+              <UploadStep period={period} onChangePeriod={() => setConfirmed(false)}
+                onDone={() => onImported?.()} onViewPeriod={(p) => { onViewPeriod?.(p); onClose(); }} />
+            )}
+          </>
+        ) : (
+          <div style={{ ...note }}>Mode lihat saja - hanya Admin yang dapat mengunggah.</div>
+        )}
+      </div>
     </div>
   );
 }
 
 // ── Step 2+3: upload file + mapping + import ─────────────────────────────────
-function UploadStep({ period, onChangePeriod, onDone }) {
+function UploadStep({ period, onChangePeriod, onDone, onViewPeriod }) {
   const inputRef = useRef(null);
   const [file, setFile] = useState(null);
   const [matrix, setMatrix] = useState(null);
@@ -590,9 +595,17 @@ function UploadStep({ period, onChangePeriod, onDone }) {
 
   return (
     <>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-        <span style={{ ...statusPill, background: "#FFF0F0", color: T.primary, borderColor: "#F6D9D9" }}>Periode: {monthLabel(period)}</span>
-        <button onClick={onChangePeriod} style={{ ...linkBtn }}>Ganti bulan</button>
+      <div style={{
+        display: "flex", alignItems: "center", gap: 12, marginBottom: 14, padding: "10px 14px",
+        borderRadius: 11, background: "#FFF0F0", border: `1px solid #F6D9D9`,
+      }}>
+        <Calendar size={16} color={T.primary} />
+        <div style={{ fontSize: 12.5, color: T.mid }}>
+          Mengunggah untuk periode <b style={{ color: T.hi, fontSize: 13.5 }}>{monthLabel(period)}</b>
+        </div>
+        <button onClick={onChangePeriod} style={{ ...btn, marginLeft: "auto", padding: "6px 13px", fontSize: 12 }}>
+          Ganti Periode
+        </button>
       </div>
 
       <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>2. Unggah, Preview & Petakan Kolom</div>
@@ -662,8 +675,11 @@ function UploadStep({ period, onChangePeriod, onDone }) {
       )}
       {err && <div style={{ ...note, marginTop: 12, background: T.errorBg, borderColor: T.error, color: T.error }}>{err}</div>}
       {result && (
-        <div style={{ ...note, marginTop: 12, background: T.successBg, borderColor: T.success, color: "#155724" }}>
-          <b>Berhasil.</b> {monthLabel(result.month)} · {result.rows.toLocaleString()} baris · {result.branches} branch · {result.deactivated.toLocaleString()} site lama dinonaktifkan.
+        <div style={{ ...note, marginTop: 12, background: T.successBg, borderColor: T.success, color: "#155724", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span><b>Berhasil.</b> {monthLabel(result.month)} · {result.rows.toLocaleString()} baris · {result.branches} branch · {result.deactivated.toLocaleString()} site lama dinonaktifkan.</span>
+          <button onClick={() => onViewPeriod?.(result.month)} style={{ ...btn, marginLeft: "auto", padding: "6px 13px", fontSize: 12, background: "#fff" }}>
+            Lihat Data Periode Ini <ChevronRight size={13} />
+          </button>
         </div>
       )}
     </>
@@ -679,6 +695,8 @@ const COLUMNS = [
   { key: "region", label: "Region" },
   { key: "area", label: "Area" },
   { key: "circle", label: "Circle" },
+  { key: "kabupaten", label: "Kabupaten" },
+  { key: "kecamatan_name", label: "Kecamatan" },
   { key: "kecamatan", label: "Kecamatan Unik" },
 ];
 
@@ -686,8 +704,52 @@ const FCOLS = COLUMNS.map((c) => [c.key, c.label]);
 const FT_T = { card: "#FFFFFF", line: T.line, sub: "#F5F6F9", hi: T.hi, mid: T.mid, lo: T.lo, teal: T.primary, tealBg: "#FFF0F0" };
 const MAX_ROWS = 1000;
 
+// ── Data Site per Periode - view TERPISAH dari upload, murni utk browse/filter
+// data List Site yang sudah tersimpan per bulan (baca mh_sites_monthly). ──
+function SiteDataByPeriodView({ canManage, history, currentMonth, initialPeriod, onBack, onImported }) {
+  const periods = useMemo(() => {
+    const set = new Set(history.map((h) => h.period));
+    set.add(initialPeriod || currentMonth);
+    return [...set].sort().reverse();
+  }, [history, currentMonth, initialPeriod]);
+  const [period, setPeriod] = useState(initialPeriod || history[0]?.period || currentMonth);
+  const [showUpload, setShowUpload] = useState(false);
+  const rowsForPeriod = history.find((h) => h.period === period)?.rows;
+
+  return (
+    <div style={{ maxWidth: 1600, width: "100%" }}>
+      <BackBtn onClick={onBack} />
+      <div style={{
+        display: "flex", alignItems: "center", gap: 12, marginBottom: 14, padding: "10px 14px",
+        borderRadius: 11, background: "#FFF0F0", border: `1px solid #F6D9D9`, flexWrap: "wrap",
+      }}>
+        <Calendar size={16} color={T.primary} />
+        <div style={{ fontSize: 12.5, color: T.mid }}>Menampilkan data periode</div>
+        <select value={period} onChange={(e) => setPeriod(e.target.value)} style={{ ...selectStyle, width: 190, fontWeight: 700 }}>
+          {periods.map((p) => <option key={p} value={p}>{monthLabel(p)}</option>)}
+        </select>
+        {!history.some((h) => h.period === period) && (
+          <span style={{ fontSize: 11.5, color: "#8a5b00" }}>Belum pernah diupload - tidak ada data.</span>
+        )}
+        {canManage && (
+          <button onClick={() => setShowUpload(true)} style={{ ...pbtn, marginLeft: "auto", padding: "8px 14px", fontSize: 12.5 }}>
+            <Plus size={14} /> Upload Data Site
+          </button>
+        )}
+      </div>
+      <SitesBrowser key={period} period={period} expectedTotal={rowsForPeriod} />
+
+      {showUpload && (
+        <UploadSiteModal canManage={canManage} history={history} currentMonth={currentMonth}
+          onClose={() => setShowUpload(false)} onImported={onImported}
+          onViewPeriod={(p) => setPeriod(p)} />
+      )}
+    </div>
+  );
+}
+
 // ── Browser hasil - filter ala-Excel per kolom (konsep sama spt Pemenuhan Manpower) ──
-function SitesBrowser({ refreshKey, expectedTotal }) {
+function SitesBrowser({ period, expectedTotal }) {
   const [allSites, setAllSites] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(0);   // baris yang sudah terbaca (progress)
@@ -706,7 +768,7 @@ function SitesBrowser({ refreshKey, expectedTotal }) {
       const PAGE = 1000;
       let all = [];
       for (let off = 0; off < 200000; off += PAGE) {
-        const { data, error } = await supabaseMarta.rpc("mh_list_sites", { p_filters: {}, p_limit: PAGE, p_offset: off });
+        const { data, error } = await supabaseMarta.rpc("mh_list_sites_by_period", { p_period: period, p_filters: {}, p_limit: PAGE, p_offset: off });
         if (error) break;
         const rows = data || [];
         all = all.concat(rows);
@@ -715,8 +777,8 @@ function SitesBrowser({ refreshKey, expectedTotal }) {
       }
       setAllSites(all);
     } finally { setLoading(false); }
-  }, []);
-  useEffect(() => { load(); }, [load, refreshKey]);
+  }, [period]);
+  useEffect(() => { load(); }, [load]);
 
   // Perkiraan progres: pakai jumlah baris import terakhir sebagai acuan bila ada.
   const est = Number(expectedTotal) || 0;
@@ -730,8 +792,10 @@ function SitesBrowser({ refreshKey, expectedTotal }) {
 
   const uniq = (rows, k) => new Set(rows.map((r) => String(r[k] ?? "").trim()).filter(Boolean)).size;
   const stats = useMemo(() => [
-    ["Site ID", filtered.length], ["MC", uniq(filtered, "mc")], ["Area", uniq(filtered, "area")],
-    ["Region", uniq(filtered, "region")], ["Branch", uniq(filtered, "branch")], ["Kecamatan", uniq(filtered, "kecamatan")],
+    ["Site ID", filtered.length, "Site ID"], ["MC", uniq(filtered, "mc"), "MC"], ["Area", uniq(filtered, "area"), "Area"],
+    ["Region", uniq(filtered, "region"), "Region"], ["Branch", uniq(filtered, "branch"), "Branch"],
+    ["Kabupaten", uniq(filtered, "kabupaten"), "Kabupaten"], ["Kecamatan", uniq(filtered, "kecamatan_name"), "Kecamatan"],
+    ["KEC. UNIK", uniq(filtered, "kecamatan"), "Kecamatan Unik"],
   ], [filtered]);
 
   const branchList = useMemo(() => {
@@ -766,13 +830,13 @@ function SitesBrowser({ refreshKey, expectedTotal }) {
       )}
 
       {/* Ringkasan (mengikuti filter aktif) */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 1, background: T.line, borderBottom: `1px solid ${T.line}` }}>
-        {stats.map(([label, val]) => (
-          <div key={label} style={{ background: "#fff", padding: "12px 8px", textAlign: "center" }}>
-            <div style={{ fontSize: 18, fontWeight: 800, color: loading ? T.lo : T.hi, lineHeight: 1 }}>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${stats.length}, 1fr)`, gap: 1, background: T.line, borderBottom: `1px solid ${T.line}` }}>
+        {stats.map(([label, val, full]) => (
+          <div key={label} style={{ background: "#fff", padding: "12px 6px", textAlign: "center", minWidth: 0 }}>
+            <div style={{ fontSize: 18, fontWeight: 800, color: loading ? T.lo : T.hi, lineHeight: 1, whiteSpace: "nowrap" }}>
               {loading ? (label === "Site ID" ? loaded.toLocaleString() : "…") : Number(val || 0).toLocaleString()}
             </div>
-            <div style={{ fontSize: 10, fontWeight: 700, color: T.lo, marginTop: 4, textTransform: "uppercase", letterSpacing: "0.03em" }}>{label}</div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: T.lo, marginTop: 4, textTransform: "uppercase", letterSpacing: "0.02em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={full || label}>{label}</div>
           </div>
         ))}
       </div>
@@ -955,7 +1019,7 @@ function HierarchyView() {
   const allOpen = allKeys.length > 0 && allKeys.every((k) => expanded.has(k));
 
   return (
-    <div style={{ maxWidth: 920 }}>
+    <div style={{ maxWidth: 1600, width: "100%" }}>
       <div style={{ fontSize: 18, fontWeight: 800, color: T.hi, marginBottom: 3 }}>Struktur Branch & Brand</div>
       <div style={{ fontSize: 13, color: T.mid, marginBottom: 14 }}>Hirarki wilayah & pemetaan akun. Badge <b>Kosong</b> menandai branch×brand yang belum punya petugas lapangan. BME/RGE hanya label - fungsinya sama.</div>
 
