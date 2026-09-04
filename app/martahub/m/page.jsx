@@ -83,7 +83,7 @@ const TIPS = [
   "Nomor MSISDN yang sudah tercatat di plan lain akan otomatis ditandai konflik - ajukan transfer langsung dari layar konflik tersebut.",
   "Plan belum lengkap otomatis tersimpan sbg draft - lanjutkan kapan saja dari menu Aktivitas.",
   "Plan ditandai Perlu Revisi? Baca dulu komentarnya di detail aktivitas sebelum mengedit.",
-  "Laporan actual yang telat diisi setelah tanggal event ditandai Laporan Terlambat.",
+  "Laporan actual yang telat diisi setelah tanggal event ditandai Menunggu Laporan.",
   "Cek menu Kalender dulu sebelum buat plan baru, agar tidak bentrok tanggal dgn plan lain.",
   "Bandingkan target vs actual lewat tombol Lihat Plan vs Actual di kartu aktivitas.",
   "Nama lengkap bisa diubah sendiri lewat Profil > Informasi Akun, berlaku di semua role.",

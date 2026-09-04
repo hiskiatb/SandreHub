@@ -17,16 +17,17 @@
  * ("Pilih di Peta" → MapPickerSheet, Leaflet+OSM, padanan
  * location_picker_screen.dart Flutter).
  */
-import { useEffect, useMemo, useState, Suspense } from "react";
+import { useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ArrowRight, ChevronRight, Check, X, Plus, Loader2, Crosshair, Map as MapIcon, Users, CalendarDays, Building2, Tag, CardSim, Router as RouterIcon, AlertTriangle, Save, QrCode, Receipt, MapPin, Wifi, TrendingUp, Send } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronRight, Check, X, Plus, Loader2, Crosshair, Map as MapIcon, Users, CalendarDays, Building2, Tag, CardSim, Router as RouterIcon, AlertTriangle, Save, QrCode, Receipt, MapPin, Wifi, TrendingUp, Send, Trash2, MoreVertical } from "lucide-react";
 import supabaseMarta from "../../../../../lib/supabaseMarta";
 import { slug } from "../../../../../lib/activityTarget";
-import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, NAV_HEIGHT } from "../../_shared/MobileShell";
+import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../_shared/MobileShell";
 import { fmtInt } from "../../_shared/activityUi";
 import { isValidMsisdn, normalizeMsisdn } from "../../_shared/msisdn";
 import MapPickerSheet from "../../_shared/MapPickerSheet";
 import CalendarPickerSheet from "../../_shared/CalendarPickerSheet";
+import DeleteActivitySheet from "../../_shared/DeleteActivitySheet";
 import QrScanSheet from "../../_shared/QrScanSheet";
 import OrgIdBar from "../../_shared/OrgIdBar";
 import SiteTowerIcon from "../../_shared/SiteTowerIcon";
@@ -621,15 +622,68 @@ function CreatePlanWizardInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isApprover, actingForList.length, categories.length, eventName, dates, timesByDate, mcSelectedKey, mcGroups, primarySite, poiType]);
 
+  // Lacak "ada perubahan yang belum disimpan sbg draft" - dipakai utk (1)
+  // status tombol Simpan Draft (Simpan Draft → Menyimpan… → Draft
+  // Tersimpan) & (2) gerbang konfirmasi saat DSF menekan tombol Kembali:
+  // kalau BELUM ada perubahan sejak draft terakhir tersimpan (atau memang
+  // belum ada isian sama sekali), Kembali langsung keluar tanpa nanya;
+  // begitu ada perubahan yg blm tersimpan, Kembali WAJIB konfirmasi dulu
+  // (Simpan Draft & Kembali / Buang Perubahan / Lanjut Mengisi) - lihat
+  // handleBackClick(). `readyRef` memastikan efek ini TIDAK menandai dirty
+  // saat data awal masih di-prefill (mode edit) - baseline "belum ada
+  // perubahan" baru dihitung SETELAH prefill selesai.
+  const readyRef = useRef(false);
+  const [dirty, setDirty] = useState(false);
+  const [draftSavedAt, setDraftSavedAt] = useState(null);
+  const [savedActivityId, setSavedActivityId] = useState(null); // id plan baru begitu draft pertama tersimpan (belum ada di URL ?edit=)
+  const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
+  // Menu titik-3 header (cuma muncul mode Edit Plan - `editId` ada) → satu
+  // aksi: Hapus Plan, lewat DeleteActivitySheet yg SAMA PERSIS dipakai di
+  // daftar Aktivitas/quick-view (satu alur konfirmasi, bukan reimplementasi
+  // terpisah di sini).
+  const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const [showDeleteSheet, setShowDeleteSheet] = useState(false);
+  const wizardGateReady = !(loading || dataLoading || editLoading || (editId && !stepResumed));
+  useEffect(() => {
+    if (!wizardGateReady) return;
+    if (!readyRef.current) { readyRef.current = true; return; }
+    setDirty(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wizardGateReady, categories, eventName, dates, timesByDate, mcSelectedKey, targetSpProducts, targetFwaProducts, targetRebuyPulsa, targetRebuyData, costEstimate, primarySite, extraSites, poiType, network, area, address, manualLat, manualLng]);
+
+  // Tinggi bar aksi bawah (Lanjut/Submit Plan) DIUKUR LANGSUNG - SAMA
+  // polanya dgn action bar di halaman Laporan Actual/Detail Aktivitas.
+  // Wizard ini sekarang hideNav (navbar bawah disembunyikan spy fokus penuh
+  // ke pengisian, konsisten dgn Laporan Actual & Check In) & tombol Lanjut
+  // dipindah dari "menempel di bawah konten step" jadi bar fixed nempel ke
+  // tepi bawah layar sungguhan - supaya selalu terlihat & bisa ditekan
+  // tanpa perlu scroll ke bawah dulu tiap step, terutama step Review yang
+  // kontennya panjang. Harus dideklarasikan SEBELUM early return di bawah
+  // ini (gate loading/scope) supaya urutan Hooks selalu konsisten antar
+  // render - lihat error "change in the order of Hooks" kalau sebuah Hook
+  // diletakkan setelah return kondisional.
+  const actionBarRef = useRef(null);
+  const [actionBarH, setActionBarH] = useState(90);
+  useEffect(() => {
+    const el = actionBarRef.current;
+    if (!el) { setActionBarH(0); return; }
+    const ro = new ResizeObserver((entries) => {
+      const h = entries[0]?.contentRect?.height;
+      if (h != null) setActionBarH(Math.ceil(h));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+
   // Mode edit: tunggu `stepResumed` juga - supaya wizard TIDAK PERNAH sempat
   // ter-render dulu di step 1 (default) sebelum "lompat" ke step yang benar,
   // yang sebelumnya kelihatan seperti kedipan/glitch. Sekali lolos gate ini,
   // wizard langsung tampil di step akhir yang benar dari awal.
-  if (loading || dataLoading || editLoading || (editId && !stepResumed)) return <MobileShell active="activities"><ShellSpinner /></MobileShell>;
+  if (loading || dataLoading || editLoading || (editId && !stepResumed)) return <MobileShell active="activities" hideNav><ShellSpinner /></MobileShell>;
 
   if (!scope?.found) {
     return (
-      <MobileShell active="activities">
+      <MobileShell active="activities" hideNav>
         <div style={{ padding: "60px 20px", textAlign: "center" }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: "#3A3A44" }}>Belum bisa membuat plan</div>
           <div style={{ marginTop: 6, fontSize: 12.5, color: "#8A8A96" }}>Email Anda belum terdaftar sebagai BME/RGE di MartaHub.</div>
@@ -704,7 +758,17 @@ function CreatePlanWizardInner() {
   }
 
   const goNext = () => { if (validateStep(step)) setStep((s) => Math.min(s + 1, STEPS.length - 1)); };
-  const goBack = () => step === 0 ? router.back() : setStep((s) => s - 1);
+  // Keluar dari wizard (step 0, tombol Kembali di header) SEKARANG minta
+  // konfirmasi dulu kalau masih ada perubahan yg belum tersimpan sbg draft
+  // (`dirty`) - dulu langsung router.back() begitu saja, risiko isian yg
+  // sudah susah payah diketik hilang tanpa peringatan. Kalau tidak ada
+  // perubahan (baru buka / semua sudah tersimpan), Kembali tetap langsung
+  // keluar tanpa basa-basi.
+  const goBack = () => {
+    if (step > 0) { setStep((s) => s - 1); return; }
+    if (dirty) { setShowLeaveConfirm(true); return; }
+    router.back();
+  };
 
   // Draft WAJIB bisa disimpan kapan saja - dari step mana pun, asal SUDAH
   // ada minimal satu bagian yang diisi (bukan form kosong sama sekali).
@@ -720,7 +784,7 @@ function CreatePlanWizardInner() {
     );
   }
 
-  async function save(finalStatus) {
+  async function save(finalStatus, { andLeave = false } = {}) {
     // Validasi penuh hanya utk submit - draft boleh field lokasi kosong
     // (default ke pilihan pertama), sama seperti perilaku app Flutter.
     if (finalStatus === "plan_submitted") {
@@ -802,14 +866,21 @@ function CreatePlanWizardInner() {
         target_rev_3m: targetEstRevenue,
       };
 
-      let activityId = editId;
-      if (editId) {
+      // Setelah draft PERTAMA tersimpan (plan baru, belum ada di URL
+      // ?edit=), simpan id-nya di state lokal `savedActivityId` supaya
+      // "Simpan Draft" berikutnya UPDATE baris yg sama (bukan INSERT baris
+      // baru tiap ditekan) - TANPA mengubah URL/`editId` (yg akan memicu
+      // ulang seluruh effect prefill mode-edit & bisa menimpa isian lokal
+      // yg belum tersimpan).
+      const targetId = editId || savedActivityId;
+      let activityId = targetId;
+      if (targetId) {
         // Update - brand/branch/pemilik TIDAK diubah (sama spt updatePlan()
         // Flutter). "Simpan Draft" TIDAK menyentuh status (biarkan apa
         // adanya, draft/revision_needed); "Ajukan Plan" set plan_submitted.
         const payload = { ...commonFields, updated_at: new Date().toISOString() };
         if (finalStatus === "plan_submitted") payload.status = "plan_submitted";
-        const { error } = await supabaseMarta.from("mh_activities").update(payload).eq("id", editId);
+        const { error } = await supabaseMarta.from("mh_activities").update(payload).eq("id", targetId);
         if (error) throw error;
       } else {
         // "Buat Untuk": kedua kolom bme_user_id & created_by diisi id TARGET,
@@ -885,14 +956,33 @@ function CreatePlanWizardInner() {
       // plan_submitted) - ketiganya kini WAJIB tercatat krn plan tidak lagi
       // lewat approval TMV yang otomatis meninggalkan jejak sendiri.
       try {
-        const action = finalStatus === "plan_submitted" ? "activity_plan_submit" : editId ? "activity_plan_update" : "activity_plan_create";
+        const action = finalStatus === "plan_submitted" ? "activity_plan_submit" : targetId ? "activity_plan_update" : "activity_plan_create";
         await supabaseMarta.rpc("mh_activity_log_event", {
           p_activity_id: activityId, p_action: action,
           p_detail: `${eventName.trim() || "(tanpa nama)"} · ${finalStatus === "plan_submitted" ? "diajukan" : "draft disimpan"}`,
         });
       } catch { /* best-effort - jangan blokir penyimpanan plan */ }
 
-      router.replace(`/martahub/m/activities?open=${activityId}`);
+      if (finalStatus === "plan_submitted") {
+        // Submit final - SELALU keluar dari wizard, tidak ada alasan utk
+        // tetap tinggal setelah plan resmi diajukan.
+        router.replace(`/martahub/m/activities?open=${activityId}`);
+      } else {
+        // Simpan Draft - TETAP TINGGAL di wizard (sesuai masukan: DSF
+        // sering menyimpan draft sambil masih lanjut mengisi bagian lain,
+        // dulu setiap "Simpan Draft" otomatis melempar keluar ke daftar
+        // Aktivitas, jadi harus buka ulang plan-nya lagi cuma utk
+        // melanjutkan isi). `savedActivityId` dicatat supaya draft
+        // berikutnya UPDATE baris yg sama, `draftSavedAt`/`dirty` di-reset
+        // supaya tombol berubah jadi "Draft Tersimpan" & Kembali tidak lagi
+        // minta konfirmasi (sampai ada perubahan baru lagi) - KECUALI
+        // dipanggil dari alur "Simpan Draft & Kembali" (andLeave), yg
+        // langsung keluar setelah tersimpan.
+        setSavedActivityId(activityId);
+        setDraftSavedAt(new Date().toISOString());
+        setDirty(false);
+        if (andLeave) router.back();
+      }
     } catch (e) {
       setErr(e.message || "Gagal menyimpan plan");
     } finally {
@@ -901,7 +991,7 @@ function CreatePlanWizardInner() {
   }
 
   return (
-    <MobileShell active="activities">
+    <MobileShell active="activities" hideNav>
       {/* Header wizard STICKY dgn glass blur - pola & nilai warna/blur SAMA
           PERSIS dgn header Beranda (app/martahub/m/page.jsx) supaya bahasa
           desainnya konsisten antar layar. Sebelumnya cuma div biasa, jadi
@@ -935,14 +1025,47 @@ function CreatePlanWizardInner() {
               di bawahnya, jadi badge itu cuma duplikat info tanpa nambah
               guna, sementara Simpan Draft lebih sering dibutuhkan & kelihatan
               dari step manapun tanpa scroll ke bawah dulu. */}
+          {/* Label berubah sesuai status simpan (Simpan Draft → Menyimpan…
+              → Draft Tersimpan), SAMA polanya dgn tombol draft di Laporan
+              Actual - supaya DSF tahu PASTI draft-nya sudah benar-benar
+              masuk, bukan cuma menebak dari tombol yang tidak berubah. */}
           <button onClick={() => save("draft")} disabled={saving}
             style={{
               flexShrink: 0, display: "flex", alignItems: "center", gap: 5, padding: "7px 11px", borderRadius: 10,
-              border: "1.5px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 11.5, fontWeight: 700,
+              border: `1.5px solid ${draftSavedAt && !dirty ? "#15803D" : "#E4E5EA"}`,
+              background: draftSavedAt && !dirty ? "rgba(21,128,61,0.06)" : "#FFFFFF",
+              color: draftSavedAt && !dirty ? "#15803D" : "#5A5A68", fontSize: 11.5, fontWeight: 700,
               fontFamily: FF, cursor: saving ? "default" : "pointer",
             }}>
-            <Save size={13} /> Simpan Draft
+            {saving ? <Loader2 size={13} style={{ animation: "mspin .85s linear infinite" }} /> : draftSavedAt && !dirty ? <Check size={13} /> : <Save size={13} />}
+            {saving ? "Menyimpan…" : draftSavedAt && !dirty ? "Draft Tersimpan" : "Simpan Draft"}
           </button>
+
+          {/* Menu titik-3 - CUMA muncul mode Edit Plan (plan sudah ada
+              baris-nya di DB, jadi memang bisa dihapus). Plan yg belum
+              pernah tersimpan sama sekali (wizard "Buat Plan Baru" murni)
+              tidak dikasih tombol ini - tidak ada apa pun utk dihapus,
+              cukup tekan Kembali (sudah ada konfirmasi buang perubahan
+              sendiri). */}
+          {editId && (
+            <div style={{ position: "relative", flexShrink: 0 }}>
+              <button onClick={() => setHeaderMenuOpen((v) => !v)} aria-label="Menu lainnya"
+                style={{ width: 34, height: 34, borderRadius: 10, background: "#FFFFFF", border: "1px solid #E4E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
+                <MoreVertical size={16} />
+              </button>
+              {headerMenuOpen && (
+                <>
+                  <div onClick={() => setHeaderMenuOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 24 }} />
+                  <div style={{ position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 25, minWidth: 168, background: "#FFFFFF", borderRadius: 13, border: "1px solid #ECEDF0", boxShadow: "0 8px 24px rgba(23,24,28,0.14)", overflow: "hidden" }}>
+                    <button onClick={() => { setHeaderMenuOpen(false); setShowDeleteSheet(true); }}
+                      style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, padding: "11px 13px", border: "none", background: "none", cursor: "pointer", fontSize: 12.5, fontWeight: 700, color: "#DC2626", fontFamily: FF }}>
+                      <Trash2 size={15} /> Hapus Plan
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
         <WizardStepper steps={STEPS} current={step} onStepClick={(i) => setStep(i)} />
@@ -952,7 +1075,7 @@ function CreatePlanWizardInner() {
         <div style={{ margin: "14px 20px 0", padding: "10px 12px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 12, fontWeight: 600 }}>{err}</div>
       )}
 
-      <div style={{ padding: "18px 20px 24px", paddingBottom: `calc(${NAV_HEIGHT}px + 24px + env(safe-area-inset-bottom,0px))` }}>
+      <div style={{ padding: "18px 20px 24px", paddingBottom: `calc(env(safe-area-inset-bottom,0px) + ${actionBarH + 24}px)` }}>
         {step === 0 && (
           <StepInfo {...{
             categories, toggleCategory, eventName, setEventName, dates, setDates,
@@ -989,11 +1112,21 @@ function CreatePlanWizardInner() {
           }} />
         )}
 
-        {/* Tombol Lanjut/Submit Plan - TIDAK lagi sticky/fixed di bawah layar,
-            skrg ditempatkan langsung di bawah konten step (card terakhir
-            yang perlu diisi), supaya tidak nempel/menutupi layar terus
-            menerus. "Simpan Draft" sudah dipindah ke header kanan atas. */}
-        <div style={{ marginTop: 18 }}>
+      </div>
+
+      {/* Tombol Lanjut/Submit Plan - SEKARANG bar fixed nempel ke tepi bawah
+          layar sungguhan (bukan lagi menempel di bawah konten step),
+          persis polanya dgn Laporan Actual/Detail Aktivitas - selalu
+          terlihat & bisa ditekan dari mana pun posisi scroll-nya, terutama
+          berguna di step Review yang kontennya panjang. "Simpan Draft"
+          tetap di header kanan atas (aksi sekunder, terpisah dari alur
+          linear Lanjut/Submit ini). */}
+      <div ref={actionBarRef} style={{
+        position: "fixed", left: 0, right: 0, bottom: "env(safe-area-inset-bottom,0px)", zIndex: 45,
+        background: "rgba(244,245,247,0.92)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
+        borderTop: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 -4px 16px rgba(23,24,28,0.05)",
+      }}>
+        <div style={{ maxWidth: 480, margin: "0 auto", padding: "12px 20px 14px" }}>
           {step === 3 ? (
             <button onClick={() => save("plan_submitted")} disabled={saving}
               style={{ width: "100%", height: 52, borderRadius: 14, border: "none", background: BRAND, color: "#fff", fontSize: 14.5, fontWeight: 800, fontFamily: FF, cursor: saving ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 4px 14px rgba(17,17,20,0.11)" }}>
@@ -1015,6 +1148,24 @@ function CreatePlanWizardInner() {
           initialSelected={actingForList}
           onClose={() => setActingForSheet(false)}
           onConfirm={(list) => { setActingForList(list); setActingForSheet(false); }}
+        />
+      )}
+
+      {showLeaveConfirm && (
+        <LeaveConfirmSheet
+          saving={saving}
+          onCancel={() => setShowLeaveConfirm(false)}
+          onDiscard={() => { setShowLeaveConfirm(false); router.back(); }}
+          onSaveAndLeave={() => { setShowLeaveConfirm(false); save("draft", { andLeave: true }); }}
+        />
+      )}
+
+      {showDeleteSheet && (
+        <DeleteActivitySheet
+          activityId={editId}
+          activityName={eventName}
+          onClose={() => setShowDeleteSheet(false)}
+          onDeleted={() => router.replace("/martahub/m/activities")}
         />
       )}
     </MobileShell>
@@ -1558,7 +1709,7 @@ function StepLocation({ hasMc, sitesInMc, primarySite, setPrimarySite, extraSite
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {primarySite ? (
-              <SiteRow badge="Utama" badgeColor="#EC008C" label={`${primarySite.site_id}${primarySite.site_name ? ` · ${primarySite.site_name}` : ""}`}
+              <SiteRow badge="Site 1" badgeColor="#EC008C" label={`${primarySite.site_id}${primarySite.site_name ? ` · ${primarySite.site_name}` : ""}`}
                 onTap={() => setPicking("primary")} onRemove={extraSites.length ? () => { setPrimarySite(extraSites[0]); setExtraSites(extraSites.slice(1)); } : null} />
             ) : (
               <AddSiteRow label={sitesInMc.length ? "Pilih site utama" : "Tidak ada site di MC ini"} enabled={sitesInMc.length > 0} error={invalid.has("site")} onClick={() => setPicking("primary")} />
@@ -1943,10 +2094,14 @@ function LockedField({ text, muted }) {
 function SiteRow({ badge, badgeColor, label, onTap, onRemove }) {
   return (
     <div onClick={onTap} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 12px", borderRadius: 12, background: "#F6F7F9", cursor: onTap ? "pointer" : "default" }}>
-      <span style={{ fontSize: 10.5, fontWeight: 800, padding: "4px 9px", borderRadius: 8, color: badgeColor, background: `${badgeColor}20` }}>{badge}</span>
-      <span style={{ flex: 1, fontSize: 13.5, fontWeight: 700, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+      {/* Ikon site - SAMA PERSIS (SiteTowerIcon) dgn yg dipakai di mana pun
+          site ditampilkan di app ini (Review step, Detail Aktivitas, dst) -
+          bukan sekadar badge teks polos tanpa penanda visual jenisnya. */}
+      <span style={{ flexShrink: 0, display: "flex" }}><SiteTowerIcon size={16} /></span>
+      <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 800, padding: "4px 9px", borderRadius: 8, color: badgeColor, background: `${badgeColor}20` }}>{badge}</span>
+      <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 700, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
       {onRemove && (
-        <button onClick={(e) => { e.stopPropagation(); onRemove(); }} style={{ background: "none", border: "none", cursor: "pointer", color: "#B0B0BA", display: "flex" }}>
+        <button onClick={(e) => { e.stopPropagation(); onRemove(); }} style={{ flexShrink: 0, background: "none", border: "none", cursor: "pointer", color: "#B0B0BA", display: "flex" }}>
           <X size={16} />
         </button>
       )}
@@ -2001,6 +2156,48 @@ const ACT_BRAND_LABEL = { im3: "IM3", tri: "3ID" };
  * ditambahkan jadi branch×brand utama (pemilik plan ini); kombinasi lain
  * cuma memperluas pilihan lokasi/site yang bisa dicari di langkah
  * berikutnya - makanya diberi label "Utama" supaya jelas bedanya. */
+/** Sheet konfirmasi saat DSF menekan Kembali (step 0) padahal masih ada
+ * perubahan yg belum tersimpan sbg draft (`dirty`) - tiga pilihan jelas:
+ * simpan dulu baru keluar, buang perubahan & keluar apa adanya, atau batal
+ * (lanjut mengisi). TIDAK ada tombol "X"/tap-backdrop-utk-tutup - sengaja,
+ * DSF harus memilih salah satu scr eksplisit spy tidak ada yg kepencet
+ * tanpa sadar & kehilangan isian. */
+function LeaveConfirmSheet({ saving, onCancel, onDiscard, onSaveAndLeave }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 97, background: "rgba(23,24,28,0.42)", display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div style={{ width: "100%", maxWidth: 480, background: "#FFFFFF", borderRadius: "20px 20px 0 0", padding: "20px 20px calc(env(safe-area-inset-bottom,0px) + 18px)", fontFamily: FF, boxShadow: "0 -8px 30px rgba(23,24,28,0.16)" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+          <div style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 10, background: "rgba(180,83,9,0.10)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <AlertTriangle size={16} color="#B45309" />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 14.5, fontWeight: 800, color: "#17181C" }}>Ada perubahan belum tersimpan</div>
+            <div style={{ marginTop: 3, fontSize: 12, color: "#8A8A96", fontWeight: 600, lineHeight: 1.4 }}>
+              Simpan dulu sbg draft supaya isian ini tidak hilang, atau buang & keluar apa adanya.
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+          <button onClick={onSaveAndLeave} disabled={saving}
+            style={{ width: "100%", height: 48, borderRadius: 13, border: "none", background: BRAND, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF, cursor: saving ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            {saving ? <Loader2 size={16} style={{ animation: "mspin .85s linear infinite" }} /> : <Save size={16} />}
+            {saving ? "Menyimpan…" : "Simpan Draft & Kembali"}
+          </button>
+          <button onClick={onDiscard} disabled={saving}
+            style={{ width: "100%", height: 46, borderRadius: 13, border: "1.5px solid #F3C6C6", background: "#FFFFFF", color: "#DC2626", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: saving ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            <Trash2 size={15} /> Buang Perubahan
+          </button>
+          <button onClick={onCancel} disabled={saving}
+            style={{ width: "100%", height: 44, borderRadius: 13, border: "none", background: "none", color: "#8A8A96", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: saving ? "default" : "pointer" }}>
+            Lanjut Mengisi
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ActingForSheet({ groups, loading, initialSelected, onClose, onConfirm }) {
   const [branchQ, setBranchQ] = useState("");
   const [expandedBranch, setExpandedBranch] = useState(null);
@@ -2262,7 +2459,7 @@ function ActingForSheet({ groups, loading, initialSelected, onClose, onConfirm }
 
 export default function CreatePlanWizard() {
   return (
-    <Suspense fallback={<MobileShell active="activities"><ShellSpinner /></MobileShell>}>
+    <Suspense fallback={<MobileShell active="activities" hideNav><ShellSpinner /></MobileShell>}>
       <CreatePlanWizardInner />
     </Suspense>
   );

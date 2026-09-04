@@ -24,7 +24,7 @@ export const BRAND = "linear-gradient(135deg,#ED1C24,#EC008C)";
 // konten) supaya layar lain yg perlu menempel PERSIS di atas nav (mis.
 // action bar fixed di wizard Buat Plan) bisa memakai angka yg SAMA PERSIS,
 // bukan angka taksiran yg gampang meleset & menyisakan celah/gap.
-export const NAV_HEIGHT = 58;
+export const NAV_HEIGHT = 64; // dinaikkan dari 58 - target sentuh tiap tab sblmnya terlalu pas-pasan utk jempol
 
 /** Haptic feedback ringan ala iOS (selection tick) - dipakai saat pindah
  * tab bottom-nav supaya perpindahan menu "terasa" bukan cuma keliatan.
@@ -248,7 +248,13 @@ function PullToRefreshIndicator({ pull, refreshing, dragging }) {
   const label = refreshing ? "Memuat ulang…" : ready ? "Lepas untuk refresh" : "Tarik untuk refresh";
   return (
     <div style={{
-      position: "absolute", top: 0, left: 0, right: 0, height: PTR_MAX_PULL, zIndex: 5,
+      // top digeser turun sejumlah safe-area-inset-top (notch/status bar) -
+      // sebelumnya nempel persis di top:0 wrapper (yaitu paling atas layar
+      // fisik), jadi bundaran spinner-nya kepotong/ketutup notch di HP yg
+      // punya poni/Dynamic Island. Dengan offset ini bundarannya selalu
+      // muncul PERSIS di bawah notch, konsisten dgn header tiap halaman yg
+      // juga sudah pakai safe-area-inset-top yg sama.
+      position: "absolute", top: "calc(env(safe-area-inset-top,0px) + 14px)", left: 0, right: 0, height: PTR_MAX_PULL, zIndex: 5,
       display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end",
       gap: 6, paddingBottom: 12, pointerEvents: "none",
     }}>
@@ -413,7 +419,18 @@ export default function MobileShell({ active, children, hideNav, fab }) {
       <div ref={ptrRef} style={{ position: "relative" }}>
         <PullToRefreshIndicator pull={pull} refreshing={refreshing} dragging={dragging} />
         <div style={{
-          maxWidth: 480, margin: "0 auto", paddingBottom: hideNav ? 0 : 96, overscrollBehaviorY: "none",
+          maxWidth: 480, margin: "0 auto",
+          // Ekstra ruang scroll di bawah begitu ada FAB (mis. "Buat Plan" di
+          // Aktivitas/Kalender) - dulu paddingBottom cuma cukup utk navbar
+          // (96px), padahal FAB posisinya MENGAMBANG DI ATAS navbar itu
+          // (lihat komentar `{fab}` di bawah). Begitu discroll sampai
+          // mentok, konten terakhir (mis. banner Estimasi Revenue di kartu
+          // paling bawah) jadi ketutup FAB, TIDAK BISA discroll lebih jauh
+          // lagi utk melihatnya krn memang sudah mentok - bukan cuma
+          // kepotong sementara. +64px kira2 setara tinggi tombol FAB +
+          // margin-nya sendiri, supaya konten terakhir selalu bisa discroll
+          // sampai benar2 bebas dari FAB.
+          paddingBottom: hideNav ? 0 : fab ? 160 : 96, overscrollBehaviorY: "none",
           // PENTING: `transform` (bahkan translateY(0px)) SELALU membuat elemen
           // ini jadi containing block baru utk descendant `position:fixed` -
           // artinya SEMUA modal/sheet (mis. DeleteActivitySheet) yang dirender
@@ -424,7 +441,7 @@ export default function MobileShell({ active, children, hideNav, fab }) {
           // benar2 lagi ada pull aktif (pull!==0) - saat istirahat (kondisi
           // paling umum ketika modal dibuka) nilainya "none" spy fixed-position
           // anak-anaknya balik normal relatif ke viewport.
-          transform: pull !== 0 ? `translateY(${pull}px)` : "none",
+          transform: pull !== 0 ? `translateY(calc(${pull}px + env(safe-area-inset-top,0px) + 14px))` : "none",
           transition: dragging ? "none" : "transform 0.32s cubic-bezier(0.34,1.56,0.64,1)",
         }}>
           {children}

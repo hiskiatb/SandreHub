@@ -139,7 +139,7 @@ export function planDateFields(dates) {
   };
 }
 
-export const DEFAULT_DATE_TIME = { isAllDay: true, startTime: "09:00", endTime: "17:00" };
+export const DEFAULT_DATE_TIME = { isAllDay: false, startTime: "09:00", endTime: "17:00" };
 
 /** Sinkronkan peta waktu-per-tanggal `timesByDate` dgn daftar tanggal
  * terpilih terbaru - tanggal baru dapat waktu default (Seharian, supaya

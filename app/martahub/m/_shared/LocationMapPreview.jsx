@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState } from "react";
 import { X, ExternalLink, Maximize2 } from "lucide-react";
 import { loadLeaflet } from "./MapPickerSheet";
+import { locationiqTileUrl, LOCATIONIQ_TILE_SUBDOMAINS, LOCATIONIQ_TILE_MAX_ZOOM } from "../../../../lib/locationiqTiles";
 
 function tinyAttribution(map, L) {
   const ctl = L.control({ position: "bottomright" });
@@ -17,7 +18,7 @@ function tinyAttribution(map, L) {
     const div = L.DomUtil.create("div");
     div.style.cssText =
       "background:rgba(255,255,255,0.72);padding:1px 5px;border-radius:5px;font-size:8.5px;color:#8A8A94;font-weight:600;";
-    div.innerHTML = "© OpenStreetMap";
+    div.innerHTML = "© LocationIQ";
     return div;
   };
   ctl.addTo(map);
@@ -43,7 +44,7 @@ function useLeafletMap({ lat, lng, interactive }) {
           touchZoom: interactive,
           attributionControl: false,
         }).setView([lat, lng], interactive ? 17 : 16);
-        L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
+        L.tileLayer(locationiqTileUrl("streets"), { maxZoom: LOCATIONIQ_TILE_MAX_ZOOM, subdomains: LOCATIONIQ_TILE_SUBDOMAINS }).addTo(map);
         tinyAttribution(map, L);
         const icon = L.divIcon({
           className: "",

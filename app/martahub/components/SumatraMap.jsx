@@ -10,6 +10,7 @@ import {
   setLastFile, ensurePermission, checkPermission, listMatchingFiles,
 } from "../../../lib/folderHandles";
 import "leaflet/dist/leaflet.css";
+import { locationiqTileUrl, LOCATIONIQ_TILE_SUBDOMAINS, LOCATIONIQ_TILE_ATTRIBUTION, LOCATIONIQ_TILE_MAX_ZOOM } from "../../../lib/locationiqTiles";
 
 // Email sesi (SandraHub, sama seperti gerbang akses MartaHub §0.1) - dipakai
 // hanya untuk mencatat SIAPA terakhir memproses file lokal (audit ringan di
@@ -98,7 +99,7 @@ async function buildBaseMap(el, { dark, expanded, interactive = expanded }) {
     // benar-benar zoom sampai level jalan - dibutuhkan utk cek kepadatan
     // site di sekitar satu titik sebelum bikin activity baru (permintaan
     // eksplisit: "jangan gimmick", peta harus bisa dipakai sungguhan).
-    minZoom: 5, maxZoom: 18, maxBoundsViscosity: 1.0,
+    minZoom: 5, maxZoom: 19, maxBoundsViscosity: 1.0,
   });
   // maxBounds HANYA dikunci utk pratinjau kartu kecil di dashboard
   // (expanded=false) - Map Intelligence PENUH (expanded=true) sengaja TIDAK
@@ -422,7 +423,7 @@ async function paintActivities(map, ref, points, { expanded } = {}) {
         m.on("click", () => {
           try {
             const bounds = L.latLngBounds(cl.items.map((p) => [p.lat, p.lng]));
-            map.flyToBounds(bounds, { padding: [60, 60], maxZoom: Math.min(18, map.getZoom() + 4), duration: 0.6 });
+            map.flyToBounds(bounds, { padding: [60, 60], maxZoom: Math.min(19, map.getZoom() + 4), duration: 0.6 });
           } catch { /* noop */ }
         });
         g.addLayer(m);
@@ -501,7 +502,7 @@ async function paintPosm(map, ref, points, { expanded } = {}) {
         m.on("click", () => {
           try {
             const bounds = L.latLngBounds(cl.items.map((p) => [p.lat, p.lng]));
-            map.flyToBounds(bounds, { padding: [60, 60], maxZoom: Math.min(18, map.getZoom() + 4), duration: 0.6 });
+            map.flyToBounds(bounds, { padding: [60, 60], maxZoom: Math.min(19, map.getZoom() + 4), duration: 0.6 });
           } catch { /* noop */ }
         });
         g.addLayer(m);
@@ -960,7 +961,7 @@ async function paintSites(map, ref, siteArr, { outline = false, selectedIdRef = 
         m.on("click", () => {
           try {
             const bounds = L.latLngBounds(c.items.map((s) => [s.lat, s.lng]));
-            map.flyToBounds(bounds, { padding: [60, 60], maxZoom: Math.min(18, map.getZoom() + 4), duration: 0.6 });
+            map.flyToBounds(bounds, { padding: [60, 60], maxZoom: Math.min(19, map.getZoom() + 4), duration: 0.6 });
           } catch { /* noop */ }
         });
         g.addLayer(m);
@@ -1388,7 +1389,7 @@ function MapSkeleton({ t }) {
   return (
     <div className="mh-map-skeleton">
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 100, background: t.card, border: `1px solid ${t.line}`, boxShadow: "0 4px 16px rgba(0,0,0,0.12)" }}>
-        <span style={{ width: 14, height: 14, borderRadius: "50%", borderWidth: 2, borderStyle: "solid", borderColor: t.line, borderTopColor: "#ED1C24", animation: "mh-map-spin .7s linear infinite" }} />
+        <span style={{ width: 14, height: 14, borderRadius: "50%", borderWidth: 2, borderStyle: "solid", borderTopColor: "#ED1C24", borderRightColor: t.line, borderBottomColor: t.line, borderLeftColor: t.line, animation: "mh-map-spin .7s linear infinite" }} />
         <span style={{ fontSize: 11, fontWeight: 700, color: t.mid }}>Memuat peta…</span>
       </div>
       <style>{`@keyframes mh-map-spin{ to{ transform:rotate(360deg); } }`}</style>
@@ -2587,12 +2588,12 @@ export default function MapFull({ t, dark, canManage = false, activityPoints = [
       const map = mapRef.current;
       if (tileLayerRef.current) { try { map.removeLayer(tileLayerRef.current); } catch { /* noop */ } tileLayerRef.current = null; }
       if (mapStyle === "detail") {
-        const tileUrl = dark
-          ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-          : "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
-        const layer = L.tileLayer(tileUrl, {
-          maxZoom: 19, subdomains: dark ? "abcd" : "abc",
-          attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors' + (dark ? ' &copy; <a href="https://carto.com/attributions" target="_blank" rel="noopener">CARTO</a>' : ""),
+        // Tile LocationIQ (satu provider dgn search/reverse-geocode di
+        // seluruh MartaHub) - pakai tema "dark"/"streets" bawaan LocationIQ
+        // sendiri, bukan trik CSS filter lagi.
+        const layer = L.tileLayer(locationiqTileUrl(dark ? "dark" : "streets"), {
+          maxZoom: LOCATIONIQ_TILE_MAX_ZOOM, subdomains: LOCATIONIQ_TILE_SUBDOMAINS,
+          attribution: LOCATIONIQ_TILE_ATTRIBUTION,
         });
         layer.addTo(map);
         try { layer.bringToBack(); } catch { /* noop */ }

@@ -99,12 +99,15 @@ function MapIntelligenceBody({ ctx }) {
     let cancelled = false;
     const id = setTimeout(async () => {
       try {
-        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&countrycodes=id&viewbox=94.5,6.5,106.5,-6.5&bounded=1&limit=6`;
-        const res = await fetch(url, { headers: { Accept: "application/json" } });
-        const rows = await res.json();
+        // Lewat edge function locationiq (proxy LocationIQ, token aman di
+        // server) - bukan fetch langsung ke Nominatim dari browser.
+        const { data, error } = await supabaseMarta.functions.invoke("locationiq", {
+          body: { action: "autocomplete", q },
+        });
         if (cancelled) return;
-        setAddrSuggestions((rows || []).map((r) => ({
-          kind: "Alamat", name: r.display_name, lat: parseFloat(r.lat), lng: parseFloat(r.lon),
+        if (error) { setAddrSuggestions([]); return; }
+        setAddrSuggestions((data?.results || []).map((r) => ({
+          kind: "Alamat", name: r.display, lat: r.lat, lng: r.lon,
         })));
       } catch { if (!cancelled) setAddrSuggestions([]); }
     }, 450);

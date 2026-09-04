@@ -44,6 +44,26 @@ export default function ActivityDetailPage() {
   const eventTitleRef = useRef(null);
   const headerRef = useRef(null);
   const [showEventTitle, setShowEventTitle] = useState(false);
+  // Tinggi bar aksi bawah (tombol Isi Laporan Actual/Check-in + opsional
+  // Edit Plan) DIUKUR LANGSUNG (bukan angka tebakan tetap 130px spt
+  // sebelumnya) - sebelumnya kalau kedua tombol (aksi utama + edit) sama2
+  // muncul, tingginya bisa melebihi 130px shg card TERAKHIR (Estimasi
+  // Revenue yg gelap) ketutup sebagian oleh bar & nyisain celah/terlihat
+  // "menembus" di bawah. Dgn ResizeObserver, padding bawah konten SELALU
+  // pas dgn tinggi bar aksi yg sebenarnya - responsive ke kombinasi tombol
+  // apapun & ukuran layar apapun.
+  const actionBarRef = useRef(null);
+  const [actionBarH, setActionBarH] = useState(130);
+  useEffect(() => {
+    const el = actionBarRef.current;
+    if (!el) { setActionBarH(0); return; }
+    const ro = new ResizeObserver((entries) => {
+      const h = entries[0]?.contentRect?.height;
+      if (h != null) setActionBarH(Math.ceil(h));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
   useEffect(() => {
     function onScroll() {
       const titleEl = eventTitleRef.current;
@@ -265,7 +285,7 @@ export default function ActivityDetailPage() {
         </div>
       </div>
 
-      <div style={{ padding: `4px 20px calc(env(safe-area-inset-bottom,0px) + 130px)`, fontFamily: FF }}>
+      <div style={{ padding: `4px 20px calc(env(safe-area-inset-bottom,0px) + ${actionBarH + 20}px)`, fontFamily: FF }}>
         {/* Header - dibungkus jadi satu kartu (bukan cuma flex row polos di
             atas background) supaya identitas event terasa lebih "utuh" &
             senada dgn gaya card section di bawahnya. Aksen warna kiri = warna
@@ -477,7 +497,7 @@ export default function ActivityDetailPage() {
         // jadi satu2nya elemen fixed di bawah, jadi lengket persis di tepi
         // bawah layar (cuma dikurangi safe-area-inset-bottom), bukan lagi
         // "mengambang" di atas navbar yg sudah tidak ada.
-        <div style={{
+        <div ref={actionBarRef} style={{
           position: "fixed", left: 0, right: 0, bottom: "env(safe-area-inset-bottom,0px)", zIndex: 45,
           background: "rgba(244,245,247,0.92)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
           borderTop: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 -4px 16px rgba(23,24,28,0.05)",

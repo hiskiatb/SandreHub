@@ -3,13 +3,11 @@
  * /martahub/m/map - Peta lokasi (web mobile), padanan konsep "Peta" yang
  * sebelumnya di-mark SEGERA di Menu Home. Konsep visualnya SENGAJA disamakan
  * dgn "Activity Map" desktop (app/martahub/components/SumatraMap.jsx) yang
- * sudah terbukti jalan: basemap CartoDB "light_all" (bukan tile
- * tile.openstreetmap.org mentah - itu penyebab peta versi sebelumnya sering
- * gagal muncul, krn tile.openstreetmap.org membatasi/rate-limit trafik dari
- * webview & sering diblokir jaringan tertentu; CartoDB CDN yg dipakai
- * Activity Map jauh lebih stabil), view+pan DIKUNCI ke batas Pulau Sumatera
- * saja (maxBounds), dan ada pencarian tempat (dibatasi ke Indonesia/area
- * Sumatera lewat viewbox Nominatim).
+ * sudah terbukti jalan: basemap LocationIQ "streets" (satu provider dgn
+ * search/reverse-geocode di seluruh MartaHub - lihat lib/locationiqTiles.js),
+ * view+pan DIKUNCI ke batas Pulau Sumatera saja (maxBounds), dan ada
+ * pencarian tempat (dibatasi ke Indonesia/area Sumatera lewat viewbox
+ * LocationIQ, proxy via edge function `locationiq`).
  *
  * Dua layer, bisa ditoggle independen:
  *   - Event  → lokasi aktivitas/plan milik pengguna (mh_activities_for_me,
@@ -27,6 +25,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, Crosshair, ListChecks, PackageCheck, X, MapPin as MapPinIcon, Search } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
+import { locationiqTileUrl, LOCATIONIQ_TILE_SUBDOMAINS, LOCATIONIQ_TILE_ATTRIBUTION, LOCATIONIQ_TILE_MAX_ZOOM } from "../../../../lib/locationiqTiles";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { loadLeaflet } from "../_shared/MapPickerSheet";
 import { statusMeta, fmtDate } from "../_shared/activityUi";
@@ -69,6 +68,8 @@ export default function MartaMapPage() {
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState([]);
   const [searchFocused, setSearchFocused] = useState(false);
+  const searchDebounceRef = useRef(null);
+  const searchReqId = useRef(0);
 
   // Data - dua sumber independen, best-effort (satu gagal tidak
   // menjatuhkan yang lain).
@@ -99,19 +100,20 @@ export default function MartaMapPage() {
     return () => { alive = false; };
   }, [sessionLoading]);
 
-  // Init peta sekali - basemap CartoDB (bukan tile.openstreetmap.org mentah,
-  // itu penyebab utama peta versi sebelumnya sering gagal muncul), view+pan
-  // dikunci ke Sumatera lewat maxBounds.
+  // Init peta sekali - basemap tile.openstreetmap.org (gratis, tanpa API
+  // key). Distandarkan ke LocationIQ (satu provider dgn search/geocode di
+  // seluruh MartaHub). View+pan dikunci ke Sumatera lewat maxBounds.
   useEffect(() => {
     let alive = true;
     loadLeaflet().then((L) => {
       if (!alive || !mapDivRef.current || mapRef.current) return;
       const map = L.map(mapDivRef.current, {
-        zoomControl: false, minZoom: 5, maxZoom: 18, maxBoundsViscosity: 1.0,
+        zoomControl: false, minZoom: 5, maxZoom: 19, maxBoundsViscosity: 1.0,
       }).fitBounds(SUMATRA_BOUNDS, { animate: false });
       map.setMaxBounds(SUMATRA_BOUNDS);
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-        subdomains: "abcd", maxZoom: 19, attribution: "&copy; OpenStreetMap, &copy; CARTO",
+      L.tileLayer(locationiqTileUrl("streets"), {
+        subdomains: LOCATIONIQ_TILE_SUBDOMAINS, maxZoom: LOCATIONIQ_TILE_MAX_ZOOM,
+        attribution: LOCATIONIQ_TILE_ATTRIBUTION,
       }).addTo(map);
       L.control.zoom({ position: "bottomright" }).addTo(map);
       mapRef.current = map;
@@ -126,21 +128,45 @@ export default function MartaMapPage() {
 
   // Pencarian tempat - Nominatim, dibatasi ke Indonesia + viewbox Sumatera
   // (bounded=1) supaya hasil di luar pulau tidak muncul, sesuai konsep
-  // "hanya Sumatera saja".
+  // "hanya Sumatera saja". Sebelumnya HANYA jalan lewat keydown "Enter" -
+  // di banyak mobile browser/webview, keyboard virtual tidak selalu
+  // mengirim event keydown "Enter" (apalagi saat autocomplete aktif),
+  // sehingga suggestion tidak pernah muncul. Sekarang auto-search
+  // di-debounce 450ms tiap kali user berhenti ngetik (Enter tetap didukung
+  // utk trigger instan), + timeout 8dtk spy tidak macet kalau network lelet.
+  useEffect(() => {
+    const q = searchQ.trim();
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    if (q.length < 3) { setSearchResults([]); return; }
+    searchDebounceRef.current = setTimeout(() => runSearch(), 450);
+    return () => clearTimeout(searchDebounceRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQ]);
+
   async function runSearch() {
     const q = searchQ.trim();
     if (!q) { setSearchResults([]); return; }
+    const reqId = ++searchReqId.current;
     setSearching(true);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
     try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(q)}&countrycodes=id&viewbox=${SUMATRA_VIEWBOX}&bounded=1&limit=6`, {
-        headers: { "Accept-Language": "id" },
+      // Lewat edge function locationiq (proxy LocationIQ, token aman di
+      // server) - bukan fetch langsung ke Nominatim dari browser, yg sering
+      // diblokir/rate-limit di jaringan mobile shg suggestion tidak muncul.
+      // Sumatra viewbox sudah dibatasi di sisi edge function.
+      const { data, error } = await supabaseMarta.functions.invoke("locationiq", {
+        body: { action: "autocomplete", q },
+        signal: controller.signal,
       });
-      const data = await res.json();
-      setSearchResults(data || []);
+      if (reqId !== searchReqId.current) return;
+      setSearchResults(error ? [] : (data?.results || []));
     } catch {
+      if (reqId !== searchReqId.current) return;
       setSearchResults([]);
     } finally {
-      setSearching(false);
+      clearTimeout(timer);
+      if (reqId === searchReqId.current) setSearching(false);
     }
   }
 
@@ -148,7 +174,7 @@ export default function MartaMapPage() {
     const lat = Number(r.lat), lng = Number(r.lon);
     mapRef.current?.setView([lat, lng], 15);
     setSearchResults([]);
-    setSearchQ(r.display_name);
+    setSearchQ(r.display);
     setSearchFocused(false);
     setActiveId(null);
   }
@@ -239,7 +265,7 @@ export default function MartaMapPage() {
                   {searchResults.map((r, i) => (
                     <button key={i} onClick={() => pickSearchResult(r)}
                       style={{ width: "100%", textAlign: "left", padding: "10px 12px", background: "none", border: "none", borderBottom: i < searchResults.length - 1 ? "1px solid #F0F0F3" : "none", cursor: "pointer", fontSize: 11.5, color: "#3A3A44", lineHeight: 1.4, fontFamily: FF }}>
-                      {r.display_name}
+                      {r.display}
                     </button>
                   ))}
                 </div>

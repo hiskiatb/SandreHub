@@ -17,7 +17,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { ArrowLeft, Plus, QrCode, Trash2, Loader2, CheckCircle2, AlertTriangle, MapPin, Camera, ImagePlus, Images, X, Receipt, RefreshCw, CardSim, Router, Gauge, FolderClock } from "lucide-react";
+import { ArrowLeft, ArrowRight, Plus, QrCode, Trash2, Loader2, CheckCircle2, AlertTriangle, MapPin, Camera, ImagePlus, Images, X, Receipt, RefreshCw, CardSim, Router, Gauge, FolderClock, Map as MapIcon, Navigation } from "lucide-react";
 import supabaseMarta from "../../../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../../_shared/MobileShell";
 import { isValidMsisdn, normalizeMsisdn } from "../../../_shared/msisdn";
@@ -27,7 +27,10 @@ import QrScanSheet from "../../../_shared/QrScanSheet";
 import OrgIdBar from "../../../_shared/OrgIdBar";
 import SiteTowerIcon from "../../../_shared/SiteTowerIcon";
 import SitePickerSheet from "../../../_shared/SitePickerSheet";
+import MapPickerSheet from "../../../_shared/MapPickerSheet";
+import LocationMapPreview from "../../../_shared/LocationMapPreview";
 import { fetchSalesEntries, deleteSalesEntry, fetchRebuyEntries, addRebuyEntryDb, deleteRebuyEntry } from "../../../_shared/planData";
+import { latestPlanDate } from "../../../_shared/activityUi";
 
 const CATS = [
   { key: "sp", label: "Catat Penjualan SP", icon: CardSim },
@@ -39,6 +42,21 @@ const REBUY_TYPES = [
   { key: "fwa", label: "FWA", icon: Router },
 ];
 
+// Form ini dipecah jadi SUB-MENU/TAB terpisah (Lokasi / Penjualan SP /
+// Penjualan FWA / Rebuy & Cost / Dokumentasi) - sebelumnya SEMUA section
+// ditumpuk vertikal jadi satu scroll panjang tanpa pemisahan yang jelas,
+// terasa berantakan & bikin DSF bingung harus mulai isi dari mana. Tiap
+// tab isinya PERSIS section yang sama spt sebelumnya (state & handler
+// TIDAK berubah sama sekali, cuma cara nampilkannya) - jadi ketuk satu
+// tab, isi bagian itu, pindah tab lain, tanpa perlu scroll panjang lagi.
+const SUBMIT_TABS = [
+  { key: "lokasi", label: "Lokasi", fullLabel: "Lokasi & GPS", icon: MapPin },
+  { key: "sp", label: "SP", fullLabel: "Penjualan SP", icon: CardSim },
+  { key: "fwa", label: "FWA", fullLabel: "Penjualan FWA", icon: Router },
+  { key: "rebuy", label: "Rebuy", fullLabel: "Rebuy & Cost", icon: RefreshCw },
+  { key: "dokumentasi", label: "Foto", fullLabel: "Dokumentasi", icon: Images },
+];
+
 const MIN_PHOTOS = 1;
 const PHOTO_BUCKET = "mh-photos";
 // Draft otomatis - hanya data teks/nomor (MSISDN, rebuy, cost, insight)
@@ -47,6 +65,12 @@ const PHOTO_BUCKET = "mh-photos";
 // semua MSISDN yg sudah dicatat otomatis muncul lagi - tinggal foto yg
 // perlu diambil ulang.
 const draftKey = (id) => `mh_actual_draft_${id}`;
+
+function fmtIndoDate(dateStr) {
+  if (!dateStr) return "-";
+  const d = new Date(`${dateStr}T00:00:00`);
+  return d.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+}
 
 export default function SubmitActualPage() {
   const { id: activityId } = useParams();
@@ -59,6 +83,28 @@ export default function SubmitActualPage() {
   const [siteCandidates, setSiteCandidates] = useState([]); // site lain di MC yg sama, blm dipilih - sumber "Tambah Site"
   const [sitePicking, setSitePicking] = useState(false);
   const [addingSite, setAddingSite] = useState(false);
+  const [tab, setTab] = useState("lokasi"); // tab aktif form Laporan Actual - lihat SUBMIT_TABS
+  // Step mana saja yang SUDAH PERNAH dibuka - dipakai stepper di bawah utk
+  // menandai step "sudah dilihat" (centang abu-abu) vs benar2 belum pernah
+  // dibuka sama sekali, supaya DSF yang buru2 tetap kelihatan jelas kalau
+  // masih ada bagian yang belum sempat dicek satupun.
+  const [visitedSteps, setVisitedSteps] = useState(() => new Set(["lokasi"]));
+  function goToTab(key) {
+    setTab(key);
+    setVisitedSteps((prev) => (prev.has(key) ? prev : new Set(prev).add(key)));
+  }
+  const tabIdx = SUBMIT_TABS.findIndex((t) => t.key === tab);
+  const isFirstTab = tabIdx <= 0;
+  const isLastTab = tabIdx === SUBMIT_TABS.length - 1;
+  function goPrevTab() { if (!isFirstTab) goToTab(SUBMIT_TABS[tabIdx - 1].key); }
+  function goNextTab() { if (!isLastTab) goToTab(SUBMIT_TABS[tabIdx + 1].key); }
+
+  const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
+  // Ditandai true begitu DSF pertama kali coba kirim tapi masih ada field
+  // wajib yang kosong - dipakai utk kasih outline merah di field terkait
+  // (bukan cuma pindah tab & teks error di atas), supaya jelas BAGIAN MANA
+  // yang harus dilengkapi.
+  const [attemptedSubmit, setAttemptedSubmit] = useState(false);
   const [types, setTypes] = useState({ sp: [], fwa: [] });
   const [dataLoading, setDataLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -146,6 +192,31 @@ export default function SubmitActualPage() {
   const [gpsFixing, setGpsFixing] = useState(false);
   const [gpsErr, setGpsErr] = useState("");
   const [gpsCorrected, setGpsCorrected] = useState(false);
+  // Sheet peta interaktif (MapPickerSheet - SAMA PERSIS komponen yg dipakai
+  // wizard Buat Plan) utk mengoreksi titik GPS scr visual: geser peta ke
+  // titik yg benar, atau tap crosshair utk lompat ke posisi HP sekarang -
+  // dibuka dari kartu "Titik GPS Lokasi Event" di tab Lokasi.
+  const [gpsMapPicking, setGpsMapPicking] = useState(false);
+
+  // Tinggi bar aksi bawah (Simpan Draft + Kirim Laporan) DIUKUR LANGSUNG,
+  // sama polanya dgn halaman detail aktivitas - sebelumnya bar ini
+  // "position:sticky, bottom:66" (angka tebakan asumsi msh ada navbar 58px
+  // di bawahnya), TIDAK responsive & jadi berantakan/nabrak navbar begitu
+  // NAV_HEIGHT berubah. Sekarang halaman ini hideNav (fokus penuh ke
+  // pengisian laporan, konsisten dgn halaman detail & Check In) & bar-nya
+  // fixed nempel ke tepi bawah layar sungguhan.
+  const actionBarRef = useRef(null);
+  const [actionBarH, setActionBarH] = useState(140);
+  useEffect(() => {
+    const el = actionBarRef.current;
+    if (!el) { setActionBarH(0); return; }
+    const ro = new ResizeObserver((entries) => {
+      const h = entries[0]?.contentRect?.height;
+      if (h != null) setActionBarH(Math.ceil(h));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
 
   function fixGpsToCurrentLocation() {
     if (!navigator.geolocation) { setGpsErr("Browser ini tidak mendukung GPS."); return; }
@@ -168,7 +239,7 @@ export default function SubmitActualPage() {
     (async () => {
       try {
         const [{ data: a, error: e1 }, { data: sp }, { data: fwa }, { data: profile }] = await Promise.all([
-          supabaseMarta.from("mh_activities").select("id,event_name,brand,address,site_id,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,status,checkin_valid,actual_draft_saved_at,latitude,longitude").eq("id", activityId).single(),
+          supabaseMarta.from("mh_activities").select("id,event_name,brand,address,site_id,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,status,checkin_valid,actual_draft_saved_at,latitude,longitude,plan_date,plan_date_start,plan_date_end,plan_dates_multi").eq("id", activityId).single(),
           supabaseMarta.from("mh_product_types").select("id,name,unit_price,brand").eq("category", "sp").eq("active", true).order("name"),
           supabaseMarta.from("mh_product_types").select("id,name,unit_price,brand").eq("category", "fwa").eq("active", true).order("name"),
           scope?.email ? supabaseMarta.from("mh_profiles").select("dsf_org_id").eq("email", scope.email.toLowerCase()).maybeSingle() : Promise.resolve({ data: null }),
@@ -312,8 +383,22 @@ export default function SubmitActualPage() {
     return ids;
   }, [entries]);
 
-  if (loading || dataLoading) return <MobileShell active="activities"><ShellSpinner /></MobileShell>;
-  if (err && !activity) return <MobileShell active="activities"><div style={{ padding: 40, textAlign: "center", color: "#C62828", fontSize: 13 }}>{err}</div></MobileShell>;
+  // Set berisi key tab yang masih ada field wajib kosong - dipakai stepper
+  // utk kasih titik merah, dan sbg sumber kebenaran tunggal biar konsisten
+  // dgn pengecekan di handleSubmitClick (jangan sampai dua tempat beda
+  // aturan validasinya). Harus dideklarasikan SEBELUM early return di
+  // bawah ini supaya urutan Hooks selalu konsisten antar render (aturan
+  // Hooks React - lihat error "change in the order of Hooks" kalau
+  // sebuah Hook diletakkan setelah return kondisional).
+  const invalidSteps = useMemo(() => {
+    const s = new Set();
+    if (Number(costActual || 0) <= 0) s.add("rebuy");
+    if (photos.length < MIN_PHOTOS) s.add("dokumentasi");
+    return s;
+  }, [costActual, photos.length]);
+
+  if (loading || dataLoading) return <MobileShell active="activities" hideNav><ShellSpinner /></MobileShell>;
+  if (err && !activity) return <MobileShell active="activities" hideNav><div style={{ padding: 40, textAlign: "center", color: "#C62828", fontSize: 13 }}>{err}</div></MobileShell>;
 
   function isDuplicateLocal(cat, msisdn) {
     return entries[cat].some((e) => e.msisdn === msisdn) || pendingTransfers[cat].some((p) => p.msisdn === msisdn);
@@ -496,6 +581,16 @@ export default function SubmitActualPage() {
   }
 
   async function submit() {
+    // Pertahanan lapis kedua (UI di bawah sudah menyembunyikan tombol Kirim
+    // & menggantinya dgn Simpan Draft selama daysRemaining true) - dicek
+    // ulang di sini supaya TIDAK ADA jalan (termasuk race condition data
+    // activity berubah di tengah pengisian) utk mengirim actual selama
+    // masih ada hari plan yang belum berjalan.
+    if (daysRemaining) {
+      setErr(`Laporan belum bisa dikirim - masih ada hari plan yang belum berjalan (sampai ${fmtIndoDate(lastPlanDay)}). Data disimpan sebagai draft dulu.`);
+      await saveDraft();
+      return;
+    }
     if (photos.length < MIN_PHOTOS) {
       setErr(`Wajib upload minimal ${MIN_PHOTOS} foto dokumentasi sebelum mengirim laporan.`);
       return;
@@ -561,7 +656,7 @@ export default function SubmitActualPage() {
   if (result) {
     const validated = result.status === "approved";
     return (
-      <MobileShell active="activities">
+      <MobileShell active="activities" hideNav>
         <div style={{ padding: "60px 24px", textAlign: "center" }}>
           <div style={{ width: 64, height: 64, borderRadius: "50%", background: validated ? "rgba(21,128,61,0.1)" : "rgba(180,83,9,0.1)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto" }}>
             {validated ? <CheckCircle2 size={30} color="#15803D" /> : <AlertTriangle size={30} color="#B45309" />}
@@ -601,74 +696,109 @@ export default function SubmitActualPage() {
       setAddingSite(false);
     }
   }
-  const costRatioPct = revenueEstimate > 0 ? Math.round(((Number(costActual) || 0) / revenueEstimate) * 100) : 0;
   const locationLine = activity?.address || null;
 
+  // Plan bisa berisi BEBERAPA hari (rentang/multi tanggal) - Laporan Actual
+  // mewakili keseluruhan plan, jadi baru boleh DIKIRIM setelah hari
+  // TERAKHIR plan ini terlewati (bukan cuma hari pertamanya). Selama masih
+  // ada hari yang belum berjalan, semua yang sudah diisi tetap aman lewat
+  // "Simpan Draft" - tinggal dilanjutkan lagi nanti sampai hari terakhir.
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const lastPlanDay = activity ? latestPlanDate(activity) : null;
+  const daysRemaining = !!(lastPlanDay && lastPlanDay > todayStr);
+
+  function handleSubmitClick() {
+    if (Number(costActual || 0) <= 0) {
+      setAttemptedSubmit(true);
+      setErr("Cost Actual wajib diisi sebelum mengirim laporan.");
+      goToTab("rebuy");
+      return;
+    }
+    if (photos.length < MIN_PHOTOS) {
+      setAttemptedSubmit(true);
+      setErr(`Wajib upload minimal ${MIN_PHOTOS} foto dokumentasi sebelum mengirim laporan.`);
+      goToTab("dokumentasi");
+      return;
+    }
+    setAttemptedSubmit(false);
+    setErr("");
+    setShowConfirmSubmit(true);
+  }
+
+  const draftLabel = savingDraft ? "Menyimpan…" : draftSavedAt ? "Draft Tersimpan" : "Simpan Draft";
+
   return (
-    <MobileShell active="activities">
-      {/* Header ringkas gaya wizard Buat Plan - putih/frosted, bukan lagi
-          kartu gradasi gelap dengan glow radial (kesannya berlebihan utk
-          sekadar header laporan). Identitas event + lokasi tetap di sini,
-          site id jadi strip abu tipis nempel di bawahnya, & metrik report
-          jadi grid tile TERANG (pola sama dgn MetricTile di halaman detail)
-          supaya minimalis tapi tetap rapi & jelas kebaca. */}
+    <MobileShell active="activities" hideNav>
+      {/* Header disederhanakan - SAMA POLANYA PERSIS dgn wizard Buat Plan
+          (new/page.jsx): baris tipis [Kembali][Judul halaman][Simpan Draft]
+          + stepper di bawahnya, TITIK. Nama event/brand/lokasi/metrik yang
+          sebelumnya numpuk di sini semua DIPINDAH ke kartu putih di konten
+          (persis gaya kartu header di Activity Detail) - supaya area
+          sticky di atas ini tidak lagi penuh informasi, cuma "di mana saya
+          sekarang & progres sejauh mana". */}
       <div style={{
         position: "sticky", top: 0, zIndex: 20, maxWidth: 480, margin: "0 auto",
         padding: "calc(env(safe-area-inset-top,0px) + 16px) 20px 14px",
         background: "rgba(244,245,247,0.86)", backdropFilter: "blur(18px) saturate(1.5)", WebkitBackdropFilter: "blur(18px) saturate(1.5)",
         borderBottom: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 6px 20px rgba(23,24,28,0.05)",
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <button onClick={() => router.back()} style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 10, background: "#FFFFFF", border: "1px solid #E4E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <button onClick={() => router.back()} aria-label="Kembali"
+            style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 10, background: "#FFFFFF", border: "1px solid #E4E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
             <ArrowLeft size={16} />
           </button>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase", color: "#C6168D" }}>Laporan Actual</div>
-            <div style={{ marginTop: 1, fontSize: 15.5, fontWeight: 800, color: "#17181C", letterSpacing: "-0.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{activity?.event_name}</div>
-            {locationLine && (
-              <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#8A8A96", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                <MapPin size={11} style={{ flexShrink: 0 }} /> <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{locationLine}</span>
-              </div>
-            )}
+          <div style={{ flex: 1, textAlign: "left", fontSize: 14.5, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            Laporan Actual
           </div>
+          {/* Label berubah sesuai status simpan: "Simpan Draft" → "Menyimpan…"
+              → "Draft Tersimpan" (dgn centang) begitu berhasil - supaya
+              jelas terkonfirmasi, bukan cuma tombol yang tidak berubah. */}
+          <button onClick={saveDraft} disabled={saving || savingDraft}
+            style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 5, height: 34, padding: "0 12px", borderRadius: 10, border: `1.5px solid ${draftSavedAt && !savingDraft ? "#15803D" : "#E4E5EA"}`, background: draftSavedAt && !savingDraft ? "rgba(21,128,61,0.06)" : "#FFFFFF", color: draftSavedAt && !savingDraft ? "#15803D" : "#5A5A68", fontSize: 11, fontWeight: 800, fontFamily: FF, cursor: (saving || savingDraft) ? "default" : "pointer", whiteSpace: "nowrap" }}>
+            {savingDraft ? <Loader2 size={13} style={{ animation: "mspin .85s linear infinite" }} /> : draftSavedAt ? <CheckCircle2 size={13} /> : <FolderClock size={13} />}
+            {draftLabel}
+          </button>
         </div>
 
-        {/* Ikon site skrg pakai SiteTowerIcon (menara BTS - SAMA PERSIS dgn
-            Map Intelligence & Review di wizard Buat Plan), bukan lagi ikon
-            gedung generik. "Tambah Site" tetap tersedia di sini (konsepnya
-            sama persis spt "Tambah site lain" di form plan) - site baru yg
-            dipilih di sini langsung dipersist ke mh_activity_sites lewat
-            mh_activity_add_site(). */}
-        <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          {siteLabels.map((label, i) => (
-            <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 700, color: "#5A5A68", background: "#EDEEF1", padding: "4px 9px 4px 7px", borderRadius: 8 }}>
-              <SiteTowerIcon size={11} /> {label}
-            </span>
-          ))}
-          {siteCandidates.length > 0 && (
-            <button onClick={() => setSitePicking(true)} disabled={addingSite}
-              style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 700, color: "#5A5A68", background: "#FFFFFF", border: "1.5px dashed #D8D9E0", padding: "4px 9px", borderRadius: 8, cursor: addingSite ? "default" : "pointer", fontFamily: FF }}>
-              <Plus size={11} /> Tambah Site
-            </button>
-          )}
-        </div>
-
-        {/* Report grid 2x2 - live sesuai input pengguna, tile terang dgn
-            ikon berwarna per metrik (pola sama dgn MetricTile di halaman
-            detail aktivitas). */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 12 }}>
-          <ReportTile icon={CardSim} accent="#ED1C24" label="Total SP" value={entries.sp.length} />
-          <ReportTile icon={Router} accent="#2563EB" label="Total FWA" value={entries.fwa.length} />
-          <ReportTile icon={RefreshCw} accent="#B45309" label="Total Rebuy" value={`Rp ${rebuyGrandTotal.toLocaleString("id-ID")}`} />
-          <ReportTile icon={Gauge} accent="#7C3AED" label="Estimasi Cost Ratio" value={`${costRatioPct}%`} />
-        </div>
+        {/* Stepper bernomor SAJA - tidak ada lagi kartu ringkasan event
+            (nama/brand/lokasi/tanggal) atau grid metrik Total SP/FWA/
+            Rebuy/Cost Ratio di sini. Halaman ini fokus PENUH ke pengisian
+            laporan penjualan; ringkasan plan (nama event, brand, lokasi,
+            tanggal, target vs actual) sudah ada di halaman Activity Detail
+            - user tinggal tap tombol Kembali kalau perlu lihat itu lagi,
+            tidak perlu diduplikasi di sini. */}
+        <SubmitStepper tab={tab} onGoTo={goToTab} invalidSteps={attemptedSubmit ? invalidSteps : null} />
       </div>
 
-      <div style={{ padding: "16px 20px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ padding: `16px 20px calc(env(safe-area-inset-bottom,0px) + ${actionBarH + 16}px)`, display: "flex", flexDirection: "column", gap: 14 }}>
         {err && <div style={{ padding: "10px 12px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 12, fontWeight: 600 }}>{err}</div>}
 
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 10.5, color: "#B0B0BA", fontWeight: 600 }}>
           <FolderClock size={11} /> Draft MSISDN, rebuy & catatan tersimpan otomatis di perangkat ini
+        </div>
+
+        {tab === "lokasi" && (
+        <>
+        {/* Site yang dipilih + Tambah Site (sudah tampil di header sbg
+            chip) dijelaskan ulang di sini scr ringkas supaya tab "Lokasi"
+            berdiri sendiri & jelas isinya, tanpa perlu lihat ke header. */}
+        <div style={{ borderRadius: 16, background: "#FFFFFF", border: "1px solid #EDEDF1", padding: 13 }}>
+          <SectionHeading icon={SiteTowerIcon} title={`Site (${siteLabels.length})`} subtitle="Site tujuan aktivitas ini" />
+          <Divider />
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 10 }}>
+            {siteLabels.map((label, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: 11, background: "#F6F7F9" }}>
+                <SiteTowerIcon size={14} />
+                <span style={{ fontSize: 12, fontWeight: 700, color: "#3A3A44" }}>{label}</span>
+              </div>
+            ))}
+          </div>
+          {siteCandidates.length > 0 && (
+            <button onClick={() => setSitePicking(true)} disabled={addingSite}
+              style={{ marginTop: 10, width: "100%", height: 38, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 12, fontWeight: 700, color: "#5A5A68", background: "#FFFFFF", border: "1.5px dashed #D8D9E0", borderRadius: 11, cursor: addingSite ? "default" : "pointer", fontFamily: FF }}>
+              <Plus size={13} /> Tambah Site
+            </button>
+          )}
         </div>
 
         {/* Perbaiki Titik GPS - GANTI langkah Check In terpisah yg sudah
@@ -676,7 +806,11 @@ export default function SubmitActualPage() {
             mengisi laporan ini, longlat plan (bisa jadi cuma perkiraan saat
             dibuat) bisa langsung dikoreksi persis ke titik mereka berdiri
             sekarang - tersimpan bareng laporan (submit/saveDraft), TANPA
-            perlu langkah/halaman Check In terpisah lagi. */}
+            perlu langkah/halaman Check In terpisah lagi. Sekarang ditambah
+            VISUAL PETA (thumbnail Leaflet, sama komponen dgn wizard Buat
+            Plan) supaya DSF benar2 kelihatan di mana titik AWAL plan
+            dibuat vs mau dipindah ke mana - bukan cuma angka koordinat
+            polos spt sebelumnya. */}
         <div style={{ borderRadius: 16, background: gpsCorrected ? "rgba(21,128,61,0.06)" : "#FFFFFF", border: `1px solid ${gpsCorrected ? "rgba(21,128,61,0.22)" : "#EDEDF1"}`, padding: 13 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <div style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 10, background: gpsCorrected ? "rgba(21,128,61,0.12)" : "rgba(37,99,235,0.10)", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -686,23 +820,97 @@ export default function SubmitActualPage() {
               <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>Titik GPS Lokasi Event</div>
               <div style={{ marginTop: 1, fontSize: 10.5, color: "#8A8A96", fontWeight: 600, lineHeight: 1.4 }}>
                 {gpsCorrected && gpsLat != null && gpsLng != null
-                  ? `Diperbaiki · ${gpsLat.toFixed(5)}, ${gpsLng.toFixed(5)}`
+                  ? "Titik sudah diperbaiki - beda dari titik awal plan"
                   : "Sedang di lokasi event? Perbaiki titik GPS-nya di sini"}
               </div>
             </div>
           </div>
-          <button onClick={fixGpsToCurrentLocation} disabled={gpsFixing}
-            style={{
-              marginTop: 9, width: "100%", height: 38, borderRadius: 11, border: `1.5px solid ${gpsCorrected ? "#15803D" : "#2563EB"}`,
-              background: gpsCorrected ? "rgba(21,128,61,0.08)" : "rgba(37,99,235,0.06)", color: gpsCorrected ? "#15803D" : "#2563EB",
-              fontSize: 12, fontWeight: 800, fontFamily: FF, cursor: gpsFixing ? "default" : "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
-            }}>
-            {gpsFixing ? <Loader2 size={14} style={{ animation: "mspin .85s linear infinite" }} /> : <MapPin size={14} />}
-            {gpsFixing ? "Mengambil lokasi…" : gpsCorrected ? "Ambil Ulang Titik GPS" : "Saya di Lokasi - Perbaiki Titik GPS"}
-          </button>
+
+          {/* Thumbnail peta - selalu menampilkan titik yang SEDANG AKTIF
+              (titik baru kalau sudah dikoreksi, kalau belum ya titik awal
+              plan). Tap thumbnail-nya sendiri bisa dibesarkan jadi peta
+              penuh (bawaan LocationMapPreview) buat lihat detail lebih
+              jelas tanpa perlu masuk mode edit. */}
+          {(gpsCorrected ? gpsLat : activity?.latitude) != null && (gpsCorrected ? gpsLng : activity?.longitude) != null ? (
+            <LocationMapPreview
+              lat={gpsCorrected ? gpsLat : activity.latitude}
+              lng={gpsCorrected ? gpsLng : activity.longitude}
+              height={130}
+            />
+          ) : (
+            <div style={{ marginTop: 10, height: 90, borderRadius: 11, background: "#F6F7F9", border: "1px dashed #D8D9E0", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 4 }}>
+              <MapIcon size={16} color="#B0B0BA" />
+              <span style={{ fontSize: 10.5, fontWeight: 600, color: "#B0B0BA" }}>Titik GPS awal plan belum tersedia</span>
+            </div>
+          )}
+
+          {/* Koordinat + alamat yang sudah dibuat sebelumnya di plan -
+              ditampilkan APA ADANYA (read-only, teks alamat memang bagian
+              dari plan bukan laporan actual) supaya DSF bisa cocokkan
+              "ini beneran lokasi event yang sama kan?" sebelum
+              memutuskan perlu dikoreksi atau tidak. */}
+          <div style={{ marginTop: 9, display: "flex", alignItems: "flex-start", gap: 7, padding: "9px 10px", borderRadius: 10, background: "#F6F7F9" }}>
+            <Navigation size={12.5} color="#8A8A96" style={{ flexShrink: 0, marginTop: 1.5 }} />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 10, fontWeight: 800, color: "#B0B0BA", textTransform: "uppercase", letterSpacing: 0.3 }}>Alamat dari Plan</div>
+              <div style={{ marginTop: 2, fontSize: 11.5, fontWeight: 600, color: "#3A3A44", lineHeight: 1.4 }}>{activity?.address || "-"}</div>
+              {activity?.latitude != null && activity?.longitude != null && (
+                <div style={{ marginTop: 4, fontSize: 10, fontWeight: 700, color: "#8A8A96", fontVariantNumeric: "tabular-nums" }}>
+                  Titik awal · {Number(activity.latitude).toFixed(5)}, {Number(activity.longitude).toFixed(5)}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {gpsCorrected && gpsLat != null && gpsLng != null && (
+            <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 700, color: "#15803D" }}>
+              <CheckCircle2 size={12} /> Titik baru · {gpsLat.toFixed(5)}, {gpsLng.toFixed(5)}
+            </div>
+          )}
+
+          {/* Dua cara koreksi: buka peta interaktif utk geser ke titik yg
+              tepat scr visual (mis. titik plan agak meleset dari lokasi
+              sebenarnya), atau cara cepat "Titik Saya Sekarang" langsung
+              pakai GPS HP kalau DSF memang lagi berdiri di lokasi. */}
+          <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+            <button onClick={() => setGpsMapPicking(true)}
+              style={{
+                flex: 1, height: 40, borderRadius: 11, border: `1.5px solid ${gpsCorrected ? "#15803D" : "#2563EB"}`,
+                background: gpsCorrected ? "rgba(21,128,61,0.08)" : "rgba(37,99,235,0.06)", color: gpsCorrected ? "#15803D" : "#2563EB",
+                fontSize: 11.5, fontWeight: 800, fontFamily: FF, cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              }}>
+              <MapIcon size={13} /> {gpsCorrected ? "Ubah di Peta" : "Pilih di Peta"}
+            </button>
+            <button onClick={fixGpsToCurrentLocation} disabled={gpsFixing}
+              style={{
+                flex: 1, height: 40, borderRadius: 11, border: "1.5px solid #E4E5EA",
+                background: "#FFFFFF", color: "#5A5A68",
+                fontSize: 11.5, fontWeight: 800, fontFamily: FF, cursor: gpsFixing ? "default" : "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              }}>
+              {gpsFixing ? <Loader2 size={13} style={{ animation: "mspin .85s linear infinite" }} /> : <Navigation size={13} />}
+              {gpsFixing ? "Mengambil…" : "Titik Saya Sekarang"}
+            </button>
+          </div>
           {gpsErr && <div style={{ marginTop: 6, fontSize: 10.5, color: "#DC2626", fontWeight: 700 }}>{gpsErr}</div>}
         </div>
+        </>
+        )}
+
+        {gpsMapPicking && (
+          <MapPickerSheet
+            initialLat={gpsCorrected && gpsLat != null ? gpsLat : activity?.latitude}
+            initialLng={gpsCorrected && gpsLng != null ? gpsLng : activity?.longitude}
+            onClose={() => setGpsMapPicking(false)}
+            onConfirm={({ lat, lng }) => {
+              setGpsLat(lat); setGpsLng(lng);
+              setGpsCorrected(true);
+              setGpsErr("");
+              setGpsMapPicking(false);
+            }}
+          />
+        )}
 
         {/* ORG ID Aktif SEKARANG ADA DI SETIAP SECTION (SP maupun FWA) -
             bukan lagi satu kontrol tunggal di atas yg perlu discroll ulang
@@ -711,7 +919,7 @@ export default function SubmitActualPage() {
             section SP langsung kepakai jg di section FWA. usedOrgIds =
             org_id yg sudah pernah dipakai activity ini (dari plan/entry
             lama) diseed otomatis sbg chip. */}
-        {CATS.map((c) => (
+        {CATS.filter((c) => c.key === tab).map((c) => (
           <SalesSection key={c.key} cat={c.key} label={c.label} icon={c.icon}
             types={types[c.key]} selectedType={selectedType[c.key]} onSelectType={(v) => setSelectedType((s) => ({ ...s, [c.key]: v }))}
             input={msisdnInput[c.key]} onInputChange={(v) => setMsisdnInput((s) => ({ ...s, [c.key]: v }))}
@@ -726,6 +934,8 @@ export default function SubmitActualPage() {
 
         {/* Catat Penjualan Rebuy - wajib per-entri: Transaction ID, nomor
             tujuan (manual, dikunci "62"), jenis (SP/FWA), lalu amount-nya. */}
+        {tab === "rebuy" && (
+        <>
         <RebuySection
           transactionId={rebuyTransactionId} onTransactionIdChange={setRebuyTransactionId}
           msisdn={rebuyMsisdn} onMsisdnChange={setRebuyMsisdn}
@@ -740,15 +950,18 @@ export default function SubmitActualPage() {
           <SectionHeading icon={Receipt} title="Cost & Insight" subtitle="Biaya aktual dan catatan lapangan" />
           <Divider />
           <FieldLabel text="Cost Actual" required top />
-          <NumberInput value={costActual} onChange={setCostActual} prefix="Rp" />
+          <NumberInput value={costActual} onChange={setCostActual} prefix="Rp" error={attemptedSubmit && (!costActual || Number(costActual) <= 0)} />
           {(!costActual || Number(costActual) <= 0) && <FieldError text="Cost Actual wajib diisi (tidak boleh 0)." />}
           <FieldLabel text="Insight" top hint="Opsional" />
           <TextInput value={insight} onChange={setInsight} placeholder="Catatan/insight dari lapangan…" multiline />
         </Card>
+        </>
+        )}
 
         {/* Dokumentasi Foto - satu grid rapi, ketuk kotak "+" utk pilih
             sumbernya (Kamera/Galeri/Kolase) - bukan lagi 3 tombol terpisah
             di atas grid. */}
+        {tab === "dokumentasi" && (
         <Card accent>
           <SectionHeading icon={Images} title="Dokumentasi Foto" subtitle={`Minimal ${MIN_PHOTOS} foto · ${photos.length} terpilih`} />
           <Divider />
@@ -770,9 +983,9 @@ export default function SubmitActualPage() {
             ))}
             <button onClick={() => setPhotoPickerOpen(true)}
               style={{
-                aspectRatio: "1", borderRadius: 12, border: "1.5px dashed #D8D9E0", background: "#F6F7F9",
+                aspectRatio: "1", borderRadius: 12, border: `1.5px dashed ${attemptedSubmit && photos.length < MIN_PHOTOS ? "#DC2626" : "#D8D9E0"}`, background: attemptedSubmit && photos.length < MIN_PHOTOS ? "rgba(220,38,38,0.05)" : "#F6F7F9",
                 display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4,
-                color: "#8A8A96", cursor: "pointer", fontFamily: FF,
+                color: attemptedSubmit && photos.length < MIN_PHOTOS ? "#DC2626" : "#8A8A96", cursor: "pointer", fontFamily: FF,
               }}>
               <ImagePlus size={18} />
               <span style={{ fontSize: 9.5, fontWeight: 700 }}>Tambah</span>
@@ -800,36 +1013,68 @@ export default function SubmitActualPage() {
             <div style={{ marginTop: 10, fontSize: 11.5, color: "#8A8A96", fontWeight: 600 }}>Mengunggah foto {uploadProgress.done}/{uploadProgress.total}…</div>
           )}
         </Card>
+        )}
       </div>
 
-      {(() => {
-        const photosMissing = photos.length < MIN_PHOTOS;
-        const costMissing = !costActual || Number(costActual) <= 0;
-        const blocked = photosMissing || costMissing;
-        const label = photosMissing ? "Tambahkan Foto Dokumentasi" : costMissing ? "Isi Cost Actual dulu" : "Kirim Laporan";
-        return (
-          <div style={{ position: "sticky", bottom: 66, background: "linear-gradient(180deg,rgba(244,245,247,0) 0%,#F4F5F7 30%)", padding: "16px 20px 0" }}>
-            {draftSavedAt && (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 8, fontSize: 11.5, fontWeight: 700, color: "#8A6D00" }}>
-                <FolderClock size={12.5} />
-                Tersimpan sbg draft · {new Date(draftSavedAt).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
-              </div>
-            )}
-            <div style={{ display: "flex", gap: 9 }}>
-              <button onClick={saveDraft} disabled={saving || savingDraft}
-                style={{ flex: "0 0 auto", height: 52, padding: "0 18px", borderRadius: 14, border: "1.5px solid #DADBE2", cursor: (saving || savingDraft) ? "default" : "pointer", background: "#fff", color: "#3A3A44", fontSize: 13.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
-                {savingDraft ? <Loader2 size={15} style={{ animation: "mspin .85s linear infinite" }} /> : <FolderClock size={15} />}
-                {savingDraft ? "Menyimpan…" : "Simpan Draft"}
-              </button>
-              <button onClick={submit} disabled={saving || savingDraft || blocked}
-                style={{ flex: 1, height: 52, borderRadius: 14, border: "none", cursor: (saving || savingDraft || blocked) ? "default" : "pointer", background: (saving || savingDraft || blocked) ? "#D8D9E0" : BRAND, color: "#fff", fontSize: 14.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, boxShadow: (saving || savingDraft || blocked) ? "none" : "0 4px 14px rgba(17,17,20,0.11)" }}>
-                {saving ? <Loader2 size={17} style={{ animation: "mspin .85s linear infinite" }} /> : <CheckCircle2 size={18} />}
-                {saving ? (uploadProgress ? `Mengunggah foto ${uploadProgress.done}/${uploadProgress.total}…` : "Mengirim…") : label}
-              </button>
+      {/* Action bar bawah SEKARANG cuma soal NAVIGASI step (Sebelumnya/
+          Lanjut) - satu fokus, satu tujuan tiap layar. "Simpan Draft" sudah
+          pindah ke pojok kanan atas header (aksi sekunder, bisa dipakai
+          kapan saja tanpa mengganggu alur linear ini). Baru di STEP
+          TERAKHIR (Dokumentasi) tombol "Lanjut" berubah jadi "Kirim Laporan
+          Actual" - dan itu SELALU minta konfirmasi dulu (lihat
+          ConfirmSubmitSheet) sebelum benar2 terkirim, plus dicek dulu apa
+          semua hari plan ini sudah berjalan (daysRemaining). */}
+      <div ref={actionBarRef} style={{
+        position: "fixed", left: 0, right: 0, bottom: "env(safe-area-inset-bottom,0px)", zIndex: 45,
+        background: "rgba(244,245,247,0.92)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
+        borderTop: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 -4px 16px rgba(23,24,28,0.05)",
+      }}>
+        <div style={{ maxWidth: 480, margin: "0 auto", padding: "12px 20px 14px" }}>
+          {isLastTab && daysRemaining && (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 7, marginBottom: 9, padding: "9px 11px", borderRadius: 11, background: "rgba(180,83,9,0.08)" }}>
+              <AlertTriangle size={13.5} color="#B45309" style={{ flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 11, fontWeight: 600, color: "#8A6D00", lineHeight: 1.45 }}>
+                Plan ini masih berjalan sampai <b>{fmtIndoDate(lastPlanDay)}</b> - laporan baru bisa dikirim setelah hari itu. Untuk sekarang, ketuk tombol di bawah utk simpan sbg draft.
+              </span>
             </div>
+          )}
+          <div style={{ display: "flex", gap: 9 }}>
+            {!isFirstTab && (
+              <button onClick={goPrevTab} disabled={saving || savingDraft}
+                style={{ flex: "0 0 auto", height: 52, padding: "0 18px", borderRadius: 14, border: "1.5px solid #DADBE2", cursor: (saving || savingDraft) ? "default" : "pointer", background: "#fff", color: "#3A3A44", fontSize: 13.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                <ArrowLeft size={15} /> Sebelumnya
+              </button>
+            )}
+            {!isLastTab ? (
+              <button onClick={goNextTab}
+                style={{ flex: 1, height: 52, borderRadius: 14, border: "none", cursor: "pointer", background: BRAND, color: "#fff", fontSize: 14.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 4px 14px rgba(17,17,20,0.11)" }}>
+                Lanjut ke {SUBMIT_TABS[tabIdx + 1].fullLabel} <ArrowRight size={16} />
+              </button>
+            ) : daysRemaining ? (
+              <button onClick={saveDraft} disabled={saving || savingDraft}
+                style={{ flex: 1, height: 52, borderRadius: 14, border: "none", cursor: (saving || savingDraft) ? "default" : "pointer", background: (saving || savingDraft) ? "#D8D9E0" : "#B45309", color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                {savingDraft ? <Loader2 size={16} style={{ animation: "mspin .85s linear infinite" }} /> : <FolderClock size={16} />}
+                {savingDraft ? "Menyimpan…" : "Simpan sbg Draft"}
+              </button>
+            ) : (
+              <button onClick={handleSubmitClick} disabled={saving || savingDraft}
+                style={{ flex: 1, height: 52, borderRadius: 14, border: "none", cursor: (saving || savingDraft) ? "default" : "pointer", background: (saving || savingDraft) ? "#D8D9E0" : BRAND, color: "#fff", fontSize: 14.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, boxShadow: (saving || savingDraft) ? "none" : "0 4px 14px rgba(17,17,20,0.11)" }}>
+                {saving ? <Loader2 size={17} style={{ animation: "mspin .85s linear infinite" }} /> : <CheckCircle2 size={18} />}
+                {saving ? (uploadProgress ? `Mengunggah foto ${uploadProgress.done}/${uploadProgress.total}…` : "Mengirim…") : "Kirim Laporan Actual"}
+              </button>
+            )}
           </div>
-        );
-      })()}
+        </div>
+      </div>
+
+      {showConfirmSubmit && (
+        <ConfirmSubmitSheet
+          onClose={() => setShowConfirmSubmit(false)}
+          onConfirm={() => { setShowConfirmSubmit(false); submit(); }}
+          totalSp={entries.sp.length} totalFwa={entries.fwa.length}
+          totalRebuy={rebuyGrandTotal} costActual={Number(costActual) || 0} photoCount={photos.length}
+        />
+      )}
 
       {conflict && (
         <ConflictSheet conflict={conflict} onClose={() => setConflict(null)} onConfirm={resolveConflictTransfer} />
@@ -1032,6 +1277,146 @@ function MiniTotal({ label, value }) {
   );
 }
 
+// ═════════════════════ Stepper Laporan Actual ═══════════════════════════
+// SAMA PERSIS gaya WizardStepper di wizard Buat Plan (activities/new/
+// page.jsx) - lingkaran bernomor terhubung garis progres, langkah yang
+// sudah dilewati bisa diketuk utk kembali (skip-forward tetap lewat
+// tombol Lanjut di bawah). Konsisten visual dgn wizard, bukan varian
+// sendiri lagi (sebelumnya sempat diganti jadi progress-bar tipis, tapi
+// itu bikin dua wizard di app ini punya "bahasa" stepper yang beda).
+const SUBMIT_STEP_DOT = 26;
+const SUBMIT_STEP_ROW_H = 32;
+function SubmitStepper({ tab, onGoTo, invalidSteps }) {
+  const current = SUBMIT_TABS.findIndex((t) => t.key === tab);
+  return (
+    <div style={{ marginTop: 14, display: "flex", alignItems: "flex-start" }}>
+      {SUBMIT_TABS.map((t, i) => {
+        const done = i < current;
+        const active = i === current;
+        // Semua step BISA diketuk kapan saja (bukan cuma yang sudah
+        // dilewati) - DSF sering perlu lompat maju utk cek sesuatu lalu
+        // balik lagi, jadi navigasi bebas lebih membantu drpd dikunci
+        // linear. Validasi wajib-isi tetap dicek terpisah saat tombol
+        // "Kirim Laporan Actual" ditekan (lihat handleSubmitClick).
+        const clickable = true;
+        const invalid = invalidSteps?.has(t.key);
+        const leftFilled = i > 0 && i <= current;
+        const rightFilled = i < SUBMIT_TABS.length - 1 && i < current;
+        return (
+          <div key={t.key} style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center" }}>
+            <div style={{ display: "flex", alignItems: "center", width: "100%", height: SUBMIT_STEP_ROW_H }}>
+              <SubmitStepLine visible={i > 0} filled={leftFilled} side="left" />
+              <button
+                onClick={() => clickable && onGoTo(t.key)}
+                disabled={!clickable}
+                aria-label={t.label}
+                aria-current={active ? "step" : undefined}
+                style={{
+                  position: "relative",
+                  width: SUBMIT_STEP_DOT, height: SUBMIT_STEP_DOT, borderRadius: "50%", flexShrink: 0,
+                  display: "flex", alignItems: "center", justifyContent: "center", padding: 0,
+                  border: invalid ? "1.5px solid #DC2626" : "none",
+                  cursor: clickable ? "pointer" : "default",
+                  background: done || active ? BRAND : "#FFFFFF",
+                  boxShadow: active
+                    ? "0 0 0 4px rgba(237,28,36,0.14), 0 2px 6px rgba(237,28,36,0.28)"
+                    : done ? "0 1px 3px rgba(237,28,36,0.18)" : "inset 0 0 0 1.5px #E4E5EA",
+                  transform: active ? "scale(1.08)" : "scale(1)",
+                  transition: "transform .22s cubic-bezier(.34,1.56,.64,1), background .2s, box-shadow .2s",
+                }}>
+                {done ? <CheckCircle2 size={13} color="#fff" strokeWidth={3.2} />
+                      : <span style={{ fontSize: 11.5, fontWeight: 800, lineHeight: 1, color: active ? "#fff" : "#C4C4CE", fontFamily: FF }}>{i + 1}</span>}
+                {/* Titik merah kecil - menandai step ini masih ada field
+                    wajib yang belum lengkap, MUNCUL HANYA setelah DSF
+                    sempat coba kirim & ditolak (attemptedSubmit), supaya
+                    tidak menakut-nakuti sebelum sempat mencoba. */}
+                {invalid && (
+                  <span style={{ position: "absolute", top: -2, right: -2, width: 9, height: 9, borderRadius: "50%", background: "#DC2626", border: "1.5px solid #F4F5F7" }} />
+                )}
+              </button>
+              <SubmitStepLine visible={i < SUBMIT_TABS.length - 1} filled={rightFilled} side="right" />
+            </div>
+            <span style={{
+              marginTop: 5, width: "100%", textAlign: "center", fontSize: 10.5, lineHeight: "14px",
+              fontWeight: active ? 800 : 700, letterSpacing: 0.1,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              color: invalid ? "#DC2626" : active ? "#17181C" : done ? "#6B6B76" : "#B7B7C2", transition: "color .2s",
+            }}>
+              {t.label}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+function SubmitStepLine({ visible, filled, side }) {
+  return (
+    <div style={{
+      flex: 1, height: 2.5, borderRadius: 2, background: "#E9EAEE", position: "relative", overflow: "hidden",
+      marginRight: side === "left" ? 6 : 0, marginLeft: side === "right" ? 6 : 0,
+      visibility: visible ? "visible" : "hidden",
+    }}>
+      <div style={{ position: "absolute", inset: 0, borderRadius: 2, background: BRAND, transform: `scaleX(${filled ? 1 : 0})`, transformOrigin: "left", transition: "transform .35s cubic-bezier(.4,0,.2,1)" }} />
+    </div>
+  );
+}
+
+// ═════════════════════ Konfirmasi Kirim Laporan Actual ══════════════════
+// Ditampilkan SELALU sebelum submit() benar2 dipanggil - ringkasan angka
+// terakhir + peringatan "tidak bisa diedit lagi setelah dikirim", supaya
+// DSF tidak salah kirim/lupa cek dulu (validasi hari plan yang blm
+// berjalan sudah dicek SEBELUM sheet ini muncul - lihat handleSubmitClick
+// & daysRemaining di komponen utama).
+function ConfirmSubmitSheet({ onClose, onConfirm, totalSp, totalFwa, totalRebuy, costActual, photoCount }) {
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(23,24,28,0.45)", zIndex: 70, display: "flex", alignItems: "flex-end" }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        width: "100%", maxWidth: 480, margin: "0 auto", background: "#FFFFFF", borderRadius: "22px 22px 0 0",
+        padding: "10px 20px calc(env(safe-area-inset-bottom,0px) + 20px)", fontFamily: FF,
+      }}>
+        <div style={{ width: 36, height: 4, borderRadius: 2, background: "#E4E5EA", margin: "0 auto 16px" }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 12, background: "rgba(237,28,36,0.10)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <CheckCircle2 size={19} color="#ED1C24" />
+          </div>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: "#17181C" }}>Kirim Laporan Actual?</div>
+            <div style={{ marginTop: 1, fontSize: 11.5, color: "#8A8A96", fontWeight: 600 }}>Data tidak bisa diedit lagi setelah dikirim</div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <MiniSummary label="Total SP" value={totalSp} />
+          <MiniSummary label="Total FWA" value={totalFwa} />
+          <MiniSummary label="Total Rebuy" value={`Rp ${Number(totalRebuy).toLocaleString("id-ID")}`} />
+          <MiniSummary label="Cost Actual" value={`Rp ${Number(costActual).toLocaleString("id-ID")}`} />
+        </div>
+        <div style={{ marginTop: 8, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{photoCount} foto dokumentasi terlampir</div>
+
+        <div style={{ display: "flex", gap: 9, marginTop: 20 }}>
+          <button onClick={onClose}
+            style={{ flex: 1, height: 48, borderRadius: 13, border: "1.5px solid #DADBE2", background: "#FFFFFF", color: "#3A3A44", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
+            Cek Lagi
+          </button>
+          <button onClick={onConfirm}
+            style={{ flex: 1, height: 48, borderRadius: 13, border: "none", background: BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer", boxShadow: "0 4px 14px rgba(17,17,20,0.11)" }}>
+            Ya, Kirim
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+function MiniSummary({ label, value }) {
+  return (
+    <div style={{ borderRadius: 12, background: "#F6F7F9", border: "1px solid #ECEDF0", padding: "9px 11px" }}>
+      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.3, textTransform: "uppercase", color: "#B0B0BA" }}>{label}</div>
+      <div style={{ marginTop: 2, fontSize: 13, fontWeight: 800, color: "#17181C" }}>{value}</div>
+    </div>
+  );
+}
+
 function ReportTile({ icon: Icon, accent = "#ED1C24", label, value }) {
   return (
     <div style={{ minWidth: 0, borderRadius: 13, background: "#FFFFFF", border: "1px solid #ECEDF0", padding: "10px 11px", display: "flex", alignItems: "center", gap: 9 }}>
@@ -1170,10 +1555,10 @@ function TextInput({ value, onChange, placeholder, error, multiline }) {
   return <Comp value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} rows={multiline ? 3 : undefined}
     style={{ ...inputBase, height: multiline ? 84 : 48, paddingTop: multiline ? 12 : 0, resize: multiline ? "vertical" : undefined, border: `1.5px solid ${error ? "#DC2626" : "#ECEDF0"}` }} />;
 }
-function NumberInput({ value, onChange, prefix }) {
+function NumberInput({ value, onChange, prefix, error }) {
   const display = value === "" ? "" : Number(value).toLocaleString("id-ID");
   return (
-    <div style={{ ...inputBase, display: "flex", alignItems: "center" }}>
+    <div style={{ ...inputBase, display: "flex", alignItems: "center", border: `1.5px solid ${error ? "#DC2626" : "#ECEDF0"}`, background: error ? "rgba(220,38,38,0.04)" : inputBase.background }}>
       {prefix && <span style={{ flexShrink: 0, fontSize: 13, fontWeight: 700, color: "#8A8A96", marginRight: 6 }}>{prefix}</span>}
       <input value={display} inputMode="numeric" onChange={(e) => onChange(e.target.value.replace(/\D/g, ""))}
         style={{ flex: 1, minWidth: 0, width: "100%", background: "transparent", border: "none", outline: "none", fontSize: 14, fontWeight: 600, color: "#17181C", fontFamily: FF }} />

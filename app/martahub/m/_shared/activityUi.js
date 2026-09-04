@@ -78,6 +78,20 @@ export function earliestPlanDate(a) {
   return a.plan_date_start || a.plan_date || null;
 }
 
+// Tanggal event PALING AKHIR dari plan ini (rentang/multi bisa berisi
+// beberapa hari) - dipakai utk memastikan Laporan Actual baru boleh
+// dikirim setelah SELURUH hari plan ini terlewati (bukan cuma hari
+// pertamanya), krn actual yg dikirim mewakili keseluruhan plan, bukan
+// cuma satu hari. Selama masih ada hari yang belum berjalan, data actual
+// yang sudah diisi tetap aman tersimpan lewat "Simpan Draft" saja.
+export function latestPlanDate(a) {
+  if (a.plan_dates_multi) {
+    const parts = a.plan_dates_multi.split(",").filter(Boolean).sort();
+    if (parts.length) return parts[parts.length - 1];
+  }
+  return a.plan_date_end || a.plan_date_start || a.plan_date || null;
+}
+
 // Plan yg statusnya "siap dieksekusi" (plan_submitted/approved) TIDAK PERLU
 // approval lagi - jadi status pill "Plan Diajukan"/"Disetujui" kurang
 // berguna dibanding info yg lebih actionable: berapa hari lagi event-nya.
@@ -122,7 +136,7 @@ export function isDraftIncomplete(a) {
 //
 // Tahapannya: Draft → Revisi Plan (kalau ditandai perlu revisi) → begitu
 // status DB plan_submitted, labelnya JADI DINAMIS ikut tanggal event
-// (Terjadwal → Berjalan → Laporan Terlambat kalau actual belum diisi) →
+// (Terjadwal → Berjalan → Menunggu Laporan kalau actual belum diisi) →
 // Revisi Report (kalau laporan actual ditandai perlu revisi) → Selesai.
 export function activityStage(a) {
   if (a.status === "draft") return STATUS_META.draft;
@@ -133,7 +147,7 @@ export function activityStage(a) {
   if (READY_STATUSES.has(a.status)) {
     const todayStr = new Date().toISOString().slice(0, 10);
     const eventDateStr = earliestPlanDate(a);
-    if (eventDateStr && eventDateStr < todayStr) return { label: "Laporan Terlambat", color: "#DC2626", bg: "rgba(220,38,38,0.10)" };
+    if (eventDateStr && eventDateStr < todayStr) return { label: "Menunggu Laporan", color: "#DC2626", bg: "rgba(220,38,38,0.10)" };
     if (eventDateStr === todayStr) return { label: "Berjalan", color: "#7C3AED", bg: "rgba(124,58,237,0.10)" };
     return { label: "Terjadwal", color: "#2563EB", bg: "rgba(37,99,235,0.10)" };
   }

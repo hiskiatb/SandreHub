@@ -32,7 +32,7 @@ export function deriveStatusInfo(r) {
       const diffDays = Math.round((today - planDate) / 86400000);
       if (diffDays < 0) return ["Menunggu Hari-H", T.blue, T.blueBg];
       if (diffDays === 0) return ["Hari-H / Berlangsung", T.warning, T.warningBg];
-      return ["Terlambat Lapor", T.error, T.errorBg];
+      return ["Menunggu Laporan", T.error, T.errorBg];
     }
   }
   return STATUS[r?.status] || [r?.status, T.mid, "#eef1f6"];

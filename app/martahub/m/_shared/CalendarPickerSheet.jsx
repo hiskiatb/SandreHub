@@ -25,10 +25,11 @@
  * `allDateTimesValid()`, `planTimeFields()`.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, X, Check, Loader2, MapPin, CalendarDays, Clock, Info } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, X, Check, Loader2, MapPin, CalendarDays, Clock, Info, ArrowRight, AlertTriangle, CardSim, Router, Receipt, Sunrise, Sunset } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import { FF, BRAND } from "./MobileShell";
-import { fmtDate, statusMeta, fmtInt } from "./activityUi";
+import { fmtDate, statusMeta, fmtInt, fmtRp, activityStage } from "./activityUi";
+import { MetricTile, RebuyTile, RevenueCostBanner } from "./MetricTiles";
 import { groupContiguousDates, syncTimesByDate, allDateTimesValid, DEFAULT_DATE_TIME } from "./planData";
 
 const MONTH_NAMES_FULL = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
@@ -456,7 +457,7 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
                 <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>
                   Atur Waktu · {picked.length} tanggal
                 </div>
-                {summary && <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{summary}</div>}
+                {summary && picked.length > 1 && <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{summary}</div>}
                 {sheetSnap === "collapsed" && (
                   <div style={{ marginTop: 4, fontSize: 10.5, color: "#B0B0BA", fontWeight: 600 }}>Tarik ke atas utk atur waktu tiap tanggal</div>
                 )}
@@ -522,19 +523,39 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
  * ringkasan cepat activity yg sudah ada di tanggal itu, TANPA pindah halaman
  * (masih di dalam alur pilih tanggal). Bisa ditutup lewat tombol X ATAU
  * ketuk area gelap di belakangnya (backdrop), gaya popup pada umumnya. */
+// Popup ini SEKARANG pakai bahasa visual & KOMPONEN YANG SAMA PERSIS dgn
+// kartu di halaman Aktivitas/Detail Aktivitas (MetricTiles.jsx - satu
+// sumber kebenaran utk grid Target/Actual SP·FWA·Rebuy·Cost + banner
+// Estimasi Revenue/Cost Ratio) - dulu popup ini cuma teks ringkas polos
+// (lokasi + "MC · site · Target N/N SP/FWA" satu baris), beda total dari
+// tampilan activity di halaman lain padahal data yg dirujuk activity yg
+// sama persis.
 function ActivityDetailPopup({ activity: a, onClose }) {
-  const meta = statusMeta(a.status);
+  const stage = activityStage(a);
+  const hasActual = a.actual_sp != null;
+  const brandKey = (a.brand || "").toLowerCase();
   return (
     <div onClick={onClose}
       style={{ position: "fixed", inset: 0, zIndex: 96, background: "rgba(23,24,28,0.42)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
       <div onClick={(e) => e.stopPropagation()}
-        style={{ width: "100%", maxWidth: 360, background: "#FFFFFF", borderRadius: 18, padding: 18, fontFamily: FF, boxShadow: "0 12px 40px rgba(23,24,28,0.24)" }}>
+        style={{ width: "100%", maxWidth: 380, maxHeight: "calc(100dvh - 48px)", overflowY: "auto", background: "#FFFFFF", borderRadius: 20, padding: 18, fontFamily: FF, boxShadow: "0 12px 40px rgba(23,24,28,0.24)" }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 15, fontWeight: 800, color: "#17181C" }}>{a.event_name || "Activity tanpa nama"}</div>
-            <span style={{ display: "inline-block", marginTop: 6, fontSize: 10.5, fontWeight: 800, padding: "3px 9px", borderRadius: 999, color: meta.color, background: meta.bg }}>
-              {meta.label}
-            </span>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: "#17181C", lineHeight: 1.3 }}>{a.event_name || "Activity tanpa nama"}</div>
+            <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              {a.brand && (
+                <span style={{
+                  flexShrink: 0, fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 999, whiteSpace: "nowrap",
+                  background: OTHER_ACT_BRAND_COLOR[brandKey] || "#8A8A96",
+                  color: brandKey === "tri" ? "#FFFFFF" : "#17181C",
+                }}>
+                  {brandKey === "tri" ? "3ID" : "IM3"}
+                </span>
+              )}
+              <span style={{ fontSize: 10, fontWeight: 800, padding: "3px 9px", borderRadius: 999, color: stage.color, background: stage.bg, whiteSpace: "nowrap" }}>
+                {stage.label}
+              </span>
+            </div>
           </div>
           <button onClick={onClose}
             style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 9, background: "#F6F7F9", border: "1px solid #ECEDF0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
@@ -542,20 +563,46 @@ function ActivityDetailPopup({ activity: a, onClose }) {
           </button>
         </div>
 
-        <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 9 }}>
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
-            <MapPin size={13} color="#8A8A96" style={{ flexShrink: 0, marginTop: 1 }} />
-            <span style={{ fontSize: 12, color: "#5A5A68", fontWeight: 600, lineHeight: 1.4 }}>
-              {a.address || a.site_id || "Lokasi belum diisi"}
+        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 6 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+            <MapPin size={12} color="#B0B0BA" style={{ flexShrink: 0, marginTop: 1.5 }} />
+            <span style={{ fontSize: 11.5, color: "#5A5A68", fontWeight: 600, lineHeight: 1.4 }}>
+              {a.address || a.site_id || "Lokasi belum diisi"}{a.mc ? ` · ${a.mc}` : ""}
             </span>
           </div>
-          <div style={{ fontSize: 12, color: "#5A5A68", fontWeight: 600 }}>
-            {a.mc || "-"} {a.site_id ? `· ${a.site_id}` : ""} · Target {fmtInt(a.target_sp)}/{fmtInt(a.target_fwa)} SP/FWA
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <Clock size={12} color="#B0B0BA" style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: 11.5, color: "#5A5A68", fontWeight: 700 }}>{fmtDate(a.plan_date)} · {otherActTimeLabel(a, a.plan_date)}</span>
           </div>
         </div>
 
+        {/* Grid Target/Actual SP·FWA·Rebuy·Cost + banner Estimasi Revenue -
+            komponen yg SAMA dipakai di kartu daftar Aktivitas & halaman
+            Detail Aktivitas (lihat MetricTiles.jsx), bukan salinan gaya
+            sendiri lagi. */}
+        <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <MetricTile icon={CardSim} accent="#DB2777" label="SP" target={fmtInt(a.target_sp)} actual={hasActual ? fmtInt(a.actual_sp) : "-"} />
+          <MetricTile icon={Router} accent="#2563EB" label="FWA" target={fmtInt(a.target_fwa)} actual={hasActual ? fmtInt(a.actual_fwa) : "-"} />
+          <div style={{ gridColumn: "1 / -1" }}>
+            <RebuyTile
+              spTarget={fmtRp(a.target_rebuy_pulsa)} spActual={hasActual ? fmtRp(a.actual_rebuy_pulsa) : "-"}
+              fwaTarget={fmtRp(a.target_rebuy_data)} fwaActual={hasActual ? fmtRp(a.actual_rebuy_data) : "-"}
+            />
+          </div>
+          <div style={{ gridColumn: "1 / -1" }}>
+            <MetricTile icon={Receipt} accent="#7C3AED" label="Cost" target={fmtRp(a.cost_estimate)} actual={hasActual ? fmtRp(a.cost_actual ?? a.cost_estimate) : "-"} />
+          </div>
+        </div>
+        <RevenueCostBanner
+          revenueLabel={a.actual_rev_3m != null ? "Total Revenue Actual" : "Estimasi Total Revenue"}
+          revenueValue={a.actual_rev_3m != null ? fmtRp(a.actual_rev_3m) : (a.target_rev_3m > 0 ? fmtRp(a.target_rev_3m) : "-")}
+          costRatioValue={a.actual_rev_3m != null
+            ? `${((Number(a.cost_actual ?? a.cost_estimate) || 0) / a.actual_rev_3m * 100).toFixed(1)}%`
+            : (a.target_rev_3m > 0 ? `${((Number(a.cost_estimate) || 0) / a.target_rev_3m * 100).toFixed(1)}%` : "-")}
+        />
+
         <button onClick={onClose}
-          style={{ marginTop: 16, width: "100%", height: 42, borderRadius: 11, border: "none", background: "#F0F0F3", color: "#3A3A44", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
+          style={{ marginTop: 14, width: "100%", height: 42, borderRadius: 11, border: "none", background: "#F0F0F3", color: "#3A3A44", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
           Tutup
         </button>
       </div>
@@ -602,57 +649,62 @@ function otherActTimeLabel(a, dateKey) {
   return `${st.replace(":", ".")} - ${et.replace(":", ".")}`;
 }
 
+// Kartu ini SEKARANG SAMA PERSIS bahasa visualnya dgn kartu aktivitas di
+// Beranda/daftar Aktivitas (ActivityRow - m/page.jsx & ActivityCard -
+// activities/page.jsx): putih, badge Brand solid, subtitle MC, pill status
+// (activityStage - sama sumber label dgn di mana pun activity ditampilkan),
+// baris waktu ber-ikon jam, chevron di pojok. Dulu kartu ini pakai tema
+// coklat/amber sendiri (ikut warna alert "Plan Lain Sudah Ada" di
+// sekitarnya) - jadi terlihat spt komponen berbeda drpd kartu activity yg
+// dilihat user di halaman lain, padahal isinya sama (satu activity plan).
+// Sekarang badge Brand + pill status yg membawa aksen warna, kartunya
+// sendiri netral - konsisten dgn "bahasa" activity card di seluruh app.
+const OTHER_ACT_BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
 function OtherActRow({ act: a, dateKey, onOpenDetail }) {
-  const [open, setOpen] = useState(false);
-  const meta = statusMeta(a.status);
+  const stage = activityStage(a);
   const location = a.address || "Lokasi belum diisi";
   const timeLabel = otherActTimeLabel(a, dateKey);
+  const brandKey = (a.brand || "").toLowerCase();
   return (
-    <div style={{ background: "#FFFFFF", border: "1px solid rgba(180,83,9,0.14)", borderRadius: 9, overflow: "hidden" }}>
-      <button onClick={() => setOpen((v) => !v)}
-        style={{
-          display: "flex", alignItems: "center", gap: 7, width: "100%", textAlign: "left", cursor: "pointer",
-          background: "none", border: "none", padding: "6px 6px 6px 9px", fontFamily: FF,
-        }}>
-        <span style={{ fontSize: 11, fontWeight: 700, color: "#8A5A0F", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {a.event_name || "Activity tanpa nama"}
-        </span>
-        <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 999, color: meta.color, background: meta.bg, whiteSpace: "nowrap" }}>
-          {meta.label}
-        </span>
-        <span style={{ flexShrink: 0, width: 20, height: 20, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", color: "#B8860B" }}>
-          {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-        </span>
-      </button>
-
-      {/* Lokasi & JAM di tanggal ini SELALU langsung terlihat (bukan cuma
-          muncul setelah dropdown dibuka) - dua info itu yg paling sering
-          dicari duluan (di mana & jam berapa) sebelum memutuskan mau buka
-          detail lengkapnya atau tidak. Info site ID SENGAJA tidak
-          ditampilkan di sini - kurang berguna dibanding alamat & jam. */}
-      <div style={{ padding: "0 9px 7px 9px", display: "flex", flexDirection: "column", gap: 4 }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 5 }}>
-          <MapPin size={11} color="#B8860B" style={{ flexShrink: 0, marginTop: 1.5, opacity: 0.75 }} />
-          <span style={{ fontSize: 10.5, color: "#8A5A0F", fontWeight: 600, lineHeight: 1.35, opacity: 0.85 }}>{location}</span>
+    <button onClick={() => onOpenDetail(a)}
+      style={{ position: "relative", textAlign: "left", width: "100%", background: "#FFFFFF", border: "1px solid #EDEDF1", borderRadius: 14, padding: "11px 34px 11px 12px", cursor: "pointer", fontFamily: FF, boxShadow: "0 1px 4px rgba(23,24,28,0.04)" }}>
+      <span style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: "#B0B0BA" }}>
+        <ChevronRight size={14} />
+      </span>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {a.event_name || "Activity tanpa nama"}
+          </div>
+          {(a.brand || a.mc) && (
+            <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+              {a.brand && (
+                <span style={{
+                  flexShrink: 0, fontSize: 8.5, fontWeight: 800, padding: "2px 6px", borderRadius: 999, whiteSpace: "nowrap",
+                  background: OTHER_ACT_BRAND_COLOR[brandKey] || "#8A8A96",
+                  color: brandKey === "tri" ? "#FFFFFF" : "#17181C",
+                }}>
+                  {brandKey === "tri" ? "3ID" : "IM3"}
+                </span>
+              )}
+              {a.mc && <span style={{ fontSize: 10.5, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{a.mc}</span>}
+            </div>
+          )}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-          <Clock size={11} color="#B8860B" style={{ flexShrink: 0, opacity: 0.75 }} />
-          <span style={{ fontSize: 10.5, color: "#8A5A0F", fontWeight: 700, opacity: 0.85 }}>{timeLabel}</span>
-        </div>
+        <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, padding: "3px 8px", borderRadius: 999, color: stage.color, background: stage.bg, whiteSpace: "nowrap" }}>
+          {stage.label}
+        </span>
       </div>
 
-      {open && (
-        <div style={{ padding: "0 9px 9px", borderTop: "1px dashed rgba(180,83,9,0.2)", marginTop: -1 }}>
-          <div style={{ paddingTop: 8, fontSize: 10.5, color: "#8A5A0F", fontWeight: 600, lineHeight: 1.5 }}>
-            {a.mc || "MC belum diisi"} · Target {fmtInt(a.target_sp)}/{fmtInt(a.target_fwa)} SP/FWA
-          </div>
-          <button onClick={() => onOpenDetail(a)}
-            style={{ marginTop: 8, width: "100%", height: 32, borderRadius: 8, border: "1px solid rgba(180,83,9,0.25)", background: "rgba(180,83,9,0.08)", color: "#8A5A0F", fontSize: 11, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>
-            Lihat Detail Lengkap
-          </button>
-        </div>
-      )}
-    </div>
+      <div style={{ marginTop: 6, display: "flex", alignItems: "flex-start", gap: 5 }}>
+        <MapPin size={11} color="#B0B0BA" style={{ flexShrink: 0, marginTop: 1.5 }} />
+        <span style={{ fontSize: 10.5, color: "#5A5A68", fontWeight: 600, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{location}</span>
+      </div>
+      <div style={{ marginTop: 3, display: "flex", alignItems: "center", gap: 5 }}>
+        <Clock size={11} color="#B0B0BA" style={{ flexShrink: 0 }} />
+        <span style={{ fontSize: 10.5, color: "#5A5A68", fontWeight: 700 }}>{timeLabel}</span>
+      </div>
+    </button>
   );
 }
 
@@ -697,28 +749,34 @@ function DateTimeRow({ label, dateKey, time, otherActs, onOpenDetail, editingFie
 
       {!time.isAllDay && (
         <div style={{ padding: "0 13px 12px", ...(otherActs && otherActs.length > 0 ? { borderTop: "1px solid #F0F0F3", paddingTop: 12 } : {}) }}>
+          {/* Tampilan flat sederhana (tanpa kartu bertinta
+              merah muda) sesuai masukan - cukup label kecil + ikon jam
+              polos, pil abu-abu datar spt sebelumnya, TAPI sekarang tiap
+              pil dikasih ikon kecil (matahari terbit utk Mulai, terbenam
+              utk Berakhir) supaya tetap ada penanda visual tanpa perlu
+              bungkus kartu berwarna. */}
           <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 8 }}>
-            <Clock size={11.5} color="#B0B0BA" />
+            <Clock size={12} color="#B0B0BA" />
             <span style={{ fontSize: 9.5, fontWeight: 800, color: "#B0B0BA", textTransform: "uppercase", letterSpacing: 0.3 }}>Jam Kegiatan</span>
           </div>
           <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
-            <button onClick={() => onOpenField("start")} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
-              <div style={{ fontSize: 9.5, fontWeight: 800, color: "#B0B0BA", textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 4 }}>Mulai</div>
-              <TimePill text={time.startTime.replace(":", ".")} active={editingField === "start"} />
+            <button onClick={() => onOpenField("start")} style={{ flex: 1, minWidth: 0, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
+              <div style={{ fontSize: 9.5, fontWeight: 800, color: "#B0B0BA", textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 5 }}>Mulai</div>
+              <TimePill icon={Sunrise} text={time.startTime.replace(":", ".")} active={editingField === "start"} />
             </button>
-            {/* Simbol penghubung - disejajarkan ke tengah tinggi pil jam
-                (bukan tengah seluruh kolom termasuk label) lewat
-                alignItems:"flex-end" di baris + marginBottom setengah tinggi
-                pil, supaya selalu pas walau ukuran font berubah. */}
-            <div style={{ width: 10, height: 1.5, borderRadius: 1, background: "#D8D9E0", marginBottom: 13, flexShrink: 0 }} />
-            <button onClick={() => onOpenField("end")} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
-              <div style={{ fontSize: 9.5, fontWeight: 800, color: "#B0B0BA", textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 4 }}>Berakhir</div>
-              <TimePill text={time.endTime.replace(":", ".")} active={editingField === "end"} danger={invalid} />
+            <div style={{ width: 10, height: 1.5, borderRadius: 1, background: "#D8D9E0", marginBottom: 17, flexShrink: 0 }} />
+            <button onClick={() => onOpenField("end")} style={{ flex: 1, minWidth: 0, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
+              <div style={{ fontSize: 9.5, fontWeight: 800, color: "#B0B0BA", textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 5 }}>Berakhir</div>
+              <TimePill icon={Sunset} text={time.endTime.replace(":", ".")} active={editingField === "end"} danger={invalid} />
             </button>
           </div>
-          {editingField === "start" && <WheelPicker value={time.startTime} onChange={onChangeStart} />}
-          {editingField === "end" && <WheelPicker value={time.endTime} onChange={onChangeEnd} />}
-          {invalid && <div style={{ marginTop: 6, fontSize: 10, color: "#DC2626", fontWeight: 700 }}>Jam mulai harus lebih awal dari jam selesai</div>}
+          {editingField === "start" && <WheelPicker label="Mulai" onDone={() => onOpenField("start")} value={time.startTime} onChange={onChangeStart} />}
+          {editingField === "end" && <WheelPicker label="Berakhir" onDone={() => onOpenField("end")} value={time.endTime} onChange={onChangeEnd} />}
+          {invalid && (
+            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, color: "#DC2626", fontWeight: 700 }}>
+              <AlertTriangle size={11} /> Jam mulai harus lebih awal dari jam selesai
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -734,14 +792,16 @@ function ToggleSwitch({ checked, onChange }) {
   );
 }
 
-function TimePill({ text, active, danger }) {
+function TimePill({ icon: Icon, text, active, danger }) {
   return (
     <span style={{
-      display: "inline-block", fontSize: 13, fontWeight: 800, fontVariantNumeric: "tabular-nums",
+      display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 5,
+      fontSize: 13, fontWeight: 800, fontVariantNumeric: "tabular-nums",
       color: danger ? "#DC2626" : active ? "#fff" : "#17181C",
       background: danger ? "rgba(220,38,38,0.10)" : active ? BRAND : "#EDEEF1",
-      borderRadius: 999, padding: "6px 13px",
+      borderRadius: 999, padding: "6px 13px", transition: "background .15s",
     }}>
+      {Icon && <Icon size={12} color={danger ? "#DC2626" : active ? "#fff" : "#8A8A96"} style={{ flexShrink: 0 }} />}
       {text}
     </span>
   );
@@ -793,7 +853,19 @@ function WheelColumn({ values, selected, onChange }) {
 
   return (
     <div ref={ref} onScroll={handleScroll} className="mh-wheel-col"
-      style={{ height: WHEEL_ITEM_H * (WHEEL_PAD * 2 + 1), width: 58, overflowY: "scroll", scrollSnapType: "y mandatory", WebkitOverflowScrolling: "touch", scrollbarWidth: "none" }}>
+      style={{
+        height: WHEEL_ITEM_H * (WHEEL_PAD * 2 + 1), width: 64, overflowY: "scroll", scrollSnapType: "y mandatory", WebkitOverflowScrolling: "touch", scrollbarWidth: "none",
+        // Fade tipis di tepi atas/bawah (spt UIDatePicker iOS asli) - dulu
+        // baris paling atas/bawah kepotong tegas & terlihat "nabrak" tepi
+        // kartu, sekarang memudar halus jadi kesan roda yang menerus.
+        WebkitMaskImage: "linear-gradient(180deg, transparent 0%, #000 28%, #000 72%, transparent 100%)",
+        maskImage: "linear-gradient(180deg, transparent 0%, #000 28%, #000 72%, transparent 100%)",
+        // user-select:none + tap-highlight transparan - TANPA ini, tap/drag
+        // cepat di kolom angka bisa memicu highlight seleksi teks bawaan
+        // browser (kotak biru transparan menempel di satu digit, terlihat
+        // spt glitch visual) krn tiap baris cuma <div> teks biasa.
+        userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none", WebkitTapHighlightColor: "transparent",
+      }}>
       <style>{`.mh-wheel-col::-webkit-scrollbar{display:none;width:0;height:0}`}</style>
       <div style={{ height: WHEEL_ITEM_H * WHEEL_PAD }} />
       {values.map((v, i) => {
@@ -802,8 +874,8 @@ function WheelColumn({ values, selected, onChange }) {
           <div key={v} onClick={() => snapTo(i)}
             style={{
               height: WHEEL_ITEM_H, scrollSnapAlign: "center", display: "flex", alignItems: "center", justifyContent: "center",
-              fontSize: isSel ? 18 : 14.5, fontWeight: isSel ? 800 : 500, color: isSel ? "#17181C" : "#B0B0BA",
-              fontVariantNumeric: "tabular-nums", cursor: "pointer", transition: "color .1s, font-size .1s",
+              fontSize: isSel ? 19 : 14.5, fontWeight: isSel ? 800 : 500, color: isSel ? "#17181C" : "#C4C4CE",
+              fontVariantNumeric: "tabular-nums", cursor: "pointer", transition: "color .12s, font-size .12s",
             }}>
             {v}
           </div>
@@ -817,18 +889,36 @@ function WheelColumn({ values, selected, onChange }) {
 const WHEEL_HOURS = Array.from({ length: 24 }, (_, i) => pad2(i));
 const WHEEL_MINUTES = Array.from({ length: 60 }, (_, i) => pad2(i));
 
-/** Roda pemutar jam:menit, padanan visual UIDatePicker iOS - bar abu-abu di
- * tengah menandai baris yg aktif dipilih, kedua kolom scroll independen. */
-function WheelPicker({ value, onChange }) {
+/** Roda pemutar jam:menit, padanan visual UIDatePicker iOS - bar putih
+ * dgn border+bayangan tipis di tengah menandai baris yg aktif dipilih,
+ * kedua kolom scroll independen. Dibungkus kartu putih terpisah (bukan
+ * nempel langsung di background merah muda kartu induk) + label "Jam" /
+ * "Menit" di atas tiap kolom & tombol "Selesai" - sebelumnya wheel ini
+ * nongol tanpa konteks jelas kolom mana jam/menit & tidak ada cara
+ * eksplisit menutupnya selain tap ulang pil yg sama. */
+function WheelPicker({ label, onDone, value, onChange }) {
   const [h, m] = value.split(":");
   const centerTop = WHEEL_ITEM_H * WHEEL_PAD;
   return (
-    <div style={{ position: "relative", marginTop: 10, padding: "4px 0 2px" }}>
-      <div style={{ position: "absolute", top: 4 + centerTop, left: 6, right: 6, height: WHEEL_ITEM_H, borderRadius: 9, background: "#EDEEF1", zIndex: 0, pointerEvents: "none" }} />
-      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 2, position: "relative", zIndex: 1 }}>
-        <WheelColumn values={WHEEL_HOURS} selected={h} onChange={(nh) => onChange(`${nh}:${m}`)} />
-        <span style={{ fontSize: 16, fontWeight: 800, color: "#17181C", padding: "0 2px" }}>.</span>
-        <WheelColumn values={WHEEL_MINUTES} selected={m} onChange={(nm) => onChange(`${h}:${nm}`)} />
+    <div style={{ marginTop: 10, borderRadius: 12, background: "#FFFFFF", border: "1px solid rgba(237,28,36,0.14)", boxShadow: "0 2px 10px rgba(23,24,28,0.05)", padding: "10px 10px 8px", position: "relative" }}>
+      {/* Tombol checklist bulat (bukan teks "Selesai") - padanan tombol
+          centang oranye di Edit Alarm iOS, cara paling ringkas & langsung
+          dikenali utk "konfirmasi & tutup" tanpa perlu kata apa pun. */}
+      <button onClick={onDone} aria-label={`Selesai atur jam ${label}`}
+        style={{ position: "absolute", top: 8, right: 8, zIndex: 2, width: 26, height: 26, borderRadius: "50%", border: "none", background: BRAND, boxShadow: "0 2px 6px rgba(237,28,36,0.35)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+        <Check size={13} color="#fff" strokeWidth={3} />
+      </button>
+      <div style={{ position: "relative", padding: "2px 0" }}>
+        <div style={{ position: "absolute", top: 2 + centerTop, left: 4, right: 4, height: WHEEL_ITEM_H, borderRadius: 10, background: "#F6F7F9", border: "1px solid #ECEDF0", zIndex: 0, pointerEvents: "none" }} />
+        <div style={{ display: "flex", justifyContent: "center", alignItems: "center", position: "relative", zIndex: 1 }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+            <WheelColumn values={WHEEL_HOURS} selected={h} onChange={(nh) => onChange(`${nh}:${m}`)} />
+          </div>
+          <span style={{ fontSize: 17, fontWeight: 800, color: "#17181C", padding: "0 3px", position: "relative", top: -1 }}>.</span>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+            <WheelColumn values={WHEEL_MINUTES} selected={m} onChange={(nm) => onChange(`${h}:${nm}`)} />
+          </div>
+        </div>
       </div>
     </div>
   );

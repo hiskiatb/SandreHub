@@ -480,7 +480,7 @@ function ActivityCard({ r, userId, branchLabel, onOpen }) {
           invalid HTML (juga bikin klik toggle ikut ke-trigger sbg onOpen).
           role="button"+tabIndex spy tetap fokus/aksesibel via keyboard. */}
       <div role="button" tabIndex={0} onClick={onOpen} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}
-        style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", padding: "15px 16px 4px", cursor: "pointer", fontFamily: FF }}>
+        style={{ display: "block", width: "100%", textAlign: "left", background: "none", border: "none", padding: `15px 16px ${isDraft ? 15 : 4}px`, cursor: "pointer", fontFamily: FF }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
           <div style={{ minWidth: 0, flex: 1 }}>
             {/* Badge brand di kiri judul DIHAPUS - brand-nya sekarang jadi
@@ -525,10 +525,21 @@ function ActivityCard({ r, userId, branchLabel, onOpen }) {
             (status sudah cukup satu pill di kanan-atas, tidak perlu baris
             status kedua di sini lagi). */}
         {!isDraft && (
-          <div style={{ marginTop: 9, display: "flex", justifyContent: "flex-end" }}>
+          <div style={{ marginTop: 3, display: "flex", justifyContent: "flex-end" }}>
+            {/* Tap target diperbesar (dulu cuma padding "3px 0" - tingginya
+                cuma ±19px, jauh di bawah target minimal 44px, jadi jempol
+                sering "meleset" ke area kartu di sekitarnya & malah
+                membuka Detail Aktivitas alih-alih toggle ini). Sekarang
+                dikasih padding penuh + latar pill tipis supaya area
+                sentuh JELAS batasnya scr visual, bukan cuma teks polos yg
+                menyatu dgn kartu. onPointerDown JUGA di-stop (bukan cuma
+                onClick) - beberapa browser mobile bisa memicu handler
+                induk dari fase pointerdown/touchstart sebelum event click
+                nyampai, jadi stopPropagation cuma di onClick kadang telat. */}
             <button
+              onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => { e.stopPropagation(); e.preventDefault(); setExpanded((v) => !v); }}
-              style={{ flexShrink: 0, padding: "3px 0", border: "none", background: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: "#8A8A96", fontFamily: FF }}>
+              style={{ flexShrink: 0, minHeight: 34, padding: "8px 10px", borderRadius: 9, border: "none", background: "#F6F7F9", cursor: "pointer", display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 700, color: "#5A5A68", fontFamily: FF }}>
               {expanded ? "Sembunyikan" : "Lihat Plan vs Actual"}
               <ChevronDown size={13} style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
             </button>

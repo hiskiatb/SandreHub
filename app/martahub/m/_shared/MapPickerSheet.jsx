@@ -11,6 +11,8 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Crosshair, Search, Check, Loader2, MapPin, Pencil, AlertTriangle, ChevronDown } from "lucide-react";
 import { FF, BRAND } from "./MobileShell";
+import supabaseMarta from "../../../../lib/supabaseMarta";
+import { locationiqTileUrl, LOCATIONIQ_TILE_SUBDOMAINS, LOCATIONIQ_TILE_ATTRIBUTION, LOCATIONIQ_TILE_MAX_ZOOM } from "../../../../lib/locationiqTiles";
 
 const LEAFLET_CSS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
 const LEAFLET_JS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
@@ -48,10 +50,13 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
   const [address, setAddress] = useState(null);
   const [geocoding, setGeocoding] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [locErr, setLocErr] = useState("");
   const [searchQ, setSearchQ] = useState("");
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState([]);
+  const [searchErr, setSearchErr] = useState("");
   const debounceRef = useRef(null);
+  const searchDebounceRef = useRef(null);
   // `alive` dicek di SETIAP callback async (fetch/geolocation) sebelum
   // setState - sheet ini bisa ditutup (unmount) sementara request masih
   // di tengah jalan (fetch Nominatim/geolocation lambat), dan tanpa guard
@@ -78,8 +83,8 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
     loadLeaflet().then((L) => {
       if (!alive || !mapDivRef.current || mapRef.current) return;
       const map = L.map(mapDivRef.current, { zoomControl: false }).setView([center.lat, center.lng], 16);
-      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: "&copy; OpenStreetMap contributors", maxZoom: 19,
+      L.tileLayer(locationiqTileUrl("streets"), {
+        attribution: LOCATIONIQ_TILE_ATTRIBUTION, maxZoom: LOCATIONIQ_TILE_MAX_ZOOM, subdomains: LOCATIONIQ_TILE_SUBDOMAINS,
       }).addTo(map);
       L.control.zoom({ position: "bottomright" }).addTo(map);
       map.on("move", () => {
@@ -107,22 +112,16 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [center.lat, center.lng, ready]);
 
-  // Sebelumnya nyoba SAMPAI 4 level zoom SATU-SATU berurutan (await
-  // bertahap) kalau level pertama kosong - itu yg bikin lama krn kadang
-  // beneran nyampe 3-4 round-trip ke Nominatim sebelum dapat hasil/nyerah.
-  // Sekarang cukup SATU request (zoom=17, "jalan"-level - lebih longgar
-  // drpd 18/"bangunan persis" yg sering kosong di titik jalan kosong tanpa
-  // nomor bangunan, spt kasus di screenshot), dan kalau `display_name`
-  // kosong tapi field `address`-nya sendiri ADA isinya, langsung susun
-  // fallback dari situ (road/suburb/kota) TANPA request kedua. Request
-  // kedua HANYA dipanggil kalau yg pertama BENAR2 kosong sama sekali.
+  // Lewat edge function locationiq (action:"reverse") - beda dgn Nominatim,
+  // LocationIQ tidak butuh parameter "zoom" bertingkat, jadi cukup SATU
+  // request per titik (edge function-nya sendiri sudah punya cache 2 menit
+  // di sisi server utk titik yg sama, jadi geser2 kecil di area yg sama
+  // tidak boros kuota).
   async function reverseGeocode(lat, lng) {
     const reqId = ++geoReqId.current;
     setGeocoding(true);
     try {
-      let found = await fetchGeocode(lat, lng, 17);
-      if (!aliveRef.current || reqId !== geoReqId.current) return;
-      if (!found) found = await fetchGeocode(lat, lng, 12); // fallback tunggal ke level kota - jarang kepakai
+      const found = await fetchGeocode(lat, lng);
       if (!aliveRef.current || reqId !== geoReqId.current) return;
       setAddress(found);
     } catch {
@@ -133,48 +132,138 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
     }
   }
 
-  async function fetchGeocode(lat, lng, zoom) {
-    const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=${zoom}&addressdetails=1`, {
-      headers: { "Accept-Language": "id" },
-    });
-    const data = await res.json();
-    const a = data?.address;
-    const fallback = a && [a.road, a.suburb || a.village, a.city_district, a.city || a.town || a.county].filter(Boolean).join(", ");
-    return data?.display_name || fallback || null;
+  async function fetchGeocode(lat, lng) {
+    // Lewat edge function `locationiq` (proxy ke LocationIQ, token disimpan
+    // aman di server via Supabase secret) - BUKAN fetch langsung ke Nominatim
+    // dari browser. Panggil langsung dari client sering diblokir/rate-limit
+    // di jaringan mobile/webview (itu penyebab "Mencari alamat…" nyangkut &
+    // suggestion tidak pernah muncul). Timeout eksplisit tetap dipasang spy
+    // state loading tidak macet kalau edge function/upstream lelet.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const { data, error } = await supabaseMarta.functions.invoke("locationiq", {
+        body: { action: "reverse", lat, lon: lng },
+        signal: controller.signal,
+      });
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error("[locationiq reverse] error:", error, error?.context?.status);
+        return null;
+      }
+      return data?.result?.display || null;
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("[locationiq reverse] exception:", e);
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   function useMyLocation() {
-    if (!navigator.geolocation) return;
+    setLocErr("");
+    // Sebelumnya kalau `navigator.geolocation` tidak ada (mis. dibuka lewat
+    // koneksi non-HTTPS/context tidak aman, browser lawas, atau webview yg
+    // mematikan API ini) fungsi ini `return` diam2 TANPA pesan apa pun -
+    // tombol kelihatan "tidak ngapa-ngapain" sama sekali, DSF tidak tahu
+    // apa yg salah. Sekarang selalu ada feedback jelas.
+    if (!navigator.geolocation) {
+      setLocErr("Perangkat/browser ini tidak mendukung deteksi lokasi. Gunakan Input Koordinat Manual di bawah.");
+      return;
+    }
     setLocating(true);
+    // Safety timer TERPISAH dari timeout milik geolocation API sendiri -
+    // beberapa WebView (mis. in-app browser) diketahui TIDAK PERNAH
+    // memanggil callback sukses MAUPUN error saat izin lokasi diblokir di
+    // level OS/aplikasi, jadi tombol "Lokasi Saya" nyangkut loading
+    // selamanya kalau cuma mengandalkan opsi `timeout` bawaan (yg juga
+    // TIDAK dijamin dihormati semua browser). Timer ini menjamin state
+    // loading SELALU berakhir & DSF selalu dapat pesan yg jelas.
+    const safetyTimer = setTimeout(() => {
+      if (!aliveRef.current) return;
+      setLocating(false);
+      setLocErr("Tidak bisa mendapatkan lokasi (waktu habis). Pastikan izin Lokasi aktif utk browser ini, atau isi Input Koordinat Manual.");
+    }, 13000);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        clearTimeout(safetyTimer);
         if (!aliveRef.current) return;
         const { latitude, longitude } = pos.coords;
         mapRef.current?.setView([latitude, longitude], 17);
         setCenter({ lat: latitude, lng: longitude });
         setLocating(false);
       },
-      () => { if (aliveRef.current) setLocating(false); },
-      { enableHighAccuracy: true, timeout: 12000 }
+      (err) => {
+        clearTimeout(safetyTimer);
+        if (!aliveRef.current) return;
+        setLocating(false);
+        // Pesan dibedakan per kode error (PERMISSION_DENIED=1,
+        // POSITION_UNAVAILABLE=2, TIMEOUT=3) - "izin diblokir" & "sinyal
+        // GPS lemah" butuh tindakan yg beda dari DSF, jangan digeneralisir
+        // jadi satu pesan generik yg tidak actionable.
+        if (err.code === 1) setLocErr("Izin akses Lokasi ditolak. Aktifkan izin Lokasi utk browser ini di pengaturan perangkat, atau isi Input Koordinat Manual.");
+        else if (err.code === 2) setLocErr("Lokasi tidak terdeteksi (sinyal GPS lemah). Coba lagi di area terbuka, atau isi Input Koordinat Manual.");
+        else setLocErr("Waktu mencari lokasi habis. Coba lagi, atau isi Input Koordinat Manual.");
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
     );
   }
+
+  // Sebelumnya search HANYA jalan lewat keydown "Enter" - di banyak mobile
+  // browser/webview, tombol "Search"/"Go" di keyboard virtual tidak selalu
+  // mengirim event keydown dgn key==="Enter" (apalagi saat kondisi
+  // autocomplete/composition aktif), jadi user ngetik tapi suggestion tidak
+  // pernah muncul sama sekali. Fix: auto-search di-debounce 450ms tiap kali
+  // user berhenti ngetik (min 3 karakter), Enter tetap didukung utk trigger
+  // instan.
+  useEffect(() => {
+    const q = searchQ.trim();
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    if (q.length < 3) { setSearchResults([]); return; }
+    searchDebounceRef.current = setTimeout(() => runSearch(), 450);
+    return () => clearTimeout(searchDebounceRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQ]);
 
   async function runSearch() {
     const q = searchQ.trim();
     if (!q) return;
     const reqId = ++searchReqId.current;
-    setSearching(true); setSearchResults([]);
+    setSearching(true); setSearchResults([]); setSearchErr("");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000); // sama alasannya dgn fetchGeocode - jangan sampai "Mencari…" macet tanpa batas
     try {
-      const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&q=${encodeURIComponent(q)}&countrycodes=id&limit=6`, {
-        headers: { "Accept-Language": "id" },
+      const { data, error } = await supabaseMarta.functions.invoke("locationiq", {
+        body: { action: "autocomplete", q },
+        signal: controller.signal,
       });
-      const data = await res.json();
       if (!aliveRef.current || reqId !== searchReqId.current) return;
-      setSearchResults(data || []);
-    } catch {
+      if (error) {
+        // Ditampilkan biar keliatan alasan gagalnya PERSIS apa (bukan cuma
+        // "hasil kosong") - mis. token belum aktif, kena rate-limit, dsb -
+        // supaya gampang di-diagnosa tanpa perlu buka DevTools.
+        // eslint-disable-next-line no-console
+        console.error("[locationiq autocomplete] error:", error);
+        const ctxStatus = error?.context?.status;
+        setSearchErr(
+          ctxStatus === 401 || ctxStatus === 403 ? "Token LocationIQ belum aktif/salah. Cek secret LOCATIONIQ_TOKEN."
+          : ctxStatus === 429 ? "Kuota LocationIQ hari ini habis. Coba lagi besok atau upgrade plan."
+          : ctxStatus === 500 ? "Server pencarian bermasalah (LOCATIONIQ_TOKEN belum diset?)."
+          : "Gagal memuat saran pencarian. Coba lagi."
+        );
+        setSearchResults([]);
+        return;
+      }
+      setSearchResults(data?.results || []);
+    } catch (e) {
       if (!aliveRef.current || reqId !== searchReqId.current) return;
+      // eslint-disable-next-line no-console
+      console.error("[locationiq autocomplete] exception:", e);
+      setSearchErr(e?.name === "AbortError" ? "Pencarian terlalu lama, coba lagi." : "Gagal memuat saran pencarian. Coba lagi.");
       setSearchResults([]);
     } finally {
+      clearTimeout(timer);
       if (aliveRef.current && reqId === searchReqId.current) setSearching(false);
     }
   }
@@ -183,9 +272,10 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
     const lat = Number(r.lat), lng = Number(r.lon);
     mapRef.current?.setView([lat, lng], 17);
     setCenter({ lat, lng });
-    setAddress(r.display_name || null);
+    setAddress(r.display || null);
     setSearchResults([]);
     setSearchQ("");
+    setSearchErr("");
   }
 
   function applyManualCoords() {
@@ -229,9 +319,15 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
                 {searchResults.map((r, i) => (
                   <button key={i} onClick={() => pickResult(r)}
                     style={{ width: "100%", textAlign: "left", padding: "10px 12px", background: "none", border: "none", borderBottom: i < searchResults.length - 1 ? "1px solid #F0F0F3" : "none", cursor: "pointer", fontSize: 11.5, color: "#3A3A44", lineHeight: 1.4 }}>
-                    {r.display_name}
+                    {r.display}
                   </button>
                 ))}
+              </div>
+            )}
+            {!searching && searchErr && searchQ.trim().length >= 3 && (
+              <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 12, boxShadow: "0 8px 24px rgba(23,24,28,0.12)", padding: "9px 12px", display: "flex", alignItems: "flex-start", gap: 7 }}>
+                <AlertTriangle size={13} color="#DC2626" style={{ flexShrink: 0, marginTop: 1 }} />
+                <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.5, color: "#B91C1C" }}>{searchErr}</div>
               </div>
             )}
           </div>
@@ -316,6 +412,13 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
             </div>
           </div>
         </div>
+
+        {locErr && (
+          <div style={{ marginTop: 8, display: "flex", alignItems: "flex-start", gap: 7, padding: "9px 10px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA" }}>
+            <AlertTriangle size={13} color="#DC2626" style={{ flexShrink: 0, marginTop: 1 }} />
+            <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.5, color: "#B91C1C" }}>{locErr}</div>
+          </div>
+        )}
 
         <button onClick={() => { setManualOpen((v) => !v); setManualErr(""); }}
           style={{

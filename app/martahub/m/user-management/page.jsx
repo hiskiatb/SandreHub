@@ -888,9 +888,9 @@ function TeamView({ scope, email }) {
   const load = useCallback(async () => {
     setErr("");
     try {
-      const { data: profile, error: pErr } = await supabaseMarta.from("mh_profiles").select("assignment_id").eq("email", email.toLowerCase()).maybeSingle();
+      const { data: profile, error: pErr } = await supabaseMarta.from("mh_profiles").select("id").eq("email", email.toLowerCase()).maybeSingle();
       if (pErr) throw pErr;
-      const myAssignmentId = profile?.assignment_id;
+      const myAssignmentId = profile?.id;
       const { data, error } = await supabaseMarta.rpc("mh_list_assignments", { p_period: null });
       if (error) throw error;
       setRows((data || []).filter((r) => myAssignmentId && r.supervisor_assignment_id === myAssignmentId));

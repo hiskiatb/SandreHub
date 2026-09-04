@@ -26,7 +26,7 @@ const STATUS = {
 // plan_date vs hari ini (murni tampilan, TIDAK mengubah kolom status di DB):
 //   - belum sampai plan_date  -> "Menunggu Hari-H"
 //   - hari ini persis plan_date -> "Hari-H / Berlangsung"
-//   - sudah lewat plan_date tapi laporan aktual belum disubmit -> "Terlambat Lapor"
+//   - sudah lewat plan_date tapi laporan aktual belum disubmit -> "Menunggu Laporan"
 // Begitu laporan aktual disubmit, status DB pindah ke 'submitted' dst, jadi
 // fungsi ini otomatis tidak lagi dipakai utk activity itu.
 function deriveStatusInfo(r) {
@@ -38,7 +38,7 @@ function deriveStatusInfo(r) {
       const diffDays = Math.round((today - planDate) / 86400000);
       if (diffDays < 0) return ["Menunggu Hari-H", T.blue, T.blueBg];
       if (diffDays === 0) return ["Hari-H / Berlangsung", T.warning, T.warningBg];
-      return ["Terlambat Lapor", T.error, T.errorBg];
+      return ["Menunggu Laporan", T.error, T.errorBg];
     }
   }
   return STATUS[r?.status] || [r?.status, T.mid, "#eef1f6"];

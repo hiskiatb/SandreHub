@@ -7,7 +7,7 @@
  * `mh_activity_checkin` yang SAMA PERSIS dipakai Flutter (satu sumber
  * kebenaran validasi di server).
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { ArrowLeft, CheckCircle2, XCircle, Loader2, LocateFixed, RefreshCw } from "lucide-react";
 import supabaseMarta from "../../../../../../lib/supabaseMarta";
@@ -70,8 +70,8 @@ export default function CheckinPage() {
   };
   useEffect(() => { if (!loadingDetail) locate(); }, [loadingDetail]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (loading || loadingDetail) return <MobileShell active="activities"><ShellSpinner /></MobileShell>;
-  if (err && !activity) return <MobileShell active="activities"><div style={{ padding: 40, textAlign: "center", color: "#C62828", fontSize: 13 }}>{err}</div></MobileShell>;
+  if (loading || loadingDetail) return <MobileShell active="activities" hideNav><ShellSpinner /></MobileShell>;
+  if (err && !activity) return <MobileShell active="activities" hideNav><div style={{ padding: 40, textAlign: "center", color: "#C62828", fontSize: 13 }}>{err}</div></MobileShell>;
 
   // Guard sisi klien - halaman ini bisa dibuka langsung lewat URL, jadi
   // sembunyikan Check In dari daftar/detail saja TIDAK CUKUP.
@@ -86,7 +86,7 @@ export default function CheckinPage() {
   const BLOCKED_STATUSES = new Set(["draft", "revision_needed"]);
   if (activity && BLOCKED_STATUSES.has(activity.status)) {
     return (
-      <MobileShell active="activities">
+      <MobileShell active="activities" hideNav>
         <div style={{ padding: "60px 20px", textAlign: "center" }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: "#17181C" }}>Belum bisa Check In</div>
           <div style={{ marginTop: 6, fontSize: 12.5, color: "#8A8A96", lineHeight: 1.5 }}>
@@ -105,6 +105,25 @@ export default function CheckinPage() {
   const planLng = activity?.longitude != null ? Number(activity.longitude) : null;
   const dist = pos && planLat != null && planLng != null ? haversineMeters(pos.latitude, pos.longitude, planLat, planLng) : null;
   const valid = pos != null && (planLat == null || (dist ?? 0) <= radius);
+
+  // Tinggi bar aksi bawah (tombol Check In) DIUKUR LANGSUNG - pola sama dgn
+  // halaman detail/laporan actual. Sebelumnya "position:sticky, bottom:66"
+  // (angka tebakan asumsi navbar msh ada di bawahnya) - halaman ini SEKARANG
+  // hideNav (fokus penuh ke Check In, konsisten dgn Laporan Actual), jadi
+  // bar-nya fixed nempel ke tepi bawah layar sungguhan & konten dikasih
+  // padding bawah persis setinggi bar itu, bukan lagi tebakan tetap.
+  const actionBarRef = useRef(null);
+  const [actionBarH, setActionBarH] = useState(90);
+  useEffect(() => {
+    const el = actionBarRef.current;
+    if (!el) { setActionBarH(0); return; }
+    const ro = new ResizeObserver((entries) => {
+      const h = entries[0]?.contentRect?.height;
+      if (h != null) setActionBarH(Math.ceil(h));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
 
   async function doCheckin() {
     if (!pos) return;
@@ -127,7 +146,7 @@ export default function CheckinPage() {
   }
 
   return (
-    <MobileShell active="activities">
+    <MobileShell active="activities" hideNav>
       <div style={{ padding: "calc(env(safe-area-inset-top,0px) + 16px) 20px 0" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <button onClick={() => router.back()} style={{ width: 34, height: 34, borderRadius: 10, background: "#FFFFFF", border: "1px solid #E4E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
@@ -144,7 +163,7 @@ export default function CheckinPage() {
         </div>
       </div>
 
-      <div style={{ padding: "16px 20px 24px" }}>
+      <div style={{ padding: `16px 20px calc(env(safe-area-inset-bottom,0px) + ${actionBarH + 16}px)` }}>
         {err && <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 12, fontWeight: 600 }}>{err}</div>}
 
         {/* Radar illustration */}
@@ -196,17 +215,23 @@ export default function CheckinPage() {
         </div>
       </div>
 
-      <div style={{ position: "sticky", bottom: 66, background: "linear-gradient(180deg,rgba(244,245,247,0) 0%,#F4F5F7 30%)", padding: "16px 20px 0" }}>
-        <button onClick={doCheckin} disabled={!pos || saving}
-          style={{
-            width: "100%", height: 52, borderRadius: 14, border: "none", cursor: !pos || saving ? "default" : "pointer",
-            background: !pos ? "#D8D9E0" : BRAND, color: "#fff", fontSize: 14.5, fontWeight: 800, fontFamily: FF,
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 9,
-            boxShadow: !pos ? "none" : "0 4px 14px rgba(17,17,20,0.11)",
-          }}>
-          {saving ? <Loader2 size={17} style={{ animation: "mspin .85s linear infinite" }} /> : <CheckCircle2 size={18} />}
-          {saving ? "Menyimpan…" : "Check In Sekarang"}
-        </button>
+      <div ref={actionBarRef} style={{
+        position: "fixed", left: 0, right: 0, bottom: "env(safe-area-inset-bottom,0px)", zIndex: 45,
+        background: "rgba(244,245,247,0.92)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
+        borderTop: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 -4px 16px rgba(23,24,28,0.05)",
+      }}>
+        <div style={{ maxWidth: 480, margin: "0 auto", padding: "12px 20px 14px" }}>
+          <button onClick={doCheckin} disabled={!pos || saving}
+            style={{
+              width: "100%", height: 52, borderRadius: 14, border: "none", cursor: !pos || saving ? "default" : "pointer",
+              background: !pos ? "#D8D9E0" : BRAND, color: "#fff", fontSize: 14.5, fontWeight: 800, fontFamily: FF,
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 9,
+              boxShadow: !pos ? "none" : "0 4px 14px rgba(17,17,20,0.11)",
+            }}>
+            {saving ? <Loader2 size={17} style={{ animation: "mspin .85s linear infinite" }} /> : <CheckCircle2 size={18} />}
+            {saving ? "Menyimpan…" : "Check In Sekarang"}
+          </button>
+        </div>
       </div>
     </MobileShell>
   );
