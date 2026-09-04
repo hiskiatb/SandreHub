@@ -320,13 +320,52 @@ function CreatePlanWizardInner() {
    * lain, bulk mode TIDAK membuka TagConflictSheet per nomor (tidak
    * praktis utk banyak nomor sekaligus) - nomor itu cuma dilewati & ikut
    * dihitung di ringkasan hasil (lihat pesan akhir). */
+  /** Pisah SATU baris yg ternyata isinya banyak MSISDN DIGABUNG TANPA
+   * pemisah sama sekali (mis. "6289562013755628956201286366289562..."
+   * hasil copy-paste yg kehilangan newline/koma-nya). Sengaja TIDAK
+   * memakai "62" polos sbg penanda batas nomor - "62" gampang muncul lagi
+   * di TENGAH sebuah nomor (mis. ...6220... di digit ke-6/7) jadi kalau
+   * dipakai sbg trigger, satu nomor asli malah bisa kepotong jadi dua.
+   * Yang dipakai adalah "628" (awalan wajib SEMUA nomor HP Indonesia
+   * setelah kode negara - tidak ada nomor HP yg awalannya selain 628xx),
+   * jauh lebih spesifik & jarang muncul kebetulan di tengah nomor lain.
+   * Algoritma: cari semua posisi "628" sbg calon TITIK MULAI nomor, lalu
+   * potong tiap nomor dari satu titik "628" sampai TEPAT SEBELUM titik
+   * "628" berikutnya (atau sampai akhir teks kalau itu yg terakhir). */
+  function splitGluedMsisdn(digits) {
+    const anchors = [];
+    for (let i = 0; i <= digits.length - 3; i++) {
+      if (digits.slice(i, i + 3) === "628") anchors.push(i);
+    }
+    if (anchors.length === 0) return [digits]; // tidak ada "628" sama sekali - biarkan apa adanya, biar tetap divalidasi (akan gagal & dilewati sbg invalid kalau memang bukan nomor)
+    const out = [];
+    // Sisa digit SEBELUM titik "628" pertama (kalau ada) tetap diikutkan
+    // sbg satu potongan tersendiri, biar tidak diam-diam hilang - nanti
+    // toh divalidasi normal & dibuang kalau memang bukan nomor valid.
+    if (anchors[0] > 0) out.push(digits.slice(0, anchors[0]));
+    for (let k = 0; k < anchors.length; k++) {
+      const start = anchors[k];
+      const end = k + 1 < anchors.length ? anchors[k + 1] : digits.length;
+      out.push(digits.slice(start, end));
+    }
+    return out;
+  }
+
   async function addTagMsisdnBulk(cat, rawText) {
     if (!tagActiveOrgId.trim()) { setTagFieldErr((e) => ({ ...e, [cat]: "Pilih ORG ID Aktif dulu sebelum tagging nomor." })); return; }
     const activeOrgId = tagActiveOrgId.trim();
     const typeId = tagTypes[cat]?.[0]?.id || null;
     const typeObj = tagTypes[cat]?.find((t) => t.id === typeId);
 
-    const rawLines = rawText.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
+    // Pisah dulu per baris/koma/titik-koma spt biasa, TAPI tiap baris yg
+    // ternyata masih kepanjangan (>15 digit - jauh lebih panjang dari satu
+    // MSISDN wajar) berarti isinya beberapa nomor yg nempel jadi satu -
+    // dipecah lagi lewat splitGluedMsisdn sebelum divalidasi satu-satu.
+    const rawLines = rawText.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean)
+      .flatMap((line) => {
+        const onlyDigits = line.replace(/\D/g, "");
+        return onlyDigits.length > 15 ? splitGluedMsisdn(onlyDigits) : [line];
+      });
     const seen = new Set([...tagEntries[cat].map((e) => e.msisdn), ...tagPending[cat].map((p) => p.msisdn)]);
     const toAdd = [];
     let invalidCount = 0;
@@ -1624,7 +1663,15 @@ function TagCategorySection({ cat, label, accent, input, onInputChange, onAdd, o
           onKeyDown={(e) => e.key === "Enter" && onAdd()}
           onPaste={(e) => {
             const text = e.clipboardData.getData("text");
-            if (/[\n,;]/.test(text) && onBulkAdd) { e.preventDefault(); onBulkAdd(text); }
+            // Selain dipisah baris/koma/titik-koma spt biasa, tempelan yg
+            // isinya banyak nomor DIGABUNG TANPA pemisah sama sekali (mis.
+            // hasil copy dari sumber yg salah format) juga otomatis masuk
+            // mode bulk kalau jumlah digitnya jauh lebih panjang dari satu
+            // nomor MSISDN wajar (>15 digit) - splitAdd-nya sendiri yg akan
+            // memisah per nomor (lihat splitGluedMsisdn di addTagMsisdnBulk).
+            const digitsOnly = text.replace(/\D/g, "");
+            const looksGlued = digitsOnly.length > 15;
+            if ((/[\n,;]/.test(text) || looksGlued) && onBulkAdd) { e.preventDefault(); onBulkAdd(text); }
           }}
           placeholder="Contoh: 628123456789 (bisa tempel banyak baris)"
           disabled={busy}

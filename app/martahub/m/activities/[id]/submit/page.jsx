@@ -127,6 +127,7 @@ export default function SubmitActualPage() {
   const [pendingTransfers, setPendingTransfers] = useState({ sp: [], fwa: [] });
   const [msisdnInput, setMsisdnInput] = useState({ sp: "", fwa: "" });
   const [msisdnErr, setMsisdnErr] = useState({ sp: null, fwa: null });
+  const [msisdnBulkBusy, setMsisdnBulkBusy] = useState({ sp: false, fwa: false });
 
   // Rebuy - per-transaksi: Transaction ID + nomor tujuan (wajib 62xxx,
   // dikunci lewat Phone62Input - tidak mungkin tersimpan diawali 0/8) + jenis
@@ -436,6 +437,86 @@ export default function SubmitActualPage() {
     // site), jadi cuma menambah izin lokasi yg diminta tanpa manfaat nyata.
     setEntries((prev) => ({ ...prev, [cat]: [...prev[cat], { msisdn: norm, typeId, typeName: typeObj?.name, taggedAt: new Date().toISOString(), orgId: entryOrgId }] }));
     setMsisdnInput((prev) => ({ ...prev, [cat]: "" }));
+  }
+
+  /** Sama persis dgn splitGluedMsisdn di halaman Buat Plan Baru
+   * (activities/new/page.jsx) - dipakai lagi di sini krn Laporan Actual
+   * juga sering ditempeli banyak nomor SP/FWA sekaligus (dulu fitur ini
+   * cuma aktif saat bikin plan, sekarang diaktifkan jg di sini). Anchor
+   * pemisah pakai "628" (bukan "62" polos) supaya nomor yg kebetulan ada
+   * "62" lagi di tengahnya tidak salah kepotong. */
+  function splitGluedMsisdn(digits) {
+    const anchors = [];
+    for (let i = 0; i <= digits.length - 3; i++) {
+      if (digits.slice(i, i + 3) === "628") anchors.push(i);
+    }
+    if (anchors.length === 0) return [digits];
+    const out = [];
+    if (anchors[0] > 0) out.push(digits.slice(0, anchors[0]));
+    for (let k = 0; k < anchors.length; k++) {
+      const start = anchors[k];
+      const end = k + 1 < anchors.length ? anchors[k + 1] : digits.length;
+      out.push(digits.slice(start, end));
+    }
+    return out;
+  }
+
+  /** Versi bulk dari addMsisdn - dipicu dari onPaste di input SP/FWA (lihat
+   * SalesSection) begitu teks yg ditempel ternyata lebih dari satu
+   * baris/dipisah koma, ATAU satu blob digit panjang tanpa pemisah sama
+   * sekali (splitGluedMsisdn yg memecahnya). Sama spt bulk-add di Buat
+   * Plan: konflik kepemilikan (mh_dsf_check_msisdn_owner) TIDAK membuka
+   * ConflictSheet per nomor (tidak praktis utk banyak nomor) - nomor yg
+   * konflik cuma dilewati & dihitung di ringkasan pesan akhir. */
+  async function addMsisdnBulk(cat, rawText) {
+    if (!activeOrgId.trim()) { setMsisdnErr((e) => ({ ...e, [cat]: "Pilih ORG ID Aktif dulu sebelum tagging nomor." })); return; }
+    const entryOrgId = activeOrgId.trim();
+    const typeId = selectedType[cat];
+    const typeObj = types[cat].find((t) => t.id === typeId);
+
+    const rawLines = rawText.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean)
+      .flatMap((line) => {
+        const onlyDigits = line.replace(/\D/g, "");
+        return onlyDigits.length > 15 ? splitGluedMsisdn(onlyDigits) : [line];
+      });
+    const seen = new Set(entries[cat].map((e) => e.msisdn).concat(pendingTransfers[cat].map((p) => p.msisdn)));
+    const toAdd = [];
+    let invalidCount = 0;
+    for (const line of rawLines) {
+      let digits = line.replace(/\D/g, "");
+      if (digits.startsWith("0")) digits = "62" + digits.slice(1);
+      else if (digits.startsWith("8")) digits = "62" + digits;
+      const norm = normalizeMsisdn(digits);
+      if (!isValidMsisdn(norm)) { invalidCount++; continue; }
+      if (seen.has(norm)) continue;
+      seen.add(norm);
+      toAdd.push(norm);
+    }
+
+    if (toAdd.length === 0) {
+      setMsisdnErr((e) => ({ ...e, [cat]: invalidCount > 0 ? "Tidak ada nomor valid yang bisa ditambahkan dari teks yang ditempel." : "Semua nomor di daftar tempelan sudah ada." }));
+      return;
+    }
+    setMsisdnErr((e) => ({ ...e, [cat]: null }));
+    setMsisdnBulkBusy((b) => ({ ...b, [cat]: true }));
+
+    let added = 0, conflicted = 0;
+    for (const msisdn of toAdd) {
+      try {
+        const { data: ownerRows } = await supabaseMarta.rpc("mh_dsf_check_msisdn_owner", { p_msisdn: msisdn });
+        const owner = ownerRows && ownerRows.length > 0 ? ownerRows[0] : null;
+        if (owner) { conflicted++; continue; }
+      } catch { /* best-effort - kalau cek gagal, tetap lanjut tambahkan nomor ini */ }
+      setEntries((prev) => ({ ...prev, [cat]: [...prev[cat], { msisdn, typeId, typeName: typeObj?.name, taggedAt: new Date().toISOString(), orgId: entryOrgId }] }));
+      added++;
+    }
+
+    setMsisdnBulkBusy((b) => ({ ...b, [cat]: false }));
+    setMsisdnInput((prev) => ({ ...prev, [cat]: "" }));
+    const notes = [];
+    if (conflicted > 0) notes.push(`${conflicted} sudah ditag di event lain`);
+    if (invalidCount > 0) notes.push(`${invalidCount} format tidak valid`);
+    setMsisdnErr((e) => ({ ...e, [cat]: `${added} nomor ditambahkan${notes.length ? ` · ${notes.join(", ")}` : ""}.` }));
   }
 
   async function resolveConflictTransfer() {
@@ -938,6 +1019,7 @@ export default function SubmitActualPage() {
             types={types[c.key]} selectedType={selectedType[c.key]} onSelectType={(v) => setSelectedType((s) => ({ ...s, [c.key]: v }))}
             input={msisdnInput[c.key]} onInputChange={(v) => setMsisdnInput((s) => ({ ...s, [c.key]: v }))}
             onAdd={() => addMsisdn(c.key, msisdnInput[c.key])}
+            onBulkAdd={(text) => addMsisdnBulk(c.key, text)} bulkBusy={msisdnBulkBusy[c.key]}
             entries={entries[c.key]} onRemove={(m) => removeEntry(c.key, m)}
             pending={pendingTransfers[c.key]} error={msisdnErr[c.key]}
             onScanResult={(msisdn) => addMsisdn(c.key, msisdn)}
@@ -1110,7 +1192,7 @@ export default function SubmitActualPage() {
 }
 
 // ═══════════════════════════════ Sections ══════════════════════════════════
-function SalesSection({ cat, label, icon, types, selectedType, onSelectType, input, onInputChange, onAdd, entries, onRemove, pending, error, onScanResult, activeOrgId, setActiveOrgId, ownOrgId, ownLabel, orgChips, setOrgChips, usedOrgIds }) {
+function SalesSection({ cat, label, icon, types, selectedType, onSelectType, input, onInputChange, onAdd, onBulkAdd, bulkBusy, entries, onRemove, pending, error, onScanResult, activeOrgId, setActiveOrgId, ownOrgId, ownLabel, orgChips, setOrgChips, usedOrgIds }) {
   const [scanning, setScanning] = useState(false);
   const total = entries.length;
 
@@ -1138,7 +1220,18 @@ function SalesSection({ cat, label, icon, types, selectedType, onSelectType, inp
             divalidasi/ditolak setelah tombol + ditekan). */}
         <input value={input} onChange={(e) => onInputChange(e.target.value.replace(/\D/g, ""))} inputMode="numeric" pattern="[0-9]*"
           onKeyDown={(e) => e.key === "Enter" && onAdd()}
-          placeholder="Contoh: 628123456789"
+          onPaste={(e) => {
+            // Tempel banyak nomor sekaligus - sama spt di Buat Plan Baru
+            // (satu per baris/koma, ATAU blob digit panjang tanpa
+            // pemisah sama sekali) langsung diproses jadi banyak entri
+            // via addMsisdnBulk, bukan dijejalkan ke field satu-nomor ini.
+            const text = e.clipboardData.getData("text");
+            const digitsOnly = text.replace(/\D/g, "");
+            const looksGlued = digitsOnly.length > 15;
+            if ((/[\n,;]/.test(text) || looksGlued) && onBulkAdd) { e.preventDefault(); onBulkAdd(text); }
+          }}
+          disabled={bulkBusy}
+          placeholder="Contoh: 628123456789 (bisa tempel banyak sekaligus)"
           style={{ flex: 1, minWidth: 0, height: 46, padding: "0 14px", borderRadius: 12, background: "#F6F7F9", border: "1.5px solid #ECEDF0", fontSize: 13.5, fontFamily: FF, color: "#17181C", outline: "none" }} />
         <button onClick={() => setScanning(true)} style={{ width: 46, height: 46, borderRadius: 12, background: "#F6F7F9", border: "1.5px solid #ECEDF0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
           <QrCode size={17} />

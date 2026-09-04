@@ -1869,7 +1869,7 @@ function ConnectCombinedFolder({ t, geo, canManage }) {
   if (!canManage) return null;
   const { busy, progress, connecting, connectStage, territoryFolder, sitesFolder } = geo;
   const loading = busy || connecting;
-  const btnBase = { width: "100%", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, height: 38, borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: loading ? "default" : "pointer", opacity: loading ? 0.9 : 1, fontFamily: FONT, border: "none", background: "linear-gradient(135deg,#ED1C24,#C6168D)", color: "#fff" };
+  const btnBase = { width: "100%", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 8, height: 38, borderRadius: 10, fontSize: 12.5, fontWeight: 700, cursor: "pointer", opacity: 1, fontFamily: FONT, border: "none", background: "linear-gradient(135deg,#ED1C24,#C6168D)", color: "#fff" };
   const stageLabel = connectStage || (busy ? (progress < 85 ? "Membaca & memproses berkas…" : progress < 100 ? "Menyimpan lokal…" : "Selesai") : "");
 
   if (!supportsFolderLink) {
@@ -1877,7 +1877,7 @@ function ConnectCombinedFolder({ t, geo, canManage }) {
     const hasLocal = geo.layers.length > 0 || geo.siteData.length > 0;
     return (<>
       <input ref={fileRef} type="file" accept=".zip,.kml,.kmz,.geojson,.json" onChange={geo.onPick} style={{ display: "none" }} />
-      <button onClick={() => fileRef.current?.click()} disabled={loading} style={btnBase}>
+      <button onClick={() => fileRef.current?.click()} style={btnBase}>
         {loading ? <Spinner /> : <I name="upload" size={15} color="#fff" />} {loading ? (stageLabel || `Memproses… ${progress}%`) : (hasLocal ? "Perbarui berkas (perangkat ini)" : "Pilih berkas (perangkat ini)")}
       </button>
       <div style={{ fontSize: 10, color: t.lo, lineHeight: 1.55, margin: "8px 0" }}>
@@ -1893,7 +1893,7 @@ function ConnectCombinedFolder({ t, geo, canManage }) {
 
   if (!folder) {
     return (<>
-      <button onClick={geo.connectCombinedFolder} disabled={loading} style={btnBase}>
+      <button onClick={geo.connectCombinedFolder} style={btnBase}>
         {loading ? <Spinner /> : <I name="folder" size={15} color="#fff" />} {loading ? (stageLabel || "Menghubungkan…") : "Hubungkan Folder"}
       </button>
       <div style={{ fontSize: 10, color: t.lo, lineHeight: 1.55, margin: "8px 0" }}>
@@ -1904,7 +1904,7 @@ function ConnectCombinedFolder({ t, geo, canManage }) {
 
   // needsPermission
   return (<>
-    <button onClick={geo.reauthorizeCombined} disabled={loading} style={btnBase}>
+    <button onClick={geo.reauthorizeCombined} style={btnBase}>
       {loading ? <Spinner /> : <I name="folder" size={15} color="#fff" />} {loading ? (stageLabel || "Memproses…") : "Berikan Izin Ulang"}
     </button>
     <div style={{ fontSize: 10, color: t.lo, lineHeight: 1.55, margin: "8px 0" }}>

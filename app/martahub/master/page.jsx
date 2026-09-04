@@ -405,7 +405,7 @@ function ActivityTargetView({ email, canManage, onBack }) {
           </div>
 
           <button onClick={saveAll} disabled={saving || loading || !branches.length}
-            style={{ ...pbtn, ...((saving || loading || !branches.length) ? disabledPbtn : {}) }}>
+            style={{ ...pbtn }}>
             {saving ? "Menyimpan…" : `Simpan Semua (${branches.length} branch)`}
           </button>
         </>

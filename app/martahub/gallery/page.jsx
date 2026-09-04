@@ -81,8 +81,8 @@ function Body({ email }) {
           style={{ padding: "8px 12px", borderRadius: 9, border: `1px solid ${T.line}`, fontSize: 12.5, fontWeight: 600, color: T.hi, background: "#fff" }}>
           {regions.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
-        <button onClick={load} disabled={loading}
-          style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 9, border: `1px solid ${T.line}`, background: "#fff", color: T.mid, fontSize: 12.5, fontWeight: 700, cursor: loading ? "default" : "pointer" }}>
+        <button onClick={load}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 9, border: `1px solid ${T.line}`, background: "#fff", color: T.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
           {loading ? <Loader2 size={14} style={{ animation: "mh-spin .8s linear infinite" }} /> : <RefreshCw size={14} />} Muat ulang
         </button>
       </div>

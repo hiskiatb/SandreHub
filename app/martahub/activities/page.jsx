@@ -583,8 +583,8 @@ function Body({ email }) {
           )}
         </div>
 
-        <button onClick={load} disabled={loading} title="Muat ulang data"
-          style={{ ...btn, opacity: loading ? 0.6 : 1, cursor: loading ? "default" : "pointer", color: T.mid, flexShrink: 0 }}>
+        <button onClick={load} title="Muat ulang data"
+          style={{ ...btn, opacity: 1, cursor: "pointer", color: T.mid, flexShrink: 0 }}>
           {loading ? <Loader2 size={13} style={{ animation: "mh-spin .8s linear infinite" }} /> : <RefreshCw size={13} />} Refresh
         </button>
 
@@ -605,8 +605,8 @@ function Body({ email }) {
             <RotateCcw size={13} /> Clear All Filter
           </button>
 
-          <button onClick={exportXlsx} disabled={loading || exporting || filteredRows.length === 0} title="Export data sesuai filter yang sedang diterapkan"
-            style={{ ...btn, opacity: (loading || exporting || filteredRows.length === 0) ? 0.5 : 1, cursor: (loading || exporting || filteredRows.length === 0) ? "default" : "pointer", background: "linear-gradient(135deg,#1E8E3E,#0F6B2C)", borderColor: "transparent", color: "#fff" }}>
+          <button onClick={exportXlsx} disabled={filteredRows.length === 0} title="Export data sesuai filter yang sedang diterapkan"
+            style={{ ...btn, opacity: filteredRows.length === 0 ? 0.5 : 1, cursor: filteredRows.length === 0 ? "default" : "pointer", background: "linear-gradient(135deg,#1E8E3E,#0F6B2C)", borderColor: "transparent", color: "#fff" }}>
             <Download size={13} /> {exporting ? "Menyiapkan file…" : "Export .xlsx"}
           </button>
         </div>

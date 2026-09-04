@@ -270,8 +270,8 @@ function Body({ email, role }) {
           style={{ ...btn, opacity: (activeFilterCount || q) ? 1 : 0.4, cursor: (activeFilterCount || q) ? "pointer" : "default" }}>
           <RotateCcw size={13} /> Clear Filter
         </button>
-        <button onClick={load} disabled={loading}
-          style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 12px", borderRadius: 9, border: `1px solid ${T.line}`, background: "#fff", color: T.mid, fontSize: 12.5, fontWeight: 700, cursor: loading ? "default" : "pointer" }}>
+        <button onClick={load}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 12px", borderRadius: 9, border: `1px solid ${T.line}`, background: "#fff", color: T.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
           {loading ? <Loader2 size={14} style={{ animation: "mh-spin .8s linear infinite" }} /> : <RefreshCw size={14} />} Muat ulang
         </button>
         <button onClick={downloadTemplate}
@@ -283,7 +283,7 @@ function Body({ email, role }) {
             <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }}
               onChange={(e) => e.target.files?.[0] && handleUploadFile(e.target.files[0])} />
             <button onClick={() => fileRef.current?.click()} disabled={uploading}
-              style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 12px", borderRadius: 9, border: "none", background: T.primary, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: uploading ? "default" : "pointer", opacity: uploading ? 0.7 : 1 }}>
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 12px", borderRadius: 9, border: "none", background: T.primary, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: uploading ? "default" : "pointer" }}>
               {uploading ? <Loader2 size={14} style={{ animation: "mh-spin .8s linear infinite" }} /> : <Upload size={14} />} Upload Hasil Validasi
             </button>
           </>

@@ -678,8 +678,11 @@ function DetailSheet({ r, userId, onClose, onRequestDelete }) {
   } else if (isReady && !eventArrived) {
     action = { label: "Edit Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${r.id}`) };
   } else if (isReady && eventArrived) {
-    const hasActualDraft = !!r.actual_draft_saved_at && r.actual_sp == null;
-    action = { label: hasActualDraft ? "Lanjutkan Laporan Actual" : "Isi Laporan Actual", onTap: () => router.push(`/martahub/m/activities/${r.id}/submit`) };
+    // Sheet ini cuma ringkasan plan (baru dibuat / berjalan) - baik belum
+    // ada laporan actual SAMA SEKALI maupun sudah ada draft-nya, tombol
+    // "Isi/Lanjutkan Laporan Actual" TIDAK ditampilkan di sini lagi (biar
+    // tidak dobel dgn entry point resminya di list Aktivitas/Beranda).
+    // Sengaja dibiarkan `action = null` (Tutup + Hapus Plan saja).
   } else if (r.status === "revision_actual") {
     action = { label: "Revisi & Kirim Ulang", onTap: () => router.push(`/martahub/m/activities/${r.id}/submit`) };
   }
