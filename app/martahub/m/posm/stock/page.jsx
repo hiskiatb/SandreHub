@@ -316,7 +316,7 @@ function StockHistorySheet({ row, callerEmail, onClose }) {
         </div>
         <div style={{ padding: "2px 20px 0", fontSize: 11, color: "#8A8A96" }}>{row.branch_name} · {BRAND_DISPLAY[row.brand] || (row.brand || "").toUpperCase()}</div>
 
-        <div style={{ flex: 1, overflowY: "auto", padding: "12px 20px 24px" }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: "12px 20px calc(env(safe-area-inset-bottom,0px) + 24px)" }}>
           {err && <div style={{ marginBottom: 10, padding: "9px 11px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 11.5, fontWeight: 600 }}>{err}</div>}
           {entries === null ? (
             <ShellSpinner />

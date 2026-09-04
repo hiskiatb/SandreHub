@@ -22,7 +22,7 @@ export default function SitePickerSheet({ items, onClose, onSelect, title = "Pil
           <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari site…"
             style={{ ...inputBase, marginTop: 10, height: 42 }} />
         </div>
-        <div style={{ overflowY: "auto", padding: "0 20px 20px" }}>
+        <div style={{ overflowY: "auto", padding: "0 20px calc(env(safe-area-inset-bottom,0px) + 20px)" }}>
           {filtered.length === 0 && <div style={{ padding: "24px 0", textAlign: "center", color: "#8A8A96", fontSize: 12.5 }}>Tidak ada site cocok.</div>}
           {filtered.map((s) => (
             <button key={s.site_id} onClick={() => onSelect(s)}

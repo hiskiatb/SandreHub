@@ -573,7 +573,7 @@ function ActivityCard({ r, userId, branchLabel, onOpen }) {
         )}
 
         {showNote && (
-          <div style={{ marginTop: 9, fontSize: 10.5, color: meta.color, background: meta.bg, borderRadius: 9, padding: "7px 9px", fontWeight: 600, lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+          <div style={{ marginTop: 9, fontSize: 10.5, color: stage.color, background: stage.bg, borderRadius: 9, padding: "7px 9px", fontWeight: 600, lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
             {r.validation_note}
           </div>
         )}

@@ -735,18 +735,22 @@ export default function SubmitActualPage() {
   }
 
   if (result) {
-    const validated = result.status === "approved";
+    // Tidak ada lagi validasi otomatis berbasis check-in (sudah dihapus) -
+    // begitu submit berhasil, laporan LANGSUNG dianggap terkirim/selesai,
+    // tanpa cabang "perlu ditinjau". Review GA (SP/FWA/Rebuy) kalau
+    // diperlukan sekarang jadi urusan terpisah di sisi CMS, bukan gate
+    // yang memblokir DSF di sini.
     return (
       <MobileShell active="activities" hideNav>
         <div style={{ padding: "60px 24px", textAlign: "center" }}>
-          <div style={{ width: 64, height: 64, borderRadius: "50%", background: validated ? "rgba(21,128,61,0.1)" : "rgba(180,83,9,0.1)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto" }}>
-            {validated ? <CheckCircle2 size={30} color="#15803D" /> : <AlertTriangle size={30} color="#B45309" />}
+          <div style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(21,128,61,0.1)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto" }}>
+            <CheckCircle2 size={30} color="#15803D" />
           </div>
           <div style={{ marginTop: 18, fontSize: 17, fontWeight: 800, color: "#17181C" }}>
-            {validated ? "Laporan tervalidasi otomatis" : "Laporan perlu ditinjau"}
+            Laporan Actual Terkirim
           </div>
           <div style={{ marginTop: 8, fontSize: 13, color: "#6B6B76", lineHeight: 1.6 }}>
-            {result.validation_note || (validated ? "Titik lokasi cocok dengan site event ini." : "Titik lokasi tidak cocok dengan site manapun di event ini - approver bisa meninjau manual.")}
+            Laporan actual event ini sudah berhasil dikirim.
           </div>
           <button onClick={() => router.replace(`/martahub/m/activities?open=${activityId}`)}
             style={{ marginTop: 26, width: "100%", height: 48, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>

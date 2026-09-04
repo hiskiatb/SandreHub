@@ -2503,7 +2503,7 @@ function ActingForSheet({ groups, loading, initialSelected, onClose, onConfirm }
             </>
           )}
         </div>
-        <div style={{ padding: "12px 20px 20px", borderTop: "1px solid #F0F0F3", flexShrink: 0 }}>
+        <div style={{ padding: "12px 20px calc(env(safe-area-inset-bottom,0px) + 20px)", borderTop: "1px solid #F0F0F3", flexShrink: 0 }}>
           <button onClick={confirm} disabled={combos.length === 0}
             style={{ width: "100%", height: 46, borderRadius: 12, border: "none", fontFamily: FF, fontSize: 14, fontWeight: 800, color: "#FFFFFF",
               background: combos.length === 0 ? "#D8D9E0" : BRAND, cursor: combos.length === 0 ? "not-allowed" : "pointer" }}>
