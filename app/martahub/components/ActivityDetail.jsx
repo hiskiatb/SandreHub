@@ -79,9 +79,23 @@ export function BrandBadge({ brand, big }) {
   );
 }
 
-const PHOTO_BUCKET = "mh-photos";
-function photoUrl(path) {
-  return supabaseMarta.storage.from(PHOTO_BUCKET).getPublicUrl(path).data.publicUrl;
+// Foto ditampilkan lewat proxy Edge Function `media-view` (sama seperti versi
+// mobile) - browser TIDAK PERNAH memanggil Google Drive langsung / melihat
+// link Storage privat-nya. Function itu ambil bytes dari Drive (kalau sudah
+// dimirror) atau fallback ke Supabase Storage (foto lama/belum dimirror),
+// lalu dialirkan balik. Butuh header Authorization, jadi tidak bisa dipakai
+// langsung sbg <img src> - di-fetch manual lalu diubah jadi object URL blob.
+const MEDIA_VIEW_URL = (process.env.NEXT_PUBLIC_MARTA_SUPABASE_URL || "").replace(/\/$/, "") + "/functions/v1/media-view";
+async function fetchAuthedPhotoBlobUrl(kind, id) {
+  const { data: sessionData } = await supabaseMarta.auth.getSession();
+  const token = sessionData?.session?.access_token;
+  if (!token) throw new Error("Belum login");
+  const res = await fetch(`${MEDIA_VIEW_URL}?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new Error(`Gagal memuat foto (${res.status})`);
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
 }
 
 export const DETAIL_COLS = "id,event_name,event_category,event_categories,brand,mc,branch_id,site_id,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,poi_type,network_category,area_potential,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,target_rev_3m,cost_estimate,expected_outcome,actual_sp,actual_fwa,actual_rebuy_pulsa,actual_rebuy_data,actual_rev_3m,cost_actual,insight,checkin_valid,checkin_distance,checkin_at,approved_by_name,approved_by_email,approved_at,approval_notes,validation_status,validation_note,validated_at,override_status,override_by_name,override_at,override_note,created_at";
@@ -122,7 +136,18 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }
         setExtraSites((sites || []).map((s) => s.site_id));
         setEntries(sales || []);
         setEditReqs(edits || []);
-        setPhotos((docs || []).filter((d) => d.file_type === "photo").map((d) => ({ ...d, url: photoUrl(d.storage_path) })));
+        const photoDocs = (docs || []).filter((d) => d.file_type === "photo");
+        if (photoDocs.length) {
+          const withUrls = await Promise.all(
+            photoDocs.map(async (d) => {
+              try { return { ...d, url: await fetchAuthedPhotoBlobUrl("document", d.id) }; }
+              catch { return { ...d, url: null }; }
+            })
+          );
+          if (alive) setPhotos(withUrls.filter((p) => p.url));
+        } else {
+          setPhotos([]);
+        }
 
         const allSiteIds = Array.from(new Set([act?.site_id, ...(sites || []).map((s) => s.site_id)].filter(Boolean)));
         if (allSiteIds.length > 0) {

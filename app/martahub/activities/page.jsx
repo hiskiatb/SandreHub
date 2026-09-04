@@ -21,16 +21,17 @@ const STATUS = {
   revision_actual: ["Perlu Perbaikan Lokasi/Bukti", T.warning, T.warningBg],
 };
 
-// Status "approved" (Plan disetujui) mencakup 3 fase operasional berbeda yang
-// dulu numpuk jadi satu label "Disetujui" - dipecah berdasarkan tanggal
-// plan_date vs hari ini (murni tampilan, TIDAK mengubah kolom status di DB):
+// Status "approved" sekarang eksklusif berarti laporan aktual sudah disubmit
+// & tervalidasi otomatis (lihat trigger mh_validate_activity_actual) -> harus
+// selalu tampil "Selesai". Sebelum laporan aktual masuk (actual_sp masih null)
+// status masih berupa 'ready'/dll dan dipecah berdasarkan tanggal plan_date
+// vs hari ini (murni tampilan, TIDAK mengubah kolom status di DB):
 //   - belum sampai plan_date  -> "Menunggu Hari-H"
 //   - hari ini persis plan_date -> "Hari-H / Berlangsung"
 //   - sudah lewat plan_date tapi laporan aktual belum disubmit -> "Menunggu Laporan"
-// Begitu laporan aktual disubmit, status DB pindah ke 'submitted' dst, jadi
-// fungsi ini otomatis tidak lagi dipakai utk activity itu.
 function deriveStatusInfo(r) {
   if (r?.status === "approved") {
+    if (r?.actual_sp != null) return ["Selesai", T.success, T.successBg];
     const planDateStr = r.plan_date_start || r.plan_date;
     if (planDateStr) {
       const today = new Date(); today.setHours(0, 0, 0, 0);
