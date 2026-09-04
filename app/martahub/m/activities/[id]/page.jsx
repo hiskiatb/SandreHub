@@ -489,11 +489,22 @@ export default function ActivityDetailPage() {
         // bawah layar (cuma dikurangi safe-area-inset-bottom), bukan lagi
         // "mengambang" di atas navbar yg sudah tidak ada.
         <div ref={actionBarRef} style={{
-          position: "fixed", left: 0, right: 0, bottom: "env(safe-area-inset-bottom,0px)", zIndex: 45,
-          background: "rgba(244,245,247,0.92)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
-          borderTop: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 -4px 16px rgba(23,24,28,0.05)",
+          position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 45,
+          // Bar dibungkus supaya DIBATASI maxWidth (bukan cuma tombolnya) &
+          // bottom:0 PENUH sampai tepi layar (bukan cuma sampai
+          // safe-area-inset-bottom) - sebelumnya nyisain celah kosong di
+          // bawah bar yg nembus warna gelap body di device dgn home
+          // indicator (notch bawah), padding-nya yg menyerap safe-area,
+          // bukan posisi bar-nya.
+          display: "flex", justifyContent: "center",
         }}>
-          <div style={{ maxWidth: 480, margin: "0 auto", padding: "12px 20px 14px" }}>
+          <div style={{
+            width: "100%", maxWidth: 480,
+            background: "rgba(244,245,247,0.92)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)",
+            borderTop: "1px solid rgba(23,24,28,0.06)", borderLeft: "1px solid rgba(23,24,28,0.06)", borderRight: "1px solid rgba(23,24,28,0.06)",
+            boxShadow: "0 -4px 16px rgba(23,24,28,0.05)",
+            padding: "12px 20px calc(env(safe-area-inset-bottom,0px) + 14px)",
+          }}>
             <button onClick={action.onTap}
               style={{ width: "100%", height: 50, borderRadius: 14, border: "none", cursor: "pointer", background: BRAND, color: "#fff", fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 14px rgba(17,17,20,0.11)" }}>
               <span style={{ fontSize: 13.5, fontWeight: 800, display: "flex", alignItems: "center", gap: 8 }}>

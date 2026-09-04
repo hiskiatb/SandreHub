@@ -17,7 +17,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { ArrowLeft, ArrowRight, Plus, QrCode, Trash2, Loader2, CheckCircle2, AlertTriangle, MapPin, Camera, ImagePlus, Images, X, Receipt, RefreshCw, CardSim, Router, Gauge, FolderClock, Map as MapIcon, Navigation } from "lucide-react";
+import { ArrowLeft, ArrowRight, Plus, QrCode, Trash2, Loader2, CheckCircle2, AlertTriangle, MapPin, Camera, ImagePlus, Images, X, Receipt, RefreshCw, CardSim, Router, Gauge, FolderClock, Map as MapIcon, Navigation, Lightbulb } from "lucide-react";
 import supabaseMarta from "../../../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../../_shared/MobileShell";
 import { isValidMsisdn, normalizeMsisdn } from "../../../_shared/msisdn";
@@ -865,6 +865,20 @@ export default function SubmitActualPage() {
           {gpsCorrected && gpsLat != null && gpsLng != null && (
             <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 6, fontSize: 10.5, fontWeight: 700, color: "#15803D" }}>
               <CheckCircle2 size={12} /> Titik baru · {gpsLat.toFixed(5)}, {gpsLng.toFixed(5)}
+            </div>
+          )}
+
+          {/* Tip singkat - dorong DSF utk pakai "Titik Saya Sekarang" kalau
+              memang lagi berdiri di lokasi event, biar longlat laporan
+              akurat (bukan cuma pakai titik awal plan yg kadang cuma
+              perkiraan). Cuma tampil kalau belum dikoreksi - begitu sudah
+              gpsCorrected, tip ini tidak relevan lagi. */}
+          {!gpsCorrected && (
+            <div style={{ marginTop: 10, display: "flex", alignItems: "flex-start", gap: 7, padding: "8px 10px", borderRadius: 10, background: "rgba(37,99,235,0.06)" }}>
+              <Lightbulb size={13} color="#2563EB" style={{ flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 10.5, fontWeight: 600, color: "#3A5BA0", lineHeight: 1.45 }}>
+                Sudah berada di lokasi event? Update longlat agar akurat.
+              </span>
             </div>
           )}
 

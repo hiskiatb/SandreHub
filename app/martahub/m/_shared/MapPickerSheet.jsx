@@ -55,6 +55,11 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState([]);
   const [searchErr, setSearchErr] = useState("");
+  // Edit alamat manual - alamat hasil reverse-geocode kadang kurang presisi
+  // (nama jalan resmi vs yg umum dipakai, patokan lokal, dsb), jadi DSF
+  // boleh koreksi teksnya langsung di sini tanpa perlu geser peta lagi.
+  const [addrEditing, setAddrEditing] = useState(false);
+  const [addrDraft, setAddrDraft] = useState("");
   const debounceRef = useRef(null);
   const searchDebounceRef = useRef(null);
   // `alive` dicek di SETIAP callback async (fetch/geolocation) sebelum
@@ -404,12 +409,40 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
             <AlertTriangle size={14} color="#C2410C" style={{ flexShrink: 0, marginTop: 1 }} />
           )}
           <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.5, color: geocoding ? "#B0B0BA" : address ? "#3A3A44" : "#9A3412" }}>
-              {geocoding ? "Mencari alamat…" : (address || "Alamat tidak ditemukan - boleh dilanjut, isi manual di kolom Alamat nanti.")}
-            </div>
-            <div style={{ marginTop: 5, display: "inline-flex", fontSize: 10.5, fontWeight: 700, color: "#8A8A96", fontVariantNumeric: "tabular-nums", background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 7, padding: "2px 7px" }}>
-              {center.lat.toFixed(6)}, {center.lng.toFixed(6)}
-            </div>
+            {addrEditing ? (
+              <>
+                <textarea autoFocus value={addrDraft} onChange={(e) => setAddrDraft(e.target.value)}
+                  placeholder="Ketik alamat…" rows={2}
+                  style={{ width: "100%", resize: "none", border: "1.5px solid #ED1C24", borderRadius: 8, padding: "6px 8px", fontSize: 12.5, fontWeight: 600, fontFamily: FF, color: "#17181C", outline: "none", background: "#FFFFFF" }} />
+                <div style={{ marginTop: 6, display: "flex", gap: 6 }}>
+                  <button onClick={() => setAddrEditing(false)}
+                    style={{ height: 28, padding: "0 10px", borderRadius: 7, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 11, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
+                    Batal
+                  </button>
+                  <button onClick={() => { setAddress(addrDraft.trim() || null); setAddrEditing(false); }}
+                    style={{ height: 28, padding: "0 12px", borderRadius: 7, border: "none", background: BRAND, color: "#fff", fontSize: 11, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>
+                    Simpan
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.5, color: geocoding ? "#B0B0BA" : address ? "#3A3A44" : "#9A3412", flex: 1 }}>
+                    {geocoding ? "Mencari alamat…" : (address || "Alamat tidak ditemukan - boleh dilanjut, isi manual di kolom Alamat nanti.")}
+                  </div>
+                  {!geocoding && (
+                    <button onClick={() => { setAddrDraft(address || ""); setAddrEditing(true); }} aria-label="Edit alamat"
+                      style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                      <Pencil size={13} color="#8A8A96" />
+                    </button>
+                  )}
+                </div>
+                <div style={{ marginTop: 5, display: "inline-flex", fontSize: 10.5, fontWeight: 700, color: "#8A8A96", fontVariantNumeric: "tabular-nums", background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 7, padding: "2px 7px" }}>
+                  {center.lat.toFixed(6)}, {center.lng.toFixed(6)}
+                </div>
+              </>
+            )}
           </div>
         </div>
 
