@@ -22,8 +22,7 @@ const ROLES = [
   ["spm_sumatera", "SPM Sumatera (Superadmin Nasional)"],
   ["head", "Head TMV (per Region)"],
   ["tmv", "Brand TMV (Region × Brand)"],
-  ["bme", "BME (Branch)"],
-  ["rge", "RGE (Branch)"],
+  ["bme_rge", "BME/RGE (Branch)"],
   ["tl_dsf", "TL DSF (Team Leader DSF)"],
   ["dsf", "DSF (Field Sales)"],
   ["md", "MD (Material Distributor)"],
@@ -57,8 +56,8 @@ const isProtectedRole = (role) => role === "spm_sumatera";
 // DAN picker multi-select "BME/RGE di bawah ini" di form tmv/head (lihat
 // `SubordinatePicker`) - satu sumber kebenaran utk role atasan yg valid.
 const SUPERVISOR_ROLES_FOR = {
-  bme: ["tmv", "head"], rge: ["tmv", "head"],
-  tl_dsf: ["bme", "rge"], md: ["bme", "rge"],
+  bme_rge: ["tmv", "head"],
+  tl_dsf: ["bme_rge"], md: ["bme_rge"],
   dsf: ["tl_dsf"],
 };
 // Role yang BISA jadi "atasan langsung" bme/rge lewat picker multi-select
@@ -104,13 +103,13 @@ const ACTION_META = {
 const BRAND_COLOR_POP = { im3: "#EAB308", tri: "#D946EF" };
 // Warna per role BME/RGE/MD/DSF/TL DSF - dipakai avatar & badge kecil di
 // kartu, konsisten dgn palet mobile (app/martahub/m/user-management).
-const ROLE_COLOR_CARD = { bme: "#ED1C24", rge: "#EC008C", md: "#185FA5", dsf: "#B45309", tl_dsf: "#B45309" };
+const ROLE_COLOR_CARD = { bme_rge: "#ED1C24", md: "#185FA5", dsf: "#B45309", tl_dsf: "#B45309" };
 const toBranchSlug = (name) => (name || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-+|-+$)/g, "");
 // Role lain (selain BME/RGE/MD/DSF) yang bisa langsung ditambah di bawah
 // BME/RGE lewat kartu cabang - SEMUA role branch-scoped yg ada di ROLES,
 // bukan cuma MD/DSF. Ditampilkan lewat toggle "+ Role lain" spy default
 // tidak penuh, tapi begitu dibuka SEMUA jenis role bisa diisi > 1 orang.
-const BRANCH_SUBROLES = ROLES.map(([v]) => v).filter((v) => !["spm_sumatera", "head", "tmv", "bme", "rge", "md", "dsf"].includes(v));
+const BRANCH_SUBROLES = ROLES.map(([v]) => v).filter((v) => !["spm_sumatera", "head", "tmv", "bme_rge", "md", "dsf"].includes(v));
 // Semua role "executor" di bawah BME/RGE (MD, DSF, + role cabang lain) -
 // digabung jadi satu daftar pilihan utk tombol "+ Tambahkan Executor".
 const EXECUTOR_ROLES = ["md", "dsf", ...BRANCH_SUBROLES];
@@ -543,7 +542,7 @@ function HierarchyTree({ rows }) {
   const renderTmvSubtree = (tmv, depth) => (
     <div key={tmv.id}>
       <NodeLine r={tmv} depth={depth} roleColor={T.im3} />
-      {childrenOf(tmv.id).filter((r) => r.role === "bme" || r.role === "rge").map((bme) => renderBmeSubtree(bme, depth + 1))}
+      {childrenOf(tmv.id).filter((r) => r.role === "bme_rge").map((bme) => renderBmeSubtree(bme, depth + 1))}
     </div>
   );
 
@@ -557,7 +556,7 @@ function HierarchyTree({ rows }) {
           {/* bme/rge yg atasannya LANGSUNG Head TMV ini (bukan lewat Brand
               TMV) - baru dimungkinkan sejak Head TMV bisa punya bawahan
               bme/rge sendiri lintas-brand di region-nya. */}
-          {childrenOf(h.id).filter((r) => r.role === "bme" || r.role === "rge").map((bme) => renderBmeSubtree(bme, (spm.length ? 1 : 0) + 1))}
+          {childrenOf(h.id).filter((r) => r.role === "bme_rge").map((bme) => renderBmeSubtree(bme, (spm.length ? 1 : 0) + 1))}
         </div>
       ))}
       {(() => {
@@ -759,7 +758,7 @@ const BRAND_LABEL = { im3: "IM3", tri: "3ID" };
 function AddModal({ onClose, onSave, existing, scope }) {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
-  const [role, setRole] = useState("bme");
+  const [role, setRole] = useState("bme_rge");
   const [region, setRegion] = useState("NORTH SUMATERA");
   const [brand, setBrand] = useState("im3");         // untuk role TM & Visibility
   const [q, setQ] = useState("");
@@ -780,7 +779,7 @@ function AddModal({ onClose, onSave, existing, scope }) {
   const [mcOptions, setMcOptions] = useState([]);
   // Mirror UserAssignment.isBranchRole (mobile assignments_provider.dart) -
   // 6 role POSMAT baru diperlakukan sama persis spt bme/rge.
-  const isBranchRole = ["bme", "rge", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"].includes(role);
+  const isBranchRole = ["bme_rge", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"].includes(role);
   const isTmv = role === "tmv";
   const isDsf = role === "dsf";
   // tl_dsf/md/dsf SEKARANG py region/brand/branch sendiri (opsional) - dipilih
@@ -840,7 +839,7 @@ function AddModal({ onClose, onSave, existing, scope }) {
   // (brand bebas). Brand TMV → bme/rge region SAMA & brand SAMA persis.
   const subCandidates = useMemo(() => {
     if (!isSupervisorCapableRole(role)) return [];
-    return (existing || []).filter((r) => (r.role === "bme" || r.role === "rge") && r.region === region && (role === "head" || r.brand === brand))
+    return (existing || []).filter((r) => r.role === "bme_rge" && r.region === region && (role === "head" || r.brand === brand))
       .sort((a, b) => String(a.full_name || a.email).localeCompare(String(b.full_name || b.email)));
   }, [existing, role, region, brand]);
   const toggleSub = (id) => setSubSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -1077,7 +1076,7 @@ function AddModal({ onClose, onSave, existing, scope }) {
 function EditModal({ row, onClose, onSave, existing, scope }) {
   const [name, setName] = useState(row.full_name || "");
   const [email, setEmail] = useState(row.email || "");
-  const [role, setRole] = useState(row.role || "bme");
+  const [role, setRole] = useState(row.role || "bme_rge");
   const [region, setRegion] = useState(row.region || "NORTH SUMATERA");
   const [brand, setBrand] = useState(row.brand || "im3");
   const [branchId, setBranchId] = useState(row.branch_id || "");
@@ -1091,11 +1090,11 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
   // Bawahan bme/rge yg SUDAH tertaut ke assignment ini (supervisor_assignment_id
   // === row.id) - jadi centang awal picker, bukan mulai kosong.
   const [subSelected, setSubSelected] = useState(() => new Set(
-    (existing || []).filter((r) => (r.role === "bme" || r.role === "rge") && r.supervisor_assignment_id === row.id).map((r) => r.id)
+    (existing || []).filter((r) => r.role === "bme_rge" && r.supervisor_assignment_id === row.id).map((r) => r.id)
   ));
   // Mirror UserAssignment.isBranchRole (mobile assignments_provider.dart) -
   // 6 role POSMAT baru diperlakukan sama persis spt bme/rge.
-  const isBranchRole = ["bme", "rge", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"].includes(role);
+  const isBranchRole = ["bme_rge", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"].includes(role);
   const isTmv = role === "tmv";
   const isDsf = role === "dsf";
   // tl_dsf/md/dsf SEKARANG py region/brand/branch sendiri (opsional) - lihat
@@ -1128,7 +1127,7 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
   // Head TMV → region sama (brand bebas), Brand TMV → region+brand sama persis.
   const subCandidates = useMemo(() => {
     if (!isSupervisorCapableRole(role)) return [];
-    return (existing || []).filter((r) => (r.role === "bme" || r.role === "rge") && r.id !== row.id && r.region === region && (role === "head" || r.brand === brand))
+    return (existing || []).filter((r) => r.role === "bme_rge" && r.id !== row.id && r.region === region && (role === "head" || r.brand === brand))
       .sort((a, b) => String(a.full_name || a.email).localeCompare(String(b.full_name || b.email)));
   }, [existing, role, region, brand, row.id]);
   const toggleSub = (id) => setSubSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -1200,7 +1199,7 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
     if (!canSave) return;
     let subChanges;
     if (isSupervisorCapableRole(role)) {
-      const prevLinked = new Set((existing || []).filter((r) => (r.role === "bme" || r.role === "rge") && r.supervisor_assignment_id === row.id).map((r) => r.id));
+      const prevLinked = new Set((existing || []).filter((r) => r.role === "bme_rge" && r.supervisor_assignment_id === row.id).map((r) => r.id));
       subChanges = {
         added: [...subSelected].filter((id) => !prevLinked.has(id)),
         removed: [...prevLinked].filter((id) => !subSelected.has(id)),
@@ -1502,7 +1501,7 @@ function BranchCard({ branchName, combos, canAdd, onAdd, onRemove, onEdit, calle
       </div>
       {combos.map((combo) => {
         const brandColor = BRAND_COLOR_POP[combo.brand] || T.mid;
-        const bmeRge = [...(combo.byRole?.get("bme") || []), ...(combo.byRole?.get("rge") || [])];
+        const bmeRge = combo.byRole?.get("bme_rge") || [];
         // Semua "executor" di bawah BME/RGE (MD, DSF, TL DSF, DSE, GSE, AE,
         // Promotor, CSE/RSE, BSM) - ditampilkan sbg daftar per role yg SUDAH
         // terisi, penambahan orang baru (role apa pun, boleh dobel) lewat
@@ -1516,7 +1515,7 @@ function BranchCard({ branchName, combos, canAdd, onAdd, onRemove, onEdit, calle
               {combo.brand === "tri" ? "3ID" : "IM3"}
             </span>
             {/* BME/RGE - hanya 1 slot per cabang×brand */}
-            <SlotRow title="BME / RGE" role="bme" mixedRoles people={bmeRge} canAdd={canAdd && bmeRge.length === 0} single
+            <SlotRow title="BME / RGE" role="bme_rge" people={bmeRge} canAdd={canAdd && bmeRge.length === 0} single
               context={ctx} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} compact />
             {executorRows.map(([r, list]) => (
               <SlotRow key={r} title={`${ROLE_LABEL[r] || r} (di bawah BME/RGE)`} role={r} people={list} canAdd={false}

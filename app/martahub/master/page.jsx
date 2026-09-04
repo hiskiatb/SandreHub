@@ -895,7 +895,7 @@ function HierarchyView() {
       if (!brNode.branches.has(c.branch_id))
         brNode.branches.set(c.branch_id, {
           branch_id: c.branch_id, branch: norm(c.branch) || c.branch_id, region, brand,
-          bme: [], rge: [], sites: Number(c.sites ?? c.site_count ?? c.count ?? 0),
+          bmeRge: [], sites: Number(c.sites ?? c.site_count ?? c.count ?? 0),
         });
     }
     for (const a of assigns) {
@@ -904,11 +904,11 @@ function HierarchyView() {
         const rNode = regions.get(norm(a.region) || "-"); if (!rNode) continue;
         const brNode = rNode.brands.get(brand); if (!brNode) continue;
         brNode.tmv.push(a);
-      } else if (a.role === "bme" || a.role === "rge") {
+      } else if (a.role === "bme_rge") {
         for (const rNode of regions.values()) {
           const brNode = rNode.brands.get(brand); if (!brNode) continue;
           const bn = brNode.branches.get(a.branch_id);
-          if (bn) { (a.role === "bme" ? bn.bme : bn.rge).push(a); break; }
+          if (bn) { bn.bmeRge.push(a); break; }
         }
       }
     }
@@ -939,7 +939,7 @@ function HierarchyView() {
         for (const bn of b.branches) {
           branches++;
           // BME & RGE fungsional sama → cukup ada minimal satu petugas lapangan.
-          if (bn.bme.length + bn.rge.length > 0) filled++; else empty++;
+          if (bn.bmeRge.length > 0) filled++; else empty++;
         }
       }
     }
@@ -1041,7 +1041,7 @@ function TreeRow({ depth = 0, open, onClick, icon, title, meta, right }) {
 function BranchRow({ bn }) {
   // BME & RGE fungsional identik → cukup ada minimal satu petugas lapangan.
   // Label BME/RGE tetap ditampilkan sebagai remark per akun.
-  const filled = bn.bme.length + bn.rge.length > 0;
+  const filled = bn.bmeRge.length > 0;
   const cov = filled
     ? { t: "Terisi", c: T.success, bg: T.successBg, icon: <UserCheck size={11} /> }
     : { t: "Kosong", c: T.error, bg: T.errorBg, icon: <UserX size={11} /> };
@@ -1054,11 +1054,10 @@ function BranchRow({ bn }) {
       </div>
       <div style={{ display: "flex", gap: 16, marginTop: 8, flexWrap: "wrap" }}>
         <span style={{ fontSize: 10, fontWeight: 800, color: T.lo, textTransform: "uppercase", letterSpacing: ".04em", alignSelf: "center" }}>Petugas Lapangan</span>
-        {bn.bme.length === 0 && bn.rge.length === 0
+        {bn.bmeRge.length === 0
           ? <span style={{ fontSize: 11.5, color: T.lo, fontStyle: "italic" }}>- belum ada -</span>
           : <>
-              {bn.bme.map((a) => <AccountChip key={a.id} a={a} tag="BME" />)}
-              {bn.rge.map((a) => <AccountChip key={a.id} a={a} tag="RGE" />)}
+              {bn.bmeRge.map((a) => <AccountChip key={a.id} a={a} tag="BME/RGE" />)}
             </>}
       </div>
     </div>

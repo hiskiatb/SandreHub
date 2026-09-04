@@ -3,19 +3,27 @@
  * /martahub/m/profile - Profil BME/RGE (web mobile), padanan `profile_screen.dart`
  * di Flutter: identitas, informasi akun, scope penugasan, dan Keluar.
  *
+ * REDESIGN TOTAL: sebelumnya halaman ini satu-satunya yg masih pakai bahasa
+ * desain lama (header non-sticky polos, hero card gradient merah-magenta
+ * penuh, border/shadow beda sendiri) - tidak senada dgn Beranda/Aktivitas/
+ * Kalender yg semuanya sudah dirapikan ke bahasa desain yg SAMA (header
+ * sticky glass-blur, kartu putih netral border #EDEDF1 + shadow tipis,
+ * badge/pill solid utk brand & role, bukan lagi hero gradient besar).
+ * Sekarang halaman ini ikut pola yg sama persis.
+ *
  * Transfer MSISDN SENGAJA tidak lagi jadi baris menu di sini - permintaan
  * transfer yg ditujukan ke pengguna ini sudah masuk lewat inbox Notifikasi
  * (badge digabung di Home), jadi tidak perlu jalan pintas kedua di sini.
  */
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, LogOut, Mail, Building2, MapPin, Sparkles, Target, TrendingUp, ChevronRight, Hash, User2, Pencil, Loader2, Save } from "lucide-react";
+import { LogOut, Mail, Building2, MapPin, Sparkles, User2, Pencil, Loader2, Save } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
-import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, updateCachedFullName } from "../_shared/MobileShell";
-import { fmtInt } from "../_shared/activityUi";
+import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, updateCachedFullName, logMartaLogout } from "../_shared/MobileShell";
 import { BRAND_DISPLAY } from "../_shared/planData";
 
-const ROLE_LABEL = { bme: "BME", rge: "RGE", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
+const ROLE_LABEL = { bme_rge: "BME/RGE", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
+const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
 
 function initials(name) {
   if (!name) return "?";
@@ -26,25 +34,13 @@ function initials(name) {
 export default function ProfilePage() {
   const router = useRouter();
   const { loading, email, userId, scope } = useMartaSession();
-  const [stats, setStats] = useState(null);
   // Nama yg baru saja diganti sendiri lewat EditNameSheet - override di atas
   // scope.fullName spy tampilan langsung ikut berubah tanpa nunggu re-fetch
   // scope penuh (mh_set_my_name sendiri sudah simpan ke server).
   const [nameOverride, setNameOverride] = useState(null);
   const [editingName, setEditingName] = useState(false);
   const fullName = nameOverride ?? scope?.fullName;
-
-  useEffect(() => {
-    if (loading || !userId) return;
-    let alive = true;
-    (async () => {
-      try {
-        const { data } = await supabaseMarta.from("mh_leaderboard_summary").select("total_activities, achievement_pct, final_score").eq("user_id", userId).maybeSingle();
-        if (alive) setStats(data || null);
-      } catch { /* best-effort */ }
-    })();
-    return () => { alive = false; };
-  }, [loading, userId]);
+  const brandKey = scope?.brand ? scope.brand.toLowerCase() : null;
 
   const signOut = async () => {
     await logMartaLogout();
@@ -56,62 +52,91 @@ export default function ProfilePage() {
 
   return (
     <MobileShell active="profile">
-      <div style={{ padding: "calc(env(safe-area-inset-top,0px) + 20px) 20px 0", fontFamily: FF }}>
-        <BackBar router={router} />
+      {/* Header STICKY dgn glass blur - SAMA PERSIS pola/nilai warna & blur
+          dgn header Beranda/Aktivitas/Kalender, supaya Profil tidak lagi
+          terasa spt halaman "beda aplikasi". */}
+      <div style={{
+        position: "sticky", top: 0, zIndex: 20, maxWidth: 480, margin: "0 auto",
+        padding: "calc(env(safe-area-inset-top,0px) + 20px) 20px 14px", fontFamily: FF,
+        background: "rgba(244,245,247,0.86)", backdropFilter: "blur(18px) saturate(1.5)", WebkitBackdropFilter: "blur(18px) saturate(1.5)",
+        borderBottom: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 6px 20px rgba(23,24,28,0.05)",
+      }}>
+        <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em" }}>Profil Anda</div>
+      </div>
 
-        {/* Header card */}
-        <div style={{ marginTop: 16, borderRadius: 20, background: BRAND, padding: "22px 20px", color: "#fff", boxShadow: "0 8px 20px rgba(17,17,20,0.14), 0 2px 5px rgba(17,17,20,0.08)", position: "relative", overflow: "hidden" }}>
-          <div style={{ position: "absolute", right: -30, top: -30, width: 120, height: 120, borderRadius: "50%", background: "rgba(255,255,255,0.08)" }} />
+      <div style={{ padding: "14px 20px calc(env(safe-area-inset-bottom,0px) + 24px)", fontFamily: FF }}>
+        {/* Kartu identitas - dulu hero gradient merah-magenta penuh layar,
+            SEKARANG kartu putih netral spt kartu2 lain (border #EDEDF1,
+            shadow tipis) - avatar jadi satu-satunya aksen warna brand
+            (lingkaran solid BRAND), bukan seluruh kartu diwarnai. */}
+        <div style={{
+          marginTop: 2, background: "#FFFFFF", borderRadius: 18, padding: "16px",
+          border: "1px solid #EDEDF1", boxShadow: "0 2px 10px rgba(23,24,28,0.04), 0 1px 2px rgba(23,24,28,0.03)",
+        }}>
           <div style={{ display: "flex", alignItems: "center", gap: 13 }}>
-            <div style={{ width: 52, height: 52, borderRadius: "50%", background: "rgba(255,255,255,0.18)", border: "2px solid rgba(255,255,255,0.5)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, fontWeight: 800, flexShrink: 0 }}>
+            <div style={{
+              width: 50, height: 50, borderRadius: "50%", background: BRAND, color: "#fff",
+              display: "flex", alignItems: "center", justifyContent: "center", fontSize: 17, fontWeight: 800, flexShrink: 0,
+              boxShadow: "0 4px 10px rgba(237,28,36,0.22)",
+            }}>
               {initials(fullName || email)}
             </div>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 16, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fullName || "-"}</div>
-              <div style={{ marginTop: 3, display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, opacity: 0.9, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                <Mail size={11} /> {email}
+              <div style={{ fontSize: 15.5, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fullName || "-"}</div>
+              <div style={{ marginTop: 3, display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <Mail size={11} color="#B0B0BA" /> {email}
               </div>
             </div>
           </div>
-          {stats && (
-            <div style={{ display: "flex", gap: 20, marginTop: 18, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.2)" }}>
-              <MiniStat icon={Sparkles} label="Aktivitas" value={fmtInt(stats.total_activities)} />
-              <MiniStat icon={Target} label="Capaian" value={`${Math.round(stats.achievement_pct || 0)}%`} />
-              <MiniStat icon={TrendingUp} label="Skor" value={fmtInt(Math.round(stats.final_score || 0))} />
-            </div>
-          )}
         </div>
 
-        {/* Informasi akun - identitas dasar, terpisah dari scope penugasan
-            di bawahnya supaya tidak tercampur "siapa saya" vs "di mana saya
-            ditugaskan". */}
         <SectionCard title="Informasi Akun">
-          <RowKV icon={<User2 size={13} />} label="Nama Lengkap" value={fullName || "-"}
-            onEdit={() => setEditingName(true)} />
+          <RowKV icon={<User2 size={13} />} label="Nama Lengkap" value={fullName || "-"} onEdit={() => setEditingName(true)} />
+          <Divider />
           <RowKV icon={<Mail size={13} />} label="Email" value={email} />
-          <RowKV icon={<Sparkles size={13} />} label="Peran" value={ROLE_LABEL[scope?.role] || scope?.role || "-"} />
+          <Divider />
+          <RowKV icon={<Sparkles size={13} />} label="Peran"
+            valueNode={<RolePill label={ROLE_LABEL[scope?.role] || scope?.role || "-"} />} last />
         </SectionCard>
 
         {/* Scope info - authState sudah pasti 'active' di titik ini (lihat
-            catatan redirect di useMartaSession, MobileShell.jsx). */}
+            catatan redirect di useMartaSession, MobileShell.jsx). Brand
+            SEKARANG pakai badge solid SAMA PERSIS spt di kartu aktivitas
+            (kuning teks hitam utk IM3, magenta teks putih utk 3ID) - bukan
+            lagi teks polos, biar identitas brand langsung kebaca. */}
         {(scope?.brand || scope?.branchName || scope?.region) && (
           <SectionCard title="Penugasan">
-            {scope?.brand && <RowKV icon={<Building2 size={13} />} label="BRAND" value={BRAND_DISPLAY[scope.brand] || scope.brand.toUpperCase()} />}
-            {scope?.branchName && <RowKV icon={<MapPin size={13} />} label="BRANCH" value={scope.branchName} />}
-            {scope?.region && <RowKV icon={<MapPin size={13} />} label="Region" value={scope.region} />}
+            {scope?.brand && (
+              <>
+                <RowKV icon={<Building2 size={13} />} label="Brand"
+                  valueNode={
+                    <span style={{
+                      fontSize: 10.5, fontWeight: 800, padding: "3px 9px", borderRadius: 999, whiteSpace: "nowrap",
+                      background: BRAND_COLOR[brandKey] || "#8A8A96",
+                      color: brandKey === "tri" ? "#FFFFFF" : "#17181C",
+                    }}>
+                      {brandKey === "tri" ? "3ID" : (BRAND_DISPLAY[scope.brand] || scope.brand.toUpperCase())}
+                    </span>
+                  } />
+                <Divider />
+              </>
+            )}
+            {scope?.branchName && (
+              <>
+                <RowKV icon={<MapPin size={13} />} label="Branch" value={scope.branchName} />
+                <Divider />
+              </>
+            )}
+            {scope?.region && <RowKV icon={<MapPin size={13} />} label="Region" value={scope.region} last />}
           </SectionCard>
         )}
 
-        <div style={{ marginTop: 14, background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 16, overflow: "hidden", boxShadow: "0 4px 12px rgba(17,17,20,0.04)" }}>
-          <MenuRow icon={<Hash size={16} />} label="Semua Aktivitas" onTap={() => router.push("/martahub/m/activities")} last />
-        </div>
-
         <button onClick={signOut}
-          style={{ width: "100%", marginTop: 14, height: 48, borderRadius: 14, border: "1px solid #F7C6C9", background: "#FFF5F6", color: "#DC2626", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 4px 12px rgba(220,38,38,0.06)" }}>
+          style={{ width: "100%", marginTop: 12, height: 48, borderRadius: 14, border: "1px solid #F7C6C9", background: "#FFF5F6", color: "#DC2626", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
           <LogOut size={15} /> Keluar
         </button>
 
-        <div style={{ textAlign: "center", marginTop: 18, marginBottom: 30, fontSize: 10.5, color: "#C4C4CE", fontWeight: 600 }}>
+        <div style={{ textAlign: "center", marginTop: 18, marginBottom: 6, fontSize: 10.5, color: "#C4C4CE", fontWeight: 600 }}>
           MartaHub · IOH Sumatera
         </div>
       </div>
@@ -125,45 +150,45 @@ export default function ProfilePage() {
   );
 }
 
-function BackBar({ router }) {
-  return (
-    <button onClick={() => router.push("/martahub/m")}
-      style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#5A5A68", fontSize: 12.5, fontWeight: 700, fontFamily: FF, padding: 0 }}>
-      <ArrowLeft size={16} /> Beranda
-    </button>
-  );
-}
-
-function MiniStat({ icon: Icon, label, value }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 4, opacity: 0.85 }}>
-        <Icon size={11} />
-        <span style={{ fontSize: 10, fontWeight: 600 }}>{label}</span>
-      </div>
-      <div style={{ fontSize: 14, fontWeight: 800 }}>{value}</div>
-    </div>
-  );
-}
-
 function SectionCard({ title, children }) {
   return (
-    <div style={{ marginTop: 14, background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 16, padding: "14px 15px", boxShadow: "0 4px 12px rgba(17,17,20,0.04)" }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 10 }}>{title}</div>
+    <div style={{
+      marginTop: 12, background: "#FFFFFF", borderRadius: 18, padding: "14px 15px",
+      border: "1px solid #EDEDF1", boxShadow: "0 2px 10px rgba(23,24,28,0.04), 0 1px 2px rgba(23,24,28,0.03)",
+    }}>
+      <div style={{ fontSize: 10.5, fontWeight: 800, color: "#B0B0BA", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>{title}</div>
       {children}
     </div>
   );
 }
 
-function RowKV({ icon, label, value, onEdit }) {
+function Divider() {
+  return <div style={{ height: 1, background: "#F0F0F3" }} />;
+}
+
+function RolePill({ label }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "6px 0" }}>
-      <span style={{ color: "#8A8A96", display: "flex" }}>{icon}</span>
-      <span style={{ fontSize: 12, color: "#8A8A96", fontWeight: 600, flex: 1 }}>{label}</span>
-      <span style={{ fontSize: 12.5, color: "#17181C", fontWeight: 700 }}>{value}</span>
+    <span style={{ fontSize: 10.5, fontWeight: 800, padding: "3px 9px", borderRadius: 999, whiteSpace: "nowrap", background: "rgba(237,28,36,0.09)", color: "#ED1C24" }}>
+      {label}
+    </span>
+  );
+}
+
+function RowKV({ icon, label, value, valueNode, onEdit, last }) {
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: last ? "9px 0 2px" : "9px 0" }}>
+      <span style={{ color: "#B0B0BA", display: "flex", flexShrink: 0, marginTop: 1 }}>{icon}</span>
+      <span style={{ fontSize: 12, color: "#8A8A96", fontWeight: 600, flex: 1, marginTop: 1 }}>{label}</span>
+      {valueNode ? valueNode : (
+        <span style={{ fontSize: 12.5, color: "#17181C", fontWeight: 700, textAlign: "right", wordBreak: "break-word", maxWidth: onEdit ? "unset" : 190 }}>{value}</span>
+      )}
       {onEdit && (
         <button onClick={onEdit} title="Ubah nama"
-          style={{ marginLeft: 2, width: 24, height: 24, borderRadius: 7, border: "1px solid #ECEDF0", background: "#F6F7F9", color: "#5A5A68", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+          style={{
+            marginLeft: 2, width: 24, height: 24, borderRadius: 7, flexShrink: 0, cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            border: "1px solid #ECEDF0", background: "#F6F7F9", color: "#5A5A68",
+          }}>
           <Pencil size={11} />
         </button>
       )}
@@ -227,13 +252,3 @@ function EditNameSheet({ currentName, onClose, onSaved }) {
   );
 }
 
-function MenuRow({ icon, label, onTap, last }) {
-  return (
-    <button onClick={onTap}
-      style={{ width: "100%", display: "flex", alignItems: "center", gap: 11, padding: "14px 15px", background: "none", border: "none", borderBottom: last ? "none" : "1px solid #F0F0F3", cursor: "pointer", fontFamily: FF }}>
-      <span style={{ color: "#5A5A68", display: "flex" }}>{icon}</span>
-      <span style={{ flex: 1, textAlign: "left", fontSize: 13, fontWeight: 700, color: "#17181C" }}>{label}</span>
-      <ChevronRight size={16} color="#C4C4CE" />
-    </button>
-  );
-}

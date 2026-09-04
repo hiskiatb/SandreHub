@@ -8,14 +8,13 @@
  */
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle } from "lucide-react";
-import { ArrowLeft, PackageCheck, MapPin, Navigation, Milestone, CheckCircle2, Clock, XCircle, Layers, ChevronRight, ImageOff, History, Store, Users } from "lucide-react";
+import { ArrowLeft, PackageCheck, Navigation, Layers, ChevronRight, ImageOff, Image as ImageIcon, History, Store, Users } from "lucide-react";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { fmtInt } from "../_shared/activityUi";
 import { APPROVER_ROLES, BRAND_DISPLAY } from "../_shared/planData";
 import {
   fetchMyBranchProgress, fetchMyTypeSummary, fetchMyInstallations,
-  fetchStockEntries, posmatStockPhotoUrl, STOCK_MODE_LABEL, INSTALL_MODES,
+  fetchStockEntries, posmatStockPhotoUrl, posmPlanVisualUrl, STOCK_MODE_LABEL,
   fetchPlansForBranch, PLAN_CATEGORIES,
 } from "../_shared/posmData";
 
@@ -35,6 +34,11 @@ async function fetchAllocatedMaterialsForBranch(branchId, brand) {
       const cur = map.get(m.posmat_type_id) || {
         posmat_type_id: m.posmat_type_id, name: m.name, unit: m.unit, stock_mode: m.stock_mode,
         qty: 0, installed_qty: 0, plan_names: [],
+        // Plan pertama yang menyumbang materi ini - dipakai utk thumbnail visual
+        // & langsung mengarahkan ketukan kartu ke halaman pemasangan Plan itu
+        // (kalau materi berasal dari >1 Plan, sisanya tetap terhitung ke total
+        // tapi navigasi ikut Plan pertama yang ditemukan).
+        plan_id: pl.id, category: pl.category, visual_path: pl.visual_path,
       };
       cur.qty += qty;
       cur.installed_qty += Number(m.installed_qty) || 0;
@@ -48,7 +52,6 @@ async function fetchAllocatedMaterialsForBranch(branchId, brand) {
 
 const fmtRupiah = (v) => v == null ? null : `Rp${Number(v).toLocaleString("id-ID", { maximumFractionDigits: 0 })}`;
 
-const MODE_ICON = { activity: Milestone, outlet: MapPin, street: Navigation };
 const CATEGORY_ICON = { retailer_installment: Store, outdoor_installment: Navigation, customer_activation: Users };
 const CATEGORY_COLOR = {
   retailer_installment: { color: "#ED1C24", bg: "rgba(237,28,36,0.10)" },
@@ -94,6 +97,7 @@ export default function PosmHubPage() {
   if (sessionLoading || installs === null) return <MobileShell active="home"><ShellSpinner /></MobileShell>;
 
   const pct = progress?.target_qty > 0 ? Math.min(100, Math.round((progress.achieved_qty / progress.target_qty) * 100)) : null;
+  const needsRevisionCount = installs.filter((ins) => ins.retailer_outlet_code && ins.review_status === "revision_needed").length;
 
   return (
     <MobileShell active="home">
@@ -179,34 +183,14 @@ export default function PosmHubPage() {
 
       {/* Materi POSM yang dialokasikan ke Branch ini lewat Plan POSM (desktop) -
           langsung tampil di halaman utama, tidak perlu buka sheet Tambah
-          Stok/Ajukan Klaim dulu utk tahu apa yang harus dikerjakan. */}
+          Stok/Ajukan Klaim dulu utk tahu apa yang harus dikerjakan. Ketuk
+          kartu -> langsung ke halaman Plan (bisa langsung "Cari Outlet &
+          Pasang" dari sana), thumbnail pakai visual Plan yang sama. */}
       {allocated && allocated.length > 0 && (
         <div style={{ padding: "16px 20px 0" }}>
           <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10 }}>POSM YANG DITUGASKAN KE BRANCH</div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {allocated.map((m) => {
-              const pct = m.qty > 0 ? Math.min(100, Math.round((m.installed_qty / m.qty) * 100)) : 0;
-              const done = m.remaining <= 0;
-              return (
-                <div key={m.posmat_type_id} style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 14, padding: "12px 14px" }}>
-                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C" }}>{m.name}</div>
-                      <div style={{ marginTop: 2, fontSize: 10.5, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.plan_names.join(", ")}</div>
-                    </div>
-                    <span style={{ flexShrink: 0, fontSize: 9.5, fontWeight: 800, padding: "4px 8px", borderRadius: 999, color: done ? "#15803D" : "#B45309", background: done ? "rgba(21,128,61,0.10)" : "rgba(180,83,9,0.10)" }}>
-                      {done ? "Selesai" : `Sisa ${fmtInt(m.remaining)}`}
-                    </span>
-                  </div>
-                  <div style={{ marginTop: 9, display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "#5A5A68", fontWeight: 700 }}>
-                    <span>{fmtInt(m.installed_qty)} / {fmtInt(m.qty)} {m.unit}</span>
-                  </div>
-                  <div style={{ marginTop: 6, height: 6, borderRadius: 999, background: "#F0F0F3", overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: `${pct}%`, background: done ? "#15803D" : "#ED1C24", borderRadius: 999 }} />
-                  </div>
-                </div>
-              );
-            })}
+            {allocated.map((m) => <AssignedMaterialCard key={m.posmat_type_id} m={m} router={router} />)}
           </div>
         </div>
       )}
@@ -239,19 +223,26 @@ export default function PosmHubPage() {
         </div>
       )}
 
-      {/* Riwayat instalasi */}
+      {/* Riwayat instalasi - dipisah jadi menu tersendiri (bukan daftar penuh
+          di Beranda POSM), supaya halaman utama tetap ringkas. Kartu ini
+          cuma ringkasan (jumlah + status revisi terbaru kalau ada). */}
       <div style={{ padding: "20px 20px 100px" }}>
-        <div style={{ fontSize: 13, fontWeight: 800, marginBottom: 10 }}>Riwayat Instalasi</div>
-        {installs.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "36px 20px", background: "#FFFFFF", border: "1px dashed #D8D9E0", borderRadius: 16 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#3A3A44" }}>Belum ada instalasi tercatat</div>
-            <div style={{ marginTop: 4, fontSize: 12, color: "#8A8A96" }}>Pilih salah satu kategori POSM di atas untuk mulai mencatat pemasangan.</div>
+        <button onClick={() => router.push("/martahub/m/posm/riwayat")}
+          style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "13px 14px", borderRadius: 14, border: "1px solid #E9EAEE", background: "#FFFFFF", cursor: "pointer", textAlign: "left", fontFamily: FF }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: "#F0F0F3", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <History size={16} color="#5A5A68" />
           </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {installs.map((ins) => <InstallCard key={ins.id} ins={ins} router={router} />)}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>Riwayat Instalasi</div>
+              {needsRevisionCount > 0 && <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#DC2626", flexShrink: 0 }} />}
+            </div>
+            <div style={{ fontSize: 10.5, color: "#8A8A96", fontWeight: 600 }}>
+              {installs.length === 0 ? "Belum ada instalasi tercatat" : needsRevisionCount > 0 ? `${needsRevisionCount} perlu revisi · ${installs.length} total` : `${installs.length} pemasangan tercatat`}
+            </div>
           </div>
-        )}
+          <ChevronRight size={16} color="#B0B0BA" />
+        </button>
       </div>
 
       {historyType && (
@@ -273,59 +264,36 @@ function BackBar({ router }) {
   );
 }
 
-function reviewBadge(status) {
-  const map = {
-    valid: { label: "Tervalidasi", color: "#15803D", bg: "rgba(21,128,61,0.10)", icon: CheckCircle2 },
-    approved: { label: "Tervalidasi", color: "#15803D", bg: "rgba(21,128,61,0.10)", icon: CheckCircle2 },
-    mismatch: { label: "Tidak Cocok", color: "#DC2626", bg: "rgba(220,38,38,0.10)", icon: XCircle },
-    rejected: { label: "Ditolak", color: "#DC2626", bg: "rgba(220,38,38,0.10)", icon: XCircle },
+function AssignedMaterialCard({ m, router }) {
+  const pct = m.qty > 0 ? Math.min(100, Math.round((m.installed_qty / m.qty) * 100)) : 0;
+  const done = m.remaining <= 0;
+  const url = m.visual_path ? posmPlanVisualUrl(m.visual_path) : null;
+  const goToPlan = () => {
+    if (m.category && m.plan_id) router.push(`/martahub/m/posm/kategori/${m.category}/${m.plan_id}`);
   };
-  return map[status] || { label: "Menunggu Validasi", color: "#B45309", bg: "rgba(180,83,9,0.10)", icon: Clock };
-}
-
-function InstallCard({ ins, router }) {
-  const Icon = MODE_ICON[ins.mode] || Milestone;
-  const badge = reviewBadge(ins.location_status);
-  const BadgeIcon = badge.icon;
-  const label = ins.mode === "activity" ? (ins.activity_name || "Terikat Activity") : ins.mode === "outlet" ? (ins.retailer_outlet_name ? ins.retailer_outlet_name.toUpperCase() : (ins.site_id || "Terikat Outlet")) : (ins.street_description || "Street Branding");
-  const totalQty = (ins.items || []).reduce((s, it) => s + Number(it.qty || 0), 0);
-  const needsRevision = ins.retailer_outlet_code && ins.review_status === "revision_needed";
   return (
-    <div style={{ textAlign: "left", width: "100%", background: needsRevision ? "#FFF7F7" : "#FFFFFF", border: `1px solid ${needsRevision ? "#F3C6C6" : "#E9EAEE"}`, borderRadius: 16, padding: "13px 14px", fontFamily: FF, boxSizing: "border-box" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-        <div style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 10, background: "#F0F0F3", display: "flex", alignItems: "center", justifyContent: "center", color: "#5A5A68" }}>
-          <Icon size={16} />
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
-          <div style={{ marginTop: 3, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>
-            {INSTALL_MODES.find((m) => m.key === ins.mode)?.label} · {fmtInt(totalQty)} item · {new Date(ins.created_at).toLocaleDateString("id-ID")}
-          </div>
-        </div>
-        <span style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 3, fontSize: 9.5, fontWeight: 800, padding: "4px 8px", borderRadius: 999, color: badge.color, background: badge.bg }}>
-          <BadgeIcon size={10} /> {badge.label}
-        </span>
+    <button onClick={goToPlan} style={{ width: "100%", display: "flex", gap: 12, textAlign: "left", background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 16, padding: 12, cursor: "pointer", fontFamily: FF, boxSizing: "border-box" }}>
+      <div style={{ width: 52, height: 52, borderRadius: 12, background: "#F0F0F3", flexShrink: 0, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        {url ? <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <ImageIcon size={18} color="#C4C4CE" />}
       </div>
-      {ins.plan_id && ins.in_period === false && (
-        <div style={{ marginTop: 8, fontSize: 9.5, fontWeight: 800, color: "#B8860B", background: "rgba(184,134,11,0.10)", display: "inline-block", padding: "3px 8px", borderRadius: 999 }}>
-          Di luar periode Plan
-        </div>
-      )}
-      {needsRevision && (
-        <div style={{ marginTop: 10, padding: "9px 10px", borderRadius: 11, background: "#FFFFFF", border: "1px solid #F3C6C6" }}>
-          <div style={{ display: "flex", alignItems: "flex-start", gap: 7 }}>
-            <AlertTriangle size={13} color="#DC2626" style={{ flexShrink: 0, marginTop: 1 }} />
-            <div style={{ fontSize: 11, color: "#7A1F1F", fontWeight: 600, lineHeight: 1.5, flex: 1 }}>
-              CMS meminta revisi{ins.review_notes ? `: ${ins.review_notes}` : "."}
-            </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C" }}>{m.name}</div>
+            <div style={{ marginTop: 2, fontSize: 10.5, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.plan_names.join(", ")}</div>
           </div>
-          <button onClick={() => router.push(`/martahub/m/posm/revisi/${ins.id}`)}
-            style={{ marginTop: 8, width: "100%", height: 36, borderRadius: 10, border: "none", background: "#DC2626", color: "#fff", fontSize: 12, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>
-            Perbaiki Sekarang
-          </button>
+          <span style={{ flexShrink: 0, fontSize: 9.5, fontWeight: 800, padding: "4px 8px", borderRadius: 999, color: done ? "#15803D" : "#B45309", background: done ? "rgba(21,128,61,0.10)" : "rgba(180,83,9,0.10)" }}>
+            {done ? "Selesai" : `Sisa ${fmtInt(m.remaining)}`}
+          </span>
         </div>
-      )}
-    </div>
+        <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8, fontSize: 11, color: "#5A5A68", fontWeight: 700 }}>
+          <span>{fmtInt(m.installed_qty)} / {fmtInt(m.qty)} {m.unit}</span>
+        </div>
+        <div style={{ marginTop: 6, height: 6, borderRadius: 999, background: "#F0F0F3", overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${pct}%`, background: done ? "#15803D" : "#ED1C24", borderRadius: 999 }} />
+        </div>
+      </div>
+    </button>
   );
 }
 

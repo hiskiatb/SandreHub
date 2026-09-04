@@ -22,13 +22,13 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, CheckCircle2, Loader2, MapPin, ImageOff } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Loader2, MapPin, ImageOff, MessageSquareWarning } from "lucide-react";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../../lib/supabaseMarta";
 import { applyMartaScope, regionLabel } from "../../../../lib/martaScope";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { BRAND_DISPLAY } from "../_shared/planData";
 
-const ROLE_LABEL = { admin: "Admin", head: "Head TMV", tmv: "Brand TMV", bme: "BME", rge: "RGE", spm_sumatera: "SPM Sumatera" };
+const ROLE_LABEL = { admin: "Admin", head: "Head TMV", tmv: "Brand TMV", bme_rge: "BME/RGE", spm_sumatera: "SPM Sumatera" };
 const CAN_APPROVE_ROLES = ["admin", "head", "tmv", "spm_sumatera"];
 
 const PENDING_COLS = "id, event_name, brand, mc, site_id, plan_date_start, plan_date, target_sp, target_fwa, created_at";
@@ -106,10 +106,8 @@ export default function MobileApprovalPage() {
       let error;
       if (kind === "override") {
         ({ error } = await supabaseMarta.rpc("mh_activity_manual_override", { p_activity_id: row.id, p_final_status: "approved", p_note: null, p_caller_email: email }));
-      } else if (kind === "md_street") {
-        ({ error } = await supabaseMarta.rpc("mh_web_decide_md_installation", { p_id: row.id, p_decision: "approved", p_notes: null, p_caller_email: email }));
       } else {
-        ({ error } = await supabaseMarta.rpc("mh_web_decide_plan", { p_activity_id: row.id, p_email: email, p_decision: "approved", p_notes: null }));
+        ({ error } = await supabaseMarta.rpc("mh_web_decide_md_installation", { p_id: row.id, p_decision: "approved", p_notes: null, p_caller_email: email }));
       }
       if (error) throw new Error(error.message);
       await load();
@@ -119,6 +117,12 @@ export default function MobileApprovalPage() {
 
   async function confirmDecision() {
     if (!dialog) return;
+    // RPC mh_web_decide_plan mewajibkan komentar saat minta revisi plan -
+    // divalidasi di sini juga spy user langsung tahu tanpa nunggu round-trip.
+    if (dialog.kind === "plan" && !notes.trim()) {
+      setActionErr("Komentar wajib diisi - jelaskan apa yang perlu diperbaiki.");
+      return;
+    }
     setSubmitting(true); setActionErr("");
     try {
       let error;
@@ -139,7 +143,7 @@ export default function MobileApprovalPage() {
   if (sessionLoading || loading) return <MobileShell active="home"><ShellSpinner /></MobileShell>;
 
   const TABS = [
-    { key: "plan", label: "Plan", count: planRows.length },
+    { key: "plan", label: "Tinjau Plan", count: planRows.length },
     { key: "revision", label: "Perlu Ditinjau", count: revisionRows.length },
     { key: "street", label: "Street Branding", count: streetRows.length },
   ];
@@ -186,14 +190,26 @@ export default function MobileApprovalPage() {
         )}
 
         {tab === "plan" && (
-          planRows.length === 0 ? <EmptyState text="Tidak ada plan yang perlu disetujui" /> : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {planRows.map((r) => (
-                <PlanCard key={r.id} r={r} canApprove={canApprove} busy={busyRowId === r.id}
-                  onApprove={() => quickApprove(r, "plan")} onRevise={() => openDialog(r, "plan", "revision_needed")} />
-              ))}
+          <>
+            {/* Plan TIDAK PERLU disetujui lagi utk bisa dieksekusi - begitu
+                tanggal event tiba, BME/RGE langsung bisa Check In/Isi
+                Laporan Actual tanpa menunggu keputusan siapa pun di sini.
+                Tab ini murni utk PENGAWASAN: atasan bisa meninjau plan yang
+                baru disubmit, dan kalau memang dirasa kurang sesuai, beri
+                komentar lewat "Perlu Revisi" - pemilik plan langsung dapat
+                notifikasi & diarahkan ke wizard editnya. */}
+            <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 12, background: "#F0F7FF", border: "1px solid #D6E8FF", fontSize: 11.5, color: "#1D4ED8", fontWeight: 600, lineHeight: 1.5 }}>
+              Plan di sini SUDAH BISA langsung dijalankan pemiliknya begitu tanggal event tiba - tidak menunggu persetujuan siapa pun. Beri &ldquo;Perlu Revisi&rdquo; hanya kalau memang ada yang perlu dikoreksi.
             </div>
-          )
+            {planRows.length === 0 ? <EmptyState text="Tidak ada plan yang perlu ditinjau" /> : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {planRows.map((r) => (
+                  <PlanCard key={r.id} r={r} canApprove={canApprove} busy={busyRowId === r.id}
+                    onRevise={() => openDialog(r, "plan", "revision_needed")} />
+                ))}
+              </div>
+            )}
+          </>
         )}
 
         {tab === "revision" && (
@@ -233,9 +249,11 @@ export default function MobileApprovalPage() {
             <div style={{ marginTop: 4, fontSize: 12.5, color: "#8A8A96" }}>
               {dialog.kind === "md_street" ? (dialog.row.md_full_name || dialog.row.md_email || "-") : `${dialog.row.event_name || "-"} · ${dialog.row.mc || "-"}`}
             </div>
-            <label style={{ display: "block", marginTop: 16, fontSize: 11, fontWeight: 700, color: "#8A8A96", textTransform: "uppercase", letterSpacing: "0.05em" }}>Catatan (opsional)</label>
+            <label style={{ display: "block", marginTop: 16, fontSize: 11, fontWeight: 700, color: "#8A8A96", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Catatan {dialog.kind === "plan" ? "(wajib)" : "(opsional)"}
+            </label>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
-              placeholder="Apa yang perlu diperbaiki…"
+              placeholder={dialog.kind === "plan" ? "Apa yang perlu diperbaiki… (wajib diisi)" : "Apa yang perlu diperbaiki…"}
               style={{ width: "100%", marginTop: 7, padding: "11px 13px", borderRadius: 12, border: "1.5px solid #ECEDF0", background: "#F6F7F9", fontSize: 13, fontFamily: FF, resize: "vertical", outline: "none", boxSizing: "border-box" }} />
             {actionErr && <div style={{ marginTop: 10, fontSize: 12, color: "#C62828" }}>{actionErr}</div>}
             <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
@@ -294,7 +312,10 @@ function ApproveRejectRow({ canApprove, busy, onApprove, approveLabel = "Setujui
   );
 }
 
-function PlanCard({ r, canApprove, busy, onApprove, onRevise }) {
+// Cuma SATU aksi (bukan lagi ApproveRejectRow dua tombol) - plan tidak
+// perlu "disetujui" lagi, jadi tombolnya murni "Perlu Revisi" utk atasan
+// yg mau kasih komentar/koreksi, TIDAK ADA tombol "Setuju" lagi di sini.
+function PlanCard({ r, canApprove, busy, onRevise }) {
   return (
     <div style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 16, padding: "14px 15px", fontFamily: FF }}>
       <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
@@ -305,7 +326,13 @@ function PlanCard({ r, canApprove, busy, onApprove, onRevise }) {
         {r.mc || "-"} · {r.site_id || "-"} · {fmtDate(r.plan_date_start || r.plan_date)}
       </div>
       <div style={{ marginTop: 4, fontSize: 11.5, color: "#8A8A96" }}>Target {r.target_sp ?? 0}/{r.target_fwa ?? 0} SP/FWA</div>
-      <ApproveRejectRow canApprove={canApprove} busy={busy} onApprove={onApprove} onReject={onRevise} rejectLabel="Perlu Revisi" />
+      {canApprove && (
+        <button onClick={onRevise} disabled={busy}
+          style={{ width: "100%", marginTop: 12, height: 40, borderRadius: 11, border: "1px solid #FBD9B4", background: "#FFF7ED", color: "#C2410C", fontSize: 12.5, fontWeight: 800, fontFamily: FF, cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+          {busy ? <Loader2 size={14} style={{ animation: "mspin .85s linear infinite" }} /> : <MessageSquareWarning size={14} />}
+          Perlu Revisi
+        </button>
+      )}
     </div>
   );
 }

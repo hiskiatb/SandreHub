@@ -18,16 +18,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  LogOut, Building2, ChevronRight, Bell,
+  Building2, ChevronRight, Clock,
   CalendarPlus, ListChecks, Map as MapIcon, Trophy, ShieldCheck, ClipboardCheck, Lightbulb, PackageCheck,
   Target, CheckCircle2, Gauge, Wallet, Tags, LayoutDashboard, UserCog, FileEdit,
 } from "lucide-react";
 import supabaseMarta from "../../../lib/supabaseMarta";
 import { applyMartaScope, loadBranchMap } from "../../../lib/martaScope";
 import MobileShell, { useMartaSession, ShellSpinner, InlineSpinner, MartaSplash, FF, BRAND } from "./_shared/MobileShell";
-import { statusMeta, fmtDate, fmtInt, isDraftIncomplete } from "./_shared/activityUi";
+import AppHeader, { Badge } from "./_shared/AppHeader";
+import { fmtDate, fmtTimeLabel, fmtInt, isDraftIncomplete, activityStage } from "./_shared/activityUi";
 import { APPROVER_ROLES, ADDABLE_ROLES_FOR, BRAND_DISPLAY, BRANDS } from "./_shared/planData";
-import { fetchUnreadCount } from "./_shared/notifData";
 
 // ╔══════════════════════════════════════════════════════════════════════════╗
 // ║ MOCK DASHBOARD DATA - HANYA UNTUK VISUALISASI, HAPUS KAPAN SAJA          ║
@@ -66,16 +66,27 @@ const MOCK_HOME_ACTIVITIES = [
   { id: "mock-h10", event_name: "Project Perluasan Way Halim Lampung", brand: "IM3", branch_id: MHB["BANDAR LAMPUNG"], mc: "MC-11", event_category: "project", event_categories: null, plan_date: "2026-08-19", plan_date_start: null, plan_dates_multi: null, poi_type: "outdoor", status: "approved", checkin_valid: true, target_sp: 10, target_fwa: 5, actual_sp: 11, actual_fwa: 6, cost_actual: 3300000, actual_rev_3m: 7900000, created_at: "2026-08-19T08:50:00+07:00", site_id: "TLK-021" },
 ];
 
-const ROLE_LABEL = { bme: "BME", rge: "RGE", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
+const ROLE_LABEL = { bme_rge: "BME/RGE", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
 // mc/poi_type/event_categories/plan_date_start/plan_dates_multi ditambahkan
 // supaya "draft belum lengkap" di Beranda pakai definisi yg SAMA PERSIS dgn
 // halaman detail & daftar Aktivitas (lihat isDraftIncomplete di activityUi.js).
-const ACTIVITY_COLS = "id,event_name,brand,branch_id,mc,event_category,event_categories,plan_date,plan_date_start,plan_dates_multi,poi_type,status,checkin_valid,target_sp,target_fwa,actual_sp,actual_fwa,cost_actual,actual_rev_3m,created_at,site_id";
+const ACTIVITY_COLS = "id,event_name,brand,branch_id,mc,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,checkin_valid,target_sp,target_fwa,actual_sp,actual_fwa,cost_actual,actual_rev_3m,created_at,site_id";
 
+// Rotasi harian (getDate() % TIPS.length) - deterministik per hari & ikut
+// menyesuaikan otomatis kalau jumlah tips berubah, jadi tiap tips kebagian
+// giliran tampil scr merata sepanjang bulan tanpa perlu state/random.
+// Semua tips dijaga MAKSIMAL 2 baris di kartu carousel (WebkitLineClamp:2
+// di CarouselCard) - kalimat sengaja dipadatkan spy tidak terpotong.
 const TIPS = [
   "Check-in tepat di lokasi site supaya validasi laporan otomatis lolos tanpa perlu ditinjau manual.",
-  "Upload minimal 2 foto dokumentasi yang jelas saat mengisi laporan actual - ini wajib sebelum bisa dikirim.",
+  "Upload foto dokumentasi yang jelas saat isi laporan actual - mempercepat proses validasi.",
   "Nomor MSISDN yang sudah tercatat di plan lain akan otomatis ditandai konflik - ajukan transfer langsung dari layar konflik tersebut.",
+  "Plan belum lengkap otomatis tersimpan sbg draft - lanjutkan kapan saja dari menu Aktivitas.",
+  "Plan ditandai Perlu Revisi? Baca dulu komentarnya di detail aktivitas sebelum mengedit.",
+  "Laporan actual yang telat diisi setelah tanggal event ditandai Laporan Terlambat.",
+  "Cek menu Kalender dulu sebelum buat plan baru, agar tidak bentrok tanggal dgn plan lain.",
+  "Bandingkan target vs actual lewat tombol Lihat Plan vs Actual di kartu aktivitas.",
+  "Nama lengkap bisa diubah sendiri lewat Profil > Informasi Akun, berlaku di semua role.",
 ];
 
 // Nama bulan lengkap khusus selector periode Home (MONTHS di activityUi.js
@@ -105,16 +116,20 @@ export default function MartaMobileHome() {
   const { loading, email, scope } = useMartaSession();
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
-  const [pendingTransfers, setPendingTransfers] = useState(0);
   const [pendingApprovals, setPendingApprovals] = useState(0);
-  const [unreadNotifs, setUnreadNotifs] = useState(0);
   const [branchMap, setBranchMap] = useState(() => new Map());
+  // Nama branch per site utk kartu "Aktivitas Terbaru" - SAMA PERSIS dgn
+  // pendekatan di daftar Aktivitas (activities/page.jsx): lewat mh_sites
+  // (site_id -> branch text), BUKAN mh_activities.branch_id -> mh_branches
+  // (branchMap di atas, dipakai KHUSUS utk opsi filter Branch/Region) - dua
+  // tabel wilayah ini belum direkonsiliasi (lihat catatan di martaScope.js),
+  // & utk banyak baris branch_id-nya ternyata tidak match ke mh_branches
+  // sama sekali (makanya branch sempat tidak muncul di kartu ini).
+  const [branchBySite, setBranchBySite] = useState({});
   const months = useMemo(monthOptions, []);
   const [monthKey, setMonthKey] = useState(months[0].key);
   const [branchFilter, setBranchFilter] = useState("");
   const [brandFilter, setBrandFilter] = useState("");
-  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
-  const [loggingOut, setLoggingOut] = useState(false);
 
   const isApprover = APPROVER_ROLES.includes(scope?.role);
 
@@ -130,21 +145,17 @@ export default function MartaMobileHome() {
           .limit(200);
         if (error) throw error;
         if (alive) setRows(data || []);
+
+        const siteIds = Array.from(new Set((data || []).map((r) => r.site_id).filter(Boolean)));
+        if (siteIds.length > 0) {
+          const { data: siteRows } = await supabaseMarta.from("mh_sites").select("site_id,branch").in("site_id", siteIds);
+          const map = {};
+          (siteRows || []).forEach((s2) => { if (s2.branch) map[s2.site_id] = s2.branch; });
+          if (alive) setBranchBySite(map);
+        }
       } catch (e) {
         if (alive) setErr(e.message || "Gagal memuat aktivitas");
       }
-    })();
-    const transfersFetch = (async () => {
-      try {
-        const { data } = await supabaseMarta.rpc("mh_msisdn_transfer_list_for_me");
-        if (alive) setPendingTransfers((data || []).filter((t) => t.status === "pending").length);
-      } catch { /* best-effort */ }
-    })();
-    const notifsFetch = (async () => {
-      try {
-        const n = await fetchUnreadCount();
-        if (alive) setUnreadNotifs(n || 0);
-      } catch { /* best-effort */ }
     })();
     // ── MOCK DASHBOARD DATA - lihat blok besar dekat import atas file
     // (MOCK_HOME_ACTIVITIES dkk). Override HANYA state lokal browser,
@@ -152,12 +163,10 @@ export default function MartaMobileHome() {
     // fetch asli di atas selesai (bukan race/setTimeout tebakan). Hapus
     // blok ini + baris pemanggilannya utk kembali ke data asli.
     if (USE_MOCK_HOME_DATA) {
-      Promise.allSettled([activitiesFetch, transfersFetch, notifsFetch]).then(() => {
+      Promise.allSettled([activitiesFetch]).then(() => {
         if (!alive) return;
         setRows(MOCK_HOME_ACTIVITIES);
         setErr("");
-        setPendingTransfers(1);
-        setUnreadNotifs(3);
       });
     }
     return () => { alive = false; };
@@ -211,15 +220,6 @@ export default function MartaMobileHome() {
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, isApprover, scope]);
-
-  // Keluar sekarang WAJIB lewat konfirmasi dulu (LogoutConfirmSheet) -
-  // sebelumnya satu tap langsung logout, gampang kepencet tidak sengaja
-  // krn posisinya persis sebelah ikon Notifikasi di header.
-  const signOut = async () => {
-    setLoggingOut(true);
-    await supabaseMarta.auth.signOut();
-    router.replace("/martahub/m/login");
-  };
 
   if (loading) return <MartaSplash />;
 
@@ -292,32 +292,7 @@ export default function MartaMobileHome() {
         background: "rgba(244,245,247,0.86)", backdropFilter: "blur(18px) saturate(1.5)", WebkitBackdropFilter: "blur(18px) saturate(1.5)",
         borderBottom: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 6px 20px rgba(23,24,28,0.05)",
       }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 12, color: "#8A8A96", fontWeight: 600 }}>{greeting()},</div>
-            <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", maxWidth: 230, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {scope?.fullName || email}
-            </div>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-            {/* Transfer MSISDN tidak lagi punya akses terpisah - permintaan yg
-                ditujukan ke "yang bersangkutan" (pemilik nomor saat ini) masuk
-                lewat inbox Notifikasi yang sama, badge-nya digabung di sini. */}
-            <button onClick={() => router.push("/martahub/m/notifications")}
-              style={{ position: "relative", display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, background: "#FFFFFF", border: "1px solid #E4E5EA", borderRadius: 11, cursor: "pointer", color: "#8A8A96" }}>
-              <Bell size={15} />
-              {(unreadNotifs + pendingTransfers) > 0 && <Badge n={unreadNotifs + pendingTransfers} />}
-            </button>
-            {/* Keluar - sengaja diberi warna merah (beda dari Notifikasi)
-                supaya aksi destruktif ini langsung terlihat beda tegas,
-                dan sekarang butuh konfirmasi (LogoutConfirmSheet) dulu -
-                bukan langsung logout begitu ditap. */}
-            <button onClick={() => setLogoutConfirmOpen(true)}
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, background: "#FDECEC", border: "1px solid #F6C6C6", borderRadius: 11, cursor: "pointer", color: "#ED1C24" }}>
-              <LogOut size={15} />
-            </button>
-          </div>
-        </div>
+        <AppHeader scope={scope} email={email} />
       </div>
 
       <div style={{ padding: "0 20px 4px" }}>
@@ -353,14 +328,6 @@ export default function MartaMobileHome() {
           </div>
         </div>
       </div>
-
-      {logoutConfirmOpen && (
-        <LogoutConfirmSheet
-          loading={loggingOut}
-          onCancel={() => setLogoutConfirmOpen(false)}
-          onConfirm={signOut}
-        />
-      )}
 
       {/* Banner draft belum selesai - SENGAJA elemen berdiri sendiri yg
           SELALU terlihat (bukan dikubur di dalam MissionCarousel yg
@@ -467,7 +434,7 @@ export default function MartaMobileHome() {
           di header, Profil lewat tab bawah "Profil"), jadi Menu ini cuma
           isi aksi yg belum ada jalan pintas lain. */}
       <div style={{ padding: "22px 20px 0" }}>
-        <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.01em", marginBottom: 12 }}>Menu</div>
+        <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.01em", marginBottom: 12 }}>Menu Anda</div>
         <div style={{ background: "#FFFFFF", border: "1px solid #EDEDF1", borderRadius: 22, padding: "20px 12px", boxShadow: "0 6px 16px rgba(17,17,20,0.05), 0 1px 3px rgba(17,17,20,0.03)" }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", rowGap: 20 }}>
             <MenuItem icon={CalendarPlus} label="Buat Plan" color={BRAND} onClick={() => router.push("/martahub/m/activities/new")} />
@@ -493,7 +460,7 @@ export default function MartaMobileHome() {
                 tmv/bme/rge/tl_dsf). dsf/md/dst di bawah tl_dsf tidak dapat
                 menu ini krn mereka tidak mengelola siapa pun. */}
             {Object.prototype.hasOwnProperty.call(ADDABLE_ROLES_FOR, scope?.role) && (
-              <MenuItem icon={UserCog} label="User Management" color="#7C3AED" onClick={() => router.push("/martahub/m/user-management")} />
+              <MenuItem icon={UserCog} label="Kelola User" color="#7C3AED" onClick={() => router.push("/martahub/m/user-management")} />
             )}
           </div>
         </div>
@@ -520,27 +487,11 @@ export default function MartaMobileHome() {
           </div>
         ) : (
           <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
-            {recent.map((r) => <ActivityRow key={r.id} r={r} />)}
+            {recent.map((r) => <ActivityRow key={r.id} r={r} branchLabel={branchBySite[r.site_id]} />)}
           </div>
         )}
       </div>
     </MobileShell>
-  );
-}
-
-function greeting() {
-  const h = new Date().getHours();
-  if (h < 11) return "Selamat Pagi";
-  if (h < 15) return "Selamat Siang";
-  if (h < 18) return "Selamat Sore";
-  return "Selamat Malam";
-}
-
-function Badge({ n }) {
-  return (
-    <span style={{ position: "absolute", top: -4, right: -4, minWidth: 16, height: 16, borderRadius: 8, background: "#ED1C24", color: "#fff", fontSize: 9.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 3px", border: "2px solid #F4F5F7" }}>
-      {n}
-    </span>
   );
 }
 
@@ -568,12 +519,12 @@ function FilterSelect({ icon: Icon, value, onChange, placeholder, options, fullW
       position: "relative", display: fullWidth ? "flex" : "inline-flex", width: fullWidth ? "100%" : undefined,
       boxSizing: "border-box", alignItems: "center", gap: 7,
       minHeight: 40, padding: interactive ? "0 34px 0 14px" : "0 14px", borderRadius: 999,
-      background: !interactive ? "#F4F5F7" : (active ? "#FDECEC" : "#FFFFFF"),
-      border: `1.5px solid ${!interactive ? "#E9EAEE" : (active ? "#ED1C24" : "#E4E5EA")}`,
+      background: active ? "#FDECEC" : "#FFFFFF",
+      border: `1.5px solid ${active ? "#ED1C24" : "#E4E5EA"}`,
       cursor: interactive ? "pointer" : "default",
     }}>
-      <Icon size={13} color={!interactive ? "#B0B0BA" : (active ? "#ED1C24" : "#8A8A96")} style={{ flexShrink: 0 }} />
-      <span style={{ fontSize: 12.5, fontWeight: 700, color: !interactive ? "#9A9AA6" : (active ? "#C62828" : "#3A3A44"), whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: fullWidth ? 1 : undefined, maxWidth: fullWidth ? undefined : 150 }}>
+      <Icon size={13} color={active ? "#ED1C24" : "#8A8A96"} style={{ flexShrink: 0 }} />
+      <span style={{ fontSize: 12.5, fontWeight: 700, color: active ? "#C62828" : "#3A3A44", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: fullWidth ? 1 : undefined, maxWidth: fullWidth ? undefined : 150 }}>
         {showPrefix && <span style={{ fontWeight: 600, opacity: 0.68 }}>{prefixLabel} </span>}
         {label}
       </span>
@@ -608,17 +559,17 @@ function BrandTagSelect({ value, onChange, options }) {
   const interactive = options.length > 1;
   const selected = options.find((o) => o.value === value);
   const effective = selected || (options.length === 1 ? options[0] : null);
-  const color = interactive && effective ? (BRAND_TAG_COLORS[effective.value] || "#5A5A68") : "#9A9AA6";
+  const color = effective ? (BRAND_TAG_COLORS[effective.value] || "#5A5A68") : "#9A9AA6";
   return (
     <div style={{
       position: "relative", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", boxSizing: "border-box",
       minHeight: 40, padding: interactive ? "0 22px 0 10px" : "0 10px", borderRadius: 999,
-      background: !interactive ? "#F4F5F7" : (value ? `${color}14` : "#FFFFFF"),
-      border: `1.5px solid ${!interactive ? "#E9EAEE" : (value ? color : "#E4E5EA")}`,
+      background: value ? `${color}14` : "#FFFFFF",
+      border: `1.5px solid ${value ? color : "#E4E5EA"}`,
       cursor: interactive ? "pointer" : "default",
     }}>
       {effective ? (
-        <span style={{ width: 9, height: 9, borderRadius: "50%", flexShrink: 0, background: interactive ? color : "#B0B0BA" }} />
+        <span style={{ width: 9, height: 9, borderRadius: "50%", flexShrink: 0, background: color }} />
       ) : (
         <Tags size={12} color={color} strokeWidth={2.2} style={{ flexShrink: 0 }} />
       )}
@@ -643,39 +594,6 @@ function BrandTagSelect({ value, onChange, options }) {
  * header, mencegah logout tidak sengaja (posisinya persis sebelah ikon
  * Notifikasi). Bisa dibatalkan lewat tombol Batal ATAU tap backdrop, sama
  * seperti pola konfirmasi/detail lain di app ini (mis. ActivityDetailPopup). */
-function LogoutConfirmSheet({ onCancel, onConfirm, loading }) {
-  return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center", fontFamily: FF }}>
-      <div onClick={loading ? undefined : onCancel} style={{ position: "absolute", inset: 0, background: "rgba(23,24,28,0.45)" }} />
-      <div style={{
-        position: "relative", width: "100%", maxWidth: 480, boxSizing: "border-box",
-        background: "#FFFFFF", borderRadius: "24px 24px 0 0",
-        padding: "22px 20px calc(env(safe-area-inset-bottom,0px) + 20px)",
-        boxShadow: "0 -10px 32px rgba(17,17,20,0.16)",
-      }}>
-        <div style={{ width: 38, height: 4, borderRadius: 99, background: "#E4E5EA", margin: "0 auto 18px" }} />
-        <div style={{ width: 52, height: 52, borderRadius: 16, background: "#FDECEC", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
-          <LogOut size={22} color="#ED1C24" />
-        </div>
-        <div style={{ fontSize: 16, fontWeight: 800, textAlign: "center", color: "#17181C" }}>Keluar dari akun?</div>
-        <div style={{ marginTop: 6, fontSize: 12.5, color: "#8A8A96", textAlign: "center", lineHeight: 1.5 }}>
-          Anda perlu login kembali untuk mengakses MartaHub.
-        </div>
-        <div style={{ marginTop: 20, display: "flex", gap: 10 }}>
-          <button onClick={onCancel} disabled={loading}
-            style={{ flex: 1, padding: "13px 0", borderRadius: 14, background: "#F4F5F7", border: "1px solid #E4E5EA", fontSize: 13.5, fontWeight: 800, color: "#3A3A44", cursor: loading ? "default" : "pointer", fontFamily: FF }}>
-            Batal
-          </button>
-          <button onClick={onConfirm} disabled={loading}
-            style={{ flex: 1, padding: "13px 0", borderRadius: 14, background: "#ED1C24", border: "none", fontSize: 13.5, fontWeight: 800, color: "#FFFFFF", cursor: loading ? "default" : "pointer", opacity: loading ? 0.75 : 1, fontFamily: FF }}>
-            {loading ? "Memproses..." : "Ya, Keluar"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /** Select periode Achievement - ditumpuk transparan (overlay) di atas label
  * yg selebar TEKS TERPILIH SAJA (bukan native <select> polos yg di banyak
  * browser lebar sendiri mengikuti opsi TERPANJANG dalam daftar, jadi
@@ -815,12 +733,13 @@ function MissionCarousel({ needsCheckin, needsReport, upcoming, isApprover, pend
 
 // Tinggi kartu carousel DISAMAKAN persis (bukan cuma "kebetulan mirip") -
 // ketiga konsep (Aktivitas/Approval-Draft/Tips) pakai struktur identik:
-// header (ikon+badge+judul+subjudul, dibatasi 2 baris) lalu footer CTA yg
-// nempel di bawah lewat marginTop:"auto", dibungkus minHeight tetap supaya
-// kartu tanpa CTA (Tips) tetap sama tingginya dgn yg lain. Diperkecil sejak
-// CTA dipadatkan jadi chevron bulat sejajar ikon (bukan baris terpisah di
-// bawah lagi) - kartu jadi tidak makan tempat tinggi.
-const CAROUSEL_CARD_MIN_H = 92;
+// ikon + judul + subjudul (dibatasi 2 baris), dibungkus minHeight tetap
+// supaya kartu tanpa CTA (Tips) tetap sama tingginya dgn yg lain. Label
+// badge kecil ("ACTIVITY · DRAFT" dkk di atas judul) DIHAPUS - cuma makan
+// baris ekstra tanpa nambah info baru (judul di bawahnya sudah cukup
+// jelas), jadi kartu bisa lebih pendek. MIN_H ikut diperkecil sejalan
+// dgn hilangnya baris badge itu.
+const CAROUSEL_CARD_MIN_H = 78;
 
 function CarouselCard({ badge, accent, title, subtitle, action, cta }) {
   const Icon = badge?.includes("APPROVAL") ? ClipboardCheck : badge?.includes("TIPS") ? Lightbulb : ListChecks;
@@ -839,9 +758,8 @@ function CarouselCard({ badge, accent, title, subtitle, action, cta }) {
           <Icon size={19} color="#fff" />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ fontSize: 9.5, fontWeight: 800, color: accent, letterSpacing: 0.5 }}>{badge}</span>
-          <div style={{ marginTop: 3, fontSize: 14, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</div>
-          <div style={{ marginTop: 2, fontSize: 11.5, color: "#4A4A55", lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{subtitle}</div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{title}</div>
+          <div style={{ marginTop: 3, fontSize: 11.5, color: "#4A4A55", lineHeight: 1.4, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{subtitle}</div>
         </div>
         {/* CTA dipadatkan jadi chevron saja di kanan, sejajar dgn ikon+teks
             (bukan baris terpisah di bawah) - supaya tinggi kartu tidak
@@ -856,20 +774,67 @@ function CarouselCard({ badge, accent, title, subtitle, action, cta }) {
   );
 }
 
-function ActivityRow({ r }) {
+// Warna brand - SAMA PERSIS dgn skema di wizard Buat Plan & kartu daftar
+// Aktivitas (BRAND_COLOR di activities/page.jsx): IM3 kuning, 3ID magenta.
+const HOME_BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
+
+// Kartu ini SEKARANG SAMA PERSIS bahasa visualnya dgn kartu di daftar
+// Aktivitas (activities/page.jsx ActivityCard) - title, subtitle MC ·
+// Branch · badge Brand solid, baris waktu, & pill status di bawahnya -
+// CUMA TANPA blok "Plan vs Actual" (grid target/actual + banner revenue),
+// krn kartu ringkas di Beranda ini murni utk sekilas lihat & lompat ke
+// detail, bukan tempat baca breakdown angka. Pill kanan-atas juga PAKAI
+// STATUS ASLI (statusMeta), bukan countdown "Hari Ini"/H- spt di kartu
+// daftar Aktivitas - di Beranda user belum tentu fokus ke satu plan
+// tertentu, jadi info "tahap apa" lebih berguna drpd "berapa hari lagi".
+function ActivityRow({ r, branchLabel }) {
   const router = useRouter();
-  const meta = statusMeta(r.status);
+  // SATU pill status - activityStage() (activityUi.js) SEKARANG jadi
+  // satu-satunya sumber label status, dipakai SAMA PERSIS dgn kartu di
+  // daftar Aktivitas (dulu di sini "Hari Ini"/countdown dobel dgn pill
+  // status lain di bawah, kelihatan kontradiksi).
+  const stage = activityStage(r);
+  const timeLabel = fmtTimeLabel(r);
+
   return (
     <button onClick={() => router.push(`/martahub/m/activities/${r.id}`)}
-      style={{ textAlign: "left", width: "100%", background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 16, padding: "13px 14px", cursor: "pointer", fontFamily: FF }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.event_name || "-"}</div>
-          <div style={{ marginTop: 3, fontSize: 11.5, color: "#8A8A96", fontWeight: 600 }}>{fmtDate(r.plan_date)} · Target {fmtInt(r.target_sp)}/{fmtInt(r.target_fwa)} SP/FWA</div>
+      style={{ position: "relative", textAlign: "left", width: "100%", background: "#FFFFFF", border: "1px solid #EDEDF1", borderRadius: 18, padding: "15px 16px", cursor: "pointer", fontFamily: FF, boxShadow: "0 2px 10px rgba(23,24,28,0.04), 0 1px 2px rgba(23,24,28,0.03)" }}>
+      <span style={{
+        position: "absolute", right: 16, bottom: 13,
+        width: 30, height: 30, borderRadius: 10, background: "#FFFFFF", border: "1px solid #E7E7EC",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <ChevronRight size={15} color="#5A5A68" />
+      </span>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.event_name || "-"}</div>
+          {/* Urutan subtitle: Brand (badge) → Branch → MC - brand paling kiri
+              krn itu identitas paling cepat dikenali (warnanya), baru
+              lingkup wilayah (Branch), baru siapa (MC). */}
+          <div style={{ marginTop: 5, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+            {r.brand && (
+              <span style={{
+                flexShrink: 0, fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 999, whiteSpace: "nowrap",
+                background: HOME_BRAND_COLOR[r.brand.toLowerCase()] || "#8A8A96",
+                color: r.brand.toLowerCase() === "tri" ? "#FFFFFF" : "#17181C",
+              }}>
+                {r.brand.toLowerCase() === "tri" ? "3ID" : "IM3"}
+              </span>
+            )}
+            <span style={{ fontSize: 11.5, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+              {[branchLabel, r.mc].filter(Boolean).join(" · ")}
+            </span>
+          </div>
         </div>
-        <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 800, padding: "4px 9px", borderRadius: 999, color: meta.color, background: meta.bg, whiteSpace: "nowrap" }}>
-          {meta.label}
+        <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 800, padding: "4px 9px", borderRadius: 999, color: stage.color, background: stage.bg, whiteSpace: "nowrap" }}>
+          {stage.label}
         </span>
+      </div>
+
+      <div style={{ marginTop: 7, display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: "#5A5A68", fontWeight: 600, paddingRight: 28 }}>
+        <Clock size={12} color="#B0B0BA" style={{ flexShrink: 0 }} />
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fmtDate(r.plan_date)} · {timeLabel}</span>
       </div>
     </button>
   );

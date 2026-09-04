@@ -17,7 +17,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { ArrowLeft, Plus, QrCode, Trash2, Loader2, CheckCircle2, AlertTriangle, MapPin, Camera, ImagePlus, Images, X, Receipt, RefreshCw, CardSim, Router, Gauge, FolderClock, Wallet, SignalHigh, Building2 } from "lucide-react";
+import { ArrowLeft, Plus, QrCode, Trash2, Loader2, CheckCircle2, AlertTriangle, MapPin, Camera, ImagePlus, Images, X, Receipt, RefreshCw, CardSim, Router, Gauge, FolderClock } from "lucide-react";
 import supabaseMarta from "../../../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../../_shared/MobileShell";
 import { isValidMsisdn, normalizeMsisdn } from "../../../_shared/msisdn";
@@ -25,7 +25,9 @@ import { compressToMaxBytes } from "../../../_shared/imageTools";
 import PhotoCollageSheet from "../../../_shared/PhotoCollageSheet";
 import QrScanSheet from "../../../_shared/QrScanSheet";
 import OrgIdBar from "../../../_shared/OrgIdBar";
-import { fetchSalesEntries, deleteSalesEntry } from "../../../_shared/planData";
+import SiteTowerIcon from "../../../_shared/SiteTowerIcon";
+import SitePickerSheet from "../../../_shared/SitePickerSheet";
+import { fetchSalesEntries, deleteSalesEntry, fetchRebuyEntries, addRebuyEntryDb, deleteRebuyEntry } from "../../../_shared/planData";
 
 const CATS = [
   { key: "sp", label: "Catat Penjualan SP", icon: CardSim },
@@ -33,8 +35,8 @@ const CATS = [
 ];
 
 const REBUY_TYPES = [
-  { key: "pulsa", label: "Pulsa", icon: Wallet },
-  { key: "data", label: "Data", icon: SignalHigh },
+  { key: "sp", label: "SP", icon: CardSim },
+  { key: "fwa", label: "FWA", icon: Router },
 ];
 
 const MIN_PHOTOS = 1;
@@ -53,6 +55,10 @@ export default function SubmitActualPage() {
 
   const [activity, setActivity] = useState(null);
   const [siteLabels, setSiteLabels] = useState([]); // site(s) yg dipilih sebelumnya (Check-In/Create Plan) - array, satu baris per site
+  const [siteRows, setSiteRows] = useState([]); // {site_id, site_name} versi objek dari siteLabels - dipakai utk exclude di picker
+  const [siteCandidates, setSiteCandidates] = useState([]); // site lain di MC yg sama, blm dipilih - sumber "Tambah Site"
+  const [sitePicking, setSitePicking] = useState(false);
+  const [addingSite, setAddingSite] = useState(false);
   const [types, setTypes] = useState({ sp: [], fwa: [] });
   const [dataLoading, setDataLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -64,21 +70,33 @@ export default function SubmitActualPage() {
   // org_id yg sedang "aktif" dipilih, distempel ke entry baru yg ditambahkan.
   const [ownOrgId, setOwnOrgId] = useState("");
   const [activeOrgId, setActiveOrgId] = useState("");
+  // Daftar chip ORG ID dipusatkan di sini (bukan lokal per-instance) supaya
+  // OrgIdBar yg dirender DUA KALI (di section SP & section FWA - biar
+  // gampang dipilih tanpa scroll ke atas) selalu menampilkan chip yg SAMA
+  // PERSIS, org_id yg ditambahkan di satu section langsung kepakai di
+  // section lainnya.
+  const [orgChips, setOrgChips] = useState([]);
   const [selectedType, setSelectedType] = useState({ sp: null, fwa: null });
   const [entries, setEntries] = useState({ sp: [], fwa: [] }); // {msisdn, typeId, typeName, orgId}
   const [pendingTransfers, setPendingTransfers] = useState({ sp: [], fwa: [] });
   const [msisdnInput, setMsisdnInput] = useState({ sp: "", fwa: "" });
   const [msisdnErr, setMsisdnErr] = useState({ sp: null, fwa: null });
 
-  // Rebuy - SEKARANG wajib per-MSISDN juga (bukan cuma dua angka total):
-  // masukkan nomor dulu, pilih jenisnya Pulsa/Data, baru masukkan amount-nya.
-  const [rebuyEntries, setRebuyEntries] = useState([]); // {msisdn, type:'pulsa'|'data', amount}
+  // Rebuy - per-transaksi: Transaction ID + nomor tujuan (wajib 62xxx,
+  // dikunci lewat Phone62Input - tidak mungkin tersimpan diawali 0/8) + jenis
+  // SP/FWA + nominal. Setiap entri dipersist ke mh_activity_rebuy_entries
+  // (bukan cuma dijumlah lalu dibuang) supaya Transaction ID bisa ditelusuri.
+  const [rebuyEntries, setRebuyEntries] = useState([]); // {msisdn, type:'sp'|'fwa', amount, transactionId, persisted?, id?}
+  const [rebuyTransactionId, setRebuyTransactionId] = useState("");
   const [rebuyMsisdn, setRebuyMsisdn] = useState("");
   const [rebuyType, setRebuyType] = useState(null);
   const [rebuyAmount, setRebuyAmount] = useState("");
   const [rebuyErr, setRebuyErr] = useState(null);
-  const rebuyPulsaTotal = rebuyEntries.filter((r) => r.type === "pulsa").reduce((s, r) => s + (Number(r.amount) || 0), 0);
-  const rebuyDataTotal = rebuyEntries.filter((r) => r.type === "data").reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  // actual_rebuy_pulsa/actual_rebuy_data di DB TIDAK diganti nama (dipakai jg
+  // oleh alur pengajuan revisi laporan) - sp dipetakan ke kolom "pulsa", fwa
+  // ke kolom "data", murni penamaan internal, tidak terlihat di UI.
+  const rebuySpTotal = rebuyEntries.filter((r) => r.type === "sp").reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const rebuyFwaTotal = rebuyEntries.filter((r) => r.type === "fwa").reduce((s, r) => s + (Number(r.amount) || 0), 0);
 
   const [costActual, setCostActual] = useState("0");
   const [insight, setInsight] = useState("");
@@ -113,6 +131,36 @@ export default function SubmitActualPage() {
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState(null);
   const [draftReady, setDraftReady] = useState(false); // baru mulai autosave SETELAH draft lama (kalau ada) selesai dibaca
+  const [draftSavedAt, setDraftSavedAt] = useState(null); // waktu terakhir "Simpan Draft" (server-side, mh_activities.actual_draft_saved_at)
+  const [savingDraft, setSavingDraft] = useState(false);
+
+  // Perbaiki Titik GPS - GANTI langkah Check-In yg sudah dihapus. Dulu DSF
+  // wajib Check In dulu di lokasi (memvalidasi jaraknya) sebelum bisa Isi
+  // Laporan Actual. Sekarang tidak ada lagi langkah terpisah itu - kalau
+  // DSF memang sedang di lokasi event, longlat plan bisa langsung dikoreksi
+  // di sini (persis di titik mereka berdiri) sbg bagian dari laporan itu
+  // sendiri, disimpan ke mh_activities.latitude/longitude begitu laporan
+  // dikirim (bukan tabel/field check-in terpisah yg sudah tidak dipakai).
+  const [gpsLat, setGpsLat] = useState(null);
+  const [gpsLng, setGpsLng] = useState(null);
+  const [gpsFixing, setGpsFixing] = useState(false);
+  const [gpsErr, setGpsErr] = useState("");
+  const [gpsCorrected, setGpsCorrected] = useState(false);
+
+  function fixGpsToCurrentLocation() {
+    if (!navigator.geolocation) { setGpsErr("Browser ini tidak mendukung GPS."); return; }
+    setGpsFixing(true); setGpsErr("");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setGpsLat(pos.coords.latitude);
+        setGpsLng(pos.coords.longitude);
+        setGpsCorrected(true);
+        setGpsFixing(false);
+      },
+      () => { setGpsErr("Gagal mengambil lokasi. Pastikan izin GPS diaktifkan."); setGpsFixing(false); },
+      { enableHighAccuracy: true, timeout: 12000 }
+    );
+  }
 
   useEffect(() => {
     if (loading) return;
@@ -120,15 +168,25 @@ export default function SubmitActualPage() {
     (async () => {
       try {
         const [{ data: a, error: e1 }, { data: sp }, { data: fwa }, { data: profile }] = await Promise.all([
-          supabaseMarta.from("mh_activities").select("id,event_name,brand,address,site_id,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,status,checkin_valid").eq("id", activityId).single(),
-          supabaseMarta.from("mh_product_types").select("id,name,unit_price").eq("category", "sp").eq("active", true).order("name"),
-          supabaseMarta.from("mh_product_types").select("id,name,unit_price").eq("category", "fwa").eq("active", true).order("name"),
+          supabaseMarta.from("mh_activities").select("id,event_name,brand,address,site_id,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,status,checkin_valid,actual_draft_saved_at,latitude,longitude").eq("id", activityId).single(),
+          supabaseMarta.from("mh_product_types").select("id,name,unit_price,brand").eq("category", "sp").eq("active", true).order("name"),
+          supabaseMarta.from("mh_product_types").select("id,name,unit_price,brand").eq("category", "fwa").eq("active", true).order("name"),
           scope?.email ? supabaseMarta.from("mh_profiles").select("dsf_org_id").eq("email", scope.email.toLowerCase()).maybeSingle() : Promise.resolve({ data: null }),
         ]);
         if (e1) throw e1;
         if (!alive) return;
         setActivity(a);
-        setTypes({ sp: sp || [], fwa: fwa || [] });
+        if (a?.actual_draft_saved_at) setDraftSavedAt(a.actual_draft_saved_at);
+        if (a?.latitude != null) setGpsLat(a.latitude);
+        if (a?.longitude != null) setGpsLng(a.longitude);
+        // Produk yg PUNYA brand hanya boleh dijual utk brand event ini
+        // sendiri (mis. "SP 3GB 3ID" tidak boleh muncul di event brand IM3)
+        // - produk tanpa brand (generik) tetap muncul di semua event.
+        // Sebelumnya query ini tidak difilter brand sama sekali, jadi
+        // produk brand lain ikut kepilih tanpa sengaja.
+        const evBrand = (a?.brand || "").toLowerCase();
+        const byBrand = (t) => !t.brand || t.brand.toLowerCase() === evBrand;
+        setTypes({ sp: (sp || []).filter(byBrand), fwa: (fwa || []).filter(byBrand) });
         // Jenis SP/FWA tidak lagi dipilih manual oleh DSF - otomatis pakai
         // jenis pertama yg aktif utk brand ybs (transparan di belakang layar).
         setSelectedType({ sp: sp?.[0]?.id || null, fwa: fwa?.[0]?.id || null });
@@ -140,12 +198,25 @@ export default function SubmitActualPage() {
           const { data: extraSites } = await supabaseMarta.from("mh_activity_sites").select("site_id").eq("activity_id", activityId);
           const siteIds = Array.from(new Set([a?.site_id, ...(extraSites || []).map((s) => s.site_id)].filter(Boolean)));
           if (siteIds.length > 0) {
-            const { data: siteRows } = await supabaseMarta.from("mh_sites").select("site_id,site_name").in("site_id", siteIds);
+            const { data: siteRowsData } = await supabaseMarta.from("mh_sites").select("site_id,site_name,mc,branch_id").in("site_id", siteIds);
             const labels = siteIds.map((id) => {
-              const row = siteRows?.find((s) => s.site_id === id);
+              const row = siteRowsData?.find((s) => s.site_id === id);
               return row?.site_name ? `${id} · ${row.site_name}` : id;
             });
-            if (alive) setSiteLabels(labels);
+            if (alive) {
+              setSiteLabels(labels);
+              setSiteRows(siteIds.map((id) => siteRowsData?.find((s) => s.site_id === id) || { site_id: id }));
+            }
+
+            // Kandidat "Tambah Site" - site LAIN di MC yg sama dgn site yg
+            // sudah dipilih, supaya konsepnya sama persis dgn "Tambah site
+            // lain" di wizard Buat Plan (bukan cari dari semua site branch).
+            const anchor = siteRowsData?.find((s) => s.site_id === a?.site_id) || siteRowsData?.[0];
+            if (anchor?.mc && anchor?.branch_id) {
+              const { data: mcSites } = await supabaseMarta.from("mh_sites").select("site_id,site_name")
+                .eq("mc", anchor.mc).eq("branch_id", anchor.branch_id);
+              if (alive) setSiteCandidates((mcSites || []).filter((s) => !siteIds.includes(s.site_id)));
+            }
           }
         } catch { /* best-effort - hero tetap tampil tanpa label site kalau gagal */ }
 
@@ -163,7 +234,7 @@ export default function SubmitActualPage() {
             const d = JSON.parse(raw);
             if (d.entries) setEntries(d.entries);
             if (d.pendingTransfers) setPendingTransfers(d.pendingTransfers);
-            if (d.rebuyEntries) setRebuyEntries(d.rebuyEntries);
+            if (d.rebuyEntries) setRebuyEntries(d.rebuyEntries.map((r) => ({ ...r, persisted: false, id: undefined })));
             if (d.costActual != null) setCostActual(d.costActual);
             if (d.insight != null) setInsight(d.insight);
           }
@@ -175,6 +246,18 @@ export default function SubmitActualPage() {
         // Ditandai `persisted:true` supaya hapusnya lewat deleteSalesEntry()
         // (RPC) bukan cuma dibuang dari state lokal, dan supaya submit()
         // tidak mengirim ulang nomor yang sudah ada.
+        // Rebuy yang sudah tercatat di DB sblmnya (mis. laporan direvisi &
+        // dikirim ulang) - ditandai persisted:true spt nomor SP/FWA di atas.
+        try {
+          const rebuyRows = await fetchRebuyEntries(activityId);
+          if (alive && rebuyRows.length > 0) {
+            setRebuyEntries((prev) => [
+              ...rebuyRows.map((r) => ({ id: r.id, msisdn: r.msisdn, type: r.type, amount: Number(r.amount), transactionId: r.transaction_id, persisted: true })),
+              ...prev.filter((e) => !rebuyRows.some((r) => r.id === e.id)),
+            ]);
+          }
+        } catch { /* best-effort */ }
+
         try {
           const rows = await fetchSalesEntries(activityId);
           const byCat = { sp: [], fwa: [] };
@@ -212,6 +295,22 @@ export default function SubmitActualPage() {
       localStorage.setItem(draftKey(activityId), JSON.stringify({ entries, pendingTransfers, rebuyEntries, costActual, insight }));
     } catch { /* localStorage penuh/diblokir - draft best-effort saja */ }
   }, [draftReady, activityId, entries, pendingTransfers, rebuyEntries, costActual, insight]);
+
+  // Org_id yg SUDAH PERNAH dipakai di activity ini (entry lama, termasuk yg
+  // ditag waktu Buat Plan) - diseed jadi chip di OrgIdBar spy tidak perlu
+  // diketik ulang manual (permintaan: "org id simpan yg sudah ada di plan").
+  // HARUS di atas early return manapun (Rules of Hooks - urutan hook wajib
+  // sama tiap render, sebelumnya taruh di bawah early return `loading` jadi
+  // hook count beda antar render & React melempar warning "change in the
+  // order of Hooks").
+  const usedOrgIds = useMemo(() => {
+    const ids = [];
+    const seen = new Set();
+    for (const e of [...entries.sp, ...entries.fwa]) {
+      if (e.orgId && !seen.has(e.orgId)) { seen.add(e.orgId); ids.push({ orgId: e.orgId, label: e.orgId }); }
+    }
+    return ids;
+  }, [entries]);
 
   if (loading || dataLoading) return <MobileShell active="activities"><ShellSpinner /></MobileShell>;
   if (err && !activity) return <MobileShell active="activities"><div style={{ padding: 40, textAlign: "center", color: "#C62828", fontSize: 13 }}>{err}</div></MobileShell>;
@@ -291,18 +390,109 @@ export default function SubmitActualPage() {
   }
 
   function addRebuyEntry() {
+    const txId = rebuyTransactionId.trim();
+    if (!txId) { setRebuyErr("Transaction ID wajib diisi."); return; }
+    if (rebuyEntries.some((r) => r.transactionId === txId)) { setRebuyErr("Transaction ID ini sudah ditambahkan."); return; }
     const norm = normalizeMsisdn(rebuyMsisdn);
-    if (!isValidMsisdn(norm)) { setRebuyErr('Format MSISDN tidak valid - wajib diawali "62".'); return; }
-    if (!rebuyType) { setRebuyErr("Pilih jenisnya dulu - Pulsa atau Data."); return; }
+    if (!isValidMsisdn(norm)) { setRebuyErr("Nomor tujuan belum lengkap."); return; }
+    if (!rebuyType) { setRebuyErr("Pilih jenisnya dulu - SP atau FWA."); return; }
     const amt = Number(rebuyAmount);
-    if (!amt || amt <= 0) { setRebuyErr("Masukkan amount rebuy-nya."); return; }
-    if (rebuyEntries.some((r) => r.msisdn === norm && r.type === rebuyType)) { setRebuyErr("Nomor + jenis ini sudah ditambahkan."); return; }
+    if (!amt || amt <= 0) { setRebuyErr("Masukkan nominal rebuy-nya."); return; }
     setRebuyErr(null);
-    setRebuyEntries((prev) => [...prev, { msisdn: norm, type: rebuyType, amount: amt }]);
-    setRebuyMsisdn(""); setRebuyType(null); setRebuyAmount("");
+    setRebuyEntries((prev) => [...prev, { msisdn: norm, type: rebuyType, amount: amt, transactionId: txId, persisted: false }]);
+    setRebuyTransactionId(""); setRebuyMsisdn(""); setRebuyType(null); setRebuyAmount("");
   }
-  function removeRebuyEntry(idx) {
+  // Sama spt removeEntry() utk nomor SP/FWA - optimistic, rollback kalau RPC
+  // hapusnya gagal (entri yg sudah persisted:true tersimpan di DB).
+  async function removeRebuyEntry(idx) {
+    const entry = rebuyEntries[idx];
+    if (!entry) return;
     setRebuyEntries((prev) => prev.filter((_, i) => i !== idx));
+    if (entry.persisted && entry.id) {
+      try {
+        await deleteRebuyEntry(entry.id);
+      } catch (e) {
+        setRebuyEntries((prev) => [...prev.slice(0, idx), entry, ...prev.slice(idx)]);
+        setErr(e.message || "Gagal menghapus entri rebuy");
+      }
+    }
+  }
+
+  // Kirim entries SP/FWA + rebuy yang BELUM tersimpan (persisted:false) ke
+  // DB - dipakai bareng oleh submit() (laporan final) dan saveDraft() (draft),
+  // supaya nomor yg sudah diketik DSF tetap aman tersimpan di server walau
+  // laporan belum final di-submit (bukan cuma localStorage per-perangkat).
+  async function persistNewEntries() {
+    // Kirim entries per kelompok kategori+jenis+org_id - best-effort,
+    // laporan pokok TETAP tersubmit walau bagian ini gagal (sama spt
+    // Flutter). Dikelompokkan per org_id juga (bukan cuma typeId) krn satu
+    // event bisa dicatat oleh beberapa org_id sekaligus (lihat OrgIdBar) -
+    // mh_dsf_submit_sales_entries cuma menerima SATU p_org_id per panggilan.
+    for (const cat of ["sp", "fwa"]) {
+      const byGroup = new Map();
+      // `persisted` = sudah tercatat di DB sebelumnya (dimuat lewat
+      // fetchSalesEntries) - JANGAN dikirim ulang, cuma entry baru yang
+      // belum tersimpan yang perlu di-submit di sini.
+      for (const e of entries[cat].filter((e) => !e.persisted)) {
+        const key = `${e.typeId}|${e.orgId}`;
+        if (!byGroup.has(key)) byGroup.set(key, { typeId: e.typeId, orgId: e.orgId, list: [] });
+        byGroup.get(key).list.push(e);
+      }
+      for (const { typeId, orgId: groupOrgId, list } of byGroup.values()) {
+        try {
+          await supabaseMarta.rpc("mh_dsf_submit_sales_entries", {
+            p_activity_id: activityId,
+            p_org_id: groupOrgId,
+            p_category: cat,
+            p_product_type_id: typeId,
+            p_entries: list.map((e) => ({ msisdn: e.msisdn, imei: null, tagged_at: e.taggedAt })),
+          });
+        } catch { /* best-effort, lanjut kelompok berikutnya */ }
+      }
+    }
+
+    // Simpan tiap entri rebuy BARU (transactionId + nomor + nominal) -
+    // best-effort spt entries SP/FWA di atas, laporan pokok tetap tersubmit
+    // walau ada entri yg gagal tersimpan individual.
+    for (const e of rebuyEntries.filter((e) => !e.persisted)) {
+      try {
+        await addRebuyEntryDb({ activityId, type: e.type, transactionId: e.transactionId, msisdn: e.msisdn, amount: e.amount });
+      } catch { /* best-effort, lanjut entri berikutnya */ }
+    }
+
+    // Tandai semua entry lokal sebagai persisted:true supaya tidak dikirim
+    // dobel kalau DSF simpan draft lagi atau lanjut submit final setelahnya.
+    setEntries((prev) => ({
+      sp: prev.sp.map((e) => ({ ...e, persisted: true })),
+      fwa: prev.fwa.map((e) => ({ ...e, persisted: true })),
+    }));
+    setRebuyEntries((prev) => prev.map((e) => ({ ...e, persisted: true })));
+  }
+
+  // Simpan sbg draft - BUKAN laporan final: entry SP/FWA/rebuy yg sudah
+  // diketik + Cost Actual/Insight tersimpan di server (bukan cuma
+  // localStorage), tapi status/actual_sp/actual_fwa/actual_rebuy_*/actual_rev_3m
+  // SENGAJA tidak disentuh spy activity ini TIDAK dianggap sudah dilaporkan
+  // di layar lain (Aktivitas/Kalender/Detail) - cuma actual_draft_saved_at
+  // yg berubah, jadi statusnya jelas: "Draft Laporan" bukan "Sudah Lapor".
+  async function saveDraft() {
+    setSavingDraft(true); setErr("");
+    try {
+      await persistNewEntries();
+      const nowIso = new Date().toISOString();
+      const { error } = await supabaseMarta.from("mh_activities").update({
+        cost_actual: costActual ? Number(costActual) || 0 : null,
+        insight: insight.trim() || null,
+        actual_draft_saved_at: nowIso,
+        ...(gpsCorrected && gpsLat != null && gpsLng != null ? { latitude: gpsLat, longitude: gpsLng } : {}),
+      }).eq("id", activityId);
+      if (error) throw error;
+      setDraftSavedAt(nowIso);
+    } catch (e) {
+      setErr(e.message || "Gagal menyimpan draft");
+    } finally {
+      setSavingDraft(false);
+    }
   }
 
   async function submit() {
@@ -327,12 +517,18 @@ export default function SubmitActualPage() {
         actual_date: new Date().toISOString().slice(0, 10),
         actual_sp: actualSp,
         actual_fwa: actualFwa,
-        actual_rebuy_pulsa: rebuyPulsaTotal,
-        actual_rebuy_data: rebuyDataTotal,
+        actual_rebuy_pulsa: rebuySpTotal,
+        actual_rebuy_data: rebuyFwaTotal,
         actual_rev_3m: revenue,
         cost_actual: Number(costActual) || 0,
         insight: insight.trim() || null,
         status: "pending_validation",
+        actual_draft_saved_at: null,
+        // Titik GPS dikoreksi lewat "Perbaiki Titik GPS" (gantiin Check In
+        // yg sudah dihapus) - kalau DSF sempat memperbaikinya, longlat plan
+        // yg lama ditimpa dgn titik nyata di lokasi ini. Kalau tidak
+        // dikoreksi, longlat lama dibiarkan apa adanya (tidak dikirim null).
+        ...(gpsCorrected && gpsLat != null && gpsLng != null ? { latitude: gpsLat, longitude: gpsLng } : {}),
       }).eq("id", activityId).select("status,validation_status,validation_note").single();
       if (error) throw error;
 
@@ -351,33 +547,7 @@ export default function SubmitActualPage() {
         setUploadProgress({ done: i + 1, total: photos.length });
       }
 
-      // Kirim entries per kelompok kategori+jenis+org_id - best-effort,
-      // laporan pokok TETAP tersubmit walau bagian ini gagal (sama spt
-      // Flutter). Dikelompokkan per org_id juga (bukan cuma typeId) krn satu
-      // event bisa dicatat oleh beberapa org_id sekaligus (lihat OrgIdBar) -
-      // mh_dsf_submit_sales_entries cuma menerima SATU p_org_id per panggilan.
-      for (const cat of ["sp", "fwa"]) {
-        const byGroup = new Map();
-        // `persisted` = sudah tercatat di DB sebelumnya (dimuat lewat
-        // fetchSalesEntries) - JANGAN dikirim ulang, cuma entry baru yang
-        // belum tersimpan yang perlu di-submit di sini.
-        for (const e of entries[cat].filter((e) => !e.persisted)) {
-          const key = `${e.typeId}|${e.orgId}`;
-          if (!byGroup.has(key)) byGroup.set(key, { typeId: e.typeId, orgId: e.orgId, list: [] });
-          byGroup.get(key).list.push(e);
-        }
-        for (const { typeId, orgId: groupOrgId, list } of byGroup.values()) {
-          try {
-            await supabaseMarta.rpc("mh_dsf_submit_sales_entries", {
-              p_activity_id: activityId,
-              p_org_id: groupOrgId,
-              p_category: cat,
-              p_product_type_id: typeId,
-              p_entries: list.map((e) => ({ msisdn: e.msisdn, imei: null, tagged_at: e.taggedAt })),
-            });
-          } catch { /* best-effort, lanjut kelompok berikutnya */ }
-        }
-      }
+      await persistNewEntries();
 
       try { localStorage.removeItem(draftKey(activityId)); } catch { /* best-effort */ }
       setResult(data);
@@ -411,70 +581,87 @@ export default function SubmitActualPage() {
     );
   }
 
-  const rebuyGrandTotal = rebuyPulsaTotal + rebuyDataTotal;
+  const rebuyGrandTotal = rebuySpTotal + rebuyFwaTotal;
   const revenueEstimate = [...entries.sp, ...entries.fwa].reduce((sum, e) => {
     const t = [...types.sp, ...types.fwa].find((x) => x.id === e.typeId);
     return sum + (t?.unit_price || 0);
   }, 0) + rebuyGrandTotal;
+
+  async function addSite(s) {
+    setAddingSite(true);
+    try {
+      await supabaseMarta.rpc("mh_activity_add_site", { p_activity_id: activityId, p_site_id: s.site_id });
+      setSiteLabels((prev) => [...prev, s.site_name ? `${s.site_id} · ${s.site_name}` : s.site_id]);
+      setSiteRows((prev) => [...prev, s]);
+      setSiteCandidates((prev) => prev.filter((x) => x.site_id !== s.site_id));
+      setSitePicking(false);
+    } catch (e) {
+      setErr(e.message || "Gagal menambah site");
+    } finally {
+      setAddingSite(false);
+    }
+  }
   const costRatioPct = revenueEstimate > 0 ? Math.round(((Number(costActual) || 0) / revenueEstimate) * 100) : 0;
   const locationLine = activity?.address || null;
 
   return (
     <MobileShell active="activities">
-      {/* Hero card ringkas - identitas event + lokasi, tanpa hiasan berlebih.
-          Site id ditaruh sebagai strip TERPISAH di bawahnya (bukan di dalam
-          hero) tapi disambung tanpa jarak/garis supaya terasa satu kesatuan
-          - hero rounded cuma di atas, strip site rounded cuma di bawah. */}
-      <div style={{ padding: "calc(env(safe-area-inset-top,0px) + 14px) 20px 0" }}>
-        <div style={{
-          borderRadius: siteLabels.length > 0 ? "22px 22px 0 0" : 22, padding: 18, position: "relative", overflow: "hidden",
-          background: "linear-gradient(135deg, #1B1C21 0%, #2A1420 100%)",
-        }}>
-          <div style={{ position: "absolute", top: -50, right: -30, width: 130, height: 130, borderRadius: "50%", background: "radial-gradient(circle, rgba(236,0,140,0.22), transparent 70%)" }} />
-
-          <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 12 }}>
-            <button onClick={() => router.back()} style={{ flexShrink: 0, width: 32, height: 32, borderRadius: 10, background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#fff" }}>
-              <ArrowLeft size={15} />
-            </button>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase", color: "#F5A3CB" }}>Laporan Actual</div>
-              <div style={{ marginTop: 1, fontSize: 15.5, fontWeight: 800, color: "#fff", letterSpacing: "-0.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{activity?.event_name}</div>
-              {locationLine && (
-                <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "rgba(255,255,255,0.6)", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  <MapPin size={11} style={{ flexShrink: 0 }} /> <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{locationLine}</span>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Report grid 2x2 - live sesuai input pengguna */}
-          <div style={{ position: "relative", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 16 }}>
-            <ReportTile icon={CardSim} label="Total SP" value={entries.sp.length} />
-            <ReportTile icon={Router} label="Total FWA" value={entries.fwa.length} />
-            <ReportTile icon={RefreshCw} label="Total Rebuy" value={`Rp ${rebuyGrandTotal.toLocaleString("id-ID")}`} />
-            <ReportTile icon={Gauge} label="Estimasi Cost Ratio" value={`${costRatioPct}%`} />
+      {/* Header ringkas gaya wizard Buat Plan - putih/frosted, bukan lagi
+          kartu gradasi gelap dengan glow radial (kesannya berlebihan utk
+          sekadar header laporan). Identitas event + lokasi tetap di sini,
+          site id jadi strip abu tipis nempel di bawahnya, & metrik report
+          jadi grid tile TERANG (pola sama dgn MetricTile di halaman detail)
+          supaya minimalis tapi tetap rapi & jelas kebaca. */}
+      <div style={{
+        position: "sticky", top: 0, zIndex: 20, maxWidth: 480, margin: "0 auto",
+        padding: "calc(env(safe-area-inset-top,0px) + 16px) 20px 14px",
+        background: "rgba(244,245,247,0.86)", backdropFilter: "blur(18px) saturate(1.5)", WebkitBackdropFilter: "blur(18px) saturate(1.5)",
+        borderBottom: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 6px 20px rgba(23,24,28,0.05)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button onClick={() => router.back()} style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 10, background: "#FFFFFF", border: "1px solid #E4E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
+            <ArrowLeft size={16} />
+          </button>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.6, textTransform: "uppercase", color: "#C6168D" }}>Laporan Actual</div>
+            <div style={{ marginTop: 1, fontSize: 15.5, fontWeight: 800, color: "#17181C", letterSpacing: "-0.01em", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{activity?.event_name}</div>
+            {locationLine && (
+              <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#8A8A96", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                <MapPin size={11} style={{ flexShrink: 0 }} /> <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{locationLine}</span>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Strip Site ID - kartu berbeda, tapi disambung langsung ke bawah
-            hero (tanpa margin/gap, tone warna diteruskan sedikit lebih
-            terang) jadi terasa satu kesatuan. Tiap site id baris sendiri
-            supaya gampang dibaca walau namanya panjang. */}
-        {siteLabels.length > 0 && (
-          <div style={{
-            borderRadius: "0 0 22px 22px", padding: "12px 18px 14px",
-            background: "#241419", borderTop: "1px solid rgba(255,255,255,0.08)",
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 9.5, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase", color: "rgba(255,255,255,0.4)", marginBottom: 6 }}>
-              <Building2 size={10} /> Site Dipilih
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-              {siteLabels.map((label, i) => (
-                <div key={i} style={{ fontSize: 12, fontWeight: 700, color: "#fff", wordBreak: "break-word" }}>{label}</div>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Ikon site skrg pakai SiteTowerIcon (menara BTS - SAMA PERSIS dgn
+            Map Intelligence & Review di wizard Buat Plan), bukan lagi ikon
+            gedung generik. "Tambah Site" tetap tersedia di sini (konsepnya
+            sama persis spt "Tambah site lain" di form plan) - site baru yg
+            dipilih di sini langsung dipersist ke mh_activity_sites lewat
+            mh_activity_add_site(). */}
+        <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          {siteLabels.map((label, i) => (
+            <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 700, color: "#5A5A68", background: "#EDEEF1", padding: "4px 9px 4px 7px", borderRadius: 8 }}>
+              <SiteTowerIcon size={11} /> {label}
+            </span>
+          ))}
+          {siteCandidates.length > 0 && (
+            <button onClick={() => setSitePicking(true)} disabled={addingSite}
+              style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 700, color: "#5A5A68", background: "#FFFFFF", border: "1.5px dashed #D8D9E0", padding: "4px 9px", borderRadius: 8, cursor: addingSite ? "default" : "pointer", fontFamily: FF }}>
+              <Plus size={11} /> Tambah Site
+            </button>
+          )}
+        </div>
+
+        {/* Report grid 2x2 - live sesuai input pengguna, tile terang dgn
+            ikon berwarna per metrik (pola sama dgn MetricTile di halaman
+            detail aktivitas). */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 12 }}>
+          <ReportTile icon={CardSim} accent="#ED1C24" label="Total SP" value={entries.sp.length} />
+          <ReportTile icon={Router} accent="#2563EB" label="Total FWA" value={entries.fwa.length} />
+          <ReportTile icon={RefreshCw} accent="#B45309" label="Total Rebuy" value={`Rp ${rebuyGrandTotal.toLocaleString("id-ID")}`} />
+          <ReportTile icon={Gauge} accent="#7C3AED" label="Estimasi Cost Ratio" value={`${costRatioPct}%`} />
+        </div>
       </div>
 
       <div style={{ padding: "16px 20px 24px", display: "flex", flexDirection: "column", gap: 14 }}>
@@ -484,13 +671,46 @@ export default function SubmitActualPage() {
           <FolderClock size={11} /> Draft MSISDN, rebuy & catatan tersimpan otomatis di perangkat ini
         </div>
 
-        {/* ORG ID Aktif - satu kontrol dipakai bareng utk kategori SP & FWA
-            di bawahnya (persis pola Tagging Nomor di wizard Buat Plan):
-            pilih/tambah org_id di sini dulu, baru scan/catat nomornya. */}
-        <Card accent>
-          <OrgIdBar value={activeOrgId} onChange={setActiveOrgId} ownOrgId={ownOrgId} ownLabel={scope?.fullName} />
-        </Card>
+        {/* Perbaiki Titik GPS - GANTI langkah Check In terpisah yg sudah
+            dihapus. Kalau DSF memang sedang berada di lokasi event saat
+            mengisi laporan ini, longlat plan (bisa jadi cuma perkiraan saat
+            dibuat) bisa langsung dikoreksi persis ke titik mereka berdiri
+            sekarang - tersimpan bareng laporan (submit/saveDraft), TANPA
+            perlu langkah/halaman Check In terpisah lagi. */}
+        <div style={{ borderRadius: 16, background: gpsCorrected ? "rgba(21,128,61,0.06)" : "#FFFFFF", border: `1px solid ${gpsCorrected ? "rgba(21,128,61,0.22)" : "#EDEDF1"}`, padding: 13 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 10, background: gpsCorrected ? "rgba(21,128,61,0.12)" : "rgba(37,99,235,0.10)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <MapPin size={15} color={gpsCorrected ? "#15803D" : "#2563EB"} />
+            </div>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>Titik GPS Lokasi Event</div>
+              <div style={{ marginTop: 1, fontSize: 10.5, color: "#8A8A96", fontWeight: 600, lineHeight: 1.4 }}>
+                {gpsCorrected && gpsLat != null && gpsLng != null
+                  ? `Diperbaiki · ${gpsLat.toFixed(5)}, ${gpsLng.toFixed(5)}`
+                  : "Sedang di lokasi event? Perbaiki titik GPS-nya di sini"}
+              </div>
+            </div>
+          </div>
+          <button onClick={fixGpsToCurrentLocation} disabled={gpsFixing}
+            style={{
+              marginTop: 9, width: "100%", height: 38, borderRadius: 11, border: `1.5px solid ${gpsCorrected ? "#15803D" : "#2563EB"}`,
+              background: gpsCorrected ? "rgba(21,128,61,0.08)" : "rgba(37,99,235,0.06)", color: gpsCorrected ? "#15803D" : "#2563EB",
+              fontSize: 12, fontWeight: 800, fontFamily: FF, cursor: gpsFixing ? "default" : "pointer",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+            }}>
+            {gpsFixing ? <Loader2 size={14} style={{ animation: "mspin .85s linear infinite" }} /> : <MapPin size={14} />}
+            {gpsFixing ? "Mengambil lokasi…" : gpsCorrected ? "Ambil Ulang Titik GPS" : "Saya di Lokasi - Perbaiki Titik GPS"}
+          </button>
+          {gpsErr && <div style={{ marginTop: 6, fontSize: 10.5, color: "#DC2626", fontWeight: 700 }}>{gpsErr}</div>}
+        </div>
 
+        {/* ORG ID Aktif SEKARANG ADA DI SETIAP SECTION (SP maupun FWA) -
+            bukan lagi satu kontrol tunggal di atas yg perlu discroll ulang
+            tiap ganti kategori. Daftar chip-nya tetap SATU sumber (orgChips,
+            controlled - lihat OrgIdBar.jsx) jadi org_id yg ditambahkan di
+            section SP langsung kepakai jg di section FWA. usedOrgIds =
+            org_id yg sudah pernah dipakai activity ini (dari plan/entry
+            lama) diseed otomatis sbg chip. */}
         {CATS.map((c) => (
           <SalesSection key={c.key} cat={c.key} label={c.label} icon={c.icon}
             types={types[c.key]} selectedType={selectedType[c.key]} onSelectType={(v) => setSelectedType((s) => ({ ...s, [c.key]: v }))}
@@ -499,18 +719,21 @@ export default function SubmitActualPage() {
             entries={entries[c.key]} onRemove={(m) => removeEntry(c.key, m)}
             pending={pendingTransfers[c.key]} error={msisdnErr[c.key]}
             onScanResult={(msisdn) => addMsisdn(c.key, msisdn)}
+            activeOrgId={activeOrgId} setActiveOrgId={setActiveOrgId} ownOrgId={ownOrgId} ownLabel={scope?.fullName}
+            orgChips={orgChips} setOrgChips={setOrgChips} usedOrgIds={usedOrgIds}
           />
         ))}
 
-        {/* Catat Penjualan Rebuy - SEKARANG wajib per-MSISDN: nomor dulu,
-            baru pilih jenis (Pulsa/Data), baru amount-nya. */}
+        {/* Catat Penjualan Rebuy - wajib per-entri: Transaction ID, nomor
+            tujuan (manual, dikunci "62"), jenis (SP/FWA), lalu amount-nya. */}
         <RebuySection
+          transactionId={rebuyTransactionId} onTransactionIdChange={setRebuyTransactionId}
           msisdn={rebuyMsisdn} onMsisdnChange={setRebuyMsisdn}
           type={rebuyType} onTypeChange={setRebuyType}
           amount={rebuyAmount} onAmountChange={setRebuyAmount}
           onAdd={addRebuyEntry} error={rebuyErr}
           entries={rebuyEntries} onRemove={removeRebuyEntry}
-          pulsaTotal={rebuyPulsaTotal} dataTotal={rebuyDataTotal}
+          spTotal={rebuySpTotal} fwaTotal={rebuyFwaTotal}
         />
 
         <Card accent>
@@ -586,11 +809,24 @@ export default function SubmitActualPage() {
         const label = photosMissing ? "Tambahkan Foto Dokumentasi" : costMissing ? "Isi Cost Actual dulu" : "Kirim Laporan";
         return (
           <div style={{ position: "sticky", bottom: 66, background: "linear-gradient(180deg,rgba(244,245,247,0) 0%,#F4F5F7 30%)", padding: "16px 20px 0" }}>
-            <button onClick={submit} disabled={saving || blocked}
-              style={{ width: "100%", height: 52, borderRadius: 14, border: "none", cursor: (saving || blocked) ? "default" : "pointer", background: (saving || blocked) ? "#D8D9E0" : BRAND, color: "#fff", fontSize: 14.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, boxShadow: (saving || blocked) ? "none" : "0 4px 14px rgba(17,17,20,0.11)" }}>
-              {saving ? <Loader2 size={17} style={{ animation: "mspin .85s linear infinite" }} /> : <CheckCircle2 size={18} />}
-              {saving ? (uploadProgress ? `Mengunggah foto ${uploadProgress.done}/${uploadProgress.total}…` : "Mengirim…") : label}
-            </button>
+            {draftSavedAt && (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 8, fontSize: 11.5, fontWeight: 700, color: "#8A6D00" }}>
+                <FolderClock size={12.5} />
+                Tersimpan sbg draft · {new Date(draftSavedAt).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+              </div>
+            )}
+            <div style={{ display: "flex", gap: 9 }}>
+              <button onClick={saveDraft} disabled={saving || savingDraft}
+                style={{ flex: "0 0 auto", height: 52, padding: "0 18px", borderRadius: 14, border: "1.5px solid #DADBE2", cursor: (saving || savingDraft) ? "default" : "pointer", background: "#fff", color: "#3A3A44", fontSize: 13.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+                {savingDraft ? <Loader2 size={15} style={{ animation: "mspin .85s linear infinite" }} /> : <FolderClock size={15} />}
+                {savingDraft ? "Menyimpan…" : "Simpan Draft"}
+              </button>
+              <button onClick={submit} disabled={saving || savingDraft || blocked}
+                style={{ flex: 1, height: 52, borderRadius: 14, border: "none", cursor: (saving || savingDraft || blocked) ? "default" : "pointer", background: (saving || savingDraft || blocked) ? "#D8D9E0" : BRAND, color: "#fff", fontSize: 14.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, boxShadow: (saving || savingDraft || blocked) ? "none" : "0 4px 14px rgba(17,17,20,0.11)" }}>
+                {saving ? <Loader2 size={17} style={{ animation: "mspin .85s linear infinite" }} /> : <CheckCircle2 size={18} />}
+                {saving ? (uploadProgress ? `Mengunggah foto ${uploadProgress.done}/${uploadProgress.total}…` : "Mengirim…") : label}
+              </button>
+            </div>
           </div>
         );
       })()}
@@ -598,12 +834,16 @@ export default function SubmitActualPage() {
       {conflict && (
         <ConflictSheet conflict={conflict} onClose={() => setConflict(null)} onConfirm={resolveConflictTransfer} />
       )}
+
+      {sitePicking && (
+        <SitePickerSheet items={siteCandidates} onClose={() => setSitePicking(false)} onSelect={addSite} title="Tambah Site" />
+      )}
     </MobileShell>
   );
 }
 
 // ═══════════════════════════════ Sections ══════════════════════════════════
-function SalesSection({ cat, label, icon, types, selectedType, onSelectType, input, onInputChange, onAdd, entries, onRemove, pending, error, onScanResult }) {
+function SalesSection({ cat, label, icon, types, selectedType, onSelectType, input, onInputChange, onAdd, entries, onRemove, pending, error, onScanResult, activeOrgId, setActiveOrgId, ownOrgId, ownLabel, orgChips, setOrgChips, usedOrgIds }) {
   const [scanning, setScanning] = useState(false);
   const total = entries.length;
 
@@ -614,10 +854,22 @@ function SalesSection({ cat, label, icon, types, selectedType, onSelectType, inp
         <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, color: "#ED1C24", background: "rgba(237,28,36,0.08)", padding: "4px 10px", borderRadius: 999 }}>{total} nomor</span>
       </div>
       <Divider />
+
+      {/* ORG ID Aktif langsung di sini - per section (SP/FWA), bukan lagi
+          satu kontrol terpisah di atas - memudahkan pemilihan tanpa perlu
+          scroll bolak-balik. */}
+      <div style={{ marginTop: 10, marginBottom: 2 }}>
+        <OrgIdBar value={activeOrgId} onChange={setActiveOrgId} ownOrgId={ownOrgId} ownLabel={ownLabel}
+          chips={orgChips} onChipsChange={setOrgChips} presetOrgIds={usedOrgIds} />
+      </div>
+
       {types.length === 0 && <div style={{ marginTop: 10 }}><LockedField text="Belum ada jenis untuk brand Anda - hubungi admin" muted /></div>}
 
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <input value={input} onChange={(e) => onInputChange(e.target.value)} inputMode="tel"
+        {/* Cuma terima ANGKA - MSISDN tidak pernah punya huruf/simbol, jadi
+            karakter non-digit langsung disaring saat diketik (bukan baru
+            divalidasi/ditolak setelah tombol + ditekan). */}
+        <input value={input} onChange={(e) => onInputChange(e.target.value.replace(/\D/g, ""))} inputMode="numeric" pattern="[0-9]*"
           onKeyDown={(e) => e.key === "Enter" && onAdd()}
           placeholder="Contoh: 628123456789"
           style={{ flex: 1, minWidth: 0, height: 46, padding: "0 14px", borderRadius: 12, background: "#F6F7F9", border: "1.5px solid #ECEDF0", fontSize: 13.5, fontFamily: FF, color: "#17181C", outline: "none" }} />
@@ -633,7 +885,7 @@ function SalesSection({ cat, label, icon, types, selectedType, onSelectType, inp
       {total > 0 && (
         <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
           {entries.map((e) => (
-            <MsisdnCard key={e.msisdn} entry={e} onRemove={() => onRemove(e.msisdn)} />
+            <MsisdnCard key={e.msisdn} entry={e} cat={cat} onRemove={() => onRemove(e.msisdn)} />
           ))}
         </div>
       )}
@@ -661,25 +913,52 @@ function SalesSection({ cat, label, icon, types, selectedType, onSelectType, inp
   );
 }
 
-/** Catat Penjualan Rebuy - urutan input SESUAI PERMINTAAN: MSISDN dulu
- * (wajib), baru pilih jenisnya Pulsa/Data, baru masukkan amount-nya,
- * tekan Tambah utk mencatat satu entri. Total Pulsa/Data dihitung
- * otomatis dari daftar entri utk dikirim ke `actual_rebuy_pulsa/data`. */
-function RebuySection({ msisdn, onMsisdnChange, type, onTypeChange, amount, onAmountChange, onAdd, error, entries, onRemove, pulsaTotal, dataTotal }) {
+/** Input nomor tujuan yg dikunci selalu diawali "62" - user tidak bisa
+ * mengetik / paste jadi 0xxx atau 8xxx. Prefix "+62" ditampilkan sbg chip
+ * statis, field cuma menerima digit setelahnya; kalau user paste nomor
+ * mentah yg sudah diawali "62" atau "0", prefix-nya otomatis dibuang biar
+ * gak dobel. Tanpa opsi scan - input manual saja sesuai permintaan. */
+function Phone62Input({ value, onChange, placeholder }) {
+  const digits = value && value.startsWith("62") ? value.slice(2) : value || "";
+  function handle(e) {
+    let raw = e.target.value.replace(/\D/g, "");
+    if (raw.startsWith("62")) raw = raw.slice(2);
+    if (raw.startsWith("0")) raw = raw.replace(/^0+/, "");
+    onChange(raw ? "62" + raw : "");
+  }
+  return (
+    <div style={{ display: "flex", alignItems: "center", height: 46, borderRadius: 12, background: "#F6F7F9", border: "1.5px solid #ECEDF0", overflow: "hidden" }}>
+      <span style={{ flexShrink: 0, height: "100%", display: "flex", alignItems: "center", padding: "0 12px", background: "#ECEDF0", color: "#5A5A68", fontSize: 13.5, fontWeight: 800, fontFamily: FF }}>+62</span>
+      <input value={digits} onChange={handle} inputMode="numeric"
+        placeholder={placeholder || "812xxxxxxxx"}
+        style={{ flex: 1, minWidth: 0, height: "100%", padding: "0 14px", border: "none", background: "transparent", fontSize: 13.5, fontFamily: FF, color: "#17181C", outline: "none" }} />
+    </div>
+  );
+}
+
+/** Catat Penjualan Rebuy - urutan input SESUAI PERMINTAAN: Transaction ID
+ * dulu, baru nomor tujuan (manual, dikunci "62"), baru jenisnya SP/FWA,
+ * baru masukkan amount-nya, tekan Tambah utk mencatat satu entri. Total
+ * SP/FWA dihitung otomatis dari daftar entri utk dikirim ke
+ * `actual_rebuy_pulsa/data` (kolom lama, dipetakan sbg sp/fwa). */
+function RebuySection({ transactionId, onTransactionIdChange, msisdn, onMsisdnChange, type, onTypeChange, amount, onAmountChange, onAdd, error, entries, onRemove, spTotal, fwaTotal }) {
   return (
     <Card accent>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <SectionHeading icon={RefreshCw} title="Catat Penjualan Rebuy" subtitle='MSISDN (wajib diawali "62") → jenis → amount' />
+        <SectionHeading icon={RefreshCw} title="Catat Penjualan Rebuy" subtitle="Transaction ID → nomor tujuan → jenis → amount" />
         <span style={{ flexShrink: 0, fontSize: 11.5, fontWeight: 800, color: "#C6168D", background: "rgba(236,0,140,0.08)", padding: "4px 10px", borderRadius: 999 }}>{entries.length} entri</span>
       </div>
       <Divider />
 
-      <FieldLabel text="1. MSISDN" top hint='Wajib "62"' />
-      <input value={msisdn} onChange={(e) => onMsisdnChange(e.target.value)} inputMode="tel"
-        placeholder="Contoh: 628123456789"
+      <FieldLabel text="1. Transaction ID" top />
+      <input value={transactionId} onChange={(e) => onTransactionIdChange(e.target.value)}
+        placeholder="Contoh: TRX-20260902-0001"
         style={{ width: "100%", minWidth: 0, height: 46, padding: "0 14px", borderRadius: 12, background: "#F6F7F9", border: "1.5px solid #ECEDF0", fontSize: 13.5, fontFamily: FF, color: "#17181C", outline: "none", boxSizing: "border-box" }} />
 
-      <FieldLabel text="2. Jenis" top />
+      <FieldLabel text="2. Nomor Tujuan" top hint="Manual, otomatis 62" />
+      <Phone62Input value={msisdn} onChange={onMsisdnChange} />
+
+      <FieldLabel text="3. Jenis" top />
       <div style={{ display: "flex", gap: 8 }}>
         {REBUY_TYPES.map((t) => {
           const Icon = t.icon; const active = type === t.key;
@@ -698,7 +977,7 @@ function RebuySection({ msisdn, onMsisdnChange, type, onTypeChange, amount, onAm
         })}
       </div>
 
-      <FieldLabel text="3. Amount" top />
+      <FieldLabel text="4. Amount" top />
       <div style={{ display: "flex", gap: 8 }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <NumberInput value={amount} onChange={onAmountChange} prefix="Rp" />
@@ -711,14 +990,14 @@ function RebuySection({ msisdn, onMsisdnChange, type, onTypeChange, amount, onAm
 
       {entries.length > 0 && (
         <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-          {entries.map((e, i) => <RebuyCard key={`${e.msisdn}-${e.type}-${i}`} entry={e} onRemove={() => onRemove(i)} />)}
+          {entries.map((e, i) => <RebuyCard key={`${e.transactionId}-${i}`} entry={e} onRemove={() => onRemove(i)} />)}
         </div>
       )}
 
       {entries.length > 0 && (
         <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
-          <MiniTotal label="Total Pulsa" value={pulsaTotal} />
-          <MiniTotal label="Total Data" value={dataTotal} />
+          <MiniTotal label="Total SP" value={spTotal} />
+          <MiniTotal label="Total FWA" value={fwaTotal} />
         </div>
       )}
     </Card>
@@ -726,16 +1005,16 @@ function RebuySection({ msisdn, onMsisdnChange, type, onTypeChange, amount, onAm
 }
 
 function RebuyCard({ entry, onRemove }) {
-  const isPulsa = entry.type === "pulsa";
-  const Icon = isPulsa ? Wallet : SignalHigh;
+  const isSp = entry.type === "sp";
+  const Icon = isSp ? CardSim : Router;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#F6F7F9", border: "1px solid #ECEDF0", borderRadius: 14, padding: "10px 8px 10px 12px" }}>
-      <div style={{ width: 34, height: 34, borderRadius: 10, background: isPulsa ? "rgba(237,28,36,0.08)" : "rgba(236,0,140,0.08)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-        <Icon size={15} color={isPulsa ? "#ED1C24" : "#C6168D"} />
+      <div style={{ width: 34, height: 34, borderRadius: 10, background: isSp ? "rgba(237,28,36,0.08)" : "rgba(236,0,140,0.08)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <Icon size={15} color={isSp ? "#ED1C24" : "#C6168D"} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C", fontVariantNumeric: "tabular-nums" }}>{entry.msisdn}</div>
-        <div style={{ fontSize: 10.5, color: "#8A8A96", fontWeight: 600 }}>{isPulsa ? "Pulsa" : "Data"} · Rp {Number(entry.amount).toLocaleString("id-ID")}</div>
+        <div style={{ fontSize: 10.5, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{isSp ? "SP" : "FWA"} · {entry.transactionId} · Rp {Number(entry.amount).toLocaleString("id-ID")}</div>
       </div>
       <button onClick={onRemove} style={{ width: 32, height: 32, borderRadius: 9, border: "none", background: "transparent", color: "#DC2626", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
         <Trash2 size={15} />
@@ -753,15 +1032,15 @@ function MiniTotal({ label, value }) {
   );
 }
 
-function ReportTile({ icon: Icon, label, value }) {
+function ReportTile({ icon: Icon, accent = "#ED1C24", label, value }) {
   return (
-    <div style={{ minWidth: 0, borderRadius: 14, background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.1)", padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
-      <div style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 9, background: "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <Icon size={14} color="#F5A3CB" />
+    <div style={{ minWidth: 0, borderRadius: 13, background: "#FFFFFF", border: "1px solid #ECEDF0", padding: "10px 11px", display: "flex", alignItems: "center", gap: 9 }}>
+      <div style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 9, background: `${accent}16`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <Icon size={14} color={accent} />
       </div>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 800, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value}</div>
-        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.3, textTransform: "uppercase", color: "rgba(255,255,255,0.5)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
+        <div style={{ fontSize: 13.5, fontWeight: 800, color: "#17181C", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{value}</div>
+        <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.3, textTransform: "uppercase", color: "#B0B0BA", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
       </div>
     </div>
   );
@@ -785,11 +1064,16 @@ function SectionHeading({ icon: Icon, title, subtitle }) {
   );
 }
 
-function MsisdnCard({ entry, onRemove }) {
+// Ikon per kategori - SP = CardSim, FWA = Router (konsisten dgn seluruh
+// aplikasi), BUKAN MapPin generik spt sebelumnya - MSISDN card bukan
+// penanda lokasi, jadi ikonnya seharusnya jenis produknya.
+function MsisdnCard({ entry, cat, onRemove }) {
+  const Icon = cat === "fwa" ? Router : CardSim;
+  const accent = cat === "fwa" ? "#2563EB" : "#ED1C24";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#F6F7F9", border: "1px solid #ECEDF0", borderRadius: 14, padding: "10px 8px 10px 12px" }}>
       <div style={{ width: 34, height: 34, borderRadius: 10, background: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-        <MapPin size={15} color="#ED1C24" />
+        <Icon size={15} color={accent} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>

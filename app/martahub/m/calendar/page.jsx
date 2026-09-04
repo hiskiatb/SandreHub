@@ -8,13 +8,14 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, ChevronDown, Plus, Loader2, MapPin } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Loader2, Clock } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
-import MobileShell, { useMartaSession, FF, BRAND } from "../_shared/MobileShell";
-import { statusMeta, fmtDate, fmtInt } from "../_shared/activityUi";
+import MobileShell, { useMartaSession, FF, BRAND, NAV_HEIGHT } from "../_shared/MobileShell";
+import { activityStage, fmtDate, fmtTimeLabel } from "../_shared/activityUi";
 
 const MONTH_NAMES_FULL = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 const DOW = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
 
 function dotColorForStatuses(statuses) {
   if (statuses.some((s) => s === "rejected" || s === "revision_needed" || s === "revision_actual")) return "#DC2626";
@@ -46,6 +47,7 @@ export default function CalendarPage() {
   const [viewMonth, setViewMonth] = useState(today.getMonth());
   const [selected, setSelected] = useState(toKey(today.getFullYear(), today.getMonth(), today.getDate()));
   const [byDate, setByDate] = useState({});
+  const [branchBySite, setBranchBySite] = useState({});
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
@@ -68,7 +70,15 @@ export default function CalendarPage() {
         if (error) throw error;
         const bucket = {};
         for (const a of data || []) for (const key of activityDateKeys(a)) (bucket[key] ||= []).push(a);
-        if (alive) setByDate(bucket);
+
+        const siteIds = Array.from(new Set((data || []).map((a) => a.site_id).filter(Boolean)));
+        let branchMap = {};
+        if (siteIds.length) {
+          const { data: sites } = await supabaseMarta.from("mh_sites").select("site_id,branch").in("site_id", siteIds);
+          for (const s of sites || []) branchMap[s.site_id] = s.branch;
+        }
+
+        if (alive) { setBranchBySite(branchMap); setByDate(bucket); }
       } catch (e) {
         if (alive) setErr(e.message || "Gagal memuat kalender");
       } finally {
@@ -97,35 +107,62 @@ export default function CalendarPage() {
   }
 
   const dayActs = byDate[selected] || [];
-  const [expandedId, setExpandedId] = useState(null);
-  function selectDate(key) { setSelected(key); setExpandedId(null); }
+  function selectDate(key) { setSelected(key); }
+
+  const goCreatePlan = () => router.push(`/martahub/m/activities/new?date=${selected}`);
+  const isSelectedToday = selected === todayKey;
+
+  const fab = (
+    <div style={{ position: "fixed", left: 0, right: 0, bottom: `calc(env(safe-area-inset-bottom,0px) + ${NAV_HEIGHT}px)`, zIndex: 35, pointerEvents: "none" }}>
+      <div style={{ maxWidth: 480, margin: "0 auto", position: "relative", height: 0 }}>
+        <button onClick={goCreatePlan} aria-label={dayActs.length === 0 ? "Buat Plan" : "Tambah Plan"}
+          style={{
+            pointerEvents: "auto", position: "absolute", right: 20, bottom: 20,
+            display: "flex", alignItems: "center", gap: 7,
+            padding: "13px 18px", borderRadius: 999, border: "none", background: BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer",
+            boxShadow: "0 8px 20px rgba(17,17,20,0.22)",
+          }}>
+          <Plus size={16} /> {dayActs.length === 0 ? "Buat Plan" : "Tambah Plan"}
+        </button>
+      </div>
+    </div>
+  );
 
   return (
-    <MobileShell active="calendar">
-      <div style={{ padding: "calc(env(safe-area-inset-top,0px) + 20px) 20px 0", fontFamily: FF }}>
-        <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em" }}>Kalender</div>
-        <div style={{ marginTop: 3, fontSize: 12.5, color: "#8A8A96", fontWeight: 500 }}>
-          Lihat plan yang sudah dijadwalkan, lalu buat plan baru dari tanggal manapun.
-        </div>
-
-        {/* Month nav */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 18 }}>
-          <button onClick={() => changeMonth(-1)} style={{ width: 34, height: 34, borderRadius: 10, background: "#FFFFFF", border: "1px solid #E4E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
-            <ChevronLeft size={17} />
-          </button>
-          <div style={{ fontSize: 15.5, fontWeight: 800, color: "#17181C" }}>{MONTH_NAMES_FULL[viewMonth]} {viewYear}</div>
-          <button onClick={() => changeMonth(1)} style={{ width: 34, height: 34, borderRadius: 10, background: "#FFFFFF", border: "1px solid #E4E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
-            <ChevronRight size={17} />
-          </button>
-        </div>
+    <MobileShell active="calendar" fab={fab}>
+      {/* Header STICKY - cuma judul, TANPA tombol Buat Plan lagi - sebelumnya
+          ada dua tombol "Buat Plan" sekaligus di layar yg sama (satu di
+          sini, satu lagi kontekstual di kartu detail tanggal di bawah),
+          jadi terasa dobel/berantakan. Sekarang cukup SATU tombol
+          kontekstual di kartu detail tanggal - sekalian jelas ke tanggal
+          mana plan barunya akan dibuat. */}
+      <div style={{
+        position: "sticky", top: 0, zIndex: 20, maxWidth: 480, margin: "0 auto",
+        padding: "calc(env(safe-area-inset-top,0px) + 20px) 20px 14px", fontFamily: FF,
+        background: "rgba(244,245,247,0.86)", backdropFilter: "blur(18px) saturate(1.5)", WebkitBackdropFilter: "blur(18px) saturate(1.5)",
+        borderBottom: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 6px 20px rgba(23,24,28,0.05)",
+      }}>
+        <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em" }}>Kalender Aktivitas</div>
       </div>
 
-      {/* Grid */}
-      <div style={{ padding: "14px 14px 0" }}>
-        <div style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 18, padding: "12px 8px" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2 }}>
+      <div style={{ padding: "14px 20px 0", fontFamily: FF }}>
+        {/* Kartu kalender - navigasi bulan SEKARANG jadi header kartu ini
+            sendiri (dulu baris terpisah di luar, mengambang & nambah jarak
+            kosong) supaya kalender terasa satu blok yang rapi. */}
+        <div style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 18, padding: "12px 12px 14px", boxShadow: "0 4px 14px rgba(17,17,20,0.04)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <button onClick={() => changeMonth(-1)} style={{ width: 30, height: 30, borderRadius: 9, background: "#F6F7F9", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
+              <ChevronLeft size={16} />
+            </button>
+            <div style={{ fontSize: 14, fontWeight: 800, color: "#17181C" }}>{MONTH_NAMES_FULL[viewMonth]} {viewYear}</div>
+            <button onClick={() => changeMonth(1)} style={{ width: 30, height: 30, borderRadius: 9, background: "#F6F7F9", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
+              <ChevronRight size={16} />
+            </button>
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2, marginTop: 14 }}>
             {DOW.map((d) => (
-              <div key={d} style={{ textAlign: "center", fontSize: 10.5, fontWeight: 800, color: "#B0B0BA", padding: "4px 0" }}>{d}</div>
+              <div key={d} style={{ textAlign: "center", fontSize: 10, fontWeight: 800, color: "#B0B0BA", paddingBottom: 6 }}>{d}</div>
             ))}
           </div>
           {loading ? (
@@ -133,7 +170,7 @@ export default function CalendarPage() {
               <Loader2 size={20} color="#ED1C24" style={{ animation: "mspin .9s linear infinite" }} />
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2, marginTop: 2 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2, marginTop: 4 }}>
               {cells.map((c) => {
                 const acts = byDate[c.key] || [];
                 const sel = c.key === selected;
@@ -141,12 +178,13 @@ export default function CalendarPage() {
                 return (
                   <button key={c.key} onClick={() => selectDate(c.key)}
                     style={{
-                      position: "relative", aspectRatio: "1", borderRadius: 12,
+                      position: "relative", aspectRatio: "1 / 0.8", borderRadius: 11,
                       border: isToday && !sel ? "1.5px solid #ED1C24" : "1.5px solid transparent",
                       background: sel ? BRAND : "transparent",
                       color: !c.inMonth ? "#D0D0D8" : sel ? "#fff" : "#17181C",
-                      fontFamily: FF, fontSize: 13, fontWeight: sel ? 800 : 600, cursor: "pointer",
+                      fontFamily: FF, fontSize: 12.5, fontWeight: sel ? 800 : 600, cursor: "pointer",
                       display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
+                      transition: "background 0.15s, color 0.15s",
                     }}>
                     <span>{c.d}</span>
                     {acts.length > 0 && (
@@ -162,77 +200,83 @@ export default function CalendarPage() {
 
       {err && <div style={{ margin: "12px 20px 0", padding: "10px 12px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 12, fontWeight: 600 }}>{err}</div>}
 
-      {/* Detail tanggal terpilih */}
-      <div style={{ padding: "18px 20px 100px" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ fontSize: 13.5, fontWeight: 800, color: "#17181C" }}>{fmtDate(selected)}</div>
-          <span style={{ fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{dayActs.length} aktivitas</span>
+      {/* Detail tanggal terpilih - juga dibungkus 1 kartu, konsisten dgn
+          kartu kalender di atasnya. */}
+      <div style={{ padding: "14px 20px calc(env(safe-area-inset-bottom,0px) + 24px)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ minWidth: 0 }}>
+            {/* Tanggal terpilih jadi fokus utama (lebih besar) - badge
+                "HARI INI" TERPISAH sbg pill kecil berwarna brand (bukan
+                menggantikan teks tanggal spt sebelumnya), supaya tetap
+                jelas tanggal PERSIS berapa tanpa perlu menghitung sendiri. */}
+            <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#17181C", letterSpacing: "-0.01em" }}>{fmtDate(selected)}</div>
+              {isSelectedToday && (
+                <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.3, padding: "3px 8px", borderRadius: 999, background: "rgba(237,28,36,0.10)", color: "#ED1C24", whiteSpace: "nowrap" }}>
+                  HARI INI
+                </span>
+              )}
+            </div>
+            <div style={{ marginTop: 4, fontSize: 11.5, color: "#8A8A96", fontWeight: 600 }}>
+              {dayActs.length === 0 ? "Belum ada aktivitas" : `${dayActs.length} aktivitas dijadwalkan`}
+            </div>
+          </div>
         </div>
 
         {dayActs.length === 0 ? (
-          <div style={{ marginTop: 12, textAlign: "center", padding: "32px 20px", background: "#FFFFFF", border: "1px dashed #D8D9E0", borderRadius: 16 }}>
+          <div style={{ marginTop: 10, textAlign: "center", padding: "26px 20px", background: "#FFFFFF", border: "1px dashed #D8D9E0", borderRadius: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#3A3A44" }}>Belum ada plan di tanggal ini</div>
-            <div style={{ marginTop: 4, fontSize: 12, color: "#8A8A96" }}>Ketuk "Buat Plan" untuk menjadwalkan aktivitas baru.</div>
           </div>
         ) : (
-          <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
             {dayActs.map((a) => {
-              const meta = statusMeta(a.status);
-              const open = expandedId === a.id;
+              const stage = activityStage(a);
+              const timeLabel = fmtTimeLabel(a);
+              const branchLabel = branchBySite[a.site_id];
               return (
-                <div key={a.id} style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 16, overflow: "hidden", fontFamily: FF }}>
-                  <button onClick={() => setExpandedId(open ? null : a.id)}
-                    style={{ textAlign: "left", width: "100%", background: "none", border: "none", padding: "13px 14px", cursor: "pointer", fontFamily: FF }}>
-                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 13.5, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.event_name || "-"}</div>
-                        <div style={{ marginTop: 3, fontSize: 11.5, color: "#8A8A96", fontWeight: 600 }}>
-                          {a.mc || "-"} {a.site_id ? `· ${a.site_id}` : ""} · Target {fmtInt(a.target_sp)}/{fmtInt(a.target_fwa)} SP/FWA
-                        </div>
-                      </div>
-                      <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
-                        <span style={{ fontSize: 10, fontWeight: 800, padding: "4px 9px", borderRadius: 999, color: meta.color, background: meta.bg, whiteSpace: "nowrap" }}>
-                          {meta.label}
+                <button key={a.id} onClick={() => router.push(`/martahub/m/activities/${a.id}`)}
+                  style={{ position: "relative", textAlign: "left", width: "100%", background: "#FFFFFF", border: "1px solid #EDEDF1", borderRadius: 18, padding: "15px 16px", cursor: "pointer", fontFamily: FF, boxShadow: "0 2px 10px rgba(23,24,28,0.04), 0 1px 2px rgba(23,24,28,0.03)" }}>
+                  <span style={{
+                    position: "absolute", right: 16, bottom: 13,
+                    width: 30, height: 30, borderRadius: 10, background: "#FFFFFF", border: "1px solid #E7E7EC",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    <ChevronRight size={15} color="#5A5A68" />
+                  </span>
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: 14, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.event_name || "-"}</div>
+                      <div style={{ marginTop: 5, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                        {a.brand && (
+                          <span style={{
+                            flexShrink: 0, fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 999, whiteSpace: "nowrap",
+                            background: BRAND_COLOR[a.brand.toLowerCase()] || "#8A8A96",
+                            color: a.brand.toLowerCase() === "tri" ? "#FFFFFF" : "#17181C",
+                          }}>
+                            {a.brand.toLowerCase() === "tri" ? "3ID" : "IM3"}
+                          </span>
+                        )}
+                        <span style={{ fontSize: 11.5, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+                          {[branchLabel, a.mc].filter(Boolean).join(" · ")}
                         </span>
-                        <ChevronDown size={15} color="#B0B0BA" style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
                       </div>
                     </div>
-                  </button>
+                    <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 800, padding: "4px 9px", borderRadius: 999, color: stage.color, background: stage.bg, whiteSpace: "nowrap" }}>
+                      {stage.label}
+                    </span>
+                  </div>
 
-                  {open && (
-                    <div style={{ padding: "0 14px 13px", borderTop: "1px solid #F0F0F3" }}>
-                      <div style={{ display: "flex", alignItems: "flex-start", gap: 7, marginTop: 11 }}>
-                        <MapPin size={13} color="#8A8A96" style={{ flexShrink: 0, marginTop: 1 }} />
-                        <span style={{ fontSize: 12, color: "#5A5A68", fontWeight: 600, lineHeight: 1.4 }}>
-                          {a.address || a.site_id || "Lokasi belum diisi"}
-                        </span>
-                      </div>
-                      <button onClick={() => router.push(`/martahub/m/activities/${a.id}`)}
-                        style={{ marginTop: 11, width: "100%", height: 38, borderRadius: 11, border: "1px solid #E4E5EA", background: "#F7F7F9", color: "#3A3A44", fontSize: 12, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
-                        Lihat Detail Aktivitas
-                      </button>
-                    </div>
-                  )}
-                </div>
+                  <div style={{ marginTop: 7, display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: "#5A5A68", fontWeight: 600, paddingRight: 28 }}>
+                    <Clock size={12} color="#B0B0BA" style={{ flexShrink: 0 }} />
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fmtDate(a.plan_date)} · {timeLabel}</span>
+                  </div>
+                </button>
               );
             })}
           </div>
         )}
       </div>
 
-      {/* FAB Buat Plan - tanggal terpilih ikut ter-prefill di wizard */}
-      <div style={{ position: "fixed", left: 0, right: 0, bottom: 96, zIndex: 45, pointerEvents: "none" }}>
-        <div style={{ maxWidth: 480, margin: "0 auto", display: "flex", justifyContent: "flex-end", padding: "0 20px" }}>
-          <button onClick={() => router.push(`/martahub/m/activities/new?date=${selected}`)}
-            style={{
-              pointerEvents: "auto", display: "flex", alignItems: "center", gap: 8,
-              padding: "14px 20px", borderRadius: 28, border: "none", background: BRAND, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF, cursor: "pointer",
-              boxShadow: "0 6px 16px rgba(17,17,20,0.10), 0 2px 4px rgba(17,17,20,0.06)",
-            }}>
-            <Plus size={18} /> Buat Plan
-          </button>
-        </div>
-      </div>
     </MobileShell>
   );
 }

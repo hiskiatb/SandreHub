@@ -16,7 +16,7 @@ const STATUS = {
   draft: ["Draft", T.mid, "#eef1f6"], submitted: ["Laporan Masuk", T.blue, T.blueBg],
   approved: ["Disetujui", T.success, T.successBg], rejected: ["Ditolak", T.error, T.errorBg],
   completed: ["Selesai", T.success, T.successBg], inProgress: ["Berlangsung", T.warning, T.warningBg],
-  plan_submitted: ["Menunggu Approval", T.blue, T.blueBg], revision_needed: ["Revisi Plan", T.warning, T.warningBg],
+  plan_submitted: ["Plan Diajukan", T.blue, T.blueBg], revision_needed: ["Revisi Plan", T.warning, T.warningBg],
   pending_validation: ["Menunggu Validasi", T.blue, T.blueBg],
   revision_actual: ["Perlu Perbaikan Lokasi/Bukti", T.warning, T.warningBg],
 };
@@ -54,6 +54,7 @@ const fmtInt = (n) => (n == null ? "-" : Number(n).toLocaleString("id-ID"));
 // Label seragam utk kolom bertipe "tag" (POI, Event Category, Network Category):
 // SEMUA HURUF BESAR, underscore diganti spasi (bukan "urban_area" tapi "URBAN AREA").
 const fmtTag = (s) => (s ? String(s).replace(/_/g, " ").toUpperCase() : "-");
+const unsnake = (s) => (s ? String(s).split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ") : "-");
 
 // Badge brand - SOLID & "pop", bukan teks warna transparan spt sebelumnya:
 // IM3 = kuning solid + teks HITAM (kontras tinggi, sesuai identitas IM3),
@@ -190,18 +191,18 @@ function Body({ email }) {
     { key: "planDate", label: "Plan Date", width: 100, filter: true, get: (r) => fmtDate(r.plan_date_start || r.plan_date), sortVal: (r) => r.plan_date_start || r.plan_date || "" },
     { key: "actualDate", label: "Actual Date", width: 100, filter: true, get: (r) => fmtDate(r.actual_date), sortVal: (r) => r.actual_date || "" },
     { key: "eventCategory", label: "Event Category", width: 160, filter: true, get: (r) => cats(r) },
-    { key: "network", label: "Network Category", width: 130, filter: true, get: (r) => fmtTag(r.network_category) },
+    { key: "network", label: "Network Category", width: 130, filter: true, get: (r) => unsnake(r.network_category) },
     { key: "eventName", label: "Event Name", width: 230, filter: true, get: (r) => r.event_name || "-" },
-    { key: "areaPotential", label: "Area Potential", width: 120, filter: true, get: (r) => fmtTag(r.area_potential) },
+    { key: "areaPotential", label: "Area Potential", width: 120, filter: true, get: (r) => unsnake(r.area_potential) },
     { key: "siteId", label: "Site ID", width: 100, filter: true, get: (r) => r.site_id || "-" },
     { key: "long", label: "Long", width: 90, filter: true, get: (r) => (r.longitude != null ? String(r.longitude) : "-"), raw: (r) => r.longitude, numeric: true },
     { key: "lat", label: "Lat", width: 90, filter: true, get: (r) => (r.latitude != null ? String(r.latitude) : "-"), raw: (r) => r.latitude, numeric: true },
-    { key: "poi", label: "POI", width: 110, filter: true, get: (r) => fmtTag(r.poi_type) },
+    { key: "poi", label: "POI", width: 110, filter: true, get: (r) => unsnake(r.poi_type) },
     { key: "address", label: "Address", width: 240, filter: true, get: (r) => r.address || "-" },
     { key: "targetSp", label: "Target SP", width: 92, filter: true, get: (r) => fmtInt(r.target_sp), raw: (r) => r.target_sp, numeric: true },
     { key: "targetFwa", label: "Target FWA", width: 96, filter: true, get: (r) => fmtInt(r.target_fwa), raw: (r) => r.target_fwa, numeric: true },
     { key: "targetRebuy", label: "Target Rebuy", width: 110, filter: true, get: (r) => fmtRp(rebuySum(r.target_rebuy_pulsa, r.target_rebuy_data)), raw: (r) => rebuySum(r.target_rebuy_pulsa, r.target_rebuy_data), numeric: true },
-    { key: "targetRev", label: "Target Rev (3M)", width: 130, filter: true, get: (r) => fmtRp(r.target_rev_3m), raw: (r) => r.target_rev_3m, numeric: true },
+    { key: "targetRev", label: "Estimasi Total Revenue", width: 150, filter: true, get: (r) => fmtRp(r.target_rev_3m), raw: (r) => r.target_rev_3m, numeric: true },
     { key: "costEstimate", label: "Cost Estimate", width: 120, filter: true, get: (r) => fmtRp(r.cost_estimate), raw: (r) => r.cost_estimate, numeric: true },
     { key: "actualSp", label: "Actual SP", width: 92, filter: true, get: (r) => fmtInt(r.actual_sp), raw: (r) => r.actual_sp, numeric: true },
     { key: "actualFwa", label: "Actual FWA", width: 96, filter: true, get: (r) => fmtInt(r.actual_fwa), raw: (r) => r.actual_fwa, numeric: true },

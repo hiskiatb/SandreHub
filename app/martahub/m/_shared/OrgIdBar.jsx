@@ -20,15 +20,31 @@
  * yg perlu tahu org_id aktif saat menyimpan entry baru) tapi mengelola
  * sendiri daftar chip & saran hierarkinya.
  *
- * @param {{ value: string, onChange: (orgId: string) => void, ownOrgId?: string, ownLabel?: string }} props
+ * @param {{ value: string, onChange: (orgId: string) => void, ownOrgId?: string, ownLabel?: string, chips?: Array, onChipsChange?: Function, presetOrgIds?: Array, compact?: boolean }} props
+ *
+ * chips/onChipsChange (OPSIONAL) - kalau diisi, daftar chip jadi
+ * "controlled" oleh parent (state disimpan di luar, bukan lokal) supaya
+ * BEBERAPA instance OrgIdBar (mis. satu di section SP, satu lagi di section
+ * FWA - lihat Isi Laporan Actual) bisa berbagi daftar chip yg SAMA PERSIS,
+ * jadi org_id yg ditambahkan di satu section langsung muncul juga di
+ * section lain tanpa perlu diketik ulang. Kalau tidak diisi, perilaku
+ * lama (chip lokal per-instance) tetap jalan spt biasa.
+ *
+ * presetOrgIds (OPSIONAL) - org_id yg SUDAH PERNAH dipakai utk activity ini
+ * (mis. dari entry yg ditag waktu Buat Plan) - otomatis ditambahkan sbg
+ * chip begitu tersedia, supaya tidak perlu diketik ulang manual saat Isi
+ * Laporan Actual.
  */
 import { useEffect, useState } from "react";
-import { Plus, X, User } from "lucide-react";
+import { Plus, X, User, UserCircle2 } from "lucide-react";
 import { FF } from "./MobileShell";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 
-export default function OrgIdBar({ value, onChange, ownOrgId, ownLabel }) {
-  const [chips, setChips] = useState([]); // {orgId, label}
+export default function OrgIdBar({ value, onChange, ownOrgId, ownLabel, chips: chipsProp, onChipsChange, presetOrgIds, compact }) {
+  const controlledChips = chipsProp !== undefined;
+  const [localChips, setLocalChips] = useState([]); // {orgId, label}
+  const chips = controlledChips ? chipsProp : localChips;
+  const setChips = controlledChips ? onChipsChange : setLocalChips;
   const [suggestions, setSuggestions] = useState([]); // dari mh_dsf_org_ids_under_me()
   const [adding, setAdding] = useState(false);
   const [manualVal, setManualVal] = useState("");
@@ -41,6 +57,22 @@ export default function OrgIdBar({ value, onChange, ownOrgId, ownLabel }) {
     setChips((prev) => (prev.some((c) => c.orgId === ownOrgId) ? prev : [{ orgId: ownOrgId, label: ownLabel || "Saya" }, ...prev]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownOrgId]);
+
+  // Preset org_id yg sudah pernah dipakai di activity ini (dari plan/tag
+  // sebelumnya) - digabung ke daftar chip begitu tersedia (bisa datang
+  // belakangan krn fetch async), tanpa menimpa chip yg sudah ada.
+  useEffect(() => {
+    if (!presetOrgIds || presetOrgIds.length === 0) return;
+    setChips((prev) => {
+      let next = prev;
+      for (const p of presetOrgIds) {
+        if (!p?.orgId || next.some((c) => c.orgId === p.orgId)) continue;
+        next = [...next, { orgId: p.orgId, label: p.label || p.orgId }];
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presetOrgIds]);
 
   useEffect(() => {
     if (!value && ownOrgId) onChange(ownOrgId);
@@ -62,7 +94,7 @@ export default function OrgIdBar({ value, onChange, ownOrgId, ownLabel }) {
   }, []);
 
   function addChip(orgId, label) {
-    const id = (orgId || "").trim();
+    const id = (orgId || "").replace(/\s+/g, "").trim();
     if (!id) return;
     setChips((prev) => (prev.some((c) => c.orgId === id) ? prev : [...prev, { orgId: id, label: label || id }]));
     onChange(id);
@@ -106,7 +138,7 @@ export default function OrgIdBar({ value, onChange, ownOrgId, ownLabel }) {
         })}
         <button type="button" onClick={() => setAdding((v) => !v)}
           style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 11px", borderRadius: 999, border: "1.5px dashed #D8D9E0", background: "#FFFFFF", color: "#5A5A68", fontSize: 11.5, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
-          <Plus size={13} /> Tambah Org ID
+          <UserCircle2 size={14} color="#8A8A96" /> Tambah Org ID
         </button>
       </div>
 
@@ -130,8 +162,15 @@ export default function OrgIdBar({ value, onChange, ownOrgId, ownLabel }) {
             </>
           )}
           <form onSubmit={(e) => { e.preventDefault(); addChip(manualVal); }} style={{ display: "flex", gap: 8 }}>
-            <input value={manualVal} onChange={(e) => setManualVal(e.target.value)} placeholder="Ketik ORG ID lain…"
-              style={{ flex: 1, minWidth: 0, height: 40, padding: "0 12px", borderRadius: 10, background: "#FFFFFF", border: "1px solid #E4E5EA", fontSize: 12.5, fontFamily: FF, color: "#17181C", outline: "none", boxSizing: "border-box" }} />
+            <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", height: 40, padding: "0 12px", borderRadius: 10, background: "#FFFFFF", border: "1px solid #E4E5EA", boxSizing: "border-box" }}>
+              <UserCircle2 size={15} color="#B0B0BA" style={{ flexShrink: 0, marginRight: 7 }} />
+              {/* ORG ID tidak boleh mengandung spasi - dibuang langsung saat
+                  diketik/paste (bukan cuma di-trim saat submit), supaya
+                  tidak ada org_id tersimpan dgn spasi nyelip di tengah yg
+                  bikin pencocokan chip/pemilik jadi meleset. */}
+              <input value={manualVal} onChange={(e) => setManualVal(e.target.value.replace(/\s+/g, ""))} placeholder="Ketik ORG ID lain…"
+                style={{ flex: 1, minWidth: 0, border: "none", background: "transparent", fontSize: 12.5, fontFamily: FF, color: "#17181C", outline: "none" }} />
+            </div>
             <button type="submit"
               style={{ flexShrink: 0, width: 40, height: 40, borderRadius: 10, background: "#17181C", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
               <Plus size={16} color="#fff" />

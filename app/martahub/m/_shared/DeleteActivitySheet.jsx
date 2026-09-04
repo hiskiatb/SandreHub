@@ -28,6 +28,7 @@ import { Trash2, AlertTriangle, Loader2, ShieldAlert } from "lucide-react";
 import { FF } from "./MobileShell";
 import { statusMeta } from "./activityUi";
 import { deletePlanImpact, deletePlan } from "./planData";
+import BottomSheet from "./BottomSheet";
 
 export default function DeleteActivitySheet({ activityId, activityName, onClose, onDeleted }) {
   const [impact, setImpact] = useState(null);
@@ -77,12 +78,8 @@ export default function DeleteActivitySheet({ activityId, activityName, onClose,
   const displayName = impact?.event_name || activityName || "Plan ini";
 
   return (
-    <div onClick={() => !busy && onClose()}
-      style={{ position: "fixed", inset: 0, background: "rgba(23,24,28,0.5)", zIndex: 200, display: "flex", alignItems: "flex-end" }}>
-      <div onClick={(e) => e.stopPropagation()}
-        style={{ width: "100%", maxWidth: 480, margin: "0 auto", background: "#FFFFFF", borderRadius: "24px 24px 0 0", padding: "10px 22px calc(env(safe-area-inset-bottom,0px) + 22px)", fontFamily: FF, boxShadow: "0 -14px 44px rgba(23,24,28,0.2)" }}>
-        <div style={{ width: 40, height: 4, borderRadius: 3, background: "#E4E5EA", margin: "6px auto 18px" }} />
-
+    <BottomSheet onClose={onClose} zIndex={200} borderRadius="24px 24px 0 0"
+      backdropOpacity={0.5} disableBackdropClose={busy} disableSwipeClose={busy}>
         {loading ? (
           <div style={{ padding: "28px 0 20px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
             <Loader2 size={26} color="#DC2626" style={{ animation: "mspin .85s linear infinite" }} />
@@ -200,8 +197,7 @@ export default function DeleteActivitySheet({ activityId, activityName, onClose,
             </div>
           </>
         )}
-      </div>
-    </div>
+    </BottomSheet>
   );
 }
 

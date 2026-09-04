@@ -27,7 +27,7 @@ function mdPhotoUrl(path) {
 // jadi katup pengaman manual (mh_activity_manual_override) utk status
 // 'revision_actual' yang sebenarnya valid (mis. GPS meleset).
 
-const ROLE_LABEL = { admin: "Admin", head: "Head TMV", tmv: "Brand TMV", bme: "BME", rge: "RGE", pending: "Pending" };
+const ROLE_LABEL = { admin: "Admin", head: "Head TMV", tmv: "Brand TMV", bme_rge: "BME/RGE", pending: "Pending" };
 const CAT_LABEL = { directSelling: "Direct Selling", jointEvent: "Joint Event", openBooth: "Open Booth", project: "Project", sponsorship: "Sponsorship", thematic: "Thematic" };
 
 const fmtDate = (s) => {
@@ -79,10 +79,6 @@ function Body({ email }) {
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [actionErr, setActionErr] = useState("");
-  // Multi-select untuk "Approve All" - fase plan saja.
-  const [selectedPlanIds, setSelectedPlanIds] = useState(() => new Set());
-  const [bulkBusy, setBulkBusy] = useState(false);
-  const [bulkErr, setBulkErr] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true); setErr("");
@@ -109,7 +105,6 @@ function Body({ email }) {
       setPlanRows(plans || []);
       setRevisionRows(revisions || []);
       setHistory(hist || []);
-      setSelectedPlanIds(new Set());
 
       // MD Activities - Street Branding (§8.3), review manual TERPISAH dari
       // rekonsiliasi otomatis mode Activity/Outlet (menu Validasi Lokasi).
@@ -137,38 +132,15 @@ function Body({ email }) {
     setDialog(null);
   }
 
-  function togglePlanSelect(id) {
-    setSelectedPlanIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }
-  function toggleSelectAllPlans() {
-    setSelectedPlanIds((prev) => (prev.size === planRows.length ? new Set() : new Set(planRows.map((r) => r.id))));
-  }
-
-  async function approveAllPlans() {
-    if (selectedPlanIds.size === 0 || bulkBusy) return;
-    if (!confirm(`Setujui ${selectedPlanIds.size} plan sekaligus?`)) return;
-    setBulkBusy(true); setBulkErr("");
-    try {
-      const { data, error } = await supabaseMarta.rpc("mh_web_decide_plans_bulk", {
-        p_activity_ids: Array.from(selectedPlanIds),
-        p_email: email,
-        p_decision: "approved",
-        p_notes: null,
-      });
-      if (error) throw new Error(error.message);
-      const failed = (data || []).filter((r) => r.ok !== true).length;
-      if (failed > 0) setBulkErr(`${failed} plan gagal diproses (di luar scope Anda).`);
-      await load();
-    } catch (e) { setBulkErr(e.message || "Gagal memproses"); }
-    finally { setBulkBusy(false); }
-  }
-
   async function confirmDecision() {
     if (!dialog) return;
+    // RPC mh_web_decide_plan mewajibkan komentar saat minta revisi plan -
+    // divalidasi di sini juga spy user langsung tahu tanpa nunggu round-trip
+    // server (server tetap jadi penegak akhir, ini cuma UX).
+    if (dialog.kind === "plan" && !notes.trim()) {
+      setActionErr("Komentar wajib diisi - jelaskan apa yang perlu diperbaiki.");
+      return;
+    }
     setSubmitting(true); setActionErr("");
     try {
       let error;
@@ -238,38 +210,32 @@ function Body({ email }) {
         </div>
       )}
 
-      {/* Plan approval queue - SATU-SATUNYA fase approval manusia sekarang */}
+      {/* Tinjau Plan - plan TIDAK PERLU disetujui lagi utk bisa dieksekusi
+          (begitu tanggal event tiba, pemiliknya langsung bisa Check In/Isi
+          Laporan Actual). Bagian ini murni pengawasan: atasan bisa meninjau
+          plan yang baru disubmit & memberi "Perlu Revisi" kalau memang ada
+          yg perlu dikoreksi - pemilik plan langsung dapat notifikasi &
+          diarahkan ke wizard editnya. Tombol "Setujui"/"Setujui Semua"
+          SUDAH DIHAPUS krn tidak ada lagi gate yg perlu dilewati. */}
       <div style={{ ...card, padding: 0, overflow: "hidden", marginBottom: 20 }}>
-        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.line}`, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-          <div style={{ fontWeight: 800, fontSize: 14, flex: 1 }}>
-            Menunggu Persetujuan Plan <span style={{ color: T.mid, fontWeight: 500 }}>· {planRows.length}</span>
+        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.line}` }}>
+          <div style={{ fontWeight: 800, fontSize: 14 }}>
+            Tinjau Plan <span style={{ color: T.mid, fontWeight: 500 }}>· {planRows.length}</span>
           </div>
-          {canApprove && planRows.length > 0 && (
-            <>
-              <button onClick={toggleSelectAllPlans} style={{ ...btn }}>{selectedPlanIds.size === planRows.length ? "Batal pilih" : "Pilih semua"}</button>
-              <button onClick={approveAllPlans} disabled={selectedPlanIds.size === 0 || bulkBusy}
-                style={{ ...btn, background: T.success, color: "#fff", borderColor: T.success, opacity: selectedPlanIds.size === 0 || bulkBusy ? 0.5 : 1 }}>
-                {bulkBusy ? "Memproses…" : `Setujui Semua (${selectedPlanIds.size})`}
-              </button>
-            </>
-          )}
+          <div style={{ fontSize: 11.5, color: T.mid, marginTop: 3 }}>
+            Plan di bawah SUDAH BISA langsung dijalankan pemiliknya begitu tanggal event tiba - tidak menunggu persetujuan siapa pun. Beri &ldquo;Perlu Revisi&rdquo; hanya kalau memang ada yang perlu dikoreksi.
+          </div>
         </div>
-        {bulkErr && <div style={{ padding: "8px 16px", fontSize: 12, color: T.error, background: T.errorBg }}>{bulkErr}</div>}
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, whiteSpace: "nowrap" }}>
             <thead><tr style={{ background: "#F7F9FC", color: T.mid, textAlign: "left" }}>
-              {[canApprove ? "" : null, "Event", "Brand", "MC", "Site", "Kategori", "Target SP/FWA", "Tanggal", "Diajukan", ""].filter((h) => h !== null).map((h, i) => <th key={h || `sel-${i}`} style={{ padding: "9px 14px", fontSize: 11, fontWeight: 800, textTransform: "uppercase" }}>{h}</th>)}
+              {["Event", "Brand", "MC", "Site", "Kategori", "Target SP/FWA", "Tanggal", "Diajukan", ""].map((h) => <th key={h} style={{ padding: "9px 14px", fontSize: 11, fontWeight: 800, textTransform: "uppercase" }}>{h}</th>)}
             </tr></thead>
             <tbody>
-              {loading && <tr><td colSpan={10} style={{ padding: 26, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
-              {!loading && planRows.length === 0 && <tr><td colSpan={10} style={{ padding: 26, textAlign: "center", color: T.lo }}>Tidak ada plan yang perlu disetujui</td></tr>}
+              {loading && <tr><td colSpan={9} style={{ padding: 26, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
+              {!loading && planRows.length === 0 && <tr><td colSpan={9} style={{ padding: 26, textAlign: "center", color: T.lo }}>Tidak ada plan yang perlu ditinjau</td></tr>}
               {!loading && planRows.map((r) => (
-                <tr key={r.id} style={{ borderTop: `1px solid ${T.line}`, background: selectedPlanIds.has(r.id) ? T.primaryBg : "transparent" }}>
-                  {canApprove && (
-                    <td style={{ padding: "10px 14px" }}>
-                      <input type="checkbox" checked={selectedPlanIds.has(r.id)} onChange={() => togglePlanSelect(r.id)} style={{ width: 15, height: 15, cursor: "pointer" }} />
-                    </td>
-                  )}
+                <tr key={r.id} style={{ borderTop: `1px solid ${T.line}` }}>
                   <td style={{ padding: "10px 14px", fontWeight: 700 }}>{r.event_name || "-"}</td>
                   <td style={{ padding: "10px 14px" }}>{r.brand ? <span style={{ fontSize: 10.5, fontWeight: 800, color: String(r.brand).toLowerCase() === "tri" ? T.tri : T.im3 }}>{brandLabel(r.brand)}</span> : "-"}</td>
                   <td style={{ padding: "10px 14px", color: T.mid }}>{r.mc || "-"}</td>
@@ -280,10 +246,7 @@ function Body({ email }) {
                   <td style={{ padding: "10px 14px", color: T.lo, fontSize: 11.5 }}>{fmtDate(r.created_at)}</td>
                   <td style={{ padding: "10px 14px", textAlign: "right" }}>
                     {canApprove && (
-                      <span style={{ display: "inline-flex", gap: 8 }}>
-                        <button onClick={() => openDialog(r, "plan", "approved")} style={{ ...btn, background: T.success, color: "#fff", borderColor: T.success }}>Setujui</button>
-                        <button onClick={() => openDialog(r, "plan", "revision_needed")} style={{ ...btn, color: T.error, borderColor: `${T.error}44` }}>Perlu Revisi</button>
-                      </span>
+                      <button onClick={() => openDialog(r, "plan", "revision_needed")} style={{ ...btn, color: T.error, borderColor: `${T.error}44` }}>Perlu Revisi</button>
                     )}
                   </td>
                 </tr>
@@ -440,9 +403,11 @@ function Body({ email }) {
                 Ini katup pengaman manual - laporan ini sudah gagal validasi otomatis (mis. GPS check-in meleset dari site). Pastikan Anda sudah memverifikasi kehadiran BME sebelum override.
               </div>
             )}
-            <label style={{ fontSize: 11.5, fontWeight: 700, color: T.mid, textTransform: "uppercase", letterSpacing: "0.03em" }}>Catatan (opsional)</label>
+            <label style={{ fontSize: 11.5, fontWeight: 700, color: T.mid, textTransform: "uppercase", letterSpacing: "0.03em" }}>
+              Catatan {dialog.kind === "plan" ? "(wajib)" : "(opsional)"}
+            </label>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
-              placeholder={dialog.type === "approved" ? "Catatan tambahan untuk BME/RGE…" : dialog.kind === "override" ? "Alasan tetap perlu revisi…" : "Apa yang perlu direvisi dari plan ini…"}
+              placeholder={dialog.kind === "plan" ? "Apa yang perlu direvisi dari plan ini… (wajib diisi)" : dialog.kind === "override" ? "Alasan tetap perlu revisi…" : "Catatan tambahan untuk BME/RGE…"}
               style={{ width: "100%", marginTop: 6, padding: "9px 11px", borderRadius: 9, border: `1px solid ${T.line}`, fontSize: 12.5, fontFamily: FONT, resize: "vertical", outline: "none", boxSizing: "border-box" }} />
             {actionErr && <div style={{ marginTop: 10, fontSize: 12, color: T.error }}>{actionErr}</div>}
             <div style={{ display: "flex", gap: 10, marginTop: 18 }}>

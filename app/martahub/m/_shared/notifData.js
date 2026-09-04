@@ -7,6 +7,11 @@ import supabaseMarta from "../../../../lib/supabaseMarta";
 export const NOTIF_TYPE_META = {
   activity_approved: { label: "Plan Disetujui", color: "#15803D", bg: "rgba(21,128,61,0.10)" },
   activity_rejected: { label: "Plan Ditolak", color: "#DC2626", bg: "rgba(220,38,38,0.10)" },
+  // Plan TIDAK PERLU approval lagi utk bisa dieksekusi - satu-satunya alasan
+  // atasan "memutuskan" plan sekarang adalah kalau dia merasa plan-nya perlu
+  // dikoreksi, jadi jenis notifikasi ini dipakai dari mh_web_decide_plan()
+  // (decision='revision_needed') menggantikan alur approval lama.
+  activity_plan_revision_needed: { label: "Plan Perlu Direvisi", color: "#B45309", bg: "rgba(180,83,9,0.10)" },
   msisdn_transfer_requested: { label: "Permintaan Transfer", color: "#B45309", bg: "rgba(180,83,9,0.10)" },
   msisdn_transfer_approved: { label: "Transfer Disetujui", color: "#15803D", bg: "rgba(21,128,61,0.10)" },
   msisdn_transfer_rejected: { label: "Transfer Ditolak", color: "#DC2626", bg: "rgba(220,38,38,0.10)" },
@@ -40,11 +45,20 @@ export async function markAllNotificationsRead() {
 
 /** `route` yg disimpan di baris notifikasi adalah path GoRouter Flutter
  * (mis. "/msisdn-transfers", "/activities/<uuid>") - BUKAN path web ini.
- * Terjemahkan ke padanan /martahub/m/** sebelum dipakai router.push(). */
-export function translateNotifRoute(route) {
+ * Terjemahkan ke padanan /martahub/m/** sebelum dipakai router.push().
+ *
+ * `type` (OPSIONAL) - utk notifikasi "Plan Perlu Direvisi", diarahkan
+ * LANGSUNG ke wizard edit plan (bukan cuma halaman detail read-only) supaya
+ * pemilik plan bisa langsung mengoreksi tanpa langkah ekstra - sesuai
+ * permintaan "pastikan bisa langsung diarahkan ke activity plan yang harus
+ * direvisi". Jenis notifikasi lain ttp ke halaman detail biasa. */
+export function translateNotifRoute(route, type) {
   if (!route) return null;
   if (route === "/msisdn-transfers") return "/martahub/m/transfers";
   const actMatch = route.match(/^\/activities\/([0-9a-f-]{36})$/i);
-  if (actMatch) return `/martahub/m/activities/${actMatch[1]}`;
+  if (actMatch) {
+    if (type === "activity_plan_revision_needed") return `/martahub/m/activities/new?edit=${actMatch[1]}`;
+    return `/martahub/m/activities/${actMatch[1]}`;
+  }
   return null; // route dikenal tapi tidak ada padanan web - jangan navigasi ke path Flutter
 }

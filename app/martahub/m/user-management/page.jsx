@@ -53,10 +53,10 @@ import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { ADDABLE_ROLES_FOR, EXECUTOR_ROLES, fetchOrgHierarchy, REGIONS, BRAND_DISPLAY } from "../_shared/planData";
 
-const ROLE_LABEL = { spm_sumatera: "SPM Sumatera", head: "Head TMV", tmv: "Brand TMV", bme: "BME", rge: "RGE", tl_dsf: "TL DSF", dsf: "DSF", md: "MD", dse: "DSE", gse: "GSE", ae: "AE", promotor: "Promotor", cse_rse: "CSE/RSE", bsm: "BSM", admin: "Admin" };
+const ROLE_LABEL = { spm_sumatera: "SPM Sumatera", head: "Head TMV", tmv: "Brand TMV", bme_rge: "BME/RGE", tl_dsf: "TL DSF", dsf: "DSF", md: "MD", dse: "DSE", gse: "GSE", ae: "AE", promotor: "Promotor", cse_rse: "CSE/RSE", bsm: "BSM", admin: "Admin" };
 const ROLE_COLOR = {
   spm_sumatera: "#7C3AED", head: "#0F6E56", tmv: "#0F6E56", admin: "#7C3AED",
-  bme: "#ED1C24", rge: "#EC008C", tl_dsf: "#B45309", dsf: "#B45309",
+  bme_rge: "#ED1C24", tl_dsf: "#B45309", dsf: "#B45309",
   md: "#185FA5", dse: "#185FA5", gse: "#185FA5", ae: "#185FA5", promotor: "#185FA5", cse_rse: "#185FA5", bsm: "#185FA5",
 };
 const BRAND_COLOR = { im3: "#EAB308", tri: "#D946EF" }; // im3 = kuning terang, 3ID = magenta terang - sengaja dibuat pop/kontras spy dua brand ini tidak ketuker
@@ -169,7 +169,7 @@ function ActivityLogView({ callerEmail }) {
 // Halaman ini khusus role yang punya "bawahan" utk dikelola - dsf/md/dst di
 // bawah tl_dsf tidak dapat akses krn mereka bukan atasan siapa pun & juga
 // tidak punya kapabilitas tambah (lihat ADDABLE_ROLES_FOR).
-const ALLOWED_ROLES = ["spm_sumatera", "admin", "head", "tmv", "bme", "rge", "tl_dsf"];
+const ALLOWED_ROLES = ["spm_sumatera", "admin", "head", "tmv", "bme_rge", "tl_dsf"];
 const GRID_ROLES = ["spm_sumatera", "admin", "head", "tmv"];
 
 const initials = (name, email) => {
@@ -209,7 +209,7 @@ export default function UserManagementPage() {
           </button>
           <div style={{ marginTop: 60, textAlign: "center" }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: "#3A3A44" }}>Anda tidak punya akses ke halaman ini</div>
-            <div style={{ marginTop: 6, fontSize: 12.5, color: "#8A8A96" }}>Role Anda ({ROLE_LABEL[scope?.role] || scope?.role || "-"}) tidak mengelola tim di User Management.</div>
+            <div style={{ marginTop: 6, fontSize: 12.5, color: "#8A8A96" }}>Role Anda ({ROLE_LABEL[scope?.role] || scope?.role || "-"}) tidak mengelola tim di Kelola User.</div>
           </div>
         </div>
       </MobileShell>
@@ -228,7 +228,7 @@ export default function UserManagementPage() {
           style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#5A5A68", fontSize: 12.5, fontWeight: 700, fontFamily: FF, padding: 0 }}>
           <ArrowLeft size={16} /> Beranda
         </button>
-        <div style={{ marginTop: 12, fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em" }}>User Management</div>
+        <div style={{ marginTop: 12, fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em" }}>Kelola User</div>
         <div style={{ marginTop: 3, fontSize: 12.5, color: "#8A8A96" }}>Kelola siapa saja yang menjabat di tim Anda - mapping aktif saat ini</div>
 
         <div style={{ marginTop: 14, display: "flex", gap: 6 }}>
@@ -572,27 +572,24 @@ function BranchBlock({ branchName, combos, addableRoles, onSaveAssignment, onRem
         // konsep itu jabatan yang sama, yang membedakan cuma brand & cabang
         // (sudah dipisah lewat kartu combo ini sendiri), bukan role di DB -
         // dan cuma SATU slot per cabang×brand (spt Head TMV/Brand TMV).
-        const bmeRge = [...(combo.byRole?.get("bme") || []), ...(combo.byRole?.get("rge") || [])];
+        const bmeRge = combo.byRole?.get("bme_rge") || [];
         // Semua "executor" di bawah BME/RGE (MD, DSF, TL DSF, DSE, GSE, AE,
         // Promotor, CSE/RSE, BSM) - yg SUDAH terisi ditampilkan sbg daftar
         // per role, penambahan orang baru (role apa pun yg diizinkan utk
         // caller ini, boleh dobel) lewat satu tombol gabungan di bawah.
         const executorRows = EXECUTOR_ROLES.map((r) => [r, combo.byRole?.get(r) || []]).filter(([, list]) => list.length > 0);
         const ctx = { region: combo.region, brand: combo.brand, branchSlug: combo.branchSlug, branchName: combo.branchName };
-        const canAddBmeRge = (addableRoles.includes("bme") || addableRoles.includes("rge")) && bmeRge.length === 0;
+        const canAddBmeRge = addableRoles.includes("bme_rge") && bmeRge.length === 0;
         const executorOptions = EXECUTOR_ROLES.filter((r) => addableRoles.includes(r));
         return (
           <div key={combo.brand} style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed #E9EAEE" }}>
             <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.2, padding: "2px 7px", borderRadius: 999, color: brandColor, background: `${brandColor}17` }}>
               {BRAND_DISPLAY[combo.brand] || combo.brand.toUpperCase()}
             </span>
-            {/* BME & RGE digabung jadi satu daftar - keduanya jabatan yg sama,
-                cuma brand/cabang yg membedakan, jadi TIDAK perlu memilih dulu
-                mau isi sbg BME atau RGE - baris baru otomatis tersimpan sbg
-                'bme'. Badge kecil di tiap orang tetap menandai role asli data
-                lama (BME/RGE) supaya informasinya tidak hilang. Hanya SATU
-                slot per cabang×brand. */}
-            <InlineRoleRow title="BME / RGE" role="bme" mixedRoles single
+            {/* BME & RGE sekarang SATU role tunggal "bme_rge" di database
+                (bukan lagi digabung tampilan dari 2 role terpisah) - hanya
+                SATU slot per cabang×brand. */}
+            <InlineRoleRow title="BME / RGE" role="bme_rge" single
               people={bmeRge} canAdd={canAddBmeRge}
               context={ctx} onSaveAssignment={onSaveAssignment} onRemove={onRemove} compact currentEmail={currentEmail} />
             {executorRows.map(([r, list]) => (
@@ -717,12 +714,10 @@ function ExecutorPickerSheet({ ctx, executorOptions, onClose, onSave }) {
  * sudah ada TIDAK PERNAH hilang dari render ini kecuali admin menekan
  * Hapus (dgn konfirmasi terpisah, lihat RemoveConfirmSheet). */
 function InlineRoleRow({ title, role, mixedRoles, people, canAdd, context, onSaveAssignment, onRemove, compact, currentEmail, nested, needsOrgId, single }) {
-  // mixedRoles (opsional) - dipakai blok gabungan "BME / RGE": daftarnya
-  // menggabungkan DUA role sekaligus (BME & RGE itu jabatan yang sama,
-  // cuma brand/cabang yg membedakan - TIDAK perlu pilih salah satu saat
-  // menambah, baris baru selalu tersimpan sbg 'bme'), tiap orang tetap
-  // ditandai badge kecil role aslinya + warna avatar sesuai role dia
-  // sendiri, murni supaya tetap kelihatan siapa BME/siapa RGE dari data lama.
+  // mixedRoles: sisa prop lama dari saat BME/RGE masih 2 role terpisah -
+  // sekarang role="bme_rge" tunggal, prop ini sudah tidak dipakai lagi
+  // di sini tapi dibiarkan ada di signature komponen (tidak bahaya, cuma
+  // tidak pernah true).
   return (
     <div style={{ marginTop: compact ? 6 : 8, ...(nested ? { marginLeft: 14, paddingLeft: 10, borderLeft: "2px solid #ECEDF0" } : {}) }}>
       <div style={{ fontSize: compact ? 10 : 10.5, fontWeight: 700, color: "#8A8A96", textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>

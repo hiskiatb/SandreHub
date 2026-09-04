@@ -74,20 +74,27 @@ export default function CheckinPage() {
   if (err && !activity) return <MobileShell active="activities"><div style={{ padding: 40, textAlign: "center", color: "#C62828", fontSize: 13 }}>{err}</div></MobileShell>;
 
   // Guard sisi klien - halaman ini bisa dibuka langsung lewat URL, jadi
-  // sembunyikan Check In dari daftar/detail saja TIDAK CUKUP. Baru sah
-  // check-in setelah plan disetujui TMV (status "approved"); draft/status
-  // lain (menunggu approval, revisi, dst.) belum boleh.
-  if (activity && activity.status !== "approved") {
+  // sembunyikan Check In dari daftar/detail saja TIDAK CUKUP.
+  //
+  // Plan SEKARANG TIDAK PERLU approval TMV lagi sebelum check-in/isi
+  // laporan actual - begitu plan sudah DIAJUKAN ("plan_submitted", atau
+  // status lanjutan apapun setelah itu, termasuk "approved" utk plan lama
+  // dari sebelum perubahan ini), check-in langsung boleh begitu tanggal
+  // event tiba. Yang TETAP diblokir cuma draft/revisi (plan belum lengkap/
+  // belum diajukan) - itu bukan soal approval, tapi plan-nya sendiri belum
+  // final/blm boleh dieksekusi.
+  const BLOCKED_STATUSES = new Set(["draft", "revision_needed"]);
+  if (activity && BLOCKED_STATUSES.has(activity.status)) {
     return (
       <MobileShell active="activities">
         <div style={{ padding: "60px 20px", textAlign: "center" }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: "#17181C" }}>Belum bisa Check In</div>
           <div style={{ marginTop: 6, fontSize: 12.5, color: "#8A8A96", lineHeight: 1.5 }}>
-            Plan ini belum disetujui TMV{activity.status === "draft" ? " - lengkapi & ajukan dulu sebelum check-in." : "."}
+            Plan ini belum diajukan - lengkapi & ajukan dulu sebelum check-in.
           </div>
-          <button onClick={() => router.push(`/martahub/m/activities/${activityId}`)}
+          <button onClick={() => router.push(`/martahub/m/activities/new?edit=${activityId}`)}
             style={{ marginTop: 18, padding: "10px 20px", borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
-            Lihat Detail Plan
+            Lanjutkan Plan
           </button>
         </div>
       </MobileShell>

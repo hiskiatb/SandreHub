@@ -47,6 +47,22 @@ export default function PosmNewPage() {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const [done, setDone] = useState(false);
+  const [invalid, setInvalid] = useState(new Set());
+
+  // Menandai SATU field yg gagal validasi (merah di kartunya) + auto-scroll
+  // ke situ - sebelumnya submit() cuma nampilin pesan error di atas tanpa
+  // menandai ATAU menggulung ke field yg dimaksud, jadi kalau field-nya lagi
+  // tidak terlihat di layar (di bawah/di atas), DSF harus nebak sendiri
+  // bagian mana yg kurang.
+  function fail(key, message) {
+    setErr(message);
+    setInvalid(new Set([key]));
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        document.getElementById(`field-${key}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 30);
+    });
+  }
 
   // Branch & brand yang SEBENARNYA dipakai utk site list + stok tersedia:
   // approver pakai pilihan manual mereka, BME/RGE dkk pakai scope sendiri
@@ -142,15 +158,16 @@ export default function PosmNewPage() {
 
   async function submit() {
     setErr("");
-    if (isApprover && !targetBranchId) { setErr("Pilih branch tujuan pemasangan dulu."); return; }
-    if (isApprover && !effBrand) { setErr("Pilih brand dulu."); return; }
-    if (!planId) { setErr("Pilih Plan POSM terlebih dulu."); return; }
-    if (mode === "activity" && !activityId) { setErr("Pilih activity terlebih dulu."); return; }
-    if (mode === "outlet" && !siteId) { setErr("Pilih outlet/site terlebih dulu."); return; }
-    if (mode === "street" && !streetDesc.trim()) { setErr("Isi deskripsi lokasi street branding."); return; }
-    if (lat == null || lng == null) { setErr("Titik GPS wajib diambil sebelum submit."); return; }
-    if (items.length === 0) { setErr("Tambahkan minimal satu jenis material."); return; }
-    if (items.some((i) => !i.qty || Number(i.qty) <= 0)) { setErr("Jumlah tiap item harus lebih dari nol."); return; }
+    setInvalid(new Set());
+    if (isApprover && !targetBranchId) { fail("targetBranchId", "Pilih branch tujuan pemasangan dulu."); return; }
+    if (isApprover && !effBrand) { fail("targetBrand", "Pilih brand dulu."); return; }
+    if (mode === "activity" && !activityId) { fail("activityId", "Pilih activity terlebih dulu."); return; }
+    if (mode === "outlet" && !siteId) { fail("siteId", "Pilih outlet/site terlebih dulu."); return; }
+    if (mode === "street" && !streetDesc.trim()) { fail("streetDesc", "Isi deskripsi lokasi street branding."); return; }
+    if (lat == null || lng == null) { fail("geo", "Titik GPS wajib diambil sebelum submit."); return; }
+    if (!planId) { fail("planId", "Pilih Plan POSM terlebih dulu."); return; }
+    if (items.length === 0) { fail("items", "Tambahkan minimal satu jenis material."); return; }
+    if (items.some((i) => !i.qty || Number(i.qty) <= 0)) { fail("items", "Jumlah tiap item harus lebih dari nol."); return; }
 
     setSaving(true);
     try {
@@ -212,14 +229,14 @@ export default function PosmNewPage() {
             Admin) yg tidak punya branch tetap sendiri. Stok yang dipakai akan
             mengurangi alokasi branch yang dipilih di sini. */}
         {isApprover && (
-          <Card>
+          <Card id="field-targetBranchId" error={invalid.has("targetBranchId")}>
             <FieldLabel text="Pasang di Branch" required hint="Stok ikut branch ini" />
             <select value={targetBranchId} onChange={(e) => { setTargetBranchId(e.target.value); setSiteId(""); setItems([]); }} style={selectBase}>
               <option value="">Pilih branch tujuan…</option>
               {branchOptions.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}
             </select>
             {!scope?.brand && (
-              <>
+              <div id="field-targetBrand">
                 <FieldLabel text="Brand" required top />
                 <div style={{ display: "flex", gap: 8 }}>
                   {BRAND_CHOICES.map((b) => (
@@ -229,13 +246,13 @@ export default function PosmNewPage() {
                     </button>
                   ))}
                 </div>
-              </>
+              </div>
             )}
           </Card>
         )}
 
         {/* Mode */}
-        <Card>
+        <Card id={mode === "activity" ? "field-activityId" : mode === "outlet" ? "field-siteId" : "field-streetDesc"} error={invalid.has("activityId") || invalid.has("siteId") || invalid.has("streetDesc")}>
           <FieldLabel text="Mode Instalasi" required />
           <div style={{ display: "flex", background: "#F6F7F9", borderRadius: 12, padding: 3 }}>
             {INSTALL_MODES.map((m) => (
@@ -274,7 +291,7 @@ export default function PosmNewPage() {
         </Card>
 
         {/* GPS */}
-        <Card>
+        <Card id="field-geo" error={invalid.has("geo")}>
           <FieldLabel text="Titik GPS" required hint="Wajib diambil di lokasi" />
           <button onClick={useMyLocation} disabled={locating}
             style={{ width: "100%", height: 46, borderRadius: 12, border: `1.5px solid ${lat ? "#15803D" : "#ECEDF0"}`, background: lat ? "rgba(21,128,61,0.06)" : "#F6F7F9", color: lat ? "#15803D" : "#5A5A68", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
@@ -284,7 +301,7 @@ export default function PosmNewPage() {
         </Card>
 
         {/* Plan POSM */}
-        <Card>
+        <Card id="field-planId" error={invalid.has("planId")}>
           <FieldLabel text="Plan POSM" required hint={plans.length === 0 ? "Tidak ada Plan aktif" : `${plans.length} tersedia`} />
           {plans.length === 0 ? (
             <div style={{ fontSize: 11.5, color: "#B0B0BA" }}>
@@ -311,7 +328,7 @@ export default function PosmNewPage() {
         </Card>
 
         {/* Items */}
-        <Card>
+        <Card id="field-items" error={invalid.has("items")}>
           <FieldLabel text="Jenis Material" required hint={`${items.length} dipilih`} />
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {available.filter((t) => !items.some((i) => i.posmat_type_id === t.posmat_type_id)).map((t) => (
@@ -410,8 +427,8 @@ function PhotoPicker({ photos, onAdd, onRemove, onCollage }) {
 
 const selectBase = { width: "100%", height: 46, padding: "0 12px", borderRadius: 12, background: "#F6F7F9", border: "1.5px solid #ECEDF0", fontSize: 13, fontWeight: 500, color: "#17181C", fontFamily: FF, outline: "none", boxSizing: "border-box" };
 
-function Card({ children }) {
-  return <div style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 16, padding: 15 }}>{children}</div>;
+function Card({ children, id, error }) {
+  return <div id={id} style={{ background: "#FFFFFF", border: `1px solid ${error ? "#F3C6C6" : "#E9EAEE"}`, borderRadius: 16, padding: 15, scrollMarginTop: 100 }}>{children}</div>;
 }
 function FieldLabel({ text, required, hint, top }) {
   return (

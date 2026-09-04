@@ -77,6 +77,12 @@ export const AREA_OPTIONS = ["High", "Medium", "Low"];
 
 export const snake = (s) => s.toLowerCase().replaceAll(" ", "_");
 
+// Kebalikan snake() - dipakai utk menampilkan nilai enum tersimpan
+// ("public_area") sbg label rapi Title Case ("Public Area") di layar
+// display (bukan cuma di form edit-prefill yg sebelumnya masing2 file
+// punya salinan sendiri).
+export const unsnake = (s) => (s || "").split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+
 const MONTH_NAMES = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 
 // PENTING: harus murni UTC (Date.UTC + getUTC*/setUTCDate), BUKAN
@@ -254,13 +260,34 @@ export async function deleteSalesEntry(entryId) {
   if (error) throw error;
 }
 
+// ── Rebuy per-entri (Transaction ID + nomor tujuan + nominal) ────────────
+// Beda dgn mh_dsf_sales_entries (nomor prospek yg dicatat/diclaim), nomor di
+// sini cuma nomor TUJUAN top-up rebuy - tidak perlu cek kepemilikan/transfer,
+// boleh sama dgn nomor SP/FWA atau muncul berkali-kali di event berbeda.
+export async function fetchRebuyEntries(activityId) {
+  const { data, error } = await supabaseMarta.rpc("mh_activity_list_rebuy_entries", { p_activity_id: activityId });
+  if (error) throw error;
+  return data || [];
+}
+export async function addRebuyEntryDb({ activityId, type, transactionId, msisdn, amount }) {
+  const { data, error } = await supabaseMarta.rpc("mh_activity_add_rebuy_entry", {
+    p_activity_id: activityId, p_type: type, p_transaction_id: transactionId, p_msisdn: msisdn, p_amount: amount,
+  });
+  if (error) throw error;
+  return data;
+}
+export async function deleteRebuyEntry(entryId) {
+  const { error } = await supabaseMarta.rpc("mh_activity_delete_rebuy_entry", { p_id: entryId });
+  if (error) throw error;
+}
+
 // ── "Buat Untuk" (delegate / acting-for) ────────────────────────────────
 // Approver (Head/Brand TMV/SPM Sumatera/Admin) TIDAK punya branch sendiri,
 // jadi Create Plan mereka HARUS dibuat atas nama BME/RGE/dsb yang mereka
 // naungi - SAMA PERSIS dgn `_pickActingFor()`/`_effectiveOwnerId()` di
 // create_plan_screen.dart (Flutter).
 export const APPROVER_ROLES = ["head", "tmv", "spm_sumatera", "admin"];
-const TARGETABLE_ROLES = ["bme", "rge", "tl_dsf", "dsf", "md", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"];
+const TARGETABLE_ROLES = ["bme_rge", "tl_dsf", "dsf", "md", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"];
 
 // Dua brand yang berjalan di MartaHub (sama dgn BRAND_TAG_COLORS di
 // app/martahub/m/page.jsx) - dipakai utk membentuk grid branch×brand penuh
@@ -308,15 +335,14 @@ const toSlug = (name) => (name || "").trim().toLowerCase().replace(/[^a-z0-9]+/g
 export const EXECUTOR_ROLES = ["md", "dsf", "tl_dsf", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"];
 
 export const ADDABLE_ROLES_FOR = {
-  spm_sumatera: ["head", "tmv", "bme", "rge", "tl_dsf", "md", "dsf", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"],
-  admin: ["head", "tmv", "bme", "rge", "tl_dsf", "md", "dsf", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"],
+  spm_sumatera: ["head", "tmv", "bme_rge", "tl_dsf", "md", "dsf", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"],
+  admin: ["head", "tmv", "bme_rge", "tl_dsf", "md", "dsf", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"],
   // Head TMV & Brand TMV boleh langsung men-set MD/DSF utk region mereka
   // sendiri (bukan cuma lewat BME/RGE) - sesuai tingkatan hirarki, atasan
   // boleh mengisi posisi di bawah bawahannya juga, bukan cuma satu level.
-  head: ["tmv", "bme", "rge", "md", "dsf"],
-  tmv: ["bme", "rge", "md", "dsf"],
-  bme: ["tl_dsf", "md", "dse", "gse", "ae", "promotor", "cse_rse", "bsm", "dsf"],
-  rge: ["tl_dsf", "md", "dse", "gse", "ae", "promotor", "cse_rse", "bsm", "dsf"],
+  head: ["tmv", "bme_rge", "md", "dsf"],
+  tmv: ["bme_rge", "md", "dsf"],
+  bme_rge: ["tl_dsf", "md", "dse", "gse", "ae", "promotor", "cse_rse", "bsm", "dsf"],
   tl_dsf: ["dsf"],
 };
 

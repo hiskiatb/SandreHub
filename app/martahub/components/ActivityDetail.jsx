@@ -18,7 +18,7 @@ const STATUS = {
   draft: ["Draft", T.mid, "#eef1f6"], submitted: ["Laporan Masuk", T.blue, T.blueBg],
   approved: ["Disetujui", T.success, T.successBg], rejected: ["Ditolak", T.error, T.errorBg],
   completed: ["Selesai", T.success, T.successBg], inProgress: ["Berlangsung", T.warning, T.warningBg],
-  plan_submitted: ["Menunggu Approval", T.blue, T.blueBg], revision_needed: ["Revisi Plan", T.warning, T.warningBg],
+  plan_submitted: ["Plan Diajukan", T.blue, T.blueBg], revision_needed: ["Revisi Plan", T.warning, T.warningBg],
   pending_validation: ["Menunggu Validasi", T.blue, T.blueBg],
   revision_actual: ["Perlu Perbaikan Lokasi/Bukti", T.warning, T.warningBg],
 };
@@ -47,6 +47,10 @@ const fmtDate = (s) => {
 const fmtInt = (n) => (n == null ? "-" : Number(n).toLocaleString("id-ID"));
 const fmtRp = (n) => (n == null ? "-" : `Rp${Number(n).toLocaleString("id-ID")}`);
 const fmtTag = (s) => (s ? String(s).replace(/_/g, " ").toUpperCase() : "-");
+// Title Case ("Public Area") dipakai khusus utk POI/Network/Area supaya
+// tidak sekaligus huruf kapital semua (fmtTag/ALL CAPS di atas tetap
+// dipakai utk kategori event).
+const unsnake = (s) => (s ? String(s).split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ") : "-");
 
 export function BrandBadge({ brand }) {
   if (!brand) return <span style={{ color: T.lo }}>-</span>;
@@ -196,9 +200,9 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }
                   <KV label="Micro Cluster" value={a.mc || "-"} />
                   <KV label="Tanggal" value={planDateLabel(a)} />
                   <KV label="Waktu" value={a.is_all_day === false && a.start_time && a.end_time ? `${a.start_time.slice(0, 5)} – ${a.end_time.slice(0, 5)}` : "Seharian"} />
-                  <KV label="POI" value={fmtTag(a.poi_type)} />
-                  <KV label="Kekuatan Sinyal" value={fmtTag(a.network_category)} />
-                  <KV label="Potensi Area" value={fmtTag(a.area_potential)} />
+                  <KV label="POI" value={unsnake(a.poi_type)} />
+                  <KV label="Kekuatan Sinyal" value={unsnake(a.network_category)} />
+                  <KV label="Potensi Area" value={unsnake(a.area_potential)} />
                   {a.address && <KV label="Alamat" value={a.address} span2 />}
                 </KVGrid>
               </DetailSection>
@@ -223,10 +227,11 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }
                     <tbody>
                       <MetricRow label="SP" target={fmtInt(a.target_sp)} actual={entries.length ? fmtInt(spEntries.filter((e) => e.validation_status === "valid").length) : fmtInt(a.actual_sp)} />
                       <MetricRow label="FWA" target={fmtInt(a.target_fwa)} actual={entries.length ? fmtInt(fwaEntries.filter((e) => e.validation_status === "valid").length) : fmtInt(a.actual_fwa)} />
-                      <MetricRow label="Rebuy Pulsa" target={fmtRp(a.target_rebuy_pulsa)} actual={fmtRp(a.actual_rebuy_pulsa)} />
-                      <MetricRow label="Rebuy Data" target={fmtRp(a.target_rebuy_data)} actual={fmtRp(a.actual_rebuy_data)} />
-                      <MetricRow label="Revenue 3 Bulan" target={fmtRp(a.target_rev_3m)} actual={fmtRp(a.actual_rev_3m)} />
+                      <MetricRow label="Rebuy SP" target={fmtRp(a.target_rebuy_pulsa)} actual={fmtRp(a.actual_rebuy_pulsa)} />
+                      <MetricRow label="Rebuy FWA" target={fmtRp(a.target_rebuy_data)} actual={fmtRp(a.actual_rebuy_data)} />
+                      <MetricRow label="Estimasi Total Revenue" target={fmtRp(a.target_rev_3m)} actual={fmtRp(a.actual_rev_3m)} />
                       <MetricRow label="Cost" target={fmtRp(a.cost_estimate)} actual={fmtRp(a.cost_actual)} />
+                      <MetricRow label="Cost Ratio" target={a.target_rev_3m > 0 ? `${((Number(a.cost_estimate) || 0) / a.target_rev_3m * 100).toFixed(1)}%` : "-"} actual={a.actual_rev_3m > 0 ? `${((Number(a.cost_actual) || 0) / a.actual_rev_3m * 100).toFixed(1)}%` : "-"} />
                     </tbody>
                   </table>
                 </div>

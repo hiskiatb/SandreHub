@@ -19,16 +19,18 @@
  */
 import { useEffect, useMemo, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ArrowRight, ChevronRight, Check, X, Plus, Loader2, Crosshair, Map as MapIcon, Users, CalendarDays, Building2, Tag, CardSim, Router as RouterIcon, AlertTriangle, Save, QrCode } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronRight, Check, X, Plus, Loader2, Crosshair, Map as MapIcon, Users, CalendarDays, Building2, Tag, CardSim, Router as RouterIcon, AlertTriangle, Save, QrCode, Receipt, MapPin, Wifi, TrendingUp, Send } from "lucide-react";
 import supabaseMarta from "../../../../../lib/supabaseMarta";
 import { slug } from "../../../../../lib/activityTarget";
-import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../_shared/MobileShell";
+import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, NAV_HEIGHT } from "../../_shared/MobileShell";
 import { fmtInt } from "../../_shared/activityUi";
 import { isValidMsisdn, normalizeMsisdn } from "../../_shared/msisdn";
 import MapPickerSheet from "../../_shared/MapPickerSheet";
 import CalendarPickerSheet from "../../_shared/CalendarPickerSheet";
 import QrScanSheet from "../../_shared/QrScanSheet";
 import OrgIdBar from "../../_shared/OrgIdBar";
+import SiteTowerIcon from "../../_shared/SiteTowerIcon";
+import SitePickerSheet from "../../_shared/SitePickerSheet";
 import {
   resolveBranchUuid, fetchScopeSites, mcGroupsFromSites, fetchPoiTypes, fetchActivityForEdit,
   CATEGORIES, NETWORK_OPTIONS, AREA_OPTIONS, snake, syncActivitySites, planDateFields,
@@ -154,11 +156,25 @@ function CreatePlanWizardInner() {
   const [mcSelected, setMcSelected] = useState(() => new Set());
 
   // ── Step 2: Target ──
-  const [targetSp, setTargetSp] = useState("25");
-  const [targetFwa, setTargetFwa] = useState("2");
+  // Target SP/FWA SEKARANG dipilih dari master data produk
+  // (mh_product_types, sama dgn dipakai di Catat Rencana Penjualan di
+  // bawah & Isi Laporan) + qty per produk - BUKAN lagi angka target polos.
+  // targetSp/targetFwa (jumlah unit) & targetSpRevenue/targetFwaRevenue
+  // (estimasi Rupiah) diturunkan otomatis dari sini (lihat const di bawah),
+  // supaya Estimasi Total Revenue & Cost Ratio ikut ter-update live setiap
+  // qty produk/rebuy/budget cost berubah - tidak perlu tombol "hitung".
+  const [targetSpProducts, setTargetSpProducts] = useState([]); // [{productTypeId,name,unitPrice,qty}]
+  const [targetFwaProducts, setTargetFwaProducts] = useState([]);
   const [targetRebuyPulsa, setTargetRebuyPulsa] = useState("0");
   const [targetRebuyData, setTargetRebuyData] = useState("0");
-  const [costEstimate, setCostEstimate] = useState("500000");
+  const [costEstimate, setCostEstimate] = useState("0");
+  const targetSp = targetSpProducts.reduce((s, p) => s + (Number(p.qty) || 0), 0);
+  const targetFwa = targetFwaProducts.reduce((s, p) => s + (Number(p.qty) || 0), 0);
+  const targetSpRevenue = targetSpProducts.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.unitPrice) || 0), 0);
+  const targetFwaRevenue = targetFwaProducts.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.unitPrice) || 0), 0);
+  const targetRebuyTotal = (Number(targetRebuyPulsa) || 0) + (Number(targetRebuyData) || 0);
+  const targetEstRevenue = targetSpRevenue + targetFwaRevenue + targetRebuyTotal;
+  const targetCostRatio = targetEstRevenue > 0 ? ((Number(costEstimate) || 0) / targetEstRevenue) * 100 : null;
 
   // ── Step 2: Catat Penjualan (opsional, dulu disebut "Tagging Nomor") ──
   // Reservasi MSISDN SEBELUM event berlangsung, supaya nomor prospek tidak
@@ -183,6 +199,7 @@ function CreatePlanWizardInner() {
   const [tagEntries, setTagEntries] = useState({ sp: [], fwa: [] }); // {msisdn, typeId, typeName, taggedAt, orgId, id?, persisted?}
   const [tagPending, setTagPending] = useState({ sp: [], fwa: [] }); // {msisdn, entryId, typeId, category, orgId}
   const [tagConflict, setTagConflict] = useState(null); // {category, typeId, typeName, msisdn, owner, orgId}
+  const [tagBulkBusy, setTagBulkBusy] = useState({ sp: false, fwa: false }); // lagi proses paste-banyak-nomor
   const [salesEntriesLoaded, setSalesEntriesLoaded] = useState(false);
 
   useEffect(() => {
@@ -191,17 +208,23 @@ function CreatePlanWizardInner() {
     (async () => {
       try {
         const [{ data: sp }, { data: fwa }, { data: profile }] = await Promise.all([
-          supabaseMarta.from("mh_product_types").select("id,name,unit_price").eq("category", "sp").eq("active", true).order("name"),
-          supabaseMarta.from("mh_product_types").select("id,name,unit_price").eq("category", "fwa").eq("active", true).order("name"),
+          supabaseMarta.from("mh_product_types").select("id,name,unit_price,brand").eq("category", "sp").eq("active", true).order("name"),
+          supabaseMarta.from("mh_product_types").select("id,name,unit_price,brand").eq("category", "fwa").eq("active", true).order("name"),
           email ? supabaseMarta.from("mh_profiles").select("dsf_org_id").eq("email", email.toLowerCase()).maybeSingle() : Promise.resolve({ data: null }),
         ]);
         if (!alive) return;
-        setTagTypes({ sp: sp || [], fwa: fwa || [] });
+        // Produk yg PUNYA brand hanya boleh muncul utk plan brand itu sendiri
+        // (mis. "SP 3GB 3ID" tidak boleh kepilih di plan brand IM3) - produk
+        // tanpa brand (generik) tetap muncul di semua brand. Sebelumnya
+        // query ini sama sekali tidak difilter brand.
+        const planBrand = (effectiveScope.brand || "").toLowerCase();
+        const byBrand = (t) => !t.brand || t.brand.toLowerCase() === planBrand;
+        setTagTypes({ sp: (sp || []).filter(byBrand), fwa: (fwa || []).filter(byBrand) });
         if (profile?.dsf_org_id) setTagOwnOrgId(profile.dsf_org_id);
       } catch { /* best-effort - tagging opsional, jangan blokir wizard kalau gagal */ }
     })();
     return () => { alive = false; };
-  }, [loading, email]);
+  }, [loading, email, effectiveScope.brand]);
 
   // Mode edit: nomor yang SUDAH tercatat di DB (mis. di-booking sebelumnya
   // lewat langkah ini, atau dilanjutkan dari Isi Laporan) harus muncul lagi
@@ -283,6 +306,72 @@ function CreatePlanWizardInner() {
     setTagInput((prev) => ({ ...prev, [cat]: "" }));
   }
 
+  /** Tempel banyak nomor sekaligus (mis. paste list dari Excel/WhatsApp,
+   * satu nomor per baris) - dipicu otomatis begitu isi clipboard yg
+   * ditempel ke field Nomor SP/FWA ternyata lebih dari satu baris (lihat
+   * onPaste di TagCategorySection), jadi user tidak perlu tempel-Tambah
+   * satu-satu. Tiap baris dirapikan sendiri jadi "62xxx" (boleh diawali
+   * "628xxx", "08xxx", ATAU "8xxx" polos - baris lain dgn format apapun
+   * selain itu dilewati sbg tidak valid), lalu di-dedupe thd nomor yg
+   * sudah ada di daftar MAUPUN sesama baris yg dtempel.
+   *
+   * Beda dgn addTagMsisdn (satu nomor): kalau ternyata sudah ditag event
+   * lain, bulk mode TIDAK membuka TagConflictSheet per nomor (tidak
+   * praktis utk banyak nomor sekaligus) - nomor itu cuma dilewati & ikut
+   * dihitung di ringkasan hasil (lihat pesan akhir). */
+  async function addTagMsisdnBulk(cat, rawText) {
+    if (!tagActiveOrgId.trim()) { setTagFieldErr((e) => ({ ...e, [cat]: "Pilih ORG ID Aktif dulu sebelum tagging nomor." })); return; }
+    const activeOrgId = tagActiveOrgId.trim();
+    const typeId = tagTypes[cat]?.[0]?.id || null;
+    const typeObj = tagTypes[cat]?.find((t) => t.id === typeId);
+
+    const rawLines = rawText.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
+    const seen = new Set([...tagEntries[cat].map((e) => e.msisdn), ...tagPending[cat].map((p) => p.msisdn)]);
+    const toAdd = [];
+    let invalidCount = 0;
+    for (const line of rawLines) {
+      // KHUSUS mode tempel-banyak: boleh diawali "0" (0812...) ATAU "8"
+      // polos (812...) - dikonversi otomatis jadi "62..." di sini - beda
+      // dgn addTagMsisdn (ketik satu-satu) yg tetap wajib diketik "62..."
+      // sendiri (lihat catatan di _shared/msisdn.js). Ini supaya list yg
+      // dicopy dari Excel/WhatsApp (biasanya "0812..." atau campur) bisa
+      // langsung ditempel apa adanya tanpa dirapikan manual dulu.
+      let digits = line.replace(/\D/g, "");
+      if (digits.startsWith("0")) digits = "62" + digits.slice(1);
+      else if (digits.startsWith("8")) digits = "62" + digits;
+      const norm = normalizeMsisdn(digits);
+      if (!isValidMsisdn(norm)) { invalidCount++; continue; }
+      if (seen.has(norm)) continue; // duplikat (thd daftar lama ATAU sesama baris ditempel) - senyap dilewati
+      seen.add(norm);
+      toAdd.push(norm);
+    }
+
+    if (toAdd.length === 0) {
+      setTagFieldErr((e) => ({ ...e, [cat]: invalidCount > 0 ? "Tidak ada nomor valid yang bisa ditambahkan dari teks yang ditempel." : "Semua nomor di daftar tempelan sudah ada." }));
+      return;
+    }
+    setTagFieldErr((e) => ({ ...e, [cat]: null }));
+    setTagBulkBusy((b) => ({ ...b, [cat]: true }));
+
+    let added = 0, conflicted = 0;
+    for (const msisdn of toAdd) {
+      try {
+        const { data: ownerRows } = await supabaseMarta.rpc("mh_dsf_check_msisdn_owner", { p_msisdn: msisdn });
+        const owner = ownerRows && ownerRows.length > 0 ? ownerRows[0] : null;
+        if (owner) { conflicted++; continue; }
+      } catch { /* best-effort - kalau cek gagal, tetap lanjut tambahkan nomor ini */ }
+      setTagEntries((prev) => ({ ...prev, [cat]: [...prev[cat], { msisdn, typeId, typeName: typeObj?.name, taggedAt: new Date().toISOString(), orgId: activeOrgId }] }));
+      added++;
+    }
+
+    setTagBulkBusy((b) => ({ ...b, [cat]: false }));
+    setTagInput((prev) => ({ ...prev, [cat]: "" }));
+    const notes = [];
+    if (conflicted > 0) notes.push(`${conflicted} sudah ditag di event lain`);
+    if (invalidCount > 0) notes.push(`${invalidCount} format tidak valid`);
+    setTagFieldErr((e) => ({ ...e, [cat]: `${added} nomor ditambahkan${notes.length ? ` · ${notes.join(", ")}` : ""}.` }));
+  }
+
   function confirmTagConflict() {
     if (!tagConflict) return;
     // Belum ada activityId - permintaan pemindahan BENERAN baru diajukan
@@ -303,7 +392,6 @@ function CreatePlanWizardInner() {
   const [address, setAddress] = useState("");
   const [manualLat, setManualLat] = useState(null);
   const [manualLng, setManualLng] = useState(null);
-  const [locating, setLocating] = useState(false);
 
   useEffect(() => {
     // Mode edit: JANGAN fetch dulu sebelum editBranchSlug (branch ASLI
@@ -458,11 +546,11 @@ function CreatePlanWizardInner() {
     // editId ada - lihat definisinya di atas), jadi branch-nya pasti
     // editBranchSlug (branch ASLI activity, BUKAN scope login).
     if (a.mc) setMcSelected(new Set([mcKey(editBranchSlug, a.mc)]));
-    setTargetSp(String(a.target_sp ?? 25));
-    setTargetFwa(String(a.target_fwa ?? 2));
+    setTargetSpProducts(Array.isArray(a.target_sp_products) ? a.target_sp_products : []);
+    setTargetFwaProducts(Array.isArray(a.target_fwa_products) ? a.target_fwa_products : []);
     setTargetRebuyPulsa(String(a.target_rebuy_pulsa ?? 0));
     setTargetRebuyData(String(a.target_rebuy_data ?? 0));
-    setCostEstimate(String(a.cost_estimate ?? 500000));
+    setCostEstimate(String(a.cost_estimate ?? 0));
     setPoiType(unsnake(a.poi_type));
     setNetwork(unsnake(a.network_category));
     setArea(unsnake(a.area_potential));
@@ -552,16 +640,6 @@ function CreatePlanWizardInner() {
 
   const toggleCategory = (c) => setCategories((prev) => prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]);
 
-  const useMyLocation = () => {
-    if (!navigator.geolocation) { setErr("Browser ini tidak mendukung geolocation."); return; }
-    setLocating(true); setErr("");
-    navigator.geolocation.getCurrentPosition(
-      (pos) => { setManualLat(pos.coords.latitude); setManualLng(pos.coords.longitude); setLocating(false); },
-      () => { setErr("Gagal mengambil lokasi. Pastikan izin lokasi diaktifkan."); setLocating(false); },
-      { enableHighAccuracy: true, timeout: 12000 }
-    );
-  };
-
   const validDates = dates.filter(Boolean);
 
   function validateStep(i) {
@@ -584,11 +662,44 @@ function CreatePlanWizardInner() {
         bad.add("mc");
       }
     }
+    if (i === 1) {
+      // Target WAJIB diisi minimal SATU dari 4 (SP/FWA/Rebuy SP/Rebuy FWA) -
+      // bukan malah boleh dikosongkan semua spt sebelumnya (plan tanpa
+      // target apa pun tidak ada gunanya utk dievaluasi nanti).
+      const hasAnyTarget = targetSp > 0 || targetFwa > 0 || Number(targetRebuyPulsa) > 0 || Number(targetRebuyData) > 0;
+      if (!hasAnyTarget) bad.add("target");
+      // Estimasi Budget Cost SEKARANG wajib diisi (bukan default 500rb yg
+      // gampang kelewat tanpa disadari lalu ke-submit apa adanya) - DSF
+      // harus benar2 mengisi angka sendiri, walau nol tetap tidak valid.
+      if (!costEstimate || Number(costEstimate) <= 0) bad.add("costEstimate");
+    }
     if (i === 2) {
       if (!primarySite) bad.add("site");
       if (!poiType) bad.add("poiType");
+      // Titik GPS (lat/lng) SEKARANG WAJIB juga - bukan cuma alamat teks -
+      // supaya lokasi event benar2 presisi (bukan cuma deskripsi alamat yg
+      // bisa ambigu), diisi via "Lokasi Saya" (posisi HP saat itu) ATAU
+      // "Pilih di Peta" (bisa digeser manual ke titik yg tepat/berbeda dari
+      // posisi HP - itu jalur utk "longlat manual").
+      if (manualLat == null || manualLng == null) bad.add("geo");
+      if (!address.trim()) bad.add("address");
+      if (!network) bad.add("network");
+      if (!area) bad.add("area");
     }
     setInvalid(bad);
+    // Field pertama yg tidak valid (urutan insert `bad.add(...)` di atas
+    // SAMA PERSIS dgn urutan tampil di layar) di-scroll-in-view otomatis -
+    // sebelumnya cuma ditandai merah tanpa auto-scroll, jadi kalau field yg
+    // salah ada di bagian bawah/atas yg lagi tidak terlihat, DSF klik
+    // "Lanjut" berkali2 tanpa tau apa yg kurang.
+    if (bad.size > 0) {
+      const firstKey = bad.values().next().value;
+      requestAnimationFrame(() => {
+        setTimeout(() => {
+          document.getElementById(`field-${firstKey}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 30);
+      });
+    }
     return bad.size === 0;
   }
 
@@ -603,7 +714,7 @@ function CreatePlanWizardInner() {
   function hasAnyDraftContent() {
     return !!(
       eventName.trim() || categories.length > 0 || validDates.length > 0 || mcSelected.size > 0 ||
-      Number(targetSp) || Number(targetFwa) || Number(targetRebuyPulsa) || Number(targetRebuyData) || Number(costEstimate) ||
+      targetSpProducts.length > 0 || targetFwaProducts.length > 0 || Number(targetRebuyPulsa) || Number(targetRebuyData) || Number(costEstimate) ||
       primarySite || extraSites.length > 0 || address.trim() ||
       tagEntries.sp.length > 0 || tagEntries.fwa.length > 0
     );
@@ -613,12 +724,23 @@ function CreatePlanWizardInner() {
     // Validasi penuh hanya utk submit - draft boleh field lokasi kosong
     // (default ke pilihan pertama), sama seperti perilaku app Flutter.
     if (finalStatus === "plan_submitted") {
-      const okInfo = validateStep(0);
-      const okLoc = validateStep(2);
-      if (!okInfo || !okLoc) {
-        setErr("Lengkapi field yang wajib diisi sebelum mengajukan plan.");
-        setStep(!okInfo ? 0 : 2);
-        return;
+      // Ketiga step (Info/Target/Lokasi) SEKARANG divalidasi semua sebelum
+      // submit final - sebelumnya step Target (index 1) kelewat dicek di
+      // sini, jadi plan bisa lolos submit walau Target/Budget Cost belum
+      // pernah diisi asal DSF langsung lompat dari Review. Dicek SATU-SATU
+      // & BERHENTI di kegagalan pertama (bukan panggil ketiganya lalu ambil
+      // hasil terakhir) - validateStep() men-setInvalid() utk step yg lagi
+      // dicek, jadi kalau ketiganya dipanggil berturutan, `invalid` state
+      // akhirnya cuma berisi hasil step TERAKHIR yg dicek, salah kalau yg
+      // gagal duluan itu step SEBELUMNYA (badge merah jadi tidak nyambung
+      // dgn step yg ditampilkan). validateStep() juga sudah otomatis
+      // scroll ke field pertama yg salah di step-nya masing2.
+      for (const s of [0, 1, 2]) {
+        if (!validateStep(s)) {
+          setErr("Lengkapi field yang wajib diisi sebelum submit plan.");
+          setStep(s);
+          return;
+        }
       }
     } else {
       // "Buat Untuk" (approver) tetap wajib dipilih dulu WALAU draft - branch
@@ -667,9 +789,17 @@ function CreatePlanWizardInner() {
         area_potential: snake(effectiveArea),
         target_sp: Number(targetSp) || 0,
         target_fwa: Number(targetFwa) || 0,
+        target_sp_products: targetSpProducts.filter((p) => Number(p.qty) > 0),
+        target_fwa_products: targetFwaProducts.filter((p) => Number(p.qty) > 0),
         target_rebuy_pulsa: Number(targetRebuyPulsa) || 0,
         target_rebuy_data: Number(targetRebuyData) || 0,
         cost_estimate: Number(costEstimate) || 0,
+        // Estimasi Total Revenue (sum qty×harga produk SP+FWA + rebuy) -
+        // dihitung otomatis di sisi klien (lihat targetEstRevenue di atas)
+        // & disimpan ke kolom `target_rev_3m` yg sebelumnya sama sekali
+        // tidak pernah diisi form manapun, tapi sudah ditampilkan di semua
+        // layar detail sbg "Revenue 3 Bulan"/"Estimasi Total Revenue".
+        target_rev_3m: targetEstRevenue,
       };
 
       let activityId = editId;
@@ -748,6 +878,20 @@ function CreatePlanWizardInner() {
         }
       }
 
+      // Log Aktivitas (menu User Management) - best-effort, JANGAN sampai
+      // menggagalkan penyimpanan plan kalau logging-nya sendiri error.
+      // Aksinya dibedakan create/update/submit spy jejaknya jelas: plan
+      // baru dibuat, plan lama diedit, atau plan diajukan (status →
+      // plan_submitted) - ketiganya kini WAJIB tercatat krn plan tidak lagi
+      // lewat approval TMV yang otomatis meninggalkan jejak sendiri.
+      try {
+        const action = finalStatus === "plan_submitted" ? "activity_plan_submit" : editId ? "activity_plan_update" : "activity_plan_create";
+        await supabaseMarta.rpc("mh_activity_log_event", {
+          p_activity_id: activityId, p_action: action,
+          p_detail: `${eventName.trim() || "(tanpa nama)"} · ${finalStatus === "plan_submitted" ? "diajukan" : "draft disimpan"}`,
+        });
+      } catch { /* best-effort - jangan blokir penyimpanan plan */ }
+
       router.replace(`/martahub/m/activities?open=${activityId}`);
     } catch (e) {
       setErr(e.message || "Gagal menyimpan plan");
@@ -786,13 +930,19 @@ function CreatePlanWizardInner() {
               {editId ? "Edit Plan" : "Buat Plan Baru"}
             </div>
           </div>
-          <div style={{
-            flexShrink: 0, display: "flex", alignItems: "baseline", gap: 1, padding: "5px 10px", borderRadius: 999,
-            background: "rgba(237,28,36,0.08)",
-          }}>
-            <span style={{ fontSize: 12.5, fontWeight: 800, color: "#ED1C24", fontVariantNumeric: "tabular-nums" }}>{step + 1}</span>
-            <span style={{ fontSize: 10.5, fontWeight: 700, color: "#ED1C24", opacity: 0.55 }}>/{STEPS.length}</span>
-          </div>
+          {/* "Simpan Draft" gantikan badge angka langkah "1/4" yg sebelumnya
+              di sini - progres langkah sudah kebaca jelas dari WizardStepper
+              di bawahnya, jadi badge itu cuma duplikat info tanpa nambah
+              guna, sementara Simpan Draft lebih sering dibutuhkan & kelihatan
+              dari step manapun tanpa scroll ke bawah dulu. */}
+          <button onClick={() => save("draft")} disabled={saving}
+            style={{
+              flexShrink: 0, display: "flex", alignItems: "center", gap: 5, padding: "7px 11px", borderRadius: 10,
+              border: "1.5px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 11.5, fontWeight: 700,
+              fontFamily: FF, cursor: saving ? "default" : "pointer",
+            }}>
+            <Save size={13} /> Simpan Draft
+          </button>
         </div>
 
         <WizardStepper steps={STEPS} current={step} onStepClick={(i) => setStep(i)} />
@@ -802,7 +952,7 @@ function CreatePlanWizardInner() {
         <div style={{ margin: "14px 20px 0", padding: "10px 12px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 12, fontWeight: 600 }}>{err}</div>
       )}
 
-      <div style={{ padding: "18px 20px 24px" }}>
+      <div style={{ padding: "18px 20px 24px", paddingBottom: `calc(${NAV_HEIGHT}px + 24px + env(safe-area-inset-bottom,0px))` }}>
         {step === 0 && (
           <StepInfo {...{
             categories, toggleCategory, eventName, setEventName, dates, setDates,
@@ -814,47 +964,45 @@ function CreatePlanWizardInner() {
         )}
         {step === 1 && (
           <StepTarget {...{
-            targetSp, setTargetSp, targetFwa, setTargetFwa, targetRebuyPulsa, setTargetRebuyPulsa, targetRebuyData, setTargetRebuyData, costEstimate, setCostEstimate,
-            tagOwnOrgId, tagActiveOrgId, setTagActiveOrgId, tagInput, setTagInput, tagFieldErr, tagEntries, tagPending, addTagMsisdn, removeTagEntry,
-            tagConflict, setTagConflict, confirmTagConflict, ownLabel: scope?.fullName,
+            targetSpProducts, setTargetSpProducts, targetFwaProducts, setTargetFwaProducts,
+            spProductOptions: tagTypes.sp, fwaProductOptions: tagTypes.fwa,
+            targetSp, targetFwa, targetSpRevenue, targetFwaRevenue, targetRebuyTotal, targetEstRevenue, targetCostRatio,
+            targetRebuyPulsa, setTargetRebuyPulsa, targetRebuyData, setTargetRebuyData, costEstimate, setCostEstimate,
+            tagOwnOrgId, tagActiveOrgId, setTagActiveOrgId, tagInput, setTagInput, tagFieldErr, tagEntries, tagPending, addTagMsisdn, addTagMsisdnBulk, tagBulkBusy, removeTagEntry,
+            tagConflict, setTagConflict, confirmTagConflict, ownLabel: scope?.fullName, invalid,
           }} />
         )}
         {step === 2 && (
           <StepLocation {...{
             hasMc: mcSelected.size > 0, sitesInMc, primarySite, setPrimarySite, extraSites, setExtraSites,
             poiType, setPoiType, poiTypes, network, setNetwork, area, setArea,
-            address, setAddress, manualLat, manualLng, setManualLat, setManualLng, locating, useMyLocation, invalid,
+            address, setAddress, manualLat, manualLng, setManualLat, setManualLng, invalid,
           }} />
         )}
         {step === 3 && (
           <StepReview {...{
             categories, eventName, dates: validDates, timesByDate,
             mcSummary: Array.from(mcSelected).map((k) => k.split("::")[1]).join(", "),
-            targetSp, targetFwa, targetRebuyPulsa, targetRebuyData, costEstimate,
+            targetSpProducts, targetFwaProducts, targetSp, targetFwa, targetSpRevenue, targetFwaRevenue,
+            targetRebuyPulsa, targetRebuyData, costEstimate, targetEstRevenue, targetCostRatio,
             primarySite, extraSites, poiType, network, area, address, manualLat, manualLng,
           }} />
         )}
-      </div>
 
-      {/* Bottom action bar - "Simpan Draft" SEKARANG tersedia di SEMUA step
-          (bukan cuma step terakhir/Review) supaya pengguna bisa berhenti
-          & menyimpan progres kapan pun, tanpa dipaksa mengisi step
-          Lokasi/Review dulu hanya demi menyimpan draft. */}
-      <div style={{ position: "sticky", bottom: 66, background: "linear-gradient(180deg,rgba(244,245,247,0) 0%,#F4F5F7 30%)", padding: "16px 20px 0" }}>
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={() => save("draft")} disabled={saving}
-            style={{ flex: 1, height: 50, borderRadius: 12, border: "1.5px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 13.5, fontWeight: 700, fontFamily: FF, cursor: saving ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
-            <Save size={15} /> Simpan Draft
-          </button>
+        {/* Tombol Lanjut/Submit Plan - TIDAK lagi sticky/fixed di bawah layar,
+            skrg ditempatkan langsung di bawah konten step (card terakhir
+            yang perlu diisi), supaya tidak nempel/menutupi layar terus
+            menerus. "Simpan Draft" sudah dipindah ke header kanan atas. */}
+        <div style={{ marginTop: 18 }}>
           {step === 3 ? (
             <button onClick={() => save("plan_submitted")} disabled={saving}
-              style={{ flex: 1.3, height: 50, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF, cursor: saving ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 4px 12px rgba(17,17,20,0.1)" }}>
-              {saving ? <Loader2 size={16} style={{ animation: "mspin .85s linear infinite" }} /> : <><Check size={16} /> Ajukan Plan</>}
+              style={{ width: "100%", height: 52, borderRadius: 14, border: "none", background: BRAND, color: "#fff", fontSize: 14.5, fontWeight: 800, fontFamily: FF, cursor: saving ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 4px 14px rgba(17,17,20,0.11)" }}>
+              {saving ? <Loader2 size={17} style={{ animation: "mspin .85s linear infinite" }} /> : <><Send size={17} /> Submit Plan</>}
             </button>
           ) : (
             <button onClick={goNext} disabled={saving}
-              style={{ flex: 1.3, height: 50, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 4px 12px rgba(17,17,20,0.1)" }}>
-              Lanjut <ArrowRight size={16} />
+              style={{ width: "100%", height: 52, borderRadius: 14, border: "none", background: BRAND, color: "#fff", fontSize: 14.5, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: "0 4px 14px rgba(17,17,20,0.11)" }}>
+              Lanjut <ArrowRight size={17} />
             </button>
           )}
         </div>
@@ -903,7 +1051,7 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
     <Card>
       {isApprover && (
         <>
-          <FieldLabel text="Buat Untuk" required hint={actingForLoading ? "Memuat…" : "Orang atau branch·brand"} />
+          <FieldLabel id="field-actingFor" text="Buat Untuk" required hint={actingForLoading ? "Memuat…" : "Orang atau branch·brand"} />
           <button onClick={onPickActingFor}
             style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "12px 13px", borderRadius: 12, background: "#F6F7F9", border: `1.5px solid ${invalid.has("actingFor") ? "#DC2626" : "#ECEDF0"}`, cursor: "pointer", fontFamily: FF }}>
             <div style={{ width: 30, height: 30, borderRadius: "50%", background: actingFor ? (actingFor.email ? "rgba(237,28,36,0.10)" : "#FDF2E3") : "#E9EAEE", color: actingFor ? (actingFor.email ? "#ED1C24" : "#B45309") : "#9A9AA6", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -939,7 +1087,7 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
         </>
       )}
 
-      <FieldLabel text="Activity Category" required hint="Bisa lebih dari satu" top={isApprover} />
+      <FieldLabel id="field-categories" text="Activity Category" required hint="Bisa lebih dari satu" top={isApprover} />
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         {CATEGORIES.map((c) => {
           const active = categories.includes(c);
@@ -950,11 +1098,11 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
       </div>
       {invalid.has("categories") && <FieldError text="Pilih minimal satu kategori" />}
 
-      <FieldLabel text="Event Name" required top />
+      <FieldLabel id="field-eventName" text="Event Name" required top />
       <TextInput value={eventName} onChange={setEventName} placeholder="Contoh: Open Booth FWA" error={invalid.has("eventName")} />
       {invalid.has("eventName") && <FieldError text="Nama event wajib diisi" />}
 
-      <FieldLabel text="Plan Date & Waktu" required top hint="Ketuk utk atur - wajib per tanggal" />
+      <FieldLabel id="field-planDate" text="Plan Date & Waktu" required top hint="Ketuk utk atur - wajib per tanggal" />
 
       {/* Kalender bulanan - padanan activity_calendar_sheet.dart (Flutter):
           titik status di tanggal yg SUDAH punya plan, supaya BME/RGE bisa
@@ -1017,7 +1165,7 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
         </>
       )}
 
-      <FieldLabel text="Micro Cluster" required top hint={mcGroups.length > 1 ? "Bisa lebih dari satu - wajib min. 1 per branch" : "Bisa lebih dari satu"} />
+      <FieldLabel id="field-mc" text="Micro Cluster" required top hint={mcGroups.length > 1 ? "Bisa lebih dari satu - wajib min. 1 per branch" : "Bisa lebih dari satu"} />
       <GroupedSelectPills groups={mcGroups} selected={mcSelected} onToggle={toggleMc} placeholder="Tidak ada MC di scope Anda" />
       {invalid.has("mc") && <FieldError text={mcGroups.length > 1 ? "Pilih minimal satu MC dari SETIAP branch" : "Micro cluster wajib dipilih"} />}
     </Card>
@@ -1026,44 +1174,77 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
 
 // ═════════════════════════════════ Step 2 ═════════════════════════════════
 function StepTarget({
-  targetSp, setTargetSp, targetFwa, setTargetFwa, targetRebuyPulsa, setTargetRebuyPulsa, targetRebuyData, setTargetRebuyData, costEstimate, setCostEstimate,
-  tagOwnOrgId, tagActiveOrgId, setTagActiveOrgId, tagInput, setTagInput, tagFieldErr, tagEntries, tagPending, addTagMsisdn, removeTagEntry,
-  tagConflict, setTagConflict, confirmTagConflict, ownLabel,
+  targetSpProducts, setTargetSpProducts, targetFwaProducts, setTargetFwaProducts, spProductOptions, fwaProductOptions,
+  targetSp, targetFwa, targetSpRevenue, targetFwaRevenue, targetRebuyTotal, targetEstRevenue, targetCostRatio,
+  targetRebuyPulsa, setTargetRebuyPulsa, targetRebuyData, setTargetRebuyData, costEstimate, setCostEstimate,
+  tagOwnOrgId, tagActiveOrgId, setTagActiveOrgId, tagInput, setTagInput, tagFieldErr, tagEntries, tagPending, addTagMsisdn, addTagMsisdnBulk, tagBulkBusy, removeTagEntry,
+  tagConflict, setTagConflict, confirmTagConflict, ownLabel, invalid,
 }) {
-  // Dua kolom pakai CSS GRID dgn minmax(0,1fr), BUKAN flex:1 biasa - flex:1
-  // tanpa minWidth:0 bisa "menolak" mengecil di bawah lebar konten intrinsik
-  // (mis. angka Rupiah panjang + prefix "Rp"), jadi kolom kanan (Rebuy Data)
-  // kepotong/keluar dari layar di layar sempit. minmax(0,1fr) memaksa tiap
-  // kolom BOLEH mengecil sampai 0 dulu baru bagi rata sisanya - dijamin tidak
-  // pernah overflow horizontal seberapa pun sempit layarnya.
-  const twoCol = { display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", gap: 10 };
   const taggedTotal = tagEntries.sp.length + tagEntries.fwa.length;
+
+  function qtyOf(list, id) {
+    const found = list.find((p) => p.productTypeId === id);
+    return found ? String(found.qty) : "";
+  }
+  function setQty(setList, product, raw) {
+    const digits = raw.replace(/\D/g, "");
+    setList((prev) => {
+      if (!digits || Number(digits) === 0) return prev.filter((p) => p.productTypeId !== product.id);
+      const entry = { productTypeId: product.id, name: product.name, unitPrice: product.unit_price, qty: Number(digits) };
+      const exists = prev.some((p) => p.productTypeId === product.id);
+      return exists ? prev.map((p) => (p.productTypeId === product.id ? entry : p)) : [...prev, entry];
+    });
+  }
+
   return (
     <>
-      <Card>
-        <div style={twoCol}>
-          <div style={{ minWidth: 0 }}>
-            <FieldLabel text="Target SP" />
-            <NumberInput value={targetSp} onChange={setTargetSp} />
-          </div>
-          <div style={{ minWidth: 0 }}>
-            <FieldLabel text="Target FWA" />
-            <NumberInput value={targetFwa} onChange={setTargetFwa} />
-          </div>
+      {/* Kartu Target (SP/FWA/Rebuy) dipisah dari kartu Estimasi Budget Cost
+          di bawahnya - dulu satu kartu panjang, sekarang dua kartu terpisah
+          spy masing2 punya identitas & status validasi sendiri (Target
+          minimal SATU dari 4 wajib diisi; Budget Cost wajib diisi terpisah
+          - dua syarat yg beda, jangan terasa jadi satu form yg sama). */}
+      <Card style={invalid?.has("target") ? { border: "1.5px solid #F3C6C6" } : undefined}>
+        <FieldLabel id="field-target" text="Target" required hint="Minimal 1 dari 4 wajib diisi" />
+        <ProductTargetGroup
+          icon={CardSim} accent="#ED1C24" label="Target Penjualan SP"
+          products={spProductOptions}
+          getQty={(id) => qtyOf(targetSpProducts, id)}
+          onQtyChange={(product, val) => setQty(setTargetSpProducts, product, val)}
+          totalUnit={targetSp} totalRevenue={targetSpRevenue}
+        />
+        <div style={{ height: 1, background: "#F0F0F3", margin: "16px 0" }} />
+        <ProductTargetGroup
+          icon={RouterIcon} accent="#C6168D" label="Target Penjualan FWA"
+          products={fwaProductOptions}
+          getQty={(id) => qtyOf(targetFwaProducts, id)}
+          onQtyChange={(product, val) => setQty(setTargetFwaProducts, product, val)}
+          totalUnit={targetFwa} totalRevenue={targetFwaRevenue}
+        />
+
+        <div style={{ height: 1, background: "#F0F0F3", margin: "16px 0" }} />
+        {/* Rebuy TETAP pakai amount langsung (bukan produk×qty) - sesuai
+            permintaan, rebuy tidak dipecah per jenis produk - tapi headernya
+            (ikon bulat + label) disamakan gayanya dgn Target Penjualan
+            SP/FWA di atas supaya satu kartu ini terasa konsisten. */}
+        <AmountTargetGroup icon={CardSim} accent="#B45309" label="Target Rebuy SP" value={targetRebuyPulsa} onChange={setTargetRebuyPulsa} />
+        <div style={{ marginTop: 14 }}>
+          <AmountTargetGroup icon={RouterIcon} accent="#0D9488" label="Target Rebuy FWA" value={targetRebuyData} onChange={setTargetRebuyData} />
         </div>
-        <div style={{ ...twoCol, marginTop: 12 }}>
-          <div style={{ minWidth: 0 }}>
-            <FieldLabel text="Rebuy Pulsa" />
-            <NumberInput value={targetRebuyPulsa} onChange={setTargetRebuyPulsa} prefix="Rp" />
-          </div>
-          <div style={{ minWidth: 0 }}>
-            <FieldLabel text="Rebuy Data" />
-            <NumberInput value={targetRebuyData} onChange={setTargetRebuyData} prefix="Rp" />
-          </div>
-        </div>
-        <FieldLabel text="Budget Cost" top />
-        <NumberInput value={costEstimate} onChange={setCostEstimate} prefix="Rp" />
+        {invalid?.has("target") && <FieldError text="Isi minimal satu target (SP, FWA, Rebuy SP, atau Rebuy FWA) - tidak boleh kosong semua." />}
       </Card>
+
+      <Card id="field-costEstimate" style={{ marginTop: 12, ...(invalid?.has("costEstimate") ? { border: "1.5px solid #F3C6C6" } : {}) }}>
+        <AmountTargetGroup icon={Receipt} accent="#7C3AED" label="Estimasi Budget Cost" value={costEstimate} onChange={setCostEstimate} required />
+        {invalid?.has("costEstimate") && <FieldError text="Estimasi Budget Cost wajib diisi." />}
+      </Card>
+
+      {/* Estimasi Total Revenue & Cost Ratio - auto-generate, update LIVE
+          setiap qty produk/rebuy/budget cost di atas berubah, tidak perlu
+          tombol hitung terpisah. */}
+      <TargetSummaryCard
+        spRevenue={targetSpRevenue} fwaRevenue={targetFwaRevenue} rebuyTotal={targetRebuyTotal}
+        estRevenue={targetEstRevenue} costEstimate={Number(costEstimate) || 0} costRatio={targetCostRatio}
+      />
 
       {/* Catat Penjualan (dulu "Tagging Nomor") - kartu terpisah & sengaja
           ditonjolkan (header gradasi pink-merah, senada aksen brand) supaya
@@ -1081,7 +1262,7 @@ function StepTarget({
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                <span style={{ fontSize: 13.5, fontWeight: 800, color: "#fff" }}>Catat Penjualan</span>
+                <span style={{ fontSize: 13.5, fontWeight: 800, color: "#fff" }}>Catat Rencana Penjualan SP & FWA</span>
                 <span style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: 0.3, color: "#fff", background: "rgba(255,255,255,0.22)", borderRadius: 999, padding: "2px 7px" }}>OPSIONAL</span>
               </div>
               <div style={{ marginTop: 2, fontSize: 10.5, color: "rgba(255,255,255,0.85)", fontWeight: 600, lineHeight: 1.4 }}>
@@ -1100,15 +1281,17 @@ function StepTarget({
         <div style={{ padding: "14px 16px 16px", background: "#FFFFFF" }}>
           <OrgIdBar value={tagActiveOrgId} onChange={setTagActiveOrgId} ownOrgId={tagOwnOrgId} ownLabel={ownLabel} />
 
-          <TagCategorySection cat="sp" label="Nomor SP"
+          <TagCategorySection cat="sp" label="Nomor SP" accent="#ED1C24"
             input={tagInput.sp} onInputChange={(v) => setTagInput((p) => ({ ...p, sp: v }))}
             onAdd={() => addTagMsisdn("sp", tagInput.sp)}
+            onBulkAdd={(text) => addTagMsisdnBulk("sp", text)} busy={tagBulkBusy.sp}
             onScanResult={(msisdn) => addTagMsisdn("sp", msisdn)}
             entries={tagEntries.sp} onRemove={(m) => removeTagEntry("sp", m)}
             pending={tagPending.sp} error={tagFieldErr.sp} />
-          <TagCategorySection cat="fwa" label="Nomor FWA"
+          <TagCategorySection cat="fwa" label="Nomor FWA" accent="#C6168D"
             input={tagInput.fwa} onInputChange={(v) => setTagInput((p) => ({ ...p, fwa: v }))}
             onAdd={() => addTagMsisdn("fwa", tagInput.fwa)}
+            onBulkAdd={(text) => addTagMsisdnBulk("fwa", text)} busy={tagBulkBusy.fwa}
             onScanResult={(msisdn) => addTagMsisdn("fwa", msisdn)}
             entries={tagEntries.fwa} onRemove={(m) => removeTagEntry("fwa", m)}
             pending={tagPending.fwa} error={tagFieldErr.fwa} />
@@ -1122,37 +1305,179 @@ function StepTarget({
   );
 }
 
+/** Satu blok produk (SP atau FWA) di kartu Target - daftar produk dari
+ * master data (mh_product_types) apa adanya, tiap baris punya qty input
+ * sendiri (kosong/0 = tidak ditarget). Subtotal per produk & total
+ * unit+revenue kelompok ditampilkan live begitu qty diketik - tidak perlu
+ * tombol "Tambah" terpisah spt di Catat Rencana Penjualan di bawahnya,
+ * karena di sini cuma set qty per produk yg SUDAH ada di master data
+ * (bukan mencatat MSISDN individual). */
+function ProductTargetGroup({ icon: Icon, accent, label, products, getQty, onQtyChange, totalUnit, totalRevenue }) {
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <div style={{ width: 26, height: 26, borderRadius: 8, background: `${accent}14`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Icon size={13} color={accent} />
+          </div>
+          <span style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>{label}</span>
+        </div>
+        {totalUnit > 0 && (
+          <span style={{ fontSize: 10.5, fontWeight: 800, color: accent, background: `${accent}14`, borderRadius: 999, padding: "3px 9px" }}>{totalUnit} unit</span>
+        )}
+      </div>
+
+      {(!products || products.length === 0) ? (
+        <div style={{ marginTop: 10, fontSize: 11.5, color: "#B0B0BA", fontStyle: "italic" }}>Belum ada produk aktif di master data.</div>
+      ) : (
+        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+          {products.map((product) => {
+            const qty = getQty(product.id);
+            const subtotal = (Number(qty) || 0) * (Number(product.unit_price) || 0);
+            return (
+              <div key={product.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 12, background: "#F6F7F9", border: "1px solid #ECEDF0" }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{product.name}</div>
+                  <div style={{ marginTop: 2, fontSize: 10.5, color: "#8A8A96", fontWeight: 600 }}>
+                    Rp {Number(product.unit_price).toLocaleString("id-ID")}/unit
+                    {Number(qty) > 0 && <span style={{ color: accent, fontWeight: 800 }}> · Rp {subtotal.toLocaleString("id-ID")}</span>}
+                  </div>
+                </div>
+                <div style={{ width: 78, flexShrink: 0 }}>
+                  <input value={qty} onChange={(e) => onQtyChange(product, e.target.value)} inputMode="numeric" placeholder="0"
+                    style={{ width: "100%", height: 38, borderRadius: 10, background: "#FFFFFF", border: "1.5px solid #ECEDF0", textAlign: "center", fontSize: 13.5, fontWeight: 800, fontFamily: FF, color: "#17181C", outline: "none", boxSizing: "border-box" }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {totalUnit > 0 && (
+        <div style={{ marginTop: 8, fontSize: 11, fontWeight: 700, color: "#5A5A68" }}>
+          Total {totalUnit} unit · Estimasi Rp {totalRevenue.toLocaleString("id-ID")}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Satu field amount (Rebuy SP/FWA, Budget Cost) dgn header ikon bulat +
+ * label - gaya SAMA PERSIS dgn header ProductTargetGroup (Target Penjualan
+ * SP/FWA) di atas, supaya seluruh kartu Target kelihatan konsisten walau
+ * field ini cuma satu angka Rupiah langsung (bukan qty×produk). */
+function AmountTargetGroup({ icon: Icon, accent, label, value, onChange, required }) {
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+        <div style={{ width: 26, height: 26, borderRadius: 8, background: `${accent}14`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Icon size={13} color={accent} />
+        </div>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>{label}</span>
+        {required && <span style={{ color: "#ED1C24", fontWeight: 800, marginLeft: 1 }}>*</span>}
+      </div>
+      <div style={{ marginTop: 8 }}>
+        <NumberInput value={value} onChange={onChange} prefix="Rp" />
+      </div>
+    </div>
+  );
+}
+
+/** Kartu ringkasan Estimasi Total Revenue + Cost Ratio - SELALU auto
+ * generate dari state di StepTarget (produk SP/FWA×qty, rebuy amount,
+ * budget cost), jadi tidak pernah "basi"/perlu disegarkan manual begitu
+ * salah satu inputnya berubah. Cost Ratio = Budget Cost ÷ Estimasi Total
+ * Revenue - dibiarkan "-" (bukan 0% atau error) kalau revenue-nya masih 0
+ * supaya tidak menyesatkan (pembagian oleh nol). */
+function TargetSummaryCard({ spRevenue, fwaRevenue, rebuyTotal, estRevenue, costEstimate, costRatio }) {
+  const ratioColor = costRatio == null ? "#8A8A96" : costRatio <= 30 ? "#22A85E" : costRatio <= 60 ? "#B45309" : "#DC2626";
+  return (
+    <div style={{ marginTop: 14, borderRadius: 18, overflow: "hidden", border: "1px solid #E4E5EA", background: "linear-gradient(160deg,#17181C,#2A2B33)", padding: "16px 16px 14px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+        <Tag size={13} color="#F5A3CB" />
+        <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase", color: "rgba(255,255,255,0.6)" }}>Ringkasan Estimasi</span>
+      </div>
+
+      <div style={{ marginTop: 10, display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.6)", fontWeight: 700 }}>Estimasi Total Revenue</div>
+          <div style={{ marginTop: 3, fontSize: 21, fontWeight: 800, color: "#fff", fontVariantNumeric: "tabular-nums" }}>Rp {estRevenue.toLocaleString("id-ID")}</div>
+        </div>
+        <div style={{ flexShrink: 0, textAlign: "right" }}>
+          <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.6)", fontWeight: 700 }}>Cost Ratio</div>
+          <div style={{ marginTop: 3, fontSize: 17, fontWeight: 800, color: ratioColor }}>{costRatio == null ? "-" : `${costRatio.toFixed(1)}%`}</div>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(3,minmax(0,1fr))", gap: 8 }}>
+        <SummaryMini label="SP" value={spRevenue} />
+        <SummaryMini label="FWA" value={fwaRevenue} />
+        <SummaryMini label="Rebuy" value={rebuyTotal} />
+      </div>
+    </div>
+  );
+}
+
+function SummaryMini({ label, value }) {
+  return (
+    <div style={{ borderRadius: 11, background: "rgba(255,255,255,0.08)", padding: "8px 9px", minWidth: 0 }}>
+      <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase", color: "rgba(255,255,255,0.55)" }}>{label}</div>
+      <div style={{ marginTop: 3, fontSize: 12, fontWeight: 800, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Rp {Number(value).toLocaleString("id-ID")}</div>
+    </div>
+  );
+}
+
 /** Satu kelompok (SP atau FWA) di dalam kartu Catat Penjualan - input MSISDN +
  * tombol tambah, lalu nomor yang sudah ditag ditampilkan sbg chip mungil yg
  * bisa dilepas satu-satu (bukan kartu besar spt di Isi Laporan - di sini
  * cuma satu dari beberapa field di step yg sama, jadi dipadatkan). */
-function TagCategorySection({ cat, label, input, onInputChange, onAdd, onScanResult, entries, onRemove, pending, error }) {
+function TagCategorySection({ cat, label, accent, input, onInputChange, onAdd, onBulkAdd, busy, onScanResult, entries, onRemove, pending, error }) {
   const Icon = cat === "sp" ? CardSim : RouterIcon;
   const [scanning, setScanning] = useState(false);
   return (
     <div style={{ marginTop: 16 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          <Icon size={13} color="#8A8A96" />
+          <div style={{ width: 22, height: 22, borderRadius: 7, background: `${accent}14`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Icon size={12} color={accent} />
+          </div>
           <span style={{ fontSize: 11.5, fontWeight: 800, color: "#3A3A44" }}>{label}</span>
         </div>
         <span style={{ fontSize: 10, fontWeight: 800, color: "#C6168D", background: "rgba(198,22,141,0.08)", padding: "2px 8px", borderRadius: 999 }}>{entries.length} nomor</span>
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-        <input value={input} onChange={(e) => onInputChange(e.target.value)} inputMode="tel"
+        {/* Bisa TEMPEL banyak nomor sekaligus (satu nomor per baris, mis.
+            hasil copy dari Excel/WhatsApp) - begitu isi clipboard ternyata
+            lebih dari satu baris/dipisah koma, langsung diproses jadi
+            banyak entri sekaligus (onBulkAdd) alih-alih ditaruh apa adanya
+            di field ketik satu-nomor ini. Paste SATU nomor saja tetap jalan
+            spt biasa (masuk ke field, ditambah lewat Enter/tombol +). */}
+        {/* Cuma terima ANGKA saat diketik manual satu-satu - MSISDN tidak
+            pernah punya huruf/simbol, jadi karakter non-digit langsung
+            disaring di sini (bukan baru divalidasi/ditolak setelah tombol +
+            ditekan). Tempel BANYAK baris (onPaste di bawah) TETAP dibiarkan
+            lewat mentah dulu ke onBulkAdd - itu jalur terpisah yg parsing &
+            validasi tiap nomornya sendiri, bukan field ketik ini. */}
+        <input value={input} onChange={(e) => onInputChange(e.target.value.replace(/\D/g, ""))} inputMode="numeric" pattern="[0-9]*"
           onKeyDown={(e) => e.key === "Enter" && onAdd()}
-          placeholder="Contoh: 628123456789"
+          onPaste={(e) => {
+            const text = e.clipboardData.getData("text");
+            if (/[\n,;]/.test(text) && onBulkAdd) { e.preventDefault(); onBulkAdd(text); }
+          }}
+          placeholder="Contoh: 628123456789 (bisa tempel banyak baris)"
+          disabled={busy}
           style={{ flex: 1, minWidth: 0, height: 44, padding: "0 13px", borderRadius: 11, background: "#F6F7F9", border: "1.5px solid #ECEDF0", fontSize: 13, fontFamily: FF, color: "#17181C", outline: "none", boxSizing: "border-box" }} />
         {/* Scan QR kartu SIM - SAMA PERSIS dgn Isi Laporan (_shared/QrScanSheet,
             jsQR lintas browser) supaya reservasi nomor prospek sebelum event
             juga bisa lewat scan, bukan cuma ketik manual. */}
-        <button onClick={() => setScanning(true)} style={{ flexShrink: 0, width: 44, height: 44, borderRadius: 11, background: "#F6F7F9", border: "1.5px solid #ECEDF0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
+        <button onClick={() => setScanning(true)} style={{ flexShrink: 0, width: 44, height: 44, borderRadius: 11, background: `${accent}14`, border: `1.5px solid ${accent}33`, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: accent }}>
           <QrCode size={17} />
         </button>
-        <button onClick={onAdd} style={{ flexShrink: 0, width: 44, height: 44, borderRadius: 11, background: "linear-gradient(135deg,#ED1C24,#C6168D)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-          <Plus size={17} color="#fff" />
+        <button onClick={onAdd} disabled={busy} style={{ flexShrink: 0, width: 44, height: 44, borderRadius: 11, background: "linear-gradient(135deg,#ED1C24,#C6168D)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}>
+          {busy ? <Loader2 size={17} color="#fff" style={{ animation: "mspin .85s linear infinite" }} /> : <Plus size={17} color="#fff" />}
         </button>
       </div>
+      {busy && <div style={{ marginTop: 6, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>Menambahkan nomor…</div>}
       {error && <FieldError text={error} />}
       {scanning && (
         <QrScanSheet
@@ -1218,7 +1543,7 @@ function TagConflictSheet({ conflict, onClose, onConfirm }) {
 }
 
 // ═════════════════════════════════ Step 3 ═════════════════════════════════
-function StepLocation({ hasMc, sitesInMc, primarySite, setPrimarySite, extraSites, setExtraSites, poiType, setPoiType, poiTypes, network, setNetwork, area, setArea, address, setAddress, manualLat, manualLng, setManualLat, setManualLng, locating, useMyLocation, invalid }) {
+function StepLocation({ hasMc, sitesInMc, primarySite, setPrimarySite, extraSites, setExtraSites, poiType, setPoiType, poiTypes, network, setNetwork, area, setArea, address, setAddress, manualLat, manualLng, setManualLat, setManualLng, invalid }) {
   const [picking, setPicking] = useState(null); // 'primary' | 'extra' | null
   const [mapPicking, setMapPicking] = useState(false);
   const taken = new Set([primarySite?.site_id, ...extraSites.map((s) => s.site_id)].filter(Boolean));
@@ -1227,7 +1552,7 @@ function StepLocation({ hasMc, sitesInMc, primarySite, setPrimarySite, extraSite
   return (
     <>
       <Card>
-        <FieldLabel text="Site" required hint={`${(primarySite ? 1 : 0) + extraSites.length} dipilih`} />
+        <FieldLabel id="field-site" text="Site" required hint={`${(primarySite ? 1 : 0) + extraSites.length} dipilih`} />
         {!hasMc ? (
           <LockedField text="Pilih micro cluster dulu di step 1" muted />
         ) : (
@@ -1249,36 +1574,41 @@ function StepLocation({ hasMc, sitesInMc, primarySite, setPrimarySite, extraSite
         )}
         {invalid.has("site") && <FieldError text="Site wajib dipilih" />}
 
-        <FieldLabel text="POI Type" required top />
+        <FieldLabel id="field-poiType" text="POI Type" required top />
         <SelectPills options={poiTypes} value={poiType} onChange={setPoiType} error={invalid.has("poiType")} />
 
-        <FieldLabel text="Network Category" top />
-        <SegmentedControl options={NETWORK_OPTIONS} value={network} onChange={setNetwork} />
+        <FieldLabel id="field-network" text="Network Category" required top />
+        <SegmentedControl options={NETWORK_OPTIONS} value={network} onChange={setNetwork} error={invalid.has("network")} />
+        {invalid.has("network") && <FieldError text="Network Category wajib dipilih" />}
 
-        <FieldLabel text="Area Potential" top />
-        <SegmentedControl options={AREA_OPTIONS} value={area} onChange={setArea} />
+        <FieldLabel id="field-area" text="Area Potential" required top />
+        <SegmentedControl options={AREA_OPTIONS} value={area} onChange={setArea} error={invalid.has("area")} />
+        {invalid.has("area") && <FieldError text="Area Potential wajib dipilih" />}
       </Card>
 
       <Card style={{ marginTop: 12 }}>
-        <FieldLabel text="Lokasi Acara" hint="Opsional - titik GPS event" />
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={useMyLocation} disabled={locating}
-            style={{ flex: 1, height: 46, borderRadius: 12, border: `1.5px solid ${manualLat ? "#15803D" : "#ECEDF0"}`, background: manualLat ? "rgba(21,128,61,0.06)" : "#F6F7F9", color: manualLat ? "#15803D" : "#5A5A68", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
-            {locating ? <Loader2 size={15} style={{ animation: "mspin .85s linear infinite" }} /> : <Crosshair size={15} />}
-            {locating ? "Mencari…" : "Lokasi Saya"}
-          </button>
-          <button onClick={() => setMapPicking(true)}
-            style={{ flex: 1, height: 46, borderRadius: 12, border: "1.5px solid #ECEDF0", background: "#F6F7F9", color: "#5A5A68", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
-            <MapIcon size={15} /> Pilih di Peta
-          </button>
-        </div>
-        {manualLat != null && (
+        {/* Titik GPS WAJIB juga (bukan cuma Alamat teks) - lokasi event
+            harus presisi, bukan cuma deskripsi alamat yg bisa ambigu.
+            "Lokasi Saya" DIGABUNG ke dalam "Pilih di Peta" (bukan dua
+            tombol terpisah lagi) - begitu sheet peta dibuka, ada tombol
+            crosshair di situ yg langsung lompat ke posisi HP DSF saat itu,
+            DAN peta-nya sendiri bisa digeser manual kalau titiknya beda dari
+            posisi HP - satu pintu masuk utk dua cara pengisian. */}
+        <FieldLabel id="field-geo" text="Lokasi Acara" required hint="Titik GPS presisi - bantu isi Alamat otomatis" />
+        <button onClick={() => setMapPicking(true)}
+          style={{ width: "100%", height: 46, borderRadius: 12, border: `1.5px solid ${manualLat ? "#15803D" : invalid.has("geo") ? "#F3C6C6" : "#ECEDF0"}`, background: manualLat ? "rgba(21,128,61,0.06)" : "#F6F7F9", color: manualLat ? "#15803D" : "#5A5A68", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+          {manualLat ? <Check size={15} /> : <MapIcon size={15} />} {manualLat ? "Titik Sudah Ditandai" : "Pilih di Peta"}
+        </button>
+        {manualLat != null ? (
           <div style={{ marginTop: 8, fontSize: 11, color: "#8A8A96", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
             Titik ditandai · {manualLat.toFixed(5)}, {manualLng.toFixed(5)}
           </div>
+        ) : invalid.has("geo") && (
+          <FieldError text="Titik GPS wajib diisi - tap Lokasi Saya, atau Pilih di Peta kalau mau menandai titik manual." />
         )}
-        <FieldLabel text="Alamat" top hint="Bisa diedit manual" />
-        <TextInput value={address} onChange={setAddress} placeholder="Alamat lengkap lokasi kegiatan" multiline />
+        <FieldLabel id="field-address" text="Alamat" required top hint="Boleh diedit manual" />
+        <TextInput value={address} onChange={setAddress} placeholder="Alamat lengkap lokasi kegiatan" multiline error={invalid.has("address")} />
+        {invalid.has("address") && <FieldError text="Alamat wajib diisi - pakai Lokasi Saya/Pilih di Peta utk auto-isi, atau ketik manual." />}
       </Card>
 
       {picking && (
@@ -1314,51 +1644,99 @@ function StepReview(p) {
   const planDateSummary = p.dates.length === 0 ? "-"
     : dateGroups.map((g) => (g.length === 1 ? g[0] : `${g[0]} s/d ${g[g.length - 1]}`)).join(", ");
   return (
-    <Card>
-      <ReviewRow k="Kategori" v={p.categories.join(", ") || "-"} />
-      <ReviewRow k="Event Name" v={p.eventName || "-"} />
-      <ReviewRow k="Plan Date" v={planDateSummary} />
-      {p.dates.length <= 1 ? (
-        <ReviewRow k="Waktu" v={(() => { const t = p.timesByDate?.[p.dates[0]]; return !t || t.isAllDay ? "Seharian" : `${t.startTime} – ${t.endTime}`; })()} />
-      ) : (
-        <div style={{ marginTop: 10 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#8A8A96", marginBottom: 6 }}>Waktu per Tanggal</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {p.dates.map((d) => {
-              const t = p.timesByDate?.[d];
-              return (
-                <div key={d} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 600 }}>
-                  <span style={{ color: "#5A5A68" }}>{d}</span>
-                  <span style={{ color: "#17181C", fontWeight: 800 }}>{!t || t.isAllDay ? "Seharian" : `${t.startTime} – ${t.endTime}`}</span>
-                </div>
-              );
-            })}
+    <>
+      <ReviewSection icon={CalendarDays} accent="#2563EB" title="Informasi Plan">
+        <ReviewRow k="Kategori" v={p.categories.join(", ") || "-"} />
+        <ReviewRow k="Event Name" v={p.eventName || "-"} />
+        <ReviewRow k="Plan Date" v={planDateSummary} />
+        {p.dates.length <= 1 ? (
+          <ReviewRow k="Waktu" v={(() => { const t = p.timesByDate?.[p.dates[0]]; return !t || t.isAllDay ? "Seharian" : `${t.startTime} – ${t.endTime}`; })()} />
+        ) : (
+          <div style={{ marginTop: 4, marginBottom: 4 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#8A8A96", margin: "6px 0" }}>Waktu per Tanggal</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {p.dates.map((d) => {
+                const t = p.timesByDate?.[d];
+                return (
+                  <div key={d} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 600 }}>
+                    <span style={{ color: "#5A5A68" }}>{d}</span>
+                    <span style={{ color: "#17181C", fontWeight: 800 }}>{!t || t.isAllDay ? "Seharian" : `${t.startTime} – ${t.endTime}`}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        <ReviewRow k="Micro Cluster" v={p.mcSummary || "-"} last />
+      </ReviewSection>
+
+      <ReviewSection icon={Tag} accent="#C6168D" title="Target & Estimasi">
+        <ReviewRow icon={CardSim} k="Target SP" v={`${fmtInt(p.targetSp)} unit · Rp ${fmtInt(p.targetSpRevenue)}`} />
+        <ReviewRow icon={RouterIcon} k="Target FWA" v={`${fmtInt(p.targetFwa)} unit · Rp ${fmtInt(p.targetFwaRevenue)}`} />
+        <ReviewRow icon={CardSim} k="Rebuy SP" v={`Rp ${fmtInt(p.targetRebuyPulsa)}`} />
+        <ReviewRow icon={RouterIcon} k="Rebuy FWA" v={`Rp ${fmtInt(p.targetRebuyData)}`} />
+        <ReviewRow icon={Receipt} k="Budget Cost" v={`Rp ${fmtInt(p.costEstimate)}`} last />
+
+        {/* Ringkasan estimasi ditonjolkan - gaya SAMA dgn TargetSummaryCard
+            di step Target, supaya angka paling penting (yg dipakai utk
+            keputusan Ajukan Plan) langsung kelihatan tanpa harus baca satu-
+            satu baris di atas. */}
+        <div style={{ marginTop: 12, borderRadius: 14, background: "linear-gradient(160deg,#17181C,#2A2B33)", padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9, minWidth: 0 }}>
+            <div style={{ width: 28, height: 28, borderRadius: 9, background: "rgba(255,255,255,0.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <TrendingUp size={13} color="#F5A3CB" />
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.3, textTransform: "uppercase", color: "rgba(255,255,255,0.55)" }}>Estimasi Total Revenue</div>
+              <div style={{ marginTop: 2, fontSize: 15, fontWeight: 800, color: "#fff" }}>Rp {fmtInt(p.targetEstRevenue)}</div>
+            </div>
+          </div>
+          <div style={{ flexShrink: 0, textAlign: "right" }}>
+            <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.3, textTransform: "uppercase", color: "rgba(255,255,255,0.55)" }}>Cost Ratio</div>
+            <div style={{ marginTop: 2, fontSize: 15, fontWeight: 800, color: p.targetCostRatio == null ? "#fff" : p.targetCostRatio <= 30 ? "#4ADE80" : p.targetCostRatio <= 60 ? "#FBBF24" : "#F87171" }}>
+              {p.targetCostRatio == null ? "-" : `${p.targetCostRatio.toFixed(1)}%`}
+            </div>
           </div>
         </div>
-      )}
-      <ReviewRow k="Micro Cluster" v={p.mcSummary || "-"} />
-      <Divider />
-      <ReviewRow k="Target SP/FWA" v={`${fmtInt(p.targetSp)}/${fmtInt(p.targetFwa)}`} />
-      <ReviewRow k="Rebuy Pulsa" v={`Rp ${fmtInt(p.targetRebuyPulsa)}`} />
-      <ReviewRow k="Rebuy Data" v={`Rp ${fmtInt(p.targetRebuyData)}`} />
-      <ReviewRow k="Budget Cost" v={`Rp ${fmtInt(p.costEstimate)}`} />
-      <Divider />
-      <ReviewRow k="Site Utama" v={p.primarySite ? p.primarySite.site_id : "-"} />
-      {p.extraSites.length > 0 && <ReviewRow k="Site Tambahan" v={p.extraSites.map((s) => s.site_id).join(", ")} />}
-      <ReviewRow k="POI Type" v={p.poiType || "-"} />
-      <ReviewRow k="Network" v={p.network || "-"} />
-      <ReviewRow k="Area Potential" v={p.area || "-"} />
-      <ReviewRow k="Alamat" v={p.address || "-"} />
-      <ReviewRow k="Titik GPS" v={p.manualLat ? `${p.manualLat.toFixed(5)}, ${p.manualLng.toFixed(5)}` : "-"} />
-    </Card>
+      </ReviewSection>
+
+      <ReviewSection icon={MapPin} accent="#7C3AED" title="Lokasi">
+        <ReviewRow icon={SiteTowerIcon} k="Site Utama" v={p.primarySite ? p.primarySite.site_id : "-"} />
+        {p.extraSites.length > 0 && <ReviewRow icon={SiteTowerIcon} k="Site Tambahan" v={p.extraSites.map((s) => s.site_id).join(", ")} />}
+        <ReviewRow icon={Building2} k="POI Type" v={p.poiType || "-"} />
+        <ReviewRow icon={Wifi} k="Network" v={p.network || "-"} />
+        <ReviewRow icon={TrendingUp} k="Area Potential" v={p.area || "-"} />
+        <ReviewRow icon={MapPin} k="Alamat" v={p.address || "-"} />
+        <ReviewRow icon={Crosshair} k="Titik GPS" v={p.manualLat ? `${p.manualLat.toFixed(5)}, ${p.manualLng.toFixed(5)}` : "-"} last />
+      </ReviewSection>
+    </>
+  );
+}
+
+/** Satu kartu section di halaman Review - header ikon bulat berwarna + judul
+ * (gaya SAMA dgn SectionCard di halaman Detail Aktivitas), supaya Review
+ * kelihatan terstruktur per kelompok info (Informasi Plan/Target &
+ * Estimasi/Lokasi) alih-alih satu daftar rata panjang tanpa pembeda spt
+ * sebelumnya. */
+function ReviewSection({ icon: Icon, accent, title, children }) {
+  return (
+    <div style={{ borderRadius: 18, background: "#FFFFFF", border: "1px solid #EFEFF2", boxShadow: "0 2px 10px rgba(23,24,28,0.04)", padding: "14px 16px", marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 8 }}>
+        <div style={{ width: 28, height: 28, borderRadius: 9, background: `${accent}14`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Icon size={14} color={accent} />
+        </div>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>{title}</span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column" }}>{children}</div>
+    </div>
   );
 }
 
 // ═══════════════════════════════ Primitives ════════════════════════════════
 const inputBase = { width: "100%", height: 48, padding: "0 14px", borderRadius: 12, background: "#F6F7F9", border: "1.5px solid #ECEDF0", fontSize: 14, fontWeight: 500, color: "#17181C", fontFamily: FF, outline: "none", boxSizing: "border-box" };
 
-function Card({ children, style }) {
-  return <div style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 18, padding: 16, ...style }}>{children}</div>;
+function Card({ children, style, id }) {
+  return <div id={id} style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 18, padding: 16, scrollMarginTop: 140, ...style }}>{children}</div>;
 }
 function Divider() { return <div style={{ height: 1, background: "#F0F0F3", margin: "12px 0" }} />; }
 
@@ -1447,9 +1825,10 @@ function StepLine({ visible, filled, side }) {
     </div>
   );
 }
-function FieldLabel({ text, required, hint, top }) {
+function FieldLabel({ text, required, hint, top, icon: Icon, id }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", marginTop: top ? 16 : 0, marginBottom: 7 }}>
+    <div id={id} style={{ display: "flex", alignItems: "center", marginTop: top ? 16 : 0, marginBottom: 7, scrollMarginTop: 140 }}>
+      {Icon && <Icon size={12} color="#8A8A96" style={{ marginRight: 5, flexShrink: 0 }} />}
       <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.4, textTransform: "uppercase", color: "#8A8A96" }}>{text}</span>
       {required && <span style={{ color: "#ED1C24", fontWeight: 800, marginLeft: 3 }}>*</span>}
       {hint && <span style={{ marginLeft: "auto", fontSize: 10.5, color: "#B0B0BA", fontWeight: 500 }}>{hint}</span>}
@@ -1539,9 +1918,9 @@ function GroupedSelectPills({ groups, selected, onToggle, placeholder }) {
     </div>
   );
 }
-function SegmentedControl({ options, value, onChange }) {
+function SegmentedControl({ options, value, onChange, error }) {
   return (
-    <div style={{ display: "flex", background: "#F6F7F9", borderRadius: 12, padding: 3 }}>
+    <div style={{ display: "flex", background: error ? "#FDECEC" : "#F6F7F9", borderRadius: 12, padding: 3, border: error ? "1px solid #F3C6C6" : "1px solid transparent" }}>
       {options.map((o) => {
         const active = value === o;
         return (
@@ -1582,41 +1961,17 @@ function AddSiteRow({ label, enabled, error, compact, onClick }) {
     </button>
   );
 }
-function ReviewRow({ k, v }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "6px 0" }}>
-      <span style={{ fontSize: 12.5, color: "#8A8A96", fontWeight: 600 }}>{k}</span>
-      <span style={{ fontSize: 13, color: "#17181C", fontWeight: 700, textAlign: "right" }}>{v}</span>
-    </div>
-  );
-}
-function SitePickerSheet({ items, onClose, onSelect }) {
-  const [q, setQ] = useState("");
-  const filtered = items.filter((s) => !q.trim() || s.site_id.toLowerCase().includes(q.toLowerCase()) || (s.site_name || "").toLowerCase().includes(q.toLowerCase()));
-  return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(23,24,28,0.45)", zIndex: 70, display: "flex", alignItems: "flex-end" }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, margin: "0 auto", maxHeight: "75vh", display: "flex", flexDirection: "column", background: "#FFFFFF", borderRadius: "22px 22px 0 0", fontFamily: FF }}>
-        <div style={{ width: 40, height: 4, borderRadius: 3, background: "#E4E5EA", margin: "10px auto 4px" }} />
-        <div style={{ padding: "10px 20px" }}>
-          <div style={{ fontSize: 15, fontWeight: 800 }}>Pilih Site</div>
-          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari site…"
-            style={{ ...inputBase, marginTop: 10, height: 42 }} />
-        </div>
-        <div style={{ overflowY: "auto", padding: "0 20px 20px" }}>
-          {filtered.length === 0 && <div style={{ padding: "24px 0", textAlign: "center", color: "#8A8A96", fontSize: 12.5 }}>Tidak ada site cocok.</div>}
-          {filtered.map((s) => (
-            <button key={s.site_id} onClick={() => onSelect(s)}
-              style={{ width: "100%", textAlign: "left", padding: "12px 10px", borderRadius: 10, border: "none", background: "none", borderBottom: "1px solid #F0F0F3", cursor: "pointer" }}>
-              <div style={{ fontSize: 13.5, fontWeight: 700, color: "#17181C" }}>{s.site_id}</div>
-              {s.site_name && <div style={{ fontSize: 11.5, color: "#8A8A96", marginTop: 2 }}>{s.site_name}</div>}
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
 
+function ReviewRow({ icon: Icon, k, v, last }) {
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, padding: "7px 0", borderBottom: last ? "none" : "1px solid #F5F5F7" }}>
+      <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#8A8A96", fontWeight: 600, flexShrink: 0 }}>
+        {Icon && <Icon size={12} color="#B0B0BA" />} {k}
+      </span>
+      <span style={{ fontSize: 12.5, color: "#17181C", fontWeight: 700, textAlign: "right" }}>{v}</span>
+    </div>
+  );
+}
 // Tag brand kecil - IM3 pakai kuning + teks hitam (identitas brand yg
 // diminta), TRI tetap pink + teks putih. Warna & teks SELALU dipasangkan
 // lewat dua map ini (bukan cuma warna) supaya kontrasnya benar di semua

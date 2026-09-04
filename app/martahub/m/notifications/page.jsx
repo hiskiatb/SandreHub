@@ -10,7 +10,7 @@
  */
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Bell, ArrowRightLeft, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { ArrowLeft, Bell, ArrowRightLeft, CheckCircle2, XCircle, Clock, MessageSquareWarning } from "lucide-react";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { fetchNotifications, markAllNotificationsRead, markNotificationRead, notifTypeMeta, translateNotifRoute } from "../_shared/notifData";
 
@@ -20,6 +20,7 @@ const TYPE_ICON = {
   msisdn_transfer_rejected: XCircle,
   activity_approved: CheckCircle2,
   activity_rejected: XCircle,
+  activity_plan_revision_needed: MessageSquareWarning,
 };
 
 function timeAgo(dateStr) {
@@ -64,7 +65,7 @@ export default function NotificationsPage() {
       markNotificationRead(n.id).catch(() => {});
       setRows((prev) => prev.map((r) => r.id === n.id ? { ...r, read_at: new Date().toISOString() } : r));
     }
-    const target = translateNotifRoute(n.route);
+    const target = translateNotifRoute(n.route, n.type);
     if (target) router.push(target);
   }
 
@@ -107,7 +108,7 @@ function NotifRow({ n, onOpen }) {
   const meta = notifTypeMeta(n.type);
   const Icon = TYPE_ICON[n.type] || Clock;
   const unread = !n.read_at;
-  const clickable = !!translateNotifRoute(n.route);
+  const clickable = !!translateNotifRoute(n.route, n.type);
   return (
     <button onClick={onOpen} disabled={!clickable}
       style={{

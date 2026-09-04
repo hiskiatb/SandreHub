@@ -33,8 +33,7 @@ const mk = (d) => ({
 });
 
 const ROLES = [
-  { value: "bme",     label: "BME",     desc: "Brand Marketing Executive" },
-  { value: "rge",     label: "RGE",     desc: "Retail Grassroot Executive" },
+  { value: "bme_rge", label: "BME/RGE", desc: "Branch Marketing / Retail Grassroot Executive" },
   { value: "tm_im3",  label: "TM IM3",  desc: "Territory Manager — IM3" },
   { value: "tm_tri",  label: "TM Tri",  desc: "Territory Manager — Tri" },
   { value: "head_tm", label: "Head TM", desc: "Head of Territory Management" },
@@ -141,7 +140,7 @@ export default function MartaRegisterPage() {
     });
   }, []);
 
-  const needsBrand = role === "bme" || role === "rge";
+  const needsBrand = role === "bme_rge";
   const isManager  = ["tm_im3", "tm_tri", "head_tm"].includes(role);
 
   const pwStrong   = password.length >= 8;

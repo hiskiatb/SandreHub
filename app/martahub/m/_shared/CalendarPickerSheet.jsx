@@ -25,7 +25,7 @@
  * `allDateTimesValid()`, `planTimeFields()`.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, X, Check, Loader2, MapPin } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, X, Check, Loader2, MapPin, CalendarDays, Clock, Info } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import { FF, BRAND } from "./MobileShell";
 import { fmtDate, statusMeta, fmtInt } from "./activityUi";
@@ -89,6 +89,7 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
   const [timesByDate, setTimesByDate] = useState(() => syncTimesByDate(picked, initialTimesByDate));
   useEffect(() => {
     setTimesByDate((prev) => syncTimesByDate(picked, prev));
+    if (picked.length === 0) setSheetSnap("collapsed");
   }, [picked]);
   // Baris tanggal mana + field jam mana (mulai/selesai) yg sedang membuka
   // roda pemutar - hanya satu yg terbuka sekaligus, gaya iOS date picker.
@@ -113,7 +114,42 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
   const [dragPx, setDragPx] = useState(0); // offset drag berjalan (live), px
   const dragState = useRef({ dragging: false, startY: 0, lastPx: 0 });
 
+  // Header (tombol X + judul + nav bulan) tingginya IKUT BERUBAH per
+  // perangkat (safe-area-inset-top beda2), jadi tidak bisa diasumsikan
+  // angka tetap. Diukur nyata lewat ResizeObserver, dipakai sbg batas atas
+  // (maxHeight) panel "Atur Waktu" di bawah - TANPA batas ini, snap "full"
+  // (92vh) + tinggi header bisa MELEBIHI tinggi layar (100dvh), dan krn
+  // panel itu flexShrink:0, kelebihannya bukan bikin panel menyusut tapi
+  // malah kepotong mentah di bawah layar (tombol "Gunakan Tanggal & Waktu
+  // Ini" ikut hilang kepotong - itu keluhan "terpotong").
+  const headerRef = useRef(null);
+  const [headerH, setHeaderH] = useState(150);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      const h = entries[0]?.contentRect?.height;
+      if (h) setHeaderH(Math.ceil(h));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   function handleDragStart(e) {
+    // stopPropagation SEJAK touchstart - tanpa ini gesture geser handle di
+    // sini ikut "kebaca" jg oleh usePullToRefresh (MobileShell.jsx) yg
+    // listen di container HALAMAN DI BELAKANG sheet ini (sheet dirender sbg
+    // children di dalamnya) → menggeser handle ke bawah ikut mentrigger
+    // pull-to-refresh, yg pas ambang tarikannya terpenuhi langsung
+    // `window.location.reload()` - itulah yg kelihatan spt "error balik ke
+    // halaman sebelumnya" (state wizard hilang krn full reload).
+    e.stopPropagation();
+    // Belum ada tanggal terpilih → tidak ada apa pun utk ditampilkan di
+    // panel "Atur Waktu", jadi jangan biarkan bisa ditarik naik (dulu ini
+    // yg bikin "ngebug": panel bisa ditarik ke half/full padahal isinya
+    // cuma placeholder kosong, jadi area putih besar kosong menutupi
+    // kalender di atasnya percuma).
+    if (picked.length === 0) return;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
     dragState.current = { dragging: true, startY: clientY, lastPx: 0 };
     window.addEventListener("mousemove", handleDragMove);
@@ -122,6 +158,7 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
     window.addEventListener("touchend", handleDragEnd);
   }
   function handleDragMove(e) {
+    e.stopPropagation();
     if (!dragState.current.dragging) return;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
     const px = clientY - dragState.current.startY;
@@ -129,7 +166,8 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
     setDragPx(px);
     if (e.cancelable) e.preventDefault();
   }
-  function handleDragEnd() {
+  function handleDragEnd(e) {
+    e?.stopPropagation?.();
     dragState.current.dragging = false;
     window.removeEventListener("mousemove", handleDragMove);
     window.removeEventListener("mouseup", handleDragEnd);
@@ -266,38 +304,65 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
   const panelHeight = dragPx !== 0 ? `calc(${SNAP[sheetSnap]}vh - ${dragPx}px)` : `${SNAP[sheetSnap]}vh`;
 
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 90, background: "#F4F5F7", fontFamily: FF, display: "flex", flexDirection: "column" }}>
-      {/* Mini header (tombol tutup + judul) SENGAJA dipisah dari area yang
-          bisa tergulung di bawahnya - supaya tetap selalu terlihat & bisa
-          diklik walau panel "Atur Waktu" sedang ditarik full (menutupi
-          hampir semua layar). */}
-      <div style={{ flexShrink: 0, padding: "calc(env(safe-area-inset-top,0px) + 14px) 18px 10px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <button onClick={onClose} style={{ width: 36, height: 36, borderRadius: 11, background: "#FFFFFF", border: "1px solid #E4E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
-          <X size={16} />
-        </button>
-        <div style={{ fontSize: 15, fontWeight: 800 }}>Pilih Plan Date</div>
-        <div style={{ width: 36 }} />
+    <div
+      // Sheet ini full-viewport (fixed inset:0) tapi tetap DIRENDER sbg
+      // children di dalam container halaman yg jd tempat MobileShell
+      // memasang listener pull-to-refresh (lihat catatan panjang di
+      // handleDragStart di atas) - jadi SEMUA gesture sentuh di mana pun
+      // dlm sheet ini (bukan cuma di handle "Atur Waktu") wajib berhenti di
+      // sini, tdk pernah bubble ke halaman di belakangnya. Tanpa ini, mulai
+      // menggeser dari titik mana pun selain handle (mis. dari judul panel,
+      // atau grid kalender) tetap bisa "kebaca" jd tarikan pull-to-refresh
+      // → `window.location.reload()` → sheet & progress wizard hilang,
+      // terasa spt "balik ke halaman Buat Plan" begitu saja.
+      // stopPropagation cukup di touchstart saja - itu satu-satunya event
+      // yg dipakai MobileShell (usePullToRefresh) utk memutuskan mulai
+      // "aktif" menarik-refresh atau tidak (lihat onTouchStart di sana:
+      // begitu tdk pernah nyampai ke listernya, `active` di situ tetap
+      // false selamanya utk sesi sentuh ini, jd touchmove/touchend di sana
+      // otomatis no-op walau sempat kebaca). SENGAJA TIDAK stopPropagation
+      // di touchmove/touchend di sini - drag "Atur Waktu" panel (di bawah)
+      // pakai `window.addEventListener` utk mengikuti drag, & window ada
+      // LEBIH TINGGI drpd div ini di jalur bubble; kalau touchmove/touchend
+      // di-stop di sini, event itu justru tdk akan pernah nyampai ke
+      // `window` sama sekali - itu yg kmrn bikin drag jd tidak bisa
+      // diturunkan sama sekali.
+      onTouchStart={(e) => e.stopPropagation()}
+      style={{ position: "fixed", inset: 0, zIndex: 90, background: "#F4F5F7", fontFamily: FF, display: "flex", flexDirection: "column" }}>
+      {/* Header SENGAJA dipisah dari area yang bisa tergulung di bawahnya -
+          supaya tetap selalu terlihat & bisa diklik walau panel "Atur Waktu"
+          sedang ditarik full (menutupi hampir semua layar). Kartu putih
+          dgn bayangan tipis biar terasa "mengambang" di atas isi kalender,
+          bukan cuma teks polos nempel di background abu-abu. */}
+      <div ref={headerRef} style={{ flexShrink: 0, background: "#FFFFFF", borderRadius: "0 0 20px 20px", boxShadow: "0 6px 18px rgba(23,24,28,0.05)", position: "relative", zIndex: 1 }}>
+        <div style={{ padding: "calc(env(safe-area-inset-top,0px) + 14px) 18px 4px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <button onClick={onClose} style={{ width: 34, height: 34, borderRadius: 11, background: "#F6F7F9", border: "1px solid #ECEDF0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
+            <X size={15} />
+          </button>
+          <div style={{ fontSize: 16, fontWeight: 800, color: "#17181C", letterSpacing: -0.2 }}>Pilih Plan Date</div>
+          <div style={{ width: 34 }} />
+        </div>
+
+        {/* Month nav - dibuat lebih tegas: nama bulan lebih besar & jadi
+            fokus utama, tombol prev/next bulat solid gaya "pill" spy lebih
+            enak disentuh & terasa lebih premium drpd kotak border tipis. */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px 14px" }}>
+          <button onClick={() => changeMonth(-1)} disabled={atLaunchMonth}
+            style={{ width: 36, height: 36, borderRadius: "50%", background: atLaunchMonth ? "#F6F7F9" : "#17181C", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: atLaunchMonth ? "default" : "pointer", color: atLaunchMonth ? "#D8D9E0" : "#fff" }}>
+            <ChevronLeft size={17} />
+          </button>
+          <div style={{ fontSize: 17, fontWeight: 800, color: "#17181C", letterSpacing: -0.3 }}>{MONTH_NAMES_FULL[viewMonth]} <span style={{ color: "#B0B0BA", fontWeight: 700 }}>{viewYear}</span></div>
+          <button onClick={() => changeMonth(1)}
+            style={{ width: 36, height: 36, borderRadius: "50%", background: "#17181C", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#fff" }}>
+            <ChevronRight size={17} />
+          </button>
+        </div>
       </div>
 
       {/* Kalender - discroll kalau ruangnya diperas panel bawah yang sedang
           ditarik lebih besar, supaya tidak ada yang terpotong. */}
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
       <div style={{ padding: "0 18px", flexShrink: 0 }}>
-        <div style={{ textAlign: "center", fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>
-          Ketuk tanggal utk memilih - berdekatan otomatis jadi rentang
-        </div>
-
-        {/* Month nav */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 16 }}>
-          <button onClick={() => changeMonth(-1)} disabled={atLaunchMonth}
-            style={{ width: 34, height: 34, borderRadius: 10, background: "#FFFFFF", border: "1px solid #E4E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: atLaunchMonth ? "default" : "pointer", color: atLaunchMonth ? "#D8D9E0" : "#5A5A68" }}>
-            <ChevronLeft size={17} />
-          </button>
-          <div style={{ fontSize: 15.5, fontWeight: 800, color: "#17181C" }}>{MONTH_NAMES_FULL[viewMonth]} {viewYear}</div>
-          <button onClick={() => changeMonth(1)} style={{ width: 34, height: 34, borderRadius: 10, background: "#FFFFFF", border: "1px solid #E4E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
-            <ChevronRight size={17} />
-          </button>
-        </div>
       </div>
 
       {/* Grid */}
@@ -321,7 +386,14 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
                 style={{
                   position: "relative", aspectRatio: "1", borderRadius: radius,
                   border: isToday && !sel ? "1.5px solid #ED1C24" : "1.5px solid transparent",
-                  background: sel ? (role === "solo" ? BRAND : role === "mid" ? "rgba(237,28,36,0.16)" : BRAND) : "transparent",
+                  // Semua sel terpilih (solo/start/mid/end) pakai warna solid yg
+                  // SAMA - dulu sel "mid" dikasih background merah muda pudar
+                  // dgn teks putih di atasnya (nyaris tak terbaca, & terasa
+                  // beda status drpd tanggal terpilih lainnya). Sekarang
+                  // rentang tersambung tetap terlihat jelas sbg SATU pil utuh
+                  // yg semuanya "tanggal terpilih", hanya bentuk sudutnya yg
+                  // beda (bulat di ujung, datar di tengah) - bukan warnanya.
+                  background: sel ? BRAND : "transparent",
                   color: !c.inMonth ? "#D0D0D8" : sel ? "#fff" : "#17181C",
                   fontFamily: FF, fontSize: 13, fontWeight: sel ? 800 : 600, cursor: "pointer",
                   display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
@@ -353,40 +425,51 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
           mana pun & sejauh apa pun, nanti otomatis meloncat ke tingkat
           terdekat saat dilepas; sekali ketuk pada handle = naik/turun satu
           tingkat, cepat & tidak perlu presisi menggeser. */}
-      <div style={{ height: panelHeight, flexShrink: 0, background: "#FFFFFF", borderRadius: "20px 20px 0 0", boxShadow: "0 -6px 24px rgba(23,24,28,0.08)", display: "flex", flexDirection: "column", overflow: "hidden", transition: dragPx === 0 ? "height .28s cubic-bezier(.4,0,.2,1)" : "none" }}>
+      <div style={{ height: panelHeight, maxHeight: `calc(100dvh - ${headerH}px)`, flexShrink: 0, background: "#FFFFFF", borderRadius: "20px 20px 0 0", boxShadow: "0 -6px 24px rgba(23,24,28,0.08)", display: "flex", flexDirection: "column", overflow: "hidden", transition: dragPx === 0 ? "height .28s cubic-bezier(.4,0,.2,1)" : "none" }}>
         <div
           onMouseDown={handleDragStart}
           onTouchStart={handleDragStart}
-          onClick={() => setSheetSnap((s) => (s === "collapsed" ? "half" : s === "half" ? "full" : "collapsed"))}
-          style={{ flexShrink: 0, padding: "10px 0 6px", cursor: "grab", touchAction: "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+          onClick={() => picked.length > 0 && setSheetSnap((s) => (s === "collapsed" ? "half" : s === "half" ? "full" : "collapsed"))}
+          style={{ flexShrink: 0, padding: "10px 0 6px", cursor: picked.length === 0 ? "default" : "grab", touchAction: "none", display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
           <div style={{ width: 40, height: 4, borderRadius: 3, background: "#D8D9E0" }} />
         </div>
 
-        <div style={{ padding: "2px 20px 0", flexShrink: 0, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>
-              {picked.length === 0 ? "Pilih tanggal dulu" : `Atur Waktu · ${picked.length} tanggal`}
+        {picked.length === 0 ? (
+          // Belum ada tanggal dipilih - state ini SELALU collapsed (drag &
+          // ekspansi dimatikan di handleDragStart/handle-tap saat
+          // picked.length===0), jadi didesain sbg SATU baris rapi yg
+          // mengisi tinggi panel collapsed dgn nyaman drpd judul kecil di
+          // pojok kiri atas + sisa ruang kosong menganggur di bawahnya.
+          <div style={{ flex: 1, padding: "6px 20px 4px", display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ flexShrink: 0, width: 40, height: 40, borderRadius: 12, background: "linear-gradient(135deg,#FFF1F1,#FDECEC)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <CalendarDays size={19} color="#ED1C24" />
             </div>
-            {summary && <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{summary}</div>}
-            {picked.length > 0 && sheetSnap === "collapsed" && (
-              <div style={{ marginTop: 4, fontSize: 10.5, color: "#B0B0BA", fontWeight: 600 }}>Tarik ke atas utk atur waktu tiap tanggal</div>
-            )}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C" }}>Belum ada tanggal dipilih</div>
+              <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96", fontWeight: 600, lineHeight: 1.4 }}>Ketuk tanggal di kalender di atas utk mulai atur waktu</div>
+            </div>
           </div>
-          {picked.length > 0 && (
-            <button onClick={() => setSheetSnap((s) => (s === "full" ? "collapsed" : "full"))}
-              style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 8, background: "#F6F7F9", border: "1px solid #ECEDF0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#8A8A96" }}>
-              {sheetSnap === "full" ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-            </button>
-          )}
-        </div>
+        ) : (
+          <>
+            <div style={{ padding: "2px 20px 0", flexShrink: 0, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>
+                  Atur Waktu · {picked.length} tanggal
+                </div>
+                {summary && <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{summary}</div>}
+                {sheetSnap === "collapsed" && (
+                  <div style={{ marginTop: 4, fontSize: 10.5, color: "#B0B0BA", fontWeight: 600 }}>Tarik ke atas utk atur waktu tiap tanggal</div>
+                )}
+              </div>
+              <button onClick={() => setSheetSnap((s) => (s === "full" ? "collapsed" : "full"))}
+                style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 8, background: "#F6F7F9", border: "1px solid #ECEDF0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#8A8A96" }}>
+                {sheetSnap === "full" ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+              </button>
+            </div>
 
         {sheetSnap !== "collapsed" && (
           <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "10px 20px 12px" }}>
-            {picked.length === 0 ? (
-              <div style={{ fontSize: 11.5, color: "#B0B0BA", fontWeight: 600, padding: "24px 0", textAlign: "center" }}>
-                Ketuk satu atau beberapa tanggal di kalender di atas.
-              </div>
-            ) : loading ? (
+            {loading ? (
               <div style={{ display: "flex", justifyContent: "center", padding: "16px 0" }}>
                 <Loader2 size={18} color="#ED1C24" style={{ animation: "mspin .9s linear infinite" }} />
               </div>
@@ -395,6 +478,7 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
                 {[...picked].sort().map((d) => (
                   <DateTimeRow key={d}
                     label={shortDateLabel(d)}
+                    dateKey={d}
                     time={timesByDate[d] || DEFAULT_DATE_TIME}
                     otherActs={byDate[d] || []}
                     onOpenDetail={setDetailAct}
@@ -411,6 +495,8 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
           </div>
         )}
         {sheetSnap === "collapsed" && <div style={{ flex: 1 }} />}
+          </>
+        )}
 
         <div style={{ padding: "10px 20px calc(env(safe-area-inset-bottom,0px) + 16px)", flexShrink: 0, borderTop: "1px solid #F0F0F3" }}>
           <button onClick={() => onConfirm(picked, timesByDate)} disabled={picked.length === 0 || !allValid}
@@ -489,7 +575,88 @@ function ActivityDetailPopup({ activity: a, onClose }) {
  * sudah ada di tanggal ini - disebutkan satu-satu (event_name + status),
  * bukan cuma angka, dan bisa diketuk utk lihat detailnya lewat popup
  * (`onOpenDetail`). */
-function DateTimeRow({ label, time, otherActs, onOpenDetail, editingField, onToggleAllDay, onOpenField, onChangeStart, onChangeEnd }) {
+/** Satu baris activity lain yg sudah ada di tanggal itu - TIDAK LANGSUNG
+ * buka popup detail lengkap saat diketuk (dulu begitu, kurang jelas ada
+ * info apa sebelum membukanya). Sekarang diketuk = expand/collapse dropdown
+ * INLINE kecil dulu (lokasi + MC + target) - cukup utk gambaran cepat;
+ * kalau masih mau lihat detail penuh, ada tombol "Lihat detail lengkap"
+ * di dalam dropdown-nya yg baru membuka `ActivityDetailPopup`. */
+/** Waktu activity LAIN ini di TANGGAL YANG SAMA yg sedang dilihat (bukan
+ * cuma waktu global activity itu) - activity multi-tanggal bisa punya jam
+ * berbeda per tanggal lewat `plan_date_times` (JSON per tanggal), jadi
+ * dicek dulu di situ sebelum fallback ke is_all_day/start_time/end_time
+ * tingkat activity (utk activity single-date/lama). */
+function otherActTimeLabel(a, dateKey) {
+  let perDate = null;
+  if (dateKey && a.plan_date_times) {
+    try {
+      const map = typeof a.plan_date_times === "string" ? JSON.parse(a.plan_date_times) : a.plan_date_times;
+      perDate = map?.[dateKey] || null;
+    } catch { /* biarkan null, fallback di bawah */ }
+  }
+  const isAllDay = perDate ? !!perDate.is_all_day : a.is_all_day !== false;
+  if (isAllDay) return "Seharian";
+  const st = (perDate?.start_time || a.start_time || "").slice(0, 5);
+  const et = (perDate?.end_time || a.end_time || "").slice(0, 5);
+  if (!st || !et) return "Seharian";
+  return `${st.replace(":", ".")} - ${et.replace(":", ".")}`;
+}
+
+function OtherActRow({ act: a, dateKey, onOpenDetail }) {
+  const [open, setOpen] = useState(false);
+  const meta = statusMeta(a.status);
+  const location = a.address || "Lokasi belum diisi";
+  const timeLabel = otherActTimeLabel(a, dateKey);
+  return (
+    <div style={{ background: "#FFFFFF", border: "1px solid rgba(180,83,9,0.14)", borderRadius: 9, overflow: "hidden" }}>
+      <button onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "flex", alignItems: "center", gap: 7, width: "100%", textAlign: "left", cursor: "pointer",
+          background: "none", border: "none", padding: "6px 6px 6px 9px", fontFamily: FF,
+        }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#8A5A0F", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {a.event_name || "Activity tanpa nama"}
+        </span>
+        <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 999, color: meta.color, background: meta.bg, whiteSpace: "nowrap" }}>
+          {meta.label}
+        </span>
+        <span style={{ flexShrink: 0, width: 20, height: 20, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", color: "#B8860B" }}>
+          {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+        </span>
+      </button>
+
+      {/* Lokasi & JAM di tanggal ini SELALU langsung terlihat (bukan cuma
+          muncul setelah dropdown dibuka) - dua info itu yg paling sering
+          dicari duluan (di mana & jam berapa) sebelum memutuskan mau buka
+          detail lengkapnya atau tidak. Info site ID SENGAJA tidak
+          ditampilkan di sini - kurang berguna dibanding alamat & jam. */}
+      <div style={{ padding: "0 9px 7px 9px", display: "flex", flexDirection: "column", gap: 4 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 5 }}>
+          <MapPin size={11} color="#B8860B" style={{ flexShrink: 0, marginTop: 1.5, opacity: 0.75 }} />
+          <span style={{ fontSize: 10.5, color: "#8A5A0F", fontWeight: 600, lineHeight: 1.35, opacity: 0.85 }}>{location}</span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <Clock size={11} color="#B8860B" style={{ flexShrink: 0, opacity: 0.75 }} />
+          <span style={{ fontSize: 10.5, color: "#8A5A0F", fontWeight: 700, opacity: 0.85 }}>{timeLabel}</span>
+        </div>
+      </div>
+
+      {open && (
+        <div style={{ padding: "0 9px 9px", borderTop: "1px dashed rgba(180,83,9,0.2)", marginTop: -1 }}>
+          <div style={{ paddingTop: 8, fontSize: 10.5, color: "#8A5A0F", fontWeight: 600, lineHeight: 1.5 }}>
+            {a.mc || "MC belum diisi"} · Target {fmtInt(a.target_sp)}/{fmtInt(a.target_fwa)} SP/FWA
+          </div>
+          <button onClick={() => onOpenDetail(a)}
+            style={{ marginTop: 8, width: "100%", height: 32, borderRadius: 8, border: "1px solid rgba(180,83,9,0.25)", background: "rgba(180,83,9,0.08)", color: "#8A5A0F", fontSize: 11, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>
+            Lihat Detail Lengkap
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DateTimeRow({ label, dateKey, time, otherActs, onOpenDetail, editingField, onToggleAllDay, onOpenField, onChangeStart, onChangeEnd }) {
   const invalid = !time.isAllDay && (!time.startTime || !time.endTime || time.startTime >= time.endTime);
   return (
     <div style={{ border: `1.5px solid ${invalid ? "#F3C6C6" : "#ECEDF0"}`, borderRadius: 14, overflow: "hidden", background: "#FBFBFC" }}>
@@ -505,34 +672,35 @@ function DateTimeRow({ label, time, otherActs, onOpenDetail, editingField, onTog
         </div>
       </div>
 
-      {/* Sebutkan SATU-SATU activity plan yg sudah ada (bukan cuma angka) -
-          tiap baris bisa diketuk utk lihat detailnya lewat popup, supaya
-          pengguna tahu persis apa isinya sebelum menambah plan baru di
-          tanggal yang sama. */}
+      {/* Dipisah jadi SECTION SENDIRI yg jelas berlabel (ikon + judul +
+          garis pemisah dari bagian atur waktu) - dulu daftar plan lain ini
+          nempel langsung di bawah toggle "Seharian" tanpa label apa pun,
+          jadi ambigu spt bagian dari kontrol waktu itu sendiri. Sekarang
+          jelas: "sudah ada plan LAIN di tanggal ini (bukan yg lagi dibuat)",
+          & ttp bisa diketuk per baris utk lihat detail sebelum menambah
+          plan baru di tanggal yg sama. */}
       {otherActs && otherActs.length > 0 && (
-        <div style={{ padding: "0 13px 10px", display: "flex", flexDirection: "column", gap: 5 }}>
-          {otherActs.map((a) => {
-            const meta = statusMeta(a.status);
-            return (
-              <button key={a.id} onClick={() => onOpenDetail(a)}
-                style={{
-                  display: "flex", alignItems: "center", gap: 7, width: "100%", textAlign: "left", cursor: "pointer",
-                  background: "rgba(180,83,9,0.06)", border: "1px solid rgba(180,83,9,0.14)", borderRadius: 9, padding: "6px 9px", fontFamily: FF,
-                }}>
-                <span style={{ fontSize: 11, fontWeight: 700, color: "#B45309", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {a.event_name || "Activity tanpa nama"}
-                </span>
-                <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 999, color: meta.color, background: meta.bg, whiteSpace: "nowrap" }}>
-                  {meta.label}
-                </span>
-              </button>
-            );
-          })}
+        <div style={{ margin: "0 13px 10px", padding: "9px 10px", borderRadius: 11, background: "rgba(180,83,9,0.05)", border: "1px solid rgba(180,83,9,0.16)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 7 }}>
+            <Info size={11.5} color="#B45309" />
+            <span style={{ fontSize: 10, fontWeight: 800, color: "#B45309", textTransform: "uppercase", letterSpacing: 0.3 }}>
+              {otherActs.length} Plan Lain Sudah Ada
+            </span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            {otherActs.map((a) => (
+              <OtherActRow key={a.id} act={a} dateKey={dateKey} onOpenDetail={onOpenDetail} />
+            ))}
+          </div>
         </div>
       )}
 
       {!time.isAllDay && (
-        <div style={{ padding: "0 13px 12px" }}>
+        <div style={{ padding: "0 13px 12px", ...(otherActs && otherActs.length > 0 ? { borderTop: "1px solid #F0F0F3", paddingTop: 12 } : {}) }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 8 }}>
+            <Clock size={11.5} color="#B0B0BA" />
+            <span style={{ fontSize: 9.5, fontWeight: 800, color: "#B0B0BA", textTransform: "uppercase", letterSpacing: 0.3 }}>Jam Kegiatan</span>
+          </div>
           <div style={{ display: "flex", alignItems: "flex-end", gap: 10 }}>
             <button onClick={() => onOpenField("start")} style={{ background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
               <div style={{ fontSize: 9.5, fontWeight: 800, color: "#B0B0BA", textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 4 }}>Mulai</div>

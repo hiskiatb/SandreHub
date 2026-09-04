@@ -7,7 +7,7 @@ import { getMartaScope, regionLabel } from "../../../lib/martaScope";
 const ROLE_LABEL = {
   admin: "Admin", spm_sumatera: "SPM Sumatera (Superadmin Nasional)",
   head: "Head TMV (per Region)", tmv: "Brand TMV (Region × Brand)",
-  bme: "BME", rge: "RGE", tl_dsf: "TL DSF", dsf: "DSF", md: "MD",
+  bme_rge: "BME/RGE", tl_dsf: "TL DSF", dsf: "DSF", md: "MD",
 };
 
 // Role yang boleh mengubah setting radius (lihat mh_set_setting di database -
