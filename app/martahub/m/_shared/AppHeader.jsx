@@ -12,6 +12,7 @@
  * milik halaman itu), tidak perlu bungkus sticky tambahan di sini.
  */
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Bell, LogOut } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
@@ -107,7 +108,17 @@ export default function AppHeader({ scope, email }) {
 }
 
 function LogoutConfirmSheet({ onCancel, onConfirm, loading }) {
-  return (
+  // Portal ke document.body - AppHeader dipakai di dalam {children} milik
+  // MobileShell, & wrapper {children} itu bisa kena `transform` saat gestur
+  // pull-to-refresh aktif (lihat komentar di MobileShell.jsx). Sebuah
+  // ancestor ber-transform jadi containing block BARU utk semua descendant
+  // position:fixed (spec CSS) - jadi sheet ini bisa "terjebak" relatif ke
+  // wrapper yg ditranslate itu alih-alih viewport asli, & keliatan nempel
+  // di atas layar alih-alih jadi bottom sheet. Portal keluar dari DOM tree
+  // {children} sepenuhnya menghindari jebakan ini sama sekali (sama seperti
+  // {fab} yg sengaja dirender di luar wrapper itu utk alasan yg sama).
+  if (typeof document === "undefined") return null;
+  return createPortal(
     <div style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center", fontFamily: FF }}>
       <div onClick={loading ? undefined : onCancel} style={{ position: "absolute", inset: 0, background: "rgba(23,24,28,0.45)" }} />
       <div style={{
@@ -135,6 +146,7 @@ function LogoutConfirmSheet({ onCancel, onConfirm, loading }) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }

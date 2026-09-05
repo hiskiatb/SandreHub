@@ -427,6 +427,7 @@ function ActivitiesInner() {
 }
 
 function ActivityCard({ r, userId, branchLabel, onOpen }) {
+  const router = useRouter();
   const isReady = READY_STATUSES.has(r.status);
   // SATU pill status utk seluruh kartu - activityStage() (activityUi.js)
   // adalah SATU-SATUNYA sumber label status sekarang, tidak ada lagi pill
@@ -582,6 +583,35 @@ function ActivityCard({ r, userId, branchLabel, onOpen }) {
       {!isDraft && (
         <div style={{ padding: "0 15px 14px 19px", marginTop: 2 }}>
           <ActivityMetricsBlock r={r} expanded={expanded} />
+        </div>
+      )}
+
+      {/* Aksi Edit Plan / Isi-Edit Actual langsung di kartu daftar - dulu
+          cuma ada di DetailSheet (harus buka quick-view dulu), sekarang
+          ditaruh juga di sini spy bisa langsung aksi dari daftar tanpa
+          tap tambahan. Logika SAMA PERSIS dgn DetailSheet: revision_needed
+          => satu tombol "Revisi Plan", selain draft => dua tombol independen
+          Edit Plan + Isi/Edit Laporan Actual (label switch sesuai actual_sp). */}
+      {!isDraft && (
+        <div onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}
+          style={{ padding: "0 15px 14px", display: "flex", gap: 8 }}>
+          {r.status === "revision_needed" ? (
+            <button onClick={() => router.push(`/martahub/m/activities/new?edit=${r.id}`)}
+              style={{ flex: 1, height: 40, borderRadius: 11, border: "none", background: BRAND, color: "#fff", fontSize: 12, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              <Pencil size={13} /> Revisi Plan
+            </button>
+          ) : (
+            <>
+              <button onClick={() => router.push(`/martahub/m/activities/new?edit=${r.id}`)}
+                style={{ flex: 1, height: 40, borderRadius: 11, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#3A3A44", fontSize: 12, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                <Pencil size={13} /> Edit Plan
+              </button>
+              <button onClick={() => router.push(`/martahub/m/activities/${r.id}/submit`)}
+                style={{ flex: 1, height: 40, borderRadius: 11, border: "none", background: BRAND, color: "#fff", fontSize: 12, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                <Receipt size={13} /> {hasActual ? "Edit Actual" : "Isi Actual"}
+              </button>
+            </>
+          )}
         </div>
       )}
 
