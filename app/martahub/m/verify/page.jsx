@@ -38,7 +38,25 @@ function VerifyInner() {
   const code = digits.join("");
 
   const onDigit = (i, v) => {
-    const clean = v.replace(/\D/g, "").slice(-1);
+    const clean = v.replace(/\D/g, "");
+    // iOS "Insert Code" QuickType suggestion (bar di atas keyboard, ambil
+    // dari notifikasi Mail/Outlook) TIDAK mengirim event `paste` seperti
+    // copy-paste manual - begitu disentuh, iOS langsung menyuntikkan
+    // SELURUH kode 6 digit sbg satu `onChange` ke kotak yg sedang fokus.
+    // Sebelum ini `.slice(-1)` cuma menyisakan digit TERAKHIR & 5 digit
+    // sisanya hilang begitu saja (persis gejala "kepotong" yg dilaporkan -
+    // suggestion-nya sendiri kelihatan padat/kepotong scr visual krn lebar
+    // pill iOS terbatas, itu di luar kendali halaman web, TAPI yg
+    // sebelumnya benar2 rusak adalah PENGISIANNYA: tersisa 1 digit saja).
+    // Sekarang kalau value yg masuk >1 digit, disebar ke kotak-kotak
+    // berikutnya persis seperti alur onPaste di bawah.
+    if (clean.length > 1) {
+      const arr = clean.slice(0, 6).split("");
+      setDigits((d) => { const next = [...d]; arr.forEach((c, k) => { if (i + k < 6) next[i + k] = c; }); return next; });
+      setErr("");
+      inputs.current[Math.min(i + arr.length, 5)]?.focus();
+      return;
+    }
     setDigits((d) => { const next = [...d]; next[i] = clean; return next; });
     setErr("");
     if (clean && i < 5) inputs.current[i + 1]?.focus();
@@ -144,7 +162,12 @@ function VerifyInner() {
                   ref={(el) => (inputs.current[i] = el)}
                   className="otp-box"
                   inputMode="numeric"
-                  maxLength={1}
+                  // autoComplete cuma perlu di kotak PERTAMA - itu yg akan
+                  // fokus otomatis saat halaman dibuka, jadi itu yg
+                  // ditawari iOS/Android utk diisi via suggestion bar
+                  // (QuickType "Insert Code" / Android SMS autofill).
+                  autoComplete={i === 0 ? "one-time-code" : "off"}
+                  maxLength={i === 0 ? 6 : 1}
                   value={d}
                   disabled={busy}
                   onChange={(e) => onDigit(i, e.target.value)}
