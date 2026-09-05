@@ -18,7 +18,7 @@
  */
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Mail, Info, Loader2, ArrowLeft, ArrowRight, ShieldCheck } from "lucide-react";
+import { Mail, Info, Loader2, ArrowLeft, ArrowRight, ShieldCheck, Download, Share, X, PlusSquare } from "lucide-react";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../../lib/martaScope";
 import { HubLogo } from "../../../../components/HubLogo";
@@ -36,6 +36,50 @@ export default function MartaMobileLogin() {
   const [checkingEmail, setCheckingEmail] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
   const [err, setErr] = useState("");
+
+  // "Pasang Aplikasi" - trigger add-to-home-screen dari tombol di halaman
+  // login sendiri (diminta krn user susah nemu lewat menu browser). Android/
+  // Chrome punya event `beforeinstallprompt` yg bisa dipicu programatik
+  // lewat tombol; iOS Safari TIDAK mengizinkan trigger otomatis sama sekali
+  // (batasan platform, bukan bug) - jadi utk iOS tombolnya cuma menampilkan
+  // panduan manual (Share > Add to Home Screen). Kalau app sudah ke-install
+  // (`display-mode: standalone`) tombolnya disembunyikan total krn tidak
+  // relevan lagi.
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [isIOS, setIsIOS] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [showIOSGuide, setShowIOSGuide] = useState(false);
+  const [installing, setInstalling] = useState(false);
+
+  useEffect(() => {
+    const ua = window.navigator.userAgent || "";
+    setIsIOS(/iphone|ipad|ipod/i.test(ua) && !window.MSStream);
+    setIsStandalone(
+      window.matchMedia?.("(display-mode: standalone)").matches || window.navigator.standalone === true
+    );
+    const onBeforeInstall = (e) => { e.preventDefault(); setInstallPrompt(e); };
+    window.addEventListener("beforeinstallprompt", onBeforeInstall);
+    return () => window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (isIOS) { setShowIOSGuide(true); return; }
+    if (!installPrompt) return;
+    setInstalling(true);
+    try {
+      installPrompt.prompt();
+      await installPrompt.userChoice;
+    } finally {
+      setInstallPrompt(null);
+      setInstalling(false);
+    }
+  };
+
+  // Tombol hanya relevan kalau: belum ter-install DAN (Android dgn event
+  // beforeinstallprompt sudah tertangkap, ATAU iOS - selalu ditampilkan di
+  // iOS krn browsernya tidak pernah mengirim event ini sama sekali, jadi
+  // satu-satunya cara adalah panduan manual).
+  const showInstallButton = !isStandalone && (isIOS || !!installPrompt);
 
   useEffect(() => {
     let alive = true;
@@ -126,6 +170,52 @@ export default function MartaMobileLogin() {
           <ArrowLeft size={14} /> Ganti Hub
         </button>
       </div>
+
+      {/* Pasang Aplikasi - lihat komentar di state showInstallButton di atas */}
+      {showInstallButton && (
+        <div style={{ position: "fixed", top: "calc(env(safe-area-inset-top,0px) + 16px)", right: 18, zIndex: 20 }}>
+          <button onClick={handleInstallClick} disabled={installing}
+            style={{ display: "flex", alignItems: "center", gap: 6, background: "#FFFFFF", border: "1px solid #E4E5EA", borderRadius: 11, padding: "8px 14px", cursor: installing ? "default" : "pointer", color: "#ED1C24", fontSize: 13, fontWeight: 700, fontFamily: FF, boxShadow: "0 1px 2px rgba(23,24,28,0.05)" }}>
+            {installing ? <Loader2 size={14} style={{ animation: "mspin .85s linear infinite" }} /> : <Download size={14} />} Pasang Aplikasi
+          </button>
+        </div>
+      )}
+
+      {showIOSGuide && (
+        <div onClick={() => setShowIOSGuide(false)} style={{ position: "fixed", inset: 0, zIndex: 40, display: "flex", alignItems: "flex-end", justifyContent: "center", fontFamily: FF }}>
+          <div style={{ position: "absolute", inset: 0, background: "rgba(23,24,28,0.45)" }} />
+          <div onClick={(e) => e.stopPropagation()} style={{
+            position: "relative", width: "100%", maxWidth: 480, boxSizing: "border-box",
+            background: "#FFFFFF", borderRadius: "24px 24px 0 0",
+            padding: "22px 20px calc(env(safe-area-inset-bottom,0px) + 20px)",
+            boxShadow: "0 -10px 32px rgba(17,17,20,0.16)",
+          }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: "#17181C" }}>Pasang MartaHub di Layar Utama</div>
+              <button onClick={() => setShowIOSGuide(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "#8A8A96", padding: 4 }}><X size={18} /></button>
+            </div>
+            <div style={{ marginTop: 4, fontSize: 12, color: "#8A8A96", lineHeight: 1.5 }}>
+              Safari di iPhone/iPad tidak mengizinkan instal otomatis - ikuti 2 langkah ini:
+            </div>
+            <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 10, background: "#F6F7F9", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 13, color: "#3A3A44" }}>1</div>
+              <div style={{ fontSize: 13, color: "#3A3A44", fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                Tap ikon <Share size={15} style={{ display: "inline" }} /> <b>Share/Bagikan</b> di bar Safari
+              </div>
+            </div>
+            <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 10, background: "#F6F7F9", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 13, color: "#3A3A44" }}>2</div>
+              <div style={{ fontSize: 13, color: "#3A3A44", fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                Pilih <PlusSquare size={15} style={{ display: "inline" }} /> <b>Add to Home Screen</b>
+              </div>
+            </div>
+            <button onClick={() => setShowIOSGuide(false)}
+              style={{ marginTop: 22, width: "100%", height: 48, borderRadius: 14, border: "none", background: "#17181C", color: "#fff", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FF }}>
+              Mengerti
+            </button>
+          </div>
+        </div>
+      )}
 
       <div style={{ minHeight: "100svh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "72px 0 calc(env(safe-area-inset-bottom,0px) + 24px)" }}>
         <div className="marta-login-card" style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
