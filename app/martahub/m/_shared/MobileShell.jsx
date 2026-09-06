@@ -10,7 +10,7 @@
  * kena wrapper nav ini.
  */
 import { useEffect, useRef, useState, useTransition } from "react";
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Home, ListChecks, CalendarDays, User2, RefreshCw } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../../lib/martaScope";
@@ -193,15 +193,25 @@ function usePullToRefresh(containerRef) {
     let startY = 0;
     let active = false; // sesi sentuhan ini dimulai dari posisi paling atas (scrollTop 0)
 
+    // Popup/dialog full-screen tertentu (mis. TimeEditPopup di
+    // CalendarPickerSheet) mengunci pull-to-refresh lewat flag global ini
+    // (document.body.dataset.ptrLock) selagi mereka terbuka - mengandalkan
+    // stopPropagation di CalendarPickerSheet SAJA ternyata tidak selalu
+    // cukup (mis. saat gesture ditest lewat emulasi touch DevTools, atau
+    // popup lain yg belum sempat dikasih stopPropagation serupa), jadi
+    // dicek eksplisit di sini sbg lapis pertahanan kedua yg pasti berlaku
+    // ke SEMUA popup yg memasang flag ini, tidak bergantung struktur DOM.
+    const isLocked = () => document.body.dataset.ptrLock === "1";
+
     const onTouchStart = (e) => {
-      if (refreshingRef.current) return;
+      if (refreshingRef.current || isLocked()) return;
       if (getScrollTop() > 0) { active = false; return; }
       active = true;
       startY = e.touches[0].clientY;
       setDragging(true);
     };
     const onTouchMove = (e) => {
-      if (!active || refreshingRef.current) return;
+      if (!active || refreshingRef.current || isLocked()) return;
       const delta = e.touches[0].clientY - startY;
       if (delta <= 0 || getScrollTop() > 0) { active = false; setPullState(0); return; }
       e.preventDefault();
@@ -318,62 +328,25 @@ export default function MobileShell({ active, children, hideNav, fab }) {
   // supaya tidak "nyangkut" spinner kalau user balik lagi ke tab yg sama.
   useEffect(() => { if (!isPending) setPendingKey(null); }, [isPending]);
 
-  // ── Feedback instan utk SEMUA tombol yang bisa ditap, di semua layar ────
-  // Sebelumnya perbaikan "kerasa freeze" cuma dipasang di nav bawah. Supaya
-  // berlaku ke SEMUA tombol di seluruh MartaHub mobile (kartu aktivitas,
-  // tombol menu, CTA, tombol Kembali dll) tanpa perlu mengubah satu-satu
-  // di puluhan file halaman, dipasang SATU listener klik global di sini
-  // (MobileShell membungkus SEMUA halaman sesi yg sudah login) - lewat
-  // capture phase supaya kepakai walau tombolnya di dalam bottom-sheet/
-  // modal yg dirender di {children}.
-  //
-  // Didebounce 150ms sblm tombol didim+diberi spinner: aksi yg SELESAI
-  // instan (buka sheet, ganti tab filter, dll) tidak sempat kelihatan
-  // "kedip" - cuma aksi yg BENAR2 makan waktu (navigasi antar halaman,
-  // query jaringan) yg dapat indikator. Auto-bersih begitu halaman
-  // berpindah (pathname berubah) ATAU maksimal 6 detik (jaga2 kalau
-  // tombolnya ternyata memicu aksi async di halaman yang sama & lupa
-  // kelola loading state sendiri) supaya tombol tidak "nyangkut" kelihatan
-  // disabled selamanya.
-  const [tapPending, setTapPending] = useState(false);
-  const pathname = usePathname();
-  useEffect(() => {
-    let pendingEl = null;
-    let armTimer = null;
-    let safetyTimer = null;
-
-    const clearPending = () => {
-      clearTimeout(safetyTimer);
-      safetyTimer = null;
-      if (pendingEl) { pendingEl.classList.remove("mh-tap-pending"); pendingEl = null; }
-      setTapPending(false);
-    };
-
-    const onClickCapture = (e) => {
-      const btn = e.target.closest("button:not([disabled]):not([data-no-tap-pending])");
-      clearTimeout(armTimer);
-      if (pendingEl) clearPending();
-      if (!btn) return;
-      armTimer = setTimeout(() => {
-        if (!document.body.contains(btn)) return; // sudah hilang (mis. sheet ditutup) - tidak perlu indikator lagi
-        btn.classList.add("mh-tap-pending");
-        pendingEl = btn;
-        setTapPending(true);
-        safetyTimer = setTimeout(clearPending, 6000);
-      }, 150);
-    };
-
-    document.addEventListener("click", onClickCapture, true);
-    return () => {
-      document.removeEventListener("click", onClickCapture, true);
-      clearTimeout(armTimer);
-      clearPending();
-    };
-  }, []);
-  // Halaman berganti (navigasi berhasil) → bersihkan indikator tap manapun
-  // yang masih nyala (elemen lama kemungkinan sudah unmount bersama halaman
-  // sebelumnya, ini jaga2 kalau msh ada sisa).
-  useEffect(() => { setTapPending(false); }, [pathname]);
+  // Dulu ada satu listener klik GLOBAL di sini yg mendim (opacity 0.5 +
+  // pointer-events:none) HAMPIR SEMUA tombol di seluruh app 150ms setelah
+  // ditap, lalu baru dibersihkan saat ada klik lain / pindah halaman /
+  // timeout 6 detik - niatnya kasih feedback visual utk aksi yg BENAR²
+  // lambat (navigasi, query jaringan), tapi krn scope-nya "semua tombol
+  // kecuali yg di-exclude manual" & hampir tidak ada tombol yg di-exclude
+  // (cuma nav bawah, lewat data-no-tap-pending, yg sudah punya indikator
+  // sendiri lewat `isPending`/`startTransition` di bawah), efeknya jadi
+  // KEBALIKAN dari niatnya: tombol yg aksinya instan & lokal (mis. chip
+  // pilih "Activity Category" - `setState` biasa, tanpa network/navigasi
+  // sama sekali) ikut kena dim ~150ms SETELAH warnanya sendiri sudah
+  // berubah, dan dim itu nyangkut sampai beberapa detik - persis gejala
+  // "diklik → freeze → baru keliatan kepilih" yg dilaporkan, di HAMPIR
+  // SEMUA tombol di app (bukan cuma satu tempat). Mekanisme ini dihapus
+  // total - nav bawah tetap dapat feedback dari `isPending` di bawah
+  // (sudah cukup & tidak pernah bergantung pada mekanisme ini krn memang
+  // sudah di-exclude lewat data-no-tap-pending), & tombol lain yg benar²
+  // punya aksi async (submit/simpan dll) sudah mengelola loading state-nya
+  // sendiri di komponennya masing-masing (busy/disabled/spinner lokal).
 
   // Daftarkan service worker sekali per tab - bikin /martahub/m installable
   // sbg PWA ("Add to Home Screen"). Online-only (lihat public/martahub/sw.js),
@@ -402,7 +375,6 @@ export default function MobileShell({ active, children, hideNav, fab }) {
         @keyframes mspin{to{transform:rotate(360deg)}}
         @keyframes navIndicatorGrow{0%{transform:scaleX(0.2);opacity:0.5}55%{transform:scaleX(1.12)}100%{transform:scaleX(1);opacity:1}}
         @keyframes navProgressSlide{0%{transform:translateX(-100%)}50%{transform:translateX(30%)}100%{transform:translateX(100%)}}
-        .mh-tap-pending{opacity:0.5 !important;pointer-events:none !important;transition:opacity .15s ease}
       `}</style>
 
       {/* Progress bar tipis di paling atas - muncul SELAMA transisi antar
@@ -410,7 +382,7 @@ export default function MobileShell({ active, children, hideNav, fab }) {
           ada tanda visual instan begitu ditap ("sudah kepencet, lagi
           proses") - bukan cuma spinner di ikon nav yg mungkin di luar
           fokus mata user saat itu. */}
-      {(isPending || tapPending) && (
+      {isPending && (
         <div aria-hidden style={{ position: "fixed", top: 0, left: 0, right: 0, height: 3, zIndex: 60, overflow: "hidden", background: "rgba(237,28,36,0.12)" }}>
           <div style={{ position: "absolute", top: 0, bottom: 0, width: "40%", background: "linear-gradient(90deg,#ED1C24,#EC008C)", animation: "navProgressSlide 0.9s ease-in-out infinite" }} />
         </div>

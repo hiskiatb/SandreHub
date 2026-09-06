@@ -11,7 +11,6 @@ import { Clock, Copy, Check, RefreshCw, LogOut, Loader2 } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../../lib/martaScope";
 import { logMartaLogout } from "../_shared/MobileShell";
-import { HubLogo } from "../../../../components/HubLogo";
 
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 
@@ -63,9 +62,7 @@ function PendingInner() {
       `}</style>
       <div style={{ minHeight: "100svh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "40px 24px" }}>
         <div style={{ width: "100%", maxWidth: 380, textAlign: "center" }}>
-          <HubLogo variant="marta" size={50} dark={false} shadow inBox />
-
-          <div style={{ marginTop: 26, width: 64, height: 64, margin: "26px auto 0", borderRadius: "50%", background: "rgba(180,83,9,0.10)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ width: 64, height: 64, margin: "0 auto", borderRadius: "50%", background: "rgba(180,83,9,0.10)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <Clock size={28} color="#B45309" />
           </div>
 

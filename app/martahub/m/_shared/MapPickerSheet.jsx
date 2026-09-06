@@ -17,6 +17,43 @@ import { locationiqTileUrl, LOCATIONIQ_TILE_SUBDOMAINS, LOCATIONIQ_TILE_ATTRIBUT
 const LEAFLET_CSS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
 const LEAFLET_JS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
 
+// Cache client-side (in-memory, module scope - bertahan lintas
+// buka/tutup sheet dlm satu session tab, TIDAK menggantikan cache 2 menit
+// di sisi server, cuma fast-path biar hasil yg sama kelihatan instan tanpa
+// nunggu network roundtrip). TTL disamakan dgn cache server (2 menit).
+const CLIENT_CACHE_TTL_MS = 2 * 60 * 1000;
+const geocodeCache = new Map(); // key: "lat5,lng5" -> { value, ts }
+const autocompleteCache = new Map(); // key: lowercased/trimmed query -> { value, ts }
+
+function geocodeCacheKey(lat, lng) {
+  return `${lat.toFixed(5)},${lng.toFixed(5)}`;
+}
+
+function getCached(map, key) {
+  const hit = map.get(key);
+  if (!hit) return undefined;
+  if (Date.now() - hit.ts > CLIENT_CACHE_TTL_MS) { map.delete(key); return undefined; }
+  return hit.value;
+}
+
+function setCached(map, key, value) {
+  map.set(key, { value, ts: Date.now() });
+}
+
+// Retry SEKALI (bukan exponential backoff) utk kegagalan yg keliatan
+// transient (network error/timeout, atau 5xx-ish) - 429 (rate-limit) TIDAK
+// di-retry sama sekali krn retry tidak akan membantu & cuma boros kuota.
+function isTransientFailure(err, errorCtxStatus) {
+  if (errorCtxStatus === 429) return false;
+  if (err?.name === "AbortError") return true;
+  if (errorCtxStatus == null) return true; // network error / exception tanpa status
+  return errorCtxStatus >= 500;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 let leafletLoadPromise = null;
 export function loadLeaflet() {
   if (typeof window === "undefined") return Promise.reject(new Error("no window"));
@@ -79,8 +116,7 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
   // DSF sudah punya angka longlat pasti dari sumber lain) - toggle-able,
   // TIDAK menggantikan peta, cuma pelengkap.
   const [manualOpen, setManualOpen] = useState(false);
-  const [manualLatInput, setManualLatInput] = useState("");
-  const [manualLngInput, setManualLngInput] = useState("");
+  const [manualCoordInput, setManualCoordInput] = useState("");
   const [manualErr, setManualErr] = useState("");
 
   useEffect(() => {
@@ -124,6 +160,14 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
   // tidak boros kuota).
   async function reverseGeocode(lat, lng) {
     const reqId = ++geoReqId.current;
+    // Fast-path cache client - kalau titik ini (dibulatkan 5 desimal, sama
+    // granularitas dgn cache server) baru saja di-geocode, langsung pakai
+    // tanpa nyalain spinner "Mencari alamat…" sama sekali - kerasa instan.
+    const cached = getCached(geocodeCache, geocodeCacheKey(lat, lng));
+    if (cached !== undefined) {
+      setAddress(cached);
+      return;
+    }
     setGeocoding(true);
     try {
       const found = await fetchGeocode(lat, lng);
@@ -137,7 +181,7 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
     }
   }
 
-  async function fetchGeocode(lat, lng) {
+  async function fetchGeocode(lat, lng, isRetry) {
     // Lewat edge function `locationiq` (proxy ke LocationIQ, token disimpan
     // aman di server via Supabase secret) - BUKAN fetch langsung ke Nominatim
     // dari browser. Panggil langsung dari client sering diblokir/rate-limit
@@ -154,12 +198,23 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
       if (error) {
         // eslint-disable-next-line no-console
         console.error("[locationiq reverse] error:", error, error?.context?.status);
+        const ctxStatus = error?.context?.status;
+        if (!isRetry && isTransientFailure(error, ctxStatus)) {
+          await delay(600);
+          return fetchGeocode(lat, lng, true);
+        }
         return null;
       }
-      return data?.result?.display || null;
+      const display = data?.result?.display || null;
+      if (display) setCached(geocodeCache, geocodeCacheKey(lat, lng), display);
+      return display;
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error("[locationiq reverse] exception:", e);
+      if (!isRetry && isTransientFailure(e, undefined)) {
+        await delay(600);
+        return fetchGeocode(lat, lng, true);
+      }
       return null;
     } finally {
       clearTimeout(timer);
@@ -231,11 +286,36 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQ]);
 
-  async function runSearch() {
+  // Urutkan hasil autocomplete berdasarkan jarak lurus (squared-distance,
+  // cukup akurat utk sekadar ranking dlm area kecil, tidak perlu presisi
+  // haversine) dari titik peta SAAT pencarian ditembak - supaya hasil yg
+  // paling relevan dgn posisi peta sekarang muncul paling atas.
+  function sortResultsByDistance(results, fromLat, fromLng) {
+    return [...results].sort((a, b) => {
+      const da = (Number(a.lat) - fromLat) ** 2 + (Number(a.lon) - fromLng) ** 2;
+      const db = (Number(b.lat) - fromLat) ** 2 + (Number(b.lon) - fromLng) ** 2;
+      return da - db;
+    });
+  }
+
+  async function runSearch(isRetry, reqIdOverride) {
     const q = searchQ.trim();
     if (!q) return;
-    const reqId = ++searchReqId.current;
-    setSearching(true); setSearchResults([]); setSearchErr("");
+    const reqId = isRetry ? reqIdOverride : ++searchReqId.current;
+    const qKey = q.toLowerCase();
+    const fromLat = center.lat, fromLng = center.lng;
+    if (!isRetry) {
+      // Fast-path cache client - query yg sama persis (case/whitespace
+      // diabaikan) dlm 2 menit terakhir langsung dipakai, tanpa nyalain
+      // spinner "Mencari…" sama sekali.
+      const cached = getCached(autocompleteCache, qKey);
+      if (cached !== undefined) {
+        setSearchResults(sortResultsByDistance(cached, fromLat, fromLng));
+        setSearchErr("");
+        return;
+      }
+      setSearching(true); setSearchResults([]); setSearchErr("");
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000); // sama alasannya dgn fetchGeocode - jangan sampai "Mencari…" macet tanpa batas
     try {
@@ -251,6 +331,11 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
         // eslint-disable-next-line no-console
         console.error("[locationiq autocomplete] error:", error);
         const ctxStatus = error?.context?.status;
+        if (!isRetry && isTransientFailure(error, ctxStatus)) {
+          clearTimeout(timer);
+          await delay(600);
+          return runSearch(true, reqId);
+        }
         setSearchErr(
           ctxStatus === 401 || ctxStatus === 403 ? "Token LocationIQ belum aktif/salah. Cek secret LOCATIONIQ_TOKEN."
           : ctxStatus === 429 ? "Kuota LocationIQ hari ini habis. Coba lagi besok atau upgrade plan."
@@ -260,11 +345,18 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
         setSearchResults([]);
         return;
       }
-      setSearchResults(data?.results || []);
+      const results = data?.results || [];
+      if (results.length) setCached(autocompleteCache, qKey, results);
+      setSearchResults(sortResultsByDistance(results, fromLat, fromLng));
     } catch (e) {
       if (!aliveRef.current || reqId !== searchReqId.current) return;
       // eslint-disable-next-line no-console
       console.error("[locationiq autocomplete] exception:", e);
+      if (!isRetry && isTransientFailure(e, undefined)) {
+        clearTimeout(timer);
+        await delay(600);
+        return runSearch(true, reqId);
+      }
       setSearchErr(e?.name === "AbortError" ? "Pencarian terlalu lama, coba lagi." : "Gagal memuat saran pencarian. Coba lagi.");
       setSearchResults([]);
     } finally {
@@ -284,10 +376,16 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
   }
 
   function applyManualCoords() {
-    const lat = Number(manualLatInput.replace(",", "."));
-    const lng = Number(manualLngInput.replace(",", "."));
-    if (!manualLatInput.trim() || !manualLngInput.trim() || Number.isNaN(lat) || Number.isNaN(lng)) {
-      setManualErr("Latitude/longitude harus berupa angka.");
+    // Satu kolom gabungan "lat, lng" (BUKAN dua kolom terpisah) - dipisah
+    // dgn koma ATAU spasi, urutan SELALU latitude dulu baru longitude
+    // (sama seperti format yg ditampilkan di badge koordinat di atas),
+    // supaya DSF tinggal copy-paste dari Google Maps/badge tanpa mikir
+    // field mana yg mana.
+    const parts = manualCoordInput.trim().replace(/,/g, " ").split(/\s+/).filter(Boolean);
+    const lat = Number(parts[0]);
+    const lng = Number(parts[1]);
+    if (parts.length !== 2 || Number.isNaN(lat) || Number.isNaN(lng)) {
+      setManualErr("Format harus \"latitude, longitude\", mis. -5.401579, 105.263786.");
       return;
     }
     if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
@@ -298,12 +396,13 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
     mapRef.current?.setView([lat, lng], 17);
     setCenter({ lat, lng });
     setManualOpen(false);
-    setManualLatInput(""); setManualLngInput("");
+    setManualCoordInput("");
   }
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 90, background: "#F4F5F7", fontFamily: FF, display: "flex", flexDirection: "column" }}>
-      <style>{`@keyframes pinDrop{0%{transform:translateY(-16px);opacity:0}100%{transform:translateY(0);opacity:1}}`}</style>
+      <style>{`@keyframes pinDrop{0%{transform:translateY(-16px);opacity:0}100%{transform:translateY(0);opacity:1}}
+        .mh-map-search::placeholder{color:#7A7A86;font-weight:500}`}</style>
       {/* Top bar */}
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, padding: "calc(env(safe-area-inset-top,0px) + 12px) 14px 0" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -312,21 +411,34 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
             <X size={17} color="#5A5A68" />
           </button>
           <div style={{ flex: 1, position: "relative" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 12px", borderRadius: 12, background: "#FFFFFF", border: "1px solid #E4E5EA", boxShadow: "0 2px 8px rgba(23,24,28,0.08)" }}>
-              <Search size={14} color="#9A9AA6" style={{ flexShrink: 0 }} />
+            {/* Kontras dinaikkan - sebelumnya border/shadow tipis nyaris
+                nyatu dgn tile peta yg terang, jadi kolom cari kelihatan
+                spt dekorasi bukan input aktif (gampang kelewat). Sekarang
+                border lebih tebal + shadow lebih jelas + placeholder lebih
+                gelap, biar langsung kebaca sbg field yg bisa diketik. */}
+            <div style={{ display: "flex", alignItems: "center", gap: 9, height: 44, padding: "0 13px", borderRadius: 13, background: "#FFFFFF", border: "1.5px solid #D6D7E0", boxShadow: "0 4px 16px rgba(23,24,28,0.16)" }}>
+              <Search size={16} color="#5A5A68" strokeWidth={2.4} style={{ flexShrink: 0 }} />
               <input value={searchQ} onChange={(e) => setSearchQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && runSearch()}
-                placeholder="Input nama jalan…"
-                style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none", fontSize: 12.5, fontFamily: FF, color: "#17181C" }} />
-              {searching && <Loader2 size={13} color="#9A9AA6" style={{ animation: "mspin .9s linear infinite" }} />}
+                placeholder="Cari nama jalan atau tempat…" className="mh-map-search"
+                style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none", fontSize: 13.5, fontWeight: 500, fontFamily: FF, color: "#17181C" }} />
+              {searching && <Loader2 size={14} color="#5A5A68" style={{ animation: "mspin .9s linear infinite" }} />}
             </div>
             {searchResults.length > 0 && (
               <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "#FFFFFF", border: "1px solid #E4E5EA", borderRadius: 12, boxShadow: "0 8px 24px rgba(23,24,28,0.12)", maxHeight: 220, overflowY: "auto" }}>
-                {searchResults.map((r, i) => (
-                  <button key={i} onClick={() => pickResult(r)}
-                    style={{ width: "100%", textAlign: "left", padding: "10px 12px", background: "none", border: "none", borderBottom: i < searchResults.length - 1 ? "1px solid #F0F0F3" : "none", cursor: "pointer", fontSize: 11.5, color: "#3A3A44", lineHeight: 1.4 }}>
-                    {r.display}
-                  </button>
-                ))}
+                {searchResults.map((r, i) => {
+                  const placeLabel = r.address?.road || r.address?.village || r.address?.town || r.address?.city || r.address?.county || null;
+                  return (
+                    <button key={i} onClick={() => pickResult(r)}
+                      style={{ width: "100%", textAlign: "left", padding: "10px 12px", background: "none", border: "none", borderBottom: i < searchResults.length - 1 ? "1px solid #F0F0F3" : "none", cursor: "pointer", fontSize: 11.5, color: "#3A3A44", lineHeight: 1.4 }}>
+                      {r.display}
+                      {placeLabel && (
+                        <div style={{ marginTop: 3 }}>
+                          <span style={{ display: "inline-block", fontSize: 10, fontWeight: 600, color: "#9A9AA4", background: "#F2F2F5", borderRadius: 5, padding: "1px 6px" }}>{placeLabel}</span>
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             )}
             {!searching && searchErr && searchQ.trim().length >= 3 && (
@@ -438,8 +550,9 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
                     </button>
                   )}
                 </div>
-                <div style={{ marginTop: 5, display: "inline-flex", fontSize: 10.5, fontWeight: 700, color: "#8A8A96", fontVariantNumeric: "tabular-nums", background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 7, padding: "2px 7px" }}>
-                  {center.lat.toFixed(6)}, {center.lng.toFixed(6)}
+                <div style={{ marginTop: 5, display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: "#8A8A96", fontVariantNumeric: "tabular-nums", background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 7, padding: "2px 7px" }}>
+                  <span style={{ fontWeight: 800, color: "#B0B0BA" }}>Lat, Lng</span>
+                  <span>{center.lat.toFixed(6)}, {center.lng.toFixed(6)}</span>
                 </div>
               </>
             )}
@@ -462,15 +575,17 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
           <Pencil size={13} /> {manualOpen ? "Tutup Input Manual" : "Input Koordinat Manual"}
         </button>
 
+
         {manualOpen && (
           <div style={{ marginTop: 10, padding: "11px 12px", borderRadius: 12, background: "#F6F7F9", border: "1px solid #ECEDF0" }}>
-            <div style={{ fontSize: 10, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 8 }}>Ketik Koordinat Manual</div>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input value={manualLatInput} onChange={(e) => setManualLatInput(e.target.value)} inputMode="decimal" placeholder="Latitude, mis. 3.595300"
-                style={{ flex: 1, minWidth: 0, height: 42, borderRadius: 10, border: "1.5px solid #E4E5EA", padding: "0 11px", fontSize: 12.5, fontFamily: FF, outline: "none", background: "#FFFFFF" }} />
-              <input value={manualLngInput} onChange={(e) => setManualLngInput(e.target.value)} inputMode="decimal" placeholder="Longitude, mis. 98.672100"
-                style={{ flex: 1, minWidth: 0, height: 42, borderRadius: 10, border: "1.5px solid #E4E5EA", padding: "0 11px", fontSize: 12.5, fontFamily: FF, outline: "none", background: "#FFFFFF" }} />
-            </div>
+            <div style={{ fontSize: 10, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 8 }}>Ketik Koordinat Manual (Lat, Lng)</div>
+            {/* Satu kolom saja (bukan 2 kolom Latitude/Longitude terpisah) -
+                urutan selalu Lat dulu baru Lng, sama persis dgn format yg
+                ditampilkan di badge koordinat di atas, jadi tinggal
+                copy-paste. */}
+            <input value={manualCoordInput} onChange={(e) => setManualCoordInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && applyManualCoords()}
+              inputMode="decimal" placeholder="mis. -5.401579, 105.263786"
+              style={{ width: "100%", height: 42, borderRadius: 10, border: "1.5px solid #E4E5EA", padding: "0 11px", fontSize: 12.5, fontFamily: FF, outline: "none", background: "#FFFFFF", boxSizing: "border-box" }} />
             {manualErr && <div style={{ marginTop: 7, fontSize: 11, color: "#DC2626", fontWeight: 600 }}>{manualErr}</div>}
             <button onClick={applyManualCoords}
               style={{ width: "100%", marginTop: 9, height: 40, borderRadius: 10, border: "none", background: "#17181C", color: "#fff", fontSize: 12.5, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>

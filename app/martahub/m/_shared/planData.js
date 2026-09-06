@@ -28,7 +28,7 @@ export async function fetchScopeSites(branchIdSlug, brand) {
   if (!branchIdSlug || !brand) return [];
   const { data, error } = await supabaseMarta
     .from("mh_sites")
-    .select("site_id, site_name, mc, network_cat, area_potential, latitude, longitude")
+    .select("site_id, site_name, mc, network_cat, area_potential, latitude, longitude, kecamatan_name, kabupaten, kecamatan, branch, region, area, circle")
     .eq("branch_id", branchIdSlug)
     .eq("brand", brand.toLowerCase())
     .eq("active", true);

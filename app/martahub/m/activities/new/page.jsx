@@ -33,22 +33,16 @@ import OrgIdBar from "../../_shared/OrgIdBar";
 import SiteTowerIcon from "../../_shared/SiteTowerIcon";
 import SitePickerSheet from "../../_shared/SitePickerSheet";
 import {
-  resolveBranchUuid, fetchScopeSites, mcGroupsFromSites, fetchPoiTypes, fetchActivityForEdit,
+  resolveBranchUuid, fetchScopeSites, fetchPoiTypes, fetchActivityForEdit,
   CATEGORIES, NETWORK_OPTIONS, AREA_OPTIONS, snake, syncActivitySites, planDateFields,
   groupContiguousDates, syncTimesByDate, allDateTimesValid, planTimeFields, timesByDateFromActivity,
   APPROVER_ROLES, fetchAssignableGroups, resolveProfileIdByEmail,
   fetchSalesEntries, deleteSalesEntry,
 } from "../../_shared/planData";
 
-const STEPS = ["Info", "Target", "Lokasi", "Review"];
+const STEPS = ["Info", "Lokasi", "Target", "Review"];
 
 const unsnake = (s) => (s || "").split("_").map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-
-// Key komposit "branchId::mc" - dipakai konsisten di mana pun MC terpilih
-// perlu diketahui juga branch asalnya (mcSelected Set, filter sitesInMc,
-// validasi per-branch) supaya nama MC yg kebetulan sama di dua branch
-// berbeda tidak tertukar/dianggap satu.
-const mcKey = (branchId, mc) => `${branchId}::${mc}`;
 
 function CreatePlanWizardInner() {
   const router = useRouter();
@@ -147,14 +141,9 @@ function CreatePlanWizardInner() {
   // utk mengurutkan activity kalau ada beberapa di tanggal yang sama.
   const [timesByDate, setTimesByDate] = useState(() => syncTimesByDate((prefillDate ? [prefillDate] : []).filter(Boolean), {}));
   const [multiInput, setMultiInput] = useState("");
-  // Micro Cluster sekarang MULTI-SELECT (Set berisi key "branchId::mc",
-  // bukan cuma satu string) - begitu "Buat Untuk" mencakup lebih dari satu
-  // branch, tiap branch WAJIB punya minimal satu MC terpilih (lihat
-  // validateStep), supaya pool site yg dicari step Lokasi benar-benar
-  // mencakup semua branch yg diikutkan, bukan cuma satu MC dari satu branch
-  // saja. Kolom `mc` di DB tetap satu nilai text - saat simpan diisi dari MC
-  // milik site utama yg akhirnya benar-benar dipilih (lihat save()).
-  const [mcSelected, setMcSelected] = useState(() => new Set());
+  // Micro Cluster TIDAK LAGI dipilih manual - otomatis diturunkan dari site
+  // yang dipilih di step Lokasi (site sudah punya kolom `mc` sendiri di DB),
+  // jadi picker MC terpisah dihapus supaya alur lebih singkat.
 
   // ── Step 2: Target ──
   // Target SP/FWA SEKARANG dipilih dari master data produk
@@ -499,7 +488,7 @@ function CreatePlanWizardInner() {
   // relevan (beda branch), reset - sama seperti ganti MC manual.
   useEffect(() => {
     if (!isApprover) return;
-    setMcSelected(new Set()); setPrimarySite(null); setExtraSites([]);
+    setPrimarySite(null); setExtraSites([]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actingForKey]);
 
@@ -520,40 +509,9 @@ function CreatePlanWizardInner() {
     return () => { alive = false; };
   }, [editId]);
 
-  // Nama branch per slug - dipakai utk header kelompok Micro Cluster begitu
-  // sitenya digabung dari lebih dari satu branch (multi "Buat Untuk").
-  // Non-approver/single-branch cukup dari scope sendiri.
-  const branchNameBySlug = useMemo(() => {
-    const m = {};
-    if (isApprover) { for (const a of actingForList) if (a.branch_id) m[a.branch_id] = a.branch_name || a.branch_id; }
-    else if (scope?.branchId) { m[scope.branchId] = scope.branchName || scope.branchId; }
-    return m;
-  }, [isApprover, actingForList, scope]);
-  const mcGroups = useMemo(() => mcGroupsFromSites(sites, branchNameBySlug), [sites, branchNameBySlug]);
-  const sitesInMc = useMemo(() => sites.filter((s) => mcSelected.has(mcKey(s.branch_id, s.mc))), [sites, mcSelected]);
-  // Kunci stabil dari isi mcSelected (Set baru tiap render tidak bisa
-  // dipakai langsung sbg dependency effect) - dipakai supaya effect reset di
-  // bawah cuma jalan saat ISI-nya benar-benar berubah.
-  const mcSelectedKey = useMemo(() => Array.from(mcSelected).sort().join(","), [mcSelected]);
-
-  const toggleMc = (branchId, mc) => {
-    setMcSelected((prev) => {
-      const next = new Set(prev);
-      const key = mcKey(branchId, mc);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
-    });
-  };
-
-  // Reset pilihan site saat MC diganti MANUAL oleh user - TIDAK dipicu saat
-  // prefill mode edit mengisi `mcSelected` (guard `prefilled`/`editId` di
-  // bawah), supaya site utama/tambahan hasil prefill tidak langsung
-  // terhapus lagi.
-  useEffect(() => {
-    if (editId && !prefilled) return;
-    setPrimarySite(null); setExtraSites([]);
-  }, [mcSelectedKey]); // eslint-disable-line react-hooks/exhaustive-deps
-
+  // Site search step Lokasi sekarang mencari lintas SEMUA site di scope
+  // (bukan lagi difilter Micro Cluster dulu) - `sites` gabungan semua branch
+  // terpilih apa adanya (lihat effect fetch di atas).
   // Prefill field DASAR mode edit - begitu editData & branch/brand ASLI
   // activity (editBranchSlug) siap. SENGAJA TIDAK MENUNGGU `sites` lagi
   // (lihat catatan besar di editBranchSlug/effectiveScope di atas) - site/MC
@@ -563,7 +521,7 @@ function CreatePlanWizardInner() {
   useEffect(() => {
     if (!editId || prefilled || !editData || !editBranchSlug) return;
     const a = editData.activity;
-    setCategories((a.event_categories || []).map(unsnake));
+    setCategories((a.event_categories || []).map(unsnake).slice(0, 1));
     setEventName(a.event_name || "");
     let editDates;
     if (a.plan_dates_multi) { editDates = a.plan_dates_multi.split(","); }
@@ -582,10 +540,8 @@ function CreatePlanWizardInner() {
     // fallback ke is_all_day/start_time/end_time lama diterapkan ke semua
     // tanggal (record lama, dibuat sebelum fitur per-tanggal ada).
     setTimesByDate(timesByDateFromActivity(a, editDates.filter(Boolean)));
-    // Mode edit selalu single-branch (isApprover otomatis false saat
-    // editId ada - lihat definisinya di atas), jadi branch-nya pasti
-    // editBranchSlug (branch ASLI activity, BUKAN scope login).
-    if (a.mc) setMcSelected(new Set([mcKey(editBranchSlug, a.mc)]));
+    // Micro Cluster tidak lagi diprefill terpisah - otomatis ikut site
+    // (site_id) yang dicocokkan di effect terpisah di bawah.
     setTargetSpProducts(Array.isArray(a.target_sp_products) ? a.target_sp_products : []);
     setTargetFwaProducts(Array.isArray(a.target_fwa_products) ? a.target_fwa_products : []);
     setTargetRebuyPulsa(String(a.target_rebuy_pulsa ?? 0));
@@ -624,9 +580,9 @@ function CreatePlanWizardInner() {
       if (matched.length > 1) setExtraSites(matched.slice(1));
     }
     const vd = dates.filter(Boolean);
-    const infoOk = categories.length > 0 && !!eventName.trim() && vd.length > 0 && allDateTimesValid(vd, timesByDate) && mcSelected.size > 0;
+    const infoOk = categories.length > 0 && !!eventName.trim() && vd.length > 0 && allDateTimesValid(vd, timesByDate);
     const locOk = !!matchedPrimary && !!poiType;
-    setStep(!infoOk ? 0 : !locOk ? 2 : 3);
+    setStep(!infoOk ? 0 : !locOk ? 1 : 3);
     setStepResumed(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editId, stepResumed, prefilled, dataLoading, editData, sites]);
@@ -651,15 +607,12 @@ function CreatePlanWizardInner() {
       if (eventName.trim()) next.delete("eventName");
       if (vd.length > 0) next.delete("planDate");
       if (vd.length === 0 || allDateTimesValid(vd, timesByDate)) next.delete("timeRange");
-      const branchesWithMc = mcGroups.filter((g) => g.mcList.length > 0);
-      const mcOk = mcSelected.size > 0 && !(branchesWithMc.length > 1 && branchesWithMc.some((g) => !Array.from(mcSelected).some((k) => k.startsWith(`${g.branchId}::`))));
-      if (mcOk) next.delete("mc");
       if (primarySite) next.delete("site");
       if (poiType) next.delete("poiType");
       return next.size === prev.size ? prev : next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isApprover, actingForList.length, categories.length, eventName, dates, timesByDate, mcSelectedKey, mcGroups, primarySite, poiType]);
+  }, [isApprover, actingForList.length, categories.length, eventName, dates, timesByDate, primarySite, poiType]);
 
   // Lacak "ada perubahan yang belum disimpan sbg draft" - dipakai utk (1)
   // status tombol Simpan Draft (Simpan Draft → Menyimpan… → Draft
@@ -688,7 +641,7 @@ function CreatePlanWizardInner() {
     if (!readyRef.current) { readyRef.current = true; return; }
     setDirty(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wizardGateReady, categories, eventName, dates, timesByDate, mcSelectedKey, targetSpProducts, targetFwaProducts, targetRebuyPulsa, targetRebuyData, costEstimate, primarySite, extraSites, poiType, network, area, address, manualLat, manualLng]);
+  }, [wizardGateReady, categories, eventName, dates, timesByDate, targetSpProducts, targetFwaProducts, targetRebuyPulsa, targetRebuyData, costEstimate, primarySite, extraSites, poiType, network, area, address, manualLat, manualLng]);
 
   // Tinggi bar aksi bawah (Lanjut/Submit Plan) DIUKUR LANGSUNG - SAMA
   // polanya dgn action bar di halaman Laporan Actual/Detail Aktivitas.
@@ -731,7 +684,7 @@ function CreatePlanWizardInner() {
     );
   }
 
-  const toggleCategory = (c) => setCategories((prev) => prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]);
+  const toggleCategory = (c) => setCategories((prev) => (prev[0] === c ? [] : [c]));
 
   const validDates = dates.filter(Boolean);
 
@@ -745,28 +698,8 @@ function CreatePlanWizardInner() {
       // Waktu WAJIB valid utk SETIAP tanggal terpilih (bukan satu waktu
       // global) - dipakai TMV utk urutkan activity di tanggal yang sama.
       if (validDates.length > 0 && !allDateTimesValid(validDates, timesByDate)) bad.add("timeRange");
-      // MC wajib minimal satu SECARA KESELURUHAN, dan kalau "Buat Untuk"
-      // mencakup lebih dari satu branch, WAJIB minimal satu per branch yg
-      // memang punya MC (branch tanpa MC sama sekali dikecualikan - tidak
-      // ada apa pun yg bisa dipilih di sana).
-      const branchesWithMc = mcGroups.filter((g) => g.mcList.length > 0);
-      if (mcSelected.size === 0) bad.add("mc");
-      else if (branchesWithMc.length > 1 && branchesWithMc.some((g) => !Array.from(mcSelected).some((k) => k.startsWith(`${g.branchId}::`)))) {
-        bad.add("mc");
-      }
     }
     if (i === 1) {
-      // Target WAJIB diisi minimal SATU dari 4 (SP/FWA/Rebuy SP/Rebuy FWA) -
-      // bukan malah boleh dikosongkan semua spt sebelumnya (plan tanpa
-      // target apa pun tidak ada gunanya utk dievaluasi nanti).
-      const hasAnyTarget = targetSp > 0 || targetFwa > 0 || Number(targetRebuyPulsa) > 0 || Number(targetRebuyData) > 0;
-      if (!hasAnyTarget) bad.add("target");
-      // Estimasi Budget Cost SEKARANG wajib diisi (bukan default 500rb yg
-      // gampang kelewat tanpa disadari lalu ke-submit apa adanya) - DSF
-      // harus benar2 mengisi angka sendiri, walau nol tetap tidak valid.
-      if (!costEstimate || Number(costEstimate) <= 0) bad.add("costEstimate");
-    }
-    if (i === 2) {
       if (!primarySite) bad.add("site");
       if (!poiType) bad.add("poiType");
       // Titik GPS (lat/lng) SEKARANG WAJIB juga - bukan cuma alamat teks -
@@ -778,6 +711,17 @@ function CreatePlanWizardInner() {
       if (!address.trim()) bad.add("address");
       if (!network) bad.add("network");
       if (!area) bad.add("area");
+    }
+    if (i === 2) {
+      // Target WAJIB diisi minimal SATU dari 4 (SP/FWA/Rebuy SP/Rebuy FWA) -
+      // bukan malah boleh dikosongkan semua spt sebelumnya (plan tanpa
+      // target apa pun tidak ada gunanya utk dievaluasi nanti).
+      const hasAnyTarget = targetSp > 0 || targetFwa > 0 || Number(targetRebuyPulsa) > 0 || Number(targetRebuyData) > 0;
+      if (!hasAnyTarget) bad.add("target");
+      // Estimasi Budget Cost SEKARANG wajib diisi (bukan default 500rb yg
+      // gampang kelewat tanpa disadari lalu ke-submit apa adanya) - DSF
+      // harus benar2 mengisi angka sendiri, walau nol tetap tidak valid.
+      if (!costEstimate || Number(costEstimate) <= 0) bad.add("costEstimate");
     }
     setInvalid(bad);
     // Field pertama yg tidak valid (urutan insert `bad.add(...)` di atas
@@ -816,7 +760,7 @@ function CreatePlanWizardInner() {
   // pekerjaan yang belum selesai.
   function hasAnyDraftContent() {
     return !!(
-      eventName.trim() || categories.length > 0 || validDates.length > 0 || mcSelected.size > 0 ||
+      eventName.trim() || categories.length > 0 || validDates.length > 0 ||
       targetSpProducts.length > 0 || targetFwaProducts.length > 0 || Number(targetRebuyPulsa) || Number(targetRebuyData) || Number(costEstimate) ||
       primarySite || extraSites.length > 0 || address.trim() ||
       tagEntries.sp.length > 0 || tagEntries.fwa.length > 0
@@ -878,9 +822,8 @@ function CreatePlanWizardInner() {
         event_categories: categoryCodes,
         event_name: eventName.trim(),
         site_id: siteIds[0] || null,
-        // Kolom `mc` di DB cuma satu nilai - ambil dari MC site UTAMA yang
-        // benar-benar dipakai (bukan dari daftar mcSelected yg bisa lebih
-        // dari satu), sama seperti perilaku lama saat mc masih single-select.
+        // Kolom `mc` di DB diambil langsung dari site UTAMA yang dipilih
+        // (MC tidak lagi dipilih manual terpisah - lihat StepLocation).
         mc: primarySite?.mc || null,
         latitude: manualLat,
         longitude: manualLng,
@@ -1119,12 +1062,19 @@ function CreatePlanWizardInner() {
           <StepInfo {...{
             categories, toggleCategory, eventName, setEventName, dates, setDates,
             timesByDate, setTimesByDate,
-            mcSelected, toggleMc, mcGroups, invalid,
+            invalid,
             branchName: effectiveScope.branchNameDisplay,
             isApprover, actingFor, actingForList, actingForLoading, onPickActingFor: () => setActingForSheet(true),
           }} />
         )}
         {step === 1 && (
+          <StepLocation {...{
+            sites, primarySite, setPrimarySite, extraSites, setExtraSites,
+            poiType, setPoiType, poiTypes, network, setNetwork, area, setArea,
+            address, setAddress, manualLat, manualLng, setManualLat, setManualLng, invalid,
+          }} />
+        )}
+        {step === 2 && (
           <StepTarget {...{
             targetSpProducts, setTargetSpProducts, targetFwaProducts, setTargetFwaProducts,
             spProductOptions: tagTypes.sp, fwaProductOptions: tagTypes.fwa,
@@ -1134,17 +1084,9 @@ function CreatePlanWizardInner() {
             tagConflict, setTagConflict, confirmTagConflict, ownLabel: scope?.fullName, invalid,
           }} />
         )}
-        {step === 2 && (
-          <StepLocation {...{
-            hasMc: mcSelected.size > 0, sitesInMc, primarySite, setPrimarySite, extraSites, setExtraSites,
-            poiType, setPoiType, poiTypes, network, setNetwork, area, setArea,
-            address, setAddress, manualLat, manualLng, setManualLat, setManualLng, invalid,
-          }} />
-        )}
         {step === 3 && (
           <StepReview {...{
             categories, eventName, dates: validDates, timesByDate,
-            mcSummary: Array.from(mcSelected).map((k) => k.split("::")[1]).join(", "),
             targetSpProducts, targetFwaProducts, targetSp, targetFwa, targetSpRevenue, targetFwaRevenue,
             targetRebuyPulsa, targetRebuyData, costEstimate, targetEstRevenue, targetCostRatio,
             primarySite, extraSites, poiType, network, area, address, manualLat, manualLng,
@@ -1223,7 +1165,7 @@ function CreatePlanWizardInner() {
 }
 
 // ═════════════════════════════════ Step 1 ═════════════════════════════════
-function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, setDates, timesByDate, setTimesByDate, mcSelected, toggleMc, mcGroups, invalid, branchName, isApprover, actingFor, actingForList, actingForLoading, onPickActingFor }) {
+function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, setDates, timesByDate, setTimesByDate, invalid, branchName, isApprover, actingFor, actingForList, actingForLoading, onPickActingFor }) {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const validDates = dates.filter(Boolean);
   // Tidak ada mode manual - ringkasan dihitung otomatis dari keterdekatan
@@ -1288,7 +1230,7 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
         </>
       )}
 
-      <FieldLabel id="field-categories" text="Activity Category" required hint="Bisa lebih dari satu" top={isApprover} />
+      <FieldLabel id="field-categories" text="Activity Category" required top={isApprover} />
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         {CATEGORIES.map((c) => {
           const active = categories.includes(c);
@@ -1300,7 +1242,7 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
       {invalid.has("categories") && <FieldError text="Pilih minimal satu kategori" />}
 
       <FieldLabel id="field-eventName" text="Event Name" required top />
-      <TextInput value={eventName} onChange={setEventName} placeholder="Contoh: Open Booth FWA" error={invalid.has("eventName")} />
+      <TextInput value={eventName} onChange={setEventName} placeholder="Masukkan nama event" error={invalid.has("eventName")} />
       {invalid.has("eventName") && <FieldError text="Nama event wajib diisi" />}
 
       <FieldLabel id="field-planDate" text="Plan Date & Waktu" required top hint="Ketuk utk atur - wajib per tanggal" />
@@ -1354,21 +1296,6 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
           }}
         />
       )}
-
-      {/* Field "Branch" cuma perlu ditampilkan sendiri kalau CUMA satu branch
-          - begitu lebih dari satu (multi "Buat Untuk"), nama tiap branch
-          sudah jadi header section di picker MC di bawah, jadi baris ini
-          tinggal duplikat tanpa info baru. */}
-      {mcGroups.length <= 1 && (
-        <>
-          <FieldLabel text="Branch" required top />
-          <LockedField text={branchName || "-"} muted />
-        </>
-      )}
-
-      <FieldLabel id="field-mc" text="Micro Cluster" required top hint={mcGroups.length > 1 ? "Bisa lebih dari satu - wajib min. 1 per branch" : "Bisa lebih dari satu"} />
-      <GroupedSelectPills groups={mcGroups} selected={mcSelected} onToggle={toggleMc} placeholder="Tidak ada MC di scope Anda" />
-      {invalid.has("mc") && <FieldError text={mcGroups.length > 1 ? "Pilih minimal satu MC dari SETIAP branch" : "Micro cluster wajib dipilih"} />}
     </Card>
   );
 }
@@ -1752,36 +1679,48 @@ function TagConflictSheet({ conflict, onClose, onConfirm }) {
 }
 
 // ═════════════════════════════════ Step 3 ═════════════════════════════════
-function StepLocation({ hasMc, sitesInMc, primarySite, setPrimarySite, extraSites, setExtraSites, poiType, setPoiType, poiTypes, network, setNetwork, area, setArea, address, setAddress, manualLat, manualLng, setManualLat, setManualLng, invalid }) {
+function StepLocation({ sites, primarySite, setPrimarySite, extraSites, setExtraSites, poiType, setPoiType, poiTypes, network, setNetwork, area, setArea, address, setAddress, manualLat, manualLng, setManualLat, setManualLng, invalid }) {
   const [picking, setPicking] = useState(null); // 'primary' | 'extra' | null
   const [mapPicking, setMapPicking] = useState(false);
   const taken = new Set([primarySite?.site_id, ...extraSites.map((s) => s.site_id)].filter(Boolean));
-  const available = sitesInMc.filter((s) => !taken.has(s.site_id));
+  const available = sites.filter((s) => !taken.has(s.site_id));
 
   return (
     <>
       <Card>
         <FieldLabel id="field-site" text="Site" required hint={`${(primarySite ? 1 : 0) + extraSites.length} dipilih`} />
-        {!hasMc ? (
-          <LockedField text="Pilih micro cluster dulu di step 1" muted />
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {primarySite ? (
-              <SiteRow badge="Site 1" badgeColor="#EC008C" label={`${primarySite.site_id}${primarySite.site_name ? ` · ${primarySite.site_name}` : ""}`}
-                onTap={() => setPicking("primary")} onRemove={extraSites.length ? () => { setPrimarySite(extraSites[0]); setExtraSites(extraSites.slice(1)); } : null} />
-            ) : (
-              <AddSiteRow label={sitesInMc.length ? "Pilih site utama" : "Tidak ada site di MC ini"} enabled={sitesInMc.length > 0} error={invalid.has("site")} onClick={() => setPicking("primary")} />
-            )}
-            {extraSites.map((s, i) => (
-              <SiteRow key={s.site_id} badge={`Site ${i + 2}`} badgeColor="#8A8A96" label={`${s.site_id}${s.site_name ? ` · ${s.site_name}` : ""}`}
-                onRemove={() => setExtraSites(extraSites.filter((x) => x.site_id !== s.site_id))} />
-            ))}
-            {primarySite && (
-              <AddSiteRow label="Tambah site lain" compact enabled={available.length > 0} onClick={() => setPicking("extra")} />
-            )}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {primarySite ? (
+            <SiteRow badge="Site 1" badgeColor="#8A8A96" label={`${primarySite.site_id}${primarySite.site_name ? ` · ${primarySite.site_name}` : ""}`}
+              onTap={() => setPicking("primary")} onRemove={extraSites.length ? () => { setPrimarySite(extraSites[0]); setExtraSites(extraSites.slice(1)); } : null} />
+          ) : (
+            <AddSiteRow label={sites.length ? "Cari & pilih site" : "Tidak ada site di scope Anda"} enabled={sites.length > 0} error={invalid.has("site")} onClick={() => setPicking("primary")} />
+          )}
+          {extraSites.map((s, i) => (
+            <SiteRow key={s.site_id} badge={`Site ${i + 2}`} badgeColor="#8A8A96" label={`${s.site_id}${s.site_name ? ` · ${s.site_name}` : ""}`}
+              onRemove={() => setExtraSites(extraSites.filter((x) => x.site_id !== s.site_id))} />
+          ))}
+          {primarySite && (
+            <AddSiteRow label="Tambah site lain" compact enabled={available.length > 0} onClick={() => setPicking("extra")} />
+          )}
+        </div>
+        {invalid.has("site") && <FieldError text="Site wajib dipilih" />}
+
+        {/* MC/Kecamatan/Kabupaten TIDAK LAGI dipilih manual - otomatis
+            ditampilkan read-only dari data site utama yang dipilih di atas,
+            begitu site sudah dipilih (dulu MC dipilih manual sendiri di
+            step Info sebelum bisa cari site - sekarang site sudah bawa
+            info ini sendiri, jadi urutannya dibalik). */}
+        {primarySite && (
+          <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+            <FieldLabel text="Micro Cluster" top />
+            <LockedField text={primarySite.mc || "-"} muted />
+            <FieldLabel text="Kecamatan" top />
+            <LockedField text={primarySite.kecamatan_name || "-"} muted />
+            <FieldLabel text="Kabupaten" top />
+            <LockedField text={primarySite.kabupaten || "-"} muted />
           </div>
         )}
-        {invalid.has("site") && <FieldError text="Site wajib dipilih" />}
 
         <FieldLabel id="field-poiType" text="POI Type" required top />
         <SelectPills options={poiTypes} value={poiType} onChange={setPoiType} error={invalid.has("poiType")} />
@@ -1822,7 +1761,7 @@ function StepLocation({ hasMc, sitesInMc, primarySite, setPrimarySite, extraSite
 
       {picking && (
         <SitePickerSheet
-          items={picking === "primary" ? sitesInMc : available}
+          items={picking === "primary" ? sites : available}
           onClose={() => setPicking(null)}
           onSelect={(s) => {
             if (picking === "primary") setPrimarySite(s); else setExtraSites([...extraSites, s]);
@@ -1876,7 +1815,7 @@ function StepReview(p) {
             </div>
           </div>
         )}
-        <ReviewRow k="Micro Cluster" v={p.mcSummary || "-"} last />
+        <ReviewRow k="Micro Cluster" v={p.primarySite?.mc || "-"} last />
       </ReviewSection>
 
       <ReviewSection icon={Tag} accent="#C6168D" title="Target & Estimasi">
@@ -2079,51 +2018,6 @@ function SelectPills({ options, value, onChange, error, placeholder }) {
     <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
       {options.map((o) => <Chip key={o} active={value === o} onClick={() => onChange(o)} label={o} />)}
       {error && <FieldError text="Wajib dipilih" />}
-    </div>
-  );
-}
-/** Sama seperti SelectPills, tapi MULTI-SELECT dan opsinya dikelompokkan per
- * branch (dari `mcGroupsFromSites`) - begitu "Buat Untuk" mencakup lebih
- * dari satu branch, MC dari branch berbeda jadi gampang tercampur & susah
- * dicari kalau ditampilkan rata semua, PLUS tiap branch wajib punya minimal
- * satu MC terpilih (lihat validateStep di komponen induk) - jadi section
- * yang belum ada pilihannya ditandai merah di sini juga, bukan cuma lewat
- * satu pesan error umum di bawah. Kalau cuma satu branch (kasus paling
- * umum), header section & penanda per-branch disembunyikan supaya tidak
- * menambah tinggi tanpa guna. */
-function GroupedSelectPills({ groups, selected, onToggle, placeholder }) {
-  const total = (groups || []).reduce((s, g) => s + g.mcList.length, 0);
-  if (total === 0) return <LockedField text={placeholder || "Tidak ada opsi"} muted />;
-  if (groups.length <= 1) {
-    const g = groups[0];
-    return (
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-        {g.mcList.map((o) => <Chip key={o} active={selected.has(mcKey(g.branchId, o))} onClick={() => onToggle(g.branchId, o)} label={o} />)}
-      </div>
-    );
-  }
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {groups.map((g) => {
-        const branchSelectedCount = g.mcList.filter((o) => selected.has(mcKey(g.branchId, o))).length;
-        const needsPick = g.mcList.length > 0 && branchSelectedCount === 0;
-        return (
-          <div key={g.branchId}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-              <span style={{ fontSize: 10, fontWeight: 800, color: needsPick ? "#DC2626" : "#B0B0BA", letterSpacing: 0.3, textTransform: "uppercase" }}>{g.branchName}</span>
-              {needsPick && <span style={{ fontSize: 9.5, fontWeight: 700, color: "#DC2626" }}>· pilih minimal 1</span>}
-              {branchSelectedCount > 0 && <span style={{ fontSize: 9.5, fontWeight: 700, color: "#B0B0BA" }}>· {branchSelectedCount} dipilih</span>}
-            </div>
-            {g.mcList.length === 0 ? (
-              <div style={{ fontSize: 11.5, color: "#C4C4CE" }}>Tidak ada MC di branch ini</div>
-            ) : (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {g.mcList.map((o) => <Chip key={o} active={selected.has(mcKey(g.branchId, o))} onClick={() => onToggle(g.branchId, o)} label={o} />)}
-              </div>
-            )}
-          </div>
-        );
-      })}
     </div>
   );
 }
