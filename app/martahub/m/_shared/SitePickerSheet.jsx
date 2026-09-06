@@ -5,10 +5,11 @@
  * wizard Buat Plan) supaya alur "Tambah Site" bisa dipakai lagi di Isi
  * Laporan Actual dgn konsep yg SAMA PERSIS spt di form plan.
  */
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
+import { useVisualViewportBox } from "./useVisualViewportBox";
 import { X, Search } from "lucide-react";
 import { FF } from "./MobileShell";
-import { lockPullToRefresh, unlockPullToRefresh } from "./CalendarPickerSheet";
+import BottomSheet from "./BottomSheet";
 
 const inputBase = { width: "100%", height: 48, padding: "0 14px 0 40px", borderRadius: 12, background: "#F6F7F9", border: "1.5px solid #ECEDF0", fontSize: 14, fontWeight: 500, color: "#17181C", fontFamily: FF, outline: "none", boxSizing: "border-box" };
 
@@ -33,35 +34,28 @@ function SiteTowerIcon({ size = 16, color = "#8A8A96" }) {
 export default function SitePickerSheet({ items, onClose, onSelect, title = "Pilih Site" }) {
   const [q, setQ] = useState("");
   const filtered = items.filter((s) => !q.trim() || s.site_id.toLowerCase().includes(q.toLowerCase()) || (s.site_name || "").toLowerCase().includes(q.toLowerCase()));
+  // Dibangun di atas BottomSheet (_shared/BottomSheet.jsx) - primitif yg
+  // sama dipakai semua sheet "muncul dari bawah" di app ini (animasi
+  // masuk/keluar/drag konsisten). Search box perlu tetap kelihatan/nempel
+  // di atas sementara HANYA daftar site yg discroll kalau panjang - itu
+  // diatur SENDIRI di sini (bukan lewat BottomSheet, yg isinya generik),
+  // pakai `useVisualViewportBox` yg sama supaya batas tinggi daftarnya juga
+  // tetap pas walau keyboard virtual sedang muncul (bukan vh statis).
+  const sheetRef = useRef(null);
+  const vv = useVisualViewportBox();
 
-  useEffect(() => {
-    const { overflow, touchAction } = document.body.style;
-    document.body.style.overflow = "hidden";
-    document.body.style.touchAction = "none";
-    lockPullToRefresh();
-    return () => {
-      document.body.style.overflow = overflow;
-      document.body.style.touchAction = touchAction;
-      unlockPullToRefresh();
-    };
-  }, []);
+  function selectAndClose(s) {
+    sheetRef.current?.close(() => onSelect(s));
+  }
 
   return (
-    <div
-      onClick={onClose}
-      style={{ position: "fixed", inset: 0, background: "rgba(23,24,28,0.45)", zIndex: 70, display: "flex", alignItems: "flex-end", overscrollBehavior: "none", touchAction: "none" }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{ width: "100%", maxWidth: 480, margin: "0 auto", maxHeight: "80vh", display: "flex", flexDirection: "column", background: "#FFFFFF", borderRadius: "22px 22px 0 0", fontFamily: FF, overscrollBehavior: "contain", boxShadow: "0 -8px 30px rgba(10,10,14,0.18)" }}
-      >
-        <div style={{ width: 40, height: 4, borderRadius: 3, background: "#E4E5EA", margin: "10px auto 2px", flexShrink: 0 }} />
-
-        <div style={{ padding: "6px 16px 12px", flexShrink: 0 }}>
+    <BottomSheet ref={sheetRef} onClose={onClose}>
+      <div style={{ display: "flex", flexDirection: "column", maxHeight: Math.round(vv.height * 0.72) }}>
+        <div style={{ flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "4px 4px 10px" }}>
             <div style={{ fontSize: 16, fontWeight: 800, color: "#17181C", letterSpacing: -0.2 }}>{title}</div>
             <button
-              onClick={onClose}
+              onClick={() => sheetRef.current?.close(onClose)}
               aria-label="Tutup"
               style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "#F1F2F5", color: "#5A5A68", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}
             >
@@ -80,14 +74,14 @@ export default function SitePickerSheet({ items, onClose, onSelect, title = "Pil
           </div>
         </div>
 
-        <div style={{ overflowY: "auto", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch", padding: "0 16px calc(env(safe-area-inset-bottom,0px) + 20px)", minHeight: 160 }}>
+        <div style={{ marginTop: 10, overflowY: "auto", overscrollBehavior: "contain", WebkitOverflowScrolling: "touch" }}>
           {filtered.length === 0 && (
             <div style={{ padding: "32px 0", textAlign: "center", color: "#8A8A96", fontSize: 12.5 }}>Tidak ada site cocok.</div>
           )}
           {filtered.map((s) => (
             <button
               key={s.site_id}
-              onClick={() => onSelect(s)}
+              onClick={() => selectAndClose(s)}
               style={{ width: "100%", textAlign: "left", padding: "12px 10px", borderRadius: 12, border: "none", background: "none", borderBottom: "1px solid #F0F0F3", cursor: "pointer", display: "flex", alignItems: "center", gap: 12 }}
             >
               <div style={{ width: 34, height: 34, borderRadius: 10, background: "#F6F7F9", border: "1px solid #ECEDF0", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -101,6 +95,6 @@ export default function SitePickerSheet({ items, onClose, onSelect, title = "Pil
           ))}
         </div>
       </div>
-    </div>
+    </BottomSheet>
   );
 }

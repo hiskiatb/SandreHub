@@ -9,7 +9,7 @@
  * bergerak - SAMA PERSIS dgn `_onSettled()` Flutter.
  */
 import { useEffect, useRef, useState } from "react";
-import { X, Crosshair, Search, Check, Loader2, MapPin, Pencil, AlertTriangle, ChevronDown } from "lucide-react";
+import { X, Crosshair, Search, Check, Loader2, MapPin, Pencil, AlertTriangle, ChevronDown, Info } from "lucide-react";
 import { FF, BRAND } from "./MobileShell";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import { locationiqTileUrl, LOCATIONIQ_TILE_SUBDOMAINS, LOCATIONIQ_TILE_ATTRIBUTION, LOCATIONIQ_TILE_MAX_ZOOM } from "../../../../lib/locationiqTiles";
@@ -21,6 +21,14 @@ const LEAFLET_JS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
 // buka/tutup sheet dlm satu session tab, TIDAK menggantikan cache 2 menit
 // di sisi server, cuma fast-path biar hasil yg sama kelihatan instan tanpa
 // nunggu network roundtrip). TTL disamakan dgn cache server (2 menit).
+// Panel pencarian expanded SENGAJA tidak nutup 100% layar - disisain
+// sedikit ruang di atas (peta + status bar kelihatan tipis) spt referensi
+// Apple Maps, bukan flush ke ujung atas layar. COLLAPSED_APPROX_HEIGHT_PX
+// dipakai cuma sbg estimasi utk BATAS drag-to-collapse (lihat
+// handlePanelTouchMove) - approx tinggi panel versi collapsed (search bar +
+// label "Lokasi Terpilih" + kartu alamat + tombol konfirmasi).
+const EXPANDED_TOP_GAP_PX = 90;
+const COLLAPSED_APPROX_HEIGHT_PX = 260;
 const CLIENT_CACHE_TTL_MS = 2 * 60 * 1000;
 const geocodeCache = new Map(); // key: "lat5,lng5" -> { value, ts }
 const autocompleteCache = new Map(); // key: lowercased/trimmed query -> { value, ts }
@@ -92,13 +100,56 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
   const [searching, setSearching] = useState(false);
   const [searchResults, setSearchResults] = useState([]);
   const [searchErr, setSearchErr] = useState("");
+  // Search dipindah ke DALAM panel bawah (gaya Apple Maps) - "expanded"
+  // saat input fokus ATAU ada ketikan, panel melebar nutupin hampir layar
+  // penuh nampilin daftar saran scroll-able; "collapsed" (default) balik ke
+  // tinggi normal nampilin blok alamat/manual/konfirmasi spt biasa.
+  const [searchExpanded, setSearchExpanded] = useState(false);
+  const searchInputRef = useRef(null);
+  // Drag-to-collapse: lacak posisi jari vertikal dari titik sentuh awal di
+  // handle/baris search saat expanded, panel "ngikutin" jari via translateY
+  // inline sementara drag berlangsung, lalu snap balik expanded (kalau
+  // geser < threshold) atau snap collapsed (>= threshold) begitu jari
+  // dilepas - transform inline direset stlh snap, biar CSS transition yg
+  // ambil alih animasinya.
+  const dragStartYRef = useRef(null);
+  const [dragOffset, setDragOffset] = useState(0);
+  // Jarak geser max yg diizinkan = selisih tinggi expanded - tinggi
+  // collapsed (approx) - DIBATASI (bukan bebas sampai ke bawah layar) spy
+  // "tinggi minimum saat ditarik" ya persis tinggi awal (collapsed), TIDAK
+  // BISA ketarik lebih rendah dari itu / nutup semua kontennya. Threshold
+  // utk benar2 snap ke collapsed dibuat proporsional (35% dari jarak max)
+  // spy gampang ketarik turun tanpa perlu narik jauh2.
+  const maxDragRef = useRef(320);
+  const DRAG_COLLAPSE_RATIO = 0.35;
+
+  function handlePanelTouchStart(e) {
+    if (!searchExpanded) return;
+    dragStartYRef.current = e.touches[0].clientY;
+    const expandedPx = window.innerHeight - EXPANDED_TOP_GAP_PX;
+    maxDragRef.current = Math.max(60, expandedPx - COLLAPSED_APPROX_HEIGHT_PX);
+  }
+  function handlePanelTouchMove(e) {
+    if (dragStartYRef.current == null) return;
+    const dy = e.touches[0].clientY - dragStartYRef.current;
+    if (dy > 0) setDragOffset(Math.min(dy, maxDragRef.current)); // cuma boleh narik ke bawah SAMPAI batas tinggi collapsed, bukan ke atas / lebih rendah dr itu
+  }
+  function handlePanelTouchEnd() {
+    if (dragStartYRef.current == null) return;
+    const draggedDown = dragOffset;
+    dragStartYRef.current = null;
+    setDragOffset(0);
+    if (draggedDown >= maxDragRef.current * DRAG_COLLAPSE_RATIO) {
+      searchInputRef.current?.blur();
+      setSearchExpanded(false);
+    }
+    // < threshold: snap balik expanded (state sudah expanded, tinggal
+    // transform di-reset di atas, CSS transition yg urus animasinya).
+  }
   // Edit alamat manual - alamat hasil reverse-geocode kadang kurang presisi
   // (nama jalan resmi vs yg umum dipakai, patokan lokal, dsb), jadi DSF
   // boleh koreksi teksnya langsung di sini tanpa perlu geser peta lagi.
-  const [addrEditing, setAddrEditing] = useState(false);
-  const [addrDraft, setAddrDraft] = useState("");
   const debounceRef = useRef(null);
-  const searchDebounceRef = useRef(null);
   // `alive` dicek di SETIAP callback async (fetch/geolocation) sebelum
   // setState - sheet ini bisa ditutup (unmount) sementara request masih
   // di tengah jalan (fetch Nominatim/geolocation lambat), dan tanpa guard
@@ -110,7 +161,37 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
   const aliveRef = useRef(true);
   const geoReqId = useRef(0);
   const searchReqId = useRef(0);
-  useEffect(() => () => { aliveRef.current = false; }, []);
+  // BUG PENTING (penyebab tombol "Lokasi Saya" nyangkut loading terus):
+  // sebelumnya effect ini CUMA daftarin cleanup (set false ke aliveRef),
+  // TANPA pernah nge-reset aliveRef.current balik ke true saat setup. Di
+  // React 18 StrictMode (mode development), tiap effect mount SENGAJA
+  // di-mount -> unmount -> mount lagi 1x (buat nge-tes cleanup) - unmount
+  // palsu itu trigger cleanup di atas (aliveRef.current jadi false), tapi
+  // krn tidak ada yg reset ke true lagi pas mount KEDUA (yg sungguhan),
+  // ref ini permanen kepasang false walau komponennya beneran hidup.
+  // Efeknya: SEMUA pengecekan "if (!aliveRef.current) return;" di callback
+  // async (geolocation, reverse-geocode, search) langsung bail out diam2
+  // tanpa pernah setLocating(false)/setLocErr - state loading nyangkut
+  // selamanya. Sebelumnya jarang kepergok krn cuma kena kalau tombol
+  // ditekan PAS window sempit itu - sekarang jadi PASTI kena krn lokasi
+  // skrg di-trigger OTOMATIS pas mount (effect auto-locate di bawah).
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => { aliveRef.current = false; };
+  }, []);
+
+  // Default saat sheet ini dibuka TANPA koordinat awal (mis. site/DSF blm
+  // pernah pilih titik sebelumnya) - langsung arahkan ke lokasi user saat
+  // ini (`useMyLocation`, fungsi yg SAMA persis dgn yg dipanggil tombol
+  // crosshair manual), bukan diam di default hardcoded sekitar Lampung.
+  // SENGAJA cuma jalan kalau `initialLat`/`initialLng` KOSONG - kalau sheet
+  // dibuka utk ubah/liat titik yg SUDAH pernah dipilih sebelumnya, jangan
+  // ditimpa otomatis ke lokasi user skrg. Hanya sekali saat mount (deps
+  // kosong), bukan tiap kali initialLat/Lng berubah.
+  useEffect(() => {
+    if (!initialLat && !initialLng) useMyLocation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Input manual longlat - jalur cadangan kalau titiknya susah ditemukan
   // dgn geser peta (mis. area tanpa jalan/landmark jelas di tile OSM, atau
   // DSF sudah punya angka longlat pasti dari sumber lain) - toggle-able,
@@ -205,9 +286,17 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
         }
         return null;
       }
-      const display = data?.result?.display || null;
-      if (display) setCached(geocodeCache, geocodeCacheKey(lat, lng), display);
-      return display;
+      // Sebelumnya pakai result.display (versi RINGKAS yg disusun edge
+      // function - road+area+city doang) buat ditampilin di "Lokasi
+      // Terpilih" - DSF minta versi RAW/lengkap persis kayak response asli
+      // LocationIQ (mis. "Lapangan Benteng, Petisah Tengah, Medan Petisah,
+      // Kota Medan, Sumatera Utara, Sumatra, 20112, Indonesia"), bukan
+      // dipotong sampai nama jalan aja ilang. Pakai displayFull (raw
+      // display_name dari LocationIQ, sudah disediakan edge function-nya
+      // sejak awal tapi belum dipakai di sini).
+      const full = data?.result?.displayFull || data?.result?.display || null;
+      if (full) setCached(geocodeCache, geocodeCacheKey(lat, lng), full);
+      return full;
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error("[locationiq reverse] exception:", e);
@@ -270,20 +359,18 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
     );
   }
 
-  // Sebelumnya search HANYA jalan lewat keydown "Enter" - di banyak mobile
-  // browser/webview, tombol "Search"/"Go" di keyboard virtual tidak selalu
-  // mengirim event keydown dgn key==="Enter" (apalagi saat kondisi
-  // autocomplete/composition aktif), jadi user ngetik tapi suggestion tidak
-  // pernah muncul sama sekali. Fix: auto-search di-debounce 450ms tiap kali
-  // user berhenti ngetik (min 3 karakter), Enter tetap didukung utk trigger
-  // instan.
+  // Auto-suggestion (search live tiap ngetik, di-debounce 450ms) SENGAJA
+  // DIHAPUS - tiap ketikan yg berhenti 450ms sebelumnya trigger 1 request
+  // ke edge function/LocationIQ, boros kuota (rencana LocationIQ dibatasi
+  // jumlah request/bulan). Sekarang ganti ke konsep persis kayak demo resmi
+  // LocationIQ sendiri: user KETIK BEBAS, request BARU dikirim begitu
+  // eksplisit menekan tombol "Cari" (atau Enter di keyboard) - jauh lebih
+  // hemat krn 1 pencarian = 1 request, bukan 1 request per jeda ketikan.
+  // Efek sampingnya: hasil lama otomatis dikosongkan begitu query berubah
+  // (spy tidak nyangkut nampilin hasil dari kata kunci sebelumnya).
   useEffect(() => {
-    const q = searchQ.trim();
-    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
-    if (q.length < 3) { setSearchResults([]); return; }
-    searchDebounceRef.current = setTimeout(() => runSearch(), 450);
-    return () => clearTimeout(searchDebounceRef.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setSearchResults([]);
+    setSearchErr("");
   }, [searchQ]);
 
   // Urutkan hasil autocomplete berdasarkan jarak lurus (squared-distance,
@@ -298,9 +385,35 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
     });
   }
 
-  async function runSearch(isRetry, reqIdOverride) {
+  // MITIGASI RINGAN utk typo prefix jalan (BUKAN fuzzy/Levenshtein spell-
+// correction sungguhan - itu butuh gazetteer/index lokal yg tidak dipunyai
+// app ini). Cuma menangani DUA hal simpel: (1) spasi ganda dirapikan jadi
+// satu, (2) prefix umum "jl"/"jln" <-> "jalan" ditukar krn user sering
+// tidak konsisten menulisnya. Typo di TENGAH nama jalan (mis. "Renfille"
+// utk "Renville") TIDAK akan tertolong oleh ini.
+function lightNormalizeQuery(q) {
+  const collapsed = q.replace(/\s+/g, " ").trim();
+  const lower = collapsed.toLowerCase();
+  if (/^jln?\.?\s/.test(lower)) {
+    return collapsed.replace(/^jln?\.?\s/i, "Jalan ");
+  }
+  if (/^jalan\s/.test(lower)) {
+    return collapsed.replace(/^jalan\s/i, "Jl ");
+  }
+  return collapsed !== q ? collapsed : null; // null = tidak ada varian lain utk dicoba
+}
+
+async function runSearch(isRetry, reqIdOverride) {
     const q = searchQ.trim();
     if (!q) return;
+    // Minimal 3 karakter - konsisten dgn ambang yg dipakai di tip/empty-
+    // state UI (searchQ.trim().length >= 3) & sekalian jaga2 dari request
+    // sia-sia utk query 1-2 huruf yg hasilnya nyaris pasti tidak berguna.
+    if (q.length < 3 && !isRetry) {
+      setSearchErr("Ketik minimal 3 huruf dulu, baru tekan Cari.");
+      setSearchResults([]);
+      return;
+    }
     const reqId = isRetry ? reqIdOverride : ++searchReqId.current;
     const qKey = q.toLowerCase();
     const fromLat = center.lat, fromLng = center.lng;
@@ -345,7 +458,27 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
         setSearchResults([]);
         return;
       }
-      const results = data?.results || [];
+      let results = data?.results || [];
+      // Fallback SEKALI (bukan retry-of-retry) kalau attempt asli nol hasil
+      // - coba varian query yg dinormalisasi ringan (lihat lightNormalizeQuery).
+      // Tidak ditembak kalau attempt asli sudah dapat hasil, dan hasil dari
+      // varian ini yg dipakai kalau lebih baik (attempt asli tetap kosong).
+      if (!results.length && !isRetry) {
+        const normalized = lightNormalizeQuery(q);
+        if (normalized && normalized.toLowerCase() !== qKey) {
+          try {
+            const fallback = await supabaseMarta.functions.invoke("locationiq", {
+              body: { action: "autocomplete", q: normalized },
+            });
+            if (!fallback.error && fallback.data?.results?.length) {
+              results = fallback.data.results;
+            }
+          } catch {
+            // diam-diam gagal - attempt asli (kosong) tetap yg ditampilkan
+          }
+        }
+      }
+      if (!aliveRef.current || reqId !== searchReqId.current) return;
       if (results.length) setCached(autocompleteCache, qKey, results);
       setSearchResults(sortResultsByDistance(results, fromLat, fromLng));
     } catch (e) {
@@ -369,10 +502,16 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
     const lat = Number(r.lat), lng = Number(r.lon);
     mapRef.current?.setView([lat, lng], 17);
     setCenter({ lat, lng });
-    setAddress(r.display || null);
+    // Sama spt fetchGeocode - simpan versi RAW (displayFull) sbg alamat
+    // "Lokasi Terpilih", bukan versi ringkas `r.display` yg dipakai di baris
+    // suggestion (list suggestion tetap ringkas biar gampang di-scan, tapi
+    // begitu DIPILIH, alamat final yg disimpan harus lengkap).
+    setAddress(r.displayFull || r.display || null);
     setSearchResults([]);
     setSearchQ("");
     setSearchErr("");
+    searchInputRef.current?.blur();
+    setSearchExpanded(false);
   }
 
   function applyManualCoords() {
@@ -403,52 +542,13 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
     <div style={{ position: "fixed", inset: 0, zIndex: 90, background: "#F4F5F7", fontFamily: FF, display: "flex", flexDirection: "column" }}>
       <style>{`@keyframes pinDrop{0%{transform:translateY(-16px);opacity:0}100%{transform:translateY(0);opacity:1}}
         .mh-map-search::placeholder{color:#7A7A86;font-weight:500}`}</style>
-      {/* Top bar */}
+      {/* Top bar - HANYA tombol close, search sudah pindah ke panel bawah
+          (gaya Apple Maps) - lihat bagian "Bottom confirm panel" di bawah. */}
       <div style={{ position: "absolute", top: 0, left: 0, right: 0, zIndex: 10, padding: "calc(env(safe-area-inset-top,0px) + 12px) 14px 0" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button onClick={onClose}
-            style={{ width: 38, height: 38, borderRadius: 12, background: "#FFFFFF", border: "1px solid #E4E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 2px 8px rgba(23,24,28,0.08)", flexShrink: 0 }}>
-            <X size={17} color="#5A5A68" />
-          </button>
-          <div style={{ flex: 1, position: "relative" }}>
-            {/* Kontras dinaikkan - sebelumnya border/shadow tipis nyaris
-                nyatu dgn tile peta yg terang, jadi kolom cari kelihatan
-                spt dekorasi bukan input aktif (gampang kelewat). Sekarang
-                border lebih tebal + shadow lebih jelas + placeholder lebih
-                gelap, biar langsung kebaca sbg field yg bisa diketik. */}
-            <div style={{ display: "flex", alignItems: "center", gap: 9, height: 44, padding: "0 13px", borderRadius: 13, background: "#FFFFFF", border: "1.5px solid #D6D7E0", boxShadow: "0 4px 16px rgba(23,24,28,0.16)" }}>
-              <Search size={16} color="#5A5A68" strokeWidth={2.4} style={{ flexShrink: 0 }} />
-              <input value={searchQ} onChange={(e) => setSearchQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && runSearch()}
-                placeholder="Cari nama jalan atau tempat…" className="mh-map-search"
-                style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none", fontSize: 13.5, fontWeight: 500, fontFamily: FF, color: "#17181C" }} />
-              {searching && <Loader2 size={14} color="#5A5A68" style={{ animation: "mspin .9s linear infinite" }} />}
-            </div>
-            {searchResults.length > 0 && (
-              <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "#FFFFFF", border: "1px solid #E4E5EA", borderRadius: 12, boxShadow: "0 8px 24px rgba(23,24,28,0.12)", maxHeight: 220, overflowY: "auto" }}>
-                {searchResults.map((r, i) => {
-                  const placeLabel = r.address?.road || r.address?.village || r.address?.town || r.address?.city || r.address?.county || null;
-                  return (
-                    <button key={i} onClick={() => pickResult(r)}
-                      style={{ width: "100%", textAlign: "left", padding: "10px 12px", background: "none", border: "none", borderBottom: i < searchResults.length - 1 ? "1px solid #F0F0F3" : "none", cursor: "pointer", fontSize: 11.5, color: "#3A3A44", lineHeight: 1.4 }}>
-                      {r.display}
-                      {placeLabel && (
-                        <div style={{ marginTop: 3 }}>
-                          <span style={{ display: "inline-block", fontSize: 10, fontWeight: 600, color: "#9A9AA4", background: "#F2F2F5", borderRadius: 5, padding: "1px 6px" }}>{placeLabel}</span>
-                        </div>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-            {!searching && searchErr && searchQ.trim().length >= 3 && (
-              <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, background: "#FEF2F2", border: "1px solid #FECACA", borderRadius: 12, boxShadow: "0 8px 24px rgba(23,24,28,0.12)", padding: "9px 12px", display: "flex", alignItems: "flex-start", gap: 7 }}>
-                <AlertTriangle size={13} color="#DC2626" style={{ flexShrink: 0, marginTop: 1 }} />
-                <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.5, color: "#B91C1C" }}>{searchErr}</div>
-              </div>
-            )}
-          </div>
-        </div>
+        <button onClick={onClose}
+          style={{ width: 38, height: 38, borderRadius: 12, background: "#FFFFFF", border: "1px solid #E4E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 2px 8px rgba(23,24,28,0.08)", flexShrink: 0 }}>
+          <X size={17} color="#5A5A68" />
+        </button>
       </div>
 
       {/* Map */}
@@ -500,104 +600,243 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
         )}
       </div>
 
-      {/* Bottom confirm panel - dirapikan: kartu koordinat sendiri (bukan
-          teks polos), status alamat dibedakan visual (netral/amber saat
-          tidak ketemu, bukan cuma teks abu-abu biasa), + toggle "Input
-          Manual" utk longlat kalau titiknya susah ditemukan lewat geser
-          peta (mis. area tanpa landmark jelas di tile OSM). */}
-      <div style={{ background: "#FFFFFF", borderRadius: "20px 20px 0 0", padding: "16px 18px calc(env(safe-area-inset-bottom,0px) + 16px)", boxShadow: "0 -4px 20px rgba(23,24,28,0.08)" }}>
-        <div style={{ fontSize: 10, fontWeight: 800, color: "#B0B0BA", textTransform: "uppercase", letterSpacing: 0.3 }}>Lokasi Terpilih</div>
-
-        <div style={{
-          marginTop: 8, display: "flex", alignItems: "flex-start", gap: 9, padding: "10px 11px", borderRadius: 12,
-          background: geocoding ? "#F6F7F9" : address ? "#F6F7F9" : "#FFF7ED",
-          border: `1px solid ${geocoding ? "#EFEFF2" : address ? "#EFEFF2" : "#FED7AA"}`,
+      {/* Bottom panel - Apple-Maps style: search dipindah ke DALAM panel
+          ini (paling atas, di bawah handle drag). "Collapsed" (default):
+          tinggi normal, nampilin blok alamat/manual/konfirmasi spt biasa di
+          bawah kolom cari. "Expanded" (input fokus ATAU ada ketikan):
+          tinggi animasi ke 85dvh, konten alamat/manual/konfirmasi
+          disembunyikan, diganti daftar saran scroll-able penuh. */}
+      <div
+        onTouchStart={handlePanelTouchStart}
+        onTouchMove={handlePanelTouchMove}
+        onTouchEnd={handlePanelTouchEnd}
+        style={{
+          background: "#FFFFFF", borderRadius: "20px 20px 0 0",
+          padding: "8px 18px calc(env(safe-area-inset-bottom,0px) + 16px)",
+          boxShadow: "0 -4px 20px rgba(23,24,28,0.08)",
+          // Expanded naik tinggi ke arah atas layar TAPI sengaja disisain
+          // gap kecil di puncak (EXPANDED_TOP_GAP_PX) spy peta + status bar
+          // masih keliatan tipis di atas - persis referensi Apple Maps,
+          // BUKAN nutup mentok 100% layar (itu sebelumnya kesannya terlalu
+          // "menelan" seluruh layar & sudut jadi lurus, sekarang tetap
+          // rounded di kedua kondisi biar konsisten spt bottom sheet lain).
+          // PENTING: pakai `height` (bukan cuma `maxHeight`) saat expanded -
+          // sebelumnya cuma maxHeight, jadi selama hasil pencarian masih
+          // kosong/loading (blm ada isi yg "mendorong" tingginya), panel
+          // ikut MENYUSUT balik sekecil kontennya (cuma search bar) walau
+          // status-nya udah expanded. `height` FIXED spy tetap ke-reserve
+          // penuh dari awal ngetik, apa pun isi hasilnya.
+          height: searchExpanded ? `calc(100dvh - ${EXPANDED_TOP_GAP_PX}px)` : "auto",
+          maxHeight: searchExpanded ? `calc(100dvh - ${EXPANDED_TOP_GAP_PX}px)` : "none",
+          transition: dragOffset ? "none" : "height 280ms cubic-bezier(0.32,0.72,0,1)",
+          transform: dragOffset ? `translateY(${dragOffset}px)` : "none",
+          display: "flex", flexDirection: "column", overflow: "hidden",
         }}>
-          {geocoding ? (
-            <Loader2 size={14} color="#B0B0BA" style={{ flexShrink: 0, marginTop: 1, animation: "mspin .9s linear infinite" }} />
-          ) : address ? (
-            <MapPin size={14} color="#5A5A68" style={{ flexShrink: 0, marginTop: 1 }} />
-          ) : (
-            <AlertTriangle size={14} color="#C2410C" style={{ flexShrink: 0, marginTop: 1 }} />
-          )}
-          <div style={{ minWidth: 0, flex: 1 }}>
-            {addrEditing ? (
-              <>
-                <textarea autoFocus value={addrDraft} onChange={(e) => setAddrDraft(e.target.value)}
-                  placeholder="Ketik alamat…" rows={2}
-                  style={{ width: "100%", resize: "none", border: "1.5px solid #ED1C24", borderRadius: 8, padding: "6px 8px", fontSize: 12.5, fontWeight: 600, fontFamily: FF, color: "#17181C", outline: "none", background: "#FFFFFF" }} />
-                <div style={{ marginTop: 6, display: "flex", gap: 6 }}>
-                  <button onClick={() => setAddrEditing(false)}
-                    style={{ height: 28, padding: "0 10px", borderRadius: 7, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 11, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
-                    Batal
-                  </button>
-                  <button onClick={() => { setAddress(addrDraft.trim() || null); setAddrEditing(false); }}
-                    style={{ height: 28, padding: "0 12px", borderRadius: 7, border: "none", background: BRAND, color: "#fff", fontSize: 11, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>
-                    Simpan
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.5, color: geocoding ? "#B0B0BA" : address ? "#3A3A44" : "#9A3412", flex: 1 }}>
-                    {geocoding ? "Mencari alamat…" : (address || "Alamat tidak ditemukan - boleh dilanjut, isi manual di kolom Alamat nanti.")}
-                  </div>
-                  {!geocoding && (
-                    <button onClick={() => { setAddrDraft(address || ""); setAddrEditing(true); }} aria-label="Edit alamat"
-                      style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-                      <Pencil size={13} color="#8A8A96" />
-                    </button>
-                  )}
-                </div>
-                <div style={{ marginTop: 5, display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: "#8A8A96", fontVariantNumeric: "tabular-nums", background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 7, padding: "2px 7px" }}>
-                  <span style={{ fontWeight: 800, color: "#B0B0BA" }}>Lat, Lng</span>
-                  <span>{center.lat.toFixed(6)}, {center.lng.toFixed(6)}</span>
-                </div>
-              </>
-            )}
-          </div>
+        {/* Handle bar - gaya sama dgn bottom sheet lain di codebase ini
+            (mis. SitePickerSheet/QrScanSheet): pill abu2 kecil di tengah. */}
+        <div style={{ width: "100%", display: "flex", justifyContent: "center", padding: "6px 0 8px", flexShrink: 0 }}>
+          <div style={{ width: 40, height: 4, borderRadius: 999, background: "#DCDDE3" }} />
         </div>
 
-        {locErr && (
-          <div style={{ marginTop: 8, display: "flex", alignItems: "flex-start", gap: 7, padding: "9px 10px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA" }}>
-            <AlertTriangle size={13} color="#DC2626" style={{ flexShrink: 0, marginTop: 1 }} />
-            <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.5, color: "#B91C1C" }}>{locErr}</div>
+        {/* Search - sekarang jadi elemen PERTAMA di dalam panel (di bawah
+            handle), bukan lagi mengambang di atas peta. */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 9, height: 44, padding: "0 13px", borderRadius: 13, background: "#F2F2F5", border: "1.5px solid #E4E5EA" }}>
+            <Search size={16} color="#5A5A68" strokeWidth={2.4} style={{ flexShrink: 0 }} />
+            <input ref={searchInputRef} value={searchQ}
+              onChange={(e) => setSearchQ(e.target.value)}
+              onFocus={() => setSearchExpanded(true)}
+              onKeyDown={(e) => e.key === "Enter" && runSearch()}
+              placeholder="Cari nama jalan atau tempat…" className="mh-map-search"
+              style={{ flex: 1, minWidth: 0, background: "transparent", border: "none", outline: "none", fontSize: 13.5, fontWeight: 500, fontFamily: FF, color: "#17181C" }} />
+            {searching && <Loader2 size={14} color="#5A5A68" style={{ animation: "mspin .9s linear infinite" }} />}
           </div>
-        )}
-
-        <button onClick={() => { setManualOpen((v) => !v); setManualErr(""); }}
-          style={{
-            width: "100%", marginTop: 9, height: 42, borderRadius: 12, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
-            border: `1.5px solid ${manualOpen ? "#ED1C24" : "#E4E5EA"}`, background: manualOpen ? "rgba(237,28,36,0.06)" : "#FFFFFF",
-            color: manualOpen ? "#ED1C24" : "#5A5A68", fontSize: 12.5, fontWeight: 800, fontFamily: FF,
-          }}>
-          <Pencil size={13} /> {manualOpen ? "Tutup Input Manual" : "Input Koordinat Manual"}
-        </button>
-
-
-        {manualOpen && (
-          <div style={{ marginTop: 10, padding: "11px 12px", borderRadius: 12, background: "#F6F7F9", border: "1px solid #ECEDF0" }}>
-            <div style={{ fontSize: 10, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 8 }}>Ketik Koordinat Manual (Lat, Lng)</div>
-            {/* Satu kolom saja (bukan 2 kolom Latitude/Longitude terpisah) -
-                urutan selalu Lat dulu baru Lng, sama persis dgn format yg
-                ditampilkan di badge koordinat di atas, jadi tinggal
-                copy-paste. */}
-            <input value={manualCoordInput} onChange={(e) => setManualCoordInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && applyManualCoords()}
-              inputMode="decimal" placeholder="mis. -5.401579, 105.263786"
-              style={{ width: "100%", height: 42, borderRadius: 10, border: "1.5px solid #E4E5EA", padding: "0 11px", fontSize: 12.5, fontFamily: FF, outline: "none", background: "#FFFFFF", boxSizing: "border-box" }} />
-            {manualErr && <div style={{ marginTop: 7, fontSize: 11, color: "#DC2626", fontWeight: 600 }}>{manualErr}</div>}
-            <button onClick={applyManualCoords}
-              style={{ width: "100%", marginTop: 9, height: 40, borderRadius: 10, border: "none", background: "#17181C", color: "#fff", fontSize: 12.5, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-              <ChevronDown size={13} style={{ transform: "rotate(-90deg)" }} /> Arahkan Peta ke Titik Ini
+          {/* Tombol "Cari" eksplisit - konsep SAMA persis kayak demo resmi
+              LocationIQ (ketik bebas, request BARU dikirim cuma pas tombol
+              ini/Enter ditekan). Cuma nongol pas ada ketikan, biar gak
+              makan tempat pas query masih kosong. */}
+          {searchExpanded && searchQ.trim().length > 0 && (
+            <button onClick={() => runSearch()} disabled={searching}
+              style={{ flexShrink: 0, height: 36, padding: "0 14px", borderRadius: 10, border: "none", background: searching ? "#D8D9E0" : BRAND, color: "#fff", fontSize: 12, fontWeight: 800, fontFamily: FF, cursor: searching ? "default" : "pointer" }}>
+              Cari
             </button>
-          </div>
-        )}
+          )}
+          {searchExpanded && (
+            <button onClick={() => { searchInputRef.current?.blur(); setSearchExpanded(false); }}
+              style={{ flexShrink: 0, height: 36, padding: "0 10px", borderRadius: 10, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 12, fontWeight: 700, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", gap: 3 }}>
+              Batal <ChevronDown size={13} />
+            </button>
+          )}
+        </div>
 
-        <button onClick={() => onConfirm({ lat: center.lat, lng: center.lng, address })} disabled={!ready}
-          style={{ width: "100%", marginTop: 12, height: 48, borderRadius: 13, border: "none", cursor: ready ? "pointer" : "default", background: ready ? BRAND : "#D8D9E0", color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: ready ? "0 4px 14px rgba(17,17,20,0.11)" : "none" }}>
-          <Check size={16} /> Gunakan Titik Ini
-        </button>
+        {searchExpanded ? (
+          /* EXPANDED: daftar saran penuh, scroll-able, menggantikan blok
+             alamat/manual/konfirmasi selama panel melebar. */
+          <div style={{ marginTop: 10, flex: 1, minHeight: 0, overflowY: "auto" }}>
+            {/* Tip idle - tampil SEBELUM user mulai ngetik (query kosong),
+                bukan cuma pas hasil kosong/error. Nunjukin dari awal cara
+                paling efektif cari di sini (nama jalan), krn data kita cuma
+                jalan/tempat OSM - beda dgn Apple Maps yg punya kategori
+                POI siap pakai (Pom Bensin/Hotel/dst di referensi), jadi
+                diganti tip singkat drpd daftar kategori yg kita tidak
+                punya datanya. */}
+            {searchQ.trim().length === 0 && (
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 9, padding: "12px 11px", borderRadius: 12, background: "#F6F7F9", border: "1px solid #ECEDF0" }}>
+                <Info size={14} color="#8A8A96" style={{ flexShrink: 0, marginTop: 1 }} />
+                <div style={{ fontSize: 12.5, fontWeight: 500, lineHeight: 1.6, color: "#6B6B76" }}>
+                  Tips: pencarian paling akurat kalau pakai <b style={{ color: "#3A3A44" }}>nama jalan</b> (mis. "Jalan Jendral Sudirman") atau nama tempat/patokan terdekat.
+                </div>
+              </div>
+            )}
+            {/* Loading placeholder - baris "Mencari..." ngisi ruang selagi
+                nunggu request (debounce + fetch) blm selesai, biar panel yg
+                udah kepalang naik full-screen gak keliatan kosong-melompong
+                sesaat sebelum hasil/tip "tidak ditemukan" muncul. */}
+            {searching && searchQ.trim().length >= 3 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "14px 6px", color: "#8A8A96" }}>
+                <Loader2 size={15} style={{ animation: "mspin .9s linear infinite" }} />
+                <span style={{ fontSize: 13, fontWeight: 600 }}>Mencari "{searchQ.trim()}"…</span>
+              </div>
+            )}
+            {searchResults.map((r, i) => {
+              // `r.display` (nama jalan/tempat dari edge function) adalah
+              // baris UTAMA yg harus paling kebaca - sebelumnya cuma badge
+              // kecil ~10px yg jadi fokus, nama jalannya malah nyaris tak
+              // kelihatan. Baris kedua (area/kota) dipisah dari `address`
+              // kalau ada, sbg konteks tambahan yg lebih halus.
+              const secondary = r.address?.village || r.address?.town || r.address?.city || r.address?.county || null;
+              return (
+                <button key={i} onClick={() => pickResult(r)}
+                  style={{ width: "100%", textAlign: "left", padding: "14px 6px", background: "none", border: "none", borderBottom: i < searchResults.length - 1 ? "1px solid #F0F0F3" : "none", cursor: "pointer", display: "flex", alignItems: "flex-start", gap: 10 }}>
+                  <MapPin size={16} color="#8A8A96" style={{ flexShrink: 0, marginTop: 2 }} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 15, fontWeight: 700, color: "#17181C", lineHeight: 1.35 }}>{r.display}</div>
+                    {secondary && (
+                      <div style={{ marginTop: 2, fontSize: 12.5, fontWeight: 500, color: "#6B6B76", lineHeight: 1.4 }}>{secondary}</div>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+            {!searching && searchErr && searchQ.trim().length >= 3 && (
+              <div style={{ marginTop: 4, display: "flex", alignItems: "flex-start", gap: 7, padding: "10px 11px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA" }}>
+                <AlertTriangle size={13} color="#DC2626" style={{ flexShrink: 0, marginTop: 1 }} />
+                <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.5, color: "#B91C1C" }}>{searchErr}</div>
+              </div>
+            )}
+            {/* Empty-state: query cukup panjang, tidak loading, tidak ada
+                hasil DAN tidak ada error - kasih tip actionable, bukan
+                cuma ruang kosong yg bikin DSF mikir aplikasinya nge-hang. */}
+            {!searching && !searchErr && searchQ.trim().length >= 3 && searchResults.length === 0 && (
+              <div style={{ marginTop: 4, display: "flex", alignItems: "flex-start", gap: 7, padding: "10px 11px", borderRadius: 10, background: "#F6F7F9", border: "1px solid #ECEDF0" }}>
+                <Info size={13} color="#8A8A96" style={{ flexShrink: 0, marginTop: 1 }} />
+                <div style={{ fontSize: 12.5, fontWeight: 500, lineHeight: 1.5, color: "#6B6B76" }}>
+                  Tidak ditemukan. Coba masukkan nama jalan atau jalan terdekat, lalu sesuaikan titik dengan menggeser pin di peta setelah menutup pencarian.
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <>
+            <div style={{ fontSize: 10, fontWeight: 800, color: "#B0B0BA", textTransform: "uppercase", letterSpacing: 0.3, marginTop: 10 }}>Lokasi Terpilih</div>
+
+            <div style={{
+              marginTop: 8, display: "flex", alignItems: "flex-start", gap: 9, padding: "10px 11px", borderRadius: 12,
+              background: geocoding ? "#F6F7F9" : address ? "#F6F7F9" : "#FFF7ED",
+              border: `1px solid ${geocoding ? "#EFEFF2" : address ? "#EFEFF2" : "#FED7AA"}`,
+            }}>
+              {geocoding ? (
+                <Loader2 size={14} color="#B0B0BA" style={{ flexShrink: 0, marginTop: 1, animation: "mspin .9s linear infinite" }} />
+              ) : address ? (
+                <MapPin size={14} color="#5A5A68" style={{ flexShrink: 0, marginTop: 1 }} />
+              ) : (
+                <AlertTriangle size={14} color="#C2410C" style={{ flexShrink: 0, marginTop: 1 }} />
+              )}
+              {/* Edit alamat manual (textarea + pensil) SENGAJA DIHAPUS -
+                  alamat titik ini SELALU murni hasil reverse-geocode
+                  LocationIQ dari koordinat pin/hasil pencarian, tidak boleh
+                  ada jalur utk DSF ngetik alamat sendiri di sini (beda dgn
+                  field "Alamat" utama di form plan yg tetap bebas diisi
+                  manual - itu di luar sheet ini). Kalau alamat tidak
+                  ketemu, DSF cukup digeser pin-nya/cari ulang, bukan
+                  ngetik alamat sendiri di titik ini. */}
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, lineHeight: 1.5, color: geocoding ? "#B0B0BA" : address ? "#3A3A44" : "#9A3412" }}>
+                  {geocoding ? "Mencari alamat…" : (address || "Alamat tidak ditemukan - coba geser pin atau cari ulang di kolom pencarian.")}
+                </div>
+                {/* Lat & Lng SEKARANG 2 chip terpisah (bukan 1 baris
+                    gabungan "Lat, Lng x, y") - lebih gampang discan
+                    sekilas mana lat mana lng, & lebih gampang di-tap/select
+                    salah satu angkanya doang kalau DSF perlu copy cuma
+                    satu nilai. */}
+                <div style={{ marginTop: 5, display: "flex", gap: 5 }}>
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: "#8A8A96", fontVariantNumeric: "tabular-nums", background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 7, padding: "2px 7px" }}>
+                    <span style={{ fontWeight: 800, color: "#B0B0BA" }}>Lat</span>
+                    <span>{center.lat.toFixed(6)}</span>
+                  </div>
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 700, color: "#8A8A96", fontVariantNumeric: "tabular-nums", background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 7, padding: "2px 7px" }}>
+                    <span style={{ fontWeight: 800, color: "#B0B0BA" }}>Lng</span>
+                    <span>{center.lng.toFixed(6)}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {locErr && (
+              <div style={{ marginTop: 8, display: "flex", alignItems: "flex-start", gap: 7, padding: "9px 10px", borderRadius: 10, background: "#FEF2F2", border: "1px solid #FECACA" }}>
+                <AlertTriangle size={13} color="#DC2626" style={{ flexShrink: 0, marginTop: 1 }} />
+                <div style={{ fontSize: 11, fontWeight: 600, lineHeight: 1.5, color: "#B91C1C" }}>{locErr}</div>
+              </div>
+            )}
+
+            <button onClick={() => { setManualOpen((v) => !v); setManualErr(""); }}
+              style={{
+                width: "100%", marginTop: 9, height: 42, borderRadius: 12, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                border: `1.5px solid ${manualOpen ? "#ED1C24" : "#E4E5EA"}`, background: manualOpen ? "rgba(237,28,36,0.06)" : "#FFFFFF",
+                color: manualOpen ? "#ED1C24" : "#5A5A68", fontSize: 12.5, fontWeight: 800, fontFamily: FF,
+              }}>
+              <Pencil size={13} /> {manualOpen ? "Tutup Input Manual" : "Input Koordinat Manual"}
+            </button>
+
+            {/* Panel input manual - SEKARANG dianimasikan buka/tutupnya
+                (maxHeight+opacity, bukan muncul/hilang instan) spy transisi
+                naik-turun kartu ini terasa smooth, konsisten dgn animasi
+                bottom sheet lain di app ini. maxHeight dikasih angka cukup
+                besar (400px) drpd "none"/auto krn CSS transition butuh
+                angka pasti spy animasinya jalan. */}
+            <div style={{
+              maxHeight: manualOpen ? 400 : 0, opacity: manualOpen ? 1 : 0,
+              overflow: "hidden", transition: "max-height 280ms cubic-bezier(0.32,0.72,0,1), opacity 200ms ease",
+            }}>
+              <div style={{ marginTop: 10, padding: "11px 12px", borderRadius: 12, background: "#F6F7F9", border: "1px solid #ECEDF0" }}>
+                {/* Tip Google Maps - arahan konkret DSF kalau alamat/titik
+                    susah ditemukan lewat pencarian/geser pin di sini: buka
+                    Google Maps, cari lokasinya di sana, tekan-tahan titiknya
+                    utk dapat koordinat, lalu tempel di kolom bawah ini. */}
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 7, padding: "9px 10px", borderRadius: 10, background: "#FFFFFF", border: "1px solid #E4E5EA", marginBottom: 10 }}>
+                  <Info size={13} color="#8A8A96" style={{ flexShrink: 0, marginTop: 1 }} />
+                  <div style={{ fontSize: 11, fontWeight: 500, lineHeight: 1.6, color: "#6B6B76" }}>
+                    Tidak ketemu alamatnya di sini? Cari lokasinya di aplikasi <b style={{ color: "#3A3A44" }}>Google Maps</b>, tekan-tahan titiknya utk melihat koordinat, lalu ketik di kolom bawah ini.
+                  </div>
+                </div>
+                <div style={{ fontSize: 10, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 8 }}>Koordinat (Lat, Lng)</div>
+                <input value={manualCoordInput} onChange={(e) => setManualCoordInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && applyManualCoords()}
+                  inputMode="decimal" placeholder="mis. -5.401579, 105.263786"
+                  style={{ width: "100%", height: 42, borderRadius: 10, border: "1.5px solid #E4E5EA", padding: "0 11px", fontSize: 12.5, fontFamily: FF, outline: "none", background: "#FFFFFF", boxSizing: "border-box" }} />
+                {manualErr && <div style={{ marginTop: 7, fontSize: 11, color: "#DC2626", fontWeight: 600 }}>{manualErr}</div>}
+                <button onClick={applyManualCoords}
+                  style={{ width: "100%", marginTop: 9, height: 40, borderRadius: 10, border: "none", background: "#17181C", color: "#fff", fontSize: 12.5, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                  <ChevronDown size={13} style={{ transform: "rotate(-90deg)" }} /> Arahkan Peta ke Titik Ini
+                </button>
+              </div>
+            </div>
+
+            <button onClick={() => onConfirm({ lat: center.lat, lng: center.lng, address })} disabled={!ready}
+              style={{ width: "100%", marginTop: 12, height: 48, borderRadius: 13, border: "none", cursor: ready ? "pointer" : "default", background: ready ? BRAND : "#D8D9E0", color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, boxShadow: ready ? "0 4px 14px rgba(17,17,20,0.11)" : "none" }}>
+              <Check size={16} /> Gunakan Titik Ini
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

@@ -27,9 +27,11 @@
  * `syncTimesByDate()`, `allDateTimesValid()`, `planTimeFields()`.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, ArrowRight, X, Check, Plus, Loader2, MapPin, CalendarDays, Clock, Info, AlertTriangle, CardSim, Router, Receipt } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, ArrowRight, X, Check, Plus, Loader2, MapPin, CalendarDays, Clock, Info, AlertTriangle, CardSim, Router, Receipt } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import { FF, BRAND } from "./MobileShell";
+import { lockPullToRefresh, unlockPullToRefresh } from "./pullToRefreshLock";
+import BottomSheet from "./BottomSheet";
 import { fmtDate, statusMeta, fmtInt, fmtRp, activityStage } from "./activityUi";
 import { MetricTile, RebuyTile, RevenueCostBanner } from "./MetricTiles";
 import { groupContiguousDates, syncTimesByDate, allDateTimesValid, DEFAULT_DATE_TIME } from "./planData";
@@ -41,16 +43,12 @@ import { groupContiguousDates, syncTimesByDate, allDateTimesValid, DEFAULT_DATE_
 // ikut MELEPAS kunci milik sheet induknya walau sheetnya masih terbuka.
 // Dgn counter, kunci baru benar² lepas ("hitung mundur ke 0") setelah
 // SEMUA pemakainya (sheet + popup) sudah unmount.
-export function lockPullToRefresh() {
-  const n = Number(document.body.dataset.ptrLockCount || 0) + 1;
-  document.body.dataset.ptrLockCount = String(n);
-  document.body.dataset.ptrLock = "1";
-}
-export function unlockPullToRefresh() {
-  const n = Math.max(0, Number(document.body.dataset.ptrLockCount || 0) - 1);
-  document.body.dataset.ptrLockCount = String(n);
-  if (n === 0) delete document.body.dataset.ptrLock;
-}
+// lockPullToRefresh/unlockPullToRefresh dipindah ke pullToRefreshLock.js
+// (modul tersendiri) supaya BottomSheet.jsx bisa pakai tanpa circular
+// import - file ini sendiri skrg pakai BottomSheet.jsx utk popup2 di
+// bawah. Re-export di sini spy import lama (file lain yg masih
+// `from "./CalendarPickerSheet"`) tidak putus.
+export { lockPullToRefresh, unlockPullToRefresh } from "./pullToRefreshLock";
 
 const MONTH_NAMES_FULL = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 const DOW = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
@@ -150,6 +148,14 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
   // satu yg bisa terbuka sekaligus - ketuk baris tanggal lain di daftar akan
   // menutup yg lama & membuka yg baru.
   const [openDateKey, setOpenDateKey] = useState(null);
+  // true kalau TimeEditPopup yg lagi kebuka ini utk tanggal yg BARU
+  // pertama kali ditap (belum "confirmed" sbg pilihan final) - dipakai
+  // buat tau apa nutup popup tanpa nge-klik "Gunakan Rentang Waktu Ini"
+  // harus MEMBATALKAN tanggal itu (dikeluarkan lagi dari `picked`) atau
+  // tidak. Re-edit waktu dari tanggal yg SUDAH terpilih (tap baris "Atur
+  // Waktu") beda kasus - itu bukan pemilihan baru, jadi nutup popupnya
+  // TIDAK boleh ikut membatalkan tanggal yg sudah confirmed sebelumnya.
+  const [openDateKeyIsNew, setOpenDateKeyIsNew] = useState(false);
   // Tanggal yg BARU ditap & SUDAH punya plan lain (byDate[key].length>0) -
   // ditahan dulu di sini utk ditampilkan lewat DateConfirmPopup (daftar
   // plan yg sudah ada + tombol "Tambah Event"/"Batal") SEBELUM lanjut ke
@@ -158,6 +164,7 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
   // (belum) punya plan lain langsung lompat ke TimeEditPopup spt biasa,
   // tanpa perlu layar konfirmasi ini.
   const [confirmDateKey, setConfirmDateKey] = useState(null);
+  const [monthPickerOpen, setMonthPickerOpen] = useState(false);
 
   // Activity plan (punya siapa pun) yg lagi ditampilkan detailnya lewat popup
   // - diklik dari daftar "N plan lain sudah ada di tanggal ini" pada
@@ -211,6 +218,7 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
   }, [gridStart, viewMonth]);
 
   const todayKey = toKey(today.getFullYear(), today.getMonth(), today.getDate());
+  const todayDow = today.getDay(); // 0=Min...6=Sab, cocok dgn urutan array DOW
 
   // MartaHub mobile mulai dipakai Agustus 2026 - jangan biarkan pengguna
   // mundur ke bulan sebelum itu (tidak ada plan yg mungkin ada di sana).
@@ -234,7 +242,7 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
       const exists = prev.includes(key);
       if (exists) return prev.filter((x) => x !== key);
       const hasOtherPlans = (byDate[key] || []).length > 0;
-      if (hasOtherPlans) setConfirmDateKey(key); else setOpenDateKey(key);
+      if (hasOtherPlans) setConfirmDateKey(key); else { setOpenDateKey(key); setOpenDateKeyIsNew(true); }
       return [...prev, key].sort();
     });
   }
@@ -244,6 +252,7 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
   // (dikeluarkan lagi dari `picked`, bukan cuma menutup popupnya).
   function confirmAddEvent() {
     setOpenDateKey(confirmDateKey);
+    setOpenDateKeyIsNew(true);
     setConfirmDateKey(null);
   }
   function cancelConfirm() {
@@ -257,6 +266,29 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
   // digabung jadi satu rentang dgn waktu bersama).
   function patchTime(date, patch) {
     setTimesByDate((prev) => ({ ...prev, [date]: { ...(prev[date] || DEFAULT_DATE_TIME), ...patch } }));
+  }
+
+  // Nutup TimeEditPopup TANPA nge-klik "Gunakan Rentang Waktu Ini" (lewat X,
+  // klik backdrop, ATAU drag-to-close) - kalau ini tanggal yg BARU ditap
+  // (belum di-confirm sama sekali), batalkan pemilihannya (keluarkan dari
+  // `picked`) spy user harus pilih tanggal itu lagi dari awal, BUKAN diam2
+  // tetap ke-input dgn waktu default/asal-asalan. Re-edit tanggal yg sudah
+  // confirmed sebelumnya TIDAK ikut kebatalin - cuma popup editornya yg
+  // ketutup, tanggalnya tetap terpilih dgn waktu yg sudah ada.
+  function dismissTimeEdit() {
+    const key = openDateKey;
+    const wasNew = openDateKeyIsNew;
+    setOpenDateKey(null);
+    setOpenDateKeyIsNew(false);
+    if (wasNew && key) setPicked((prev) => prev.filter((x) => x !== key));
+  }
+  // Nge-klik "Gunakan Rentang Waktu Ini" - waktu SUDAH ke-apply live lewat
+  // patchTime tiap onChange, jadi ini cuma menandai tanggal ini "confirmed"
+  // (tidak lagi dianggap "baru"/belum final) & menutup popup - beda dgn
+  // dismissTimeEdit, ini TIDAK membatalkan apa pun.
+  function confirmTimeEdit() {
+    setOpenDateKey(null);
+    setOpenDateKeyIsNew(false);
   }
 
   // Grup tanggal terpilih yang berdekatan → dipakai utk gaya visual "pil
@@ -304,28 +336,49 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
       {/* Header - kartu putih dgn bayangan tipis biar terasa "mengambang" di
           atas isi kalender, bukan cuma teks polos nempel di background
           abu-abu. */}
-      <div style={{ flexShrink: 0, background: "#FFFFFF", borderRadius: "0 0 20px 20px", boxShadow: "0 6px 18px rgba(23,24,28,0.05)", position: "relative", zIndex: 1 }}>
-        <div style={{ padding: "calc(env(safe-area-inset-top,0px) + 14px) 18px 4px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ flexShrink: 0, background: "linear-gradient(180deg,#FFFFFF,#FDFDFE)", borderRadius: "0 0 22px 22px", boxShadow: "0 8px 22px rgba(23,24,28,0.06)", position: "relative", zIndex: 1 }}>
+        <div style={{ padding: "calc(env(safe-area-inset-top,0px) + 14px) 18px 2px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          {/* Tombol tutup - kotak rounded (bukan bulat) supaya SECARA BENTUK
+              beda dgn stepper bulan di bawah (bulat) - jadi tidak ada dua
+              kontrol berbeda fungsi yg keliatan sama & bikin bingung mana
+              "kembali/tutup" vs mana "ganti bulan". */}
           <button onClick={onClose} style={{ width: 34, height: 34, borderRadius: 11, background: "#F6F7F9", border: "1px solid #ECEDF0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
             <X size={15} />
           </button>
-          <div style={{ fontSize: 16, fontWeight: 800, color: "#17181C", letterSpacing: -0.2 }}>Pilih Plan Date</div>
+          <div style={{ fontSize: 16.5, fontWeight: 800, color: "#17181C", letterSpacing: -0.3 }}>Pilih Plan Date</div>
           <div style={{ width: 34 }} />
         </div>
 
-        {/* Month nav - dibuat lebih tegas: nama bulan lebih besar & jadi
-            fokus utama, tombol prev/next bulat solid gaya "pill" spy lebih
-            enak disentuh & terasa lebih premium drpd kotak border tipis. */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px 14px" }}>
-          <button onClick={() => changeMonth(-1)} disabled={atLaunchMonth}
-            style={{ width: 36, height: 36, borderRadius: "50%", background: atLaunchMonth ? "#F6F7F9" : "#17181C", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: atLaunchMonth ? "default" : "pointer", color: atLaunchMonth ? "#D8D9E0" : "#fff" }}>
-            <ChevronLeft size={17} />
-          </button>
-          <div style={{ fontSize: 17, fontWeight: 800, color: "#17181C", letterSpacing: -0.3 }}>{MONTH_NAMES_FULL[viewMonth]} <span style={{ color: "#B0B0BA", fontWeight: 700 }}>{viewYear}</span></div>
-          <button onClick={() => changeMonth(1)}
-            style={{ width: 36, height: 36, borderRadius: "50%", background: "#17181C", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#fff" }}>
-            <ChevronRight size={17} />
-          </button>
+        {/* Month nav - sengaja dijadikan SATU stepper pill menyatu (bkn dua
+            tombol bulat besar terpisah spt sebelumnya) krn tombol bulat
+            solid hitam persis di bawah tombol "X" tutup bikin user kesan
+            "ini tombol kembali juga". Sekarang panah prev/next jadi tombol
+            putih kecil DI DALAM satu kapsul abu2 bareng label bulan - scr
+            visual jelas ini 1 kontrol "stepper ganti bulan", bukan navigasi
+            kembali, & terasa lebih rapi/mewah drpd 2 lingkaran hitam besar. */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "12px 16px 16px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 2, background: "#F1F2F5", borderRadius: 999, padding: 4 }}>
+            <button onClick={() => changeMonth(-1)} disabled={atLaunchMonth}
+              style={{ width: 32, height: 32, borderRadius: "50%", background: "#FFFFFF", border: "none", boxShadow: atLaunchMonth ? "none" : "0 1px 4px rgba(23,24,28,0.10)", display: "flex", alignItems: "center", justifyContent: "center", cursor: atLaunchMonth ? "default" : "pointer", color: atLaunchMonth ? "#D8D9E0" : "#3A3A44" }}>
+              <ChevronLeft size={16} strokeWidth={2.5} />
+            </button>
+            {/* Label bulan/tahun SEKARANG jadi tombol - diketuk masuk ke
+                MonthYearPickerSheet (wheel scroll gaya time-picker), bukan
+                cuma teks statis. Chevron-down kecil jadi affordance visual
+                spy user tau ini bisa diketuk utk lompat cepat ke bulan/
+                tahun manapun (drpd geser panah satu-satu terus). */}
+            <button onClick={() => setMonthPickerOpen(true)}
+              style={{ minWidth: 158, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, background: "none", border: "none", padding: "4px 6px", borderRadius: 8, cursor: "pointer" }}>
+              <span style={{ textAlign: "center", fontSize: 16, fontWeight: 800, color: "#17181C", letterSpacing: -0.3 }}>
+                {MONTH_NAMES_FULL[viewMonth]} <span style={{ color: "#A9A9B4", fontWeight: 700 }}>{viewYear}</span>
+              </span>
+              <ChevronDown size={14} strokeWidth={2.5} color="#A9A9B4" />
+            </button>
+            <button onClick={() => changeMonth(1)}
+              style={{ width: 32, height: 32, borderRadius: "50%", background: "#FFFFFF", border: "none", boxShadow: "0 1px 4px rgba(23,24,28,0.10)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#3A3A44" }}>
+              <ChevronRight size={16} strokeWidth={2.5} />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -334,43 +387,54 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
           dipertahankan). */}
       <div style={{ flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}>
       {/* Grid */}
-      <div style={{ padding: "16px 14px 0", flexShrink: 0 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2 }}>
-          {DOW.map((d) => (
-            <div key={d} style={{ textAlign: "center", fontSize: 10.5, fontWeight: 800, color: "#B0B0BA", padding: "4px 0" }}>{d}</div>
-          ))}
+      <div style={{ padding: "16px 16px 0", flexShrink: 0 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 4 }}>
+          {DOW.map((d, i) => {
+            // Konsep referensi: label hari UPPERCASE + letter-spacing lebar
+            // (bukan "Min/Sen/..." apa adanya), dan kolom hari yg SAMA dgn
+            // hari ini ditebalkan hitam - beda dr kolom lain yg abu2 - biar
+            // langsung kelihatan "hari ini hari apa" sekilas dari header.
+            const isTodayCol = i === todayDow;
+            return (
+              <div key={d} style={{ textAlign: "center", fontSize: 10.5, fontWeight: 800, letterSpacing: 0.8, textTransform: "uppercase", color: isTodayCol ? "#17181C" : "#B0B0BA", padding: "4px 0" }}>{d}</div>
+            );
+          })}
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2, marginTop: 2 }}>
+        {/* Semua tanggal SEKARANG bulat penuh (circle) - konsep terbaru dari
+            referensi user: bukan cuma tanggal yg "ada plan"/"dipilih" yg
+            bulat, tp SEMUA tanggal (termasuk yg kosong) dikasih background
+            circle abu2 lembut biar grid-nya terasa satu bahasa visual yg
+            konsisten, bukan campuran kotak+bulat spt sebelumnya. Konsep pil
+            menyambung utk rentang tanggal (start/mid/end) sengaja
+            DIHILANGKAN krn referensinya tidak menunjukkan itu - tiap
+            tanggal jadi lingkaran individual. */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 4, marginTop: 4 }}>
           {cells.map((c) => {
             const acts = byDate[c.key] || [];
             const sel = pickedSet.has(c.key);
-            const role = cellRole[c.key];
             const isToday = c.key === todayKey;
-            // Pil menyambung: ujung awal/akhir bulat, tengah datar - kesan
-            // "rentang" yang jelas walau tidak ada mode Rentang eksplisit.
-            const radius = role === "mid" ? "0" : role === "start" ? "12px 4px 4px 12px" : role === "end" ? "4px 12px 12px 4px" : "12px";
+            const hasPlan = acts.length > 0;
+            const bg = sel ? BRAND : hasPlan ? "#FCEFC7" : c.inMonth ? "#F1F2F5" : "#F8F8FA";
             return (
               <button key={c.key} onClick={() => pickCell(c.key)}
                 style={{
-                  position: "relative", aspectRatio: "1", borderRadius: radius,
+                  position: "relative", aspectRatio: "1", borderRadius: "50%",
                   border: isToday && !sel ? "1.5px solid #ED1C24" : "1.5px solid transparent",
-                  background: sel ? BRAND : "transparent",
-                  color: !c.inMonth ? "#D0D0D8" : sel ? "#fff" : "#17181C",
-                  fontFamily: FF, fontSize: 13, fontWeight: sel ? 800 : 600, cursor: "pointer",
-                  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
+                  background: bg,
+                  boxShadow: sel ? "0 4px 10px rgba(237,28,36,0.30)" : "none",
+                  color: !c.inMonth ? "#C7C7D0" : sel ? "#fff" : hasPlan ? "#8A6D1D" : "#4A4A54",
+                  fontFamily: FF, fontSize: 13, fontWeight: sel || hasPlan || isToday ? 800 : 600, cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center",
                 }}>
-                <span>{c.d}</span>
-                {acts.length > 0 && (
-                  <span style={{ width: 4, height: 4, borderRadius: "50%", background: sel ? "#fff" : dotColorForStatuses(acts.map((a) => a.status)) }} />
-                )}
+                {c.d}
               </button>
             );
           })}
         </div>
         {picked.length > 0 && (
-          <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
-            <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#B45309" }} />
-            <span style={{ fontSize: 10, color: "#8A8A96", fontWeight: 600 }}>Titik = sudah ada plan lain (punya siapa pun) di tanggal itu</span>
+          <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#FCEFC7", border: "1px solid #F0DFA0" }} />
+            <span style={{ fontSize: 10, color: "#8A8A96", fontWeight: 600 }}>Sudah ada plan lain (punya siapa pun) di tanggal itu - ketuk untuk lihat detail</span>
           </div>
         )}
       </div>
@@ -413,7 +477,7 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
                       label={shortDateLabel(d)}
                       time={timesByDate[d] || DEFAULT_DATE_TIME}
                       otherCount={(byDate[d] || []).length}
-                      onClick={() => setOpenDateKey(d)}
+                      onClick={() => { setOpenDateKey(d); setOpenDateKeyIsNew(false); }}
                     />
                   ))}
                 </div>
@@ -454,11 +518,23 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
           onToggleAllDay={(v) => patchTime(openDateKey, { isAllDay: v })}
           onChangeStart={(v) => patchTime(openDateKey, { startTime: v })}
           onChangeEnd={(v) => patchTime(openDateKey, { endTime: v })}
-          onClose={() => setOpenDateKey(null)}
+          onClose={dismissTimeEdit}
+          onConfirm={confirmTimeEdit}
         />
       )}
 
       {detailAct && <ActivityDetailPopup activity={detailAct} onClose={() => setDetailAct(null)} />}
+
+      {monthPickerOpen && (
+        <MonthYearPickerSheet
+          initialMonth={viewMonth}
+          initialYear={viewYear}
+          minYear={LAUNCH_YEAR}
+          minMonth={LAUNCH_MONTH}
+          onConfirm={(y, m) => { setViewYear(y); setViewMonth(m); }}
+          onClose={() => setMonthPickerOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -795,86 +871,120 @@ function WheelTimeBlock({ label, isStart, value, onChange, danger }) {
   );
 }
 
+/** Sheet pemilih Bulan+Tahun cepat - diketuk dari label "September 2026" di
+ * header kalender. Pakai WheelColumn yg SAMA persis dgn wheel jam/menit
+ * (WheelTimeBlock) spy bahasa interaksinya konsisten satu app: scroll-snap,
+ * getar tipis per baris, fade tepi atas/bawah, baris tengah membesar/bold.
+ * Beda dr wheel jam: kolom bulan lebih lebar (nama bulan penuh) & kolom
+ * tahun dibatasi dari LAUNCH_YEAR/LAUNCH_MONTH (sama spt batas tombol
+ * panah prev/next yg sudah ada) - kalau kombinasi hasil scroll jatuh
+ * sebelum batas launch, di-clamp otomatis pas tombol "Pilih" ditekan. */
+function MonthYearPickerSheet({ initialMonth, initialYear, minYear, minMonth, onConfirm, onClose }) {
+  const sheetRef = useRef(null);
+  const [draftMonth, setDraftMonth] = useState(initialMonth);
+  const [draftYear, setDraftYear] = useState(initialYear);
+
+  const yearValues = useMemo(() => {
+    const end = Math.max(minYear + 6, initialYear + 4);
+    return Array.from({ length: end - minYear + 1 }, (_, i) => String(minYear + i));
+  }, [minYear, initialYear]);
+
+  function commit() {
+    let y = draftYear, m = draftMonth;
+    if (y === minYear && m < minMonth) m = minMonth; // clamp - sama spt batas tombol panah bulan
+    sheetRef.current?.close(() => onConfirm(y, m));
+  }
+
+  return (
+    <BottomSheet ref={sheetRef} onClose={onClose}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: "#17181C", letterSpacing: -0.2 }}>Pilih Bulan & Tahun</div>
+        <button onClick={() => sheetRef.current?.close(onClose)}
+          style={{ width: 30, height: 30, borderRadius: "50%", border: "none", background: "#F1F2F5", color: "#5A5A68", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+          <X size={15} strokeWidth={2.5} />
+        </button>
+      </div>
+      <div style={{ marginTop: 14, marginBottom: 4, height: 1, background: "linear-gradient(90deg, transparent, #E4E5EA 12%, #E4E5EA 88%, transparent)" }} />
+
+      <div style={{ position: "relative", marginTop: 6, borderRadius: 14, background: "#FAFAFB", border: "1.5px solid #ECEDF0", overflow: "hidden" }}>
+        {/* Pita highlight tengah - nunjukin baris mana yg "aktif kepilih"
+            di KEDUA kolom sekaligus (bulan & tahun), spy jelas ini 1 hasil
+            gabungan, bukan dua wheel lepas. */}
+        <div style={{ position: "absolute", left: 8, right: 8, top: "50%", transform: "translateY(-50%)", height: WHEEL_ITEM_H, borderRadius: 10, background: "linear-gradient(135deg,rgba(237,28,36,0.07),rgba(236,0,140,0.07))", pointerEvents: "none" }} />
+        <div style={{ position: "relative", padding: "10px 4px", display: "flex", justifyContent: "center", alignItems: "center" }}>
+          <WheelColumn values={MONTH_NAMES_FULL} selected={MONTH_NAMES_FULL[draftMonth]} onChange={(v) => setDraftMonth(MONTH_NAMES_FULL.indexOf(v))} width={148} />
+          <WheelColumn values={yearValues} selected={String(draftYear)} onChange={(v) => setDraftYear(Number(v))} width={84} />
+        </div>
+      </div>
+
+      <button onClick={commit}
+        style={{ marginTop: 16, width: "100%", height: 50, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontFamily: FF, fontSize: 14.5, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+        Pilih Bulan Ini <ArrowRight size={15} strokeWidth={2.5} />
+      </button>
+    </BottomSheet>
+  );
+}
+
 /** Popup kecil di tengah layar (BUKAN bottom sheet, tidak bisa ditarik) utk
  * atur waktu SATU tanggal - gaya "productivity app" pada umumnya (Google
  * Calendar/Todoist/Apple Calendar mobile web): tap baris tanggal → popup ini
  * muncul → atur Seharian/Mulai/Berakhir dgn input jam native → tutup.
  * Perubahan berlaku LIVE lewat onChange (patchTime di parent), jadi tombol
  * "Selesai" cuma menutup popup, bukan "menyimpan" secara terpisah. */
-function TimeEditPopup({ label, time, onToggleAllDay, onChangeStart, onChangeEnd, onClose }) {
+function TimeEditPopup({ label, time, onToggleAllDay, onChangeStart, onChangeEnd, onClose, onConfirm }) {
   const invalid = !time.isAllDay && (!time.startTime || !time.endTime || time.startTime >= time.endTime);
-
-  // Kunci scroll HALAMAN DI BELAKANG popup selagi popup ini terbuka - dulu
-  // background (kalender di belakang) masih bisa ikut tergulir/rubber-band
-  // saat jari menyentuh area popup, kelihatan spt "ngebug" (halaman di
-  // belakang bergeser sendiri padahal fokus ada di popup). Body dikunci
-  // total (tidak bisa discroll SAMA SEKALI selain di dalam wheel jam/menit
-  // yg scroll-nya sendiri, independen), backdrop tetap bisa DIKLIK di mana
-  // saja utk membatalkan (lihat onClick di bawah) - cuma scroll-nya yg
-  // dimatikan, bukan klik-nya.
-  useEffect(() => {
-    const { overflow, touchAction } = document.body.style;
-    document.body.style.overflow = "hidden";
-    document.body.style.touchAction = "none";
-    // Flag global yg dicek langsung oleh usePullToRefresh (MobileShell.jsx)
-    // - lapis pertahanan kedua yg tidak bergantung stopPropagation/struktur
-    // DOM, supaya pull-to-refresh benar² tidak bisa terpicu SAMA SEKALI
-    // selagi popup ini terbuka, di kondisi apa pun. Dilepas otomatis begitu
-    // popup ditutup (unmount) - pull-to-refresh langsung normal lagi.
-    lockPullToRefresh();
-    return () => {
-      document.body.style.overflow = overflow;
-      document.body.style.touchAction = touchAction;
-      unlockPullToRefresh();
-    };
-  }, []);
+  // Dibangun di atas BottomSheet (_shared/BottomSheet.jsx) - primitif yg
+  // sama dipakai semua sheet "muncul dari bawah" di app ini, jadi animasi
+  // masuk/keluar/drag-nya konsisten, bukan diduplikasi manual di sini lagi
+  // (implementasi drag manual sebelumnya di komponen ini sudah dipindah
+  // jadi bagian dari BottomSheet, dipakai lewat ref).
+  const sheetRef = useRef(null);
 
   return (
-    <div onClick={onClose}
-      style={{ position: "fixed", inset: 0, zIndex: 94, background: "rgba(15,16,20,0.55)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, overscrollBehavior: "none" }}>
-      <div onClick={(e) => e.stopPropagation()}
-        style={{ width: "100%", maxWidth: 400, maxHeight: "calc(100dvh - 40px)", overflowY: "auto", overscrollBehavior: "contain", background: "#FFFFFF", borderRadius: 22, padding: 20, fontFamily: FF, boxShadow: "0 24px 60px rgba(10,10,14,0.35), 0 2px 8px rgba(10,10,14,0.1)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          <div style={{ fontSize: 18, fontWeight: 800, color: "#17181C", letterSpacing: -0.2 }}>{label}</div>
-          <button onClick={onClose}
-            style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 9, background: "#F6F7F9", border: "1px solid #ECEDF0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
-            <X size={15} />
-          </button>
-        </div>
-        {/* Divider tegas di bawah judul tanggal - dulu judul langsung
-            nempel ke konten berikutnya tanpa pemisah jelas, sekarang ada
-            garis tipis penuh lebar yg jadi batas jelas "header vs isi". */}
-        <div style={{ marginTop: 14, marginBottom: 14, height: 1, background: "linear-gradient(90deg, transparent, #E4E5EA 12%, #E4E5EA 88%, transparent)" }} />
-
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontSize: 14.5, fontWeight: 700, color: "#3A3A44" }}>Seharian</span>
-          <ToggleSwitch checked={time.isAllDay} onChange={onToggleAllDay} />
-        </div>
-
-        {!time.isAllDay && (
-          <div style={{ marginTop: 14 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 8 }}>
-              <Clock size={12} color="#B0B0BA" />
-              <span style={{ fontSize: 11.5, fontWeight: 800, color: "#B0B0BA", textTransform: "uppercase", letterSpacing: 0.3 }}>Jam Kegiatan</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-              <WheelTimeBlock label="Waktu Mulai" isStart value={time.startTime} onChange={onChangeStart} />
-              <WheelTimeBlock label="Waktu Berakhir" value={time.endTime} onChange={onChangeEnd} danger={invalid} />
-            </div>
-            {invalid && (
-              <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "#DC2626", fontWeight: 700 }}>
-                <AlertTriangle size={11} /> Jam mulai harus lebih awal dari jam selesai
-              </div>
-            )}
-          </div>
-        )}
-
-        <button onClick={onClose}
-          style={{ marginTop: 14, width: "100%", height: 50, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontFamily: FF, fontSize: 14.5, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-          Gunakan Rentang Waktu Ini <ArrowRight size={15} strokeWidth={2.5} />
+    <BottomSheet ref={sheetRef} onClose={onClose}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: "#17181C", letterSpacing: -0.2 }}>{label}</div>
+        <button onClick={() => sheetRef.current?.close(onClose)}
+          style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 9, background: "#F6F7F9", border: "1px solid #ECEDF0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
+          <X size={15} />
         </button>
       </div>
-    </div>
+      {/* Divider tegas di bawah judul tanggal - dulu judul langsung
+          nempel ke konten berikutnya tanpa pemisah jelas, sekarang ada
+          garis tipis penuh lebar yg jadi batas jelas "header vs isi". */}
+      <div style={{ marginTop: 14, marginBottom: 14, height: 1, background: "linear-gradient(90deg, transparent, #E4E5EA 12%, #E4E5EA 88%, transparent)" }} />
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span style={{ fontSize: 14.5, fontWeight: 700, color: "#3A3A44" }}>Seharian</span>
+        <ToggleSwitch checked={time.isAllDay} onChange={onToggleAllDay} />
+      </div>
+
+      {!time.isAllDay && (
+        <div style={{ marginTop: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 8 }}>
+            <Clock size={12} color="#B0B0BA" />
+            <span style={{ fontSize: 11.5, fontWeight: 800, color: "#B0B0BA", textTransform: "uppercase", letterSpacing: 0.3 }}>Jam Kegiatan</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+            <WheelTimeBlock label="Waktu Mulai" isStart value={time.startTime} onChange={onChangeStart} />
+            <WheelTimeBlock label="Waktu Berakhir" value={time.endTime} onChange={onChangeEnd} danger={invalid} />
+          </div>
+          {invalid && (
+            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 5, fontSize: 12, color: "#DC2626", fontWeight: 700 }}>
+              <AlertTriangle size={11} /> Jam mulai harus lebih awal dari jam selesai
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Ditutup lewat animasi BottomSheet yg sama (slide-down), BARU
+          onConfirm dipanggil setelah animasinya selesai - bukan onDismiss
+          (jadi TIDAK dianggap "batal", tanggal baru tetap tersimpan). */}
+      <button onClick={() => sheetRef.current?.close(onConfirm)}
+        style={{ marginTop: 14, width: "100%", height: 50, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontFamily: FF, fontSize: 14.5, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+        Gunakan Rentang Waktu Ini <ArrowRight size={15} strokeWidth={2.5} />
+      </button>
+    </BottomSheet>
   );
 }
 
@@ -889,59 +999,51 @@ function TimeEditPopup({ label, time, onToggleAllDay, onChangeStart, onChangeEnd
  * tanggal ini, tidak jadi ditambah). Tutup lewat X/backdrop = sama dgn
  * "Batal" (konsisten, bukan diam2 tetap menandai tanggal ini terpilih). */
 function DateConfirmPopup({ dateKey, label, otherActs, onOpenDetail, onAddEvent, onCancel }) {
-  useEffect(() => {
-    const { overflow, touchAction } = document.body.style;
-    document.body.style.overflow = "hidden";
-    document.body.style.touchAction = "none";
-    lockPullToRefresh();
-    return () => {
-      document.body.style.overflow = overflow;
-      document.body.style.touchAction = touchAction;
-      unlockPullToRefresh();
-    };
-  }, []);
+  // Sama spt TimeEditPopup - dibangun di atas BottomSheet supaya animasi
+  // masuk/keluar/drag-nya konsisten satu sumber kebenaran.
+  const sheetRef = useRef(null);
 
   return (
-    <div onClick={onCancel}
-      style={{ position: "fixed", inset: 0, zIndex: 94, background: "rgba(15,16,20,0.55)", backdropFilter: "blur(2px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, overscrollBehavior: "none" }}>
-      <div onClick={(e) => e.stopPropagation()}
-        style={{ width: "100%", maxWidth: 400, maxHeight: "calc(100dvh - 40px)", overflowY: "auto", overscrollBehavior: "contain", background: "#FFFFFF", borderRadius: 22, padding: 20, fontFamily: FF, boxShadow: "0 24px 60px rgba(10,10,14,0.35), 0 2px 8px rgba(10,10,14,0.1)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          <div style={{ fontSize: 18, fontWeight: 800, color: "#17181C", letterSpacing: -0.2 }}>{label}</div>
-          <button onClick={onCancel}
-            style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 9, background: "#F6F7F9", border: "1px solid #ECEDF0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
-            <X size={15} />
-          </button>
-        </div>
-        <div style={{ marginTop: 14, marginBottom: 14, height: 1, background: "linear-gradient(90deg, transparent, #E4E5EA 12%, #E4E5EA 88%, transparent)" }} />
-
-        <div style={{ padding: "9px 10px", borderRadius: 11, background: "rgba(180,83,9,0.05)", border: "1px solid rgba(180,83,9,0.16)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 7 }}>
-            <Info size={11.5} color="#B45309" />
-            <span style={{ fontSize: 11.5, fontWeight: 800, color: "#B45309", textTransform: "uppercase", letterSpacing: 0.3 }}>
-              {otherActs.length} Plan Lain Sudah Ada
-            </span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-            {otherActs.map((a) => (
-              <OtherActRow key={a.id} act={a} dateKey={dateKey} onOpenDetail={onOpenDetail} />
-            ))}
-          </div>
-        </div>
-
-        <div style={{ marginTop: 16, fontSize: 12.5, color: "#6B6B76", fontWeight: 600, lineHeight: 1.5 }}>
-          Tetap mau tambah event baru di tanggal ini juga?
-        </div>
-
-        <button onClick={onAddEvent}
-          style={{ marginTop: 12, width: "100%", height: 50, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontFamily: FF, fontSize: 14.5, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-          <Plus size={16} strokeWidth={3} /> Tambah Event
-        </button>
-        <button onClick={onCancel}
-          style={{ marginTop: 10, width: "100%", height: 46, borderRadius: 12, border: "1px solid #ECEDF0", background: "#F6F7F9", color: "#5A5A68", fontFamily: FF, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}>
-          Batal
+    <BottomSheet ref={sheetRef} onClose={onCancel}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: "#17181C", letterSpacing: -0.2 }}>{label}</div>
+        <button onClick={() => sheetRef.current?.close(onCancel)}
+          style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 9, background: "#F6F7F9", border: "1px solid #ECEDF0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
+          <X size={15} />
         </button>
       </div>
-    </div>
+      <div style={{ marginTop: 14, marginBottom: 14, height: 1, background: "linear-gradient(90deg, transparent, #E4E5EA 12%, #E4E5EA 88%, transparent)" }} />
+
+      <div style={{ padding: "9px 10px", borderRadius: 11, background: "rgba(180,83,9,0.05)", border: "1px solid rgba(180,83,9,0.16)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 7 }}>
+          <Info size={11.5} color="#B45309" />
+          <span style={{ fontSize: 11.5, fontWeight: 800, color: "#B45309", textTransform: "uppercase", letterSpacing: 0.3 }}>
+            {otherActs.length} Plan Lain Sudah Ada
+          </span>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+          {otherActs.map((a) => (
+            <OtherActRow key={a.id} act={a} dateKey={dateKey} onOpenDetail={onOpenDetail} />
+          ))}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 16, fontSize: 12.5, color: "#6B6B76", fontWeight: 600, lineHeight: 1.5 }}>
+        Tetap mau tambah event baru di tanggal ini juga?
+      </div>
+
+      {/* "Tambah Event" & "Batal" sama2 lewat animasi keluar BottomSheet yg
+          sama (slide-down) - bedanya cuma callback yg dipanggil SETELAH
+          animasi selesai (onAddEvent lanjut ke TimeEditPopup, onCancel
+          batalin tanggalnya). */}
+      <button onClick={() => sheetRef.current?.close(onAddEvent)}
+        style={{ marginTop: 12, width: "100%", height: 50, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontFamily: FF, fontSize: 14.5, fontWeight: 800, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+        <Plus size={16} strokeWidth={3} /> Tambah Event
+      </button>
+      <button onClick={() => sheetRef.current?.close(onCancel)}
+        style={{ marginTop: 10, width: "100%", height: 46, borderRadius: 12, border: "1px solid #ECEDF0", background: "#F6F7F9", color: "#5A5A68", fontFamily: FF, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}>
+        Batal
+      </button>
+    </BottomSheet>
   );
 }
