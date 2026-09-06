@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Crosshair, Search, Check, Loader2, MapPin, Pencil, AlertTriangle, ChevronDown, Info } from "lucide-react";
 import { FF, BRAND } from "./MobileShell";
+import { useVisualViewportBox } from "./useVisualViewportBox";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import { locationiqTileUrl, LOCATIONIQ_TILE_SUBDOMAINS, LOCATIONIQ_TILE_ATTRIBUTION, LOCATIONIQ_TILE_MAX_ZOOM } from "../../../../lib/locationiqTiles";
 
@@ -126,7 +127,7 @@ export default function MapPickerSheet({ initialLat, initialLng, onClose, onConf
   function handlePanelTouchStart(e) {
     if (!searchExpanded) return;
     dragStartYRef.current = e.touches[0].clientY;
-    const expandedPx = window.innerHeight - EXPANDED_TOP_GAP_PX;
+    const expandedPx = vv.height - EXPANDED_TOP_GAP_PX;
     maxDragRef.current = Math.max(60, expandedPx - COLLAPSED_APPROX_HEIGHT_PX);
   }
   function handlePanelTouchMove(e) {
@@ -538,8 +539,21 @@ async function runSearch(isRetry, reqIdOverride) {
     setManualCoordInput("");
   }
 
+  // BUG PENTING (penyebab layar jadi blank putih & search bar "hilang"
+  // pas keyboard naik): container utama sheet ini sebelumnya pakai
+  // `position: fixed, inset: 0` mentah - sama persis bug yg udah pernah
+  // ditemuin & diperbaiki di BottomSheet.jsx/SitePickerSheet.jsx (lihat
+  // useVisualViewportBox.js): `inset:0` dihitung dari LAYOUT viewport, yg
+  // TIDAK ikut mengecil pas keyboard virtual muncul di banyak mobile
+  // WebView (beda dgn area yg SECARA VISUAL kelihatan). Akibatnya sheet
+  // ini "digeser"/ke-render di luar area yg sebenarnya kelihatan begitu
+  // keyboard naik, keliatan spt layar blank putih. Fix SAMA persis: pakai
+  // `top`/`height` dari `window.visualViewport` (via useVisualViewportBox),
+  // yg beneran ikut mengecil pas keyboard naik.
+  const vv = useVisualViewportBox();
+
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 90, background: "#F4F5F7", fontFamily: FF, display: "flex", flexDirection: "column" }}>
+    <div style={{ position: "fixed", top: vv.top, left: 0, right: 0, height: vv.height, zIndex: 90, background: "#F4F5F7", fontFamily: FF, display: "flex", flexDirection: "column" }}>
       <style>{`@keyframes pinDrop{0%{transform:translateY(-16px);opacity:0}100%{transform:translateY(0);opacity:1}}
         .mh-map-search::placeholder{color:#7A7A86;font-weight:500}`}</style>
       {/* Top bar - HANYA tombol close, search sudah pindah ke panel bawah
@@ -626,8 +640,13 @@ async function runSearch(isRetry, reqIdOverride) {
           // ikut MENYUSUT balik sekecil kontennya (cuma search bar) walau
           // status-nya udah expanded. `height` FIXED spy tetap ke-reserve
           // penuh dari awal ngetik, apa pun isi hasilnya.
-          height: searchExpanded ? `calc(100dvh - ${EXPANDED_TOP_GAP_PX}px)` : "auto",
-          maxHeight: searchExpanded ? `calc(100dvh - ${EXPANDED_TOP_GAP_PX}px)` : "none",
+          // Pakai vv.height (visualViewport, IKUT MENGECIL pas keyboard
+          // muncul) - bukan lagi "100dvh" yg TIDAK ikut mengecil di banyak
+          // WebView. Ini yg tadinya bikin panel "kelewat tinggi" nabrak
+          // sampai kontennya ketutup/ke-dorong keluar layar pas keyboard
+          // naik.
+          height: searchExpanded ? Math.max(240, vv.height - EXPANDED_TOP_GAP_PX) : "auto",
+          maxHeight: searchExpanded ? Math.max(240, vv.height - EXPANDED_TOP_GAP_PX) : "none",
           transition: dragOffset ? "none" : "height 280ms cubic-bezier(0.32,0.72,0,1)",
           transform: dragOffset ? `translateY(${dragOffset}px)` : "none",
           display: "flex", flexDirection: "column", overflow: "hidden",

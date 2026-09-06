@@ -98,6 +98,18 @@ export default function SubmitActualPage() {
   const isLastTab = tabIdx === SUBMIT_TABS.length - 1;
   function goPrevTab() { if (!isFirstTab) goToTab(SUBMIT_TABS[tabIdx - 1].key); }
   function goNextTab() { if (!isLastTab) goToTab(SUBMIT_TABS[tabIdx + 1].key); }
+  // Tombol "Kembali" di HEADER sebelumnya selalu router.back() langsung -
+  // beda dgn wizard Buat Plan (activities/new/page.jsx) yg goBack()-nya
+  // step-aware (mundur 1 step dulu kalau bukan di step pertama, baru keluar
+  // total kalau sudah di step pertama). Di sini DSF harus klik stepper-nya
+  // langsung utk pindah tab, padahal tombol "Kembali" seharusnya intuitif
+  // mundur 1 langkah dulu spt di wizard lain. Fix: SAMA PERSIS pola
+  // goBack() Buat Plan - mundur 1 tab kalau bukan tab pertama, keluar ke
+  // menu Aktivitas cuma kalau sudah di tab pertama.
+  function goBackHeader() {
+    if (!isFirstTab) { goPrevTab(); return; }
+    router.back();
+  }
 
   const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
   // Ditandai true begitu DSF pertama kali coba kirim tapi masih ada field
@@ -826,7 +838,7 @@ export default function SubmitActualPage() {
         borderBottom: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 6px 20px rgba(23,24,28,0.05)",
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <button onClick={() => router.back()} aria-label="Kembali"
+          <button onClick={goBackHeader} aria-label="Kembali"
             style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 10, background: "#FFFFFF", border: "1px solid #E4E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
             <ArrowLeft size={16} />
           </button>
