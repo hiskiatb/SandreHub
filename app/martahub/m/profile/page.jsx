@@ -17,7 +17,7 @@
  */
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { LogOut, Mail, Building2, MapPin, Sparkles, User2, Pencil, Loader2, Save } from "lucide-react";
+import { LogOut, Mail, Building2, MapPin, Sparkles, User2, Pencil, Loader2, Save, AlertTriangle } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, updateCachedFullName, logMartaLogout } from "../_shared/MobileShell";
 import { BRAND_DISPLAY } from "../_shared/planData";
@@ -41,8 +41,16 @@ export default function ProfilePage() {
   const [editingName, setEditingName] = useState(false);
   const fullName = nameOverride ?? scope?.fullName;
   const brandKey = scope?.brand ? scope.brand.toLowerCase() : null;
+  // Sebelumnya tombol "Keluar" langsung logout begitu diketuk - resiko
+  // tersenggol tanpa sengaja lgs mengeluarkan akun. Sekarang WAJIB
+  // dikonfirmasi dulu lewat LogoutConfirmSheet (pola sama dgn
+  // LeaveConfirmSheet di wizard Buat Plan) sebelum signOut() sungguhan
+  // dijalankan.
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
 
   const signOut = async () => {
+    setSigningOut(true);
     await logMartaLogout();
     await supabaseMarta.auth.signOut();
     router.replace("/martahub/m/login");
@@ -131,10 +139,18 @@ export default function ProfilePage() {
           </SectionCard>
         )}
 
-        <button onClick={signOut}
+        <button onClick={() => setShowLogoutConfirm(true)}
           style={{ width: "100%", marginTop: 12, height: 48, borderRadius: 14, border: "1px solid #F7C6C9", background: "#FFF5F6", color: "#DC2626", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
           <LogOut size={15} /> Keluar
         </button>
+
+        {showLogoutConfirm && (
+          <LogoutConfirmSheet
+            busy={signingOut}
+            onCancel={() => setShowLogoutConfirm(false)}
+            onConfirm={signOut}
+          />
+        )}
 
         <div style={{ textAlign: "center", marginTop: 18, marginBottom: 6, fontSize: 10.5, color: "#C4C4CE", fontWeight: 600 }}>
           MartaHub · IOH Sumatera
@@ -252,3 +268,39 @@ function EditNameSheet({ currentName, onClose, onSaved }) {
   );
 }
 
+
+/** Konfirmasi sebelum benar-benar Keluar - pola sama dgn LeaveConfirmSheet
+ * di wizard Buat Plan (activities/new/page.jsx): overlay gelap + kartu
+ * putih naik dari bawah, tombol aksi (disini "Ya, Keluar") ditonjolkan
+ * warna bahaya (merah) krn ini aksi yg mengeluarkan akun dari sesi. */
+function LogoutConfirmSheet({ busy, onCancel, onConfirm }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 97, background: "rgba(23,24,28,0.42)", display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
+      <div style={{ width: "100%", maxWidth: 480, background: "#FFFFFF", borderRadius: "20px 20px 0 0", padding: "20px 20px calc(env(safe-area-inset-bottom,0px) + 18px)", fontFamily: FF, boxShadow: "0 -8px 30px rgba(23,24,28,0.16)" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+          <div style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 10, background: "rgba(220,38,38,0.10)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <AlertTriangle size={16} color="#DC2626" />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 14.5, fontWeight: 800, color: "#17181C" }}>Keluar dari akun ini?</div>
+            <div style={{ marginTop: 3, fontSize: 12, color: "#8A8A96", fontWeight: 600, lineHeight: 1.4 }}>
+              Kamu perlu login ulang utk mengakses MartaHub lagi setelah keluar.
+            </div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+          <button onClick={onConfirm} disabled={busy}
+            style={{ width: "100%", height: 48, borderRadius: 13, border: "none", background: "#DC2626", color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF, cursor: busy ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            {busy ? <Loader2 size={16} style={{ animation: "mspin .85s linear infinite" }} /> : <LogOut size={16} />}
+            {busy ? "Keluar…" : "Ya, Keluar"}
+          </button>
+          <button onClick={onCancel} disabled={busy}
+            style={{ width: "100%", height: 44, borderRadius: 13, border: "none", background: "none", color: "#8A8A96", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: busy ? "default" : "pointer" }}>
+            Batal
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

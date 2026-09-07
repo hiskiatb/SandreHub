@@ -80,6 +80,26 @@ export function RebuyRow({ label, target, actual, accent }) {
 /** Banner gelap "Estimasi Total Revenue" + "Cost Ratio" - dipakai persis
  * sama di bawah grid tile Target vs Actual, baik di Detail Aktivitas
  * maupun kartu breakdown list. */
+// Slab warna Cost Ratio - SAMA PERSIS 3 ambang batas yg sudah dipakai di
+// StepReview wizard Buat Plan (activities/new/page.jsx): <=30% hijau (biaya
+// jauh lebih kecil dari revenue, sehat), 30-60% kuning (masih wajar tapi
+// mulai perlu diperhatikan), >60% merah (biaya makan porsi besar dari
+// revenue, perlu ditinjau) - dipusatkan di sini biar SEMUA pemakaian
+// RevenueCostBanner (Detail Aktivitas, breakdown list Aktivitas, kartu
+// activity lain di CalendarPickerSheet) otomatis konsisten, bukan cuma
+// warna pink statis spt sebelumnya yg tidak menyampaikan sehat/tidaknya
+// rasio itu sekilas pandang.
+function costRatioColor(costRatioValue) {
+  const pct = parseFloat(String(costRatioValue).replace(",", "."));
+  if (!Number.isFinite(pct)) return "#F5A3CB"; // "-" atau nilai tak terbaca - netral spt sebelumnya
+  if (pct <= 30) return "#4ADE80";
+  if (pct <= 60) return "#FBBF24";
+  return "#F87171";
+}
+
+/** Banner gelap "Estimasi Total Revenue" + "Cost Ratio" - dipakai persis
+ * sama di bawah grid tile Target vs Actual, baik di Detail Aktivitas
+ * maupun kartu breakdown list. */
 export function RevenueCostBanner({ revenueLabel, revenueValue, costRatioValue }) {
   return (
     <div style={{ marginTop: 10, borderRadius: 14, background: "linear-gradient(135deg,#17181C,#2A2B33)", padding: "12px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontFamily: FF }}>
@@ -89,7 +109,7 @@ export function RevenueCostBanner({ revenueLabel, revenueValue, costRatioValue }
       </div>
       <div style={{ flexShrink: 0, textAlign: "right" }}>
         <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: 0.3, textTransform: "uppercase", color: "rgba(255,255,255,0.55)" }}>Cost Ratio</div>
-        <div style={{ marginTop: 2, fontSize: 15, fontWeight: 800, color: "#F5A3CB" }}>{costRatioValue}</div>
+        <div style={{ marginTop: 2, fontSize: 15, fontWeight: 800, color: costRatioColor(costRatioValue) }}>{costRatioValue}</div>
       </div>
     </div>
   );

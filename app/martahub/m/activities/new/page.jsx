@@ -19,7 +19,7 @@
  */
 import { useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ArrowRight, ChevronRight, Check, X, Plus, Loader2, Crosshair, Map as MapIcon, Users, CalendarDays, Building2, Tag, CardSim, Router as RouterIcon, AlertTriangle, Save, QrCode, Receipt, MapPin, Wifi, TrendingUp, Send, Trash2, MoreVertical } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronRight, Check, X, Plus, Loader2, Crosshair, Map as MapIcon, Users, CalendarDays, Building2, Tag, CardSim, Router as RouterIcon, AlertTriangle, Save, QrCode, Receipt, MapPin, MapPinned, Wifi, TrendingUp, Send, Trash2, MoreVertical, Info } from "lucide-react";
 import supabaseMarta from "../../../../../lib/supabaseMarta";
 import { slug } from "../../../../../lib/activityTarget";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../_shared/MobileShell";
@@ -29,7 +29,6 @@ import MapPickerSheet from "../../_shared/MapPickerSheet";
 import CalendarPickerSheet from "../../_shared/CalendarPickerSheet";
 import DeleteActivitySheet from "../../_shared/DeleteActivitySheet";
 import QrScanSheet from "../../_shared/QrScanSheet";
-import OrgIdBar from "../../_shared/OrgIdBar";
 import SiteTowerIcon from "../../_shared/SiteTowerIcon";
 import SitePickerSheet from "../../_shared/SitePickerSheet";
 import {
@@ -747,8 +746,13 @@ function CreatePlanWizardInner() {
   // sudah susah payah diketik hilang tanpa peringatan. Kalau tidak ada
   // perubahan (baru buka / semua sudah tersimpan), Kembali tetap langsung
   // keluar tanpa basa-basi.
+  // Tombol panah "Kembali" di header SELALU keluar dari wizard (balik ke
+  // menu Aktivitas / posisi awal yg membuka form ini) - BUKAN mundur satu
+  // step. Sempat dibuat step-aware (mundur satu step dulu baru keluar di
+  // step 0), tapi itu bikin bingung krn utk pindah antar step user memang
+  // sudah pakai stepper-nya langsung (klik bulatan step yang sudah
+  // dilewati) - jadi tombol panah cukup satu peran: keluar wizard.
   const goBack = () => {
-    if (step > 0) { setStep((s) => s - 1); return; }
     if (dirty) { setShowLeaveConfirm(true); return; }
     router.back();
   };
@@ -947,8 +951,14 @@ function CreatePlanWizardInner() {
 
       if (finalStatus === "plan_submitted") {
         // Submit final - SELALU keluar dari wizard, tidak ada alasan utk
-        // tetap tinggal setelah plan resmi diajukan.
-        router.replace(`/martahub/m/activities?open=${activityId}`);
+        // tetap tinggal setelah plan resmi diajukan. Sebelumnya pakai
+        // `?open=${activityId}` yg otomatis membuka LAGI popup detail plan
+        // ("Grebek pasar" dst.) begitu sampai di daftar Aktivitas - DSF
+        // baru saja submit, langsung ditimpa popup lagi, jadi kerasa cuma
+        // nambah 1 step yg tidak berguna. Sekarang balik ke daftar
+        // Aktivitas polos saja (TANPA `?open=`), sama spt fix yg sudah
+        // dilakukan di layar sukses submit Laporan Actual.
+        router.replace(`/martahub/m/activities`);
       } else {
         // Simpan Draft - TETAP TINGGAL di wizard (sesuai masukan: DSF
         // sering menyimpan draft sambil masih lanjut mengisi bagian lain,
@@ -1090,6 +1100,7 @@ function CreatePlanWizardInner() {
             targetSpProducts, targetFwaProducts, targetSp, targetFwa, targetSpRevenue, targetFwaRevenue,
             targetRebuyPulsa, targetRebuyData, costEstimate, targetEstRevenue, targetCostRatio,
             primarySite, extraSites, poiType, network, area, address, manualLat, manualLng,
+            branchName: effectiveScope.branchNameDisplay,
           }} />
         )}
 
@@ -1374,61 +1385,15 @@ function StepTarget({
         estRevenue={targetEstRevenue} costEstimate={Number(costEstimate) || 0} costRatio={targetCostRatio}
       />
 
-      {/* Catat Penjualan (dulu "Tagging Nomor") - kartu terpisah & sengaja
-          ditonjolkan (header gradasi pink-merah, senada aksen brand) supaya
-          kelihatan sbg kapabilitas baru, bukan field tambahan yg tenggelam.
-          Nomor bisa dicatat/di-BOOKING di sini SEBELUM event berlangsung,
-          lalu otomatis muncul lagi & bisa dilanjutkan di Isi Laporan saat
-          hari-H (tidak hilang, tidak perlu diketik ulang) - dan kalau
-          nomornya sudah diclaim tim lain, langsung ketahuan di sini juga,
-          bukan baru ketahuan pas lapor actual setelah event selesai. */}
-      <div style={{ marginTop: 14, borderRadius: 18, overflow: "hidden", border: "1px solid #F3D2E4", boxShadow: "0 4px 14px rgba(198,22,141,0.06)" }}>
-        <div style={{ padding: "14px 16px", background: "linear-gradient(135deg,#ED1C24,#C6168D)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ width: 36, height: 36, borderRadius: 11, background: "rgba(255,255,255,0.16)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <Tag size={17} color="#fff" />
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                <span style={{ fontSize: 13.5, fontWeight: 800, color: "#fff" }}>Catat Rencana Penjualan SP & FWA</span>
-                <span style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: 0.3, color: "#fff", background: "rgba(255,255,255,0.22)", borderRadius: 999, padding: "2px 7px" }}>OPSIONAL</span>
-              </div>
-              <div style={{ marginTop: 2, fontSize: 10.5, color: "rgba(255,255,255,0.85)", fontWeight: 600, lineHeight: 1.4 }}>
-                Bisa dicatat (booking) sebelum event, lalu dilanjutkan lagi saat hari-H di Isi Laporan
-              </div>
-            </div>
-            {taggedTotal > 0 && (
-              <div style={{ flexShrink: 0, textAlign: "center" }}>
-                <div style={{ fontSize: 17, fontWeight: 800, color: "#fff", lineHeight: 1 }}>{taggedTotal}</div>
-                <div style={{ fontSize: 8, fontWeight: 700, color: "rgba(255,255,255,0.75)", marginTop: 1 }}>NOMOR</div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div style={{ padding: "14px 16px 16px", background: "#FFFFFF" }}>
-          <OrgIdBar value={tagActiveOrgId} onChange={setTagActiveOrgId} ownOrgId={tagOwnOrgId} ownLabel={ownLabel} />
-
-          <TagCategorySection cat="sp" label="Nomor SP" accent="#ED1C24"
-            input={tagInput.sp} onInputChange={(v) => setTagInput((p) => ({ ...p, sp: v }))}
-            onAdd={() => addTagMsisdn("sp", tagInput.sp)}
-            onBulkAdd={(text) => addTagMsisdnBulk("sp", text)} busy={tagBulkBusy.sp}
-            onScanResult={(msisdn) => addTagMsisdn("sp", msisdn)}
-            entries={tagEntries.sp} onRemove={(m) => removeTagEntry("sp", m)}
-            pending={tagPending.sp} error={tagFieldErr.sp} />
-          <TagCategorySection cat="fwa" label="Nomor FWA" accent="#C6168D"
-            input={tagInput.fwa} onInputChange={(v) => setTagInput((p) => ({ ...p, fwa: v }))}
-            onAdd={() => addTagMsisdn("fwa", tagInput.fwa)}
-            onBulkAdd={(text) => addTagMsisdnBulk("fwa", text)} busy={tagBulkBusy.fwa}
-            onScanResult={(msisdn) => addTagMsisdn("fwa", msisdn)}
-            entries={tagEntries.fwa} onRemove={(m) => removeTagEntry("fwa", m)}
-            pending={tagPending.fwa} error={tagFieldErr.fwa} />
-        </div>
-      </div>
-
-      {tagConflict && (
-        <TagConflictSheet conflict={tagConflict} onClose={() => setTagConflict(null)} onConfirm={confirmTagConflict} />
-      )}
+      {/* Catat Penjualan (Rencana SP & FWA) SENGAJA DIHAPUS dari wizard
+          Buat/Edit Plan - DSF minta ini cuma ada di Isi Laporan Actual
+          (hari-H), bukan di tahap rencana. State & logic tagging
+          (tagEntries/addTagMsisdn/dst, termasuk pengiriman entry tagging
+          di save() di atas) SENGAJA DIBIARKAN - tetap aman krn tanpa UI ini
+          array-nya selalu kosong, jadi tidak ada efek apa pun saat plan
+          disimpan (loop pengiriman entry tagging cuma jalan kalau ada
+          isinya). Ini menghindari resiko menyentuh logic lain yg tidak
+          diminta. */}
     </>
   );
 }
@@ -1683,7 +1648,12 @@ function StepLocation({ sites, primarySite, setPrimarySite, extraSites, setExtra
   const [picking, setPicking] = useState(null); // 'primary' | 'extra' | null
   const [mapPicking, setMapPicking] = useState(false);
   const taken = new Set([primarySite?.site_id, ...extraSites.map((s) => s.site_id)].filter(Boolean));
-  const available = sites.filter((s) => !taken.has(s.site_id));
+  // Site tambahan WAJIB dari MC yg sama dgn site pertama (primarySite) -
+  // event cuma dianggap satu lokasi fisik, bukan gabungan beberapa MC yg
+  // bisa berjauhan. Kalau primarySite belum punya info mc (data lama/
+  // kosong), jangan diblokir sama sekali drpd DSF malah tidak bisa
+  // menambah site sama sekali.
+  const available = sites.filter((s) => !taken.has(s.site_id) && (!primarySite?.mc || s.mc === primarySite.mc));
 
   return (
     <>
@@ -1754,8 +1724,22 @@ function StepLocation({ sites, primarySite, setPrimarySite, extraSites, setExtra
         ) : invalid.has("geo") && (
           <FieldError text="Titik GPS wajib diisi - tap Lokasi Saya, atau Pilih di Peta kalau mau menandai titik manual." />
         )}
-        <FieldLabel id="field-address" text="Alamat" required top hint="Boleh diedit manual" />
+        {/* Hint label diganti dari "Boleh diedit manual" (pasif, kesannya
+            cuma opsional) jadi ajakan aktif - alamat auto-isi dari
+            LocationIQ kadang cuma sampai nama jalan/kelurahan (patokan
+            RT/RW, nomor bangunan, nama gedung/venue sering tidak ke-cover
+            data OSM-nya), jadi DSF perlu diarahkan utk MELENGKAPI, bukan
+            cuma dikasih tau "boleh" diedit. Tip block di bawah textarea
+            (konsisten dgn pola Info-tip lain di app ini) kasih alasan +
+            contoh konkret apa yg perlu ditambahkan. */}
+        <FieldLabel id="field-address" text="Alamat" required top hint="Cek & lengkapi ya" />
         <TextInput value={address} onChange={setAddress} placeholder="Alamat lengkap lokasi kegiatan" multiline error={invalid.has("address")} />
+        <div style={{ marginTop: 8, display: "flex", alignItems: "flex-start", gap: 7, padding: "9px 10px", borderRadius: 10, background: "#F6F7F9", border: "1px solid #ECEDF0" }}>
+          <Info size={13} color="#8A8A96" style={{ flexShrink: 0, marginTop: 1 }} />
+          <div style={{ fontSize: 11, fontWeight: 500, lineHeight: 1.6, color: "#6B6B76" }}>
+            Alamat di atas terisi otomatis dari titik GPS, tapi kadang belum lengkap. Tambahkan <b style={{ color: "#3A3A44" }}>patokan, nama gedung/venue, atau nomor bangunan</b> supaya tim lain gampang menemukan lokasinya.
+          </div>
+        </div>
         {invalid.has("address") && <FieldError text="Alamat wajib diisi - pakai Lokasi Saya/Pilih di Peta utk auto-isi, atau ketik manual." />}
       </Card>
 
@@ -1777,7 +1761,18 @@ function StepLocation({ sites, primarySite, setPrimarySite, extraSites, setExtra
           onClose={() => setMapPicking(false)}
           onConfirm={({ lat, lng, address: addr }) => {
             setManualLat(lat); setManualLng(lng);
-            if (addr && !address.trim()) setAddress(addr);
+            // Sebelumnya cuma isi alamat kalau kolomnya MASIH KOSONG
+            // (`!address.trim()`) - niatnya supaya alamat yg sudah diketik
+            // manual tidak ketiban timpa. Tapi ini jg bikin Edit Plan
+            // (kolom alamat SELALU sudah terisi dari data lama) jadi tidak
+            // pernah ke-update sama sekali walau titik longlat-nya diganti
+            // ke lokasi lain lewat peta - alamat lama nyangkut terus,
+            // padahal longlat-nya sudah beda. Sekarang alamat SELALU
+            // disesuaikan ke hasil titik yg baru dipilih (`addr` dari
+            // MapPickerSheet = alamat akurat titik itu, entah dari hasil
+            // pencarian atau reverse-geocode pin manual) - konsisten dgn
+            // longlat yg jg selalu diganti ke titik terbaru di atas.
+            if (addr) setAddress(addr);
             setMapPicking(false);
           }}
         />
@@ -1815,7 +1810,6 @@ function StepReview(p) {
             </div>
           </div>
         )}
-        <ReviewRow k="Micro Cluster" v={p.primarySite?.mc || "-"} last />
       </ReviewSection>
 
       <ReviewSection icon={Tag} accent="#C6168D" title="Target & Estimasi">
@@ -1849,12 +1843,15 @@ function StepReview(p) {
       </ReviewSection>
 
       <ReviewSection icon={MapPin} accent="#7C3AED" title="Lokasi">
-        <ReviewRow icon={SiteTowerIcon} k="Site Utama" v={p.primarySite ? p.primarySite.site_id : "-"} />
-        {p.extraSites.length > 0 && <ReviewRow icon={SiteTowerIcon} k="Site Tambahan" v={p.extraSites.map((s) => s.site_id).join(", ")} />}
+        <ReviewRow icon={SiteTowerIcon} k="Site" v={[p.primarySite, ...p.extraSites].filter(Boolean).map((s) => s.site_id).join(", ") || "-"} />
         <ReviewRow icon={Building2} k="POI Type" v={p.poiType || "-"} />
         <ReviewRow icon={Wifi} k="Network" v={p.network || "-"} />
         <ReviewRow icon={TrendingUp} k="Area Potential" v={p.area || "-"} />
-        <ReviewRow icon={MapPin} k="Alamat" v={p.address || "-"} />
+        <ReviewRow icon={MapPinned} k="Kecamatan" v={p.primarySite?.kecamatan_name || "-"} />
+        <ReviewRow icon={MapPinned} k="Kabupaten" v={p.primarySite?.kabupaten || "-"} />
+        <ReviewRow icon={SiteTowerIcon} k="Micro Cluster" v={p.primarySite?.mc || "-"} />
+        <ReviewRow icon={Building2} k="Branch" v={p.branchName || "-"} />
+        <ReviewRow icon={MapPin} k="Alamat" v={p.address || "-"} stacked />
         <ReviewRow icon={Crosshair} k="Titik GPS" v={p.manualLat ? `${p.manualLat.toFixed(5)}, ${p.manualLng.toFixed(5)}` : "-"} last />
       </ReviewSection>
     </>
@@ -2069,7 +2066,20 @@ function AddSiteRow({ label, enabled, error, compact, onClick }) {
   );
 }
 
-function ReviewRow({ icon: Icon, k, v, last }) {
+function ReviewRow({ icon: Icon, k, v, last, stacked }) {
+  // `stacked` = label di baris atas, nilai di baris bawah rata kiri, lebar
+  // penuh - dipakai utk nilai yang cenderung panjang (mis. Alamat) supaya
+  // tidak lagi diperas rata-kanan jadi berantakan di sebelah label.
+  if (stacked) {
+    return (
+      <div style={{ padding: "7px 0", borderBottom: last ? "none" : "1px solid #F5F5F7" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#8A8A96", fontWeight: 600 }}>
+          {Icon && <Icon size={12} color="#B0B0BA" />} {k}
+        </span>
+        <div style={{ marginTop: 4, fontSize: 12.5, color: "#17181C", fontWeight: 700, lineHeight: 1.5 }}>{v}</div>
+      </div>
+    );
+  }
   return (
     <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, padding: "7px 0", borderBottom: last ? "none" : "1px solid #F5F5F7" }}>
       <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#8A8A96", fontWeight: 600, flexShrink: 0 }}>

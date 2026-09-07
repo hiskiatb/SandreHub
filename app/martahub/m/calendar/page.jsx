@@ -8,10 +8,14 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, Plus, Loader2, Clock } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Plus, Loader2 } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, FF, BRAND, NAV_HEIGHT } from "../_shared/MobileShell";
-import { activityStage, fmtDate, fmtTimeLabel } from "../_shared/activityUi";
+// MonthYearPickerSheet dipakai ulang persis dari wizard Buat Plan (kalender
+// di sana yg jadi acuan tampilan "persis seperti ini") - drpd duplikasi
+// komponen wheel bulan/tahun di dua tempat.
+import { MonthYearPickerSheet } from "../_shared/CalendarPickerSheet";
+import { activityStage, fmtDate } from "../_shared/activityUi";
 
 const MONTH_NAMES_FULL = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 const DOW = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
@@ -25,6 +29,27 @@ function dotColorForStatuses(statuses) {
 }
 
 function pad2(n) { return String(n).padStart(2, "0"); }
+
+/** Jam mulai/selesai activity `a` KHUSUS di tanggal `dateKey` (bukan jam
+ * global activity) - dipakai utk mengurutkan & menampilkan kartu jadwal
+ * tanggal terpilih spy activity yang jamnya lebih pagi tampil lebih dulu,
+ * konsisten dgn logic per-tanggal yg sama dipakai di
+ * CalendarPickerSheet.jsx (otherActTimeLabel). */
+function dayTimeInfo(a, dateKey) {
+  let perDate = null;
+  if (dateKey && a.plan_date_times) {
+    try {
+      const map = typeof a.plan_date_times === "string" ? JSON.parse(a.plan_date_times) : a.plan_date_times;
+      perDate = map?.[dateKey] || null;
+    } catch { /* biarkan null, fallback di bawah */ }
+  }
+  const isAllDay = perDate ? !!perDate.is_all_day : a.is_all_day !== false;
+  const st = (perDate?.start_time || a.start_time || "").slice(0, 5);
+  const et = (perDate?.end_time || a.end_time || "").slice(0, 5);
+  if (isAllDay || !st || !et) return { isAllDay: true, start: null, end: null, sortKey: 24 * 60 };
+  const [h, m] = st.split(":").map(Number);
+  return { isAllDay: false, start: st.replace(":", "."), end: et.replace(":", "."), sortKey: h * 60 + (m || 0) };
+}
 function toKey(y, m, d) { return `${y}-${pad2(m + 1)}-${pad2(d)}`; }
 
 function activityDateKeys(a) {
@@ -50,6 +75,7 @@ export default function CalendarPage() {
   const [branchBySite, setBranchBySite] = useState({});
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [monthPickerOpen, setMonthPickerOpen] = useState(false);
 
   const gridStart = useMemo(() => {
     const first = new Date(viewYear, viewMonth, 1);
@@ -106,7 +132,14 @@ export default function CalendarPage() {
     setViewMonth(m); setViewYear(y);
   }
 
-  const dayActs = byDate[selected] || [];
+  // Diurutkan berdasarkan jam mulai di tanggal terpilih (spy kartu-kartu ini
+  // KELIHATAN spt jadwal/timeline sungguhan, bukan cuma daftar acak) -
+  // activity "Seharian"/tanpa jam ditaruh PALING BAWAH krn tidak punya slot
+  // waktu spesifik utk dijadikan acuan urutan.
+  const dayActs = useMemo(
+    () => [...(byDate[selected] || [])].sort((a, b) => dayTimeInfo(a, selected).sortKey - dayTimeInfo(b, selected).sortKey),
+    [byDate, selected]
+  );
   function selectDate(key) { setSelected(key); }
 
   const goCreatePlan = () => router.push(`/martahub/m/activities/new?date=${selected}`);
@@ -119,10 +152,21 @@ export default function CalendarPage() {
           style={{
             pointerEvents: "auto", position: "absolute", right: 10, bottom: 10,
             display: "flex", alignItems: "center", gap: 7,
-            padding: "13px 18px", borderRadius: 999, border: "none", background: BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer",
-            boxShadow: "0 8px 20px rgba(17,17,20,0.22)",
+            // Gaya SAMA PERSIS dgn FAB "Buat Plan" di menu Aktivitas
+            // (activities/page.jsx) - rim tipis semi-transparan + glossy
+            // highlight inset + shadow netral dua lapis (bukan glow warna),
+            // supaya konsisten di semua tempat FAB ini muncul.
+            padding: "13px 20px", borderRadius: 999,
+            border: "1px solid rgba(255,255,255,0.55)",
+            background: BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer",
+            boxShadow: [
+              "0 1px 0 rgba(255,255,255,0.45) inset",
+              "0 -6px 10px rgba(0,0,0,0.12) inset",
+              "0 3px 8px rgba(17,17,20,0.20)",
+              "0 16px 36px rgba(17,17,20,0.24)",
+            ].join(", "),
           }}>
-          <Plus size={16} /> {dayActs.length === 0 ? "Buat Plan" : "Tambah Plan"}
+          <Plus size={16} strokeWidth={2.75} /> {dayActs.length === 0 ? "Buat Plan" : "Tambah Plan"}
         </button>
       </div>
     </div>
@@ -150,52 +194,91 @@ export default function CalendarPage() {
             sendiri (dulu baris terpisah di luar, mengambang & nambah jarak
             kosong) supaya kalender terasa satu blok yang rapi. */}
         <div style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 18, padding: "12px 12px 14px", boxShadow: "0 4px 14px rgba(17,17,20,0.04)" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <button onClick={() => changeMonth(-1)} style={{ width: 30, height: 30, borderRadius: 9, background: "#F6F7F9", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
-              <ChevronLeft size={16} />
-            </button>
-            <div style={{ fontSize: 14, fontWeight: 800, color: "#17181C" }}>{MONTH_NAMES_FULL[viewMonth]} {viewYear}</div>
-            <button onClick={() => changeMonth(1)} style={{ width: 30, height: 30, borderRadius: 9, background: "#F6F7F9", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
-              <ChevronRight size={16} />
-            </button>
+          {/* Header bulan/tahun - dibuat PERSIS spt di kalender wizard Buat
+              Plan (_shared/CalendarPickerSheet.jsx): satu kapsul abu2
+              menyatu isinya panah prev/next bulat putih + label bulan-tahun
+              yg diketuk utk buka MonthYearPickerSheet (bkn cuma teks statis
+              lagi), drpd 3 elemen lepas rata kiri-tengah-kanan spt
+              sebelumnya. */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "2px 0 14px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 2, background: "#F1F2F5", borderRadius: 999, padding: 4 }}>
+              <button onClick={() => changeMonth(-1)}
+                style={{ width: 32, height: 32, borderRadius: "50%", background: "#FFFFFF", border: "none", boxShadow: "0 1px 4px rgba(23,24,28,0.10)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#3A3A44" }}>
+                <ChevronLeft size={16} strokeWidth={2.5} />
+              </button>
+              <button onClick={() => setMonthPickerOpen(true)}
+                style={{ minWidth: 158, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, background: "none", border: "none", padding: "4px 6px", borderRadius: 8, cursor: "pointer" }}>
+                <span style={{ textAlign: "center", fontSize: 16, fontWeight: 800, color: "#17181C", letterSpacing: -0.3 }}>
+                  {MONTH_NAMES_FULL[viewMonth]} <span style={{ color: "#A9A9B4", fontWeight: 700 }}>{viewYear}</span>
+                </span>
+                <ChevronDown size={14} strokeWidth={2.5} color="#A9A9B4" />
+              </button>
+              <button onClick={() => changeMonth(1)}
+                style={{ width: 32, height: 32, borderRadius: "50%", background: "#FFFFFF", border: "none", boxShadow: "0 1px 4px rgba(23,24,28,0.10)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#3A3A44" }}>
+                <ChevronRight size={16} strokeWidth={2.5} />
+              </button>
+            </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2, marginTop: 14 }}>
-            {DOW.map((d) => (
-              <div key={d} style={{ textAlign: "center", fontSize: 10, fontWeight: 800, color: "#B0B0BA", paddingBottom: 6 }}>{d}</div>
-            ))}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 4 }}>
+            {DOW.map((d, i) => {
+              const isTodayCol = i === today.getDay();
+              return (
+                <div key={d} style={{ textAlign: "center", fontSize: 10.5, fontWeight: 800, letterSpacing: 0.8, textTransform: "uppercase", color: isTodayCol ? "#17181C" : "#B0B0BA", padding: "4px 0" }}>{d}</div>
+              );
+            })}
           </div>
           {loading ? (
             <div style={{ display: "flex", justifyContent: "center", padding: "30px 0" }}>
               <Loader2 size={20} color="#ED1C24" style={{ animation: "mspin .9s linear infinite" }} />
             </div>
           ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 2, marginTop: 4 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 4, marginTop: 4 }}>
+              {/* Sel tanggal PERSIS spt kalender wizard Buat Plan: lingkaran
+                  penuh, SEMUA tanggal (bukan cuma yg terpilih) dikasih
+                  latar lingkaran abu2 lembut, tanggal yg ada aktivitas
+                  ditandai krem (bukan lagi dot kecil terpisah) - satu
+                  bahasa visual yg sama dgn kalender pemilihan Plan Date,
+                  bukan cuma bentuknya doang yg mirip. Ketuk tanggal di sini
+                  TETAP cuma pilih tanggal & tampilkan detail aktivitasnya
+                  di bawah (bukan langsung buat plan) - "Buat/Tambah Plan"
+                  tetap lewat FAB terpisah spt sebelumnya. */}
               {cells.map((c) => {
                 const acts = byDate[c.key] || [];
                 const sel = c.key === selected;
                 const isToday = c.key === todayKey;
+                const hasPlan = acts.length > 0;
+                const bg = sel ? BRAND : hasPlan ? "#FCEFC7" : c.inMonth ? "#F1F2F5" : "#F8F8FA";
                 return (
                   <button key={c.key} onClick={() => selectDate(c.key)}
                     style={{
-                      position: "relative", aspectRatio: "1 / 0.8", borderRadius: 11,
+                      position: "relative", aspectRatio: "1", borderRadius: "50%",
                       border: isToday && !sel ? "1.5px solid #ED1C24" : "1.5px solid transparent",
-                      background: sel ? BRAND : "transparent",
-                      color: !c.inMonth ? "#D0D0D8" : sel ? "#fff" : "#17181C",
-                      fontFamily: FF, fontSize: 12.5, fontWeight: sel ? 800 : 600, cursor: "pointer",
-                      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2,
+                      background: bg,
+                      boxShadow: sel ? "0 4px 10px rgba(237,28,36,0.30)" : "none",
+                      color: !c.inMonth ? "#C7C7D0" : sel ? "#fff" : hasPlan ? "#8A6D1D" : "#4A4A54",
+                      fontFamily: FF, fontSize: 13, fontWeight: sel || hasPlan || isToday ? 800 : 600, cursor: "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "center",
                       transition: "background 0.15s, color 0.15s",
                     }}>
-                    <span>{c.d}</span>
-                    {acts.length > 0 && (
-                      <span style={{ width: 4, height: 4, borderRadius: "50%", background: sel ? "#fff" : dotColorForStatuses(acts.map((a) => a.status)) }} />
-                    )}
+                    {c.d}
                   </button>
                 );
               })}
             </div>
           )}
         </div>
+
+        {monthPickerOpen && (
+          <MonthYearPickerSheet
+            initialMonth={viewMonth}
+            initialYear={viewYear}
+            minYear={2020}
+            minMonth={0}
+            onConfirm={(y, m) => { setViewYear(y); setViewMonth(m); }}
+            onClose={() => setMonthPickerOpen(false)}
+          />
+        )}
       </div>
 
       {err && <div style={{ margin: "12px 20px 0", padding: "10px 12px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 12, fontWeight: 600 }}>{err}</div>}
@@ -228,23 +311,48 @@ export default function CalendarPage() {
             <div style={{ fontSize: 13, fontWeight: 700, color: "#3A3A44" }}>Belum ada plan di tanggal ini</div>
           </div>
         ) : (
+          // Timeline jadwal - kolom jam di kiri (jam mulai tebal, jam
+          // selesai kecil di bawahnya, "Seharian" kalau tidak ada jam
+          // spesifik) + garis vertikal bertitik yang menyambung antar
+          // kartu, spy sekilas kelihatan "ini rangkaian jadwal hari itu"
+          // persis spt tampilan agenda/kalender pada umumnya - bukan cuma
+          // daftar kartu lepas berurutan.
           <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
-            {dayActs.map((a) => {
+            {dayActs.map((a, i) => {
               const stage = activityStage(a);
-              const timeLabel = fmtTimeLabel(a);
+              const t = dayTimeInfo(a, selected);
               const branchLabel = branchBySite[a.site_id];
+              const isLast = i === dayActs.length - 1;
               return (
-                <button key={a.id} onClick={() => router.push(`/martahub/m/activities/${a.id}`)}
-                  style={{ position: "relative", textAlign: "left", width: "100%", background: "#FFFFFF", border: "1px solid #EDEDF1", borderRadius: 18, padding: "15px 16px", cursor: "pointer", fontFamily: FF, boxShadow: "0 2px 10px rgba(23,24,28,0.04), 0 1px 2px rgba(23,24,28,0.03)" }}>
-                  <span style={{
-                    position: "absolute", right: 16, bottom: 13,
-                    width: 30, height: 30, borderRadius: 10, background: "#FFFFFF", border: "1px solid #E7E7EC",
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                  }}>
-                    <ChevronRight size={15} color="#5A5A68" />
-                  </span>
-                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-                    <div style={{ minWidth: 0, flex: 1 }}>
+                <div key={a.id} style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
+                  <div style={{ flexShrink: 0, width: 40, textAlign: "right", paddingTop: 3 }}>
+                    {t.isAllDay ? (
+                      <div style={{ fontSize: 10, fontWeight: 800, color: "#8A8A96" }}>Seharian</div>
+                    ) : (
+                      <>
+                        <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C", fontVariantNumeric: "tabular-nums" }}>{t.start}</div>
+                        <div style={{ marginTop: 1, fontSize: 9.5, fontWeight: 700, color: "#B0B0BA", fontVariantNumeric: "tabular-nums" }}>{t.end}</div>
+                      </>
+                    )}
+                  </div>
+
+                  <div style={{ position: "relative", width: 14, flexShrink: 0 }}>
+                    {!isLast && (
+                      <div style={{ position: "absolute", left: "50%", top: 14, bottom: -10, width: 2, background: "#ECEDF0", transform: "translateX(-50%)" }} />
+                    )}
+                    <div style={{ position: "absolute", left: "50%", top: 10, width: 9, height: 9, borderRadius: "50%", background: stage.color, border: "2px solid #FFFFFF", boxShadow: "0 0 0 1px #ECEDF0", transform: "translateX(-50%)" }} />
+                  </div>
+
+                  <button onClick={() => router.push(`/martahub/m/activities/${a.id}`)}
+                    style={{ position: "relative", textAlign: "left", flex: 1, minWidth: 0, background: "#FFFFFF", border: "1px solid #EDEDF1", borderRadius: 18, padding: "13px 16px", cursor: "pointer", fontFamily: FF, boxShadow: "0 2px 10px rgba(23,24,28,0.04), 0 1px 2px rgba(23,24,28,0.03)" }}>
+                    <span style={{
+                      position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)",
+                      width: 26, height: 26, borderRadius: 9, background: "#FFFFFF", border: "1px solid #E7E7EC",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      <ChevronRight size={14} color="#5A5A68" />
+                    </span>
+                    <div style={{ paddingRight: 30 }}>
                       <div style={{ fontSize: 14, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.event_name || "-"}</div>
                       <div style={{ marginTop: 5, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                         {a.brand && (
@@ -260,17 +368,14 @@ export default function CalendarPage() {
                           {[branchLabel, a.mc].filter(Boolean).join(" · ")}
                         </span>
                       </div>
+                      <div style={{ marginTop: 7 }}>
+                        <span style={{ fontSize: 10, fontWeight: 800, padding: "4px 9px", borderRadius: 999, color: stage.color, background: stage.bg, whiteSpace: "nowrap" }}>
+                          {stage.label}
+                        </span>
+                      </div>
                     </div>
-                    <span style={{ flexShrink: 0, fontSize: 10, fontWeight: 800, padding: "4px 9px", borderRadius: 999, color: stage.color, background: stage.bg, whiteSpace: "nowrap" }}>
-                      {stage.label}
-                    </span>
-                  </div>
-
-                  <div style={{ marginTop: 7, display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: "#5A5A68", fontWeight: 600, paddingRight: 28 }}>
-                    <Clock size={12} color="#B0B0BA" style={{ flexShrink: 0 }} />
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fmtDate(a.plan_date)} · {timeLabel}</span>
-                  </div>
-                </button>
+                  </button>
+                </div>
               );
             })}
           </div>

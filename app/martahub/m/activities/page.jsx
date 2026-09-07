@@ -8,16 +8,17 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Search, X, Plus, Trash2, CheckCircle2, AlertCircle, ChevronRight, ChevronDown, CardSim, Router, Receipt, MapPin, Pencil, FolderClock, Clock, SlidersHorizontal, Check } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, NAV_HEIGHT } from "../_shared/MobileShell";
-import { fmtDate, fmtTimeLabel, fmtInt, fmtRp, isDraftIncomplete, activityStage, READY_STATUSES, earliestPlanDate } from "../_shared/activityUi";
+import { fmtDate, fmtTimeLabel, fmtInt, fmtRp, isDraftIncomplete, activityStage, statusMeta, READY_STATUSES, earliestPlanDate, planMonthKey, updatedAgoLabel, MONTHS } from "../_shared/activityUi";
 import { MetricTile, RebuyTile, RevenueCostBanner } from "../_shared/MetricTiles";
 import DeleteActivitySheet from "../_shared/DeleteActivitySheet";
 import BottomSheet from "../_shared/BottomSheet";
+import { unsnake } from "../_shared/planData";
 
 // created_by + field2 wizard (poi_type, event_categories, plan_date_start,
 // plan_dates_multi) ditambahkan supaya kartu daftar bisa (a) gerbang opsi
 // hapus hanya utk pemilik plan, DAN (b) pakai definisi "draft belum lengkap"
 // yg SAMA PERSIS dgn halaman detail (lihat isDraftIncomplete di activityUi.js).
-const ACTIVITY_COLS = "id,event_name,brand,mc,site_id,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,target_sp,target_fwa,actual_sp,actual_fwa,target_rebuy_pulsa,target_rebuy_data,actual_rebuy_pulsa,actual_rebuy_data,target_rev_3m,actual_rev_3m,cost_estimate,cost_actual,checkin_valid,validation_note,created_at,created_by,actual_draft_saved_at";
+const ACTIVITY_COLS = "id,event_name,brand,mc,site_id,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,target_sp,target_fwa,actual_sp,actual_fwa,target_rebuy_pulsa,target_rebuy_data,actual_rebuy_pulsa,actual_rebuy_data,target_rev_3m,actual_rev_3m,cost_estimate,cost_actual,checkin_valid,validation_note,created_at,created_by,actual_draft_saved_at,updated_at";
 
 // Warna brand - SAMA PERSIS dgn skema di wizard Buat Plan (ACT_BRAND_COLOR
 // di activities/new/page.jsx): IM3 kuning, 3ID (tri) magenta.
@@ -84,6 +85,12 @@ function ActivitiesInner() {
   const { loading, userId, scope } = useMartaSession();
   const [rows, setRows] = useState(null);
   const [branchBySite, setBranchBySite] = useState({}); // site_id -> branch (mh_sites), utk subtitle "MC · Branch · Brand"
+  // site_id -> { branch, kabupaten, kecamatan } (mh_sites) - dipakai KHUSUS
+  // utk opsi filter lanjutan (Branch/Kabupaten/Kecamatan di sheet Filter
+  // Aktivitas). Dipisah dari `branchBySite` (yg sudah dipakai ActivityCard/
+  // DetailSheet sbg string biasa) spy tidak mengubah kontrak prop yg sudah
+  // ada di dua tempat itu.
+  const [siteMeta, setSiteMeta] = useState({});
   const [err, setErr] = useState("");
   const [tab, setTab] = useState(initialTab && TABS.some((t) => t.key === initialTab) ? initialTab : "all");
   const [q, setQ] = useState("");
@@ -95,6 +102,23 @@ function ActivitiesInner() {
   const [needsActionOnly, setNeedsActionOnly] = useState(false);
   const [dateRange, setDateRange] = useState("all"); // all | week | month
   const [categories, setCategories] = useState(() => new Set());
+  // Filter bulan/tahun - TERPISAH dari `dateRange` (yg relatif thd hari ini
+  // spt "minggu ini"/"bulan ini") krn ini navigasi eksplisit ke bulan
+  // TERTENTU (bisa maju/mundur bebas), disandingkan dgn judul "Aktivitas
+  // Branch/Region" di header. "all" = semua bulan (default, TIDAK
+  // menyembunyikan apa pun sampai user pilih sendiri). Opsi yg ditawarkan
+  // di sheet-nya HANYA bulan yg beneran ada plan-nya (lihat monthOptions
+  // di bawah) - bukan daftar 12 bulan/beberapa tahun kosongan.
+  const [monthKey, setMonthKey] = useState("all");
+  const [monthPickerOpen, setMonthPickerOpen] = useState(false);
+  const [statusFilter, setStatusFilter] = useState(() => new Set());
+  const [brandFilter, setBrandFilter] = useState(() => new Set());
+  const [branchFilter, setBranchFilter] = useState(() => new Set());
+  const [kabupatenFilter, setKabupatenFilter] = useState(() => new Set());
+  const [kecamatanFilter, setKecamatanFilter] = useState(() => new Set());
+  const [poiFilter, setPoiFilter] = useState(() => new Set());
+  const [siteFilter, setSiteFilter] = useState(() => new Set());
+  const [siteFilterQ, setSiteFilterQ] = useState("");
   // SATU state hapus dipakai baik dari kebab-menu kartu daftar maupun dari
   // tombol "Hapus Plan" di DetailSheet quick-view - keduanya cuma memicu
   // sheet konfirmasi yg sama (DeleteActivitySheet), bukan alur terpisah.
@@ -108,7 +132,13 @@ function ActivitiesInner() {
         const { data, error } = await supabaseMarta
           .rpc("mh_activities_for_me")
           .select(ACTIVITY_COLS)
-          .order("created_at", { ascending: false })
+          // Diurutkan berdasarkan `updated_at` (BUKAN `created_at` lagi) -
+          // kartu yg BARU SAJA diubah (edit plan, submit laporan actual,
+          // dst - trigger DB `mh_activities_touch`/`set_updated_at` selalu
+          // meng-update kolom ini tiap UPDATE) otomatis naik ke paling atas
+          // daftar, sesuai permintaan DSF supaya plan yg baru disentuh
+          // gampang ditemukan tanpa perlu scroll cari-cari.
+          .order("updated_at", { ascending: false })
           .limit(200);
         if (error) throw error;
 
@@ -127,12 +157,19 @@ function ActivitiesInner() {
         // info lain.
         const siteIds = Array.from(new Set((data || []).map((r) => r.site_id).filter(Boolean)));
         let map = {};
+        let metaMap = {};
         if (siteIds.length > 0) {
-          const { data: siteRows } = await supabaseMarta.from("mh_sites").select("site_id,branch").in("site_id", siteIds);
-          (siteRows || []).forEach((s) => { if (s.branch) map[s.site_id] = s.branch; });
+          const { data: siteRows } = await supabaseMarta.from("mh_sites")
+            .select("site_id,branch,kabupaten,kecamatan_name,kecamatan")
+            .in("site_id", siteIds);
+          (siteRows || []).forEach((s) => {
+            if (s.branch) map[s.site_id] = s.branch;
+            metaMap[s.site_id] = { branch: s.branch || null, kabupaten: s.kabupaten || null, kecamatan: s.kecamatan_name || s.kecamatan || null };
+          });
         }
         if (alive) {
           setBranchBySite(map);
+          setSiteMeta(metaMap);
           setRows(data || []);
         }
       } catch (e) {
@@ -152,6 +189,66 @@ function ActivitiesInner() {
     return c;
   }, [rows]);
 
+  // Opsi bulan/tahun yg ditawarkan di sheet pemilih - HANYA bulan yg
+  // beneran ada plan-nya di `rows` (dihitung dari earliestPlanDate tiap
+  // aktivitas via planMonthKey), diurutkan terbaru dulu. TIDAK generate
+  // rentang bulan kosong (mis. 12 bulan × sekian tahun) - kalau DSF cuma
+  // punya plan di 3 bulan berbeda, cuma 3 opsi itu yg muncul.
+  const monthOptions = useMemo(() => {
+    const counts = new Map();
+    for (const r of rows || []) {
+      const k = planMonthKey(r);
+      if (!k) continue;
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+      .map(([key, count]) => {
+        const [y, m] = key.split("-").map(Number);
+        return { key, count, label: `${MONTHS[m - 1]} ${y}` };
+      });
+  }, [rows]);
+  // Kalau bulan yg lagi dipilih ternyata sudah tidak ada datanya lagi (mis.
+  // satu2nya plan di bulan itu baru saja dihapus), balik otomatis ke
+  // "Semua Bulan" drpd nyangkut nampilin daftar kosong tanpa penjelasan.
+  useEffect(() => {
+    if (monthKey !== "all" && rows && !monthOptions.some((o) => o.key === monthKey)) setMonthKey("all");
+  }, [monthKey, monthOptions, rows]);
+  const monthLabel = monthKey === "all" ? "Semua Bulan" : (monthOptions.find((o) => o.key === monthKey)?.label || "Semua Bulan");
+
+  // Opsi tiap grup filter lanjutan - SEMUA diturunkan dari data yg BENERAN
+  // ada di `rows`/`siteMeta` (bukan daftar master statis) - sama prinsipnya
+  // dgn monthOptions di atas: kalau DSF cuma py 2 brand/3 branch, cuma itu
+  // yg muncul jadi opsi, bukan daftar kosongan yg kalau dipilih hasilnya
+  // nol. Tiap opsi bawa `count` (jumlah aktivitas yg cocok) spy DSF bisa
+  // langsung lihat mana yg "gemuk" tanpa coba-coba.
+  const filterOptionGroups = useMemo(() => {
+    const status = new Map(), brand = new Map(), branch = new Map(), kabupaten = new Map(), kecamatan = new Map(), poi = new Map(), site = new Map();
+    const bump = (map, key, label) => { if (!key) return; const cur = map.get(key); if (cur) cur.count++; else map.set(key, { key, label: label ?? key, count: 1 }); };
+    for (const r of rows || []) {
+      const meta = siteMeta[r.site_id];
+      bump(status, r.status, statusMeta(r.status).label);
+      if (r.brand) bump(brand, r.brand.toLowerCase(), r.brand.toLowerCase() === "tri" ? "3ID" : "IM3");
+      if (meta?.branch) bump(branch, meta.branch, meta.branch);
+      if (meta?.kabupaten) bump(kabupaten, meta.kabupaten, meta.kabupaten);
+      if (meta?.kecamatan) bump(kecamatan, meta.kecamatan, meta.kecamatan);
+      if (r.poi_type) bump(poi, r.poi_type, unsnake(r.poi_type));
+      if (r.site_id) bump(site, r.site_id, r.site_id);
+    }
+    const toSorted = (map) => Array.from(map.values()).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+    return {
+      status: toSorted(status), brand: toSorted(brand), branch: toSorted(branch),
+      kabupaten: toSorted(kabupaten), kecamatan: toSorted(kecamatan), poi: toSorted(poi),
+      site: toSorted(site),
+    };
+  }, [rows, siteMeta]);
+
+  const siteOptionsFiltered = useMemo(() => {
+    const term = siteFilterQ.trim().toLowerCase();
+    if (!term) return filterOptionGroups.site;
+    return filterOptionGroups.site.filter((o) => o.label.toLowerCase().includes(term));
+  }, [filterOptionGroups.site, siteFilterQ]);
+
   const filtered = useMemo(() => {
     let list = rows || [];
     if (tab !== "all") list = list.filter((r) => r.status === tab);
@@ -159,19 +256,41 @@ function ActivitiesInner() {
     if (term) list = list.filter((r) => (r.event_name || "").toLowerCase().includes(term) || (r.mc || "").toLowerCase().includes(term) || (r.site_id || "").toLowerCase().includes(term));
     if (needsActionOnly) list = list.filter((r) => needsAction(r, userId));
     if (dateRange !== "all") list = list.filter((r) => inDateRange(r, dateRange));
+    if (monthKey !== "all") list = list.filter((r) => planMonthKey(r) === monthKey);
     if (categories.size > 0) {
       list = list.filter((r) => {
         const cats = Array.isArray(r.event_categories) && r.event_categories.length ? r.event_categories : (r.event_category ? [r.event_category] : []);
         return cats.some((c) => categories.has(c));
       });
     }
+    // Grup filter lanjutan BARU - tiap grup non-kosong jadi syarat AND
+    // tambahan (di dalam grup sendiri OR, lihat komentar di state-nya).
+    if (statusFilter.size > 0) list = list.filter((r) => statusFilter.has(r.status));
+    if (brandFilter.size > 0) list = list.filter((r) => r.brand && brandFilter.has(r.brand.toLowerCase()));
+    if (branchFilter.size > 0) list = list.filter((r) => { const b = siteMeta[r.site_id]?.branch; return b && branchFilter.has(b); });
+    if (kabupatenFilter.size > 0) list = list.filter((r) => { const k = siteMeta[r.site_id]?.kabupaten; return k && kabupatenFilter.has(k); });
+    if (kecamatanFilter.size > 0) list = list.filter((r) => { const k = siteMeta[r.site_id]?.kecamatan; return k && kecamatanFilter.has(k); });
+    if (poiFilter.size > 0) list = list.filter((r) => r.poi_type && poiFilter.has(r.poi_type));
+    if (siteFilter.size > 0) list = list.filter((r) => r.site_id && siteFilter.has(r.site_id));
     return list;
-  }, [rows, tab, q, needsActionOnly, dateRange, categories, userId]);
+  }, [rows, tab, q, needsActionOnly, dateRange, monthKey, categories, userId, siteMeta, statusFilter, brandFilter, branchFilter, kabupatenFilter, kecamatanFilter, poiFilter, siteFilter]);
 
-  const activeFilterCount = (needsActionOnly ? 1 : 0) + (dateRange !== "all" ? 1 : 0) + (categories.size > 0 ? 1 : 0);
+  const activeFilterCount = (needsActionOnly ? 1 : 0) + (dateRange !== "all" ? 1 : 0) + (categories.size > 0 ? 1 : 0)
+    + (statusFilter.size > 0 ? 1 : 0) + (brandFilter.size > 0 ? 1 : 0) + (branchFilter.size > 0 ? 1 : 0)
+    + (kabupatenFilter.size > 0 ? 1 : 0) + (kecamatanFilter.size > 0 ? 1 : 0) + (poiFilter.size > 0 ? 1 : 0) + (siteFilter.size > 0 ? 1 : 0);
 
   function toggleCategory(key) {
     setCategories((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+  // Toggle generik utk SEMUA grup Set baru di atas (status/brand/branch/
+  // kabupaten/kecamatan/poi/site) - satu fungsi dipakai lewat setter yg
+  // berbeda-beda, drpd menulis ulang logic add/delete Set yg sama 7 kali.
+  function toggleInSet(setter, key) {
+    setter((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key); else next.add(key);
       return next;
@@ -181,12 +300,15 @@ function ActivitiesInner() {
     setNeedsActionOnly(false);
     setDateRange("all");
     setCategories(new Set());
+    setStatusFilter(new Set());
+    setBrandFilter(new Set());
+    setBranchFilter(new Set());
+    setKabupatenFilter(new Set());
+    setKecamatanFilter(new Set());
+    setPoiFilter(new Set());
+    setSiteFilter(new Set());
+    setSiteFilterQ("");
   }
-
-  const draftIncompleteCount = useMemo(
-    () => (rows || []).filter((r) => userId && r.created_by === userId && r.status === "draft" && isDraftIncomplete(r)).length,
-    [rows, userId]
-  );
 
   function requestDelete(r) {
     setDeleteTarget({ id: r.id, name: r.event_name });
@@ -211,10 +333,27 @@ function ActivitiesInner() {
           style={{
             pointerEvents: "auto", position: "absolute", right: FAB_MARGIN, bottom: FAB_MARGIN,
             display: "flex", alignItems: "center", gap: 7,
-            padding: "13px 18px", borderRadius: 999, border: "none", background: BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer",
-            boxShadow: "0 8px 20px rgba(17,17,20,0.22)",
+            // Cincin putih solid tebal sebelumnya kelihatan murahan (spt
+            // stiker ditempel) - diganti gaya "premium": rim tipis semi-
+            // transparan (bukan solid opaque) sbg pembeda dari tombol Edit
+            // Actual, dipadukan efek glossy (highlight inset di atas) +
+            // tumpukan shadow (ambient warna brand yang lembut + shadow
+            // gelap tajam di bawah utk kedalaman) - kombinasi ini yang bikin
+            // FAB kelihatan mengambang & mewah, bukan cuma dikasih garis.
+            padding: "13px 20px", borderRadius: 999,
+            border: "1px solid rgba(255,255,255,0.55)",
+            background: BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer",
+            // Glow warna brand dibuang - ganti shadow netral (abu-abu gelap)
+            // saja spt FAB/kartu lain di app ini, tetap dua lapis (dekat +
+            // jauh) utk kesan elevasi mewah tanpa efek "menyala".
+            boxShadow: [
+              "0 1px 0 rgba(255,255,255,0.45) inset",   // glossy highlight atas
+              "0 -6px 10px rgba(0,0,0,0.12) inset",     // gradasi gelap bawah dlm tombol
+              "0 3px 8px rgba(17,17,20,0.20)",           // kontak shadow dekat
+              "0 16px 36px rgba(17,17,20,0.24)",         // shadow jauh utk elevasi
+            ].join(", "),
           }}>
-          <Plus size={16} /> Buat Plan
+          <Plus size={16} strokeWidth={2.75} /> Buat Plan
         </button>
       </div>
     </div>
@@ -244,43 +383,58 @@ function ActivitiesInner() {
           <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em" }}>
             {scope?.role === "bme_rge" ? "Aktivitas Branch" : "Aktivitas Region"}
           </div>
-          {/* Tombol filter - sejajar judul, kanan. Titik merah kecil = ada
-              filter aktif (selain tab status) biar user tahu daftar sedang
-              dipersempit walau sheet-nya sudah ditutup. */}
+          {/* Chip "pilih bulan/tahun" - sejajar judul, kanan. Cuma
+              menawarkan bulan yg BENERAN ada plan-nya (lihat monthOptions)
+              via MonthFilterSheet, BUKAN dropdown 12 bulan kosongan.
+              "Semua Bulan" = default, tidak menyembunyikan apa pun.
+              Tombol filter (sliders) DIPINDAH ke sebelah kolom pencarian
+              di bawah (lihat blok "Search" - permintaan DSF: dulu di sini
+              berdempetan dgn judul, sekarang lebih dekat/relevan dgn
+              search krn keduanya sama2 alat "persempit daftar"). */}
+          <button onClick={() => setMonthPickerOpen(true)}
+            style={{
+              display: "flex", alignItems: "center", gap: 5, height: 36, padding: "0 11px", borderRadius: 11, flexShrink: 0,
+              border: `1.5px solid ${monthKey !== "all" ? BRAND : "#E4E5EA"}`,
+              background: monthKey !== "all" ? "#FDECEC" : "#FFFFFF",
+              color: monthKey !== "all" ? BRAND : "#5A5A68",
+              fontSize: 11.5, fontWeight: 700, fontFamily: FF, cursor: "pointer", whiteSpace: "nowrap",
+            }}>
+            {monthLabel}
+            <ChevronDown size={13} />
+          </button>
+        </div>
+        {/* Search + tombol Filter - sekarang SEBARIS (dulu tombol filter
+            sendirian di pojok kanan judul, sekarang dipindah ke sini spy
+            langsung kebaca sebagai "pasangan" alat persempit daftar bareng
+            kolom pencarian, bukan nempel ke judul halaman). */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14 }}>
+          <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 9, height: 44, padding: "0 13px", borderRadius: 12, background: "#FFFFFF", border: "1px solid #E9EAEE" }}>
+            <Search size={15} color="#9A9AA6" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari Aktivitas"
+              style={{ flex: 1, minWidth: 0, height: "100%", background: "transparent", border: "none", outline: "none", fontSize: 13.5, fontFamily: FF, color: "#17181C" }} />
+            {q && (
+              <button onClick={() => setQ("")} style={{ background: "none", border: "none", cursor: "pointer", color: "#9A9AA6", display: "flex" }}>
+                <X size={15} />
+              </button>
+            )}
+          </div>
+          {/* Titik merah kecil = ada filter aktif biar user tahu daftar
+              sedang dipersempit walau sheet-nya sudah ditutup. */}
           <button onClick={() => setFilterOpen(true)} aria-label="Filter"
             style={{
-              position: "relative", flexShrink: 0, width: 36, height: 36, borderRadius: 11,
-              border: `1.5px solid ${activeFilterCount > 0 ? BRAND : "#E4E5EA"}`,
+              position: "relative", flexShrink: 0, width: 44, height: 44, borderRadius: 12,
+              border: `1.5px solid ${activeFilterCount > 0 ? BRAND : "#E9EAEE"}`,
               background: activeFilterCount > 0 ? "#FDECEC" : "#FFFFFF",
               color: activeFilterCount > 0 ? BRAND : "#5A5A68",
               display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
             }}>
-            <SlidersHorizontal size={15} />
+            <SlidersHorizontal size={16} />
             {activeFilterCount > 0 && (
               <span style={{ position: "absolute", top: -3, right: -3, minWidth: 15, height: 15, padding: "0 3px", borderRadius: 999, background: BRAND, color: "#fff", fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FF }}>
                 {activeFilterCount}
               </span>
             )}
           </button>
-        </div>
-        {draftIncompleteCount > 0 && (
-          <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10.5, fontWeight: 800, color: "#C2410C", background: "#FFF7ED", border: "1px solid #FED7AA", borderRadius: 999, padding: "3px 8px" }}>
-              <AlertCircle size={11} /> {draftIncompleteCount} draft belum lengkap
-            </span>
-          </div>
-        )}
-
-        {/* Search */}
-        <div style={{ display: "flex", alignItems: "center", gap: 9, height: 44, padding: "0 13px", borderRadius: 12, background: "#FFFFFF", border: "1px solid #E9EAEE", marginTop: 14 }}>
-          <Search size={15} color="#9A9AA6" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari Aktivitas"
-            style={{ flex: 1, minWidth: 0, height: "100%", background: "transparent", border: "none", outline: "none", fontSize: 13.5, fontFamily: FF, color: "#17181C" }} />
-          {q && (
-            <button onClick={() => setQ("")} style={{ background: "none", border: "none", cursor: "pointer", color: "#9A9AA6", display: "flex" }}>
-              <X size={15} />
-            </button>
-          )}
         </div>
 
         {/* Tabs */}
@@ -350,79 +504,212 @@ function ActivitiesInner() {
         />
       )}
 
-      {filterOpen && (
-        <BottomSheet onClose={() => setFilterOpen(false)}>
-          <div style={{ fontSize: 15, fontWeight: 800, color: "#17181C" }}>Filter Aktivitas</div>
-
-          <div style={{ marginTop: 18 }}>
-            <button onClick={() => setNeedsActionOnly((v) => !v)}
+      {monthPickerOpen && (
+        <BottomSheet onClose={() => setMonthPickerOpen(false)}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: "#17181C" }}>Pilih Bulan</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: "#8A8A96" }}>Cuma bulan yg ada plan-nya yg ditampilkan di sini.</div>
+          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 6 }}>
+            <button onClick={() => { setMonthKey("all"); setMonthPickerOpen(false); }}
               style={{
-                width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
-                padding: "12px 14px", borderRadius: 13, border: `1.5px solid ${needsActionOnly ? BRAND : "#E9EAEE"}`,
-                background: needsActionOnly ? "#FDECEC" : "#F8F8FA", cursor: "pointer", fontFamily: FF,
+                display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
+                padding: "12px 14px", borderRadius: 12, border: `1.5px solid ${monthKey === "all" ? BRAND : "#E9EAEE"}`,
+                background: monthKey === "all" ? "#FDECEC" : "#FFFFFF", cursor: "pointer",
               }}>
-              <span style={{ textAlign: "left" }}>
-                <div style={{ fontSize: 13, fontWeight: 800, color: needsActionOnly ? BRAND : "#17181C" }}>Perlu Tindakan</div>
-                <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96" }}>Draft belum lengkap, revisi, atau laporan terlambat</div>
-              </span>
-              <span style={{
-                flexShrink: 0, width: 22, height: 22, borderRadius: 7, border: `1.5px solid ${needsActionOnly ? BRAND : "#D6D7DD"}`,
-                background: needsActionOnly ? BRAND : "transparent", display: "flex", alignItems: "center", justifyContent: "center",
-              }}>
-                {needsActionOnly && <Check size={13} color="#fff" />}
-              </span>
+              <span style={{ fontSize: 13.5, fontWeight: 700, color: "#17181C" }}>Semua Bulan</span>
+              {monthKey === "all" && <Check size={16} color={BRAND} />}
             </button>
-          </div>
-
-          <div style={{ marginTop: 18 }}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: "0.03em" }}>Tanggal Event</div>
-            <div style={{ marginTop: 8, display: "flex", gap: 7 }}>
-              {[{ key: "all", label: "Semua" }, { key: "week", label: "Minggu Ini" }, { key: "month", label: "Bulan Ini" }].map((o) => (
-                <button key={o.key} onClick={() => setDateRange(o.key)}
-                  style={{
-                    flex: 1, padding: "9px 0", borderRadius: 11, border: `1.5px solid ${dateRange === o.key ? BRAND : "#E9EAEE"}`,
-                    background: dateRange === o.key ? "#FDECEC" : "#F8F8FA", color: dateRange === o.key ? BRAND : "#5A5A68",
-                    fontSize: 12, fontWeight: 800, fontFamily: FF, cursor: "pointer",
-                  }}>
-                  {o.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div style={{ marginTop: 18 }}>
-            <div style={{ fontSize: 11, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: "0.03em" }}>Kategori Event</div>
-            <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 7 }}>
-              {Object.entries(CAT_LABEL).map(([key, label]) => {
-                const active = categories.has(key);
+            {monthOptions.length === 0 ? (
+              <div style={{ marginTop: 6, textAlign: "center", padding: "16px 10px", fontSize: 12, color: "#8A8A96" }}>Belum ada plan sama sekali.</div>
+            ) : (
+              monthOptions.map((o) => {
+                const active = monthKey === o.key;
                 return (
-                  <button key={key} onClick={() => toggleCategory(key)}
+                  <button key={o.key} onClick={() => { setMonthKey(o.key); setMonthPickerOpen(false); }}
                     style={{
-                      padding: "8px 13px", borderRadius: 999, border: `1.5px solid ${active ? BRAND : "#E9EAEE"}`,
-                      background: active ? "#FDECEC" : "#F8F8FA", color: active ? BRAND : "#5A5A68",
-                      fontSize: 12, fontWeight: 700, fontFamily: FF, cursor: "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
+                      padding: "12px 14px", borderRadius: 12, border: `1.5px solid ${active ? BRAND : "#E9EAEE"}`,
+                      background: active ? "#FDECEC" : "#FFFFFF", cursor: "pointer",
                     }}>
-                    {label}
+                    <span style={{ fontSize: 13.5, fontWeight: 700, color: "#17181C" }}>{o.label}</span>
+                    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8A96" }}>{o.count} plan</span>
+                      {active && <Check size={16} color={BRAND} />}
+                    </span>
                   </button>
                 );
-              })}
+              })
+            )}
+          </div>
+        </BottomSheet>
+      )}
+
+      {filterOpen && (
+        <BottomSheet onClose={() => setFilterOpen(false)}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "#17181C" }}>Filter Aktivitas</div>
+            {activeFilterCount > 0 && (
+              <button onClick={resetFilters} style={{ background: "none", border: "none", padding: 0, color: BRAND, fontSize: 12, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>
+                Reset Semua ({activeFilterCount})
+              </button>
+            )}
+          </div>
+
+          {/* Body sheet dibuat SCROLLABLE (maxHeight + overflowY) - dgn 7
+              grup filter BARU (Status/Brand/Branch/Kabupaten/Kecamatan/
+              POI/Site) ditumpuk di atas 3 grup lama (Perlu Tindakan/
+              Tanggal Event/Kategori Event), kontennya jadi jauh lebih
+              panjang drpd muat 1 layar - tombol Reset/Terapkan di bawah
+              TETAP kelihatan (di LUAR area scroll ini) drpd ikut ke-scroll
+              jauh & DSF harus scroll dulu cuma utk menutup/menerapkan. */}
+          <div style={{ marginTop: 14, maxHeight: "60vh", overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", paddingRight: 2 }}>
+            <div>
+              <button onClick={() => setNeedsActionOnly((v) => !v)}
+                style={{
+                  width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                  padding: "12px 14px", borderRadius: 13, border: `1.5px solid ${needsActionOnly ? BRAND : "#E9EAEE"}`,
+                  background: needsActionOnly ? "#FDECEC" : "#F8F8FA", cursor: "pointer", fontFamily: FF,
+                }}>
+                <span style={{ textAlign: "left" }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: needsActionOnly ? BRAND : "#17181C" }}>Perlu Tindakan</div>
+                  <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96" }}>Draft belum lengkap, revisi, atau laporan terlambat</div>
+                </span>
+                <span style={{
+                  flexShrink: 0, width: 22, height: 22, borderRadius: 7, border: `1.5px solid ${needsActionOnly ? BRAND : "#D6D7DD"}`,
+                  background: needsActionOnly ? BRAND : "transparent", display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  {needsActionOnly && <Check size={13} color="#fff" />}
+                </span>
+              </button>
+            </div>
+
+            <div style={{ marginTop: 18 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: "0.03em" }}>Tanggal Event</div>
+              <div style={{ marginTop: 8, display: "flex", gap: 7 }}>
+                {[{ key: "all", label: "Semua" }, { key: "week", label: "Minggu Ini" }, { key: "month", label: "Bulan Ini" }].map((o) => (
+                  <button key={o.key} onClick={() => setDateRange(o.key)}
+                    style={{
+                      flex: 1, padding: "9px 0", borderRadius: 11, border: `1.5px solid ${dateRange === o.key ? BRAND : "#E9EAEE"}`,
+                      background: dateRange === o.key ? "#FDECEC" : "#F8F8FA", color: dateRange === o.key ? BRAND : "#5A5A68",
+                      fontSize: 12, fontWeight: 800, fontFamily: FF, cursor: "pointer",
+                    }}>
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <FilterChipGroup title="Status" options={filterOptionGroups.status} selected={statusFilter} onToggle={(k) => toggleInSet(setStatusFilter, k)} />
+            <FilterChipGroup title="Kategori Event" options={Object.entries(CAT_LABEL).map(([key, label]) => ({ key, label, count: null }))} selected={categories} onToggle={toggleCategory} />
+            <FilterChipGroup title="Brand" options={filterOptionGroups.brand} selected={brandFilter} onToggle={(k) => toggleInSet(setBrandFilter, k)} />
+            <FilterChipGroup title="Branch" options={filterOptionGroups.branch} selected={branchFilter} onToggle={(k) => toggleInSet(setBranchFilter, k)} />
+            <FilterChipGroup title="Kabupaten" options={filterOptionGroups.kabupaten} selected={kabupatenFilter} onToggle={(k) => toggleInSet(setKabupatenFilter, k)} />
+            <FilterChipGroup title="Kecamatan" options={filterOptionGroups.kecamatan} selected={kecamatanFilter} onToggle={(k) => toggleInSet(setKecamatanFilter, k)} />
+            <FilterChipGroup title="Tipe POI" options={filterOptionGroups.poi} selected={poiFilter} onToggle={(k) => toggleInSet(setPoiFilter, k)} />
+
+            {/* Site - daftarnya berpotensi panjang, jadi BEDA gaya dari
+                grup chip di atas: kotak list dgn search box sendiri +
+                checkbox per baris (bukan chip-wrap yg bisa jadi tembok
+                teks kalau opsinya puluhan). */}
+            <div style={{ marginTop: 18 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                Site {siteFilter.size > 0 ? `(${siteFilter.size} dipilih)` : ""}
+              </div>
+              {filterOptionGroups.site.length > 6 && (
+                <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 11px", borderRadius: 10, background: "#F8F8FA", border: "1px solid #E9EAEE" }}>
+                  <Search size={13} color="#9A9AA6" />
+                  <input value={siteFilterQ} onChange={(e) => setSiteFilterQ(e.target.value)} placeholder="Cari site ID…"
+                    style={{ flex: 1, minWidth: 0, height: "100%", background: "transparent", border: "none", outline: "none", fontSize: 12.5, fontFamily: FF, color: "#17181C" }} />
+                </div>
+              )}
+              <div style={{ marginTop: 8, maxHeight: 200, overflowY: "auto", border: "1px solid #E9EAEE", borderRadius: 12, WebkitOverflowScrolling: "touch" }}>
+                {siteOptionsFiltered.length === 0 ? (
+                  <div style={{ padding: "14px 12px", fontSize: 12, color: "#8A8A96", textAlign: "center" }}>Tidak ada site cocok.</div>
+                ) : (
+                  siteOptionsFiltered.map((o, i) => {
+                    const active = siteFilter.has(o.key);
+                    return (
+                      <button key={o.key} onClick={() => toggleInSet(setSiteFilter, o.key)}
+                        style={{
+                          width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                          padding: "10px 12px", background: active ? "#FDECEC" : "#FFFFFF", border: "none",
+                          borderTop: i > 0 ? "1px solid #F0F0F3" : "none", cursor: "pointer", fontFamily: FF,
+                        }}>
+                        <span style={{ fontSize: 12.5, fontWeight: 700, color: active ? BRAND : "#17181C" }}>{o.label}</span>
+                        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span style={{ fontSize: 10.5, fontWeight: 700, color: "#8A8A96" }}>{o.count}</span>
+                          <span style={{
+                            flexShrink: 0, width: 18, height: 18, borderRadius: 6, border: `1.5px solid ${active ? BRAND : "#D6D7DD"}`,
+                            background: active ? BRAND : "transparent", display: "flex", alignItems: "center", justifyContent: "center",
+                          }}>
+                            {active && <Check size={11} color="#fff" />}
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })
+                )}
+              </div>
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 10, marginTop: 22 }}>
-            <button onClick={resetFilters}
-              style={{ flex: 1, height: 46, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
-              Reset
-            </button>
-            <button onClick={() => setFilterOpen(false)}
-              style={{ flex: 1, height: 46, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>
-              Terapkan
-            </button>
+          {/* Footer TETAP (di luar area scroll) - jumlah hasil live update
+              tiap toggle chip, jadi DSF langsung tahu efeknya SEBELUM
+              menekan "Terapkan" (yg sebenarnya cuma menutup sheet, filter-
+              nya sendiri sudah aktif seketika - tombol ini lebih sbg
+              "selesai", bukan gerbang wajib). */}
+          <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #F0F0F3" }}>
+            <div style={{ textAlign: "center", fontSize: 11.5, color: "#8A8A96", fontWeight: 600, marginBottom: 10 }}>
+              {filtered.length} aktivitas cocok dgn filter ini
+            </div>
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={resetFilters}
+                style={{ flex: 1, height: 46, borderRadius: 12, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
+                Reset
+              </button>
+              <button onClick={() => setFilterOpen(false)}
+                style={{ flex: 1, height: 46, borderRadius: 12, border: "none", background: BRAND, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>
+                Terapkan
+              </button>
+            </div>
           </div>
         </BottomSheet>
       )}
 
     </MobileShell>
+  );
+}
+
+// Satu grup chip filter multi-select reusable - dipakai utk Status/
+// Kategori Event/Brand/Branch/Kabupaten/Kecamatan/Tipe POI di sheet Filter
+// Aktivitas (Site sendiri pakai gaya list+search krn opsinya bisa banyak).
+// Tidak dirender sama sekali kalau opsinya kosong (mis. DSF ini belum
+// pernah punya plan dgn POI tertentu) - drpd nampilin judul grup kosong
+// melompong.
+function FilterChipGroup({ title, options, selected, onToggle }) {
+  if (!options || options.length === 0) return null;
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+        {title} {selected.size > 0 ? `(${selected.size} dipilih)` : ""}
+      </div>
+      <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 7 }}>
+        {options.map((o) => {
+          const active = selected.has(o.key);
+          return (
+            <button key={o.key} onClick={() => onToggle(o.key)}
+              style={{
+                display: "flex", alignItems: "center", gap: 6, padding: "8px 13px", borderRadius: 999,
+                border: `1.5px solid ${active ? BRAND : "#E9EAEE"}`,
+                background: active ? "#FDECEC" : "#F8F8FA", color: active ? BRAND : "#5A5A68",
+                fontSize: 12, fontWeight: 700, fontFamily: FF, cursor: "pointer", whiteSpace: "nowrap",
+              }}>
+              {o.label}
+              {o.count != null && <span style={{ opacity: 0.6, fontWeight: 800 }}>{o.count}</span>}
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -522,12 +809,21 @@ function ActivityCard({ r, userId, branchLabel, onOpen }) {
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fmtDate(r.plan_date)} · {timeLabel}</span>
         </div>
 
-        {/* Toggle "Lihat Plan vs Actual" - sendirian rata kanan sekarang
-            (status sudah cukup satu pill di kanan-atas, tidak perlu baris
-            status kedua di sini lagi). */}
-        {!isDraft && (
-          <div style={{ marginTop: 3, display: "flex", justifyContent: "flex-end" }}>
-            {/* Tap target diperbesar (dulu cuma padding "3px 0" - tingginya
+        {/* Timestamp "terakhir diperbarui" DISATUKAN sebaris dgn toggle
+            "Lihat Plan vs Actual" (dulu masing2 baris sendiri, timestamp
+            di kiri jadi "nganggur" krn baris toggle di bawahnya rata kanan
+            - sekarang satu baris: timestamp kiri, toggle kanan, lebih
+            rapi/tidak makan tinggi kartu ekstra). Kolom `updated_at`
+            di-touch otomatis oleh trigger DB tiap kartu ini diubah (edit
+            plan, submit laporan actual, dst), BUKAN `created_at`. */}
+        <div style={{ marginTop: 3, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minHeight: isDraft ? "auto" : 34 }}>
+          {updatedAgoLabel(r.updated_at) ? (
+            <span style={{ fontSize: 10, color: "#B0B0BA", fontWeight: 600 }}>Diperbarui {updatedAgoLabel(r.updated_at)}</span>
+          ) : <span />}
+          {/* Toggle "Lihat Plan vs Actual" - status sudah cukup satu pill
+              di kanan-atas, tidak perlu baris status kedua di sini lagi. */}
+          {!isDraft && (
+            /* Tap target diperbesar (dulu cuma padding "3px 0" - tingginya
                 cuma ±19px, jauh di bawah target minimal 44px, jadi jempol
                 sering "meleset" ke area kartu di sekitarnya & malah
                 membuka Detail Aktivitas alih-alih toggle ini). Sekarang
@@ -536,7 +832,7 @@ function ActivityCard({ r, userId, branchLabel, onOpen }) {
                 menyatu dgn kartu. onPointerDown JUGA di-stop (bukan cuma
                 onClick) - beberapa browser mobile bisa memicu handler
                 induk dari fase pointerdown/touchstart sebelum event click
-                nyampai, jadi stopPropagation cuma di onClick kadang telat. */}
+                nyampai, jadi stopPropagation cuma di onClick kadang telat. */
             <button
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => { e.stopPropagation(); e.preventDefault(); setExpanded((v) => !v); }}
@@ -544,8 +840,8 @@ function ActivityCard({ r, userId, branchLabel, onOpen }) {
               {expanded ? "Sembunyikan" : "Lihat Plan vs Actual"}
               <ChevronDown size={13} style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
             </button>
-          </div>
-        )}
+          )}
+        </div>
 
         {isDraft ? (
           <div style={{

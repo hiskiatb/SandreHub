@@ -1,6 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { X, Search, Download, RotateCcw, Wallet, FileCheck2, CardSim, Router as RouterIcon, TrendingUp, Banknote, Percent, RefreshCw, Loader2, Settings2 } from "lucide-react";
+import { X, Search, Download, RotateCcw, Wallet, FileCheck2, CardSim, Router as RouterIcon, TrendingUp, Banknote, Percent, RefreshCw, Loader2, Settings2, Image as ImageIcon } from "lucide-react";
 import ExcelJS from "exceljs";
 import MartaShell, { T, FONT, brandLabel } from "../components/MartaShell";
 import ExcelFilter from "../components/ExcelFilter";
@@ -685,6 +685,26 @@ function Body({ email }) {
                       return <td key={col.key} style={{ padding: "8px 10px", borderRight: `1px solid ${T.line}`, fontWeight: 700, color: good == null ? T.mid : good ? T.success : T.warning }}>{col.get(r)}</td>;
                     }
                     if (col.key === "eventName") return <td key={col.key} title={r.event_name} style={{ padding: "8px 10px", fontWeight: 700, color: T.hi, maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis", borderRight: `1px solid ${T.line}` }}>{col.get(r)}</td>;
+                    if (col.key === "documentation") {
+                      const n = docCountMap[r.id] || 0;
+                      return (
+                        <td key={col.key} style={{ padding: "8px 10px", borderRight: `1px solid ${T.line}` }}>
+                          {n > 0 ? (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setDetailId(r.id); }}
+                              style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 9px", borderRadius: 999, border: `1px solid ${T.line}`, background: "rgba(37,99,235,0.08)", color: "#2563EB", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}
+                              title="Lihat foto dokumentasi"
+                            >
+                              <ImageIcon size={13} />
+                              {n} foto
+                            </button>
+                          ) : (
+                            <span style={{ color: T.mid }}>-</span>
+                          )}
+                        </td>
+                      );
+                    }
                     return <td key={col.key} style={{ padding: "8px 10px", color: T.mid, borderRight: `1px solid ${T.line}`, textAlign: col.numeric ? "right" : "left" }}>{col.get(r)}</td>;
                   })}
                 </tr>

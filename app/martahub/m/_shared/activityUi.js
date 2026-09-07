@@ -78,6 +78,42 @@ export function earliestPlanDate(a) {
   return a.plan_date_start || a.plan_date || null;
 }
 
+// Kunci "YYYY-MM" dari tanggal plan PALING AWAL punya aktivitas ini -
+// dipakai utk kelompokkan/filter daftar aktivitas per bulan (mis. tab/chip
+// pilih bulan di halaman daftar). Sengaja pakai earliestPlanDate (bukan
+// created_at) krn yg relevan bagi DSF adalah BULAN EVENT-nya terjadi, bukan
+// kapan plan-nya dibuat di sistem.
+export function planMonthKey(a) {
+  const d = earliestPlanDate(a);
+  return d ? d.slice(0, 7) : null; // "YYYY-MM-DD" -> "YYYY-MM"
+}
+
+// Label ringkas relatif dari timestamp `updated_at` (ISO string) - dipakai
+// di kartu daftar aktivitas spy DSF langsung tahu kapan terakhir kartu ini
+// diubah TANPA perlu buka detailnya. Ambang dipilih supaya tetap "ringkas"
+// (bukan jam presisi) tapi masih informatif: <1 menit "Baru saja", <60
+// menit "N menit lalu", <24 jam "N jam lalu", kemarin "Kemarin",
+// <7 hari "N hari lalu", lebih lama "3 Sep" (atau "3 Sep 2025" kalau beda
+// tahun dari sekarang).
+export function updatedAgoLabel(iso) {
+  if (!iso) return null;
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return null;
+  const now = new Date();
+  const diffMs = now.getTime() - then.getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return "Baru saja";
+  if (diffMin < 60) return `${diffMin} menit lalu`;
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffHour < 24) return `${diffHour} jam lalu`;
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diffDay = Math.round((startOfDay(now) - startOfDay(then)) / 86400000);
+  if (diffDay === 1) return "Kemarin";
+  if (diffDay < 7) return `${diffDay} hari lalu`;
+  const sameYear = then.getFullYear() === now.getFullYear();
+  return `${then.getDate()} ${MONTHS[then.getMonth()]}${sameYear ? "" : " " + then.getFullYear()}`;
+}
+
 // Tanggal event PALING AKHIR dari plan ini (rentang/multi bisa berisi
 // beberapa hari) - dipakai utk memastikan Laporan Actual baru boleh
 // dikirim setelah SELURUH hari plan ini terlewati (bukan cuma hari

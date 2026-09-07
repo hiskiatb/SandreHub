@@ -166,10 +166,18 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
   const [confirmDateKey, setConfirmDateKey] = useState(null);
   const [monthPickerOpen, setMonthPickerOpen] = useState(false);
 
-  // Activity plan (punya siapa pun) yg lagi ditampilkan detailnya lewat popup
-  // - diklik dari daftar "N plan lain sudah ada di tanggal ini" pada
-  // TimeEditPopup, supaya pengguna tahu PERSIS apa isinya sebelum menambah
-  // plan baru di tanggal yang sama. Ditutup via tombol X atau klik backdrop.
+  // Activity plan (SUDAH scoped sesuai role login DSF, misal BME cuma
+  // lihat plan di bawah subtree timnya sendiri - lihat RPC server
+  // `mh_activity_calendar_for_me` -> `_mh_activity_calendar_rows`, BUKAN
+  // literally "semua plan di seluruh company") yg lagi ditampilkan
+  // detailnya lewat popup - diklik dari daftar "N plan lain sudah ada di
+  // tanggal ini" pada TimeEditPopup, supaya pengguna tahu PERSIS apa
+  // isinya sebelum menambah plan baru di tanggal yang sama. Label di UI
+  // sengaja TIDAK bilang "punya siapa pun" (bikin DSF kira ini plan
+  // lintas branch/brand org lain) - sudah diperbaiki jadi "di tim/cakupan
+  // Anda", krn datanya sendiri memang SUDAH dibatasi RLS/RPC per hierarki
+  // role, cuma copy-nya yg dulu menyesatkan. Ditutup via tombol X atau
+  // klik backdrop.
   const [detailAct, setDetailAct] = useState(null);
 
   // Muat aktivitas 6 minggu grid (termasuk ekor bulan sebelum/sesudah) supaya
@@ -337,7 +345,7 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
           atas isi kalender, bukan cuma teks polos nempel di background
           abu-abu. */}
       <div style={{ flexShrink: 0, background: "linear-gradient(180deg,#FFFFFF,#FDFDFE)", borderRadius: "0 0 22px 22px", boxShadow: "0 8px 22px rgba(23,24,28,0.06)", position: "relative", zIndex: 1 }}>
-        <div style={{ padding: "calc(env(safe-area-inset-top,0px) + 14px) 18px 2px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ padding: "calc(env(safe-area-inset-top,0px) + 14px) 18px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           {/* Tombol tutup - kotak rounded (bukan bulat) supaya SECARA BENTUK
               beda dgn stepper bulan di bawah (bulat) - jadi tidak ada dua
               kontrol berbeda fungsi yg keliatan sama & bikin bingung mana
@@ -348,15 +356,22 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
           <div style={{ fontSize: 16.5, fontWeight: 800, color: "#17181C", letterSpacing: -0.3 }}>Pilih Plan Date</div>
           <div style={{ width: 34 }} />
         </div>
+      </div>
 
-        {/* Month nav - sengaja dijadikan SATU stepper pill menyatu (bkn dua
-            tombol bulat besar terpisah spt sebelumnya) krn tombol bulat
-            solid hitam persis di bawah tombol "X" tutup bikin user kesan
-            "ini tombol kembali juga". Sekarang panah prev/next jadi tombol
-            putih kecil DI DALAM satu kapsul abu2 bareng label bulan - scr
-            visual jelas ini 1 kontrol "stepper ganti bulan", bukan navigasi
-            kembali, & terasa lebih rapi/mewah drpd 2 lingkaran hitam besar. */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "12px 16px 16px" }}>
+      {/* Kalender - discroll kalau ruangnya sempit, supaya tidak ada yang
+          terpotong (fix WebkitOverflowScrolling/overscrollBehavior tetap
+          dipertahankan). */}
+      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", background: "#F4F5F7" }}>
+      {/* Kartu kalender - month/year stepper SEKARANG dipindah jadi header
+          DI DALAM kartu ini (dulu ada di luar, di dalam header putih
+          bergradasi bareng tombol X) - konsep digabung dgn kartu kalender
+          di menu Kalender (calendar/page.jsx): satu blok kartu putih utuh
+          isinya stepper bulan + grid tanggal, mengambang di atas background
+          abu2 halaman. Interaksi ketuk label bulan → buka
+          MonthYearPickerSheet TETAP SAMA, cuma posisinya yang pindah. */}
+      <div style={{ padding: "16px 16px 0", flexShrink: 0 }}>
+        <div style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 18, padding: "12px 12px 14px", boxShadow: "0 4px 14px rgba(17,17,20,0.04)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "2px 0 14px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 2, background: "#F1F2F5", borderRadius: 999, padding: 4 }}>
             <button onClick={() => changeMonth(-1)} disabled={atLaunchMonth}
               style={{ width: 32, height: 32, borderRadius: "50%", background: "#FFFFFF", border: "none", boxShadow: atLaunchMonth ? "none" : "0 1px 4px rgba(23,24,28,0.10)", display: "flex", alignItems: "center", justifyContent: "center", cursor: atLaunchMonth ? "default" : "pointer", color: atLaunchMonth ? "#D8D9E0" : "#3A3A44" }}>
@@ -380,14 +395,6 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
             </button>
           </div>
         </div>
-      </div>
-
-      {/* Kalender - discroll kalau ruangnya sempit, supaya tidak ada yang
-          terpotong (fix WebkitOverflowScrolling/overscrollBehavior tetap
-          dipertahankan). */}
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain" }}>
-      {/* Grid */}
-      <div style={{ padding: "16px 16px 0", flexShrink: 0 }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 4 }}>
           {DOW.map((d, i) => {
             // Konsep referensi: label hari UPPERCASE + letter-spacing lebar
@@ -431,10 +438,11 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
             );
           })}
         </div>
+        </div>
         {picked.length > 0 && (
           <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
             <span style={{ width: 10, height: 10, borderRadius: "50%", background: "#FCEFC7", border: "1px solid #F0DFA0" }} />
-            <span style={{ fontSize: 10, color: "#8A8A96", fontWeight: 600 }}>Sudah ada plan lain (punya siapa pun) di tanggal itu - ketuk untuk lihat detail</span>
+            <span style={{ fontSize: 10, color: "#8A8A96", fontWeight: 600 }}>Sudah ada plan lain di tim/cakupan Anda pada tanggal itu - ketuk untuk lihat detail</span>
           </div>
         )}
       </div>
@@ -879,7 +887,7 @@ function WheelTimeBlock({ label, isStart, value, onChange, danger }) {
  * tahun dibatasi dari LAUNCH_YEAR/LAUNCH_MONTH (sama spt batas tombol
  * panah prev/next yg sudah ada) - kalau kombinasi hasil scroll jatuh
  * sebelum batas launch, di-clamp otomatis pas tombol "Pilih" ditekan. */
-function MonthYearPickerSheet({ initialMonth, initialYear, minYear, minMonth, onConfirm, onClose }) {
+export function MonthYearPickerSheet({ initialMonth, initialYear, minYear, minMonth, onConfirm, onClose }) {
   const sheetRef = useRef(null);
   const [draftMonth, setDraftMonth] = useState(initialMonth);
   const [draftYear, setDraftYear] = useState(initialYear);

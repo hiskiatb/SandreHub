@@ -23,15 +23,28 @@ export default function SquareCropSheet({ file, onCancel, onConfirm }) {
   const [rotation, setRotation] = useState(0);
   const [busy, setBusy] = useState(false);
   const dragRef = useRef(null); // {startX,startY,panX,panY,pointerId}
+  const imgRef = useRef(null);
 
   useEffect(() => () => URL.revokeObjectURL(imgUrl), [imgUrl]);
 
-  function onImgLoad(e) {
-    const w = e.target.naturalWidth, h = e.target.naturalHeight;
+  function computeFromImg(el) {
+    const w = el.naturalWidth, h = el.naturalHeight;
+    if (!w || !h) return;
     setNatural({ w, h });
     const aspect = w / h;
     setDisplay(aspect >= 1 ? { w: VIEWPORT * aspect, h: VIEWPORT } : { w: VIEWPORT, h: VIEWPORT / aspect });
   }
+  function onImgLoad(e) { computeFromImg(e.target); }
+  // Kadang browser TIDAK memicu event "load" kalau gambar sudah selesai
+  // didekode sebelum listener terpasang (mis. dari cache) - kalau itu
+  // terjadi, `display` tidak pernah keisi & tombol "Gunakan Foto Ini"
+  // (yang disabled selama `!display`) jadi macet permanen. Cek manual
+  // `img.complete` begitu ref terpasang sbg jaring pengaman.
+  useEffect(() => {
+    if (imgRef.current && imgRef.current.complete && imgRef.current.naturalWidth > 0) {
+      computeFromImg(imgRef.current);
+    }
+  }, [imgUrl]);
 
   const maxPan = useMemo(() => {
     if (!display) return { x: 0, y: 0 };
@@ -99,22 +112,28 @@ export default function SquareCropSheet({ file, onCancel, onConfirm }) {
           transform: `rotate(${rotation}deg)`, transition: "transform .22s ease",
         }}
       >
-        {display && (
-          <img
-            src={imgUrl}
-            onLoad={onImgLoad}
-            draggable={false}
-            alt=""
-            style={{
-              position: "absolute", left: "50%", top: "50%", width: display.w, height: display.h,
-              transform: `translate(-50%,-50%) translate(${pan.x}px, ${pan.y}px) scale(${scale})`,
-              cursor: dragRef.current ? "grabbing" : "grab", userSelect: "none",
-            }}
-          />
-        )}
-        {!display && (
-          <img src={imgUrl} onLoad={onImgLoad} alt="" style={{ opacity: 0, width: 1, height: 1 }} />
-        )}
+        {/* SATU elemen <img> yang sama dipertahankan dari awal (bukan
+            ditukar antara elemen "hidden 1x1" & elemen "asli" spt
+            sebelumnya) - pola lama itu bisa membuat `onLoad` gagal
+            terpicu ulang saat elemen berganti, sehingga `display` tidak
+            pernah keisi & tombol Confirm macet permanen (disabled selama
+            `!display`). Sebelum ukuran diketahui, gambar cuma disembunyikan
+            lewat opacity, elemen & listener-nya tetap sama. */}
+        <img
+          ref={imgRef}
+          src={imgUrl}
+          onLoad={onImgLoad}
+          draggable={false}
+          alt=""
+          style={{
+            position: "absolute", left: "50%", top: "50%",
+            width: display ? display.w : "auto", height: display ? display.h : "auto",
+            maxWidth: "none",
+            transform: display ? `translate(-50%,-50%) translate(${pan.x}px, ${pan.y}px) scale(${scale})` : "translate(-50%,-50%)",
+            opacity: display ? 1 : 0,
+            cursor: dragRef.current ? "grabbing" : "grab", userSelect: "none",
+          }}
+        />
         {/* grid bantu 3x3 ala kamera, murni visual */}
         <div style={{ position: "absolute", inset: 0, pointerEvents: "none", display: "grid", gridTemplateColumns: "repeat(3,1fr)", gridTemplateRows: "repeat(3,1fr)" }}>
           {Array.from({ length: 9 }).map((_, i) => (

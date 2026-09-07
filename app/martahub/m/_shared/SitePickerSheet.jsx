@@ -33,7 +33,11 @@ function SiteTowerIcon({ size = 16, color = "#8A8A96" }) {
 
 export default function SitePickerSheet({ items, onClose, onSelect, title = "Pilih Site" }) {
   const [q, setQ] = useState("");
-  const filtered = items.filter((s) => !q.trim() || s.site_id.toLowerCase().includes(q.toLowerCase()) || (s.site_name || "").toLowerCase().includes(q.toLowerCase()));
+  // Dedup by site_id - mh_sites kadang punya baris duplikat persis utk
+  // site_id yg sama (data existing, bukan bug di sini), jangan sampai
+  // muncul dobel di daftar pilihan.
+  const dedupedItems = Array.from(new Map((items || []).map((s) => [s.site_id, s])).values());
+  const filtered = dedupedItems.filter((s) => !q.trim() || s.site_id.toLowerCase().includes(q.toLowerCase()) || (s.site_name || "").toLowerCase().includes(q.toLowerCase()));
   // Dibangun di atas BottomSheet (_shared/BottomSheet.jsx) - primitif yg
   // sama dipakai semua sheet "muncul dari bawah" di app ini (animasi
   // masuk/keluar/drag konsisten). Search box perlu tetap kelihatan/nempel
@@ -88,8 +92,19 @@ export default function SitePickerSheet({ items, onClose, onSelect, title = "Pil
                 <SiteTowerIcon size={16} color="#8A8A96" />
               </div>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 700, color: "#17181C" }}>{s.site_id}</div>
-                {s.site_name && <div style={{ fontSize: 11.5, color: "#8A8A96", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.site_name}</div>}
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: "#17181C", display: "flex", alignItems: "baseline", gap: 6, overflow: "hidden" }}>
+                  <span style={{ flexShrink: 0 }}>{s.site_id}</span>
+                  {s.site_name && (
+                    <>
+                      <span style={{ color: "#D8D9E0", flexShrink: 0 }}>|</span>
+                      <span style={{ fontWeight: 600, color: "#5A5A68", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.site_name}</span>
+                    </>
+                  )}
+                </div>
+                {(() => {
+                  const sub = [s.kecamatan, s.mc].filter(Boolean).join(" - ");
+                  return sub ? <div style={{ fontSize: 11.5, color: "#8A8A96", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}</div> : null;
+                })()}
               </div>
             </button>
           ))}

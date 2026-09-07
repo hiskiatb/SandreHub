@@ -24,9 +24,10 @@ function tinyAttribution(map, L) {
   ctl.addTo(map);
 }
 
-function useLeafletMap({ lat, lng, interactive }) {
+function useLeafletMap({ lat, lng, interactive, pinColor = "#22A85E" }) {
   const divRef = useRef(null);
   const mapRef = useRef(null);
+  const markerRef = useRef(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -49,11 +50,11 @@ function useLeafletMap({ lat, lng, interactive }) {
         const icon = L.divIcon({
           className: "",
           html:
-            '<div style="width:30px;height:30px;border-radius:50% 50% 50% 0;background:#22A85E;transform:rotate(-45deg);border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.3);"></div>',
+            `<div style="width:30px;height:30px;border-radius:50% 50% 50% 0;background:${pinColor};transform:rotate(-45deg);border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.3);"></div>`,
           iconSize: [30, 30],
           iconAnchor: [15, 28],
         });
-        L.marker([lat, lng], { icon, interactive: false }).addTo(map);
+        markerRef.current = L.marker([lat, lng], { icon, interactive: false }).addTo(map);
         mapRef.current = map;
         setReady(true);
         if (interactive) setTimeout(() => map.invalidateSize(), 60);
@@ -69,11 +70,24 @@ function useLeafletMap({ lat, lng, interactive }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Titik yg dikirim bisa berubah SETELAH peta pertama kali dibuat (mis.
+  // "Titik Saya Sekarang"/"Ubah di Peta" di Laporan Actual mengoreksi GPS
+  // sesudah thumbnail ini sudah render) - sebelumnya map dibuat SEKALI saja
+  // (deps []), jadi titik baru tidak pernah kelihatan geser di sini walau
+  // datanya sudah benar. Effect ini geser marker & re-center peta begitu
+  // lat/lng berubah, TANPA membuat ulang instance peta-nya.
+  useEffect(() => {
+    if (!mapRef.current || !markerRef.current) return;
+    markerRef.current.setLatLng([lat, lng]);
+    mapRef.current.setView([lat, lng], mapRef.current.getZoom());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lat, lng, ready]);
+
   return { divRef, ready };
 }
 
-function ExpandedMap({ lat, lng, onClose }) {
-  const { divRef, ready } = useLeafletMap({ lat, lng, interactive: true });
+function ExpandedMap({ lat, lng, onClose, pinColor }) {
+  const { divRef, ready } = useLeafletMap({ lat, lng, interactive: true, pinColor });
   const gmaps = `https://www.google.com/maps?q=${lat},${lng}`;
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "#000" }}>
@@ -102,9 +116,9 @@ function ExpandedMap({ lat, lng, onClose }) {
   );
 }
 
-export default function LocationMapPreview({ lat, lng, height = 150 }) {
+export default function LocationMapPreview({ lat, lng, height = 150, pinColor = "#22A85E" }) {
   const [expanded, setExpanded] = useState(false);
-  const { divRef, ready } = useLeafletMap({ lat, lng, interactive: false });
+  const { divRef, ready } = useLeafletMap({ lat, lng, interactive: false, pinColor });
 
   if (lat == null || lng == null || Number.isNaN(lat) || Number.isNaN(lng)) return null;
 
@@ -121,7 +135,7 @@ export default function LocationMapPreview({ lat, lng, height = 150 }) {
           <Maximize2 size={12} color="#5A5A68" />
         </div>
       </button>
-      {expanded && <ExpandedMap lat={lat} lng={lng} onClose={() => setExpanded(false)} />}
+      {expanded && <ExpandedMap lat={lat} lng={lng} onClose={() => setExpanded(false)} pinColor={pinColor} />}
     </div>
   );
 }

@@ -17,7 +17,7 @@
 import { useState, useEffect } from "react";
 import {
   X, MapPin, Image as ImageIcon, Phone, FileText, Layers, Info,
-  Target as TargetIcon, CheckCircle2, Clock, XCircle, Tag, Trash2, Calendar, Pencil,
+  Target as TargetIcon, CheckCircle2, Clock, XCircle, Tag, Trash2, Calendar, Pencil, ExternalLink,
 } from "lucide-react";
 import { T, FONT, brandLabel } from "./MartaShell";
 import supabaseMarta from "../../../lib/supabaseMarta";
@@ -127,7 +127,7 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }
         const [{ data: act, error: e1 }, { data: sites }, { data: docs }, { data: sales }, { data: edits }] = await Promise.all([
           supabaseMarta.from("mh_activities").select(DETAIL_COLS).eq("id", id).single(),
           supabaseMarta.from("mh_activity_sites").select("site_id, is_primary, site_kind").eq("activity_id", id).eq("is_primary", false),
-          supabaseMarta.from("mh_documents").select("id, storage_path, file_type, created_at").eq("activity_id", id).order("created_at"),
+          supabaseMarta.from("mh_documents").select("id, storage_path, file_type, external_ref, created_at").eq("activity_id", id).order("created_at"),
           supabaseMarta.from("mh_dsf_sales_entries").select("id, category, msisdn, validation_status").eq("activity_id", id).order("created_at"),
           supabaseMarta.from("mh_activity_edit_requests").select("id, status, reason, requested_by_name, decided_by_name, decision_notes, created_at, decided_at").eq("activity_id", id).order("created_at", { ascending: false }),
         ]);
@@ -376,12 +376,33 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }
                   <SectionCard title={`Dokumentasi Foto (${photos.length})`} icon={<ImageIcon size={13} />} accent="#DB2777">
                     <div className="mh-ad-photos">
                       {photos.map((p) => (
-                        <button key={p.id} onClick={() => setLightbox(p.url)}
-                          style={{ padding: 0, border: "none", cursor: "pointer", aspectRatio: "1", borderRadius: 12, overflow: "hidden", background: "#F0F0F3" }}>
-                          <img src={p.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", transition: "transform .18s" }}
-                            onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.06)")}
-                            onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")} />
-                        </button>
+                        <div key={p.id} style={{ position: "relative", aspectRatio: "1", borderRadius: 12, overflow: "hidden", background: "#F0F0F3" }}>
+                          <button onClick={() => setLightbox(p.url)}
+                            style={{ padding: 0, border: "none", cursor: "pointer", width: "100%", height: "100%" }}>
+                            <img src={p.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", transition: "transform .18s" }}
+                              onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.06)")}
+                              onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")} />
+                          </button>
+                          {/* Link ke Google Drive - foto ini di-mirror ke Drive best-effort
+                              lewat edge function media-relay setelah DSF submit (lihat
+                              mh_documents.external_ref = Drive file id). Kalau relay-nya
+                              belum/gagal jalan, external_ref masih null - badge-nya
+                              sengaja TIDAK ditampilkan sama sekali drpd link mati, krn
+                              foto tetap ada & bisa dilihat dari Storage (klik thumbnail
+                              di atas) apa pun status mirror-nya. */}
+                          {p.external_ref && (
+                            <a href={`https://drive.google.com/file/d/${p.external_ref}/view`} target="_blank" rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              title="Buka di Google Drive"
+                              style={{
+                                position: "absolute", top: 6, right: 6, width: 26, height: 26, borderRadius: 8,
+                                background: "rgba(23,24,28,0.55)", backdropFilter: "blur(4px)",
+                                display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", textDecoration: "none",
+                              }}>
+                              <ExternalLink size={12} />
+                            </a>
+                          )}
+                        </div>
                       ))}
                     </div>
                   </SectionCard>
