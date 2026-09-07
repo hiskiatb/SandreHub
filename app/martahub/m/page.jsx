@@ -18,9 +18,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Building2, ChevronRight, Clock,
+  Building2, ChevronRight, ChevronLeft, Clock,
   CalendarPlus, ListChecks, Map as MapIcon, Trophy, ShieldCheck, ClipboardCheck, Lightbulb, PackageCheck,
-  Target, CheckCircle2, Gauge, Wallet, Tags, LayoutDashboard, UserCog, FileEdit,
+  Target, CheckCircle2, Wallet, Tags, LayoutDashboard, UserCog, FileEdit, Banknote,
+  CardSim, Router, RefreshCw, Receipt,
 } from "lucide-react";
 import supabaseMarta from "../../../lib/supabaseMarta";
 import { applyMartaScope, loadBranchMap } from "../../../lib/martaScope";
@@ -67,10 +68,21 @@ const MOCK_HOME_ACTIVITIES = [
 ];
 
 const ROLE_LABEL = { bme_rge: "BME/RGE", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
+
+// Ringkas angka Rupiah besar utk tile 4-kolom yg sempit / baris detail -
+// "1,2jt"/"850rb" dst, drpd angka penuh yg gampang overflow di lebar
+// sekecil itu.
+function fmtRpCompact(n) {
+  const v = Number(n) || 0;
+  if (v >= 1_000_000_000) return `Rp ${(v / 1_000_000_000).toFixed(1).replace(".", ",")}m`;
+  if (v >= 1_000_000) return `Rp ${(v / 1_000_000).toFixed(1).replace(".", ",")}jt`;
+  if (v >= 1_000) return `Rp ${(v / 1_000).toFixed(0)}rb`;
+  return `Rp ${v}`;
+}
 // mc/poi_type/event_categories/plan_date_start/plan_dates_multi ditambahkan
 // supaya "draft belum lengkap" di Beranda pakai definisi yg SAMA PERSIS dgn
 // halaman detail & daftar Aktivitas (lihat isDraftIncomplete di activityUi.js).
-const ACTIVITY_COLS = "id,event_name,brand,branch_id,mc,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,checkin_valid,target_sp,target_fwa,actual_sp,actual_fwa,cost_actual,actual_rev_3m,created_at,site_id";
+const ACTIVITY_COLS = "id,event_name,brand,branch_id,mc,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,checkin_valid,target_sp,target_fwa,actual_sp,actual_fwa,actual_rebuy_pulsa,actual_rebuy_data,cost_actual,actual_rev_3m,created_at,site_id";
 
 // Rotasi harian (getDate() % TIPS.length) - deterministik per hari & ikut
 // menyesuaikan otomatis kalau jumlah tips berubah, jadi tiap tips kebagian
@@ -251,10 +263,12 @@ export default function MartaMobileHome() {
   const monthRows = scopedRows.filter((r) => (r.plan_date || "").slice(0, 7) === monthKey);
   const targetSp = monthRows.reduce((s, r) => s + (r.target_sp || 0), 0);
   const actualSp = monthRows.reduce((s, r) => s + (r.actual_sp || 0), 0);
+  const actualFwaTotal = monthRows.reduce((s, r) => s + (r.actual_fwa || 0), 0);
+  const rebuySpTotal = monthRows.reduce((s, r) => s + (r.actual_rebuy_pulsa || 0), 0);
+  const rebuyFwaTotal = monthRows.reduce((s, r) => s + (r.actual_rebuy_data || 0), 0);
   const costTotal = monthRows.reduce((s, r) => s + (r.cost_actual || 0), 0);
   const revenueTotal = monthRows.reduce((s, r) => s + (r.actual_rev_3m || 0), 0);
   const achievementPct = targetSp > 0 ? Math.round((actualSp / targetSp) * 100) : 0;
-  const productivityPct = costTotal > 0 ? Math.round((revenueTotal / costTotal) * 100) : null;
   const costRatioPct = revenueTotal > 0 ? Math.round((costTotal / revenueTotal) * 100) : null;
   const planCount = monthRows.length;
   const actualCount = monthRows.filter((r) => r.actual_sp != null).length;
@@ -289,7 +303,7 @@ export default function MartaMobileHome() {
         background: "rgba(244,245,247,0.86)", backdropFilter: "blur(18px) saturate(1.5)", WebkitBackdropFilter: "blur(18px) saturate(1.5)",
         borderBottom: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 6px 20px rgba(23,24,28,0.05)",
       }}>
-        <AppHeader scope={scope} email={email} />
+        <AppHeader scope={scope} email={email} hideLogout />
       </div>
 
       <div style={{ padding: "0 20px 4px" }}>
@@ -365,53 +379,15 @@ export default function MartaMobileHome() {
           #4A4A50, merah #E63325, kuning #F5CD46, teal #57C2AC, ungu #B32E85,
           pink #EC1E79. */}
       <div style={{ padding: "18px 20px 0" }}>
-        <div style={{
-          position: "relative", borderRadius: 22, padding: "20px 18px 18px",
-          background: "linear-gradient(150deg,#38383E 0%,#4A4A50 100%)",
-          border: "1px solid rgba(255,255,255,0.06)",
-          boxShadow: "0 8px 20px rgba(17,17,20,0.16), 0 2px 5px rgba(17,17,20,0.1)",
-          opacity: rows === null && !err ? 0.55 : 1, transition: "opacity .2s",
-        }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-              {rows === null && !err ? (
-                <div style={{ width: 10, height: 10, border: "1.5px solid rgba(255,255,255,0.25)", borderTopColor: "#EC1E79", borderRadius: "50%", animation: "mspin 0.8s linear infinite" }} />
-              ) : (
-                <div style={{ width: 5, height: 5, borderRadius: 99, background: "linear-gradient(135deg,#E63325,#EC1E79)" }} />
-              )}
-              <div style={{ fontSize: 10.5, fontWeight: 800, color: "rgba(255,255,255,0.6)", letterSpacing: 1, textTransform: "uppercase" }}>Achievement</div>
-            </div>
-            <MonthSelect value={monthKey} onChange={setMonthKey} options={months} />
-          </div>
-
-          <div style={{ position: "relative", display: "flex", alignItems: "baseline", gap: 8, marginTop: 18 }}>
-            <div style={{
-              fontSize: 42, fontWeight: 800, letterSpacing: "-0.035em", lineHeight: 1,
-              fontVariantNumeric: "tabular-nums",
-              background: "linear-gradient(120deg,#FFFFFF 0%,#F7D9E8 55%,#EC1E79 100%)",
-              WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text",
-            }}>{achievementPct}%</div>
-            <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.55)", fontWeight: 600 }}>dari target bulan ini</div>
-          </div>
-
-          <div style={{ marginTop: 16, height: 9, borderRadius: 999, background: "rgba(0,0,0,0.25)", overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${Math.min(achievementPct, 100)}%`, borderRadius: 999, background: "linear-gradient(90deg,#E63325,#EC1E79)", transition: "width .3s" }} />
-          </div>
-          <div style={{ position: "relative", display: "flex", justifyContent: "space-between", marginTop: 7 }}>
-            <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.45)", fontWeight: 600 }}>{achievementPct}%</span>
-            <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.45)", fontWeight: 600 }}>Target 100%</span>
-          </div>
-
-          <div style={{ position: "relative", display: "flex", marginTop: 18, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.09)" }}>
-            <QuadStat dark icon={Target} dot="#FFFFFF" label="Plan" value={fmtInt(planCount)} />
-            <QuadDivider />
-            <QuadStat dark icon={CheckCircle2} dot="#EC1E79" label="Actual" value={fmtInt(actualCount)} valueColor="#F286B4" />
-            <QuadDivider />
-            <QuadStat dark icon={Gauge} dot="#57C2AC" label="Productivity" value={productivityPct != null ? `${productivityPct}%` : "-"} valueColor="#7FD9C6" />
-            <QuadDivider />
-            <QuadStat dark icon={Wallet} dot="#F5CD46" label="Cost Ratio" value={costRatioPct != null ? `${costRatioPct}%` : "-"} valueColor="#F5CD46" />
-          </div>
-        </div>
+        <AchievementCard
+          loading={rows === null && !err}
+          monthKey={monthKey} setMonthKey={setMonthKey} months={months}
+          achievementPct={achievementPct}
+          planCount={planCount} actualCount={actualCount}
+          revenueTotal={revenueTotal} costRatioPct={costRatioPct} costTotal={costTotal}
+          actualSp={actualSp} actualFwaTotal={actualFwaTotal}
+          rebuySpTotal={rebuySpTotal} rebuyFwaTotal={rebuyFwaTotal}
+        />
       </div>
 
       {/* Carousel: Mission / Draft / Tips */}
@@ -612,10 +588,153 @@ function MonthSelect({ value, onChange, options }) {
   );
 }
 
+/** Kartu ACHIEVEMENT - SEKARANG kartu FLIP, pola SAMA PERSIS dgn
+ * ContributionCard di app Promotor (PTS mobile, app/promotor/page.jsx):
+ * sisi depan = ringkasan achievement yg sudah ada, sisi belakang = rincian
+ * angka actual bulan ini (Penjualan SP/FWA, Rebuy SP/FWA, Revenue, Cost,
+ * jumlah Actual/Plan). Kedua sisi ditumpuk pakai CSS Grid (gridArea sama)
+ * + diukur via ResizeObserver spy tinggi kontainer selalu pas sisi yg
+ * sedang tampil, dianimasikan bareng rotasi flip 3D (rotateY).
+ */
+function AchievementCard({
+  loading, monthKey, setMonthKey, months, achievementPct, planCount, actualCount,
+  revenueTotal, costRatioPct, costTotal, actualSp, actualFwaTotal, rebuySpTotal, rebuyFwaTotal,
+}) {
+  const [open, setOpen] = useState(false);
+  const frontRef = useRef(null);
+  const backRef = useRef(null);
+  const [frontH, setFrontH] = useState(null);
+  const [backH, setBackH] = useState(null);
+
+  useEffect(() => {
+    const measure = () => {
+      if (frontRef.current) setFrontH(frontRef.current.scrollHeight);
+      if (backRef.current) setBackH(backRef.current.scrollHeight);
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    if (frontRef.current) ro.observe(frontRef.current);
+    if (backRef.current) ro.observe(backRef.current);
+    return () => ro.disconnect();
+  }, [achievementPct, planCount, actualCount, revenueTotal, costRatioPct, costTotal, actualSp, actualFwaTotal, rebuySpTotal, rebuyFwaTotal]);
+
+  const faceBase = {
+    gridArea: "1/1", alignSelf: "start", backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden",
+    position: "relative", borderRadius: 22, overflow: "hidden",
+    background: "linear-gradient(150deg,#38383E 0%,#4A4A50 100%)",
+    border: "1px solid rgba(255,255,255,0.06)",
+    boxShadow: "0 8px 20px rgba(17,17,20,0.16), 0 2px 5px rgba(17,17,20,0.1)",
+  };
+
+  return (
+    <div style={{ perspective: 1600 }}>
+      <div style={{
+        position: "relative", display: "grid", transformStyle: "preserve-3d",
+        height: (open ? backH : frontH) ?? undefined,
+        transition: "transform .46s cubic-bezier(.34,1,.4,1), height .42s cubic-bezier(.22,1,.36,1)",
+        transform: open ? "rotateY(180deg)" : "rotateY(0deg)",
+      }}>
+        {/* ── Depan: ringkasan achievement (sama spt sebelumnya) ── */}
+        <div ref={frontRef} style={{ ...faceBase, padding: "20px 18px 18px", opacity: loading ? 0.55 : 1, transition: "opacity .2s", pointerEvents: open ? "none" : "auto" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              {loading ? (
+                <div style={{ width: 10, height: 10, border: "1.5px solid rgba(255,255,255,0.25)", borderTopColor: "#EC1E79", borderRadius: "50%", animation: "mspin 0.8s linear infinite" }} />
+              ) : (
+                <div style={{ width: 5, height: 5, borderRadius: 99, background: "linear-gradient(135deg,#E63325,#EC1E79)" }} />
+              )}
+              <div style={{ fontSize: 10.5, fontWeight: 800, color: "rgba(255,255,255,0.6)", letterSpacing: 1, textTransform: "uppercase" }}>Achievement</div>
+            </div>
+            <MonthSelect value={monthKey} onChange={setMonthKey} options={months} />
+          </div>
+
+          <div style={{ position: "relative", display: "flex", alignItems: "baseline", gap: 8, marginTop: 18 }}>
+            <div style={{
+              fontSize: 42, fontWeight: 800, letterSpacing: "-0.035em", lineHeight: 1,
+              fontVariantNumeric: "tabular-nums",
+              background: "linear-gradient(120deg,#FFFFFF 0%,#F7D9E8 55%,#EC1E79 100%)",
+              WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text",
+            }}>{achievementPct}%</div>
+            <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.55)", fontWeight: 600 }}>dari target bulan ini</div>
+          </div>
+
+          <div style={{ marginTop: 16, height: 9, borderRadius: 999, background: "rgba(0,0,0,0.25)", overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${Math.min(achievementPct, 100)}%`, borderRadius: 999, background: "linear-gradient(90deg,#E63325,#EC1E79)", transition: "width .3s" }} />
+          </div>
+          <div style={{ position: "relative", display: "flex", justifyContent: "space-between", marginTop: 7 }}>
+            <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.45)", fontWeight: 600 }}>{achievementPct}%</span>
+            <span style={{ fontSize: 10.5, color: "rgba(255,255,255,0.45)", fontWeight: 600 }}>Target 100%</span>
+          </div>
+
+          <div style={{ position: "relative", display: "flex", marginTop: 18, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.09)" }}>
+            <QuadStat dark icon={Target} dot="#FFFFFF" label="Plan" value={fmtInt(planCount)} />
+            <QuadDivider />
+            <QuadStat dark icon={CheckCircle2} dot="#EC1E79" label="Actual" value={fmtInt(actualCount)} valueColor="#F286B4" />
+            <QuadDivider />
+            <QuadStat dark icon={Banknote} dot="#57C2AC" label="Revenue" value={revenueTotal > 0 ? fmtRpCompact(revenueTotal) : "-"} valueColor="#7FD9C6" />
+            <QuadDivider />
+            <QuadStat dark icon={Wallet} dot="#F5CD46" label="Cost Ratio" value={costRatioPct != null ? `${costRatioPct}%` : "-"} valueColor="#F5CD46" />
+          </div>
+
+          {/* Trigger flip - konsisten dgn "Lihat Detail >" di kartu Kontribusi
+              Anda app Promotor (PTS mobile), supaya pola & bahasa antar
+              aplikasi MartaHub tetap sama. */}
+          <button onClick={() => setOpen(true)} style={{
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 5, width: "100%",
+            marginTop: 14, border: "none", cursor: "pointer",
+            background: "rgba(255,255,255,0.1)", color: "#fff", borderRadius: 12, padding: "10px 0",
+            fontFamily: FF, fontSize: 12, fontWeight: 800,
+          }}>
+            Lihat Detail <ChevronRight size={14} />
+          </button>
+        </div>
+
+        {/* ── Belakang: rincian angka actual bulan ini ── */}
+        <div ref={backRef} style={{ ...faceBase, transform: "rotateY(180deg)", padding: "18px 18px 16px", pointerEvents: open ? "auto" : "none" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 800, color: "rgba(255,255,255,0.6)", letterSpacing: 1, textTransform: "uppercase" }}>Rincian Bulan Ini</div>
+            <button onClick={() => setOpen(false)} aria-label="Kembali ke ringkasan"
+              style={{ display: "flex", alignItems: "center", gap: 4, border: "none", background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.75)", borderRadius: 9, padding: "5px 9px 5px 7px", cursor: "pointer", fontFamily: FF, fontSize: 11, fontWeight: 700 }}>
+              <ChevronLeft size={13} /> Ringkasan
+            </button>
+          </div>
+
+          <div style={{ marginTop: 6 }}>
+            <DarkDetailRow icon={CardSim} label="Total Penjualan SP" value={fmtInt(actualSp)} color="#7FD9C6" />
+            <DarkDetailRow icon={Router} label="Total Penjualan FWA" value={fmtInt(actualFwaTotal)} color="#7FD9C6" />
+            <DarkDetailRow icon={RefreshCw} label="Total Rebuy SP" value={fmtRpCompact(rebuySpTotal)} color="#F5CD46" />
+            <DarkDetailRow icon={RefreshCw} label="Total Rebuy FWA" value={fmtRpCompact(rebuyFwaTotal)} color="#F5CD46" />
+            <DarkDetailRow icon={Banknote} label="Total Revenue" value={fmtRpCompact(revenueTotal)} color="#7FD9C6" />
+            <DarkDetailRow icon={Receipt} label="Total Cost" value={fmtRpCompact(costTotal)} color="#F286B4" />
+            <DarkDetailRow icon={ListChecks} label="Total Actual / Plan" value={`${fmtInt(actualCount)} / ${fmtInt(planCount)}`} color="#FFFFFF" last />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Baris rincian di sisi belakang kartu Achievement - ikon bulat tipis
+ * bertinta warna aksennya (sama gaya dgn badge dot QuadStat), label kiri
+ * angka kanan, dipisah hairline tipis ala StatusRow di app Promotor tapi
+ * versi tema gelap. */
+function DarkDetailRow({ icon: Icon, label, value, color, last }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: last ? "none" : "1px solid rgba(255,255,255,0.08)" }}>
+      <div style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 9, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", color }}>
+        <Icon size={13} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 700, color: "rgba(255,255,255,0.8)" }}>{label}</div>
+      <div style={{ flexShrink: 0, fontSize: 13.5, fontWeight: 800, color: "#fff", fontVariantNumeric: "tabular-nums" }}>{value}</div>
+    </div>
+  );
+}
+
 /** Tiap kuadran kini punya ikon sendiri yg mencerminkan artinya (bukan cuma
  * titik warna generik): Plan = Target (rencana yg dibidik), Actual =
- * CheckCircle2 (yg sudah tercapai/tervalidasi), Productivity = Gauge
- * (kecepatan/efisiensi kerja), Cost Ratio = Wallet (efisiensi biaya) -
+ * CheckCircle2 (yg sudah tercapai/tervalidasi), Revenue = Banknote
+ * (jumlah pendapatan actual), Cost Ratio = Wallet (efisiensi biaya) -
  * ditaruh dlm badge bulat tipis bertinta warna dot-nya masing-masing. */
 function QuadStat({ label, value, valueColor, dark, dot, icon: Icon }) {
   return (

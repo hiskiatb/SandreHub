@@ -323,10 +323,21 @@ export default function SubmitActualPage() {
         // produk brand lain ikut kepilih tanpa sengaja.
         const evBrand = (a?.brand || "").toLowerCase();
         const byBrand = (t) => !t.brand || t.brand.toLowerCase() === evBrand;
-        setTypes({ sp: (sp || []).filter(byBrand), fwa: (fwa || []).filter(byBrand) });
+        const spByBrand = (sp || []).filter(byBrand);
+        const fwaByBrand = (fwa || []).filter(byBrand);
+        setTypes({ sp: spByBrand, fwa: fwaByBrand });
         // Jenis SP/FWA tidak lagi dipilih manual oleh DSF - otomatis pakai
         // jenis pertama yg aktif utk brand ybs (transparan di belakang layar).
-        setSelectedType({ sp: sp?.[0]?.id || null, fwa: fwa?.[0]?.id || null });
+        // HARUS diambil dari daftar yg SUDAH difilter brand (spByBrand/
+        // fwaByBrand) - sebelumnya diambil dari daftar mentah SEMUA brand
+        // (sp[0]/fwa[0]), jadi kalau produk brand LAIN kebetulan lebih dulu
+        // scr alfabetis, selectedType keisi id yg TIDAK ADA di types[cat]
+        // (yg sudah difilter brand) -> catRevenue()/addMsisdn() gagal
+        // menemukan unit_price-nya (types[cat].find balik undefined) ->
+        // revenue actual (actual_rev_3m) selalu ketulis 0 walau qty sudah
+        // diisi. Ini akar masalah "Revenue & Cost Ratio di Beranda belum
+        // terisi padahal actual sudah ada".
+        setSelectedType({ sp: spByBrand[0]?.id || null, fwa: fwaByBrand[0]?.id || null });
         if (profile?.dsf_org_id) setOwnOrgId(profile.dsf_org_id);
 
         // Site yg dipilih sebelumnya (waktu Create Plan/Check-In) - tampilkan

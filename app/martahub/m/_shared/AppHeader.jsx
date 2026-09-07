@@ -35,7 +35,7 @@ export function Badge({ n }) {
   );
 }
 
-export default function AppHeader({ scope, email }) {
+export default function AppHeader({ scope, email, hideLogout }) {
   const router = useRouter();
   const [pendingTransfers, setPendingTransfers] = useState(0);
   const [unreadNotifs, setUnreadNotifs] = useState(0);
@@ -88,11 +88,16 @@ export default function AppHeader({ scope, email }) {
             {(unreadNotifs + pendingTransfers) > 0 && <Badge n={unreadNotifs + pendingTransfers} />}
           </button>
           {/* Keluar - sengaja diberi warna merah (beda dari Notifikasi)
-              supaya aksi destruktif ini langsung terlihat beda tegas. */}
-          <button onClick={() => setLogoutConfirmOpen(true)}
-            style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, background: "#FDECEC", border: "1px solid #F6C6C6", borderRadius: 11, cursor: "pointer", color: "#ED1C24" }}>
-            <LogOut size={15} />
-          </button>
+              supaya aksi destruktif ini langsung terlihat beda tegas.
+              Disembunyikan khusus di Beranda (hideLogout=true) - jalan
+              keluar SEKARANG cuma lewat menu Profil > Keluar, supaya tidak
+              ada dua pintu logout yg beda posisi/gaya utk aksi yg sama. */}
+          {!hideLogout && (
+            <button onClick={() => setLogoutConfirmOpen(true)}
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 36, height: 36, background: "#FDECEC", border: "1px solid #F6C6C6", borderRadius: 11, cursor: "pointer", color: "#ED1C24" }}>
+              <LogOut size={15} />
+            </button>
+          )}
         </div>
       </div>
 
