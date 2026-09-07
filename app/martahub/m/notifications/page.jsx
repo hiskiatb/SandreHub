@@ -10,7 +10,7 @@
  */
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Bell, ArrowRightLeft, CheckCircle2, XCircle, Clock, MessageSquareWarning } from "lucide-react";
+import { ArrowLeft, ArrowRightLeft, CheckCircle2, XCircle, Clock, MessageSquareWarning } from "lucide-react";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { fetchNotifications, markAllNotificationsRead, markNotificationRead, notifTypeMeta, translateNotifRoute } from "../_shared/notifData";
 
@@ -21,6 +21,8 @@ const TYPE_ICON = {
   activity_approved: CheckCircle2,
   activity_rejected: XCircle,
   activity_plan_revision_needed: MessageSquareWarning,
+  activity_actual_approved: CheckCircle2,
+  activity_actual_revision_needed: MessageSquareWarning,
 };
 
 function timeAgo(dateStr) {
@@ -73,15 +75,23 @@ export default function NotificationsPage() {
 
   return (
     <MobileShell active="home">
-      <div style={{ padding: "calc(env(safe-area-inset-top,0px) + 20px) 20px 0", fontFamily: FF }}>
-        <button onClick={() => router.push("/martahub/m")}
-          style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "#5A5A68", fontSize: 12.5, fontWeight: 700, fontFamily: FF, padding: 0 }}>
-          <ArrowLeft size={16} /> Beranda
+      {/* Header sticky dgn glass blur - pola SAMA PERSIS dgn halaman
+          sub-menu lain (Activity Detail, Submit Actual, dst): tombol
+          kembali kotak bulat 34x34 + judul di tengah, BUKAN lagi link teks
+          polos "< Beranda" spt sebelumnya yg beda sendiri dari sisa
+          aplikasi. */}
+      <div style={{
+        position: "sticky", top: 0, zIndex: 20, maxWidth: 480, margin: "0 auto",
+        padding: "calc(env(safe-area-inset-top,0px) + 16px) 20px 14px",
+        background: "rgba(244,245,247,0.86)", backdropFilter: "blur(18px) saturate(1.5)", WebkitBackdropFilter: "blur(18px) saturate(1.5)",
+        borderBottom: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 6px 20px rgba(23,24,28,0.05)",
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontFamily: FF,
+      }}>
+        <button onClick={() => router.push("/martahub/m")} aria-label="Kembali"
+          style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 11, background: "#FFFFFF", border: "1px solid #E4E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
+          <ArrowLeft size={16} />
         </button>
-        <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 8 }}>
-          <Bell size={19} color="#ED1C24" />
-          <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em" }}>Notifikasi</div>
-        </div>
+        <div style={{ flex: 1, minWidth: 0, fontSize: 18, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Notifikasi</div>
       </div>
 
       {err && <div style={{ margin: "14px 20px 0", padding: "10px 12px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 12, fontWeight: 600 }}>{err}</div>}
@@ -90,7 +100,7 @@ export default function NotificationsPage() {
         {rows.length === 0 ? (
           <div style={{ textAlign: "center", padding: "40px 20px", background: "#FFFFFF", border: "1px dashed #D8D9E0", borderRadius: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#3A3A44" }}>Belum ada notifikasi</div>
-            <div style={{ marginTop: 4, fontSize: 12, color: "#8A8A96" }}>Pemberitahuan approval &amp; transfer MSISDN akan muncul di sini.</div>
+            <div style={{ marginTop: 4, fontSize: 12, color: "#8A8A96" }}>Pemberitahuan plan, laporan actual, &amp; transfer MSISDN akan muncul di sini.</div>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>

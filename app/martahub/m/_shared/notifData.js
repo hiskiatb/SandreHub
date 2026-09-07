@@ -15,6 +15,12 @@ export const NOTIF_TYPE_META = {
   msisdn_transfer_requested: { label: "Permintaan Transfer", color: "#B45309", bg: "rgba(180,83,9,0.10)" },
   msisdn_transfer_approved: { label: "Transfer Disetujui", color: "#15803D", bg: "rgba(21,128,61,0.10)" },
   msisdn_transfer_rejected: { label: "Transfer Ditolak", color: "#DC2626", bg: "rgba(220,38,38,0.10)" },
+  // Keputusan Laporan Actual (mh_activity_manual_override) - BARU
+  // ditambahkan, sebelumnya RPC ini tidak pernah insert notifikasi sama
+  // sekali jadi DSF/BME tidak pernah tahu laporan actual mereka sudah
+  // diputuskan (lihat migration add_actual_report_decision_notifications).
+  activity_actual_approved: { label: "Laporan Actual Disetujui", color: "#15803D", bg: "rgba(21,128,61,0.10)" },
+  activity_actual_revision_needed: { label: "Laporan Actual Perlu Direvisi", color: "#B45309", bg: "rgba(180,83,9,0.10)" },
 };
 
 export function notifTypeMeta(type) {
@@ -58,6 +64,10 @@ export function translateNotifRoute(route, type) {
   const actMatch = route.match(/^\/activities\/([0-9a-f-]{36})$/i);
   if (actMatch) {
     if (type === "activity_plan_revision_needed") return `/martahub/m/activities/new?edit=${actMatch[1]}`;
+    // Laporan Actual yg diminta revisi - langsung ke wizard Isi Laporan
+    // (bukan cuma halaman detail read-only), sama alasannya dgn plan yg
+    // diarahkan langsung ke wizard edit di atas.
+    if (type === "activity_actual_revision_needed") return `/martahub/m/activities/${actMatch[1]}/submit`;
     return `/martahub/m/activities/${actMatch[1]}`;
   }
   return null; // route dikenal tapi tidak ada padanan web - jangan navigasi ke path Flutter
