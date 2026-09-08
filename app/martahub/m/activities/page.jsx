@@ -164,7 +164,16 @@ function ActivitiesInner() {
           if (!page || page.length < PAGE_SIZE) break;
           pFrom += PAGE_SIZE;
         }
-        const data = allRows;
+        // Dedupe by id - jaga-jaga thd RPC VOLATILE (mh_activities_for_me
+        // sekarang nulis "klaim" bme_user_id/created_by di baris pertama
+        // sebelum SELECT, lihat migrasi claim_orphan_activities_on_bme_rge_list)
+        // yg BISA dipanggil PostgREST lebih dari sekali per request kalau
+        // exact count diminta (utk Content-Range header) - kalau itu terjadi,
+        // baris yg SAMA bisa kesebut 2x. Ini idempoten & tidak mengubah
+        // hasil sama sekali kalau memang tidak ada duplikat.
+        const seen = new Map();
+        for (const r of allRows) if (r?.id) seen.set(r.id, r);
+        const data = Array.from(seen.values());
 
         // Nama branch per site - dibatch SEKALI utk semua site_id yg muncul
         // di daftar (bukan satu query per kartu), dipakai di subtitle kartu

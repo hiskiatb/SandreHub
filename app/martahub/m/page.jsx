@@ -176,7 +176,12 @@ export default function MartaMobileHome() {
           if (!page || page.length < PAGE_SIZE) break;
           pFrom += PAGE_SIZE;
         }
-        const data = allRows;
+        // Dedupe by id - lihat catatan sama di app/martahub/m/activities/
+        // page.jsx (RPC mh_activities_for_me sekarang VOLATILE, jaga2 thd
+        // PostgREST manggil fungsinya lebih dari sekali per request).
+        const seen = new Map();
+        for (const r of allRows) if (r?.id) seen.set(r.id, r);
+        const data = Array.from(seen.values());
         if (alive) setRows(data || []);
 
         const siteIds = Array.from(new Set((data || []).map((r) => r.site_id).filter(Boolean)));
