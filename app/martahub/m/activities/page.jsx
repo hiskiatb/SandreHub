@@ -129,18 +129,36 @@ function ActivitiesInner() {
     let alive = true;
     (async () => {
       try {
-        const { data, error } = await supabaseMarta
-          .rpc("mh_activities_for_me")
-          .select(ACTIVITY_COLS)
-          // Diurutkan berdasarkan `updated_at` (BUKAN `created_at` lagi) -
-          // kartu yg BARU SAJA diubah (edit plan, submit laporan actual,
-          // dst - trigger DB `mh_activities_touch`/`set_updated_at` selalu
-          // meng-update kolom ini tiap UPDATE) otomatis naik ke paling atas
-          // daftar, sesuai permintaan DSF supaya plan yg baru disentuh
-          // gampang ditemukan tanpa perlu scroll cari-cari.
-          .order("updated_at", { ascending: false })
-          .limit(200);
-        if (error) throw error;
+        // Dulu `.limit(200)` FLAT - begitu total activity di scope user
+        // (mis. spm_sumatera/admin = SELURUH Sumatera, apalagi setelah ada
+        // Import Excel/Backdoor yg sekali jalan bisa nambah ratusan baris)
+        // lewat 200, sisanya diam2 TIDAK PERNAH ke-fetch sama sekali -
+        // bikin badge "Semua"/jumlah di menu Aktivitas selalu mentok di
+        // 200 walau data aslinya lebih banyak (CMS misalnya sudah 382),
+        // & baris paling lama otomatis "hilang" dari daftar tanpa pesan
+        // apa pun. Sekarang di-paging PENUH pakai .range() sampai benar2
+        // habis, bukan cuma sekali ambil dgn batas tetap.
+        const PAGE_SIZE = 1000;
+        let allRows = [];
+        let pFrom = 0;
+        for (;;) {
+          const { data: page, error: pErr } = await supabaseMarta
+            .rpc("mh_activities_for_me")
+            .select(ACTIVITY_COLS)
+            // Diurutkan berdasarkan `updated_at` (BUKAN `created_at` lagi) -
+            // kartu yg BARU SAJA diubah (edit plan, submit laporan actual,
+            // dst - trigger DB `mh_activities_touch`/`set_updated_at` selalu
+            // meng-update kolom ini tiap UPDATE) otomatis naik ke paling atas
+            // daftar, sesuai permintaan DSF supaya plan yg baru disentuh
+            // gampang ditemukan tanpa perlu scroll cari-cari.
+            .order("updated_at", { ascending: false })
+            .range(pFrom, pFrom + PAGE_SIZE - 1);
+          if (pErr) throw pErr;
+          allRows = allRows.concat(page || []);
+          if (!page || page.length < PAGE_SIZE) break;
+          pFrom += PAGE_SIZE;
+        }
+        const data = allRows;
 
         // Nama branch per site - dibatch SEKALI utk semua site_id yg muncul
         // di daftar (bukan satu query per kartu), dipakai di subtitle kartu

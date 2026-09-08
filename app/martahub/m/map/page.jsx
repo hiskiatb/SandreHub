@@ -78,13 +78,24 @@ export default function MartaMapPage() {
     let alive = true;
     (async () => {
       try {
-        const { data, error } = await supabaseMarta
-          .rpc("mh_activities_for_me")
-          .select("id,event_name,brand,status,plan_date,site_id,latitude,longitude")
-          .order("plan_date", { ascending: false })
-          .limit(300);
-        if (error) throw error;
-        if (alive) setEvents((data || []).filter((r) => r.latitude != null && r.longitude != null));
+        // Sama spt daftar Aktivitas & Dashboard - dulu `.limit(300)` FLAT
+        // bikin titik lokasi lama/ke-sort belakang diam2 hilang dari peta
+        // begitu total activity di scope user lewat 300. Di-paging PENUH.
+        const PAGE_SIZE = 1000;
+        let allRows = [];
+        let pFrom = 0;
+        for (;;) {
+          const { data: page, error: pErr } = await supabaseMarta
+            .rpc("mh_activities_for_me")
+            .select("id,event_name,brand,status,plan_date,site_id,latitude,longitude")
+            .order("plan_date", { ascending: false })
+            .range(pFrom, pFrom + PAGE_SIZE - 1);
+          if (pErr) throw pErr;
+          allRows = allRows.concat(page || []);
+          if (!page || page.length < PAGE_SIZE) break;
+          pFrom += PAGE_SIZE;
+        }
+        if (alive) setEvents(allRows.filter((r) => r.latitude != null && r.longitude != null));
       } catch (e) {
         if (alive) setDataErr(e.message || "Gagal memuat lokasi aktivitas");
       }

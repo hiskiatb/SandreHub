@@ -64,6 +64,7 @@ function CreatePlanWizardInner() {
   const [editData, setEditData] = useState(null); // {activity, extraSiteIds} mentah dari DB
   const [editLoading, setEditLoading] = useState(!!editId);
   const [prefilled, setPrefilled] = useState(false);
+  const [targetProductsFallbackApplied, setTargetProductsFallbackApplied] = useState(false);
 
   // Branch×brand ASLI dari ACTIVITY yang diedit - BUKAN scope akun yang lagi
   // login. Sebelumnya effectiveScope mode edit (di bawah) salah pakai scope
@@ -520,7 +521,16 @@ function CreatePlanWizardInner() {
   useEffect(() => {
     if (!editId || prefilled || !editData || !editBranchSlug) return;
     const a = editData.activity;
-    setCategories((a.event_categories || []).map(unsnake).slice(0, 1));
+    // Fallback ke `event_category` (teks tunggal) kalau `event_categories`
+    // (array jsonb) kosong - plan hasil Import Excel (Backdoor) cuma
+    // mengisi kolom tunggal itu, TIDAK PERNAH mengisi array-nya, jadi kalau
+    // dibaca dari array-nya saja pill Activity Category selalu keliatan
+    // kosong/belum dipilih walau datanya sebenarnya sudah ada (harus isi
+    // ulang dari awal, padahal cuma masalah field mana yg dibaca).
+    const rawCats = Array.isArray(a.event_categories) && a.event_categories.length
+      ? a.event_categories
+      : (a.event_category ? [a.event_category] : []);
+    setCategories(rawCats.map(unsnake).slice(0, 1));
     setEventName(a.event_name || "");
     let editDates;
     if (a.plan_dates_multi) { editDates = a.plan_dates_multi.split(","); }
@@ -555,6 +565,42 @@ function CreatePlanWizardInner() {
     setPrefilled(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editId, editData, editBranchSlug, prefilled]);
+
+  // Fallback breakdown produk utk Target SP/FWA - RPC Import Excel
+  // (Backdoor) cuma menyimpan ANGKA TOTAL target_sp/target_fwa, tidak
+  // pernah mengisi target_sp_products/target_fwa_products (breakdown per
+  // produk yg dipakai step Target ini utk MENGHITUNG totalnya - lihat
+  // `targetSp = targetSpProducts.reduce(...)` di atas, TIDAK ADA fallback
+  // baca kolom total-nya langsung). Tanpa ini, plan hasil import kelihatan
+  // Target-nya 0/kosong di edit, padahal datanya ADA, cuma beda bentuk
+  // penyimpanan - kesannya harus diisi ulang dari nol.
+  // Begitu master produk (tagTypes) siap, buatkan SATU entri produk aktif
+  // yg cocok brand-nya sebesar total target tsb (saat ini cuma ada 1
+  // produk aktif per kombinasi category+brand jadi tidak ambigu mau pilih
+  // yg mana) - user tetap bisa ganti/kurangi qty-nya spt biasa dari sini,
+  // bukan mulai dari kosong.
+  useEffect(() => {
+    if (!editId || !editData || targetProductsFallbackApplied) return;
+    if (tagTypes.sp.length === 0 && tagTypes.fwa.length === 0) return; // tunggu master produk termuat
+    const a = editData.activity;
+    const brandKey = (a.brand || "").toLowerCase();
+    if (Number(a.target_sp) > 0) {
+      setTargetSpProducts((prev) => {
+        if (prev.length > 0) return prev;
+        const p = tagTypes.sp.find((x) => (x.brand || "").toLowerCase() === brandKey) || tagTypes.sp[0];
+        return p ? [{ productTypeId: p.id, name: p.name, unitPrice: p.unit_price, qty: Number(a.target_sp) }] : prev;
+      });
+    }
+    if (Number(a.target_fwa) > 0) {
+      setTargetFwaProducts((prev) => {
+        if (prev.length > 0) return prev;
+        const p = tagTypes.fwa.find((x) => (x.brand || "").toLowerCase() === brandKey) || tagTypes.fwa[0];
+        return p ? [{ productTypeId: p.id, name: p.name, unitPrice: p.unit_price, qty: Number(a.target_fwa) }] : prev;
+      });
+    }
+    setTargetProductsFallbackApplied(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editId, editData, tagTypes, targetProductsFallbackApplied]);
 
   // Cocokkan site_id tersimpan → objek site, LALU langsung tentukan step
   // resume dari situ DALAM SATU EFFECT YANG SAMA (sebelumnya dua effect

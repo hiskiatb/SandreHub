@@ -150,12 +150,26 @@ export default function MartaMobileHome() {
     let alive = true;
     const activitiesFetch = (async () => {
       try {
-        const { data, error } = await supabaseMarta
-          .rpc("mh_activities_for_me")
-          .select(ACTIVITY_COLS)
-          .order("created_at", { ascending: false })
-          .limit(200);
-        if (error) throw error;
+        // Sama spt daftar Aktivitas (activities/page.jsx) - dulu
+        // `.limit(200)` FLAT bikin stat "Total Plan" dashboard ikut
+        // ke-cap 200 & selalu meleset drpd angka asli di CMS begitu total
+        // activity di scope user (mis. spm_sumatera = seluruh Sumatera)
+        // lewat 200. Di-paging PENUH pakai .range() di sini juga.
+        const PAGE_SIZE = 1000;
+        let allRows = [];
+        let pFrom = 0;
+        for (;;) {
+          const { data: page, error: pErr } = await supabaseMarta
+            .rpc("mh_activities_for_me")
+            .select(ACTIVITY_COLS)
+            .order("created_at", { ascending: false })
+            .range(pFrom, pFrom + PAGE_SIZE - 1);
+          if (pErr) throw pErr;
+          allRows = allRows.concat(page || []);
+          if (!page || page.length < PAGE_SIZE) break;
+          pFrom += PAGE_SIZE;
+        }
+        const data = allRows;
         if (alive) setRows(data || []);
 
         const siteIds = Array.from(new Set((data || []).map((r) => r.site_id).filter(Boolean)));

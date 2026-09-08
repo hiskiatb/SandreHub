@@ -548,7 +548,13 @@ export default function SubmitActualPage() {
   if (cmsIncompleteFields.length > 0) {
     return (
       <MobileShell active="activities" hideNav>
-        <div style={{ padding: "40px 22px", textAlign: "center", maxWidth: 380, margin: "0 auto" }}>
+        {/* Dipusatkan PERSIS di tengah layar (fixed inset:0 + flex center) -
+            sama persis dgn pola ShellSpinner (lihat MobileShell.jsx), BUKAN
+            cuma padding atas spt sebelumnya yg bikin kartu ini nempel ke
+            atas layar & keliatan "kurang di tengah" krn tinggi kontennya
+            beda-beda per plan (jumlah kolom yg kosong beda-beda). */}
+        <div style={{ position: "fixed", inset: 0, zIndex: 20, display: "flex", alignItems: "center", justifyContent: "center", padding: "24px 22px", overflowY: "auto" }}>
+        <div style={{ textAlign: "center", maxWidth: 380, margin: "0 auto" }}>
           <div style={{ width: 56, height: 56, borderRadius: 16, background: "#FFFDE7", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
             <AlertTriangle size={26} color="#F57F17" />
           </div>
@@ -575,6 +581,23 @@ export default function SubmitActualPage() {
           >
             Kembali
           </button>
+          {/* Arahan - plan LAIN hasil Import Excel milik user ini bisa jadi
+              punya kolom kosong yg sama (satu file Excel yg sama biasanya
+              punya pola kekurangan yg sama di banyak baris), jadi diarahkan
+              utk cek semua plan-nya sekalian drpd ketemu satu-satu tiap kali
+              mau isi Laporan Actual. */}
+          <div style={{ marginTop: 22, paddingTop: 18, borderTop: "1px solid #EFEFF2" }}>
+            <div style={{ fontSize: 12, color: "#8A8A96", fontFamily: FF, lineHeight: 1.6, marginBottom: 10 }}>
+              Plan lain hasil Import Excel milik Anda bisa jadi punya kekurangan kolom yg sama - sebaiknya cek semua plan Anda sekalian, jangan cuma yg ini.
+            </div>
+            <button
+              onClick={() => router.push("/martahub/m/activities")}
+              style={{ width: "100%", padding: "12px 16px", borderRadius: 12, border: "1.5px solid #E3E5EC", background: "#F8F8FA", color: "#3A3A44", fontSize: 12.5, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}
+            >
+              Cek Semua Plan Saya
+            </button>
+          </div>
+        </div>
         </div>
       </MobileShell>
     );
