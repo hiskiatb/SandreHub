@@ -107,6 +107,18 @@ const fmtDate = (s) => {
   const mo = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"][(+m || 1) - 1];
   return `${d} ${mo} ${y}`;
 };
+// Ubah string "date" dari Postgres (YYYY-MM-DD, tanpa jam/zona) jadi JS Date
+// LOKAL murni (bukan lewat `new Date("YYYY-MM-DD")` yg oleh browser diparse
+// sbg UTC tengah malam - kalau lokal timezone-nya di depan UTC (WIB=UTC+7)
+// itu bisa bikin tanggal mundur 1 hari pas ditulis ke sel Excel). Dipakai
+// khusus utk export xlsx supaya kolom Plan Date/Actual Date jadi sel Excel
+// bertipe DATE asli (bisa di-sort/filter as date), bukan teks.
+function dateOnlyToJsDate(s) {
+  if (!s || String(s).length < 10) return null;
+  const [y, m, d] = String(s).slice(0, 10).split("-").map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d);
+}
 const fmtInt = (n) => (n == null ? "-" : Number(n).toLocaleString("id-ID"));
 // Label seragam utk kolom bertipe "tag" (POI, Event Category, Network Category):
 // SEMUA HURUF BESAR, underscore diganti spasi (bukan "urban_area" tapi "URBAN AREA").
@@ -341,8 +353,8 @@ function Body({ email }) {
     { key: "kabupaten", label: "Kabupaten", width: 150, filter: true, get: (r) => siteMetaMap[r.site_id]?.kabupaten || "-" },
     { key: "kecamatan", label: "Kecamatan", width: 150, filter: true, get: (r) => siteMetaMap[r.site_id]?.kecamatan || "-" },
     { key: "creator", label: "BME/RGE", width: 150, filter: true, get: (r) => resolveCreatorName(r, { profileMap, bmeAssignMap, branchMap }) || "-" },
-    { key: "planDate", label: "Plan Date", width: 100, filter: true, get: (r) => fmtDate(r.plan_date_start || r.plan_date), sortVal: (r) => r.plan_date_start || r.plan_date || "" },
-    { key: "actualDate", label: "Actual Date", width: 100, filter: true, get: (r) => fmtDate(r.actual_date), sortVal: (r) => r.actual_date || "" },
+    { key: "planDate", label: "Plan Date", width: 100, filter: true, get: (r) => fmtDate(r.plan_date_start || r.plan_date), sortVal: (r) => r.plan_date_start || r.plan_date || "", raw: (r) => dateOnlyToJsDate(r.plan_date_start || r.plan_date), date: true },
+    { key: "actualDate", label: "Actual Date", width: 100, filter: true, get: (r) => fmtDate(r.actual_date), sortVal: (r) => r.actual_date || "", raw: (r) => dateOnlyToJsDate(r.actual_date), date: true },
     { key: "eventCategory", label: "Event Category", width: 160, filter: true, get: (r) => cats(r) },
     { key: "network", label: "Network Category", width: 130, filter: true, get: (r) => unsnake(r.network_category) },
     { key: "eventName", label: "Event Name", width: 230, filter: true, get: (r) => r.event_name || "-" },
@@ -597,6 +609,7 @@ function Body({ email }) {
       const INT_FMT = "#,##0";
       const GPS_FMT = "0.000000";
       const PCT_FMT = "0.0%";
+      const DATE_FMT = "dd/mm/yyyy"; // format Short Date Excel standar - sel tetap angka/date asli, cuma tampilannya, jadi user masih bebas ganti format tanggalnya sendiri di Excel kapan saja
       // Kolom mana yg uang/integer/GPS - dicocokkan by key ke EXPORT_COLUMNS
       // (kolom ACV pakai flag c.acv yg sudah ada, tidak perlu didaftar di sini).
       const MONEY_KEYS = new Set(["targetRebuy", "targetRev", "costEstimate", "actualRebuy", "actualRev", "costActual"]);
@@ -831,6 +844,7 @@ function Body({ email }) {
       // ACV/percent = 0.0% (nilainya sendiri disimpan sbg PECAHAN 0-1, BUKAN
       // 0-100, krn itu cara Excel native menyimpan format percent).
       const colNumFmt = (c) => {
+        if (c.date) return DATE_FMT;
         if (c.acv) return PCT_FMT;
         if (MONEY_KEYS.has(c.key)) return RP_FMT;
         if (GPS_KEYS.has(c.key)) return GPS_FMT;
@@ -864,6 +878,10 @@ function Body({ email }) {
           if (c.key === "long" || c.key === "lat") {
             const v = c.raw(r);
             return v == null ? "" : v; // presisi penuh, TIDAK dibulatkan
+          }
+          if (c.date && c.raw) {
+            const v = c.raw(r); // Date object asli - sel Excel jadi tipe DATE beneran, bukan teks
+            return v || "";
           }
           if (c.acv && c.raw) {
             const v = c.raw(r); // pctVal() balikin 0-100 - dibagi 100 spy cocok dgn numFmt percent native Excel
