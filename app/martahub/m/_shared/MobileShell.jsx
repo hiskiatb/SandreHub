@@ -98,6 +98,21 @@ export async function logMartaLogout() {
   } catch { /* best-effort, jangan sampai memblokir logout */ }
 }
 
+// ── Status "sedang aktif" (presence) ────────────────────────────────────────
+// Beda dari last_login_at (waktu KLIK login terakhir) - ini "denyut" yg
+// dikirim tiap HB_INTERVAL_MS selagi tab benar-benar terbuka & terlihat
+// (visibilityState === "visible"), supaya User Management (mobile & CMS)
+// bisa membedakan "sedang aktif sekarang" vs "terakhir aktif beberapa
+// waktu lalu" vs "belum pernah login" - lihat ACTIVE_WINDOW_MS di
+// app/martahub/m/user-management/page.jsx (ambang dianggap "aktif sekarang").
+// Best-effort penuh: kegagalan di sini TIDAK PERNAH mengganggu apa pun di
+// halaman - cuma berarti status presence-nya sedikit basi.
+export const HB_INTERVAL_MS = 45_000;
+function sendHeartbeat(email) {
+  if (!email) return;
+  Promise.resolve(supabaseMarta.rpc("mh_heartbeat", { p_app: "mobile", p_caller_email: email })).catch(() => { /* best-effort */ });
+}
+
 /** Hook sesi bersama - cek login, ambil scope MartaHub (di-cache sebentar,
  * lihat catatan di atas). Redirect ke login otomatis kalau tidak ada sesi. */
 // Dipanggil setelah user berhasil ganti nama sendiri (mh_set_my_name) -
@@ -119,6 +134,8 @@ export function useMartaSession() {
   useEffect(() => {
     let alive = true;
     let channel = null;
+    let hbTimer = null;
+    let onVisible = null;
     (async () => {
       const { data: { session } } = await supabaseMarta.auth.getSession();
       if (!session) { _sessionCache = null; router.replace("/martahub/m/login"); return; }
@@ -134,6 +151,17 @@ export function useMartaSession() {
       _sessionCache = { email: session.user.email, userId: session.user.id, scope, ts: Date.now() };
       if (alive) setState({ loading: false, email: session.user.email, userId: session.user.id, scope });
       logMartaLogin(session.user.id);
+
+      // Presence: kirim sekali langsung + tiap HB_INTERVAL_MS selagi tab
+      // visible (dijeda otomatis kalau tab di-minimize/pindah tab lain -
+      // dicek lewat visibilityState, bukan dihentikan total, supaya begitu
+      // dibuka lagi status "aktif sekarang" langsung ter-refresh).
+      sendHeartbeat(session.user.email);
+      hbTimer = setInterval(() => {
+        if (document.visibilityState === "visible") sendHeartbeat(session.user.email);
+      }, HB_INTERVAL_MS);
+      onVisible = () => { if (document.visibilityState === "visible") sendHeartbeat(session.user.email); };
+      document.addEventListener("visibilitychange", onVisible);
 
       // ── Auto sign-out real-time ────────────────────────────────────────
       // Kalau admin MENGHAPUS penugasan user ini di User Management saat
@@ -160,7 +188,12 @@ export function useMartaSession() {
           .subscribe();
       } catch { /* realtime opsional - kegagalan di sini tidak boleh menghalangi sesi normal */ }
     })();
-    return () => { alive = false; if (channel) { try { supabaseMarta.removeChannel(channel); } catch { /* noop */ } } };
+    return () => {
+      alive = false;
+      if (channel) { try { supabaseMarta.removeChannel(channel); } catch { /* noop */ } }
+      if (hbTimer) clearInterval(hbTimer);
+      if (onVisible) document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [router]);
 
   return state;

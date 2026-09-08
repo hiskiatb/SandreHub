@@ -34,6 +34,15 @@ const mk = (d) => ({
 });
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
 
+
+// Chevron kustom via background-image (bukan panah native browser) supaya
+// jaraknya ke tepi kanan konsisten & tidak mepet di semua dropdown.
+const chevronBg = (color, sizePx = 10, offsetPx = 12) => ({
+  appearance: "none", WebkitAppearance: "none", MozAppearance: "none",
+  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1L5 5L9 1' stroke='${encodeURIComponent(color)}' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+  backgroundRepeat: "no-repeat", backgroundPosition: `right ${offsetPx}px center`, backgroundSize: `${sizePx}px`,
+});
+
 // geo dim → kolom di RPC combos
 const GEOCOL = { brand: "brand", circle: "circle", region: "region", area: "area", branch: "branch", mc: "mc_cluster" };
 
@@ -290,7 +299,7 @@ export default function SDP_SubmissionForms({ supabase, theme = "dark", profile,
     <div style={{ fontFamily: FF, color: t.hi }}>
       {onExit && (
         <button onClick={onExit} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: t.mid, fontFamily: FF, fontSize: 13, fontWeight: 600, padding: 0, marginBottom: 16 }}>
-          <ArrowLeft size={15} /> Kembali ke Form SDP
+          <ArrowLeft size={15} /> Kembali ke SDP Management
         </button>
       )}
       <div style={{ marginBottom: 6, fontSize: 20, fontWeight: 800, letterSpacing: -0.5 }}>Perubahan SDP</div>
@@ -491,13 +500,15 @@ function FieldInput({ f, t, value, onChange, geoOptions, sdpTypes, sdps, onPickS
     width: "100%", boxSizing: "border-box", padding: "9px 11px", borderRadius: 9,
     border: `1px solid ${t.line}`, background: t.inp, color: t.hi, fontSize: 13, fontFamily: FF, outline: "none",
   };
+  // Varian khusus <select>: tambah ruang & panah kustom supaya tidak mepet ke tepi kanan.
+  const baseSel = { ...baseInp, padding: "9px 34px 9px 11px", ...chevronBg(t.mid) };
 
   let control;
   if (f.geo) {
     const opts = geoOptions || [];
     const locked = opts.length <= 1 && opts.length > 0;
     control = (
-      <select value={value} disabled={locked} onChange={(e) => onChange(e.target.value)} style={{ ...baseInp, cursor: locked ? "default" : "pointer", opacity: locked ? 0.85 : 1 }}>
+      <select value={value} disabled={locked} onChange={(e) => onChange(e.target.value)} style={{ ...baseSel, cursor: locked ? "default" : "pointer", opacity: locked ? 0.85 : 1 }}>
         <option value="">{opts.length === 0 ? "— tidak ada data —" : "— pilih —"}</option>
         {opts.map((o) => <option key={o} value={o}>{o}</option>)}
       </select>
@@ -505,7 +516,7 @@ function FieldInput({ f, t, value, onChange, geoOptions, sdpTypes, sdps, onPickS
   } else if (f.type === "brand") {
     const locked = !!brandLock;
     control = (
-      <select value={locked ? brandLock : value} disabled={locked} onChange={(e) => onChange(e.target.value)} style={{ ...baseInp, cursor: locked ? "default" : "pointer", opacity: locked ? 0.85 : 1 }}>
+      <select value={locked ? brandLock : value} disabled={locked} onChange={(e) => onChange(e.target.value)} style={{ ...baseSel, cursor: locked ? "default" : "pointer", opacity: locked ? 0.85 : 1 }}>
         <option value="">— pilih —</option>
         <option value="IM3">IM3</option>
         <option value="3ID">3ID</option>
@@ -513,21 +524,21 @@ function FieldInput({ f, t, value, onChange, geoOptions, sdpTypes, sdps, onPickS
     );
   } else if (f.type === "sdptype") {
     control = (
-      <select value={value} onChange={(e) => onChange(e.target.value)} style={{ ...baseInp, cursor: "pointer" }}>
+      <select value={value} onChange={(e) => onChange(e.target.value)} style={{ ...baseSel, cursor: "pointer" }}>
         <option value="">— pilih —</option>
         {sdpTypes.map((o) => <option key={o} value={o}>{o}</option>)}
       </select>
     );
   } else if (f.type === "sdppick") {
     control = (
-      <select value={value} onChange={(e) => onPickSdp(e.target.value)} style={{ ...baseInp, cursor: "pointer" }}>
+      <select value={value} onChange={(e) => onPickSdp(e.target.value)} style={{ ...baseSel, cursor: "pointer" }}>
         <option value="">— pilih SDP —</option>
         {sdps.map((s) => <option key={s.sdp_id} value={s.sdp_id}>{s.sdp_id} · {s.sdp_name}</option>)}
       </select>
     );
   } else if (f.type === "yesno") {
     control = (
-      <select value={value} onChange={(e) => onChange(e.target.value)} style={{ ...baseInp, cursor: "pointer" }}>
+      <select value={value} onChange={(e) => onChange(e.target.value)} style={{ ...baseSel, cursor: "pointer" }}>
         <option value="">— pilih —</option>
         <option value="Ya">Ya</option>
         <option value="Tidak">Tidak</option>

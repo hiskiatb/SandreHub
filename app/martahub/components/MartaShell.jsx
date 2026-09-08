@@ -40,6 +40,7 @@ const NAV = [
   { label: "Dashboard", icon: "grid", path: "dashboard", route: "/martahub" },
   { section: "ACTIVITY" },
   { label: "Activity Plan", icon: "clipboard", path: "activities", route: "/martahub/activities" },
+  { label: "Activity Dashboard", icon: "insight", path: "activity-dashboard", route: "/martahub/activity-dashboard" },
   { label: "Calendar", icon: "cal", path: "calendar", route: "/martahub/calendar" },
   { section: "INTELLIGENCE" },
   { label: "Map Intelligence", icon: "map", path: "map", route: "/martahub/map" },
@@ -128,6 +129,25 @@ export default function MartaShell({ active, title, subtitle, actions, children 
     });
     return () => { cancelled = true; };
   }, [router]);
+
+  // Status "sedang aktif" (presence) - versi CMS dari heartbeat mobile
+  // (app/martahub/m/_shared/MobileShell.jsx). Kirim sekali begitu email
+  // caller diketahui + tiap HB_INTERVAL_MS selagi tab visible, supaya User
+  // Management (mobile & CMS) sama-sama bisa membedakan "aktif sekarang"
+  // vs "terakhir aktif" vs "belum pernah login" dari SATU sumber presence
+  // (mh_presence, keyed by email - tidak peduli dibuka dari mobile/CMS).
+  const callerEmail = ctx?.session?.user?.email || null;
+  useEffect(() => {
+    if (!callerEmail) return;
+    const send = () => {
+      Promise.resolve(supabaseMarta.rpc("mh_heartbeat", { p_app: "cms", p_caller_email: callerEmail })).catch(() => { /* best-effort */ });
+    };
+    send();
+    const timer = setInterval(() => { if (document.visibilityState === "visible") send(); }, 45_000);
+    const onVisible = () => { if (document.visibilityState === "visible") send(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
+  }, [callerEmail]);
 
   // Badge Approval Center - jumlah nyata mh_activities status=plan_submitted
   // yang masuk cakupan (region×brand) pengguna, bukan angka statis. Fase

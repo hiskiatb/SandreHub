@@ -12,7 +12,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   UploadCloud, ChevronRight, ArrowLeft, Construction, Download, FilePlus2, ClipboardList, KeyRound,
-  FileMinus2, Shuffle, Info, TableProperties, Eye, X, ShieldCheck, Inbox, Mail,
+  FileMinus2, Shuffle, Info, TableProperties, Eye, X, ShieldCheck, Inbox, Mail, FileSpreadsheet,
 } from "lucide-react";
 import SDP_UploadTerritory   from "./SDP_UploadTerritory";
 import SDP_RekapCSE          from "./SDP_RekapCSE";
@@ -28,6 +28,8 @@ import SDP_BatchMonitor      from "./SDP_BatchMonitor";
 import SDP_Summary           from "./SDP_Summary";
 import SDP_Approval          from "./SDP_Approval";
 import SDP_Drafts            from "./SDP_Drafts";
+import SDP_InitialImport     from "./SDP_InitialImport";
+import SDP_BulkTermReb       from "./SDP_BulkTermReb";
 
 // ─── Theme ─────────────────────────────────────────────────────────────────────
 const mk = (d) => ({
@@ -116,13 +118,15 @@ const MYCODES_CARD = {
 };
 ["cse_rse", "bsm"].forEach((r) => { MENUS[r] = [...(MENUS[r] || []), MYCODES_CARD]; });
 
-// Approval registrasi: BSM menyetujui submission CSE (branch × brand) sebelum
-// masuk data utama; CSE melihat status persetujuan submission-nya.
+// Approval registrasi: PIC Region menyetujui submission CSE/RSE (langsung,
+// BSM tidak lagi ikut approval) sebelum masuk data utama; SPM juga bisa
+// approve (scope seluruh Sumatera). CSE/RSE & BSM melihat status persetujuan
+// submission mereka sendiri.
 const APPROVAL_APPROVE_CARD = {
   id     : "approval",
   icon   : ShieldCheck,
   label  : "Approval SDP",
-  desc   : "Setujui/tolak submission CSE: registrasi, terminate, rebordering & edit",
+  desc   : "Setujui/tolak submission CSE/RSE: registrasi, terminate, rebordering & edit",
   accent : "acc",
 };
 const APPROVAL_STATUS_CARD = {
@@ -132,8 +136,8 @@ const APPROVAL_STATUS_CARD = {
   desc   : "Pantau status persetujuan submission Anda",
   accent : "blue",
 };
-["bsm"].forEach((r) => { MENUS[r] = [...(MENUS[r] || []), APPROVAL_APPROVE_CARD]; });
-["cse_rse"].forEach((r) => { MENUS[r] = [...(MENUS[r] || []), APPROVAL_STATUS_CARD]; });
+["pic_region", "spm_sumatera"].forEach((r) => { MENUS[r] = [...(MENUS[r] || []), APPROVAL_APPROVE_CARD]; });
+["cse_rse", "bsm"].forEach((r) => { MENUS[r] = [...(MENUS[r] || []), APPROVAL_STATUS_CARD]; });
 
 // Draft & Link — draft server, isian yang dibagikan via link (expiring), dan
 // isian yang dikirim balik untuk difinalkan.
@@ -193,6 +197,40 @@ const BULKGRID_CARD = {
 ["spm_sumatera", "cse_rse", "bsm", "pic_region"].forEach((r) => {
   MENUS[r] = [...(MENUS[r] || []), REGISTER_CARD, TERMINATE_CARD, REBORDER_CARD, BULKGRID_CARD];
 });
+
+// Grid massal untuk Termination & Rebordering — sama filosofi dengan
+// Registrasi Massal: Circle bisa "drop" banyak baris sekaligus dari sheet HQ
+// (02_Termination_Main / 03_Rebordering_Kec_Detail) alih-alih satu-satu lewat Form.
+const BULK_TERM_CARD = {
+  id     : "bulk_termination",
+  icon   : ClipboardList,
+  label  : "Terminate Massal",
+  desc   : "Tempel dari sheet Termination & kirim banyak SDP sekaligus",
+  accent : "acc",
+};
+const BULK_REB_CARD = {
+  id     : "bulk_rebordering",
+  icon   : ClipboardList,
+  label  : "Rebordering Massal",
+  desc   : "Tempel dari sheet Rebordering & kirim banyak baris sekaligus",
+  accent : "blue",
+};
+["spm_sumatera", "cse_rse", "bsm", "pic_region"].forEach((r) => {
+  MENUS[r] = [...(MENUS[r] || []), BULK_TERM_CARD, BULK_REB_CARD];
+});
+
+// Import Data Awal — khusus SPM Sumatera. Beda dari Registrasi Massal: memuat
+// data SDP YANG SUDAH ADA di export HQ sebagai baseline (SDP ID dipakai apa
+// adanya, tidak di-generate ulang), untuk bootstrap sistem sebelum siklus
+// bulanan berjalan normal.
+const INITIAL_IMPORT_CARD = {
+  id     : "initial_import",
+  icon   : FileSpreadsheet,
+  label  : "Import Data Awal",
+  desc   : "Muat data SDP existing dari export HQ sebagai baseline (SDP ID dipakai apa adanya)",
+  accent : "teal",
+};
+MENUS.spm_sumatera = [...(MENUS.spm_sumatera || []), INITIAL_IMPORT_CARD];
 
 // Monitor kelengkapan + Export ke format HQ — hanya PIC Region & SPM Sumatera.
 const MONITOR_CARD = {
@@ -470,7 +508,7 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile: real
           padding: 0, marginBottom: HELP[key] ? 10 : 0,
         }}
       >
-        <ArrowLeft size={14} /> Form SDP
+        <ArrowLeft size={14} /> SDP Management
       </button>
       {HELP[key] && (
         <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "9px 12px", borderRadius: 10, background: t.blueBg, border: `1px solid ${t.blueBd}` }}>
@@ -483,7 +521,7 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile: real
 
   // ── Active sub-view ─────────────────────────────────────────────────────────
   if (activeMenu === "submission_forms") {
-    // Back ditangani oleh komponen (landing → Form SDP, form → landing).
+    // Back ditangani oleh komponen (landing → SDP Management, form → landing).
     return (
       <div className="sdp-root sdp-view" style={{ fontFamily: FF }}>
         <SDP_SubmissionForms supabase={supabase} theme={theme} profile={profile} initialFormType={subFormType}
@@ -515,6 +553,29 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile: real
     return (
       <div className="sdp-root sdp-view" style={{ fontFamily: FF }}>
         <SDP_BulkGrid supabase={supabase} theme={theme} profile={profile} onExit={() => setActiveMenu(null)} />
+      </div>
+    );
+  }
+
+  if (activeMenu === "initial_import") {
+    return (
+      <div className="sdp-root sdp-view" style={{ fontFamily: FF }}>
+        <SDP_InitialImport supabase={supabase} theme={theme} profile={profile} onExit={() => setActiveMenu(null)} />
+      </div>
+    );
+  }
+
+  if (activeMenu === "bulk_termination") {
+    return (
+      <div className="sdp-root sdp-view" style={{ fontFamily: FF }}>
+        <SDP_BulkTermReb supabase={supabase} theme={theme} profile={profile} kind="termination" onExit={() => setActiveMenu(null)} />
+      </div>
+    );
+  }
+  if (activeMenu === "bulk_rebordering") {
+    return (
+      <div className="sdp-root sdp-view" style={{ fontFamily: FF }}>
+        <SDP_BulkTermReb supabase={supabase} theme={theme} profile={profile} kind="rebordering" onExit={() => setActiveMenu(null)} />
       </div>
     );
   }
@@ -621,7 +682,7 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile: real
       {/* Page header */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: -0.5, color: t.hi }}>
-          Form SDP
+          SDP Management
         </div>
         <div style={{ fontSize: 13, color: t.mid, marginTop: 3 }}>
           Pilih menu di bawah untuk melanjutkan

@@ -49,7 +49,7 @@ const MENU_CATALOG = [
   { key: "control-center", label: "PNL Control Center" },
   { key: "pivot-summary",  label: "Pivot P&L Summary" },
   { key: "payout-tracker", label: "Payout Tracker" },
-  { key: "sdp-status",     label: "Form SDP" },
+  { key: "sdp-status",     label: "SDP Management" },
   { key: "mfts",           label: "Pemenuhan Manpower" },
 ];
 

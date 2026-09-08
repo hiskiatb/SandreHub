@@ -580,7 +580,7 @@ function CreatePlanWizardInner() {
     }
     const vd = dates.filter(Boolean);
     const infoOk = categories.length > 0 && !!eventName.trim() && vd.length > 0 && allDateTimesValid(vd, timesByDate);
-    const locOk = !!matchedPrimary && !!poiType;
+    const locOk = !!matchedPrimary && !!poiType && !!address.trim();
     setStep(!infoOk ? 0 : !locOk ? 1 : 3);
     setStepResumed(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps

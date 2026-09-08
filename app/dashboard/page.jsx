@@ -183,7 +183,7 @@ const CONTROLLABLE_MENUS = {
   "control-center": "PNL Control Center",
   "pivot-summary":  "Pivot P&L Summary",
   "payout-tracker": "Payout Tracker",
-  "sdp-status":     "Form SDP",
+  "sdp-status":     "SDP Management",
   "mfts":           "Pemenuhan Manpower",
 };
 const menuKeyForView = (v) => (PNL_VIEWS.has(v) ? "summary" : v);
@@ -751,7 +751,7 @@ export default function DashboardPage() {
                   {canMonitor && <SNavItem icon={<Table2 size={14} />}        label="Pivot P&L Summary"    active={view === "pivot-summary"}  maint={menuMaint("pivot-summary")} onClick={() => navigate("pivot-summary")} />}
                   {!isSDPMember && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
                   {!isSDPMember && <SNavItem icon={<PieChart size={14} />}    label="Laporan P&L"          active={PNL_VIEWS.has(view)}       maint={menuMaint("summary")} onClick={() => navigate("summary")} />}
-                  {canSdp       && <SNavItem icon={<Users size={14} />}       label="Form SDP"             active={view === "sdp-status"}     maint={menuMaint("sdp-status")} onClick={() => navigate("sdp-status")} />}
+                  {canSdp       && <SNavItem icon={<Users size={14} />}       label="SDP Management"       active={view === "sdp-status"}     maint={menuMaint("sdp-status")} onClick={() => navigate("sdp-status")} />}
                   {canMfts && <SNavItem icon={<Briefcase size={14} />} label="Pemenuhan Manpower" active={view === "mfts"}          maint={menuMaint("mfts")} onClick={() => navigate("mfts")} />}
                   {(isSPM || isPICRegion || isSFM || isCSE) && <SNavItem icon={<Store size={14} />} label="Promotor Tracking" active={view === "promotor-tracking"} onClick={() => navigate("promotor-tracking")} />}
                   {isSPM        && <SNavItem icon={<Wrench size={14} />}      label="Kelola Menu"          active={view === "menu-access"}    onClick={() => navigate("menu-access")} />}
@@ -905,9 +905,9 @@ export default function DashboardPage() {
                       accent={{ color: "#C6168D", bg: d ? "rgba(198,22,141,0.11)" : "rgba(198,22,141,0.07)", bd: d ? "rgba(198,22,141,0.28)" : "rgba(198,22,141,0.16)", shadow: "rgba(198,22,141,0.16)" }} />
                   )}
 
-                  {/* Form SDP — SPM, BSM, CSE, PIC, dan IOH (lihat saja) */}
+                  {/* SDP Management — SPM, BSM, CSE, PIC, dan IOH (lihat saja) */}
                   {canSdp && (
-                    <DashCard icon={<Users size={20} />} title="Form SDP"
+                    <DashCard icon={<Users size={20} />} title="SDP Management"
                       desc={
                         isSPM       ? "Upload territory, mapping kode otoritas, rekap data, dan pantau status seluruh SDP Sumatera." :
                         isCSE       ? `Isi formulir data SDP di cluster ${profile?.cluster || "Anda"}.` :

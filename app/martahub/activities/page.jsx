@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { X, Search, Download, RotateCcw, Wallet, FileCheck2, CardSim, Router as RouterIcon, TrendingUp, Banknote, Percent, RefreshCw, Loader2, Settings2, Image as ImageIcon } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { X, Search, Download, Upload, RotateCcw, Wallet, FileCheck2, CardSim, Router as RouterIcon, TrendingUp, Banknote, Percent, RefreshCw, Loader2, Settings2, Image as ImageIcon } from "lucide-react";
 import ExcelJS from "exceljs";
 import MartaShell, { T, FONT, brandLabel } from "../components/MartaShell";
 import ExcelFilter from "../components/ExcelFilter";
@@ -110,6 +111,7 @@ export default function ActivityPlanPage() {
 }
 
 function Body({ email }) {
+  const router = useRouter();
   const [rows, setRows] = useState([]);
   const [branchMap, setBranchMap] = useState({});
   const [profileMap, setProfileMap] = useState({});
@@ -630,6 +632,11 @@ function Body({ email }) {
           <button onClick={exportXlsx} disabled={filteredRows.length === 0} title="Export data sesuai filter yang sedang diterapkan"
             style={{ ...btn, opacity: filteredRows.length === 0 ? 0.5 : 1, cursor: filteredRows.length === 0 ? "default" : "pointer", background: "linear-gradient(135deg,#1E8E3E,#0F6B2C)", borderColor: "transparent", color: "#fff" }}>
             <Download size={13} /> {exporting ? "Menyiapkan file…" : "Export .xlsx"}
+          </button>
+
+          <button onClick={() => router.push("/martahub/activities/import")} title="Import banyak activity plan sekaligus dari file Excel"
+            style={{ ...btn, background: "linear-gradient(90deg, #ED1C24 0%, #C6168D 100%)", borderColor: "transparent", color: "#fff" }}>
+            <Upload size={13} /> Import Plan (Excel)
           </button>
         </div>
       </div>

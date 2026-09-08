@@ -261,7 +261,7 @@ export default function SDP_Field({ supabase, theme = "light", profile, readOnly
 
       {onExit && (
         <button onClick={onExit} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: t.mid, fontFamily: FF, fontSize: 12.5, fontWeight: 600, padding: 0, marginBottom: 12 }}>
-          <ArrowLeft size={14} /> Form SDP
+          <ArrowLeft size={14} /> SDP Management
         </button>
       )}
       {helpText && (

@@ -12,7 +12,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft, Download, ClipboardCopy, Check, Loader2, AlertCircle, FileSpreadsheet, Filter,
 } from "lucide-react";
-import { HQ_LAYOUT_REGISTRATION, buildTSV, buildMatrix, fmtSubmissionMonth } from "../../../lib/sdp";
+import { HQ_LAYOUT_REGISTRATION, HQ_LAYOUT_TERMINATION, HQ_LAYOUT_REBORDERING, buildTSV, buildMatrix, fmtSubmissionMonth } from "../../../lib/sdp";
 
 const mk = (d) => ({
   card: d ? "#17171B" : "#FFFFFF", sub: d ? "#1D1D22" : "#F8F9FA", line: d ? "rgba(255,255,255,.08)" : "rgba(0,0,0,.08)",
@@ -23,14 +23,32 @@ const mk = (d) => ({
   sm: d ? "0 1px 4px rgba(0,0,0,.55)" : "0 1px 3px rgba(0,0,0,.06)",
 });
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
+
+
+// Chevron kustom via background-image (bukan panah native browser) supaya
+// jaraknya ke tepi kanan konsisten & tidak mepet di semua dropdown.
+const chevronBg = (color, sizePx = 10, offsetPx = 12) => ({
+  appearance: "none", WebkitAppearance: "none", MozAppearance: "none",
+  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1L5 5L9 1' stroke='${encodeURIComponent(color)}' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+  backgroundRepeat: "no-repeat", backgroundPosition: `right ${offsetPx}px center`, backgroundSize: `${sizePx}px`,
+});
 const SUMATERA_REGIONS = ["North Sumatera", "Central Sumatera", "South Sumatera"];
 const STATUS_OPTS = [["validated", "Validated (siap kirim HQ)"], ["submitted", "Submitted"], ["all", "Semua status"]];
+
+// Tiga sheet HQ yang didukung export — tab dipilih pengguna sebelum copy/download.
+const SHEETS = {
+  registration: { table: "sdp_registration", sheetName: "01_SDP_Registration", label: "Registration", layout: HQ_LAYOUT_REGISTRATION },
+  termination:  { table: "sdp_termination",  sheetName: "02_Termination_Main", label: "Termination",  layout: HQ_LAYOUT_TERMINATION },
+  rebordering:  { table: "sdp_rebordering",  sheetName: "03_Rebordering_Kec_Detail", label: "Rebordering", layout: HQ_LAYOUT_REBORDERING },
+};
 
 export default function SDP_Export({ supabase, theme = "dark", profile, onExit }) {
   const d = theme === "dark";
   const t = mk(d);
   const role = profile?.role ?? "";
 
+  const [sheetKey, setSheetKey] = useState("registration");
+  const cfg = SHEETS[sheetKey];
   const [all, setAll] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -42,9 +60,9 @@ export default function SDP_Export({ supabase, theme = "dark", profile, onExit }
   useEffect(() => {
     let on = true;
     (async () => {
-      setLoading(true); setErr("");
+      setLoading(true); setErr(""); setMsg(null);
       try {
-        let q = supabase.from("sdp_registration").select("*").order("created_at", { ascending: false }).limit(5000);
+        let q = supabase.from(cfg.table).select("*").order("created_at", { ascending: false }).limit(5000);
         // Scope: PIC Region → region-nya; SPM → seluruh Sumatera.
         if (role === "pic_region" && profile?.region) q = q.eq("region", profile.region);
         else q = q.eq("circle", "Sumatera");
@@ -55,7 +73,7 @@ export default function SDP_Export({ supabase, theme = "dark", profile, onExit }
       finally { if (on) setLoading(false); }
     })();
     return () => { on = false; };
-  }, [supabase, role, profile?.region]);
+  }, [supabase, role, profile?.region, cfg.table]);
 
   const periods = useMemo(() => {
     const s = new Set();
@@ -72,8 +90,8 @@ export default function SDP_Export({ supabase, theme = "dark", profile, onExit }
   const copyTSV = async () => {
     if (!rows.length) { setMsg({ type: "err", text: "Tidak ada baris untuk di-export." }); return; }
     try {
-      await navigator.clipboard.writeText(buildTSV(rows));
-      setMsg({ type: "ok", text: `${rows.length} baris disalin. Tempel (Ctrl+V) di sheet 01_SDP_Registration HQ.` });
+      await navigator.clipboard.writeText(buildTSV(rows, cfg.layout));
+      setMsg({ type: "ok", text: `${rows.length} baris disalin. Tempel (Ctrl+V) di sheet ${cfg.sheetName} HQ.` });
     } catch {
       setMsg({ type: "err", text: "Clipboard diblokir browser. Pakai Download .xlsx." });
     }
@@ -85,8 +103,8 @@ export default function SDP_Export({ supabase, theme = "dark", profile, onExit }
     try {
       const ExcelJS = (await import("exceljs")).default;
       const wb = new ExcelJS.Workbook();
-      const ws = wb.addWorksheet("01_SDP_Registration");
-      const matrix = buildMatrix(rows);
+      const ws = wb.addWorksheet(cfg.sheetName);
+      const matrix = buildMatrix(rows, cfg.layout);
       matrix.forEach((r, i) => {
         const row = ws.addRow(r);
         if (i === 0) row.font = { bold: true };
@@ -97,7 +115,7 @@ export default function SDP_Export({ supabase, theme = "dark", profile, onExit }
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `SDP_Registration_HQ_${period === "all" ? "all" : fmtSubmissionMonth(period)}.xlsx`;
+      a.download = `SDP_${cfg.label}_HQ_${period === "all" ? "all" : fmtSubmissionMonth(period)}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
       setMsg({ type: "ok", text: `File .xlsx (${rows.length} baris) diunduh.` });
@@ -106,7 +124,7 @@ export default function SDP_Export({ supabase, theme = "dark", profile, onExit }
     } finally { setBusy(false); }
   };
 
-  const previewCols = HQ_LAYOUT_REGISTRATION.slice(0, 8);
+  const previewCols = cfg.layout.slice(0, 8);
 
   return (
     <div style={{ fontFamily: FF, color: t.hi }}>
@@ -115,8 +133,19 @@ export default function SDP_Export({ supabase, theme = "dark", profile, onExit }
       </button>
 
       <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: -0.4 }}>Export ke Format HQ</div>
-      <div style={{ fontSize: 12.5, color: t.mid, marginTop: 2, marginBottom: 16 }}>
-        Kolom mengikuti sheet <b>01_SDP_Registration</b> HQ. Kolom formula (Need SAP/Oracle, Final Status) &amp; kolom HQ sengaja dikosongkan agar tidak menimpa formula HQ saat di-paste.
+      <div style={{ fontSize: 12.5, color: t.mid, marginTop: 2, marginBottom: 14 }}>
+        Kolom mengikuti sheet <b>{cfg.sheetName}</b> HQ. Kolom formula &amp; kolom milik HQ sengaja dikosongkan agar tidak menimpa formula HQ saat di-paste.
+      </div>
+
+      {/* Tab sheet */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+        {Object.entries(SHEETS).map(([k, v]) => (
+          <button key={k} onClick={() => setSheetKey(k)}
+            style={{ padding: "8px 14px", borderRadius: 9, cursor: "pointer", fontFamily: FF, fontSize: 12.5, fontWeight: 800,
+              border: `1px solid ${sheetKey === k ? t.tealBd : t.line}`, background: sheetKey === k ? t.tealBg : t.sub, color: sheetKey === k ? t.tealD : t.hi }}>
+            {v.label}
+          </button>
+        ))}
       </div>
 
       {/* Filter */}
@@ -172,7 +201,7 @@ export default function SDP_Export({ supabase, theme = "dark", profile, onExit }
             <thead>
               <tr>
                 {previewCols.map((c) => <th key={c.header} style={{ position: "sticky", top: 0, background: t.head, padding: "8px 10px", textAlign: "left", fontSize: 10.5, fontWeight: 800, color: t.mid, whiteSpace: "nowrap", borderBottom: `1px solid ${t.line}` }}>{c.header}</th>)}
-                <th style={{ position: "sticky", top: 0, background: t.head, padding: "8px 10px", fontSize: 10.5, color: t.lo, borderBottom: `1px solid ${t.line}` }}>… +{HQ_LAYOUT_REGISTRATION.length - previewCols.length} kolom</th>
+                <th style={{ position: "sticky", top: 0, background: t.head, padding: "8px 10px", fontSize: 10.5, color: t.lo, borderBottom: `1px solid ${t.line}` }}>… +{cfg.layout.length - previewCols.length} kolom</th>
               </tr>
             </thead>
             <tbody>
@@ -192,4 +221,4 @@ export default function SDP_Export({ supabase, theme = "dark", profile, onExit }
   );
 }
 
-const selStyle = (t) => ({ display: "block", marginTop: 4, padding: "8px 10px", borderRadius: 9, border: `1px solid ${t.line}`, background: t.inp, color: t.hi, fontSize: 13, fontFamily: FF, outline: "none", cursor: "pointer", minWidth: 180 });
+const selStyle = (t) => ({ display: "block", marginTop: 4, padding: "8px 34px 8px 10px", borderRadius: 9, border: `1px solid ${t.line}`, background: t.inp, color: t.hi, fontSize: 13, fontFamily: FF, outline: "none", cursor: "pointer", minWidth: 180, ...chevronBg(t.mid) });

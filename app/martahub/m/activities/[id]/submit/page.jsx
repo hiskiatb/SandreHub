@@ -29,6 +29,7 @@ import SitePickerSheet from "../../../_shared/SitePickerSheet";
 import MapPickerSheet from "../../../_shared/MapPickerSheet";
 import LocationMapPreview from "../../../_shared/LocationMapPreview";
 import { fetchSalesEntries, deleteSalesEntry, fetchRebuyEntries, addRebuyEntryDb, deleteRebuyEntry } from "../../../_shared/planData";
+import { fetchAuthedPhotoBlobUrl } from "../../../_shared/mediaProxy";
 import { latestPlanDate } from "../../../_shared/activityUi";
 
 const CATS = [
@@ -235,7 +236,18 @@ export default function SubmitActualPage() {
     setPhotos((prev) => [...prev, ...files.map((file) => ({ file, previewUrl: URL.createObjectURL(file) }))]);
   }
   function removePhoto(i) {
-    setPhotos((prev) => { URL.revokeObjectURL(prev[i].previewUrl); return prev.filter((_, idx) => idx !== i); });
+    setPhotos((prev) => {
+      const target = prev[i];
+      // Foto yg SUDAH tersimpan sebelumnya (existing:true, laporan actual
+      // lama/direvisi) - hapus juga row mh_documents-nya di server (best-
+      // effort, jangan blokir UI kalau gagal krn RLS dll - foto tetap
+      // hilang dari daftar lokal spy tidak dobel kehitung).
+      if (target?.existing && target?.docId) {
+        supabaseMarta.from("mh_documents").delete().eq("id", target.docId).then(() => {}).catch(() => {});
+      }
+      URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((_, idx) => idx !== i);
+    });
   }
   // Hasil kolase (beberapa foto digabung jadi satu) masuk ke daftar photos
   // yang SAMA - dari sisi upload/hapus/preview diperlakukan sama persis
@@ -298,7 +310,7 @@ export default function SubmitActualPage() {
     (async () => {
       try {
         const [{ data: a, error: e1 }, { data: sp }, { data: fwa }, { data: profile }] = await Promise.all([
-          supabaseMarta.from("mh_activities").select("id,event_name,brand,address,site_id,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,status,checkin_valid,actual_draft_saved_at,latitude,longitude,plan_date,plan_date_start,plan_date_end,plan_dates_multi").eq("id", activityId).single(),
+          supabaseMarta.from("mh_activities").select("id,event_name,brand,address,site_id,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,status,checkin_valid,actual_draft_saved_at,latitude,longitude,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_source").eq("id", activityId).single(),
           supabaseMarta.from("mh_product_types").select("id,name,unit_price,brand").eq("category", "sp").eq("active", true).order("name"),
           supabaseMarta.from("mh_product_types").select("id,name,unit_price,brand").eq("category", "fwa").eq("active", true).order("name"),
           scope?.email ? supabaseMarta.from("mh_profiles").select("dsf_org_id").eq("email", scope.email.toLowerCase()).maybeSingle() : Promise.resolve({ data: null }),
@@ -427,6 +439,24 @@ export default function SubmitActualPage() {
         } catch { /* best-effort */ }
 
         try {
+          const { data: docs } = await supabaseMarta.from("mh_documents").select("id, storage_path, file_type, created_at").eq("activity_id", activityId).eq("file_type", "photo").order("created_at");
+          if (docs && docs.length > 0) {
+            const withUrls = await Promise.all(
+              docs.map(async (d) => {
+                try {
+                  const url = await fetchAuthedPhotoBlobUrl("document", d.id);
+                  return { docId: d.id, previewUrl: url, existing: true };
+                } catch {
+                  return null;
+                }
+              })
+            );
+            const loaded = withUrls.filter(Boolean);
+            if (alive && loaded.length > 0) setPhotos((prev) => [...loaded, ...prev]);
+          }
+        } catch { /* best-effort - jangan blokir halaman kalau gagal muat foto lama */ }
+
+        try {
           const rows = await fetchSalesEntries(activityId);
           const byCat = { sp: [], fwa: [] };
           for (const r of rows) {
@@ -509,6 +539,45 @@ export default function SubmitActualPage() {
 
   if (loading || dataLoading) return <MobileShell active="activities" hideNav><ShellSpinner /></MobileShell>;
   if (err && !activity) return <MobileShell active="activities" hideNav><div style={{ padding: 40, textAlign: "center", color: "#C62828", fontSize: 13 }}>{err}</div></MobileShell>;
+
+  const cmsIncompleteFields = [];
+  if (activity?.plan_source === "cms_import") {
+    if (!activity?.address || !String(activity.address).trim()) cmsIncompleteFields.push("Alamat");
+  }
+  if (cmsIncompleteFields.length > 0) {
+    return (
+      <MobileShell active="activities" hideNav>
+        <div style={{ padding: "40px 22px", textAlign: "center", maxWidth: 380, margin: "0 auto" }}>
+          <div style={{ width: 56, height: 56, borderRadius: 16, background: "#FFFDE7", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 16px" }}>
+            <AlertTriangle size={26} color="#F57F17" />
+          </div>
+          <div style={{ fontSize: 15.5, fontWeight: 800, color: "#17181C", fontFamily: FF, marginBottom: 8 }}>Plan Belum Lengkap</div>
+          <div style={{ fontSize: 13, color: "#5B5C66", fontFamily: FF, lineHeight: 1.6, marginBottom: 4 }}>
+            Plan ini diinput dari CMS (import Excel), belum lewat wizard "Buat Plan" spt biasa.
+          </div>
+          <div style={{ fontSize: 13, color: "#5B5C66", fontFamily: FF, lineHeight: 1.6, marginBottom: 18 }}>
+            Kolom wajib yg masih kosong: <b style={{ color: "#17181C" }}>{cmsIncompleteFields.join(", ")}</b>. Lengkapi dulu sebelum isi Laporan Actual.
+          </div>
+          <button
+            onClick={() => router.push(`/martahub/m/activities/new?edit=${activityId}`)}
+            style={{
+              width: "100%", padding: "13px 16px", borderRadius: 12, border: "none",
+              background: "linear-gradient(90deg, #ED1C24 0%, #C6168D 100%)", color: "#fff",
+              fontSize: 13.5, fontWeight: 800, fontFamily: FF, cursor: "pointer",
+            }}
+          >
+            Lanjutkan Edit Plan
+          </button>
+          <button
+            onClick={() => router.back()}
+            style={{ width: "100%", padding: "12px 16px", marginTop: 10, borderRadius: 12, border: "1.5px solid #E3E5EC", background: "#fff", color: "#5B5C66", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}
+          >
+            Kembali
+          </button>
+        </div>
+      </MobileShell>
+    );
+  }
 
   function isDuplicateLocal(cat, msisdn) {
     return entries[cat].some((e) => e.msisdn === msisdn) || pendingTransfers[cat].some((p) => p.msisdn === msisdn);
@@ -835,11 +904,12 @@ export default function SubmitActualPage() {
       // ditautkan ke mh_documents hilang tanpa jejak), dan jumlah foto yg
       // benar2 gagal (storage ATAU insert) dihitung supaya bisa ditunjukkan
       // ke DSF di layar sukses - jangan lagi diam2 dianggap semua berhasil.
-      setUploadProgress({ done: 0, total: photos.length });
+      const newPhotos = photos.filter((p) => !p.existing && p.file);
+      setUploadProgress({ done: 0, total: newPhotos.length });
       let photoFailCount = 0;
-      for (let i = 0; i < photos.length; i++) {
+      for (let i = 0; i < newPhotos.length; i++) {
         try {
-          const blob = await compressToMaxBytes(photos[i].file);
+          const blob = await compressToMaxBytes(newPhotos[i].file);
           const path = `${activityId}/${Date.now()}_${i}.jpg`;
           const { error: upErr } = await supabaseMarta.storage.from(PHOTO_BUCKET).upload(path, blob, { contentType: "image/jpeg" });
           if (upErr) throw upErr;
@@ -850,13 +920,13 @@ export default function SubmitActualPage() {
           photoFailCount++;
           console.error("[submit] gagal simpan foto dokumentasi:", photoErr);
         }
-        setUploadProgress({ done: i + 1, total: photos.length });
+        setUploadProgress({ done: i + 1, total: newPhotos.length });
       }
 
       await persistNewEntries();
 
       try { localStorage.removeItem(draftKey(activityId)); } catch { /* best-effort */ }
-      setResult({ ...data, photoFailCount, photoTotal: photos.length });
+      setResult({ ...data, photoFailCount, photoTotal: newPhotos.length });
     } catch (e) {
       setErr(e.message || "Gagal mengirim laporan");
     } finally {

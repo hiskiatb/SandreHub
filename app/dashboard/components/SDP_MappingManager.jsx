@@ -42,6 +42,15 @@ const mk = (d) => ({
 });
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
 
+
+// Chevron kustom via background-image (bukan panah native browser) supaya
+// jaraknya ke tepi kanan konsisten & tidak mepet di semua dropdown.
+const chevronBg = (color, sizePx = 10, offsetPx = 12) => ({
+  appearance: "none", WebkitAppearance: "none", MozAppearance: "none",
+  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1L5 5L9 1' stroke='${encodeURIComponent(color)}' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+  backgroundRepeat: "no-repeat", backgroundPosition: `right ${offsetPx}px center`, backgroundSize: `${sizePx}px`,
+});
+
 // ─── Static ───────────────────────────────────────────────────────────────────
 const BRANCH_MAP = {
   "CENTRAL SUMATERA": ["BATAM","DUMAI","JAMBI","PADANG","PEKANBARU"],
@@ -135,7 +144,7 @@ function CreateModal({ profile, supabase, sdpClusters, onCreated, onClose, t }) 
   const SL = ({ lbl, value, onChange, children }) => (
     <div style={{ marginBottom:11 }}>
       <div style={{ fontSize:11, fontWeight:700, color:t.mid, letterSpacing:.5, marginBottom:4 }}>{lbl}</div>
-      <select value={value} onChange={e=>onChange(e.target.value)} style={{ width:"100%", height:35, padding:"0 10px", borderRadius:8, fontFamily:FF, fontSize:13, color:t.hi, background:t.sub, border:`1px solid ${t.line}`, outline:"none" }}>
+      <select value={value} onChange={e=>onChange(e.target.value)} style={{ width:"100%", height:35, padding:"0 32px 0 10px", borderRadius:8, fontFamily:FF, fontSize:13, color:t.hi, background:t.sub, border:`1px solid ${t.line}`, outline:"none", cursor: "pointer", ...chevronBg(t.mid) }}>
         {children}
       </select>
     </div>
@@ -433,7 +442,7 @@ export default function SDP_MappingManager({ supabase, theme = "dark", profile }
           { val:fBuType, set:setFBuType, opts:[["ALL","Semua Type"],...BU_TYPES.map(b=>[b,b])] },
           { val:fBranch, set:setFBranch, opts:[["ALL","Semua Branch"],...allBranches.map(b=>[b,b])] },
         ].map((s,i)=>(
-          <select key={i} value={s.val} onChange={e=>s.set(e.target.value)} style={{ height:30, padding:"0 8px", borderRadius:8, fontFamily:FF, fontSize:11.5, color:t.hi, background:t.sub, border:`1px solid ${t.line}`, outline:"none", cursor:"pointer" }}>
+          <select key={i} value={s.val} onChange={e=>s.set(e.target.value)} style={{ height:30, padding:"0 24px 0 8px", borderRadius:8, fontFamily:FF, fontSize:11.5, color:t.hi, background:t.sub, border:`1px solid ${t.line}`, outline:"none", cursor:"pointer", ...chevronBg(t.mid, 8, 8) }}>
             {s.opts.map(([v,l])=><option key={v} value={v}>{l}</option>)}
           </select>
         ))}

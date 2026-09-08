@@ -26,6 +26,15 @@ const mk = (d) => ({
   sm: d ? "0 1px 4px rgba(0,0,0,.55)" : "0 1px 3px rgba(0,0,0,.06)",
 });
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
+
+
+// Chevron kustom via background-image (bukan panah native browser) supaya
+// jaraknya ke tepi kanan konsisten & tidak mepet di semua dropdown.
+const chevronBg = (color, sizePx = 10, offsetPx = 12) => ({
+  appearance: "none", WebkitAppearance: "none", MozAppearance: "none",
+  backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1L5 5L9 1' stroke='${encodeURIComponent(color)}' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
+  backgroundRepeat: "no-repeat", backgroundPosition: `right ${offsetPx}px center`, backgroundSize: `${sizePx}px`,
+});
 const STATUS_TONE = { validated: "ok", approved: "blue", submitted: "amber", draft: "lo", rejected: "acc" };
 
 export default function SDP_BatchMonitor({ supabase, theme = "dark", profile, onExit }) {
@@ -122,7 +131,7 @@ export default function SDP_BatchMonitor({ supabase, theme = "dark", profile, on
           </div>
         </div>
         <label style={{ fontSize: 11.5, fontWeight: 700, color: t.mid }}>Periode
-          <select value={period} onChange={(e) => setPeriod(e.target.value)} style={{ display: "block", marginTop: 4, padding: "8px 10px", borderRadius: 9, border: `1px solid ${t.line}`, background: t.inp, color: t.hi, fontSize: 13, fontFamily: FF, cursor: "pointer", minWidth: 170 }}>
+          <select value={period} onChange={(e) => setPeriod(e.target.value)} style={{ display: "block", marginTop: 4, padding: "8px 34px 8px 10px", borderRadius: 9, border: `1px solid ${t.line}`, background: t.inp, color: t.hi, fontSize: 13, fontFamily: FF, cursor: "pointer", minWidth: 170, ...chevronBg(t.mid) }}>
             <option value="all">Semua periode</option>
             {periods.map((p) => <option key={p} value={p}>{fmtSubmissionMonth(p)}</option>)}
           </select>

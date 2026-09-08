@@ -1,25 +1,19 @@
 "use client";
 /**
- * SDP_BulkGrid.jsx — Fase 1
- * Grid editable (mirip spreadsheet) untuk registrasi SDP massal — jalur desktop
- * untuk CSE/PIC/SPM. Fitur:
- *  - Tempel dari Excel dengan dialog PEMETAAN KOLOM (header sumber → field kanonik).
- *  - Validasi inline (sel merah + alasan) via lib/sdp.
- *  - Kolom scope (circle/region) terkunci dari profil; branch dibatasi scope.
- *  - Bulan siklus 1 nilai untuk seluruh batch (sumber YYMM ID).
- *  - Simpan Draft (ke server, status='draft') & Kirim massal (hanya baris valid) — auto-generate
- *    SDP ID per baris via RPC, Hybrid → sepasang baris SDP/KSK.
+ * SDP_BulkTermReb.jsx — Grid Massal (paste dari Excel) untuk Termination &
+ * Rebordering. Sama pola UX dengan SDP_BulkGrid (Registrasi Massal), versi
+ * lebih sederhana: kolom di grid ini mengikuti 1:1 header sheet HQ
+ * (02_Termination_Main / 03_Rebordering_Kec_Detail), tidak ada generate SDP
+ * ID (SDP sudah ada, tinggal dirujuk apa adanya) & tidak ada hybrid pairing.
  *
- * Props: { supabase, theme = "dark", profile, onExit }
+ * Props: { supabase, theme = "dark", profile, onExit, kind: "termination" | "rebordering" }
  */
 import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowLeft, Plus, Trash2, ClipboardPaste, Save, Check, Loader2, AlertCircle, X,
 } from "lucide-react";
-import {
-  SDP_LISTS, validateRegistrationRow, applyDerived, isHybridScope, isNewCreation, buildKecIndex,
-} from "../../../lib/sdp";
+import { SDP_LISTS } from "../../../lib/sdp";
 
 const mk = (d) => ({
   bg: d ? "#0D0D0F" : "#F2F4F7", card: d ? "#17171B" : "#FFFFFF",
@@ -34,154 +28,165 @@ const mk = (d) => ({
 });
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
 
-
-// Chevron kustom via background-image (bukan panah native browser) supaya
-// jaraknya ke tepi kanan konsisten & tidak mepet di semua dropdown.
 const chevronBg = (color, sizePx = 10, offsetPx = 12) => ({
   appearance: "none", WebkitAppearance: "none", MozAppearance: "none",
   backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6' fill='none'%3E%3Cpath d='M1 1L5 5L9 1' stroke='${encodeURIComponent(color)}' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`,
   backgroundRepeat: "no-repeat", backgroundPosition: `right ${offsetPx}px center`, backgroundSize: `${sizePx}px`,
 });
 
-// Kolom grid = field yang diisi manusia (kolom auto & HQ tidak ditampilkan).
-const COLS = [
-  { k: "brand", label: "Brand", enum: "brand", w: 90 },
-  { k: "request_type", label: "Request Type", enum: "request_type", w: 130 },
-  { k: "registration_scope", label: "Registration Scope", enum: "registration_scope", w: 150 },
-  { k: "branch", label: "Branch", type: "branch", w: 140 },
-  { k: "micro_cluster", label: "Micro Cluster", type: "micro_cluster", w: 150 },
-  { k: "sdp_name", label: "SDP Name", w: 200 },
-  { k: "partner_company_name", label: "Partner / Company", w: 200 },
-  { k: "customer_legal_name", label: "Customer Legal Name", w: 200 },
-  { k: "company_type", label: "Company Type", enum: "company_type", w: 140 },
-  { k: "status_company", label: "Status Company", enum: "status_company", w: 130 },
-  { k: "ktp_number", label: "KTP / NIK", w: 150 },
-  { k: "npwp_number", label: "NPWP", w: 150 },
-  { k: "kabupaten", label: "Kab/Kota", w: 140 },
-  { k: "kecamatan_coverage", label: "Kecamatan Coverage", w: 170 },
-  { k: "partner_territory", label: "Partner Territory", w: 150 },
-  { k: "hybrid_type", label: "Hybrid Type", w: 130 },
-  { k: "pairing_id", label: "Pairing ID", w: 140 },
-  { k: "pic_name_partner", label: "PIC Name", w: 150 },
-  { k: "pic_phone_number", label: "PIC Phone", w: 130 },
-  { k: "pic_email_partner", label: "PIC Email", w: 180 },
-  { k: "bank_name", label: "Bank Name", w: 140 },
-  { k: "bank_account_number", label: "No. Rekening", w: 150 },
-  { k: "bank_account_name", label: "Nama Rekening", w: 170 },
-  { k: "commitment_fee_status", label: "Commitment Fee", enum: "commitment_fee_status", w: 150 },
-  { k: "main_document_folder_link", label: "Folder Dokumen", w: 200 },
-  { k: "remarks", label: "Remarks", w: 200 },
-];
-
-const DB_COLS = [
-  "sdp_id_new", "pairing_id", "brand", "submission_month", "submission_date", "cycle_month",
-  "request_type", "registration_scope", "circle", "region", "branch", "sdp_name",
-  "partner_company_name", "customer_legal_name", "company_type", "status_company",
-  "ktp_number", "npwp_number", "pic_name_partner", "pic_phone_number", "msisdn_master_trx",
-  "pic_email_partner", "email_pic_ioh", "kabupaten", "kecamatan_coverage", "partner_territory",
-  "bill_to_address", "ship_to_address", "kode_pos", "need_sap_creation", "need_oracle_creation",
-  "hybrid_type", "cse_name", "cse_partner_id", "cse_number", "bank_name", "bank_branch_kcp",
-  "bank_account_number", "bank_account_name", "commitment_fee_status", "main_document_folder_link",
-  "branding_update_required", "branding_status", "remarks",
-];
+// Kolom grid = header sheet HQ apa adanya (kolom milik HQ seperti HQ
+// Validation Status / Final Status TIDAK ditampilkan — dibiarkan kosong).
+const CONFIG = {
+  termination: {
+    table: "sdp_termination",
+    title: "Termination — Grid Massal",
+    hint: "Tempel dari sheet 02_Termination_Main. Isi SDP Code — data wilayah & partner otomatis ditarik dari data registrasi (sdp_master), tidak perlu diketik ulang.",
+    required: ["circle", "branch", "sdp_code", "sdp_name", "termination_reason", "effective_termination_date"],
+    lookupKey: "sdp_code",
+    // Kolom ini ditarik otomatis dari sdp_master saat SDP Code dikenali —
+    // tetap bisa diedit manual (fallback bila SDP belum ada di master/lookup gagal).
+    derive: { sdp_name: "sdp_name", partner_territory: "pt_name", sdp_type: "sdp_type", region: "region", branch: "branch", area: "area", micro_cluster: "cluster" },
+    cols: [
+      { k: "circle", label: "Circle", enum: "circle", w: 110 },
+      { k: "sdp_code", label: "SDP Code", w: 120 },
+      { k: "region", label: "Region", derived: true, w: 130 },
+      { k: "area", label: "Area", derived: true, w: 130 },
+      { k: "branch", label: "Branch", derived: true, w: 140 },
+      { k: "micro_cluster", label: "Micro Cluster", derived: true, w: 150 },
+      { k: "partner_territory", label: "Partner Territory", derived: true, w: 150 },
+      { k: "sdp_type", label: "SDP Type", enum: "brand", derived: true, w: 100 },
+      { k: "sdp_name", label: "SDP Name", derived: true, w: 180 },
+      { k: "lokasi_sdp", label: "Lokasi SDP", w: 160 },
+      { k: "num_kec", label: "# KEC", w: 80 },
+      { k: "termination_reason", label: "Termination Reason", enum: "termination_reason", w: 160 },
+      { k: "last_active_date", label: "Last Active Date", w: 140 },
+      { k: "effective_termination_date", label: "Effective Termination Date", w: 170 },
+      { k: "kecamatan_return_completed", label: "Kec. Return Completed?", enum: "yes_no", w: 160 },
+      { k: "kecamatan_return_where", label: "Where the Kec. Return?", enum: "return_kecamatan", w: 170 },
+      { k: "circle_iom_link", label: "Circle IOM No./Link", w: 180 },
+      { k: "document_folder_link", label: "Document Folder Link", w: 190 },
+      { k: "pic_circle", label: "PIC Circle", w: 140 },
+      { k: "pic_hq", label: "PIC HQ", w: 140 },
+      { k: "remarks", label: "Remarks", w: 200 },
+    ],
+  },
+  rebordering: {
+    table: "sdp_rebordering",
+    title: "Rebordering Kecamatan — Grid Massal",
+    hint: "Tempel dari sheet 03_Rebordering_Kec_Detail. Isi Existing SDP ID — data SDP asal otomatis ditarik dari data registrasi (sdp_master); isi tujuan (AFTER) sesuai rencana pemindahan.",
+    required: ["circle", "kecamatan", "existing_sdp_id", "rebordering_to", "after_sdp_code"],
+    lookupKey: "existing_sdp_id",
+    derive: { existing_sdp_name: "sdp_name", existing_partner_territory: "pt_name", sdp_type: "sdp_type", existing_region: "region", existing_branch: "branch", existing_micro_cluster: "cluster" },
+    cols: [
+      { k: "circle", label: "Circle", enum: "circle", w: 110 },
+      { k: "kecamatan", label: "Kecamatan", w: 160 },
+      { k: "kabupaten", label: "Kab/Kota", w: 140 },
+      { k: "rebordering_action", label: "Re-Bordering Action", w: 170 },
+      { k: "existing_sdp_id", label: "Existing SDP ID", w: 130 },
+      { k: "sdp_type", label: "SDP Type", enum: "brand", derived: true, w: 100 },
+      { k: "existing_sdp_name", label: "Existing SDP Name", derived: true, w: 180 },
+      { k: "existing_partner_territory", label: "Existing Partner Territory", derived: true, w: 180 },
+      { k: "existing_region", label: "Existing Region", derived: true, w: 140 },
+      { k: "existing_branch", label: "Existing Branch", derived: true, w: 140 },
+      { k: "existing_micro_cluster", label: "Existing Micro Cluster", derived: true, w: 160 },
+      { k: "rebordering_to", label: "Re-Bordering to", w: 150 },
+      { k: "after_sdp_code", label: "AFTER SDP / MPx Code", w: 160 },
+      { k: "after_sdp_name", label: "AFTER SDP / MPx Name", w: 180 },
+      { k: "after_partner_territory", label: "AFTER Partner Territory", w: 170 },
+      { k: "after_region", label: "AFTER Region", w: 140 },
+      { k: "after_branch", label: "AFTER Branch", w: 140 },
+      { k: "after_micro_cluster", label: "AFTER Micro Cluster", w: 160 },
+      { k: "effective_date", label: "Effective Date", w: 140 },
+      { k: "approval_iom_link", label: "Approval / IOM Link", w: 180 },
+      { k: "owner", label: "Owner", w: 140 },
+      { k: "remarks", label: "Remarks", w: 200 },
+    ],
+  },
+};
 
 const uniq = (arr) => [...new Set(arr.filter((v) => v != null && String(v).trim() !== ""))].sort((a, b) => String(a).localeCompare(String(b)));
 const emptyRow = () => ({});
 const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
-export default function SDP_BulkGrid({ supabase, theme = "dark", profile, onExit }) {
+export default function SDP_BulkTermReb({ supabase, theme = "dark", profile, onExit, kind }) {
   const d = theme === "dark";
   const t = mk(d);
+  const cfg = CONFIG[kind] || CONFIG.termination;
   const role = profile?.role ?? "";
-  const brandLock = role === "bsm" ? (profile?.bsm_brand || "") : "";
 
-  const [combos, setCombos] = useState([]);
-  const [territory, setTerritory] = useState([]);
-  const [cycleMonth, setCycleMonth] = useState("");
   const [rows, setRows] = useState([emptyRow()]);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
   const [pasteOpen, setPasteOpen] = useState(false);
+  const [master, setMaster] = useState([]); // sdp_master (scoped) — sumber auto-fill
 
-  // Master geografi + Territory IOH (untuk dropdown Kecamatan/Kab).
-  useEffect(() => {
-    let on = true;
-    (async () => {
-      let tq = supabase.from("mf_territory").select("kec_id, mc_cluster, branch, region").eq("active", true);
-      if (role === "cse_rse" && profile?.cluster) tq = tq.eq("mc_cluster", profile.cluster);
-      else if (role === "bsm" && profile?.bsm_branch) tq = tq.eq("branch", profile.bsm_branch);
-      else if (profile?.region) tq = tq.eq("region", profile.region);
-      const [{ data: c }, { data: terr }] = await Promise.all([
-        supabase.rpc("sdp_territory_combos"),
-        tq.limit(20000),
-      ]);
-      if (!on) return;
-      setCombos(c || []);
-      setTerritory(terr || []);
-    })();
-    return () => { on = false; };
-  }, [supabase, role, profile?.cluster, profile?.bsm_branch, profile?.region]);
-
-  // Muat draft — sekarang disimpan di server (sdp_registration, status='draft'),
-  // bukan localStorage, supaya bisa dilanjut dari perangkat lain.
+  // Muat draft — disimpan di server (status='draft' di tabel cfg.table), bukan
+  // localStorage, supaya draft ikut akun & bisa dilanjut dari perangkat lain.
   useEffect(() => {
     let on = true;
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const { data } = await supabase.from("sdp_registration").select("*")
+      const { data } = await supabase.from(cfg.table).select("*")
         .eq("submitted_by", user.id).eq("status", "draft").order("created_at", { ascending: true });
       if (!on || !data?.length) return;
       setRows(data.map((r) => ({ ...r, __draftId: r.id })));
-      if (data[0]?.cycle_month) setCycleMonth(data[0].cycle_month);
     })();
     return () => { on = false; };
-  }, [supabase]);
+  }, [supabase, cfg.table]);
 
-  const scopeFilter = useMemo(() => (r) => {
-    if (role === "cse_rse" && profile?.cluster) return r.mc_cluster === profile.cluster;
-    if (role === "bsm" && profile?.bsm_branch) return r.branch === profile.bsm_branch;
-    if (profile?.region) return r.region === profile.region;
-    return true;
-  }, [role, profile?.cluster, profile?.bsm_branch, profile?.region]);
+  // Data SDP yang sudah diregistrasi — dipakai untuk auto-isi kolom wilayah/partner
+  // saat SDP Code / Existing SDP ID dikenali, supaya Circle tidak mengetik ulang
+  // data yang sebenarnya sudah pernah dikumpulkan saat registrasi.
+  useEffect(() => {
+    let on = true;
+    (async () => {
+      let q = supabase.from("sdp_master").select("sdp_id, sdp_name, sdp_type, pt_name, region, branch, area, cluster");
+      if (role === "cse_rse" && profile?.cluster) q = q.eq("cluster", profile.cluster);
+      else if (role === "bsm" && profile?.bsm_branch) q = q.eq("branch", profile.bsm_branch);
+      else if (profile?.region) q = q.eq("region", profile.region);
+      const { data } = await q.limit(20000);
+      if (on) setMaster(data || []);
+    })();
+    return () => { on = false; };
+  }, [supabase, role, profile?.cluster, profile?.bsm_branch, profile?.region]);
 
-  const allowedBranches = useMemo(() => uniq(combos.filter(scopeFilter).map((r) => r.branch)), [combos, scopeFilter]);
-  // Kab/Kota & Kecamatan Coverage dipersempit per-baris sesuai Micro Cluster
-  // baris itu (satu Branch bisa punya banyak MC dengan kab/kota berbeda-beda) —
-  // bukan lagi satu daftar gabungan untuk seluruh grid.
-  const kecIndexFor = (mc) => buildKecIndex(mc ? territory.filter((r) => r.mc_cluster === mc) : territory);
-  // Circle/region tetap dari profil (scope). Region ambil dari kombinasi jika kosong.
-  const lockedRegion = profile?.region || uniq(combos.filter(scopeFilter).map((r) => r.region))[0] || "";
+  const masterIndex = useMemo(() => {
+    const m = new Map();
+    for (const s of master) if (s.sdp_id) m.set(String(s.sdp_id).trim().toUpperCase(), s);
+    return m;
+  }, [master]);
 
-  const setCell = (i, k, v) => setRows((p) => p.map((r, idx) => (idx === i ? { ...r, [k]: v } : r)));
+  // Terapkan hasil lookup sdp_master ke satu baris (mengisi kolom "derive").
+  const applyLookup = (row) => {
+    if (!cfg.derive || !cfg.lookupKey) return row;
+    const key = String(row[cfg.lookupKey] || "").trim().toUpperCase();
+    if (!key) return row;
+    const s = masterIndex.get(key);
+    if (!s) return row;
+    const next = { ...row };
+    for (const [rowKey, masterKey] of Object.entries(cfg.derive)) {
+      if (s[masterKey] != null && s[masterKey] !== "") next[rowKey] = s[masterKey];
+    }
+    return next;
+  };
+
+  const setCell = (i, k, v) => setRows((p) => p.map((r, idx) => {
+    if (idx !== i) return r;
+    const next = { ...r, [k]: v };
+    // Ubah key lookup (SDP Code / Existing SDP ID) → auto-isi kolom turunannya.
+    return k === cfg.lookupKey ? applyLookup(next) : next;
+  }));
   const addRow = () => setRows((p) => [...p, emptyRow()]);
   const delRow = (i) => setRows((p) => (p.length === 1 ? [emptyRow()] : p.filter((_, idx) => idx !== i)));
 
-  // Bangun baris lengkap (isi scope + cycle) untuk validasi/simpan.
-  const hydrate = (r) => ({
-    ...r,
-    brand: brandLock || r.brand,
-    circle: "Sumatera",
-    region: r.region || lockedRegion,
-    cycle_month: cycleMonth,
-    submission_month: cycleMonth,
-  });
-
   const validity = useMemo(() => rows.map((r) => {
-    const h = hydrate(r);
-    const empty = COLS.every((c) => !h[c.k]);
+    const empty = cfg.cols.every((c) => !r[c.k]);
     if (empty) return { skip: true, valid: false, errors: {} };
-    const res = validateRegistrationRow(h);
-    // Branch di luar scope → tolak.
-    if (h.branch && allowedBranches.length && !allowedBranches.includes(h.branch)) {
-      res.errors.branch = "Branch di luar wewenang Anda."; res.valid = false;
-    }
-    // Grid hanya untuk pembuatan baru; Update/Terminate lewat Form.
-    if (h.request_type && !isNewCreation(h.request_type)) {
-      res.errors.request_type = "Update/Terminate: pakai Form, bukan grid."; res.valid = false;
-    }
-    return { skip: false, ...res };
-  }), [rows, cycleMonth, allowedBranches, lockedRegion, brandLock]);
+    const errors = {};
+    for (const rk of cfg.required) if (!r[rk]) errors[rk] = "Wajib diisi.";
+    return { skip: false, valid: Object.keys(errors).length === 0, errors };
+  }), [rows, cfg]);
 
   const stats = useMemo(() => {
     let valid = 0, invalid = 0, filled = 0;
@@ -189,36 +194,33 @@ export default function SDP_BulkGrid({ supabase, theme = "dark", profile, onExit
     return { valid, invalid, filled };
   }, [validity]);
 
-  // Simpan Draft → ke server (sdp_registration, status='draft'), bukan lagi
-  // localStorage, supaya draft ikut akun (bisa dibuka dari perangkat lain).
-  // Baris kosong dilewati; baris yang sudah pernah tersimpan (punya __draftId)
-  // di-update, baris baru di-insert (id hasilnya disimpan balik ke row).
+  // Simpan Draft → ke server (status='draft'); baris yang sudah punya
+  // __draftId di-update, baris baru di-insert (id-nya disimpan balik ke row).
   const saveDraft = async () => {
     setSaving(true); setMsg(null);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Sesi tidak ditemukan, login ulang.");
-      const filled = rows.map((r, i) => ({ r, i })).filter(({ r }) => COLS.some((c) => r[c.k]));
+      const filled = rows.map((r, i) => ({ r, i })).filter(({ r }) => cfg.cols.some((c) => r[c.k]));
       if (!filled.length) { setMsg({ type: "err", text: "Belum ada baris terisi untuk disimpan." }); return; }
 
       const idUpdates = [];
       for (const { r, i } of filled) {
-        const h = hydrate(r);
         const p = {};
-        for (const k of DB_COLS) if (h[k] !== undefined && h[k] !== "") p[k] = h[k];
+        for (const c of cfg.cols) if (r[c.k] !== undefined && r[c.k] !== "") p[c.k] = r[c.k];
         p.submitted_by = user.id;
         p.submitted_by_name = profile?.full_name || profile?.username || null;
         p.submitter_role = role;
-        p.submitter_brand = h.brand || null;
-        p.submitter_branch = profile?.bsm_branch || h.branch || null;
-        p.submitter_cluster = profile?.cluster || null;
-        p.submitter_region = h.region || null;
+        p.submitter_brand = profile?.bsm_brand || r.sdp_type || null;
+        p.submitter_branch = profile?.bsm_branch || r.branch || r.existing_branch || r.after_branch || null;
+        p.submitter_cluster = profile?.cluster || r.micro_cluster || r.existing_micro_cluster || null;
+        p.submitter_region = r.region || r.existing_region || r.after_region || null;
         p.status = "draft";
         if (r.__draftId) {
-          const { error } = await supabase.from("sdp_registration").update(p).eq("id", r.__draftId);
+          const { error } = await supabase.from(cfg.table).update(p).eq("id", r.__draftId);
           if (error) throw error;
         } else {
-          const { data, error } = await supabase.from("sdp_registration").insert(p).select("id").single();
+          const { data, error } = await supabase.from(cfg.table).insert(p).select("id").single();
           if (error) throw error;
           idUpdates.push({ i, id: data.id });
         }
@@ -233,22 +235,20 @@ export default function SDP_BulkGrid({ supabase, theme = "dark", profile, onExit
     } finally { setSaving(false); }
   };
 
-  // Tempel dari modal → set rows.
   const applyPaste = (mappedRows) => {
+    const looked = mappedRows.map((r) => applyLookup(r));
     setRows((p) => {
-      const base = p.filter((r) => COLS.some((c) => r[c.k])); // buang baris kosong
-      return [...base, ...mappedRows, emptyRow()];
+      const base = p.filter((r) => cfg.cols.some((c) => r[c.k]));
+      return [...base, ...looked, emptyRow()];
     });
     setPasteOpen(false);
-    setMsg({ type: "ok", text: `${mappedRows.length} baris ditempel. Periksa & lengkapi.` });
+    setMsg({ type: "ok", text: `${looked.length} baris ditempel. Kolom yang cocok dengan data registrasi terisi otomatis — periksa & lengkapi sisanya.` });
   };
 
-  // Kirim massal.
   const submit = async () => {
     setMsg(null);
-    if (!cycleMonth) { setMsg({ type: "err", text: "Isi Bulan Siklus dulu (di atas grid)." }); return; }
     const toSend = [];
-    validity.forEach((v, i) => { if (!v.skip && v.valid) toSend.push(hydrate(rows[i])); });
+    validity.forEach((v, i) => { if (!v.skip && v.valid) toSend.push(rows[i]); });
     if (!toSend.length) { setMsg({ type: "err", text: "Tidak ada baris valid untuk dikirim." }); return; }
 
     setSaving(true);
@@ -256,45 +256,31 @@ export default function SDP_BulkGrid({ supabase, theme = "dark", profile, onExit
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Sesi tidak ditemukan, login ulang.");
 
-      const payloads = [];
-      for (const row of toSend) {
-        const genArgs = { p_brand: row.brand, p_scope: row.registration_scope, p_circle: row.circle, p_cycle_month: row.cycle_month };
-        const { data: id1, error: e1 } = await supabase.rpc("generate_sdp_id", genArgs);
-        if (e1) throw e1;
-        let outRows = [{ ...row, sdp_id_new: id1 }];
-        if (isHybridScope(row.registration_scope)) {
-          const seq = parseInt(String(id1).slice(-2), 10);
-          const otherBrand = String(row.brand).toUpperCase() === "IM3" ? "3ID" : "IM3";
-          const { data: id2, error: e2 } = await supabase.rpc("generate_sdp_id", { ...genArgs, p_brand: otherBrand, p_seq: seq });
-          if (e2) throw e2;
-          outRows = [
-            { ...row, sdp_id_new: id1, pairing_id: id2 },
-            { ...row, brand: otherBrand, sdp_id_new: id2, pairing_id: id1 },
-          ];
-        }
-        for (const r of outRows) {
-          const r2 = applyDerived(r);
-          const p = {};
-          for (const k of DB_COLS) if (r2[k] !== undefined && r2[k] !== "") p[k] = r2[k];
-          p.submitted_by = user.id;
-          p.submitted_by_name = profile?.full_name || profile?.username || null;
-          p.submitter_role = role;
-          p.submitter_brand = r.brand || null;
-          p.submitter_branch = profile?.bsm_branch || r.branch || null;
-          p.submitter_cluster = profile?.cluster || r.micro_cluster || null;
-          p.submitter_region = r.region || null;
-          p.status = "submitted";
-          payloads.push(p);
-        }
-      }
+      const payloads = toSend.map((row) => {
+        const p = {};
+        for (const c of cfg.cols) if (row[c.k] !== undefined && row[c.k] !== "") p[c.k] = row[c.k];
+        p.submitted_by = user.id;
+        p.submitted_by_name = profile?.full_name || profile?.username || null;
+        p.submitter_role = role;
+        p.submitter_brand = profile?.bsm_brand || row.sdp_type || null;
+        p.submitter_branch = profile?.bsm_branch || row.branch || row.existing_branch || row.after_branch || null;
+        p.submitter_cluster = profile?.cluster || row.micro_cluster || row.existing_micro_cluster || null;
+        p.submitter_region = row.region || row.existing_region || row.after_region || null;
+        p.status = "submitted";
+        return p;
+      });
 
-      const { error } = await supabase.from("sdp_registration").insert(payloads);
-      if (error) throw error;
+      // Kirim per-chunk (aman untuk batch besar).
+      const CHUNK = 300;
+      for (let i = 0; i < payloads.length; i += CHUNK) {
+        const { error } = await supabase.from(cfg.table).insert(payloads.slice(i, i + CHUNK));
+        if (error) throw error;
+      }
 
       // Baris draft server yang sudah terkirim tidak perlu tersisa sebagai draft.
       const usedDraftIds = toSend.map((r) => r.__draftId).filter(Boolean);
       if (usedDraftIds.length) {
-        try { await supabase.from("sdp_registration").delete().in("id", usedDraftIds); } catch { /* ignore */ }
+        try { await supabase.from(cfg.table).delete().in("id", usedDraftIds); } catch { /* ignore */ }
       }
 
       setMsg({ type: "ok", text: `${payloads.length} baris terkirim ke database.` });
@@ -307,56 +293,19 @@ export default function SDP_BulkGrid({ supabase, theme = "dark", profile, onExit
   const cell = (i, c) => {
     const err = validity[i]?.errors?.[c.k];
     const v = rows[i][c.k] ?? "";
+    // Kolom "derive" yang sudah terisi otomatis dari sdp_master ditandai warna
+    // teal lembut, supaya kelihatan mana yang auto vs yang perlu diisi manual.
+    const autoFilled = c.derived && !!v && cfg.derive && Object.prototype.hasOwnProperty.call(cfg.derive, c.k);
     const base = {
       width: "100%", boxSizing: "border-box", padding: "6px 8px", borderRadius: 6, fontSize: 12.5, fontFamily: FF,
-      border: `1px solid ${err ? t.acc : "transparent"}`, background: err ? t.accBg : "transparent", color: t.hi, outline: "none",
+      border: `1px solid ${err ? t.acc : (autoFilled ? t.tealBd : "transparent")}`, background: err ? t.accBg : (autoFilled ? t.tealBg : "transparent"), color: t.hi, outline: "none",
     };
-    // Varian khusus <select> sel grid: ruang & panah kustom biar tidak mepet kanan
-    // (kolom grid sempit, jadi offset & ukuran panah dibikin lebih kecil).
     const baseSelect = { ...base, padding: "6px 22px 6px 8px", ...chevronBg(err ? t.acc : t.lo, 8, 7) };
     if (c.enum) {
-      const locked = c.k === "brand" && !!brandLock;
       return (
-        <select value={locked ? brandLock : v} disabled={locked} title={err || ""} onChange={(e) => setCell(i, c.k, e.target.value)} style={{ ...baseSelect, cursor: locked ? "default" : "pointer" }}>
+        <select value={v} title={err || ""} onChange={(e) => setCell(i, c.k, e.target.value)} style={{ ...baseSelect, cursor: "pointer" }}>
           <option value="">—</option>
           {(SDP_LISTS[c.enum] || []).map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
-      );
-    }
-    if (c.type === "branch") {
-      return (
-        <select value={v} title={err || ""} onChange={(e) => setCell(i, c.k, e.target.value)} style={{ ...baseSelect, cursor: "pointer" }}>
-          <option value="">—</option>
-          {allowedBranches.map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
-      );
-    }
-    if (c.type === "micro_cluster") {
-      // MC dipersempit oleh Branch baris ini (kalau sudah dipilih).
-      const opts = uniq(combos.filter(scopeFilter).filter((r) => !rows[i].branch || r.branch === rows[i].branch).map((r) => r.mc_cluster));
-      return (
-        <select value={v} title={err || ""} onChange={(e) => setCell(i, c.k, e.target.value)} style={{ ...baseSelect, cursor: "pointer" }}>
-          <option value="">—</option>
-          {opts.map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
-      );
-    }
-    if (c.k === "kabupaten") {
-      const opts = kecIndexFor(rows[i].micro_cluster).kabupatens;
-      return (
-        <select value={v} title={err || ""} onChange={(e) => setCell(i, c.k, e.target.value)} style={{ ...baseSelect, cursor: "pointer" }}>
-          <option value="">—</option>
-          {opts.map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
-      );
-    }
-    if (c.k === "kecamatan_coverage") {
-      const ki = kecIndexFor(rows[i].micro_cluster);
-      const opts = ki.kecamatanFor(rows[i].kabupaten);
-      return (
-        <select value={v} title={err || ""} onChange={(e) => { const kec = e.target.value; setRows((p) => p.map((r, idx) => (idx === i ? { ...r, kecamatan_coverage: kec, kabupaten: r.kabupaten || ki.kabOf(kec) } : r))); }} style={{ ...baseSelect, cursor: "pointer" }}>
-          <option value="">—</option>
-          {opts.map((o) => <option key={o} value={o}>{o}</option>)}
         </select>
       );
     }
@@ -369,22 +318,17 @@ export default function SDP_BulkGrid({ supabase, theme = "dark", profile, onExit
         <ArrowLeft size={15} /> Kembali
       </button>
 
-      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 12 }}>
-        <div>
-          <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: -0.4 }}>Registrasi SDP — Grid Massal</div>
-          <div style={{ fontSize: 12.5, color: t.mid, marginTop: 2 }}>
-            Tempel dari Excel atau isi manual. Circle <b>Sumatera</b>{lockedRegion ? ` · region ${lockedRegion}` : ""} terkunci; SDP ID otomatis saat kirim.
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: -0.4 }}>{cfg.title}</div>
+        <div style={{ fontSize: 12.5, color: t.mid, marginTop: 2 }}>{cfg.hint} SDP ID/kode dipakai apa adanya (tidak digenerate ulang).</div>
+        {cfg.derive && (
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 8, fontSize: 11, fontWeight: 700, color: t.tealD }}>
+            <span style={{ width: 10, height: 10, borderRadius: 3, background: t.tealBg, border: `1px solid ${t.tealBd}` }} />
+            Kolom warna teal = otomatis terisi dari data registrasi
           </div>
-        </div>
-        <label style={{ fontSize: 11.5, fontWeight: 700, color: t.mid }}>
-          Bulan Siklus (target live)
-          <input type="month" value={cycleMonth} onChange={(e) => setCycleMonth(e.target.value)}
-            style={{ display: "block", marginTop: 4, padding: "8px 10px", borderRadius: 9, border: `1.5px solid ${cycleMonth ? t.tealBd : t.line}`, background: t.inp, color: t.hi, fontSize: 13, fontFamily: FF, outline: "none", colorScheme: "auto" }} />
-          {!cycleMonth && <div style={{ marginTop: 4, fontSize: 10.5, fontWeight: 600, color: t.lo }}>Wajib diisi sebelum kirim</div>}
-        </label>
+        )}
       </div>
 
-      {/* Toolbar */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
         <Btn t={t} icon={ClipboardPaste} onClick={() => setPasteOpen(true)} accent>Tempel dari Excel</Btn>
         <Btn t={t} icon={Plus} onClick={addRow}>Tambah baris</Btn>
@@ -403,15 +347,13 @@ export default function SDP_BulkGrid({ supabase, theme = "dark", profile, onExit
         </div>
       )}
 
-      {/* Grid — wrapper relatif supaya bisa kasih indikator visual "masih ada kolom
-          di kanan" (fade), karena tabel ini lebar & scroll horizontal. */}
       <div style={{ position: "relative", borderRadius: 12, boxShadow: t.sm }}>
         <div style={{ overflow: "auto", border: `1px solid ${t.line}`, borderRadius: 12, background: t.card, maxHeight: "60vh" }}>
         <table style={{ borderCollapse: "separate", borderSpacing: 0, minWidth: 1400, width: "100%" }}>
           <thead>
             <tr>
               <th style={{ position: "sticky", top: 0, left: 0, zIndex: 3, background: t.head, padding: "8px 6px", fontSize: 11, fontWeight: 800, color: t.mid, width: 40, borderBottom: `1px solid ${t.line}` }}>#</th>
-              {COLS.map((c) => (
+              {cfg.cols.map((c) => (
                 <th key={c.k} style={{ position: "sticky", top: 0, zIndex: 2, background: t.head, padding: "8px 8px", fontSize: 11, fontWeight: 800, color: t.mid, textAlign: "left", minWidth: c.w, borderBottom: `1px solid ${t.line}`, whiteSpace: "nowrap" }}>{c.label}</th>
               ))}
               <th style={{ position: "sticky", top: 0, zIndex: 2, background: t.head, borderBottom: `1px solid ${t.line}`, width: 40 }}></th>
@@ -424,7 +366,7 @@ export default function SDP_BulkGrid({ supabase, theme = "dark", profile, onExit
               return (
                 <tr key={i} style={{ background: rowBad ? t.accBg : "transparent" }}>
                   <td style={{ position: "sticky", left: 0, zIndex: 1, background: rowBad ? t.accBg : t.card, padding: "4px 6px", fontSize: 11, color: t.lo, textAlign: "center", borderBottom: `1px solid ${t.line}` }}>{i + 1}</td>
-                  {COLS.map((c) => (
+                  {cfg.cols.map((c) => (
                     <td key={c.k} style={{ padding: "3px 4px", borderBottom: `1px solid ${t.line}` }}>{cell(i, c)}</td>
                   ))}
                   <td style={{ padding: "3px 4px", borderBottom: `1px solid ${t.line}`, textAlign: "center" }}>
@@ -447,7 +389,7 @@ export default function SDP_BulkGrid({ supabase, theme = "dark", profile, onExit
         </button>
       </div>
 
-      {pasteOpen && <PasteModal t={t} onClose={() => setPasteOpen(false)} onApply={applyPaste} />}
+      {pasteOpen && <PasteModal t={t} cols={cfg.cols} onClose={() => setPasteOpen(false)} onApply={applyPaste} />}
       <style>{`.spin{animation:sp 1s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
@@ -463,20 +405,18 @@ function Btn({ t, icon: Icon, onClick, children, accent }) {
   );
 }
 
-// ── Modal Tempel + Pemetaan Kolom ───────────────────────────────────────────────
-function PasteModal({ t, onClose, onApply }) {
+function PasteModal({ t, cols, onClose, onApply }) {
   const [text, setText] = useState("");
   const [hasHeader, setHasHeader] = useState(true);
-  const [step, setStep] = useState("paste"); // paste | map
-  const [grid, setGrid] = useState([]);       // 2D array sumber
-  const [mapping, setMapping] = useState([]); // index kolom sumber → field key ("" = abaikan)
+  const [step, setStep] = useState("paste");
+  const [grid, setGrid] = useState([]);
+  const [mapping, setMapping] = useState([]);
 
   const parse = () => {
     const lines = text.replace(/\r/g, "").split("\n").filter((l) => l.trim() !== "");
     if (!lines.length) return;
     const g = lines.map((l) => l.split("\t"));
     setGrid(g);
-    // auto-map berdasarkan header (jika ada) atau urutan kolom grid
     const width = Math.max(...g.map((r) => r.length));
     const header = hasHeader ? g[0] : null;
     const guess = [];
@@ -484,10 +424,10 @@ function PasteModal({ t, onClose, onApply }) {
       let found = "";
       if (header && header[ci]) {
         const h = norm(header[ci]);
-        const hit = COLS.find((c) => norm(c.label) === h || norm(c.k) === h || norm(c.label).includes(h) || h.includes(norm(c.k)));
+        const hit = cols.find((c) => norm(c.label) === h || norm(c.k) === h || norm(c.label).includes(h) || h.includes(norm(c.k)));
         if (hit) found = hit.k;
       }
-      if (!found && !header && COLS[ci]) found = COLS[ci].k; // tanpa header → posisi
+      if (!found && !header && cols[ci]) found = cols[ci].k;
       guess.push(found);
     }
     setMapping(guess);
@@ -504,9 +444,6 @@ function PasteModal({ t, onClose, onApply }) {
     onApply(out);
   };
 
-  // Portal ke document.body: ancestor (kartu SDP + motion.div framer-motion) pakai
-  // transform + overflow:hidden, yang membuat position:fixed ikut ter-clip ke
-  // kotak ancestor alih-alih menutupi seluruh layar. Portal melepas modal dari itu.
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
   if (!mounted) return null;
@@ -543,7 +480,7 @@ function PasteModal({ t, onClose, onApply }) {
           </>
         ) : (
           <>
-            <div style={{ fontSize: 12.5, color: t.mid, marginBottom: 12 }}>Cocokkan tiap kolom sumber ke field SDP. Kolom yang diset “— abaikan —” tidak ditempel.</div>
+            <div style={{ fontSize: 12.5, color: t.mid, marginBottom: 12 }}>Cocokkan tiap kolom sumber ke field. Kolom yang diset “— abaikan —” tidak ditempel.</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16, maxHeight: "48vh", overflow: "auto", paddingRight: 2 }}>
               {mapping.map((fk, ci) => (
                 <div key={ci} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "8px 10px", borderRadius: 10, background: fk ? t.tealBg : t.sub, border: `1px solid ${fk ? t.tealBd : t.line}` }}>
@@ -553,7 +490,7 @@ function PasteModal({ t, onClose, onApply }) {
                   <select value={fk} onChange={(e) => setMapping((m) => m.map((x, idx) => (idx === ci ? e.target.value : x)))}
                     style={{ flex: "1 1 180px", minWidth: 160, padding: "7px 30px 7px 9px", borderRadius: 8, border: `1px solid ${t.line}`, background: t.inp, color: t.hi, fontSize: 12.5, fontFamily: FF, cursor: "pointer", ...chevronBg(t.mid) }}>
                     <option value="">— abaikan —</option>
-                    {COLS.map((c) => <option key={c.k} value={c.k}>{c.label}</option>)}
+                    {cols.map((c) => <option key={c.k} value={c.k}>{c.label}</option>)}
                   </select>
                 </div>
               ))}

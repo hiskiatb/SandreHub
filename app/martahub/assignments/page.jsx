@@ -86,6 +86,37 @@ function formatLastActive(ts) {
   return d.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
 }
 
+// Status login/presence - versi CMS, SAMA PERSIS logikanya dgn
+// app/martahub/m/user-management/page.jsx (mobile) supaya kedua permukaan
+// menampilkan status yg identik utk orang yg sama (sumbernya SATU tabel
+// mh_presence, keyed by email, diisi lewat heartbeat MartaShell/MobileShell).
+const ACTIVE_WINDOW_MS = 3 * 60 * 1000;
+function loginStatus(p) {
+  const seenTs = p.last_seen_at ? new Date(p.last_seen_at).getTime() : NaN;
+  const loginTs = p.last_login_at ? new Date(p.last_login_at).getTime() : NaN;
+  const bestTs = !Number.isNaN(seenTs) ? seenTs : (!Number.isNaN(loginTs) ? loginTs : null);
+  const active = !Number.isNaN(seenTs) && (Date.now() - seenTs) < ACTIVE_WINDOW_MS;
+  if (active) return { active: true, label: "Aktif sekarang", color: T.success };
+  if (bestTs) return { active: false, label: `Terakhir aktif: ${formatLastActive(bestTs)}`, color: T.lo };
+  return { active: false, label: "Belum pernah login", color: "#B45309" };
+}
+function mergePresence(people, presenceRows) {
+  const map = new Map((presenceRows || []).map((r) => [(r.email || "").toLowerCase(), r.last_seen_at]));
+  for (const p of people || []) {
+    const seen = map.get((p.email || "").toLowerCase());
+    if (seen) p.last_seen_at = seen;
+  }
+}
+function LoginStatusBadge({ person, style }) {
+  const st = loginStatus(person);
+  return (
+    <div style={{ marginTop: 1, fontSize: 9.5, fontWeight: 700, color: st.color, display: "flex", alignItems: "center", gap: 4, ...style }}>
+      {st.active && <span style={{ width: 6, height: 6, borderRadius: "50%", background: T.success, flexShrink: 0, boxShadow: `0 0 0 3px ${T.success}26` }} />}
+      {st.label}
+    </div>
+  );
+}
+
 // Label + warna per jenis aksi di Log Aktivitas - dipakai desktop & (via
 // pola yg sama) mobile.
 const ACTION_META = {
@@ -156,14 +187,17 @@ function Body({ canManage, callerEmail }) {
   const load = useCallback(async () => {
     setLoading(true); setErr("");
     try {
-      const [a, p] = await Promise.all([
+      const [a, p, pres] = await Promise.all([
         supabaseMarta.rpc("mh_list_assignments"),
         supabaseMarta.from("mh_profiles").select("id, email, full_name, status").eq("status", "pending"),
+        supabaseMarta.rpc("mh_list_presence"),
       ]);
       if (a.error) throw new Error(a.error.message);
-      setRows(a.data || []);
+      const freshRows = a.data || [];
+      mergePresence(freshRows, pres.data);
+      setRows(freshRows);
       setPending(p.data || []);
-      return a.data || []; // dikembalikan supaya caller (mis. addAssignments) bisa langsung pakai data segar tanpa menunggu state re-render
+      return freshRows; // dikembalikan supaya caller (mis. addAssignments) bisa langsung pakai data segar tanpa menunggu state re-render
     } catch (e) { setErr(e.message || "Gagal memuat"); return []; }
     finally { setLoading(false); }
   }, []);
@@ -409,6 +443,14 @@ function Body({ canManage, callerEmail }) {
         </div>
       )}
 
+      {/* Super User (SPM Sumatera) - sumber datanya TERPISAH dari
+          mh_profiles/mh_assignments (tabel mh_super_admins), makanya diberi
+          kartu & RPC sendiri (mh_list/add/remove_super_admin), BUKAN bagian
+          dari isProtectedRole/visibleRows di atas. Hanya spm_sumatera/admin
+          (scope.unscoped) yg boleh lihat & kelola - Head/Brand TMV TIDAK
+          PERNAH melihat kartu ini walau canManage true utk mereka. */}
+      {scope?.unscoped && <SuperAdminCard callerEmail={callerEmail} />}
+
       {/* Assignments table / hierarki - spm_sumatera SENGAJA disaring dari
           apa pun yg ditampilkan/dikelola di sini (lihat isProtectedRole di
           atas) - identitasnya berasal dari pendaftaran SandraHub, bukan baris
@@ -466,7 +508,7 @@ function Body({ canManage, callerEmail }) {
                   </td>
                   <td style={{ padding: "10px 14px" }}>{r.logged_in ? badge("Aktif", T.success, T.successBg) : badge("Menunggu login", "#8a5b00", T.warningBg)}</td>
                   <td style={{ padding: "10px 14px", fontSize: 12 }}>
-                    {formatLastActive(r.last_login_at) || <span style={{ color: T.lo, fontStyle: "italic" }}>Belum pernah login</span>}
+                    <LoginStatusBadge person={r} style={{ fontSize: 12, fontWeight: 600 }} />
                   </td>
                   <td style={{ padding: "10px 14px", textAlign: "right", whiteSpace: "nowrap" }}>
                     {canManage && <button onClick={() => setEditRow(r)} style={{ ...btn, marginRight: 6 }}>Edit</button>}
@@ -574,6 +616,114 @@ function HierarchyTree({ rows }) {
         );
       })()}
       {rows.length === 0 && <div style={{ padding: 14, textAlign: "center", color: T.lo }}>Belum ada assignment.</div>}
+    </div>
+  );
+}
+
+/** Super User (SPM Sumatera) - akses penuh semua region & brand. Sumber
+ * datanya TERPISAH dari mh_profiles/mh_assignments (tabel mh_super_admins),
+ * sebelumnya cuma bisa diisi lewat migrasi manual satu-kali dari SandraHub
+ * (mh_super_admins_from_sandrahub) - sekarang bisa ditambah/dihapus
+ * langsung dari sini lewat RPC mh_list/add/remove_super_admin (otorisasi
+ * SAMA POLA dgn mh_assign_user: hanya spm_sumatera/admin, minimal 1 akun
+ * harus selalu ada, tidak bisa hapus akun sendiri - ditegakkan di RPC).
+ * Versi desktop dari SuperAdminSection di app/martahub/m/user-management. */
+function SuperAdminCard({ callerEmail }) {
+  const [admins, setAdmins] = useState(null);
+  const [err, setErr] = useState("");
+  const [emailInput, setEmailInput] = useState("");
+  const [nameInput, setNameInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [confirmTarget, setConfirmTarget] = useState(null);
+
+  const load = useCallback(async () => {
+    setErr("");
+    try {
+      const [{ data, error }, pres] = await Promise.all([
+        supabaseMarta.rpc("mh_list_super_admins"),
+        supabaseMarta.rpc("mh_list_presence"),
+      ]);
+      if (error) throw error;
+      const rows = data || [];
+      mergePresence(rows, pres.data);
+      setAdmins(rows);
+    } catch (e) { setErr(e.message || "Gagal memuat Super User"); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  async function handleAdd() {
+    if (!emailInput.trim() || !nameInput.trim() || saving) return;
+    setSaving(true); setErr("");
+    try {
+      const { error } = await supabaseMarta.rpc("mh_add_super_admin", {
+        p_email: emailInput.trim(), p_full_name: nameInput.trim(), p_caller_email: callerEmail || null,
+      });
+      if (error) throw error;
+      setEmailInput(""); setNameInput("");
+      await load();
+    } catch (e) { setErr(e.message || "Gagal menambah Super User"); }
+    finally { setSaving(false); }
+  }
+
+  async function handleRemove(email) {
+    setErr("");
+    try {
+      const { error } = await supabaseMarta.rpc("mh_remove_super_admin", { p_email: email, p_caller_email: callerEmail || null });
+      if (error) throw error;
+      setConfirmTarget(null);
+      await load();
+    } catch (e) { setErr(e.message || "Gagal menghapus Super User"); }
+  }
+
+  return (
+    <div style={{ ...card, marginBottom: 18, padding: 0, overflow: "hidden", borderColor: "#F0D48A" }}>
+      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.line}`, background: "linear-gradient(90deg,#FFF8E8,#FFFFFF)", display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ width: 30, height: 30, borderRadius: 9, background: "linear-gradient(150deg,#D97706,#F59E0B)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 3px 8px rgba(217,119,6,0.3)" }}>
+          <Crown size={15} color="#fff" />
+        </div>
+        <div>
+          <div style={{ fontWeight: 800, fontSize: 14 }}>Super User (SPM Sumatera) <span style={{ color: T.mid, fontWeight: 500 }}>· {admins ? admins.length : "…"}</span></div>
+          <div style={{ fontSize: 11.5, color: T.mid }}>Akses penuh semua region & brand - minimal 1 akun harus selalu ada</div>
+        </div>
+      </div>
+      <div style={{ padding: "12px 16px" }}>
+        {err && <div style={{ ...card, borderColor: T.error, background: T.errorBg, color: T.error, marginBottom: 10, padding: 10 }}>{err}</div>}
+        {(admins || []).map((a) => {
+          const isSelf = !!(callerEmail && a.email && a.email.toLowerCase() === callerEmail.toLowerCase());
+          return (
+            <div key={a.email} style={{ display: "flex", alignItems: "center", gap: 10, background: "#FBFBFC", border: `1px solid ${T.line}`, borderRadius: 10, padding: "8px 12px", marginBottom: 6 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
+                  {a.full_name || "-"}
+                  {isSelf && <span style={{ fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 999, color: T.success, background: T.successBg }}>Anda</span>}
+                </div>
+                <div style={{ fontSize: 11, color: T.mid }}>{a.email}</div>
+                <LoginStatusBadge person={a} />
+              </div>
+              {isSelf ? (
+                <div title="Anda tidak bisa menghapus akun sendiri" style={{ ...btn, color: T.lo, cursor: "default" }}><UserX size={13} /></div>
+              ) : (
+                <button onClick={() => setConfirmTarget(a)} style={{ ...btn, color: T.error, border: `1px solid ${T.error}44` }}><UserX size={13} /> Hapus</button>
+              )}
+            </div>
+          );
+        })}
+        {admins && admins.length === 0 && <div style={{ fontSize: 12.5, color: T.lo, padding: "6px 0" }}>Belum ada Super User.</div>}
+
+        <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+          <input value={emailInput} onChange={(e) => setEmailInput(e.target.value)} placeholder="Email" style={{ ...inp, flex: "1 1 200px" }} />
+          <input value={nameInput} onChange={(e) => setNameInput(e.target.value.toUpperCase())} placeholder="NAMA LENGKAP" style={{ ...inp, flex: "1 1 180px", textTransform: "uppercase" }} />
+          <button onClick={handleAdd} disabled={saving || !emailInput.trim() || !nameInput.trim()} style={{ ...pbtn, opacity: saving || !emailInput.trim() || !nameInput.trim() ? 0.5 : 1 }}>
+            {saving ? <Loader2 size={14} style={{ animation: "spin .8s linear infinite" }} /> : <UserPlus size={14} />} Tambah
+          </button>
+        </div>
+      </div>
+
+      {confirmTarget && (
+        <ConfirmModal title={`Hapus ${confirmTarget.full_name || confirmTarget.email}?`}
+          message="Akun ini akan dihapus dari daftar Super User (SPM Sumatera) - akses login lewat SandraHub tidak dicabut, tapi hak akses penuh MartaHub-nya berakhir. Tidak bisa dilakukan kalau ini Super User terakhir."
+          confirmLabel="Hapus" onConfirm={() => handleRemove(confirmTarget.email)} onClose={() => setConfirmTarget(null)} />
+      )}
     </div>
   );
 }
@@ -1437,11 +1587,11 @@ function CircleCard({ circle, canManage, callerEmail, onAdd, onRemove, onEdit })
         </div>
       </div>
       <div style={{ padding: "12px 18px 16px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "4px 22px" }}>
-        <SlotRow title="Head Trade Marketing & Visibility Sumatera" role="head" people={circle.head} canAdd={canManage && circle.head.length === 0} single
+        <SlotRow title="Head Trade Marketing & Visibility Sumatera" role="head" people={circle.head} canAdd={canManage}
           context={{ region: null, brand: null, branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} />
-        <SlotRow title="Trade Marketing & Visibility IM3 Sumatera" role="tmv" people={circle.tmvIm3} canAdd={canManage && circle.tmvIm3.length === 0} single
+        <SlotRow title="Trade Marketing & Visibility IM3 Sumatera" role="tmv" people={circle.tmvIm3} canAdd={canManage}
           context={{ region: null, brand: "im3", branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} accent={BRAND_COLOR_POP.im3} />
-        <SlotRow title="Trade Marketing & Visibility 3ID Sumatera" role="tmv" people={circle.tmvTri} canAdd={canManage && circle.tmvTri.length === 0} single
+        <SlotRow title="Trade Marketing & Visibility 3ID Sumatera" role="tmv" people={circle.tmvTri} canAdd={canManage}
           context={{ region: null, brand: "tri", branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} accent={BRAND_COLOR_POP.tri} />
       </div>
     </div>
@@ -1471,11 +1621,11 @@ function RegionCard({ region, canManage, callerEmail, onAdd, onRemove, onEdit })
         <div style={{ fontSize: 14, fontWeight: 800, color: T.hi }}>Region {titleCaseRegion(region.label)}</div>
       </div>
       <div style={{ padding: "12px 16px 16px" }}>
-        <SlotRow title="Head TMV" role="head" people={region.head} canAdd={canManage && region.head.length === 0} single
+        <SlotRow title="Head TMV" role="head" people={region.head} canAdd={canManage}
           context={{ region: region.key, brand: null, branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} />
-        <SlotRow title="TMV IM3" role="tmv" people={region.tmvIm3} canAdd={canManage && region.tmvIm3.length === 0} single
+        <SlotRow title="TMV IM3" role="tmv" people={region.tmvIm3} canAdd={canManage}
           context={{ region: region.key, brand: "im3", branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} accent={BRAND_COLOR_POP.im3} />
-        <SlotRow title="TMV 3ID" role="tmv" people={region.tmvTri} canAdd={canManage && region.tmvTri.length === 0} single
+        <SlotRow title="TMV 3ID" role="tmv" people={region.tmvTri} canAdd={canManage}
           context={{ region: region.key, brand: "tri", branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} accent={BRAND_COLOR_POP.tri} />
 
         <div style={{ marginTop: 14, fontSize: 11, fontWeight: 800, color: T.mid, textTransform: "uppercase", letterSpacing: "0.04em", display: "flex", alignItems: "center", gap: 6 }}>
@@ -1663,9 +1813,7 @@ function SlotRow({ title, role, mixedRoles, people, canAdd, context, onAdd, onRe
                 {isSelf && <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 999, color: T.success, background: T.successBg }}>Anda</span>}
               </div>
               <div style={{ fontSize: 10.5, color: T.mid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.email}</div>
-              <div style={{ marginTop: 1, fontSize: 9.5, fontWeight: 600, color: p.last_login_at ? T.lo : "#B45309" }}>
-                {p.last_login_at ? `Terakhir aktif: ${formatLastActive(p.last_login_at)}` : "Belum pernah login"}
-              </div>
+              <LoginStatusBadge person={p} />
             </div>
             <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 5 }}>
               {onEdit && (

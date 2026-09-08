@@ -86,12 +86,26 @@ export function BrandBadge({ brand, big }) {
 // lalu dialirkan balik. Butuh header Authorization, jadi tidak bisa dipakai
 // langsung sbg <img src> - di-fetch manual lalu diubah jadi object URL blob.
 const MEDIA_VIEW_URL = (process.env.NEXT_PUBLIC_MARTA_SUPABASE_URL || "").replace(/\/$/, "") + "/functions/v1/media-view";
-async function fetchAuthedPhotoBlobUrl(kind, id) {
+// ✅ Root cause "Dokumentasi Foto tidak muncul apa apa di CMS" (fotonya
+// SENDIRI ada, tersimpan di Supabase Storage - bukan soal Google Drive):
+// CMS desktop TIDAK PERNAH punya sesi Supabase asli terhadap project
+// MartaHub (akses digerbangi lewat sesi SandraHub + pencocokan email,
+// lihat lib/martaScope.js), jadi `supabaseMarta.auth.getSession()` di sini
+// SELALU null dan sebelumnya langsung throw "Belum login" tanpa sempat
+// mencoba apa pun - `photos` jadi kosong & section-nya tidak pernah
+// dirender. Sekarang, kalau tidak ada sesi Supabase asli, `callerEmail`
+// (email sesi SandraHub yg sudah divalidasi guardMarta di level halaman)
+// dikirim sbg query param `email` - media-view (edge function) yang
+// memverifikasi ke mh_profiles/mh_super_admins server-side, bukan
+// dipercaya begitu saja dari client.
+async function fetchAuthedPhotoBlobUrl(kind, id, callerEmail) {
   const { data: sessionData } = await supabaseMarta.auth.getSession();
   const token = sessionData?.session?.access_token;
-  if (!token) throw new Error("Belum login");
-  const res = await fetch(`${MEDIA_VIEW_URL}?kind=${encodeURIComponent(kind)}&id=${encodeURIComponent(id)}`, {
-    headers: { Authorization: `Bearer ${token}` },
+  if (!token && !callerEmail) throw new Error("Belum login");
+  const params = new URLSearchParams({ kind, id });
+  if (!token && callerEmail) params.set("email", callerEmail);
+  const res = await fetch(`${MEDIA_VIEW_URL}?${params.toString()}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!res.ok) throw new Error(`Gagal memuat foto (${res.status})`);
   const blob = await res.blob();
@@ -142,7 +156,7 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }
         if (photoDocs.length) {
           const withUrls = await Promise.all(
             photoDocs.map(async (d) => {
-              try { return { ...d, url: await fetchAuthedPhotoBlobUrl("document", d.id) }; }
+              try { return { ...d, url: await fetchAuthedPhotoBlobUrl("document", d.id, email) }; }
               catch { return { ...d, url: null }; }
             })
           );

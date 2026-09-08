@@ -6,16 +6,17 @@
 // tabel SDP Terbaru + pagination, panel Quick Actions & Aktivitas
 // Terbaru, siklus SDP, dan pengingat — bukan sekadar mobile yang
 // dibesarkan.
-// onNavigate → sub-menu Form SDP. Untuk aksi Register/Rebordering/
+// onNavigate → sub-menu SDP Management. Untuk aksi Register/Rebordering/
 // Terminate, kirim id majemuk "submission_forms:<jenis>" agar
 // SDP_StatusForm bisa langsung membuka form yang dituju.
 // ============================================================
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   ChevronDown, ChevronRight, ChevronLeft, CalendarDays, CheckCircle2, Clock, AlertTriangle, XCircle, FileText,
   Store, Ban, Hourglass, Pencil, KeyRound, TrendingUp, FilePlus2, FileMinus2, Shuffle, Loader2,
-  Users, Info, Activity, Eye, Download, UploadCloud, TableProperties, ShieldCheck, Inbox, Mail,
+  Users, Info, Activity, Eye, Download, UploadCloud, TableProperties, ShieldCheck, Inbox, Mail, LayoutGrid, X, FileSpreadsheet,
 } from "lucide-react";
 
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -227,7 +228,7 @@ function stepsFor(role, listMenuId) {
     { label: "Export ke HQ",       sub: "Blok siap-paste",     id: "export",    icon: Download },
   ];
   if (role === "bsm") return [
-    { label: "Approval", sub: "Setujui submission CSE", id: "approval",  icon: ShieldCheck },
+    // BSM tidak lagi jadi approver — submission CSE/RSE langsung ke PIC Region.
     { label: "Data SDP", sub: "Kelola & lengkapi",     id: listMenuId,  icon: CheckCircle2 },
     { label: "Registrasi", sub: "Daftarkan SDP baru",  id: "quickform", icon: FilePlus2 },
   ];
@@ -235,8 +236,120 @@ function stepsFor(role, listMenuId) {
   return [
     { label: "Registrasi SDP", sub: "Daftarkan SDP baru",     id: "quickform",  icon: FilePlus2 },
     { label: "Lengkapi Data",  sub: "Isi detail outlet",      id: listMenuId,   icon: Pencil },
-    { label: "Status Approval", sub: "Ikuti persetujuan BSM", id: "approval",   icon: ShieldCheck },
+    { label: "Status Approval", sub: "Ikuti persetujuan PIC Region", id: "approval",   icon: ShieldCheck },
   ];
+}
+
+// ════════════════════════ MENU TERKELOMPOK (untuk popup "Semua Menu") ════════════════════════
+// Satu sumber kebenaran dipakai oleh mobile & desktop, supaya popup menu selalu
+// konsisten dan tidak perlu instruksi langkah-demi-langkah — cukup kelompok +
+// label + deskripsi singkat per kartu.
+function menuGroupsFor(role, listMenuId, has) {
+  const groups = [
+    { title: "Isi & Ubah Data", items: [
+      { id: "quickform", icon: FilePlus2, label: "Registrasi SDP", sub: "Daftarkan SDP baru — ID otomatis", tint: "teal" },
+      { id: "submission_forms:termination", icon: FileMinus2, label: "Terminate SDP", sub: "Akhiri kemitraan SDP existing", tint: "brand" },
+      { id: "submission_forms:rebordering", icon: Shuffle, label: "Rebordering SDP", sub: "Pindahkan cakupan kecamatan", tint: "blue" },
+      { id: "bulkgrid", icon: FileText, label: "Registrasi Massal", sub: "Tempel dari Excel sekaligus", tint: "mag" },
+      { id: "initial_import", icon: FileSpreadsheet, label: "Import Data Awal", sub: "Baseline dari export HQ — SDP ID apa adanya", tint: "teal" },
+      { id: "bulk_termination", icon: FileMinus2, label: "Terminate Massal", sub: "Tempel dari sheet Termination sekaligus", tint: "brand" },
+      { id: "bulk_rebordering", icon: Shuffle, label: "Rebordering Massal", sub: "Tempel dari sheet Rebordering sekaligus", tint: "blue" },
+      { id: "drafts", icon: Inbox, label: "Draft & Link", sub: "Draft, link dibagikan & kiriman balik", tint: "mag" },
+    ] },
+    { title: "Pantau & Analitik", items: [
+      { id: "approval", icon: ShieldCheck, label: (role === "cse_rse" || role === "bsm") ? "Status Approval" : "Approval SDP", sub: (role === "cse_rse" || role === "bsm") ? "Status semua submission Anda" : "Setujui/tolak submission CSE/RSE", tint: "amber" },
+      { id: listMenuId, icon: Store, label: "Data SDP", sub: "Daftar lengkap, detail & lokasi", tint: "blue" },
+      { id: "summary", icon: TableProperties, label: "Ringkasan Siklus", sub: "Live · New · Terminate · Reb", tint: "blue" },
+      { id: "monitor", icon: Activity, label: "Monitor Kelengkapan", sub: "Progres pengisian per cluster", tint: "amber" },
+      { id: "report", icon: TrendingUp, label: "Laporan", sub: "Progres pengisian per periode", tint: "gold" },
+    ] },
+    { title: "Kelola & Export", items: [
+      { id: "export", icon: Download, label: "Export ke HQ", sub: "Blok siap-paste ke spreadsheet HQ", tint: "teal" },
+      { id: "mycodes", icon: KeyRound, label: "Kode Otoritas", sub: "Klaim cluster/branch Anda", tint: "mag" },
+      { id: "upload_territory", icon: UploadCloud, label: "Upload Territory", sub: "Acuan wilayah bulanan (SPM)", tint: "teal" },
+      { id: "email_mapping", icon: Mail, label: "Mapping Email Login", sub: "Email → role & branch (import Excel)", tint: "blue" },
+    ] },
+  ];
+  return groups.map((g) => ({ ...g, items: g.items.filter((it) => has(it.id)) })).filter((g) => g.items.length);
+}
+
+// Popup terpusat untuk memilih menu — dipicu 1 tombol ("Semua Menu"), isinya
+// dikelompokkan per tujuan, jadi tidak perlu banyak kartu selalu terpampang
+// di landing page. Tampilan menyesuaikan lebar layar (bottom-sheet di HP,
+// dialog di tengah untuk layar lebih lebar).
+function MenuPickerModal({ t, groups, nav, onClose }) {
+  const tintOf = (k) => ({ teal: t.teal, brand: t.brand, blue: t.blue, mag: t.mag, amber: t.amber, gold: t.gold }[k] || t.mid);
+  // Portal ke document.body: ancestor (kartu SDP + motion.div framer-motion) punya
+  // transform + overflow:hidden, yang membuat position:fixed di dalamnya ikut
+  // ter-clip mengikuti kotak ancestor alih-alih menutupi seluruh layar. Portal
+  // melepas modal dari batasan itu.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  if (!mounted) return null;
+  return createPortal((
+    <div onClick={onClose} style={{
+      position: "fixed", inset: 0, zIndex: 200, background: "rgba(10,10,14,.55)", backdropFilter: "blur(2px)",
+      display: "flex", alignItems: "flex-end", justifyContent: "center", fontFamily: FF,
+    }}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        background: t.card, width: "min(560px, 100%)", maxHeight: "85vh", overflow: "auto",
+        borderRadius: "20px 20px 0 0", boxShadow: t.md, padding: "18px 18px 24px", boxSizing: "border-box",
+      }} className="sdp-menu-sheet">
+        <div style={{ width: 40, height: 4, borderRadius: 99, background: t.line, margin: "0 auto 14px" }} />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 800, color: t.hi, letterSpacing: "-0.02em" }}>Semua Menu</div>
+            <div style={{ fontSize: 12, color: t.mid, marginTop: 2 }}>Pilih tujuan — dikelompokkan biar cepat ketemu</div>
+          </div>
+          <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 10, border: "none", background: t.sub, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+            <X size={16} />
+          </button>
+        </div>
+        {groups.map((g) => (
+          <div key={g.title} style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: "0.07em", textTransform: "uppercase", color: t.mid, marginBottom: 9 }}>{g.title}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {g.items.map((it) => {
+                const Icon = it.icon; const col = tintOf(it.tint);
+                return (
+                  <button key={it.id} onClick={() => { nav(it.id); onClose(); }} style={{
+                    display: "flex", alignItems: "center", gap: 13, padding: "12px 13px", borderRadius: 14,
+                    border: `1px solid ${t.line}`, background: t.sub, cursor: "pointer", textAlign: "left", fontFamily: FF, width: "100%",
+                  }}>
+                    <span style={{ width: 38, height: 38, borderRadius: 11, background: `${col}18`, color: col, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon size={18} /></span>
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: "block", fontSize: 13.5, fontWeight: 800, color: t.hi }}>{it.label}</span>
+                      <span style={{ display: "block", fontSize: 11.5, color: t.mid, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{it.sub}</span>
+                    </span>
+                    <ChevronRight size={16} color={t.lo} style={{ flexShrink: 0 }} />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        <style>{`
+          @media (min-width: 640px) {
+            .sdp-menu-sheet { border-radius: 20px !important; margin-bottom: auto; margin-top: auto; }
+          }
+        `}</style>
+      </div>
+    </div>
+  ), document.body);
+}
+
+// Tombol pemicu popup menu — satu titik akses jelas, dipakai di mobile & desktop.
+function MenuTriggerButton({ t, count, onClick, full }) {
+  return (
+    <button onClick={onClick} style={{
+      display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+      width: full ? "100%" : "auto", padding: "13px 18px", borderRadius: 14, cursor: "pointer", fontFamily: FF,
+      border: `1px solid ${t.line}`, background: t.card, boxShadow: t.sm, fontSize: 13.5, fontWeight: 800, color: t.hi,
+    }}>
+      <LayoutGrid size={16} color={t.brand} /> Semua Menu
+      {count > 0 && <span style={{ fontSize: 11, fontWeight: 800, color: t.mid, background: t.sub, borderRadius: 99, padding: "2px 8px" }}>{count}</span>}
+    </button>
+  );
 }
 
 function RoleStepper({ t, role, nav, has, listMenuId, nextStep }) {
@@ -283,6 +396,9 @@ function RoleStepper({ t, role, nav, has, listMenuId, nextStep }) {
 // ════════════════════════ MOBILE (replika app) ════════════════════════
 function MobileHome({ t, role, profile, period, periods, setPeriod, agg, pct, nav, listMenuId, availableIds, supervisor }) {
   const has = (id) => !availableIds || availableIds.has(id);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuGroups = useMemo(() => menuGroupsFor(role, listMenuId, has), [role, listMenuId, availableIds]);
+  const menuCount = useMemo(() => menuGroups.reduce((n, g) => n + g.items.length, 0), [menuGroups]);
   return (
     <div style={{ fontFamily: FF, color: t.hi, maxWidth: 720, margin: "0 auto" }}>
       {/* Greeting + role + periode */}
@@ -381,20 +497,11 @@ function MobileHome({ t, role, profile, period, periods, setPeriod, agg, pct, na
           <StatusRow t={t} icon={<FileText size={17} />} tone={t.lo} title="Belum lengkap" value={agg.belum} onClick={() => nav(listMenuId)} />
         </div>
 
-        {/* Akses cepat */}
-        <div style={{ fontSize: 15, fontWeight: 800, marginTop: 4 }}>Akses cepat</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 11 }}>
-          <QuickItem t={t} icon={<Store size={20} />} tint={t.blue} label="Data SDP" sub="Daftar & isi data" onClick={() => nav(listMenuId)} />
-          {has("quickform") && <QuickItem t={t} icon={<FilePlus2 size={20} />} tint={t.teal} label="Registrasi SDP" sub="Daftarkan SDP baru" onClick={() => nav("quickform")} />}
-          {has("drafts") && <QuickItem t={t} icon={<Inbox size={20} />} tint={t.mag} label="Draft & Link" sub="Draft & link dibagikan" onClick={() => nav("drafts")} />}
-          {has("submission_forms:termination") && <QuickItem t={t} icon={<FileMinus2 size={20} />} tint={t.brand} label="Terminate SDP" sub="Akhiri SDP existing" onClick={() => nav("submission_forms:termination")} />}
-          {has("submission_forms:rebordering") && <QuickItem t={t} icon={<Shuffle size={20} />} tint={t.blue} label="Rebordering" sub="Pindah kecamatan" onClick={() => nav("submission_forms:rebordering")} />}
-          {has("approval") && <QuickItem t={t} icon={<ShieldCheck size={20} />} tint={t.amber} label={role === "cse_rse" ? "Status Approval" : "Approval"} sub={role === "cse_rse" ? "Status submission Anda" : "Setujui submission CSE"} onClick={() => nav("approval")} />}
-          {has("summary") && <QuickItem t={t} icon={<TableProperties size={20} />} tint={t.blue} label="Ringkasan Siklus" sub="Live · New · Term · Reb" onClick={() => nav("summary")} />}
-          {has("report") && <QuickItem t={t} icon={<TrendingUp size={20} />} tint={t.gold} label="Laporan" sub="Progres pengisian" onClick={() => nav("report")} />}
-          {has("mycodes") && <QuickItem t={t} icon={<KeyRound size={20} />} tint={t.mag} label="Kode Otoritas" sub="Klaim cluster" onClick={() => nav("mycodes")} />}
-        </div>
+        {/* Satu titik akses ke semua menu lain — dikelompokkan dalam popup, bukan
+            kartu yang selalu terpampang. */}
+        {menuCount > 0 && <MenuTriggerButton t={t} count={menuCount} onClick={() => setMenuOpen(true)} full />}
       </div>
+      {menuOpen && <MenuPickerModal t={t} groups={menuGroups} nav={nav} onClose={() => setMenuOpen(false)} />}
     </div>
   );
 }
@@ -437,6 +544,7 @@ const PAGE_SIZE = 8;
 
 function DesktopDashboard({ t, role, profile, period, periods, setPeriod, agg, pct, monthCounts, sortedRows, page, setPage, nav, activity, listMenuId, availableIds, supervisor }) {
   const has = (id) => !availableIds || availableIds.has(id);
+  const [menuOpen, setMenuOpen] = useState(false);
   const totalPages = Math.max(1, Math.ceil(sortedRows.length / PAGE_SIZE));
   const pageRows = sortedRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const start = sortedRows.length ? (page - 1) * PAGE_SIZE + 1 : 0;
@@ -451,30 +559,10 @@ function DesktopDashboard({ t, role, profile, period, periods, setPeriod, agg, p
     { key: "pending", icon: <Hourglass size={19} />, label: "Menunggu Approval", value: agg.pending, sub: "perlu tindak lanjut", tint: t.amber },
   ];
 
-  // Navigasi utama dikelompokkan agar tiap menu punya TUJUAN BERBEDA yang jelas
-  // (bukan banyak tile yang semuanya menuju "Data SDP").
-  const menuGroups = [
-    { title: "Isi & Ubah Data", items: [
-      { need: "quickform", id: "quickform", icon: FilePlus2, label: "Registrasi SDP", sub: "Daftarkan SDP baru — ID otomatis", tint: t.teal },
-      { need: "submission_forms:termination", id: "submission_forms:termination", icon: FileMinus2, label: "Terminate SDP", sub: "Akhiri kemitraan SDP existing", tint: t.brand },
-      { need: "submission_forms:rebordering", id: "submission_forms:rebordering", icon: Shuffle, label: "Rebordering SDP", sub: "Pindahkan cakupan kecamatan", tint: t.blue },
-      { need: "bulkgrid", id: "bulkgrid", icon: FileText, label: "Registrasi Massal", sub: "Tempel dari Excel sekaligus", tint: t.mag },
-      { need: "drafts", id: "drafts", icon: Inbox, label: "Draft & Link", sub: "Draft, link dibagikan & kiriman balik", tint: t.mag },
-    ] },
-    { title: "Pantau & Analitik", items: [
-      { need: "approval", id: "approval", icon: ShieldCheck, label: role === "cse_rse" ? "Status Approval" : "Approval SDP", sub: role === "cse_rse" ? "Status semua submission Anda" : "Setujui/tolak submission CSE (semua jenis)", tint: t.amber },
-      { need: listMenuId, id: listMenuId, icon: Store, label: "Data SDP", sub: "Daftar lengkap, detail & lokasi", tint: t.blue },
-      { need: "summary", id: "summary", icon: TableProperties, label: "Ringkasan Siklus", sub: "Live · New · Terminate · Reb", tint: t.blue },
-      { need: "monitor", id: "monitor", icon: Activity, label: "Monitor Kelengkapan", sub: "Progres pengisian per cluster", tint: t.amber },
-      { need: "report", id: "report", icon: TrendingUp, label: "Laporan", sub: "Progres pengisian per periode", tint: t.gold },
-    ] },
-    { title: "Kelola & Export", items: [
-      { need: "export", id: "export", icon: Download, label: "Export ke HQ", sub: "Blok siap-paste ke spreadsheet HQ", tint: t.teal },
-      { need: "mycodes", id: "mycodes", icon: KeyRound, label: "Kode Otoritas", sub: "Klaim cluster/branch Anda", tint: t.mag },
-      { need: "upload_territory", id: "upload_territory", icon: UploadCloud, label: "Upload Territory", sub: "Acuan wilayah bulanan (SPM)", tint: t.teal },
-      { need: "email_mapping", id: "email_mapping", icon: Mail, label: "Mapping Email Login", sub: "Email → role & branch (import Excel)", tint: t.blue },
-    ] },
-  ].map((g) => ({ ...g, items: g.items.filter((it) => has(it.need)) })).filter((g) => g.items.length);
+  // Satu sumber menu terkelompok (sama dengan popup mobile) — dipakai untuk
+  // popup "Semua Menu" desktop.
+  const menuGroups = useMemo(() => menuGroupsFor(role, listMenuId, has), [role, listMenuId, availableIds]);
+  const menuCount = useMemo(() => menuGroups.reduce((n, g) => n + g.items.length, 0), [menuGroups]);
 
   return (
     <div style={{ fontFamily: FF, color: t.hi }}>
@@ -512,17 +600,13 @@ function DesktopDashboard({ t, role, profile, period, periods, setPeriod, agg, p
         ))}
       </div>
 
-      {/* Menu utama — tiap kartu tujuan berbeda & jelas */}
-      <div style={{ marginBottom: 22 }}>
-        {menuGroups.map((g) => (
-          <div key={g.title} style={{ marginBottom: 16 }}>
-            <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: "0.06em", textTransform: "uppercase", color: t.mid, marginBottom: 10 }}>{g.title}</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(215px, 1fr))", gap: 12 }}>
-              {g.items.map((it) => <MenuTile key={it.id} t={t} it={it} onClick={() => nav(it.id)} />)}
-            </div>
-          </div>
-        ))}
-      </div>
+      {/* Satu titik akses ke semua menu — popup terkelompok, bukan tile bertumpuk. */}
+      {menuCount > 0 && (
+        <div style={{ marginBottom: 22 }}>
+          <MenuTriggerButton t={t} count={menuCount} onClick={() => setMenuOpen(true)} />
+        </div>
+      )}
+      {menuOpen && <MenuPickerModal t={t} groups={menuGroups} nav={nav} onClose={() => setMenuOpen(false)} />}
 
       {/* Tabel SDP terbaru + panel kanan (aktivitas & pengingat) */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 18, alignItems: "start" }}>
@@ -628,20 +712,3 @@ function DesktopDashboard({ t, role, profile, period, periods, setPeriod, agg, p
   );
 }
 
-// Kartu menu desktop — satu tujuan jelas per kartu.
-function MenuTile({ t, it, onClick }) {
-  const Icon = it.icon;
-  return (
-    <button onClick={onClick}
-      onMouseEnter={(e) => { e.currentTarget.style.borderColor = `${it.tint}66`; e.currentTarget.style.boxShadow = t.md; e.currentTarget.style.transform = "translateY(-1px)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.borderColor = t.line; e.currentTarget.style.boxShadow = t.sm; e.currentTarget.style.transform = "none"; }}
-      style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 14px", borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, cursor: "pointer", fontFamily: FF, textAlign: "left", boxShadow: t.sm, transition: "all .15s ease" }}>
-      <span style={{ width: 40, height: 40, borderRadius: 11, background: `${it.tint}18`, color: it.tint, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon size={19} /></span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 14, fontWeight: 800, color: t.hi }}>{it.label}</div>
-        <div style={{ fontSize: 11.5, color: t.mid, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{it.sub}</div>
-      </div>
-      <ChevronRight size={16} color={t.lo} style={{ flexShrink: 0 }} />
-    </button>
-  );
-}

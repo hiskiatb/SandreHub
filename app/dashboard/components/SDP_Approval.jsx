@@ -6,14 +6,15 @@
  *   • Registrasi  (sdp_registration)   • Terminate  (sdp_termination)
  *   • Rebordering (sdp_rebordering)     • Edit Data  (sdp_edit_requests)
  *
- * Alur status: submitted (CSE) → approved (BSM) → validated (SPM) | rejected(+alasan)
+ * Alur status: submitted (CSE/RSE) → approved (PIC Region) → validated (SPM) | rejected(+alasan)
+ * BSM TIDAK lagi jadi approver — submission CSE/RSE langsung ditinjau PIC Region.
  * (Edit Data memakai RPC sdp_approve_edit / sdp_reject_edit yang menerapkan
  *  perubahan ke sdp_monthly_data; status PENDING/APPROVED/REJECTED dipetakan.)
  *
  * Dua mode (otomatis dari role):
- *   • Approver (bsm / spm_sumatera / pic_region): antrean "Menunggu approval"
- *     dengan Setujui / Tolak, ter-scope (BSM: branch × brand; PIC: region;
- *     SPM: seluruh Sumatera). Plus daftar yang sudah diproses.
+ *   • Approver (pic_region / spm_sumatera): antrean "Menunggu approval"
+ *     dengan Setujui / Tolak, ter-scope (PIC: region; SPM: seluruh Sumatera).
+ *     Plus daftar yang sudah diproses.
  *   • Pemilik (cse_rse): daftar submission SENDIRI (semua jenis) + status-nya.
  *
  * Catatan RLS: approve/tolak Registrasi/Terminate/Rebordering = UPDATE baris
@@ -37,8 +38,8 @@ const mk = (d) => ({
 
 const STAGE = {
   draft:     { label: "Draft",         tone: "lo" },
-  submitted: { label: "Menunggu BSM",  tone: "amber" },
-  approved:  { label: "Disetujui BSM", tone: "blue" },
+  submitted: { label: "Menunggu PIC Region", tone: "amber" },
+  approved:  { label: "Disetujui PIC Region", tone: "blue" },
   validated: { label: "Tervalidasi",   tone: "green" },
   rejected:  { label: "Ditolak",       tone: "red" },
 };
@@ -48,8 +49,7 @@ const KIND = {
   rebordering:  { label: "Rebordering", col: "#2563EB" },
   edit:         { label: "Edit Data",   col: "#B7791F" },
 };
-const APPROVER = ["bsm", "spm_sumatera", "pic_region"];
-const brandOfCluster = (c) => String(c || "").toUpperCase().startsWith("CS") ? "3ID" : "IM3";
+const APPROVER = ["spm_sumatera", "pic_region"]; // BSM tidak lagi ikut approval
 const fmtDate = (iso) => iso ? new Date(iso).toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
 const editStatus = (raw) => ({ PENDING: "submitted", APPROVED: "approved", REJECTED: "rejected" }[raw] || "submitted");
 
@@ -87,19 +87,16 @@ export default function SDP_Approval({ supabase, theme = "dark", profile, onExit
       // Scope sdp_id untuk edit-request (edit tak punya kolom branch/brand).
       let scopedIds = null;
       if (isApprover && role !== "spm_sumatera") {
+        // Hanya pic_region tersisa di sini (BSM sudah tidak lagi jadi approver).
         let mq = supabase.from("sdp_master").select("sdp_id, cluster").limit(20000);
-        if (role === "bsm" && profile?.bsm_branch) mq = mq.eq("branch", profile.bsm_branch);
-        else if (role === "pic_region" && profile?.region) mq = mq.eq("region", profile.region);
+        if (role === "pic_region" && profile?.region) mq = mq.eq("region", profile.region);
         const { data: mrows } = await mq;
-        let f = mrows || [];
-        if (role === "bsm" && profile?.bsm_brand) f = f.filter((r) => brandOfCluster(r.cluster) === profile.bsm_brand);
-        scopedIds = [...new Set(f.map((r) => r.sdp_id))];
+        scopedIds = [...new Set((mrows || []).map((r) => r.sdp_id))];
       }
 
       // Scope helper untuk 3 tabel submission (punya kolom submitter_*).
       const scoped = (q) => {
         if (!isApprover) return q.eq("submitted_by", uid || "__none__");
-        if (role === "bsm") { if (profile?.bsm_branch) q = q.eq("submitter_branch", profile.bsm_branch); if (profile?.bsm_brand) q = q.eq("submitter_brand", profile.bsm_brand); return q; }
         if (role === "pic_region" && profile?.region) return q.eq("submitter_region", profile.region);
         return q; // spm: semua
       };
@@ -152,12 +149,11 @@ export default function SDP_Approval({ supabase, theme = "dark", profile, onExit
 
   const pending = useMemo(() => items.filter((r) => r.status === "submitted"), [items]);
   const processed = useMemo(() => items.filter((r) => r.status !== "submitted"), [items]);
-  // Untuk CSE: branch & brand atasan (BSM) tempat approval diteruskan.
+  // Untuk CSE: region PIC yang menerima approval submission-nya.
   const cseScope = useMemo(() => {
     if (isApprover) return null;
-    const branches = [...new Set(items.map((i) => i.branch).filter(Boolean))].sort();
-    const brands = [...new Set(items.map((i) => i.brand).filter(Boolean))].sort();
-    return (branches.length || brands.length) ? { branches, brands } : null;
+    const regions = [...new Set(items.map((i) => i.region).filter(Boolean))].sort();
+    return regions.length ? { regions } : null;
   }, [items, isApprover]);
 
   const Badge = ({ status }) => {
@@ -181,8 +177,8 @@ export default function SDP_Approval({ supabase, theme = "dark", profile, onExit
           </div>
           <div style={{ fontSize: 12.5, color: t.mid, marginTop: 3 }}>
             {isApprover
-              ? <>Setujui / tolak semua submission CSE — Registrasi, Terminate, Rebordering & Edit Data{role === "bsm" ? ` (branch ${profile?.bsm_branch || "Anda"} · ${profile?.bsm_brand || ""})` : role === "pic_region" ? ` (region ${profile?.region || "Anda"})` : ""}.</>
-              : <>Pantau status persetujuan semua submission Anda (registrasi, terminate, rebordering, edit data).{cseScope ? <> Diteruskan ke <b>BSM {cseScope.branches.join(", ") || "—"}</b> · <b>{cseScope.brands.join("/") || "—"}</b>.</> : ""}</>}
+              ? <>Setujui / tolak semua submission CSE — Registrasi, Terminate, Rebordering & Edit Data{role === "pic_region" ? ` (region ${profile?.region || "Anda"})` : ""}.</>
+              : <>Pantau status persetujuan semua submission Anda (registrasi, terminate, rebordering, edit data).{cseScope ? <> Diteruskan ke <b>PIC Region {cseScope.regions.join(", ") || "—"}</b>.</> : ""}</>}
           </div>
         </div>
         <button onClick={load} title="Muat ulang" style={{ width: 40, height: 40, borderRadius: 10, border: `1px solid ${t.line}`, background: t.card, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><RefreshCw size={15} /></button>

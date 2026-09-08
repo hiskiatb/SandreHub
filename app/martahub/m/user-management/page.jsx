@@ -78,6 +78,53 @@ function formatLastActive(ts) {
   return d.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
 }
 
+// Ambang "aktif sekarang" - dicocokkan dgn HB_INTERVAL_MS (45 detik) di
+// MobileShell/MartaShell, dikasih toleransi ~2-3x lipat spy beberapa denyut
+// yg keliru terlewat (tab background dibuka lagi, jaringan sempat putus,
+// dst) tidak langsung membuat status "aktif" berkedip jadi tidak-aktif.
+const ACTIVE_WINDOW_MS = 3 * 60 * 1000;
+
+/** Status login satu orang, dgn 3 kemungkinan berbeda + waktunya (per
+ * permintaan user): "Aktif sekarang" (hijau, ada denyut presence dlm
+ * ACTIVE_WINDOW_MS terakhir - lihat mh_heartbeat/mh_presence), "Terakhir
+ * aktif: X lalu" (pernah login/presence tapi sudah lewat jendela aktif -
+ * pakai presence kalau ada, fallback ke last_login_at utk data lama sblm
+ * fitur ini ada), atau "Belum pernah login" (belum ada keduanya sama sekali). */
+function loginStatus(p) {
+  const seenTs = p.last_seen_at ? new Date(p.last_seen_at).getTime() : NaN;
+  const loginTs = p.last_login_at ? new Date(p.last_login_at).getTime() : NaN;
+  const bestTs = !Number.isNaN(seenTs) ? seenTs : (!Number.isNaN(loginTs) ? loginTs : null);
+  const active = !Number.isNaN(seenTs) && (Date.now() - seenTs) < ACTIVE_WINDOW_MS;
+  if (active) return { active: true, label: "Aktif sekarang", color: "#0F6E56" };
+  if (bestTs) return { active: false, label: `Terakhir aktif: ${formatLastActive(bestTs)}`, color: "#B0B0BA" };
+  return { active: false, label: "Belum pernah login", color: "#B45309" };
+}
+
+/** Merge peta email→last_seen_at (dari mh_list_presence) ke SEMUA objek
+ * orang di `people` (dimutasi in-place) - aman dipakai di sini krn
+ * fetchOrgHierarchy/mh_list_assignments mengembalikan referensi objek yg
+ * SAMA dipakai ulang di banyak slot/grup (head/tmv/branch dst), jadi satu
+ * mutasi di sini otomatis kepakai di semua tempat objek itu dirender. */
+function mergePresence(people, presenceRows) {
+  const map = new Map((presenceRows || []).map((r) => [(r.email || "").toLowerCase(), r.last_seen_at]));
+  for (const p of people || []) {
+    const seen = map.get((p.email || "").toLowerCase());
+    if (seen) p.last_seen_at = seen;
+  }
+}
+
+/** Badge kecil dipakai di baris orang - dot hijau berdenyut kalau aktif
+ * sekarang, teks waktu biasa kalau tidak. */
+function LoginStatusBadge({ person, style }) {
+  const st = loginStatus(person);
+  return (
+    <div style={{ marginTop: 1, fontSize: 9.5, fontWeight: 700, color: st.color, display: "flex", alignItems: "center", gap: 4, ...style }}>
+      {st.active && <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#0F6E56", flexShrink: 0, boxShadow: "0 0 0 3px rgba(15,110,86,0.15)" }} />}
+      {st.label}
+    </div>
+  );
+}
+
 const ACTION_META = {
   login: { label: "Login", color: "#0F6E56", bg: "rgba(15,110,86,0.1)" },
   logout: { label: "Logout", color: "#5A5A68", bg: "#F0F0F3" },
@@ -274,7 +321,11 @@ function OrgHierarchyView({ scope, email }) {
   const load = useCallback(async () => {
     setErr("");
     try {
-      const d = await fetchOrgHierarchy(scope, null);
+      const [d, presRes] = await Promise.all([
+        fetchOrgHierarchy(scope, null),
+        supabaseMarta.rpc("mh_list_presence"),
+      ]);
+      mergePresence(d.people, presRes.data);
       setData(d);
     } catch (e) { setErr(e.message || "Gagal memuat data"); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -407,6 +458,7 @@ function OrgHierarchyView({ scope, email }) {
         </div>
       ) : (
         <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 12 }}>
+          <SuperAdminSection email={email} />
           <CircleSection circleRef={circleRef} circle={data.circle} addableRoles={addableRoles} onSaveAssignment={saveAssignment} onRemove={setRemoveTarget} currentEmail={email} />
           {REGIONS.map((r) => {
             const region = data.regions.find((x) => x.key === r.key);
@@ -437,6 +489,92 @@ function JumpPill({ label, onClick }) {
   );
 }
 
+/** Super User (SPM Sumatera) - akses penuh semua region & brand, SUMBER
+ * datanya terpisah dari mh_assignments/mh_profiles (tabel mh_super_admins),
+ * makanya diberi panel & RPC sendiri (mh_list/add/remove_super_admin) -
+ * sebelumnya tabel ini cuma bisa diisi lewat migrasi manual satu-kali dari
+ * SandraHub, sekarang bisa ditambah/dihapus langsung dari sini (tetap
+ * dibatasi: minimal 1 akun harus selalu ada, dan tidak bisa menghapus akun
+ * sendiri - ditegakkan di RPC, bukan cuma di UI). Hanya muncul di pohon
+ * penuh (spm_sumatera/admin) - head/tmv tidak pernah lihat panel ini. */
+function SuperAdminSection({ email }) {
+  const [admins, setAdmins] = useState(null);
+  const [err, setErr] = useState("");
+  const [removeTarget, setRemoveTarget] = useState(null);
+  const [removing, setRemoving] = useState(false);
+  const [removeErr, setRemoveErr] = useState("");
+
+  const load = useCallback(async () => {
+    setErr("");
+    try {
+      const [{ data, error }, presRes] = await Promise.all([
+        supabaseMarta.rpc("mh_list_super_admins"),
+        supabaseMarta.rpc("mh_list_presence"),
+      ]);
+      if (error) throw error;
+      const rows = data || [];
+      mergePresence(rows, presRes.data);
+      setAdmins(rows);
+    } catch (e) { setErr(e.message || "Gagal memuat Super User"); }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function handleAdd(targetEmail, fullName) {
+    const { data: { user } } = await supabaseMarta.auth.getUser();
+    const { error } = await supabaseMarta.rpc("mh_add_super_admin", {
+      p_email: targetEmail, p_full_name: fullName, p_caller_email: user?.email || email || null,
+    });
+    if (error) throw error;
+    await load();
+  }
+
+  async function confirmRemove() {
+    if (!removeTarget) return;
+    setRemoving(true); setRemoveErr("");
+    try {
+      const { data: { user } } = await supabaseMarta.auth.getUser();
+      const { error } = await supabaseMarta.rpc("mh_remove_super_admin", { p_email: removeTarget.email, p_caller_email: user?.email || email || null });
+      if (error) throw error;
+      setRemoveTarget(null);
+      await load();
+    } catch (e) { setRemoveErr(e.message || "Gagal menghapus"); }
+    finally { setRemoving(false); }
+  }
+
+  if (admins === null && !err) return null;
+
+  const people = (admins || []).map((a) => ({ id: a.email, email: a.email, full_name: a.full_name, role: "spm_sumatera", last_seen_at: a.last_seen_at }));
+
+  return (
+    <div style={{ background: "#FFFFFF", border: "1.5px solid #FDE0C0", borderRadius: 18, overflow: "hidden", boxShadow: "0 4px 14px rgba(217,119,6,0.08)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "14px 15px", background: "linear-gradient(135deg,#FFF6EA,#FFFBF3)" }}>
+        <div style={{ width: 36, height: 36, borderRadius: 11, background: "linear-gradient(150deg,#D97706,#F59E0B)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, boxShadow: "0 3px 8px rgba(217,119,6,0.3)" }}>
+          <UserCog size={17} color="#fff" />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: "#17181C" }}>Super User (SPM Sumatera)</div>
+          <div style={{ marginTop: 1, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{people.length} akun · akses penuh semua region & brand</div>
+        </div>
+      </div>
+      <div style={{ padding: "10px 14px 14px" }}>
+        {err && <Notice color="#C62828" bg="#FDECEC">{err}</Notice>}
+        <InlineRoleRow title="AKUN SUPER USER" role="spm_sumatera" people={people} canAdd
+          context={{}} onSaveAssignment={({ targetEmail, fullName }) => handleAdd(targetEmail, fullName)}
+          onRemove={(p) => setRemoveTarget(p)} currentEmail={email} />
+        <div style={{ marginTop: 4, fontSize: 10.5, color: "#B0B0BA", lineHeight: 1.5 }}>
+          Super User punya akses penuh ke semua region & brand (setara Admin) - tambah/hapus dgn hati-hati. Minimal harus ada 1 akun Super User aktif & Anda tidak bisa menghapus akun Anda sendiri.
+        </div>
+      </div>
+      {removeTarget && (
+        <RemoveConfirmSheet person={removeTarget} loading={removing} err={removeErr}
+          onCancel={() => { setRemoveTarget(null); setRemoveErr(""); }}
+          onConfirm={confirmRemove} />
+      )}
+    </div>
+  );
+}
+
 /** Circle Sumatera - level PALING ATAS, tampil beda (aksen ungu + ikon
  * mahkota) supaya langsung kelihatan ini "puncak" hirarki, bukan sekadar
  * region ke-4. SELALU terbuka penuh (bukan accordion) - 3 slot posisinya
@@ -458,13 +596,13 @@ function CircleSection({ circleRef, circle, addableRoles, onSaveAssignment, onRe
         </div>
       </div>
       <div style={{ padding: "10px 14px 14px" }}>
-        <InlineRoleRow title={titles.head} role="head" people={circle.head} canAdd={addableRoles.includes("head") && circle.head.length === 0} single
+        <InlineRoleRow title={titles.head} role="head" people={circle.head} canAdd={addableRoles.includes("head")}
           context={{ region: null, brand: null, branchSlug: null, branchName: null }}
           onSaveAssignment={onSaveAssignment} onRemove={onRemove} currentEmail={currentEmail} />
-        <InlineRoleRow title={titles.tmvIm3} role="tmv" people={circle.tmvIm3} canAdd={addableRoles.includes("tmv") && circle.tmvIm3.length === 0} single
+        <InlineRoleRow title={titles.tmvIm3} role="tmv" people={circle.tmvIm3} canAdd={addableRoles.includes("tmv")}
           context={{ region: null, brand: "im3", branchSlug: null, branchName: null }}
           onSaveAssignment={onSaveAssignment} onRemove={onRemove} currentEmail={currentEmail} />
-        <InlineRoleRow title={titles.tmvTri} role="tmv" people={circle.tmvTri} canAdd={addableRoles.includes("tmv") && circle.tmvTri.length === 0} single
+        <InlineRoleRow title={titles.tmvTri} role="tmv" people={circle.tmvTri} canAdd={addableRoles.includes("tmv")}
           context={{ region: null, brand: "tri", branchSlug: null, branchName: null }}
           onSaveAssignment={onSaveAssignment} onRemove={onRemove} currentEmail={currentEmail} />
       </div>
@@ -527,16 +665,16 @@ function RegionPanel({ region, addableRoles, onSaveAssignment, onRemove, current
 
   return (
     <div>
-      <InlineRoleRow title={titles.head} role="head" people={region.head} canAdd={addableRoles.includes("head") && region.head.length === 0} single
+      <InlineRoleRow title={titles.head} role="head" people={region.head} canAdd={addableRoles.includes("head")}
         context={{ region: region.key, brand: null, branchSlug: null, branchName: null }}
         onSaveAssignment={onSaveAssignment} onRemove={onRemove} currentEmail={currentEmail} />
       {showIm3Slot && (
-        <InlineRoleRow title={titles.tmvIm3} role="tmv" people={region.tmvIm3} canAdd={addableRoles.includes("tmv") && region.tmvIm3.length === 0} single
+        <InlineRoleRow title={titles.tmvIm3} role="tmv" people={region.tmvIm3} canAdd={addableRoles.includes("tmv")}
           context={{ region: region.key, brand: "im3", branchSlug: null, branchName: null }}
           onSaveAssignment={onSaveAssignment} onRemove={onRemove} currentEmail={currentEmail} />
       )}
       {showTriSlot && (
-        <InlineRoleRow title={titles.tmvTri} role="tmv" people={region.tmvTri} canAdd={addableRoles.includes("tmv") && region.tmvTri.length === 0} single
+        <InlineRoleRow title={titles.tmvTri} role="tmv" people={region.tmvTri} canAdd={addableRoles.includes("tmv")}
           context={{ region: region.key, brand: "tri", branchSlug: null, branchName: null }}
           onSaveAssignment={onSaveAssignment} onRemove={onRemove} currentEmail={currentEmail} />
       )}
@@ -744,9 +882,7 @@ function InlineRoleRow({ title, role, mixedRoles, people, canAdd, context, onSav
               {isSelf && <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, letterSpacing: 0.2, padding: "1px 6px", borderRadius: 999, color: "#0F6E56", background: "rgba(15,110,86,0.1)" }}>Anda</span>}
             </div>
             <div style={{ fontSize: 10.5, color: "#8A8A96", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.email}</div>
-            <div style={{ marginTop: 1, fontSize: 9.5, fontWeight: 600, color: p.last_login_at ? "#B0B0BA" : "#B45309" }}>
-              {p.last_login_at ? `Terakhir aktif: ${formatLastActive(p.last_login_at)}` : "Belum pernah login"}
-            </div>
+            <LoginStatusBadge person={p} />
           </div>
           {!onRemove ? null : isSelf ? (
             <div title="Anda tidak bisa menghapus akun sendiri" style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 8, border: "1px solid #ECEDF0", background: "#F6F7F9", color: "#C7C7CF", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -891,9 +1027,14 @@ function TeamView({ scope, email }) {
       const { data: profile, error: pErr } = await supabaseMarta.from("mh_profiles").select("id").eq("email", email.toLowerCase()).maybeSingle();
       if (pErr) throw pErr;
       const myAssignmentId = profile?.id;
-      const { data, error } = await supabaseMarta.rpc("mh_list_assignments", { p_period: null });
+      const [{ data, error }, presRes] = await Promise.all([
+        supabaseMarta.rpc("mh_list_assignments", { p_period: null }),
+        supabaseMarta.rpc("mh_list_presence"),
+      ]);
       if (error) throw error;
-      setRows((data || []).filter((r) => myAssignmentId && r.supervisor_assignment_id === myAssignmentId));
+      const teamRows = (data || []).filter((r) => myAssignmentId && r.supervisor_assignment_id === myAssignmentId);
+      mergePresence(teamRows, presRes.data);
+      setRows(teamRows);
     } catch (e) { setErr(e.message || "Gagal memuat tim"); }
   }, [email]);
 
@@ -933,9 +1074,7 @@ function TeamView({ scope, email }) {
                   </span>
                 </div>
                 {r.dsf_org_id && <div style={{ marginTop: 2, fontSize: 10.5, color: "#8A8A96" }}>ORG ID: {r.dsf_org_id}</div>}
-                <div style={{ marginTop: 2, fontSize: 10, fontWeight: 600, color: r.last_login_at ? "#B0B0BA" : "#B45309" }}>
-                  {r.last_login_at ? `Terakhir aktif: ${formatLastActive(r.last_login_at)}` : "Belum pernah login"}
-                </div>
+                <LoginStatusBadge person={r} style={{ marginTop: 2, fontSize: 10 }} />
               </div>
             </div>
           ))}

@@ -36,7 +36,7 @@ const mk = (d) => ({
   md: d ? "0 6px 20px rgba(0,0,0,.55)" : "0 6px 18px rgba(0,0,0,.09)",
 });
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
-const GEOCOL = { circle: "circle", region: "region", branch: "branch" };
+const GEOCOL = { circle: "circle", region: "region", branch: "branch", micro_cluster: "mc_cluster" };
 
 // Kolom nyata di tabel sdp_registration yang boleh di-insert dari form.
 const DB_COLS = [
@@ -59,7 +59,7 @@ const STEPS = [
              ["cycle_month","Bulan Siklus (target live)","month"],["submission_date","Tanggal Submit","date"],
              ["pairing_id","Pairing ID (auto jika Hybrid)"],["hybrid_type","Hybrid Type","enum:hybrid_type"]] },
   { id: "wilayah", title: "Wilayah & Brand", icon: MapPin, hint: "Scope wilayah & brand — dasar pembentukan SDP ID.",
-    fields: [["brand","Brand","enum:brand"],["circle","Circle","geo"],["region","Region","geo"],["branch","Branch","geo"],
+    fields: [["brand","Brand","enum:brand"],["circle","Circle","geo"],["region","Region","geo"],["branch","Branch","geo"],["micro_cluster","Micro Cluster","geo"],
              ["kabupaten","Kab/Kota"],["kecamatan_coverage","Kecamatan Coverage"],["partner_territory","Partner Territory"],["sdp_name","SDP Name"]] },
   { id: "partner", title: "Data Partner", icon: Building2, hint: "Identitas & legalitas partner.",
     fields: [["partner_company_name","Partner / Company Name"],["customer_legal_name","Customer Legal Name"],
@@ -273,9 +273,13 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
     return true;
   }, [role, profile?.cluster, profile?.bsm_branch, profile?.region]);
 
+  // Rantai cascading Circle → Region → Branch → Micro Cluster. Micro Cluster
+  // ditambahkan supaya Kab/Kota & Kecamatan Coverage di bawahnya bisa dipersempit
+  // per-MC (satu Branch bisa punya banyak MC dengan kab/kota berbeda-beda).
+  const GEO_CHAIN = ["circle", "region", "branch", "micro_cluster"];
   const geoOptions = (field) => {
     const rows = combos.filter(scopeFilter).filter((r) => {
-      for (const g of ["circle", "region", "branch"]) {
+      for (const g of GEO_CHAIN) {
         if (g === field) continue;
         if (val[g] && r[GEOCOL[g]] !== val[g]) return false;
       }
@@ -287,13 +291,13 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
   // Auto-lock geo yang hanya punya 1 opsi.
   useEffect(() => {
     let changed = false; const next = { ...val };
-    for (const g of ["circle", "region", "branch"]) {
+    for (const g of GEO_CHAIN) {
       const opts = geoOptions(g);
       if (opts.length === 1 && next[g] !== opts[0]) { next[g] = opts[0]; changed = true; }
     }
     if (changed) setVal(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [combos, val.circle, val.region, val.branch]);
+  }, [combos, val.circle, val.region, val.branch, val.micro_cluster]);
 
   // Kunci brand BSM.
   useEffect(() => { if (brandLock && val.brand !== brandLock) set("brand", brandLock); /* eslint-disable-next-line */ }, [brandLock]);
@@ -301,7 +305,12 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
   // Jenis pembuatan baru → tak perlu SDP existing; bersihkan pilihan lama.
   useEffect(() => { if (isNewCreation(val.request_type)) setExistingSdpId(""); }, [val.request_type]);
 
-  const kecIndex = useMemo(() => buildKecIndex(territory), [territory]);
+  // Kab/Kota & Kecamatan Coverage dipersempit sesuai Micro Cluster yang dipilih
+  // (mf_territory punya kolom mc_cluster per baris kecamatan) — bukan lagi
+  // menggabungkan kab/kota dari seluruh branch/region sekaligus.
+  const kecIndex = useMemo(() => buildKecIndex(
+    val.micro_cluster ? territory.filter((r) => r.mc_cluster === val.micro_cluster) : territory
+  ), [territory, val.micro_cluster]);
 
   const willGenerate = isNewCreation(val.request_type);
   const idPreview = willGenerate
