@@ -22,7 +22,7 @@ import { fetchAuthedPhotoBlobUrl } from "../../_shared/mediaProxy";
 import DeleteActivitySheet from "../../_shared/DeleteActivitySheet";
 
 const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
-const A_COLS = "id,event_name,event_category,event_categories,brand,mc,site_id,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,poi_type,network_category,area_potential,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,target_rev_3m,cost_estimate,expected_outcome,actual_sp,actual_fwa,actual_rebuy_pulsa,actual_rebuy_data,actual_rev_3m,cost_actual,insight,checkin_valid,checkin_distance,checkin_at,approved_by_name,approved_at,approval_notes,validation_status,validation_note,validated_at,override_status,override_by_name,override_at,override_note,created_at,created_by";
+const A_COLS = "id,event_name,event_category,event_categories,brand,mc,site_id,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,poi_type,network_category,area_potential,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,target_rev_3m,cost_estimate,expected_outcome,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,actual_rev_3m,cost_actual,insight,checkin_valid,checkin_distance,checkin_at,approved_by_name,approved_at,approval_notes,validation_status,validation_note,validated_at,override_status,override_by_name,override_at,override_note,created_at,created_by";
 
 // Sama seperti syarat "siap diajukan" step Info + Lokasi di wizard Create
 // Plan (new/page.jsx validateStep) - dipakai utk deteksi draft yang masih
@@ -399,8 +399,8 @@ export default function ActivityDetailPage() {
                 bikin angka kepotong/wrap berantakan. */}
             <div style={{ gridColumn: "1 / -1" }}>
               <RebuyTile
-                spTarget={fmtRp(a.target_rebuy_pulsa)} spActual={a.actual_rebuy_pulsa == null ? "-" : fmtRp(a.actual_rebuy_pulsa)}
-                fwaTarget={fmtRp(a.target_rebuy_data)} fwaActual={a.actual_rebuy_data == null ? "-" : fmtRp(a.actual_rebuy_data)}
+                spTarget={fmtRp(a.target_rebuy_sp)} spActual={a.actual_rebuy_sp == null ? "-" : fmtRp(a.actual_rebuy_sp)}
+                fwaTarget={fmtRp(a.target_rebuy_fwa)} fwaActual={a.actual_rebuy_fwa == null ? "-" : fmtRp(a.actual_rebuy_fwa)}
               />
             </div>
             <div style={{ gridColumn: "1 / -1" }}>

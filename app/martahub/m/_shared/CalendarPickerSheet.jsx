@@ -27,6 +27,7 @@
  * `syncTimesByDate()`, `allDateTimesValid()`, `planTimeFields()`.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight, ChevronDown, ArrowRight, X, Check, Plus, Loader2, MapPin, CalendarDays, Clock, Info, AlertTriangle, CardSim, Router, Receipt } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import { FF, BRAND } from "./MobileShell";
@@ -558,12 +559,30 @@ export default function CalendarPickerSheet({ initialDates, initialTimesByDate, 
 // kebenaran utk grid Target/Actual SP·FWA·Rebuy·Cost + banner Estimasi
 // Revenue/Cost Ratio).
 function ActivityDetailPopup({ activity: a, onClose }) {
+  const router = useRouter();
   const stage = activityStage(a);
   const hasActual = a.actual_sp != null;
   const brandKey = (a.brand || "").toLowerCase();
+  // Shortcut edit - logika SAMA PERSIS dgn halaman Detail Aktivitas penuh
+  // (activities/[id]/page.jsx): draft/revision_needed dulu blm punya plan
+  // final jd cuma 1 tombol "Lanjutkan/Revisi Plan"; selain itu Plan & Laporan
+  // Actual sama2 boleh diedit kapan saja (gate tanggal/status sudah dihapus)
+  // jd tampil 2 tombol terpisah.
+  let editAction = null, editPlanAction = null, editActualAction = null;
+  if (a.status === "revision_needed") editAction = { label: "Revisi Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${a.id}`) };
+  else if (a.status === "draft") editAction = { label: "Lanjutkan Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${a.id}`) };
+  else {
+    editPlanAction = { label: "Edit Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${a.id}`) };
+    editActualAction = { label: hasActual ? "Edit Laporan Actual" : "Isi Laporan Actual", onTap: () => router.push(`/martahub/m/activities/${a.id}/submit`) };
+  }
   return (
     <div onClick={onClose}
-      style={{ position: "fixed", inset: 0, zIndex: 96, background: "rgba(23,24,28,0.42)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      // zIndex 110 - HARUS di atas BottomSheet (default 100, dipakai
+      // DateConfirmPopup/TimeEditPopup di sheet ini) krn popup ini paling
+      // sering dibuka DARI DALAM DateConfirmPopup (tap salah satu "N Plan
+      // Lain Sudah Ada") - kalau lebih rendah/sama, popup ini kepampang di
+      // BELAKANG DateConfirmPopup & tidak kelihatan/tidak bisa dipakai.
+      style={{ position: "fixed", inset: 0, zIndex: 110, background: "rgba(23,24,28,0.42)", display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
       <div onClick={(e) => e.stopPropagation()}
         style={{ width: "100%", maxWidth: 380, maxHeight: "calc(100dvh - 48px)", overflowY: "auto", background: "#FFFFFF", borderRadius: 20, padding: 18, fontFamily: FF, boxShadow: "0 12px 40px rgba(23,24,28,0.24)" }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
@@ -612,8 +631,8 @@ function ActivityDetailPopup({ activity: a, onClose }) {
           <MetricTile icon={Router} accent="#2563EB" label="FWA" target={fmtInt(a.target_fwa)} actual={hasActual ? fmtInt(a.actual_fwa) : "-"} />
           <div style={{ gridColumn: "1 / -1" }}>
             <RebuyTile
-              spTarget={fmtRp(a.target_rebuy_pulsa)} spActual={hasActual ? fmtRp(a.actual_rebuy_pulsa) : "-"}
-              fwaTarget={fmtRp(a.target_rebuy_data)} fwaActual={hasActual ? fmtRp(a.actual_rebuy_data) : "-"}
+              spTarget={fmtRp(a.target_rebuy_sp)} spActual={hasActual ? fmtRp(a.actual_rebuy_sp) : "-"}
+              fwaTarget={fmtRp(a.target_rebuy_fwa)} fwaActual={hasActual ? fmtRp(a.actual_rebuy_fwa) : "-"}
             />
           </div>
           <div style={{ gridColumn: "1 / -1" }}>
@@ -630,8 +649,34 @@ function ActivityDetailPopup({ activity: a, onClose }) {
             : (a.target_rev_3m > 0 ? `${((Number(a.cost_estimate) || 0) / a.target_rev_3m * 100).toFixed(1)}%` : "-")}
         />
 
+        {/* Shortcut edit - langsung lompat ke form Plan/Laporan Actual
+            activity ini tanpa harus balik ke daftar Aktivitas dulu &
+            cari lagi manual. */}
+        {editAction && (
+          <button onClick={editAction.onTap}
+            style={{ marginTop: 14, width: "100%", height: 44, borderRadius: 11, border: "none", background: BRAND, color: "#fff", fontSize: 12.5, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>
+            {editAction.label}
+          </button>
+        )}
+        {(editPlanAction || editActualAction) && (
+          <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: editPlanAction && editActualAction ? "1fr 1fr" : "1fr", gap: 8 }}>
+            {editPlanAction && (
+              <button onClick={editPlanAction.onTap}
+                style={{ height: 44, borderRadius: 11, border: "1px solid #ECEDF0", background: "#F6F7F9", color: "#3A3A44", fontSize: 12, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>
+                {editPlanAction.label}
+              </button>
+            )}
+            {editActualAction && (
+              <button onClick={editActualAction.onTap}
+                style={{ height: 44, borderRadius: 11, border: "none", background: BRAND, color: "#fff", fontSize: 12, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>
+                {editActualAction.label}
+              </button>
+            )}
+          </div>
+        )}
+
         <button onClick={onClose}
-          style={{ marginTop: 14, width: "100%", height: 42, borderRadius: 11, border: "none", background: "#F0F0F3", color: "#3A3A44", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
+          style={{ marginTop: 10, width: "100%", height: 42, borderRadius: 11, border: "none", background: "#F0F0F3", color: "#3A3A44", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
           Tutup
         </button>
       </div>

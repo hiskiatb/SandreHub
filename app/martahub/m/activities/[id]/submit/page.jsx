@@ -212,9 +212,10 @@ export default function SubmitActualPage() {
   const rebuyFwaDetailTotal = rebuyEntries.filter((r) => r.type === "fwa").reduce((s, r) => s + (Number(r.amount) || 0), 0);
   const rebuySpHasDetail = rebuyEntries.some((r) => r.type === "sp");
   const rebuyFwaHasDetail = rebuyEntries.some((r) => r.type === "fwa");
-  // actual_rebuy_pulsa/actual_rebuy_data di DB TIDAK diganti nama (dipakai jg
-  // oleh alur pengajuan revisi laporan) - sp dipetakan ke kolom "pulsa", fwa
-  // ke kolom "data", murni penamaan internal, tidak terlihat di UI.
+  // actual_rebuy_sp/actual_rebuy_fwa - dulu bernama actual_rebuy_pulsa/
+  // actual_rebuy_data di DB (istilah produk, bukan kategori SP/FWA spt di
+  // semua tempat lain) - sudah di-rename ke sp/fwa di level database supaya
+  // konsisten, tidak ada lagi dua istilah utk konsep yang sama.
   const rebuySpTotal = rebuySpHasDetail ? rebuySpDetailTotal : (Number(rebuySpTotalManual) || 0);
   const rebuyFwaTotal = rebuyFwaHasDetail ? rebuyFwaDetailTotal : (Number(rebuyFwaTotalManual) || 0);
 
@@ -310,7 +311,7 @@ export default function SubmitActualPage() {
     (async () => {
       try {
         const [{ data: a, error: e1 }, { data: sp }, { data: fwa }, { data: profile }] = await Promise.all([
-          supabaseMarta.from("mh_activities").select("id,event_name,brand,address,site_id,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,status,checkin_valid,actual_draft_saved_at,latitude,longitude,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_source").eq("id", activityId).single(),
+          supabaseMarta.from("mh_activities").select("id,event_name,brand,address,site_id,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,status,checkin_valid,actual_draft_saved_at,latitude,longitude,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_source").eq("id", activityId).single(),
           supabaseMarta.from("mh_product_types").select("id,name,unit_price,brand").eq("category", "sp").eq("active", true).order("name"),
           supabaseMarta.from("mh_product_types").select("id,name,unit_price,brand").eq("category", "fwa").eq("active", true).order("name"),
           scope?.email ? supabaseMarta.from("mh_profiles").select("dsf_org_id").eq("email", scope.email.toLowerCase()).maybeSingle() : Promise.resolve({ data: null }),
@@ -878,8 +879,8 @@ export default function SubmitActualPage() {
         actual_date: new Date().toISOString().slice(0, 10),
         actual_sp: actualSp,
         actual_fwa: actualFwa,
-        actual_rebuy_pulsa: rebuySpTotal,
-        actual_rebuy_data: rebuyFwaTotal,
+        actual_rebuy_sp: rebuySpTotal,
+        actual_rebuy_fwa: rebuyFwaTotal,
         actual_rev_3m: revenue,
         cost_actual: Number(costActual) || 0,
         insight: insight.trim() || null,
@@ -1640,7 +1641,7 @@ function Phone62Input({ value, onChange, placeholder }) {
  * dulu, baru nomor tujuan (manual, dikunci "62"), baru jenisnya SP/FWA,
  * baru masukkan amount-nya, tekan Tambah utk mencatat satu entri. Total
  * SP/FWA dihitung otomatis dari daftar entri utk dikirim ke
- * `actual_rebuy_pulsa/data` (kolom lama, dipetakan sbg sp/fwa). */
+ * `actual_rebuy_sp`/`actual_rebuy_fwa`. */
 function RebuySection({
   spTotalManual, onSpTotalManualChange, fwaTotalManual, onFwaTotalManualChange,
   spTotal, fwaTotal, spHasDetail, fwaHasDetail, detailOpen, onToggleDetail,

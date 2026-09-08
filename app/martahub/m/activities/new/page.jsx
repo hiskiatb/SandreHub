@@ -154,14 +154,14 @@ function CreatePlanWizardInner() {
   // qty produk/rebuy/budget cost berubah - tidak perlu tombol "hitung".
   const [targetSpProducts, setTargetSpProducts] = useState([]); // [{productTypeId,name,unitPrice,qty}]
   const [targetFwaProducts, setTargetFwaProducts] = useState([]);
-  const [targetRebuyPulsa, setTargetRebuyPulsa] = useState("0");
-  const [targetRebuyData, setTargetRebuyData] = useState("0");
+  const [targetRebuySp, setTargetRebuySp] = useState("0");
+  const [targetRebuyFwa, setTargetRebuyFwa] = useState("0");
   const [costEstimate, setCostEstimate] = useState("0");
   const targetSp = targetSpProducts.reduce((s, p) => s + (Number(p.qty) || 0), 0);
   const targetFwa = targetFwaProducts.reduce((s, p) => s + (Number(p.qty) || 0), 0);
   const targetSpRevenue = targetSpProducts.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.unitPrice) || 0), 0);
   const targetFwaRevenue = targetFwaProducts.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.unitPrice) || 0), 0);
-  const targetRebuyTotal = (Number(targetRebuyPulsa) || 0) + (Number(targetRebuyData) || 0);
+  const targetRebuyTotal = (Number(targetRebuySp) || 0) + (Number(targetRebuyFwa) || 0);
   const targetEstRevenue = targetSpRevenue + targetFwaRevenue + targetRebuyTotal;
   const targetCostRatio = targetEstRevenue > 0 ? ((Number(costEstimate) || 0) / targetEstRevenue) * 100 : null;
 
@@ -543,8 +543,8 @@ function CreatePlanWizardInner() {
     // (site_id) yang dicocokkan di effect terpisah di bawah.
     setTargetSpProducts(Array.isArray(a.target_sp_products) ? a.target_sp_products : []);
     setTargetFwaProducts(Array.isArray(a.target_fwa_products) ? a.target_fwa_products : []);
-    setTargetRebuyPulsa(String(a.target_rebuy_pulsa ?? 0));
-    setTargetRebuyData(String(a.target_rebuy_data ?? 0));
+    setTargetRebuySp(String(a.target_rebuy_sp ?? 0));
+    setTargetRebuyFwa(String(a.target_rebuy_fwa ?? 0));
     setCostEstimate(String(a.cost_estimate ?? 0));
     setPoiType(unsnake(a.poi_type));
     setNetwork(unsnake(a.network_category));
@@ -640,7 +640,7 @@ function CreatePlanWizardInner() {
     if (!readyRef.current) { readyRef.current = true; return; }
     setDirty(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wizardGateReady, categories, eventName, dates, timesByDate, targetSpProducts, targetFwaProducts, targetRebuyPulsa, targetRebuyData, costEstimate, primarySite, extraSites, poiType, network, area, address, manualLat, manualLng]);
+  }, [wizardGateReady, categories, eventName, dates, timesByDate, targetSpProducts, targetFwaProducts, targetRebuySp, targetRebuyFwa, costEstimate, primarySite, extraSites, poiType, network, area, address, manualLat, manualLng]);
 
   // Tinggi bar aksi bawah (Lanjut/Submit Plan) DIUKUR LANGSUNG - SAMA
   // polanya dgn action bar di halaman Laporan Actual/Detail Aktivitas.
@@ -715,7 +715,7 @@ function CreatePlanWizardInner() {
       // Target WAJIB diisi minimal SATU dari 4 (SP/FWA/Rebuy SP/Rebuy FWA) -
       // bukan malah boleh dikosongkan semua spt sebelumnya (plan tanpa
       // target apa pun tidak ada gunanya utk dievaluasi nanti).
-      const hasAnyTarget = targetSp > 0 || targetFwa > 0 || Number(targetRebuyPulsa) > 0 || Number(targetRebuyData) > 0;
+      const hasAnyTarget = targetSp > 0 || targetFwa > 0 || Number(targetRebuySp) > 0 || Number(targetRebuyFwa) > 0;
       if (!hasAnyTarget) bad.add("target");
       // Estimasi Budget Cost SEKARANG wajib diisi (bukan default 500rb yg
       // gampang kelewat tanpa disadari lalu ke-submit apa adanya) - DSF
@@ -765,7 +765,7 @@ function CreatePlanWizardInner() {
   function hasAnyDraftContent() {
     return !!(
       eventName.trim() || categories.length > 0 || validDates.length > 0 ||
-      targetSpProducts.length > 0 || targetFwaProducts.length > 0 || Number(targetRebuyPulsa) || Number(targetRebuyData) || Number(costEstimate) ||
+      targetSpProducts.length > 0 || targetFwaProducts.length > 0 || Number(targetRebuySp) || Number(targetRebuyFwa) || Number(costEstimate) ||
       primarySite || extraSites.length > 0 || address.trim() ||
       tagEntries.sp.length > 0 || tagEntries.fwa.length > 0
     );
@@ -841,8 +841,8 @@ function CreatePlanWizardInner() {
         target_fwa: Number(targetFwa) || 0,
         target_sp_products: targetSpProducts.filter((p) => Number(p.qty) > 0),
         target_fwa_products: targetFwaProducts.filter((p) => Number(p.qty) > 0),
-        target_rebuy_pulsa: Number(targetRebuyPulsa) || 0,
-        target_rebuy_data: Number(targetRebuyData) || 0,
+        target_rebuy_sp: Number(targetRebuySp) || 0,
+        target_rebuy_fwa: Number(targetRebuyFwa) || 0,
         cost_estimate: Number(costEstimate) || 0,
         // Estimasi Total Revenue (sum qty×harga produk SP+FWA + rebuy) -
         // dihitung otomatis di sisi klien (lihat targetEstRevenue di atas)
@@ -1089,7 +1089,7 @@ function CreatePlanWizardInner() {
             targetSpProducts, setTargetSpProducts, targetFwaProducts, setTargetFwaProducts,
             spProductOptions: tagTypes.sp, fwaProductOptions: tagTypes.fwa,
             targetSp, targetFwa, targetSpRevenue, targetFwaRevenue, targetRebuyTotal, targetEstRevenue, targetCostRatio,
-            targetRebuyPulsa, setTargetRebuyPulsa, targetRebuyData, setTargetRebuyData, costEstimate, setCostEstimate,
+            targetRebuySp, setTargetRebuySp, targetRebuyFwa, setTargetRebuyFwa, costEstimate, setCostEstimate,
             tagOwnOrgId, tagActiveOrgId, setTagActiveOrgId, tagInput, setTagInput, tagFieldErr, tagEntries, tagPending, addTagMsisdn, addTagMsisdnBulk, tagBulkBusy, removeTagEntry,
             tagConflict, setTagConflict, confirmTagConflict, ownLabel: scope?.fullName, invalid,
           }} />
@@ -1098,7 +1098,7 @@ function CreatePlanWizardInner() {
           <StepReview {...{
             categories, eventName, dates: validDates, timesByDate,
             targetSpProducts, targetFwaProducts, targetSp, targetFwa, targetSpRevenue, targetFwaRevenue,
-            targetRebuyPulsa, targetRebuyData, costEstimate, targetEstRevenue, targetCostRatio,
+            targetRebuySp, targetRebuyFwa, costEstimate, targetEstRevenue, targetCostRatio,
             primarySite, extraSites, poiType, network, area, address, manualLat, manualLng,
             branchName: effectiveScope.branchNameDisplay,
           }} />
@@ -1315,7 +1315,7 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
 function StepTarget({
   targetSpProducts, setTargetSpProducts, targetFwaProducts, setTargetFwaProducts, spProductOptions, fwaProductOptions,
   targetSp, targetFwa, targetSpRevenue, targetFwaRevenue, targetRebuyTotal, targetEstRevenue, targetCostRatio,
-  targetRebuyPulsa, setTargetRebuyPulsa, targetRebuyData, setTargetRebuyData, costEstimate, setCostEstimate,
+  targetRebuySp, setTargetRebuySp, targetRebuyFwa, setTargetRebuyFwa, costEstimate, setCostEstimate,
   tagOwnOrgId, tagActiveOrgId, setTagActiveOrgId, tagInput, setTagInput, tagFieldErr, tagEntries, tagPending, addTagMsisdn, addTagMsisdnBulk, tagBulkBusy, removeTagEntry,
   tagConflict, setTagConflict, confirmTagConflict, ownLabel, invalid,
 }) {
@@ -1365,9 +1365,9 @@ function StepTarget({
             permintaan, rebuy tidak dipecah per jenis produk - tapi headernya
             (ikon bulat + label) disamakan gayanya dgn Target Penjualan
             SP/FWA di atas supaya satu kartu ini terasa konsisten. */}
-        <AmountTargetGroup icon={CardSim} accent="#B45309" label="Target Rebuy SP" value={targetRebuyPulsa} onChange={setTargetRebuyPulsa} />
+        <AmountTargetGroup icon={CardSim} accent="#B45309" label="Target Rebuy SP" value={targetRebuySp} onChange={setTargetRebuySp} />
         <div style={{ marginTop: 14 }}>
-          <AmountTargetGroup icon={RouterIcon} accent="#0D9488" label="Target Rebuy FWA" value={targetRebuyData} onChange={setTargetRebuyData} />
+          <AmountTargetGroup icon={RouterIcon} accent="#0D9488" label="Target Rebuy FWA" value={targetRebuyFwa} onChange={setTargetRebuyFwa} />
         </div>
         {invalid?.has("target") && <FieldError text="Isi minimal satu target (SP, FWA, Rebuy SP, atau Rebuy FWA) - tidak boleh kosong semua." />}
       </Card>
@@ -1815,8 +1815,8 @@ function StepReview(p) {
       <ReviewSection icon={Tag} accent="#C6168D" title="Target & Estimasi">
         <ReviewRow icon={CardSim} k="Target SP" v={`${fmtInt(p.targetSp)} unit · Rp ${fmtInt(p.targetSpRevenue)}`} />
         <ReviewRow icon={RouterIcon} k="Target FWA" v={`${fmtInt(p.targetFwa)} unit · Rp ${fmtInt(p.targetFwaRevenue)}`} />
-        <ReviewRow icon={CardSim} k="Rebuy SP" v={`Rp ${fmtInt(p.targetRebuyPulsa)}`} />
-        <ReviewRow icon={RouterIcon} k="Rebuy FWA" v={`Rp ${fmtInt(p.targetRebuyData)}`} />
+        <ReviewRow icon={CardSim} k="Rebuy SP" v={`Rp ${fmtInt(p.targetRebuySp)}`} />
+        <ReviewRow icon={RouterIcon} k="Rebuy FWA" v={`Rp ${fmtInt(p.targetRebuyFwa)}`} />
         <ReviewRow icon={Receipt} k="Budget Cost" v={`Rp ${fmtInt(p.costEstimate)}`} last />
 
         {/* Ringkasan estimasi ditonjolkan - gaya SAMA dgn TargetSummaryCard

@@ -50,7 +50,7 @@ function regionColor(region) { return REGION_COLOR[region] || "#F57C00"; }
 const BRAND_LOGO = { IM3: "/brand/logo-im3.png", "3ID": "/brand/logo-3id.png" };
 
 const MONTH_NAME = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
-const COLS = "id,event_name,brand,branch_id,plan_date,status,actual_sp,actual_fwa,actual_rebuy_pulsa,actual_rebuy_data,cost_actual,actual_rev_3m";
+const COLS = "id,event_name,brand,branch_id,plan_date,status,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,cost_actual,actual_rev_3m";
 
 function monthOptions() {
   const now = new Date();
@@ -182,7 +182,7 @@ function Body({ email }) {
   const totalCost = approvedRows.reduce((s, r) => s + (r.cost_actual || 0), 0);
   const totalSp = approvedRows.reduce((s, r) => s + (r.actual_sp || 0), 0);
   const totalFwa = approvedRows.reduce((s, r) => s + (r.actual_fwa || 0), 0);
-  const totalRebuy = approvedRows.reduce((s, r) => s + (r.actual_rebuy_pulsa || 0) + (r.actual_rebuy_data || 0), 0);
+  const totalRebuy = approvedRows.reduce((s, r) => s + (r.actual_rebuy_sp || 0) + (r.actual_rebuy_fwa || 0), 0);
   const totalRev = approvedRows.reduce((s, r) => s + (r.actual_rev_3m || 0), 0);
   const costRatioPct = totalRev > 0 ? Math.round((totalCost / totalRev) * 100) : null;
   const avgPerEvent = totalAchieved > 0 ? Math.round((totalSp + totalFwa) / totalAchieved) : 0;

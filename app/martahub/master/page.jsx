@@ -1,6 +1,6 @@
 "use client";
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useRef, useEffect, useCallback, useMemo, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { UploadCloud, Map as MapIcon, ChevronRight, ChevronDown, ArrowLeft, CheckCircle2, AlertTriangle, Clock, Network, Search, Store, UserCheck, UserX, Target as TargetIcon, Tag, Plus, Pencil, Calendar, Database } from "lucide-react";
 import MartaShell, { T } from "../components/MartaShell";
 import { useGeoLayers, LayerPanel } from "../components/SumatraMap";
@@ -16,7 +16,14 @@ import { passesRow, optionsFor, FilterTh, FilterMenu } from "../../dashboard/com
 export default function MasterDataPage() {
   return (
     <MartaShell active="master" title="Master Data" subtitle="Data bulanan MartaHub - List Site (branch BME/RGE) & Batas Wilayah.">
-      {(ctx) => <Body canManage={ctx?.canManage} email={ctx?.session?.user?.email} />}
+      {(ctx) => (
+        // Suspense wajib di sini krn Body pakai useSearchParams() (baca
+        // ?section=... utk buka langsung ke satu sub-menu, mis. dari tombol
+        // "Harga SP/FWA" di halaman Activity Plan).
+        <Suspense fallback={null}>
+          <Body canManage={ctx?.canManage} email={ctx?.session?.user?.email} />
+        </Suspense>
+      )}
     </MartaShell>
   );
 }
@@ -25,8 +32,11 @@ const mtT = { card: "#FFFFFF", line: T.line, hi: T.hi, mid: T.mid, lo: T.lo, hov
 
 function Body({ canManage, email }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const geo = useGeoLayers();
-  const [active, setActive] = useState(null); // null | 'site_data' | 'territory' | 'activity_target'
+  // Bisa dibuka langsung ke satu section via ?section=... (mis. dari tombol
+  // "Harga SP/FWA (Kalkulasi Revenue)" di halaman Activity Plan/Import).
+  const [active, setActive] = useState(() => searchParams?.get("section") || null); // null | 'site_data' | 'territory' | 'activity_target' | 'sp_fwa_types'
   const [history, setHistory] = useState([]);
   const [siteDataPeriod, setSiteDataPeriod] = useState(null); // period awal saat lompat dari Upload -> Data per Periode
   const currentMonth = currentYYYYMM();

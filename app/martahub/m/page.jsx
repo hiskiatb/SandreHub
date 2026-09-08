@@ -82,7 +82,7 @@ function fmtRpCompact(n) {
 // mc/poi_type/event_categories/plan_date_start/plan_dates_multi ditambahkan
 // supaya "draft belum lengkap" di Beranda pakai definisi yg SAMA PERSIS dgn
 // halaman detail & daftar Aktivitas (lihat isDraftIncomplete di activityUi.js).
-const ACTIVITY_COLS = "id,event_name,brand,branch_id,mc,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,checkin_valid,target_sp,target_fwa,actual_sp,actual_fwa,actual_rebuy_pulsa,actual_rebuy_data,cost_actual,actual_rev_3m,created_at,site_id";
+const ACTIVITY_COLS = "id,event_name,brand,branch_id,mc,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,checkin_valid,target_sp,target_fwa,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,cost_actual,actual_rev_3m,created_at,site_id";
 
 // Rotasi harian (getDate() % TIPS.length) - deterministik per hari & ikut
 // menyesuaikan otomatis kalau jumlah tips berubah, jadi tiap tips kebagian
@@ -264,8 +264,8 @@ export default function MartaMobileHome() {
   const targetSp = monthRows.reduce((s, r) => s + (r.target_sp || 0), 0);
   const actualSp = monthRows.reduce((s, r) => s + (r.actual_sp || 0), 0);
   const actualFwaTotal = monthRows.reduce((s, r) => s + (r.actual_fwa || 0), 0);
-  const rebuySpTotal = monthRows.reduce((s, r) => s + (r.actual_rebuy_pulsa || 0), 0);
-  const rebuyFwaTotal = monthRows.reduce((s, r) => s + (r.actual_rebuy_data || 0), 0);
+  const rebuySpTotal = monthRows.reduce((s, r) => s + (r.actual_rebuy_sp || 0), 0);
+  const rebuyFwaTotal = monthRows.reduce((s, r) => s + (r.actual_rebuy_fwa || 0), 0);
   const costTotal = monthRows.reduce((s, r) => s + (r.cost_actual || 0), 0);
   const revenueTotal = monthRows.reduce((s, r) => s + (r.actual_rev_3m || 0), 0);
   const achievementPct = targetSp > 0 ? Math.round((actualSp / targetSp) * 100) : 0;

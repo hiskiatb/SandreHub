@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { X, Search, Download, Upload, RotateCcw, Wallet, FileCheck2, CardSim, Router as RouterIcon, TrendingUp, Banknote, Percent, RefreshCw, Loader2, Settings2, Image as ImageIcon } from "lucide-react";
+import { X, Search, Download, Upload, RotateCcw, Wallet, FileCheck2, CardSim, Router as RouterIcon, TrendingUp, Banknote, Percent, RefreshCw, Loader2, Settings2, Image as ImageIcon, Undo2, AlertTriangle } from "lucide-react";
 import ExcelJS from "exceljs";
 import MartaShell, { T, FONT, brandLabel } from "../components/MartaShell";
 import ExcelFilter from "../components/ExcelFilter";
@@ -30,7 +30,42 @@ const STATUS = {
 //   - belum sampai plan_date  -> "Menunggu Hari-H"
 //   - hari ini persis plan_date -> "Hari-H / Berlangsung"
 //   - sudah lewat plan_date tapi laporan aktual belum disubmit -> "Menunggu Laporan"
-function deriveStatusInfo(r) {
+// Daftar kolom MANDATORY utk sebuah Plan (baik diisi manual lewat app maupun
+// lewat Import Excel/Backdoor) - dipakai utk cek kelengkapan data backdoor,
+// krn validasi minimal di RPC import (mh_import_plan_batch) TIDAK mengecek
+// semuanya (mis. Target SP/FWA & BME/RGE tidak divalidasi di RPC spy row yg
+// datanya sebagian kosong tetap kequarantine krn alasan lain, bkn ke-block
+// total). Balikin daftar {key,label} kolom yg masih kosong utk row tsb.
+function getIncompleteImportFields(r, meta) {
+  const missing = [];
+  if (!r.mc) missing.push({ key: "mc", label: "Micro Cluster" });
+  const siteMeta = meta?.siteMetaMap?.[r.site_id];
+  if (!siteMeta?.kabupaten) missing.push({ key: "kabupaten", label: "Kabupaten" });
+  if (!siteMeta?.kecamatan) missing.push({ key: "kecamatan", label: "Kecamatan" });
+  if (!meta?.profileMap?.[r.created_by]) missing.push({ key: "creator", label: "BME/RGE" });
+  if (!r.event_category) missing.push({ key: "eventCategory", label: "Event Category" });
+  if (!r.poi_type) missing.push({ key: "poi", label: "POI" });
+  if (!r.network_category) missing.push({ key: "network", label: "Network Category" });
+  if (!r.area_potential) missing.push({ key: "areaPotential", label: "Area Potential" });
+  if (!(Number(r.target_sp) > 0) && !(Number(r.target_fwa) > 0)) missing.push({ key: "target", label: "Target SP / Target FWA" });
+  if (!(Number(r.cost_estimate) > 0)) missing.push({ key: "costEstimate", label: "Cost Estimate" });
+  return missing;
+}
+
+function deriveStatusInfo(r, meta) {
+  // Data hasil Import Excel (Backdoor) lolos validasi MINIMAL saat import
+  // (lihat mh_import_plan_batch - cuma cek event_name/brand/plan_date/
+  // network_category/area_potential/site_id), TAPI itu tidak berarti semua
+  // kolom mandatory plan sudah terisi lengkap - kolom lain (target SP/FWA,
+  // BME/RGE dari User Management, Kabupaten/Kecamatan dari mapping Site ID,
+  // Micro Cluster) bisa saja masih kosong krn cell Excel-nya memang kosong
+  // atau master data pendukungnya (assignment BME/RGE, mapping site) belum
+  // lengkap. Cek SEMUA kolom mandatory itu di sini & tandai "Belum Lengkap"
+  // kalau ada yg masih kosong - TIMPA status lifecycle lain, walau data itu
+  // sendiri tadinya dianggap valid & lolos saat proses import.
+  if (r?.plan_source === "cms_import" && meta) {
+    if (getIncompleteImportFields(r, meta).length > 0) return ["Belum Lengkap", T.warning, T.warningBg];
+  }
   if (r?.status === "approved") {
     if (r?.actual_sp != null) return ["Selesai", T.success, T.successBg];
     const planDateStr = r.plan_date_start || r.plan_date;
@@ -95,12 +130,12 @@ function photoUrl(path) {
   return supabaseMarta.storage.from(PHOTO_BUCKET).getPublicUrl(path).data.publicUrl;
 }
 
-const DETAIL_COLS = "id,event_name,event_category,event_categories,brand,mc,branch_id,site_id,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,poi_type,network_category,area_potential,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,target_rev_3m,cost_estimate,expected_outcome,actual_sp,actual_fwa,actual_rebuy_pulsa,actual_rebuy_data,actual_rev_3m,cost_actual,insight,checkin_valid,checkin_distance,checkin_at,approved_by_name,approved_by_email,approved_at,approval_notes,validation_status,validation_note,validated_at,override_status,override_by_name,override_at,override_note,created_at";
+const DETAIL_COLS = "id,event_name,event_category,event_categories,brand,mc,branch_id,site_id,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,poi_type,network_category,area_potential,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,target_rev_3m,cost_estimate,expected_outcome,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,actual_rev_3m,cost_actual,insight,checkin_valid,checkin_distance,checkin_at,approved_by_name,approved_by_email,approved_at,approval_notes,validation_status,validation_note,validated_at,override_status,override_by_name,override_at,override_note,created_at";
 
 // Kolom list mh_activities untuk tabel Excel-style di bawah - lebih ringkas
 // dari DETAIL_COLS (dipakai modal) tapi mencakup semua field yg diminta utk
 // tabel Activity Plan (target/actual/ACV/cost ratio/insight/dokumentasi).
-const LIST_COLS = "id,event_name,brand,mc,branch_id,event_categories,event_category,plan_date_start,plan_date,actual_date,site_id,actual_site_id,network_category,area_potential,poi_type,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,target_rev_3m,cost_estimate,actual_sp,actual_fwa,actual_rebuy_pulsa,actual_rebuy_data,actual_rev_3m,cost_actual,insight,checkin_valid,created_by,bme_user_id,created_at";
+const LIST_COLS = "id,event_name,brand,mc,branch_id,event_categories,event_category,plan_date_start,plan_date,actual_date,site_id,actual_site_id,network_category,area_potential,poi_type,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,target_rev_3m,cost_estimate,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,actual_rev_3m,cost_actual,insight,checkin_valid,created_by,bme_user_id,created_at,plan_source,import_batch_id";
 
 export default function ActivityPlanPage() {
   return (
@@ -114,6 +149,11 @@ function Body({ email }) {
   const router = useRouter();
   const [rows, setRows] = useState([]);
   const [branchMap, setBranchMap] = useState({});
+  // site_id -> { kabupaten, kecamatan } dari mh_sites - Kecamatan/Kabupaten
+  // TIDAK PERNAH tersimpan di mh_activities (di SELURUH sistem ini, bukan
+  // cuma data import), selalu di-lookup live via Site ID persis spt yg
+  // sudah dipakai daftar activities mobile (app/martahub/m/activities/page.jsx).
+  const [siteMetaMap, setSiteMetaMap] = useState({});
   const [profileMap, setProfileMap] = useState({});
   const [docCountMap, setDocCountMap] = useState({});
   const [docPhotoMap, setDocPhotoMap] = useState({}); // activity_id -> storage_path foto pertama (utk thumbnail export)
@@ -128,6 +168,15 @@ function Body({ email }) {
   const [sortState, setSortState] = useState({ key: null, dir: "asc" });
   const [lbMap, setLbMap] = useState({}); // user_id -> { achievement_pct, productivity_pct }
   const [showKpiConfig, setShowKpiConfig] = useState(false);
+  // ── Rollback Import (Backdoor) - lihat COLUMNS "sumber"/"uploadDate"/
+  //    "uploadFile" & toolbar rollback di bawah tabel. batchMap: import_batch_id
+  //    -> {filename, sheet_name, created_at} dari mh_plan_import_batches,
+  //    dipakai utk kolom "Tanggal Upload"/"File Upload" & filternya.
+  const [batchMap, setBatchMap] = useState({});
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [rollbackBusy, setRollbackBusy] = useState(false);
+  const [showRollbackConfirm, setShowRollbackConfirm] = useState(false);
+  const [rollbackErr, setRollbackErr] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true); setErr("");
@@ -145,14 +194,38 @@ function Body({ email }) {
       const list = data || [];
       setRows(list);
 
-      const [{ data: branches }, { data: profiles }, { data: lbRows }] = await Promise.all([
+      // site_id unik dari rows yg baru dimuat - dipakai batasi query mh_sites
+      // (bisa 25rb+ baris, jangan tarik semuanya) ke site_id yg BENAR2
+      // dipakai activity plan saat ini saja.
+      const siteIds = [...new Set(list.map((r) => r.site_id).filter(Boolean))];
+
+      const [{ data: branches }, { data: profiles }, { data: lbRows }, { data: batches }, { data: sites }] = await Promise.all([
         supabaseMarta.from("mh_branches").select("id, name"),
         supabaseMarta.from("mh_profiles").select("id, full_name"),
         supabaseMarta.from("mh_leaderboard_summary").select("user_id, achievement_pct, productivity_pct"),
+        supabaseMarta.rpc("mh_list_import_batches"),
+        // CMS TIDAK punya sesi auth Supabase asli (lihat martaScope.js) jadi
+        // auth.uid() selalu null di sini - query LANGSUNG ke mh_sites diam2
+        // balik 0 baris krn policy mh_sites_read butuh auth.uid(). Pakai RPC
+        // SECURITY DEFINER (mh_sites_lookup) supaya bypass RLS itu, sama pola
+        // dgn RPC2 lain di CMS.
+        siteIds.length ? supabaseMarta.rpc("mh_sites_lookup", { p_site_ids: siteIds }) : Promise.resolve({ data: [] }),
       ]);
       setBranchMap(Object.fromEntries((branches || []).map((b) => [b.id, b.name])));
       setProfileMap(Object.fromEntries((profiles || []).map((p) => [p.id, p.full_name])));
       setLbMap(Object.fromEntries((lbRows || []).map((l) => [l.user_id, l])));
+      setBatchMap(Object.fromEntries((batches || []).map((b) => [b.id, b])));
+      // Satu site_id bisa punya BANYAK baris mh_sites (beda mc, dst - lihat
+      // lib/martaPlanImport.js) - ambil yg kabupaten/kecamatan-nya TERISI
+      // duluan drpd baris kosong, bukan asal ambil baris pertama.
+      const siteMeta = {};
+      for (const s of sites || []) {
+        const kec = s.kecamatan_name || s.kecamatan || null;
+        if (!siteMeta[s.site_id] || (!siteMeta[s.site_id].kecamatan && kec)) {
+          siteMeta[s.site_id] = { kabupaten: s.kabupaten || null, kecamatan: kec };
+        }
+      }
+      setSiteMetaMap(siteMeta);
 
       const ids = list.map((r) => r.id);
       if (ids.length) {
@@ -191,14 +264,25 @@ function Body({ email }) {
   // ── Definisi kolom - SATU sumber utk header, filter (kolom berlabel
   //    filter:true dapat dropdown ExcelFilter Excel-style), sort, dan render
   //    sel. Urutan PERSIS sesuai daftar kolom yang diminta. ─────────────────
+  // Hanya SPM Sumatera / Admin yg bisa rollback (sama dgn role yg diizinkan
+  // Import Plan itu sendiri, lihat _mh_import_authorize di RPC) - checkbox
+  // pilih & toolbar rollback disembunyikan sama sekali dari role lain.
+  const canRollback = scope?.role === "spm_sumatera" || scope?.role === "admin";
   const COLUMNS = useMemo(() => [
+    ...(canRollback ? [{ key: "pilih", label: "", width: 34 }] : []),
     { key: "no", label: "No.", width: 46 },
-    { key: "status", label: "Status", width: 150, filter: true, get: (r) => deriveStatusInfo(r)[0], badgeStatus: true },
+    { key: "sumber", label: "Sumber Data", width: 150, filter: true, get: (r) => (r.plan_source === "cms_import" ? "Import Excel (Backdoor)" : "Manual (CMS/Mobile)") },
+    { key: "uploadDate", label: "Tgl Upload Backdoor", width: 140, filter: true,
+      get: (r) => (r.plan_source === "cms_import" ? fmtDate(batchMap[r.import_batch_id]?.created_at || r.created_at) : "-"),
+      sortVal: (r) => (r.plan_source === "cms_import" ? (batchMap[r.import_batch_id]?.created_at || r.created_at || "") : "") },
+    { key: "status", label: "Status", width: 150, filter: true, get: (r) => deriveStatusInfo(r, { profileMap, siteMetaMap })[0], badgeStatus: true },
     { key: "month", label: "Month", width: 118, filter: true, get: (r) => monthLabel(r.plan_date_start || r.plan_date) },
     { key: "brand", label: "Brand", width: 66, filter: true, get: (r) => brandLabel(r.brand), badgeBrand: true },
     { key: "branch", label: "Branch", width: 140, filter: true, get: (r) => branchMap[r.branch_id] || "-" },
     { key: "brandBranch", label: "Brand Branch", width: 160, filter: true, get: (r) => `${brandLabel(r.brand)} - ${branchMap[r.branch_id] || "-"}` },
     { key: "mc", label: "Micro Cluster", width: 120, filter: true, get: (r) => r.mc || "-" },
+    { key: "kabupaten", label: "Kabupaten", width: 150, filter: true, get: (r) => siteMetaMap[r.site_id]?.kabupaten || "-" },
+    { key: "kecamatan", label: "Kecamatan", width: 150, filter: true, get: (r) => siteMetaMap[r.site_id]?.kecamatan || "-" },
     { key: "creator", label: "BME/RGE", width: 150, filter: true, get: (r) => profileMap[r.created_by] || "-" },
     { key: "planDate", label: "Plan Date", width: 100, filter: true, get: (r) => fmtDate(r.plan_date_start || r.plan_date), sortVal: (r) => r.plan_date_start || r.plan_date || "" },
     { key: "actualDate", label: "Actual Date", width: 100, filter: true, get: (r) => fmtDate(r.actual_date), sortVal: (r) => r.actual_date || "" },
@@ -214,22 +298,22 @@ function Body({ email }) {
     { key: "address", label: "Address", width: 240, filter: true, get: (r) => r.address || "-" },
     { key: "targetSp", label: "Target SP", width: 92, filter: true, get: (r) => fmtInt(r.target_sp), raw: (r) => r.target_sp, numeric: true },
     { key: "targetFwa", label: "Target FWA", width: 96, filter: true, get: (r) => fmtInt(r.target_fwa), raw: (r) => r.target_fwa, numeric: true },
-    { key: "targetRebuy", label: "Target Rebuy", width: 110, filter: true, get: (r) => fmtRp(rebuySum(r.target_rebuy_pulsa, r.target_rebuy_data)), raw: (r) => rebuySum(r.target_rebuy_pulsa, r.target_rebuy_data), numeric: true },
+    { key: "targetRebuy", label: "Target Rebuy", width: 110, filter: true, get: (r) => fmtRp(rebuySum(r.target_rebuy_sp, r.target_rebuy_fwa)), raw: (r) => rebuySum(r.target_rebuy_sp, r.target_rebuy_fwa), numeric: true },
     { key: "targetRev", label: "Estimasi Total Revenue", width: 150, filter: true, get: (r) => fmtRp(r.target_rev_3m), raw: (r) => r.target_rev_3m, numeric: true },
     { key: "costEstimate", label: "Cost Estimate", width: 120, filter: true, get: (r) => fmtRp(r.cost_estimate), raw: (r) => r.cost_estimate, numeric: true },
     { key: "actualSp", label: "Actual SP", width: 92, filter: true, get: (r) => fmtInt(r.actual_sp), raw: (r) => r.actual_sp, numeric: true },
     { key: "actualFwa", label: "Actual FWA", width: 96, filter: true, get: (r) => fmtInt(r.actual_fwa), raw: (r) => r.actual_fwa, numeric: true },
-    { key: "actualRebuy", label: "Actual Rebuy", width: 110, filter: true, get: (r) => fmtRp(rebuySum(r.actual_rebuy_pulsa, r.actual_rebuy_data)), raw: (r) => rebuySum(r.actual_rebuy_pulsa, r.actual_rebuy_data), numeric: true },
+    { key: "actualRebuy", label: "Actual Rebuy", width: 110, filter: true, get: (r) => fmtRp(rebuySum(r.actual_rebuy_sp, r.actual_rebuy_fwa)), raw: (r) => rebuySum(r.actual_rebuy_sp, r.actual_rebuy_fwa), numeric: true },
     { key: "actualRev", label: "Actual Rev (3M)", width: 130, filter: true, get: (r) => fmtRp(r.actual_rev_3m), raw: (r) => r.actual_rev_3m, numeric: true },
     { key: "costActual", label: "Cost Actual", width: 120, filter: true, get: (r) => fmtRp(r.cost_actual), raw: (r) => r.cost_actual, numeric: true },
     { key: "acvSp", label: "ACV SP", width: 84, filter: true, get: (r) => pctLabel(r.actual_sp, r.target_sp), raw: (r) => pctVal(r.actual_sp, r.target_sp), numeric: true, acv: true },
     { key: "acvFwa", label: "ACV FWA", width: 84, filter: true, get: (r) => pctLabel(r.actual_fwa, r.target_fwa), raw: (r) => pctVal(r.actual_fwa, r.target_fwa), numeric: true, acv: true },
-    { key: "acvRebuy", label: "ACV Rebuy", width: 92, filter: true, get: (r) => pctLabel(rebuySum(r.actual_rebuy_pulsa, r.actual_rebuy_data), rebuySum(r.target_rebuy_pulsa, r.target_rebuy_data)), raw: (r) => pctVal(rebuySum(r.actual_rebuy_pulsa, r.actual_rebuy_data), rebuySum(r.target_rebuy_pulsa, r.target_rebuy_data)), numeric: true, acv: true },
+    { key: "acvRebuy", label: "ACV Rebuy", width: 92, filter: true, get: (r) => pctLabel(rebuySum(r.actual_rebuy_sp, r.actual_rebuy_fwa), rebuySum(r.target_rebuy_sp, r.target_rebuy_fwa)), raw: (r) => pctVal(rebuySum(r.actual_rebuy_sp, r.actual_rebuy_fwa), rebuySum(r.target_rebuy_sp, r.target_rebuy_fwa)), numeric: true, acv: true },
     { key: "costRatio", label: "Cost Ratio", width: 92, filter: true, get: (r) => pctLabel(r.cost_actual, r.cost_estimate), raw: (r) => pctVal(r.cost_actual, r.cost_estimate), numeric: true, acv: true, invertGood: true },
     { key: "insight", label: "Insight (Optional)", width: 220, filter: true, get: (r) => r.insight || "-" },
     { key: "documentation", label: "Documentation", width: 120, filter: true, get: (r) => (docCountMap[r.id] ? `${docCountMap[r.id]} foto` : "-") },
     { key: "drive_link", label: "Link Google Drive", width: 140, get: (r) => (docDriveMap[r.id] ? "Buka di Drive" : "-") },
-  ], [branchMap, profileMap, docCountMap, cats]);
+  ], [branchMap, profileMap, docCountMap, cats, batchMap, canRollback, siteMetaMap]);
 
   const FILTER_COLS = useMemo(() => COLUMNS.filter((c) => c.filter), [COLUMNS]);
 
@@ -320,7 +404,7 @@ function Body({ email }) {
     const sp = sumPair("target_sp", "actual_sp");
     const fwa = sumPair("target_fwa", "actual_fwa");
 
-    const actualRebuy = filteredRows.reduce((s, r) => s + (rebuySum(r.actual_rebuy_pulsa, r.actual_rebuy_data) ?? 0), 0);
+    const actualRebuy = filteredRows.reduce((s, r) => s + (rebuySum(r.actual_rebuy_sp, r.actual_rebuy_fwa) ?? 0), 0);
     const actualRev3m = filteredRows.reduce((s, r) => s + (r.actual_rev_3m ?? 0), 0);
     const targetRev3m = filteredRows.reduce((s, r) => s + (r.target_rev_3m ?? 0), 0);
     const totalCostActual = filteredRows.reduce((s, r) => s + (r.cost_actual ?? 0), 0);
@@ -345,9 +429,9 @@ function Body({ email }) {
 
   const statusStatusCounts = useMemo(() => {
     const m = new Map();
-    for (const r of rows) { const lbl = deriveStatusInfo(r)[0]; m.set(lbl, (m.get(lbl) || 0) + 1); }
+    for (const r of rows) { const lbl = deriveStatusInfo(r, { profileMap, siteMetaMap })[0]; m.set(lbl, (m.get(lbl) || 0) + 1); }
     return m;
-  }, [rows]);
+  }, [rows, profileMap, siteMetaMap]);
   const statusChips = useMemo(() => Array.from(statusStatusCounts.keys()), [statusStatusCounts]);
   const selectedStatuses = colFilters.status || [];
   const toggleStatusChip = (lbl) => {
@@ -416,20 +500,27 @@ function Body({ email }) {
       const wb = new ExcelJS.Workbook();
       const ws = wb.addWorksheet("Activity Plan", { views: [{ state: "frozen", ySplit: 1 }] });
 
-      ws.columns = COLUMNS.map((c) => ({
+      // "pilih" (kolom checkbox rollback) TIDAK punya `get` - itu kolom
+      // UI-only, tidak ada isinya utk di-export. Dulu ikut ke-map & crash
+      // "c.get is not a function" pas ketemu kolom ini. Buang dari sini,
+      // SATU sumber utk semua langkah export di bawah (header, isi baris,
+      // posisi kolom foto/link, autoFilter) spy tidak ada yg lupa disingkron.
+      const EXPORT_COLUMNS = COLUMNS.filter((c) => c.key !== "pilih");
+
+      ws.columns = EXPORT_COLUMNS.map((c) => ({
         header: c.label,
         width: Math.max(10, Math.round((c.width || 100) / 7)),
       }));
       ws.getRow(1).font = { bold: true };
       ws.getRow(1).alignment = { vertical: "middle" };
 
-      const docCol = COLUMNS.findIndex((c) => c.key === "documentation") + 1; // 1-based utk ExcelJS
-      const driveCol = COLUMNS.findIndex((c) => c.key === "drive_link") + 1;
+      const docCol = EXPORT_COLUMNS.findIndex((c) => c.key === "documentation") + 1; // 1-based utk ExcelJS
+      const driveCol = EXPORT_COLUMNS.findIndex((c) => c.key === "drive_link") + 1;
       const THUMB_PX = 54;
 
       // Baris teks dulu (cepat, sinkron) - gambar ditempel belakangan per baris
       filteredRows.forEach((r, i) => {
-        const rowValues = COLUMNS.map((c) => {
+        const rowValues = EXPORT_COLUMNS.map((c) => {
           if (c.key === "no") return i + 1;
           if (c.key === "documentation") return ""; // diisi gambar, bukan teks
           if (c.key === "drive_link") return ""; // diisi hyperlink di bawah, bukan teks polos
@@ -455,7 +546,7 @@ function Body({ email }) {
         }
       });
 
-      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: filteredRows.length + 1, column: COLUMNS.length } };
+      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: filteredRows.length + 1, column: EXPORT_COLUMNS.length } };
 
       // Ambil & tempel thumbnail foto pertama tiap activity yg punya dokumentasi.
       // Jalan paralel (Promise.allSettled) supaya 1 foto gagal load tidak
@@ -638,8 +729,29 @@ function Body({ email }) {
             style={{ ...btn, background: "linear-gradient(90deg, #ED1C24 0%, #C6168D 100%)", borderColor: "transparent", color: "#fff" }}>
             <Upload size={13} /> Import Plan (Excel)
           </button>
+
+          <button onClick={() => router.push("/martahub/master?section=sp_fwa_types")} title="Target Revenue (3 Bulan) saat Import Plan dihitung otomatis dari harga di sini (rata2 per brand) - sumber yg sama dgn wizard Buat Plan Baru di mobile"
+            style={{ ...btn, color: T.mid }}>
+            <Settings2 size={13} /> Harga SP/FWA (Kalkulasi Revenue)
+          </button>
         </div>
       </div>
+
+      {canRollback && selectedIds.size > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", marginBottom: 12, borderRadius: 12, background: "#FFF4F4", border: `1px solid ${T.error}` }}>
+          <Undo2 size={15} color={T.error} />
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: T.hi }}>{selectedIds.size} data Import Excel (Backdoor) terpilih</span>
+          <button onClick={() => setSelectedIds(new Set())} style={{ ...btn, padding: "5px 10px" }}>Batal Pilih</button>
+          <button onClick={() => { setRollbackErr(""); setShowRollbackConfirm(true); }} disabled={rollbackBusy}
+            style={{
+              marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 7, whiteSpace: "nowrap", flexShrink: 0,
+              padding: "8px 16px", borderRadius: 9, border: "none", fontSize: 12.5, fontWeight: 700,
+              background: T.error, color: "#fff", cursor: rollbackBusy ? "default" : "pointer", opacity: rollbackBusy ? 0.7 : 1,
+            }}>
+            <Undo2 size={13} /> Rollback {selectedIds.size} Data
+          </button>
+        </div>
+      )}
 
       <div style={{ ...card, padding: 0, overflow: "hidden" }}>
         <div style={{ overflowX: "auto", maxHeight: "72vh", overflowY: "auto" }}>
@@ -647,6 +759,24 @@ function Body({ email }) {
             <thead>
               <tr style={{ background: "#F7F9FC", color: T.mid, textAlign: "left" }}>
                 {COLUMNS.map((col) => {
+                  if (col.key === "pilih") {
+                    const backdoorVisible = filteredRows.filter((r) => r.plan_source === "cms_import").map((r) => r.id);
+                    const allSelected = backdoorVisible.length > 0 && backdoorVisible.every((id) => selectedIds.has(id));
+                    return (
+                      <th key="pilih" title={backdoorVisible.length ? "Pilih semua data Import Excel (Backdoor) yg sedang tampil" : "Tidak ada data backdoor pada filter saat ini"}
+                        style={{ position: "sticky", top: 0, zIndex: 5, width: col.width, minWidth: col.width, padding: "9px 8px", background: "#F7F9FC", borderBottom: `1px solid ${T.line}`, borderRight: `1px solid ${T.line}`, textAlign: "center" }}>
+                        <input type="checkbox" checked={allSelected} disabled={backdoorVisible.length === 0}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={() => setSelectedIds((prev) => {
+                            const next = new Set(prev);
+                            if (allSelected) backdoorVisible.forEach((id) => next.delete(id));
+                            else backdoorVisible.forEach((id) => next.add(id));
+                            return next;
+                          })}
+                          style={{ cursor: backdoorVisible.length ? "pointer" : "default" }} />
+                      </th>
+                    );
+                  }
                   const isSorted = sortState.key === col.key;
                   const filterConfig = col.filter ? {
                     options: filterOptionsMap[col.key] || [],
@@ -678,10 +808,27 @@ function Body({ email }) {
                   onMouseEnter={(e) => { e.currentTarget.style.background = "#F7F9FC"; }}
                   onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
                   {COLUMNS.map((col) => {
+                    if (col.key === "pilih") {
+                      const isBackdoor = r.plan_source === "cms_import";
+                      return (
+                        <td key="pilih" onClick={(e) => e.stopPropagation()} style={{ padding: "8px 8px", borderRight: `1px solid ${T.line}`, textAlign: "center" }}>
+                          <input type="checkbox" checked={selectedIds.has(r.id)} disabled={!isBackdoor}
+                            title={isBackdoor ? "Pilih utk rollback" : "Data manual - tidak bisa di-rollback lewat fitur ini"}
+                            onChange={() => setSelectedIds((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(r.id)) next.delete(r.id); else next.add(r.id);
+                              return next;
+                            })}
+                            style={{ cursor: isBackdoor ? "pointer" : "default", opacity: isBackdoor ? 1 : 0.25 }} />
+                        </td>
+                      );
+                    }
                     if (col.key === "no") return <td key="no" style={{ padding: "8px 10px", color: T.lo, borderRight: `1px solid ${T.line}` }}>{i + 1}</td>;
                     if (col.badgeStatus) {
-                      const st = deriveStatusInfo(r);
-                      return <td key={col.key} style={{ padding: "8px 10px", borderRight: `1px solid ${T.line}` }}><span style={{ fontSize: 10, fontWeight: 800, color: st[1], background: st[2], padding: "2px 8px", borderRadius: 999 }}>{st[0]}</span></td>;
+                      const st = deriveStatusInfo(r, { profileMap, siteMetaMap });
+                      const missingFields = st[0] === "Belum Lengkap" ? getIncompleteImportFields(r, { profileMap, siteMetaMap }) : [];
+                      const badgeTitle = missingFields.length ? `Kolom belum terisi: ${missingFields.map((f) => f.label).join(", ")}` : undefined;
+                      return <td key={col.key} style={{ padding: "8px 10px", borderRight: `1px solid ${T.line}` }}><span title={badgeTitle} style={{ fontSize: 10, fontWeight: 800, color: st[1], background: st[2], padding: "2px 8px", borderRadius: 999, cursor: badgeTitle ? "help" : "default" }}>{st[0]}</span></td>;
                     }
                     if (col.badgeBrand) {
                       return <td key={col.key} style={{ padding: "8px 10px", borderRight: `1px solid ${T.line}`, textAlign: "center" }}><div style={{ display: "flex", justifyContent: "center" }}><BrandBadge brand={r.brand} /></div></td>;
@@ -726,6 +873,93 @@ function Body({ email }) {
           canDelete={scope?.role === "spm_sumatera"}
           onDeleted={(deletedId) => setRows((prev) => prev.filter((r) => r.id !== deletedId))} />
       )}
+
+      {showRollbackConfirm && (
+        <RollbackConfirmModal
+          selectedRows={rows.filter((r) => selectedIds.has(r.id))}
+          batchMap={batchMap}
+          busy={rollbackBusy}
+          err={rollbackErr}
+          onClose={() => { if (!rollbackBusy) setShowRollbackConfirm(false); }}
+          onConfirm={async () => {
+            setRollbackBusy(true); setRollbackErr("");
+            try {
+              const ids = [...selectedIds];
+              const { data, error } = await supabaseMarta.rpc("mh_rollback_import_activities", { p_activity_ids: ids, p_caller_email: email });
+              if (error) throw error;
+              setRows((prev) => prev.filter((r) => !selectedIds.has(r.id)));
+              setSelectedIds(new Set());
+              setShowRollbackConfirm(false);
+            } catch (ex) {
+              setRollbackErr(ex.message || "Gagal melakukan rollback");
+            } finally {
+              setRollbackBusy(false);
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Modal konfirmasi Rollback Import (Backdoor) - menampilkan ringkasan data
+// yg akan DIHAPUS PERMANEN (event name, branch, tgl plan, file asal upload)
+// sebelum benar2 dieksekusi, krn rollback tidak bisa "undo" dari CMS (snapshot
+// lengkapnya tetap tersimpan di mh_plan_import_rollback_log utk ditelusuri
+// admin DB kalau perlu, tapi tidak ada tombol "restore" otomatis di UI).
+function RollbackConfirmModal({ selectedRows, batchMap, busy, err, onClose, onConfirm }) {
+  const byFile = useMemo(() => {
+    const m = {};
+    for (const r of selectedRows) {
+      const key = batchMap[r.import_batch_id]?.filename || "(file tidak diketahui)";
+      m[key] = (m[key] || 0) + 1;
+    }
+    return Object.entries(m);
+  }, [selectedRows, batchMap]);
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,12,20,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300, padding: 16 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 520, maxWidth: "100%", maxHeight: "88vh", overflowY: "auto", background: "#fff", borderRadius: 18, boxShadow: "0 24px 64px rgba(13,17,23,0.22)" }}>
+        <div style={{ padding: "18px 22px", borderBottom: `1px solid ${T.line}`, display: "flex", alignItems: "flex-start", gap: 12 }}>
+          <div style={{ width: 34, height: 34, borderRadius: 10, background: "#FFF0F0", color: T.error, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <AlertTriangle size={17} />
+          </div>
+          <div>
+            <div style={{ fontSize: 15.5, fontWeight: 800, color: T.hi, letterSpacing: "-0.01em" }}>Rollback {selectedRows.length} Data Import Excel</div>
+            <div style={{ fontSize: 11.5, color: T.lo, marginTop: 3 }}>Data akan DIHAPUS PERMANEN dari Activity Plan. Tindakan ini tidak bisa dibatalkan dari halaman ini.</div>
+          </div>
+        </div>
+        <div style={{ padding: "18px 22px" }}>
+          {err && <div style={{ fontSize: 12, color: T.error, marginBottom: 12, background: T.errorBg, padding: "8px 10px", borderRadius: 8 }}>{err}</div>}
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: T.mid, marginBottom: 8 }}>Ringkasan per file yang diupload:</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+            {byFile.map(([file, n]) => (
+              <div key={file} style={{ display: "flex", justifyContent: "space-between", fontSize: 12.5, padding: "7px 10px", background: "#F7F8FA", borderRadius: 8 }}>
+                <span style={{ color: T.hi, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 340 }}>{file}</span>
+                <span style={{ color: T.mid, fontWeight: 700 }}>{n} data</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ maxHeight: 220, overflowY: "auto", border: `1px solid ${T.line}`, borderRadius: 10 }}>
+            {selectedRows.slice(0, 200).map((r) => (
+              <div key={r.id} style={{ padding: "7px 10px", fontSize: 12, borderBottom: `1px solid ${T.line}`, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                <span style={{ color: T.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.event_name || "-"}</span>
+                <span style={{ color: T.lo, flexShrink: 0 }}>{r.site_id || "-"}</span>
+              </div>
+            ))}
+            {selectedRows.length > 200 && <div style={{ padding: "7px 10px", fontSize: 11.5, color: T.lo, textAlign: "center" }}>+ {selectedRows.length - 200} data lainnya…</div>}
+          </div>
+          <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end", gap: 10 }}>
+            <button onClick={onClose} disabled={busy} style={btn}>Batal</button>
+            <button onClick={onConfirm} disabled={busy} style={{
+              padding: "9px 18px", borderRadius: 9, border: "none", fontSize: 12.5, fontWeight: 700,
+              background: T.error, color: "#fff", cursor: busy ? "default" : "pointer", opacity: busy ? 0.7 : 1,
+            }}>
+              {busy ? "Menghapus…" : `Ya, Rollback ${selectedRows.length} Data`}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

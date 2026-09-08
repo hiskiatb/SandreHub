@@ -13,9 +13,10 @@ import MartaShell, { T, FONT } from "../../components/MartaShell";
 import {
   PLAN_TARGET_FIELDS, guessPlanMapping, readWorkbookSheetNames, getSheetMatrix,
   derivePlanTable, buildPlanRows, runPlanImport, fetchImportBatches, fetchImportQuarantine, resolveImportQuarantine,
+  deleteImportQuarantine,
 } from "../../../../lib/martaPlanImport";
 
-const STEPS = ["Upload", "Pilih Sheet", "Mapping Kolom", "Preview & Kirim"];
+const STEPS = ["Upload", "Pilih Sheet", "Konfirmasi Header", "Mapping Kolom", "Preview & Kirim"];
 
 export default function ImportPlanPage() {
   return (
@@ -28,6 +29,9 @@ export default function ImportPlanPage() {
 function Body({ email }) {
   const router = useRouter();
   const [step, setStep] = useState(0);
+  // Klik "Lihat Karantina" di satu baris Riwayat Import -> fokuskan panel
+  // Karantina ke batch itu saja (lihat prop focusBatchId di QuarantineSection).
+  const [focusBatchId, setFocusBatchId] = useState(null);
 
   const [file, setFile] = useState(null);
   const [workbook, setWorkbook] = useState(null);
@@ -130,31 +134,40 @@ function Body({ email }) {
           onPick={pickSheet} onBack={() => setStep(0)} />
       )}
 
-      {step === 2 && table && (
-        <MappingCard
+      {step === 2 && matrix && (
+        <HeaderConfirmCard
           matrix={matrix} headerIdx={headerIdx} setHeaderIdx={setHeaderIdx}
-          table={table} mapping={mapping} setMap={setMap} unmap={unmap}
           onBack={() => setStep(1)}
           onNext={() => setStep(3)}
+        />
+      )}
+
+      {step === 3 && table && (
+        <MappingCard
+          table={table} headerIdx={headerIdx}
+          mapping={mapping} setMap={setMap} unmap={unmap}
+          onBack={() => setStep(2)}
+          onNext={() => setStep(4)}
           canNext={canPreview}
           requiredMissing={requiredMissing}
         />
       )}
 
-      {step === 3 && !result && (
+      {step === 4 && !result && (
         <PreviewCard
           table={table} mapping={mapping}
           running={running} progress={progress} runErr={runErr}
-          onBack={() => setStep(2)}
+          onBack={() => setStep(3)}
           onRun={runImport}
         />
       )}
 
-      {step === 3 && result && (
+      {step === 4 && result && (
         <ResultCard result={result} onReset={resetAll} onGoActivities={() => router.push("/martahub/activities")} />
       )}
 
-      <QuarantineSection email={email} />
+      <ImportHistorySection onViewQuarantine={(batchId) => setFocusBatchId(batchId)} />
+      <QuarantineSection email={email} focusBatchId={focusBatchId} onClearFocus={() => setFocusBatchId(null)} />
     </div>
   );
 }
@@ -256,10 +269,73 @@ function SheetPickCard({ sheetNames, sheetName, reading, readErr, onPick, onBack
   );
 }
 
+// ── Konfirmasi Header - step WAJIB sebelum mapping, supaya fitur ini tetap
+// aman kalau template Excel-nya berubah suatu saat (baris header pindah,
+// ada baris judul/ringkasan tambahan di atas, dst). Tebakan otomatis (cari
+// baris yg ada sel "No"/"No.") sudah dipilihkan, tapi user HARUS melihat
+// preview mentah & mengonfirmasi/mengubahnya secara eksplisit sebelum lanjut
+// - tidak diam-diam dipercaya begitu saja.
+function HeaderConfirmCard({ matrix, headerIdx, setHeaderIdx, onBack, onNext }) {
+  const maxRows = Math.min(matrix.length, 15);
+  const maxCols = Math.min(Math.max(...matrix.slice(0, maxRows).map((r) => (r || []).length)) || 0, 14);
+  const headerRow = matrix[headerIdx] || [];
+  const filledHeaderCells = headerRow.filter((c) => c != null && String(c).trim() !== "").length;
+
+  return (
+    <div style={card()}>
+      <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>Konfirmasi Baris Header</div>
+      <div style={{ color: T.mid, fontSize: 12.5, marginBottom: 6 }}>
+        Klik baris yang berisi nama-nama kolom (Event Name, Brand, Target_SP, dst). Sistem sudah menebak baris yang paling mungkin, tapi <b>pastikan dulu sebelum lanjut</b> -
+        kalau template Excel berubah (baris judul/ringkasan bertambah, urutan baris beda), mapping kolom di step berikutnya bisa salah total kalau baris header di sini salah pilih.
+      </div>
+      <div style={{ marginBottom: 14, padding: "9px 12px", borderRadius: 9, background: T.primaryBg, color: T.primary, fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
+        <CheckCircle2 size={14} />
+        Baris terpilih: <b>Baris {headerIdx + 1}</b> ({filledHeaderCells} kolom terisi nama)
+      </div>
+
+      <div style={{ overflowX: "auto", border: `1px solid ${T.line}`, borderRadius: 10, maxHeight: 420, overflowY: "auto" }}>
+        <table style={{ borderCollapse: "collapse", fontSize: 11.5, minWidth: "100%" }}>
+          <tbody>
+            {matrix.slice(0, maxRows).map((row, i) => {
+              const isSelected = i === headerIdx;
+              return (
+                <tr key={i} onClick={() => setHeaderIdx(i)}
+                  style={{ cursor: "pointer", background: isSelected ? T.primaryBg : (i % 2 ? "#FAFBFD" : "#fff") }}>
+                  <td style={{ padding: "6px 10px", borderBottom: `1px solid ${T.line}`, borderRight: `1px solid ${T.line}`, position: "sticky", left: 0, background: isSelected ? T.primaryBg : (i % 2 ? "#FAFBFD" : "#fff"), fontWeight: 800, color: isSelected ? T.primary : T.lo, whiteSpace: "nowrap" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <input type="radio" checked={isSelected} onChange={() => setHeaderIdx(i)} onClick={(e) => e.stopPropagation()} />
+                      Baris {i + 1}
+                    </div>
+                  </td>
+                  {Array.from({ length: maxCols }).map((_, ci) => (
+                    <td key={ci} style={{ padding: "6px 10px", borderBottom: `1px solid ${T.line}`, whiteSpace: "nowrap", color: isSelected ? T.hi : T.mid, fontWeight: isSelected ? 700 : 500, maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {row?.[ci] != null && String(row[ci]).trim() !== "" ? String(row[ci]) : <span style={{ color: T.line }}>-</span>}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ marginTop: 18, display: "flex", gap: 10 }}>
+        <button onClick={onBack} style={btnGhost}><ArrowLeft size={14} /> Kembali</button>
+        <button onClick={onNext} style={btnPrimary}>
+          Lanjut ke Mapping Kolom <ArrowRight size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Mapping drag-and-drop: kolom terdeteksi di sheet (chip, bisa diseret) di
 // kiri; field tujuan (drop zone) di kanan. Seret chip ke kotak field utk
-// memetakan; klik "x" di kotak utk lepas. Field wajib ditandai *.
-function MappingCard({ matrix, headerIdx, setHeaderIdx, table, mapping, setMap, unmap, onBack, onNext, canNext, requiredMissing }) {
+// memetakan; klik "x" di kotak utk lepas. Field wajib ditandai *. Baris
+// header SUDAH dikonfirmasi di step sebelumnya (Konfirmasi Header) - di sini
+// cuma ditampilkan sbg info + tombol "Ubah" (balik ke step itu) supaya tidak
+// ada 2 kontrol beda tempat utk hal yg sama.
+function MappingCard({ table, headerIdx, mapping, setMap, unmap, onBack, onNext, canNext, requiredMissing }) {
   const [dragCol, setDragCol] = useState(null);
   const mappedCols = new Set(Object.values(mapping).filter(Boolean));
   const previewRows = table.rows.slice(0, 5);
@@ -271,13 +347,10 @@ function MappingCard({ matrix, headerIdx, setHeaderIdx, table, mapping, setMap, 
           <div style={{ fontWeight: 800, fontSize: 15 }}>Mapping Kolom (Drag & Drop)</div>
           <div style={{ color: T.mid, fontSize: 12.5 }}>Seret nama kolom di kiri ke kotak field yang sesuai di kanan.</div>
         </div>
-        <label style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: T.mid, fontWeight: 700 }}>
-          Baris Header:
-          <select value={headerIdx} onChange={(e) => setHeaderIdx(Number(e.target.value))}
-            style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${T.line}`, fontSize: 12, fontFamily: FONT }}>
-            {matrix.slice(0, 15).map((_, i) => <option key={i} value={i}>Baris {i + 1}</option>)}
-          </select>
-        </label>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: T.mid, fontWeight: 700 }}>
+          Baris Header: <span style={{ color: T.hi }}>Baris {headerIdx + 1}</span>
+          <button onClick={onBack} style={{ ...btnGhost, padding: "5px 10px", fontSize: 11.5 }}>Ubah</button>
+        </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "260px 1fr", gap: 20 }}>
@@ -479,21 +552,142 @@ function ResultCard({ result, onReset, onGoActivities }) {
 
 // ── Karantina: daftar SEMUA baris gagal import (lintas batch) yg belum
 // ditandai selesai dicek - permanen, bukan cuma muncul sekali abis import.
-function QuarantineSection({ email }) {
+// Label tanggal lokal (bukan UTC) - dipakai buat kunci grup filter "per
+// tanggal" supaya baris yg masuk larut malam WIB tetap kehitung di hari yg
+// benar menurut jam lokal, bukan potong hari UTC.
+function localDateKey(iso) {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function localDateLabel(iso) {
+  return new Date(iso).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+}
+
+// ── Riwayat Import - log SEMUA sesi upload (bukan cuma yg masuk karantina),
+// persis spt kartu "Import Selesai" yg tampil sesaat setelah submit, tapi
+// permanen & bisa dilihat lagi kapan saja (mis. cek siapa upload apa tgl
+// berapa, atau sekedar susun ulang kronologi kalau ada pertanyaan dari
+// lapangan). Sumber: mh_plan_import_batches lewat mh_list_import_batches
+// (RPC yg sudah ada, dipakai juga oleh QuarantineSection & Rollback).
+function ImportHistorySection({ onViewQuarantine }) {
+  const [batches, setBatches] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [dateFilter, setDateFilter] = useState("");
+  const [q, setQ] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { setBatches(await fetchImportBatches()); }
+    catch { /* best-effort */ }
+    finally { setLoading(false); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const dateOptions = useMemo(() => {
+    const m = new Map();
+    for (const b of batches) m.set(localDateKey(b.created_at), (m.get(localDateKey(b.created_at)) || 0) + 1);
+    return [...m.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  }, [batches]);
+
+  const term = q.trim().toLowerCase();
+  const filtered = useMemo(() => {
+    let list = batches;
+    if (dateFilter) list = list.filter((b) => localDateKey(b.created_at) === dateFilter);
+    if (term) list = list.filter((b) => (b.filename || "").toLowerCase().includes(term) || (b.sheet_name || "").toLowerCase().includes(term) || (b.created_by_email || "").toLowerCase().includes(term));
+    return list;
+  }, [batches, dateFilter, term]);
+
+  return (
+    <div style={card()}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
+        <RotateCcw size={16} color={T.primary} />
+        <div style={{ fontWeight: 800, fontSize: 15 }}>Riwayat Import ({filtered.length}{dateFilter || term ? ` / ${batches.length}` : ""})</div>
+        {batches.length > 0 && (
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama file / sheet / pengupload…"
+              style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${T.line}`, fontSize: 12, fontFamily: FONT, color: T.hi, width: 220 }} />
+            <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value)}
+              style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${T.line}`, fontSize: 12, fontFamily: FONT, color: T.hi }}>
+              <option value="">Semua Tanggal ({batches.length})</option>
+              {dateOptions.map(([key, n]) => (
+                <option key={key} value={key}>{localDateLabel(batches.find((b) => localDateKey(b.created_at) === key).created_at)} ({n})</option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+      <div style={{ color: T.mid, fontSize: 12.5, marginBottom: 14 }}>
+        Log setiap sesi Import Plan dari Excel - siapa, kapan, file & sheet apa, berapa baris berhasil vs masuk karantina.
+      </div>
+
+      {loading ? (
+        <div style={{ fontSize: 12.5, color: T.lo, padding: "10px 0" }}>Memuat…</div>
+      ) : filtered.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: T.lo, padding: "10px 0" }}>
+          {batches.length === 0 ? "Belum ada riwayat import." : "Tidak ada riwayat pada filter saat ini."}
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto", border: `1px solid ${T.line}`, borderRadius: 10 }}>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: T.hover }}>
+                {["Tanggal", "File", "Sheet", "Diupload Oleh", "Total Baris", "Berhasil", "Karantina", ""].map((h) => (
+                  <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontWeight: 800, color: T.mid, whiteSpace: "nowrap", borderBottom: `1px solid ${T.line}` }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((b) => (
+                <tr key={b.id} style={{ borderBottom: `1px solid ${T.line}` }}>
+                  <td style={{ padding: "8px 10px", color: T.mid, whiteSpace: "nowrap" }}>
+                    {new Date(b.created_at).toLocaleString("id-ID", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </td>
+                  <td style={{ padding: "8px 10px", color: T.hi, fontWeight: 700, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={b.filename || "-"}>{b.filename || "-"}</td>
+                  <td style={{ padding: "8px 10px", color: T.mid, whiteSpace: "nowrap" }}>{b.sheet_name || "-"}</td>
+                  <td style={{ padding: "8px 10px", color: T.mid, whiteSpace: "nowrap" }}>{b.created_by_email || "-"}</td>
+                  <td style={{ padding: "8px 10px", color: T.hi, fontWeight: 700 }}>{b.total_rows ?? 0}</td>
+                  <td style={{ padding: "8px 10px", color: T.success, fontWeight: 700 }}>{b.imported_count ?? 0}</td>
+                  <td style={{ padding: "8px 10px", fontWeight: 700, color: (b.quarantined_count || 0) > 0 ? T.warning : T.lo }}>{b.quarantined_count ?? 0}</td>
+                  <td style={{ padding: "8px 10px" }}>
+                    {(b.quarantined_count || 0) > 0 && (
+                      <button onClick={() => onViewQuarantine(b.id)}
+                        style={{ ...btnGhost, padding: "5px 10px", fontSize: 11 }}>
+                        Lihat Karantina
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function QuarantineSection({ email, focusBatchId, onClearFocus }) {
   const [rows, setRows] = useState([]);
   const [batches, setBatches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState(null);
+  const [dateFilter, setDateFilter] = useState(""); // "" = semua tanggal
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [showBulkConfirm, setShowBulkConfirm] = useState(false);
+  const [bulkErr, setBulkErr] = useState("");
 
+  // focusBatchId (dari klik "Lihat Karantina" di Riwayat Import) mempersempit
+  // fetch ke SATU batch itu saja - reset filter tanggal supaya tidak
+  // nyampur dgn scope batch yg lagi difokuskan.
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [q, b] = await Promise.all([fetchImportQuarantine(null, true), fetchImportBatches()]);
+      const [q, b] = await Promise.all([fetchImportQuarantine(focusBatchId || null, true), fetchImportBatches()]);
       setRows(q); setBatches(b);
     } catch { /* best-effort */ }
     finally { setLoading(false); }
-  }, []);
-  useEffect(() => { load(); }, [load]);
+  }, [focusBatchId]);
+  useEffect(() => { setDateFilter(""); load(); }, [load]);
 
   async function resolve(id) {
     setBusyId(id);
@@ -502,25 +696,86 @@ function QuarantineSection({ email }) {
     finally { setBusyId(null); }
   }
 
+  async function deleteOne(id) {
+    setBusyId(id);
+    try { await deleteImportQuarantine([id], email); await load(); }
+    catch { /* best-effort */ }
+    finally { setBusyId(null); }
+  }
+
   const batchMap = useMemo(() => Object.fromEntries(batches.map((b) => [b.id, b])), [batches]);
+
+  // Daftar tanggal yg tersedia utk filter - diurutkan terbaru dulu, plus
+  // jumlah baris per tanggal (biar kelihatan langsung mana yg paling ramai).
+  const dateOptions = useMemo(() => {
+    const m = new Map();
+    for (const q of rows) {
+      const key = localDateKey(q.created_at);
+      m.set(key, (m.get(key) || 0) + 1);
+    }
+    return [...m.entries()].sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  }, [rows]);
+
+  const filteredRows = useMemo(() => {
+    if (!dateFilter) return rows;
+    return rows.filter((q) => localDateKey(q.created_at) === dateFilter);
+  }, [rows, dateFilter]);
+
+  async function deleteAllFiltered() {
+    setBulkBusy(true); setBulkErr("");
+    try {
+      await deleteImportQuarantine(filteredRows.map((q) => q.id), email);
+      setShowBulkConfirm(false);
+      await load();
+    } catch (ex) { setBulkErr(ex.message || "Gagal menghapus"); }
+    finally { setBulkBusy(false); }
+  }
 
   return (
     <div style={card()}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
         <Inbox size={16} color={T.warning} />
-        <div style={{ fontWeight: 800, fontSize: 15 }}>Karantina Import ({rows.length})</div>
+        <div style={{ fontWeight: 800, fontSize: 15 }}>Karantina Import ({filteredRows.length}{dateFilter ? ` / ${rows.length}` : ""})</div>
+        {focusBatchId && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 10px 3px 10px", borderRadius: 999, background: T.primaryBg, color: T.primary, fontSize: 11, fontWeight: 700 }}>
+            Fokus 1 Batch
+            <button onClick={onClearFocus} title="Kembali lihat semua batch" style={{ border: "none", background: "none", cursor: "pointer", color: T.primary, display: "flex", padding: 0 }}>
+              <X size={12} />
+            </button>
+          </div>
+        )}
+
+        {rows.length > 0 && (
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+            <select value={dateFilter} onChange={(e) => setDateFilter(e.target.value)}
+              style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${T.line}`, fontSize: 12, fontFamily: FONT, color: T.hi }}>
+              <option value="">Semua Tanggal ({rows.length})</option>
+              {dateOptions.map(([key, n]) => (
+                <option key={key} value={key}>{localDateLabel(rows.find((q) => localDateKey(q.created_at) === key).created_at)} ({n})</option>
+              ))}
+            </select>
+            {filteredRows.length > 0 && (
+              <button onClick={() => { setBulkErr(""); setShowBulkConfirm(true); }} disabled={bulkBusy}
+                style={{ ...btnGhost, padding: "6px 12px", fontSize: 11.5, color: T.error, borderColor: "#F3B8B8" }}>
+                <X size={12} /> Hapus Semua{dateFilter ? " (Tanggal Ini)" : ""}
+              </button>
+            )}
+          </div>
+        )}
       </div>
       <div style={{ color: T.mid, fontSize: 12.5, marginBottom: 14 }}>
-        Baris dari import sebelumnya yang gagal masuk (lintas file/sheet) & belum ditandai selesai dicek.
+        Baris dari import sebelumnya yang gagal masuk (lintas file/sheet) & belum ditandai selesai dicek. Filter per tanggal upload di kanan atas.
       </div>
 
       {loading ? (
         <div style={{ fontSize: 12.5, color: T.lo, padding: "10px 0" }}>Memuat…</div>
-      ) : rows.length === 0 ? (
-        <div style={{ fontSize: 12.5, color: T.lo, padding: "10px 0" }}>Tidak ada baris karantina yang belum dicek. 🎉</div>
+      ) : filteredRows.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: T.lo, padding: "10px 0" }}>
+          {rows.length === 0 ? "Tidak ada baris karantina yang belum dicek. 🎉" : "Tidak ada baris karantina pada tanggal ini."}
+        </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 420, overflowY: "auto" }}>
-          {rows.map((q) => {
+          {filteredRows.map((q) => {
             const b = batchMap[q.batch_id];
             return (
               <div key={q.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 12px", borderRadius: 10, border: `1px solid ${T.line}`, background: "#FAFBFD" }}>
@@ -534,15 +789,47 @@ function QuarantineSection({ email }) {
                     {b ? `${b.filename || "-"} · sheet "${b.sheet_name || "-"}"` : ""} · {new Date(q.created_at).toLocaleString("id-ID", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
                   </div>
                 </div>
-                <button onClick={() => resolve(q.id)} disabled={busyId === q.id}
-                  style={{ ...btnGhost, padding: "6px 12px", fontSize: 11.5, flexShrink: 0 }}>
-                  {busyId === q.id ? <Loader2 size={12} className="mh-spin" /> : <CheckCircle2 size={12} />} Selesai Dicek
-                </button>
+                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                  <button onClick={() => resolve(q.id)} disabled={busyId === q.id}
+                    style={{ ...btnGhost, padding: "6px 12px", fontSize: 11.5 }}>
+                    {busyId === q.id ? <Loader2 size={12} className="mh-spin" /> : <CheckCircle2 size={12} />} Selesai Dicek
+                  </button>
+                  <button onClick={() => deleteOne(q.id)} disabled={busyId === q.id}
+                    title="Hapus permanen baris karantina ini"
+                    style={{ ...btnGhost, padding: "6px 10px", fontSize: 11.5, color: T.error, borderColor: "#F3B8B8" }}>
+                    <X size={12} />
+                  </button>
+                </div>
               </div>
             );
           })}
         </div>
       )}
+
+      {showBulkConfirm && (
+        <div onClick={() => !bulkBusy && setShowBulkConfirm(false)} style={{ position: "fixed", inset: 0, background: "rgba(10,12,20,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 300, padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: 440, maxWidth: "100%", background: "#fff", borderRadius: 16, padding: 20, boxShadow: "0 24px 64px rgba(13,17,23,0.22)" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 14 }}>
+              <AlertTriangle size={18} color={T.error} style={{ flexShrink: 0, marginTop: 1 }} />
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 14.5, color: T.hi }}>Hapus {filteredRows.length} Baris Karantina</div>
+                <div style={{ fontSize: 12, color: T.lo, marginTop: 3 }}>
+                  {dateFilter ? `Semua baris karantina pada ${localDateLabel(filteredRows[0]?.created_at)}` : "Semua baris karantina yang belum dicek"} akan dihapus permanen. Data asal di file Excel TIDAK berubah - kalau masih diperlukan, cukup import ulang.
+                </div>
+              </div>
+            </div>
+            {bulkErr && <div style={{ fontSize: 12, color: T.error, marginBottom: 12, background: T.errorBg, padding: "8px 10px", borderRadius: 8 }}>{bulkErr}</div>}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button onClick={() => setShowBulkConfirm(false)} disabled={bulkBusy} style={btnGhost}>Batal</button>
+              <button onClick={deleteAllFiltered} disabled={bulkBusy}
+                style={{ padding: "9px 16px", borderRadius: 9, border: "none", fontSize: 12.5, fontWeight: 700, background: T.error, color: "#fff", cursor: bulkBusy ? "default" : "pointer", opacity: bulkBusy ? 0.7 : 1 }}>
+                {bulkBusy ? "Menghapus…" : `Ya, Hapus ${filteredRows.length} Baris`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`@keyframes mh-spin{to{transform:rotate(360deg)}} .mh-spin{animation:mh-spin .8s linear infinite}`}</style>
     </div>
   );

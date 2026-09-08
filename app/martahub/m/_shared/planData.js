@@ -217,7 +217,7 @@ export function timesByDateFromActivity(activity, dates) {
 // tertinggal dari daftar kolom ini, jadi resolusi branch itu selalu gagal
 // diam-diam (branch_id selalu undefined) dan prefill gagal total lagi
 // walau fix scope-nya sendiri sudah benar - lihat catatan di new/page.jsx.
-const EDIT_COLS = "id,branch_id,event_category,event_categories,event_name,site_id,mc,latitude,longitude,address,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,plan_date_times,poi_type,network_category,area_potential,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,cost_estimate,status,brand";
+const EDIT_COLS = "id,branch_id,event_category,event_categories,event_name,site_id,mc,latitude,longitude,address,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,plan_date_times,poi_type,network_category,area_potential,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,cost_estimate,status,brand";
 
 /** Muat satu activity utk mode edit, termasuk daftar site tambahan
  * (mh_activity_sites, is_primary=false) - dipakai wizard Create Plan saat

@@ -112,7 +112,7 @@ async function fetchAuthedPhotoBlobUrl(kind, id, callerEmail) {
   return URL.createObjectURL(blob);
 }
 
-export const DETAIL_COLS = "id,event_name,event_category,event_categories,brand,mc,branch_id,site_id,actual_site_id,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,poi_type,network_category,area_potential,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_pulsa,target_rebuy_data,target_rev_3m,cost_estimate,expected_outcome,actual_sp,actual_fwa,actual_rebuy_pulsa,actual_rebuy_data,actual_rev_3m,cost_actual,insight,checkin_valid,checkin_distance,checkin_at,approved_by_name,approved_by_email,approved_at,approval_notes,validation_status,validation_note,validated_at,override_status,override_by_name,override_at,override_note,created_at";
+export const DETAIL_COLS = "id,event_name,event_category,event_categories,brand,mc,branch_id,site_id,actual_site_id,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,poi_type,network_category,area_potential,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,target_rev_3m,cost_estimate,expected_outcome,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,actual_rev_3m,cost_actual,insight,checkin_valid,checkin_distance,checkin_at,approved_by_name,approved_by_email,approved_at,approval_notes,validation_status,validation_note,validated_at,override_status,override_by_name,override_at,override_note,created_at";
 
 const btn = { padding: "9px 15px", borderRadius: 11, border: `1px solid ${T.line}`, background: "#fff", color: T.hi, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 };
 
@@ -371,8 +371,8 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }
                   <div className="mh-ad-metrics">
                     <MetricTile accent="#DB2777" label="SP" target={fmtInt(a.target_sp)} actual={entries.length ? fmtInt(spValid) : fmtInt(a.actual_sp)} />
                     <MetricTile accent="#2563EB" label="FWA" target={fmtInt(a.target_fwa)} actual={entries.length ? fmtInt(fwaValid) : fmtInt(a.actual_fwa)} />
-                    <MetricTile accent="#B45309" label="Rebuy SP" target={fmtRp(a.target_rebuy_pulsa)} actual={fmtRp(a.actual_rebuy_pulsa)} money />
-                    <MetricTile accent="#B45309" label="Rebuy FWA" target={fmtRp(a.target_rebuy_data)} actual={fmtRp(a.actual_rebuy_data)} money />
+                    <MetricTile accent="#B45309" label="Rebuy SP" target={fmtRp(a.target_rebuy_sp)} actual={fmtRp(a.actual_rebuy_sp)} money />
+                    <MetricTile accent="#B45309" label="Rebuy FWA" target={fmtRp(a.target_rebuy_fwa)} actual={fmtRp(a.actual_rebuy_fwa)} money />
                     <MetricTile accent="#7C3AED" label="Cost" target={fmtRp(a.cost_estimate)} actual={fmtRp(a.cost_actual)} money />
                     <MetricTile accent="#0D9488" label="Est. Revenue" target={fmtRp(a.target_rev_3m)} actual={fmtRp(a.actual_rev_3m)} money />
                     <MetricTile accent="#5A5A68" label="Cost Ratio (Target)" target={a.target_rev_3m > 0 ? `${((Number(a.cost_estimate) || 0) / a.target_rev_3m * 100).toFixed(1)}%` : "-"} actual={null} single />

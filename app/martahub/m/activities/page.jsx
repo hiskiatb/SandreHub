@@ -18,7 +18,7 @@ import { unsnake } from "../_shared/planData";
 // plan_dates_multi) ditambahkan supaya kartu daftar bisa (a) gerbang opsi
 // hapus hanya utk pemilik plan, DAN (b) pakai definisi "draft belum lengkap"
 // yg SAMA PERSIS dgn halaman detail (lihat isDraftIncomplete di activityUi.js).
-const ACTIVITY_COLS = "id,event_name,brand,mc,site_id,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,target_sp,target_fwa,actual_sp,actual_fwa,target_rebuy_pulsa,target_rebuy_data,actual_rebuy_pulsa,actual_rebuy_data,target_rev_3m,actual_rev_3m,cost_estimate,cost_actual,checkin_valid,validation_note,created_at,created_by,actual_draft_saved_at,updated_at";
+const ACTIVITY_COLS = "id,event_name,brand,mc,site_id,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,target_sp,target_fwa,actual_sp,actual_fwa,target_rebuy_sp,target_rebuy_fwa,actual_rebuy_sp,actual_rebuy_fwa,target_rev_3m,actual_rev_3m,cost_estimate,cost_actual,checkin_valid,validation_note,created_at,created_by,actual_draft_saved_at,updated_at";
 
 // Warna brand - SAMA PERSIS dgn skema di wizard Buat Plan (ACT_BRAND_COLOR
 // di activities/new/page.jsx): IM3 kuning, 3ID (tri) magenta.
@@ -956,8 +956,8 @@ function ActivityMetricsBlock({ r, expanded }) {
           <MetricTile icon={Router} accent="#2563EB" label="FWA" target={fmtInt(r.target_fwa)} actual={hasActual ? fmtInt(r.actual_fwa) : "-"} />
           <div style={{ gridColumn: "1 / -1" }}>
             <RebuyTile
-              spTarget={fmtRp(r.target_rebuy_pulsa)} spActual={hasActual ? fmtRp(r.actual_rebuy_pulsa) : "-"}
-              fwaTarget={fmtRp(r.target_rebuy_data)} fwaActual={hasActual ? fmtRp(r.actual_rebuy_data) : "-"}
+              spTarget={fmtRp(r.target_rebuy_sp)} spActual={hasActual ? fmtRp(r.actual_rebuy_sp) : "-"}
+              fwaTarget={fmtRp(r.target_rebuy_fwa)} fwaActual={hasActual ? fmtRp(r.actual_rebuy_fwa) : "-"}
             />
           </div>
           <div style={{ gridColumn: "1 / -1" }}>
