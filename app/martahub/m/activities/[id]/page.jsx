@@ -17,7 +17,7 @@ import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../_sh
 import { fmtDate, fmtTimeLabel, fmtInt, fmtRp, isDraftIncomplete, activityStage } from "../../_shared/activityUi";
 import { unsnake } from "../../_shared/planData";
 import SiteTowerIcon from "../../_shared/SiteTowerIcon";
-import { MetricTile, RebuyTile, RevenueCostBanner } from "../../_shared/MetricTiles";
+import { MetricTile, RebuyTile, RevenueCostBanner, revenueBannerProps } from "../../_shared/MetricTiles";
 import { fetchAuthedPhotoBlobUrl } from "../../_shared/mediaProxy";
 import DeleteActivitySheet from "../../_shared/DeleteActivitySheet";
 
@@ -413,7 +413,7 @@ export default function ActivityDetailPage() {
               dihitung ulang di sini juga (bukan disimpan) supaya selalu
               cocok dgn cost_estimate/target_rev_3m TERBARU. */}
           <RevenueCostBanner
-            revenueLabel={a.actual_rev_3m != null ? "Total Revenue Actual" : "Estimasi Total Revenue"}
+            revenueLabel={revenueBannerProps(a).revenueLabel}
             revenueValue={a.actual_rev_3m != null ? fmtRp(a.actual_rev_3m) : (a.target_rev_3m > 0 ? fmtRp(a.target_rev_3m) : "-")}
             costRatioValue={a.actual_rev_3m != null
               ? (a.actual_rev_3m > 0

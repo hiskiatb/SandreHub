@@ -50,7 +50,13 @@ const NAV = [
   { section: "POSM" },
   { label: "POSM", icon: "posm", path: "posmat", route: "/martahub/posmat" },
   { section: "MANAGEMENT" },
-  { label: "Approval Center", icon: "check", path: "approval", route: "/martahub/approval" },
+  // Approval Center (Activity Plan) DIHAPUS dari menu - approval manusia utk
+  // Plan sudah tidak dipakai lagi (proses activity sekarang langsung jalan
+  // tanpa perlu persetujuan manual), lihat catatan di approval/page.jsx.
+  // Route/page-nya SENGAJA TIDAK dihapus (bukan cuma di-hide) - kalau ada
+  // deep link/bookmark lama yg masih mengarah ke situ, tetap bisa dibuka,
+  // cuma tidak lagi muncul di menu. Approval POSM (section POSM di atas)
+  // TIDAK disentuh sama sekali.
   { label: "User Management", icon: "users", path: "assignments", route: "/martahub/assignments" },
   { label: "Master Data", icon: "db", path: "master", route: "/martahub/master" },
   { label: "Gallery", icon: "gallery", path: "gallery", route: "/martahub/gallery" },

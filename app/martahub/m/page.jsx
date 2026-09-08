@@ -277,10 +277,15 @@ export default function MartaMobileHome() {
   const monthRows = scopedRows.filter((r) => (r.plan_date || "").slice(0, 7) === monthKey);
   const targetSp = monthRows.reduce((s, r) => s + (r.target_sp || 0), 0);
   const actualSp = monthRows.reduce((s, r) => s + (r.actual_sp || 0), 0);
+  const targetFwaTotal = monthRows.reduce((s, r) => s + (r.target_fwa || 0), 0);
   const actualFwaTotal = monthRows.reduce((s, r) => s + (r.actual_fwa || 0), 0);
+  const targetRebuySpTotal = monthRows.reduce((s, r) => s + (r.target_rebuy_sp || 0), 0);
   const rebuySpTotal = monthRows.reduce((s, r) => s + (r.actual_rebuy_sp || 0), 0);
+  const targetRebuyFwaTotal = monthRows.reduce((s, r) => s + (r.target_rebuy_fwa || 0), 0);
   const rebuyFwaTotal = monthRows.reduce((s, r) => s + (r.actual_rebuy_fwa || 0), 0);
+  const targetCostTotal = monthRows.reduce((s, r) => s + (r.cost_estimate || 0), 0);
   const costTotal = monthRows.reduce((s, r) => s + (r.cost_actual || 0), 0);
+  const targetRevTotal = monthRows.reduce((s, r) => s + (r.target_rev_3m || 0), 0);
   const revenueTotal = monthRows.reduce((s, r) => s + (r.actual_rev_3m || 0), 0);
   const achievementPct = targetSp > 0 ? Math.round((actualSp / targetSp) * 100) : 0;
   const costRatioPct = revenueTotal > 0 ? Math.round((costTotal / revenueTotal) * 100) : null;
@@ -396,11 +401,12 @@ export default function MartaMobileHome() {
         <AchievementCard
           loading={rows === null && !err}
           monthKey={monthKey} setMonthKey={setMonthKey} months={months}
-          achievementPct={achievementPct}
+          achievementPct={achievementPct} targetSp={targetSp}
           planCount={planCount} actualCount={actualCount}
-          revenueTotal={revenueTotal} costRatioPct={costRatioPct} costTotal={costTotal}
-          actualSp={actualSp} actualFwaTotal={actualFwaTotal}
-          rebuySpTotal={rebuySpTotal} rebuyFwaTotal={rebuyFwaTotal}
+          revenueTotal={revenueTotal} targetRevTotal={targetRevTotal} costRatioPct={costRatioPct} costTotal={costTotal} targetCostTotal={targetCostTotal}
+          actualSp={actualSp} actualFwaTotal={actualFwaTotal} targetFwaTotal={targetFwaTotal}
+          rebuySpTotal={rebuySpTotal} targetRebuySpTotal={targetRebuySpTotal}
+          rebuyFwaTotal={rebuyFwaTotal} targetRebuyFwaTotal={targetRebuyFwaTotal}
         />
       </div>
 
@@ -434,7 +440,10 @@ export default function MartaMobileHome() {
                 mau pasang di branch mana; akses Kelola Stok tetap ada lewat
                 quick-link di dalam hub POSM (lihat posm/page.jsx). */}
             <MenuItem icon={PackageCheck} label="POSM" color="#B32E85" onClick={() => router.push("/martahub/m/posm")} />
-            {isApprover && <MenuItem icon={ShieldCheck} label="Approval" color="#E63325" onClick={() => router.push("/martahub/m/approval")} badge={pendingApprovals} />}
+            {/* Menu Approval (Activity) DIHAPUS - approval manusia utk Plan sudah
+                tidak dipakai lagi. Route /martahub/m/approval SENGAJA TIDAK
+                dihapus (bukan cuma di-hide) utk jaga2 deep link lama. POSM
+                TIDAK disentuh sama sekali - menu POSM di atas tetap ada. */}
             {/* Management View - KHUSUS spm_sumatera (bukan approver lain),
                 satu-satunya role yg benar-benar mengelola seluruh Sumatera
                 tanpa batas region/brand. Beda dari Approval (yg soal
@@ -611,8 +620,9 @@ function MonthSelect({ value, onChange, options }) {
  * sedang tampil, dianimasikan bareng rotasi flip 3D (rotateY).
  */
 function AchievementCard({
-  loading, monthKey, setMonthKey, months, achievementPct, planCount, actualCount,
-  revenueTotal, costRatioPct, costTotal, actualSp, actualFwaTotal, rebuySpTotal, rebuyFwaTotal,
+  loading, monthKey, setMonthKey, months, achievementPct, targetSp, planCount, actualCount,
+  revenueTotal, targetRevTotal, costRatioPct, costTotal, targetCostTotal,
+  actualSp, actualFwaTotal, targetFwaTotal, rebuySpTotal, targetRebuySpTotal, rebuyFwaTotal, targetRebuyFwaTotal,
 }) {
   const [open, setOpen] = useState(false);
   const frontRef = useRef(null);
@@ -631,7 +641,7 @@ function AchievementCard({
     if (frontRef.current) ro.observe(frontRef.current);
     if (backRef.current) ro.observe(backRef.current);
     return () => ro.disconnect();
-  }, [achievementPct, planCount, actualCount, revenueTotal, costRatioPct, costTotal, actualSp, actualFwaTotal, rebuySpTotal, rebuyFwaTotal]);
+  }, [achievementPct, targetSp, planCount, actualCount, revenueTotal, targetRevTotal, costRatioPct, costTotal, targetCostTotal, actualSp, actualFwaTotal, targetFwaTotal, rebuySpTotal, targetRebuySpTotal, rebuyFwaTotal, targetRebuyFwaTotal]);
 
   const faceBase = {
     gridArea: "1/1", alignSelf: "start", backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden",
@@ -715,12 +725,12 @@ function AchievementCard({
           </div>
 
           <div style={{ marginTop: 6 }}>
-            <DarkDetailRow icon={CardSim} label="Total Penjualan SP" value={fmtInt(actualSp)} color="#7FD9C6" />
-            <DarkDetailRow icon={Router} label="Total Penjualan FWA" value={fmtInt(actualFwaTotal)} color="#7FD9C6" />
-            <DarkDetailRow icon={RefreshCw} label="Total Rebuy SP" value={fmtRpCompact(rebuySpTotal)} color="#F5CD46" />
-            <DarkDetailRow icon={RefreshCw} label="Total Rebuy FWA" value={fmtRpCompact(rebuyFwaTotal)} color="#F5CD46" />
-            <DarkDetailRow icon={Banknote} label="Total Revenue" value={fmtRpCompact(revenueTotal)} color="#7FD9C6" />
-            <DarkDetailRow icon={Receipt} label="Total Cost" value={fmtRpCompact(costTotal)} color="#F286B4" />
+            <DarkDetailRow icon={CardSim} label="Penjualan SP: Actual / Plan" value={`${fmtInt(actualSp)} / ${fmtInt(targetSp)}`} color="#7FD9C6" />
+            <DarkDetailRow icon={Router} label="Penjualan FWA: Actual / Plan" value={`${fmtInt(actualFwaTotal)} / ${fmtInt(targetFwaTotal)}`} color="#7FD9C6" />
+            <DarkDetailRow icon={RefreshCw} label="Rebuy SP: Actual / Plan" value={`${fmtRpCompact(rebuySpTotal)} / ${fmtRpCompact(targetRebuySpTotal)}`} color="#F5CD46" />
+            <DarkDetailRow icon={RefreshCw} label="Rebuy FWA: Actual / Plan" value={`${fmtRpCompact(rebuyFwaTotal)} / ${fmtRpCompact(targetRebuyFwaTotal)}`} color="#F5CD46" />
+            <DarkDetailRow icon={Banknote} label="Revenue: Actual / Plan" value={`${fmtRpCompact(revenueTotal)} / ${fmtRpCompact(targetRevTotal)}`} color="#7FD9C6" />
+            <DarkDetailRow icon={Receipt} label="Cost: Actual / Plan" value={`${fmtRpCompact(costTotal)} / ${fmtRpCompact(targetCostTotal)}`} color="#F286B4" />
             <DarkDetailRow icon={ListChecks} label="Total Actual / Plan" value={`${fmtInt(actualCount)} / ${fmtInt(planCount)}`} color="#FFFFFF" last />
           </div>
         </div>
@@ -806,9 +816,10 @@ function MissionCarousel({ needsReport, upcoming, isApprover, pendingApprovals, 
     missionCard = { badge: "AKTIVITAS", accent: "#6B6B76", title: "Belum ada plan", subtitle: "Mulai buat plan aktivitas pertama Anda.", cta: "Buat Plan Sekarang", action: () => router.push("/martahub/m/activities/new") };
   }
 
-  const approvalCard = isApprover
-    ? { badge: "APPROVAL", accent: "#B45309", title: pendingApprovals > 0 ? `${pendingApprovals} menunggu persetujuan` : "Tidak ada antrean", subtitle: pendingApprovals > 0 ? "Ada plan/report yang perlu ditinjau." : "Semua plan & report sudah diputuskan.", cta: pendingApprovals > 0 ? "Tinjau Sekarang" : "Lihat Detail", action: () => router.push("/martahub/m/approval") }
-    : { badge: "ACTIVITY · DRAFT", accent: "#1A9E90", title: draftCount > 0 ? `${draftCount} draft belum lengkap` : "Belum ada draft", subtitle: draftCount > 0 ? "Lanjutkan draft yang tersimpan sebelum diajukan." : "Plan yang disimpan sebagai draft tampil di sini.", cta: draftCount > 0 ? "Lanjutkan Draft" : "Buat Plan", action: () => router.push("/martahub/m/activities?tab=draft") };
+  // Kartu carousel "APPROVAL" DIHAPUS (approval manusia utk Plan sudah
+  // tidak dipakai lagi) - SEMUA role (termasuk approver lama) sekarang
+  // dapat kartu draft yang sama, bukan lagi dibedakan via isApprover.
+  const approvalCard = { badge: "ACTIVITY · DRAFT", accent: "#1A9E90", title: draftCount > 0 ? `${draftCount} draft belum lengkap` : "Belum ada draft", subtitle: draftCount > 0 ? "Lanjutkan draft yang tersimpan sebelum diajukan." : "Plan yang disimpan sebagai draft tampil di sini.", cta: draftCount > 0 ? "Lanjutkan Draft" : "Buat Plan", action: () => router.push("/martahub/m/activities?tab=draft") };
 
   const tipsCard = { badge: "TIPS", accent: "#6B6B76", title: "Tips MartaHub", subtitle: TIPS[new Date().getDate() % TIPS.length], cta: null, action: null };
 

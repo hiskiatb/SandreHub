@@ -34,7 +34,7 @@ import { FF, BRAND } from "./MobileShell";
 import { lockPullToRefresh, unlockPullToRefresh } from "./pullToRefreshLock";
 import BottomSheet from "./BottomSheet";
 import { fmtDate, statusMeta, fmtInt, fmtRp, activityStage } from "./activityUi";
-import { MetricTile, RebuyTile, RevenueCostBanner } from "./MetricTiles";
+import { MetricTile, RebuyTile, RevenueCostBanner, revenueBannerProps } from "./MetricTiles";
 import { groupContiguousDates, syncTimesByDate, allDateTimesValid, DEFAULT_DATE_TIME } from "./planData";
 
 // Kunci pull-to-refresh via reference count (bukan sekadar set/delete satu
@@ -640,7 +640,7 @@ function ActivityDetailPopup({ activity: a, onClose }) {
           </div>
         </div>
         <RevenueCostBanner
-          revenueLabel={a.actual_rev_3m != null ? "Total Revenue Actual" : "Estimasi Total Revenue"}
+          revenueLabel={revenueBannerProps(a).revenueLabel}
           revenueValue={a.actual_rev_3m != null ? fmtRp(a.actual_rev_3m) : (a.target_rev_3m > 0 ? fmtRp(a.target_rev_3m) : "-")}
           costRatioValue={a.actual_rev_3m != null
             ? (a.actual_rev_3m > 0

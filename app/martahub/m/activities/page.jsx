@@ -9,7 +9,7 @@ import { Search, X, Plus, Trash2, CheckCircle2, AlertCircle, ChevronRight, Chevr
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, NAV_HEIGHT } from "../_shared/MobileShell";
 import { fmtDate, fmtTimeLabel, fmtInt, fmtRp, isDraftIncomplete, activityStage, statusMeta, READY_STATUSES, earliestPlanDate, planMonthKey, updatedAgoLabel, MONTHS } from "../_shared/activityUi";
-import { MetricTile, RebuyTile, RevenueCostBanner } from "../_shared/MetricTiles";
+import { MetricTile, RebuyTile, RevenueCostBanner, revenueBannerProps } from "../_shared/MetricTiles";
 import DeleteActivitySheet from "../_shared/DeleteActivitySheet";
 import BottomSheet from "../_shared/BottomSheet";
 import { unsnake } from "../_shared/planData";
@@ -985,7 +985,7 @@ function ActivityMetricsBlock({ r, expanded }) {
       )}
 
       <RevenueCostBanner
-        revenueLabel={r.actual_rev_3m != null ? "Total Revenue Actual" : "Estimasi Total Revenue"}
+        revenueLabel={revenueBannerProps(r).revenueLabel}
         revenueValue={r.actual_rev_3m != null ? fmtRp(r.actual_rev_3m) : (r.target_rev_3m > 0 ? fmtRp(r.target_rev_3m) : "-")}
         costRatioValue={r.actual_rev_3m != null
           ? (r.actual_rev_3m > 0

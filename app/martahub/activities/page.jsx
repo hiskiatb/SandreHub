@@ -299,12 +299,12 @@ function Body({ email }) {
     { key: "targetSp", label: "Target SP", width: 92, filter: true, get: (r) => fmtInt(r.target_sp), raw: (r) => r.target_sp, numeric: true },
     { key: "targetFwa", label: "Target FWA", width: 96, filter: true, get: (r) => fmtInt(r.target_fwa), raw: (r) => r.target_fwa, numeric: true },
     { key: "targetRebuy", label: "Target Rebuy", width: 110, filter: true, get: (r) => fmtRp(rebuySum(r.target_rebuy_sp, r.target_rebuy_fwa)), raw: (r) => rebuySum(r.target_rebuy_sp, r.target_rebuy_fwa), numeric: true },
-    { key: "targetRev", label: "Estimasi Total Revenue", width: 150, filter: true, get: (r) => fmtRp(r.target_rev_3m), raw: (r) => r.target_rev_3m, numeric: true },
+    { key: "targetRev", label: "Est. Total Rev (3 Months)", width: 170, filter: true, get: (r) => fmtRp(r.target_rev_3m), raw: (r) => r.target_rev_3m, numeric: true },
     { key: "costEstimate", label: "Cost Estimate", width: 120, filter: true, get: (r) => fmtRp(r.cost_estimate), raw: (r) => r.cost_estimate, numeric: true },
     { key: "actualSp", label: "Actual SP", width: 92, filter: true, get: (r) => fmtInt(r.actual_sp), raw: (r) => r.actual_sp, numeric: true },
     { key: "actualFwa", label: "Actual FWA", width: 96, filter: true, get: (r) => fmtInt(r.actual_fwa), raw: (r) => r.actual_fwa, numeric: true },
     { key: "actualRebuy", label: "Actual Rebuy", width: 110, filter: true, get: (r) => fmtRp(rebuySum(r.actual_rebuy_sp, r.actual_rebuy_fwa)), raw: (r) => rebuySum(r.actual_rebuy_sp, r.actual_rebuy_fwa), numeric: true },
-    { key: "actualRev", label: "Actual Rev (3M)", width: 130, filter: true, get: (r) => fmtRp(r.actual_rev_3m), raw: (r) => r.actual_rev_3m, numeric: true },
+    { key: "actualRev", label: "Actual Total Rev (3 Months)", width: 170, filter: true, get: (r) => fmtRp(r.actual_rev_3m), raw: (r) => r.actual_rev_3m, numeric: true },
     { key: "costActual", label: "Cost Actual", width: 120, filter: true, get: (r) => fmtRp(r.cost_actual), raw: (r) => r.cost_actual, numeric: true },
     { key: "acvSp", label: "ACV SP", width: 84, filter: true, get: (r) => pctLabel(r.actual_sp, r.target_sp), raw: (r) => pctVal(r.actual_sp, r.target_sp), numeric: true, acv: true },
     { key: "acvFwa", label: "ACV FWA", width: 84, filter: true, get: (r) => pctLabel(r.actual_fwa, r.target_fwa), raw: (r) => pctVal(r.actual_fwa, r.target_fwa), numeric: true, acv: true },
@@ -404,7 +404,13 @@ function Body({ email }) {
     const sp = sumPair("target_sp", "actual_sp");
     const fwa = sumPair("target_fwa", "actual_fwa");
 
-    const actualRebuy = filteredRows.reduce((s, r) => s + (rebuySum(r.actual_rebuy_sp, r.actual_rebuy_fwa) ?? 0), 0);
+    // Rebuy SP & FWA DIPISAH (bukan digabung jadi satu angka) - dulu
+    // "actualRebuy" gabungan ini dipakai utk SUB-ROW "Rebuy SP" maupun
+    // "Rebuy FWA" sekaligus, jadi keduanya salah nampilin angka gabungan yg
+    // sama persis, bukan porsi masing-masing.
+    const actualRebuySp = filteredRows.reduce((s, r) => s + (r.actual_rebuy_sp ?? 0), 0);
+    const actualRebuyFwa = filteredRows.reduce((s, r) => s + (r.actual_rebuy_fwa ?? 0), 0);
+    const actualRebuy = actualRebuySp + actualRebuyFwa;
     const actualRev3m = filteredRows.reduce((s, r) => s + (r.actual_rev_3m ?? 0), 0);
     const targetRev3m = filteredRows.reduce((s, r) => s + (r.target_rev_3m ?? 0), 0);
     const totalCostActual = filteredRows.reduce((s, r) => s + (r.cost_actual ?? 0), 0);
@@ -420,7 +426,7 @@ function Body({ email }) {
       total,
       spTervalidasi: sp.act, spPengajuan: sp.tgt,
       fwaTervalidasi: fwa.act, fwaPengajuan: fwa.tgt,
-      actualRebuy, actualRev3m, targetRev3m, totalCostActual, budgetEst,
+      actualRebuy, actualRebuySp, actualRebuyFwa, actualRev3m, targetRev3m, totalCostActual, budgetEst,
       costRatioPct, costOverBudget: budgetAct > budgetEst,
       actualSubmittedCount,
       avgAchievement, avgProductivity,
@@ -610,13 +616,13 @@ function Body({ email }) {
           "pantau sekaligus lihat detail" bisa dalam satu layar. */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(172px,1fr))", gap: 14, marginBottom: 18 }}>
         <Kpi label="Total SP Tervalidasi" value={<KpiRatio main={fmtInt(kpiStats.spTervalidasi)} suffix={` / ${fmtInt(kpiStats.spPengajuan)} pengajuan`} />}
-          sub={<KpiSubRow icon={RefreshCw} label="Rebuy SP" value={fmtRp(kpiStats.actualRebuy)} />}
+          sub={<KpiSubRow icon={RefreshCw} label="Rebuy SP" value={fmtRp(kpiStats.actualRebuySp)} />}
           icon={CardSim} color={T.success} />
         <Kpi label="Total FWA Tervalidasi" value={<KpiRatio main={fmtInt(kpiStats.fwaTervalidasi)} suffix={` / ${fmtInt(kpiStats.fwaPengajuan)} pengajuan`} />}
-          sub={<KpiSubRow icon={RefreshCw} label="Rebuy FWA" value={fmtRp(kpiStats.actualRebuy)} />}
+          sub={<KpiSubRow icon={RefreshCw} label="Rebuy FWA" value={fmtRp(kpiStats.actualRebuyFwa)} />}
           icon={RouterIcon} color={T.success} />
-        <Kpi label="Total Revenue" value={fmtRp(kpiStats.actualRev3m)}
-          sub={<KpiSubRow label="Total Revenue (3M)" value={fmtRp(kpiStats.actualRev3m)} />}
+        <Kpi label="Total Revenue (3 Months)" value={fmtRp(kpiStats.actualRev3m)}
+          sub={<KpiSubRow label="Actual / Plan" value={`${fmtRp(kpiStats.actualRev3m)} / ${fmtRp(kpiStats.targetRev3m)}`} />}
           icon={Banknote} color={T.blue} />
         <Kpi label="Total Cost Actual" value={fmtRp(kpiStats.totalCostActual)}
           sub={<KpiSubRow label="Cost Ratio" value={kpiStats.costRatioPct == null ? "-" : `${kpiStats.costRatioPct}%`} />}

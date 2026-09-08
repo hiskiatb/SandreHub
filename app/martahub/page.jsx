@@ -174,7 +174,9 @@ const NAV = [
   { section: "POSM" },
   { label: "POSM", icon: "posm", path: "posmat" },
   { section: "MANAGEMENT" },
-  { label: "Approval Center", icon: "check", path: "approval" },
+  // Approval Center (Activity) DIHAPUS dari menu - lihat catatan sama di
+  // MartaShell.jsx. Route/NAV_ROUTES.approval TIDAK dihapus (deep link lama
+  // tetap bisa dibuka). POSM tidak disentuh.
   { label: "User Management", icon: "users", path: "assignments", route: "/martahub/assignments" },
   { label: "Master Data", icon: "db", path: "master" },
   { label: "Gallery", icon: "gallery", path: "gallery" },
@@ -697,7 +699,8 @@ const QUICK_ACTIONS = [
   { label: "Submit Activity", sub: "Catat hasil activity", icon: "send", color: "#7B1FA2", route: "submission" },
   { label: "Activity Monitoring", sub: "Pantau semua activity", icon: "monitor", color: "#0277BD", route: "monitoring" },
   { label: "Activity Calendar", sub: "Jadwal & ketersediaan", icon: "cal", color: "#00695C", route: "calendar" },
-  { label: "Approval Center", sub: "Tinjau persetujuan", icon: "check", color: "#E65100", route: "approval" },
+  // "Approval Center" DIHAPUS dari quick action - approval manusia utk
+  // Plan sudah tidak dipakai lagi.
 ];
 
 // Cache user/profile di scope modul - SAMA persis pola di MartaShell.jsx:
@@ -1170,17 +1173,8 @@ export default function MartaHubDashboard() {
           </div>
           <div style={{ flex: 1 }} />
 
-          {/* Bell - jumlah nyata dari antrean Approval (pendingCount), bukan dot dekoratif */}
-          <button className="mh-btn" onClick={() => router.push("/martahub/approval")} title={pendingCount ? `${pendingCount} menunggu persetujuan` : "Tidak ada yang menunggu persetujuan"} style={{ position: "relative" }}>
-            <div style={{ padding: 8, borderRadius: 9, border: `1.5px solid ${t.line}`, background: t.hover, display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Icon name="bell" size={17} color={t.mid} />
-            </div>
-            {!!pendingCount && (
-              <div style={{ position: "absolute", top: -3, right: -3, minWidth: 16, height: 16, padding: "0 3px", borderRadius: 99, background: C.error, border: `1.5px solid ${t.surface}`, color: "#fff", fontSize: 9.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                {pendingCount > 99 ? "99+" : pendingCount}
-              </div>
-            )}
-          </button>
+          {/* Bell notifikasi Approval DIHAPUS - approval manusia utk Plan
+              sudah tidak dipakai lagi. */}
 
           {/* Dark toggle */}
           <button className="mh-btn" onClick={() => setDark(!dark)} style={{ padding: 8, borderRadius: 9, border: `1.5px solid ${t.line}`, background: t.hover, display: "flex", alignItems: "center", color: t.mid }}>
@@ -1255,20 +1249,8 @@ export default function MartaHubDashboard() {
                 <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.7)", marginBottom: 4 }}>Activity Tercatat</div>
                 <div style={{ fontSize: 20, fontWeight: 800, color: "#fff", fontVariantNumeric: "tabular-nums" }}>{data.currentCount}</div>
               </div>
-              {pendingCount != null && (
-                <div className="mh-hero-stat" style={{ display: "flex", alignItems: "center", gap: 10, cursor: pendingCount > 0 ? "pointer" : "default" }} onClick={() => pendingCount > 0 && router.push("/martahub/approval")}>
-                  <div style={{ width: 32, height: 32, borderRadius: 9, background: pendingCount > 0 ? "rgba(255,255,255,0.20)" : "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                    <Icon name={pendingCount > 0 ? "bell" : "check"} size={15} color="#fff" />
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.7)", marginBottom: 2 }}>Approval</div>
-                    <div style={{ fontSize: 12.5, fontWeight: 700, color: "#fff" }}>
-                      {pendingCount > 0 ? `${pendingCount} menunggu persetujuan` : "Semua sudah diproses"}
-                    </div>
-                  </div>
-                  {pendingCount > 0 && <Icon name="arrow" size={13} color="rgba(255,255,255,0.85)" />}
-                </div>
-              )}
+              {/* Stat hero "Approval" DIHAPUS - approval manusia utk Plan sudah
+                  tidak dipakai lagi. */}
               {data.currentMonthLabel && (
                 <div className="mh-hero-stat">
                   <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: "rgba(255,255,255,0.7)", marginBottom: 4 }}>Periode Aktif</div>
