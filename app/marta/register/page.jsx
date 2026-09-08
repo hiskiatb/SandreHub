@@ -185,19 +185,46 @@ export default function MartaRegisterPage() {
     const userId = data.user?.id;
     if (!userId) { setErrMsg("Gagal membuat akun. Coba lagi."); setLoading(false); return; }
 
-    // Insert profile
+    // Catatan: trigger DB (mh_handle_new_user) sudah otomatis membuat/merge
+    // baris mh_profiles utk userId ini persis saat auth.signUp() berhasil -
+    // termasuk kasus admin sudah pre-assign role/brand/branch (misal BME/RGE)
+    // sebelum orang ini pernah login (baris "placeholder" ikut ke-merge via
+    // id-swap by email). Jadi di sini kita HARUS pakai UPDATE (bukan INSERT),
+    // dan kalau baris itu ternyata sudah punya assignment asli dari admin
+    // (status/role bukan lagi "pending"), jangan timpa role/brand/is_active
+    // hasil pilihan form - assignment dari admin itu yang harus dipakai.
     const finalBrand = isManager
       ? (role === "tm_im3" ? "IM3" : role === "tm_tri" ? "Tri" : null)
       : brand;
-    const { error: profileErr } = await supabaseMarta.from("mh_profiles").insert({
-      id:           userId,
-      email:        email.trim().toLowerCase(),
-      full_name:    fullName.trim(),
-      role,
-      brand:        finalBrand,
-      auth_code_id: authCodeId,
-      is_active:    false,
-    });
+
+    const { data: existingProfile } = await supabaseMarta
+      .from("mh_profiles")
+      .select("role, status, brand, is_active")
+      .eq("id", userId)
+      .maybeSingle();
+
+    const alreadyAssigned = !!existingProfile && existingProfile.status !== "pending" && existingProfile.role !== "pending";
+
+    const updatePayload = alreadyAssigned
+      ? {
+          // Sudah di-assign admin sebelumnya (mis. BME/RGE North Sumatera) -
+          // pertahankan role/brand/is_active dari admin, cuma lengkapi
+          // full_name & auth_code_id.
+          full_name:    fullName.trim(),
+          auth_code_id: authCodeId ?? undefined,
+        }
+      : {
+          full_name:    fullName.trim(),
+          role,
+          brand:        finalBrand,
+          auth_code_id: authCodeId,
+          is_active:    false,
+        };
+
+    const { error: profileErr } = await supabaseMarta
+      .from("mh_profiles")
+      .update(updatePayload)
+      .eq("id", userId);
     if (profileErr) { setErrMsg("Gagal menyimpan profil: " + profileErr.message); setLoading(false); return; }
 
     // Mark code used

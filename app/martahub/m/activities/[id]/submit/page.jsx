@@ -581,22 +581,11 @@ export default function SubmitActualPage() {
           >
             Kembali
           </button>
-          {/* Arahan - plan LAIN hasil Import Excel milik user ini bisa jadi
-              punya kolom kosong yg sama (satu file Excel yg sama biasanya
-              punya pola kekurangan yg sama di banyak baris), jadi diarahkan
-              utk cek semua plan-nya sekalian drpd ketemu satu-satu tiap kali
-              mau isi Laporan Actual. */}
-          <div style={{ marginTop: 22, paddingTop: 18, borderTop: "1px solid #EFEFF2" }}>
-            <div style={{ fontSize: 12, color: "#8A8A96", fontFamily: FF, lineHeight: 1.6, marginBottom: 10 }}>
-              Plan lain hasil Import Excel milik Anda bisa jadi punya kekurangan kolom yg sama - sebaiknya cek semua plan Anda sekalian, jangan cuma yg ini.
-            </div>
-            <button
-              onClick={() => router.push("/martahub/m/activities")}
-              style={{ width: "100%", padding: "12px 16px", borderRadius: 12, border: "1.5px solid #E3E5EC", background: "#F8F8FA", color: "#3A3A44", fontSize: 12.5, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}
-            >
-              Cek Semua Plan Saya
-            </button>
-          </div>
+          {/* "Cek Semua Plan Saya" DIHAPUS - dua arah aksi (lanjut edit plan
+              INI vs pergi cek plan LAIN) di satu popup bikin rancu mana yg
+              harus ditekan; popup ini cuma soal 1 plan yg sedang dibuka,
+              jadi cukup arahkan ke situ (Lanjutkan Edit Plan) tanpa
+              cabang aksi lain. */}
         </div>
         </div>
       </MobileShell>

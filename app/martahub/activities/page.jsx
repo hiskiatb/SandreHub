@@ -36,13 +36,33 @@ const STATUS = {
 // semuanya (mis. Target SP/FWA & BME/RGE tidak divalidasi di RPC spy row yg
 // datanya sebagian kosong tetap kequarantine krn alasan lain, bkn ke-block
 // total). Balikin daftar {key,label} kolom yg masih kosong utk row tsb.
+// Nama BME/RGE utk ditampilkan - PRIORITAS: pemilik SUNGGUHAN (created_by,
+// diisi RPC saat activity dibuat/diklaim oleh akun login asli) dulu. Kalau
+// kosong DAN baris ini hasil Import Excel (Backdoor), tarik nama dari
+// assignment User Management (mh_profiles role=bme_rge aktif, dicocokkan
+// branch+brand activity ini) SEKALIPUN BME/RGE itu belum pernah login -
+// supaya kolom tidak kosong padahal assignment-nya sudah ada. Ini MURNI
+// tampilan (get()/export, TIDAK ditulis ke kolom bme_user_id yg terkunci
+// foreign key ke auth.users) - begitu BME/RGE aslinya login & activity ini
+// benar2 ke-assign ke akun asli (created_by terisi), baris ini otomatis
+// pakai nama asli tsb (cabang pertama menang duluan).
+function resolveCreatorName(r, meta) {
+  const real = meta?.profileMap?.[r.created_by];
+  if (real) return real;
+  if (r?.plan_source !== "cms_import") return null;
+  const branchName = meta?.branchMap?.[r.branch_id];
+  if (!branchName) return null;
+  const key = `${String(r.brand || "").toLowerCase()}|${branchName.toUpperCase()}`;
+  return meta?.bmeAssignMap?.[key] || null;
+}
+
 function getIncompleteImportFields(r, meta) {
   const missing = [];
   if (!r.mc) missing.push({ key: "mc", label: "Micro Cluster" });
   const siteMeta = meta?.siteMetaMap?.[r.site_id];
   if (!siteMeta?.kabupaten) missing.push({ key: "kabupaten", label: "Kabupaten" });
   if (!siteMeta?.kecamatan) missing.push({ key: "kecamatan", label: "Kecamatan" });
-  if (!meta?.profileMap?.[r.created_by]) missing.push({ key: "creator", label: "BME/RGE" });
+  if (!resolveCreatorName(r, meta)) missing.push({ key: "creator", label: "BME/RGE" });
   if (!r.event_category) missing.push({ key: "eventCategory", label: "Event Category" });
   if (!r.poi_type) missing.push({ key: "poi", label: "POI" });
   if (!r.network_category) missing.push({ key: "network", label: "Network Category" });
@@ -169,6 +189,11 @@ function Body({ email }) {
   // sudah dipakai daftar activities mobile (app/martahub/m/activities/page.jsx).
   const [siteMetaMap, setSiteMetaMap] = useState({});
   const [profileMap, setProfileMap] = useState({});
+  // Assignment BME/RGE SEKARANG (User Management) - key `${brand}|${BRANCH}`,
+  // dipakai resolveCreatorName() sbg fallback tampilan utk baris Import
+  // Excel yg belum ke-assign ke akun login asli. Lihat catatan di
+  // resolveCreatorName().
+  const [bmeAssignMap, setBmeAssignMap] = useState({});
   const [docCountMap, setDocCountMap] = useState({});
   const [docPhotoMap, setDocPhotoMap] = useState({}); // activity_id -> storage_path foto pertama (utk thumbnail export)
   const [docDriveMap, setDocDriveMap] = useState({}); // activity_id -> Google Drive file id foto pertama (mh_documents.external_ref, diisi Edge Function media-relay) - utk link "Buka di Drive" saat export .xlsx
@@ -213,9 +238,15 @@ function Body({ email }) {
       // dipakai activity plan saat ini saja.
       const siteIds = [...new Set(list.map((r) => r.site_id).filter(Boolean))];
 
-      const [{ data: branches }, { data: profiles }, { data: lbRows }, { data: batches }, { data: sites }] = await Promise.all([
+      const [{ data: branches }, { data: profiles }, { data: bmeAssignRows }, { data: lbRows }, { data: batches }, { data: sites }] = await Promise.all([
         supabaseMarta.from("mh_branches").select("id, name"),
         supabaseMarta.from("mh_profiles").select("id, full_name"),
+        // Assignment BME/RGE aktif (User Management) - TERPISAH dari query
+        // profiles di atas krn butuh brand/branch_name/valid_from, & dipakai
+        // resolveCreatorName() sbg fallback nama utk baris Import Excel yg
+        // belum ke-assign ke akun login asli (lihat catatan di fungsi itu).
+        supabaseMarta.from("mh_profiles").select("full_name, brand, branch_name, valid_from")
+          .eq("role", "bme_rge").eq("is_active", true).not("branch_name", "is", null),
         supabaseMarta.from("mh_leaderboard_summary").select("user_id, achievement_pct, productivity_pct"),
         supabaseMarta.rpc("mh_list_import_batches"),
         // CMS TIDAK punya sesi auth Supabase asli (lihat martaScope.js) jadi
@@ -227,6 +258,18 @@ function Body({ email }) {
       ]);
       setBranchMap(Object.fromEntries((branches || []).map((b) => [b.id, b.name])));
       setProfileMap(Object.fromEntries((profiles || []).map((p) => [p.id, p.full_name])));
+      // Kalau satu branch+brand kebetulan py >1 assignment aktif, ambil yg
+      // valid_from PALING BARU (konsisten dgn urutan RPC mh_import_plan_batch
+      // sendiri: "order by p.valid_from desc nulls last limit 1").
+      {
+        const byKey = {};
+        for (const p of bmeAssignRows || []) {
+          const key = `${String(p.brand || "").toLowerCase()}|${String(p.branch_name || "").toUpperCase()}`;
+          const prevDate = byKey[key]?.valid_from;
+          if (!byKey[key] || (p.valid_from || "") > (prevDate || "")) byKey[key] = p;
+        }
+        setBmeAssignMap(Object.fromEntries(Object.entries(byKey).map(([k, p]) => [k, p.full_name])));
+      }
       setLbMap(Object.fromEntries((lbRows || []).map((l) => [l.user_id, l])));
       setBatchMap(Object.fromEntries((batches || []).map((b) => [b.id, b])));
       // Satu site_id bisa punya BANYAK baris mh_sites (beda mc, dst - lihat
@@ -289,7 +332,7 @@ function Body({ email }) {
     { key: "uploadDate", label: "Tgl Upload Backdoor", width: 140, filter: true,
       get: (r) => (r.plan_source === "cms_import" ? fmtDate(batchMap[r.import_batch_id]?.created_at || r.created_at) : "-"),
       sortVal: (r) => (r.plan_source === "cms_import" ? (batchMap[r.import_batch_id]?.created_at || r.created_at || "") : "") },
-    { key: "status", label: "Status", width: 150, filter: true, get: (r) => deriveStatusInfo(r, { profileMap, siteMetaMap })[0], badgeStatus: true },
+    { key: "status", label: "Status", width: 150, filter: true, get: (r) => deriveStatusInfo(r, { profileMap, siteMetaMap, bmeAssignMap, branchMap })[0], badgeStatus: true },
     { key: "month", label: "Month", width: 118, filter: true, get: (r) => monthLabel(r.plan_date_start || r.plan_date) },
     { key: "brand", label: "Brand", width: 66, filter: true, get: (r) => brandLabel(r.brand), badgeBrand: true },
     { key: "branch", label: "Branch", width: 140, filter: true, get: (r) => branchMap[r.branch_id] || "-" },
@@ -297,7 +340,7 @@ function Body({ email }) {
     { key: "mc", label: "Micro Cluster", width: 120, filter: true, get: (r) => r.mc || "-" },
     { key: "kabupaten", label: "Kabupaten", width: 150, filter: true, get: (r) => siteMetaMap[r.site_id]?.kabupaten || "-" },
     { key: "kecamatan", label: "Kecamatan", width: 150, filter: true, get: (r) => siteMetaMap[r.site_id]?.kecamatan || "-" },
-    { key: "creator", label: "BME/RGE", width: 150, filter: true, get: (r) => profileMap[r.created_by] || "-" },
+    { key: "creator", label: "BME/RGE", width: 150, filter: true, get: (r) => resolveCreatorName(r, { profileMap, bmeAssignMap, branchMap }) || "-" },
     { key: "planDate", label: "Plan Date", width: 100, filter: true, get: (r) => fmtDate(r.plan_date_start || r.plan_date), sortVal: (r) => r.plan_date_start || r.plan_date || "" },
     { key: "actualDate", label: "Actual Date", width: 100, filter: true, get: (r) => fmtDate(r.actual_date), sortVal: (r) => r.actual_date || "" },
     { key: "eventCategory", label: "Event Category", width: 160, filter: true, get: (r) => cats(r) },
@@ -327,7 +370,7 @@ function Body({ email }) {
     { key: "insight", label: "Insight (Optional)", width: 220, filter: true, get: (r) => r.insight || "-" },
     { key: "documentation", label: "Documentation", width: 120, filter: true, get: (r) => (docCountMap[r.id] ? `${docCountMap[r.id]} foto` : "-") },
     { key: "drive_link", label: "Link Google Drive", width: 140, get: (r) => (docDriveMap[r.id] ? "Buka di Drive" : "-") },
-  ], [branchMap, profileMap, docCountMap, cats, batchMap, canRollback, siteMetaMap]);
+  ], [branchMap, profileMap, bmeAssignMap, docCountMap, cats, batchMap, canRollback, siteMetaMap]);
 
   const FILTER_COLS = useMemo(() => COLUMNS.filter((c) => c.filter), [COLUMNS]);
 
@@ -340,9 +383,9 @@ function Body({ email }) {
       (r.site_id || "").toLowerCase().includes(term) ||
       (r.address || "").toLowerCase().includes(term) ||
       (branchMap[r.branch_id] || "").toLowerCase().includes(term) ||
-      (profileMap[r.created_by] || "").toLowerCase().includes(term)
+      (resolveCreatorName(r, { profileMap, bmeAssignMap, branchMap }) || "").toLowerCase().includes(term)
     );
-  }, [rows, term, branchMap, profileMap]);
+  }, [rows, term, branchMap, profileMap, bmeAssignMap]);
 
   // ── Chained faceted filter options - utk tiap kolom filter, opsi dihitung
   //    dari data yg SUDAH terfilter oleh kolom filter LAIN (bukan dirinya
@@ -452,9 +495,9 @@ function Body({ email }) {
 
   const statusStatusCounts = useMemo(() => {
     const m = new Map();
-    for (const r of rows) { const lbl = deriveStatusInfo(r, { profileMap, siteMetaMap })[0]; m.set(lbl, (m.get(lbl) || 0) + 1); }
+    for (const r of rows) { const lbl = deriveStatusInfo(r, { profileMap, siteMetaMap, bmeAssignMap, branchMap })[0]; m.set(lbl, (m.get(lbl) || 0) + 1); }
     return m;
-  }, [rows, profileMap, siteMetaMap]);
+  }, [rows, profileMap, siteMetaMap, bmeAssignMap, branchMap]);
   const statusChips = useMemo(() => Array.from(statusStatusCounts.keys()), [statusStatusCounts]);
   const selectedStatuses = colFilters.status || [];
   const toggleStatusChip = (lbl) => {
@@ -486,7 +529,7 @@ function Body({ email }) {
       const branch = branchMap[r.branch_id];
       if (branch) pool.push({ label: branch, kind: "Branch" });
       if (r.mc) pool.push({ label: r.mc, kind: "MC" });
-      const creator = profileMap[r.created_by];
+      const creator = resolveCreatorName(r, { profileMap, bmeAssignMap, branchMap });
       if (creator) pool.push({ label: creator, kind: "BME/RGE" });
       if (r.site_id) pool.push({ label: r.site_id, kind: "Site" });
       if (r.address) pool.push({ label: r.address, kind: "Alamat" });
@@ -503,7 +546,7 @@ function Body({ email }) {
       if (out.length >= 8) break;
     }
     return out;
-  }, [q, rows, branchMap, profileMap]);
+  }, [q, rows, branchMap, profileMap, bmeAssignMap]);
 
   // ── Export .xlsx - PERSIS mengikuti hasil filter yang sedang aktif
   //    (search + semua kolom filter + urutan sort), bukan seluruh data
@@ -521,6 +564,257 @@ function Body({ email }) {
     setExporting(true);
     try {
       const wb = new ExcelJS.Workbook();
+
+      // ── Palet warna & number format export - SATU sumber dipakai sheet
+      //    Summary & Activity Plan, biar konsisten & gampang diubah sekali
+      //    tempat. Warna header ikut brand MartaHub (T.primary/T.blue di
+      //    MartaShell.jsx), bukan asal pilih.
+      const XLSX_HEADER_FILL = "FFED1C24"; // brand MartaHub (T.primary)
+      const XLSX_HEADER_FONT = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
+      const XLSX_SUBHEADER_FILL = "FF1565C0"; // brand blue (T.blue) - header sub-tabel Summary
+      const XLSX_SUBHEADER_FONT = { bold: true, color: { argb: "FFFFFFFF" } };
+      const XLSX_TOTAL_FILL = "FFE3E8F0"; // T.line - baris "Total Keseluruhan"
+      const XLSX_ZEBRA_FILL = "FFF7F9FC"; // banding baris genap - sangat halus, tidak ganggu baca
+      const XLSX_BORDER_COLOR = "FFD7DCE5";
+      const XLSX_THIN_BORDER = {
+        top: { style: "thin", color: { argb: XLSX_BORDER_COLOR } },
+        left: { style: "thin", color: { argb: XLSX_BORDER_COLOR } },
+        bottom: { style: "thin", color: { argb: XLSX_BORDER_COLOR } },
+        right: { style: "thin", color: { argb: XLSX_BORDER_COLOR } },
+      };
+      // ACV (Actual/Target %) - hijau tercapai, kuning mendekati, merah jauh
+      // dari target. costRatio dibalik (invertGood): makin RENDAH makin
+      // bagus (cost aktual di bawah estimasi), jadi threshold-nya dibalik.
+      const acvColor = (pct, invertGood) => {
+        if (pct == null || Number.isNaN(pct)) return null;
+        const good = invertGood ? pct <= 100 : pct >= 100;
+        const warn = invertGood ? pct <= 120 : pct >= 80;
+        if (good) return { fill: "FFE8F5E9", font: "FF2E7D32" }; // T.success/successBg
+        if (warn) return { fill: "FFFFFDE7", font: "FF9A6B00" }; // T.warning/warningBg (font digelapkan dikit spy kebaca di atas fill terang)
+        return { fill: "FFFFEBEE", font: "FFC62828" }; // T.error/errorBg
+      };
+      const RP_FMT = '"Rp"#,##0;[Red]-"Rp"#,##0';
+      const INT_FMT = "#,##0";
+      const GPS_FMT = "0.000000";
+      const PCT_FMT = "0.0%";
+      // Kolom mana yg uang/integer/GPS - dicocokkan by key ke EXPORT_COLUMNS
+      // (kolom ACV pakai flag c.acv yg sudah ada, tidak perlu didaftar di sini).
+      const MONEY_KEYS = new Set(["targetRebuy", "targetRev", "costEstimate", "actualRebuy", "actualRev", "costActual"]);
+      const INT_KEYS = new Set(["no", "targetSp", "targetFwa", "actualSp", "actualFwa"]);
+      const GPS_KEYS = new Set(["long", "lat"]);
+
+      // ── Sheet "Summary" - pivot ringkasan per Branch (spt referensi
+      //    "Report & Plan NSA.xlsx"). Daftar Branch & Event Category-nya
+      //    dihitung di JS dari data yg lagi di-export (uniqueBranches/
+      //    uniqueCats di bawah), ditulis sbg teks tetap, tapi tiap ANGKA
+      //    di tabelnya tetap RUMUS Excel biasa (COUNTIF/SUMIF/COUNTIFS/
+      //    SUMIFS/SUM) yg reference ke seluruh kolom data - jadi kalau
+      //    angka datanya diubah manual di Excel, sel ringkasan ikut
+      //    ke-update. (Versi sebelumnya pakai rumus array dinamis Excel 365
+      //    SORT/UNIQUE/TRANSPOSE + referensi spill "#" supaya daftar
+      //    Branch/Category ikut "nambah otomatis" - tapi ExcelJS tidak
+      //    menulis metadata dynamic-array yg wajib ada utk fungsi itu,
+      //    jadi Excel selalu anggap file rusak & "Repair" dgn membuang
+      //    semua formula. Diganti ke pendekatan klasik ini spy file selalu
+      //    valid di semua versi Excel.)
+      // Kolom acuan di sheet "Activity Plan" (urutan TETAP, lihat EXPORT_COLUMNS
+      // di bawah): F=Brand, G=Branch, O=Event Category, Y=Target SP,
+      // Z=Target FWA, AA=Target Rebuy, AB=Est. Total Rev (3 Months).
+      const dataLastRow = filteredRows.length + 1; // +1 krn baris 1 = header
+      const DATA = `'Activity Plan'!`;
+      const rngBranch = `${DATA}$G$2:$G$${dataLastRow}`;
+      const rngBrand = `${DATA}$F$2:$F$${dataLastRow}`;
+      const rngCat = `${DATA}$O$2:$O$${dataLastRow}`;
+      const rngSp = `${DATA}$Y$2:$Y$${dataLastRow}`;
+      const rngFwa = `${DATA}$Z$2:$Z$${dataLastRow}`;
+      const rngRebuy = `${DATA}$AA$2:$AA$${dataLastRow}`;
+      const rngRev = `${DATA}$AB$2:$AB$${dataLastRow}`;
+      const colLetter = (n) => { let s = ""; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+      const escStr = (s) => String(s).replace(/"/g, '""');
+
+      const brandVariants = [
+        { label: "Semua Brand", crit: null },
+        { label: "IM3", crit: "IM3" },
+        { label: "3ID", crit: "3ID" },
+      ];
+
+      // Catatan (2026-09, perbaikan file corrupt/"Repair" saat dibuka Excel):
+      // Versi sebelumnya pakai rumus array dinamis Excel 365 (SORT/UNIQUE/
+      // TRANSPOSE) + referensi spill "A1#" supaya daftar Branch/Event
+      // Category ikut "nambah otomatis" kalau data di sheet diedit manual.
+      // MASALAHNYA: ExcelJS tidak menulis metadata "dynamic array formula"
+      // (prefix _xlfn., flag array formula, dsb) yg wajib ada di file .xlsx
+      // versi Excel 365 - jadi Excel selalu anggap formula itu rusak &
+      // otomatis "Repair" dgn MEMBUANG seluruh <f> formula di sheet
+      // (persis error yg dilaporkan). Diganti total ke pendekatan klasik:
+      // daftar Branch & Event Category unik dihitung SEKALI di JS (persis
+      // saat export ini), ditulis sbg TEKS tetap, lalu tiap sel angka tetap
+      // RUMUS Excel biasa (COUNTIF/SUMIF/COUNTIFS/SUMIFS/SUM) yg reference
+      // ke SELURUH kolom data di sheet "Activity Plan" - jadi kalau angka
+      // di sana diubah manual, sel ringkasan ini tetap ikut ke-update
+      // (hanya daftar Branch/Category-nya sendiri baru "ikut nambah" kalau
+      // export ulang, bukan otomatis spill spt sebelumnya). Ini didukung
+      // 100% oleh Excel versi berapa pun (termasuk Excel lama) & oleh
+      // ExcelJS, jadi file tidak pernah "Repair" lagi.
+      const uniqueBranches = Array.from(
+        new Set(filteredRows.map((r) => branchMap[r.branch_id] || "-"))
+      ).sort((a, b) => a.localeCompare(b));
+      const uniqueCats = Array.from(new Set(filteredRows.map((r) => cats(r)))).sort((a, b) =>
+        a.localeCompare(b)
+      );
+
+      if (filteredRows.length) {
+        const wsSum = wb.addWorksheet("Summary");
+        wsSum.getColumn(1).width = 22;
+        for (let c = 2; c <= 22; c++) wsSum.getColumn(c).width = 15;
+        let row = 1;
+        const titleRow = (text) => {
+          const r = wsSum.getRow(row++);
+          const cell = r.getCell(1);
+          cell.value = text;
+          cell.font = { bold: true, size: 13, color: { argb: "FFED1C24" } };
+          row++; // baris kosong pemisah
+        };
+        const headerCell = (r, col, label) => {
+          const cell = r.getCell(col);
+          cell.value = label;
+          cell.font = XLSX_SUBHEADER_FONT;
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLSX_SUBHEADER_FILL } };
+          cell.border = XLSX_THIN_BORDER;
+          cell.alignment = { vertical: "middle", horizontal: "center" };
+        };
+        const totalRowStyle = (r, colFrom, colTo) => {
+          for (let c = colFrom; c <= colTo; c++) {
+            const cell = r.getCell(c);
+            cell.font = { bold: true };
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLSX_TOTAL_FILL } };
+            cell.border = XLSX_THIN_BORDER;
+          }
+        };
+        const bandRow = (r, colFrom, colTo, idx) => {
+          if (idx % 2 !== 1) return; // baris genap (idx 0-based ganjil tampil) - selang-seling halus
+          for (let c = colFrom; c <= colTo; c++) {
+            const cell = r.getCell(c);
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLSX_ZEBRA_FILL } };
+          }
+        };
+
+        // ── Tabel A: Ringkasan per Branch (Count Activity, Target SP/FWA/
+        //    Rebuy/Revenue) - 3 sub-tabel bertumpuk (Semua/IM3/3ID). Daftar
+        //    Branch = uniqueBranches (dihitung di JS, lihat catatan di
+        //    atas), tiap sel angka = COUNTIF/SUMIF(S) klasik. ──
+        titleRow("Ringkasan per Branch");
+        brandVariants.forEach((bv) => {
+          const hdr = wsSum.getRow(row);
+          headerCell(hdr, 1, "Branch");
+          headerCell(hdr, 2, "Count Activity");
+          headerCell(hdr, 3, "Sum Target SP");
+          headerCell(hdr, 4, "Sum Target FWA");
+          headerCell(hdr, 5, "Sum Target Rebuy");
+          headerCell(hdr, 6, "Sum Est. Total Rev (3 Months)");
+          const firstDataRow = row + 1;
+          uniqueBranches.forEach((branchName, idx) => {
+            const r2 = wsSum.getRow(firstDataRow + idx);
+            r2.getCell(1).value = branchName;
+            const critBranch = `"${escStr(branchName)}"`;
+            if (bv.crit) {
+              r2.getCell(2).value = { formula: `COUNTIFS(${rngBranch},${critBranch},${rngBrand},"${bv.crit}")` };
+              r2.getCell(3).value = { formula: `SUMIFS(${rngSp},${rngBranch},${critBranch},${rngBrand},"${bv.crit}")` };
+              r2.getCell(4).value = { formula: `SUMIFS(${rngFwa},${rngBranch},${critBranch},${rngBrand},"${bv.crit}")` };
+              r2.getCell(5).value = { formula: `SUMIFS(${rngRebuy},${rngBranch},${critBranch},${rngBrand},"${bv.crit}")` };
+              r2.getCell(6).value = { formula: `SUMIFS(${rngRev},${rngBranch},${critBranch},${rngBrand},"${bv.crit}")` };
+            } else {
+              r2.getCell(2).value = { formula: `COUNTIF(${rngBranch},${critBranch})` };
+              r2.getCell(3).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngSp})` };
+              r2.getCell(4).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngFwa})` };
+              r2.getCell(5).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngRebuy})` };
+              r2.getCell(6).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngRev})` };
+            }
+            r2.getCell(2).numFmt = INT_FMT;
+            r2.getCell(3).numFmt = INT_FMT;
+            r2.getCell(4).numFmt = INT_FMT;
+            r2.getCell(5).numFmt = RP_FMT;
+            r2.getCell(6).numFmt = RP_FMT;
+            r2.getCell(1).border = XLSX_THIN_BORDER;
+            for (let c = 2; c <= 6; c++) r2.getCell(c).border = XLSX_THIN_BORDER;
+            bandRow(r2, 1, 6, idx);
+          });
+          const totalRowIdx = firstDataRow + uniqueBranches.length + 1;
+          const totalR = wsSum.getRow(totalRowIdx);
+          totalR.getCell(1).value = "Total Keseluruhan";
+          for (let c = 2; c <= 6; c++) {
+            totalR.getCell(c).value = uniqueBranches.length
+              ? { formula: `SUM(${colLetter(c)}${firstDataRow}:${colLetter(c)}${firstDataRow + uniqueBranches.length - 1})` }
+              : 0;
+          }
+          totalR.getCell(2).numFmt = INT_FMT;
+          totalR.getCell(3).numFmt = INT_FMT;
+          totalR.getCell(4).numFmt = INT_FMT;
+          totalR.getCell(5).numFmt = RP_FMT;
+          totalR.getCell(6).numFmt = RP_FMT;
+          totalRowStyle(totalR, 1, 6);
+          row = totalRowIdx + 2;
+        });
+
+        // ── Tabel B: Branch × Event Category (Count Activity) - 3
+        //    sub-tabel bertumpuk (Semua/IM3/3ID). Branch (baris) & Event
+        //    Category (kolom header) = uniqueBranches/uniqueCats (JS),
+        //    sel = COUNTIFS klasik. Ukuran grid PERSIS jumlah unik riil -
+        //    tidak perlu lagi kapasitas longgar/padding spt versi spill. ──
+        titleRow("Ringkasan per Branch × Event Category (Count Activity)");
+        brandVariants.forEach((bv) => {
+          const hdr = wsSum.getRow(row);
+          headerCell(hdr, 1, "Branch");
+          const catAnchorCol = 2;
+          uniqueCats.forEach((catName, j) => headerCell(hdr, catAnchorCol + j, catName));
+          headerCell(hdr, catAnchorCol + uniqueCats.length, "Total");
+          const firstDataRow = row + 1;
+          uniqueBranches.forEach((branchName, i) => {
+            const r2 = wsSum.getRow(firstDataRow + i);
+            r2.getCell(1).value = branchName;
+            r2.getCell(1).border = XLSX_THIN_BORDER;
+            const critBranch = `"${escStr(branchName)}"`;
+            uniqueCats.forEach((catName, j) => {
+              const col = catAnchorCol + j;
+              const critCat = `"${escStr(catName)}"`;
+              const formula = bv.crit
+                ? `COUNTIFS(${rngBranch},${critBranch},${rngCat},${critCat},${rngBrand},"${bv.crit}")`
+                : `COUNTIFS(${rngBranch},${critBranch},${rngCat},${critCat})`;
+              const cell = r2.getCell(col);
+              cell.value = { formula };
+              cell.numFmt = INT_FMT;
+              cell.border = XLSX_THIN_BORDER;
+              cell.alignment = { horizontal: "center" };
+            });
+            const totalCol = catAnchorCol + uniqueCats.length;
+            const totalCell = r2.getCell(totalCol);
+            totalCell.value = uniqueCats.length
+              ? { formula: `SUM(${colLetter(catAnchorCol)}${firstDataRow + i}:${colLetter(catAnchorCol + uniqueCats.length - 1)}${firstDataRow + i})` }
+              : 0;
+            totalCell.font = { bold: true };
+            totalCell.numFmt = INT_FMT;
+            totalCell.border = XLSX_THIN_BORDER;
+            totalCell.alignment = { horizontal: "center" };
+            bandRow(r2, 1, totalCol, i);
+          });
+          const totalRowIdx = firstDataRow + uniqueBranches.length + 1;
+          const totalR = wsSum.getRow(totalRowIdx);
+          totalR.getCell(1).value = "Total Keseluruhan";
+          for (let j = 0; j <= uniqueCats.length; j++) {
+            const col = catAnchorCol + j;
+            const cl = colLetter(col);
+            const cell = totalR.getCell(col);
+            cell.value = uniqueBranches.length
+              ? { formula: `SUM(${cl}${firstDataRow}:${cl}${firstDataRow + uniqueBranches.length - 1})` }
+              : 0;
+            cell.numFmt = INT_FMT;
+            cell.alignment = { horizontal: "center" };
+          }
+          totalRowStyle(totalR, 1, catAnchorCol + uniqueCats.length);
+          row = totalRowIdx + 2;
+        });
+      }
+
       const ws = wb.addWorksheet("Activity Plan", { views: [{ state: "frozen", ySplit: 1 }] });
 
       // "pilih" (kolom checkbox rollback) TIDAK punya `get` - itu kolom
@@ -530,12 +824,32 @@ function Body({ email }) {
       // posisi kolom foto/link, autoFilter) spy tidak ada yg lupa disingkron.
       const EXPORT_COLUMNS = COLUMNS.filter((c) => c.key !== "pilih");
 
+      // numFmt per kolom - ditentukan sekali di sini per EXPORT_COLUMNS,
+      // dipakai baik utk `ws.columns[].style` (kolom kosong/baris baru yg
+      // ditambah user nanti di Excel ikut format ini) maupun tiap sel data
+      // di bawah. Uang = Rp#,##0, integer polos = #,##0, GPS = 6 desimal,
+      // ACV/percent = 0.0% (nilainya sendiri disimpan sbg PECAHAN 0-1, BUKAN
+      // 0-100, krn itu cara Excel native menyimpan format percent).
+      const colNumFmt = (c) => {
+        if (c.acv) return PCT_FMT;
+        if (MONEY_KEYS.has(c.key)) return RP_FMT;
+        if (GPS_KEYS.has(c.key)) return GPS_FMT;
+        if (INT_KEYS.has(c.key)) return INT_FMT;
+        return undefined;
+      };
+
       ws.columns = EXPORT_COLUMNS.map((c) => ({
         header: c.label,
         width: Math.max(10, Math.round((c.width || 100) / 7)),
+        style: colNumFmt(c) ? { numFmt: colNumFmt(c) } : undefined,
       }));
-      ws.getRow(1).font = { bold: true };
-      ws.getRow(1).alignment = { vertical: "middle" };
+      ws.getRow(1).height = 22;
+      ws.getRow(1).eachCell((cell) => {
+        cell.font = XLSX_HEADER_FONT;
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLSX_HEADER_FILL } };
+        cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+        cell.border = XLSX_THIN_BORDER;
+      });
 
       const docCol = EXPORT_COLUMNS.findIndex((c) => c.key === "documentation") + 1; // 1-based utk ExcelJS
       const driveCol = EXPORT_COLUMNS.findIndex((c) => c.key === "drive_link") + 1;
@@ -551,6 +865,10 @@ function Body({ email }) {
             const v = c.raw(r);
             return v == null ? "" : v; // presisi penuh, TIDAK dibulatkan
           }
+          if (c.acv && c.raw) {
+            const v = c.raw(r); // pctVal() balikin 0-100 - dibagi 100 spy cocok dgn numFmt percent native Excel
+            return v == null ? "" : Math.round(v * 100) / 10000;
+          }
           if (c.numeric && c.raw) {
             const v = c.raw(r);
             return v == null ? "" : Math.round(v * 100) / 100;
@@ -559,6 +877,24 @@ function Body({ email }) {
           return v === "-" ? "" : v;
         });
         const row = ws.addRow(rowValues);
+        row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+          cell.border = XLSX_THIN_BORDER;
+          if (i % 2 === 1) {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLSX_ZEBRA_FILL } };
+          }
+        });
+        // Sel ACV/Cost Ratio diwarnai per-baris sesuai capaian (hijau
+        // tercapai / kuning mendekati / merah jauh) - fill zebra di atas
+        // (kalau ada) ditimpa warna ini spy tetap jelas kebaca.
+        EXPORT_COLUMNS.forEach((c, idx) => {
+          if (!c.acv) return;
+          const v = c.raw ? c.raw(r) : null; // 0-100, bukan pecahan - buat nentuin warna
+          const color = acvColor(v, !!c.invertGood);
+          if (!color) return;
+          const cell = row.getCell(idx + 1);
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: color.fill } };
+          cell.font = { color: { argb: color.font }, bold: true };
+        });
         // Link "Buka di Drive" - klik langsung buka foto di Google Drive
         // (mh_documents.external_ref, diisi Edge Function media-relay).
         // Kalau belum sempat ke-mirror (mis. kredensial Drive lagi
@@ -612,7 +948,7 @@ function Body({ email }) {
     } finally {
       setExporting(false);
     }
-  }, [COLUMNS, filteredRows, docPhotoMap, docDriveMap]);
+  }, [COLUMNS, filteredRows, docPhotoMap, docDriveMap, branchMap, cats]);
 
   const T_FILTER = { hi: T.hi, mid: T.mid, lo: T.lo, blue: T.primary, blueBg: T.primaryBg };
 
@@ -848,8 +1184,8 @@ function Body({ email }) {
                     }
                     if (col.key === "no") return <td key="no" style={{ padding: "8px 10px", color: T.lo, borderRight: `1px solid ${T.line}` }}>{i + 1}</td>;
                     if (col.badgeStatus) {
-                      const st = deriveStatusInfo(r, { profileMap, siteMetaMap });
-                      const missingFields = st[0] === "Belum Lengkap" ? getIncompleteImportFields(r, { profileMap, siteMetaMap }) : [];
+                      const st = deriveStatusInfo(r, { profileMap, siteMetaMap, bmeAssignMap, branchMap });
+                      const missingFields = st[0] === "Belum Lengkap" ? getIncompleteImportFields(r, { profileMap, siteMetaMap, bmeAssignMap, branchMap }) : [];
                       const badgeTitle = missingFields.length ? `Kolom belum terisi: ${missingFields.map((f) => f.label).join(", ")}` : undefined;
                       return <td key={col.key} style={{ padding: "8px 10px", borderRight: `1px solid ${T.line}` }}><span title={badgeTitle} style={{ fontSize: 10, fontWeight: 800, color: st[1], background: st[2], padding: "2px 8px", borderRadius: 999, cursor: badgeTitle ? "help" : "default" }}>{st[0]}</span></td>;
                     }

@@ -3,7 +3,7 @@
  * /martahub/m/activities - Daftar aktivitas BME/RGE dengan tab filter status,
  * data dari `mh_activities_for_me()` (RPC scoping sama dgn app Flutter).
  */
-import { useEffect, useMemo, useState, Suspense } from "react";
+import { useEffect, useMemo, useState, useTransition, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Search, X, Plus, Trash2, CheckCircle2, AlertCircle, ChevronRight, ChevronDown, CardSim, Router, Receipt, MapPin, Pencil, FolderClock, Clock, SlidersHorizontal, Check } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
@@ -111,6 +111,12 @@ function ActivitiesInner() {
   // di bawah) - bukan daftar 12 bulan/beberapa tahun kosongan.
   const [monthKey, setMonthKey] = useState("all");
   const [monthPickerOpen, setMonthPickerOpen] = useState(false);
+  // Indikator loading KHUSUS saat filter/periode diubah (bukan initial
+  // load - itu sudah dipakai `rows === null`) - useTransition dipakai
+  // krn filtering 700+ baris di useMemo bisa terasa "macet" sesaat tanpa
+  // umpan balik apapun, user kira tap-nya tidak kerekam. isPending TRUE
+  // persis selama React masih merender ulang daftar dgn filter baru.
+  const [isFiltering, startFilterTransition] = useTransition();
   const [statusFilter, setStatusFilter] = useState(() => new Set());
   const [brandFilter, setBrandFilter] = useState(() => new Set());
   const [branchFilter, setBranchFilter] = useState(() => new Set());
@@ -308,10 +314,12 @@ function ActivitiesInner() {
   // kabupaten/kecamatan/poi/site) - satu fungsi dipakai lewat setter yg
   // berbeda-beda, drpd menulis ulang logic add/delete Set yg sama 7 kali.
   function toggleInSet(setter, key) {
-    setter((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key); else next.add(key);
-      return next;
+    startFilterTransition(() => {
+      setter((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key); else next.add(key);
+        return next;
+      });
     });
   }
   function resetFilters() {
@@ -479,15 +487,32 @@ function ActivitiesInner() {
       <div style={{ padding: "16px 20px 0" }}>
         {err && <div style={{ padding: "10px 12px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 12, fontWeight: 600 }}>{err}</div>}
 
+        {/* Pita loading tipis - MUNCUL PERSIS selama filter/periode baru
+            lagi diterapkan (isFiltering dari useTransition di atas), beda
+            dgn ShellSpinner initial load di bawah yg cuma sekali di awal.
+            Tanpa ini, tap filter di daftar 700+ baris kelihatan spt tidak
+            kerekam sama sekali sesaat sblm hasilnya berubah. */}
+        {isFiltering && (
+          <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "8px 2px", marginBottom: 2, fontSize: 11.5, fontWeight: 700, color: "#8A8A96" }}>
+            <span style={{
+              width: 13, height: 13, borderRadius: "50%", flexShrink: 0,
+              border: "2px solid #E4E5EA", borderTopColor: BRAND,
+              animation: "mh-filter-spin .7s linear infinite",
+            }} />
+            Memuat hasil filter...
+          </div>
+        )}
+        <style>{`@keyframes mh-filter-spin{to{transform:rotate(360deg)}}`}</style>
+
         {rows === null && !err ? (
           <ShellSpinner />
         ) : filtered.length === 0 ? (
-          <div style={{ marginTop: 4, textAlign: "center", padding: "40px 20px", background: "#FFFFFF", border: "1px dashed #D8D9E0", borderRadius: 16 }}>
+          <div style={{ marginTop: 4, textAlign: "center", padding: "40px 20px", background: "#FFFFFF", border: "1px dashed #D8D9E0", borderRadius: 16, opacity: isFiltering ? 0.5 : 1 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#3A3A44" }}>Tidak ada aktivitas</div>
             <div style={{ marginTop: 4, fontSize: 12, color: "#8A8A96" }}>Coba ganti filter atau kata kunci pencarian.</div>
           </div>
         ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, opacity: isFiltering ? 0.5 : 1, transition: "opacity .15s" }}>
             {filtered.map((r) => (
               <ActivityCard key={r.id} r={r} userId={userId} branchLabel={branchBySite[r.site_id]}
                 onOpen={() => router.push(
@@ -527,7 +552,7 @@ function ActivitiesInner() {
           <div style={{ fontSize: 15, fontWeight: 800, color: "#17181C" }}>Pilih Bulan</div>
           <div style={{ marginTop: 4, fontSize: 12, color: "#8A8A96" }}>Cuma bulan yg ada plan-nya yg ditampilkan di sini.</div>
           <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 6 }}>
-            <button onClick={() => { setMonthKey("all"); setMonthPickerOpen(false); }}
+            <button onClick={() => { startFilterTransition(() => setMonthKey("all")); setMonthPickerOpen(false); }}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
                 padding: "12px 14px", borderRadius: 12, border: `1.5px solid ${monthKey === "all" ? BRAND : "#E9EAEE"}`,
@@ -542,7 +567,7 @@ function ActivitiesInner() {
               monthOptions.map((o) => {
                 const active = monthKey === o.key;
                 return (
-                  <button key={o.key} onClick={() => { setMonthKey(o.key); setMonthPickerOpen(false); }}
+                  <button key={o.key} onClick={() => { startFilterTransition(() => setMonthKey(o.key)); setMonthPickerOpen(false); }}
                     style={{
                       display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
                       padding: "12px 14px", borderRadius: 12, border: `1.5px solid ${active ? BRAND : "#E9EAEE"}`,
@@ -604,7 +629,7 @@ function ActivitiesInner() {
               <div style={{ fontSize: 11, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: "0.03em" }}>Tanggal Event</div>
               <div style={{ marginTop: 8, display: "flex", gap: 7 }}>
                 {[{ key: "all", label: "Semua" }, { key: "week", label: "Minggu Ini" }, { key: "month", label: "Bulan Ini" }].map((o) => (
-                  <button key={o.key} onClick={() => setDateRange(o.key)}
+                  <button key={o.key} onClick={() => startFilterTransition(() => setDateRange(o.key))}
                     style={{
                       flex: 1, padding: "9px 0", borderRadius: 11, border: `1.5px solid ${dateRange === o.key ? BRAND : "#E9EAEE"}`,
                       background: dateRange === o.key ? "#FDECEC" : "#F8F8FA", color: dateRange === o.key ? BRAND : "#5A5A68",

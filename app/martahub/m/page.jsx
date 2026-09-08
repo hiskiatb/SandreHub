@@ -130,6 +130,13 @@ export default function MartaMobileHome() {
   const [err, setErr] = useState("");
   const [pendingApprovals, setPendingApprovals] = useState(0);
   const [branchMap, setBranchMap] = useState(() => new Map());
+  // Status loading KHUSUS utk daftar Branch (role unscoped: admin/head/
+  // spm_sumatera/tmv) - TANPA ini, field Branch di frame pertama kelihatan
+  // SAMA PERSIS spt role yg terkunci ke 1 cabang (abu-abu, tanpa panah,
+  // tidak bisa ditekan) padahal sebetulnya cuma BELUM SELESAI fetch master
+  // data mh_branches - user (mis. spm_sumatera) yg SEHARUSNYA bisa pilih
+  // branch jadi salah kira fitur ini rusak/tidak bisa dipakai.
+  const [branchMapLoading, setBranchMapLoading] = useState(false);
   // Nama branch per site utk kartu "Aktivitas Terbaru" - SAMA PERSIS dgn
   // pendekatan di daftar Aktivitas (activities/page.jsx): lewat mh_sites
   // (site_id -> branch text), BUKAN mh_activities.branch_id -> mh_branches
@@ -210,6 +217,7 @@ export default function MartaMobileHome() {
   useEffect(() => {
     if (loading || !canBrowseBranches) return;
     let alive = true;
+    setBranchMapLoading(true);
     (async () => {
       try {
         // SIMPAN utuh {name, region} (bukan cuma nama) - dipakai branchOptions
@@ -221,6 +229,7 @@ export default function MartaMobileHome() {
         const map = await loadBranchMap();
         if (alive) setBranchMap(map);
       } catch { /* best-effort */ }
+      finally { if (alive) setBranchMapLoading(false); }
     })();
     return () => { alive = false; };
   }, [loading, canBrowseBranches]);
@@ -353,6 +362,7 @@ export default function MartaMobileHome() {
               placeholder="SEMUA BRANCH"
               prefixLabel="BRANCH"
               options={canBrowseBranches ? branchOptions : ((scope?.branchName || scope?.region) ? [{ value: "self", label: scope.branchName || scope.region }] : [])}
+              loading={canBrowseBranches && branchMapLoading}
               fullWidth
             />
           </div>
@@ -512,7 +522,7 @@ export default function MartaMobileHome() {
  * bukan dropdown kosong yg terlihat sama tapi ternyata tidak bisa apa-apa.
  * Saat interaktif, <select> ditumpuk transparan menutupi SELURUH pill
  * (overlay), jadi tap di mana saja di dalam pill membuka pilihan. */
-function FilterSelect({ icon: Icon, value, onChange, placeholder, options, fullWidth, prefixLabel }) {
+function FilterSelect({ icon: Icon, value, onChange, placeholder, options, fullWidth, prefixLabel, loading }) {
   const selected = options.find((o) => o.value === value);
   const interactive = options.length > 1;
   const label = selected ? selected.label : (options.length === 1 ? options[0].label : placeholder);
@@ -521,6 +531,31 @@ function FilterSelect({ icon: Icon, value, onChange, placeholder, options, fullW
   // nama cabang polos (mis. "ACEH") yg ambigu itu label field apa, apalagi
   // di sebelah badge Brand yg juga cuma satu kata.
   const showPrefix = prefixLabel && (selected || options.length === 1);
+  // Status LOADING (master data blm selesai diambil) HARUS beda tampilan
+  // dgn status "terkunci ke 1 cabang" (role scoped) - keduanya sama-sama
+  // options.length<=1 sesaat, tapi maknanya beda jauh: satu "belum siap,
+  // tunggu sebentar", satu lagi "memang tidak bisa diganti". Tanpa
+  // pembeda ini role unscoped (admin/spm_sumatera/head/tmv) yg field-nya
+  // SEHARUSNYA bisa dipilih akan salah kira fitur ini rusak di frame
+  // pertama sebelum daftar branch selesai dimuat.
+  if (loading) {
+    return (
+      <div style={{
+        position: "relative", display: fullWidth ? "flex" : "inline-flex", width: fullWidth ? "100%" : undefined,
+        boxSizing: "border-box", alignItems: "center", gap: 7,
+        minHeight: 40, padding: "0 14px", borderRadius: 999,
+        background: "#FFFFFF", border: "1.5px solid #E4E5EA",
+      }}>
+        <span style={{
+          width: 13, height: 13, borderRadius: "50%", flexShrink: 0,
+          border: "2px solid #E4E5EA", borderTopColor: "#8A8A96",
+          animation: "mh-filter-spin .7s linear infinite",
+        }} />
+        <style>{`@keyframes mh-filter-spin{to{transform:rotate(360deg)}}`}</style>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: "#B0B0BA" }}>Memuat...</span>
+      </div>
+    );
+  }
   return (
     <div style={{
       position: "relative", display: fullWidth ? "flex" : "inline-flex", width: fullWidth ? "100%" : undefined,
