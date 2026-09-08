@@ -82,7 +82,7 @@ function fmtRpCompact(n) {
 // mc/poi_type/event_categories/plan_date_start/plan_dates_multi ditambahkan
 // supaya "draft belum lengkap" di Beranda pakai definisi yg SAMA PERSIS dgn
 // halaman detail & daftar Aktivitas (lihat isDraftIncomplete di activityUi.js).
-const ACTIVITY_COLS = "id,event_name,brand,branch_id,mc,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,checkin_valid,target_sp,target_fwa,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,cost_actual,actual_rev_3m,created_at,site_id";
+const ACTIVITY_COLS = "id,event_name,brand,branch_id,mc,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,checkin_valid,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,target_rev_3m,cost_estimate,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,cost_actual,actual_rev_3m,created_at,site_id";
 
 // Rotasi harian (getDate() % TIPS.length) - deterministik per hari & ikut
 // menyesuaikan otomatis kalau jumlah tips berubah, jadi tiap tips kebagian
@@ -288,7 +288,14 @@ export default function MartaMobileHome() {
   const targetRevTotal = monthRows.reduce((s, r) => s + (r.target_rev_3m || 0), 0);
   const revenueTotal = monthRows.reduce((s, r) => s + (r.actual_rev_3m || 0), 0);
   const achievementPct = targetSp > 0 ? Math.round((actualSp / targetSp) * 100) : 0;
-  const costRatioPct = revenueTotal > 0 ? Math.round((costTotal / revenueTotal) * 100) : null;
+  // "0%" utk Cost Ratio TIDAK BOLEH dipakai kalau memang belum ada satupun
+  // laporan actual cost yg masuk (cost_actual semua masih null) - kalau
+  // dibagi begitu saja, "belum ada data" jadi kelihatan sama persis dgn
+  // "beneran menghabiskan Rp0 biaya", padahal dua hal yg beda jauh
+  // maknanya. "-" HANYA muncul di keadaan itu; begitu ada 1 laporan cost
+  // actual saja, tampilkan rasio beneran (termasuk kalau hasilnya 0%).
+  const hasCostActualData = monthRows.some((r) => r.cost_actual != null);
+  const costRatioPct = revenueTotal > 0 && hasCostActualData ? Math.round((costTotal / revenueTotal) * 100) : null;
   const planCount = monthRows.length;
   const actualCount = monthRows.filter((r) => r.actual_sp != null).length;
 
@@ -410,8 +417,12 @@ export default function MartaMobileHome() {
         />
       </div>
 
-      {/* Carousel: Mission / Draft / Tips */}
-      <div style={{ marginTop: 18 }}>
+      {/* Carousel: Mission / Draft / Tips - overflow:hidden di wrapper luar
+          ini sbg jaring pengaman kalau slide di dalam (yg sudah dipagari
+          boxSizing:border-box) tetap kelebaran krn sebab lain (mis. konten
+          anak yg gagal shrink) - supaya TIDAK PERNAH bikin body halaman
+          bisa discroll horizontal / kartu kepotong lewat tepi layar. */}
+      <div style={{ marginTop: 18, overflow: "hidden" }}>
         <MissionCarousel
           needsReport={needsReport} upcoming={upcoming}
           isApprover={isApprover} pendingApprovals={pendingApprovals} draftCount={draftCount}
@@ -696,9 +707,13 @@ function AchievementCard({
             <QuadDivider />
             <QuadStat dark icon={CheckCircle2} dot="#EC1E79" label="Actual" value={fmtInt(actualCount)} valueColor="#F286B4" />
             <QuadDivider />
-            <QuadStat dark icon={Banknote} dot="#57C2AC" label="Revenue" value={revenueTotal > 0 ? fmtRpCompact(revenueTotal) : "-"} valueColor="#7FD9C6" />
+            <QuadStat dark icon={Banknote} dot="#57C2AC" label="Revenue (3M)"
+              value={revenueTotal > 0 ? fmtRpCompact(revenueTotal) : "-"} valueColor="#7FD9C6"
+              sub={`Plan ${fmtRpCompact(targetRevTotal)}`} />
             <QuadDivider />
-            <QuadStat dark icon={Wallet} dot="#F5CD46" label="Cost Ratio" value={costRatioPct != null ? `${costRatioPct}%` : "-"} valueColor="#F5CD46" />
+            <QuadStat dark icon={Wallet} dot="#F5CD46" label="Cost Ratio"
+              value={costRatioPct != null ? `${costRatioPct}%` : "-"} valueColor="#F5CD46"
+              sub={`Plan ${targetRevTotal > 0 ? Math.round((targetCostTotal / targetRevTotal) * 100) + "%" : "-"}`} />
           </div>
 
           {/* Trigger flip - konsisten dgn "Lihat Detail >" di kartu Kontribusi
@@ -724,13 +739,22 @@ function AchievementCard({
             </button>
           </div>
 
-          <div style={{ marginTop: 6 }}>
-            <DarkDetailRow icon={CardSim} label="Penjualan SP: Actual / Plan" value={`${fmtInt(actualSp)} / ${fmtInt(targetSp)}`} color="#7FD9C6" />
-            <DarkDetailRow icon={Router} label="Penjualan FWA: Actual / Plan" value={`${fmtInt(actualFwaTotal)} / ${fmtInt(targetFwaTotal)}`} color="#7FD9C6" />
-            <DarkDetailRow icon={RefreshCw} label="Rebuy SP: Actual / Plan" value={`${fmtRpCompact(rebuySpTotal)} / ${fmtRpCompact(targetRebuySpTotal)}`} color="#F5CD46" />
-            <DarkDetailRow icon={RefreshCw} label="Rebuy FWA: Actual / Plan" value={`${fmtRpCompact(rebuyFwaTotal)} / ${fmtRpCompact(targetRebuyFwaTotal)}`} color="#F5CD46" />
-            <DarkDetailRow icon={Banknote} label="Revenue: Actual / Plan" value={`${fmtRpCompact(revenueTotal)} / ${fmtRpCompact(targetRevTotal)}`} color="#7FD9C6" />
-            <DarkDetailRow icon={Receipt} label="Cost: Actual / Plan" value={`${fmtRpCompact(costTotal)} / ${fmtRpCompact(targetCostTotal)}`} color="#F286B4" />
+          {/* Header kolom "Actual / Plan" SEKALI di atas (bukan diulang di
+              tiap label baris) - dulu tiap DarkDetailRow punya sufiks
+              ": Actual / Plan" sendiri2, jadi berulang 7x padahal artinya
+              sama semua: kolom kiri di value = Actual, kolom kanan = Plan. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 0 5px" }}>
+            <span style={{ flexShrink: 0, width: 28 }} />
+            <span style={{ flex: 1, minWidth: 0 }} />
+            <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase", color: "rgba(255,255,255,0.4)" }}>Actual / Plan</span>
+          </div>
+          <div>
+            <DarkDetailRow icon={CardSim} label="Penjualan SP" value={`${fmtInt(actualSp)} / ${fmtInt(targetSp)}`} color="#7FD9C6" />
+            <DarkDetailRow icon={Router} label="Penjualan FWA" value={`${fmtInt(actualFwaTotal)} / ${fmtInt(targetFwaTotal)}`} color="#7FD9C6" />
+            <DarkDetailRow icon={RefreshCw} label="Rebuy SP" value={`${fmtRpCompact(rebuySpTotal)} / ${fmtRpCompact(targetRebuySpTotal)}`} color="#F5CD46" />
+            <DarkDetailRow icon={RefreshCw} label="Rebuy FWA" value={`${fmtRpCompact(rebuyFwaTotal)} / ${fmtRpCompact(targetRebuyFwaTotal)}`} color="#F5CD46" />
+            <DarkDetailRow icon={Banknote} label="Revenue (3 Months)" value={`${fmtRpCompact(revenueTotal)} / ${fmtRpCompact(targetRevTotal)}`} color="#7FD9C6" />
+            <DarkDetailRow icon={Receipt} label="Cost Ratio" value={`${costRatioPct == null ? "-" : costRatioPct + "%"} / ${targetRevTotal > 0 ? Math.round((targetCostTotal / targetRevTotal) * 100) + "%" : "-"}`} color="#F286B4" />
             <DarkDetailRow icon={ListChecks} label="Total Actual / Plan" value={`${fmtInt(actualCount)} / ${fmtInt(planCount)}`} color="#FFFFFF" last />
           </div>
         </div>
@@ -760,9 +784,9 @@ function DarkDetailRow({ icon: Icon, label, value, color, last }) {
  * CheckCircle2 (yg sudah tercapai/tervalidasi), Revenue = Banknote
  * (jumlah pendapatan actual), Cost Ratio = Wallet (efisiensi biaya) -
  * ditaruh dlm badge bulat tipis bertinta warna dot-nya masing-masing. */
-function QuadStat({ label, value, valueColor, dark, dot, icon: Icon }) {
+function QuadStat({ label, value, valueColor, dark, dot, icon: Icon, sub }) {
   return (
-    <div style={{ flex: 1, textAlign: "center" }}>
+    <div style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
       {Icon && (
         <div style={{
           width: 22, height: 22, borderRadius: 8, margin: "0 auto 6px",
@@ -772,8 +796,15 @@ function QuadStat({ label, value, valueColor, dark, dot, icon: Icon }) {
           <Icon size={12} color={dot} strokeWidth={2.4} />
         </div>
       )}
-      <div style={{ fontSize: 9.5, color: dark ? "rgba(255,255,255,0.5)" : "#B0B0BA", fontWeight: 700, letterSpacing: 0.2 }}>{label}</div>
-      <div style={{ marginTop: 5, fontSize: 15.5, fontWeight: 800, color: valueColor || (dark ? "#FFFFFF" : "#17181C") }}>{value}</div>
+      <div style={{ fontSize: 9.5, color: dark ? "rgba(255,255,255,0.5)" : "#B0B0BA", fontWeight: 700, letterSpacing: 0.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
+      <div style={{ marginTop: 5, fontSize: 15.5, fontWeight: 800, color: valueColor || (dark ? "#FFFFFF" : "#17181C"), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</div>
+      {/* Baris kecil "Plan xxx" di bawah angka Actual - supaya kuadran
+          Revenue & Cost Ratio ikut comparable spt kuadran Plan/Actual di
+          sebelahnya (bukan cuma nampilin angka Actual sendirian tanpa
+          pembanding Plan-nya). */}
+      {sub != null && (
+        <div style={{ marginTop: 2, fontSize: 9, fontWeight: 700, color: dark ? "rgba(255,255,255,0.4)" : "#B0B0BA", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}</div>
+      )}
     </div>
   );
 }
@@ -856,7 +887,7 @@ function MissionCarousel({ needsReport, upcoming, isApprover, pendingApprovals, 
         style={{ display: "flex", overflowX: "auto", scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch", gap: 0, paddingBottom: 2 }}
       >
         {cards.map((c, i) => (
-          <div key={i} style={{ flex: "0 0 100%", scrollSnapAlign: "start", padding: "0 20px" }}>
+          <div key={i} style={{ flex: "0 0 100%", maxWidth: "100%", boxSizing: "border-box", scrollSnapAlign: "start", padding: "0 20px" }}>
             <CarouselCard {...c} />
           </div>
         ))}

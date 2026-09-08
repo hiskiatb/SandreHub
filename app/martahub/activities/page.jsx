@@ -112,6 +112,20 @@ function BrandBadge({ brand }) {
   );
 }
 const fmtRp = (n) => (n == null ? "-" : `Rp${Number(n).toLocaleString("id-ID")}`);
+// Versi ringkas (K/Mn/Bn) - dipakai KHUSUS utk pasangan "Actual / Plan" di
+// KpiSubRow yg sempit (kartu KPI minmax 172px) - fmtRp() penuh gampang
+// kepanjangan begitu 2 angka Rupiah disandingkan dlm 1 baris ("Rp1.575.000
+// / Rp1.410.000" pasti wrap/kepotong), jadi diringkas begitu >= ribuan.
+const fmtRpCompact = (n) => {
+  if (n == null) return "-";
+  const v = Number(n) || 0;
+  const sign = v < 0 ? "-" : "";
+  const abs = Math.abs(v);
+  if (abs >= 1_000_000_000) return `${sign}Rp${(abs / 1_000_000_000).toFixed(1).replace(/\.0$/, "")}Bn`;
+  if (abs >= 1_000_000) return `${sign}Rp${(abs / 1_000_000).toFixed(1).replace(/\.0$/, "")}Mn`;
+  if (abs >= 1_000) return `${sign}Rp${(abs / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
+  return `${sign}Rp${abs}`;
+};
 const rebuySum = (a, b) => { const x = Number(a || 0) + Number(b || 0); return x || null; };
 const pctVal = (actual, target) => (!target ? null : (Number(actual || 0) / Number(target)) * 100);
 const pctLabel = (actual, target) => { const v = pctVal(actual, target); return v == null ? "-" : `${Math.round(v)}%`; };
@@ -409,11 +423,14 @@ function Body({ email }) {
     // "Rebuy FWA" sekaligus, jadi keduanya salah nampilin angka gabungan yg
     // sama persis, bukan porsi masing-masing.
     const actualRebuySp = filteredRows.reduce((s, r) => s + (r.actual_rebuy_sp ?? 0), 0);
+    const targetRebuySp = filteredRows.reduce((s, r) => s + (r.target_rebuy_sp ?? 0), 0);
     const actualRebuyFwa = filteredRows.reduce((s, r) => s + (r.actual_rebuy_fwa ?? 0), 0);
+    const targetRebuyFwa = filteredRows.reduce((s, r) => s + (r.target_rebuy_fwa ?? 0), 0);
     const actualRebuy = actualRebuySp + actualRebuyFwa;
     const actualRev3m = filteredRows.reduce((s, r) => s + (r.actual_rev_3m ?? 0), 0);
     const targetRev3m = filteredRows.reduce((s, r) => s + (r.target_rev_3m ?? 0), 0);
     const totalCostActual = filteredRows.reduce((s, r) => s + (r.cost_actual ?? 0), 0);
+    const totalCostEstimate = filteredRows.reduce((s, r) => s + (r.cost_estimate ?? 0), 0);
 
     const withBudget = filteredRows.filter((r) => r.cost_estimate);
     const budgetEst = withBudget.reduce((s, r) => s + (r.cost_estimate ?? 0), 0);
@@ -426,7 +443,7 @@ function Body({ email }) {
       total,
       spTervalidasi: sp.act, spPengajuan: sp.tgt,
       fwaTervalidasi: fwa.act, fwaPengajuan: fwa.tgt,
-      actualRebuy, actualRebuySp, actualRebuyFwa, actualRev3m, targetRev3m, totalCostActual, budgetEst,
+      actualRebuy, actualRebuySp, targetRebuySp, actualRebuyFwa, targetRebuyFwa, actualRev3m, targetRev3m, totalCostActual, totalCostEstimate, budgetEst,
       costRatioPct, costOverBudget: budgetAct > budgetEst,
       actualSubmittedCount,
       avgAchievement, avgProductivity,
@@ -615,17 +632,17 @@ function Body({ email }) {
           terpisah), sekarang langsung di atas tabel Activity Plan supaya
           "pantau sekaligus lihat detail" bisa dalam satu layar. */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(172px,1fr))", gap: 14, marginBottom: 18 }}>
-        <Kpi label="Total SP Tervalidasi" value={<KpiRatio main={fmtInt(kpiStats.spTervalidasi)} suffix={` / ${fmtInt(kpiStats.spPengajuan)} pengajuan`} />}
-          sub={<KpiSubRow icon={RefreshCw} label="Rebuy SP" value={fmtRp(kpiStats.actualRebuySp)} />}
+        <Kpi label="Total Penjualan SP" value={<KpiRatio main={fmtInt(kpiStats.spTervalidasi)} suffix={` / ${fmtInt(kpiStats.spPengajuan)} Plan`} />}
+          sub={<KpiSubRow icon={RefreshCw} label="Rebuy SP: Actual / Plan" value={`${fmtRpCompact(kpiStats.actualRebuySp)} / ${fmtRpCompact(kpiStats.targetRebuySp)}`} />}
           icon={CardSim} color={T.success} />
-        <Kpi label="Total FWA Tervalidasi" value={<KpiRatio main={fmtInt(kpiStats.fwaTervalidasi)} suffix={` / ${fmtInt(kpiStats.fwaPengajuan)} pengajuan`} />}
-          sub={<KpiSubRow icon={RefreshCw} label="Rebuy FWA" value={fmtRp(kpiStats.actualRebuyFwa)} />}
+        <Kpi label="Total Penjualan FWA" value={<KpiRatio main={fmtInt(kpiStats.fwaTervalidasi)} suffix={` / ${fmtInt(kpiStats.fwaPengajuan)} Plan`} />}
+          sub={<KpiSubRow icon={RefreshCw} label="Rebuy FWA: Actual / Plan" value={`${fmtRpCompact(kpiStats.actualRebuyFwa)} / ${fmtRpCompact(kpiStats.targetRebuyFwa)}`} />}
           icon={RouterIcon} color={T.success} />
         <Kpi label="Total Revenue (3 Months)" value={fmtRp(kpiStats.actualRev3m)}
-          sub={<KpiSubRow label="Actual / Plan" value={`${fmtRp(kpiStats.actualRev3m)} / ${fmtRp(kpiStats.targetRev3m)}`} />}
+          sub={<KpiSubRow label="Actual / Plan" value={`${fmtRpCompact(kpiStats.actualRev3m)} / ${fmtRpCompact(kpiStats.targetRev3m)}`} />}
           icon={Banknote} color={T.blue} />
-        <Kpi label="Total Cost Actual" value={fmtRp(kpiStats.totalCostActual)}
-          sub={<KpiSubRow label="Cost Ratio" value={kpiStats.costRatioPct == null ? "-" : `${kpiStats.costRatioPct}%`} />}
+        <Kpi label="Total Cost" value={fmtRp(kpiStats.totalCostActual)}
+          sub={<KpiSubRow label="Actual / Plan" value={`${fmtRpCompact(kpiStats.totalCostActual)} / ${fmtRpCompact(kpiStats.totalCostEstimate)}`} />}
           icon={Wallet} color={T.warning} />
         <Kpi label="Laporan Actual" value={<KpiRatio main={String(kpiStats.actualSubmittedCount)} suffix={` / ${kpiStats.total} plan`} />}
           sub={<AchProdSubRow achievement={kpiStats.avgAchievement} productivity={kpiStats.avgProductivity}
@@ -1169,11 +1186,14 @@ function KpiConfigModal({ email, canEdit, onClose }) {
 function KpiSubRow({ icon: Icon, label, value }) {
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, fontSize: 11, fontWeight: 500, color: T.lo }}>
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4, minWidth: 0, flexShrink: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
         {Icon && <Icon size={10.5} strokeWidth={2.2} />}
         {label}
       </span>
-      <span style={{ color: T.mid, fontWeight: 700 }}>{value}</span>
+      {/* value dijaga TIDAK PERNAH wrap ke baris ke-2 - kalau sempit,
+          teksnya sendiri sudah diringkas (fmtRpCompact K/Mn/Bn) di
+          pemanggil, ellipsis di sini cuma jaring pengaman terakhir. */}
+      <span style={{ color: T.mid, fontWeight: 700, flexShrink: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "60%" }}>{value}</span>
     </div>
   );
 }
