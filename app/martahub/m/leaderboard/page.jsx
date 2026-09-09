@@ -99,7 +99,10 @@ export default function LeaderboardPage() {
         </div>
 
         {/* Mode ranking - scrollable horizontal, biar 6 opsi ga bikin sempit */}
-        <div style={{ display: "flex", gap: 7, marginTop: 14, overflowX: "auto", paddingBottom: 2, WebkitOverflowScrolling: "touch" }}>
+        {/* Scrollbar mode-chip DISEMBUNYIKAN (className mh-hide-scrollbar,
+            lihat <style jsx> di bawah) - scroll horizontal tetap jalan,
+            cuma bar abu2 di bawahnya yg dihilangkan (mengganggu visual). */}
+        <div className="mh-hide-scrollbar" style={{ display: "flex", gap: 7, marginTop: 14, overflowX: "auto", paddingBottom: 2, WebkitOverflowScrolling: "touch", scrollbarWidth: "none", msOverflowStyle: "none" }}>
           {MODES.map((m) => {
             const active = mode.key === m.key;
             return (
@@ -114,6 +117,10 @@ export default function LeaderboardPage() {
             );
           })}
         </div>
+
+        <style jsx>{`
+          .mh-hide-scrollbar::-webkit-scrollbar { display: none; height: 0; }
+        `}</style>
 
         {/* Scope: branch/region/semua - terpisah dari mode ranking supaya ga
             bikin bingung (mode = APA yg diranking, scope = SIAPA yg dibandingkan) */}
