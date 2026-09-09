@@ -311,7 +311,7 @@ export default function SubmitActualPage() {
     (async () => {
       try {
         const [{ data: a, error: e1 }, { data: sp }, { data: fwa }, { data: profile }] = await Promise.all([
-          supabaseMarta.from("mh_activities").select("id,event_name,brand,address,site_id,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,status,checkin_valid,actual_draft_saved_at,latitude,longitude,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_source").eq("id", activityId).single(),
+          supabaseMarta.from("mh_activities").select("id,event_name,brand,address,site_id,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,status,checkin_valid,actual_draft_saved_at,latitude,longitude,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_source,cost_actual,insight").eq("id", activityId).single(),
           supabaseMarta.from("mh_product_types").select("id,name,unit_price,brand").eq("category", "sp").eq("active", true).order("name"),
           supabaseMarta.from("mh_product_types").select("id,name,unit_price,brand").eq("category", "fwa").eq("active", true).order("name"),
           scope?.email ? supabaseMarta.from("mh_profiles").select("dsf_org_id").eq("email", scope.email.toLowerCase()).maybeSingle() : Promise.resolve({ data: null }),
@@ -329,6 +329,20 @@ export default function SubmitActualPage() {
         if (a?.latitude != null) setGpsLat(a.latitude);
         if (a?.longitude != null) setGpsLng(a.longitude);
         if (a?.address) setAddress(a.address);
+        // Cost Actual & Insight yg SUDAH tercatat di DB sebelumnya (laporan
+        // yg sudah pernah dikirim, lalu dibuka lagi - mis. utk direvisi,
+        // atau dilihat ulang dari device/browser LAIN) - SEBELUMNYA field
+        // ini query-nya sama sekali TIDAK mengambil cost_actual/insight,
+        // jadi costActual selalu mulai dari default "0" & insight kosong
+        // TIDAK PEDULI datanya sudah ada di DB (kelihatan benar di halaman
+        // Detail yg baca kolom ini langsung, tapi "hilang jadi 0" begitu
+        // masuk ke Isi/Edit Laporan Actual). Ditaruh SEBELUM pulihan draft
+        // localStorage di bawah supaya urutannya tetap benar: draft lokal
+        // yg belum tersimpan (edit yg lagi berjalan, belum ditekan
+        // Simpan/Kirim) TETAP menang menimpa nilai DB ini kalau ada -
+        // hanya jadi FALLBACK ke nilai DB kalau tidak ada draft lokal.
+        if (a?.cost_actual != null) setCostActual(String(a.cost_actual));
+        if (a?.insight) setInsight(a.insight);
         // Produk yg PUNYA brand hanya boleh dijual utk brand event ini
         // sendiri (mis. "SP 3GB 3ID" tidak boleh muncul di event brand IM3)
         // - produk tanpa brand (generik) tetap muncul di semua event.
