@@ -31,6 +31,18 @@ function PendingInner() {
     return () => { alive = false; };
   }, [router]);
 
+  // Rebind SEBELUM baca scope - lihat catatan panjang di useMartaSession
+  // (MobileShell.jsx) & migrasi mh_rebind_me(): RLS mobile cuma izinkan
+  // baca baris mh_profiles milik auth.uid() sendiri, jadi kalau baris scope
+  // yg baru di-assign admin masih terikat ke id lama, getMartaScope() akan
+  // pulang KOSONG (kelihatan "masih pending") walau emailnya sudah tepat -
+  // inilah PERSIS kasus "sudah di-assign tapi abis verifikasi OTP balik lagi
+  // ke sini". Best-effort, gagal diam2 (getMartaScope tetap jalan spt biasa).
+  async function rebindThenScope(targetEmail) {
+    try { await supabaseMarta.rpc("mh_rebind_me"); } catch { /* best-effort */ }
+    return getMartaScope(targetEmail);
+  }
+
   // Auto cek ulang - SEBELUMNYA user WAJIB tahu & tap tombol "Saya sudah
   // di-assign - cek ulang" sendiri begitu admin selesai meng-assign dia di
   // User Management/Assignments; kalau dia tidak tap (mis. HP-nya cuma
@@ -46,7 +58,7 @@ function PendingInner() {
     if (!email) return;
     let alive = true;
     const silentCheck = async () => {
-      const scope = await getMartaScope(email);
+      const scope = await rebindThenScope(email);
       if (!alive) return;
       if (scope.authState === "active") { router.replace("/martahub/m"); return; }
       if (scope.authState === "revoked") { router.replace(`/martahub/m/revoked?email=${encodeURIComponent(email)}`); return; }
@@ -64,7 +76,7 @@ function PendingInner() {
   const recheck = async () => {
     setChecking(true);
     try {
-      const scope = await getMartaScope(email);
+      const scope = await rebindThenScope(email);
       if (scope.authState === "active") { router.replace("/martahub/m"); return; }
       if (scope.authState === "revoked") { router.replace(`/martahub/m/revoked?email=${encodeURIComponent(email)}`); return; }
     } finally {

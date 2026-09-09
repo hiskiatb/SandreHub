@@ -141,6 +141,22 @@ export function useMartaSession() {
       if (!session) { _sessionCache = null; router.replace("/martahub/m/login"); return; }
       if (!alive) return;
       const cacheFresh = _sessionCache && _sessionCache.email === session.user.email && (Date.now() - _sessionCache.ts) < SESSION_TTL_MS;
+      if (!cacheFresh) {
+        // Robustness thd perubahan email di User Management: baris
+        // mh_profiles yg jadi acuan scope BISA saja masih terikat ke id
+        // LAMA (mis. id acak bikinan admin saat assign, atau bekas email
+        // orang lain yg slotnya di-handover) - RLS mobile ("auth.uid()=id")
+        // bikin getMartaScope() di bawah pulang KOSONG kalau id belum
+        // cocok, walau emailnya sudah persis benar (baru kejadian nyata:
+        // admin sudah assign email yg tepat, tapi user tetap "menunggu
+        // penetapan branch" terus stlh verifikasi OTP). mh_rebind_me()
+        // (SECURITY DEFINER) mengikat ulang baris ber-email sama ke
+        // auth.uid() sesi INI setiap kali scope mau dibaca ulang - bukan
+        // cuma sekali saat akun pertama dibuat spt trigger lama - jadi
+        // ganti-ganti email assignment (A→B→A lagi) selalu langsung
+        // kepakai di login/refresh berikutnya. Best-effort, gagal diam2.
+        try { await supabaseMarta.rpc("mh_rebind_me"); } catch { /* best-effort */ }
+      }
       const scope = cacheFresh ? _sessionCache.scope : await getMartaScope(session.user.email);
       if (!alive) return;
       // Baris profil ada tapi belum aktif (menunggu assign / dilepas) → jangan

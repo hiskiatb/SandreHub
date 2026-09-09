@@ -125,7 +125,7 @@ export default function SubmitActualPage() {
     const nextKey = SUBMIT_TABS[tabIdx + 1].key;
     if (nextKey === "review") {
       if (siteLabels.length === 0) { setAttemptedSubmit(true); setErr("Pilih minimal 1 site sebelum lanjut."); goToTab("lokasi"); return; }
-      if (Number(costActual || 0) <= 0) { setAttemptedSubmit(true); setErr("Cost Actual wajib diisi sebelum lanjut."); goToTab("actual"); return; }
+      if (costActual === "" || costActual == null || Number.isNaN(Number(costActual)) || Number(costActual) < 0) { setAttemptedSubmit(true); setErr("Cost Actual wajib diisi sebelum lanjut."); goToTab("actual"); return; }
       if (photos.length < MIN_PHOTOS) { setAttemptedSubmit(true); setErr(`Wajib upload minimal ${MIN_PHOTOS} foto dokumentasi sebelum lanjut.`); goToTab("dokumentasi"); return; }
       setAttemptedSubmit(false); setErr("");
     }
@@ -533,7 +533,7 @@ export default function SubmitActualPage() {
   const invalidSteps = useMemo(() => {
     const s = new Set();
     if (siteLabels.length === 0) s.add("lokasi");
-    if (Number(costActual || 0) <= 0) s.add("actual");
+    if (costActual === "" || costActual == null || Number.isNaN(Number(costActual)) || Number(costActual) < 0) s.add("actual");
     if (photos.length < MIN_PHOTOS) s.add("dokumentasi");
     return s;
   }, [siteLabels.length, costActual, photos.length]);
@@ -877,7 +877,7 @@ export default function SubmitActualPage() {
       setErr(`Wajib upload minimal ${MIN_PHOTOS} foto dokumentasi sebelum mengirim laporan.`);
       return;
     }
-    if (!costActual || Number(costActual) <= 0) {
+    if (costActual === "" || costActual == null || Number.isNaN(Number(costActual)) || Number(costActual) < 0) {
       setErr("Cost Actual wajib diisi sebelum mengirim laporan.");
       return;
     }
@@ -1066,7 +1066,7 @@ export default function SubmitActualPage() {
       goToTab("lokasi");
       return;
     }
-    if (Number(costActual || 0) <= 0) {
+    if (costActual === "" || costActual == null || Number.isNaN(Number(costActual)) || Number(costActual) < 0) {
       setAttemptedSubmit(true);
       setErr("Cost Actual wajib diisi sebelum mengirim laporan.");
       goToTab("actual");
@@ -1368,8 +1368,8 @@ export default function SubmitActualPage() {
           <SectionHeading icon={Receipt} title="Cost & Insight" subtitle="Biaya aktual dan catatan lapangan" />
           <Divider />
           <FieldLabel text="Cost Actual" required top />
-          <NumberInput value={costActual} onChange={setCostActual} prefix="Rp" error={attemptedSubmit && (!costActual || Number(costActual) <= 0)} />
-          {(!costActual || Number(costActual) <= 0) && <FieldError text="Cost Actual wajib diisi (tidak boleh 0)." />}
+          <NumberInput value={costActual} onChange={setCostActual} prefix="Rp" error={attemptedSubmit && (costActual === "" || costActual == null || Number.isNaN(Number(costActual)) || Number(costActual) < 0)} />
+          {(costActual === "" || costActual == null || Number.isNaN(Number(costActual)) || Number(costActual) < 0) && <FieldError text="Cost Actual wajib diisi (boleh 0)." />}
           <FieldLabel text="Insight" top hint="Opsional" />
           <TextInput value={insight} onChange={setInsight} placeholder="Catatan/insight dari lapangan…" multiline />
         </Card>

@@ -624,10 +624,11 @@ function CreatePlanWizardInner() {
       if (matchedPrimary) setPrimarySite(matchedPrimary);
       if (matched.length > 1) setExtraSites(matched.slice(1));
     }
-    const vd = dates.filter(Boolean);
-    const infoOk = categories.length > 0 && !!eventName.trim() && vd.length > 0 && allDateTimesValid(vd, timesByDate);
-    const locOk = !!matchedPrimary && !!poiType && !!address.trim();
-    setStep(!infoOk ? 0 : !locOk ? 1 : 3);
+    // Dulu: kalau Info & Lokasi sudah lengkap, langsung lompat ke step
+    // Review (3) - user diminta SELALU mulai dari step 1 (Info) saat Edit
+    // Plan, apa pun kelengkapan datanya, supaya alurnya konsisten & tidak
+    // bikin bingung ("kok tiba-tiba di Review, saya belum lihat Info-nya").
+    setStep(0);
     setStepResumed(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editId, stepResumed, prefilled, dataLoading, editData, sites]);
@@ -766,7 +767,10 @@ function CreatePlanWizardInner() {
       // Estimasi Budget Cost SEKARANG wajib diisi (bukan default 500rb yg
       // gampang kelewat tanpa disadari lalu ke-submit apa adanya) - DSF
       // harus benar2 mengisi angka sendiri, walau nol tetap tidak valid.
-      if (!costEstimate || Number(costEstimate) <= 0) bad.add("costEstimate");
+      // Cost 0 itu VALID (mis. event kolaborasi tanpa budget sendiri) - yg
+      // wajib cuma FIELD-nya sudah diisi (bukan kosong/NaN), bukan nilainya
+      // harus > 0.
+      if (costEstimate === "" || costEstimate == null || Number.isNaN(Number(costEstimate)) || Number(costEstimate) < 0) bad.add("costEstimate");
     }
     setInvalid(bad);
     // Field pertama yg tidak valid (urutan insert `bad.add(...)` di atas
