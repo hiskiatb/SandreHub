@@ -359,7 +359,7 @@ export default function MartaMobileHome() {
             (abu-abu, tanpa panah) - user langsung paham itu TIDAK BISA
             ditekan utk diganti, bukan cuma dropdown kosong yg mubazir. */}
         <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
-          <div style={{ flex: "7 1 0%", minWidth: 0 }}>
+          <div style={{ flex: "1 1 auto", minWidth: 0 }}>
             <FilterSelect
               icon={Building2}
               value={branchFilter}
@@ -371,7 +371,15 @@ export default function MartaMobileHome() {
               fullWidth
             />
           </div>
-          <div style={{ flex: "3 1 0%", minWidth: 0 }}>
+          {/* Brand TIDAK dikasih flex-basis fixed (dulu "3 1 0%") - itu yg
+              bikin teks "BRAND 3ID"/"BRAND IM3" gampang kepotong ellipsis di
+              layar sempit. Sekarang flexShrink:0 + width mengikuti konten
+              sendiri (whiteSpace nowrap di dalam BrandTagSelect sudah cukup
+              utk cegah wrap) - jadi lebar chip ini otomatis pas utk brand
+              apa pun (2 huruf atau lebih), dan Branch di sebelah kiri yg
+              flex:1 auto menyerap SISA ruang (porsinya jadi lebih kecil
+              dibanding sebelumnya, bukan dipatok 70%/30% kaku). */}
+          <div style={{ flexShrink: 0 }}>
             <BrandTagSelect
               value={brandFilter}
               onChange={setBrandFilter}
@@ -609,8 +617,8 @@ function BrandTagSelect({ value, onChange, options }) {
   const color = effective ? (BRAND_TAG_COLORS[effective.value] || "#5A5A68") : "#9A9AA6";
   return (
     <div style={{
-      position: "relative", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", boxSizing: "border-box",
-      minHeight: 40, padding: interactive ? "0 22px 0 10px" : "0 10px", borderRadius: 999,
+      position: "relative", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "max-content", boxSizing: "border-box",
+      minHeight: 40, padding: interactive ? "0 26px 0 12px" : "0 12px", borderRadius: 999,
       background: value ? `${color}14` : "#FFFFFF",
       border: `1.5px solid ${value ? color : "#E4E5EA"}`,
       cursor: interactive ? "pointer" : "default",
@@ -620,7 +628,7 @@ function BrandTagSelect({ value, onChange, options }) {
       ) : (
         <Tags size={12} color={color} strokeWidth={2.2} style={{ flexShrink: 0 }} />
       )}
-      <span style={{ fontSize: 12, fontWeight: 800, color, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+      <span style={{ fontSize: 12, fontWeight: 800, color, whiteSpace: "nowrap" }}>
         {effective ? <><span style={{ fontWeight: 600, opacity: 0.68 }}>BRAND </span>{effective.label}</> : "BRAND"}
       </span>
       {interactive && (
