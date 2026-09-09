@@ -31,6 +31,32 @@ function PendingInner() {
     return () => { alive = false; };
   }, [router]);
 
+  // Auto cek ulang - SEBELUMNYA user WAJIB tahu & tap tombol "Saya sudah
+  // di-assign - cek ulang" sendiri begitu admin selesai meng-assign dia di
+  // User Management/Assignments; kalau dia tidak tap (mis. HP-nya cuma
+  // dibiarkan terbuka di halaman ini), tampilannya kelihatan "macet"
+  // menunggu terus walau datanya di database sudah benar aktif. Sekarang
+  // dicek diam-diam tiap 15 detik selagi tab kelihatan (visible), PLUS
+  // langsung dicek ulang begitu tab ini kembali difokus (mis. user sempat
+  // pindah app lain lalu balik lagi) - begitu admin menyimpan assignment-nya,
+  // halaman ini pindah sendiri ke Beranda tanpa perlu user tahu harus
+  // nge-tap apa. Tombol manual "cek ulang" tetap dipertahankan (instan,
+  // tidak perlu menunggu siklus 15 detik berikutnya).
+  useEffect(() => {
+    if (!email) return;
+    let alive = true;
+    const silentCheck = async () => {
+      const scope = await getMartaScope(email);
+      if (!alive) return;
+      if (scope.authState === "active") { router.replace("/martahub/m"); return; }
+      if (scope.authState === "revoked") { router.replace(`/martahub/m/revoked?email=${encodeURIComponent(email)}`); return; }
+    };
+    const timer = setInterval(() => { if (document.visibilityState === "visible") silentCheck(); }, 15_000);
+    const onVisible = () => { if (document.visibilityState === "visible") silentCheck(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { alive = false; clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
+  }, [email, router]);
+
   const copyEmail = async () => {
     try { await navigator.clipboard.writeText(email); setCopied(true); setTimeout(() => setCopied(false), 1600); } catch { /* noop */ }
   };
