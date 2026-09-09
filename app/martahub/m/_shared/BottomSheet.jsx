@@ -241,9 +241,22 @@ const BottomSheet = forwardRef(function BottomSheet(
         }}
         style={{
           width: "100%", maxWidth, margin: "0 auto", background: "#FFFFFF", borderRadius,
-          padding: "10px 22px calc(env(safe-area-inset-bottom,0px) + 22px)", fontFamily: FF, boxShadow,
+          padding: "10px 0 0", fontFamily: FF, boxShadow,
           transform,
           transition: `transform ${duration}ms ${dragging ? "linear" : EASE}`,
+          // Konten sheet BISA lebih tinggi dari layar (mis. banyak "plan lain
+          // sudah ada" di tanggal yg sama) - dulu tidak ada batas tinggi sama
+          // sekali di sini, jadi kartu ini tumbuh mengikuti konten & bagian
+          // atasnya kepotong di luar viewport TANPA bisa discroll (body sudah
+          // dikunci scroll-nya via lockScroll di atas). Fix: batasi tinggi
+          // kartu ke viewport (via vv.height, sadar keyboard/PWA chrome) dan
+          // jadikan flex column - handle tetap fixed di atas, isi (termasuk
+          // padding kiri/kanan/bawah yg dulu ada di sini) pindah ke wrapper
+          // scrollable di bawah supaya SELALU bisa digeser sampai konten
+          // terakhir kelihatan, seberapa pun banyaknya.
+          display: "flex", flexDirection: "column",
+          maxHeight: `calc(${vv.height}px - 24px)`,
+          overflow: "hidden",
         }}
       >
         {/* Target sentuh handle sengaja lebih besar dari garis visualnya
@@ -251,10 +264,15 @@ const BottomSheet = forwardRef(function BottomSheet(
             presisi dgn jari, tapi area geser tetap harus cuma di sini
             (bukan seluruh header) spy tidak konflik dgn scroll konten sheet
             yg mungkin panjang (mis. daftar dampak hapus). */}
-        <div ref={handleRef} style={{ display: "flex", justifyContent: "center", padding: "10px 60px 12px", margin: "-4px auto 4px", touchAction: "none", cursor: "grab" }}>
+        <div ref={handleRef} style={{ flexShrink: 0, display: "flex", justifyContent: "center", padding: "10px 60px 12px", margin: "-4px auto 4px", touchAction: "none", cursor: "grab" }}>
           <div style={{ width: 40, height: 4, borderRadius: 3, background: "#E4E5EA" }} />
         </div>
-        {children}
+        <div style={{
+          flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain",
+          padding: "0 22px calc(env(safe-area-inset-bottom,0px) + 22px)",
+        }}>
+          {children}
+        </div>
       </div>
     </div>
   );

@@ -10,10 +10,10 @@
  *   revenue/cost tanpa batas atas bisa meledak ratusan ribu persen kalau ada
  *   1 activity dgn cost_actual kecil/salah input, otomatis nyangkut rank #1
  *   padahal bukan performa terbaik).
- * - Ranking sekarang MULTI-METRIK, user pilih sendiri mode-nya lewat chip:
- *   Revenue Actual, Revenue Plan, Jumlah Plan, ACH Revenue, ACH SP, ACH FWA.
- * - Setiap ACH diberi label EKSPLISIT acuannya (Realisasi ÷ Target APA),
- *   supaya "persen capaian" tidak ambigu.
+ * - Ranking MULTI-METRIK, user pilih sendiri mode-nya lewat chip: Revenue
+ *   Actual, Revenue Plan, Jumlah Plan (mode ACH_* dihapus - lihat MODES).
+ * - Setiap baris juga menampilkan Branch & Brand orangnya, bukan cuma nama,
+ *   supaya jelas asal/scope tiap peserta leaderboard.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -21,24 +21,20 @@ import { ArrowLeft, Trophy, Crown, Medal, TrendingUp, MapPin } from "lucide-reac
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { fmtInt, fmtRp } from "../_shared/activityUi";
+import { BRAND_DISPLAY } from "../_shared/planData";
 
 const COLS =
   "id,user_id,user_name,branch_id,branch_name,region,brand,total_activities," +
   "target_rev_3m,actual_rev_3m,target_sp,actual_sp,target_fwa,actual_fwa," +
   "ach_revenue_pct,ach_sp_pct,ach_fwa_pct,geo_compliance";
 
-const pct = (v) => `${fmtInt(Math.round(v || 0))}%`;
-
-// Mode ranking - masing2 py field sumber data & cara format sendiri, dan
-// `desc` yg ditampilkan sbg subjudul supaya jelas acuan hitungannya (khusus
-// ACH_*, ini WAJIB jelas "Realisasi ÷ Target APA" - jgn ambigu).
+// Mode ranking - HANYA metrik Revenue & Jumlah Plan (mode ACH_* dihapus atas
+// permintaan user - ranking berbasis persentase capaian dianggap kurang
+// relevan dibanding angka nominal langsung).
 const MODES = [
   { key: "actual_rev", label: "Revenue Actual", field: "actual_rev_3m", fmt: fmtRp, desc: "Total realisasi revenue bulan ini (Actual)" },
   { key: "plan_rev", label: "Revenue Plan", field: "target_rev_3m", fmt: fmtRp, desc: "Total target revenue di Plan yang disetujui (Plan)" },
-  { key: "jumlah_plan", label: "Jumlah Plan", field: "total_activities", fmt: (v) => `${fmtInt(v)} plan`, desc: "Jumlah Plan/Activity approved bulan ini" },
-  { key: "ach_rev", label: "ACH Revenue", field: "ach_revenue_pct", fmt: pct, desc: "ACH Revenue = Realisasi Revenue ÷ Target Revenue" },
-  { key: "ach_sp", label: "ACH SP", field: "ach_sp_pct", fmt: pct, desc: "ACH SP = Realisasi SP ÷ Target SP" },
-  { key: "ach_fwa", label: "ACH FWA", field: "ach_fwa_pct", fmt: pct, desc: "ACH FWA = Realisasi FWA ÷ Target FWA" },
+  { key: "jumlah_plan", label: "Jumlah Plan", field: "total_activities", fmt: (v) => `${fmtInt(v)} plan`, desc: "Jumlah Plan/Activity bulan ini" },
 ];
 
 export default function LeaderboardPage() {
@@ -209,8 +205,13 @@ function LeaderRow({ r, mode, isMe }) {
         <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {r.user_name || "-"} {isMe && <span style={{ color: "#ED1C24" }}>(Anda)</span>}
         </div>
-        <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color: "#8A8A96", fontWeight: 600 }}>
-          <MapPin size={10} /> {r.branch_name || "-"} · {fmtInt(r.total_activities)} plan
+        <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color: "#8A8A96", fontWeight: 600, overflow: "hidden" }}>
+          <MapPin size={10} style={{ flexShrink: 0 }} />
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {r.branch_name || "-"}
+            {r.brand && <> · <span style={{ color: "#5A5A68", fontWeight: 800 }}>{BRAND_DISPLAY[r.brand] || String(r.brand).toUpperCase()}</span></>}
+            {" "}· {fmtInt(r.total_activities)} plan
+          </span>
         </div>
       </div>
       <div style={{ flexShrink: 0, textAlign: "right" }}>

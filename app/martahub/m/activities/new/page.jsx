@@ -2469,10 +2469,36 @@ function ActingForSheet({ groups, loading, initialSelected, onClose, onConfirm }
   );
 }
 
+// Wrapper ini SENGAJA baca `?edit=` sendiri (bukan cuma render
+// CreatePlanWizardInner langsung) supaya bisa dipasang sebagai React `key`.
+// BUG YG DIPERBAIKI: navigasi antar DUA plan cms_import berbeda lewat link
+// "Edit Plan" di halaman daftar/list (mis. tap plan A → isi alamat & GPS →
+// submit → balik ke daftar → tap plan B) di Next.js App Router TIDAK
+// me-remount komponen ini kalau path-nya sama (cuma `?edit=` yg beda) -
+// CreatePlanWizardInner cuma re-render dgn `editId` baru, TAPI seluruh
+// state one-shot-nya (prefilled, stepResumed, targetProductsFallbackApplied,
+// dan field form: address, primarySite, dst.) TETAP MEMBAWA nilai LAMA dari
+// plan A krn guard-nya `if (prefilled) return` - efek prefill utk plan B
+// jadi SKIP TOTAL. Akibatnya form yg kelihatan masih berisi sisa data plan
+// A (atau kosong kalau plan A memang belum lengkap), dan begitu ditekan
+// simpan/submit, nilai SISA itu (bukan punya plan B) yg ke-UPDATE ke plan
+// B - persis pola bug yg dilaporkan: alamat yg baru saja berhasil diisi di
+// satu plan tiba2 "hilang lagi" & muncul di plan lain, atau balik kosong
+// setelah pindah ke plan berikutnya lalu balik lagi.
+// Fix: `key={edit || "new"}` - begitu `edit` berubah (termasuk dari ada
+// jadi tidak ada, atau sebaliknya), React memperlakukan ini sbg instance
+// BARU sepenuhnya (unmount lama + mount baru dari nol), jadi SEMUA state
+// (bukan cuma yg sempat "diingat" utk direset manual satu-satu) otomatis
+// balik ke initial value - sama seperti benar2 reload halaman.
+function CreatePlanWizardKeyed() {
+  const searchParams = useSearchParams();
+  return <CreatePlanWizardInner key={searchParams.get("edit") || "new"} />;
+}
+
 export default function CreatePlanWizard() {
   return (
     <Suspense fallback={<MobileShell active="activities" hideNav><ShellSpinner /></MobileShell>}>
-      <CreatePlanWizardInner />
+      <CreatePlanWizardKeyed />
     </Suspense>
   );
 }
