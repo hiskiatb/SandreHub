@@ -21,6 +21,8 @@ import {
   Download, X, ArrowLeft, Info,
 } from "lucide-react";
 import SDP_Edit from "./SDP_Edit";
+import { UploadCloud, FileCheck2, ExternalLink, RotateCw } from "lucide-react";
+import { uploadSdpDocument, listSdpDocuments, retrySdpDocumentRelay, openSdpDocument, sdpDriveFolderUrl } from "../../../lib/sdp/driveRelay";
 
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const mk = (d) => ({
@@ -457,6 +459,104 @@ function ApprovalPanel({ t, supabase, profile, entry, onChanged }) {
   );
 }
 
+
+const DOC_STATUS_LABEL = {
+  uploaded: "Menunggu relay…", relaying: "Mengirim ke Drive…",
+  synced: "Tersimpan di Drive", failed: "Gagal ke Drive",
+};
+
+function SdpDocumentsPanel({ t, supabase, profile, sdpId }) {
+  const [docs, setDocs] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const inputRef = React.useRef(null);
+
+  const reload = useCallback(() => {
+    listSdpDocuments({ supabase, sdpId }).then(setDocs).catch(() => setDocs([]));
+  }, [supabase, sdpId]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const folderUrl = useMemo(() => {
+    const synced = (docs || []).find((d) => d.drive_folder_id);
+    return synced ? sdpDriveFolderUrl(synced.drive_folder_id) : null;
+  }, [docs]);
+
+  const handleFiles = async (fileList) => {
+    setErr(""); setBusy(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      for (const file of Array.from(fileList)) {
+        await uploadSdpDocument({
+          supabase, sdpId, file,
+          uploaderId: user?.id, uploaderName: profile?.full_name || profile?.username || null,
+        });
+      }
+      reload();
+    } catch (e) { setErr("Gagal unggah: " + (e.message || e)); }
+    finally { setBusy(false); if (inputRef.current) inputRef.current.value = ""; }
+  };
+
+  const retry = async (doc) => {
+    setBusy(true);
+    try { await retrySdpDocumentRelay({ supabase, doc }); reload(); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ background: t.card, borderRadius: 18, padding: "6px 18px 14px", boxShadow: t.md, marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 0 8px", flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: t.lo }}>
+          <FileCheck2 size={13} /> Dokumen (tersimpan otomatis ke Drive)
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {folderUrl && (
+            <a href={folderUrl} target="_blank" rel="noreferrer"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 9, border: `1px solid ${t.blue}44`, color: t.blue, fontSize: 12, fontWeight: 700, textDecoration: "none" }}>
+              <ExternalLink size={13} /> Buka Folder Drive
+            </a>
+          )}
+          <input ref={inputRef} type="file" multiple style={{ display: "none" }} onChange={(e) => handleFiles(e.target.files)} />
+          <button type="button" onClick={() => inputRef.current?.click()} disabled={busy}
+            style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "7px 12px", borderRadius: 9, border: `1px dashed ${t.line}`, background: t.sub, color: t.mid, fontSize: 12, fontWeight: 700, cursor: busy ? "default" : "pointer" }}>
+            {busy ? <Loader2 size={14} className="sdpspin" /> : <UploadCloud size={14} />} {busy ? "Mengunggah…" : "Unggah Dokumen"}
+          </button>
+        </div>
+      </div>
+      {err && <div style={{ fontSize: 11.5, color: t.brand, marginBottom: 8 }}>{err}</div>}
+      {docs === null ? (
+        <div style={{ padding: "8px 0", color: t.mid, fontSize: 13 }}>Memuat…</div>
+      ) : docs.length === 0 ? (
+        <div style={{ padding: "8px 0 6px", color: t.lo, fontSize: 13 }}>Belum ada dokumen diunggah.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column" }}>
+          {docs.map((doc, i) => (
+            <div key={doc.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderTop: i === 0 ? "none" : `1px solid ${t.lineSoft}` }}>
+              <FileText size={15} color={t.mid} style={{ flexShrink: 0 }} />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.file_name}</div>
+                <div style={{ fontSize: 11.5, color: doc.status === "failed" ? t.brand : t.mid, marginTop: 2 }}>
+                  {DOC_STATUS_LABEL[doc.status] || doc.status}{doc.status === "failed" && doc.error_note ? ` · ${doc.error_note}` : ""}
+                </div>
+              </div>
+              {doc.status === "failed" && (
+                <button type="button" onClick={() => retry(doc)} disabled={busy} title="Coba lagi"
+                  style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 9px", borderRadius: 8, border: `1px solid ${t.line}`, background: "transparent", color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
+                  <RotateCw size={12} /> Ulangi
+                </button>
+              )}
+              <button type="button" onClick={() => openSdpDocument({ supabase, storagePath: doc.storage_path })} title="Buka file"
+                style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 9px", borderRadius: 8, border: `1px solid ${t.line}`, background: "transparent", color: t.blue, fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
+                <ExternalLink size={12} /> Buka
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SdpDetail({ t, d, supabase, profile, entry, onBack, canEdit, canApprove, onEdit, onChanged }) {
   const m = entry.monthly || {};
   const [history, setHistory] = useState(null);
@@ -528,6 +628,8 @@ function SdpDetail({ t, d, supabase, profile, entry, onBack, canEdit, canApprove
           </a>
         )}
       </div>
+
+      <SdpDocumentsPanel t={t} supabase={supabase} profile={profile} sdpId={entry.sdp_id} />
 
       {/* Riwayat */}
       <div style={{ background: t.card, borderRadius: 18, padding: "6px 18px 14px", boxShadow: t.md }}>

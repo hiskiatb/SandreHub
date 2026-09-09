@@ -22,6 +22,8 @@ import {
 import SDP_MapPicker from "./SDP_MapPicker";
 import SDP_SearchSelect from "./SDP_SearchSelect";
 import SDP_AddressSearch from "./SDP_AddressSearch";
+import { UploadCloud, FileText, X as XIcon } from "lucide-react";
+import { uploadSdpDocument, sdpDriveFolderUrl } from "../../../lib/sdp/driveRelay";
 
 const mk = (d) => ({
   bg: d ? "#0D0D0F" : "#F2F4F7", card: d ? "#17171B" : "#FFFFFF",
@@ -115,6 +117,12 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
   const [shareDays, setShareDays] = useState(2);
   const [sharedInfo, setSharedInfo] = useState(null);
   const [savingDraft, setSavingDraft] = useState(false);
+  // Dokumen yang dipilih user tapi BELUM diupload — sengaja disimpan terpisah
+  // dari `val` (tidak ikut ke-serialize ke localStorage draft), karena File
+  // object tidak bisa di-JSON.stringify. Upload+relay ke Drive baru terjadi
+  // saat submit(), setelah SDP ID final tersedia (folder Drive = SDP/<id>).
+  const [pendingDocs, setPendingDocs] = useState([]);
+  const [docUploadMsg, setDocUploadMsg] = useState(null);
 
   const set = (k, v) => { setVal((p) => ({ ...p, [k]: v })); setDirty(true); };
 
@@ -378,6 +386,32 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
       const { error } = await supabase.from("sdp_registration").insert(payloads);
       if (error) throw error;
 
+      // Relay dokumen yang dipilih user (kalau ada) ke Drive folder SDP/<id> —
+      // baru bisa jalan di sini karena sdp_id_new baru pasti ada setelah insert
+      // sukses. Best-effort: kalau relay gagal, registrasi TETAP sukses (file
+      // sudah aman di sdp-docs Storage lewat uploadSdpDocument, tinggal retry
+      // manual dari halaman Data SDP nanti).
+      if (pendingDocs.length) {
+        const targetSdpId = rows[0].sdp_id_new;
+        setDocUploadMsg({ type: "ok", text: `Mengirim ${pendingDocs.length} dokumen ke Drive…` });
+        let okCount = 0;
+        let lastFolderId = null;
+        for (const file of pendingDocs) {
+          try {
+            const res = await uploadSdpDocument({
+              supabase, sdpId: targetSdpId, file,
+              uploaderId: user.id, uploaderName: profile?.full_name || profile?.username || null,
+            });
+            if (res?.status === "synced") { okCount += 1; lastFolderId = res.drive_folder_id || lastFolderId; }
+          } catch { /* dicatat di tabel sdp_documents sbg failed, tidak menggagalkan submit */ }
+        }
+        const folderUrl = sdpDriveFolderUrl(lastFolderId);
+        setDocUploadMsg(okCount === pendingDocs.length
+          ? { type: "ok", text: `${okCount} dokumen tersimpan di Drive (SDP/${targetSdpId}).`, folderUrl }
+          : { type: "err", text: `${okCount}/${pendingDocs.length} dokumen berhasil ke Drive — sisanya bisa di-retry dari halaman Data SDP.`, folderUrl });
+        setPendingDocs([]);
+      }
+
       // Bila berasal dari draft server → tandai finalized (keluar dari inbox Draft & Link).
       if (serverDraftId) {
         try { await supabase.from("sdp_draft").update({ status: "finalized", finalized_at: new Date().toISOString() }).eq("id", serverDraftId); } catch { /* ignore */ }
@@ -633,6 +667,38 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
                   </div>
                 ))}
               </div>
+            </div>
+            <div style={{ background: t.sub, border: `1px solid ${t.line}`, borderRadius: 12, padding: 14, marginBottom: 16 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+                <div style={{ fontSize: 11.5, fontWeight: 800, color: t.mid, textTransform: "uppercase", letterSpacing: "0.05em" }}>Upload Dokumen (opsional — auto-tersimpan ke Drive)</div>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 13px", borderRadius: 9, border: `1px dashed ${t.line}`, background: t.card, color: t.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+                  <UploadCloud size={14} /> Pilih File
+                  <input type="file" multiple style={{ display: "none" }}
+                    onChange={(e) => { setPendingDocs((p) => [...p, ...Array.from(e.target.files || [])]); e.target.value = ""; }} />
+                </label>
+              </div>
+              {pendingDocs.length === 0 ? (
+                <div style={{ fontSize: 12, color: t.lo }}>Belum ada file dipilih. File akan otomatis dibuatkan folder <b>SDP/&lt;SDP ID&gt;</b> di Drive begitu registrasi dikirim.</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {pendingDocs.map((file, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: t.hi }}>
+                      <FileText size={14} color={t.mid} />
+                      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
+                      <button type="button" onClick={() => setPendingDocs((p) => p.filter((_, idx) => idx !== i))}
+                        style={{ display: "inline-flex", border: "none", background: "transparent", color: t.mid, cursor: "pointer", padding: 2 }}><XIcon size={13} /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {docUploadMsg && (
+                <div style={{ fontSize: 11.5, color: docUploadMsg.type === "err" ? t.acc : t.mid, marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span>{docUploadMsg.text}</span>
+                  {docUploadMsg.folderUrl && (
+                    <a href={docUploadMsg.folderUrl} target="_blank" rel="noreferrer" style={{ color: t.blue, fontWeight: 700, textDecoration: "none" }}>Buka Folder Drive →</a>
+                  )}
+                </div>
+              )}
             </div>
             <div className="wz-grid">{cur.fields.map(renderField)}</div>
           </>
