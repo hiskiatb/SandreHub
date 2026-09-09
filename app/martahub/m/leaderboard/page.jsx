@@ -1,18 +1,45 @@
 "use client";
 /**
- * /martahub/m/leaderboard - Peringkat BME/RGE (web mobile), padanan
- * `leaderboard_screen.dart` di Flutter. Baca langsung dari view
- * `mh_leaderboard_summary` (skor sudah dihitung server-side dari bobot di
- * mh_settings), difilter ke scope brand/region user seperti Flutter.
+ * /martahub/m/leaderboard - Peringkat BME/RGE (web mobile).
+ * Baca langsung dari view `mh_leaderboard_summary` (agregat approved-activity
+ * bulan ini, dihitung server-side - lihat migrasi
+ * rebuild_leaderboard_summary_multi_metric_v2).
+ *
+ * Design catatan (permintaan user, jgn diringkas balik jadi 1 skor gabungan):
+ * - TIDAK ADA skor gabungan/blended (final_score versi lama BUG: rasio
+ *   revenue/cost tanpa batas atas bisa meledak ratusan ribu persen kalau ada
+ *   1 activity dgn cost_actual kecil/salah input, otomatis nyangkut rank #1
+ *   padahal bukan performa terbaik).
+ * - Ranking sekarang MULTI-METRIK, user pilih sendiri mode-nya lewat chip:
+ *   Revenue Actual, Revenue Plan, Jumlah Plan, ACH Revenue, ACH SP, ACH FWA.
+ * - Setiap ACH diberi label EKSPLISIT acuannya (Realisasi ÷ Target APA),
+ *   supaya "persen capaian" tidak ambigu.
  */
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Trophy, Crown, Medal, TrendingUp, MapPin } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
-import { fmtInt } from "../_shared/activityUi";
+import { fmtInt, fmtRp } from "../_shared/activityUi";
 
-const COLS = "id,user_id,user_name,branch_id,branch_name,region,brand,total_activities,achievement_pct,productivity_pct,geo_compliance,final_score";
+const COLS =
+  "id,user_id,user_name,branch_id,branch_name,region,brand,total_activities," +
+  "target_rev_3m,actual_rev_3m,target_sp,actual_sp,target_fwa,actual_fwa," +
+  "ach_revenue_pct,ach_sp_pct,ach_fwa_pct,geo_compliance";
+
+const pct = (v) => `${fmtInt(Math.round(v || 0))}%`;
+
+// Mode ranking - masing2 py field sumber data & cara format sendiri, dan
+// `desc` yg ditampilkan sbg subjudul supaya jelas acuan hitungannya (khusus
+// ACH_*, ini WAJIB jelas "Realisasi ÷ Target APA" - jgn ambigu).
+const MODES = [
+  { key: "actual_rev", label: "Revenue Actual", field: "actual_rev_3m", fmt: fmtRp, desc: "Total realisasi revenue bulan ini (Actual)" },
+  { key: "plan_rev", label: "Revenue Plan", field: "target_rev_3m", fmt: fmtRp, desc: "Total target revenue di Plan yang disetujui (Plan)" },
+  { key: "jumlah_plan", label: "Jumlah Plan", field: "total_activities", fmt: (v) => `${fmtInt(v)} plan`, desc: "Jumlah Plan/Activity approved bulan ini" },
+  { key: "ach_rev", label: "ACH Revenue", field: "ach_revenue_pct", fmt: pct, desc: "ACH Revenue = Realisasi Revenue ÷ Target Revenue" },
+  { key: "ach_sp", label: "ACH SP", field: "ach_sp_pct", fmt: pct, desc: "ACH SP = Realisasi SP ÷ Target SP" },
+  { key: "ach_fwa", label: "ACH FWA", field: "ach_fwa_pct", fmt: pct, desc: "ACH FWA = Realisasi FWA ÷ Target FWA" },
+];
 
 export default function LeaderboardPage() {
   const router = useRouter();
@@ -20,13 +47,14 @@ export default function LeaderboardPage() {
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
   const [scopeFilter, setScopeFilter] = useState("branch"); // branch | region | all
+  const [mode, setMode] = useState(MODES[0]);
 
   useEffect(() => {
     if (sessionLoading) return;
     let alive = true;
     (async () => {
       try {
-        const { data, error } = await supabaseMarta.from("mh_leaderboard_summary").select(COLS).order("final_score", { ascending: false }).limit(300);
+        const { data, error } = await supabaseMarta.from("mh_leaderboard_summary").select(COLS).limit(500);
         if (error) throw error;
         if (alive) setRows(data || []);
       } catch (e) {
@@ -43,9 +71,9 @@ export default function LeaderboardPage() {
     else if (scopeFilter === "region" && scope?.region) list = list.filter((r) => r.region === scope.region);
     return list
       .slice()
-      .sort((a, b) => (b.final_score || 0) - (a.final_score || 0))
+      .sort((a, b) => (b[mode.field] || 0) - (a[mode.field] || 0))
       .map((r, i) => ({ ...r, rank: i + 1 }));
-  }, [rows, scope, scopeFilter]);
+  }, [rows, scope, scopeFilter, mode]);
 
   const myRow = filtered.find((r) => r.user_id === userId);
 
@@ -67,10 +95,29 @@ export default function LeaderboardPage() {
           <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em" }}>Leaderboard</div>
         </div>
         <div style={{ marginTop: 3, fontSize: 12.5, color: "#8A8A96", fontWeight: 500 }}>
-          Peringkat berdasar pencapaian, produktivitas &amp; kepatuhan geo
+          {mode.desc}
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+        {/* Mode ranking - scrollable horizontal, biar 6 opsi ga bikin sempit */}
+        <div style={{ display: "flex", gap: 7, marginTop: 14, overflowX: "auto", paddingBottom: 2, WebkitOverflowScrolling: "touch" }}>
+          {MODES.map((m) => {
+            const active = mode.key === m.key;
+            return (
+              <button key={m.key} onClick={() => setMode(m)}
+                style={{
+                  flexShrink: 0, padding: "8px 13px", borderRadius: 999,
+                  background: active ? "#ED1C24" : "#FFFFFF", border: `1px solid ${active ? "#ED1C24" : "#E9EAEE"}`,
+                  color: active ? "#FFFFFF" : "#5A5A68", fontSize: 12, fontWeight: 700, fontFamily: FF, cursor: "pointer", whiteSpace: "nowrap",
+                }}>
+                {m.label}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Scope: branch/region/semua - terpisah dari mode ranking supaya ga
+            bikin bingung (mode = APA yg diranking, scope = SIAPA yg dibandingkan) */}
+        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
           {[
             { key: "branch", label: scope?.branchName || "BRANCH" },
             { key: "region", label: scope?.region || "Region" },
@@ -81,9 +128,9 @@ export default function LeaderboardPage() {
             return (
               <button key={t.key} disabled={disabled} onClick={() => setScopeFilter(t.key)}
                 style={{
-                  padding: "8px 13px", borderRadius: 999,
-                  background: active ? "#17181C" : "#FFFFFF", border: `1px solid ${active ? "#17181C" : "#E9EAEE"}`,
-                  color: disabled ? "#C4C4CE" : active ? "#FFFFFF" : "#5A5A68", fontSize: 12.5, fontWeight: 700, fontFamily: FF, cursor: disabled ? "default" : "pointer",
+                  padding: "7px 12px", borderRadius: 999,
+                  background: active ? "#17181C" : "#F5F5F7", border: `1px solid ${active ? "#17181C" : "#E9EAEE"}`,
+                  color: disabled ? "#C4C4CE" : active ? "#FFFFFF" : "#5A5A68", fontSize: 11.5, fontWeight: 700, fontFamily: FF, cursor: disabled ? "default" : "pointer",
                 }}>
                 {t.label}
               </button>
@@ -100,8 +147,8 @@ export default function LeaderboardPage() {
               <div style={{ fontSize: 24, fontWeight: 800, marginTop: 3 }}>#{myRow.rank}</div>
             </div>
             <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 10.5, fontWeight: 700, opacity: 0.85, textTransform: "uppercase", letterSpacing: 0.3 }}>Skor</div>
-              <div style={{ fontSize: 20, fontWeight: 800, marginTop: 3 }}>{fmtInt(Math.round(myRow.final_score || 0))}</div>
+              <div style={{ fontSize: 10.5, fontWeight: 700, opacity: 0.85, textTransform: "uppercase", letterSpacing: 0.3 }}>{mode.label}</div>
+              <div style={{ fontSize: 20, fontWeight: 800, marginTop: 3 }}>{mode.fmt(myRow[mode.field])}</div>
             </div>
           </div>
         </div>
@@ -113,11 +160,11 @@ export default function LeaderboardPage() {
         {filtered.length === 0 ? (
           <div style={{ textAlign: "center", padding: "40px 20px", background: "#FFFFFF", border: "1px dashed #D8D9E0", borderRadius: 16 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: "#3A3A44" }}>Belum ada data</div>
-            <div style={{ marginTop: 4, fontSize: 12, color: "#8A8A96" }}>Leaderboard akan muncul setelah ada aktivitas tervalidasi.</div>
+            <div style={{ marginTop: 4, fontSize: 12, color: "#8A8A96" }}>Leaderboard akan muncul setelah ada Plan tervalidasi.</div>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {filtered.map((r) => <LeaderRow key={r.id} r={r} isMe={r.user_id === userId} />)}
+            {filtered.map((r) => <LeaderRow key={r.id} r={r} mode={mode} isMe={r.user_id === userId} />)}
           </div>
         )}
       </div>
@@ -141,7 +188,7 @@ function rankVisual(rank) {
   return { icon: null, bg: null };
 }
 
-function LeaderRow({ r, isMe }) {
+function LeaderRow({ r, mode, isMe }) {
   const rv = rankVisual(r.rank);
   return (
     <div style={{
@@ -156,14 +203,14 @@ function LeaderRow({ r, isMe }) {
           {r.user_name || "-"} {isMe && <span style={{ color: "#ED1C24" }}>(Anda)</span>}
         </div>
         <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 4, fontSize: 10.5, color: "#8A8A96", fontWeight: 600 }}>
-          <MapPin size={10} /> {r.branch_name || "-"} · {fmtInt(r.total_activities)} aktivitas
+          <MapPin size={10} /> {r.branch_name || "-"} · {fmtInt(r.total_activities)} plan
         </div>
       </div>
       <div style={{ flexShrink: 0, textAlign: "right" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 14, fontWeight: 800, color: "#17181C" }}>
-          <TrendingUp size={12} color="#15803D" /> {fmtInt(Math.round(r.final_score || 0))}
+        <div style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 13.5, fontWeight: 800, color: "#17181C" }}>
+          <TrendingUp size={12} color="#15803D" /> {mode.fmt(r[mode.field])}
         </div>
-        <div style={{ fontSize: 9.5, color: "#B0B0BA", fontWeight: 600 }}>{Math.round(r.achievement_pct || 0)}% capaian</div>
+        <div style={{ fontSize: 9.5, color: "#B0B0BA", fontWeight: 600 }}>{mode.label}</div>
       </div>
     </div>
   );

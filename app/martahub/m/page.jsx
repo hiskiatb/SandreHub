@@ -301,7 +301,7 @@ export default function MartaMobileHome() {
   const costTotal = monthRows.reduce((s, r) => s + (r.cost_actual || 0), 0);
   const targetRevTotal = monthRows.reduce((s, r) => s + (r.target_rev_3m || 0), 0);
   const revenueTotal = monthRows.reduce((s, r) => s + (r.actual_rev_3m || 0), 0);
-  const achievementPct = targetSp > 0 ? Math.round((actualSp / targetSp) * 100) : 0;
+
   // "0%" utk Cost Ratio TIDAK BOLEH dipakai kalau memang belum ada satupun
   // laporan actual cost yg masuk (cost_actual semua masih null) - kalau
   // dibagi begitu saja, "belum ada data" jadi kelihatan sama persis dgn
@@ -312,6 +312,13 @@ export default function MartaMobileHome() {
   const costRatioPct = revenueTotal > 0 && hasCostActualData ? Math.round((costTotal / revenueTotal) * 100) : null;
   const planCount = monthRows.length;
   const actualCount = monthRows.filter((r) => r.actual_sp != null).length;
+  // Badge besar di kartu Achievement = persentase Activity ACTUAL dari
+  // Activity PLAN bulan ini (actualCount/planCount) - BUKAN dari Penjualan
+  // SP seperti sebelumnya (dulu achievementPct = actualSp/targetSp, jadi
+  // angkanya kebetulan mirip tapi maknanya beda dari kuadran Plan/Actual
+  // di bawahnya, bikin bingung). planCount/actualCount dihitung di bawah,
+  // jadi formula ini WAJIB ada setelah keduanya - lihat definisi di bawah.
+  const achievementPct = planCount > 0 ? Math.round((actualCount / planCount) * 100) : 0;
 
   // Kartu "Mission" - aksi paling relevan berikutnya: butuh isi laporan
   // actual > lihat plan mendatang terdekat > kosong. Check-in DIHAPUS
@@ -739,7 +746,7 @@ function AchievementCard({
               background: "linear-gradient(120deg,#FFFFFF 0%,#F7D9E8 55%,#EC1E79 100%)",
               WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text",
             }}>{achievementPct}%</div>
-            <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.55)", fontWeight: 600 }}>dari target bulan ini</div>
+            <div style={{ fontSize: 12.5, color: "rgba(255,255,255,0.55)", fontWeight: 600 }}>Activity Actual dari Plan bulan ini</div>
           </div>
 
           <div style={{ marginTop: 16, height: 9, borderRadius: 999, background: "rgba(0,0,0,0.25)", overflow: "hidden" }}>
@@ -777,9 +784,9 @@ function AchievementCard({
           </button>
         </div>
 
-        {/* ── Belakang: rincian angka actual bulan ini ── */}
+        {/* -- Belakang: rincian angka actual bulan ini -- */}
         <div ref={backRef} style={{ ...faceBase, transform: "rotateY(180deg)", padding: "18px 18px 16px", pointerEvents: open ? "auto" : "none" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div style={{ fontSize: 10.5, fontWeight: 800, color: "rgba(255,255,255,0.6)", letterSpacing: 1, textTransform: "uppercase" }}>Rincian Bulan Ini</div>
             <button onClick={() => setOpen(false)} aria-label="Kembali ke ringkasan"
               style={{ display: "flex", alignItems: "center", gap: 4, border: "none", background: "rgba(255,255,255,0.1)", color: "rgba(255,255,255,0.75)", borderRadius: 9, padding: "5px 9px 5px 7px", cursor: "pointer", fontFamily: FF, fontSize: 11, fontWeight: 700 }}>
@@ -787,23 +794,34 @@ function AchievementCard({
             </button>
           </div>
 
-          {/* Header kolom "Actual / Plan" SEKALI di atas (bukan diulang di
-              tiap label baris) - dulu tiap DarkDetailRow punya sufiks
-              ": Actual / Plan" sendiri2, jadi berulang 7x padahal artinya
-              sama semua: kolom kiri di value = Actual, kolom kanan = Plan. */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "0 0 5px" }}>
-            <span style={{ flexShrink: 0, width: 28 }} />
+          {/* Header kolom "Actual / Plan / % Capaian" SEKALI di atas (bukan
+              diulang di tiap label baris). Jarak ke baris tombol "<
+              Ringkasan" di atas SEKARANG diberi ruang (marginTop 18, dulu
+              cuma marginBottom:4 di baris atas jadi dua elemen itu nempel
+              rapat) + garis pembatas halus supaya jelas ini section baru,
+              bukan lanjutan baris judul. */}
+          <div style={{ marginTop: 18, borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", alignItems: "center", gap: 8, padding: "12px 0 6px" }}>
+            <span style={{ flexShrink: 0, width: 26 }} />
             <span style={{ flex: 1, minWidth: 0 }} />
-            <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase", color: "rgba(255,255,255,0.4)" }}>Actual / Plan</span>
+            <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase", color: "rgba(255,255,255,0.4)", whiteSpace: "nowrap" }}>Actual / Plan</span>
+            <span style={{ flexShrink: 0, minWidth: 34, marginLeft: 8, textAlign: "center", fontSize: 8, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase", color: "rgba(255,255,255,0.3)" }}>% Ach</span>
           </div>
           <div>
-            <DarkDetailRow icon={CardSim} label="Penjualan SP" value={`${fmtInt(actualSp)} / ${fmtInt(targetSp)}`} color="#7FD9C6" />
-            <DarkDetailRow icon={Router} label="Penjualan FWA" value={`${fmtInt(actualFwaTotal)} / ${fmtInt(targetFwaTotal)}`} color="#7FD9C6" />
-            <DarkDetailRow icon={RefreshCw} label="Rebuy SP" value={`${fmtRpCompact(rebuySpTotal)} / ${fmtRpCompact(targetRebuySpTotal)}`} color="#F5CD46" />
-            <DarkDetailRow icon={RefreshCw} label="Rebuy FWA" value={`${fmtRpCompact(rebuyFwaTotal)} / ${fmtRpCompact(targetRebuyFwaTotal)}`} color="#F5CD46" />
-            <DarkDetailRow icon={Banknote} label="Revenue (3 Months)" value={`${fmtRpCompact(revenueTotal)} / ${fmtRpCompact(targetRevTotal)}`} color="#7FD9C6" />
-            <DarkDetailRow icon={Receipt} label="Cost Ratio" value={`${costRatioPct == null ? "-" : costRatioPct + "%"} / ${targetRevTotal > 0 ? Math.round((targetCostTotal / targetRevTotal) * 100) + "%" : "-"}`} color="#F286B4" />
-            <DarkDetailRow icon={ListChecks} label="Total Actual / Plan" value={`${fmtInt(actualCount)} / ${fmtInt(planCount)}`} color="#FFFFFF" last />
+            <DarkDetailRow icon={CardSim} label="Penjualan SP" actual={actualSp} plan={targetSp} fmt={fmtInt} color="#7FD9C6" />
+            <DarkDetailRow icon={Router} label="Penjualan FWA" actual={actualFwaTotal} plan={targetFwaTotal} fmt={fmtInt} color="#7FD9C6" />
+            <DarkDetailRow icon={RefreshCw} label="Rebuy SP" actual={rebuySpTotal} plan={targetRebuySpTotal} fmt={fmtRpCompact} color="#F5CD46" />
+            <DarkDetailRow icon={RefreshCw} label="Rebuy FWA" actual={rebuyFwaTotal} plan={targetRebuyFwaTotal} fmt={fmtRpCompact} color="#F5CD46" />
+            <DarkDetailRow icon={Banknote} label="Revenue (3 Months)" actual={revenueTotal} plan={targetRevTotal} fmt={fmtRpCompact} color="#7FD9C6" />
+            {/* Cost Ratio nilainya SENDIRI sudah persentase (cost/revenue) -
+                "capaian" atas persentase tidak bermakna sbg pencapaian yg
+                lebih tinggi = lebih baik (justru sebaliknya, makin rendah
+                makin sehat), jadi kolom % Capaian di baris ini SENGAJA "-"
+                (bukan dihitung ulang jadi rasio-dari-rasio yg membingungkan). */}
+            <DarkDetailRow icon={Receipt} label="Cost Ratio"
+              actualText={costRatioPct == null ? "-" : `${costRatioPct}%`}
+              planText={targetRevTotal > 0 ? `${Math.round((targetCostTotal / targetRevTotal) * 100)}%` : "-"}
+              achText="-" color="#F286B4" />
+            <DarkDetailRow icon={ListChecks} label="Total Actual / Plan" actual={actualCount} plan={planCount} fmt={fmtInt} color="#FFFFFF" last />
           </div>
         </div>
       </div>
@@ -812,17 +830,30 @@ function AchievementCard({
 }
 
 /** Baris rincian di sisi belakang kartu Achievement - ikon bulat tipis
- * bertinta warna aksennya (sama gaya dgn badge dot QuadStat), label kiri
- * angka kanan, dipisah hairline tipis ala StatusRow di app Promotor tapi
- * versi tema gelap. */
-function DarkDetailRow({ icon: Icon, label, value, color, last }) {
+ * bertinta warna aksennya (sama gaya dgn badge dot QuadStat), label kiri,
+ * KANAN sekarang 2 baris: nilai Actual/Plan (atas) + % Capaian (bawah,
+ * pill kecil) - dulu cuma nilai actual/plan tanpa persentase sama sekali,
+ * padahal itu justru yg paling cepat dibaca sekilas.
+ *
+ * Dua cara pakai:
+ *  - actual/plan/fmt: hitung sendiri "actual / plan" (diformat via fmt)
+ *    dan % capaian = actual/plan*100.
+ *  - actualText/planText/achText: nilai SUDAH dalam bentuk string siap
+ *    tampil (dipakai khusus baris Cost Ratio, krn nilainya sendiri sudah
+ *    persentase - achText dipaksa "-" di pemanggilnya, bukan dihitung
+ *    ulang jadi rasio-dari-rasio yg tidak bermakna). */
+function DarkDetailRow({ icon: Icon, label, actual, plan, fmt, actualText, planText, achText, color, last }) {
+  const aText = actualText != null ? actualText : fmt(actual);
+  const pText = planText != null ? planText : fmt(plan);
+  const ach = achText != null ? achText : (plan > 0 ? `${Math.round((actual / plan) * 100)}%` : "-");
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: last ? "none" : "1px solid rgba(255,255,255,0.08)" }}>
-      <div style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 9, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", color }}>
-        <Icon size={13} />
+    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 0", borderBottom: last ? "none" : "1px solid rgba(255,255,255,0.08)" }}>
+      <div style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 8, background: "rgba(255,255,255,0.08)", display: "flex", alignItems: "center", justifyContent: "center", color }}>
+        <Icon size={12} />
       </div>
-      <div style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 700, color: "rgba(255,255,255,0.8)" }}>{label}</div>
-      <div style={{ flexShrink: 0, fontSize: 13.5, fontWeight: 800, color: "#fff", fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      <div style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.8)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</div>
+      <div style={{ flexShrink: 0, fontSize: 12.5, fontWeight: 800, color: "#fff", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>{aText} / {pText}</div>
+      <div style={{ flexShrink: 0, minWidth: 34, textAlign: "center", fontSize: 10, fontWeight: 800, color, background: `${color}22`, borderRadius: 999, padding: "2px 6px", fontVariantNumeric: "tabular-nums" }}>{ach}</div>
     </div>
   );
 }
