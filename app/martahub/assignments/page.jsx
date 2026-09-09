@@ -290,7 +290,7 @@ function Body({ canManage, callerEmail }) {
       p_dsf_org_id: row.dsf_org_id || null,
       p_caller_email: callerEmail || null, p_mc: row.mc || null,
     });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(friendlyAssignError(error.message));
     setInfo("Assignment diperbarui.");
     await load();
   }
@@ -346,7 +346,7 @@ function Body({ canManage, callerEmail }) {
           p_caller_email: callerEmail || null,
           p_mc: form.mc || null,
         });
-        if (error) throw new Error(error.message);
+        if (error) throw new Error(friendlyAssignError(error.message));
         ok += 1;
         lastForm = { ...form, email };
       }
@@ -386,7 +386,7 @@ function Body({ canManage, callerEmail }) {
         p_mc: form.mc || null,
         p_email: form.email || null,
       });
-      if (error) throw new Error(error.message);
+      if (error) throw new Error(friendlyAssignError(error.message));
 
       if (subChanges && (subChanges.added?.length || subChanges.removed?.length)) {
         await linkSubordinates(id, subChanges.added, subChanges.removed);
@@ -1223,6 +1223,24 @@ function AddModal({ onClose, onSave, existing, scope }) {
 }
 
 // Edit satu assignment (email tetap; ubah role/region/brand/branch/cluster).
+// Terjemahkan error mentah dari Postgres jadi pesan yg dimengerti user -
+// KHUSUS pelanggaran UNIQUE(email) di mh_profiles ("mh_profiles_email_key")
+// yg sebelumnya bocor apa adanya ke banner error ("duplicate key value
+// violates unique constraint..."). Constraint-nya GLOBAL (satu email cuma
+// boleh nempel di SATU baris mh_profiles, apa pun role/branch/brand-nya),
+// jadi error ini bisa muncul walau precheck emailTaken di modal (yg cuma
+// menyaring assignment yg SEDANG terlihat di layar) tidak menangkapnya -
+// mis. email itu sudah dipakai assignment di region/branch lain yg tidak
+// termasuk `existing` (visibleRows). Fallback ke pesan aslinya kalau bukan
+// kasus ini, supaya error lain tetap kebaca apa adanya.
+function friendlyAssignError(message) {
+  const m = String(message || "");
+  if (m.includes("mh_profiles_email_key") || /duplicate key value violates unique constraint/i.test(m)) {
+    return "Email ini sudah dipakai assignment lain (di branch/brand/role mana pun) - satu email cuma boleh terhubung ke satu assignment. Pakai email lain, atau cari & edit assignment yang sudah ada.";
+  }
+  return m;
+}
+
 function EditModal({ row, onClose, onSave, existing, scope }) {
   const [name, setName] = useState(row.full_name || "");
   const [email, setEmail] = useState(row.email || "");
@@ -1331,15 +1349,19 @@ function EditModal({ row, onClose, onSave, existing, scope }) {
   // seluruh akses & data lama tanpa kehilangan apa pun.
   const emailKey = email.trim().toLowerCase();
   const emailChanged = emailKey !== String(row.email || "").trim().toLowerCase();
-  // Cegah duplikat: email baru sudah punya assignment identik (role+branch+brand).
+  // Cegah duplikat: mh_profiles.email itu UNIQUE secara GLOBAL di database
+  // (constraint mh_profiles_email_key) - satu email cuma boleh nempel di
+  // SATU baris assignment, apa pun role/branch/brand-nya. Dulu precheck ini
+  // cuma menyaring assignment yg role+branch+brand-nya SAMA PERSIS, jadi
+  // ganti email ke email assignment lain yg beda role/branch tetap lolos di
+  // sini lalu gagal di server dgn error mentah "mh_profiles_email_key".
+  // (`existing` = visibleRows, jadi ini masih precheck utk kasus yg
+  // KELIHATAN di layar; kasus di luar situ tetap ditangkap & diterjemahkan
+  // lewat friendlyAssignError() saat RPC-nya gagal.)
   const emailTaken = useMemo(() => {
     if (!emailChanged || !emailKey) return false;
-    return (existing || []).some((r) => r.id !== row.id
-      && String(r.email || "").toLowerCase() === emailKey
-      && r.role === role
-      && String(r.branch_id || "") === String(branchId || "")
-      && String(r.brand || "") === String(brand || ""));
-  }, [existing, row.id, emailKey, emailChanged, role, branchId, brand]);
+    return (existing || []).some((r) => r.id !== row.id && String(r.email || "").toLowerCase() === emailKey);
+  }, [existing, row.id, emailKey, emailChanged]);
 
   const canSave = name.trim() && emailKey && !emailTaken && (!isBranchRole || branchId)
     && (needsSupervisor ? !!supervisorId : true)
