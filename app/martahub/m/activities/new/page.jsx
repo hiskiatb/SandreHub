@@ -911,13 +911,39 @@ function CreatePlanWizardInner() {
       const targetId = editId || savedActivityId;
       let activityId = targetId;
       if (targetId) {
+        // Plan "slot kosong" (bme_user_id & created_by MASIH NULL - hasil
+        // Import Excel/Backdoor yg belum ada pemiliknya) HARUS diklaim dulu
+        // lewat RPC SEBELUM update biasa di bawah - policy RLS UPDATE
+        // mh_activities cuma mengizinkan auth.uid() = bme_user_id ATAU
+        // auth.uid() = created_by (atau admin), jadi tanpa ini update dari
+        // BME biasa ke baris begini akan DIAM-DIAM tersaring RLS (0 baris
+        // berubah, TIDAK ADA error krn .update() tanpa .select() tidak
+        // mendeteksi 0-row-match) - persis gejala "kelihatan tersimpan tapi
+        // begitu dibuka lagi datanya balik kosong lagi". RPC ini menolak
+        // (throw) dgn pesan jelas kalau plan di luar cakupan branch/brand
+        // akun ybs, supaya DSF TAHU kenapa gagal, bukan diam2 gagal.
+        if (editData?.activity?.bme_user_id == null && editData?.activity?.created_by == null) {
+          const { error: claimErr } = await supabaseMarta.rpc("mh_claim_activity_if_unclaimed", { p_activity_id: targetId });
+          if (claimErr) throw new Error(claimErr.message || "Plan ini belum ter-assign ke akun manapun - hubungi admin/SPM Sumatera.");
+        }
         // Update - brand/branch/pemilik TIDAK diubah (sama spt updatePlan()
         // Flutter). "Simpan Draft" TIDAK menyentuh status (biarkan apa
         // adanya, draft/revision_needed); "Ajukan Plan" set plan_submitted.
         const payload = { ...commonFields, updated_at: new Date().toISOString() };
         if (finalStatus === "plan_submitted") payload.status = "plan_submitted";
-        const { error } = await supabaseMarta.from("mh_activities").update(payload).eq("id", targetId);
+        // `.select("id")` SENGAJA ditambahkan - tanpa ini, kalau RLS
+        // menyaring baris (mis. tetap tidak match krn sebab lain di luar
+        // dugaan), supabase-js TIDAK melempar error sama sekali (update yg
+        // 0-row-match bukan dianggap error) - form kelihatan "berhasil
+        // disimpan" padahal DB-nya tidak berubah. Dengan `.select()`, kalau
+        // `data` yg balik kosong (bukan array berisi 1 baris), berarti
+        // update-nya TIDAK KENA baris manapun - lempar error yg jelas
+        // drpd diam2 lolos seolah berhasil.
+        const { data: updated, error } = await supabaseMarta.from("mh_activities").update(payload).eq("id", targetId).select("id");
         if (error) throw error;
+        if (!updated || updated.length === 0) {
+          throw new Error("Plan tidak tersimpan - akun Anda kemungkinan belum berwenang mengedit plan ini. Hubungi admin/SPM Sumatera.");
+        }
       } else {
         // "Buat Untuk": kedua kolom bme_user_id & created_by diisi id TARGET,
         // bukan id approver yang membuatkannya - SAMA PERSIS dgn

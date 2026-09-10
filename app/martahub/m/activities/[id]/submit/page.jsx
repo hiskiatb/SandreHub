@@ -848,15 +848,25 @@ export default function SubmitActualPage() {
     setSavingDraft(true); setErr("");
     try {
       await persistNewEntries();
+      // Sama spt submit() di bawah - plan "slot kosong" (belum ada
+      // pemiliknya, hasil Import Excel/Backdoor) harus diklaim dulu supaya
+      // update ini tidak DIAM-DIAM tersaring RLS (0 baris berubah, tanpa
+      // error krn update ini tidak pakai .select()) - lihat catatan lengkap
+      // di submit().
+      if (activity?.plan_source === "cms_import") {
+        const { error: claimErr } = await supabaseMarta.rpc("mh_claim_activity_if_unclaimed", { p_activity_id: activityId });
+        if (claimErr) throw new Error(claimErr.message || "Plan ini belum ter-assign ke akun manapun - hubungi admin/SPM Sumatera.");
+      }
       const nowIso = new Date().toISOString();
-      const { error } = await supabaseMarta.from("mh_activities").update({
+      const { data: updated, error } = await supabaseMarta.from("mh_activities").update({
         cost_actual: costActual ? Number(costActual) || 0 : null,
         insight: insight.trim() || null,
         actual_draft_saved_at: nowIso,
         ...(address.trim() ? { address: address.trim() } : {}),
         ...(gpsCorrected && gpsLat != null && gpsLng != null ? { latitude: gpsLat, longitude: gpsLng } : {}),
-      }).eq("id", activityId);
+      }).eq("id", activityId).select("id");
       if (error) throw error;
+      if (!updated || updated.length === 0) throw new Error("Draft tidak tersimpan - akun Anda kemungkinan belum berwenang mengedit plan ini.");
       setDraftSavedAt(nowIso);
       setDirty(false);
       return true;
@@ -897,6 +907,20 @@ export default function SubmitActualPage() {
     }
     setSaving(true); setErr("");
     try {
+      // Plan "slot kosong" (bme_user_id & created_by MASIH NULL - hasil
+      // Import Excel/Backdoor yg belum ada pemiliknya) HARUS diklaim dulu
+      // lewat RPC SEBELUM update di bawah - kalau tidak, policy RLS UPDATE
+      // mh_activities (cuma izinkan auth.uid() = bme_user_id/created_by)
+      // menyaring baris ini jadi 0-row-match, dan `.select().single()`
+      // di bawah melempar "cannot coerce the result to a single JSON
+      // object" (PGRST116) persis error yg dilaporkan - BUKAN krn data
+      // laporannya salah, tapi krn akun ybs belum berwenang nulis ke baris
+      // ini sama sekali. Sama persis dgn perbaikan di wizard Buat/Edit
+      // Plan (activities/new/page.jsx) - lihat catatan di sana.
+      if (activity?.plan_source === "cms_import") {
+        const { error: claimErr } = await supabaseMarta.rpc("mh_claim_activity_if_unclaimed", { p_activity_id: activityId });
+        if (claimErr) throw new Error(claimErr.message || "Plan ini belum ter-assign ke akun manapun - hubungi admin/SPM Sumatera.");
+      }
       const actualSp = effectiveQty("sp");
       const actualFwa = effectiveQty("fwa");
       const revenue = catRevenue("sp") + catRevenue("fwa");

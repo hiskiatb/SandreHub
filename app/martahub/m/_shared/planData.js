@@ -217,7 +217,14 @@ export function timesByDateFromActivity(activity, dates) {
 // tertinggal dari daftar kolom ini, jadi resolusi branch itu selalu gagal
 // diam-diam (branch_id selalu undefined) dan prefill gagal total lagi
 // walau fix scope-nya sendiri sudah benar - lihat catatan di new/page.jsx.
-const EDIT_COLS = "id,branch_id,event_category,event_categories,event_name,site_id,mc,latitude,longitude,address,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,plan_date_times,poi_type,network_category,area_potential,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,cost_estimate,status,brand";
+// `bme_user_id`/`created_by` ditambahkan - dipakai save() (activities/new/
+// page.jsx) utk deteksi plan "slot kosong" (hasil Import Excel/Backdoor yg
+// belum ada pemiliknya) SEBELUM update, supaya bisa panggil RPC
+// mh_claim_activity_if_unclaimed dulu - tanpa ini UPDATE dari BME biasa ke
+// baris yg bme_user_id/created_by-nya NULL akan DIAM-DIAM tersaring RLS (0
+// baris berubah, tanpa error) krn policy UPDATE mh_activities cuma
+// mengizinkan auth.uid() = bme_user_id/created_by.
+const EDIT_COLS = "id,branch_id,event_category,event_categories,event_name,site_id,mc,latitude,longitude,address,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,plan_date_times,poi_type,network_category,area_potential,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,cost_estimate,status,brand,bme_user_id,created_by";
 
 /** Muat satu activity utk mode edit, termasuk daftar site tambahan
  * (mh_activity_sites, is_primary=false) - dipakai wizard Create Plan saat
