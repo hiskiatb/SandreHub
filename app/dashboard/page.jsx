@@ -20,7 +20,7 @@ import {
   LogOut, ChevronRight, Calendar, Box, Layers,
   Shield, Globe, Building2, Store, SlidersHorizontal,
   Table2, Wallet, PanelLeftClose, PanelLeftOpen,
-  FileSpreadsheet, Users, Key, Briefcase, Wrench,
+  FileSpreadsheet, Users, Key, Briefcase, Wrench, Mail,
 } from "lucide-react";
 
 import FormPendapatan   from "./components/PNL_FormPendapatan";
@@ -38,6 +38,7 @@ import KodeOtoritas     from "./components/KodeOtoritas";
 import MFTS_Module      from "./components/MFTS_Module";
 import MenuAccessManager from "./components/MenuAccessManager";
 import PTS_Module        from "./components/PTS_Module";
+import ReportMerge_Module from "./components/ReportMerge_Module";
 
 // ─── Role Maps ────────────────────────────────────────────────────────────────
 const IOH_ROLE_REGION_MAP = {
@@ -451,6 +452,7 @@ export default function DashboardPage() {
   const isReadOnly      = isIOHAny;
   const canMonitor      = isSPM || isIOHAny || isMPX;
   const canSdp          = isSPM || isSDPMember || isIOHAny;   // IOH: lihat saja (read-only)
+  const canReportMerge   = isSPM || isIOHAny;   // Report Merge: SPM Sumatera + Internal IOH, Finance MPX TIDAK boleh
 
   // ── Kontrol ketersediaan menu (maintenance per-role, diatur SPM) ────────────
   const [menuStatus, setMenuStatus] = useState(new Map()); // menu_key -> { status, note }
@@ -759,6 +761,7 @@ export default function DashboardPage() {
                   {isSPM        && <SNavItem icon={<FileSpreadsheet size={14} />} label="Import Data"      active={view === "import-wizard"}  onClick={() => navigate("import-wizard")} />}
                   {isSPM        && <SNavItem icon={<MapPin size={14} />}           label="MC/Cluster Mapping" active={view === "mc-cluster"}       onClick={() => navigate("mc-cluster")} />}
                   {isSPM        && <SNavItem icon={<Key size={14} />}              label="Kode Otoritas"      active={view === "kode-otoritas"}    onClick={() => navigate("kode-otoritas")} />}
+                  {canReportMerge && <SNavItem icon={<Mail size={14} />}         label="Report Merge"       active={view === "report-merge"}     onClick={() => navigate("report-merge")} />}
                 </div>
               </motion.div>
             )}
@@ -968,6 +971,13 @@ export default function DashboardPage() {
                       tag="Admin" active={true} onClick={() => navigate("kode-otoritas")} t={t} d={d}
                       accent={{ color: "#C6168D", bg: d ? "rgba(198,22,141,0.11)" : "rgba(198,22,141,0.07)", bd: d ? "rgba(198,22,141,0.28)" : "rgba(198,22,141,0.16)", shadow: "rgba(198,22,141,0.16)" }} />
                   )}
+
+                  {canReportMerge && (
+                    <DashCard icon={<Mail size={20} />} title="Report Merge"
+                      desc="Mail-merge email & pembuatan surat PDF dengan alur approval."
+                      tag={isSPM ? "Admin" : "IOH"} active={true} onClick={() => navigate("report-merge")} t={t} d={d}
+                      accent={{ color: d ? "#818CF8" : "#4F46E5", bg: d ? "rgba(129,140,248,0.11)" : "rgba(79,70,229,0.07)", bd: d ? "rgba(129,140,248,0.28)" : "rgba(79,70,229,0.16)", shadow: "rgba(79,70,229,0.16)" }} />
+                  )}
                 </div>
               </motion.div>
             )}
@@ -1058,6 +1068,12 @@ export default function DashboardPage() {
             )}
 
             {/* ── SDP Status ── */}
+            {view === "report-merge" && canReportMerge && !viewUnderMaint && (
+              <motion.div key="report-merge" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <ReportMerge_Module t={t} profile={profile} />
+              </motion.div>
+            )}
+
             {view === "sdp-status" && canSdp && !viewUnderMaint && (
               <motion.div key="sdp" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 {/* Tombol "Kembali ke Overview" ditangani DI DALAM SDP_StatusForm
