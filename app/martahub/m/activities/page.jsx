@@ -257,6 +257,17 @@ function ActivitiesInner() {
   // langsung lihat mana yg "gemuk" tanpa coba-coba.
   const filterOptionGroups = useMemo(() => {
     const status = new Map(), brand = new Map(), branch = new Map(), kabupaten = new Map(), kecamatan = new Map(), poi = new Map(), site = new Map();
+    // Status SENGAJA di-seed dari SELURUH status yang dikenal siklus hidup
+    // plan (sama persis dgn daftar tab di atas, TABS) dgn count 0 dulu -
+    // BUKAN cuma status yg kebetulan ada di `rows` saat ini. Grup filter
+    // lain (Brand/Branch/dst.) memang sengaja hanya menampilkan opsi yg
+    // beneran ada datanya (lihat catatan di atas), tapi utk Status ini
+    // beda kasusnya: BME/TMV perlu bisa memfilter "Draft"/"Revisi Plan"/
+    // "Revisi Report" WALAU kebetulan sedang 0 di region-nya sekarang -
+    // opsi status tidak boleh "menghilang" begitu kebetulan tidak ada
+    // datanya (mis. dipakai orang lain lewat link/screenshot yg
+    // menyebutkan status itu, atau memang mau memastikan benar2 kosong).
+    for (const t of TABS) { if (t.key !== "all") status.set(t.key, { key: t.key, label: t.label, count: 0 }); }
     const bump = (map, key, label) => { if (!key) return; const cur = map.get(key); if (cur) cur.count++; else map.set(key, { key, label: label ?? key, count: 1 }); };
     for (const r of rows || []) {
       const meta = siteMeta[r.site_id];
@@ -269,8 +280,14 @@ function ActivitiesInner() {
       if (r.site_id) bump(site, r.site_id, r.site_id);
     }
     const toSorted = (map) => Array.from(map.values()).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+    // Status TIDAK ikut disortir by count (toSorted) - urutannya tetap
+    // ikut urutan siklus hidup (sama seperti TABS: Draft → Plan Diajukan →
+    // Revisi Plan → Selesai → Revisi Report), bukan diacak berdasar count
+    // (yg akan bikin status 0 selalu terlempar ke paling bawah/belakang
+    // tanpa pola yg jelas tiap kali data berubah).
+    const statusOrdered = TABS.filter((t) => t.key !== "all").map((t) => status.get(t.key)).filter(Boolean);
     return {
-      status: toSorted(status), brand: toSorted(brand), branch: toSorted(branch),
+      status: statusOrdered, brand: toSorted(brand), branch: toSorted(branch),
       kabupaten: toSorted(kabupaten), kecamatan: toSorted(kecamatan), poi: toSorted(poi),
       site: toSorted(site),
     };

@@ -42,17 +42,39 @@ export default function LeaderboardPage() {
   const { loading: sessionLoading, userId, scope } = useMartaSession();
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
-  const [scopeFilter, setScopeFilter] = useState("branch"); // branch | region | all
   const [mode, setMode] = useState(MODES[0]);
+
+  // Pilihan Branch & Brand - SEKARANG dropdown beneran (bukan cuma toggle
+  // "branch saya"/"region saya"/"semua" spt sebelumnya), supaya role yang
+  // scope-nya SATU REGION (bukan satu branch tetap) - head, tmv, atau admin/
+  // spm_sumatera yang unscoped - tetap bisa mempersempit ke branch/brand
+  // TERTENTU, bukan cuma "region saya" vs "semua".
+  //
+  // BUG LAMA yang diperbaiki: chip "BRANCH" dulu di-disable TOTAL utk role
+  // yang tidak punya SATU branch tetap (head/tmv/admin/spm_sumatera -
+  // scope.branchName selalu kosong utk mereka) - jadi begitu diklik "Region"
+  // atau "Semua" lalu coba klik "Branch" lagi, TIDAK PERNAH bisa aktif sama
+  // sekali (bukan reset yang salah, tapi memang tidak pernah bisa dipakai).
+  // Sekarang branch dipilih lewat dropdown berisi daftar branch yang
+  // BENAR-BENAR ada dlm cakupan role-nya (region-nya kalau head/tmv, semua
+  // branch kalau unscoped, HANYA branch-nya sendiri kalau bme_rge/tm biasa),
+  // jadi tidak ada lagi tombol yang permanen tidak bisa diklik.
+  const [branchList, setBranchList] = useState([]); // {id,name,region}[] - dari mh_branches, difilter cakupan role di bawah
+  const [branchPick, setBranchPick] = useState(""); // "" = semua branch dlm cakupan
+  const [brandPick, setBrandPick] = useState(""); // "" = semua brand dlm cakupan (cuma relevan kalau scope.brand kosong)
 
   useEffect(() => {
     if (sessionLoading) return;
     let alive = true;
     (async () => {
       try {
-        const { data, error } = await supabaseMarta.from("mh_leaderboard_summary").select(COLS).limit(500);
+        const [{ data, error }, { data: branches, error: be }] = await Promise.all([
+          supabaseMarta.from("mh_leaderboard_summary").select(COLS).limit(500),
+          supabaseMarta.from("mh_branches").select("id,name,region"),
+        ]);
         if (error) throw error;
-        if (alive) setRows(data || []);
+        if (be) throw be;
+        if (alive) { setRows(data || []); setBranchList(branches || []); }
       } catch (e) {
         if (alive) setErr(e.message || "Gagal memuat leaderboard");
       }
@@ -60,16 +82,40 @@ export default function LeaderboardPage() {
     return () => { alive = false; };
   }, [sessionLoading]);
 
+  // Daftar branch yang BOLEH dipilih role ini - bme_rge/tm (punya SATU
+  // branch tetap, scope.branchName terisi) cuma lihat branch-nya sendiri
+  // (dropdown tidak relevan utk mereka, disembunyikan); head/tmv dibatasi
+  // ke branch-branch DALAM region mereka; admin/spm_sumatera (unscoped)
+  // lihat semua branch.
+  const allowedBranches = useMemo(() => {
+    if (scope?.branchName) return [];
+    if (scope?.unscoped) return branchList.slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    if (scope?.region) return branchList.filter((b) => b.region === scope.region).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    return [];
+  }, [branchList, scope]);
+
   const filtered = useMemo(() => {
     let list = rows || [];
+    // Brand: dikunci ke scope.brand kalau role-nya memang terikat 1 brand
+    // (bme_rge/tm/tmv-brand-tetap) - selain itu (unscoped, atau head/tmv yg
+    // tidak terikat brand tertentu) ikuti pilihan dropdown brandPick.
     if (scope?.brand) list = list.filter((r) => (r.brand || "").toLowerCase() === scope.brand.toLowerCase());
-    if (scopeFilter === "branch" && scope?.branchName) list = list.filter((r) => r.branch_name === scope.branchName);
-    else if (scopeFilter === "region" && scope?.region) list = list.filter((r) => r.region === scope.region);
+    else if (brandPick) list = list.filter((r) => (r.brand || "").toLowerCase() === brandPick.toLowerCase());
+    // Branch/Region: bme_rge/tm (branchName tetap) selalu dibatasi ke branch
+    // sendiri. Role region-scope (head/tmv) SELALU dibatasi ke region
+    // mereka dulu (tidak bisa lihat region lain), lalu opsional dipersempit
+    // lagi ke satu branch lewat branchPick. Unscoped (admin/spm_sumatera)
+    // tidak dibatasi region, cuma ikut branchPick kalau dipilih.
+    if (scope?.branchName) list = list.filter((r) => r.branch_name === scope.branchName);
+    else {
+      if (scope?.region && !scope?.unscoped) list = list.filter((r) => r.region === scope.region);
+      if (branchPick) list = list.filter((r) => r.branch_id === branchPick);
+    }
     return list
       .slice()
       .sort((a, b) => (b[mode.field] || 0) - (a[mode.field] || 0))
       .map((r, i) => ({ ...r, rank: i + 1 }));
-  }, [rows, scope, scopeFilter, mode]);
+  }, [rows, scope, branchPick, brandPick, mode]);
 
   const myRow = filtered.find((r) => r.user_id === userId);
 
@@ -118,28 +164,49 @@ export default function LeaderboardPage() {
           .mh-hide-scrollbar::-webkit-scrollbar { display: none; height: 0; }
         `}</style>
 
-        {/* Scope: branch/region/semua - terpisah dari mode ranking supaya ga
-            bikin bingung (mode = APA yg diranking, scope = SIAPA yg dibandingkan) */}
-        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-          {[
-            { key: "branch", label: scope?.branchName || "BRANCH" },
-            { key: "region", label: scope?.region || "Region" },
-            { key: "all", label: "Semua" },
-          ].map((t) => {
-            const active = scopeFilter === t.key;
-            const disabled = (t.key === "branch" && !scope?.branchName) || (t.key === "region" && !scope?.region);
-            return (
-              <button key={t.key} disabled={disabled} onClick={() => setScopeFilter(t.key)}
-                style={{
-                  padding: "7px 12px", borderRadius: 999,
-                  background: active ? "#17181C" : "#F5F5F7", border: `1px solid ${active ? "#17181C" : "#E9EAEE"}`,
-                  color: disabled ? "#C4C4CE" : active ? "#FFFFFF" : "#5A5A68", fontSize: 11.5, fontWeight: 700, fontFamily: FF, cursor: disabled ? "default" : "pointer",
-                }}>
-                {t.label}
-              </button>
-            );
-          })}
-        </div>
+        {/* Cakupan: branch tetap (bme_rge/tm) ditampilkan sbg badge info saja
+            (tidak bisa diganti - memang scope akunnya). Role region-scope
+            (head/tmv) & unscoped (admin/spm_sumatera) dapat DROPDOWN Branch
+            beneran (bukan lagi chip yg permanen ke-disable) + dropdown Brand
+            kalau brand mereka memang tidak terkunci ke satu brand - jadi
+            SETIAP role bisa mempersempit ke branch/brand yg dia mau, tapi
+            tetap dibatasi ke cakupan role-nya (lihat allowedBranches/scope
+            di atas - region head/tmv tidak pernah bisa "bocor" lihat region
+            lain lewat dropdown ini). */}
+        {scope?.branchName ? (
+          <div style={{ marginTop: 10, display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: "#F5F5F7", border: "1px solid #E9EAEE" }}>
+            <MapPin size={12} color="#5A5A68" />
+            <span style={{ fontSize: 11.5, fontWeight: 700, color: "#5A5A68", fontFamily: FF }}>{scope.branchName}{scope?.brand ? ` · ${BRAND_DISPLAY[scope.brand.toLowerCase()] || scope.brand.toUpperCase()}` : ""}</span>
+          </div>
+        ) : (
+          <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+            {scope?.region && !scope?.unscoped && (
+              <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: "#F5F5F7", border: "1px solid #E9EAEE" }}>
+                <MapPin size={12} color="#5A5A68" />
+                <span style={{ fontSize: 11.5, fontWeight: 700, color: "#5A5A68", fontFamily: FF }}>{scope.region}</span>
+              </div>
+            )}
+            {allowedBranches.length > 0 && (
+              <select value={branchPick} onChange={(e) => setBranchPick(e.target.value)}
+                style={{ padding: "7px 12px", borderRadius: 999, background: branchPick ? "#17181C" : "#F5F5F7", border: `1px solid ${branchPick ? "#17181C" : "#E9EAEE"}`, color: branchPick ? "#FFFFFF" : "#5A5A68", fontSize: 11.5, fontWeight: 700, fontFamily: FF, cursor: "pointer", appearance: "none", WebkitAppearance: "none" }}>
+                <option value="">Semua Branch</option>
+                {allowedBranches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+              </select>
+            )}
+            {scope?.brand ? (
+              <div style={{ display: "inline-flex", alignItems: "center", padding: "7px 12px", borderRadius: 999, background: "#F5F5F7", border: "1px solid #E9EAEE" }}>
+                <span style={{ fontSize: 11.5, fontWeight: 700, color: "#5A5A68", fontFamily: FF }}>{BRAND_DISPLAY[scope.brand.toLowerCase()] || scope.brand.toUpperCase()}</span>
+              </div>
+            ) : (
+              <select value={brandPick} onChange={(e) => setBrandPick(e.target.value)}
+                style={{ padding: "7px 12px", borderRadius: 999, background: brandPick ? "#17181C" : "#F5F5F7", border: `1px solid ${brandPick ? "#17181C" : "#E9EAEE"}`, color: brandPick ? "#FFFFFF" : "#5A5A68", fontSize: 11.5, fontWeight: 700, fontFamily: FF, cursor: "pointer", appearance: "none", WebkitAppearance: "none" }}>
+                <option value="">Semua Brand</option>
+                <option value="im3">IM3</option>
+                <option value="tri">3ID</option>
+              </select>
+            )}
+          </div>
+        )}
       </div>
 
       {myRow && (

@@ -15,6 +15,7 @@ import {
   ArrowLeft, Loader2, Check, AlertCircle, Users, CheckCircle2, FileText, Clock, Filter,
 } from "lucide-react";
 import { fmtSubmissionMonth } from "../../../lib/sdp";
+import SDP_RegistrationDetail from "./SDP_RegistrationDetail";
 
 const mk = (d) => ({
   card: d ? "#17171B" : "#FFFFFF", sub: d ? "#1D1D22" : "#F8F9FA", line: d ? "rgba(255,255,255,.08)" : "rgba(0,0,0,.08)",
@@ -50,6 +51,7 @@ export default function SDP_BatchMonitor({ supabase, theme = "dark", profile, on
   const [sel, setSel] = useState(() => new Set());
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [detail, setDetail] = useState(null); // baris sdp_registration sedang dibuka
 
   const load = async () => {
     setLoading(true); setErr("");
@@ -116,6 +118,14 @@ export default function SDP_BatchMonitor({ supabase, theme = "dark", profile, on
   };
 
   const toneCol = (s) => ({ ok: t.ok, blue: t.blue, amber: t.amber, acc: t.acc }[STATUS_TONE[s] || "blue"] || t.mid);
+
+  if (detail) {
+    return (
+      <SDP_RegistrationDetail supabase={supabase} theme={theme} profile={profile} entry={detail}
+        onBack={() => setDetail(null)}
+        onChanged={() => load()} />
+    );
+  }
 
   return (
     <div style={{ fontFamily: FF, color: t.hi }}>
@@ -207,8 +217,11 @@ export default function SDP_BatchMonitor({ supabase, theme = "dark", profile, on
                   const col = toneCol(s);
                   const canPick = canApprove && s === "submitted";
                   return (
-                    <tr key={r.id}>
-                      {canApprove && <td style={tdS(t)}>{canPick ? <input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /> : null}</td>}
+                    <tr key={r.id} onClick={() => setDetail(r)}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                      style={{ cursor: "pointer" }}>
+                      {canApprove && <td style={tdS(t)} onClick={(e) => e.stopPropagation()}>{canPick ? <input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /> : null}</td>}
                       <td style={{ ...tdS(t), fontFamily: "monospace", color: t.mid, whiteSpace: "nowrap" }}>{r.sdp_id_new || "—"}</td>
                       <td style={{ ...tdS(t), fontWeight: 700, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.sdp_name || "—"}</td>
                       <td style={{ ...tdS(t), color: t.mid, whiteSpace: "nowrap" }}>{r.submitter_cluster || r.branch || "—"}</td>
