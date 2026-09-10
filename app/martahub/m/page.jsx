@@ -269,9 +269,21 @@ export default function MartaMobileHome() {
   // sedikit aktivitas (mis. achievement masih 0%) opsinya ikut kosong dan
   // field kelihatan terkunci abu-abu padahal harusnya bisa dipilih (spm_
   // sumatera/admin selalu; Head TMV & Brand TMV disaring ke region sendiri).
+  // BUG YG DIPERBAIKI: head/tmv dgn `region` KOSONG (mis. akun "Circle
+  // Sumatera" - head yg SENGAJA tidak dipatok ke satu region krn memang
+  // mencakup KETIGA region sekaligus) dulu match SEMUA branch ditolak
+  // (`b.region === scope.region` → `b.region === null` → tidak pernah
+  // cocok krn kolom region branch tidak pernah null) - field Branch jadi
+  // kelihatan "terkunci" tanpa opsi sama sekali, padahal harusnya akun
+  // begini malah paling leluasa (semua region). Sekarang: region KOSONG
+  // pada scope diperlakukan sama seperti unscoped (tidak ada batasan),
+  // SELARAS dgn applyMartaScope() (lib/martaScope.js) yg query datanya
+  // MEMANG SUDAH begini dari awal (`if (scope.region) {...filter...}` -
+  // region kosong = tidak difilter) - jadi filter Branch di UI ini
+  // akhirnya konsisten dgn data yg sebenarnya bisa dia lihat.
   const branchOptions = canBrowseBranches
     ? Array.from(branchMap.entries())
-        .filter(([, b]) => scope?.unscoped || b.region === scope?.region)
+        .filter(([, b]) => scope?.unscoped || !scope?.region || b.region === scope?.region)
         .map(([id, b]) => ({ value: id, label: b.name }))
         .sort((a, b) => a.label.localeCompare(b.label))
     : [];

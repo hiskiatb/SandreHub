@@ -308,10 +308,17 @@ export async function fetchAssignableTargets(scope) {
   const { data, error } = await supabaseMarta.rpc("mh_list_assignments");
   if (error) throw error;
   let list = (data || []).filter((r) => r.logged_in && r.branch_id && TARGETABLE_ROLES.includes(r.role));
-  if (scope.role === "head") {
+  // `scope.region` KOSONG pada head/tmv (mis. akun "Circle Sumatera" yg
+  // SENGAJA tidak dipatok satu region - mencakup ketiga region sekaligus)
+  // TIDAK BOLEH ikut memfilter jadi kosong semua (`r.region === null`
+  // tidak pernah cocok) - diperlakukan sbg "tanpa batas region" spt
+  // unscoped, konsisten dgn applyMartaScope() di lib/martaScope.js yg
+  // sudah begini dari awal.
+  if (scope.role === "head" && scope.region) {
     list = list.filter((r) => r.region === scope.region);
   } else if (scope.role === "tmv") {
-    list = list.filter((r) => r.region === scope.region && (r.brand || "").toLowerCase() === (scope.brand || "").toLowerCase());
+    if (scope.region) list = list.filter((r) => r.region === scope.region);
+    if (scope.brand) list = list.filter((r) => (r.brand || "").toLowerCase() === scope.brand.toLowerCase());
   }
   return list.sort((a, b) => (a.full_name || "").localeCompare(b.full_name || ""));
 }
@@ -370,11 +377,14 @@ export async function fetchUserManagementGrid(scope, period) {
 
   let branches = (branchRows || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
   let brands = BRANDS;
-  if (scope.role === "head") {
+  // Sama seperti fetchAssignableTargets di atas - region KOSONG pada
+  // head/tmv (akun lintas-region spt "Circle Sumatera") tidak boleh
+  // menyaring branch jadi kosong semua.
+  if (scope.role === "head" && scope.region) {
     branches = branches.filter((b) => b.region === scope.region);
   } else if (scope.role === "tmv") {
-    branches = branches.filter((b) => b.region === scope.region);
-    brands = [(scope.brand || "").toLowerCase()].filter(Boolean);
+    if (scope.region) branches = branches.filter((b) => b.region === scope.region);
+    if (scope.brand) brands = [scope.brand.toLowerCase()];
   }
 
   const groups = [];
@@ -504,11 +514,14 @@ export async function fetchAssignableGroups(scope) {
 
   let branches = (branchRows || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
   let brands = BRANDS;
-  if (scope.role === "head") {
+  // Sama seperti fetchAssignableTargets di atas - region KOSONG pada
+  // head/tmv (akun lintas-region spt "Circle Sumatera") tidak boleh
+  // menyaring branch jadi kosong semua.
+  if (scope.role === "head" && scope.region) {
     branches = branches.filter((b) => b.region === scope.region);
   } else if (scope.role === "tmv") {
-    branches = branches.filter((b) => b.region === scope.region);
-    brands = [(scope.brand || "").toLowerCase()].filter(Boolean);
+    if (scope.region) branches = branches.filter((b) => b.region === scope.region);
+    if (scope.brand) brands = [scope.brand.toLowerCase()];
   }
 
   const groups = [];

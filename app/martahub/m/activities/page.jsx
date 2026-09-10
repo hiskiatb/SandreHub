@@ -489,8 +489,11 @@ function ActivitiesInner() {
           </button>
         </div>
 
-        {/* Tabs */}
-        <div style={{ display: "flex", gap: 8, marginTop: 14, overflowX: "auto", paddingBottom: 2, WebkitOverflowScrolling: "touch" }}>
+        {/* Tabs - scrollbar-nya DISEMBUNYIKAN (className mh-hide-scrollbar,
+            pola sama persis dgn mode-chip Leaderboard) - tetap bisa digeser
+            horizontal kalau tab-nya lebih banyak dari lebar layar, cuma bar
+            abu2 di bawahnya yg dihilangkan biar lebih rapi. */}
+        <div className="mh-hide-scrollbar" style={{ display: "flex", gap: 8, marginTop: 14, overflowX: "auto", paddingBottom: 2, WebkitOverflowScrolling: "touch", scrollbarWidth: "none", msOverflowStyle: "none" }}>
           {TABS.map((t) => {
             const active = tab === t.key;
             const n = counts[t.key] || 0;
@@ -508,6 +511,9 @@ function ActivitiesInner() {
             );
           })}
         </div>
+        <style jsx>{`
+          .mh-hide-scrollbar::-webkit-scrollbar { display: none; height: 0; }
+        `}</style>
       </div>
 
       <div style={{ padding: "16px 20px 0" }}>
