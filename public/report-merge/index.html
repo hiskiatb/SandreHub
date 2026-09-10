@@ -1,0 +1,3955 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<script>
+  // Shim integrasi SandraHub — TIDAK mengubah satu baris pun logika app
+  // aslinya (index.html/approve.html persis sama). Cuma membungkus
+  // window.fetch supaya:
+  //   1) semua panggilan '/api/...' diarahkan ke '/api/report-merge/...'
+  //      (endpoint backend Report Merge di dalam SandraHub, lihat
+  //      app/api/report-merge/*).
+  //   2) menyisipkan header Authorization: Bearer <token sesi Supabase
+  //      SandraHub yang sedang login> ke tiap panggilan itu — dibaca dari
+  //      localStorage (sama origin dengan SandraHub, jadi localStorage-nya
+  //      dibagi), BUKAN login terpisah. Endpoint di server yang menolak
+  //      Finance MPX (lihat lib/reportMerge/auth.js) mengandalkan header
+  //      ini. approve.html sengaja TIDAK butuh token sesi (dia dibuka
+  //      approver lewat link email tanpa login SandraHub) — kalau token
+  //      sesi tidak ada, fetch tetap jalan tanpa header itu.
+  (function () {
+    function findSupabaseAccessToken() {
+      try {
+        for (var i = 0; i < localStorage.length; i++) {
+          var k = localStorage.key(i);
+          if (k && /^sb-.*-auth-token$/.test(k)) {
+            var raw = localStorage.getItem(k);
+            if (!raw) continue;
+            var parsed = JSON.parse(raw);
+            var token = parsed && (parsed.access_token || (parsed.currentSession && parsed.currentSession.access_token));
+            if (token) return token;
+          }
+        }
+      } catch (e) { /* biarin, fetch tetap jalan tanpa header */ }
+      return null;
+    }
+
+    var originalFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      var url = typeof input === "string" ? input : (input && input.url) || "";
+      if (url.indexOf("/api/") === 0) {
+        var newUrl = "/api/report-merge" + url.slice(4);
+        var token = findSupabaseAccessToken();
+        var opts = Object.assign({}, init);
+        if (token) {
+          opts.headers = Object.assign({}, (init && init.headers) || {}, { Authorization: "Bearer " + token });
+        }
+        if (typeof input === "string") {
+          return originalFetch(newUrl, opts);
+        }
+        var newReq = new Request(newUrl, input);
+        return originalFetch(newReq, opts);
+      }
+      return originalFetch(input, init);
+    };
+  })();
+</script>
+
+<meta charset="UTF-8">
+<title>Blast Email — Sales Performance Sumatera</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2036%2036%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%2236%22%20y2%3D%2236%22%20gradientUnits%3D%22userSpaceOnUse%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%2332BCAD%22/%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%2327A093%22/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width%3D%2236%22%20height%3D%2236%22%20rx%3D%2210%22%20fill%3D%22url%28%23g%29%22/%3E%3Cg%20stroke%3D%22%23fff%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%3E%3Cline%20x1%3D%2210%22%20y1%3D%2226%22%20x2%3D%2210%22%20y2%3D%2220%22/%3E%3Cline%20x1%3D%2218%22%20y1%3D%2226%22%20x2%3D%2218%22%20y2%3D%2215%22/%3E%3Cline%20x1%3D%2226%22%20y1%3D%2226%22%20x2%3D%2226%22%20y2%3D%2210%22/%3E%3C/g%3E%3C/svg%3E">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>
+  // Terapkan tema (gelap/terang) sebelum halaman digambar, supaya tidak ada
+  // kedipan warna saat load.
+  try{
+    var __rmTheme = localStorage.getItem('rm-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', __rmTheme);
+  }catch(e){}
+</script>
+<style>
+  @font-face{
+    font-family:'Indosat';
+    src:url('/fonts/IndosatMedium.ttf') format('truetype');
+    font-weight:500;
+    font-style:normal;
+    font-display:swap;
+  }
+  @font-face{
+    font-family:'Indosat';
+    src:url('/fonts/IndosatBold.ttf') format('truetype');
+    font-weight:700;
+    font-style:normal;
+    font-display:swap;
+  }
+  :root{
+    /* ---- Palet resmi Indosat Ooredoo Hutchison ----
+       Persis seperti Brand Guidelines bab 1.5 / 1.6 (Logo 1st & 2nd Primary
+       Color), lengkap dengan kode Pantone-nya. Ini SATU-SATUNYA sumber warna
+       brand di aplikasi — semua warna aksen lain diturunkan dari sini, tidak
+       ada warna karangan sendiri. */
+    --ioh-grey:#4D4D4F;    /* Pantone 7540 C */
+    --ioh-red:#ED1C24;     /* Pantone 2035 C */
+    --ioh-yellow:#FFCB05;  /* Pantone 1235 C */
+    --ioh-teal:#32BCAD;    /* Pantone 7465 C */
+    --ioh-purple:#C6168D;  /* Pantone 675 C  */
+    --ioh-pink:#EC008C;    /* Pantone 219 C  */
+
+    /* Alias lama biar seluruh CSS yang sudah ada tetap jalan. */
+    --red:var(--ioh-red);
+    --teal:var(--ioh-teal);
+    --yellow:var(--ioh-yellow);
+    --magenta:var(--ioh-purple);
+    --pink:var(--ioh-pink);
+    /* Turunan teal yang lebih gelap — dipakai buat hover & kedalaman, bukan
+       warna brand baru, cuma versi lebih tua dari #32BCAD. */
+    --teal-d:#27A093;
+
+    /* Tipografi: font brand Indosat untuk semua teks. Font mono cuma dipakai
+       di data teknis yang memang perlu lebar karakter seragam (alamat email,
+       token {nama}, kode) — bukan sebagai gaya visual. */
+    --font-brand:'Indosat','Poppins',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    --font-data:'JetBrains Mono','SF Mono','Fira Code',ui-monospace,monospace;
+
+    /* Token tema — default gelap */
+    --bg:#0D0D0E;
+    --surf:#13161F;
+    --surf2:#1A1D28;
+    --surf3:#222535;
+    --ink:#F1F5F9;
+    --ink2:#CBD5E1;
+    --muted:#94A3B8;
+    --line:rgba(255,255,255,0.08);
+    --line2:#2E3347;
+
+    /* Status memakai warna brand apa adanya: sukses = teal 7465 C,
+       gagal = merah 2035 C, perhatian = kuning 1235 C. Yang *-ink cuma versi
+       lebih muda dari warna yang sama (hue-nya identik) supaya tetap terbaca
+       di atas latar gelap. Sebelumnya merah gagal pakai #FF5A5F yang bukan
+       warna brand — sekarang sudah diturunkan dari #ED1C24. */
+    --good:var(--ioh-teal);   --good-bg:rgba(50,188,173,.14); --good-bd:rgba(50,188,173,.32); --good-ink:#7EE8E0;
+    --bad:var(--ioh-red);     --bad-bg:rgba(237,28,36,.16);   --bad-bd:rgba(237,28,36,.34);   --bad-ink:#F58287;
+    --warn:var(--ioh-yellow); --warn-bg:rgba(255,203,5,.14);  --warn-bd:rgba(255,203,5,.32);  --warn-ink:#FFE066;
+
+    --shadow1:0 1px 2px rgba(0,0,0,.45), 0 1px 2px rgba(0,0,0,.30);
+    --shadow2:0 6px 18px rgba(0,0,0,.55), 0 1px 4px rgba(0,0,0,.35);
+    --radius-sm:8px; --radius:12px; --radius-lg:18px;
+  }
+  [data-theme="light"]{
+    --bg:#F0F0F3;
+    --surf:#FFFFFF;
+    --surf2:#F2F2F6;
+    --surf3:#E8E8EE;
+    --ink:#111113;
+    --ink2:#2A2A30;
+    --muted:#5A5A68;
+    --line:rgba(0,0,0,.09);
+    --line2:rgba(0,0,0,.14);
+
+    --good:var(--ioh-teal);   --good-bg:rgba(50,188,173,.10); --good-bd:rgba(50,188,173,.25); --good-ink:#1D8078;
+    --bad:var(--ioh-red);     --bad-bg:rgba(237,28,36,.08);   --bad-bd:rgba(237,28,36,.22);   --bad-ink:#AA1018;
+    --warn:var(--ioh-yellow); --warn-bg:rgba(255,203,5,.16);  --warn-bd:rgba(255,203,5,.35);  --warn-ink:#8A6A00;
+
+    --shadow1:0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.05);
+    --shadow2:0 4px 16px rgba(0,0,0,.09), 0 1px 4px rgba(0,0,0,.05);
+  }
+  *{box-sizing:border-box;}
+  html{ color-scheme:dark; }
+  [data-theme="light"]{ color-scheme:light; }
+
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:var(--font-brand); font-size:14px;
+    transition:background .2s, color .2s;
+  }
+  h1,h2,h3,.display{ font-weight:700; letter-spacing:-0.02em; }
+  .mono{ font-family:var(--font-data); }
+
+  /* ---- "Circle System" ----
+     Motif latar khas Indosat: lingkaran-lingkaran warna brand yang saling
+     tumpang tindih, ditempel di pojok dan sebagian keluar kanvas, dengan
+     ruang kosong lega buat konten — persis pola di cover, roll banner, dan
+     halaman penutup brand guideline.
+     Dibikin dari radial-gradient (bukan file gambar) supaya tetap tajam di
+     layar retina, nol request tambahan, dan warnanya ikut token brand.
+     Opacity sengaja rendah: ini latar, bukan dekorasi yang ikut berebut
+     perhatian sama data. */
+  .brand-bg{
+    position:fixed; inset:0; z-index:0; pointer-events:none; overflow:hidden;
+  }
+  .brand-bg::after{
+    content:''; position:absolute; right:-190px; bottom:-200px;
+    width:760px; height:760px; opacity:.09;
+    /* Titik pusat & radius tiap lingkaran sengaja dijaga tetap di dalam kotak
+       ini — kalau ada yang kelewat tepi kiri/atas kotak, bekas potongannya
+       kelihatan sebagai garis lurus. Yang boleh terpotong cuma sisi kanan &
+       bawah, karena itu memang keluar layar (bleed), sesuai pola brand. */
+    background:
+      radial-gradient(circle at 74% 34%, var(--ioh-pink) 0 24%, transparent 24.4%),
+      radial-gradient(circle at 60% 80%, var(--ioh-purple) 0 26%, transparent 26.4%),
+      radial-gradient(circle at 88% 16%, var(--ioh-yellow) 0 15%, transparent 15.4%),
+      radial-gradient(circle at 33% 78%, var(--ioh-teal) 0 18%, transparent 18.4%),
+      radial-gradient(circle at 55% 55%, var(--ioh-red) 0 33%, transparent 33.4%);
+  }
+  [data-theme="light"] .brand-bg::after{ opacity:.11; }
+  /* Konten selalu di atas motif latar. */
+  .topbar, .wrap{ position:relative; z-index:1; }
+  @media (max-width:640px){
+    .brand-bg::after{ width:460px; height:460px; right:-130px; bottom:-140px; }
+  }
+  ::selection{ background:rgba(50,188,173,.35); }
+  :focus-visible{ outline:2px solid var(--teal); outline-offset:2px; border-radius:6px; }
+
+  /* Loading bar — sapuan gradasi warna brand, muncul saat email sedang diproses */
+  .loading-bar{ position:fixed; top:0; left:0; right:0; height:3px; z-index:9999; overflow:hidden; background:rgba(50,188,173,.12); opacity:0; pointer-events:none; transition:opacity .15s; }
+  .loading-bar.active{ opacity:1; }
+  .loading-bar::after{
+    content:''; position:absolute; top:0; height:100%; width:40%; border-radius:99px;
+    background:linear-gradient(90deg, transparent, var(--red) 30%, var(--yellow) 55%, var(--teal) 75%, var(--magenta), transparent);
+    animation:rm-sweep 1.4s cubic-bezier(.4,0,.2,1) infinite;
+  }
+  @keyframes rm-sweep{ 0%{left:-45%;width:42%;} 50%{left:28%;width:58%;} 100%{left:110%;width:42%;} }
+
+  .topbar{
+    background:var(--surf); color:var(--ink); padding:14px 28px;
+    display:flex; align-items:center; justify-content:space-between;
+    border-bottom:1px solid var(--line); position:sticky; top:0; z-index:40;
+    flex-wrap:wrap; row-gap:10px;
+  }
+  .topbar .brand{ display:flex; align-items:center; gap:12px; }
+  .brand .mark{
+    width:36px; height:36px; border-radius:10px; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center; box-shadow:var(--shadow1);
+  }
+  .brand .mark svg{ display:block; border-radius:10px; }
+  .brand .title{ font-size:15px; font-weight:700; letter-spacing:-0.01em; }
+  .brand .subtitle{ font-size:11.5px; color:var(--muted); }
+
+  .topbar-right{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; row-gap:10px; }
+  .theme-toggle{
+    width:34px; height:34px; border-radius:var(--radius-sm); border:1px solid var(--line2); background:var(--surf2);
+    color:var(--muted); display:flex; align-items:center; justify-content:center; cursor:pointer;
+    font-size:15px; line-height:1; transition:all .15s; flex-shrink:0;
+  }
+  .theme-toggle:hover{ background:var(--surf3); color:var(--ink); border-color:var(--teal); }
+  /* Varian dengan label teks — disediakan kalau suatu saat ada tombol yang
+     fungsinya kurang jelas tanpa teks. Tools di topbar sekarang ikon-saja
+     (keterangan lengkapnya ada di tooltip). */
+  .theme-toggle.labeled{ width:auto; padding:0 14px; gap:7px; font-size:12.5px; font-weight:700; color:var(--ink2); }
+  /* Pemisah tipis antara kelompok "ganti alur" dan kelompok "tools global",
+     supaya dua jenis kontrol ini kebaca sebagai dua kelompok, bukan satu
+     deretan tombol panjang. */
+  .topbar-sep{ width:1px; height:24px; background:var(--line2); flex:none; margin:0 4px; }
+  .topbar-tools{ display:flex; align-items:center; gap:8px; flex:none; }
+
+  /* ---- Step rail ----
+     Indikator progres model stepper: bulatan bernomor yang dihubungkan garis,
+     berubah jadi centang begitu tahapnya selesai. Dibanding deretan pill,
+     bentuk ini langsung menyampaikan tiga hal sekaligus tanpa perlu dibaca:
+     ada berapa tahap, sekarang di mana, dan mana yang sudah beres. */
+  .steprail{ background:var(--surf); border-bottom:1px solid var(--line); position:relative; z-index:1; }
+  .steprail-inner{
+    max-width:1180px; margin:0 auto; padding:13px 28px;
+    display:flex; align-items:center; gap:12px;
+  }
+  .stepnode{ display:flex; align-items:center; gap:9px; flex:none; cursor:help; }
+  .stepnode-dot{
+    width:26px; height:26px; border-radius:50%; flex:none;
+    display:flex; align-items:center; justify-content:center;
+    font-size:12px; font-weight:700; font-family:var(--font-brand);
+    background:var(--surf2); border:1.5px solid var(--line2); color:var(--muted);
+    transition:background .15s, border-color .15s, color .15s, box-shadow .15s;
+  }
+  .stepnode-label{ font-size:12.5px; font-weight:600; color:var(--muted); white-space:nowrap; transition:color .15s; }
+  .stepnode.active .stepnode-dot{
+    background:var(--teal); border-color:var(--teal); color:#fff;
+    box-shadow:0 0 0 4px rgba(50,188,173,.18);
+  }
+  .stepnode.active .stepnode-label{ color:var(--ink); font-weight:700; }
+  .stepnode.done{ cursor:pointer; }
+  .stepnode.done .stepnode-dot{ background:var(--teal-d); border-color:var(--teal-d); color:#fff; }
+  .stepnode.done .stepnode-label{ color:var(--ink2); }
+  .stepnode.done:hover .stepnode-dot{ background:var(--teal); border-color:var(--teal); }
+  .stepnode.done:hover .stepnode-label{ color:var(--teal); }
+  /* Garis penghubung ikut kepakai sebagai bar progres: bagian yang sudah
+     dilewati berwarna teal, sisanya abu. */
+  /* flex-basis 0 (bukan auto) — biar tiap garis penghubung dapat lebar yang
+     sama persis, tidak ikut-ikutan panjang-pendeknya nama tahap. */
+  .stepline{ flex:1 1 0; min-width:18px; height:2px; border-radius:2px; background:var(--line2); }
+  .stepline.done{ background:var(--teal-d); }
+
+  .mode-switch{ display:flex; gap:2px; background:var(--surf2); border:1px solid var(--line2); border-radius:999px; padding:3px; }
+  .mode-btn{
+    border:none; background:transparent; color:var(--muted); font-family:inherit; font-size:12px; font-weight:700;
+    padding:7px 14px; border-radius:999px; cursor:pointer; transition:all .15s; white-space:nowrap;
+  }
+  .mode-btn.active{ background:var(--teal); color:#fff; box-shadow:0 0 0 3px rgba(50,188,173,.20); }
+  .mode-btn:not(.active):hover{ background:var(--surf3); color:var(--ink); }
+
+  .row-select-bar{
+    display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
+    margin-bottom:10px; font-size:12.5px; color:var(--ink2); font-weight:600;
+  }
+  .row-select-actions{ display:flex; align-items:center; gap:8px; color:var(--muted); font-weight:400; }
+  .link-btn{
+    background:none; border:none; padding:0; color:var(--teal-d); font-weight:700; font-size:12.5px;
+    cursor:pointer; font-family:inherit;
+  }
+  .link-btn:hover{ text-decoration:underline; }
+
+  .btn-big{ padding:15px 28px; font-size:15.5px; flex:1; justify-content:center; }
+  .surat-cta-row{ display:flex; gap:12px; flex-wrap:wrap; align-items:stretch; }
+  .surat-summary-grid{ display:flex; flex-direction:column; gap:8px; font-size:13.5px; }
+  .surat-summary-row{ display:flex; justify-content:space-between; gap:16px; padding:4px 0; border-bottom:1px dashed var(--line); }
+  .surat-summary-row:last-child{ border-bottom:none; }
+  .surat-summary-row .k{ color:var(--muted); }
+  .surat-summary-row .v{ font-weight:700; color:var(--ink); text-align:right; }
+
+  .modal-error{ display:none; }
+  .modal-error.show{
+    display:block; background:var(--bad-bg); border:1px solid var(--bad-bd); color:var(--bad-ink);
+    border-radius:10px; padding:10px 14px; font-size:13px; margin-top:10px; line-height:1.5;
+  }
+
+  .wrap{ max-width:1180px; margin:0 auto; padding:28px; }
+  .panel{
+    background:var(--surf); border:1px solid var(--line); border-radius:var(--radius-lg);
+    padding:26px; margin-bottom:18px; box-shadow:var(--shadow1);
+  }
+  .panel h2{ margin:0 0 6px 0; font-size:18px; display:flex; align-items:center; gap:10px; }
+  .panel h2::before{ content:''; width:4px; height:18px; border-radius:2px; background:var(--teal); display:inline-block; flex-shrink:0; }
+  .panel .hint{ color:var(--muted); font-size:13px; margin:0 0 20px 14px; line-height:1.6; }
+
+  .dropzone{
+    border:2px dashed var(--line2); border-radius:var(--radius); padding:44px 20px;
+    text-align:center; cursor:pointer; transition:border-color .15s, background .15s; background:var(--surf2);
+  }
+  .dropzone:hover, .dropzone.drag{ border-color:var(--teal); background:rgba(50,188,173,.08); }
+  .dropzone .icon{ font-size:28px; margin-bottom:8px; }
+  .dropzone .cta{ color:var(--teal); font-weight:700; }
+  .dropzone input{ display:none; }
+  /* Setelah file berhasil kebaca, dropzone diciutkan jadi baris tipis
+     "klik untuk ganti file" — supaya gak ada dropzone kosong ukuran penuh
+     nangkring di atas kartu info file yang sudah terisi. */
+  .dropzone.has-file{ display:flex; align-items:center; gap:12px; text-align:left; padding:14px 18px; }
+  .dropzone.has-file .icon{ font-size:20px; margin-bottom:0; }
+  .dropzone.has-file .hint{ display:none; }
+
+  .filebar{
+    display:flex; align-items:center; justify-content:space-between;
+    background:var(--surf2); border:1px solid var(--line); border-radius:var(--radius-sm);
+    padding:11px 16px; margin-top:14px; font-size:13px; gap:12px; flex-wrap:wrap;
+  }
+  .filebar b{ color:var(--ink); }
+  .filebar .stat{ color:var(--muted); font-family:var(--font-brand); font-size:11.5px; }
+  /* Kartu file + pilih sheet digabung jadi 1 unit visual (dipisah garis
+     tipis di dalam), bukan bar + form kecil terpisah di bawahnya. */
+  .filebar-group{ margin-top:14px; border-radius:var(--radius-sm); overflow:hidden; border:1px solid var(--line); }
+  .filebar-group .filebar{ margin-top:0; border:none; border-radius:0; }
+  .filebar-group .filebar + .filebar{ border-top:1px solid var(--line); }
+  .filebar-sheet select{ width:auto; min-width:200px; }
+
+  table.raw{ width:100%; border-collapse:collapse; margin-top:16px; font-size:12.5px; }
+  table.raw th, table.raw td{ border:1px solid var(--line); padding:7px 9px; text-align:left; white-space:nowrap; }
+  table.raw th{ background:var(--surf2); font-weight:600; color:var(--ink2); font-family:var(--font-brand); font-size:10.5px; text-transform:uppercase; letter-spacing:.05em; }
+  table.raw td{ color:var(--ink2); }
+  .scrollx{ overflow-x:auto; border-radius:var(--radius-sm); border:1px solid var(--line); }
+  .scrollx table.raw{ margin-top:0; }
+  .scrollx table.raw th, .scrollx table.raw td{ border-top:none; border-left:none; border-right:none; }
+
+  .grid2{ display:grid; grid-template-columns:1fr 1fr; gap:22px; }
+  label.field-label{ display:block; font-size:12px; font-weight:600; color:var(--ink2); margin:0 0 6px 0; letter-spacing:.01em; }
+  select, input[type=text], textarea{
+    width:100%; padding:10px 12px; border:1px solid var(--line2); border-radius:var(--radius-sm);
+    font-family:inherit; font-size:13.5px; color:var(--ink); background:var(--surf); transition:border-color .15s, box-shadow .15s, background .15s;
+  }
+  select:focus, input[type=text]:focus, textarea:focus{ outline:none; border-color:var(--teal); box-shadow:0 0 0 3px rgba(50,188,173,.18); }
+  input[readonly]{ background:var(--surf3); color:var(--muted); cursor:default; }
+  textarea{ resize:vertical; min-height:70px; line-height:1.5; }
+  #narIntro, #narClosing{ min-height:170px; }
+  #narIntro.drop-target-active{
+    border-color:var(--teal); box-shadow:0 0 0 3px rgba(50,188,173,.20); background:rgba(50,188,173,.05);
+  }
+  .token-pill[draggable]{ cursor:grab; }
+  .token-pill[draggable]:active{ cursor:grabbing; }
+  .field{ margin-bottom:16px; }
+  .token-hint{ font-size:11.5px; color:var(--muted); margin-top:6px; line-height:1.5; }
+  .token-hint code{ background:var(--surf3); padding:1px 6px; border-radius:4px; color:var(--teal); font-family:var(--font-data); font-size:11px; }
+
+  /* Rincian kolom Excel yang dibutuhkan Buat Surat — disembunyikan default
+     (details/summary bawaan browser, tanpa JS tambahan) supaya gak makan
+     tempat buat yang sudah hafal formatnya, tapi tetap gampang ditemukan
+     buat yang baru pertama pakai. */
+  .format-help{ margin:14px 0 0; }
+  .format-help summary{ cursor:pointer; font-size:12.5px; font-weight:700; color:var(--teal-d); list-style:none; }
+  .format-help summary::-webkit-details-marker{ display:none; }
+  .format-help summary::before{ content:'▸'; display:inline-block; margin-right:6px; transition:transform .15s; }
+  .format-help[open] summary::before{ transform:rotate(90deg); }
+  .format-help-body{ margin-top:8px; padding:12px 14px; background:var(--surf2); border:1px solid var(--line); border-radius:var(--radius-sm); font-size:12px; color:var(--ink2); line-height:1.7; }
+  .format-help-body p{ margin:0 0 8px; }
+  .format-help-body p:last-child{ margin-bottom:0; }
+  .format-help-body code{ background:var(--surf3); padding:1px 6px; border-radius:4px; color:var(--teal); font-family:var(--font-data); font-size:11px; }
+
+  /* Status "sudah diisi" — titik centang kecil di sebelah label, supaya
+     langsung kelihatan field mana yang masih kosong tanpa harus baca
+     satu-satu isinya. Di-toggle lewat JS (class .is-filled di .field). */
+  .field.is-filled > .field-label{ color:var(--ink); }
+  .field.is-filled > .field-label::after{ content:'✓'; color:var(--teal); font-weight:700; margin-left:6px; }
+  .field.is-filled > select, .field.is-filled > input[type=text]:not([readonly]), .field.is-filled > textarea{
+    border-color:rgba(50,188,173,.35);
+  }
+
+  /* Label kecil buat mengelompokkan field yang berkaitan, supaya jelas
+     mana bagian "pemetaan data", "pengirim", dan "narasi" tanpa perlu
+     bikin panel terpisah-pisah. */
+  .field-group-label{
+    font-size:10.5px; font-weight:700; color:var(--muted); text-transform:uppercase;
+    letter-spacing:.08em; margin:24px 0 12px 0; font-family:var(--font-brand);
+    display:flex; align-items:center; gap:8px;
+  }
+  .field-group-label:first-child{ margin-top:0; }
+  .field-group-label::after{ content:''; flex:1; height:1px; background:var(--line); }
+
+  /* Strip ringkas buat informasi terkunci (bukan input bebas) — dulu
+     dirender sebagai kartu form penuh (locked-box) yang makan tempat
+     sejajar dengan field yang beneran bisa diedit; sekarang cuma 1 baris
+     ringkas supaya ruang di kolom kanan fokus ke field yang bisa diisi. */
+  .sender-strip{
+    display:flex; align-items:center; gap:10px; background:var(--surf2);
+    border:1px solid var(--line); border-radius:var(--radius-sm); padding:10px 14px;
+  }
+  .sender-strip-icon{ font-size:13px; flex-shrink:0; opacity:.7; }
+  .sender-strip-text{ display:flex; flex-direction:column; gap:1px; min-width:0; flex:1; }
+  .sender-strip-text input[type=text]{
+    border:none; background:transparent; padding:0; width:100%; font-size:13px; font-weight:600;
+    color:var(--ink); cursor:default;
+  }
+  .sender-strip-text input[type=text]:focus{ outline:none; box-shadow:none; }
+  .sender-strip-text #senderEmail{
+    font-family:var(--font-data); font-size:11.5px; font-weight:400; color:var(--muted);
+  }
+
+  /* Kotak netral buat mengelompokkan field yang BISA diedit (Pemetaan,
+     Narasi, Konten, Kolom tabel) — beda dari locked-box supaya "terkunci"
+     tetap kelihatan beda dari "boleh diubah". */
+  .group-box{
+    background:var(--surf); border:1px solid var(--line); border-radius:var(--radius);
+    padding:16px 16px 2px 16px; box-shadow:var(--shadow1);
+  }
+  .group-box .field:last-child{ margin-bottom:14px; }
+
+  /* Pill token yang bisa diklik buat sisip {nama}/{judul}/dll ke posisi
+     kursor di textarea — lebih interaktif daripada cuma teks hint. */
+  .token-pills{ display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; }
+  .token-pill{
+    font-family:var(--font-data); font-size:11px; padding:4px 10px; border-radius:999px;
+    background:var(--surf2); border:1px solid var(--line2); color:var(--teal-d); cursor:pointer;
+    transition:all .12s; line-height:1.4;
+  }
+  .token-pill:hover{ background:rgba(50,188,173,.12); border-color:var(--teal); }
+  .token-pill:active{ transform:scale(.94); }
+
+  /* Pill toggle buat kolom tabel — gantikan checklist vertikal: lebih
+     ringkas, dan status aktif/nonaktif langsung kelihatan dari warnanya. */
+  .colpills{ display:flex; flex-wrap:wrap; gap:8px; max-height:220px; overflow-y:auto; padding:2px; }
+  .colpill{
+    display:inline-flex; align-items:center; gap:8px; padding:6px 12px 6px 8px; border-radius:999px;
+    border:1px solid var(--line2); background:var(--surf2); cursor:pointer; transition:all .15s; user-select:none;
+  }
+  .colpill:hover{ border-color:var(--teal); }
+  .colpill.active{ background:rgba(50,188,173,.10); border-color:var(--teal); }
+  .colpill .cp-toggle{
+    width:16px; height:16px; border-radius:50%; border:2px solid var(--line2); flex-shrink:0;
+    display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:700; color:#fff;
+    transition:all .15s;
+  }
+  .colpill.active .cp-toggle{ background:var(--teal); border-color:var(--teal); }
+  .colpill.active .cp-toggle::after{ content:'✓'; }
+  .colpill .cp-label{
+    border:none; background:transparent; padding:0; font-size:12.5px; font-weight:600; color:var(--ink);
+  }
+  .colpill.active .cp-label{ color:var(--teal-d); }
+  .colpill:not(.active) .cp-label{ color:var(--muted); text-decoration:line-through; text-decoration-color:var(--line2); }
+  .colpill .cp-label:focus{ outline:none; }
+
+  /* Toggle kecil per-kolom: tandai kolom berisi angka (mis. jumlah/nominal)
+     supaya dirender dengan pemisah ribuan (560,000,000), bukan angka
+     mentah — bisa beda-beda tiap file Excel jadi ini dibuat per-kolom,
+     bukan pengaturan global. Auto-tebak dari isi data saat upload, tapi
+     tetap bisa di-toggle manual. */
+  .cp-fmt{
+    font-family:var(--font-data); font-size:9.5px; font-weight:700; padding:2px 6px; border-radius:999px;
+    border:1px solid var(--line2); background:var(--surf); color:var(--muted); cursor:pointer; flex-shrink:0;
+    line-height:1.4; transition:all .12s;
+  }
+  .cp-fmt:hover{ border-color:var(--teal); color:var(--teal-d); }
+  .cp-fmt.on{ background:var(--teal); border-color:var(--teal); color:#fff; }
+
+  .btn{
+    display:inline-flex; align-items:center; gap:8px; padding:10px 18px; border-radius:var(--radius);
+    border:1px solid transparent; font-weight:600; font-size:13.5px; cursor:pointer; font-family:inherit;
+    transition:all .15s; letter-spacing:-0.01em;
+  }
+  .btn-primary{ background:var(--teal); color:#fff; border-color:var(--teal); }
+  .btn-primary:hover{ background:var(--teal-d); border-color:var(--teal-d); }
+  .btn-secondary{ background:var(--surf2); color:var(--ink); border-color:var(--line2); }
+  .btn-secondary:hover{ border-color:var(--teal); color:var(--teal); background:var(--surf3); }
+  .btn:disabled{ opacity:.4; cursor:not-allowed; }
+  .actions{ display:flex; justify-content:flex-end; gap:10px; margin-top:8px; flex-wrap:wrap; }
+
+  /* Header tiap panel step — judul di kiri, tombol (Kembali/Lanjut + aksi
+     pendukung) rata kanan dalam SATU baris sejajar, biar rapi dan presisi.
+     Paragraf penjelasan sengaja ditaruh DI LUAR header ini supaya bar yang
+     nempel (sticky) tetap tipis — cuma judul + tombol.
+     Sticky-nya nempel di bawah topbar (pakai --topbar-h yang diukur lewat
+     JS) supaya tombol selalu gampang dijangkau tanpa perlu scroll balik ke
+     atas, walau isi step-nya panjang (form Tahap 2, tabel preview surat).
+     margin-top negatif + padding-top: biar posisi judul saat diam tetap
+     sama persis kayak sebelumnya, tapi pas nempel ada bidang solid di atas
+     judul yang menutupi konten yang lewat di belakangnya. */
+  .panel-head{
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+    position:sticky; top:var(--topbar-h, 64px); z-index:5;
+    background:var(--surf);
+    margin:-26px 0 14px 0; padding:26px 0 12px 0;
+    border-bottom:1px solid var(--line);
+  }
+  .panel-head h2{ margin:0; }
+  /* margin-left:auto — rata kanan, baik saat sebaris sama judul maupun saat
+     turun ke baris sendiri di layar sempit. */
+  .panel-head-nav{ display:flex; align-items:center; gap:16px; flex-wrap:wrap; margin-left:auto; }
+  .panel-head-nav .actions{ margin:0; }
+  .panel-head-utility{ display:flex; gap:8px; flex-wrap:wrap; }
+
+  .btn-hold{ background:var(--warn-bg); color:var(--warn-ink); border-color:var(--warn-bd); }
+  .btn-hold:hover{ border-color:var(--warn); filter:brightness(1.05); }
+  .btn-hold.is-paused{ background:var(--good-bg); color:var(--good-ink); border-color:var(--good-bd); }
+  .btn-hold:disabled{ opacity:.6; cursor:not-allowed; }
+  .btn-cancel-hold{ background:transparent; color:var(--muted); border-color:var(--line2); font-size:12.5px; padding:8px 12px; }
+  .btn-cancel-hold:hover{ color:var(--bad-ink); border-color:var(--bad-bd); background:var(--bad-bg); }
+  .modal-box textarea{ min-height:64px; }
+
+  /* Step 3 layout */
+  /* Sengaja pakai token --warn (bukan netral) — ini pengingat penting:
+     gak ada mode uji coba, tombol kirim di bawah beneran mengirim email
+     ke alamat asli. */
+  .send-mode-badge{
+    display:flex; align-items:center; gap:8px; padding:0 16px; border-radius:var(--radius);
+    border:1px solid var(--warn-bd); background:var(--warn-bg); font-size:12.5px; font-weight:700; color:var(--warn-ink);
+    white-space:nowrap;
+  }
+  .send-mode-badge .smb-dot{ width:8px; height:8px; border-radius:50%; background:var(--warn); box-shadow:0 0 0 3px rgba(255,203,5,.22); flex-shrink:0; }
+  .preview-layout{ display:grid; grid-template-columns:270px 1fr; gap:20px; align-items:start; }
+  /* Kolom kanan (kartu email) sengaja dikasih min-width:0 — tanpa ini,
+     tabel data yang lebar (banyak kolom, nowrap demi kompatibilitas email)
+     memaksa track grid ikut melebar dan mendorong SELURUH halaman jadi
+     scroll horizontal, termasuk bar aksi di bawahnya. Dengan min-width:0,
+     yang scroll horizontal cuma tabelnya sendiri, di dalam kotaknya. */
+  .preview-layout .preview-main{ min-width:0; }
+  .mail-card, .mail-body{ min-width:0; }
+  .recipient-list{
+    background:var(--surf); border:1px solid var(--line); border-radius:var(--radius-lg);
+    max-height:640px; overflow-y:auto; box-shadow:var(--shadow1);
+  }
+  .recipient-list .rl-head{ padding:14px 18px; border-bottom:1px solid var(--line); font-weight:700; font-size:11px; color:var(--muted); background:var(--surf2); font-family:var(--font-brand); text-transform:uppercase; letter-spacing:.06em; }
+  .recipient-item{ padding:12px 16px; border-bottom:1px solid var(--line); cursor:pointer; font-size:13px; border-left:3px solid transparent; transition:background .12s; }
+  .recipient-item:hover{ background:var(--surf2); }
+  .recipient-item.active{ background:rgba(50,188,173,.10); border-left-color:var(--teal); }
+  .recipient-item .rname{ font-weight:600; color:var(--ink); margin-bottom:2px; }
+  .recipient-item .rmeta{ color:var(--muted); font-size:11px; font-family:var(--font-brand); }
+
+  .mail-card{ position:relative; background:var(--surf); border:1px solid var(--line); border-radius:var(--radius-lg); overflow:hidden; box-shadow:var(--shadow1); }
+  .mail-card::before{
+    content:''; position:absolute; top:0; left:0; right:0; height:4px;
+    background:linear-gradient(90deg, var(--ioh-red), var(--ioh-pink), var(--ioh-purple), var(--ioh-teal), var(--ioh-yellow));
+    z-index:1;
+  }
+  .mail-toolbar{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:13px 20px; border-bottom:1px solid var(--line); background:var(--surf2);
+  }
+  .mail-toolbar .subject{ font-weight:600; font-size:14px; color:var(--ink); }
+  .mail-toolbar .badge{ background:rgba(50,188,173,.14); color:var(--teal-d); }
+  .mail-header{ padding:16px 22px; border-bottom:1px solid var(--line); display:flex; gap:12px; }
+  .avatar{
+    width:38px; height:38px; border-radius:50%;
+    background:linear-gradient(135deg, var(--teal), var(--teal-d)); color:#fff;
+    display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; flex-shrink:0;
+  }
+  .mail-header .from{ font-weight:600; font-size:13.5px; color:var(--ink); }
+  .mail-header .fromaddr{ color:var(--muted); font-size:12px; font-family:var(--font-data); }
+  .mail-header .to-line{ margin-top:7px; font-size:12px; color:var(--muted); }
+  .mail-meta .mm-chips .chip{
+    display:inline-block; background:rgba(50,188,173,.10); border:1px solid rgba(50,188,173,.28); border-radius:999px; padding:2px 9px; margin:0; color:var(--teal-d); font-family:var(--font-data); font-size:11px; white-space:nowrap;
+  }
+  /* Isi email selalu pratinjau apa adanya (background putih) — email yang
+     benar-benar terkirim TIDAK ikut mode gelap/terang aplikasi ini, jadi
+     area ini sengaja dikunci terang supaya pratinjau akurat. */
+  .mail-body{ padding:22px; font-size:13.5px; line-height:1.75; max-height:460px; overflow-y:auto; overflow-x:auto; background:#ffffff; color:#4D4D4F; }
+  .mail-body p{ margin:0 0 14px 0; }
+  table.rep{ width:100%; border-collapse:collapse; margin:10px 0 0 0; font-size:12.5px; }
+  table.rep thead th{ background:var(--teal); color:#fff; padding:8px 10px; text-align:left; font-weight:600; }
+  table.rep tbody td{ padding:7px 10px; border-bottom:1px solid #E4E7EC; }
+  table.rep tbody tr:nth-child(even){ background:#F5F8FE; }
+  table.rep tfoot td{ background:var(--teal); color:#fff; text-align:center; font-weight:600; padding:8px; }
+
+  .empty{ text-align:center; color:var(--muted); padding:60px 20px; }
+  .badge{ display:inline-block; font-size:10.5px; padding:3px 10px; border-radius:999px; background:var(--surf3); color:var(--ink2); font-weight:700; font-family:var(--font-brand); letter-spacing:.03em; }
+  .toast{
+    position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+    background:var(--surf3); color:var(--ink); padding:12px 22px; border-radius:var(--radius); font-size:13px;
+    opacity:0; pointer-events:none; transition:opacity .2s; z-index:50; border:1px solid var(--line2); box-shadow:var(--shadow2);
+  }
+  .toast.show{ opacity:1; }
+  .step-hidden{ display:none; }
+
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:60;
+    display:flex; align-items:center; justify-content:center; backdrop-filter:blur(2px);
+  }
+  .modal-box{
+    background:var(--surf); border:1px solid var(--line); border-radius:var(--radius-lg); padding:26px; width:420px; max-width:90vw;
+    box-shadow:var(--shadow2); color:var(--ink);
+  }
+  .modal-box h3{ margin:0 0 10px 0; color:var(--ink); }
+  .modal-box-wide{ width:760px; }
+  .picker-list{ max-height:340px; overflow-y:auto; margin-top:4px; display:flex; flex-direction:column; gap:6px; }
+  .picker-item{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:10px 12px; border:1px solid var(--line2); border-radius:var(--radius-sm); background:var(--surf2);
+    cursor:pointer; transition:border-color .15s, background .15s;
+  }
+  .picker-item:hover{ border-color:var(--teal); background:rgba(50,188,173,.08); }
+  .picker-item .pi-main{ display:flex; flex-direction:column; gap:2px; min-width:0; }
+  .picker-item .pi-title{ font-weight:600; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .picker-item .pi-sub{ font-size:11.5px; color:var(--muted); font-family:var(--font-brand); }
+  .picker-item .pi-del{
+    flex-shrink:0; background:transparent; border:1px solid var(--line2); color:var(--muted); border-radius:var(--radius-sm);
+    width:28px; height:28px; cursor:pointer; font-size:13px;
+  }
+  .picker-item .pi-del:hover{ color:var(--bad-ink); border-color:var(--bad-bd); background:var(--bad-bg); }
+  .picker-empty{ color:var(--muted); font-size:13px; text-align:center; padding:26px 10px; }
+  .archive-badge{ font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; white-space:nowrap; }
+  .archive-badge.completed{ background:var(--good-bg); color:var(--good-ink); }
+  .archive-badge.cancelled{ background:var(--warn-bg); color:var(--warn-ink); }
+  .archive-badge.partial{ background:var(--bad-bg); color:var(--bad-ink); }
+  .archive-badge.pending{ background:var(--warn-bg); color:var(--warn-ink); }
+  .archive-badge.rejected{ background:var(--bad-bg); color:var(--bad-ink); }
+  .archive-badge.neutral{ background:var(--surf3); color:var(--muted); }
+
+  /* Pilihan cara mengelompokkan kiriman di tahap Blast Surat — dibikin
+     kartu pilihan (bukan dropdown) karena cuma dua opsi dan konsekuensinya
+     perlu dibaca sekilas sebelum memilih. */
+  .blast-mode-switch{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .blast-mode-opt{
+    display:flex; align-items:flex-start; gap:10px; padding:12px 14px; cursor:pointer;
+    border:1px solid var(--line2); border-radius:var(--radius-sm); background:var(--surf2);
+    transition:border-color .15s, background .15s;
+  }
+  .blast-mode-opt:hover{ border-color:var(--teal); }
+  .blast-mode-opt input{ margin:2px 0 0; accent-color:var(--teal); flex:none; }
+  .blast-mode-opt span{ display:flex; flex-direction:column; gap:3px; min-width:0; }
+  .blast-mode-opt b{ font-size:13px; color:var(--ink); font-weight:700; }
+  .blast-mode-opt small{ font-size:11.5px; color:var(--muted); line-height:1.5; }
+  .blast-mode-opt:has(input:checked){ border-color:var(--teal); background:rgba(50,188,173,.10); }
+
+  /* Baris lampiran di preview email — meniru tampilan lampiran di klien
+     email supaya jelas "yang dikirim itu file ini". */
+  .attach-row{ display:flex; flex-wrap:wrap; gap:8px; padding:12px 20px 0; }
+  .attach-chip{
+    display:inline-flex; align-items:center; gap:7px; max-width:100%;
+    padding:7px 12px; border:1px solid var(--line2); border-radius:var(--radius-sm);
+    background:var(--surf2); font-size:12px; color:var(--ink2); text-decoration:none;
+  }
+  .attach-chip:hover{ border-color:var(--teal); color:var(--teal); }
+  .attach-chip .ac-name{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  @media (max-width:640px){
+    .blast-mode-switch{ grid-template-columns:1fr; }
+  }
+  .archive-recipient-row{ border:1px solid var(--line2); border-radius:var(--radius-sm); margin-bottom:8px; overflow:hidden; }
+  .archive-recipient-head{
+    display:flex; align-items:center; justify-content:space-between; gap:10px; padding:9px 12px;
+    background:var(--surf2); cursor:pointer; font-size:13px;
+  }
+  .archive-recipient-body{ padding:12px; border-top:1px solid var(--line2); font-size:12.5px; display:none; }
+  .archive-recipient-body.open{ display:block; }
+  .archive-recipient-body table{ width:100%; border-collapse:collapse; margin-top:8px; font-size:11.5px; }
+  .archive-recipient-body th, .archive-recipient-body td{ border:1px solid var(--line2); padding:5px 8px; text-align:left; white-space:nowrap; }
+  .archive-recipient-body th{ background:var(--surf2); }
+  #sendLog{ margin-top:14px; max-height:220px; overflow-y:auto; font-size:12.5px; }
+  .log-row{ display:flex; justify-content:space-between; gap:10px; padding:8px 10px; border-bottom:1px solid var(--line); }
+  .log-row .ln{ color:var(--ink2); }
+  .log-row .lstatus{ font-weight:700; white-space:nowrap; font-family:var(--font-brand); font-size:11.5px; }
+  .log-row .lstatus.ok{ color:var(--good); }
+  .log-row .lstatus.err{ color:var(--bad); }
+  .log-row .lstatus.pending{ color:var(--muted); }
+  .log-row .lstatus.hold{ color:var(--warn-ink); }
+  .status-ok{ background:var(--good-bg) !important; border-color:var(--good-bd) !important; color:var(--good-ink) !important; }
+  .status-err{ background:var(--bad-bg) !important; border-color:var(--bad-bd) !important; color:var(--bad-ink) !important; }
+
+  /* Baris kontrol atas step 3 — status koneksi + mode pengiriman
+     berdampingan, supaya tidak ada ruang kosong canggung di sebelah
+     dropdown mode seperti sebelumnya. */
+  .step3-controls{ display:flex; gap:16px; align-items:stretch; margin-bottom:20px; flex-wrap:wrap; }
+  .step3-controls .status-card{ flex:1 1 320px; margin-bottom:0; }
+
+
+  .status-card{
+    display:flex; align-items:flex-start; gap:12px; padding:14px 18px; border-radius:var(--radius);
+    border:1px solid var(--line2); background:var(--surf2); font-size:13px; line-height:1.5;
+  }
+  .status-card .sc-icon{ font-size:16px; flex-shrink:0; line-height:1.4; }
+  .status-card .sc-body{ flex:1; min-width:0; }
+  .status-card .sc-title{ font-weight:700; }
+  .status-card .sc-sub{ color:inherit; opacity:.85; font-size:12px; margin-top:2px; }
+
+  /* Baris To/Cc di kartu email — label kolom tetap, chip mengalir di
+     sebelahnya, supaya rapi walau jumlah penerima/CC banyak. */
+  .mail-meta{ margin-top:8px; display:flex; flex-direction:column; gap:6px; }
+  .mail-meta .mm-row{ display:flex; gap:10px; align-items:flex-start; }
+  .mail-meta .mm-label{
+    flex-shrink:0; width:24px; padding-top:3px; font-size:10.5px; font-weight:700; color:var(--muted);
+    text-transform:uppercase; letter-spacing:.04em; font-family:var(--font-brand);
+  }
+  .mail-meta .mm-chips{ display:flex; flex-wrap:wrap; gap:5px; min-width:0; }
+
+  /* Kotak cari di daftar penerima — penting begitu daftarnya ratusan baris */
+  .recipient-list .rl-search-wrap{ padding:10px 14px; border-bottom:1px solid var(--line); background:var(--surf); position:sticky; top:0; z-index:2; }
+  .recipient-list .rl-search{ width:100%; padding:7px 10px; font-size:12.5px; border:1px solid var(--line2); border-radius:var(--radius-sm); background:var(--surf2); color:var(--ink); }
+  .recipient-list .rl-search:focus{ outline:none; border-color:var(--teal); box-shadow:0 0 0 2px rgba(50,188,173,.18); }
+  .recipient-list .rl-empty{ padding:26px 16px; text-align:center; color:var(--muted); font-size:12.5px; }
+
+  @media (max-width:900px){
+    .preview-layout{ grid-template-columns:1fr; }
+    .grid2{ grid-template-columns:1fr; }
+    .recipient-list{ max-height:320px; }
+    .wrap{ padding:20px 16px; }
+    .panel{ padding:20px; }
+    /* padding panel mengecil → offset negatif header sticky ikut disesuaikan
+       biar tetap pas menempel di tepi atas panel. */
+    .panel-head{ margin-top:-20px; padding-top:20px; }
+  }
+  @media (max-width:640px){
+    .step3-controls{ flex-direction:column; align-items:stretch; }
+    /* Saat jadi kolom, flex-basis 320px tadinya kebaca sebagai TINGGI —
+       bikin kartu status jadi kotak menjulang. Di layar sempit tingginya
+       dibiarkan ikut isi saja. */
+    .step3-controls .status-card{ flex:0 0 auto; }
+    /* nowrap perlu di layar lebar biar badge-nya satu baris, tapi di HP
+       malah bikin teksnya keluar layar — di sini boleh turun baris. */
+    .send-mode-badge{ white-space:normal; padding:11px 14px; }
+    .topbar{ padding:12px 16px; }
+    .topbar-right{ width:100%; justify-content:space-between; }
+    /* Di layar sempit barisnya sudah melipat sendiri, jadi garis pemisahnya
+       malah nyangkut sendirian — cukup disembunyikan. */
+    .topbar-sep{ display:none; }
+    .brand .subtitle{ display:none; }
+    /* Di layar sempit cuma tahap yang sedang aktif yang menampilkan nama —
+       sisanya cukup bulatan bernomor. Stepper tetap terbaca utuh tanpa
+       memaksa teks turun baris atau kepotong. */
+    .steprail-inner{ padding:11px 16px; gap:8px; }
+    .stepnode-label{ display:none; }
+    .stepnode.active .stepnode-label{ display:block; }
+    .filebar{ flex-direction:column; align-items:flex-start; }
+    .panel-head-nav{ flex-direction:column; align-items:stretch; width:100%; margin-left:0; gap:8px; }
+    .panel-head-nav .actions{ justify-content:stretch; }
+    .panel-head-nav .actions .btn{ flex:1; }
+    .panel-head-utility{ justify-content:stretch; }
+    .panel-head-utility .btn{ flex:1; }
+    #step3 .preview-main > .actions{ justify-content:stretch; }
+    #step3 .preview-main > .actions .btn{ flex:1 1 auto; }
+  }
+
+  ::-webkit-scrollbar{ width:10px; height:10px; }
+  ::-webkit-scrollbar-track{ background:transparent; }
+  ::-webkit-scrollbar-thumb{ background:var(--line2); border-radius:99px; }
+  ::-webkit-scrollbar-thumb:hover{ background:var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- Motif latar "Circle System" brand Indosat — murni dekoratif, jadi
+     disembunyikan dari pembaca layar. -->
+<div class="brand-bg" aria-hidden="true"></div>
+
+<div class="loading-bar" id="loadingBar"></div>
+
+<div class="topbar">
+  <div class="brand">
+    <div class="mark"><svg viewBox="0 0 36 36" width="36" height="36" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sales Performance Sumatera">
+        <defs>
+          <linearGradient id="rmLogoGrad" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#32BCAD"/>
+            <stop offset="100%" stop-color="#27A093"/>
+          </linearGradient>
+        </defs>
+        <rect width="36" height="36" rx="10" fill="url(#rmLogoGrad)"/>
+        <g stroke="#fff" stroke-width="3" stroke-linecap="round">
+          <line x1="10" y1="26" x2="10" y2="20"/>
+          <line x1="18" y1="26" x2="18" y2="15"/>
+          <line x1="26" y1="26" x2="26" y2="10"/>
+        </g>
+      </svg></div>
+    <div>
+      <div class="title">Sales Performance Sumatera</div>
+      <!-- Subjudul dulu isinya "Blast Email — Sales Performance Sumatera",
+           cuma mengulang judul di atasnya. Sekarang dipakai buat menjelaskan
+           alur yang lagi aktif ngapain, dan ikut berubah pas ganti mode. -->
+      <div class="subtitle" id="appSubtitle">Blast Email — laporan Excel jadi email terpisah per penerima</div>
+    </div>
+  </div>
+  <!-- Isi topbar dipisah per JENIS kontrol, bukan dijejer rata semua:
+       ganti alur (mode-switch) → garis pemisah → tools global (ikon).
+       Indikator step pindah ke baris sendiri di bawah (.steprail), karena
+       progres itu jenis informasi yang beda dan butuh ruang sendiri. -->
+  <div class="topbar-right">
+    <div class="mode-switch" id="modeSwitch">
+      <button class="mode-btn active" id="modeBtnEmail" type="button" title="Ubah satu file Excel jadi banyak email terpisah — tiap penerima dapat email berisi tabel rincian miliknya sendiri." onclick="switchAppMode('email')">📧 Blast Email Report</button>
+      <button class="mode-btn" id="modeBtnSurat" type="button" title="Generate surat resmi jadi file PDF dari template di Excel, lalu kirim ke approver untuk disetujui." onclick="switchAppMode('surat')">📄 Buat Surat &amp; Blast Surat</button>
+    </div>
+    <span class="topbar-sep" aria-hidden="true"></span>
+    <!-- Topbar cuma memuat tools yang berlaku GLOBAL. Dulu di sini berjejer
+         lima ikon — dua di antaranya bahkan ikon yang sama — jadi tidak ada
+         yang bisa dibedakan sekilas. Tools khusus alur Buat Surat sekarang
+         pindah ke dalam panel Tahap 1, tempat kerjanya memang dimulai, dan
+         di sana pakai label teks yang jelas. -->
+    <div class="topbar-tools">
+      <button class="theme-toggle labeled" id="btnOpenSuratSettings" type="button" style="display:none;" title="Atur alamat email approver dan gambar tanda tangan yang dipakai untuk semua surat." onclick="openSuratSettingsModal()">⚙️ Pengaturan</button>
+      <button class="theme-toggle labeled" id="btnOpenArchive" type="button" title="Riwayat semua proses kirim yang sudah selesai, dikelompokkan per Judul &amp; Periode." onclick="openArchiveModal()">🗂️ Arsip</button>
+      <button class="theme-toggle" id="themeToggle" type="button" title="Ganti tampilan gelap/terang">🌙</button>
+    </div>
+  </div>
+</div>
+
+<!-- Step rail: satu baris khusus indikator progres, tepat di bawah app bar.
+     Sengaja TIDAK sticky — yang perlu selalu nempel cuma app bar & header
+     panel (yang sudah memuat nama tahap aktif), jadi ruang layar tidak
+     habis dipakai bar bertumpuk. -->
+<div class="steprail">
+  <div class="steprail-inner" id="stepsNav"></div>
+</div>
+
+<div class="wrap">
+
+<div id="emailFlowWrap">
+
+  <!-- STEP 1: UPLOAD -->
+  <div id="step1" class="panel">
+    <div class="panel-head">
+      <h2>1. Upload data Excel</h2>
+      <div class="panel-head-nav" id="step1Actions" style="display:none;">
+        <div class="actions">
+          <button class="btn btn-primary" onclick="goStep(2)">Lanjut: Atur Pengelompokan →</button>
+        </div>
+      </div>
+    </div>
+    <p class="hint">Unggah file Excel berisi daftar penerima dan rincian data yang akan dikirim per penerima.</p>
+    <div class="dropzone" id="dropzone">
+      <div class="icon">📄</div>
+      <div><span class="cta">Klik untuk pilih file</span> atau drag & drop di sini</div>
+      <div class="hint" style="margin-top:6px; margin-left:0;">Format .xlsx atau .csv — pastikan baris pertama berisi nama kolom (header).</div>
+      <input type="file" id="fileInput" accept=".xlsx,.xls,.csv">
+    </div>
+    <div id="fileInfo"></div>
+    <div id="rawPreviewWrap"></div>
+  </div>
+
+  <!-- STEP 2: MAPPING -->
+  <div id="step2" class="panel step-hidden">
+    <div class="panel-head">
+      <h2>2. Atur pengelompokan &amp; narasi</h2>
+      <div class="panel-head-nav">
+        <div class="panel-head-utility">
+          <button class="btn btn-secondary" onclick="openTemplateLoadModal()" title="Pilih dari preset yang pernah disimpan">📂 Muat Preset</button>
+          <button class="btn btn-secondary" onclick="openTemplateSaveModal()" title="Simpan pengaturan ini untuk dipakai ulang">💾 Simpan Preset</button>
+        </div>
+        <div class="actions">
+          <button class="btn btn-secondary" onclick="goStep(1)">← Kembali</button>
+          <button class="btn btn-primary" onclick="buildGroupsAndGoStep3()">Lanjut: Preview & Kirim →</button>
+        </div>
+      </div>
+    </div>
+    <p class="hint">Baris-baris Excel yang nilainya sama di "kolom pengelompokan" akan digabung jadi 1 email — misal 1 partner punya 5 baris transaksi, partner itu terima 1 email berisi tabel 5 baris tersebut. Tentukan kolom identitas penerima, lalu susun teks email yang akan digenerate otomatis.</p>
+
+    <div class="grid2">
+      <div>
+        <div class="field-group-label">Pemetaan data</div>
+        <div class="group-box">
+          <div class="field">
+            <label class="field-label">Kelompokkan email berdasarkan kolom</label>
+            <select id="mapGroup"></select>
+            <div class="token-hint">Biasanya kolom nama kiosk/partner — 1 nilai unik di kolom ini = 1 email terkirim.</div>
+          </div>
+          <div class="field">
+            <label class="field-label">Kolom alamat email penerima (To)</label>
+            <select id="mapEmail"></select>
+            <div class="token-hint">Jika satu sel berisi lebih dari satu email, pisahkan dengan <code>;</code> atau <code>,</code> pada data Excel.</div>
+          </div>
+          <div class="field">
+            <label class="field-label">Kolom CC (opsional)</label>
+            <select id="mapCC"><option value="">— tidak ada —</option></select>
+          </div>
+          <div class="field">
+            <label class="field-label">Kolom nama untuk sapaan (mis. nama kiosk/partner)</label>
+            <select id="mapName"></select>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="field-group-label">Pengirim (terkunci)</div>
+        <!-- Dibungkus group-box seperti seksi lain, supaya struktur kolom
+             kiri & kanan sama persis (label + kartu) dan tepi kartunya
+             sejajar lurus antar kolom. -->
+        <div class="group-box">
+          <div class="field">
+            <div class="sender-strip" title="Diambil otomatis dari server (.env) — bukan field yang bisa diedit di sini">
+              <span class="sender-strip-icon">🔒</span>
+              <div class="sender-strip-text">
+                <input type="text" id="senderName" placeholder="Memuat dari server…" readonly>
+                <input type="text" id="senderEmail" placeholder="Memuat dari server…" readonly>
+              </div>
+            </div>
+            <div class="token-hint">Email terkirim selalu dari alamat ini (diatur lewat file .env di server) — bukan dari alamat pribadimu. Kolom ini hanya ikut dipakai untuk tampilan preview.</div>
+          </div>
+        </div>
+        <div class="field-group-label">Narasi email</div>
+        <div class="group-box">
+          <div class="field">
+            <label class="field-label">Judul laporan (dipakai juga sebagai subjek email)</label>
+            <input type="text" id="narJudul" value="Log Injection OTF">
+            <div class="token-hint">Teks ini otomatis dipakai sebagai subjek email juga. Opsional, bisa tambahkan token: <code>{periode}</code> <code>{nama}</code> <code>{jumlah}</code></div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <div class="field-group-label">Konten email</div>
+    <div class="group-box">
+      <div class="field">
+        <label class="field-label">Paragraf pembuka</label>
+        <div class="token-pills" data-target="narIntro"></div>
+        <textarea id="narIntro">Yth. Bapak/Ibu {nama},
+
+Dengan ini kami sampaikan {judul}, dengan rincian sebagai berikut:</textarea>
+        <div class="token-hint">Klik, atau seret (drag) salah satu token di atas ke posisi yang diinginkan dalam teks.</div>
+      </div>
+      <div class="field">
+        <label class="field-label">Paragraf penutup</label>
+        <textarea id="narClosing">Apabila terdapat kendala atau hal yang perlu ditindaklanjuti, mohon untuk dapat diinformasikan kepada kami.
+
+Demikian informasi ini kami sampaikan, atas perhatian dan kerja samanya kami ucapkan terima kasih.
+
+Warm regards,
+Sales Performance Management — Indosat Circle Sumatera</textarea>
+      </div>
+    </div>
+
+    <div class="field-group-label">Kolom tabel yang ditampilkan</div>
+    <div class="group-box">
+      <div class="field" style="margin-bottom:10px;">
+        <label class="field-label" style="margin-bottom:10px;">Klik pill untuk aktif/nonaktifkan, ketik untuk ganti nama tampilan, klik tombol "123" untuk format sebagai angka berpemisah ribuan. Arahkan kursor ke pill untuk lihat nama kolom aslinya.</label>
+        <div class="colpills" id="colcheckList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEP 3: PREVIEW & SEND -->
+  <div id="step3" class="panel step-hidden">
+    <div class="panel-head">
+      <h2>3. Preview &amp; kirim</h2>
+      <div class="panel-head-nav">
+        <div class="actions">
+          <button class="btn btn-secondary" onclick="goStep(2)">← Kembali ke pengaturan</button>
+        </div>
+      </div>
+    </div>
+    <p class="hint">Periksa tiap email hasil generate — begitu diproses, email langsung terkirim ke alamat penerima aslinya.</p>
+
+    <div class="step3-controls">
+      <div id="outlookStatusBar" class="status-card">
+        <span class="sc-icon">⏳</span>
+        <div class="sc-body"><div class="sc-title">Mengecek koneksi…</div></div>
+      </div>
+      <div class="send-mode-badge"><span class="smb-dot"></span> Kirim langsung ke penerima asli — tidak ada mode uji coba</div>
+    </div>
+
+    <div class="preview-layout">
+      <div class="recipient-list">
+        <div class="rl-head" id="recipientCount">0 penerima</div>
+        <div class="rl-search-wrap"><input type="text" class="rl-search" id="recipientSearch" placeholder="🔍 Cari penerima…"></div>
+        <div id="recipientItems"></div>
+      </div>
+
+      <div class="preview-main">
+        <div class="mail-card" id="mailCard"></div>
+        <div class="token-hint" style="margin-top:10px;">"Kirim ke penerima ini" hanya mengirim ke penerima yang sedang ditampilkan di preview. "⚡ Kirim ke semua penerima" mengirim ke seluruh daftar, satu per satu, dan bisa dijeda kapan saja.</div>
+        <div class="actions">
+          <button class="btn btn-secondary" id="btnSendOne" onclick="sendCurrent()">Kirim ke penerima ini</button>
+          <button class="btn btn-primary" id="btnSendAll" onclick="confirmSendAll()">⚡ Kirim ke semua penerima</button>
+          <button class="btn btn-hold" id="btnHoldAll" style="display:none;" onclick="toggleHoldSendAll()">⏸ Jeda</button>
+          <button class="btn btn-cancel-hold" id="btnCancelHold" style="display:none;" onclick="cancelHeldSendAll()">Batalkan sisa</button>
+        </div>
+        <div id="sendLog"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+  <div id="confirmModal" class="modal-overlay" style="display:none;">
+    <div class="modal-box">
+      <h3>Konfirmasi</h3>
+      <p id="confirmText" style="margin:0 0 20px 0; color:var(--muted); font-size:13.5px; line-height:1.6;"></p>
+      <div class="actions" style="margin-top:0;">
+        <button class="btn btn-secondary" onclick="closeConfirmModal()">Batal</button>
+        <button class="btn btn-primary" id="confirmModalOk">Ya, lanjutkan</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="templateSaveModal" class="modal-overlay" style="display:none;">
+    <div class="modal-box">
+      <h3>💾 Simpan Preset</h3>
+      <p class="modal-hint">Simpan pengaturan Tahap 2 saat ini (pemetaan, narasi, kolom tabel) supaya bisa langsung dipakai lagi lain kali tanpa mengatur ulang dari awal.</p>
+      <div class="field" style="margin-bottom:0;">
+        <label class="field-label">Nama preset</label>
+        <input type="text" id="templateSaveName" placeholder="mis. Alokasi Bulanan MPC Sumatera">
+      </div>
+      <div class="modal-error" id="templateSaveError"></div>
+      <div class="actions" style="margin-top:18px;">
+        <button class="btn btn-secondary" onclick="closeTemplateSaveModal()">Batal</button>
+        <button class="btn btn-primary" id="templateSaveGo" onclick="submitTemplateSave()">Simpan</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="templateLoadModal" class="modal-overlay" style="display:none;">
+    <div class="modal-box">
+      <h3>📂 Muat Preset</h3>
+      <p class="modal-hint">Pilih preset yang pernah disimpan sebelumnya untuk langsung diterapkan.</p>
+      <div id="templateLoadList" class="picker-list"></div>
+      <div class="actions" style="margin-top:18px;">
+        <button class="btn btn-secondary" onclick="closeTemplateLoadModal()">Tutup</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="archiveModal" class="modal-overlay" style="display:none;">
+    <div class="modal-box modal-box-wide">
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:6px;">
+        <h3 id="archiveModalTitle" style="margin:0;">🗂️ Arsip Kiriman</h3>
+        <button class="btn btn-secondary" id="archiveBackBtn" style="display:none;" onclick="renderArchiveList()">← Daftar arsip</button>
+      </div>
+      <p class="modal-hint" id="archiveModalHint">Riwayat semua proses kirim yang sudah selesai, dikelompokkan otomatis per Judul &amp; Periode. Klik salah satu untuk buka detailnya.</p>
+      <div id="archiveModalBody"></div>
+      <div class="actions" style="margin-top:18px;">
+        <button class="btn btn-secondary" onclick="closeArchiveModal()">Tutup</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="suratSettingsModal" class="modal-overlay" style="display:none;">
+    <div class="modal-box">
+      <h3>⚙️ Pengaturan Approver &amp; TTD</h3>
+      <p class="modal-hint">Berlaku untuk semua surat yang digenerate — tersimpan di server, bukan cuma di browser ini.</p>
+
+      <div class="field-group-label">Approver</div>
+      <div class="group-box">
+        <div class="field">
+          <label class="field-label">Alamat email approver</label>
+          <input type="email" id="settingsApproverEmail" placeholder="nama@perusahaan.com">
+          <div class="token-hint">Semua email "request approval" dikirim ke alamat ini.</div>
+        </div>
+        <div class="actions" style="justify-content:flex-start; margin-top:0; margin-bottom:14px;">
+          <button class="btn btn-primary" id="settingsApproverSaveBtn" onclick="saveSuratApprover()">Simpan Approver</button>
+        </div>
+      </div>
+
+      <div class="field-group-label">Tanda Tangan</div>
+      <div class="group-box">
+        <div id="settingsSignaturePreviewWrap" class="hint" style="margin-bottom:10px;">Belum ada tanda tangan tersimpan.</div>
+        <div class="field">
+          <label class="field-label">Upload gambar tanda tangan (PNG transparan disarankan)</label>
+          <input type="file" id="settingsSignatureFile" accept="image/*">
+        </div>
+        <div class="actions" style="justify-content:flex-start; margin-top:8px; margin-bottom:14px;">
+          <button class="btn btn-primary" id="settingsSignatureSaveBtn" onclick="saveSuratSignature()">Simpan Tanda Tangan</button>
+          <button class="btn btn-secondary" id="settingsSignatureDeleteBtn" onclick="deleteSuratSignature()" style="display:none;">Hapus</button>
+        </div>
+        <p class="hint" style="margin:0;">Tanda tangan ini otomatis ditempel ke semua PDF dalam satu batch begitu approver menekan "Setujui" — posisinya mengikuti ruang tanda tangan yang sudah disiapkan di tiap surat. Kalau belum ada tanda tangan tersimpan, batch tetap bisa disetujui, hanya PDF-nya tidak ditempel apa-apa.</p>
+      </div>
+
+      <div class="field-group-label">Kota &amp; Penandatangan Surat</div>
+      <div class="group-box">
+        <p class="hint" style="margin-top:0;">Diisi sekali di sini, otomatis dipakai di semua surat &amp; memo — Excel yang diupload cukup berisi data, tidak perlu menulis ulang siapa penandatangannya di tiap file.</p>
+        <div class="field">
+          <label class="field-label">Kota surat</label>
+          <input type="text" id="settingsKota" placeholder="mis. Medan" style="max-width:260px;">
+        </div>
+        <div id="settingsSignersWrap"></div>
+        <div class="token-hint" style="margin-top:2px;">Penandatangan 1 dipakai untuk surat bertanda tangan tunggal (Surat Pemberitahuan, BAST, IOM Permohonan Reva). Penandatangan 2-4 dipakai kalau jenis suratnya butuh tanda tangan lebih dari satu (mis. IOM Payout MPx/SDP) — kosongkan yang tidak perlu.</div>
+        <div class="actions" style="justify-content:flex-start; margin-top:12px; margin-bottom:0;">
+          <button class="btn btn-primary" id="settingsSignersSaveBtn" onclick="saveSuratLetterSigners()">Simpan Kota &amp; Penandatangan</button>
+        </div>
+      </div>
+
+      <div class="modal-error" id="settingsError"></div>
+      <div class="actions" style="margin-top:18px;">
+        <button class="btn btn-secondary" onclick="closeSuratSettingsModal()">Tutup</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Daftar batch surat: pintu masuk tahap Blast Surat. Approval sering
+       baru masuk berjam-jam kemudian, jadi harus ada cara membuka lagi batch
+       yang sudah disetujui tanpa mengulang proses generate. -->
+
+  <div id="suratBatchListModal" class="modal-overlay" style="display:none;">
+    <div class="modal-box modal-box-wide">
+      <h3>📋 Daftar Surat</h3>
+      <p class="modal-hint">Semua batch surat yang pernah digenerate beserta statusnya. Batch yang sudah disetujui approver bisa langsung dilanjutkan ke tahap blast ke penerima.</p>
+      <div id="suratBatchListBody"></div>
+      <div class="actions" style="margin-top:18px;">
+        <button class="btn btn-secondary" onclick="closeSuratBatchList()">Tutup</button>
+      </div>
+    </div>
+  </div>
+
+<div id="suratFlowWrap" class="step-hidden">
+
+  <div class="modal-error" id="suratError" style="max-width:1180px; margin:0 auto 14px;"></div>
+
+  <!-- SURAT STEP 1: UPLOAD -->
+  <div id="suratStep1" class="panel">
+    <div class="panel-head">
+      <h2>1. Upload Excel surat</h2>
+      <div class="panel-head-nav">
+        <!-- Dua tombol ini dulu berupa ikon kecil di topbar. Dipindah ke sini
+             karena keduanya bagian dari alur Buat Surat, dan di sini muat
+             dikasih label yang jelas. -->
+        <div class="panel-head-utility">
+          <button class="btn btn-secondary" onclick="openSuratBatchList()" title="Semua batch surat yang pernah digenerate beserta statusnya">📋 Daftar Surat</button>
+        </div>
+        <div class="actions" id="suratStep1Actions" style="display:none;">
+          <button class="btn btn-primary" onclick="goSuratStep(2)">Lanjut: Atur Surat →</button>
+        </div>
+      </div>
+    </div>
+    <p class="hint">Upload Excel berisi data suratnya — jenis suratnya otomatis dikenali dari nama sheet, tidak perlu didaftarkan dulu.</p>
+    <details class="format-help">
+      <summary>📋 Lihat nama sheet yang dikenali</summary>
+      <div class="format-help-body">
+        <p>Beri nama sheet data persis salah satu dari 5 jenis surat berikut (boleh besar/kecil huruf &amp; spasi bebas): <code>IOM Payout MPx</code>, <code>IOM Payout SDP</code>, <code>IOM Permohonan Reva</code>, <code>Surat Pemberitahuan</code>, <code>BAST</code>. Satu file boleh berisi beberapa sheet sekaligus (satu per jenis surat).</p>
+        <p>Kolom minimum tiap sheet: <code>PARTNER_NAME</code> atau <code>PT_NAME</code> (nama mitra), <code>EMAIL_TO</code> (khusus Surat Pemberitahuan &amp; BAST, karena keduanya lanjut dikirim ke penerima), lalu kolom nilai apa pun sesuai kebutuhan surat itu — kolom tambahan otomatis bisa dipakai tanpa perlu diatur di mana pun.</p>
+      </div>
+    </details>
+    <div class="dropzone" id="suratDropzone">
+      <div class="icon">📄</div>
+      <div><span class="cta">Klik untuk pilih file</span> atau drag &amp; drop di sini</div>
+      <div class="hint" style="margin-top:6px; margin-left:0;">Format .xlsx — nama sheet menentukan jenis suratnya.</div>
+      <input type="file" id="suratFileInput" accept=".xlsx,.xls">
+    </div>
+    <div id="suratFileInfo"></div>
+  </div>
+
+  <!-- SURAT STEP 2: ATUR SURAT -->
+  <div id="suratStep2" class="panel step-hidden">
+    <div class="panel-head">
+      <h2>2. Atur surat</h2>
+      <div class="panel-head-nav">
+        <div class="actions">
+          <button class="btn btn-secondary" onclick="goSuratStep(1)">← Kembali</button>
+          <button class="btn btn-primary" id="suratStep2NextBtn" onclick="goSuratStep(3)">Lanjut: Preview &amp; Kirim →</button>
+        </div>
+      </div>
+    </div>
+    <p class="hint">Pilih template surat, konfirmasi sumber data &amp; periode, lalu pilih baris mana saja yang mau digenerate.</p>
+
+    <div class="field-group-label">Template</div>
+    <div class="group-box">
+      <div class="field">
+        <label class="field-label">Template surat</label>
+        <select id="suratTemplateSelect"></select>
+      </div>
+      <div id="suratTemplateNote" class="hint" style="margin:0 0 12px;"></div>
+    </div>
+
+    <!-- Cuma muncul untuk jenis surat "memo" (IOM) — surat ke mitra
+         (Pemberitahuan/BAST) tidak butuh ini karena Kepada-nya sudah
+         otomatis nama mitra per baris. Nilai yang diketik di sini diingat
+         per jenis surat di server, jadi lain kali buka jenis surat yang
+         sama, kolomnya sudah terisi otomatis (tinggal ubah kalau perlu). -->
+    <div id="suratMemoFieldsSection" style="display:none;">
+      <div class="field-group-label">Detail Memo</div>
+      <div class="group-box">
+        <p class="hint" style="margin-top:0;">Diingat otomatis per jenis surat — lain kali buka jenis surat yang sama, kolom ini sudah terisi dari yang terakhir kamu ketik. Tetap bisa diubah kapan saja.</p>
+        <div class="grid2">
+          <div class="field">
+            <label class="field-label">Nomor surat</label>
+            <input type="text" id="suratMemoNoSurat" placeholder="mis. 123/ND/SPM-SUM/IX/2026" oninput="renderSuratSummary()">
+          </div>
+          <div class="field">
+            <label class="field-label">Hal</label>
+            <input type="text" id="suratMemoHal" placeholder="dikosongkan = pakai bawaan jenis surat ini" oninput="renderSuratSummary()">
+          </div>
+        </div>
+        <div class="grid2">
+          <div class="field">
+            <label class="field-label">Kepada</label>
+            <div style="display:flex; gap:8px;">
+              <select id="suratMemoKepadaSelect" style="flex:1;" onchange="renderSuratSummary()"></select>
+              <button type="button" class="btn btn-secondary" onclick="toggleTambahKepada()">+ Tambah</button>
+            </div>
+            <div id="suratMemoKepadaAddWrap" style="display:none; gap:8px; margin-top:8px;">
+              <input type="text" id="suratMemoKepadaNew" placeholder="Ketik Kepada baru, lalu Simpan" style="flex:1;">
+              <button type="button" class="btn btn-primary" onclick="tambahKepadaBaru()">Simpan</button>
+              <button type="button" class="btn btn-secondary" onclick="toggleTambahKepada(false)">Batal</button>
+            </div>
+          </div>
+          <div class="field">
+            <label class="field-label">Dari</label>
+            <div style="display:flex; gap:8px;">
+              <select id="suratMemoDariSelect" style="flex:1;" onchange="renderSuratSummary()"></select>
+              <button type="button" class="btn btn-secondary" onclick="toggleTambahDari()">+ Tambah</button>
+            </div>
+            <div id="suratMemoDariAddWrap" style="display:none; gap:8px; margin-top:8px;">
+              <input type="text" id="suratMemoDariNew" placeholder="Ketik Dari baru, lalu Simpan" style="flex:1;">
+              <button type="button" class="btn btn-primary" onclick="tambahDariBaru()">Simpan</button>
+              <button type="button" class="btn btn-secondary" onclick="toggleTambahDari(false)">Batal</button>
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <label class="field-label">Refers to <span style="font-weight:400;color:#94a3b8;">(opsional — satu baris = satu poin acuan)</span></label>
+          <textarea id="suratMemoReferensi" rows="2" placeholder="mis. No. 0067/PEF0/SLS/26 Petunjuk Pelaksanaan ...&#10;IOM 938 - Result of No. .... Permohonan Pengecekan Fee ..." oninput="renderSuratSummary()"></textarea>
+        </div>
+        <div class="grid2">
+          <div class="field">
+            <label class="field-label">Type Expenses (referensi anggaran) <span style="font-weight:400;color:#94a3b8;">(opsional)</span></label>
+            <input type="text" id="suratMemoBudgetType" placeholder="mis. Distribution Fee MPx Hybrid 2026" oninput="renderSuratSummary()">
+          </div>
+          <div class="field">
+            <label class="field-label">MTA|CC <span style="font-weight:400;color:#94a3b8;">(opsional)</span></label>
+            <input type="text" id="suratMemoBudgetMtaCc" placeholder="mis. (IM3) 6030803000, (3ID) 6030808000 | 13SR000000" oninput="renderSuratSummary()">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="suratDataSection" style="display:none;">
+      <div class="field-group-label">Sumber data</div>
+      <div class="group-box">
+        <div class="grid2">
+          <div class="field">
+            <label class="field-label">Periode (buat token {{PERIODE}})</label>
+            <input type="text" id="suratPeriode" placeholder="mis. Agustus 2026" oninput="renderSuratSummary()">
+          </div>
+          <div class="field">
+            <label class="field-label">Sheet data</label>
+            <select id="suratDataSheetSelect"></select>
+          </div>
+        </div>
+        <div id="suratDataInfo" class="hint" style="margin:0 0 12px;"></div>
+      </div>
+
+      <div class="field-group-label">Pilih baris yang mau digenerate</div>
+      <div class="group-box" style="padding-bottom:14px;">
+        <div class="row-select-bar">
+          <span id="suratRowSelCount">0 dari 0 baris dipilih</span>
+          <div class="row-select-actions">
+            <button type="button" class="link-btn" onclick="setAllSuratRows(true)">Pilih semua</button>
+            <span>·</span>
+            <button type="button" class="link-btn" onclick="setAllSuratRows(false)">Kosongkan</button>
+          </div>
+        </div>
+        <div id="suratDataPreviewWrap"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SURAT STEP 3: PREVIEW & KIRIM APPROVAL -->
+  <div id="suratStep3" class="panel step-hidden">
+    <div class="panel-head">
+      <h2>3. Preview &amp; kirim approval</h2>
+      <div class="panel-head-nav">
+        <div class="actions">
+          <button class="btn btn-secondary" onclick="goSuratStep(2)">← Kembali</button>
+        </div>
+      </div>
+    </div>
+    <p class="hint">Cek 1 contoh surat dulu sebelum generate semuanya.</p>
+
+    <div class="field-group-label">Ringkasan</div>
+    <div class="group-box" id="suratSummaryBox">
+      <div id="suratSummary" class="surat-summary-grid"></div>
+    </div>
+
+    <div class="field-group-label">Aksi</div>
+    <div class="surat-cta-row">
+      <button class="btn btn-secondary" id="suratPreviewBtn" onclick="previewOneSurat()">👁 Preview Satu Surat</button>
+      <button class="btn btn-primary btn-big" id="suratGenerateBtn" onclick="generateAllSurat()">📧 Generate &amp; Kirim Approval</button>
+    </div>
+    <p class="hint" style="margin-top:10px;">"Generate &amp; Kirim Approval" langsung mengirim email berisi semua PDF ke approver — tidak ada file yang diunduh dari sini.</p>
+    <div id="suratProgress" class="hint" style="margin-top:4px;"></div>
+  </div>
+
+  <!-- SURAT STEP 4: BLAST SURAT (setelah disetujui approver) -->
+  <div id="suratStep4" class="panel step-hidden">
+    <div class="panel-head">
+      <h2>4. Blast surat ke penerima</h2>
+      <div class="panel-head-nav">
+        <div class="panel-head-utility">
+          <button class="btn btn-secondary" onclick="openSuratBatchList()" title="Buka daftar batch surat lain">📋 Daftar Surat</button>
+        </div>
+        <div class="actions">
+          <button class="btn btn-secondary" id="btnBlastSendOne" onclick="blastSendCurrent()">Kirim ke penerima ini</button>
+          <button class="btn btn-primary" id="btnBlastSendAll" onclick="confirmBlastAll()">⚡ Kirim ke semua penerima</button>
+          <button class="btn btn-hold" id="btnBlastHold" style="display:none;" onclick="toggleHoldBlastAll()">⏸ Jeda</button>
+          <button class="btn btn-cancel-hold" id="btnBlastCancelHold" style="display:none;" onclick="cancelHeldBlastAll()">Batalkan sisa</button>
+        </div>
+      </div>
+    </div>
+    <p class="hint">Surat yang sudah disetujui approver dikirim ke alamat masing-masing penerima, dengan PDF ber-tanda tangan sebagai lampiran.</p>
+
+    <div class="step3-controls">
+      <div id="blastBatchCard" class="status-card">
+        <span class="sc-icon">⏳</span>
+        <div class="sc-body"><div class="sc-title">Belum ada batch dipilih</div><div class="sc-sub">Buka "📋 Daftar Surat" untuk memilih batch yang sudah disetujui.</div></div>
+      </div>
+      <div class="send-mode-badge"><span class="smb-dot"></span> Kirim langsung ke penerima asli — tidak ada mode uji coba</div>
+    </div>
+
+    <div class="field-group-label">Cara mengelompokkan</div>
+    <div class="group-box">
+      <div class="field" style="margin-bottom:10px;">
+        <label class="field-label" style="margin-bottom:10px;">Kalau satu orang punya beberapa surat, mau digabung jadi satu email atau dikirim terpisah?</label>
+        <div class="blast-mode-switch">
+          <label class="blast-mode-opt">
+            <input type="radio" name="blastGroupMode" value="grouped" checked onchange="setBlastGroupMode('grouped')">
+            <span><b>Gabung per penerima</b><small>1 email berisi beberapa lampiran PDF — penerima yang sama tidak dikirimi berkali-kali.</small></span>
+          </label>
+          <label class="blast-mode-opt">
+            <input type="radio" name="blastGroupMode" value="per-letter" onchange="setBlastGroupMode('per-letter')">
+            <span><b>Satu surat satu email</b><small>Tiap surat dikirim sebagai email sendiri, walaupun alamat tujuannya sama.</small></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="field-group-label">Narasi email</div>
+    <div class="group-box">
+      <div class="field">
+        <label class="field-label">Subjek email</label>
+        <div class="token-pills" data-target="blastSubject"></div>
+        <input type="text" id="blastSubject" value="{judul}" oninput="renderBlastPreview()">
+      </div>
+      <div class="field">
+        <label class="field-label">Paragraf pembuka</label>
+        <div class="token-pills" data-target="blastIntro"></div>
+        <textarea id="blastIntro" oninput="renderBlastPreview()">Yth. Bapak/Ibu {nama},
+
+Bersama email ini kami sampaikan {judul} periode {periode} sebagaimana terlampir.</textarea>
+        <div class="token-hint">Klik, atau seret (drag) salah satu token di atas ke posisi yang diinginkan dalam teks.</div>
+      </div>
+      <div class="field">
+        <label class="field-label">Paragraf penutup</label>
+        <textarea id="blastClosing" oninput="renderBlastPreview()">Apabila terdapat kendala atau hal yang perlu ditindaklanjuti, mohon untuk dapat diinformasikan kepada kami.
+
+Demikian informasi ini kami sampaikan, atas perhatian dan kerja samanya kami ucapkan terima kasih.
+
+Warm regards,
+Sales Performance Management — Indosat Circle Sumatera</textarea>
+      </div>
+    </div>
+
+    <div class="field-group-label">Penerima &amp; preview</div>
+    <div class="preview-layout">
+      <div class="recipient-list">
+        <div class="rl-head" id="blastRecipientCount">0 penerima</div>
+        <div class="rl-search-wrap"><input type="text" class="rl-search" id="blastRecipientSearch" placeholder="🔍 Cari penerima…"></div>
+        <div id="blastRecipientItems"></div>
+      </div>
+      <div class="preview-main">
+        <div class="mail-card" id="blastMailCard"></div>
+        <div class="token-hint" style="margin-top:10px;">Lampiran adalah PDF yang sudah ditempel tanda tangan saat batch disetujui — file yang sama persis dengan yang dilihat approver.</div>
+        <div id="blastSendLog"></div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let state = {
+  rows: [], columns: [], step: 1,
+  mapping: { group:'', email:'', cc:'', name:'' },
+  tableCols: [], // [{key,label,included}]
+  narrative: {},
+  groups: [], // computed
+  activeIndex: 0
+};
+
+/* Tiap step: [nomor, label pendek, keterangan lengkap].
+   Label sengaja dijaga pendek supaya topbar tetap muat satu baris; penjelasan
+   detail "step ini sebenarnya ngapain" ditaruh di tooltip (muncul saat kursor
+   diarahkan ke pill-nya), jadi gak perlu nebak-nebak tanpa bikin topbar sesak. */
+const stepsMeta = [
+  [1,'Upload',          'Upload file Excel berisi daftar penerima dan rincian data yang mau dikirim. Baris pertama harus nama kolom (header).'],
+  [2,'Atur Data',       'Tentukan kolom pengelompokan & alamat penerima, susun narasi email, lalu pilih kolom mana saja yang tampil di tabel email.'],
+  [3,'Preview & Kirim', 'Periksa tiap email hasil generate satu per satu, lalu kirim ke penerima yang sedang dibuka atau ke seluruh daftar sekaligus.'],
+];
+function renderStepsNav(){
+  // Nav step ini dipakai BERSAMA oleh 2 alur (Blast Email & Buat Surat) —
+  // isinya ganti sesuai `appMode` yang lagi aktif, bukan 2 nav terpisah.
+  const nav = document.getElementById('stepsNav');
+  nav.innerHTML = '';
+  const isSurat = appMode === 'surat';
+  let meta = isSurat ? suratStepsMeta : stepsMeta;
+  const currentStep = isSurat ? suratState.step : state.step;
+  const goFn = isSurat ? goSuratStep : goStep;
+  // Tahap 4 (Blast Surat) cuma ditampilkan kalau jenis surat yang dipilih
+  // memang berlanjut ke pengiriman. Untuk memo internal yang alurnya
+  // berhenti di approval, menampilkan tahap ke-4 malah menyesatkan —
+  // seolah masih ada langkah yang belum dikerjakan.
+  if(isSurat && currentStep < 4){
+    const tpl = suratState.selectedTemplate;
+    const alur = tpl ? String(tpl.ALUR || '').trim().toLowerCase() : '';
+    if(tpl && alur !== 'approval_lalu_blast') meta = meta.filter(([n])=> n !== 4);
+  }
+  meta.forEach(([n,label,hint], i)=>{
+    // Garis penghubung antar bulatan. Ditandai "done" kalau tahap sebelum
+    // garis ini sudah dilewati, jadi garisnya sekalian jadi bar progres.
+    if(i > 0){
+      const line = document.createElement('div');
+      line.className = 'stepline' + (n <= currentStep ? ' done' : '');
+      nav.appendChild(line);
+    }
+    const isDone = n < currentStep;
+    const el = document.createElement('div');
+    el.className = 'stepnode' + (n === currentStep ? ' active' : (isDone ? ' done' : ''));
+    // Keterangan lengkap tahap + info kalau bulatannya bisa diklik.
+    el.title = hint + (isDone ? '\n\n(Klik untuk balik ke tahap ini)' : '');
+
+    const dot = document.createElement('span');
+    dot.className = 'stepnode-dot';
+    dot.textContent = isDone ? '✓' : String(n);
+
+    const lbl = document.createElement('span');
+    lbl.className = 'stepnode-label';
+    lbl.textContent = label;
+
+    el.append(dot, lbl);
+    if(isDone) el.onclick = ()=>goFn(n);
+    nav.appendChild(el);
+  });
+  // Tinggi topbar dipakai sebagai titik nempel header panel yang sticky —
+  // diukur ulang tiap render karena isinya bisa berubah tinggi (mis. melipat
+  // ke baris ke-2 di layar sempit).
+  syncTopbarHeightVar();
+}
+function goStep(n){
+  state.step = n;
+  [1,2,3].forEach(i=>{
+    document.getElementById('step'+i).classList.toggle('step-hidden', i!==n);
+  });
+  renderStepsNav();
+  window.scrollTo({ top:0, behavior:'smooth' });
+}
+function toast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 2200);
+}
+
+/* ---------- Status "sudah diisi" per field (Step 2) ---------- */
+function updateFieldFilled(el){
+  const field = el.closest('.field');
+  if(!field) return;
+  const has = (el.value || '').trim().length > 0;
+  field.classList.toggle('is-filled', has);
+}
+function refreshAllFilledStates(){
+  document.querySelectorAll('#step2 select, #step2 input[type=text], #step2 textarea').forEach(updateFieldFilled);
+}
+function wireFilledStateTracking(){
+  document.querySelectorAll('#step2 select, #step2 input[type=text], #step2 textarea').forEach(el=>{
+    el.addEventListener('input', ()=>updateFieldFilled(el));
+    el.addEventListener('change', ()=>updateFieldFilled(el));
+  });
+  refreshAllFilledStates();
+}
+
+/* ---------- Pill token — {nama}/{judul}/{periode}/{jumlah} + 1 token per
+   kolom Excel yang sedang aktif. Bisa diklik ATAU diseret (drag & drop) ke
+   posisi mana pun di dalam textarea narasi. Token kolom Excel (mis.
+   {Plan}) diisi dari nilai baris PERTAMA di grup penerima itu saat email
+   digenerate — karena satu email narasinya ditulis sekali per penerima,
+   bukan per baris tabel. ---------- */
+const META_TOKENS = [
+  { token:'{nama}', label:'Nama Partner' },
+  { token:'{judul}', label:'Judul' },
+  { token:'{jumlah}', label:'Jumlah Baris' }
+];
+
+function renderTokenPills(){
+  const colTokens = (state.columns || []).map(c=>({ token:'{'+c+'}', label:c }));
+  const all = META_TOKENS.concat(colTokens);
+  document.querySelectorAll('.token-pills').forEach(wrap=>{
+    wrap.innerHTML = all.map(t=>
+      `<button type="button" class="token-pill" draggable="true" data-token="${escapeHtml(t.token)}" title="Klik atau seret untuk menyisipkan ${escapeHtml(t.token)}">${escapeHtml(t.label)}</button>`
+    ).join('');
+  });
+  wireTokenPills();
+}
+
+function insertTokenAtCursor(ta, tok){
+  const start = ta.selectionStart ?? ta.value.length;
+  const end = ta.selectionEnd ?? ta.value.length;
+  ta.value = ta.value.slice(0, start) + tok + ta.value.slice(end);
+  const pos = start + tok.length;
+  ta.focus();
+  ta.setSelectionRange(pos, pos);
+  updateFieldFilled(ta);
+  autoGrowTextarea(ta);
+}
+
+function wireTokenPills(){
+  document.querySelectorAll('.token-pill').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const wrap = btn.closest('.token-pills');
+      const ta = document.getElementById(wrap.dataset.target);
+      if(!ta) return;
+      insertTokenAtCursor(ta, btn.dataset.token);
+    });
+    btn.addEventListener('dragstart', (e)=>{
+      e.dataTransfer.setData('text/plain', btn.dataset.token);
+      e.dataTransfer.effectAllowed = 'copy';
+    });
+  });
+}
+
+/* ---------- Drop token yang presisi ke posisi kursor yang benar ----------
+   Browser secara bawaan bisa salah menaruh teks yang di-drop di TENGAH kata
+   (mis. token {nama} nyasar ke tengah kata "nama" yang sudah ada, jadi
+   "{nam{nama}a}") karena posisi kursor tarik-lepas bawaan browser kadang
+   tidak presisi di dalam <textarea> polos. Jadi drop-nya kita hitung &
+   kendalikan sendiri: ukur posisi karakter yang paling dekat dengan titik
+   mouse dilepas (pakai elemen cermin tersembunyi yang meniru font & lebar
+   textarea persis), lalu — kalau ternyata mendarat di TENGAH token
+   {sesuatu} yang sudah ada — digeser ke pinggir token itu supaya tidak
+   pernah merusak token yang sudah ada. ---------- */
+function getTextareaDropIndex(ta, clientX, clientY){
+  const style = getComputedStyle(ta);
+  const mirror = document.createElement('div');
+  ['paddingTop','paddingRight','paddingBottom','paddingLeft',
+   'borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth',
+   'fontFamily','fontSize','fontWeight','fontStyle','lineHeight','letterSpacing'
+  ].forEach(p=>{ mirror.style[p] = style[p]; });
+  mirror.style.position = 'fixed';
+  mirror.style.visibility = 'hidden';
+  mirror.style.whiteSpace = 'pre-wrap';
+  mirror.style.wordWrap = 'break-word';
+  mirror.style.overflowWrap = 'break-word';
+  mirror.style.top = '0px';
+  mirror.style.left = '-99999px';
+  mirror.style.width = ta.clientWidth + 'px';
+  mirror.style.boxSizing = 'content-box';
+
+  const text = ta.value;
+  const spans = [];
+  const frag = document.createDocumentFragment();
+  for(let i=0;i<text.length;i++){
+    const span = document.createElement('span');
+    span.textContent = text[i] === '\n' ? '\n' : text[i];
+    frag.appendChild(span);
+    spans.push(span);
+  }
+  mirror.appendChild(frag);
+  document.body.appendChild(mirror);
+
+  const taRect = ta.getBoundingClientRect();
+  const paddingLeft = parseFloat(style.paddingLeft) || 0;
+  const paddingTop = parseFloat(style.paddingTop) || 0;
+  const originX = taRect.left + paddingLeft - ta.scrollLeft;
+  const originY = taRect.top + paddingTop - ta.scrollTop;
+  const mirrorRect = mirror.getBoundingClientRect();
+
+  let bestIndex = text.length;
+  let bestDist = Infinity;
+  spans.forEach((span, i)=>{
+    const r = span.getBoundingClientRect();
+    if(r.width === 0 && r.height === 0) return;
+    const screenX = originX + (r.left - mirrorRect.left);
+    const screenY = originY + (r.top - mirrorRect.top);
+    const screenXEnd = screenX + r.width;
+    const screenYEnd = screenY + r.height;
+    const midY = (screenY + screenYEnd) / 2;
+    const dy = Math.abs(clientY - midY);
+    let dx = 0;
+    if(clientX < screenX) dx = screenX - clientX;
+    else if(clientX > screenXEnd) dx = clientX - screenXEnd;
+    const dist = dy * 1000 + dx;
+    if(dist < bestDist){
+      bestDist = dist;
+      bestIndex = (clientX > (screenX + screenXEnd) / 2) ? i + 1 : i;
+    }
+  });
+
+  document.body.removeChild(mirror);
+  return Math.max(0, Math.min(text.length, bestIndex));
+}
+
+function snapAwayFromTokens(text, index){
+  const re = /\{[^{}]*\}/g;
+  let m;
+  while((m = re.exec(text))){
+    const start = m.index, end = m.index + m[0].length;
+    if(index > start && index < end){
+      return (index - start <= end - index) ? start : end;
+    }
+  }
+  return index;
+}
+
+function wireTextareaTokenDrop(){
+  ['narIntro'].forEach(id=>{
+    const ta = document.getElementById(id);
+    if(!ta) return;
+    ta.addEventListener('dragover', (e)=>{
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      ta.classList.add('drop-target-active');
+    });
+    ta.addEventListener('dragleave', ()=>{
+      ta.classList.remove('drop-target-active');
+    });
+    ta.addEventListener('drop', (e)=>{
+      e.preventDefault();
+      ta.classList.remove('drop-target-active');
+      const tok = e.dataTransfer.getData('text/plain');
+      if(!tok) return;
+      let idx = getTextareaDropIndex(ta, e.clientX, e.clientY);
+      idx = snapAwayFromTokens(ta.value, idx);
+      ta.focus();
+      ta.setSelectionRange(idx, idx);
+      insertTokenAtCursor(ta, tok);
+    });
+  });
+}
+
+/* ---------- Textarea narasi otomatis melebar mengikuti isi ---------- */
+function autoGrowTextarea(ta){
+  ta.style.height = 'auto';
+  ta.style.height = Math.max(ta.scrollHeight, 170) + 'px';
+}
+function wireAutoGrowTextareas(){
+  ['narIntro','narClosing'].forEach(id=>{
+    const ta = document.getElementById(id);
+    if(!ta) return;
+    ta.addEventListener('input', ()=>autoGrowTextarea(ta));
+    autoGrowTextarea(ta);
+  });
+}
+
+/* ---------- Tema gelap/terang ---------- */
+function applyThemeIcon(){
+  const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+  document.getElementById('themeToggle').textContent = cur === 'dark' ? '🌙' : '☀️';
+}
+function toggleTheme(){
+  const root = document.documentElement;
+  const next = (root.getAttribute('data-theme') || 'dark') === 'dark' ? 'light' : 'dark';
+  root.setAttribute('data-theme', next);
+  try{ localStorage.setItem('rm-theme', next); }catch(e){}
+  applyThemeIcon();
+}
+document.getElementById('themeToggle').addEventListener('click', toggleTheme);
+applyThemeIcon();
+
+/* ---------- Loading bar (indikator proses kirim) ---------- */
+function showLoadingBar(){ document.getElementById('loadingBar').classList.add('active'); }
+function hideLoadingBar(){ document.getElementById('loadingBar').classList.remove('active'); }
+
+/* ---------- STEP 1: Upload & parse ---------- */
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+dropzone.addEventListener('click', ()=>fileInput.click());
+dropzone.addEventListener('dragover', e=>{ e.preventDefault(); dropzone.classList.add('drag'); });
+dropzone.addEventListener('dragleave', ()=> dropzone.classList.remove('drag'));
+dropzone.addEventListener('drop', e=>{
+  e.preventDefault(); dropzone.classList.remove('drag');
+  if(e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e=>{
+  if(e.target.files.length) handleFile(e.target.files[0]);
+});
+
+function handleFile(file){
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    try{
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, {type:'array'});
+      if(!wb.SheetNames.length){ toast('File tidak berisi sheet apapun.'); return; }
+      state.workbook = wb;
+      state.fileName = file.name;
+      loadSheet(wb.SheetNames[0]);
+    }catch(err){
+      toast('Gagal membaca file: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function loadSheet(sheetName){
+  const wb = state.workbook;
+  const sheet = wb.Sheets[sheetName];
+  const json = XLSX.utils.sheet_to_json(sheet, {defval:''});
+  if(!json.length){ toast('Sheet "' + sheetName + '" kosong atau tidak terbaca.'); return; }
+  state.rows = json;
+  state.columns = Object.keys(json[0]);
+  onFileParsed(state.fileName, wb.SheetNames.length > 1 ? sheetName : null);
+}
+
+function onFileParsed(filename, sheetName){
+  const wb = state.workbook;
+  const multiSheet = wb.SheetNames.length > 1;
+  document.getElementById('fileInfo').innerHTML = `
+    <div class="filebar-group">
+      <div class="filebar">
+        <div><b>${escapeHtml(filename)}</b>${sheetName ? ' · sheet: <b>'+escapeHtml(sheetName)+'</b>' : ''}</div>
+        <div class="stat">${state.rows.length} baris · ${state.columns.length} kolom terdeteksi</div>
+      </div>
+      ${multiSheet ? `<div class="filebar filebar-sheet">
+        <label class="field-label" style="margin:0;">File ini punya ${wb.SheetNames.length} sheet — pilih yang mau dipakai</label>
+        <select id="sheetSelect">${wb.SheetNames.map(n=>`<option value="${escapeHtml(n)}"${n===sheetName?' selected':''}>${escapeHtml(n)}</option>`).join('')}</select>
+      </div>` : ''}
+    </div>`;
+  if(multiSheet){
+    document.getElementById('sheetSelect').addEventListener('change', e=>loadSheet(e.target.value));
+  }
+  // Ciutkan dropzone jadi baris "ganti file" begitu ada file yang berhasil
+  // kebaca — dropzone kosong ukuran penuh gak perlu tampil lagi di atas
+  // kartu info file yang sudah terisi.
+  const dz = document.getElementById('dropzone');
+  dz.classList.add('has-file');
+  const cta = dz.querySelector('.cta');
+  if(cta) cta.textContent = 'Klik untuk ganti file';
+  renderRawPreview();
+  document.getElementById('step1Actions').style.display = 'flex';
+  setupMappingOptions();
+}
+
+function renderRawPreview(){
+  const cols = state.columns;
+  const totalRows = state.rows.length;
+  const rows = state.rows.slice(0,5);
+  let html = `<div class="field-group-label" style="margin-top:20px;">Pratinjau data (${rows.length} baris pertama dari ${totalRows})</div>` +
+    '<div class="scrollx"><table class="raw"><thead><tr>' +
+    cols.map(c=>`<th>${escapeHtml(c)}</th>`).join('') + '</tr></thead><tbody>';
+  rows.forEach(r=>{
+    html += '<tr>' + cols.map(c=>`<td>${escapeHtml(String(r[c]))}</td>`).join('') + '</tr>';
+  });
+  html += '</tbody></table></div>';
+  document.getElementById('rawPreviewWrap').innerHTML = html;
+}
+
+function escapeHtml(str){
+  return String(str).replace(/[&<>"']/g, s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
+}
+
+/* ---------- STEP 2: Mapping ---------- */
+function setupMappingOptions(){
+  const cols = state.columns;
+  const fill = (id, withEmpty)=>{
+    const sel = document.getElementById(id);
+    sel.innerHTML = (withEmpty ? '<option value="">— tidak ada —</option>' : '') +
+      cols.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  };
+  fill('mapGroup', false);
+  fill('mapEmail', false);
+  fill('mapCC', true);
+  fill('mapName', false);
+
+  // best-effort auto guess
+  const guess = (needle)=> cols.find(c=>c.toLowerCase().includes(needle));
+  const emailGuess = guess('email') || guess('to');
+  const nameGuess = guess('name') || guess('nama') || guess('kiosk') || guess('partner');
+  const groupGuess = guess('name') || guess('kiosk') || guess('partner') || guess('id') || cols[0];
+  if(emailGuess) document.getElementById('mapEmail').value = emailGuess;
+  if(nameGuess) document.getElementById('mapName').value = nameGuess;
+  if(groupGuess) document.getElementById('mapGroup').value = groupGuess;
+
+  // Tebak kolom mana yang isinya angka (mis. jumlah/nominal), dari sampel
+  // baris — bukan dari nama kolom, karena nama kolom di tiap file Excel
+  // bisa beda-beda. Defaultnya bisa di-toggle manual lewat pill "123".
+  // Tebak kolom mana yang berisi NOMINAL (uang) — bukan sekadar kolom
+  // berisi angka. Kalau cuma dicek "isinya angka atau bukan", kolom
+  // seperti nomor urut / nomor referensi (mis. SO Number) yang isinya
+  // digit semua tapi BUKAN nominal ikut salah kedeteksi. Jadi ditambah 2
+  // sinyal lain: (1) nama kolom — kata seperti jumlah/amount/total/harga
+  // menunjukkan nominal, kata seperti no/id/kode/nomor menunjukkan
+  // identifier; (2) bentuk nilainya — nomor identifier biasanya panjang
+  // digitnya SAMA PERSIS di semua baris dan hampir semua nilainya unik
+  // (nomor urut), sedangkan nominal uang panjang digitnya bervariasi
+  // antar baris. Tetap bisa dikoreksi manual lewat pill "123" kalau
+  // tebakannya meleset.
+  const AMOUNT_WORDS = new Set(['amount','jumlah','total','harga','nilai','rp','rupiah','price','plan','budget','biaya','omzet','revenue','pendapatan','komisi','fee','tarif','saldo','pembayaran','payment','target','achv','achievement','pencapaian']);
+  const ID_WORDS = new Set(['id','no','nomor','kode','number','sn','serial','ref','npwp','nik','ktp','plat','telepon','phone','hp','zip']);
+  const tokenizeColName = (col)=> col.toLowerCase().replace(/[_\-.]/g,' ').split(/\s+/).filter(Boolean);
+  const keywordHint = (col)=>{
+    const words = tokenizeColName(col);
+    if(words.some(w=> AMOUNT_WORDS.has(w))) return 'amount';
+    if(words.some(w=> ID_WORDS.has(w))) return 'id';
+    return null;
+  };
+  const looksLikeIdShape = (vals)=>{
+    const digitLens = vals.map(v=> String(v).trim().replace(/,/g,'').replace(/^0+(?=\d)/,'').length);
+    const sameLen = digitLens.length > 0 && digitLens.every(l=> l === digitLens[0]) && digitLens[0] >= 6;
+    const uniqueRatio = new Set(vals.map(v=> String(v).trim())).size / vals.length;
+    return sameLen && uniqueRatio >= 0.9;
+  };
+  const sampleRows = state.rows.slice(0, 20);
+  const looksNumeric = (col)=>{
+    const vals = sampleRows.map(r=>r[col]).filter(v=> v!=='' && v!=null);
+    if(!vals.length) return false;
+    const numericVals = vals.filter(v=> isNumericValue(v));
+    const mostlyNumeric = (numericVals.length / vals.length) >= 0.8;
+    if(!mostlyNumeric) return false;
+    const hint = keywordHint(col);
+    if(hint === 'amount') return true;
+    if(hint === 'id') return false;
+    if(looksLikeIdShape(numericVals)) return false;
+    return true;
+  };
+  state.tableCols = cols.map(c=>({ key:c, label:c, included:true, numeric: looksNumeric(c) }));
+  renderColChecklistDOM();
+  renderTokenPills();
+  refreshAllFilledStates();
+}
+
+function isNumericValue(v){
+  const s = String(v).trim().replace(/,/g,'');
+  if(s === '') return false;
+  return Number.isFinite(Number(s));
+}
+
+function formatNumericCell(raw){
+  if(raw === null || raw === undefined || String(raw).trim() === '') return raw;
+  const num = Number(String(raw).trim().replace(/,/g,''));
+  if(!Number.isFinite(num)) return raw;
+  const opts = Number.isInteger(num) ? {maximumFractionDigits:0} : {maximumFractionDigits:2};
+  return num.toLocaleString('en-US', opts);
+}
+
+function renderColChecklistDOM(){
+  const list = document.getElementById('colcheckList');
+  list.innerHTML = '';
+  state.tableCols.forEach((c, idx)=>{
+    const pill = document.createElement('div');
+    pill.className = 'colpill' + (c.included ? ' active' : '');
+    pill.title = 'Kolom asli: ' + c.key;
+    pill.innerHTML = `<span class="cp-toggle"></span><input type="text" value="${escapeHtml(c.label)}" data-idx="${idx}" class="cp-label" style="width:${Math.max(3, c.label.length)}ch">` +
+      `<button type="button" class="cp-fmt${c.numeric ? ' on' : ''}" title="Format sebagai angka berpemisah ribuan, mis. 560,000,000">123</button>`;
+    const input = pill.querySelector('.cp-label');
+    const fmtBtn = pill.querySelector('.cp-fmt');
+    pill.addEventListener('click', (e)=>{
+      if(e.target === input || e.target === fmtBtn) return;
+      c.included = !c.included;
+      pill.classList.toggle('active', c.included);
+    });
+    input.addEventListener('click', e=> e.stopPropagation());
+    input.addEventListener('input', e=>{
+      c.label = e.target.value;
+      e.target.style.width = Math.max(3, e.target.value.length) + 'ch';
+    });
+    fmtBtn.addEventListener('click', e=>{
+      e.stopPropagation();
+      c.numeric = !c.numeric;
+      fmtBtn.classList.toggle('on', c.numeric);
+    });
+    list.appendChild(pill);
+  });
+}
+
+/* ---------- Template save/load ---------- */
+function currentMappingSnapshot(){
+  return {
+    group: document.getElementById('mapGroup').value,
+    email: document.getElementById('mapEmail').value,
+    cc: document.getElementById('mapCC').value,
+    name: document.getElementById('mapName').value
+  };
+}
+
+function currentTemplateSnapshot(){
+  return {
+    mapping: currentMappingSnapshot(),
+    tableCols: state.tableCols,
+    narrative: {
+      judul: document.getElementById('narJudul').value,
+      subjectTpl: document.getElementById('narJudul').value,
+      intro: document.getElementById('narIntro').value,
+      closing: document.getElementById('narClosing').value
+    },
+    sender: {
+      name: document.getElementById('senderName').value,
+      email: document.getElementById('senderEmail').value
+    }
+  };
+}
+
+/* ---------- Template narasi tersimpan (Supabase) ---------- */
+function openTemplateSaveModal(){
+  document.getElementById('templateSaveName').value = document.getElementById('narJudul').value || '';
+  const err = document.getElementById('templateSaveError');
+  err.classList.remove('show'); err.textContent = '';
+  document.getElementById('templateSaveModal').style.display = 'flex';
+}
+function closeTemplateSaveModal(){
+  document.getElementById('templateSaveModal').style.display = 'none';
+}
+async function submitTemplateSave(){
+  const name = document.getElementById('templateSaveName').value.trim();
+  const err = document.getElementById('templateSaveError');
+  const btn = document.getElementById('templateSaveGo');
+  err.classList.remove('show'); err.textContent = '';
+  if(!name){ err.textContent = 'Nama preset wajib diisi.'; err.classList.add('show'); return; }
+  btn.disabled = true; btn.textContent = 'Menyimpan…';
+  try{
+    const snap = currentTemplateSnapshot();
+    const res = await fetch('/api/templates', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ name, mapping: snap.mapping, sender: snap.sender, narrative: snap.narrative, tableCols: snap.tableCols })
+    });
+    const data = await res.json();
+    if(!data.ok) throw new Error(data.error || 'Gagal menyimpan preset.');
+    closeTemplateSaveModal();
+    toast('Preset "' + name + '" tersimpan.');
+  }catch(e){
+    err.textContent = '⚠️ ' + e.message;
+    err.classList.add('show');
+  }finally{
+    btn.disabled = false; btn.textContent = 'Simpan';
+  }
+}
+
+function openTemplateLoadModal(){
+  document.getElementById('templateLoadModal').style.display = 'flex';
+  fetchAndRenderTemplateList();
+}
+function closeTemplateLoadModal(){
+  document.getElementById('templateLoadModal').style.display = 'none';
+}
+async function fetchAndRenderTemplateList(){
+  const list = document.getElementById('templateLoadList');
+  list.innerHTML = '<div class="picker-empty">Memuat…</div>';
+  try{
+    const res = await fetch('/api/templates');
+    const data = await res.json();
+    if(!data.ok) throw new Error(data.error || 'Gagal memuat daftar preset.');
+    if(!data.templates.length){
+      list.innerHTML = '<div class="picker-empty">Belum ada preset tersimpan.<br>Isi narasi di Langkah 2, lalu klik \'💾 Simpan Preset\' supaya bisa dipakai lagi di sini.</div>';
+      return;
+    }
+    list.innerHTML = '';
+    data.templates.forEach(row=>{
+      const item = document.createElement('div');
+      item.className = 'picker-item';
+      const updated = row.updated_at ? new Date(row.updated_at).toLocaleString('id-ID', {dateStyle:'medium', timeStyle:'short'}) : '';
+      item.innerHTML = `<div class="pi-main"><div class="pi-title">${escapeHtml(row.name)}</div><div class="pi-sub">Terakhir diubah: ${escapeHtml(updated)}</div></div><button type="button" class="pi-del" title="Hapus preset">🗑</button>`;
+      item.addEventListener('click', (e)=>{
+        if(e.target.closest('.pi-del')) return;
+        loadTemplateFromRow(row);
+      });
+      item.querySelector('.pi-del').addEventListener('click', (e)=>{
+        e.stopPropagation();
+        deleteTemplateFromList(row.id, row.name);
+      });
+      list.appendChild(item);
+    });
+  }catch(e){
+    list.innerHTML = '<div class="picker-empty">⚠️ ' + escapeHtml(e.message) + '</div>';
+  }
+}
+function loadTemplateFromRow(row){
+  applyTemplate({
+    mapping: row.mapping || {},
+    narrative: row.narrative || {},
+    sender: row.sender || {},
+    tableCols: row.table_cols || []
+  });
+  closeTemplateLoadModal();
+}
+async function deleteTemplateFromList(id, name){
+  try{
+    const res = await fetch('/api/templates/' + id, { method:'DELETE' });
+    const data = await res.json();
+    if(!data.ok) throw new Error(data.error || 'Gagal menghapus preset.');
+    toast('Preset "' + name + '" dihapus.');
+    fetchAndRenderTemplateList();
+  }catch(e){
+    toast('Gagal menghapus: ' + e.message);
+  }
+}
+
+/* ---------- Arsip kiriman (folder riwayat yang sudah terkirim) ---------- */
+async function logArchiveBatch(payload){
+  try{
+    const res = await fetch('/api/archive/batches', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const data = await res.json();
+    return data.ok ? data.batch : null;
+  }catch(e){ return null; }
+}
+async function logArchiveRecipient(batchId, payload){
+  if(!batchId) return;
+  try{
+    await fetch('/api/archive/batches/' + batchId + '/recipients', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+  }catch(e){ /* arsip gagal dicatat — tidak menghalangi pengiriman email itu sendiri */ }
+}
+async function updateArchiveBatch(batchId, payload){
+  if(!batchId) return;
+  try{
+    await fetch('/api/archive/batches/' + batchId, {method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+  }catch(e){}
+}
+// Setiap kali proses kirim jalan, narasi yang dipakai otomatis ikut tersimpan
+// sebagai Template (namanya = Judul laporan saat itu) — supaya lain kali
+// tinggal klik di "Muat Template", tidak perlu klik "Simpan Template" manual
+// lagi. Kalau nama yang sama sudah pernah ada, templatenya di-update (bukan
+// numpuk duplikat). Diam-diam gagal kalau ada masalah — tidak pernah
+// menghalangi proses kirim email itu sendiri.
+async function autoSaveTemplateFromCurrentNarrative(){
+  try{
+    const snapshot = currentTemplateSnapshot();
+    const name = (snapshot.narrative.judul || '').trim();
+    if(!name) return;
+    const payload = { name, ...snapshot };
+    const listRes = await fetch('/api/templates');
+    const listData = await listRes.json();
+    const existing = (listData.ok && Array.isArray(listData.templates))
+      ? listData.templates.find(t => (t.name || '').trim().toLowerCase() === name.toLowerCase())
+      : null;
+    if(existing){
+      await fetch('/api/templates/' + existing.id, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    } else {
+      await fetch('/api/templates', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    }
+  }catch(e){ /* auto-save template gagal — tidak menghalangi pengiriman email */ }
+}
+function buildRecipientArchivePayload(group, status, errorMessage){
+  const cols = state.tableCols.filter(c=>c.included);
+  return {
+    name: group.name,
+    emails: group.emails.join('; '),
+    ccs: group.ccs.join('; '),
+    subject: fillTemplate(state.narrative.subjectTpl, group),
+    intro: fillTemplate(state.narrative.intro, group),
+    closing: fillTemplate(state.narrative.closing, group),
+    tableCols: cols,
+    tableRows: group.rows,
+    status,
+    errorMessage: errorMessage || null
+  };
+}
+
+function openArchiveModal(){
+  document.getElementById('archiveModal').style.display = 'flex';
+  renderArchiveList();
+}
+function closeArchiveModal(){
+  document.getElementById('archiveModal').style.display = 'none';
+}
+async function renderArchiveList(){
+  document.getElementById('archiveBackBtn').style.display = 'none';
+  document.getElementById('archiveModalTitle').textContent = '🗂️ Arsip Kiriman';
+  document.getElementById('archiveModalHint').style.display = '';
+  const body = document.getElementById('archiveModalBody');
+  body.innerHTML = '<div class="picker-empty">Memuat…</div>';
+  try{
+    const res = await fetch('/api/archive/batches');
+    const data = await res.json();
+    if(!data.ok) throw new Error(data.error || 'Gagal memuat arsip.');
+    if(!data.batches.length){
+      body.innerHTML = '<div class="picker-empty">Belum ada riwayat kiriman.</div>';
+      return;
+    }
+    const list = document.createElement('div');
+    list.className = 'picker-list';
+    data.batches.forEach(b=>{
+      const item = document.createElement('div');
+      item.className = 'picker-item';
+      const when = b.created_at ? new Date(b.created_at).toLocaleString('id-ID', {dateStyle:'medium', timeStyle:'short'}) : '';
+      const badgeClass = b.status === 'completed' ? 'completed' : (b.status === 'cancelled' || b.status === 'paused') ? 'cancelled' : 'partial';
+      const label = [b.judul, b.periode].filter(Boolean).join(' — ') || '(tanpa judul)';
+      item.innerHTML = `<div class="pi-main"><div class="pi-title">${escapeHtml(label)}</div><div class="pi-sub">${escapeHtml(when)} · ${b.success_count} berhasil, ${b.fail_count} gagal dari ${b.total_recipients}</div></div><span class="archive-badge ${badgeClass}">${escapeHtml(b.status)}</span>`;
+      item.addEventListener('click', ()=>openArchiveBatchDetail(b.id));
+      list.appendChild(item);
+    });
+    body.innerHTML = '';
+    body.appendChild(list);
+  }catch(e){
+    body.innerHTML = '<div class="picker-empty">⚠️ ' + escapeHtml(e.message) + '</div>';
+  }
+}
+async function openArchiveBatchDetail(id){
+  document.getElementById('archiveBackBtn').style.display = 'inline-flex';
+  document.getElementById('archiveModalHint').style.display = 'none';
+  const body = document.getElementById('archiveModalBody');
+  body.innerHTML = '<div class="picker-empty">Memuat…</div>';
+  try{
+    const res = await fetch('/api/archive/batches/' + id);
+    const data = await res.json();
+    if(!data.ok) throw new Error(data.error || 'Gagal memuat detail.');
+    const b = data.batch;
+    document.getElementById('archiveModalTitle').textContent = [b.judul, b.periode].filter(Boolean).join(' — ') || '(tanpa judul)';
+    const wrap = document.createElement('div');
+    data.recipients.forEach((r, idx)=>{
+      const row = document.createElement('div');
+      row.className = 'archive-recipient-row';
+      const statusIcon = r.status === 'ok' ? '✅' : '❌';
+      row.innerHTML = `<div class="archive-recipient-head"><span>${statusIcon} ${escapeHtml(r.recipient_name || '(tanpa nama)')} — ${escapeHtml(r.recipient_emails || '')}</span><span class="pi-sub">${new Date(r.sent_at).toLocaleTimeString('id-ID')}</span></div><div class="archive-recipient-body" id="arb-${idx}"></div>`;
+      row.querySelector('.archive-recipient-head').addEventListener('click', ()=>{
+        const detailBox = row.querySelector('.archive-recipient-body');
+        const willOpen = !detailBox.classList.contains('open');
+        detailBox.classList.toggle('open', willOpen);
+        if(willOpen && !detailBox.dataset.filled){
+          detailBox.dataset.filled = '1';
+          const cols = (r.table_cols || []).filter(c=>c.included);
+          let html = '';
+          if(r.error_message) html += `<div class="modal-error show" style="margin-top:0;">⚠️ ${escapeHtml(r.error_message)}</div>`;
+          html += `<div><b>Subjek:</b> ${escapeHtml(r.subject || '')}</div>`;
+          html += `<table><thead><tr>${cols.map(c=>`<th>${escapeHtml(c.label)}</th>`).join('')}</tr></thead><tbody>`;
+          (r.table_rows || []).forEach(row2=>{
+            html += '<tr>' + cols.map(c=>`<td>${escapeHtml(String(row2[c.key] ?? ''))}</td>`).join('') + '</tr>';
+          });
+          html += '</tbody></table>';
+          detailBox.innerHTML = html;
+        }
+      });
+      wrap.appendChild(row);
+    });
+    body.innerHTML = '';
+    body.appendChild(wrap);
+  }catch(e){
+    body.innerHTML = '<div class="picker-empty">⚠️ ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function applyTemplate(tpl){
+  if(!state.columns.length){
+    toast('Upload file Excel dulu sebelum memuat preset.');
+    return;
+  }
+  const missing = [];
+  const trySet = (id, val, label)=>{
+    const sel = document.getElementById(id);
+    if(!val){ sel.value = ''; return; }
+    const exists = Array.from(sel.options).some(o=>o.value===val);
+    if(exists) sel.value = val;
+    else missing.push(`${label} ("${val}")`);
+  };
+  trySet('mapGroup', tpl.mapping.group, 'kolom pengelompokan');
+  trySet('mapEmail', tpl.mapping.email, 'kolom email');
+  trySet('mapCC', tpl.mapping.cc, 'kolom CC');
+  trySet('mapName', tpl.mapping.name, 'kolom nama');
+
+  document.getElementById('narJudul').value = tpl.narrative.judul || '';
+  document.getElementById('narIntro').value = tpl.narrative.intro || '';
+  document.getElementById('narClosing').value = tpl.narrative.closing || '';
+  if(tpl.sender){
+    document.getElementById('senderName').value = tpl.sender.name || '';
+    document.getElementById('senderEmail').value = tpl.sender.email || '';
+  }
+
+  if(tpl.tableCols && Array.isArray(tpl.tableCols)){
+    const byKey = {};
+    tpl.tableCols.forEach(c=>{ byKey[c.key] = c; });
+    state.tableCols.forEach(c=>{
+      if(byKey[c.key]){
+        c.included = byKey[c.key].included;
+        c.label = byKey[c.key].label;
+        if(typeof byKey[c.key].numeric === 'boolean') c.numeric = byKey[c.key].numeric;
+      }
+    });
+    renderColChecklistDOM();
+  }
+
+  ['narIntro','narClosing'].forEach(id=>{ const ta = document.getElementById(id); if(ta) autoGrowTextarea(ta); });
+  refreshAllFilledStates();
+  if(missing.length){
+    toast('Preset dimuat, tapi kolom ini tidak ada di file sekarang: ' + missing.join(', '));
+  } else {
+    toast('Preset berhasil diterapkan.');
+  }
+}
+
+/* ---------- Build groups ---------- */
+function buildGroupsAndGoStep3(){
+  state.mapping.group = document.getElementById('mapGroup').value;
+  state.mapping.email = document.getElementById('mapEmail').value;
+  state.mapping.cc = document.getElementById('mapCC').value;
+  state.mapping.name = document.getElementById('mapName').value;
+
+  if(!state.mapping.group || !state.mapping.email || !state.mapping.name){
+    toast('Lengkapi dulu kolom pengelompokan, email, dan nama.');
+    return;
+  }
+
+  state.sender = {
+    name: document.getElementById('senderName').value.trim(),
+    email: document.getElementById('senderEmail').value.trim()
+  };
+  if(!state.sender.email){
+    toast('Isi dulu email pengirim (From).');
+    return;
+  }
+
+  let periodeValue = '';
+  if(!periodeValue){
+    // Deteksi otomatis periode dari kolom tanggal (field manual sudah dihapus
+    // karena biasanya info periode sudah ada di Judul laporan).
+    const dateCol = state.columns.find(c=>/date|tanggal|tgl/i.test(c));
+    if(dateCol){
+      const dates = state.rows.map(r=>new Date(r[dateCol])).filter(d=>!isNaN(d));
+      if(dates.length){
+        const min = new Date(Math.min(...dates));
+        const max = new Date(Math.max(...dates));
+        const fmt = d => d.toLocaleDateString('id-ID', {day:'numeric', month:'long', year:'numeric'});
+        periodeValue = (min.getTime() === max.getTime()) ? fmt(min) : `${fmt(min)} – ${fmt(max)}`;
+      }
+    }
+  }
+  state.narrative = {
+    judul: document.getElementById('narJudul').value || 'Laporan',
+    periode: periodeValue || '-',
+    subjectTpl: document.getElementById('narJudul').value || 'Laporan',
+    intro: document.getElementById('narIntro').value,
+    closing: document.getElementById('narClosing').value
+  };
+
+  const map = new Map();
+  state.rows.forEach(r=>{
+    const key = String(r[state.mapping.group]);
+    if(!map.has(key)) map.set(key, []);
+    map.get(key).push(r);
+  });
+
+  state.groups = Array.from(map.entries()).map(([key, rows])=>{
+    const first = rows[0];
+    const rawEmail = String(first[state.mapping.email] || '');
+    const emails = rawEmail.split(/[;,]/).map(s=>s.trim()).filter(Boolean);
+    const ccRaw = state.mapping.cc ? String(first[state.mapping.cc] || '') : '';
+    const ccs = ccRaw.split(/[;,]/).map(s=>s.trim()).filter(Boolean);
+    const name = String(first[state.mapping.name] || key);
+    return { key, name, emails, ccs, rows };
+  });
+
+  if(!state.groups.length){
+    toast('Tidak ada data untuk diproses.');
+    return;
+  }
+
+  state.activeIndex = 0;
+  renderRecipientList();
+  renderMailCard();
+  goStep(3);
+}
+
+/* ---------- STEP 3: Preview ---------- */
+function fillTemplate(tpl, group){
+  let out = tpl
+    .replaceAll('{nama}', group.name)
+    .replaceAll('{judul}', state.narrative.judul)
+    .replaceAll('{periode}', state.narrative.periode)
+    .replaceAll('{jumlah}', String(group.rows.length));
+  // Token kolom Excel lain (mis. {Plan}, {Kode Mitra}) — diisi dari nilai
+  // baris pertama di grup penerima ini, karena narasi ditulis sekali per
+  // penerima, bukan per baris tabel.
+  const firstRow = group.rows && group.rows[0];
+  if(firstRow){
+    (state.columns || []).forEach(col=>{
+      const tok = '{' + col + '}';
+      if(out.includes(tok)){
+        out = out.split(tok).join(String(firstRow[col] ?? ''));
+      }
+    });
+  }
+  return out;
+}
+
+function initials(name){
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if(!parts.length) return '?';
+  return (parts[0][0] + (parts[1] ? parts[1][0] : '')).toUpperCase();
+}
+
+function renderRecipientList(){
+  const wrap = document.getElementById('recipientItems');
+  wrap.innerHTML = '';
+  const filter = (state.recipientFilter || '').trim().toLowerCase();
+  const matches = state.groups
+    .map((g, idx)=>({ g, idx }))
+    .filter(({g})=> !filter || g.name.toLowerCase().includes(filter));
+
+  document.getElementById('recipientCount').textContent = filter
+    ? `${matches.length} dari ${state.groups.length} penerima`
+    : `${state.groups.length} penerima`;
+
+  if(!matches.length){
+    wrap.innerHTML = '<div class="rl-empty">Tidak ada penerima yang cocok dengan pencarian.</div>';
+    return;
+  }
+  matches.forEach(({g, idx})=>{
+    const el = document.createElement('div');
+    el.className = 'recipient-item' + (idx===state.activeIndex ? ' active' : '');
+    el.innerHTML = `<div class="rname">${escapeHtml(g.name)}</div>
+      <div class="rmeta">${g.rows.length} baris · ${g.emails.length} email</div>`;
+    el.onclick = ()=>{ state.activeIndex = idx; renderRecipientList(); renderMailCard(); };
+    wrap.appendChild(el);
+  });
+}
+
+document.getElementById('recipientSearch').addEventListener('input', e=>{
+  state.recipientFilter = e.target.value;
+  renderRecipientList();
+});
+
+function buildTableHtml(group){
+  // Inline styles only — email clients (Outlook included) routinely strip
+  // <style> blocks and CSS classes, so every visual rule has to live on the
+  // tag itself or the table renders as bare unstyled HTML. Header & baris
+  // total pakai warna teal solid yang SAMA persis (bukan dua shade beda)
+  // supaya konsisten kalau dilihat berdampingan — sengaja bukan gradient
+  // karena gradient background sering di-strip Outlook — ini tabel yang
+  // benar-benar dilihat penerima asli di inbox mereka, bukan cuma preview
+  // di app.
+  // Grid penuh (garis vertikal + horizontal) + bingkai luar bulat (rounded
+  // wrapper technique — aman untuk Outlook: kalau border-radius diabaikan,
+  // tetap jadi kotak siku rapi, tidak pernah rusak).
+  // Sengaja TIDAK width:100% — tanpa itu, tabel di inbox lebar (mis. jendela
+  // Outlook maksimal) dulu dipaksa melar penuh sampai tiap kolom kebagian
+  // spasi kosong jauh lebih lebar dari isinya (kolom "4.06" bisa kebagian
+  // ratusan pixel kosong). Tanpa width, tiap kolom cuma selebar isinya —
+  // rapat, padat, gak ada celah kosong yang gak perlu.
+  const cols = state.tableCols.filter(c=>c.included);
+  const lastIdx = cols.length - 1;
+  const colBorder = (idx) => idx === lastIdx ? '' : 'border-right:1px solid rgba(255,255,255,0.35);';
+  const colBorderTd = (idx) => idx === lastIdx ? '' : 'border-right:1px solid #E7EEEC;';
+  const thStyleBase = 'padding:7px 10px;border-bottom:2px solid #27A093;background:#32BCAD;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:bold;white-space:nowrap;text-transform:uppercase;letter-spacing:0.4px;';
+  let html = '<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><tr><td style="border:1px solid #D8E3E0;border-radius:10px;overflow:hidden;padding:0;">' +
+    '<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;"><thead><tr>' +
+    cols.map((c,idx)=>`<th style="${thStyleBase}${colBorder(idx)}text-align:${c.numeric ? 'right' : 'left'};">${escapeHtml(c.label)}</th>`).join('') + '</tr></thead><tbody>';
+  group.rows.forEach((r, ridx)=>{
+    const bg = ridx % 2 === 1 ? 'background:#FAFCFB;' : 'background:#ffffff;';
+    const isLastRow = ridx === group.rows.length - 1;
+    html += '<tr>' + cols.map((c,idx)=>{
+      const val = c.numeric ? formatNumericCell(r[c.key]) : r[c.key];
+      const align = c.numeric ? 'text-align:right;' : '';
+      const rowBorder = isLastRow ? '' : 'border-bottom:1px solid #E9EFEE;';
+      const tdBase = `padding:6px 10px;${rowBorder}font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#4D4D4F;white-space:nowrap;`;
+      return `<td style="${tdBase}${colBorderTd(idx)}${bg}${align}">${escapeHtml(String(val))}</td>`;
+    }).join('') + '</tr>';
+  });
+  // Baris total di footer: kolom yang ditandai "amount" (123) otomatis
+  // dijumlahkan (bukan cuma dihitung jumlah baris) — supaya penerima
+  // langsung lihat totalnya tanpa perlu jumlah manual.
+  // Baris total pakai warna teal yang SAMA dengan header (bukan shade beda)
+  // supaya konsisten kalau dilihat berdampingan — pembedanya cukup dari
+  // border-top aksen teal-d, bukan dari warna dasar yang beda.
+  const totalTdBase = 'padding:7px 10px;background:#32BCAD;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:11.5px;font-weight:bold;border-top:2px solid #27A093;white-space:nowrap;';
+  let labelPlaced = false;
+  const footerCells = cols.map((c,idx)=>{
+    if(c.numeric){
+      const sum = group.rows.reduce((acc, r)=>{
+        const n = Number(String(r[c.key] ?? '').trim().replace(/,/g,''));
+        return acc + (Number.isFinite(n) ? n : 0);
+      }, 0);
+      const formatted = sum.toLocaleString('en-US', Number.isInteger(sum) ? {maximumFractionDigits:0} : {maximumFractionDigits:2});
+      return `<td style="${totalTdBase}${colBorder(idx)}text-align:right;">${escapeHtml(formatted)}</td>`;
+    }
+    if(!labelPlaced){
+      labelPlaced = true;
+      return `<td style="${totalTdBase}${colBorder(idx)}text-align:left;">Total (${group.rows.length} baris)</td>`;
+    }
+    return `<td style="${totalTdBase}${colBorder(idx)}"></td>`;
+  }).join('');
+  html += `</tbody><tfoot><tr>${footerCells}</tr></tfoot></table>`;
+  html += '</td></tr></table>';
+  return html;
+}
+
+function buildEmailBodyHtml(group){
+  const pStyle = 'font-family:Arial,Helvetica,sans-serif;font-size:13.5px;color:#4D4D4F;line-height:1.65;margin:0 0 14px 0;';
+  const intro = fillTemplate(state.narrative.intro, group).split('\n\n').map(p=>`<p style="${pStyle}">${escapeHtml(p).replace(/\n/g,'<br>')}</p>`).join('');
+  const closing = fillTemplate(state.narrative.closing, group).split('\n\n').map(p=>`<p style="${pStyle}">${escapeHtml(p).replace(/\n/g,'<br>')}</p>`).join('');
+  return `<div style="font-family:Arial,Helvetica,sans-serif;">${intro}${buildTableHtml(group)}<div style="height:14px;line-height:14px;">&nbsp;</div>${closing}</div>`;
+}
+
+function renderMailCard(){
+  if(!state.groups.length) return;
+  const group = state.groups[state.activeIndex];
+  const subject = fillTemplate(state.narrative.subjectTpl, group);
+  const toChips = group.emails.map(e=>`<span class="chip">${escapeHtml(e)}</span>`).join('');
+  const ccRow = group.ccs.length
+    ? `<div class="mm-row"><span class="mm-label">Cc</span><div class="mm-chips">${group.ccs.map(e=>`<span class="chip">${escapeHtml(e)}</span>`).join('')}</div></div>`
+    : '';
+  document.getElementById('mailCard').innerHTML = `
+    <div class="mail-toolbar">
+      <div class="subject">${escapeHtml(subject)}</div>
+      <span class="badge">${state.activeIndex+1} / ${state.groups.length}</span>
+    </div>
+    <div class="mail-header">
+      <div class="avatar">${initials(state.sender.name || state.sender.email)}</div>
+      <div style="flex:1; min-width:0;">
+        <div class="from">${escapeHtml(state.sender.name || state.sender.email)}</div>
+        <div class="fromaddr">${escapeHtml(state.sender.email)}</div>
+        <div class="mail-meta">
+          <div class="mm-row"><span class="mm-label">To</span><div class="mm-chips">${toChips}</div></div>
+          ${ccRow}
+        </div>
+      </div>
+    </div>
+    <div class="mail-body">${buildEmailBodyHtml(group)}</div>
+  `;
+}
+
+/* ---------- Status koneksi Resend ---------- */
+async function checkSenderStatus(){
+  const bar = document.getElementById('outlookStatusBar');
+  bar.classList.remove('status-ok','status-err');
+  const setCard = (icon, title, sub)=>{
+    bar.innerHTML = `<span class="sc-icon">${icon}</span><div class="sc-body">
+      <div class="sc-title">${title}</div>${sub ? `<div class="sc-sub">${sub}</div>` : ''}
+    </div>`;
+  };
+  try{
+    const res = await fetch('/api/status');
+    const data = await res.json();
+    if(data.ok){
+      if(data.domainVerified){
+        setCard('✅', `Siap kirim dari ${escapeHtml(data.sender || '')}`,
+          `Domain <strong>${escapeHtml(data.domain || '')}</strong> terverifikasi — bisa kirim ke penerima mana pun.`);
+        bar.classList.add('status-ok');
+      } else {
+        setCard('⚠️', `Domain ${escapeHtml(data.domain || '')} belum Verified`,
+          `Status: ${escapeHtml(data.domainStatus || 'tidak ditemukan')} — selama belum verified, email cuma bisa terkirim ke alamat kamu sendiri. Cek resend.com/domains.`);
+        bar.classList.add('status-err');
+      }
+      // Sinkronkan field "Nama pengirim" / "Email pengirim" dengan alamat asli
+      // di server (.env), supaya preview di step 3 tidak menampilkan alamat
+      // yang berbeda dari yang benar-benar dipakai saat mengirim via Resend.
+      const m = /^(.*)<(.+)>$/.exec(data.sender || '');
+      const realName = m ? m[1].trim() : '';
+      const realEmail = m ? m[2].trim() : (data.sender || '').trim();
+      document.getElementById('senderName').value = realName;
+      document.getElementById('senderEmail').value = realEmail;
+      refreshAllFilledStates();
+    } else if (data.needsSetup) {
+      setCard('⚠️', 'Setup belum lengkap', `${escapeHtml(data.error)} (lihat README.md).`);
+      bar.classList.add('status-err');
+    } else {
+      setCard('⚠️', escapeHtml(data.error || 'Gagal terhubung ke Resend.'), '');
+      bar.classList.add('status-err');
+    }
+  }catch(err){
+    setCard('⚠️', 'Tidak bisa menghubungi server', `${escapeHtml(err.message)} — pastikan server sedang berjalan.`);
+    bar.classList.add('status-err');
+  }
+}
+
+/* ---------- Kirim via Resend ---------- */
+function logRow(name, status, message){
+  const wrap = document.getElementById('sendLog');
+  const row = document.createElement('div');
+  row.className = 'log-row';
+  const cls = status === 'ok' ? 'ok' : status === 'err' ? 'err' : status === 'hold' ? 'hold' : 'pending';
+  const label = status === 'ok' ? '✅ Terkirim' : status === 'err' ? '❌ Gagal' : status === 'hold' ? '⏸ Dijeda' : '⏳ Memproses…';
+  row.innerHTML = `<span class="ln">${escapeHtml(name)}${message ? ' — <span style="color:var(--muted)">'+escapeHtml(message)+'</span>' : ''}</span><span class="lstatus ${cls}">${label}</span>`;
+  wrap.prepend(row);
+  return row;
+}
+
+async function sendGroupViaResend(group){
+  const subject = fillTemplate(state.narrative.subjectTpl, group);
+  const html = buildEmailBodyHtml(group);
+  const account = ''; // pemilihan akun pengirim tidak didukung di versi Mac
+  const mode = 'send'; // mode terkunci permanen: selalu kirim langsung ke penerima asli
+  const payload = {
+    to: group.emails.join('; '),
+    cc: group.ccs.join('; '),
+    subject, html, account, mode
+  };
+  const res = await fetch('/api/send', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if(!data.ok) throw new Error(data.error || 'gagal mengirim');
+  return data;
+}
+
+async function sendCurrent(){
+  const group = state.groups[state.activeIndex];
+  const row = logRow(group.name, 'pending');
+  showLoadingBar();
+  try{
+    const data = await sendGroupViaResend(group);
+    row.remove();
+    logRow(group.name, 'ok', data.mode === 'send' ? 'terkirim' : 'terkirim ke alamat tes');
+    toast(data.mode === 'send' ? 'Email terkirim.' : 'Email uji coba terkirim ke alamat tes.');
+    const batch = await logArchiveBatch({
+      judul: state.narrative.judul, periode: state.narrative.periode, subjectTemplate: state.narrative.subjectTpl,
+      totalRecipients: 1, successCount: 1, failCount: 0, status: 'completed'
+    });
+    if(batch) logArchiveRecipient(batch.id, buildRecipientArchivePayload(group, 'ok'));
+    autoSaveTemplateFromCurrentNarrative();
+  }catch(err){
+    row.remove();
+    logRow(group.name, 'err', err.message);
+    toast('Gagal: ' + err.message);
+    const batch = await logArchiveBatch({
+      judul: state.narrative.judul, periode: state.narrative.periode, subjectTemplate: state.narrative.subjectTpl,
+      totalRecipients: 1, successCount: 0, failCount: 1, status: 'completed'
+    });
+    if(batch) logArchiveRecipient(batch.id, buildRecipientArchivePayload(group, 'err', err.message));
+  } finally {
+    hideLoadingBar();
+  }
+}
+
+function confirmSendAll(){
+  document.getElementById('confirmText').textContent =
+    `Kamu akan MENGIRIM LANGSUNG ${state.groups.length} email berbeda, masing-masing ke penerimanya sendiri. Email akan langsung terkirim tanpa jeda konfirmasi lagi — tapi kalau di tengah jalan berubah pikiran, ada tombol "Jeda" untuk menghentikan sementara. Lanjutkan?`;
+  document.getElementById('confirmModal').style.display = 'flex';
+  document.getElementById('confirmModalOk').onclick = ()=>{
+    closeConfirmModal();
+    sendAllTotals = { ok:0, err:0 };
+    sendAllSequential(0);
+  };
+}
+function closeConfirmModal(){
+  document.getElementById('confirmModal').style.display = 'none';
+}
+
+// --- Jeda (hold/pause) untuk proses kirim massal ---
+// sendAllPauseRequested: diset true saat tombol Jeda diklik, dicek di awal
+// tiap iterasi — jadi email yang sedang berjalan tetap selesai dulu,
+// baru berhenti SEBELUM mulai kirim ke penerima berikutnya.
+// sendAllPaused: true selagi benar-benar berhenti menunggu (tombol jadi "Lanjutkan").
+// sendAllResumeIndex: index penerima berikutnya yang belum diproses.
+let sendAllPauseRequested = false;
+let sendAllPaused = false;
+let sendAllResumeIndex = 0;
+let sendAllTotals = { ok:0, err:0 };
+let currentArchiveBatchId = null;
+
+function toggleHoldSendAll(){
+  if(sendAllPaused){
+    sendAllPaused = false;
+    sendAllPauseRequested = false;
+    document.getElementById('btnCancelHold').style.display = 'none';
+    document.getElementById('btnSendAll').disabled = true;
+    document.getElementById('btnSendOne').disabled = true;
+    sendAllSequential(sendAllResumeIndex);
+  } else {
+    sendAllPauseRequested = true;
+    const btn = document.getElementById('btnHoldAll');
+    btn.textContent = '⏸ Menjeda setelah email ini selesai…';
+    btn.disabled = true;
+  }
+}
+
+function cancelHeldSendAll(){
+  const remaining = state.groups.length - sendAllResumeIndex;
+  sendAllPaused = false;
+  sendAllPauseRequested = false;
+  document.getElementById('btnHoldAll').style.display = 'none';
+  document.getElementById('btnCancelHold').style.display = 'none';
+  document.getElementById('btnSendAll').disabled = false;
+  document.getElementById('btnSendOne').disabled = false;
+  logRow('— Dibatalkan —', 'err', `${remaining} penerima tersisa tidak diproses`);
+  toast(`Dibatalkan. Berhasil: ${sendAllTotals.ok}, gagal: ${sendAllTotals.err}, tidak diproses: ${remaining}.`);
+  updateArchiveBatch(currentArchiveBatchId, {
+    successCount: sendAllTotals.ok, failCount: sendAllTotals.err,
+    totalRecipients: state.groups.length, status: 'cancelled'
+  });
+}
+
+async function sendAllSequential(startIndex){
+  const start = startIndex || 0;
+  if(start === 0){
+    document.getElementById('sendLog').innerHTML = '';
+    currentArchiveBatchId = null;
+    const batch = await logArchiveBatch({
+      judul: state.narrative.judul, periode: state.narrative.periode, subjectTemplate: state.narrative.subjectTpl,
+      totalRecipients: state.groups.length, successCount: 0, failCount: 0, status: 'in_progress'
+    });
+    if(batch) currentArchiveBatchId = batch.id;
+    autoSaveTemplateFromCurrentNarrative();
+  }
+  sendAllPauseRequested = false;
+  sendAllPaused = false;
+  document.getElementById('btnSendAll').disabled = true;
+  document.getElementById('btnSendOne').disabled = true;
+  const holdBtn = document.getElementById('btnHoldAll');
+  holdBtn.style.display = 'inline-flex';
+  holdBtn.disabled = false;
+  holdBtn.classList.remove('is-paused');
+  holdBtn.textContent = '⏸ Jeda';
+  document.getElementById('btnCancelHold').style.display = 'none';
+  showLoadingBar();
+
+  const total = state.groups.length;
+  for(let i = start; i < total; i++){
+    if(sendAllPauseRequested){
+      sendAllPaused = true;
+      sendAllResumeIndex = i;
+      hideLoadingBar();
+      const remaining = total - i;
+      logRow('— Dijeda —', 'hold', `${i} dari ${total} sudah diproses, ${remaining} tersisa`);
+      holdBtn.textContent = `▶ Lanjutkan (${remaining} tersisa)`;
+      holdBtn.classList.add('is-paused');
+      holdBtn.disabled = false;
+      document.getElementById('btnCancelHold').style.display = 'inline-flex';
+      updateArchiveBatch(currentArchiveBatchId, {
+        successCount: sendAllTotals.ok, failCount: sendAllTotals.err, status: 'paused'
+      });
+      return;
+    }
+    const group = state.groups[i];
+    const row = logRow(group.name, 'pending');
+    try{
+      const data = await sendGroupViaResend(group);
+      row.remove();
+      logRow(group.name, 'ok', data.mode === 'send' ? 'terkirim' : 'terkirim ke alamat tes');
+      sendAllTotals.ok++;
+      logArchiveRecipient(currentArchiveBatchId, buildRecipientArchivePayload(group, 'ok'));
+    }catch(err){
+      row.remove();
+      logRow(group.name, 'err', err.message);
+      sendAllTotals.err++;
+      logArchiveRecipient(currentArchiveBatchId, buildRecipientArchivePayload(group, 'err', err.message));
+    }
+    await new Promise(r=>setTimeout(r, 250)); // jeda kecil antar pengiriman
+  }
+  hideLoadingBar();
+  holdBtn.style.display = 'none';
+  document.getElementById('btnCancelHold').style.display = 'none';
+  document.getElementById('btnSendAll').disabled = false;
+  document.getElementById('btnSendOne').disabled = false;
+  toast(`Selesai. Berhasil: ${sendAllTotals.ok}, gagal: ${sendAllTotals.err}.`);
+  updateArchiveBatch(currentArchiveBatchId, {
+    successCount: sendAllTotals.ok, failCount: sendAllTotals.err, status: 'completed'
+  });
+}
+
+checkSenderStatus();
+wireFilledStateTracking();
+renderTokenPills();
+wireAutoGrowTextareas();
+wireTextareaTokenDrop();
+
+
+
+/* ===================== BUAT SURAT (generate PDF surat per mitra) =====================
+ * Alur terpisah dari fitur Blast Email di atas (state/DOM sendiri, tidak
+ * menyentuh `state` yang dipakai fitur blast email). Excel di-parse di
+ * browser (SheetJS, sama seperti fitur blast email).
+ * - "Preview Satu Surat" -> POST /api/letters/generate (1 baris data, balas
+ *   1 file PDF langsung) buat dicek cepat sebelum commit ke batch.
+ * - "Generate & Kirim Approval" -> POST /api/letters/batches (SEMUA baris
+ *   terpilih sekaligus). Server yang generate semua PDF, simpan ke
+ *   Supabase Storage + tabel letter_batches/letter_batch_items (status
+ *   pending_approval), lalu kirim 1 email ke APPROVER_EMAIL (isi .env)
+ *   berisi semua PDF sebagai lampiran + link ke public/approve.html buat
+ *   approve/tolak. Tidak ada download/ZIP di browser lagi.
+ */
+let suratState = {
+  workbook: null, fileName: '',
+  templates: [], selectedTemplate: null,
+  dataSheetName: '', dataRows: [], dataColumns: [],
+  selectedRows: new Set(),
+  step: 1,
+};
+let SURAT_SUPPORTED_CODES = [];
+let SURAT_TYPE_NAMES = {};
+let SURAT_TYPE_META = {};
+
+/* ---------- Mode switch: Blast Email <-> Buat Surat ----------
+ * Bukan modal/popup — dua alur (masing-masing punya step Upload/Atur
+ * Data/Preview & Kirim sendiri) hidup di halaman yang sama, tinggal
+ * di-switch mana yang kelihatan. State/DOM dua alur ini tetap terpisah
+ * total (state vs suratState) — switch mode TIDAK mereset data yang
+ * sudah diisi di alur satunya.
+ */
+let appMode = 'email';
+function switchAppMode(mode){
+  appMode = mode;
+  document.getElementById('emailFlowWrap').classList.toggle('step-hidden', mode !== 'email');
+  document.getElementById('suratFlowWrap').classList.toggle('step-hidden', mode !== 'surat');
+  document.getElementById('modeBtnEmail').classList.toggle('active', mode === 'email');
+  document.getElementById('modeBtnSurat').classList.toggle('active', mode === 'surat');
+  document.getElementById('btnOpenSuratSettings').style.display = mode === 'surat' ? 'flex' : 'none';
+  // Subjudul & judul tab browser ikut alur yang lagi aktif — biar pas lagi
+  // buka beberapa tab kelihatan bedanya, gak dua-duanya "Blast Email".
+  const isSurat = mode === 'surat';
+  document.getElementById('appSubtitle').textContent = isSurat
+    ? 'Buat Surat — template Excel jadi PDF surat resmi & kirim approval'
+    : 'Blast Email — laporan Excel jadi email terpisah per penerima';
+  document.title = (isSurat ? 'Buat Surat' : 'Blast Email') + ' — Sales Performance Sumatera';
+  renderStepsNav();
+}
+
+const suratStepsMeta = [
+  [1,'Upload',          'Upload Excel berisi data suratnya. Jenis surat otomatis dikenali dari nama sheet — tidak perlu didaftarkan.'],
+  [2,'Atur Surat',      'Pilih template surat yang mau dipakai, konfirmasi sheet data & periode, lalu centang baris mana saja yang suratnya digenerate.'],
+  [3,'Kirim Approval',  'Cek dulu satu contoh surat jadi PDF, lalu generate semua sekaligus dan kirim email permintaan approval ke approver.'],
+  [4,'Blast Surat',     'Setelah approver menyetujui (tanda tangan otomatis tertempel), kirim tiap surat ke alamat penerimanya masing-masing dengan PDF sebagai lampiran.'],
+];
+const SURAT_STEP_COUNT = suratStepsMeta.length;
+function goSuratStep(n){
+  suratState.step = n;
+  for(let i = 1; i <= SURAT_STEP_COUNT; i++){
+    document.getElementById('suratStep'+i).classList.toggle('step-hidden', i!==n);
+  }
+  if(n === 3) renderSuratSummary();
+  renderStepsNav();
+  window.scrollTo({ top:0, behavior:'smooth' });
+}
+
+async function loadSuratSupportedCodes(){
+  try{
+    const r = await fetch('/api/letters/templates-supported');
+    const j = await r.json();
+    if(j.ok){
+      SURAT_SUPPORTED_CODES = j.codes;
+      // Peta kode -> nama yang dipakai tim, dan apakah jenis surat itu
+      // "aggregate" (1 memo dari banyak baris, mis. IOM) atau tidak
+      // (1 baris = 1 surat). Server yang menentukan ini, bukan file Excel
+      // atau pilihan manual — jenis surat memang cuma ada 5, semuanya
+      // sudah dikenal mesinnya.
+      SURAT_TYPE_NAMES = {};
+      SURAT_TYPE_META = {};
+      (j.types || []).forEach(t => {
+        SURAT_TYPE_NAMES[t.code] = t.name;
+        SURAT_TYPE_META[t.code] = { aggregate: Boolean(t.aggregate) };
+      });
+    }
+  }catch(e){ /* diam-diam gagal — upload nanti nunjukin errornya sendiri */ }
+}
+
+// "IOM Payout MPx" vs "  iom   payout mpx " harus dianggap sama — orang
+// nulis nama sheet dengan spasi/kapital yang beda-beda.
+function normalizeSuratName(s){
+  return String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/* ---------- Pengaturan Approver & TTD ---------- */
+let suratSettingsCache = { approverEmail: '', hasSignature: false, signatureUrl: null, letterSigners: { kota: '', signers: [] } };
+let suratSignaturePendingBase64 = null;
+
+let suratMemoFieldsCache = {}; // { [TEMPLATE_CODE]: {noSurat,hal,kepada,dari} }
+
+async function loadSuratSettingsCache(){
+  try{
+    const r = await fetch('/api/settings');
+    const j = await r.json();
+    if(j.ok){
+      suratSettingsCache = {
+        approverEmail: j.approverEmail || '', hasSignature: j.hasSignature, signatureUrl: j.signatureUrl,
+        letterSigners: j.letterSigners || { kota: '', signers: [] },
+      };
+      suratMemoFieldsCache = j.memoFields || {};
+    }
+  }catch(e){ /* diam-diam gagal — panel pengaturan tetap bisa dibuka manual */ }
+}
+
+// Isi 4 kolom "Detail Memo" dari yang terakhir kali diketik untuk jenis
+// surat ini (kalau belum pernah, tetap kosong — nanti fallback ke bawaan
+// jenis suratnya sendiri di server).
+function applySuratMemoFieldsFromMemory(templateCode){
+  const f = suratMemoFieldsCache[templateCode] || {};
+  document.getElementById('suratMemoNoSurat').value = f.noSurat || '';
+  document.getElementById('suratMemoHal').value = f.hal || '';
+  document.getElementById('suratMemoReferensi').value = f.referensi || '';
+  // Budget belum diingat per jenis surat (biasanya beda tiap payout) —
+  // sengaja tidak diprefill, kosong tiap buka jenis surat yang sama.
+  document.getElementById('suratMemoBudgetType').value = '';
+  document.getElementById('suratMemoBudgetMtaCc').value = '';
+  renderMemoFieldOptions(templateCode, 'kepada');
+  renderMemoFieldOptions(templateCode, 'dari');
+  document.getElementById('suratMemoKepadaAddWrap').style.display = 'none';
+  document.getElementById('suratMemoDariAddWrap').style.display = 'none';
+}
+
+// Konfigurasi bersama buat Kepada & Dari — keduanya berperilaku sama
+// persis (dropdown dari daftar opsi yang terus terkumpul + tombol
+// "+ Tambah"), cuma beda id elemen & endpoint penyimpanannya.
+const MEMO_FIELD_UI = {
+  kepada: { selectId: 'suratMemoKepadaSelect', addWrapId: 'suratMemoKepadaAddWrap', newInputId: 'suratMemoKepadaNew', optionsKey: 'kepadaOptions', endpoint: 'kepada-option', label: 'Kepada' },
+  dari:   { selectId: 'suratMemoDariSelect',   addWrapId: 'suratMemoDariAddWrap',   newInputId: 'suratMemoDariNew',   optionsKey: 'dariOptions',   endpoint: 'dari-option',   label: 'Dari' },
+};
+
+// Dropdown ini nunjukin semua opsi (Kepada atau Dari) yang pernah dipakai
+// buat jenis surat ini (lihat saveMemoFieldMemory di server), dan
+// otomatis memilih yang terakhir dipakai.
+function renderMemoFieldOptions(templateCode, field, selected){
+  const ui = MEMO_FIELD_UI[field];
+  const f = suratMemoFieldsCache[templateCode] || {};
+  const options = Array.isArray(f[ui.optionsKey]) ? f[ui.optionsKey].slice() : [];
+  // Kompatibel dengan data lama (sebelum ada daftar opsi) yang cuma
+  // punya 1 nilai tersimpan — tetap masuk daftar biar tidak hilang.
+  if(f[field] && !options.includes(f[field])) options.push(f[field]);
+  const pilih = selected !== undefined ? selected : (f[field] || '');
+  const sel = document.getElementById(ui.selectId);
+  if(!options.length){
+    sel.innerHTML = `<option value="">— belum ada, klik "+ Tambah" —</option>`;
+    return;
+  }
+  sel.innerHTML = options.map(o=>`<option value="${escapeHtml(o)}">${escapeHtml(o)}</option>`).join('');
+  sel.value = pilih && options.includes(pilih) ? pilih : options[options.length-1];
+}
+
+function toggleTambahMemoField(field, show){
+  const ui = MEMO_FIELD_UI[field];
+  const wrap = document.getElementById(ui.addWrapId);
+  const willShow = show === undefined ? wrap.style.display === 'none' : show;
+  wrap.style.display = willShow ? 'flex' : 'none';
+  if(willShow){
+    document.getElementById(ui.newInputId).value = '';
+    document.getElementById(ui.newInputId).focus();
+  }
+}
+function toggleTambahKepada(show){ toggleTambahMemoField('kepada', show); }
+function toggleTambahDari(show){ toggleTambahMemoField('dari', show); }
+
+async function tambahMemoFieldBaru(field){
+  const ui = MEMO_FIELD_UI[field];
+  const tpl = suratState.selectedTemplate;
+  if(!tpl){ return; }
+  const templateCode = String(tpl.TEMPLATE_CODE||'').trim();
+  const nilaiBaru = document.getElementById(ui.newInputId).value.trim();
+  if(!nilaiBaru){ toast(`Ketik dulu ${ui.label}-nya.`); return; }
+  try{
+    const r = await fetch('/api/settings/memo-fields/' + ui.endpoint, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ templateCode, [field]: nilaiBaru }),
+    });
+    const j = await r.json();
+    if(!j.ok){ toast(j.error || 'Gagal menambahkan.'); return; }
+    suratMemoFieldsCache[templateCode] = j.fields;
+    renderMemoFieldOptions(templateCode, field, nilaiBaru);
+    toggleTambahMemoField(field, false);
+    renderSuratSummary();
+    toast(`${ui.label} baru ditambahkan.`);
+  }catch(e){
+    toast('Gagal terhubung ke server: ' + e.message);
+  }
+}
+async function tambahKepadaBaru(){ await tambahMemoFieldBaru('kepada'); }
+async function tambahDariBaru(){ await tambahMemoFieldBaru('dari'); }
+
+// Baca 4 kolom itu sebagai object siap dikirim ke server.
+function readSuratMemoFields(){
+  return {
+    noSurat: document.getElementById('suratMemoNoSurat').value.trim(),
+    hal: document.getElementById('suratMemoHal').value.trim(),
+    kepada: (document.getElementById('suratMemoKepadaSelect').value || '').trim(),
+    dari: (document.getElementById('suratMemoDariSelect').value || '').trim(),
+    referensi: document.getElementById('suratMemoReferensi').value.trim(),
+    budgetType: document.getElementById('suratMemoBudgetType').value.trim(),
+    budgetMtaCc: document.getElementById('suratMemoBudgetMtaCc').value.trim(),
+  };
+}
+
+// Terapkan ke templateConfig yang mau dikirim ke server — cuma menimpa
+// field yang memang diisi, biar yang kosong tetap jatuh ke bawaan jenis
+// surat itu (LETTER_DEFAULTS di server).
+function applySuratMemoFieldsToConfig(tpl, fields){
+  const out = { ...tpl };
+  if(fields.noSurat) out.NO_SURAT = fields.noSurat;
+  if(fields.hal) out.HEADER_VALUE_3 = fields.hal;
+  if(fields.kepada) out.MEMO_TO = fields.kepada;
+  if(fields.dari) out.MEMO_FROM = fields.dari;
+  if(fields.referensi) out.REFERENSI = fields.referensi;
+  if(fields.budgetType) out.BUDGET_TYPE = fields.budgetType;
+  if(fields.budgetMtaCc) out.BUDGET_MTA_CC = fields.budgetMtaCc;
+  return out;
+}
+
+// Simpan diam-diam ke server tiap kali preview/generate — jadi lain kali
+// buka jenis surat yang sama, "Detail Memo" sudah keisi otomatis. Gagal
+// simpan tidak menghentikan preview/generate-nya.
+async function rememberSuratMemoFields(templateCode, fields){
+  if(!fields.noSurat && !fields.hal && !fields.kepada && !fields.dari && !fields.referensi) return;
+  try{
+    const r = await fetch('/api/settings/memo-fields', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ templateCode, ...fields }),
+    });
+    const j = await r.json();
+    // Pakai balasan server (sudah termasuk kepadaOptions yang terkumpul),
+    // bukan "fields" lokal — supaya dropdown Kepada tidak kehilangan opsi
+    // lain yang sudah pernah tersimpan.
+    if(j.ok) suratMemoFieldsCache[templateCode] = j.fields;
+  }catch(e){ /* diam-diam gagal — tidak krusial */ }
+}
+
+// 4 baris nama+jabatan penandatangan — cukup untuk semua varian tanda
+// tangan yang ada (tunggal / grid 2x2 / tabel s.d. 4 orang).
+function renderSettingsSigners(){
+  const wrap = document.getElementById('settingsSignersWrap');
+  const signers = (suratSettingsCache.letterSigners && suratSettingsCache.letterSigners.signers) || [];
+  document.getElementById('settingsKota').value = (suratSettingsCache.letterSigners && suratSettingsCache.letterSigners.kota) || '';
+  wrap.innerHTML = [0,1,2,3].map(i=>{
+    const sg = signers[i] || {};
+    return `<div class="grid2" style="margin-top:${i===0?'0':'8'}px;">
+      <div class="field">
+        <label class="field-label">Nama penandatangan ${i+1}</label>
+        <input type="text" class="settingsSignerName" data-idx="${i}" value="${escapeHtml(sg.name||'')}" placeholder="mis. Nama Lengkap">
+      </div>
+      <div class="field">
+        <label class="field-label">Jabatan penandatangan ${i+1}</label>
+        <input type="text" class="settingsSignerTitle" data-idx="${i}" value="${escapeHtml(sg.title||'')}" placeholder="mis. Head of Sales Performance">
+      </div>
+      <div class="field">
+        <label class="field-label">NIK penandatangan ${i+1} <span style="font-weight:400;color:#94a3b8;">(opsional)</span></label>
+        <input type="text" class="settingsSignerNik" data-idx="${i}" value="${escapeHtml(sg.nik||'')}" placeholder="mis. 84055809">
+      </div>
+      <div class="field">
+        <label class="field-label">Keterangan tanda tangan ${i+1} <span style="font-weight:400;color:#94a3b8;">(opsional)</span></label>
+        <input type="text" class="settingsSignerRole" data-idx="${i}" value="${escapeHtml(sg.role||'')}" placeholder="${i===0?'bawaan: Proposed by:':'bawaan: Approved by:'}">
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function openSuratSettingsModal(){
+  document.getElementById('settingsError').textContent = '';
+  document.getElementById('settingsError').classList.remove('show');
+  suratSignaturePendingBase64 = null;
+  document.getElementById('settingsApproverEmail').value = suratSettingsCache.approverEmail || '';
+  renderSettingsSignaturePreview();
+  renderSettingsSigners();
+  document.getElementById('suratSettingsModal').style.display = 'flex';
+  // refresh dari server tiap kali dibuka, biar gak ketinggalan kalau
+  // diubah dari device lain
+  loadSuratSettingsCache().then(()=>{
+    document.getElementById('settingsApproverEmail').value = suratSettingsCache.approverEmail || '';
+    renderSettingsSignaturePreview();
+    renderSettingsSigners();
+  });
+}
+
+async function saveSuratLetterSigners(){
+  showSettingsError('');
+  const kota = document.getElementById('settingsKota').value.trim();
+  const names = Array.from(document.querySelectorAll('.settingsSignerName'));
+  const titles = Array.from(document.querySelectorAll('.settingsSignerTitle'));
+  const niks = Array.from(document.querySelectorAll('.settingsSignerNik'));
+  const roles = Array.from(document.querySelectorAll('.settingsSignerRole'));
+  const signers = names.map((el,i)=>({
+    name: el.value.trim(),
+    title: (titles[i]?.value||'').trim(),
+    nik: (niks[i]?.value||'').trim(),
+    role: (roles[i]?.value||'').trim(),
+  })).filter(sg=>sg.name || sg.title);
+  const btn = document.getElementById('settingsSignersSaveBtn');
+  btn.disabled = true; btn.textContent = 'Menyimpan…';
+  try{
+    const r = await fetch('/api/settings/letter-signers', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ kota, signers }),
+    });
+    const j = await r.json();
+    if(!j.ok){ showSettingsError(j.error || 'Gagal menyimpan.'); return; }
+    suratSettingsCache.letterSigners = j.letterSigners;
+    toast('Kota & penandatangan disimpan.');
+  }catch(e){
+    showSettingsError('Gagal terhubung ke server: ' + e.message);
+  }finally{
+    btn.disabled = false; btn.textContent = 'Simpan Kota & Penandatangan';
+  }
+}
+function closeSuratSettingsModal(){
+  document.getElementById('suratSettingsModal').style.display = 'none';
+}
+
+function renderSettingsSignaturePreview(){
+  const wrap = document.getElementById('settingsSignaturePreviewWrap');
+  const delBtn = document.getElementById('settingsSignatureDeleteBtn');
+  if(suratSettingsCache.hasSignature && suratSettingsCache.signatureUrl){
+    wrap.innerHTML = `<img src="${suratSettingsCache.signatureUrl}" alt="Tanda tangan tersimpan" style="max-height:70px; max-width:220px; background:#fff; border-radius:8px; padding:6px; border:1px solid var(--line2);">`;
+    delBtn.style.display = 'inline-flex';
+  } else {
+    wrap.textContent = 'Belum ada tanda tangan tersimpan.';
+    delBtn.style.display = 'none';
+  }
+}
+
+function showSettingsError(msg){
+  const el = document.getElementById('settingsError');
+  el.textContent = msg || '';
+  el.classList.toggle('show', Boolean(msg));
+}
+
+async function saveSuratApprover(){
+  const email = document.getElementById('settingsApproverEmail').value.trim();
+  showSettingsError('');
+  if(!email){ showSettingsError('Isi alamat email dulu.'); return; }
+  const btn = document.getElementById('settingsApproverSaveBtn');
+  btn.disabled = true; btn.textContent = 'Menyimpan…';
+  try{
+    const r = await fetch('/api/settings/approver', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email }),
+    });
+    const j = await r.json();
+    if(!j.ok){ showSettingsError(j.error || 'Gagal menyimpan.'); return; }
+    suratSettingsCache.approverEmail = j.approverEmail;
+    toast('Approver disimpan.');
+    renderSuratSummary();
+  }catch(e){
+    showSettingsError('Gagal terhubung ke server: ' + e.message);
+  }finally{
+    btn.disabled = false; btn.textContent = 'Simpan Approver';
+  }
+}
+
+document.getElementById('settingsSignatureFile').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    suratSignaturePendingBase64 = ev.target.result; // data:image/...;base64,....
+    document.getElementById('settingsSignaturePreviewWrap').innerHTML =
+      `<img src="${suratSignaturePendingBase64}" alt="Preview tanda tangan baru" style="max-height:70px; max-width:220px; background:#fff; border-radius:8px; padding:6px; border:1px solid var(--line2);"> <span class="hint">(belum disimpan — klik "Simpan Tanda Tangan")</span>`;
+  };
+  reader.readAsDataURL(file);
+});
+
+async function saveSuratSignature(){
+  showSettingsError('');
+  if(!suratSignaturePendingBase64){ showSettingsError('Pilih file gambar tanda tangan dulu.'); return; }
+  const btn = document.getElementById('settingsSignatureSaveBtn');
+  btn.disabled = true; btn.textContent = 'Menyimpan…';
+  try{
+    const r = await fetch('/api/settings/signature', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ imageBase64: suratSignaturePendingBase64 }),
+    });
+    const j = await r.json();
+    if(!j.ok){ showSettingsError(j.error || 'Gagal menyimpan.'); return; }
+    suratSettingsCache.hasSignature = true;
+    suratSettingsCache.signatureUrl = j.signatureUrl;
+    suratSignaturePendingBase64 = null;
+    document.getElementById('settingsSignatureFile').value = '';
+    renderSettingsSignaturePreview();
+    toast('Tanda tangan disimpan.');
+  }catch(e){
+    showSettingsError('Gagal terhubung ke server: ' + e.message);
+  }finally{
+    btn.disabled = false; btn.textContent = 'Simpan Tanda Tangan';
+  }
+}
+
+async function deleteSuratSignature(){
+  showSettingsError('');
+  const btn = document.getElementById('settingsSignatureDeleteBtn');
+  btn.disabled = true;
+  try{
+    const r = await fetch('/api/settings/signature', { method:'DELETE' });
+    const j = await r.json();
+    if(!j.ok){ showSettingsError(j.error || 'Gagal menghapus.'); return; }
+    suratSettingsCache.hasSignature = false;
+    suratSettingsCache.signatureUrl = null;
+    renderSettingsSignaturePreview();
+    toast('Tanda tangan dihapus.');
+  }catch(e){
+    showSettingsError('Gagal terhubung ke server: ' + e.message);
+  }finally{
+    btn.disabled = false;
+  }
+}
+
+const suratDropzone = document.getElementById('suratDropzone');
+const suratFileInput = document.getElementById('suratFileInput');
+suratDropzone.addEventListener('click', ()=>suratFileInput.click());
+suratDropzone.addEventListener('dragover', e=>{ e.preventDefault(); suratDropzone.classList.add('drag'); });
+suratDropzone.addEventListener('dragleave', ()=> suratDropzone.classList.remove('drag'));
+suratDropzone.addEventListener('drop', e=>{
+  e.preventDefault(); suratDropzone.classList.remove('drag');
+  if(e.dataTransfer.files.length) handleSuratFile(e.dataTransfer.files[0]);
+});
+suratFileInput.addEventListener('change', e=>{
+  if(e.target.files.length) handleSuratFile(e.target.files[0]);
+});
+
+function showSuratError(msg){
+  const el = document.getElementById('suratError');
+  el.textContent = msg || '';
+  el.classList.toggle('show', Boolean(msg));
+}
+
+function handleSuratFile(file){
+  showSuratError('');
+  const reader = new FileReader();
+  reader.onload = (e)=>{
+    try{
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, {type:'array'});
+
+      // Jenis surat dikenali langsung dari nama sheet-nya — cocokkan tiap
+      // sheet di file terhadap 5 jenis surat yang didukung mesin (nama
+      // dari /api/letters/templates-supported). Tidak ada pendaftaran
+      // manual, tidak ada sheet TEMPLATE_SURAT: nama sheet ITU adalah
+      // jenis suratnya.
+      const namaKeKode = {};
+      SURAT_SUPPORTED_CODES.forEach(code=>{
+        namaKeKode[normalizeSuratName(SURAT_TYPE_NAMES[code] || code)] = code;
+        namaKeKode[normalizeSuratName(code)] = code;
+      });
+      const templates = [];
+      wb.SheetNames.forEach(sheetName=>{
+        const code = namaKeKode[normalizeSuratName(sheetName)];
+        if(!code) return;
+        const aggregate = Boolean((SURAT_TYPE_META[code]||{}).aggregate);
+        templates.push({
+          TEMPLATE_CODE: code,
+          LETTER_NAME: SURAT_TYPE_NAMES[code] || code,
+          SOURCE_SHEET: sheetName,
+          // IOM (aggregate) berhenti setelah approval — surat ke mitra
+          // (Pemberitahuan/BAST) lanjut dikirim ke tiap penerima.
+          ALUR: aggregate ? 'approval_saja' : 'approval_lalu_blast',
+        });
+      });
+
+      if(!templates.length){
+        showSuratError(
+          `Tidak ada sheet di file ini yang namanya cocok dengan salah satu dari ${SURAT_SUPPORTED_CODES.length} jenis surat yang didukung: ` +
+          SURAT_SUPPORTED_CODES.map(c=>SURAT_TYPE_NAMES[c]||c).join(', ') +
+          '. Ganti nama sheet-nya persis salah satu dari daftar itu, lalu upload ulang.'
+        );
+        return;
+      }
+
+      suratState.workbook = wb;
+      suratState.fileName = file.name;
+      suratState.templates = templates;
+
+      document.getElementById('suratFileInfo').innerHTML =
+        `<div class="filebar"><div><b>${escapeHtml(file.name)}</b></div>` +
+        `<div class="stat">${wb.SheetNames.length} sheet · ${templates.length} jenis surat terdeteksi</div></div>`;
+      const sdz = document.getElementById('suratDropzone');
+      sdz.classList.add('has-file');
+      const sdzCta = sdz.querySelector('.cta');
+      if(sdzCta) sdzCta.textContent = 'Klik untuk ganti file';
+      renderSuratTemplateSelect();
+      document.getElementById('suratStep1Actions').style.display = 'flex';
+    }catch(err){
+      showSuratError('Gagal membaca file: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// Dropdown ini sekarang cuma berisi jenis surat yang sheet datanya BENAR-
+// BENAR ada di file yang lagi diupload (lihat handleSuratFile) — jadi tidak
+// ada lagi opsi "belum didukung" atau "sheet belum ada di file ini".
+function renderSuratTemplateSelect(){
+  const sel = document.getElementById('suratTemplateSelect');
+  sel.innerHTML = suratState.templates.map((t,i)=>
+    `<option value="${i}">${escapeHtml(t.LETTER_NAME)} (sheet: ${escapeHtml(t.SOURCE_SHEET)})</option>`
+  ).join('');
+  sel.onchange = onSuratTemplateChange;
+  sel.value = 0;
+  onSuratTemplateChange();
+}
+
+function onSuratTemplateChange(){
+  const sel = document.getElementById('suratTemplateSelect');
+  const idx = Number(sel.value);
+  const tpl = suratState.templates[idx];
+  suratState.selectedTemplate = tpl;
+  // Jumlah tahap ikut jenis surat yang dipilih — memo internal berhenti di
+  // tahap 3, surat ke mitra lanjut ke tahap 4.
+  renderStepsNav();
+  document.getElementById('suratTemplateNote').textContent = '';
+  showSuratError('');
+  document.getElementById('suratStep2NextBtn').disabled = false;
+  const aggregate = Boolean((SURAT_TYPE_META[String(tpl.TEMPLATE_CODE||'').trim()]||{}).aggregate);
+  document.getElementById('suratMemoFieldsSection').style.display = aggregate ? 'block' : 'none';
+  if(aggregate) applySuratMemoFieldsFromMemory(String(tpl.TEMPLATE_CODE||'').trim());
+  loadSuratDataSheet();
+}
+
+function loadSuratDataSheet(){
+  const wb = suratState.workbook;
+  const tpl = suratState.selectedTemplate;
+  const dataSheetSelect = document.getElementById('suratDataSheetSelect');
+  dataSheetSelect.innerHTML = wb.SheetNames.map(n=>`<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+  dataSheetSelect.value = tpl.SOURCE_SHEET;
+  dataSheetSelect.onchange = ()=>applySuratDataSheet(dataSheetSelect.value);
+  applySuratDataSheet(tpl.SOURCE_SHEET);
+  document.getElementById('suratDataSection').style.display = 'block';
+}
+
+function applySuratDataSheet(sheetName){
+  const wb = suratState.workbook;
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], {defval:''});
+  suratState.dataSheetName = sheetName;
+  suratState.dataRows = rows;
+  suratState.dataColumns = rows.length ? Object.keys(rows[0]) : [];
+  suratState.selectedRows = new Set(rows.map((_,i)=>i));
+  const periodeInput = document.getElementById('suratPeriode');
+  if(!periodeInput.value && rows.length){
+    const periodCol = suratState.dataColumns.find(c => /period/i.test(c));
+    if(periodCol && rows[0][periodCol]) periodeInput.value = String(rows[0][periodCol]);
+  }
+  document.getElementById('suratDataInfo').textContent = `${rows.length} baris data ditemukan di sheet "${sheetName}".`;
+  renderSuratDataPreview();
+}
+
+function renderSuratDataPreview(){
+  const cols = suratState.dataColumns;
+  const rows = suratState.dataRows;
+  const wrap = document.getElementById('suratDataPreviewWrap');
+  updateSuratRowSelCount();
+  if(!rows.length){ wrap.innerHTML = ''; return; }
+  const allChecked = suratState.selectedRows.size === rows.length;
+  let html = '<div class="scrollx" style="max-height:280px; overflow-y:auto;"><table class="raw"><thead><tr>' +
+    `<th><input type="checkbox" id="suratSelectAllCheck" ${allChecked ? 'checked' : ''} onchange="setAllSuratRows(this.checked)"></th>` +
+    cols.map(c=>`<th>${escapeHtml(c)}</th>`).join('') + '</tr></thead><tbody>';
+  rows.forEach((r,i)=>{
+    html += `<tr><td><input type="checkbox" class="suratRowCheck" ${suratState.selectedRows.has(i)?'checked':''} onchange="toggleSuratRow(${i}, this.checked)"></td>` +
+      cols.map(c=>`<td>${escapeHtml(String(r[c]))}</td>`).join('') + '</tr>';
+  });
+  html += '</tbody></table></div>';
+  wrap.innerHTML = html;
+}
+
+function updateSuratRowSelCount(){
+  const el = document.getElementById('suratRowSelCount');
+  if(el) el.textContent = `${suratState.selectedRows.size} dari ${suratState.dataRows.length} baris dipilih`;
+}
+
+function toggleSuratRow(idx, checked){
+  if(checked) suratState.selectedRows.add(idx); else suratState.selectedRows.delete(idx);
+  updateSuratRowSelCount();
+  const allCheck = document.getElementById('suratSelectAllCheck');
+  if(allCheck) allCheck.checked = suratState.selectedRows.size === suratState.dataRows.length;
+}
+
+function setAllSuratRows(checked){
+  suratState.selectedRows = checked ? new Set(suratState.dataRows.map((_,i)=>i)) : new Set();
+  renderSuratDataPreview();
+}
+
+function suratLetterFilename(tpl, row, seq){
+  const code = String(tpl.TEMPLATE_CODE||'SURAT').trim();
+  const idPart = String(row.ID || seq).trim();
+  const namePart = String(row.PARTNER_NAME || row.PT_NAME || '').trim();
+  const safe = (s)=> s.replace(/[^a-zA-Z0-9_-]+/g,'_').replace(/^_+|_+$/g,'');
+  return `Surat_${safe(code)}_${safe(idPart)}${namePart ? '_'+safe(namePart) : ''}.pdf`;
+}
+
+async function fetchSuratPdf(tpl, row, seq){
+  const r = await fetch('/api/letters/generate', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      templateConfig: tpl,
+      row,
+      batchMeta: { periode: document.getElementById('suratPeriode').value || '' },
+      seq,
+    }),
+  });
+  if(!r.ok){
+    let msg = 'HTTP ' + r.status;
+    try{ const j = await r.json(); if(j.error) msg = j.error; }catch(e){}
+    throw new Error(msg);
+  }
+  return r.arrayBuffer();
+}
+
+// Jenis surat "aggregate" (IOM) satu dokumennya merangkum BANYAK baris —
+// preview-nya harus kirim semua baris yang dipilih, bukan cuma 1 baris.
+async function fetchSuratMemoPdf(tpl, rows){
+  const r = await fetch('/api/letters/generate', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      templateConfig: tpl,
+      rows,
+      batchMeta: { periode: document.getElementById('suratPeriode').value || '' },
+    }),
+  });
+  if(!r.ok){
+    let msg = 'HTTP ' + r.status;
+    try{ const j = await r.json(); if(j.error) msg = j.error; }catch(e){}
+    throw new Error(msg);
+  }
+  return r.arrayBuffer();
+}
+
+function renderSuratSummary(){
+  const tpl = suratState.selectedTemplate;
+  const box = document.getElementById('suratSummary');
+  if(!tpl){ box.innerHTML = '⚠️ Belum ada template surat yang dipilih.'; return; }
+  const previewBtn = document.getElementById('suratPreviewBtn');
+  if(previewBtn) previewBtn.textContent = isSelectedTemplateAggregate() ? '👁 Preview Memo' : '👁 Preview Satu Surat';
+  const letterLabel = tpl.LETTER_NAME || tpl.TEMPLATE_CODE || '';
+  const periode = document.getElementById('suratPeriode').value || '(belum diisi)';
+  const rows = [
+    ['File', escapeHtml(suratState.fileName || '-')],
+    ['Template', escapeHtml(letterLabel)],
+    ['Sheet data', escapeHtml(suratState.dataSheetName || '-')],
+    ['Periode', escapeHtml(periode)],
+    ['Baris dipilih', `${suratState.selectedRows.size} dari ${suratState.dataRows.length}`],
+    ['Dikirim ke approver', suratSettingsCache.approverEmail ? escapeHtml(suratSettingsCache.approverEmail) : '<span style="color:var(--bad-ink);">belum diatur — klik ⚙️ di pojok atas</span>'],
+    // Baris ini menjawab pertanyaan "habis ini apa?" — beda jenis surat,
+    // beda ujung prosesnya.
+    ['Setelah disetujui', String(tpl.ALUR || '').trim().toLowerCase() === 'approval_lalu_blast'
+      ? 'Lanjut Tahap 4 — dikirim ke tiap penerima beserta PDF ber-TTD'
+      : 'Selesai — surat ini tidak dikirim ke penerima (alur: approval saja)'],
+  ];
+  box.innerHTML = rows.map(([k,v]) => `<div class="surat-summary-row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
+}
+
+function isSelectedTemplateAggregate(){
+  const tpl = suratState.selectedTemplate;
+  return Boolean(tpl && (SURAT_TYPE_META[String(tpl.TEMPLATE_CODE||'').trim()]||{}).aggregate);
+}
+
+async function previewOneSurat(){
+  const tpl = suratState.selectedTemplate;
+  const allRows = suratState.dataRows;
+  const idxList = Array.from(suratState.selectedRows);
+  if(!tpl){ showSuratError('Pilih template surat dulu.'); return; }
+  if(!idxList.length){
+    showSuratError('Belum ada baris data yang dipilih untuk preview.');
+    return;
+  }
+  showSuratError('');
+  const btn = document.getElementById('suratPreviewBtn');
+  const aggregate = isSelectedTemplateAggregate();
+  btn.disabled = true; btn.textContent = 'Membuat preview...';
+  try{
+    // Detail Memo (Kepada/Dari/Hal/Nomor) yang diketik di tahap 2 ikut
+    // dipakai di preview juga, dan otomatis diingat buat lain kali.
+    const templateCode = String(tpl.TEMPLATE_CODE||'').trim();
+    let tplToSend = tpl;
+    if(aggregate){
+      const fields = readSuratMemoFields();
+      tplToSend = applySuratMemoFieldsToConfig(tpl, fields);
+      rememberSuratMemoFields(templateCode, fields);
+    }
+    // Memo IOM: satu dokumen merangkum SEMUA baris yang dipilih — beda dari
+    // surat ke mitra yang cukup 1 baris buat contoh.
+    const buf = aggregate
+      ? await fetchSuratMemoPdf(tplToSend, idxList.map(i=>allRows[i]))
+      : await fetchSuratPdf(tpl, allRows[idxList[0]], 1);
+    const blob = new Blob([buf], {type:'application/pdf'});
+    window.open(URL.createObjectURL(blob), '_blank');
+  }catch(e){
+    showSuratError('Gagal generate preview: ' + e.message);
+  }finally{
+    btn.disabled = false; btn.textContent = aggregate ? '\u{1F441} Preview Memo' : '\u{1F441} Preview Satu Surat';
+  }
+}
+
+async function generateAllSurat(){
+  const tpl = suratState.selectedTemplate;
+  const rows = suratState.dataRows;
+  const idxList = Array.from(suratState.selectedRows);
+  if(!tpl){ showSuratError('Pilih template surat dulu.'); return; }
+  if(!idxList.length){ showSuratError('Belum ada baris data yang dipilih.'); return; }
+
+  showSuratError('');
+  const genBtn = document.getElementById('suratGenerateBtn');
+  const prevBtn = document.getElementById('suratPreviewBtn');
+  genBtn.disabled = true; prevBtn.disabled = true;
+  const progress = document.getElementById('suratProgress');
+  progress.textContent = `Membuat ${idxList.length} surat & mengirim email approval...`;
+
+  try{
+    const selectedRows = idxList.map(idx => rows[idx]);
+    // Sama seperti preview: Detail Memo (Kepada/Dari/Hal/Nomor) ikut
+    // dipakai di batch final, dan diingat lagi buat lain kali.
+    let templateConfigToSend = tpl;
+    if(isSelectedTemplateAggregate()){
+      const templateCode = String(tpl.TEMPLATE_CODE||'').trim();
+      const fields = readSuratMemoFields();
+      templateConfigToSend = applySuratMemoFieldsToConfig(tpl, fields);
+      rememberSuratMemoFields(templateCode, fields);
+    }
+    const r = await fetch('/api/letters/batches', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        templateConfig: templateConfigToSend,
+        rows: selectedRows,
+        batchMeta: { periode: document.getElementById('suratPeriode').value || '' },
+      }),
+    });
+    const j = await r.json();
+    if(!j.ok){
+      progress.textContent = '';
+      showSuratError(j.error || ('HTTP ' + r.status));
+      toast('Gagal generate & kirim approval.');
+      return;
+    }
+    if(j.emailSent){
+      // Tahap berikutnya (blast ke penerima) baru terbuka setelah approver
+      // menyetujui, jadi di sini cukup ditunjukkan jalan masuknya — bukan
+      // tombol lanjut yang belum bisa dipakai.
+      progress.innerHTML = `✅ ${j.total} surat berhasil dibuat. Email approval terkirim ke approver.<br>` +
+        `Setelah disetujui, buka <b>📋 Daftar Surat</b> untuk mengirim suratnya ke masing-masing penerima ` +
+        `— <button type="button" class="link-btn" onclick="openSuratBatchList()">buka daftar sekarang</button>.`;
+      toast(`${j.total} surat dibuat, email approval terkirim.`);
+    } else {
+      progress.textContent = `⚠️ ${j.total} surat berhasil dibuat & disimpan, TAPI email approval gagal terkirim (${j.emailError || 'tidak diketahui'}). Link approval: ${j.approveUrl}`;
+      toast('Surat dibuat, tapi email approval gagal terkirim — cek link manual di bawah.');
+    }
+  }catch(e){
+    progress.textContent = '';
+    showSuratError('Gagal terhubung ke server: ' + e.message);
+  }finally{
+    genBtn.disabled = false; prevBtn.disabled = false;
+  }
+}
+
+/* ==================== TAHAP 4: BLAST SURAT ====================
+ * Lanjutan setelah approver menyetujui. PDF di server SUDAH ber-tanda
+ * tangan (ditempel otomatis saat approve), jadi tahap ini murni soal
+ * mengirim: kelompokkan penerima, susun narasi, lalu kirim satu per satu
+ * dengan PDF-nya sebagai lampiran.
+ *
+ * Alurnya sengaja dibikin kembar dengan Blast Email Report — daftar
+ * penerima di kiri, preview email di kanan, kirim satu / kirim semua
+ * dengan jeda dan log. Bedanya cuma dua: isi emailnya narasi saja (tanpa
+ * tabel data), dan tiap email membawa lampiran PDF.
+ */
+let blastState = {
+  batch: null,      // record batch surat yang sedang dibuka
+  items: [],        // surat-surat di batch itu (dari /detail)
+  groupMode: 'grouped',
+  groups: [],       // hasil pengelompokan — inilah satuan "1 email"
+  activeIndex: 0,
+  search: '',
+};
+
+function setBlastGroupMode(mode){
+  blastState.groupMode = mode;
+  buildBlastGroups();
+  blastState.activeIndex = 0;
+  renderBlastRecipients();
+  renderBlastPreview();
+}
+
+/* Kelompokkan surat jadi satuan kiriman.
+ * - grouped    : kunci = gabungan alamat tujuan, jadi satu penerima cuma
+ *                dapat satu email walau suratnya beberapa.
+ * - per-letter : tiap surat berdiri sendiri.
+ * Surat tanpa alamat email tetap dimasukkan tapi ditandai, supaya
+ * ketahuan di layar — bukan diam-diam dilewati. */
+function buildBlastGroups(){
+  const items = blastState.items || [];
+  if(blastState.groupMode === 'per-letter'){
+    blastState.groups = items.map(it=>({
+      key: 'seq-' + it.seq,
+      name: it.partnerName || it.rowId || it.filename,
+      emails: it.emailTo, ccs: it.emailCc,
+      items: [it],
+    }));
+    return;
+  }
+  const map = new Map();
+  items.forEach(it=>{
+    const key = (it.emailTo.slice().sort().join(';') || '(tanpa-email)') + '|' + (it.emailCc.slice().sort().join(';'));
+    if(!map.has(key)){
+      map.set(key, { key, name: it.partnerName || it.rowId || it.filename, emails: it.emailTo, ccs: it.emailCc, items: [] });
+    }
+    map.get(key).items.push(it);
+  });
+  blastState.groups = Array.from(map.values());
+}
+
+function blastGroupStatus(group){
+  const st = group.items.map(i=>i.blastStatus);
+  if(st.every(s=>s === 'sent')) return 'sent';
+  if(st.some(s=>s === 'failed')) return 'failed';
+  return 'pending';
+}
+
+function renderBlastRecipients(){
+  const wrap = document.getElementById('blastRecipientItems');
+  const q = (blastState.search || '').toLowerCase();
+  const list = blastState.groups
+    .map((g,i)=>({ g, i }))
+    .filter(({g})=> !q || g.name.toLowerCase().includes(q) || g.emails.join(' ').toLowerCase().includes(q));
+
+  document.getElementById('blastRecipientCount').textContent =
+    `${blastState.groups.length} penerima · ${blastState.items.length} surat`;
+
+  if(!list.length){
+    wrap.innerHTML = '<div class="rl-empty">Tidak ada penerima yang cocok.</div>';
+    return;
+  }
+  wrap.innerHTML = list.map(({g,i})=>{
+    const status = blastGroupStatus(g);
+    const mark = status === 'sent' ? ' ✅' : status === 'failed' ? ' ❌' : '';
+    const emailLabel = g.emails.length ? g.emails.join(', ') : '⚠️ tidak ada alamat email';
+    return `<div class="recipient-item${i===blastState.activeIndex?' active':''}" onclick="selectBlastGroup(${i})">
+      <div class="rname">${escapeHtml(g.name)}${mark}</div>
+      <div class="rmeta">${g.items.length} surat · ${escapeHtml(emailLabel)}</div>
+    </div>`;
+  }).join('');
+}
+
+function selectBlastGroup(i){
+  blastState.activeIndex = i;
+  renderBlastRecipients();
+  renderBlastPreview();
+}
+
+/* Isi token narasi. Selain token umum, nilai kolom Excel baris pertama di
+ * grup ini juga bisa dipakai — sama seperti di Blast Email Report. */
+function fillBlastTemplate(tpl, group){
+  const batch = blastState.batch || {};
+  let out = String(tpl || '')
+    .replaceAll('{nama}', group.name)
+    .replaceAll('{judul}', batch.letter_name || batch.template_code || 'Surat')
+    .replaceAll('{periode}', batch.periode || '-')
+    .replaceAll('{jumlah}', String(group.items.length));
+  const firstRow = group.items[0] && group.items[0].rowData;
+  if(firstRow){
+    Object.keys(firstRow).forEach(col=>{
+      const tok = '{' + col + '}';
+      if(out.includes(tok)) out = out.split(tok).join(String(firstRow[col] ?? ''));
+    });
+  }
+  return out;
+}
+
+function currentBlastNarrative(){
+  return {
+    subjectTpl: document.getElementById('blastSubject').value,
+    intro: document.getElementById('blastIntro').value,
+    closing: document.getElementById('blastClosing').value,
+    groupMode: blastState.groupMode,
+  };
+}
+
+/* Isi email untuk satu penerima. Sengaja tanpa tabel data — yang dikirim
+ * adalah suratnya, jadi badan email cukup pengantar. */
+function buildBlastEmailHtml(group){
+  const n = currentBlastNarrative();
+  const pStyle = 'font-family:Arial,Helvetica,sans-serif;font-size:13.5px;color:#4D4D4F;line-height:1.65;margin:0 0 14px 0;';
+  const para = (txt)=> String(txt || '').split('\n\n')
+    .map(p=>`<p style="${pStyle}">${escapeHtml(p).replace(/\n/g,'<br>')}</p>`).join('');
+  const fileList = group.items.map(it=>
+    `<li style="${pStyle}margin:0 0 4px 0;">${escapeHtml(it.filename)}</li>`).join('');
+  return `<div style="font-family:Arial,Helvetica,sans-serif;">
+    ${para(fillBlastTemplate(n.intro, group))}
+    <p style="${pStyle}margin:0 0 6px 0;"><b>Surat terlampir:</b></p>
+    <ul style="margin:0 0 14px 0;padding-left:20px;">${fileList}</ul>
+    ${para(fillBlastTemplate(n.closing, group))}
+  </div>`;
+}
+
+function renderBlastPreview(){
+  const card = document.getElementById('blastMailCard');
+  if(!blastState.groups.length){
+    card.innerHTML = '<div class="rl-empty" style="padding:40px 20px;">Belum ada batch surat yang dibuka.</div>';
+    return;
+  }
+  const group = blastState.groups[blastState.activeIndex] || blastState.groups[0];
+  const subject = fillBlastTemplate(currentBlastNarrative().subjectTpl, group);
+  const toChips = group.emails.length
+    ? group.emails.map(e=>`<span class="chip">${escapeHtml(e)}</span>`).join('')
+    : '<span class="chip" style="color:var(--bad-ink);border-color:var(--bad-bd);background:var(--bad-bg);">tidak ada alamat email</span>';
+  const ccRow = group.ccs.length
+    ? `<div class="mm-row"><span class="mm-label">Cc</span><div class="mm-chips">${group.ccs.map(e=>`<span class="chip">${escapeHtml(e)}</span>`).join('')}</div></div>`
+    : '';
+  const attachments = group.items.map(it=>
+    it.previewUrl
+      ? `<a class="attach-chip" href="${it.previewUrl}" target="_blank" rel="noopener" title="Buka PDF ini di tab baru">📎 <span class="ac-name">${escapeHtml(it.filename)}</span></a>`
+      : `<span class="attach-chip">📎 <span class="ac-name">${escapeHtml(it.filename)}</span></span>`
+  ).join('');
+
+  // Alamat pengirim dibaca dari field terkunci yang sudah diisi server —
+  // BUKAN dari state.sender, karena state itu baru terisi kalau alur Blast
+  // Email Report dijalankan sampai tahap 2, sedangkan layar ini bisa dibuka
+  // langsung dari Daftar Surat tanpa menyentuh alur email sama sekali.
+  const senderName = (document.getElementById('senderName') || {}).value || '';
+  const senderEmail = (document.getElementById('senderEmail') || {}).value || '';
+
+  card.innerHTML = `
+    <div class="mail-toolbar">
+      <div class="subject">${escapeHtml(subject)}</div>
+      <span class="badge">${blastState.activeIndex+1} / ${blastState.groups.length}</span>
+    </div>
+    <div class="mail-header">
+      <div class="avatar">${initials(senderName || senderEmail || 'SP')}</div>
+      <div style="flex:1; min-width:0;">
+        <div class="from">${escapeHtml(senderName || senderEmail || 'Pengirim')}</div>
+        <div class="fromaddr">${escapeHtml(senderEmail)}</div>
+        <div class="mail-meta">
+          <div class="mm-row"><span class="mm-label">To</span><div class="mm-chips">${toChips}</div></div>
+          ${ccRow}
+        </div>
+      </div>
+    </div>
+    <div class="attach-row">${attachments}</div>
+    <div class="mail-body">${buildBlastEmailHtml(group)}</div>`;
+}
+
+/* ---------- Daftar batch surat (pintu masuk tahap blast) ---------- */
+function openSuratBatchList(){
+  document.getElementById('suratBatchListModal').style.display = 'flex';
+  renderSuratBatchList();
+}
+function closeSuratBatchList(){
+  document.getElementById('suratBatchListModal').style.display = 'none';
+}
+
+/* Tidak semua jenis surat berakhir di pengiriman ke mitra. Memo internal
+   (IOM Payout, IOM Permohonan/Reva) alurnya "approval_saja" — begitu
+   disetujui approver, urusannya selesai. Yang boleh lanjut ke tahap blast
+   cuma yang alurnya "approval_lalu_blast" (Surat Pemberitahuan, BAST). */
+function batchBolehBlast(b){
+  return b.status === 'approved' && b.alur === 'approval_lalu_blast';
+}
+
+function suratBatchStatusBadge(b){
+  if(b.status === 'pending_approval') return '<span class="archive-badge pending">⏳ Menunggu approval</span>';
+  if(b.status === 'rejected') return '<span class="archive-badge rejected">❌ Ditolak</span>';
+  // Disetujui, tapi alurnya memang berhenti di sini.
+  if(b.alur !== 'approval_lalu_blast') return '<span class="archive-badge completed">✅ Disetujui — selesai (tanpa blast)</span>';
+  if(b.blast_status === 'sent') return '<span class="archive-badge completed">📤 Sudah dikirim ke penerima</span>';
+  if(b.blast_status === 'partial') return '<span class="archive-badge partial">📤 Terkirim sebagian</span>';
+  return '<span class="archive-badge completed">✅ Disetujui — siap di-blast</span>';
+}
+
+async function renderSuratBatchList(){
+  const body = document.getElementById('suratBatchListBody');
+  body.innerHTML = '<div class="picker-empty">Memuat…</div>';
+  try{
+    const r = await fetch('/api/letters/batches');
+    const j = await r.json();
+    if(!j.ok) throw new Error(j.error || 'gagal memuat');
+    const batches = j.batches || [];
+    if(!batches.length){
+      body.innerHTML = '<div class="picker-empty">Belum ada batch surat. Generate dulu lewat Tahap 1–3.</div>';
+      return;
+    }
+    body.innerHTML = '<div class="picker-list">' + batches.map(b=>{
+      const when = b.created_at ? new Date(b.created_at).toLocaleString('id-ID', {day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit'}) : '';
+      const canBlast = batchBolehBlast(b);
+      const alurLabel = b.alur === 'approval_lalu_blast' ? 'approval → blast' : 'approval saja';
+      const sub = `${b.total_items} surat${b.periode ? ' · ' + escapeHtml(b.periode) : ''} · ${escapeHtml(when)} · alur: ${alurLabel}`;
+      const sent = (b.blast_success_count || 0);
+      const sentInfo = sent ? ` · ${sent} sudah terkirim` : '';
+      return `<div class="picker-item"${canBlast ? ` onclick="openBlastForBatch('${b.id}')"` : ' style="cursor:default;"'}>
+        <div class="pi-main">
+          <div class="pi-title">${escapeHtml(b.letter_name || b.template_code)}</div>
+          <div class="pi-sub">${sub}${sentInfo}</div>
+        </div>
+        <div style="display:flex; align-items:center; gap:10px; flex-shrink:0;">
+          ${suratBatchStatusBadge(b)}
+          ${canBlast ? '<span class="btn btn-primary" style="pointer-events:none; padding:7px 14px; font-size:12.5px;">Blast Surat →</span>' : ''}
+        </div>
+      </div>`;
+    }).join('') + '</div>';
+  }catch(e){
+    // Kalau kolom pelacak blast belum ada di database, pesan asli dari
+    // Postgres ("column ... does not exist") susah dimengerti — diterjemahkan
+    // jadi instruksi yang bisa langsung dikerjakan.
+    const needsMigration = /column|does not exist|blast_status/i.test(e.message || '');
+    body.innerHTML = needsMigration
+      ? `<div class="picker-empty">Tabel di Supabase belum punya kolom untuk tahap blast.<br><br>
+          Buka <b>Supabase → SQL Editor</b>, jalankan ulang isi file <code>supabase_schema.sql</code>
+          (aman dijalankan berkali-kali karena semuanya pakai "if not exists"), lalu buka daftar ini lagi.
+          <br><br><span style="opacity:.7">Detail: ${escapeHtml(e.message)}</span></div>`
+      : `<div class="picker-empty">Gagal memuat daftar: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+/* Buka satu batch yang sudah disetujui ke layar Blast Surat. */
+async function openBlastForBatch(batchId){
+  closeSuratBatchList();
+  showLoadingBar();
+  try{
+    const r = await fetch('/api/letters/batches/' + encodeURIComponent(batchId) + '/detail');
+    const j = await r.json();
+    if(!j.ok) throw new Error(j.error || 'gagal memuat batch');
+    if(!batchBolehBlast(j.batch)){
+      toast('Jenis surat ini alurnya "approval saja" — tidak dikirim ke penerima.');
+      return;
+    }
+
+    blastState.batch = j.batch;
+    blastState.items = j.items || [];
+    blastState.activeIndex = 0;
+    blastState.search = '';
+
+    // Narasi terakhir yang dipakai buat batch ini dipulihkan — biar tidak
+    // perlu mengetik ulang kalau blast-nya dilanjutkan lain waktu.
+    const saved = j.batch.blast_narrative;
+    if(saved){
+      if(saved.subjectTpl) document.getElementById('blastSubject').value = saved.subjectTpl;
+      if(saved.intro) document.getElementById('blastIntro').value = saved.intro;
+      if(saved.closing) document.getElementById('blastClosing').value = saved.closing;
+      if(saved.groupMode){
+        blastState.groupMode = saved.groupMode;
+        const radio = document.querySelector(`input[name="blastGroupMode"][value="${saved.groupMode}"]`);
+        if(radio) radio.checked = true;
+      }
+    }
+
+    renderBlastBatchCard();
+    buildBlastGroups();
+    renderBlastRecipients();
+    renderBlastPreview();
+    renderBlastTokenPills();
+    document.getElementById('blastSendLog').innerHTML = '';
+    goSuratStep(4);
+  }catch(e){
+    console.error('Gagal membuka batch surat:', e);
+    toast('Gagal membuka batch: ' + e.message);
+  }finally{
+    hideLoadingBar();
+  }
+}
+
+function renderBlastBatchCard(){
+  const b = blastState.batch || {};
+  const card = document.getElementById('blastBatchCard');
+  const sentCount = blastState.items.filter(i=>i.blastStatus === 'sent').length;
+  const ttd = b.signature_applied
+    ? 'PDF sudah ber-tanda tangan'
+    : '⚠️ PDF belum ditempel tanda tangan (belum ada TTD tersimpan saat disetujui)';
+  card.className = 'status-card ' + (b.signature_applied ? 'status-ok' : 'status-err');
+  card.innerHTML = `
+    <span class="sc-icon">${b.signature_applied ? '✅' : '⚠️'}</span>
+    <div class="sc-body">
+      <div class="sc-title">${escapeHtml(b.letter_name || b.template_code || 'Batch surat')}${b.periode ? ' — ' + escapeHtml(b.periode) : ''}</div>
+      <div class="sc-sub">${blastState.items.length} surat · ${ttd}${sentCount ? ` · ${sentCount} sudah terkirim` : ''}</div>
+    </div>`;
+}
+
+/* Token pill khusus layar blast — daftar tokennya diambil dari kolom Excel
+ * yang benar-benar ada di batch ini, bukan dari file yang lagi dibuka. */
+function renderBlastTokenPills(){
+  const firstRow = (blastState.items[0] && blastState.items[0].rowData) || {};
+  const cols = Object.keys(firstRow).slice(0, 12);
+  const tokens = ['{nama}','{judul}','{periode}','{jumlah}'].concat(cols.map(c=>'{'+c+'}'));
+  document.querySelectorAll('#suratStep4 .token-pills').forEach(wrap=>{
+    const targetId = wrap.getAttribute('data-target');
+    wrap.innerHTML = tokens.map(t=>
+      `<button type="button" class="token-pill" onclick="insertBlastToken('${targetId}', '${t.replace(/'/g,"\\'")}')">${escapeHtml(t)}</button>`
+    ).join('');
+  });
+}
+function insertBlastToken(targetId, token){
+  const el = document.getElementById(targetId);
+  if(!el) return;
+  insertTokenAtCursor(el, token);
+  renderBlastPreview();
+}
+
+/* ---------- Kirim ---------- */
+function blastLogRow(name, status, message){
+  const wrap = document.getElementById('blastSendLog');
+  const row = document.createElement('div');
+  row.className = 'log-row';
+  const cls = status === 'ok' ? 'ok' : status === 'err' ? 'err' : status === 'hold' ? 'hold' : 'pending';
+  const label = status === 'ok' ? '✅ Terkirim' : status === 'err' ? '❌ Gagal' : status === 'hold' ? '⏸ Dijeda' : '⏳ Memproses…';
+  row.innerHTML = `<span class="ln">${escapeHtml(name)}${message ? ' — <span style="color:var(--muted)">'+escapeHtml(message)+'</span>' : ''}</span><span class="lstatus ${cls}">${label}</span>`;
+  wrap.prepend(row);
+  return row;
+}
+
+async function blastSendGroup(group){
+  if(!group.emails.length) throw new Error('baris ini tidak punya alamat email di Excel');
+  const payload = {
+    to: group.emails.join('; '),
+    cc: group.ccs.join('; '),
+    seqs: group.items.map(i=>i.seq),
+    subject: fillBlastTemplate(currentBlastNarrative().subjectTpl, group),
+    html: buildBlastEmailHtml(group),
+    narrative: currentBlastNarrative(),
+  };
+  const res = await fetch('/api/letters/batches/' + encodeURIComponent(blastState.batch.id) + '/blast-one', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if(!data.ok) throw new Error(data.error || 'gagal mengirim');
+  group.items.forEach(it=>{ it.blastStatus = 'sent'; });
+  return data;
+}
+
+async function blastSendCurrent(){
+  if(!blastState.groups.length) return;
+  const group = blastState.groups[blastState.activeIndex];
+  const row = blastLogRow(group.name, 'pending');
+  showLoadingBar();
+  try{
+    const data = await blastSendGroup(group);
+    row.remove();
+    blastLogRow(group.name, 'ok', `${data.attachmentCount} lampiran`);
+    toast('Surat terkirim.');
+    renderBlastRecipients();
+    renderBlastBatchCard();
+  }catch(e){
+    row.remove();
+    blastLogRow(group.name, 'err', e.message);
+    toast('Gagal mengirim: ' + e.message);
+  }finally{
+    hideLoadingBar();
+  }
+}
+
+function confirmBlastAll(){
+  if(!blastState.groups.length) return;
+  const belum = blastState.groups.filter(g=>blastGroupStatus(g) !== 'sent').length;
+  document.getElementById('confirmText').textContent =
+    `Kamu akan MENGIRIM LANGSUNG surat ke ${belum} penerima, masing-masing dengan PDF ber-tanda tangan sebagai lampiran. Penerima yang sudah pernah terkirim otomatis dilewati. Kalau di tengah jalan berubah pikiran, ada tombol "Jeda". Lanjutkan?`;
+  document.getElementById('confirmModal').style.display = 'flex';
+  document.getElementById('confirmModalOk').onclick = ()=>{
+    closeConfirmModal();
+    blastTotals = { ok:0, err:0, skip:0 };
+    blastSendAllSequential(0);
+  };
+}
+
+let blastPauseRequested = false;
+let blastPaused = false;
+let blastResumeIndex = 0;
+let blastTotals = { ok:0, err:0, skip:0 };
+
+function toggleHoldBlastAll(){
+  if(blastPaused){
+    blastPaused = false; blastPauseRequested = false;
+    document.getElementById('btnBlastCancelHold').style.display = 'none';
+    document.getElementById('btnBlastSendAll').disabled = true;
+    document.getElementById('btnBlastSendOne').disabled = true;
+    blastSendAllSequential(blastResumeIndex);
+  } else {
+    blastPauseRequested = true;
+    const btn = document.getElementById('btnBlastHold');
+    btn.textContent = '⏸ Menjeda setelah surat ini selesai…';
+    btn.disabled = true;
+  }
+}
+
+function cancelHeldBlastAll(){
+  const remaining = blastState.groups.length - blastResumeIndex;
+  blastPaused = false; blastPauseRequested = false;
+  document.getElementById('btnBlastHold').style.display = 'none';
+  document.getElementById('btnBlastCancelHold').style.display = 'none';
+  document.getElementById('btnBlastSendAll').disabled = false;
+  document.getElementById('btnBlastSendOne').disabled = false;
+  blastLogRow('— Dibatalkan —', 'err', `${remaining} penerima tersisa tidak diproses`);
+  toast(`Dibatalkan. Berhasil: ${blastTotals.ok}, gagal: ${blastTotals.err}.`);
+}
+
+async function blastSendAllSequential(startIndex){
+  const start = startIndex || 0;
+  if(start === 0) document.getElementById('blastSendLog').innerHTML = '';
+  blastPauseRequested = false; blastPaused = false;
+  document.getElementById('btnBlastSendAll').disabled = true;
+  document.getElementById('btnBlastSendOne').disabled = true;
+  const holdBtn = document.getElementById('btnBlastHold');
+  holdBtn.style.display = 'inline-flex';
+  holdBtn.disabled = false;
+  holdBtn.classList.remove('is-paused');
+  holdBtn.textContent = '⏸ Jeda';
+  document.getElementById('btnBlastCancelHold').style.display = 'none';
+  showLoadingBar();
+
+  const total = blastState.groups.length;
+  for(let i = start; i < total; i++){
+    if(blastPauseRequested){
+      blastPaused = true;
+      blastResumeIndex = i;
+      holdBtn.disabled = false;
+      holdBtn.classList.add('is-paused');
+      holdBtn.textContent = `▶ Lanjutkan (${total - i} tersisa)`;
+      document.getElementById('btnBlastCancelHold').style.display = 'inline-flex';
+      blastLogRow('— Dijeda —', 'hold', `${total - i} penerima belum diproses`);
+      hideLoadingBar();
+      return;
+    }
+    const group = blastState.groups[i];
+    blastState.activeIndex = i;
+    renderBlastRecipients();
+    renderBlastPreview();
+
+    // Penerima yang sudah pernah terkirim dilewati — supaya blast yang
+    // dilanjutkan tidak mengirim surat dobel ke orang yang sama.
+    if(blastGroupStatus(group) === 'sent'){
+      blastTotals.skip += 1;
+      blastLogRow(group.name, 'ok', 'sudah pernah terkirim — dilewati');
+      continue;
+    }
+
+    const row = blastLogRow(group.name, 'pending');
+    try{
+      const data = await blastSendGroup(group);
+      row.remove();
+      blastLogRow(group.name, 'ok', `${data.attachmentCount} lampiran`);
+      blastTotals.ok += 1;
+    }catch(e){
+      row.remove();
+      blastLogRow(group.name, 'err', e.message);
+      blastTotals.err += 1;
+    }
+    renderBlastRecipients();
+  }
+
+  holdBtn.style.display = 'none';
+  document.getElementById('btnBlastCancelHold').style.display = 'none';
+  document.getElementById('btnBlastSendAll').disabled = false;
+  document.getElementById('btnBlastSendOne').disabled = false;
+  hideLoadingBar();
+  renderBlastBatchCard();
+  toast(`Selesai. Berhasil: ${blastTotals.ok}, gagal: ${blastTotals.err}${blastTotals.skip ? ', dilewati: ' + blastTotals.skip : ''}.`);
+}
+
+document.getElementById('blastRecipientSearch').addEventListener('input', (e)=>{
+  blastState.search = e.target.value;
+  renderBlastRecipients();
+});
+
+loadSuratSupportedCodes();
+loadSuratSettingsCache();
+
+renderStepsNav();
+
+// Header tiap panel (judul + tombol Kembali/Lanjut) dibuat "sticky" nempel
+// tepat di bawah topbar — supaya tetap kelihatan & gampang diklik walau
+// lagi scroll ke bawah. Topbar tingginya bisa berubah-ubah (melipat ke 2
+// baris di layar sempit), jadi diukur langsung dari elemennya tiap kali
+// ukuran layar berubah, bukan di-hardcode.
+function syncTopbarHeightVar(){
+  const tb = document.querySelector('.topbar');
+  if(tb) document.documentElement.style.setProperty('--topbar-h', tb.offsetHeight + 'px');
+}
+window.addEventListener('resize', syncTopbarHeightVar);
+window.addEventListener('load', syncTopbarHeightVar);
+syncTopbarHeightVar();
+</script>
+</body>
+</html>
