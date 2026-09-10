@@ -2435,6 +2435,22 @@ async function checkSenderStatus(){
   try{
     const res = await fetch('/api/status');
     const data = await res.json();
+    // Field "Pengirim (Terkunci)" diisi dari data.sender KAPAN PUN itu ada
+    // di respons — bukan cuma waktu data.ok true — supaya nama & alamat
+    // pengirim (dari environment di server) tetap tampil walau cek
+    // verifikasi domain ke Resend gagal (mis. API key salah/belum diisi,
+    // atau server tidak bisa akses internet ke Resend). Sebelum ini,
+    // field-nya cuma keisi di jalur data.ok, jadi kalau langkah cek Resend
+    // gagal, field ini nyangkut selamanya di placeholder "Memuat dari
+    // server…" walau environment-nya sendiri sudah benar.
+    if (data.sender) {
+      const m = /^(.*)<(.+)>$/.exec(data.sender || '');
+      const realName = m ? m[1].trim() : '';
+      const realEmail = m ? m[2].trim() : (data.sender || '').trim();
+      document.getElementById('senderName').value = realName;
+      document.getElementById('senderEmail').value = realEmail;
+      refreshAllFilledStates();
+    }
     if(data.ok){
       if(data.domainVerified){
         setCard('✅', `Siap kirim dari ${escapeHtml(data.sender || '')}`,
@@ -2445,15 +2461,6 @@ async function checkSenderStatus(){
           `Status: ${escapeHtml(data.domainStatus || 'tidak ditemukan')} — selama belum verified, email cuma bisa terkirim ke alamat kamu sendiri. Cek resend.com/domains.`);
         bar.classList.add('status-err');
       }
-      // Sinkronkan field "Nama pengirim" / "Email pengirim" dengan alamat asli
-      // di server (.env), supaya preview di step 3 tidak menampilkan alamat
-      // yang berbeda dari yang benar-benar dipakai saat mengirim via Resend.
-      const m = /^(.*)<(.+)>$/.exec(data.sender || '');
-      const realName = m ? m[1].trim() : '';
-      const realEmail = m ? m[2].trim() : (data.sender || '').trim();
-      document.getElementById('senderName').value = realName;
-      document.getElementById('senderEmail').value = realEmail;
-      refreshAllFilledStates();
     } else if (data.needsSetup) {
       setCard('⚠️', 'Setup belum lengkap', `${escapeHtml(data.error)} (lihat README.md).`);
       bar.classList.add('status-err');
