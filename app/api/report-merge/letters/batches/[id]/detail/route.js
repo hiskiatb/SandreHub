@@ -1,7 +1,7 @@
 // app/api/report-merge/letters/batches/[id]/detail/route.js
 import { NextResponse } from "next/server";
-import { requireReportMergeAccess } from "../../../../../../lib/reportMerge/auth";
-import { LETTER_STORAGE_BUCKET, parseEmailCell, pickRowField } from "../../../../../../lib/reportMerge/letters";
+import { requireReportMergeAccess } from "../../../../../../../lib/reportMerge/auth";
+import { LETTER_STORAGE_BUCKET, parseEmailCell, pickRowField } from "../../../../../../../lib/reportMerge/letters";
 
 export async function GET(req, { params }) {
   const auth = await requireReportMergeAccess(req);
