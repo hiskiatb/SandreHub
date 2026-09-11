@@ -10,9 +10,10 @@
  */
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRightLeft, CheckCircle2, XCircle, Clock, MessageSquareWarning } from "lucide-react";
+import { ArrowLeft, ArrowRightLeft, CheckCircle2, XCircle, Clock, MessageSquareWarning, Send, BellRing, Bell } from "lucide-react";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { fetchNotifications, markAllNotificationsRead, markNotificationRead, notifTypeMeta, translateNotifRoute } from "../_shared/notifData";
+import { getPushStatus, enablePushNotifications, sendTestPush } from "../_shared/pushNotif";
 
 const TYPE_ICON = {
   msisdn_transfer_requested: ArrowRightLeft,
@@ -23,6 +24,9 @@ const TYPE_ICON = {
   activity_plan_revision_needed: MessageSquareWarning,
   activity_actual_approved: CheckCircle2,
   activity_actual_revision_needed: MessageSquareWarning,
+  activity_plan_submitted: Send,
+  activity_actual_submitted: Send,
+  activity_actual_reminder: BellRing,
 };
 
 function timeAgo(dateStr) {
@@ -43,6 +47,27 @@ export default function NotificationsPage() {
   const { loading: sessionLoading } = useMartaSession();
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
+  const [pushState, setPushState] = useState("checking"); // checking | offer | on | denied | unsupported
+  const [pushBusy, setPushBusy] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const status = await getPushStatus(); // "unsupported" | "denied" | "on" | "off"
+      setPushState(status === "off" ? "offer" : status);
+    })();
+  }, []);
+
+  async function handleEnablePush() {
+    setPushBusy(true);
+    const res = await enablePushNotifications();
+    setPushBusy(false);
+    if (res.ok) {
+      setPushState("on");
+      sendTestPush(); // notif tes sekali - bukti fiturnya benar2 jalan
+    } else {
+      setPushState(res.reason === "denied" ? "denied" : "offer");
+    }
+  }
 
   useEffect(() => {
     if (sessionLoading) return;
@@ -93,6 +118,27 @@ export default function NotificationsPage() {
         </button>
         <div style={{ flex: 1, minWidth: 0, fontSize: 18, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Notifikasi</div>
       </div>
+
+      {pushState === "offer" && (
+        <div style={{ margin: "14px 20px 0", padding: "12px 14px", borderRadius: 14, background: "#FFFFFF", border: `1px solid ${BRAND}33`, display: "flex", alignItems: "center", gap: 10, fontFamily: FF }}>
+          <div style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 11, background: `${BRAND}18`, display: "flex", alignItems: "center", justifyContent: "center", color: BRAND }}>
+            <Bell size={16} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>Aktifkan Notifikasi</div>
+            <div style={{ marginTop: 1, fontSize: 11, color: "#8A8A96" }}>Dapat notif langsung saat ada plan/laporan baru & reminder laporan actual.</div>
+          </div>
+          <button onClick={handleEnablePush} disabled={pushBusy}
+            style={{ flexShrink: 0, padding: "8px 12px", borderRadius: 10, background: BRAND, color: "#fff", border: "none", fontSize: 11.5, fontWeight: 800, cursor: pushBusy ? "default" : "pointer", opacity: pushBusy ? 0.7 : 1 }}>
+            {pushBusy ? "..." : "Aktifkan"}
+          </button>
+        </div>
+      )}
+      {pushState === "denied" && (
+        <div style={{ margin: "14px 20px 0", padding: "10px 12px", borderRadius: 10, background: "#FFF7ED", color: "#B45309", fontSize: 11.5, fontWeight: 600, fontFamily: FF }}>
+          Notifikasi push diblokir di browser ini - aktifkan lewat pengaturan izin situs kalau ingin menerima notif.
+        </div>
+      )}
 
       {err && <div style={{ margin: "14px 20px 0", padding: "10px 12px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 12, fontWeight: 600 }}>{err}</div>}
 

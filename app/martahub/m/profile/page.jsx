@@ -15,12 +15,13 @@
  * transfer yg ditujukan ke pengguna ini sudah masuk lewat inbox Notifikasi
  * (badge digabung di Home), jadi tidak perlu jalan pintas kedua di sini.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { LogOut, Mail, Building2, MapPin, Sparkles, User2, Pencil, Loader2, Save, AlertTriangle } from "lucide-react";
+import { LogOut, Mail, Building2, MapPin, Sparkles, User2, Pencil, Loader2, Save, AlertTriangle, BellRing } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, updateCachedFullName, logMartaLogout } from "../_shared/MobileShell";
 import { BRAND_DISPLAY } from "../_shared/planData";
+import { getPushStatus, enablePushNotifications, disablePushNotifications, sendTestPush } from "../_shared/pushNotif";
 
 const ROLE_LABEL = { bme_rge: "BME/RGE", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
 const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
@@ -48,6 +49,54 @@ export default function ProfilePage() {
   // dijalankan.
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+
+  // Status notifikasi push - SELALU dibaca ulang dari browser (bukan
+  // disimpan/ditebak), supaya toggle ini tidak pernah "bohong" walau izin
+  // dicabut dari luar app (mis. lewat pengaturan situs browser). Nilai:
+  // "checking" | "unsupported" | "denied" | "on" | "off".
+  const [notifStatus, setNotifStatus] = useState("checking");
+  const [notifBusy, setNotifBusy] = useState(false);
+  const [notifErr, setNotifErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const status = await getPushStatus();
+      if (alive) setNotifStatus(status);
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // Toggle iOS-style - AMAN dipanggil berkali-kali (nyala/mati bolak-balik):
+  // nyalakan = minta izin + subscribe + simpan ke server + 1x notif tes;
+  // matikan = unsubscribe browser + hapus dari server. Status akhir SELALU
+  // dibaca ulang langsung dari browser (bukan diasumsikan dari hasil call),
+  // supaya toggle tidak pernah nyangkut di posisi yg salah kalau ada
+  // kegagalan parsial di tengah jalan.
+  async function handleToggleNotif(nextOn) {
+    if (notifBusy || notifStatus === "checking" || notifStatus === "unsupported") return;
+    setNotifBusy(true);
+    setNotifErr("");
+    try {
+      if (nextOn) {
+        const res = await enablePushNotifications();
+        if (res.ok) {
+          setNotifStatus("on");
+          sendTestPush(); // notif tes sekali - best-effort, tidak menahan UI
+        } else if (res.reason === "denied") {
+          setNotifStatus("denied");
+        } else {
+          setNotifStatus(await getPushStatus());
+          setNotifErr("Gagal mengaktifkan notifikasi - coba lagi.");
+        }
+      } else {
+        await disablePushNotifications();
+        setNotifStatus(await getPushStatus());
+      }
+    } finally {
+      setNotifBusy(false);
+    }
+  }
 
   const signOut = async () => {
     setSigningOut(true);
@@ -139,6 +188,34 @@ export default function ProfilePage() {
           </SectionCard>
         )}
 
+        <SectionCard title="Preferensi">
+          <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "3px 0 4px" }}>
+            <span style={{
+              flexShrink: 0, width: 30, height: 30, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center",
+              background: notifStatus === "on" ? "rgba(10,132,255,0.12)" : "#F6F7F9", color: notifStatus === "on" ? "#0A84FF" : "#8A8A96",
+            }}>
+              <BellRing size={14} />
+            </span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: "#17181C" }}>Notifikasi Push</div>
+              <div style={{ marginTop: 1, fontSize: 10.5, color: "#8A8A96", fontWeight: 600, lineHeight: 1.4 }}>
+                {notifStatus === "checking" && "Memeriksa status..."}
+                {notifStatus === "unsupported" && "Tidak didukung di browser ini."}
+                {notifStatus === "denied" && "Diblokir - ubah izin situs di pengaturan browser."}
+                {notifStatus === "on" && "Aktif di perangkat ini."}
+                {notifStatus === "off" && "Nonaktif - nyalakan utk dapat notif plan, laporan & reminder."}
+              </div>
+            </div>
+            <IOSSwitch
+              checked={notifStatus === "on"}
+              disabled={notifStatus === "checking" || notifStatus === "unsupported" || notifStatus === "denied"}
+              busy={notifBusy}
+              onChange={handleToggleNotif}
+            />
+          </div>
+          {notifErr && <div style={{ marginTop: 2, fontSize: 10.5, color: "#C62828", fontWeight: 600 }}>{notifErr}</div>}
+        </SectionCard>
+
         <button onClick={() => setShowLogoutConfirm(true)}
           style={{ width: "100%", marginTop: 12, height: 48, borderRadius: 14, border: "1px solid #F7C6C9", background: "#FFF5F6", color: "#DC2626", fontSize: 13, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
           <LogOut size={15} /> Keluar
@@ -180,6 +257,47 @@ function SectionCard({ title, children }) {
 
 function Divider() {
   return <div style={{ height: 1, background: "#F0F0F3" }} />;
+}
+
+/** Toggle switch model iOS (pill biru sistem, knob putih bergeser) - dipakai
+ * utk Notifikasi Push di atas. Sepenuhnya "controlled": tampilan HANYA
+ * mengikuti prop `checked` (dibaca ulang dari status browser oleh
+ * pemanggil), TIDAK menyimpan state sendiri - jadi tidak mungkin toggle ini
+ * menunjukkan status yg keliru dari kondisi aslinya. */
+function IOSSwitch({ checked, onChange, disabled, busy }) {
+  const on = !!checked;
+  const inactive = disabled || busy;
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-disabled={inactive}
+      disabled={inactive}
+      onClick={() => !inactive && onChange && onChange(!on)}
+      style={{
+        position: "relative", flexShrink: 0, width: 47, height: 27, padding: 2, borderRadius: 999,
+        border: "none", boxSizing: "border-box", cursor: inactive ? "default" : "pointer",
+        background: on ? "#0A84FF" : "#E4E5EA",
+        boxShadow: on ? "inset 0 0 0 0 rgba(0,0,0,0)" : "inset 0 0 0 1px rgba(0,0,0,0.04)",
+        transition: "background-color 0.18s ease",
+        opacity: disabled && !busy ? 0.5 : 1,
+        WebkitTapHighlightColor: "transparent",
+      }}
+    >
+      <span
+        style={{
+          display: "block", width: 23, height: 23, borderRadius: "50%", background: "#FFFFFF",
+          boxShadow: "0 3px 7px rgba(0,0,0,0.18), 0 1px 1px rgba(0,0,0,0.08)",
+          transform: on ? "translateX(20px)" : "translateX(0)",
+          transition: "transform 0.2s cubic-bezier(.34,1.4,.64,1)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}
+      >
+        {busy && <Loader2 size={11} color={on ? "#0A84FF" : "#8A8A96"} style={{ animation: "mspin .8s linear infinite" }} />}
+      </span>
+    </button>
+  );
 }
 
 function RolePill({ label }) {

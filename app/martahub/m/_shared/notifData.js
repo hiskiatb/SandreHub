@@ -21,6 +21,14 @@ export const NOTIF_TYPE_META = {
   // diputuskan (lihat migration add_actual_report_decision_notifications).
   activity_actual_approved: { label: "Laporan Actual Disetujui", color: "#15803D", bg: "rgba(21,128,61,0.10)" },
   activity_actual_revision_needed: { label: "Laporan Actual Perlu Direvisi", color: "#B45309", bg: "rgba(180,83,9,0.10)" },
+  // Notifikasi submit (utk TMV, scope sesuai scope laporan yg bisa dia
+  // lihat) - diisi server-side dari trigger _mh_notify_activity_submit
+  // pada mh_activities (migration add_push_notifications_infra).
+  activity_plan_submitted: { label: "Plan Baru Disubmit", color: "#2563EB", bg: "rgba(37,99,235,0.10)" },
+  activity_actual_submitted: { label: "Laporan Actual Baru", color: "#2563EB", bg: "rgba(37,99,235,0.10)" },
+  // Reminder utk BME/RGE (07.00/12.00/18.00 WIB) - diisi server-side dari
+  // mh_run_actual_reminder() (pg_cron).
+  activity_actual_reminder: { label: "Laporan Actual Belum Diisi", color: "#B45309", bg: "rgba(180,83,9,0.10)" },
 };
 
 export function notifTypeMeta(type) {
@@ -68,6 +76,9 @@ export function translateNotifRoute(route, type) {
     // (bukan cuma halaman detail read-only), sama alasannya dgn plan yg
     // diarahkan langsung ke wizard edit di atas.
     if (type === "activity_actual_revision_needed") return `/martahub/m/activities/${actMatch[1]}/submit`;
+    // Reminder laporan actual - langsung ke wizard Isi Laporan (tujuan
+    // reminder ini MEMANG supaya langsung diisi, bukan cuma dilihat).
+    if (type === "activity_actual_reminder") return `/martahub/m/activities/${actMatch[1]}/submit`;
     return `/martahub/m/activities/${actMatch[1]}`;
   }
   return null; // route dikenal tapi tidak ada padanan web - jangan navigasi ke path Flutter

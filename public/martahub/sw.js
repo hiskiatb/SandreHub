@@ -72,3 +72,47 @@ self.addEventListener("fetch", (event) => {
     );
   }
 });
+
+/**
+ * Web Push — notifikasi TMV saat ada plan/laporan actual baru masuk sesuai
+ * scope-nya, dan reminder BME/RGE 07.00/12.00/18.00 WIB utk laporan actual
+ * yg belum diisi. Payload dikirim server-side (edge function mh-send-push,
+ * dipicu trigger/cron Postgres) sbg JSON: { title, body, url, tag }.
+ */
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { title: "MartaHub", body: event.data ? event.data.text() : "" };
+  }
+  const title = data.title || "MartaHub";
+  const options = {
+    body: data.body || "",
+    icon: "/martahub/icon-192.png",
+    badge: "/martahub/icon-192.png",
+    tag: data.tag || undefined,
+    data: { url: data.url || "/martahub/m" },
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// Klik notifikasi → fokus tab yg sudah terbuka kalau ada (dan navigasi ke
+// url tujuan), atau buka tab baru kalau belum ada satupun yg terbuka.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const targetUrl = (event.notification.data && event.notification.data.url) || "/martahub/m";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if ("focus" in client) {
+          client.postMessage({ type: "mh-push-navigate", url: targetUrl });
+          client.focus();
+          if ("navigate" in client) client.navigate(targetUrl).catch(() => {});
+          return;
+        }
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(targetUrl);
+    })
+  );
+});
