@@ -19,7 +19,6 @@ const STATUS = {
   completed: ["Selesai", T.success, T.successBg], inProgress: ["Berlangsung", T.warning, T.warningBg],
   plan_submitted: ["Plan Diajukan", T.blue, T.blueBg], revision_needed: ["Revisi Plan", T.warning, T.warningBg],
   pending_validation: ["Menunggu Validasi", T.blue, T.blueBg],
-  revision_actual: ["Perlu Perbaikan Lokasi/Bukti", T.warning, T.warningBg],
 };
 
 // Status "approved" sekarang eksklusif berarti laporan aktual sudah disubmit
@@ -85,6 +84,11 @@ function deriveStatusInfo(r, meta) {
   // sendiri tadinya dianggap valid & lolos saat proses import.
   if (r?.plan_source === "cms_import" && meta) {
     if (getIncompleteImportFields(r, meta).length > 0) return ["Belum Lengkap", T.warning, T.warningBg];
+  }
+  // "revision_needed" digabung (dulu status terpisah "revision_actual") -
+  // bedanya plan/actual sekarang ditandai kolom revision_target.
+  if (r?.status === "revision_needed" && r?.revision_target === "actual") {
+    return ["Laporan Actual Perlu Direvisi", T.warning, T.warningBg];
   }
   if (r?.status === "approved") {
     if (r?.actual_sp != null) return ["Selesai", T.success, T.successBg];
@@ -181,7 +185,7 @@ const DETAIL_COLS = "id,event_name,event_category,event_categories,brand,mc,bran
 // Kolom list mh_activities untuk tabel Excel-style di bawah - lebih ringkas
 // dari DETAIL_COLS (dipakai modal) tapi mencakup semua field yg diminta utk
 // tabel Activity Plan (target/actual/ACV/cost ratio/insight/dokumentasi).
-const LIST_COLS = "id,event_name,brand,mc,branch_id,event_categories,event_category,plan_date_start,plan_date,actual_date,site_id,actual_site_id,network_category,area_potential,poi_type,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,target_rev_3m,cost_estimate,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,actual_rev_3m,cost_actual,insight,checkin_valid,created_by,bme_user_id,created_at,plan_source,import_batch_id";
+const LIST_COLS = "id,event_name,brand,mc,branch_id,event_categories,event_category,plan_date_start,plan_date,actual_date,site_id,actual_site_id,network_category,area_potential,poi_type,address,latitude,longitude,status,revision_target,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,target_rev_3m,cost_estimate,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,actual_rev_3m,cost_actual,insight,checkin_valid,created_by,bme_user_id,created_at,plan_source,import_batch_id";
 
 export default function ActivityPlanPage() {
   return (

@@ -11,18 +11,28 @@ export const STATUS_META = {
   // lewat Approval Center kalau memang ada yg keliru - BUKAN gate wajib
   // dilewati spt approval dulu.
   plan_submitted:       { label: "Plan Diajukan",              color: "#2563EB", bg: "rgba(37,99,235,0.10)" },
-  revision_needed:      { label: "Revisi Plan",               color: "#B45309", bg: "rgba(180,83,9,0.10)" },
+  // Digabung dgn 'revision_actual' (dulu status terpisah) jadi SATU status
+  // "revision_needed" - bedanya plan/actual sekarang ditandai kolom
+  // revision_target ('plan'/'actual'), dijelaskan lewat validation_note.
+  revision_needed:      { label: "Revisi",                    color: "#B45309", bg: "rgba(180,83,9,0.10)" },
   // 'approved' SEKARANG cuma dipakai di satu titik siklus hidup: laporan
   // actual lolos validasi otomatis (checkin_valid via trigger server) - jadi
   // artinya "Selesai", BUKAN "plan disetujui" (gate itu sudah dihapus).
   approved:              { label: "Selesai",                   color: "#15803D", bg: "rgba(21,128,61,0.10)" },
   pending_validation:    { label: "Menunggu Validasi",         color: "#2563EB", bg: "rgba(37,99,235,0.10)" },
-  revision_actual:       { label: "Revisi Report",             color: "#B45309", bg: "rgba(180,83,9,0.10)" },
   in_progress:           { label: "Berjalan",                  color: "#7C3AED", bg: "rgba(124,58,237,0.10)" },
 };
 
 export function statusMeta(status) {
   return STATUS_META[status] || { label: status || "-", color: "#6B7280", bg: "rgba(107,114,128,0.10)" };
+}
+
+// Label kontekstual utk status "revision_needed" - plan/actual dibedakan
+// dari kolom revision_target, bukan lagi dua status terpisah. Default ke
+// "Revisi Plan" kalau revision_target belum keisi (baris lama sblm kolom
+// ini ada, atau memang sedang tahap plan).
+export function revisionKindLabel(a) {
+  return a?.revision_target === "actual" ? "Revisi Report" : "Revisi Plan";
 }
 
 export const MONTHS = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"];
@@ -139,6 +149,45 @@ export function latestPlanDate(a) {
 // di STATUS_META), jadi TIDAK dianggap lagi "siap mengisi laporan".
 export const READY_STATUSES = new Set(["plan_submitted"]);
 
+// Kolom PLAN wajib - SATU sumber kebenaran dipakai jg oleh isDraftIncomplete()
+// di atas (definisi sama, cuma dipisah krn dipakai di konteks beda: draft
+// blm lengkap vs plan yg statusnya sudah lanjut tapi ternyata masih bolong,
+// mis. hasil Import Excel/Backdoor "slot kosong").
+export function missingPlanFields(a) {
+  const categories = Array.isArray(a.event_categories) && a.event_categories.length ? a.event_categories : (a.event_category ? a.event_category.split(",").filter(Boolean) : []);
+  const hasDate = !!(a.plan_date || a.plan_date_start || a.plan_dates_multi);
+  const missing = [];
+  if (!(a.event_name || "").trim()) missing.push("Nama Event");
+  if (!categories.length) missing.push("Kategori Event");
+  if (!hasDate) missing.push("Tanggal Plan");
+  if (!a.mc) missing.push("MC");
+  if (!a.site_id) missing.push("Site");
+  if (!a.poi_type) missing.push("Tipe POI");
+  return missing;
+}
+
+// Kolom ACTUAL wajib - SAMA PERSIS dgn yg sudah divalidasi wajib di form
+// Isi Laporan Actual (submit/page.jsx) DAN di trigger server
+// mh_validate_activity_actual() (DB) - tiga tempat ini SENGAJA disamakan
+// supaya "Selesai" berarti sama di mana pun ditampilkan (kartu, filter
+// Status, ringkasan Beranda), bukan tiga definisi longgar yg beda-beda.
+export function missingActualFields(a) {
+  const missing = [];
+  if (a.actual_sp == null) missing.push("Actual SP");
+  if (a.actual_fwa == null) missing.push("Actual FWA");
+  if (a.cost_actual == null) missing.push("Cost Actual");
+  if (!(a.insight || "").trim()) missing.push("Insight");
+  return missing;
+}
+
+// Aktivitas dianggap BENAR-BENAR "Selesai" hanya kalau TIDAK ADA kolom plan
+// maupun actual yang masih kosong - dipakai sbg gate tambahan di atas
+// status DB mentah (status==='approved' TIDAK CUKUP sendirian, krn data
+// lama/import bisa saja ke-approve sebelum field2 ini lengkap).
+export function isActivityFullyComplete(a) {
+  return missingPlanFields(a).length === 0 && missingActualFields(a).length === 0;
+}
+
 export function eventCountdownLabel(a) {
   const eventDate = earliestPlanDate(a);
   if (!eventDate) return { label: "Tanggal belum diisi", color: "#6B7280", bg: "rgba(107,114,128,0.10)" };
@@ -176,10 +225,16 @@ export function isDraftIncomplete(a) {
 // Revisi Report (kalau laporan actual ditandai perlu revisi) → Selesai.
 export function activityStage(a) {
   if (a.status === "draft") return STATUS_META.draft;
-  if (a.status === "revision_needed") return STATUS_META.revision_needed;
-  if (a.status === "revision_actual") return STATUS_META.revision_actual;
+  if (a.status === "revision_needed") return { label: revisionKindLabel(a), color: STATUS_META.revision_needed.color, bg: STATUS_META.revision_needed.bg };
   const hasActual = a.actual_sp != null;
-  if (hasActual || a.status === "approved") return { label: "Selesai", color: "#15803D", bg: "rgba(21,128,61,0.10)" };
+  if (hasActual || a.status === "approved") {
+    // "Selesai" (hijau) HANYA kalau semua kolom plan & actual benar2
+    // lengkap - kalau tidak, tandai jelas "Perlu Dilengkapi" (bukan
+    // diam2 tetap dianggap Selesai) supaya gap antara jumlah "Selesai"
+    // di kartu vs di filter Status tidak lagi membingungkan.
+    if (isActivityFullyComplete(a)) return { label: "Selesai", color: "#15803D", bg: "rgba(21,128,61,0.10)" };
+    return { label: "Perlu Dilengkapi", color: "#B45309", bg: "rgba(180,83,9,0.10)" };
+  }
   if (READY_STATUSES.has(a.status)) {
     const todayStr = new Date().toISOString().slice(0, 10);
     const eventDateStr = earliestPlanDate(a);

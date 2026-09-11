@@ -22,10 +22,10 @@ function mdPhotoUrl(path) {
 // mh_web_decide_activity) SUDAH DIHAPUS dari alur manusia - begitu BME
 // submit laporan actual, trigger server mh_validate_activity_actual otomatis
 // memvalidasi check-in terhadap site-site event ini dan langsung menuntaskan
-// status jadi 'approved' (lolos) atau 'revision_actual' (perlu ditinjau/
-// direvisi BME) - TANPA klik approve/reject manusia. Approver di sini hanya
-// jadi katup pengaman manual (mh_activity_manual_override) utk status
-// 'revision_actual' yang sebenarnya valid (mis. GPS meleset).
+// status jadi 'approved' (lolos) atau 'revision_needed' dgn revision_target='actual'
+// (perlu ditinjau/direvisi BME) - TANPA klik approve/reject manusia. Approver
+// di sini hanya jadi katup pengaman manual (mh_activity_manual_override) utk
+// laporan actual yg sebenarnya valid (mis. kolom kosong krn alasan wajar).
 
 const ROLE_LABEL = { admin: "Admin", head: "Head TMV", tmv: "Brand TMV", bme_rge: "BME/RGE", pending: "Pending" };
 const CAT_LABEL = { directSelling: "Direct Selling", jointEvent: "Joint Event", openBooth: "Open Booth", project: "Project", sponsorship: "Sponsorship", thematic: "Thematic" };
@@ -53,7 +53,7 @@ const catLabel = (r) => {
 
 const PENDING_COLS = "id, event_name, brand, mc, site_id, plan_date_start, plan_date, event_categories, status, target_sp, target_fwa, created_at";
 const REVISION_COLS = "id, event_name, brand, mc, site_id, actual_sp, actual_fwa, target_sp, target_fwa, validation_status, validation_note, validated_at";
-const HISTORY_COLS = "id, event_name, brand, mc, site_id, status, actual_sp, approved_by_name, approved_by_email, approved_at, approval_notes, override_by_name, override_note";
+const HISTORY_COLS = "id, event_name, brand, mc, site_id, status, revision_target, actual_sp, approved_by_name, approved_by_email, approved_at, approval_notes, override_by_name, override_note";
 
 export default function ApprovalPage() {
   return (
@@ -74,7 +74,7 @@ function Body({ email }) {
   // review manual, BUKAN geofencing - beda dgn mode Activity/Outlet yang
   // direkonsiliasi otomatis di menu Validasi Lokasi).
   const [mdStreetRows, setMdStreetRows] = useState([]);
-  // dialog: { row, kind: 'plan'|'override'|'md_street', type: 'approved'|'revision_needed'|'revision_actual'|'rejected' }
+  // dialog: { row, kind: 'plan'|'override'|'md_street', type: 'approved'|'revision_needed'|'rejected' }
   const [dialog, setDialog] = useState(null);
   const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -91,11 +91,11 @@ function Body({ email }) {
 
       // Fase Actual TIDAK LAGI diputuskan manusia - daftar di bawah ini
       // hanyalah katup pengaman utk item yang gagal validasi otomatis
-      // (status 'revision_actual'), bukan antrean approval biasa.
-      let revisionQ = supabaseMarta.from("mh_activities").select(REVISION_COLS).eq("status", "revision_actual").order("validated_at", { ascending: true });
+      // (status 'revision_needed' + revision_target='actual'), bukan antrean approval biasa.
+      let revisionQ = supabaseMarta.from("mh_activities").select(REVISION_COLS).eq("status", "revision_needed").eq("revision_target", "actual").order("validated_at", { ascending: true });
       revisionQ = await applyMartaScope(revisionQ, sc);
 
-      let historyQ = supabaseMarta.from("mh_activities").select(HISTORY_COLS).in("status", ["approved", "rejected", "revision_needed", "revision_actual"]).order("approved_at", { ascending: false }).limit(15);
+      let historyQ = supabaseMarta.from("mh_activities").select(HISTORY_COLS).in("status", ["approved", "rejected", "revision_needed"]).order("approved_at", { ascending: false }).limit(15);
       historyQ = await applyMartaScope(historyQ, sc);
 
       const [{ data: plans, error: e0 }, { data: revisions, error: e1 }, { data: hist, error: e2 }] = await Promise.all([planQ, revisionQ, historyQ]);
@@ -155,11 +155,11 @@ function Body({ email }) {
           p_caller_email: email,
         }));
       } else if (dialog.kind === "override") {
-        // Katup pengaman manual utk laporan Actual berstatus 'revision_actual'
+        // Katup pengaman manual utk laporan Actual berstatus 'revision_needed' (target actual)
         // - PENGECUALIAN, bukan jalur approval normal (yang sudah dihapus).
         ({ error } = await supabaseMarta.rpc("mh_activity_manual_override", {
           p_activity_id: dialog.row.id,
-          p_final_status: dialog.type === "approved" ? "approved" : "revision_actual",
+          p_final_status: dialog.type === "approved" ? "approved" : "revision_needed",
           p_note: notes.trim() || null,
           p_caller_email: email,
         }));
@@ -257,7 +257,7 @@ function Body({ email }) {
       </div>
 
       {/* Katup pengaman manual - laporan Actual yang GAGAL validasi otomatis
-          (status 'revision_actual'). Bukan antrean approval biasa: sebagian
+          (status 'revision_needed' + revision_target='actual'). Bukan antrean approval biasa: sebagian
           besar laporan actual sudah lolos/ditolak otomatis lewat trigger
           server begitu BME submit - ini hanya utk kasus mis. GPS meleset. */}
       <div style={{ ...card, padding: 0, overflow: "hidden", marginBottom: 20 }}>
@@ -281,7 +281,7 @@ function Body({ email }) {
               {canApprove && (
                 <span style={{ display: "inline-flex", gap: 8, flexShrink: 0 }}>
                   <button onClick={() => openDialog(r, "override", "approved")} style={{ ...btn, background: T.success, color: "#fff", borderColor: T.success }}>Setujui (Override)</button>
-                  <button onClick={() => openDialog(r, "override", "revision_actual")} style={{ ...btn, color: T.error, borderColor: `${T.error}44` }}>Tetap Revisi</button>
+                  <button onClick={() => openDialog(r, "override", "revision_needed")} style={{ ...btn, color: T.error, borderColor: `${T.error}44` }}>Tetap Revisi</button>
                 </span>
               )}
             </div>
@@ -351,10 +351,8 @@ function Body({ email }) {
           const label = h.status === "approved"
             ? (h.actual_sp == null ? "Plan Disetujui" : (h.override_by_name ? "Selesai (Override)" : "Selesai"))
             : h.status === "revision_needed"
-              ? "Revisi Plan"
-              : h.status === "revision_actual"
-                ? "Revisi Laporan"
-                : "Ditolak";
+              ? (h.revision_target === "actual" ? "Revisi Laporan" : "Revisi Plan")
+              : "Ditolak";
           const positive = h.status === "approved";
           return (
           <div key={h.id} style={{ padding: "12px 16px", borderTop: `1px solid ${T.line}`, display: "flex", alignItems: "flex-start", gap: 12 }}>
@@ -382,7 +380,7 @@ function Body({ email }) {
       </div>
 
       {/* Confirm dialog - judul/label menyesuaikan kind (plan/override/md_street)
-          & type (approved/revision_needed/revision_actual/rejected) */}
+          & type (approved/revision_needed/rejected) */}
       {dialog && (
         <div onClick={closeDialog} style={{ position: "fixed", inset: 0, background: "rgba(13,17,23,0.45)", zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 22, width: "100%", maxWidth: 420, fontFamily: FONT, boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}>

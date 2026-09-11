@@ -12,7 +12,7 @@
  *     org lain - SAMA PERSIS dgn alur Flutter, bukan disederhanakan.
  *   - Rebuy Pulsa/Data, Cost Actual, Insight.
  *   - submitActual() → status 'pending_validation' → trigger server
- *     otomatis memutuskan approved/revision_actual (TIDAK ada approval
+ *     otomatis memutuskan approved/revision_needed (revision_target=actual) (TIDAK ada approval
  *     manusia lagi utk fase ini).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -436,7 +436,7 @@ export default function SubmitActualPage() {
         } catch { /* draft rusak/kosong - abaikan, mulai dari kosong */ }
 
         // Nomor yang SUDAH tercatat di DB utk activity ini - baik dari sesi
-        // Isi Laporan sebelumnya (mis. status revision_actual, kirim ulang)
+        // Isi Laporan sebelumnya (mis. status revision_needed utk actual, kirim ulang)
         // maupun dari Catat Penjualan di wizard Buat Plan sebelum event.
         // Ditandai `persisted:true` supaya hapusnya lewat deleteSalesEntry()
         // (RPC) bukan cuma dibuang dari state lokal, dan supaya submit()

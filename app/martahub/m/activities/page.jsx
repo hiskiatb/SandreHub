@@ -8,7 +8,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Search, X, Plus, Trash2, CheckCircle2, AlertCircle, ChevronRight, ChevronDown, CardSim, Router, Receipt, MapPin, Pencil, FolderClock, Clock, SlidersHorizontal, Check } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, NAV_HEIGHT } from "../_shared/MobileShell";
-import { fmtDate, fmtTimeLabel, fmtInt, fmtRp, isDraftIncomplete, activityStage, statusMeta, READY_STATUSES, earliestPlanDate, planMonthKey, updatedAgoLabel, MONTHS } from "../_shared/activityUi";
+import { fmtDate, fmtTimeLabel, fmtInt, fmtRp, isDraftIncomplete, isActivityFullyComplete, activityStage, statusMeta, revisionKindLabel, READY_STATUSES, earliestPlanDate, planMonthKey, updatedAgoLabel, MONTHS } from "../_shared/activityUi";
 import { MetricTile, RebuyTile, RevenueCostBanner, revenueBannerProps } from "../_shared/MetricTiles";
 import DeleteActivitySheet from "../_shared/DeleteActivitySheet";
 import BottomSheet from "../_shared/BottomSheet";
@@ -18,7 +18,7 @@ import { unsnake } from "../_shared/planData";
 // plan_dates_multi) ditambahkan supaya kartu daftar bisa (a) gerbang opsi
 // hapus hanya utk pemilik plan, DAN (b) pakai definisi "draft belum lengkap"
 // yg SAMA PERSIS dgn halaman detail (lihat isDraftIncomplete di activityUi.js).
-const ACTIVITY_COLS = "id,event_name,brand,mc,site_id,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,target_sp,target_fwa,actual_sp,actual_fwa,target_rebuy_sp,target_rebuy_fwa,actual_rebuy_sp,actual_rebuy_fwa,target_rev_3m,actual_rev_3m,cost_estimate,cost_actual,checkin_valid,validation_note,created_at,created_by,actual_draft_saved_at,updated_at";
+const ACTIVITY_COLS = "id,event_name,brand,mc,site_id,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,revision_target,target_sp,target_fwa,actual_sp,actual_fwa,target_rebuy_sp,target_rebuy_fwa,actual_rebuy_sp,actual_rebuy_fwa,target_rev_3m,actual_rev_3m,cost_estimate,cost_actual,checkin_valid,validation_note,created_at,created_by,actual_draft_saved_at,updated_at";
 
 // Warna brand - SAMA PERSIS dgn skema di wizard Buat Plan (ACT_BRAND_COLOR
 // di activities/new/page.jsx): IM3 kuning, 3ID (tri) magenta.
@@ -35,7 +35,6 @@ const TABS = [
   { key: "plan_submitted", label: "Plan Diajukan" },
   { key: "revision_needed", label: "Revisi" },
   { key: "approved", label: "Selesai" },
-  { key: "revision_actual", label: "Revisi Report" },
 ];
 
 // Kategori event - SAMA PERSIS dgn key yg dipakai wizard Buat Plan
@@ -49,13 +48,18 @@ const CAT_LABEL = { directSelling: "Direct Selling", jointEvent: "Joint Event", 
 // membantu semua level (BME/RGE - tahu apa yg harus dikerjakan; TMV/Head -
 // tahu siapa yg butuh ditindaklanjuti).
 function needsAction(r, userId) {
-  if (r.status === "revision_needed" || r.status === "revision_actual") return true;
+  if (r.status === "revision_needed") return true;
   if (r.status === "draft") return !!userId && r.created_by === userId && isDraftIncomplete(r);
   if (READY_STATUSES.has(r.status) && r.actual_sp == null) {
     const eventDateStr = earliestPlanDate(r);
     const todayStr = new Date().toISOString().slice(0, 10);
     return !!eventDateStr && eventDateStr <= todayStr;
   }
+  // Data lama (sebelum trigger server mewajibkan kolom lengkap sblm
+  // approve) bisa saja terlanjur berstatus "approved" padahal masih ada
+  // kolom plan/actual kosong - jangan biarkan diam2 nyasar di "Selesai",
+  // munculkan sbg "Perlu Tindakan" spy jelas ada yg harus dilengkapi.
+  if (r.status === "approved" && !isActivityFullyComplete(r)) return true;
   return false;
 }
 
@@ -271,7 +275,16 @@ function ActivitiesInner() {
     const bump = (map, key, label) => { if (!key) return; const cur = map.get(key); if (cur) cur.count++; else map.set(key, { key, label: label ?? key, count: 1 }); };
     for (const r of rows || []) {
       const meta = siteMeta[r.site_id];
-      bump(status, r.status, statusMeta(r.status).label);
+      // "approved" HANYA dihitung sbg "Selesai" kalau semua kolom plan &
+      // actual beneran lengkap (isActivityFullyComplete) - data lama yg
+      // terlanjur approved padahal masih bolong TIDAK ikut dihitung di
+      // sini (muncul di "Perlu Tindakan" lewat needsAction() sbg
+      // gantinya), supaya jumlah "Selesai" di sini SELALU konsisten dgn
+      // definisi yg sama dipakai activityStage() (pill kartu) & ringkasan
+      // Beranda.
+      if (r.status !== "approved" || isActivityFullyComplete(r)) {
+        bump(status, r.status, statusMeta(r.status).label);
+      }
       if (r.brand) bump(brand, r.brand.toLowerCase(), r.brand.toLowerCase() === "tri" ? "3ID" : "IM3");
       if (meta?.branch) bump(branch, meta.branch, meta.branch);
       if (meta?.kabupaten) bump(kabupaten, meta.kabupaten, meta.kabupaten);
@@ -301,7 +314,11 @@ function ActivitiesInner() {
 
   const filtered = useMemo(() => {
     let list = rows || [];
-    if (tab !== "all") list = list.filter((r) => r.status === tab);
+    // Tab "Selesai" (approved) ikut mensyaratkan kolom lengkap - SAMA
+    // PERSIS dgn definisi di filterOptionGroups di atas & activityStage()
+    // - supaya isi daftar yg tampil benar2 cocok dgn angka yg tertulis di
+    // tab/chip-nya.
+    if (tab !== "all") list = list.filter((r) => r.status === tab && (tab !== "approved" || isActivityFullyComplete(r)));
     const term = q.trim().toLowerCase();
     if (term) list = list.filter((r) => (r.event_name || "").toLowerCase().includes(term) || (r.mc || "").toLowerCase().includes(term) || (r.site_id || "").toLowerCase().includes(term));
     if (needsActionOnly) list = list.filter((r) => needsAction(r, userId));
@@ -315,7 +332,7 @@ function ActivitiesInner() {
     }
     // Grup filter lanjutan BARU - tiap grup non-kosong jadi syarat AND
     // tambahan (di dalam grup sendiri OR, lihat komentar di state-nya).
-    if (statusFilter.size > 0) list = list.filter((r) => statusFilter.has(r.status));
+    if (statusFilter.size > 0) list = list.filter((r) => statusFilter.has(r.status) && (r.status !== "approved" || isActivityFullyComplete(r)));
     if (brandFilter.size > 0) list = list.filter((r) => r.brand && brandFilter.has(r.brand.toLowerCase()));
     if (branchFilter.size > 0) list = list.filter((r) => { const b = siteMeta[r.site_id]?.branch; return b && branchFilter.has(b); });
     if (kabupatenFilter.size > 0) list = list.filter((r) => { const k = siteMeta[r.site_id]?.kabupaten; return k && kabupatenFilter.has(k); });
@@ -555,9 +572,11 @@ function ActivitiesInner() {
                   // lengkap, lihat stepResumed di new/page.jsx), skip
                   // halaman detail sepenuhnya. Status lain (sudah diajukan
                   // dst.) tetap ke halaman detail spt biasa.
-                  (r.status === "draft" || r.status === "revision_needed") && r.created_by === userId
+                  r.created_by === userId && (r.status === "draft" || (r.status === "revision_needed" && r.revision_target !== "actual"))
                     ? `/martahub/m/activities/new?edit=${r.id}`
-                    : `/martahub/m/activities/${r.id}`
+                    : r.created_by === userId && r.status === "revision_needed" && r.revision_target === "actual"
+                      ? `/martahub/m/activities/${r.id}/submit`
+                      : `/martahub/m/activities/${r.id}`
                 )} />
             ))}
           </div>
@@ -799,7 +818,7 @@ function ActivityCard({ r, userId, branchLabel, onOpen }) {
   const stage = activityStage(r);
   const isDraft = r.status === "draft";
   const incomplete = isDraft && isDraftIncomplete(r);
-  const showNote = !!r.validation_note && (r.status === "revision_needed" || r.status === "revision_actual" || r.status === "rejected");
+  const showNote = !!r.validation_note && (r.status === "revision_needed" || r.status === "rejected");
   // Plan yg sudah siap TAPI tanggal event-nya belum tiba MASIH BOLEH diedit
   // (bukan terkunci sejak diajukan) - lihat penjelasan yg sama di halaman
   // detail (earliestPlanDate/READY_STATUSES).
@@ -967,9 +986,9 @@ function ActivityCard({ r, userId, branchLabel, onOpen }) {
         <div onClick={(e) => e.stopPropagation()} onPointerDown={(e) => e.stopPropagation()}
           style={{ padding: "0 15px 14px", display: "flex", gap: 8 }}>
           {r.status === "revision_needed" ? (
-            <button onClick={() => router.push(`/martahub/m/activities/new?edit=${r.id}`)}
+            <button onClick={() => router.push(r.revision_target === "actual" ? `/martahub/m/activities/${r.id}/submit` : `/martahub/m/activities/new?edit=${r.id}`)}
               style={{ flex: 1, height: 40, borderRadius: 11, border: "none", background: BRAND, color: "#fff", fontSize: 12, fontWeight: 800, fontFamily: FF, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-              <Pencil size={13} /> Revisi Plan
+              <Pencil size={13} /> {revisionKindLabel(r)}
             </button>
           ) : (
             <>
@@ -1079,7 +1098,7 @@ function DetailSheet({ r, userId, onClose, onRequestDelete }) {
   let editPlanAction = null;
   let editActualAction = null;
   if (r.status === "revision_needed") {
-    action = { label: "Revisi Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${r.id}`) };
+    action = { label: revisionKindLabel(r), onTap: () => router.push(r.revision_target === "actual" ? `/martahub/m/activities/${r.id}/submit` : `/martahub/m/activities/new?edit=${r.id}`) };
   } else if (r.status === "draft") {
     action = { label: "Lanjutkan Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${r.id}`) };
   } else {
@@ -1105,7 +1124,7 @@ function DetailSheet({ r, userId, onClose, onRequestDelete }) {
             dapat catatan generik "Laporan actual dikirim" (sejak validasi
             check-in dihapus), jadi menampilkannya di sini cuma jadi noise
             duplikat dgn pill status "Selesai" di atas. */}
-        {r.validation_note && ["revision_needed", "revision_actual", "rejected"].includes(r.status) && (
+        {r.validation_note && ["revision_needed", "rejected"].includes(r.status) && (
           <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 10, background: meta.bg, color: meta.color, fontSize: 11.5, fontWeight: 600, lineHeight: 1.5 }}>
             {r.validation_note}
           </div>

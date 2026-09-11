@@ -72,7 +72,7 @@ export default function MobileApprovalPage() {
     try {
       let planQ = supabaseMarta.from("mh_activities").select(PENDING_COLS).eq("status", "plan_submitted").order("created_at", { ascending: true }).limit(300);
       planQ = await applyMartaScope(planQ, scope);
-      let revisionQ = supabaseMarta.from("mh_activities").select(REVISION_COLS).eq("status", "revision_actual").order("validated_at", { ascending: true }).limit(300);
+      let revisionQ = supabaseMarta.from("mh_activities").select(REVISION_COLS).eq("status", "revision_needed").eq("revision_target", "actual").order("validated_at", { ascending: true }).limit(300);
       revisionQ = await applyMartaScope(revisionQ, scope);
 
       const [{ data: plans, error: e0 }, { data: revisions, error: e1 }, { data: street, error: e2 }] = await Promise.all([
@@ -129,7 +129,7 @@ export default function MobileApprovalPage() {
       if (dialog.kind === "md_street") {
         ({ error } = await supabaseMarta.rpc("mh_web_decide_md_installation", { p_id: dialog.row.id, p_decision: dialog.type, p_notes: notes.trim() || null, p_caller_email: email }));
       } else if (dialog.kind === "override") {
-        ({ error } = await supabaseMarta.rpc("mh_activity_manual_override", { p_activity_id: dialog.row.id, p_final_status: dialog.type === "approved" ? "approved" : "revision_actual", p_note: notes.trim() || null, p_caller_email: email }));
+        ({ error } = await supabaseMarta.rpc("mh_activity_manual_override", { p_activity_id: dialog.row.id, p_final_status: dialog.type === "approved" ? "approved" : "revision_needed", p_note: notes.trim() || null, p_caller_email: email }));
       } else {
         ({ error } = await supabaseMarta.rpc("mh_web_decide_plan", { p_activity_id: dialog.row.id, p_email: email, p_decision: dialog.type, p_notes: notes.trim() || null }));
       }
@@ -217,7 +217,7 @@ export default function MobileApprovalPage() {
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {revisionRows.map((r) => (
                 <RevisionCard key={r.id} r={r} canApprove={canApprove} busy={busyRowId === r.id}
-                  onApprove={() => quickApprove(r, "override")} onKeepRevision={() => openDialog(r, "override", "revision_actual")} />
+                  onApprove={() => quickApprove(r, "override")} onKeepRevision={() => openDialog(r, "override", "revision_needed")} />
               ))}
             </div>
           )

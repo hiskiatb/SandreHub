@@ -32,10 +32,15 @@ const STATUS = {
   completed: ["Selesai", T.success, T.successBg], inProgress: ["Berlangsung", T.warning, T.warningBg],
   plan_submitted: ["Plan Diajukan", T.blue, T.blueBg], revision_needed: ["Revisi Plan", T.warning, T.warningBg],
   pending_validation: ["Menunggu Validasi", T.blue, T.blueBg],
-  revision_actual: ["Perlu Perbaikan Lokasi/Bukti", T.warning, T.warningBg],
 };
 
 export function deriveStatusInfo(r) {
+  // "revision_needed" digabung (dulu ada status terpisah "revision_actual")
+  // - bedanya plan/actual sekarang ditandai kolom revision_target, bukan
+  // status mentahnya sendiri.
+  if (r?.status === "revision_needed" && r?.revision_target === "actual") {
+    return ["Laporan Actual Perlu Direvisi", T.warning, T.warningBg];
+  }
   if (r?.status === "approved") {
     const planDateStr = r.plan_date_start || r.plan_date;
     if (planDateStr) {
@@ -112,7 +117,7 @@ async function fetchAuthedPhotoBlobUrl(kind, id, callerEmail) {
   return URL.createObjectURL(blob);
 }
 
-export const DETAIL_COLS = "id,event_name,event_category,event_categories,brand,mc,branch_id,site_id,actual_site_id,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,poi_type,network_category,area_potential,address,latitude,longitude,status,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,target_rev_3m,cost_estimate,expected_outcome,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,actual_rev_3m,cost_actual,insight,checkin_valid,checkin_distance,checkin_at,approved_by_name,approved_by_email,approved_at,approval_notes,validation_status,validation_note,validated_at,override_status,override_by_name,override_at,override_note,created_at";
+export const DETAIL_COLS = "id,event_name,event_category,event_categories,brand,mc,branch_id,site_id,actual_site_id,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,poi_type,network_category,area_potential,address,latitude,longitude,status,revision_target,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,target_rev_3m,cost_estimate,expected_outcome,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,actual_rev_3m,cost_actual,insight,checkin_valid,checkin_distance,checkin_at,approved_by_name,approved_by_email,approved_at,approval_notes,validation_status,validation_note,validated_at,override_status,override_by_name,override_at,override_note,created_at";
 
 const btn = { padding: "9px 15px", borderRadius: 11, border: `1px solid ${T.line}`, background: "#fff", color: T.hi, fontSize: 12.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6 };
 

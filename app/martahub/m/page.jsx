@@ -82,7 +82,7 @@ function fmtRpCompact(n) {
 // mc/poi_type/event_categories/plan_date_start/plan_dates_multi ditambahkan
 // supaya "draft belum lengkap" di Beranda pakai definisi yg SAMA PERSIS dgn
 // halaman detail & daftar Aktivitas (lihat isDraftIncomplete di activityUi.js).
-const ACTIVITY_COLS = "id,event_name,brand,branch_id,mc,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,checkin_valid,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,target_rev_3m,cost_estimate,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,cost_actual,actual_rev_3m,created_at,site_id";
+const ACTIVITY_COLS = "id,event_name,brand,branch_id,mc,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,revision_target,checkin_valid,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,target_rev_3m,cost_estimate,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,cost_actual,actual_rev_3m,created_at,site_id";
 
 // Rotasi harian (getDate() % TIPS.length) - deterministik per hari & ikut
 // menyesuaikan otomatis kalau jumlah tips berubah, jadi tiap tips kebagian
@@ -251,7 +251,7 @@ export default function MartaMobileHome() {
         // /martahub/m/approval) - sebelumnya query ini TIDAK di-scope, jadi
         // badge-nya bisa lebih besar dari isi Approval Center yg sebenarnya
         // (approver brand/region tertentu tapi badge menghitung Sumatera).
-        let q = supabaseMarta.from("mh_activities").select("id", { count: "exact", head: true }).in("status", ["plan_submitted", "revision_actual"]);
+        let q = supabaseMarta.from("mh_activities").select("id", { count: "exact", head: true }).or('status.eq.plan_submitted,and(status.eq.revision_needed,revision_target.eq.actual)');
         q = await applyMartaScope(q, scope);
         const { count } = await q;
         if (alive) setPendingApprovals(count || 0);
@@ -770,9 +770,9 @@ function AchievementCard({
           </div>
 
           <div style={{ position: "relative", display: "flex", marginTop: 18, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.09)" }}>
-            <QuadStat dark icon={Target} dot="#FFFFFF" label="Plan" value={fmtInt(planCount)} />
+            <QuadStat dark icon={Target} dot="#FFFFFF" label="Activity Plan" value={fmtInt(planCount)} />
             <QuadDivider />
-            <QuadStat dark icon={CheckCircle2} dot="#EC1E79" label="Actual" value={fmtInt(actualCount)} valueColor="#F286B4" />
+            <QuadStat dark icon={CheckCircle2} dot="#EC1E79" label="Activity Actual" value={fmtInt(actualCount)} valueColor="#F286B4" />
             <QuadDivider />
             <QuadStat dark icon={Banknote} dot="#57C2AC" label="Revenue (3M)"
               value={revenueTotal > 0 ? fmtRpCompact(revenueTotal) : "-"} valueColor="#7FD9C6"
@@ -833,7 +833,7 @@ function AchievementCard({
               actualText={costRatioPct == null ? "-" : `${costRatioPct}%`}
               planText={targetRevTotal > 0 ? `${Math.round((targetCostTotal / targetRevTotal) * 100)}%` : "-"}
               achText="-" color="#F286B4" />
-            <DarkDetailRow icon={ListChecks} label="Total Actual / Plan" actual={actualCount} plan={planCount} fmt={fmtInt} color="#FFFFFF" last />
+            <DarkDetailRow icon={ListChecks} label="Total Activity Actual / Plan" actual={actualCount} plan={planCount} fmt={fmtInt} color="#FFFFFF" last />
           </div>
         </div>
       </div>

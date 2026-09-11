@@ -33,7 +33,7 @@ import supabaseMarta from "../../../../lib/supabaseMarta";
 import { FF, BRAND } from "./MobileShell";
 import { lockPullToRefresh, unlockPullToRefresh } from "./pullToRefreshLock";
 import BottomSheet from "./BottomSheet";
-import { fmtDate, statusMeta, fmtInt, fmtRp, activityStage } from "./activityUi";
+import { fmtDate, statusMeta, fmtInt, fmtRp, activityStage, revisionKindLabel } from "./activityUi";
 import { MetricTile, RebuyTile, RevenueCostBanner, revenueBannerProps } from "./MetricTiles";
 import { groupContiguousDates, syncTimesByDate, allDateTimesValid, DEFAULT_DATE_TIME } from "./planData";
 
@@ -61,7 +61,7 @@ const LAUNCH_YEAR = 2026, LAUNCH_MONTH = 7;
 // Prioritas warna titik saat 1 tanggal punya >1 aktivitas - status paling
 // "butuh perhatian" menang, SAMA PERSIS dgn `_dotColor()` Flutter.
 function dotColorForStatuses(statuses) {
-  if (statuses.some((s) => s === "rejected" || s === "revision_needed" || s === "revision_actual")) return "#DC2626";
+  if (statuses.some((s) => s === "rejected" || s === "revision_needed")) return "#DC2626";
   if (statuses.some((s) => s === "plan_submitted" || s === "pending_validation")) return "#B45309";
   if (statuses.some((s) => s === "approved")) return "#15803D";
   return "#6B7280"; // draft / lainnya
@@ -569,7 +569,7 @@ function ActivityDetailPopup({ activity: a, onClose }) {
   // Actual sama2 boleh diedit kapan saja (gate tanggal/status sudah dihapus)
   // jd tampil 2 tombol terpisah.
   let editAction = null, editPlanAction = null, editActualAction = null;
-  if (a.status === "revision_needed") editAction = { label: "Revisi Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${a.id}`) };
+  if (a.status === "revision_needed") editAction = { label: revisionKindLabel(a), onTap: () => router.push(a.revision_target === "actual" ? `/martahub/m/activities/${a.id}/submit` : `/martahub/m/activities/new?edit=${a.id}`) };
   else if (a.status === "draft") editAction = { label: "Lanjutkan Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${a.id}`) };
   else {
     editPlanAction = { label: "Edit Plan", onTap: () => router.push(`/martahub/m/activities/new?edit=${a.id}`) };
