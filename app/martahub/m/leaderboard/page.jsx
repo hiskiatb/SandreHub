@@ -178,7 +178,7 @@ export default function LeaderboardPage() {
 
         {/* Mode ranking - scrollable horizontal, biar 6 opsi ga bikin sempit */}
         {/* Scrollbar mode-chip DISEMBUNYIKAN (className mh-hide-scrollbar,
-            lihat <style jsx> di bawah) - scroll horizontal tetap jalan,
+            lihat <style jsx global> di bawah) - scroll horizontal tetap jalan,
             cuma bar abu2 di bawahnya yg dihilangkan (mengganggu visual). */}
         <div className="mh-hide-scrollbar" style={{ display: "flex", gap: 7, marginTop: 14, overflowX: "auto", paddingBottom: 2, WebkitOverflowScrolling: "touch", scrollbarWidth: "none", msOverflowStyle: "none" }}>
           {MODES.map((m) => {
@@ -196,10 +196,6 @@ export default function LeaderboardPage() {
             );
           })}
         </div>
-
-        <style jsx>{`
-          .mh-hide-scrollbar::-webkit-scrollbar { display: none; height: 0; }
-        `}</style>
 
         {/* Cakupan: branch tetap (bme_rge/tm) ditampilkan sbg badge info saja
             (tidak bisa diganti - memang scope akunnya). Role region-scope
@@ -293,6 +289,7 @@ export default function LeaderboardPage() {
       </div>
 
       <style jsx global>{`
+        .mh-hide-scrollbar::-webkit-scrollbar { display: none; height: 0; }
         @keyframes lbspin { to { transform: rotate(360deg); } }
       `}</style>
     </MobileShell>
