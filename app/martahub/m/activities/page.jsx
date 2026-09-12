@@ -131,7 +131,6 @@ function ActivitiesInner() {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   });
-  const [monthPickerOpen, setMonthPickerOpen] = useState(false);
   // Indikator loading KHUSUS saat filter/periode diubah (bukan initial
   // load - itu sudah dipakai `rows === null`) - useTransition dipakai
   // krn filtering 700+ baris di useMemo bisa terasa "macet" sesaat tanpa
@@ -526,17 +525,23 @@ function ActivitiesInner() {
               di bawah (lihat blok "Search" - permintaan DSF: dulu di sini
               berdempetan dgn judul, sekarang lebih dekat/relevan dgn
               search krn keduanya sama2 alat "persempit daftar"). */}
-          <button onClick={() => setMonthPickerOpen(true)}
-            style={{
-              display: "flex", alignItems: "center", gap: 5, height: 36, padding: "0 11px", borderRadius: 11, flexShrink: 0,
-              border: `1.5px solid ${monthKey !== "all" ? BRAND : "#E4E5EA"}`,
-              background: monthKey !== "all" ? "#FDECEC" : "#FFFFFF",
-              color: monthKey !== "all" ? BRAND : "#5A5A68",
-              fontSize: 11.5, fontWeight: 700, fontFamily: FF, cursor: "pointer", whiteSpace: "nowrap",
-            }}>
-            {monthLabel}
-            <ChevronDown size={13} />
-          </button>
+          {/* Pilih periode - konsep SAMA PERSIS dgn MonthSelect di kartu
+              Achievement (Beranda, app/martahub/m/page.jsx): pill + overlay
+              <select> transparan seukuran teks terpilih, BUKAN lagi tombol
+              chip yg buka BottomSheet kartu di bawah. Warnanya netral (tidak
+              pakai border/latar merah lagi) krn ini cuma alat ganti periode,
+              bukan status "filter aktif" yg perlu ditandai mencolok. */}
+          <div style={{ position: "relative", display: "inline-flex", alignItems: "center", flexShrink: 0 }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 5, height: 36, padding: "0 26px 0 11px", borderRadius: 11, background: "#FFFFFF", border: "1px solid #E4E5EA" }}>
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: "#5A5A68", whiteSpace: "nowrap" }}>{monthLabel}</span>
+            </div>
+            <ChevronDown size={13} style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", color: "#9A9AA6", pointerEvents: "none" }} />
+            <select value={monthKey} onChange={(e) => startFilterTransition(() => setMonthKey(e.target.value))} aria-label="Pilih Bulan"
+              style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 16 }}>
+              <option value="all">Semua Bulan</option>
+              {monthOptions.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+          </div>
         </div>
         {/* Search + tombol Filter - sekarang SEBARIS (dulu tombol filter
             sendirian di pojok kanan judul, sekarang dipindah ke sini spy
@@ -664,44 +669,6 @@ function ActivitiesInner() {
         />
       )}
 
-      {monthPickerOpen && (
-        <BottomSheet onClose={() => setMonthPickerOpen(false)}>
-          <div style={{ fontSize: 15, fontWeight: 800, color: "#17181C" }}>Pilih Bulan</div>
-          <div style={{ marginTop: 4, fontSize: 12, color: "#8A8A96" }}>Cuma bulan yg ada plan-nya yg ditampilkan di sini.</div>
-          <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 6 }}>
-            <button onClick={() => { startFilterTransition(() => setMonthKey("all")); setMonthPickerOpen(false); }}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
-                padding: "12px 14px", borderRadius: 12, border: `1.5px solid ${monthKey === "all" ? BRAND : "#E9EAEE"}`,
-                background: monthKey === "all" ? "#FDECEC" : "#FFFFFF", cursor: "pointer",
-              }}>
-              <span style={{ fontSize: 13.5, fontWeight: 700, color: "#17181C" }}>Semua Bulan</span>
-              {monthKey === "all" && <Check size={16} color={BRAND} />}
-            </button>
-            {monthOptions.length === 0 ? (
-              <div style={{ marginTop: 6, textAlign: "center", padding: "16px 10px", fontSize: 12, color: "#8A8A96" }}>Belum ada plan sama sekali.</div>
-            ) : (
-              monthOptions.map((o) => {
-                const active = monthKey === o.key;
-                return (
-                  <button key={o.key} onClick={() => { startFilterTransition(() => setMonthKey(o.key)); setMonthPickerOpen(false); }}
-                    style={{
-                      display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%",
-                      padding: "12px 14px", borderRadius: 12, border: `1.5px solid ${active ? BRAND : "#E9EAEE"}`,
-                      background: active ? "#FDECEC" : "#FFFFFF", cursor: "pointer",
-                    }}>
-                    <span style={{ fontSize: 13.5, fontWeight: 700, color: "#17181C" }}>{o.label}</span>
-                    <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: "#8A8A96" }}>{o.count} plan</span>
-                      {active && <Check size={16} color={BRAND} />}
-                    </span>
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </BottomSheet>
-      )}
 
       {filterOpen && (
         <BottomSheet onClose={() => setFilterOpen(false)}>
