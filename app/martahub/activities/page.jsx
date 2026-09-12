@@ -513,7 +513,13 @@ function Body({ email }) {
     const budgetAct = withBudget.reduce((s, r) => s + (r.cost_actual ?? 0), 0);
     const costRatioPct = budgetEst > 0 ? Math.round((budgetAct / budgetEst) * 100) : null;
 
-    const actualSubmittedCount = filteredRows.filter((r) => r.actual_date).length;
+    // "Laporan Actual" = jumlah plan yg SUDAH SELESAI (status DB 'completed'),
+    // SAMA PERSIS definisinya dgn tab Aktivitas mobile & kartu ringkasan
+    // Beranda - BUKAN lagi berdasar kolom `actual_date` (legacy, jarang/
+    // tidak konsisten terisi, tidak ikut diperbarui trigger validasi
+    // mh_validate_activity_actual sama sekali) yg bikin angka KPI ini bisa
+    // meleset jauh dari status Selesai yg sebenarnya.
+    const actualSubmittedCount = filteredRows.filter((r) => r.status === "completed").length;
 
     return {
       total,

@@ -353,7 +353,13 @@ export default function CalendarPage() {
                       <ChevronRight size={14} color="#5A5A68" />
                     </span>
                     <div style={{ paddingRight: 30 }}>
-                      <div style={{ fontSize: 14, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.event_name || "-"}</div>
+                      {/* Judul event boleh sampai 2 baris (line-clamp), bukan lagi
+                          dipotong 1 baris - konsisten dgn kartu di daftar Aktivitas
+                          & Beranda. */}
+                      <div style={{
+                        fontSize: 14, fontWeight: 800, color: "#17181C", lineHeight: 1.32,
+                        display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+                      }}>{a.event_name || "-"}</div>
                       <div style={{ marginTop: 5, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                         {a.brand && (
                           <span style={{

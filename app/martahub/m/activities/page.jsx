@@ -119,7 +119,18 @@ function ActivitiesInner() {
   // menyembunyikan apa pun sampai user pilih sendiri). Opsi yg ditawarkan
   // di sheet-nya HANYA bulan yg beneran ada plan-nya (lihat monthOptions
   // di bawah) - bukan daftar 12 bulan/beberapa tahun kosongan.
-  const [monthKey, setMonthKey] = useState("all");
+  // Default bulan berjalan (bukan lagi "all"/Semua Bulan) - BME/TMV paling
+  // sering cuma perlu lihat aktivitas bulan ini, "Semua Bulan" msh bisa
+  // dipilih manual lewat sheet bulan kalau memang perlu lihat riwayat.
+  // Kalau ternyata belum ada plan sama sekali di bulan ini (monthOptions
+  // dibangun dari data yg ADA di `rows`, bukan kalender tetap), effect
+  // auto-reset di bawah (monthOptions.some(...)) otomatis mengembalikannya
+  // ke "all" - jadi tidak ada risiko nyangkut di bulan kosong tanpa
+  // penjelasan.
+  const [monthKey, setMonthKey] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
   const [monthPickerOpen, setMonthPickerOpen] = useState(false);
   // Indikator loading KHUSUS saat filter/periode diubah (bukan initial
   // load - itu sudah dipakai `rows === null`) - useTransition dipakai
@@ -925,7 +936,16 @@ function ActivityCard({ r, userId, branchLabel, onOpen }) {
                 berwarna) - konsepnya SAMA dgn pill status (planStatus) di
                 bawah: background solid + teks kontras, IM3 kuning teks
                 hitam, 3ID magenta teks putih. */}
-            <div style={{ fontSize: 14, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {/* Judul event skrg boleh sampai 2 baris (line-clamp) - dulu
+                dipotong 1 baris (nowrap+ellipsis) tapi ternyata cukup banyak
+                nama event yg lebih panjang dari perkiraan awal, kepotong
+                jadi tidak informatif. Baris ke-3+ tetap dipotong "..." spy
+                tinggi kartu tidak melar tanpa batas kalau ada nama SANGAT
+                panjang. */}
+            <div style={{
+              fontSize: 14, fontWeight: 800, color: "#17181C", lineHeight: 1.32,
+              display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+            }}>
               {r.event_name || "Plan Tanpa Nama"}
             </div>
             {/* Urutan subtitle: Brand (badge) → Branch → MC. */}

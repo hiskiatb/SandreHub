@@ -21,14 +21,34 @@ import {
   Building2, ChevronRight, ChevronLeft, Clock,
   CalendarPlus, ListChecks, Map as MapIcon, Trophy, ShieldCheck, ClipboardCheck, Lightbulb, PackageCheck,
   Target, CheckCircle2, Wallet, Tags, LayoutDashboard, UserCog, FileEdit, Banknote,
-  CardSim, Router, RefreshCw, Receipt,
+  CardSim, Router, RefreshCw, Receipt, Globe2,
 } from "lucide-react";
 import supabaseMarta from "../../../lib/supabaseMarta";
 import { applyMartaScope, loadBranchMap } from "../../../lib/martaScope";
 import MobileShell, { useMartaSession, ShellSpinner, InlineSpinner, MartaSplash, FF, BRAND } from "./_shared/MobileShell";
 import AppHeader, { Badge } from "./_shared/AppHeader";
 import { fmtDate, fmtTimeLabel, fmtInt, isDraftIncomplete, activityStage } from "./_shared/activityUi";
-import { APPROVER_ROLES, ADDABLE_ROLES_FOR, BRAND_DISPLAY, BRANDS } from "./_shared/planData";
+import { APPROVER_ROLES, ADDABLE_ROLES_FOR, BRAND_DISPLAY, BRANDS, REGIONS } from "./_shared/planData";
+
+// Singkatan region utk chip filter ringkas ("REG" + NSA/CSA/SSA) - nilai
+// key HARUS sama persis dgn REGIONS (planData.js)/mh_branches.region di DB.
+const REGION_ABBR = { "NORTH SUMATERA": "NSA", "CENTRAL SUMATERA": "CSA", "SOUTH SUMATERA": "SSA" };
+
+// Kunci localStorage utk mengingat pilihan filter Branch/Brand/Region di
+// Beranda antar sesi (device ini saja - per browser, BUKAN disinkron ke
+// akun) - sebelumnya filter ini reset tiap kali halaman dibuka ulang,
+// nyusahin TMV Circle/Head yg tiap hari cuma mau lihat 1 region/brand
+// tertentu.
+const FILTERS_STORAGE_KEY = "mh_home_filters_v1";
+function loadSavedFilters() {
+  if (typeof window === "undefined") return {};
+  try { return JSON.parse(window.localStorage.getItem(FILTERS_STORAGE_KEY) || "{}") || {}; }
+  catch { return {}; }
+}
+function saveFilters(f) {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(f)); } catch { /* best-effort */ }
+}
 
 // ╔══════════════════════════════════════════════════════════════════════════╗
 // ║ MOCK DASHBOARD DATA - HANYA UNTUK VISUALISASI, HAPUS KAPAN SAJA          ║
@@ -151,8 +171,16 @@ export default function MartaMobileHome() {
   const [branchBySite, setBranchBySite] = useState({});
   const months = useMemo(monthOptions, []);
   const [monthKey, setMonthKey] = useState(months[0].key);
-  const [branchFilter, setBranchFilter] = useState("");
-  const [brandFilter, setBrandFilter] = useState("");
+  const [branchFilter, setBranchFilter] = useState(() => loadSavedFilters().branchFilter || "");
+  const [brandFilter, setBrandFilter] = useState(() => loadSavedFilters().brandFilter || "");
+  // Region HANYA relevan utk akun "Circle" (head/tmv dgn scope.region
+  // KOSONG - lihat catatan canBrowseRegions di bawah) - default "" (belum
+  // dipilih, tombol nampilin "REG"), BUKAN "ALL" - biar beda scr visual dgn
+  // begitu user SUDAH sengaja pilih "ALL" dari daftar opsi.
+  const [regionFilter, setRegionFilter] = useState(() => loadSavedFilters().regionFilter || "");
+  // Simpan tiap kali salah satu dari 3 filter ini berubah - state diingat
+  // lintas sesi (localStorage device ini), tidak lagi reset tiap buka app.
+  useEffect(() => { saveFilters({ branchFilter, brandFilter, regionFilter }); }, [branchFilter, brandFilter, regionFilter]);
 
   const isApprover = APPROVER_ROLES.includes(scope?.role);
 
@@ -236,6 +264,15 @@ export default function MartaMobileHome() {
   // lib/martaScope.js (dipakai bareng applyMartaScope di bawah).
   const canBrowseBranches = !!(scope?.unscoped || scope?.role === "head" || scope?.role === "tmv");
   const canBrowseBrands = !!(scope?.unscoped || scope?.role === "head");
+  // Region cuma jadi FILTER yg bisa dipilih utk akun "Circle" (head/tmv
+  // dgn scope.region KOSONG, mencakup ketiga region sekaligus - lihat
+  // struktur organisasi di planData.js) ATAU unscoped (admin/spm_sumatera).
+  // Head/Brand TMV yg terkunci ke SATU region tidak perlu memfilter apa2
+  // lagi (branch-nya sendiri sudah otomatis kepatok ke region itu), jadi
+  // chip Region utk mereka ditampilkan non-interaktif (cuma label region
+  // sendiri), sama polanya persis dgn canBrowseBrands utk role tmv (brand
+  // sudah terkunci ke scope.brand).
+  const canBrowseRegions = !!(scope?.unscoped || ((scope?.role === "head" || scope?.role === "tmv") && !scope?.region));
   useEffect(() => {
     if (loading || !canBrowseBranches) return;
     let alive = true;
@@ -298,15 +335,33 @@ export default function MartaMobileHome() {
   // MEMANG SUDAH begini dari awal (`if (scope.region) {...filter...}` -
   // region kosong = tidak difilter) - jadi filter Branch di UI ini
   // akhirnya konsisten dgn data yg sebenarnya bisa dia lihat.
+  // Region efektif yg dipakai utk MENYARING (bukan sekadar apa yg dipilih
+  // di dropdown) - "" (belum disentuh) ATAU "ALL" (sengaja dipilih "Semua
+  // Region") DUA-DUANYA berarti TIDAK ADA filter region, cuma beda tampilan
+  // labelnya saja di chip ("REG" vs "ALL").
+  const effectiveRegionFilter = canBrowseRegions && regionFilter && regionFilter !== "ALL" ? regionFilter : "";
   const branchOptions = canBrowseBranches
     ? Array.from(branchMap.entries())
         .filter(([, b]) => scope?.unscoped || !scope?.region || b.region === scope?.region)
+        // Region Circle (dipilih lewat chip REG di atas) mempersempit lagi
+        // daftar branch yg muncul - berlapis dgn penyaringan scope di atas,
+        // BUKAN pengganti (utk Head/Brand TMV yg sudah terkunci ke satu
+        // region, effectiveRegionFilter selalu kosong krn canBrowseRegions
+        // false, jadi baris ini no-op utk mereka).
+        .filter(([, b]) => !effectiveRegionFilter || b.region === effectiveRegionFilter)
         .map(([id, b]) => ({ value: id, label: b.name }))
         .sort((a, b) => a.label.localeCompare(b.label))
     : [];
   const brandOptions = canBrowseBrands
     ? BRANDS.map((b) => ({ value: b, label: BRAND_DISPLAY[b] || b.toUpperCase() }))
     : [];
+  // Opsi chip Region - "Circle" (canBrowseRegions) dapat 4 pilihan (ALL +
+  // 3 region disingkat NSA/CSA/SSA); yg terkunci ke 1 region (bukan
+  // Circle) dapat 1 opsi non-interaktif (region-nya sendiri), SAMA
+  // polanya persis dgn brandOptions/canBrowseBrands di atas.
+  const regionOptions = canBrowseRegions
+    ? [{ value: "ALL", label: "ALL" }, ...REGIONS.map((r) => ({ value: r.key, label: REGION_ABBR[r.key] || r.label }))]
+    : (scope?.region ? [{ value: scope.region, label: REGION_ABBR[scope.region] || scope.region }] : []);
 
   // Perbandingan brand HARUS case-insensitive - rows di sini datang dari
   // mh_activities (brand disimpan "IM3"/"TRI", huruf besar), sedangkan
@@ -315,7 +370,13 @@ export default function MartaMobileHome() {
   // memilih filter brand pada role scoped akan selalu menampilkan 0 hasil
   // krn "IM3" !== "im3".
   const scopedRows = (rows || []).filter((r) =>
-    (!branchFilter || r.branch_id === branchFilter) && (!brandFilter || (r.brand || "").toLowerCase() === brandFilter.toLowerCase())
+    (!branchFilter || r.branch_id === branchFilter)
+    && (!brandFilter || (r.brand || "").toLowerCase() === brandFilter.toLowerCase())
+    // Region difilter lewat branchMap (branch_id baris ini -> region
+    // branch itu) - konsisten dgn cara Branch/Brand di atas, bukan lewat
+    // kolom region di mh_activities sendiri (activity TIDAK punya kolom
+    // region langsung).
+    && (!effectiveRegionFilter || branchMap.get(r.branch_id)?.region === effectiveRegionFilter)
   );
   const monthRows = scopedRows.filter((r) => (r.plan_date || "").slice(0, 7) === monthKey);
   const targetSp = monthRows.reduce((s, r) => s + (r.target_sp || 0), 0);
@@ -340,7 +401,14 @@ export default function MartaMobileHome() {
   const hasCostActualData = monthRows.some((r) => r.cost_actual != null);
   const costRatioPct = revenueTotal > 0 && hasCostActualData ? Math.round((costTotal / revenueTotal) * 100) : null;
   const planCount = monthRows.length;
-  const actualCount = monthRows.filter((r) => r.actual_sp != null).length;
+  // "Selesai" bulan ini - SAMA PERSIS definisinya dgn tab Aktivitas
+  // (status kolom DB == 'completed'), BUKAN lagi "actual_sp sudah terisi"
+  // spt sebelumnya. Definisi lama itu ikut menghitung baris yg SEDANG
+  // Revisi (mis. Revisi Report krn Cost Actual salah) tapi actual_sp-nya
+  // kebetulan sudah sempat diisi - kehitung "selesai" di sini padahal di
+  // tab Aktivitas jelas masuk hitungan Revisi, bukan Selesai, bikin kedua
+  // angka beda tanpa alasan yg jelas bagi BME/TMV.
+  const actualCount = monthRows.filter((r) => r.status === "completed").length;
   // Badge besar di kartu Achievement = persentase Activity ACTUAL dari
   // Activity PLAN bulan ini (actualCount/planCount) - BUKAN dari Penjualan
   // SP seperti sebelumnya (dulu achievementPct = actualSp/targetSp, jadi
@@ -422,6 +490,17 @@ export default function MartaMobileHome() {
               options={canBrowseBrands ? brandOptions : (scope?.brand ? [{ value: scope.brand, label: BRAND_DISPLAY[scope.brand] || scope.brand.toUpperCase() }] : [])}
             />
           </div>
+          {/* Region ("REG") - chip ke-3, SATU baris yg sama dgn Branch &
+              Brand (bukan baris terpisah) - cuma tampil interaktif utk
+              akun "Circle" (canBrowseRegions); Head/Brand TMV yg sudah
+              terkunci ke 1 region tetap dapat chip-nya (non-interaktif,
+              label region sendiri), konsisten dgn pola Brand utk role
+              tmv (brand terkunci) di atas. */}
+          {regionOptions.length > 0 && (
+            <div style={{ flexShrink: 0 }}>
+              <RegionTagSelect value={regionFilter} onChange={setRegionFilter} options={regionOptions} />
+            </div>
+          )}
         </div>
       </div>
 
@@ -681,6 +760,54 @@ function BrandTagSelect({ value, onChange, options }) {
   );
 }
 
+// Warna per region (dot kecil di chip, sama semangat dgn BRAND_TAG_COLORS)
+// - dipilih netral/beda dari warna brand (IM3 merah, TRI magenta) & dari
+// warna status supaya tidak tertukar makna di layar yg sama.
+const REGION_TAG_COLORS = { "NORTH SUMATERA": "#0D9488", "CENTRAL SUMATERA": "#7C3AED", "SOUTH SUMATERA": "#B45309", "ALL": "#5A5A68" };
+
+// RegionTagSelect - chip filter Region, POLA SAMA PERSIS dgn BrandTagSelect
+// di atas (dot kecil + label singkat + native <select> transparan
+// ditumpuk di atasnya) supaya visualnya konsisten satu baris dgn Branch &
+// Brand, cuma beda warnanya & label defaultnya "REG" (bukan "BRAND").
+// Default (belum disentuh sama sekali, value="") nampilin "REG" polos;
+// begitu user pilih salah satu opsi (termasuk "ALL" yg SENGAJA disediakan
+// sbg pilihan eksplisit "Semua Region", bukan cuma reset diam2) baru
+// nampilin labelnya ("ALL"/"NSA"/"CSA"/"SSA").
+function RegionTagSelect({ value, onChange, options }) {
+  const interactive = options.length > 1;
+  const selected = options.find((o) => o.value === value);
+  const effective = selected || (options.length === 1 ? options[0] : null);
+  const color = effective ? (REGION_TAG_COLORS[effective.value] || "#5A5A68") : "#9A9AA6";
+  return (
+    <div style={{
+      position: "relative", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "max-content", boxSizing: "border-box",
+      minHeight: 40, padding: interactive ? "0 26px 0 12px" : "0 12px", borderRadius: 999,
+      background: value ? `${color}14` : "#FFFFFF",
+      border: `1.5px solid ${value ? color : "#E4E5EA"}`,
+      cursor: interactive ? "pointer" : "default",
+    }}>
+      {effective ? (
+        <span style={{ width: 9, height: 9, borderRadius: "50%", flexShrink: 0, background: color }} />
+      ) : (
+        <Globe2 size={12} color={color} strokeWidth={2.2} style={{ flexShrink: 0 }} />
+      )}
+      <span style={{ fontSize: 12, fontWeight: 800, color, whiteSpace: "nowrap" }}>
+        {effective ? <><span style={{ fontWeight: 600, opacity: 0.68 }}>REG </span>{effective.label}</> : "REG"}
+      </span>
+      {interactive && (
+        <ChevronRight size={11} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%) rotate(90deg)", color, pointerEvents: "none" }} />
+      )}
+      {interactive && (
+        <select value={value} onChange={(e) => onChange(e.target.value)} aria-label="Region"
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 16 }}>
+          <option value="">REG</option>
+          {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      )}
+    </div>
+  );
+}
+
 /** Bottom sheet konfirmasi Keluar - dipanggil dari tombol Keluar merah di
  * header, mencegah logout tidak sengaja (posisinya persis sebelah ikon
  * Notifikasi). Bisa dibatalkan lewat tombol Batal ATAU tap backdrop, sama
@@ -789,7 +916,7 @@ function AchievementCard({
           <div style={{ position: "relative", display: "flex", marginTop: 18, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.09)" }}>
             <QuadStat dark icon={Target} dot="#FFFFFF" label="Activity Plan" value={fmtInt(planCount)} />
             <QuadDivider />
-            <QuadStat dark icon={CheckCircle2} dot="#EC1E79" label="Activity Actual" value={fmtInt(actualCount)} valueColor="#F286B4" />
+            <QuadStat dark icon={CheckCircle2} dot="#EC1E79" label="Selesai" value={fmtInt(actualCount)} valueColor="#F286B4" />
             <QuadDivider />
             <QuadStat dark icon={Banknote} dot="#57C2AC" label="Revenue (3M)"
               value={revenueTotal > 0 ? fmtRpCompact(revenueTotal) : "-"} valueColor="#7FD9C6"
@@ -850,7 +977,7 @@ function AchievementCard({
               actualText={costRatioPct == null ? "-" : `${costRatioPct}%`}
               planText={targetRevTotal > 0 ? `${Math.round((targetCostTotal / targetRevTotal) * 100)}%` : "-"}
               achText="-" color="#F286B4" />
-            <DarkDetailRow icon={ListChecks} label="Total Activity Actual / Plan" actual={actualCount} plan={planCount} fmt={fmtInt} color="#FFFFFF" last />
+            <DarkDetailRow icon={ListChecks} label="Total Selesai / Plan" actual={actualCount} plan={planCount} fmt={fmtInt} color="#FFFFFF" last />
           </div>
         </div>
       </div>
@@ -1086,7 +1213,12 @@ function ActivityRow({ r, branchLabel }) {
       </span>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.event_name || "-"}</div>
+          {/* Judul event boleh sampai 2 baris (line-clamp), bukan lagi
+              dipotong 1 baris - konsisten dgn kartu di daftar Aktivitas. */}
+          <div style={{
+            fontSize: 14, fontWeight: 800, color: "#17181C", lineHeight: 1.32,
+            display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+          }}>{r.event_name || "-"}</div>
           {/* Urutan subtitle: Brand (badge) → Branch → MC - brand paling kiri
               krn itu identitas paling cepat dikenali (warnanya), baru
               lingkup wilayah (Branch), baru siapa (MC). */}
