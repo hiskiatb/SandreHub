@@ -292,7 +292,24 @@ function ActivitiesInner() {
     // opsi status tidak boleh "menghilang" begitu kebetulan tidak ada
     // datanya (mis. dipakai orang lain lewat link/screenshot yg
     // menyebutkan status itu, atau memang mau memastikan benar2 kosong).
-    for (const t of TABS) { if (t.key !== "all") status.set(t.key, { key: t.key, label: t.label, count: 0 }); }
+    // "Plan Diajukan" (status DB plan_submitted) SENGAJA TIDAK dipakai
+    // langsung sbg opsi filter Status - kartu daftar tidak pernah
+    // menampilkan label itu (activityStage() selalu menampilkan salah satu
+    // dari 3 turunannya: Terjadwal/Berjalan/Menunggu Laporan, tergantung
+    // jam & tanggal event), jadi filternya HARUS ikut 3 turunan itu juga
+    // spy label yg dipilih di filter SAMA PERSIS dgn label yg dilihat BME
+    // di kartu - bukan label "Plan Diajukan" yg tidak pernah kelihatan.
+    const PLAN_STAGE_KEYS = { "Terjadwal": "stage:scheduled", "Berjalan": "stage:ongoing", "Menunggu Laporan": "stage:waiting_report" };
+    for (const t of TABS) {
+      if (t.key === "all") continue;
+      if (t.key === "plan_submitted") {
+        status.set("stage:scheduled", { key: "stage:scheduled", label: "Terjadwal", count: 0 });
+        status.set("stage:ongoing", { key: "stage:ongoing", label: "Berjalan", count: 0 });
+        status.set("stage:waiting_report", { key: "stage:waiting_report", label: "Menunggu Laporan", count: 0 });
+        continue;
+      }
+      status.set(t.key, { key: t.key, label: t.label, count: 0 });
+    }
     const bump = (map, key, label) => { if (!key) return; const cur = map.get(key); if (cur) cur.count++; else map.set(key, { key, label: label ?? key, count: 1 }); };
     for (const r of rows || []) {
       const meta = siteMeta[r.site_id];
@@ -302,7 +319,16 @@ function ActivitiesInner() {
       // menjamin baris 'completed' SELALU lengkap sebelum status itu
       // tersimpan, jadi tidak ada lagi kasus 'completed' tapi bolong yg
       // perlu ditandai terpisah - satu status DB = satu opsi filter.
-      bump(status, r.status, statusMeta(r.status).label);
+      // KHUSUS plan_submitted: dihitung ke salah satu dari 3 turunan
+      // tampilan (Terjadwal/Berjalan/Menunggu Laporan) via activityStage(),
+      // BUKAN ke "Plan Diajukan" mentah - label filter harus sama persis
+      // dgn yg dilihat BME di kartu.
+      if (r.status === "plan_submitted") {
+        const stageKey = PLAN_STAGE_KEYS[activityStage(r).label];
+        if (stageKey) bump(status, stageKey, status.get(stageKey)?.label);
+      } else {
+        bump(status, r.status, statusMeta(r.status).label);
+      }
       if (r.brand) bump(brand, r.brand.toLowerCase(), r.brand.toLowerCase() === "tri" ? "3ID" : "IM3");
       if (meta?.branch) bump(branch, meta.branch, meta.branch);
       if (meta?.kabupaten) bump(kabupaten, meta.kabupaten, meta.kabupaten);
@@ -316,7 +342,9 @@ function ActivitiesInner() {
     // Revisi Plan → Selesai → Revisi Report), bukan diacak berdasar count
     // (yg akan bikin status 0 selalu terlempar ke paling bawah/belakang
     // tanpa pola yg jelas tiap kali data berubah).
-    const statusOrdered = TABS.filter((t) => t.key !== "all").map((t) => status.get(t.key)).filter(Boolean);
+    const statusOrdered = TABS.filter((t) => t.key !== "all").flatMap((t) => t.key === "plan_submitted"
+      ? [status.get("stage:scheduled"), status.get("stage:ongoing"), status.get("stage:waiting_report")]
+      : [status.get(t.key)]).filter(Boolean);
     return {
       status: statusOrdered, brand: toSorted(brand), branch: toSorted(branch),
       kabupaten: toSorted(kabupaten), kecamatan: toSorted(kecamatan), poi: toSorted(poi),
@@ -352,7 +380,14 @@ function ActivitiesInner() {
     // tambahan (di dalam grup sendiri OR, lihat komentar di state-nya).
     // Filter status APA ADANYA sesuai kolom `status` di DB - tidak ada lagi
     // kasus virtual "completed tapi bolong" (lihat catatan di activityStage()).
-    if (statusFilter.size > 0) list = list.filter((r) => statusFilter.has(r.status));
+    // Utk plan_submitted, dicocokkan ke turunan tampilannya (stage:scheduled/
+    // ongoing/waiting_report), BUKAN ke key "plan_submitted" mentah - itu
+    // sendiri sudah tidak ada lagi sbg opsi filter (lihat filterOptionGroups).
+    const PLAN_STAGE_FILTER_KEYS = { "Terjadwal": "stage:scheduled", "Berjalan": "stage:ongoing", "Menunggu Laporan": "stage:waiting_report" };
+    if (statusFilter.size > 0) list = list.filter((r) => {
+      if (r.status === "plan_submitted") return statusFilter.has(PLAN_STAGE_FILTER_KEYS[activityStage(r).label]);
+      return statusFilter.has(r.status);
+    });
     if (brandFilter.size > 0) list = list.filter((r) => r.brand && brandFilter.has(r.brand.toLowerCase()));
     if (branchFilter.size > 0) list = list.filter((r) => { const b = siteMeta[r.site_id]?.branch; return b && branchFilter.has(b); });
     if (kabupatenFilter.size > 0) list = list.filter((r) => { const k = siteMeta[r.site_id]?.kabupaten; return k && kabupatenFilter.has(k); });
