@@ -105,7 +105,7 @@ export default function MobileApprovalPage() {
     try {
       let error;
       if (kind === "override") {
-        ({ error } = await supabaseMarta.rpc("mh_activity_manual_override", { p_activity_id: row.id, p_final_status: "approved", p_note: null, p_caller_email: email }));
+        ({ error } = await supabaseMarta.rpc("mh_activity_manual_override", { p_activity_id: row.id, p_final_status: "completed", p_note: null, p_caller_email: email }));
       } else {
         ({ error } = await supabaseMarta.rpc("mh_web_decide_md_installation", { p_id: row.id, p_decision: "approved", p_notes: null, p_caller_email: email }));
       }
@@ -129,7 +129,7 @@ export default function MobileApprovalPage() {
       if (dialog.kind === "md_street") {
         ({ error } = await supabaseMarta.rpc("mh_web_decide_md_installation", { p_id: dialog.row.id, p_decision: dialog.type, p_notes: notes.trim() || null, p_caller_email: email }));
       } else if (dialog.kind === "override") {
-        ({ error } = await supabaseMarta.rpc("mh_activity_manual_override", { p_activity_id: dialog.row.id, p_final_status: dialog.type === "approved" ? "approved" : "revision_needed", p_note: notes.trim() || null, p_caller_email: email }));
+        ({ error } = await supabaseMarta.rpc("mh_activity_manual_override", { p_activity_id: dialog.row.id, p_final_status: dialog.type === "approved" ? "completed" : "revision_needed", p_note: notes.trim() || null, p_caller_email: email }));
       } else {
         ({ error } = await supabaseMarta.rpc("mh_web_decide_plan", { p_activity_id: dialog.row.id, p_email: email, p_decision: dialog.type, p_notes: notes.trim() || null }));
       }

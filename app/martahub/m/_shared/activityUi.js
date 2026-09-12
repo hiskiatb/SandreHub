@@ -15,10 +15,11 @@ export const STATUS_META = {
   // "revision_needed" - bedanya plan/actual sekarang ditandai kolom
   // revision_target ('plan'/'actual'), dijelaskan lewat validation_note.
   revision_needed:      { label: "Revisi",                    color: "#B45309", bg: "rgba(180,83,9,0.10)" },
-  // 'approved' SEKARANG cuma dipakai di satu titik siklus hidup: laporan
-  // actual lolos validasi otomatis (checkin_valid via trigger server) - jadi
-  // artinya "Selesai", BUKAN "plan disetujui" (gate itu sudah dihapus).
-  approved:              { label: "Selesai",                   color: "#15803D", bg: "rgba(21,128,61,0.10)" },
+  // 'completed' (dulu bernama 'approved' - diganti krn TIDAK lagi berarti
+  // "disetujui atasan", gate approval plan sudah dihapus total) cuma
+  // dipakai di satu titik siklus hidup: laporan actual lolos validasi
+  // kelengkapan OTOMATIS oleh trigger server, bukan keputusan manual.
+  completed:             { label: "Selesai",                   color: "#15803D", bg: "rgba(21,128,61,0.10)" },
   pending_validation:    { label: "Menunggu Validasi",         color: "#2563EB", bg: "rgba(37,99,235,0.10)" },
   in_progress:           { label: "Berjalan",                  color: "#7C3AED", bg: "rgba(124,58,237,0.10)" },
 };
@@ -53,15 +54,13 @@ export function fmtRp(n) {
   return `Rp ${Number(n).toLocaleString("id-ID")}`;
 }
 
-// Label jam ringkas utk kartu daftar Aktivitas - "Seharian" kalau is_all_day
-// (atau jam tidak lengkap), atau rentang "HH.MM - HH.MM" kalau ada. Kalau
-// plan multi-tanggal punya jam berbeda per tanggal (plan_date_times), pakai
-// jam di TANGGAL PALING AWAL (earliestPlanDate) sbg representasi kartu -
-// sama logikanya dgn otherActTimeLabel di CalendarPickerSheet, cuma versi
-// tanpa dateKey eksplisit (kartu daftar cuma nampilin satu baris ringkas).
-export function fmtTimeLabel(a) {
+// Ambil info jam utk SATU tanggal spesifik dari plan ini (fallback ke jam
+// tunggal a.start_time/a.end_time kalau plan_date_times belum/tidak ada
+// utk tanggal itu) - SATU sumber kebenaran dipakai baik oleh fmtTimeLabel
+// (tampilan kartu) maupun activityStage (nentuin kapan persis "Berjalan"
+// berubah jadi "Menunggu Laporan").
+export function perDateTimeInfo(a, dateKey) {
   let perDate = null;
-  const dateKey = earliestPlanDate(a);
   if (dateKey && a.plan_date_times) {
     try {
       const map = typeof a.plan_date_times === "string" ? JSON.parse(a.plan_date_times) : a.plan_date_times;
@@ -69,9 +68,21 @@ export function fmtTimeLabel(a) {
     } catch { /* biarkan null, fallback di bawah */ }
   }
   const isAllDay = perDate ? !!perDate.is_all_day : a.is_all_day !== false;
+  const startTime = (perDate?.start_time || a.start_time || "").slice(0, 5);
+  const endTime = (perDate?.end_time || a.end_time || "").slice(0, 5);
+  return { isAllDay, startTime, endTime };
+}
+
+// Label jam ringkas utk kartu daftar Aktivitas - "Seharian" kalau is_all_day
+// (atau jam tidak lengkap), atau rentang "HH.MM - HH.MM" kalau ada. Kalau
+// plan multi-tanggal punya jam berbeda per tanggal (plan_date_times), pakai
+// jam di TANGGAL PALING AWAL (earliestPlanDate) sbg representasi kartu -
+// sama logikanya dgn otherActTimeLabel di CalendarPickerSheet, cuma versi
+// tanpa dateKey eksplisit (kartu daftar cuma nampilin satu baris ringkas).
+export function fmtTimeLabel(a) {
+  const dateKey = earliestPlanDate(a);
+  const { isAllDay, startTime: st, endTime: et } = perDateTimeInfo(a, dateKey);
   if (isAllDay) return "Seharian";
-  const st = (perDate?.start_time || a.start_time || "").slice(0, 5);
-  const et = (perDate?.end_time || a.end_time || "").slice(0, 5);
   if (!st || !et) return "Seharian";
   return `${st.replace(":", ".")} - ${et.replace(":", ".")}`;
 }
@@ -138,13 +149,13 @@ export function latestPlanDate(a) {
   return a.plan_date_end || a.plan_date_start || a.plan_date || null;
 }
 
-// Plan yg statusnya "siap dieksekusi" (plan_submitted/approved) TIDAK PERLU
+// Plan yg statusnya "siap dieksekusi" (plan_submitted/completed) TIDAK PERLU
 // approval lagi - jadi status pill "Plan Diajukan"/"Disetujui" kurang
 // berguna dibanding info yg lebih actionable: berapa hari lagi event-nya.
 // Dipakai gantiin status pill KHUSUS utk status "siap" ini; status lain
 // (draft/revisi/dst.) tetap pakai statusMeta() biasa krn label itu justru
 // yg paling relevan di fase itu.
-// Cuma plan_submitted yg berarti "siap, belum ada actual" - 'approved'
+// Cuma plan_submitted yg berarti "siap, belum ada actual" - 'completed'
 // sekarang eksklusif berarti "actual sudah selesai & valid" (lihat catatan
 // di STATUS_META), jadi TIDAK dianggap lagi "siap mengisi laporan".
 export const READY_STATUSES = new Set(["plan_submitted"]);
@@ -182,8 +193,8 @@ export function missingActualFields(a) {
 
 // Aktivitas dianggap BENAR-BENAR "Selesai" hanya kalau TIDAK ADA kolom plan
 // maupun actual yang masih kosong - dipakai sbg gate tambahan di atas
-// status DB mentah (status==='approved' TIDAK CUKUP sendirian, krn data
-// lama/import bisa saja ke-approve sebelum field2 ini lengkap).
+// status DB mentah (status==='completed' TIDAK CUKUP sendirian, krn data
+// lama/import bisa saja ke-tandai completed sebelum field2 ini lengkap).
 export function isActivityFullyComplete(a) {
   return missingPlanFields(a).length === 0 && missingActualFields(a).length === 0;
 }
@@ -221,25 +232,53 @@ export function isDraftIncomplete(a) {
 //
 // Tahapannya: Draft → Revisi Plan (kalau ditandai perlu revisi) → begitu
 // status DB plan_submitted, labelnya JADI DINAMIS ikut tanggal event
-// (Terjadwal → Berjalan → Menunggu Laporan kalau actual belum diisi) →
+// (Terjadwal → Berjalan → Menunggu Laporan begitu jam selesai event lewat,
+// atau begitu tanggalnya berganti kalau event seharian/tanpa jam) →
 // Revisi Report (kalau laporan actual ditandai perlu revisi) → Selesai.
 export function activityStage(a) {
   if (a.status === "draft") return STATUS_META.draft;
   if (a.status === "revision_needed") return { label: revisionKindLabel(a), color: STATUS_META.revision_needed.color, bg: STATUS_META.revision_needed.bg };
   const hasActual = a.actual_sp != null;
-  if (hasActual || a.status === "approved") {
+  if (hasActual || a.status === "completed") {
     // "Selesai" (hijau) HANYA kalau semua kolom plan & actual benar2
-    // lengkap - kalau tidak, tandai jelas "Perlu Dilengkapi" (bukan
-    // diam2 tetap dianggap Selesai) supaya gap antara jumlah "Selesai"
-    // di kartu vs di filter Status tidak lagi membingungkan.
+    // lengkap - kalau tidak, tandai jelas mana yg kurang (bukan diam2
+    // tetap dianggap Selesai, dan bukan cuma "Perlu Dilengkapi" polos yg
+    // bikin bingung arahnya ke plan atau actual) supaya gap antara jumlah
+    // "Selesai" di kartu vs di filter Status tidak lagi membingungkan.
     if (isActivityFullyComplete(a)) return { label: "Selesai", color: "#15803D", bg: "rgba(21,128,61,0.10)" };
-    return { label: "Perlu Dilengkapi", color: "#B45309", bg: "rgba(180,83,9,0.10)" };
+    const planMissing = missingPlanFields(a).length > 0;
+    const actualMissing = missingActualFields(a).length > 0;
+    // Label dipersingkat (bukan "... Perlu Dilengkapi" yg kepanjangan di
+    // pill kartu) - "Kurang" cukup jelas & tetap membedakan arahnya ke
+    // Plan atau Actual, sama istilahnya dgn opsi filter Status di daftar
+    // Aktivitas (lihat filterOptionGroups di activities/page.jsx) supaya
+    // TMV/BME melihat kata yg SAMA PERSIS di kartu maupun di filter.
+    const label = planMissing && actualMissing
+      ? "Plan & Actual Kurang"
+      : planMissing
+        ? "Plan Kurang"
+        : "Actual Kurang";
+    return { label, color: "#B45309", bg: "rgba(180,83,9,0.10)" };
   }
   if (READY_STATUSES.has(a.status)) {
-    const todayStr = new Date().toISOString().slice(0, 10);
+    const now = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
     const eventDateStr = earliestPlanDate(a);
     if (eventDateStr && eventDateStr < todayStr) return { label: "Menunggu Laporan", color: "#DC2626", bg: "rgba(220,38,38,0.10)" };
-    if (eventDateStr === todayStr) return { label: "Berjalan", color: "#7C3AED", bg: "rgba(124,58,237,0.10)" };
+    if (eventDateStr === todayStr) {
+      // Seharian (atau jam tidak lengkap) -> tetap "Berjalan" sampai pukul
+      // 00.00 (baru berubah besok, ditangani cabang di atas). Kalau event
+      // punya jam selesai spesifik, begitu jam SEKARANG lewat jam selesai
+      // itu, LANGSUNG "Menunggu Laporan" - tidak perlu nunggu gonta hari.
+      const { isAllDay, endTime } = perDateTimeInfo(a, eventDateStr);
+      if (!isAllDay && endTime) {
+        const eventEnd = new Date(`${eventDateStr}T${endTime}:00`);
+        if (!Number.isNaN(eventEnd.getTime()) && now > eventEnd) {
+          return { label: "Menunggu Laporan", color: "#DC2626", bg: "rgba(220,38,38,0.10)" };
+        }
+      }
+      return { label: "Berjalan", color: "#7C3AED", bg: "rgba(124,58,237,0.10)" };
+    }
     return { label: "Terjadwal", color: "#2563EB", bg: "rgba(37,99,235,0.10)" };
   }
   return statusMeta(a.status);

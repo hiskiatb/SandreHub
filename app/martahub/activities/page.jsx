@@ -15,13 +15,13 @@ const CAT_LABEL = {
 };
 const STATUS = {
   draft: ["Draft", T.mid, "#eef1f6"], submitted: ["Laporan Masuk", T.blue, T.blueBg],
-  approved: ["Disetujui", T.success, T.successBg], rejected: ["Ditolak", T.error, T.errorBg],
+  rejected: ["Ditolak", T.error, T.errorBg],
   completed: ["Selesai", T.success, T.successBg], inProgress: ["Berlangsung", T.warning, T.warningBg],
   plan_submitted: ["Plan Diajukan", T.blue, T.blueBg], revision_needed: ["Revisi Plan", T.warning, T.warningBg],
   pending_validation: ["Menunggu Validasi", T.blue, T.blueBg],
 };
 
-// Status "approved" sekarang eksklusif berarti laporan aktual sudah disubmit
+// Status "completed" (dulu "approved") sekarang eksklusif berarti laporan aktual sudah disubmit
 // & tervalidasi otomatis (lihat trigger mh_validate_activity_actual) -> harus
 // selalu tampil "Selesai". Sebelum laporan aktual masuk (actual_sp masih null)
 // status masih berupa 'ready'/dll dan dipecah berdasarkan tanggal plan_date
@@ -90,15 +90,28 @@ function deriveStatusInfo(r, meta) {
   if (r?.status === "revision_needed" && r?.revision_target === "actual") {
     return ["Laporan Actual Perlu Direvisi", T.warning, T.warningBg];
   }
-  if (r?.status === "approved") {
+  if (r?.status === "completed") {
     if (r?.actual_sp != null) return ["Selesai", T.success, T.successBg];
     const planDateStr = r.plan_date_start || r.plan_date;
     if (planDateStr) {
+      const now = new Date();
       const today = new Date(); today.setHours(0, 0, 0, 0);
       const planDate = new Date(planDateStr.slice(0, 10)); planDate.setHours(0, 0, 0, 0);
       const diffDays = Math.round((today - planDate) / 86400000);
       if (diffDays < 0) return ["Menunggu Hari-H", T.blue, T.blueBg];
-      if (diffDays === 0) return ["Hari-H / Berlangsung", T.warning, T.warningBg];
+      if (diffDays === 0) {
+        // Seharian/jam tidak lengkap -> tetap "Berlangsung" sampai
+        // 00.00 (baru ganti besok, lewat cabang diffDays > 0 di bawah).
+        // Kalau ada jam selesai spesifik, begitu SEKARANG lewat jam
+        // selesai itu, langsung "Menunggu Laporan" - tanpa nunggu hari
+        // berganti.
+        const et = (r.end_time || "").slice(0, 5);
+        if (r.is_all_day === false && et) {
+          const eventEnd = new Date(`${planDateStr.slice(0, 10)}T${et}:00`);
+          if (!Number.isNaN(eventEnd.getTime()) && now > eventEnd) return ["Menunggu Laporan", T.error, T.errorBg];
+        }
+        return ["Hari-H / Berlangsung", T.warning, T.warningBg];
+      }
       return ["Menunggu Laporan", T.error, T.errorBg];
     }
   }

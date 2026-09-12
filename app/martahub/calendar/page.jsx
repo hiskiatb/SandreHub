@@ -8,7 +8,7 @@ import { getMartaScope } from "../../../lib/martaScope";
 const MONTH_NAMES = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 const DOW = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
 const STATUS_COLOR = {
-  draft: T.mid, submitted: T.warning, approved: T.success, rejected: T.error,
+  draft: T.mid, submitted: T.warning, rejected: T.error,
   completed: T.success, inProgress: T.warning,
 };
 

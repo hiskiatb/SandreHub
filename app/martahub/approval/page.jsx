@@ -22,7 +22,7 @@ function mdPhotoUrl(path) {
 // mh_web_decide_activity) SUDAH DIHAPUS dari alur manusia - begitu BME
 // submit laporan actual, trigger server mh_validate_activity_actual otomatis
 // memvalidasi check-in terhadap site-site event ini dan langsung menuntaskan
-// status jadi 'approved' (lolos) atau 'revision_needed' dgn revision_target='actual'
+// status jadi 'completed' (lolos) atau 'revision_needed' dgn revision_target='actual'
 // (perlu ditinjau/direvisi BME) - TANPA klik approve/reject manusia. Approver
 // di sini hanya jadi katup pengaman manual (mh_activity_manual_override) utk
 // laporan actual yg sebenarnya valid (mis. kolom kosong krn alasan wajar).
@@ -95,7 +95,7 @@ function Body({ email }) {
       let revisionQ = supabaseMarta.from("mh_activities").select(REVISION_COLS).eq("status", "revision_needed").eq("revision_target", "actual").order("validated_at", { ascending: true });
       revisionQ = await applyMartaScope(revisionQ, sc);
 
-      let historyQ = supabaseMarta.from("mh_activities").select(HISTORY_COLS).in("status", ["approved", "rejected", "revision_needed"]).order("approved_at", { ascending: false }).limit(15);
+      let historyQ = supabaseMarta.from("mh_activities").select(HISTORY_COLS).in("status", ["completed", "rejected", "revision_needed"]).order("approved_at", { ascending: false }).limit(15);
       historyQ = await applyMartaScope(historyQ, sc);
 
       const [{ data: plans, error: e0 }, { data: revisions, error: e1 }, { data: hist, error: e2 }] = await Promise.all([planQ, revisionQ, historyQ]);
@@ -159,7 +159,7 @@ function Body({ email }) {
         // - PENGECUALIAN, bukan jalur approval normal (yang sudah dihapus).
         ({ error } = await supabaseMarta.rpc("mh_activity_manual_override", {
           p_activity_id: dialog.row.id,
-          p_final_status: dialog.type === "approved" ? "approved" : "revision_needed",
+          p_final_status: dialog.type === "approved" ? "completed" : "revision_needed",
           p_note: notes.trim() || null,
           p_caller_email: email,
         }));
@@ -344,16 +344,16 @@ function Body({ email }) {
         </div>
         {!loading && history.length === 0 && <div style={{ padding: 22, textAlign: "center", color: T.lo, fontSize: 12.5 }}>Belum ada keputusan.</div>}
         {history.map((h) => {
-          // 'approved' dipakai dua kali di siklus hidup activity yang sama:
-          // plan disetujui (belum ada actual_sp, siap dieksekusi) VS report
-          // disetujui (sudah ada actual_sp, benar-benar selesai). Dibedakan
+          // 'completed' (dulu 'approved') dipakai dua kali di siklus hidup activity
+          // yang sama: plan disetujui (belum ada actual_sp, siap dieksekusi) VS
+          // report disetujui (sudah ada actual_sp, benar-benar selesai). Dibedakan
           // di sini murni dari tampilan, bukan status mentahnya sendiri.
-          const label = h.status === "approved"
+          const label = h.status === "completed"
             ? (h.actual_sp == null ? "Plan Disetujui" : (h.override_by_name ? "Selesai (Override)" : "Selesai"))
             : h.status === "revision_needed"
               ? (h.revision_target === "actual" ? "Revisi Laporan" : "Revisi Plan")
               : "Ditolak";
-          const positive = h.status === "approved";
+          const positive = h.status === "completed";
           return (
           <div key={h.id} style={{ padding: "12px 16px", borderTop: `1px solid ${T.line}`, display: "flex", alignItems: "flex-start", gap: 12 }}>
             <span style={{

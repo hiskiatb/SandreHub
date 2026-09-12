@@ -12,7 +12,7 @@
  *     org lain - SAMA PERSIS dgn alur Flutter, bukan disederhanakan.
  *   - Rebuy Pulsa/Data, Cost Actual, Insight.
  *   - submitActual() → status 'pending_validation' → trigger server
- *     otomatis memutuskan approved/revision_needed (revision_target=actual) (TIDAK ada approval
+ *     otomatis memutuskan completed/revision_needed (revision_target=actual) (TIDAK ada approval
  *     manusia lagi utk fase ini).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -321,7 +321,7 @@ export default function SubmitActualPage() {
         // Seed site ACTUAL dari site PLAN begitu halaman ini dibuka
         // pertama kali (idempotent - no-op kalau site actual sudah ada).
         // Halaman ini sekarang bisa diakses kapan saja (bahkan setelah
-        // approved), jadi seeding dilakukan setiap kali dibuka, bukan cuma
+        // completed), jadi seeding dilakukan setiap kali dibuka, bukan cuma
         // sekali di alur lama.
         try { await supabaseMarta.rpc("mh_seed_activity_actual_sites", { p_activity_id: activityId }); } catch { /* best-effort */ }
         setActivity(a);

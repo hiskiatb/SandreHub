@@ -12,13 +12,13 @@
  *
  * Definisi angka (didiskusikan & disepakati dgn user sebelum dibangun):
  *  - "Plan"/Target event = SEMUA aktivitas bulan ybs (status apapun).
- *  - "Achieved" event = aktivitas yg sudah `status = 'approved'` (laporan
+ *  - "Achieved" event = aktivitas yg sudah `status = 'completed'` (laporan
  *    actual-nya sudah disetujui/final).
  *  - "Ratio" finansial = Cost Actual ÷ Revenue Actual × 100 - SAMA PERSIS
  *    dgn definisi Cost Ratio yg sudah dipakai di Beranda mobile, supaya
  *    angka di CMS & mobile tidak pernah beda utk metrik yg namanya sama.
  *  - "Avg/Event" = rata-rata (SP+FWA unit actual) per event yg sudah achieved.
- *  - "Top Performer Event" = event approved dgn cost_actual>0 yg py rasio
+ *  - "Top Performer Event" = event completed dgn cost_actual>0 yg py rasio
  *    Revenue÷Cost TERTINGGI (disepakati eksplisit dgn user, bukan asumsi).
  *  - Insight box = kalimat template otomatis mengikuti branch dgn jumlah
  *    event tertinggi per brand bulan ybs (auto-generate, bukan diketik
@@ -165,31 +165,31 @@ function Body({ email }) {
   const im3Top = topBranch(planByBrand.im3);
   const triTop = topBranch(planByBrand.tri);
 
-  // ── Section 2: Achievement (status='approved') + finansial ──
-  const approvedRows = useMemo(() => rows.filter((r) => r.status === "approved"), [rows]);
+  // ── Section 2: Achievement (status='completed') + finansial ──
+  const completedRows = useMemo(() => rows.filter((r) => r.status === "completed"), [rows]);
   const achievedByBrand = useMemo(() => {
     const out = { im3: new Map(), tri: new Map() };
-    for (const r of approvedRows) {
+    for (const r of completedRows) {
       const b = (r.brand || "").toLowerCase();
       if (b !== "im3" && b !== "tri") continue;
       out[b].set(r.branch_id, (out[b].get(r.branch_id) || 0) + 1);
     }
     return out;
-  }, [approvedRows]);
-  const totalAchieved = approvedRows.length;
+  }, [completedRows]);
+  const totalAchieved = completedRows.length;
   const achievementPct = totalPlan > 0 ? Math.round((totalAchieved / totalPlan) * 100) : 0;
 
-  const totalCost = approvedRows.reduce((s, r) => s + (r.cost_actual || 0), 0);
-  const totalSp = approvedRows.reduce((s, r) => s + (r.actual_sp || 0), 0);
-  const totalFwa = approvedRows.reduce((s, r) => s + (r.actual_fwa || 0), 0);
-  const totalRebuy = approvedRows.reduce((s, r) => s + (r.actual_rebuy_sp || 0) + (r.actual_rebuy_fwa || 0), 0);
-  const totalRev = approvedRows.reduce((s, r) => s + (r.actual_rev_3m || 0), 0);
+  const totalCost = completedRows.reduce((s, r) => s + (r.cost_actual || 0), 0);
+  const totalSp = completedRows.reduce((s, r) => s + (r.actual_sp || 0), 0);
+  const totalFwa = completedRows.reduce((s, r) => s + (r.actual_fwa || 0), 0);
+  const totalRebuy = completedRows.reduce((s, r) => s + (r.actual_rebuy_sp || 0) + (r.actual_rebuy_fwa || 0), 0);
+  const totalRev = completedRows.reduce((s, r) => s + (r.actual_rev_3m || 0), 0);
   const costRatioPct = totalRev > 0 ? Math.round((totalCost / totalRev) * 100) : null;
   const avgPerEvent = totalAchieved > 0 ? Math.round((totalSp + totalFwa) / totalAchieved) : 0;
 
   const topPerformer = useMemo(() => {
     let best = null;
-    for (const r of approvedRows) {
+    for (const r of completedRows) {
       if (!r.cost_actual || r.cost_actual <= 0) continue;
       const conv = (r.actual_rev_3m || 0) / r.cost_actual;
       if (!best || conv > best.conv) best = { r, conv };
@@ -201,7 +201,7 @@ function Body({ email }) {
       revenue: best.r.actual_rev_3m || 0,
       costRatio: best.r.cost_actual > 0 ? Math.round(((best.r.cost_actual || 0) / (best.r.actual_rev_3m || 1)) * 100) : null,
     };
-  }, [approvedRows, branchMap]);
+  }, [completedRows, branchMap]);
 
   const rc = regionColor(effectiveRegion);
 
@@ -410,7 +410,7 @@ function Body({ email }) {
               </div>
             </div>
           ) : (
-            <div style={{ color: T.lo, fontSize: 12.5, padding: "10px 0", position: "relative" }}>Belum ada event approved dgn cost &amp; revenue tercatat bulan ini.</div>
+            <div style={{ color: T.lo, fontSize: 12.5, padding: "10px 0", position: "relative" }}>Belum ada event completed dgn cost &amp; revenue tercatat bulan ini.</div>
           )}
         </div>
       </div>

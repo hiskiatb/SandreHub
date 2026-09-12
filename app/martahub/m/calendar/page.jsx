@@ -24,7 +24,7 @@ const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
 function dotColorForStatuses(statuses) {
   if (statuses.some((s) => s === "rejected" || s === "revision_needed")) return "#DC2626";
   if (statuses.some((s) => s === "plan_submitted" || s === "pending_validation")) return "#B45309";
-  if (statuses.some((s) => s === "approved")) return "#15803D";
+  if (statuses.some((s) => s === "completed")) return "#15803D";
   return "#6B7280";
 }
 

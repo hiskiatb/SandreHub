@@ -188,7 +188,7 @@ export default function ActivityDetailPage() {
   const fwaPending = fwaEntries.filter((e) => e.validation_status === "pending").length;
 
   // Plan SEKARANG TIDAK PERLU approval TMV sebelum bisa dieksekusi - status
-  // "plan_submitted" (atau "approved", utk plan lama dari sebelum perubahan
+  // "plan_submitted" (atau "completed", utk plan lama dari sebelum perubahan
   // ini) sudah cukup, TIDAK perlu menunggu keputusan approver lagi. Yang
   // menentukan langkah berikutnya cuma TANGGAL EVENT-nya:
   //  - sebelum tanggalnya tiba → planning-nya MASIH BOLEH diedit (draft
@@ -197,8 +197,8 @@ export default function ActivityDetailPage() {
   //    tanpa menunggu approval apapun.
   const eventDate = earliestPlanDate(a);
   const eventArrived = eventDate ? eventDate <= new Date().toISOString().slice(0, 10) : false;
-  // approved sekarang berarti "actual selesai & valid", bukan lagi
-  // "plan disetujui" - gate approval plan sudah dihapus (lihat activityUi.js).
+  // completed (dulu "approved") sekarang berarti "actual selesai & valid",
+  // bukan lagi "plan disetujui" - gate approval plan sudah dihapus (lihat activityUi.js).
   // Gate tanggal/status utk edit plan & isi actual DIHAPUS - Plan sekarang
   // BOLEH diedit kapan saja (bahkan setelah actual disetujui), & Laporan
   // Actual BOLEH diisi/diedit kapan saja begitu plan-nya sudah diajukan

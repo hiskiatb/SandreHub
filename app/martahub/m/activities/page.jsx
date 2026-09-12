@@ -8,7 +8,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Search, X, Plus, Trash2, CheckCircle2, AlertCircle, ChevronRight, ChevronDown, CardSim, Router, Receipt, MapPin, Pencil, FolderClock, Clock, SlidersHorizontal, Check } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, NAV_HEIGHT } from "../_shared/MobileShell";
-import { fmtDate, fmtTimeLabel, fmtInt, fmtRp, isDraftIncomplete, isActivityFullyComplete, activityStage, statusMeta, revisionKindLabel, READY_STATUSES, earliestPlanDate, planMonthKey, updatedAgoLabel, MONTHS } from "../_shared/activityUi";
+import { fmtDate, fmtTimeLabel, fmtInt, fmtRp, isDraftIncomplete, isActivityFullyComplete, missingPlanFields, missingActualFields, activityStage, statusMeta, revisionKindLabel, READY_STATUSES, earliestPlanDate, planMonthKey, updatedAgoLabel, MONTHS } from "../_shared/activityUi";
 import { MetricTile, RebuyTile, RevenueCostBanner, revenueBannerProps } from "../_shared/MetricTiles";
 import DeleteActivitySheet from "../_shared/DeleteActivitySheet";
 import BottomSheet from "../_shared/BottomSheet";
@@ -34,7 +34,7 @@ const TABS = [
   { key: "draft", label: "Draft" },
   { key: "plan_submitted", label: "Plan Diajukan" },
   { key: "revision_needed", label: "Revisi" },
-  { key: "approved", label: "Selesai" },
+  { key: "completed", label: "Selesai" },
 ];
 
 // Kategori event - SAMA PERSIS dgn key yg dipakai wizard Buat Plan
@@ -56,10 +56,10 @@ function needsAction(r, userId) {
     return !!eventDateStr && eventDateStr <= todayStr;
   }
   // Data lama (sebelum trigger server mewajibkan kolom lengkap sblm
-  // approve) bisa saja terlanjur berstatus "approved" padahal masih ada
+  // approve) bisa saja terlanjur berstatus "completed" padahal masih ada
   // kolom plan/actual kosong - jangan biarkan diam2 nyasar di "Selesai",
   // munculkan sbg "Perlu Tindakan" spy jelas ada yg harus dilengkapi.
-  if (r.status === "approved" && !isActivityFullyComplete(r)) return true;
+  if (r.status === "completed" && !isActivityFullyComplete(r)) return true;
   return false;
 }
 
@@ -272,18 +272,30 @@ function ActivitiesInner() {
     // datanya (mis. dipakai orang lain lewat link/screenshot yg
     // menyebutkan status itu, atau memang mau memastikan benar2 kosong).
     for (const t of TABS) { if (t.key !== "all") status.set(t.key, { key: t.key, label: t.label, count: 0 }); }
+    // Dua opsi "virtual" (bukan status DB mentah, subset dari 'completed'
+    // yg belum lulus isActivityFullyComplete) - SENGAJA di-seed 0 juga spy
+    // TMV bisa lihat & filter "berapa yg masih kurang Plan/Actual"-nya,
+    // konsisten dgn label yg sama dipakai activityStage() (pill kartu).
+    status.set("completed:plan", { key: "completed:plan", label: "Plan Kurang", count: 0 });
+    status.set("completed:actual", { key: "completed:actual", label: "Actual Kurang", count: 0 });
     const bump = (map, key, label) => { if (!key) return; const cur = map.get(key); if (cur) cur.count++; else map.set(key, { key, label: label ?? key, count: 1 }); };
     for (const r of rows || []) {
       const meta = siteMeta[r.site_id];
-      // "approved" HANYA dihitung sbg "Selesai" kalau semua kolom plan &
+      // "completed" HANYA dihitung sbg "Selesai" kalau semua kolom plan &
       // actual beneran lengkap (isActivityFullyComplete) - data lama yg
-      // terlanjur approved padahal masih bolong TIDAK ikut dihitung di
+      // terlanjur completed padahal masih bolong TIDAK ikut dihitung di
       // sini (muncul di "Perlu Tindakan" lewat needsAction() sbg
       // gantinya), supaya jumlah "Selesai" di sini SELALU konsisten dgn
       // definisi yg sama dipakai activityStage() (pill kartu) & ringkasan
       // Beranda.
-      if (r.status !== "approved" || isActivityFullyComplete(r)) {
+      if (r.status !== "completed" || isActivityFullyComplete(r)) {
         bump(status, r.status, statusMeta(r.status).label);
+      } else {
+        // Baris 'completed' tapi masih bolong - dihitung ke bucket
+        // virtual sesuai arah kekurangannya (bisa kena DUA-duanya
+        // sekaligus kalau plan & actual sama-sama kurang).
+        if (missingPlanFields(r).length > 0) bump(status, "completed:plan", "Plan Kurang");
+        if (missingActualFields(r).length > 0) bump(status, "completed:actual", "Actual Kurang");
       }
       if (r.brand) bump(brand, r.brand.toLowerCase(), r.brand.toLowerCase() === "tri" ? "3ID" : "IM3");
       if (meta?.branch) bump(branch, meta.branch, meta.branch);
@@ -299,6 +311,7 @@ function ActivitiesInner() {
     // (yg akan bikin status 0 selalu terlempar ke paling bawah/belakang
     // tanpa pola yg jelas tiap kali data berubah).
     const statusOrdered = TABS.filter((t) => t.key !== "all").map((t) => status.get(t.key)).filter(Boolean);
+    statusOrdered.push(status.get("completed:plan"), status.get("completed:actual"));
     return {
       status: statusOrdered, brand: toSorted(brand), branch: toSorted(branch),
       kabupaten: toSorted(kabupaten), kecamatan: toSorted(kecamatan), poi: toSorted(poi),
@@ -314,11 +327,11 @@ function ActivitiesInner() {
 
   const filtered = useMemo(() => {
     let list = rows || [];
-    // Tab "Selesai" (approved) ikut mensyaratkan kolom lengkap - SAMA
+    // Tab "Selesai" (completed) ikut mensyaratkan kolom lengkap - SAMA
     // PERSIS dgn definisi di filterOptionGroups di atas & activityStage()
     // - supaya isi daftar yg tampil benar2 cocok dgn angka yg tertulis di
     // tab/chip-nya.
-    if (tab !== "all") list = list.filter((r) => r.status === tab && (tab !== "approved" || isActivityFullyComplete(r)));
+    if (tab !== "all") list = list.filter((r) => r.status === tab && (tab !== "completed" || isActivityFullyComplete(r)));
     const term = q.trim().toLowerCase();
     if (term) list = list.filter((r) => (r.event_name || "").toLowerCase().includes(term) || (r.mc || "").toLowerCase().includes(term) || (r.site_id || "").toLowerCase().includes(term));
     if (needsActionOnly) list = list.filter((r) => needsAction(r, userId));
@@ -332,7 +345,14 @@ function ActivitiesInner() {
     }
     // Grup filter lanjutan BARU - tiap grup non-kosong jadi syarat AND
     // tambahan (di dalam grup sendiri OR, lihat komentar di state-nya).
-    if (statusFilter.size > 0) list = list.filter((r) => statusFilter.has(r.status) && (r.status !== "approved" || isActivityFullyComplete(r)));
+    if (statusFilter.size > 0) list = list.filter((r) => {
+      if (statusFilter.has(r.status) && (r.status !== "completed" || isActivityFullyComplete(r))) return true;
+      if (r.status === "completed" && !isActivityFullyComplete(r)) {
+        if (statusFilter.has("completed:plan") && missingPlanFields(r).length > 0) return true;
+        if (statusFilter.has("completed:actual") && missingActualFields(r).length > 0) return true;
+      }
+      return false;
+    });
     if (brandFilter.size > 0) list = list.filter((r) => r.brand && brandFilter.has(r.brand.toLowerCase()));
     if (branchFilter.size > 0) list = list.filter((r) => { const b = siteMeta[r.site_id]?.branch; return b && branchFilter.has(b); });
     if (kabupatenFilter.size > 0) list = list.filter((r) => { const k = siteMeta[r.site_id]?.kabupaten; return k && kabupatenFilter.has(k); });
@@ -1086,7 +1106,7 @@ function DetailSheet({ r, userId, onClose, onRequestDelete }) {
   // penuh semua sub-kasus (mis. "plan belum lengkap" utk draft).
   //
   // Plan SEKARANG TIDAK PERLU approval TMV lagi - "plan_submitted" (atau
-  // "approved" utk plan lama) sudah cukup utk lanjut, TIDAK perlu menunggu
+  // "completed" utk plan lama) sudah cukup utk lanjut, TIDAK perlu menunggu
   // keputusan approver. Yang menentukan aksinya cuma TANGGAL EVENT: sebelum
   // tiba → masih boleh Edit Plan, begitu tiba → langsung Isi Laporan Actual
   // (Check In DIHAPUS - tidak lagi jadi langkah terpisah, SAMA PERSIS dgn
@@ -1120,7 +1140,7 @@ function DetailSheet({ r, userId, onClose, onRequestDelete }) {
         </div>
         <ActivityMetricsBlock r={r} />
         {/* Catatan validasi HANYA ditampilkan utk status yg benar2 perlu
-            perhatian (revisi/ditolak) - status "approved" skrg SELALU
+            perhatian (revisi/ditolak) - status "completed" skrg SELALU
             dapat catatan generik "Laporan actual dikirim" (sejak validasi
             check-in dihapus), jadi menampilkannya di sini cuma jadi noise
             duplikat dgn pill status "Selesai" di atas. */}
