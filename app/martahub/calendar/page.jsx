@@ -7,9 +7,13 @@ import { getMartaScope } from "../../../lib/martaScope";
 
 const MONTH_NAMES = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 const DOW = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+// Status hidup HANYA 4 ini (siklus Draft -> Plan Diajukan -> Revisi/Selesai)
+// - 'submitted'/'rejected'/'in_progress'/'revision_actual'/'done' sudah
+// dibuang dari constraint DB krn tidak ada satupun kode/data yg memakainya
+// lagi (lihat migration drop_dead_activity_status_values).
 const STATUS_COLOR = {
-  draft: T.mid, submitted: T.warning, rejected: T.error,
-  completed: T.success, inProgress: T.warning,
+  draft: T.mid, plan_submitted: T.blue, revision_needed: T.warning,
+  completed: T.success,
 };
 
 function pad(n) { return String(n).padStart(2, "0"); }
@@ -157,6 +161,8 @@ function Body({ email }) {
       {detailId && (
         <ActivityDetailModal id={detailId} onClose={() => setDetailId(null)} email={email}
           canDelete={scope?.role === "spm_sumatera"}
+          canMarkRevision={["admin", "head", "tmv", "spm_sumatera"].includes(scope?.role)}
+          onRevised={() => load()}
           onDeleted={() => { setDetailId(null); load(); }} />
       )}
     </div>

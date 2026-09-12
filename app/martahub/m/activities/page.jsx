@@ -8,7 +8,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Search, X, Plus, Trash2, CheckCircle2, AlertCircle, ChevronRight, ChevronDown, CardSim, Router, Receipt, MapPin, Pencil, FolderClock, Clock, SlidersHorizontal, Check } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, NAV_HEIGHT } from "../_shared/MobileShell";
-import { fmtDate, fmtTimeLabel, fmtInt, fmtRp, isDraftIncomplete, isActivityFullyComplete, missingPlanFields, missingActualFields, activityStage, statusMeta, revisionKindLabel, READY_STATUSES, earliestPlanDate, planMonthKey, updatedAgoLabel, MONTHS } from "../_shared/activityUi";
+import { fmtDate, fmtTimeLabel, fmtInt, fmtRp, isDraftIncomplete, isActivityFullyComplete, activityStage, statusMeta, revisionKindLabel, READY_STATUSES, earliestPlanDate, planMonthKey, updatedAgoLabel, MONTHS } from "../_shared/activityUi";
 import { MetricTile, RebuyTile, RevenueCostBanner, revenueBannerProps } from "../_shared/MetricTiles";
 import DeleteActivitySheet from "../_shared/DeleteActivitySheet";
 import BottomSheet from "../_shared/BottomSheet";
@@ -18,7 +18,13 @@ import { unsnake } from "../_shared/planData";
 // plan_dates_multi) ditambahkan supaya kartu daftar bisa (a) gerbang opsi
 // hapus hanya utk pemilik plan, DAN (b) pakai definisi "draft belum lengkap"
 // yg SAMA PERSIS dgn halaman detail (lihat isDraftIncomplete di activityUi.js).
-const ACTIVITY_COLS = "id,event_name,brand,mc,site_id,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,revision_target,target_sp,target_fwa,actual_sp,actual_fwa,target_rebuy_sp,target_rebuy_fwa,actual_rebuy_sp,actual_rebuy_fwa,target_rev_3m,actual_rev_3m,cost_estimate,cost_actual,checkin_valid,validation_note,created_at,created_by,actual_draft_saved_at,updated_at";
+// insight + plan_source WAJIB ikut di-select - tanpa `insight`, missingActualFields()/
+// isActivityFullyComplete() (activityUi.js) SELALU menganggap Insight kosong
+// (row.insight jadi undefined walau di DB sebenarnya sudah terisi) - bug lama
+// yg bikin "Selesai" di sini beda hitungan dgn Beranda/halaman detail. `plan_source`
+// dipakai buat kecualikan hasil Import Excel (cms_import) dari syarat Insight
+// (data historis itu memang tidak pernah punya narasi tsb dari sumbernya).
+const ACTIVITY_COLS = "id,event_name,brand,mc,site_id,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,revision_target,target_sp,target_fwa,actual_sp,actual_fwa,target_rebuy_sp,target_rebuy_fwa,actual_rebuy_sp,actual_rebuy_fwa,target_rev_3m,actual_rev_3m,cost_estimate,cost_actual,insight,plan_source,checkin_valid,validation_note,created_at,created_by,actual_draft_saved_at,updated_at";
 
 // Warna brand - SAMA PERSIS dgn skema di wizard Buat Plan (ACT_BRAND_COLOR
 // di activities/new/page.jsx): IM3 kuning, 3ID (tri) magenta.
@@ -179,6 +185,21 @@ function ActivitiesInner() {
         for (const r of allRows) if (r?.id) seen.set(r.id, r);
         const data = Array.from(seen.values());
 
+        // Jumlah dokumentasi foto per aktivitas - dibatch SEKALI (SATU query
+        // `.in()`, bukan satu query per kartu) lalu ditempel jadi `doc_count`
+        // di tiap baris - dipakai missingActualFields() (activityUi.js) utk
+        // ikut mensyaratkan dokumentasi sblm dianggap "Selesai" (SAMA PERSIS
+        // dgn syarat wajib minimal foto di form Isi Laporan Actual/
+        // submit/page.jsx - dua tempat ini SENGAJA disamakan, sama alasannya
+        // kayak Actual SP/FWA/Cost/Insight di atas).
+        const activityIds = data.map((r) => r.id).filter(Boolean);
+        if (activityIds.length > 0) {
+          const { data: docRows } = await supabaseMarta.from("mh_documents").select("activity_id").in("activity_id", activityIds);
+          const docCountMap = new Map();
+          for (const d of docRows || []) docCountMap.set(d.activity_id, (docCountMap.get(d.activity_id) || 0) + 1);
+          for (const r of data) r.doc_count = docCountMap.get(r.id) || 0;
+        }
+
         // Nama branch per site - dibatch SEKALI utk semua site_id yg muncul
         // di daftar (bukan satu query per kartu), dipakai di subtitle kartu
         // "MC · Branch · Brand" (gantiin badge brand terpisah di sisi kiri
@@ -272,31 +293,16 @@ function ActivitiesInner() {
     // datanya (mis. dipakai orang lain lewat link/screenshot yg
     // menyebutkan status itu, atau memang mau memastikan benar2 kosong).
     for (const t of TABS) { if (t.key !== "all") status.set(t.key, { key: t.key, label: t.label, count: 0 }); }
-    // Dua opsi "virtual" (bukan status DB mentah, subset dari 'completed'
-    // yg belum lulus isActivityFullyComplete) - SENGAJA di-seed 0 juga spy
-    // TMV bisa lihat & filter "berapa yg masih kurang Plan/Actual"-nya,
-    // konsisten dgn label yg sama dipakai activityStage() (pill kartu).
-    status.set("completed:plan", { key: "completed:plan", label: "Plan Kurang", count: 0 });
-    status.set("completed:actual", { key: "completed:actual", label: "Actual Kurang", count: 0 });
     const bump = (map, key, label) => { if (!key) return; const cur = map.get(key); if (cur) cur.count++; else map.set(key, { key, label: label ?? key, count: 1 }); };
     for (const r of rows || []) {
       const meta = siteMeta[r.site_id];
-      // "completed" HANYA dihitung sbg "Selesai" kalau semua kolom plan &
-      // actual beneran lengkap (isActivityFullyComplete) - data lama yg
-      // terlanjur completed padahal masih bolong TIDAK ikut dihitung di
-      // sini (muncul di "Perlu Tindakan" lewat needsAction() sbg
-      // gantinya), supaya jumlah "Selesai" di sini SELALU konsisten dgn
-      // definisi yg sama dipakai activityStage() (pill kartu) & ringkasan
-      // Beranda.
-      if (r.status !== "completed" || isActivityFullyComplete(r)) {
-        bump(status, r.status, statusMeta(r.status).label);
-      } else {
-        // Baris 'completed' tapi masih bolong - dihitung ke bucket
-        // virtual sesuai arah kekurangannya (bisa kena DUA-duanya
-        // sekaligus kalau plan & actual sama-sama kurang).
-        if (missingPlanFields(r).length > 0) bump(status, "completed:plan", "Plan Kurang");
-        if (missingActualFields(r).length > 0) bump(status, "completed:actual", "Actual Kurang");
-      }
+      // Status dihitung APA ADANYA sesuai kolom `status` di DB - tidak ada
+      // lagi bucket virtual "Plan Kurang"/"Actual Kurang" (dihapus): trigger
+      // DB (mh_validate_activity_actual, BEFORE INSERT OR UPDATE) sudah
+      // menjamin baris 'completed' SELALU lengkap sebelum status itu
+      // tersimpan, jadi tidak ada lagi kasus 'completed' tapi bolong yg
+      // perlu ditandai terpisah - satu status DB = satu opsi filter.
+      bump(status, r.status, statusMeta(r.status).label);
       if (r.brand) bump(brand, r.brand.toLowerCase(), r.brand.toLowerCase() === "tri" ? "3ID" : "IM3");
       if (meta?.branch) bump(branch, meta.branch, meta.branch);
       if (meta?.kabupaten) bump(kabupaten, meta.kabupaten, meta.kabupaten);
@@ -311,7 +317,6 @@ function ActivitiesInner() {
     // (yg akan bikin status 0 selalu terlempar ke paling bawah/belakang
     // tanpa pola yg jelas tiap kali data berubah).
     const statusOrdered = TABS.filter((t) => t.key !== "all").map((t) => status.get(t.key)).filter(Boolean);
-    statusOrdered.push(status.get("completed:plan"), status.get("completed:actual"));
     return {
       status: statusOrdered, brand: toSorted(brand), branch: toSorted(branch),
       kabupaten: toSorted(kabupaten), kecamatan: toSorted(kecamatan), poi: toSorted(poi),
@@ -331,7 +336,7 @@ function ActivitiesInner() {
     // PERSIS dgn definisi di filterOptionGroups di atas & activityStage()
     // - supaya isi daftar yg tampil benar2 cocok dgn angka yg tertulis di
     // tab/chip-nya.
-    if (tab !== "all") list = list.filter((r) => r.status === tab && (tab !== "completed" || isActivityFullyComplete(r)));
+    if (tab !== "all") list = list.filter((r) => r.status === tab);
     const term = q.trim().toLowerCase();
     if (term) list = list.filter((r) => (r.event_name || "").toLowerCase().includes(term) || (r.mc || "").toLowerCase().includes(term) || (r.site_id || "").toLowerCase().includes(term));
     if (needsActionOnly) list = list.filter((r) => needsAction(r, userId));
@@ -345,14 +350,9 @@ function ActivitiesInner() {
     }
     // Grup filter lanjutan BARU - tiap grup non-kosong jadi syarat AND
     // tambahan (di dalam grup sendiri OR, lihat komentar di state-nya).
-    if (statusFilter.size > 0) list = list.filter((r) => {
-      if (statusFilter.has(r.status) && (r.status !== "completed" || isActivityFullyComplete(r))) return true;
-      if (r.status === "completed" && !isActivityFullyComplete(r)) {
-        if (statusFilter.has("completed:plan") && missingPlanFields(r).length > 0) return true;
-        if (statusFilter.has("completed:actual") && missingActualFields(r).length > 0) return true;
-      }
-      return false;
-    });
+    // Filter status APA ADANYA sesuai kolom `status` di DB - tidak ada lagi
+    // kasus virtual "completed tapi bolong" (lihat catatan di activityStage()).
+    if (statusFilter.size > 0) list = list.filter((r) => statusFilter.has(r.status));
     if (brandFilter.size > 0) list = list.filter((r) => r.brand && brandFilter.has(r.brand.toLowerCase()));
     if (branchFilter.size > 0) list = list.filter((r) => { const b = siteMeta[r.site_id]?.branch; return b && branchFilter.has(b); });
     if (kabupatenFilter.size > 0) list = list.filter((r) => { const k = siteMeta[r.site_id]?.kabupaten; return k && kabupatenFilter.has(k); });

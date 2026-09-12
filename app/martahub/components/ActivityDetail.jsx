@@ -17,7 +17,7 @@
 import { useState, useEffect } from "react";
 import {
   X, MapPin, Image as ImageIcon, Phone, FileText, Layers, Info,
-  Target as TargetIcon, CheckCircle2, Clock, XCircle, Tag, Trash2, Calendar, Pencil, ExternalLink,
+  Target as TargetIcon, CheckCircle2, Clock, XCircle, Tag, Trash2, Calendar, Pencil, ExternalLink, AlertTriangle,
 } from "lucide-react";
 import { T, FONT, brandLabel } from "./MartaShell";
 import supabaseMarta from "../../../lib/supabaseMarta";
@@ -26,10 +26,14 @@ const CAT_LABEL = {
   directSelling: "Direct Selling", jointEvent: "Join Event", openBooth: "Open Booth",
   project: "Project", sponsorship: "Sponsorship", thematic: "Thematic",
 };
+// Status hidup HANYA 5 ini - "submitted"/"rejected"/"inProgress" dibuang
+// (juga sudah dibuang dari constraint DB, lihat migration
+// drop_dead_activity_status_values) krn tidak ada kode/data yg memakainya
+// lagi - "pending_validation" sendiri transien (langsung ditimpa trigger
+// jadi completed/revision_needed), disimpan cuma jaga2.
 const STATUS = {
-  draft: ["Draft", T.mid, "#eef1f6"], submitted: ["Laporan Masuk", T.blue, T.blueBg],
-  rejected: ["Ditolak", T.error, T.errorBg],
-  completed: ["Selesai", T.success, T.successBg], inProgress: ["Berlangsung", T.warning, T.warningBg],
+  draft: ["Draft", T.mid, "#eef1f6"],
+  completed: ["Selesai", T.success, T.successBg],
   plan_submitted: ["Plan Diajukan", T.blue, T.blueBg], revision_needed: ["Revisi Plan", T.warning, T.warningBg],
   pending_validation: ["Menunggu Validasi", T.blue, T.blueBg],
 };
@@ -137,7 +141,14 @@ const btn = { padding: "9px 15px", borderRadius: 11, border: `1px solid ${T.line
 // SPM Sumatera bisa menghapus Activity Plan langsung dari modal detail ini,
 // dengan konfirmasi ketik "HAPUS" (lihat DeleteConfirm di bawah) supaya tidak
 // kepencet tidak sengaja - aksi ini permanen (hard delete row mh_activities).
-export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }) {
+// Roles di ATAS BME/RGE (Brand TMV/'tmv', Head TMV/'head', SPM Sumatera/
+// 'spm_sumatera', Admin) yang boleh menandai Activity Plan perlu direvisi -
+// SATU-SATUNYA daftar peran dipakai jg oleh RPC mh_activity_mark_revision
+// sendiri (pengecekan asli tetap di server, ini cuma nentuin tombolnya
+// tampil atau tidak di client).
+export const REVISION_ROLES = ["admin", "head", "tmv", "spm_sumatera"];
+
+export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, canMarkRevision, onRevised, email }) {
   const [a, setA] = useState(null);
   const [planSites, setPlanSites] = useState([]);
   const [actualSites, setActualSites] = useState([]);
@@ -150,6 +161,9 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }
   const [lightbox, setLightbox] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [showRevision, setShowRevision] = useState(false);
+  const [revising, setRevising] = useState(false);
+  const [revisionErr, setRevisionErr] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -209,6 +223,29 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }
       onDeleted?.(id);
       onClose();
     } catch (e) { setErr(e.message || "Gagal menghapus activity plan"); setDeleting(false); }
+  }
+
+  // SATU-SATUNYA pintu di seluruh aplikasi utk menandai Activity Plan perlu
+  // direvisi (plan MAUPUN laporan actual) - dipanggil dari sini (desktop)
+  // atau dari halaman Activity Detail versi mobile, TIDAK ADA jalan lain.
+  // RPC (mh_activity_mark_revision) sendiri yg menentukan arah revisinya
+  // (plan/actual) berdasar status activity saat ini, jadi client tidak
+  // perlu (dan tidak boleh) menebak-nebak arahnya sendiri.
+  async function handleMarkRevision(note) {
+    setRevising(true); setRevisionErr("");
+    try {
+      const { data, error } = await supabaseMarta.rpc("mh_activity_mark_revision", {
+        p_activity_id: id, p_note: note, p_caller_email: email,
+      });
+      if (error) throw error;
+      setA(data);
+      setShowRevision(false);
+      onRevised?.(data);
+    } catch (e) {
+      setRevisionErr(e.message || "Gagal menandai revisi");
+    } finally {
+      setRevising(false);
+    }
   }
 
   const st = a ? deriveStatusInfo(a) : null;
@@ -290,6 +327,18 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }
                   <button onClick={() => window.open(`${window.location.origin}/martahub/m/activities/${a.id}/submit`, "_blank")} title="Isi/Edit Laporan Actual"
                     style={{ height: 36, padding: "0 12px", borderRadius: 11, border: "1px solid #E4E5EA", background: "#fff", color: "#3A3A44", display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: FONT }}>
                     <FileText size={14} /> {a.actual_sp == null ? "Isi Laporan Actual" : "Edit Laporan Actual"}
+                  </button>
+                )}
+                {/* Tandai Revisi - SATU-SATUNYA tombol di seluruh app yg bisa
+                    memicu status "Revisi" (plan maupun laporan actual),
+                    cuma tampil utk role di atas BME/RGE & cuma di dua
+                    status yg masuk akal utk direvisi (Plan Diajukan atau
+                    Selesai) - draft/revision_needed/pending_validation
+                    sengaja tidak dikasih tombol ini. */}
+                {canMarkRevision && (a.status === "plan_submitted" || a.status === "completed") && (
+                  <button onClick={() => { setRevisionErr(""); setShowRevision(true); }} title="Tandai Perlu Revisi"
+                    style={{ height: 36, padding: "0 12px", borderRadius: 11, border: `1px solid ${T.warning}44`, background: T.warningBg, color: T.warning, display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: FONT }}>
+                    <AlertTriangle size={14} /> Tandai Revisi
                   </button>
                 )}
                 {canDelete && (
@@ -498,6 +547,17 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, email }
           onConfirm={handleDelete}
         />
       )}
+
+      {showRevision && (
+        <RevisionConfirm
+          eventName={a?.event_name}
+          isActualStage={a?.status === "completed" || a?.actual_sp != null}
+          submitting={revising}
+          err={revisionErr}
+          onCancel={() => setShowRevision(false)}
+          onConfirm={handleMarkRevision}
+        />
+      )}
     </div>
   );
 }
@@ -522,6 +582,46 @@ function DeleteConfirm({ eventName, deleting, onCancel, onConfirm }) {
           <button onClick={onConfirm} disabled={!ready || deleting}
             style={{ ...btn, background: ready ? T.error : "#F0F2F5", color: ready ? "#fff" : T.lo, border: "none", cursor: ready && !deleting ? "pointer" : "default" }}>
             {deleting ? "Menghapus…" : "Hapus Permanen"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Modal "Tandai Revisi" - satu-satunya jalan memicu status Revisi (plan
+// ATAU laporan actual, arahnya ditentukan server sendiri lewat RPC
+// mh_activity_mark_revision berdasar tahap activity ini sekarang).
+// Catatan WAJIB diisi (tombol nonaktif kalau kosong) krn catatan inilah
+// yg langsung dibaca BME/RGE pemilik plan sbg alasan revisinya - "biarkan
+// komentar yang berbicara", bukan label status generik yg ambigu.
+function RevisionConfirm({ eventName, isActualStage, submitting, err, onCancel, onConfirm }) {
+  const [note, setNote] = useState("");
+  const ready = note.trim().length > 0;
+  return (
+    <div onClick={(e) => e.stopPropagation()} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 220, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div style={{ width: "100%", maxWidth: 440, background: "#fff", borderRadius: 18, padding: 24, boxShadow: "0 24px 64px rgba(13,17,23,0.3)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <AlertTriangle size={17} color={T.warning} />
+          <div style={{ fontSize: 15.5, fontWeight: 800, color: T.hi }}>Tandai Perlu Revisi</div>
+        </div>
+        <div style={{ fontSize: 12.5, color: T.mid, lineHeight: 1.55, marginBottom: 14 }}>
+          {isActualStage
+            ? <>Laporan actual{eventName ? <> untuk <b>{eventName}</b></> : ""} akan dikembalikan ke BME/RGE untuk diperbaiki.</>
+            : <>Plan{eventName ? <> untuk <b>{eventName}</b></> : ""} akan dikembalikan ke BME/RGE untuk diperbaiki sebelum bisa dieksekusi.</>}
+          {" "}Tulis dengan jelas apa yang perlu diperbaiki - catatan ini langsung tampil ke pemilik plan.
+        </div>
+        <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={4} autoFocus
+          placeholder="Contoh: Site plan salah, seharusnya di site X. Tolong diperbaiki dan submit ulang."
+          style={{ width: "100%", padding: "10px 13px", borderRadius: 10, border: `1px solid ${T.line}`, fontSize: 13, fontFamily: FONT, marginBottom: 10, resize: "vertical" }} />
+        {err && (
+          <div style={{ marginBottom: 10, padding: "9px 12px", borderRadius: 10, background: T.errorBg, color: T.error, fontSize: 12, fontWeight: 600 }}>{err}</div>
+        )}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button onClick={onCancel} disabled={submitting} style={{ ...btn }}>Batal</button>
+          <button onClick={() => onConfirm(note.trim())} disabled={!ready || submitting}
+            style={{ ...btn, background: ready ? T.warning : "#F0F2F5", color: ready ? "#fff" : T.lo, border: "none", cursor: ready && !submitting ? "pointer" : "default" }}>
+            {submitting ? "Mengirim…" : "Kirim & Tandai Revisi"}
           </button>
         </div>
       </div>

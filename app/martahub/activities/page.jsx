@@ -13,10 +13,14 @@ const CAT_LABEL = {
   directSelling: "Direct Selling", jointEvent: "Join Event", openBooth: "Open Booth",
   project: "Project", sponsorship: "Sponsorship", thematic: "Thematic",
 };
+// Status hidup HANYA 5 ini - "submitted"/"rejected"/"inProgress" dibuang
+// (juga sudah dibuang dari constraint DB, lihat migration
+// drop_dead_activity_status_values) krn tidak ada kode/data yg memakainya
+// lagi - "pending_validation" sendiri transien (langsung ditimpa trigger
+// jadi completed/revision_needed), disimpan cuma jaga2.
 const STATUS = {
-  draft: ["Draft", T.mid, "#eef1f6"], submitted: ["Laporan Masuk", T.blue, T.blueBg],
-  rejected: ["Ditolak", T.error, T.errorBg],
-  completed: ["Selesai", T.success, T.successBg], inProgress: ["Berlangsung", T.warning, T.warningBg],
+  draft: ["Draft", T.mid, "#eef1f6"],
+  completed: ["Selesai", T.success, T.successBg],
   plan_submitted: ["Plan Diajukan", T.blue, T.blueBg], revision_needed: ["Revisi Plan", T.warning, T.warningBg],
   pending_validation: ["Menunggu Validasi", T.blue, T.blueBg],
 };
@@ -1265,6 +1269,8 @@ function Body({ email }) {
       {detailId && (
         <ActivityDetailModal id={detailId} onClose={() => setDetailId(null)} email={email}
           canDelete={scope?.role === "spm_sumatera"}
+          canMarkRevision={["admin", "head", "tmv", "spm_sumatera"].includes(scope?.role)}
+          onRevised={(updated) => setRows((prev) => prev.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)))}
           onDeleted={(deletedId) => setRows((prev) => prev.filter((r) => r.id !== deletedId))} />
       )}
 

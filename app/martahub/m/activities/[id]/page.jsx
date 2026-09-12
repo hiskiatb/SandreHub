@@ -20,6 +20,14 @@ import SiteTowerIcon from "../../_shared/SiteTowerIcon";
 import { MetricTile, RebuyTile, RevenueCostBanner, revenueBannerProps } from "../../_shared/MetricTiles";
 import { fetchAuthedPhotoBlobUrl } from "../../_shared/mediaProxy";
 import DeleteActivitySheet from "../../_shared/DeleteActivitySheet";
+import MarkRevisionSheet from "../../_shared/MarkRevisionSheet";
+
+// Roles di ATAS BME/RGE (Brand TMV/'tmv', Head TMV/'head', SPM Sumatera/
+// 'spm_sumatera', Admin) yang boleh menandai Activity Plan perlu direvisi -
+// SAMA PERSIS dgn daftar peran di versi desktop (ActivityDetail.jsx,
+// REVISION_ROLES) & di RPC mh_activity_mark_revision sendiri (pengecekan
+// asli tetap di server).
+const REVISION_ROLES = ["admin", "head", "tmv", "spm_sumatera"];
 
 const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
 const A_COLS = "id,event_name,event_category,event_categories,brand,mc,site_id,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,poi_type,network_category,area_potential,address,latitude,longitude,status,revision_target,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,target_rev_3m,cost_estimate,expected_outcome,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,actual_rev_3m,cost_actual,insight,checkin_valid,checkin_distance,checkin_at,approved_by_name,approved_at,approval_notes,validation_status,validation_note,validated_at,override_status,override_by_name,override_at,override_note,created_at,created_by";
@@ -31,7 +39,7 @@ const A_COLS = "id,event_name,event_category,event_categories,brand,mc,site_id,p
 export default function ActivityDetailPage() {
   const { id: activityId } = useParams();
   const router = useRouter();
-  const { loading: sessionLoading, userId } = useMartaSession();
+  const { loading: sessionLoading, userId, email, scope } = useMartaSession();
   const [a, setA] = useState(null);
   const [extraSites, setExtraSites] = useState([]);
   const [siteNames, setSiteNames] = useState({}); // site_id -> site_name (mh_sites), utk label di list gabungan
@@ -83,6 +91,7 @@ export default function ActivityDetailPage() {
   const [err, setErr] = useState("");
   const [lightbox, setLightbox] = useState(null);
   const [showDeleteSheet, setShowDeleteSheet] = useState(false);
+  const [showRevisionSheet, setShowRevisionSheet] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -278,6 +287,20 @@ export default function ActivityDetailPage() {
                     <button onClick={() => { setMenuOpen(false); setShowDeleteSheet(true); }}
                       style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "8px 6px", border: "none", background: "none", cursor: "pointer", fontFamily: FF, borderRadius: 9, color: "#DC2626", fontSize: 12.5, fontWeight: 700 }}>
                       <Trash2 size={14} /> Hapus Plan
+                    </button>
+                  </>
+                )}
+
+                {/* Tandai Revisi - SATU-SATUNYA jalan (bareng versi desktop
+                    ActivityDetail.jsx) utk memicu status Revisi, cuma tampil
+                    utk role di atas BME/RGE & cuma di status yg masuk akal
+                    utk direvisi (Plan Diajukan/Selesai). */}
+                {REVISION_ROLES.includes(scope?.role) && (a.status === "plan_submitted" || a.status === "completed") && (
+                  <>
+                    <div style={{ height: 1, background: "#F0F0F3", margin: "10px 0 8px" }} />
+                    <button onClick={() => { setMenuOpen(false); setShowRevisionSheet(true); }}
+                      style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "8px 6px", border: "none", background: "none", cursor: "pointer", fontFamily: FF, borderRadius: 9, color: "#B45309", fontSize: 12.5, fontWeight: 700 }}>
+                      <RefreshCw size={14} /> Tandai Revisi
                     </button>
                   </>
                 )}
@@ -553,6 +576,17 @@ export default function ActivityDetailPage() {
           activityName={a.event_name}
           onClose={() => setShowDeleteSheet(false)}
           onDeleted={() => router.replace("/martahub/m/activities")}
+        />
+      )}
+
+      {showRevisionSheet && (
+        <MarkRevisionSheet
+          activityId={activityId}
+          eventName={a.event_name}
+          isActualStage={a.status === "completed" || a.actual_sp != null}
+          email={email}
+          onClose={() => setShowRevisionSheet(false)}
+          onRevised={(updated) => setA(updated)}
         />
       )}
     </MobileShell>

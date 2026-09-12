@@ -20,8 +20,11 @@ export const STATUS_META = {
   // dipakai di satu titik siklus hidup: laporan actual lolos validasi
   // kelengkapan OTOMATIS oleh trigger server, bukan keputusan manual.
   completed:             { label: "Selesai",                   color: "#15803D", bg: "rgba(21,128,61,0.10)" },
+  // Transien - langsung ditimpa trigger server jadi completed/revision_needed
+  // dalam transaksi yg sama, disimpan cuma jaga2 (lihat activityStage()).
   pending_validation:    { label: "Menunggu Validasi",         color: "#2563EB", bg: "rgba(37,99,235,0.10)" },
-  in_progress:           { label: "Berjalan",                  color: "#7C3AED", bg: "rgba(124,58,237,0.10)" },
+  // 'in_progress' SUDAH DIBUANG dari constraint DB (drop_dead_activity_status_values)
+  // - tidak pernah ada kode/data yg memakainya, entry lama dihapus di sini juga.
 };
 
 export function statusMeta(status) {
@@ -182,12 +185,34 @@ export function missingPlanFields(a) {
 // mh_validate_activity_actual() (DB) - tiga tempat ini SENGAJA disamakan
 // supaya "Selesai" berarti sama di mana pun ditampilkan (kartu, filter
 // Status, ringkasan Beranda), bukan tiga definisi longgar yg beda-beda.
+//
+// PENGECUALIAN Insight utk plan_source==='cms_import': baris hasil Import
+// Excel/Backdoor (mh_import_plan_batch) itu data historis dari sistem lama,
+// BUKAN laporan yg ditulis BME lewat app - jadi memang dari sononya tidak
+// pernah punya narasi Insight, dan tidak akan pernah ada yg mengisinya.
+// Laporan yg BENAR-BENAR disubmit BME lewat app (plan_source lain/kosong)
+// TETAP wajib Insight - dicegah dari sisi app (tombol submit tidak bisa
+// ditekan kalau kolom wajib kosong) DAN dari sisi server (trigger
+// mh_validate_activity_actual menolak jadi 'completed' kalau Insight
+// kosong) - dua lapis ini SUDAH MEMASTIKAN laporan actual normal tidak
+// akan pernah "completed" tanpa Insight, jadi baris begini seharusnya
+// TIDAK PERNAH terjadi lagi ke depannya (lihat catatan reset data lama di
+// bawah, isActivityFullyComplete).
 export function missingActualFields(a) {
   const missing = [];
   if (a.actual_sp == null) missing.push("Actual SP");
   if (a.actual_fwa == null) missing.push("Actual FWA");
   if (a.cost_actual == null) missing.push("Cost Actual");
-  if (!(a.insight || "").trim()) missing.push("Insight");
+  if (a.plan_source !== "cms_import" && !(a.insight || "").trim()) missing.push("Insight");
+  // Dokumentasi foto - SAMA PERSIS syaratnya (wajib minimal 1) dgn form Isi
+  // Laporan Actual (MIN_PHOTOS di submit/page.jsx) & trigger server
+  // mh_validate_activity_actual() (DB) - dikecualikan utk cms_import krn
+  // alasan yg sama spt Insight. `doc_count` HARUS sudah ditempel di baris
+  // ini sblm dipanggil (lihat query batch di activities/page.jsx & Beranda,
+  // m/page.jsx) - kalau field ini tidak pernah di-set (undefined), dianggap
+  // 0/belum ada dokumentasi (fail-safe ke arah "belum lengkap", BUKAN
+  // diam2 dianggap lengkap).
+  if (a.plan_source !== "cms_import" && !(a.doc_count > 0)) missing.push("Dokumentasi Foto");
   return missing;
 }
 
@@ -238,28 +263,16 @@ export function isDraftIncomplete(a) {
 export function activityStage(a) {
   if (a.status === "draft") return STATUS_META.draft;
   if (a.status === "revision_needed") return { label: revisionKindLabel(a), color: STATUS_META.revision_needed.color, bg: STATUS_META.revision_needed.bg };
-  const hasActual = a.actual_sp != null;
-  if (hasActual || a.status === "completed") {
-    // "Selesai" (hijau) HANYA kalau semua kolom plan & actual benar2
-    // lengkap - kalau tidak, tandai jelas mana yg kurang (bukan diam2
-    // tetap dianggap Selesai, dan bukan cuma "Perlu Dilengkapi" polos yg
-    // bikin bingung arahnya ke plan atau actual) supaya gap antara jumlah
-    // "Selesai" di kartu vs di filter Status tidak lagi membingungkan.
-    if (isActivityFullyComplete(a)) return { label: "Selesai", color: "#15803D", bg: "rgba(21,128,61,0.10)" };
-    const planMissing = missingPlanFields(a).length > 0;
-    const actualMissing = missingActualFields(a).length > 0;
-    // Label dipersingkat (bukan "... Perlu Dilengkapi" yg kepanjangan di
-    // pill kartu) - "Kurang" cukup jelas & tetap membedakan arahnya ke
-    // Plan atau Actual, sama istilahnya dgn opsi filter Status di daftar
-    // Aktivitas (lihat filterOptionGroups di activities/page.jsx) supaya
-    // TMV/BME melihat kata yg SAMA PERSIS di kartu maupun di filter.
-    const label = planMissing && actualMissing
-      ? "Plan & Actual Kurang"
-      : planMissing
-        ? "Plan Kurang"
-        : "Actual Kurang";
-    return { label, color: "#B45309", bg: "rgba(180,83,9,0.10)" };
-  }
+  // "completed" SELALU berarti "Selesai" - trigger DB (mh_validate_activity_actual,
+  // BEFORE INSERT OR UPDATE) yg SATU-SATUNYA jalan naik ke status ini sudah
+  // memastikan semua kolom plan & actual (+ dokumentasi, kecuali cms_import)
+  // benar2 lengkap SEBELUM status disimpan "completed". Jadi kartu di sini
+  // TIDAK PERLU (dan TIDAK BOLEH) mengecek ulang kelengkapan data sendiri -
+  // dulu ada label tambahan "Plan Kurang"/"Actual Kurang" utk baris lama yg
+  // lolos jadi completed padahal blm lengkap (dari sblm trigger ini ada),
+  // tapi itu sudah 0 baris & dihapus dari sini spy status kartu SELALU
+  // sama persis dgn status asli di DB - satu sumber kebenaran, bukan dua.
+  if (a.status === "completed") return STATUS_META.completed;
   if (READY_STATUSES.has(a.status)) {
     const now = new Date();
     const todayStr = now.toISOString().slice(0, 10);

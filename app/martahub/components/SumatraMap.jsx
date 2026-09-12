@@ -27,7 +27,9 @@ const C = { success: "#2E7D32", warning: "#F57F17", error: "#C62828", errorL: "#
 // data selalu dioper dari luar via prop `activityPoints`, dari mh_activities
 // asli). Dipertahankan longgar (fallback abu) supaya status baru/tak dikenal
 // tidak pernah bikin titik hilang dari peta.
-const ACTIVITY_STATUS_COLOR = { completed: C.success, submitted: C.warning, plan_submitted: "#0277BD", revision_needed: C.error, rejected: C.error, draft: "#7B8BAD" };
+// Status hidup HANYA 4 ini - "submitted"/"rejected" dibuang (juga sudah
+// dibuang dari constraint DB) krn tidak ada lagi kode/data yg memakainya.
+const ACTIVITY_STATUS_COLOR = { completed: C.success, plan_submitted: "#0277BD", revision_needed: C.error, draft: "#7B8BAD" };
 const SUMATRA_BOUNDS = [[-6.6, 94.4], [6.7, 107.1]]; // seluruh Pulau Sumatera
 // Warna titik POSM - SAMA PERSIS dgn POSM_COLOR di mobile map
 // (app/martahub/m/map/page.jsx) supaya konsisten lintas platform.

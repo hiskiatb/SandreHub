@@ -82,7 +82,11 @@ function fmtRpCompact(n) {
 // mc/poi_type/event_categories/plan_date_start/plan_dates_multi ditambahkan
 // supaya "draft belum lengkap" di Beranda pakai definisi yg SAMA PERSIS dgn
 // halaman detail & daftar Aktivitas (lihat isDraftIncomplete di activityUi.js).
-const ACTIVITY_COLS = "id,event_name,brand,branch_id,mc,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,revision_target,checkin_valid,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,target_rev_3m,cost_estimate,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,cost_actual,actual_rev_3m,created_at,site_id";
+// insight + plan_source WAJIB ikut di-select - tanpa `insight`, activityStage()
+// (dipakai di pill status kartu Beranda) SELALU menganggap Insight kosong utk
+// SEMUA baris (row.insight jadi undefined walau di DB sudah terisi) - bug lama
+// yg bikin hitungan "Selesai" di Beranda beda dgn tab Aktivitas/halaman detail.
+const ACTIVITY_COLS = "id,event_name,brand,branch_id,mc,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,revision_target,checkin_valid,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,target_rev_3m,cost_estimate,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,cost_actual,actual_rev_3m,insight,plan_source,created_at,site_id";
 
 // Rotasi harian (getDate() % TIPS.length) - deterministik per hari & ikut
 // menyesuaikan otomatis kalau jumlah tips berubah, jadi tiap tips kebagian
@@ -182,6 +186,19 @@ export default function MartaMobileHome() {
         const seen = new Map();
         for (const r of allRows) if (r?.id) seen.set(r.id, r);
         const data = Array.from(seen.values());
+
+        // Jumlah dokumentasi foto per aktivitas - dibatch SEKALI, lihat
+        // catatan sama di app/martahub/m/activities/page.jsx (dipakai
+        // missingActualFields() utk ikut mensyaratkan dokumentasi sblm
+        // "Selesai", biar pill status di Beranda konsisten dgn tab Aktivitas).
+        const activityIds = data.map((r) => r.id).filter(Boolean);
+        if (activityIds.length > 0) {
+          const { data: docRows } = await supabaseMarta.from("mh_documents").select("activity_id").in("activity_id", activityIds);
+          const docCountMap = new Map();
+          for (const d of docRows || []) docCountMap.set(d.activity_id, (docCountMap.get(d.activity_id) || 0) + 1);
+          for (const r of data) r.doc_count = docCountMap.get(r.id) || 0;
+        }
+
         if (alive) setRows(data || []);
 
         const siteIds = Array.from(new Set((data || []).map((r) => r.site_id).filter(Boolean)));
