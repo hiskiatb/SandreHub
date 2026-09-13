@@ -45,7 +45,15 @@ export function deriveStatusInfo(r) {
   if (r?.status === "revision_needed" && r?.revision_target === "actual") {
     return ["Laporan Actual Perlu Direvisi", T.warning, T.warningBg];
   }
-  if (r?.status === "completed") {
+  // FIX: derivasi hari-H/menunggu-laporan sebelumnya dipasang di cabang
+  // status==="completed" - tapi per trigger DB mh_validate_activity_actual,
+  // status HANYA pernah jadi "completed" SETELAH semua kolom actual (+
+  // dokumentasi) tervalidasi lengkap, jadi cabang ini nyaris tidak pernah
+  // berguna. Yang SEHARUSNYA punya turunan (Menunggu Hari-H / Hari-H
+  // Berlangsung / Menunggu Laporan) justru status "plan_submitted" - sama
+  // persis dgn activityStage() di mobile (READY_STATUSES = {plan_submitted},
+  // lihat m/_shared/activityUi.js).
+  if (r?.status === "plan_submitted") {
     const planDateStr = r.plan_date_start || r.plan_date;
     if (planDateStr) {
       const now = new Date();

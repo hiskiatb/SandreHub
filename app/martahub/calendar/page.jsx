@@ -1,23 +1,37 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
 import MartaShell, { T, FONT, brandLabel } from "../components/MartaShell";
-import { ActivityDetailModal } from "../components/ActivityDetail";
+import { ActivityDetailModal, deriveStatusInfo } from "../components/ActivityDetail";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../lib/martaScope";
 
 const MONTH_NAMES = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+const DAY_NAMES_FULL = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
 const DOW = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
-// Status hidup HANYA 4 ini (siklus Draft -> Plan Diajukan -> Revisi/Selesai)
-// - 'submitted'/'rejected'/'in_progress'/'revision_actual'/'done' sudah
-// dibuang dari constraint DB krn tidak ada satupun kode/data yg memakainya
-// lagi (lihat migration drop_dead_activity_status_values).
-const STATUS_COLOR = {
-  draft: T.mid, plan_submitted: T.blue, revision_needed: T.warning,
-  completed: T.success,
-};
+
+// Legend warna - dipakai utk chip status di dalam sel kalender & di baris
+// legend header. Warna & label SATU sumber kebenaran dgn deriveStatusInfo()
+// (diimpor dari ActivityDetail.jsx, sama persis dgn Activity Plan & mobile),
+// jadi sel kalender TIDAK LAGI mewarnai berdasar `status` mentah sendiri
+// (bug lama: activity plan_submitted yg plan_date-nya sudah lewat tetap
+// tampil biru "Plan Diajukan" di grid padahal daftar di bawahnya sudah
+// benar menampilkan merah "Menunggu Laporan" - sekarang keduanya konsisten
+// krn sama-sama lewat deriveStatusInfo()).
+const LEGEND = [
+  { label: "Draft", color: T.mid },
+  { label: "Terjadwal", color: T.blue },
+  { label: "Berlangsung", color: T.warning },
+  { label: "Menunggu Laporan", color: T.error },
+  { label: "Selesai", color: T.success },
+];
 
 function pad(n) { return String(n).padStart(2, "0"); }
 function isoDate(y, m, d) { return `${y}-${pad(m + 1)}-${pad(d)}`; }
+function fmtDayLong(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dow = new Date(y, m - 1, d).getDay();
+  return `${DAY_NAMES_FULL[dow]}, ${d} ${MONTH_NAMES[m - 1]} ${y}`;
+}
 
 export default function CalendarPage() {
   return (
@@ -35,6 +49,7 @@ function Body({ email }) {
   const [scope, setScope] = useState(null);
   const [selected, setSelected] = useState(null);
   const [detailId, setDetailId] = useState(null);
+  const [hoverDay, setHoverDay] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true); setErr("");
@@ -74,6 +89,18 @@ function Body({ email }) {
     return m;
   }, [rows]);
 
+  // Ringkasan status bulan ini (dipakai di strip legend/stat header) -
+  // dihitung dari deriveStatusInfo() per baris supaya angkanya SELALU
+  // sinkron dgn warna/label yg dipakai di grid & panel hari terpilih.
+  const monthStats = useMemo(() => {
+    const byColor = new Map();
+    for (const r of rows) {
+      const [, color] = deriveStatusInfo(r);
+      byColor.set(color, (byColor.get(color) || 0) + 1);
+    }
+    return LEGEND.map((l) => ({ ...l, count: byColor.get(l.color) || 0 }));
+  }, [rows]);
+
   const firstDow = new Date(cursor.y, cursor.m, 1).getDay();
   const daysInMonth = new Date(cursor.y, cursor.m + 1, 0).getDate();
   const todayISO = new Date().toISOString().slice(0, 10);
@@ -84,54 +111,103 @@ function Body({ email }) {
   const selectedEvents = selected ? (byDay.get(selected) || []) : [];
 
   return (
-    <div>
+    <div style={{ minWidth: 0, maxWidth: "100%", overflowX: "hidden" }}>
       {!MARTA_CONFIGURED && <div style={{ ...card, borderColor: T.warning, background: T.warningBg, color: "#7a5b00", marginBottom: 16 }}>Supabase MartaHub belum dikonfigurasi / project paused.</div>}
       {err && <div style={{ ...card, borderColor: T.error, background: T.errorBg, color: T.error, marginBottom: 16 }}>{err}</div>}
 
+      {/* Header - navigasi bulan (kiri), lalu strip legend/stat status
+          bulan ini (kanan), scope badge menyusul kalau ada. Sebelumnya
+          cuma ada teks "N kegiatan bulan ini" polos - sekarang breakdown
+          per status ikut ditampilkan (angka + dot warna), jadi user bisa
+          langsung lihat berapa yg masih "Menunggu Laporan" dst tanpa harus
+          klik satu-satu hari. */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
-        <button className="mh-btn" onClick={() => setCursor((c) => { const d = new Date(c.y, c.m - 1, 1); return { y: d.getFullYear(), m: d.getMonth() }; })}
-          style={{ ...navBtn }}>‹</button>
-        <div style={{ fontSize: 16, fontWeight: 800, minWidth: 160, textAlign: "center" }}>{MONTH_NAMES[cursor.m]} {cursor.y}</div>
-        <button className="mh-btn" onClick={() => setCursor((c) => { const d = new Date(c.y, c.m + 1, 1); return { y: d.getFullYear(), m: d.getMonth() }; })}
-          style={{ ...navBtn }}>›</button>
-        <button className="mh-btn" onClick={() => { const n = new Date(); setCursor({ y: n.getFullYear(), m: n.getMonth() }); }}
-          style={{ ...navBtn, width: "auto", padding: "0 14px", fontSize: 12, fontWeight: 700 }}>Hari ini</button>
-        <div style={{ marginLeft: "auto", fontSize: 12.5, color: T.mid }}>{rows.length} kegiatan bulan ini</div>
-        {scope && !scope.unscoped && scope.found && (
-          <span style={{ fontSize: 11, fontWeight: 700, color: T.mid, background: "#F0F4FA", border: `1px solid ${T.line}`, borderRadius: 100, padding: "3px 10px" }}>
-            Scope: {scope.region || "-"} · {brandLabel(scope.brand)}
-          </span>
-        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button className="mh-btn" onClick={() => setCursor((c) => { const d = new Date(c.y, c.m - 1, 1); return { y: d.getFullYear(), m: d.getMonth() }; })}
+            style={navBtn} aria-label="Bulan sebelumnya">‹</button>
+          <div style={{ fontSize: 17, fontWeight: 800, minWidth: 168, textAlign: "center", color: T.hi }}>{MONTH_NAMES[cursor.m]} {cursor.y}</div>
+          <button className="mh-btn" onClick={() => setCursor((c) => { const d = new Date(c.y, c.m + 1, 1); return { y: d.getFullYear(), m: d.getMonth() }; })}
+            style={navBtn} aria-label="Bulan berikutnya">›</button>
+          <button className="mh-btn" onClick={() => { const n = new Date(); setCursor({ y: n.getFullYear(), m: n.getMonth() }); }}
+            style={{ ...navBtn, width: "auto", padding: "0 14px", fontSize: 12, fontWeight: 700 }}>Hari ini</button>
+        </div>
+
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            {monthStats.map((s) => (
+              <span key={s.label} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11.5, color: T.mid, fontWeight: 700 }}>
+                <i style={{ width: 7, height: 7, borderRadius: "50%", background: s.color, display: "inline-block", flexShrink: 0 }} />
+                {s.label} <b style={{ color: T.hi }}>{s.count}</b>
+              </span>
+            ))}
+          </div>
+          {scope && !scope.unscoped && scope.found && (
+            <span style={{ fontSize: 11, fontWeight: 700, color: T.mid, background: "#F0F4FA", border: `1px solid ${T.line}`, borderRadius: 100, padding: "3px 10px", whiteSpace: "nowrap" }}>
+              Scope: {scope.region || "-"} · {brandLabel(scope.brand)}
+            </span>
+          )}
+        </div>
       </div>
 
-      <div style={{ ...card, padding: 12 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 4, marginBottom: 6 }}>
-          {DOW.map((d) => <div key={d} style={{ textAlign: "center", fontSize: 10.5, fontWeight: 800, color: T.lo, textTransform: "uppercase", padding: "4px 0" }}>{d}</div>)}
+      <div style={{ ...card, padding: 16, boxShadow: "0 1px 3px rgba(16,24,40,0.04)", minWidth: 0, boxSizing: "border-box" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gap: 8, marginBottom: 8, width: "100%", boxSizing: "border-box" }}>
+          {DOW.map((d, i) => (
+            <div key={d} style={{ textAlign: "center", fontSize: 10.5, fontWeight: 800, color: (i === 0 || i === 6) ? T.primary : T.lo, textTransform: "uppercase", padding: "4px 0", letterSpacing: "0.03em" }}>{d}</div>
+          ))}
         </div>
         {loading ? (
-          <div style={{ padding: 40, textAlign: "center", color: T.lo, fontSize: 13 }}>Memuat…</div>
+          <div style={{ padding: 56, textAlign: "center", color: T.lo, fontSize: 13 }}>
+            <div className="mh-ad-skel" style={{ height: 320, borderRadius: 10 }} />
+            <style>{"@keyframes mh-cal-pulse{0%,100%{opacity:.55}50%{opacity:1}}"}</style>
+          </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 4 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, minmax(0,1fr))", gap: 8, width: "100%", boxSizing: "border-box" }}>
             {cells.map((d, i) => {
-              if (d === null) return <div key={i} />;
+              if (d === null) return <div key={i} style={{ minHeight: 100, minWidth: 0, borderRadius: 10, background: "#FAFBFD" }} />;
               const iso = isoDate(cursor.y, cursor.m, d);
               const events = byDay.get(iso) || [];
               const isToday = iso === todayISO;
               const isSel = iso === selected;
+              const isWeekend = i % 7 === 0 || i % 7 === 6;
+              const isHover = hoverDay === iso;
+              const visible = events.slice(0, 3);
+              const restCount = events.length - visible.length;
               return (
                 <div key={i} onClick={() => setSelected(events.length ? iso : null)}
+                  onMouseEnter={() => setHoverDay(iso)} onMouseLeave={() => setHoverDay((h) => (h === iso ? null : h))}
                   style={{
-                    minHeight: 72, borderRadius: 8, padding: "6px 6px", cursor: events.length ? "pointer" : "default",
+                    minHeight: 100, minWidth: 0, borderRadius: 10, padding: "8px 8px", cursor: events.length ? "pointer" : "default",
+                    display: "flex", flexDirection: "column", gap: 3, overflow: "hidden",
                     border: `1.5px solid ${isSel ? T.primary : isToday ? T.primaryBd : T.line}`,
-                    background: isSel ? T.primaryBg : isToday ? "#FFFBF5" : "#fff",
+                    background: isSel ? T.primaryBg : isWeekend ? "#FAFBFD" : "#fff",
+                    boxShadow: isHover && events.length ? "0 4px 12px rgba(16,24,40,0.08)" : "none",
+                    transition: "box-shadow .15s ease, border-color .15s ease",
                   }}>
-                  <div style={{ fontSize: 11.5, fontWeight: isToday ? 800 : 600, color: isToday ? T.primary : T.mid, marginBottom: 4 }}>{d}</div>
-                  {events.slice(0, 2).map((e) => (
-                    <div key={e.id} title={e.event_name} style={{ fontSize: 9.5, fontWeight: 700, color: "#fff", background: STATUS_COLOR[e.status] || T.mid, borderRadius: 4, padding: "1px 5px", marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {e.event_name || "Kegiatan"}
-                    </div>
-                  ))}
-                  {events.length > 2 && <div style={{ fontSize: 9.5, color: T.lo, fontWeight: 700 }}>+{events.length - 2} lagi</div>}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    {isToday ? (
+                      <span style={{ width: 20, height: 20, borderRadius: "50%", background: T.primary, color: "#fff", fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{d}</span>
+                    ) : (
+                      <span style={{ fontSize: 11.5, fontWeight: 700, color: isWeekend ? T.primary : T.mid, padding: "0 2px" }}>{d}</span>
+                    )}
+                    {events.length > 0 && <span style={{ fontSize: 9, fontWeight: 800, color: T.lo }}>{events.length}</span>}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                    {visible.map((e) => {
+                      const [, color] = deriveStatusInfo(e);
+                      return (
+                        <div key={e.id} title={e.event_name} style={{
+                          fontSize: 9.5, fontWeight: 700, color: T.hi, background: `${color}14`,
+                          borderLeft: `3px solid ${color}`, borderRadius: 4, padding: "2px 6px",
+                          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+                        }}>
+                          {e.event_name || "Kegiatan"}
+                        </div>
+                      );
+                    })}
+                    {restCount > 0 && (
+                      <div style={{ fontSize: 9.5, color: T.lo, fontWeight: 800, padding: "0 2px" }}>+{restCount} lagi</div>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -141,19 +217,36 @@ function Body({ email }) {
 
       {selected && (
         <div style={{ ...card, marginTop: 14, padding: 0, overflow: "hidden" }}>
-          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.line}`, fontWeight: 800, fontSize: 13.5 }}>Kegiatan {selected}</div>
+          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.line}`, display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 800, fontSize: 13.5, color: T.hi }}>{fmtDayLong(selected)}</div>
+              <div style={{ fontSize: 11.5, color: T.lo, fontWeight: 700, marginTop: 1 }}>{selectedEvents.length} kegiatan</div>
+            </div>
+            <button className="mh-btn" onClick={() => setSelected(null)} aria-label="Tutup"
+              style={{ width: 26, height: 26, borderRadius: 8, border: `1px solid ${T.line}`, background: "#fff", color: T.mid, fontSize: 13, fontWeight: 700, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>✕</button>
+          </div>
           <div>
-            {selectedEvents.map((e) => (
-              <div key={e.id} onClick={() => setDetailId(e.id)}
-                style={{ padding: "10px 16px", borderBottom: `1px solid ${T.line}`, display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}
-                onMouseEnter={(ev) => { ev.currentTarget.style.background = "#F7F9FC"; }}
-                onMouseLeave={(ev) => { ev.currentTarget.style.background = "transparent"; }}>
-                <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", background: STATUS_COLOR[e.status] || T.mid, borderRadius: 999, padding: "2px 9px" }}>{e.status || "draft"}</span>
-                <span style={{ fontWeight: 700, fontSize: 13 }}>{e.event_name || "-"}</span>
-                <span style={{ color: T.mid, fontSize: 12 }}>{e.mc || "-"} · {e.site_id || "-"}</span>
-                {e.brand && <span style={{ marginLeft: "auto", fontSize: 10.5, fontWeight: 800, color: String(e.brand).toLowerCase() === "tri" ? T.tri : T.im3 }}>{brandLabel(e.brand)}</span>}
-              </div>
-            ))}
+            {selectedEvents.map((e) => {
+              const [label, color] = deriveStatusInfo(e);
+              const isTri = String(e.brand || "").toLowerCase() === "tri";
+              return (
+                <div key={e.id} onClick={() => setDetailId(e.id)}
+                  style={{ padding: "11px 16px", borderBottom: `1px solid ${T.line}`, display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}
+                  onMouseEnter={(ev) => { ev.currentTarget.style.background = "#F7F9FC"; }}
+                  onMouseLeave={(ev) => { ev.currentTarget.style.background = "transparent"; }}>
+                  <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff", background: color || T.mid, borderRadius: 999, padding: "3px 10px", flexShrink: 0 }}>{label}</span>
+                  <span style={{ fontWeight: 700, fontSize: 13, color: T.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.event_name || "-"}</span>
+                  <span style={{ color: T.lo, fontSize: 12, flexShrink: 0 }}>{e.mc || "-"} · {e.site_id || "-"}</span>
+                  {e.brand && (
+                    <span style={{
+                      marginLeft: "auto", fontSize: 10.5, fontWeight: 800, flexShrink: 0,
+                      color: isTri ? T.tri : T.im3, background: isTri ? `${T.tri}14` : `${T.im3}14`,
+                      borderRadius: 6, padding: "2px 8px",
+                    }}>{brandLabel(e.brand)}</span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
