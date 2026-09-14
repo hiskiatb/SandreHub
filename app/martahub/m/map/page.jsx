@@ -28,6 +28,7 @@ import supabaseMarta from "../../../../lib/supabaseMarta";
 import { locationiqTileUrl, LOCATIONIQ_TILE_SUBDOMAINS, LOCATIONIQ_TILE_ATTRIBUTION, LOCATIONIQ_TILE_MAX_ZOOM } from "../../../../lib/locationiqTiles";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { loadLeaflet } from "../_shared/MapPickerSheet";
+import { lockPullToRefresh, unlockPullToRefresh } from "../_shared/pullToRefreshLock";
 import { statusMeta, fmtDate } from "../_shared/activityUi";
 
 const EVENT_COLOR = "#ED1C24";
@@ -70,6 +71,17 @@ export default function MartaMapPage() {
   const [searchFocused, setSearchFocused] = useState(false);
   const searchDebounceRef = useRef(null);
   const searchReqId = useRef(0);
+
+  // Kunci pull-to-refresh SELAMA halaman Peta ini terbuka - geser peta ke
+  // bawah (pan/drag) di dekat bagian atas layar sebelumnya kebaca sbg
+  // gestur "tarik utk refresh" oleh MobileShell (usePullToRefresh), jadi
+  // navigasi peta (geser sedikit ke atas lalu turun lagi) malah memicu
+  // reload halaman - sama mekanismenya dgn BottomSheet/CalendarPickerSheet
+  // (document.body.dataset.ptrLock, dicek langsung oleh usePullToRefresh).
+  useEffect(() => {
+    lockPullToRefresh();
+    return unlockPullToRefresh;
+  }, []);
 
   // Data - dua sumber independen, best-effort (satu gagal tidak
   // menjatuhkan yang lain).
