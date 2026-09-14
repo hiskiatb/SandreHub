@@ -22,6 +22,7 @@ import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, updateCachedFullName, logMartaLogout } from "../_shared/MobileShell";
 import { BRAND_DISPLAY } from "../_shared/planData";
 import { getPushStatus, enablePushNotifications, disablePushNotifications, sendTestPush } from "../_shared/pushNotif";
+import { getMySlots, switchSlot } from "../../../../lib/martaScope";
 
 const ROLE_LABEL = { bme_rge: "BME/RGE", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
 const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
@@ -187,6 +188,13 @@ export default function ProfilePage() {
             {scope?.region && <RowKV icon={<MapPin size={13} />} label="Region" value={scope.region} last />}
           </SectionCard>
         )}
+
+        {/* Assignment lain (branch/brand lain) utk email yg sama - muncul
+            HANYA kalau memang punya >1. Pindah cukup tap - RPC
+            mh_switch_slot_for_email mirror slot terpilih ke mh_profiles,
+            lalu halaman di-reload spy semua data ikut scope yg baru
+            (tanpa perlu logout/login ulang). */}
+        <AssignmentSwitcherCard email={email} scope={scope} />
 
         <SectionCard title="Preferensi">
           <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "3px 0 4px" }}>
@@ -420,5 +428,57 @@ function LogoutConfirmSheet({ busy, onCancel, onConfirm }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function AssignmentSwitcherCard({ email, scope }) {
+  const [slots, setSlots] = useState([]);
+  const [switching, setSwitching] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve(email ? getMySlots(email) : []).then((s) => { if (!cancelled) setSlots(s); });
+    return () => { cancelled = true; };
+  }, [email]);
+
+  if (slots.length < 2) return null;
+
+  const onPick = async (slotId) => {
+    if (switching) return;
+    setSwitching(true);
+    try {
+      await switchSlot(email, slotId);
+      window.location.reload();
+    } catch (err) {
+      alert(err.message || "Gagal beralih assignment");
+      setSwitching(false);
+    }
+  };
+
+  return (
+    <SectionCard title="Assignment Lain">
+      {slots.map((s, i) => {
+        const label = [s.branchName, s.brand ? (s.brand.toLowerCase() === "tri" ? "3ID" : s.brand.toUpperCase()) : null].filter(Boolean).join(" · ") || (s.role || "Assignment");
+        return (
+          <div key={s.id}>
+            <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "9px 0" }}>
+              <span style={{ fontSize: 12.5, color: s.isCurrent ? "#17181C" : "#8A8A96", fontWeight: 700, flex: 1 }}>{label}</span>
+              {s.isCurrent ? (
+                <span style={{ fontSize: 10.5, fontWeight: 800, padding: "3px 9px", borderRadius: 999, background: "rgba(46,125,50,0.1)", color: "#2E7D32" }}>Aktif</span>
+              ) : (
+                <button onClick={() => onPick(s.id)} disabled={switching}
+                  style={{
+                    fontSize: 11, fontWeight: 800, padding: "5px 11px", borderRadius: 999, cursor: switching ? "wait" : "pointer",
+                    border: "1px solid #ED1C24", background: "#fff", color: "#ED1C24",
+                  }}>
+                  Pakai
+                </button>
+              )}
+            </div>
+            {i < slots.length - 1 && <Divider />}
+          </div>
+        );
+      })}
+    </SectionCard>
   );
 }

@@ -6,7 +6,7 @@ import { HubLogo } from "../../../components/HubLogo";
 import { HubLogoLoader } from "../../../components/HubLogoLoader";
 import { supabase } from "../../../lib/supabase";
 import { supabaseMarta } from "../../../lib/supabaseMarta";
-import { getMartaScope, applyMartaScope } from "../../../lib/martaScope";
+import { getMartaScope, applyMartaScope, getMySlots, switchSlot } from "../../../lib/martaScope";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const HEADER_H = 60; // tinggi header sidebar & topbar SAMA agar garis bawah sejajar
@@ -106,6 +106,64 @@ let _martaCtxCache = null;
  * Pakai: <MartaShell active="assignments" title="Assignments">{(ctx)=> ...}</MartaShell>
  * ctx = { profile, canManage, session }.
  */
+
+// Dropdown "ganti assignment" - muncul di header HANYA kalau email yg lagi
+// login punya >1 assignment aktif (mh_profile_slots). Pindah slot = 1 RPC
+// (mh_switch_slot_for_email) yg mirror field slot terpilih ke mh_profiles,
+// jadi TIDAK perlu re-login - tapi supaya SEMUA halaman (masing2 fetch scope
+// sendiri2 lewat getMartaScope(email) per page, lihat komentar di atas file
+// ini) langsung konsisten memakai scope barunya, kita reload penuh sekali
+// setelah switch (masih jauh lebih smooth drpd harus logout/login ulang).
+function AssignmentSwitcher({ email }) {
+  const [slots, setSlots] = useState([]);
+  const [switching, setSwitching] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.resolve(email ? getMySlots(email) : []).then((s) => { if (!cancelled) setSlots(s); });
+    return () => { cancelled = true; };
+  }, [email]);
+
+  if (slots.length < 2) return null;
+
+  const current = slots.find((s) => s.isCurrent) || slots[0];
+  const onChange = async (e) => {
+    const slotId = e.target.value;
+    if (!slotId || slotId === current.id) return;
+    setSwitching(true);
+    try {
+      await switchSlot(email, slotId);
+      window.location.reload();
+    } catch (err) {
+      alert(err.message || "Gagal beralih assignment");
+      setSwitching(false);
+    }
+  };
+
+  const slotLabel = (s) => {
+    const brand = s.brand ? brandLabel(s.brand) : null;
+    const parts = [s.branchName || REGION_LABEL_FALLBACK(s.region), brand].filter(Boolean);
+    return parts.length ? parts.join(" · ") : (ROLE_LABEL_FALLBACK(s.role));
+  };
+
+  return (
+    <select
+      value={current.id}
+      onChange={onChange}
+      disabled={switching}
+      title="Assignment aktif - pilih untuk beralih"
+      style={{
+        padding: "7px 10px", borderRadius: 9, border: `1px solid ${T.line}`, background: "#fff",
+        color: T.hi, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, cursor: switching ? "wait" : "pointer",
+        maxWidth: 220,
+      }}>
+      {slots.map((s) => <option key={s.id} value={s.id}>{slotLabel(s)}</option>)}
+    </select>
+  );
+}
+function REGION_LABEL_FALLBACK(region) { return region || null; }
+function ROLE_LABEL_FALLBACK(role) { return role || "Assignment"; }
+
 export default function MartaShell({ active, title, subtitle, actions, children }) {
   const router = useRouter();
   const [ctx, setCtx] = useState(_martaCtxCache);
@@ -368,6 +426,7 @@ export default function MartaShell({ active, title, subtitle, actions, children 
               Google Drive
             </a>
           )}
+          <AssignmentSwitcher email={callerEmail} />
           {actions}
         </header>
         <div style={{ flex: 1, padding: "22px 26px 60px" }}>

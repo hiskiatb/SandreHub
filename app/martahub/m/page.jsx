@@ -463,6 +463,19 @@ export default function MartaMobileHome() {
             (abu-abu, tanpa panah) - user langsung paham itu TIDAK BISA
             ditekan utk diganti, bukan cuma dropdown kosong yg mubazir. */}
         <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
+          {/* Urutan SEKARANG: REGION - BRANCH - BRAND (dari kiri), mengikuti
+              hierarki cakupannya (region membatasi branch mana yg muncul,
+              lihat effectiveRegionFilter di atas) - sebelumnya Region ada
+              di ujung kanan padahal dialah yg menyaring Branch, jadi
+              urutan lama kebalik dari alur mikirnya. Region ditampilkan
+              HANYA kalau memang ada opsinya (akun "Circle"/unscoped -
+              lihat canBrowseRegions); kalau tidak, Branch otomatis jadi
+              yg pertama. */}
+          {regionOptions.length > 0 && (
+            <div style={{ flexShrink: 0 }}>
+              <RegionTagSelect value={regionFilter} onChange={setRegionFilter} options={regionOptions} />
+            </div>
+          )}
           <div style={{ flex: "1 1 auto", minWidth: 0 }}>
             <FilterSelect
               icon={Building2}
@@ -480,7 +493,7 @@ export default function MartaMobileHome() {
               layar sempit. Sekarang flexShrink:0 + width mengikuti konten
               sendiri (whiteSpace nowrap di dalam BrandTagSelect sudah cukup
               utk cegah wrap) - jadi lebar chip ini otomatis pas utk brand
-              apa pun (2 huruf atau lebih), dan Branch di sebelah kiri yg
+              apa pun (2 huruf atau lebih), dan Branch di sebelahnya yg
               flex:1 auto menyerap SISA ruang (porsinya jadi lebih kecil
               dibanding sebelumnya, bukan dipatok 70%/30% kaku). */}
           <div style={{ flexShrink: 0 }}>
@@ -490,17 +503,6 @@ export default function MartaMobileHome() {
               options={canBrowseBrands ? brandOptions : (scope?.brand ? [{ value: scope.brand, label: BRAND_DISPLAY[scope.brand] || scope.brand.toUpperCase() }] : [])}
             />
           </div>
-          {/* Region ("REG") - chip ke-3, SATU baris yg sama dgn Branch &
-              Brand (bukan baris terpisah) - cuma tampil interaktif utk
-              akun "Circle" (canBrowseRegions); Head/Brand TMV yg sudah
-              terkunci ke 1 region tetap dapat chip-nya (non-interaktif,
-              label region sendiri), konsisten dgn pola Brand utk role
-              tmv (brand terkunci) di atas. */}
-          {regionOptions.length > 0 && (
-            <div style={{ flexShrink: 0 }}>
-              <RegionTagSelect value={regionFilter} onChange={setRegionFilter} options={regionOptions} />
-            </div>
-          )}
         </div>
       </div>
 
@@ -658,7 +660,11 @@ function FilterSelect({ icon: Icon, value, onChange, placeholder, options, fullW
   // Kata depan ("Cabang") SEBELUM nilainya - tanpa ini badge cuma nampilin
   // nama cabang polos (mis. "ACEH") yg ambigu itu label field apa, apalagi
   // di sebelah badge Brand yg juga cuma satu kata.
-  const showPrefix = prefixLabel && (selected || options.length === 1);
+  // Prefix ("BRANCH ") HANYA dipakai utk kasus terkunci non-interaktif
+  // (role scoped, 1 opsi = info scope sendiri, bukan pilihan aktif) -
+  // begitu user AKTIF memilih sesuatu lewat dropdown ini, tampilkan nilainya
+  // saja polos (mis. "KISARAN"), tanpa diawali label field lagi.
+  const showPrefix = prefixLabel && !selected && options.length === 1;
   // Status LOADING (master data blm selesai diambil) HARUS beda tampilan
   // dgn status "terkunci ke 1 cabang" (role scoped) - keduanya sama-sama
   // options.length<=1 sesaat, tapi maknanya beda jauh: satu "belum siap,
@@ -744,7 +750,7 @@ function BrandTagSelect({ value, onChange, options }) {
         <Tags size={12} color={color} strokeWidth={2.2} style={{ flexShrink: 0 }} />
       )}
       <span style={{ fontSize: 12, fontWeight: 800, color, whiteSpace: "nowrap" }}>
-        {effective ? <><span style={{ fontWeight: 600, opacity: 0.68 }}>BRAND </span>{effective.label}</> : "BRAND"}
+        {selected ? selected.label : (effective ? <><span style={{ fontWeight: 600, opacity: 0.68 }}>BRAND </span>{effective.label}</> : "BRAND")}
       </span>
       {interactive && (
         <ChevronRight size={11} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%) rotate(90deg)", color, pointerEvents: "none" }} />
@@ -792,15 +798,19 @@ function RegionTagSelect({ value, onChange, options }) {
         <Globe2 size={12} color={color} strokeWidth={2.2} style={{ flexShrink: 0 }} />
       )}
       <span style={{ fontSize: 12, fontWeight: 800, color, whiteSpace: "nowrap" }}>
-        {effective ? <><span style={{ fontWeight: 600, opacity: 0.68 }}>REG </span>{effective.label}</> : "REG"}
+        {selected ? selected.label : (effective ? <><span style={{ fontWeight: 600, opacity: 0.68 }}>REG </span>{effective.label}</> : "REG")}
       </span>
       {interactive && (
         <ChevronRight size={11} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%) rotate(90deg)", color, pointerEvents: "none" }} />
       )}
       {interactive && (
+        // TIDAK ada lagi <option value="">REG</option> di sini - dulu ada
+        // 2 cara sama2 berarti "tanpa filter region" (opsi kosong "REG" DAN
+        // opsi "ALL" yg eksplisit), membingungkan. Sekarang cuma "ALL" yg
+        // jadi satu2nya cara mematikan filter region - "REG" murni label
+        // placeholder chip sebelum disentuh, BUKAN opsi yg bisa dipilih.
         <select value={value} onChange={(e) => onChange(e.target.value)} aria-label="Region"
           style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 16 }}>
-          <option value="">REG</option>
           {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       )}
