@@ -14,7 +14,7 @@ import { MapPin, ChevronRight, ChevronLeft, Users, Info } from "lucide-react";
 // ═════════════════════════════════════════════════════════════════════════════
 
 const ROLE_LABEL = {
-  md: "MD", dsf: "DSF", tl_dsf: "TL DSF", bme_rge: "BME/RGE",
+  md: "MD", dsf: "DSF", tl_dsf: "TL DSF", bme_rge: "BME/RGE", bsm: "BSM",
   tmv: "Brand TMV", head: "Head TMV", spm_sumatera: "SPM Sumatera", admin: "Admin",
 };
 

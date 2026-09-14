@@ -13,8 +13,11 @@ const mcLabelForBrand = (brand) => (brand === "tri" ? "Cluster" : "MC");
 // ✅ "Head" → "Head TMV" dan "TMV" → "Brand TMV" adalah relabel tampilan saja
 // (MARTAHUB_ACTIVITY_USER_SPEC.md §4.5) - nilai role di database (head/tmv)
 // TIDAK berubah. Role tl_dsf/dsf/md/spm_sumatera baru (§4.2/§4.5).
-// ✅ dse/gse/ae/promotor/cse_rse/bsm ditambahkan (§ POSMAT semua level) - role
+// ✅ dse/gse/ae/promotor/cse_rse ditambahkan (§ POSMAT semua level) - role
 // baru khusus pencatat POSMAT, branch-scoped spt bme/rge, TANPA atasan.
+// ✅ "bsm" SEKARANG setara BME/RGE penuh (bukan lagi role POSMAT executor) -
+// bisa buat plan & lihat aktivitas BME/RGE lain sendiri di branch×brand yg
+// sama (lihat migrasi add_bsm_role_as_bme_rge_peer di project MartaHub).
 // `mh_profiles.role`/`mh_assignments.role` TIDAK LAGI dibatasi enum CHECK di
 // database (cuma validasi format) - role baru ke depannya CUKUP ditambah di
 // sini, TANPA migrasi DB.
@@ -140,7 +143,9 @@ const toBranchSlug = (name) => (name || "").trim().toLowerCase().replace(/[^a-z0
 // BME/RGE lewat kartu cabang - SEMUA role branch-scoped yg ada di ROLES,
 // bukan cuma MD/DSF. Ditampilkan lewat toggle "+ Role lain" spy default
 // tidak penuh, tapi begitu dibuka SEMUA jenis role bisa diisi > 1 orang.
-const BRANCH_SUBROLES = ROLES.map(([v]) => v).filter((v) => !["spm_sumatera", "head", "tmv", "bme_rge", "md", "dsf"].includes(v));
+// "bsm" DIKELUARKAN - sekarang setara BME/RGE penuh (ditampilkan sbg
+// SlotRow sendiri sejajar BME/RGE di bawah), bukan lagi bawahannya.
+const BRANCH_SUBROLES = ROLES.map(([v]) => v).filter((v) => !["spm_sumatera", "head", "tmv", "bme_rge", "bsm", "md", "dsf"].includes(v));
 // Semua role "executor" di bawah BME/RGE (MD, DSF, + role cabang lain) -
 // digabung jadi satu daftar pilihan utk tombol "+ Tambahkan Executor".
 const EXECUTOR_ROLES = ["md", "dsf", ...BRANCH_SUBROLES];
@@ -1671,8 +1676,11 @@ function BranchCard({ branchName, combos, canAdd, onAdd, onRemove, onEdit, calle
       {combos.map((combo) => {
         const brandColor = BRAND_COLOR_POP[combo.brand] || T.mid;
         const bmeRge = combo.byRole?.get("bme_rge") || [];
+        // BSM - setara BME/RGE penuh (lihat migrasi add_bsm_role_as_bme_rge_peer),
+        // ditampilkan sbg SlotRow sejajar, bukan masuk daftar executor.
+        const bsm = combo.byRole?.get("bsm") || [];
         // Semua "executor" di bawah BME/RGE (MD, DSF, TL DSF, DSE, GSE, AE,
-        // Promotor, CSE/RSE, BSM) - ditampilkan sbg daftar per role yg SUDAH
+        // Promotor, CSE/RSE) - ditampilkan sbg daftar per role yg SUDAH
         // terisi, penambahan orang baru (role apa pun, boleh dobel) lewat
         // satu tombol "+ Tambahkan Executor" di bawah, bukan lagi baris
         // tambah terpisah per role.
@@ -1685,6 +1693,9 @@ function BranchCard({ branchName, combos, canAdd, onAdd, onRemove, onEdit, calle
             </span>
             {/* BME/RGE - hanya 1 slot per cabang×brand */}
             <SlotRow title="BME / RGE" role="bme_rge" people={bmeRge} canAdd={canAdd && bmeRge.length === 0} single
+              context={ctx} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} compact />
+            {/* BSM - hanya 1 slot per cabang×brand, sama pola BME/RGE */}
+            <SlotRow title="BSM" role="bsm" people={bsm} canAdd={canAdd && bsm.length === 0} single
               context={ctx} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} compact />
             {executorRows.map(([r, list]) => (
               <SlotRow key={r} title={`${ROLE_LABEL[r] || r} (di bawah BME/RGE)`} role={r} people={list} canAdd={false}

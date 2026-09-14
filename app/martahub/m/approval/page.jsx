@@ -28,7 +28,7 @@ import { applyMartaScope, regionLabel } from "../../../../lib/martaScope";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { BRAND_DISPLAY } from "../_shared/planData";
 
-const ROLE_LABEL = { admin: "Admin", head: "Head TMV", tmv: "Brand TMV", bme_rge: "BME/RGE", spm_sumatera: "SPM Sumatera" };
+const ROLE_LABEL = { admin: "Admin", head: "Head TMV", tmv: "Brand TMV", bme_rge: "BME/RGE", bsm: "BSM", spm_sumatera: "SPM Sumatera" };
 const CAN_APPROVE_ROLES = ["admin", "head", "tmv", "spm_sumatera"];
 
 const PENDING_COLS = "id, event_name, brand, mc, site_id, plan_date_start, plan_date, target_sp, target_fwa, created_at";

@@ -294,7 +294,10 @@ export async function deleteRebuyEntry(entryId) {
 // naungi - SAMA PERSIS dgn `_pickActingFor()`/`_effectiveOwnerId()` di
 // create_plan_screen.dart (Flutter).
 export const APPROVER_ROLES = ["head", "tmv", "spm_sumatera", "admin"];
-const TARGETABLE_ROLES = ["bme_rge", "tl_dsf", "dsf", "md", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"];
+// "bsm" TIDAK termasuk di sini - sejak §BSM-peer, bsm setara BME/RGE
+// (buat plan & kelola tim sendiri), BUKAN lagi "orang yang dibuatkan plan
+// oleh atasan" spt executor role lain.
+const TARGETABLE_ROLES = ["bme_rge", "tl_dsf", "dsf", "md", "dse", "gse", "ae", "promotor", "cse_rse"];
 
 // Dua brand yang berjalan di MartaHub (sama dgn BRAND_TAG_COLORS di
 // app/martahub/m/page.jsx) - dipakai utk membentuk grid branch×brand penuh
@@ -346,17 +349,23 @@ const toSlug = (name) => (name || "").trim().toLowerCase().replace(/[^a-z0-9]+/g
 // dipakai tombol gabungan "+ Tambahkan Executor" di User Management (mobile
 // & desktop), opsi yg ditawarkan ke satu caller tetap disaring lagi lewat
 // ADDABLE_ROLES_FOR di bawah.
-export const EXECUTOR_ROLES = ["md", "dsf", "tl_dsf", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"];
+// "bsm" DIKELUARKAN dari daftar ini (lihat catatan TARGETABLE_ROLES di
+// atas) - bsm sekarang setara BME/RGE, bukan executor di bawahnya.
+export const EXECUTOR_ROLES = ["md", "dsf", "tl_dsf", "dse", "gse", "ae", "promotor", "cse_rse"];
 
 export const ADDABLE_ROLES_FOR = {
-  spm_sumatera: ["head", "tmv", "bme_rge", "tl_dsf", "md", "dsf", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"],
-  admin: ["head", "tmv", "bme_rge", "tl_dsf", "md", "dsf", "dse", "gse", "ae", "promotor", "cse_rse", "bsm"],
+  spm_sumatera: ["head", "tmv", "bme_rge", "bsm", "tl_dsf", "md", "dsf", "dse", "gse", "ae", "promotor", "cse_rse"],
+  admin: ["head", "tmv", "bme_rge", "bsm", "tl_dsf", "md", "dsf", "dse", "gse", "ae", "promotor", "cse_rse"],
   // Head TMV & Brand TMV boleh langsung men-set MD/DSF utk region mereka
   // sendiri (bukan cuma lewat BME/RGE) - sesuai tingkatan hirarki, atasan
   // boleh mengisi posisi di bawah bawahannya juga, bukan cuma satu level.
-  head: ["tmv", "bme_rge", "md", "dsf"],
-  tmv: ["bme_rge", "md", "dsf"],
-  bme_rge: ["tl_dsf", "md", "dse", "gse", "ae", "promotor", "cse_rse", "bsm", "dsf"],
+  head: ["tmv", "bme_rge", "bsm", "md", "dsf"],
+  tmv: ["bme_rge", "bsm", "md", "dsf"],
+  // BSM setara BME/RGE - boleh Kelola Tim yang SAMA (MD/DSF/TL DSF/DSE/GSE/
+  // AE/Promotor/CSE-RSE), TIDAK termasuk bme_rge/bsm sendiri (itu peer,
+  // bukan bawahan - lihat mh_bme_assign_member yg juga menolaknya).
+  bme_rge: ["tl_dsf", "md", "dse", "gse", "ae", "promotor", "cse_rse", "dsf"],
+  bsm: ["tl_dsf", "md", "dse", "gse", "ae", "promotor", "cse_rse", "dsf"],
   tl_dsf: ["dsf"],
 };
 

@@ -978,7 +978,10 @@ function HierarchyView() {
         const rNode = regions.get(norm(a.region) || "-"); if (!rNode) continue;
         const brNode = rNode.brands.get(brand); if (!brNode) continue;
         brNode.tmv.push(a);
-      } else if (a.role === "bme_rge") {
+      } else if (a.role === "bme_rge" || a.role === "bsm") {
+        // "bsm" setara BME/RGE penuh (branch/brand-scoped, sama-sama
+        // "petugas lapangan" cabang) - digabung ke daftar yg sama, cuma
+        // tag chip-nya beda (lihat AccountChip di bawah).
         for (const rNode of regions.values()) {
           const brNode = rNode.brands.get(brand); if (!brNode) continue;
           const bn = brNode.branches.get(a.branch_id);
@@ -1131,7 +1134,7 @@ function BranchRow({ bn }) {
         {bn.bmeRge.length === 0
           ? <span style={{ fontSize: 11.5, color: T.lo, fontStyle: "italic" }}>- belum ada -</span>
           : <>
-              {bn.bmeRge.map((a) => <AccountChip key={a.id} a={a} tag="BME/RGE" />)}
+              {bn.bmeRge.map((a) => <AccountChip key={a.id} a={a} tag={a.role === "bsm" ? "BSM" : "BME/RGE"} />)}
             </>}
       </div>
     </div>

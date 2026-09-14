@@ -288,7 +288,7 @@ function Body({ email }) {
         // resolveCreatorName() sbg fallback nama utk baris Import Excel yg
         // belum ke-assign ke akun login asli (lihat catatan di fungsi itu).
         supabaseMarta.from("mh_profiles").select("full_name, brand, branch_name, valid_from")
-          .eq("role", "bme_rge").eq("is_active", true).not("branch_name", "is", null),
+          .in("role", ["bme_rge", "bsm"]).eq("is_active", true).not("branch_name", "is", null),
         supabaseMarta.from("mh_leaderboard_summary").select("user_id, achievement_pct, productivity_pct"),
         supabaseMarta.rpc("mh_list_import_batches"),
         // CMS TIDAK punya sesi auth Supabase asli (lihat martaScope.js) jadi

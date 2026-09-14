@@ -515,7 +515,7 @@ function ActivitiesInner() {
               Region") - biar user langsung sadar cakupan daftar yg dia
               lihat tanpa perlu buka filter dulu. */}
           <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em" }}>
-            {scope?.role === "bme_rge" ? "Aktivitas Branch" : "Aktivitas Region"}
+            {scope?.role === "bme_rge" || scope?.role === "bsm" ? "Aktivitas Branch" : "Aktivitas Region"}
           </div>
           {/* Chip "pilih bulan/tahun" - sejajar judul, kanan. Cuma
               menawarkan bulan yg BENERAN ada plan-nya (lihat monthOptions)

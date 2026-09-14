@@ -216,7 +216,9 @@ function ActivityLogView({ callerEmail }) {
 // Halaman ini khusus role yang punya "bawahan" utk dikelola - dsf/md/dst di
 // bawah tl_dsf tidak dapat akses krn mereka bukan atasan siapa pun & juga
 // tidak punya kapabilitas tambah (lihat ADDABLE_ROLES_FOR).
-const ALLOWED_ROLES = ["spm_sumatera", "admin", "head", "tmv", "bme_rge", "tl_dsf"];
+// "bsm" ditambahkan - setara BME/RGE penuh (Kelola Tim sendiri, lihat
+// ADDABLE_ROLES_FOR.bsm di planData.js), jadi dapat akses yg sama.
+const ALLOWED_ROLES = ["spm_sumatera", "admin", "head", "tmv", "bme_rge", "bsm", "tl_dsf"];
 const GRID_ROLES = ["spm_sumatera", "admin", "head", "tmv"];
 
 const initials = (name, email) => {
@@ -711,13 +713,19 @@ function BranchBlock({ branchName, combos, addableRoles, onSaveAssignment, onRem
         // (sudah dipisah lewat kartu combo ini sendiri), bukan role di DB -
         // dan cuma SATU slot per cabang×brand (spt Head TMV/Brand TMV).
         const bmeRge = combo.byRole?.get("bme_rge") || [];
+        // BSM - role setara BME/RGE penuh (bisa buat plan & lihat aktivitas
+        // BME/RGE lain sendiri di cabang×brand yg sama - lihat migrasi
+        // add_bsm_role_as_bme_rge_peer), jadi DITAMPILKAN sbg baris
+        // sejajar "BME / RGE" (bukan masuk daftar executor di bawahnya lagi).
+        const bsm = combo.byRole?.get("bsm") || [];
         // Semua "executor" di bawah BME/RGE (MD, DSF, TL DSF, DSE, GSE, AE,
-        // Promotor, CSE/RSE, BSM) - yg SUDAH terisi ditampilkan sbg daftar
+        // Promotor, CSE/RSE) - yg SUDAH terisi ditampilkan sbg daftar
         // per role, penambahan orang baru (role apa pun yg diizinkan utk
         // caller ini, boleh dobel) lewat satu tombol gabungan di bawah.
         const executorRows = EXECUTOR_ROLES.map((r) => [r, combo.byRole?.get(r) || []]).filter(([, list]) => list.length > 0);
         const ctx = { region: combo.region, brand: combo.brand, branchSlug: combo.branchSlug, branchName: combo.branchName };
         const canAddBmeRge = addableRoles.includes("bme_rge") && bmeRge.length === 0;
+        const canAddBsm = addableRoles.includes("bsm") && bsm.length === 0;
         const executorOptions = EXECUTOR_ROLES.filter((r) => addableRoles.includes(r));
         return (
           <div key={combo.brand} style={{ marginTop: 8, paddingTop: 8, borderTop: "1px dashed #E9EAEE" }}>
@@ -729,6 +737,11 @@ function BranchBlock({ branchName, combos, addableRoles, onSaveAssignment, onRem
                 SATU slot per cabang×brand. */}
             <InlineRoleRow title="BME / RGE" role="bme_rge" single
               people={bmeRge} canAdd={canAddBmeRge}
+              context={ctx} onSaveAssignment={onSaveAssignment} onRemove={onRemove} compact currentEmail={currentEmail} />
+            {/* Baris BSM - satu slot per cabang×brand, sama persis pola
+                BME/RGE di atas (bukan bawahannya). */}
+            <InlineRoleRow title="BSM" role="bsm" single
+              people={bsm} canAdd={canAddBsm}
               context={ctx} onSaveAssignment={onSaveAssignment} onRemove={onRemove} compact currentEmail={currentEmail} />
             {executorRows.map(([r, list]) => (
               <InlineRoleRow key={r} title={`${ROLE_LABEL[r] || r} (di bawah BME/RGE)`} role={r} people={list} canAdd={false}

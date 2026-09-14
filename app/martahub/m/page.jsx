@@ -21,7 +21,7 @@ import {
   Building2, ChevronRight, ChevronLeft, Clock,
   CalendarPlus, ListChecks, Map as MapIcon, Trophy, ShieldCheck, ClipboardCheck, Lightbulb, PackageCheck,
   Target, CheckCircle2, Wallet, Tags, LayoutDashboard, UserCog, FileEdit, Banknote,
-  CardSim, Router, RefreshCw, Receipt, Globe2,
+  CardSim, Router, RefreshCw, Receipt, Globe2, Bell, X,
 } from "lucide-react";
 import supabaseMarta from "../../../lib/supabaseMarta";
 import { applyMartaScope, loadBranchMap } from "../../../lib/martaScope";
@@ -29,6 +29,7 @@ import MobileShell, { useMartaSession, ShellSpinner, InlineSpinner, MartaSplash,
 import AppHeader, { Badge } from "./_shared/AppHeader";
 import { fmtDate, fmtTimeLabel, fmtInt, isDraftIncomplete, activityStage } from "./_shared/activityUi";
 import { APPROVER_ROLES, ADDABLE_ROLES_FOR, BRAND_DISPLAY, BRANDS, REGIONS } from "./_shared/planData";
+import { pushSupported, getPushStatus, enablePushNotifications } from "./_shared/pushNotif";
 
 // Singkatan region utk chip filter ringkas ("REG" + NSA/CSA/SSA) - nilai
 // key HARUS sama persis dgn REGIONS (planData.js)/mh_branches.region di DB.
@@ -48,6 +49,21 @@ function loadSavedFilters() {
 function saveFilters(f) {
   if (typeof window === "undefined") return;
   try { window.localStorage.setItem(FILTERS_STORAGE_KEY, JSON.stringify(f)); } catch { /* best-effort */ }
+}
+
+// Kunci localStorage utk mengingat user SUDAH PERNAH menekan "Nanti saja"
+// pada banner ajakan aktifkan notifikasi push di Beranda - device ini saja
+// (per browser), spy banner tidak terus muncul tiap login kalau memang
+// sudah ditolak/ditunda user, TAPI tetap muncul lagi kalau browser-nya beda
+// atau localStorage-nya dibersihkan (device baru = dianggap belum pernah).
+const PUSH_BANNER_DISMISSED_KEY = "mh_push_banner_dismissed_v1";
+function isPushBannerDismissed() {
+  if (typeof window === "undefined") return true;
+  try { return window.localStorage.getItem(PUSH_BANNER_DISMISSED_KEY) === "1"; } catch { return false; }
+}
+function dismissPushBanner() {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(PUSH_BANNER_DISMISSED_KEY, "1"); } catch { /* best-effort */ }
 }
 
 // ╔══════════════════════════════════════════════════════════════════════════╗
@@ -87,7 +103,7 @@ const MOCK_HOME_ACTIVITIES = [
   { id: "mock-h10", event_name: "Project Perluasan Way Halim Lampung", brand: "IM3", branch_id: MHB["BANDAR LAMPUNG"], mc: "MC-11", event_category: "project", event_categories: null, plan_date: "2026-08-19", plan_date_start: null, plan_dates_multi: null, poi_type: "outdoor", status: "completed", checkin_valid: true, target_sp: 10, target_fwa: 5, actual_sp: 11, actual_fwa: 6, cost_actual: 3300000, actual_rev_3m: 7900000, created_at: "2026-08-19T08:50:00+07:00", site_id: "TLK-021" },
 ];
 
-const ROLE_LABEL = { bme_rge: "BME/RGE", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
+const ROLE_LABEL = { bme_rge: "BME/RGE", bsm: "BSM", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
 
 // Ringkas angka Rupiah besar utk tile 4-kolom yg sempit / baris detail -
 // "1,2jt"/"850rb" dst, drpd angka penuh yg gampang overflow di lebar
@@ -183,6 +199,47 @@ export default function MartaMobileHome() {
   useEffect(() => { saveFilters({ branchFilter, brandFilter, regionFilter }); }, [branchFilter, brandFilter, regionFilter]);
 
   const isApprover = APPROVER_ROLES.includes(scope?.role);
+
+  // Banner ajakan aktifkan notifikasi push - muncul di Beranda begitu
+  // login KALAU device ini belum pernah subscribe push & user belum pernah
+  // menekan "Nanti saja" sebelumnya (lihat PUSH_BANNER_DISMISSED_KEY di
+  // atas). Kalau browser sudah "denied" permanen (user pernah tolak lewat
+  // prompt browser) TIDAK ditampilkan lagi krn requestPermission() tidak
+  // akan pernah berhasil lagi tanpa user reset izin manual dari setting
+  // browser - banner cuma bikin frustrasi kalau dipaksa muncul terus.
+  const [showPushBanner, setShowPushBanner] = useState(false);
+  const [pushEnabling, setPushEnabling] = useState(false);
+  useEffect(() => {
+    if (loading) return;
+    let alive = true;
+    Promise.resolve(
+      pushSupported() && !isPushBannerDismissed() ? getPushStatus() : "unsupported"
+    ).then((status) => {
+      if (alive && (status === "off")) setShowPushBanner(true);
+    });
+    return () => { alive = false; };
+  }, [loading]);
+
+  async function handleEnablePushFromBanner() {
+    setPushEnabling(true);
+    const res = await enablePushNotifications();
+    setPushEnabling(false);
+    if (res.ok) {
+      setShowPushBanner(false);
+    } else if (res.reason === "denied") {
+      // User menolak lewat prompt browser - jangan tampilkan lagi (lihat
+      // catatan di atas komponen banner).
+      dismissPushBanner();
+      setShowPushBanner(false);
+    }
+    // reason lainnya (mis. sw_not_ready) - biarkan banner tetap tampil,
+    // user bisa coba tekan lagi.
+  }
+
+  function handleDismissPushBanner() {
+    dismissPushBanner();
+    setShowPushBanner(false);
+  }
 
   useEffect(() => {
     if (loading) return;
@@ -505,6 +562,56 @@ export default function MartaMobileHome() {
           </div>
         </div>
       </div>
+
+      {/* Banner ajakan aktifkan notifikasi push - paling atas (sebelum
+          banner draft) spy jadi hal pertama yg dilihat user begitu login,
+          sesuai permintaan "arahan pertama kali login jika sebelumnya
+          belum pernah diaktifkan". requestPermission() WAJIB dipicu lewat
+          klik langsung (user gesture) - makanya tombol di sini yg manggil
+          enablePushNotifications(), bukan otomatis saat banner muncul. */}
+      {showPushBanner && (
+        <div style={{ padding: "16px 20px 0" }}>
+          <div style={{
+            display: "flex", alignItems: "flex-start", gap: 12, fontFamily: FF,
+            padding: "14px 15px", borderRadius: 18, border: "1px solid #BFDBFE",
+            background: "linear-gradient(135deg, #EFF6FF 0%, #F8FBFF 65%)",
+            boxShadow: "0 4px 14px rgba(29,78,216,0.08)",
+          }}>
+            <div style={{ flexShrink: 0, width: 42, height: 42, borderRadius: 13, background: "linear-gradient(150deg,#3B82F6,#1D4ED8)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 10px rgba(29,78,216,0.28)" }}>
+              <Bell size={19} color="#fff" />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 800, color: "#1E3A8A" }}>
+                Aktifkan notifikasi
+              </div>
+              <div style={{ marginTop: 2, fontSize: 11.5, color: "#1D4ED8", fontWeight: 600, lineHeight: 1.4 }}>
+                Dapat kabar langsung saat plan/actual disetujui, perlu revisi, atau ada laporan baru masuk.
+              </div>
+              <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+                <button onClick={handleEnablePushFromBanner} disabled={pushEnabling}
+                  style={{
+                    padding: "8px 14px", borderRadius: 10, border: "none", cursor: pushEnabling ? "default" : "pointer",
+                    background: "#1D4ED8", color: "#fff", fontFamily: FF, fontSize: 12, fontWeight: 800,
+                    opacity: pushEnabling ? 0.7 : 1,
+                  }}>
+                  {pushEnabling ? "Mengaktifkan..." : "Aktifkan"}
+                </button>
+                <button onClick={handleDismissPushBanner} disabled={pushEnabling}
+                  style={{
+                    padding: "8px 14px", borderRadius: 10, border: "1px solid #BFDBFE", cursor: pushEnabling ? "default" : "pointer",
+                    background: "transparent", color: "#1D4ED8", fontFamily: FF, fontSize: 12, fontWeight: 700,
+                  }}>
+                  Nanti saja
+                </button>
+              </div>
+            </div>
+            <button onClick={handleDismissPushBanner} aria-label="Tutup" disabled={pushEnabling}
+              style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 999, background: "rgba(29,78,216,0.1)", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: pushEnabling ? "default" : "pointer" }}>
+              <X size={14} color="#1D4ED8" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Banner draft belum selesai - SENGAJA elemen berdiri sendiri yg
           SELALU terlihat (bukan dikubur di dalam MissionCarousel yg

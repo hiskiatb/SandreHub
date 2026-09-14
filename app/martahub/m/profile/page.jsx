@@ -24,7 +24,7 @@ import { BRAND_DISPLAY } from "../_shared/planData";
 import { getPushStatus, enablePushNotifications, disablePushNotifications, sendTestPush } from "../_shared/pushNotif";
 import { getMySlots, switchSlot } from "../../../../lib/martaScope";
 
-const ROLE_LABEL = { bme_rge: "BME/RGE", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
+const ROLE_LABEL = { bme_rge: "BME/RGE", bsm: "BSM", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
 const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
 
 function initials(name) {

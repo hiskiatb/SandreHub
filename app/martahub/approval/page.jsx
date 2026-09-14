@@ -27,7 +27,7 @@ function mdPhotoUrl(path) {
 // di sini hanya jadi katup pengaman manual (mh_activity_manual_override) utk
 // laporan actual yg sebenarnya valid (mis. kolom kosong krn alasan wajar).
 
-const ROLE_LABEL = { admin: "Admin", head: "Head TMV", tmv: "Brand TMV", bme_rge: "BME/RGE", pending: "Pending" };
+const ROLE_LABEL = { admin: "Admin", head: "Head TMV", tmv: "Brand TMV", bme_rge: "BME/RGE", bsm: "BSM", pending: "Pending" };
 const CAT_LABEL = { directSelling: "Direct Selling", jointEvent: "Joint Event", openBooth: "Open Booth", project: "Project", sponsorship: "Sponsorship", thematic: "Thematic" };
 
 const fmtDate = (s) => {
