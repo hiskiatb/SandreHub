@@ -2,7 +2,6 @@
 import { useState, useEffect, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import supabase from "../../../../lib/supabase";
-import { generateOTP } from "../../../../lib/email/otp";
 import { sendOTPEmail } from "../../../../lib/email/sendOTP";
 import { HubLogo } from "../../../../components/HubLogo";
 import { Mail, Loader2, ShieldCheck, Lock, User, Eye, EyeOff, AlertCircle, RefreshCw, CheckCircle2 } from "lucide-react";
@@ -47,15 +46,10 @@ function CseRseRegisterInner() {
 
   useEffect(() => { setD(localStorage.getItem("hub-theme") !== "light"); }, []);
 
+  // OTP di-generate & disimpan DI SERVER (app/api/send-otp/route.js, pakai
+  // service role) — bukan di client lagi, lihat catatan keamanan di sana.
   const sendOtp = async (cleanEmail) => {
-    const code = generateOTP();
-    const { error: otpErr } = await supabase.from("email_otps").insert({
-      email: cleanEmail, otp: String(code),
-      expires_at: new Date(Date.now() + 600_000).toISOString(),
-      verified: false,
-    });
-    if (otpErr) throw otpErr;
-    const res = await sendOTPEmail(cleanEmail, code);
+    const res = await sendOTPEmail(cleanEmail);
     if (!res.success) throw new Error(res.error || "Gagal mengirim OTP.");
   };
 

@@ -9,7 +9,6 @@ import {
 import { HubLogo } from "../../../components/HubLogo";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
-import { generateOTP } from "../../../lib/email/otp";
 import { sendOTPEmail } from "../../../lib/email/sendOTP";
 
 const B = { red: "#ED1C24", yellow: "#FFCB05", teal: "#32BCAD", magenta: "#C6168D" };
@@ -462,14 +461,9 @@ export default function RegisterPage() {
       // CSE: tidak perlu validasi kode, langsung lanjut ke OTP
 
       // ── Send OTP ────────────────────────────────────────────────────────
-      const otp = generateOTP();
-      const { error: otpErr } = await supabase.from("email_otps").insert({
-        email, otp: String(otp),
-        expires_at: new Date(Date.now() + 600_000).toISOString(),
-        verified: false,
-      });
-      if (otpErr) throw otpErr;
-      const res = await sendOTPEmail(email, otp);
+      // OTP di-generate & disimpan DI SERVER (bukan di sini lagi) — lihat
+      // catatan keamanan di app/api/send-otp/route.js.
+      const res = await sendOTPEmail(email);
       if (!res.success) throw new Error(res.error);
 
       // Save to sessionStorage

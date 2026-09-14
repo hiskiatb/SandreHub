@@ -3,7 +3,6 @@ import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import supabase from "../../lib/supabase";
-import { generateOTP } from "../../lib/email/otp";
 import { sendOTPEmail } from "../../lib/email/sendOTP";
 import { Sun, Moon, Loader2, ChevronLeft, MailOpen, ShieldCheck, RefreshCw, Edit3, AlertCircle, Box } from "lucide-react";
 import { HubLogo } from "../../components/HubLogo";
@@ -122,10 +121,9 @@ function VerifyContent() {
     if (!canResend || !emailParam) return;
     setResending(true); setErrMsg("");
     try {
-      const newOtp = generateOTP();
-      const { error } = await supabase.from("email_otps").insert({ email: emailParam, otp: String(newOtp), expires_at: new Date(Date.now() + 600_000).toISOString(), verified: false });
-      if (error) throw error;
-      const res = await sendOTPEmail(emailParam, newOtp);
+      // OTP di-generate & disimpan DI SERVER, lihat catatan keamanan di
+      // app/api/send-otp/route.js.
+      const res = await sendOTPEmail(emailParam);
       if (!res.success) throw new Error(res.error);
       setTimer(60); setCanResend(false); setOtp(Array(6).fill(""));
       inputRefs.current[0]?.focus();

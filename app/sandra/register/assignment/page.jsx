@@ -14,7 +14,6 @@ import {
   KeyRound, User, Mail, Lock, CheckCircle2, AlertTriangle,
   ChevronRight, ArrowLeft, Loader2, Sun, Moon, Eye, EyeOff,
 } from "lucide-react";
-import { generateOTP } from "../../../../lib/email/otp";
 import { sendOTPEmail } from "../../../../lib/email/sendOTP";
 
 // ─── Theme ─────────────────────────────────────────────────────────────────────
@@ -126,16 +125,9 @@ export default function RegisterAssignment() {
       const { data: dup } = await supabase.from("profiles").select("id").eq("email", email.trim().toLowerCase()).maybeSingle();
       if (dup) { setErrMsg("Email sudah terdaftar. Gunakan email lain."); return; }
 
-      // Kirim OTP
-      const otp = generateOTP();
-      const { error: otpErr } = await supabase.from("email_otps").insert({
-        email: email.trim().toLowerCase(),
-        otp: String(otp),
-        expires_at: new Date(Date.now() + 600_000).toISOString(),
-        verified: false,
-      });
-      if (otpErr) throw otpErr;
-      const res = await sendOTPEmail(email.trim().toLowerCase(), otp);
+      // Kirim OTP — di-generate & disimpan DI SERVER (lihat catatan
+      // keamanan di app/api/send-otp/route.js), bukan di client lagi.
+      const res = await sendOTPEmail(email.trim().toLowerCase());
       if (!res.success) throw new Error(res.error ?? "Gagal kirim email OTP.");
 
       // Simpan ke sessionStorage untuk verify page

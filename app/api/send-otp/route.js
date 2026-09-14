@@ -1,17 +1,59 @@
 import { Resend } from "resend";
+import { createClient } from "@supabase/supabase-js";
+import { generateOTP } from "../../../lib/email/otp";
 
 const resendApiKey = process.env.RESEND_API_KEY;
 
+// Dibuat lazy (bukan top-level) — sama alasannya dgn route lain di sini:
+// supaya Next.js tidak crash saat build/"Collecting page data" kalau env
+// belum ke-set di lingkungan build itu.
+function getSupabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return null;
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+
+// SECURITY: OTP di-generate & disimpan DI SINI (server, service role) —
+// BUKAN lagi dikirim dari client. Sebelumnya client mengirim {email, otp}
+// hasil generate sendiri lalu insert langsung ke tabel `email_otps` pakai
+// anon key; karena policy INSERT tabel itu terbuka untuk anon/authenticated
+// dengan `with_check: true`, siapa pun bisa insert baris palsu dengan OTP
+// pilihannya sendiri untuk email siapa pun, lalu langsung panggil
+// /api/verify-otp — otp palsu itu jadi kandidat "ter-terbaru" & lolos,
+// hingga akun berhasil dibuat TANPA pernah menerima email verifikasi
+// (bypass total). Sekarang: client cuma kirim {email}; endpoint ini yang
+// generate OTP, insert ke `email_otps` pakai service role, lalu kirim
+// emailnya — client tidak pernah bisa memilih nilai OTP-nya sendiri.
+// (Policy RLS INSERT anon di `email_otps` sudah dicabut — lihat migrasi
+// docs/sql/email_otps_lockdown.sql.)
 export async function POST(req) {
   try {
-    const { email, otp } = await req.json();
+    const { email } = await req.json();
+    const cleanEmail = String(email ?? "").trim().toLowerCase();
 
-    if (!email || !otp)
-      return Response.json({ success: false, error: "Email dan OTP wajib diisi" }, { status: 400 });
+    if (!cleanEmail)
+      return Response.json({ success: false, error: "Email wajib diisi" }, { status: 400 });
     if (!resendApiKey)
       throw new Error("RESEND_API_KEY belum dikonfigurasi di environment");
 
-    console.log(`📤 [API] Mengirim OTP ke: ${email}`);
+    const supabaseAdmin = getSupabaseAdmin();
+    if (!supabaseAdmin)
+      return Response.json({ success: false, error: "Konfigurasi server belum lengkap." }, { status: 500 });
+
+    const otp = generateOTP();
+    const { error: otpErr } = await supabaseAdmin.from("email_otps").insert({
+      email: cleanEmail,
+      otp: String(otp),
+      expires_at: new Date(Date.now() + 600_000).toISOString(),
+      verified: false,
+    });
+    if (otpErr) {
+      console.error("❌ [EMAIL_OTPS INSERT ERROR]", otpErr);
+      return Response.json({ success: false, error: "Gagal menyiapkan kode OTP." }, { status: 500 });
+    }
+
+    console.log(`📤 [API] Mengirim OTP ke: ${cleanEmail}`);
     const resend = new Resend(resendApiKey);
     const digits = String(otp).split("");
 
@@ -208,7 +250,7 @@ export async function POST(req) {
 
     const { data, error } = await resend.emails.send({
       from: "SandraHub <sandra@spmsumatera.site>",
-      to: email,
+      to: cleanEmail,
       subject: "Kode OTP Verifikasi Akun SandraHub",
       html,
       text: `Verifikasi Akun SandraHub\n\nKode OTP Anda: ${otp}\n\nJangan bagikan kode ini kepada siapapun, termasuk tim SandraHub.\nKode berlaku selama 10 menit.\n\nJika Anda tidak merasa mendaftar, abaikan email ini.\n\n— SandraHub · SPM Sumatera\nspmsumatera.site`,
@@ -216,10 +258,14 @@ export async function POST(req) {
 
     if (error) {
       console.error("❌ [RESEND ERROR]", error);
+      // Baris OTP sudah terlanjur ke-insert tapi email gagal terkirim —
+      // hapus lagi supaya tidak nyangkut jadi OTP "valid" yg user tidak
+      // pernah lihat (mencegah baris zombie di email_otps).
+      await supabaseAdmin.from("email_otps").delete().eq("email", cleanEmail).eq("otp", String(otp)).eq("verified", false);
       return Response.json({ success: false, error: error.message }, { status: 400 });
     }
 
-    return Response.json({ success: true, message: "OTP berhasil terkirim ke " + email, id: data?.id });
+    return Response.json({ success: true, message: "OTP berhasil terkirim ke " + cleanEmail, id: data?.id });
   } catch (err) {
     console.error("[CRITICAL SEND ERROR]", err);
     return Response.json({ success: false, error: "Gagal mengirim email: " + err.message }, { status: 500 });

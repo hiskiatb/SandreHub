@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import supabase from "../../../lib/supabase";
-import { generateOTP } from "../../../lib/email/otp";
 import { sendOTPEmail } from "../../../lib/email/sendOTP";
 import { HubLogo } from "../../../components/HubLogo";
 import { Mail, Lock, Eye, EyeOff, User, KeyRound, Loader2, AlertCircle, CheckCircle2, Sun, Moon, ArrowLeft, ArrowRight } from "lucide-react";
@@ -62,11 +61,9 @@ export default function AgencyRegisterPage() {
       const { data: dup } = await supabase.from("profiles").select("id").eq("email", email).maybeSingle();
       if (dup) { setErrMsg("Email sudah terdaftar. Silakan masuk."); setLoading(false); return; }
 
-      // kirim OTP
-      const otp = generateOTP();
-      const { error: otpErr } = await supabase.from("email_otps").insert({ email, otp: String(otp), expires_at: new Date(Date.now() + 600_000).toISOString(), verified: false });
-      if (otpErr) throw otpErr;
-      const res = await sendOTPEmail(email, otp);
+      // kirim OTP — di-generate & disimpan DI SERVER, lihat catatan
+      // keamanan di app/api/send-otp/route.js.
+      const res = await sendOTPEmail(email);
       if (!res.success) throw new Error(res.error);
 
       sessionStorage.setItem("pending_reg", JSON.stringify({

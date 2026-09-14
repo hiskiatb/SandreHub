@@ -75,6 +75,20 @@ function fmtIndoDate(dateStr) {
   return d.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
 }
 
+// Cost Actual dianggap BELUM lengkap kalau: kosong/bukan angka/negatif
+// (SAMA seperti sebelumnya), ATAU nilainya PERSIS 0 tapi user belum
+// centang konfirmasi "memang tidak ada biaya" - field ini TIDAK LAGI
+// default ke "0" (lihat useState di bawah), supaya BME/RGE tidak bisa
+// lolos kirim laporan tanpa benar2 mengisi/mengonfirmasi cost aktualnya
+// (sebelumnya default "0" bikin ~81% laporan actual diam2 tersimpan
+// dgn cost 0 tanpa pernah disentuh sama sekali, bikin metrik Cost Ratio
+// di Beranda selalu ~0% dan tidak akurat).
+function isCostActualIncomplete(v, zeroConfirmed) {
+  if (v === "" || v == null || Number.isNaN(Number(v)) || Number(v) < 0) return true;
+  if (Number(v) === 0 && !zeroConfirmed) return true;
+  return false;
+}
+
 export default function SubmitActualPage() {
   const { id: activityId } = useParams();
   const router = useRouter();
@@ -125,7 +139,7 @@ export default function SubmitActualPage() {
     const nextKey = SUBMIT_TABS[tabIdx + 1].key;
     if (nextKey === "review") {
       if (siteLabels.length === 0) { setAttemptedSubmit(true); setErr("Pilih minimal 1 site sebelum lanjut."); goToTab("lokasi"); return; }
-      if (costActual === "" || costActual == null || Number.isNaN(Number(costActual)) || Number(costActual) < 0) { setAttemptedSubmit(true); setErr("Cost Actual wajib diisi sebelum lanjut."); goToTab("actual"); return; }
+      if (isCostActualIncomplete(costActual, costActualZeroConfirmed)) { setAttemptedSubmit(true); setErr(Number(costActual) === 0 ? "Centang konfirmasi \"memang tidak ada biaya\" dulu sebelum lanjut." : "Cost Actual wajib diisi sebelum lanjut."); goToTab("actual"); return; }
       if (photos.length < MIN_PHOTOS) { setAttemptedSubmit(true); setErr(`Wajib upload minimal ${MIN_PHOTOS} foto dokumentasi sebelum lanjut.`); goToTab("dokumentasi"); return; }
       setAttemptedSubmit(false); setErr("");
     }
@@ -219,7 +233,11 @@ export default function SubmitActualPage() {
   const rebuySpTotal = rebuySpHasDetail ? rebuySpDetailTotal : (Number(rebuySpTotalManual) || 0);
   const rebuyFwaTotal = rebuyFwaHasDetail ? rebuyFwaDetailTotal : (Number(rebuyFwaTotalManual) || 0);
 
-  const [costActual, setCostActual] = useState("0");
+  const [costActual, setCostActual] = useState("");
+  // Centang eksplisit "memang tidak ada biaya" - WAJIB kalau costActual
+  // diisi persis 0, supaya 0 selalu berarti sengaja, bukan default yg
+  // kelewatan/tidak sempat diisi (lihat isCostActualIncomplete di atas).
+  const [costActualZeroConfirmed, setCostActualZeroConfirmed] = useState(false);
   const [insight, setInsight] = useState("");
 
   // Dokumentasi foto - WAJIB minimal 2 sebelum bisa kirim (sama persis
@@ -342,6 +360,7 @@ export default function SubmitActualPage() {
         // Simpan/Kirim) TETAP menang menimpa nilai DB ini kalau ada -
         // hanya jadi FALLBACK ke nilai DB kalau tidak ada draft lokal.
         if (a?.cost_actual != null) setCostActual(String(a.cost_actual));
+        if (a?.cost_actual === 0) setCostActualZeroConfirmed(true);
         if (a?.insight) setInsight(a.insight);
         // Produk yg PUNYA brand hanya boleh dijual utk brand event ini
         // sendiri (mis. "SP 3GB 3ID" tidak boleh muncul di event brand IM3)
@@ -431,6 +450,7 @@ export default function SubmitActualPage() {
             if (d.pendingTransfers) setPendingTransfers(d.pendingTransfers);
             if (d.rebuyEntries) setRebuyEntries(d.rebuyEntries.map((r) => ({ ...r, persisted: false, id: undefined })));
             if (d.costActual != null) setCostActual(d.costActual);
+            if (d.costActualZeroConfirmed) setCostActualZeroConfirmed(true);
             if (d.insight != null) setInsight(d.insight);
           }
         } catch { /* draft rusak/kosong - abaikan, mulai dari kosong */ }
@@ -505,9 +525,9 @@ export default function SubmitActualPage() {
   useEffect(() => {
     if (!draftReady || !activityId) return;
     try {
-      localStorage.setItem(draftKey(activityId), JSON.stringify({ entries, pendingTransfers, rebuyEntries, costActual, insight }));
+      localStorage.setItem(draftKey(activityId), JSON.stringify({ entries, pendingTransfers, rebuyEntries, costActual, costActualZeroConfirmed, insight }));
     } catch { /* localStorage penuh/diblokir - draft best-effort saja */ }
-  }, [draftReady, activityId, entries, pendingTransfers, rebuyEntries, costActual, insight]);
+  }, [draftReady, activityId, entries, pendingTransfers, rebuyEntries, costActual, costActualZeroConfirmed, insight]);
 
   // Org_id yg SUDAH PERNAH dipakai di activity ini (entry lama, termasuk yg
   // ditag waktu Buat Plan) - diseed jadi chip di OrgIdBar spy tidak perlu
@@ -535,7 +555,7 @@ export default function SubmitActualPage() {
     if (!readyRef.current) { readyRef.current = true; return; }
     setDirty(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataLoading, costActual, insight, address, photos.length, entries, pendingTransfers, rebuyEntries, qtyManual, rebuySpTotalManual, rebuyFwaTotalManual, gpsCorrected, gpsLat, gpsLng]);
+  }, [dataLoading, costActual, costActualZeroConfirmed, insight, address, photos.length, entries, pendingTransfers, rebuyEntries, qtyManual, rebuySpTotalManual, rebuyFwaTotalManual, gpsCorrected, gpsLat, gpsLng]);
 
   // Set berisi key tab yang masih ada field wajib kosong - dipakai stepper
   // utk kasih titik merah, dan sbg sumber kebenaran tunggal biar konsisten
@@ -547,10 +567,10 @@ export default function SubmitActualPage() {
   const invalidSteps = useMemo(() => {
     const s = new Set();
     if (siteLabels.length === 0) s.add("lokasi");
-    if (costActual === "" || costActual == null || Number.isNaN(Number(costActual)) || Number(costActual) < 0) s.add("actual");
+    if (isCostActualIncomplete(costActual, costActualZeroConfirmed)) s.add("actual");
     if (photos.length < MIN_PHOTOS) s.add("dokumentasi");
     return s;
-  }, [siteLabels.length, costActual, photos.length]);
+  }, [siteLabels.length, costActual, costActualZeroConfirmed, photos.length]);
 
   if (loading || dataLoading) return <MobileShell active="activities" hideNav><ShellSpinner /></MobileShell>;
   if (err && !activity) return <MobileShell active="activities" hideNav><div style={{ padding: 40, textAlign: "center", color: "#C62828", fontSize: 13 }}>{err}</div></MobileShell>;
@@ -901,8 +921,8 @@ export default function SubmitActualPage() {
       setErr(`Wajib upload minimal ${MIN_PHOTOS} foto dokumentasi sebelum mengirim laporan.`);
       return;
     }
-    if (costActual === "" || costActual == null || Number.isNaN(Number(costActual)) || Number(costActual) < 0) {
-      setErr("Cost Actual wajib diisi sebelum mengirim laporan.");
+    if (isCostActualIncomplete(costActual, costActualZeroConfirmed)) {
+      setErr(Number(costActual) === 0 ? "Centang konfirmasi \"memang tidak ada biaya\" dulu sebelum mengirim laporan." : "Cost Actual wajib diisi sebelum mengirim laporan.");
       return;
     }
     setSaving(true); setErr("");
@@ -1104,9 +1124,9 @@ export default function SubmitActualPage() {
       goToTab("lokasi");
       return;
     }
-    if (costActual === "" || costActual == null || Number.isNaN(Number(costActual)) || Number(costActual) < 0) {
+    if (isCostActualIncomplete(costActual, costActualZeroConfirmed)) {
       setAttemptedSubmit(true);
-      setErr("Cost Actual wajib diisi sebelum mengirim laporan.");
+      setErr(Number(costActual) === 0 ? "Centang konfirmasi \"memang tidak ada biaya\" dulu sebelum mengirim laporan." : "Cost Actual wajib diisi sebelum mengirim laporan.");
       goToTab("actual");
       return;
     }
@@ -1406,8 +1426,22 @@ export default function SubmitActualPage() {
           <SectionHeading icon={Receipt} title="Cost & Insight" subtitle="Biaya aktual dan catatan lapangan" />
           <Divider />
           <FieldLabel text="Cost Actual" required top />
-          <NumberInput value={costActual} onChange={setCostActual} prefix="Rp" error={attemptedSubmit && (costActual === "" || costActual == null || Number.isNaN(Number(costActual)) || Number(costActual) < 0)} />
-          {(costActual === "" || costActual == null || Number.isNaN(Number(costActual)) || Number(costActual) < 0) && <FieldError text="Cost Actual wajib diisi (boleh 0)." />}
+          <NumberInput value={costActual} onChange={(v) => { setCostActual(v); setCostActualZeroConfirmed(false); }} prefix="Rp" error={attemptedSubmit && isCostActualIncomplete(costActual, costActualZeroConfirmed)} />
+          {/* Muncul HANYA saat user mengetik persis 0 (bukan kosong) - checkbox
+              ini WAJIB dicentang dulu sebelum bisa lanjut/kirim, supaya 0 tidak
+              lagi bisa "kelewatan" (lihat isCostActualIncomplete di atas). */}
+          {costActual !== "" && costActual != null && Number(costActual) === 0 && (
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, marginTop: 8, padding: "9px 10px", borderRadius: 10, background: "rgba(180,83,9,0.06)", border: `1px solid ${attemptedSubmit && !costActualZeroConfirmed ? "#DC2626" : "rgba(180,83,9,0.25)"}`, cursor: "pointer" }}>
+              <input type="checkbox" checked={costActualZeroConfirmed} onChange={(e) => setCostActualZeroConfirmed(e.target.checked)}
+                style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0, accentColor: "#B45309" }} />
+              <span style={{ fontSize: 11.5, fontWeight: 600, color: "#7A5B00", lineHeight: 1.4 }}>Memang tidak ada biaya untuk kegiatan ini.</span>
+            </label>
+          )}
+          {isCostActualIncomplete(costActual, costActualZeroConfirmed) && (
+            <FieldError text={costActual !== "" && costActual != null && Number(costActual) === 0
+              ? "Centang konfirmasi di atas dulu kalau memang tidak ada biaya."
+              : "Cost Actual wajib diisi."} />
+          )}
           <FieldLabel text="Insight" top hint="Opsional" />
           <TextInput value={insight} onChange={setInsight} placeholder="Catatan/insight dari lapangan…" multiline />
         </Card>
