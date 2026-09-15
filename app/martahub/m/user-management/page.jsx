@@ -52,6 +52,7 @@ import {
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { ADDABLE_ROLES_FOR, EXECUTOR_ROLES, fetchOrgHierarchy, REGIONS, BRAND_DISPLAY } from "../_shared/planData";
+import { useLivePresenceRows } from "../../../../lib/martaPresence";
 
 const ROLE_LABEL = { spm_sumatera: "SPM Sumatera", head: "Head TMV", tmv: "Brand TMV", bme_rge: "BME/RGE", tl_dsf: "TL DSF", dsf: "DSF", md: "MD", dse: "DSE", gse: "GSE", ae: "AE", promotor: "Promotor", cse_rse: "CSE/RSE", bsm: "BSM", admin: "Admin" };
 const ROLE_COLOR = {
@@ -323,17 +324,23 @@ function OrgHierarchyView({ scope, email }) {
   const load = useCallback(async () => {
     setErr("");
     try {
-      const [d, presRes] = await Promise.all([
-        fetchOrgHierarchy(scope, null),
-        supabaseMarta.rpc("mh_list_presence"),
-      ]);
-      mergePresence(d.people, presRes.data);
+      const d = await fetchOrgHierarchy(scope, null);
       setData(d);
     } catch (e) { setErr(e.message || "Gagal memuat data"); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope.role, scope.region, scope.brand]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Presence realtime bersama (lihat lib/martaPresence.js) - status "Aktif
+  // sekarang" di tiap orang ter-update sendiri begitu ada heartbeat baru
+  // dari siapa pun, TANPA perlu refresh halaman ini. mergePresence memutasi
+  // objek `data.people` LANGSUNG (referensi yg sama dipakai ulang di semua
+  // slot/grup - lihat catatan di mergePresence), jadi cukup dipanggil ulang
+  // tiap render dgn data presence terbaru - React tetap re-render normal krn
+  // presenceRows sendiri adalah array baru tiap ada perubahan/detak.
+  const presenceRows = useLivePresenceRows();
+  if (data) mergePresence(data.people, presenceRows);
 
   // Satu jalur simpan dipakai SEMUA baris siap-isi di tabel (slot Circle/
   // Region maupun kombo cabang×brand) - konteksnya (region/brand/branch)
@@ -509,18 +516,17 @@ function SuperAdminSection({ email }) {
   const load = useCallback(async () => {
     setErr("");
     try {
-      const [{ data, error }, presRes] = await Promise.all([
-        supabaseMarta.rpc("mh_list_super_admins"),
-        supabaseMarta.rpc("mh_list_presence"),
-      ]);
+      const { data, error } = await supabaseMarta.rpc("mh_list_super_admins");
       if (error) throw error;
-      const rows = data || [];
-      mergePresence(rows, presRes.data);
-      setAdmins(rows);
+      setAdmins(data || []);
     } catch (e) { setErr(e.message || "Gagal memuat Super User"); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Presence realtime bersama - lihat catatan di OrgHierarchyView di atas.
+  const presenceRows = useLivePresenceRows();
+  if (admins) mergePresence(admins, presenceRows);
 
   async function handleAdd(targetEmail, fullName) {
     const { data: { user } } = await supabaseMarta.auth.getUser();
@@ -1040,18 +1046,18 @@ function TeamView({ scope, email }) {
       const { data: profile, error: pErr } = await supabaseMarta.from("mh_profiles").select("id").eq("email", email.toLowerCase()).maybeSingle();
       if (pErr) throw pErr;
       const myAssignmentId = profile?.id;
-      const [{ data, error }, presRes] = await Promise.all([
-        supabaseMarta.rpc("mh_list_assignments", { p_period: null }),
-        supabaseMarta.rpc("mh_list_presence"),
-      ]);
+      const { data, error } = await supabaseMarta.rpc("mh_list_assignments", { p_period: null });
       if (error) throw error;
       const teamRows = (data || []).filter((r) => myAssignmentId && r.supervisor_assignment_id === myAssignmentId);
-      mergePresence(teamRows, presRes.data);
       setRows(teamRows);
     } catch (e) { setErr(e.message || "Gagal memuat tim"); }
   }, [email]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Presence realtime bersama - lihat catatan di OrgHierarchyView di atas.
+  const presenceRows = useLivePresenceRows();
+  if (rows) mergePresence(rows, presenceRows);
 
   const addableRoles = ADDABLE_ROLES_FOR[scope.role] || [];
   const filtered = (rows || []).filter((r) => {

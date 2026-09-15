@@ -4,6 +4,7 @@ import { AlertTriangle, Plus, Check, Copy, Lock, Save, UserX, Building2, MapPin,
 import MartaShell, { T, FONT } from "../components/MartaShell";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../lib/martaScope";
+import { useLivePresenceRows } from "../../../lib/martaPresence";
 
 // Label field Cluster/MC berbeda per brand - konvensi yg sudah ada di spec
 // (IM3 disebut "MC", 3ID disebut "Cluster"), keduanya sama-sama kolom
@@ -192,14 +193,12 @@ function Body({ canManage, callerEmail }) {
   const load = useCallback(async () => {
     setLoading(true); setErr("");
     try {
-      const [a, p, pres] = await Promise.all([
+      const [a, p] = await Promise.all([
         supabaseMarta.rpc("mh_list_assignments"),
         supabaseMarta.from("mh_profiles").select("id, email, full_name, status").eq("status", "pending"),
-        supabaseMarta.rpc("mh_list_presence"),
       ]);
       if (a.error) throw new Error(a.error.message);
       const freshRows = a.data || [];
-      mergePresence(freshRows, pres.data);
       setRows(freshRows);
       setPending(p.data || []);
       return freshRows; // dikembalikan supaya caller (mis. addAssignments) bisa langsung pakai data segar tanpa menunggu state re-render
@@ -207,6 +206,15 @@ function Body({ canManage, callerEmail }) {
     finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // Presence realtime bersama (lib/martaPresence.js) - status "Aktif
+  // sekarang" ter-update sendiri tiap ada heartbeat baru dari siapa pun,
+  // TANPA perlu refresh halaman ini (sebelumnya cuma snapshot sekali saat
+  // load). mergePresence memutasi baris `rows` LANGSUNG - dipanggil ulang
+  // tiap render dgn data presence terbaru, aman krn idempoten & tidak
+  // memicu setState (re-render sudah dipicu oleh presenceRows berubah).
+  const presenceRows = useLivePresenceRows();
+  if (rows.length) mergePresence(rows, presenceRows);
   useEffect(() => {
     let on = true;
     supabaseMarta.from("mh_branches").select("id,name,region").eq("active", true).then(({ data }) => { if (on) setBranches(data || []); });
@@ -644,17 +652,16 @@ function SuperAdminCard({ callerEmail }) {
   const load = useCallback(async () => {
     setErr("");
     try {
-      const [{ data, error }, pres] = await Promise.all([
-        supabaseMarta.rpc("mh_list_super_admins"),
-        supabaseMarta.rpc("mh_list_presence"),
-      ]);
+      const { data, error } = await supabaseMarta.rpc("mh_list_super_admins");
       if (error) throw error;
-      const rows = data || [];
-      mergePresence(rows, pres.data);
-      setAdmins(rows);
+      setAdmins(data || []);
     } catch (e) { setErr(e.message || "Gagal memuat Super User"); }
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  // Presence realtime bersama - lihat catatan di Body/load() di atas.
+  const presenceRows = useLivePresenceRows();
+  if (admins) mergePresence(admins, presenceRows);
 
   async function handleAdd() {
     if (!emailInput.trim() || !nameInput.trim() || saving) return;
