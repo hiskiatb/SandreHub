@@ -114,32 +114,41 @@ export default function ActivityDetailPage() {
         setEditReqs(edits || []);
 
         // Nama site (bukan cuma kode) - dipakai di list gabungan Site Utama +
-        // Site Tambahan, biar bukan teks kode doang.
+        // Site Tambahan, biar bukan teks kode doang. Dijalankan BARENGAN
+        // (Promise.all) dgn pengambilan foto di bawah, bukan berurutan spt
+        // sebelumnya - dulu foto baru mulai diambil SETELAH query nama site
+        // ini selesai (padahal dua-duanya independen), jadi section
+        // "Dokumentasi Foto" kelihatan telat muncul krn nunggu 1 round-trip
+        // tambahan yg sebenarnya tidak perlu ditunggu duluan.
         const allSiteIds = Array.from(new Set([act?.site_id, ...(sites || []).map((s) => s.site_id)].filter(Boolean)));
+        const siteNamesPromise = allSiteIds.length > 0
+          ? supabaseMarta.from("mh_sites").select("site_id,site_name,branch").in("site_id", allSiteIds)
+          : Promise.resolve({ data: null });
+
+        const photoDocs = (docs || []).filter((d) => d.file_type === "photo");
+        // Lewat proxy media-view (Google Drive kalau sudah dimirror, fallback
+        // Storage kalau belum) - browser tidak pernah lihat link Drive-nya.
+        const photosPromise = photoDocs.length
+          ? Promise.all(
+              photoDocs.map(async (d) => {
+                try {
+                  const url = await fetchAuthedPhotoBlobUrl("document", d.id);
+                  return { ...d, url };
+                } catch {
+                  return { ...d, url: null };
+                }
+              })
+            )
+          : Promise.resolve([]);
+
+        const [{ data: siteRows }, withUrls] = await Promise.all([siteNamesPromise, photosPromise]);
+        if (alive) setPhotos(withUrls.filter((p) => p.url));
         if (allSiteIds.length > 0) {
-          const { data: siteRows } = await supabaseMarta.from("mh_sites").select("site_id,site_name,branch").in("site_id", allSiteIds);
           const map = {};
           (siteRows || []).forEach((s) => { map[s.site_id] = s.site_name; });
           if (alive) setSiteNames(map);
           const primaryBranch = (siteRows || []).find((s) => s.site_id === act?.site_id)?.branch;
           if (alive && primaryBranch) setBranchLabel(primaryBranch);
-        }
-
-        const photoDocs = (docs || []).filter((d) => d.file_type === "photo");
-        if (photoDocs.length) {
-          // Lewat proxy media-view (Google Drive kalau sudah dimirror, fallback
-          // Storage kalau belum) - browser tidak pernah lihat link Drive-nya.
-          const withUrls = await Promise.all(
-            photoDocs.map(async (d) => {
-              try {
-                const url = await fetchAuthedPhotoBlobUrl("document", d.id);
-                return { ...d, url };
-              } catch {
-                return { ...d, url: null };
-              }
-            })
-          );
-          if (alive) setPhotos(withUrls.filter((p) => p.url));
         }
       } catch (e) {
         if (alive) setErr(e.message || "Gagal memuat detail aktivitas");

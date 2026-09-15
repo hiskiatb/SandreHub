@@ -9,6 +9,7 @@ import { useEffect, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
+import { useOtpResendCooldown } from "../../../../lib/otpCooldown";
 import { HubLogo } from "../../../../components/HubLogo";
 
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -21,19 +22,13 @@ function VerifyInner() {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [resending, setResending] = useState(false);
-  const [cooldown, setCooldown] = useState(0);
+  const otpCooldown = useOtpResendCooldown(email);
   const inputs = useRef([]);
 
   useEffect(() => {
     if (!email) { router.replace("/martahub/m/login"); return; }
     inputs.current[0]?.focus();
   }, [email, router]);
-
-  useEffect(() => {
-    if (cooldown <= 0) return;
-    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
-    return () => clearTimeout(t);
-  }, [cooldown]);
 
   const code = digits.join("");
 
@@ -96,14 +91,18 @@ function VerifyInner() {
   useEffect(() => { if (code.length === 6) verify(); }, [code]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const resend = async () => {
-    if (resending || cooldown > 0) return;
+    if (resending || otpCooldown.remainingSeconds > 0) return;
+    // Cek cooldown TERSIMPAN (bertahan lintas reload/tutup-app) dulu -
+    // kalau ternyata belum boleh (mis. barusan kirim dari /login lalu
+    // langsung pindah ke sini), jangan tembak request yg pasti kena 429.
+    if (!otpCooldown.isReady()) { setErr(`Tunggu ${otpCooldown.remainingSeconds} detik lagi sebelum minta kode baru.`); return; }
     setResending(true); setErr("");
     try {
       const { error } = await supabaseMarta.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
       if (error) throw error;
-      setCooldown(30);
+      otpCooldown.markSent();
     } catch (e) {
-      setErr("Gagal mengirim ulang kode.");
+      setErr(otpCooldown.reconcileError(e));
     } finally {
       setResending(false);
     }
@@ -191,9 +190,9 @@ function VerifyInner() {
             {busy && <>Memverifikasi kode…</>}
           </div>
 
-          <button onClick={resend} disabled={resending || cooldown > 0 || busy}
-            style={{ marginTop: 4, background: "none", border: "none", cursor: resending || cooldown > 0 || busy ? "default" : "pointer", color: cooldown > 0 || busy ? "#B0B0BA" : "#ED1C24", fontSize: 13, fontWeight: 700, fontFamily: FF }}>
-            {cooldown > 0 ? `Kirim ulang dalam ${cooldown}s` : resending ? "Mengirim…" : "Kirim ulang kode"}
+          <button onClick={resend} disabled={resending || otpCooldown.remainingSeconds > 0 || busy}
+            style={{ marginTop: 4, background: "none", border: "none", cursor: resending || otpCooldown.remainingSeconds > 0 || busy ? "default" : "pointer", color: otpCooldown.remainingSeconds > 0 || busy ? "#B0B0BA" : "#ED1C24", fontSize: 13, fontWeight: 700, fontFamily: FF }}>
+            {otpCooldown.remainingSeconds > 0 ? `Kirim ulang dalam ${otpCooldown.remainingSeconds}s` : resending ? "Mengirim…" : "Kirim ulang kode"}
           </button>
         </div>
       </div>

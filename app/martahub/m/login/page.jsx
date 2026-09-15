@@ -21,6 +21,7 @@ import { useRouter } from "next/navigation";
 import { Mail, Info, Loader2, ArrowLeft, ArrowRight, ShieldCheck, Download, Share, X, PlusSquare } from "lucide-react";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../../lib/martaScope";
+import { useOtpResendCooldown } from "../../../../lib/otpCooldown";
 import { HubLogo } from "../../../../components/HubLogo";
 import { MartaSplash } from "../_shared/MobileShell";
 
@@ -32,6 +33,7 @@ export default function MartaMobileLogin() {
   const [checking, setChecking] = useState(true);
   const [busyGoogle, setBusyGoogle] = useState(false);
   const [email, setEmail] = useState("");
+  const otpCooldown = useOtpResendCooldown(email.trim().toLowerCase());
   const [detected, setDetected] = useState(null);
   const [checkingEmail, setCheckingEmail] = useState(false);
   const [sendingCode, setSendingCode] = useState(false);
@@ -127,13 +129,18 @@ export default function MartaMobileLogin() {
   const sendCode = async () => {
     const v = email.trim().toLowerCase();
     if (!v || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) { setErr("Masukkan email yang valid."); return; }
+    // Cek cooldown TERSIMPAN (bertahan lintas reload/tutup-app) SEBELUM
+    // memanggil server - hindari kirim request yg pasti akan ditolak 429
+    // (mis. user balik dari /verify lalu submit ulang email yang sama).
+    if (!otpCooldown.isReady()) { setErr(`Tunggu ${otpCooldown.remainingSeconds} detik lagi sebelum kirim kode baru.`); return; }
     setSendingCode(true); setErr("");
     try {
       const { error } = await supabaseMarta.auth.signInWithOtp({ email: v, options: { shouldCreateUser: true } });
       if (error) throw error;
+      otpCooldown.markSent();
       router.push(`/martahub/m/verify?email=${encodeURIComponent(v)}`);
     } catch (e) {
-      setErr(e.message || "Gagal mengirim kode. Coba lagi.");
+      setErr(otpCooldown.reconcileError(e));
       setSendingCode(false);
     }
   };
@@ -258,12 +265,12 @@ export default function MartaMobileLogin() {
               </div>
             )}
 
-            <button onClick={sendCode} disabled={sendingCode}
-              style={{ marginTop: 14, width: "100%", height: 54, borderRadius: 14, border: "none", cursor: sendingCode ? "default" : "pointer",
-                background: "linear-gradient(135deg,#ED1C24,#EC008C)",
+            <button onClick={sendCode} disabled={sendingCode || otpCooldown.remainingSeconds > 0}
+              style={{ marginTop: 14, width: "100%", height: 54, borderRadius: 14, border: "none", cursor: sendingCode || otpCooldown.remainingSeconds > 0 ? "default" : "pointer",
+                background: otpCooldown.remainingSeconds > 0 ? "#C7C7CE" : "linear-gradient(135deg,#ED1C24,#EC008C)",
                 color: "#fff", fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
                 boxShadow: "0 4px 12px rgba(17,17,20,0.1)", fontFamily: FF }}>
-              {sendingCode ? <Loader2 size={16} style={{ animation: "mspin .85s linear infinite" }} /> : <><span>Kirim Kode</span><ArrowRight size={14} strokeWidth={2.5} /></>}
+              {sendingCode ? <Loader2 size={16} style={{ animation: "mspin .85s linear infinite" }} /> : otpCooldown.remainingSeconds > 0 ? <span>Kirim Kode ({otpCooldown.remainingSeconds}s)</span> : <><span>Kirim Kode</span><ArrowRight size={14} strokeWidth={2.5} /></>}
             </button>
           </div>
 

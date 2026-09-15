@@ -945,6 +945,36 @@ export default function SubmitActualPage() {
       const actualFwa = effectiveQty("fwa");
       const revenue = catRevenue("sp") + catRevenue("fwa");
 
+      // Upload foto dokumentasi - SEBELUM update status ke "pending_validation"
+      // (dulu SETELAH-nya). Trigger backend `mh_validate_activity_actual` yg
+      // menentukan laporan lengkap/tidak jalan TEPAT SAAT update di bawah ini
+      // (status -> pending_validation) dan langsung menghitung `count(*) from
+      // mh_documents` di momen itu juga - kalau foto baru diupload SETELAH
+      // update tsb, trigger selalu melihat 0 dokumen (walau DSF sudah pilih &
+      // upload foto dgn benar) dan salah menandai "Dokumentasi Foto" sbg kolom
+      // kosong -> laporan langsung kena revision_needed padahal sebenarnya
+      // lengkap. Upload dulu di sini supaya saat trigger mengecek, dokumennya
+      // sudah benar2 tercatat. Foto tetap best-effort (upload sebagian gagal
+      // TIDAK menggagalkan submit laporan pokok, sama spt sebelumnya).
+      const newPhotos = photos.filter((p) => !p.existing && p.file);
+      setUploadProgress({ done: 0, total: newPhotos.length });
+      let photoFailCount = 0;
+      for (let i = 0; i < newPhotos.length; i++) {
+        try {
+          const blob = await compressToMaxBytes(newPhotos[i].file);
+          const path = `${activityId}/${Date.now()}_${i}.jpg`;
+          const { error: upErr } = await supabaseMarta.storage.from(PHOTO_BUCKET).upload(path, blob, { contentType: "image/jpeg" });
+          if (upErr) throw upErr;
+          const { error: docErr } = await supabaseMarta.from("mh_documents").insert({ activity_id: activityId, uploader_id: userId, storage_path: path, file_type: "photo" });
+          if (docErr) throw docErr;
+          supabaseMarta.functions.invoke("media-relay", { body: { bucket: PHOTO_BUCKET, path } }).catch(() => {});
+        } catch (photoErr) {
+          photoFailCount++;
+          console.error("[submit] gagal simpan foto dokumentasi:", photoErr);
+        }
+        setUploadProgress({ done: i + 1, total: newPhotos.length });
+      }
+
       const { data, error } = await supabaseMarta.from("mh_activities").update({
         actual_date: new Date().toISOString().slice(0, 10),
         actual_sp: actualSp,
@@ -967,32 +997,6 @@ export default function SubmitActualPage() {
         ...(gpsCorrected && gpsLat != null && gpsLng != null ? { latitude: gpsLat, longitude: gpsLng } : {}),
       }).eq("id", activityId).select("status,validation_status,validation_note").single();
       if (error) throw error;
-
-      // Upload foto dokumentasi - SETELAH laporan pokok tersimpan (kalau
-      // upload sebagian gagal, laporan tetap tersubmit; sama spt Flutter).
-      // BEDA dgn versi lama: sekarang error insert ke mh_documents JUGA
-      // dicek (dulu tidak, jadi foto yg ke-upload ke storage tapi gagal
-      // ditautkan ke mh_documents hilang tanpa jejak), dan jumlah foto yg
-      // benar2 gagal (storage ATAU insert) dihitung supaya bisa ditunjukkan
-      // ke DSF di layar sukses - jangan lagi diam2 dianggap semua berhasil.
-      const newPhotos = photos.filter((p) => !p.existing && p.file);
-      setUploadProgress({ done: 0, total: newPhotos.length });
-      let photoFailCount = 0;
-      for (let i = 0; i < newPhotos.length; i++) {
-        try {
-          const blob = await compressToMaxBytes(newPhotos[i].file);
-          const path = `${activityId}/${Date.now()}_${i}.jpg`;
-          const { error: upErr } = await supabaseMarta.storage.from(PHOTO_BUCKET).upload(path, blob, { contentType: "image/jpeg" });
-          if (upErr) throw upErr;
-          const { error: docErr } = await supabaseMarta.from("mh_documents").insert({ activity_id: activityId, uploader_id: userId, storage_path: path, file_type: "photo" });
-          if (docErr) throw docErr;
-          supabaseMarta.functions.invoke("media-relay", { body: { bucket: PHOTO_BUCKET, path } }).catch(() => {});
-        } catch (photoErr) {
-          photoFailCount++;
-          console.error("[submit] gagal simpan foto dokumentasi:", photoErr);
-        }
-        setUploadProgress({ done: i + 1, total: newPhotos.length });
-      }
 
       await persistNewEntries();
 

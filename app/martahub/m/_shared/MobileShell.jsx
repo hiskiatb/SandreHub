@@ -405,6 +405,30 @@ export default function MobileShell({ active, children, hideNav, fab }) {
     navigator.serviceWorker.register("/martahub/sw.js", { scope: "/martahub/m/" }).catch(() => {});
   }, []);
 
+  // Navigasi saat notifikasi push DIKLIK ketika app SUDAH terbuka (tab ini
+  // salah satu yg dikenali SW - lihat "notificationclick" di
+  // public/martahub/sw.js). SW sendiri sudah coba client.navigate(url)
+  // langsung, TAPI WindowClient.navigate() tidak didukung konsisten di
+  // semua browser (mis. banyak versi Safari/iOS PWA menolaknya diam-diam),
+  // jadi klik notif kelihatan "tidak ngapa-ngapain" walau tab-nya kefokus.
+  // postMessage {type:"mh-push-navigate", url} dari SW SELALU terkirim
+  // terlepas dari dukungan .navigate(), jadi didengarkan di sini & dipakai
+  // router.push() SPA (lebih instan drpd .navigate() yg full-reload pun
+  // kalau didukung). Kasus app BELUM terbuka sama sekali (cold-start)
+  // ditangani penuh oleh SW sendiri lewat clients.openWindow(url), yg
+  // otomatis me-load halaman tujuan langsung - tidak butuh listener ini.
+  useEffect(() => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+    function onSwMessage(event) {
+      const d = event.data;
+      if (d && d.type === "mh-push-navigate" && typeof d.url === "string" && d.url) {
+        router.push(d.url);
+      }
+    }
+    navigator.serviceWorker.addEventListener("message", onSwMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onSwMessage);
+  }, [router]);
+
   // Prefetch SEMUA rute bottom-nav begitu shell mount (bukan cuma saat
   // link masuk viewport / di-hover spt default Next.js - nav bawah ini
   // memang SELALU di viewport, tapi prefetch eksplisit di sini memastikan
