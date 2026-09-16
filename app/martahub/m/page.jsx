@@ -241,6 +241,19 @@ export default function MartaMobileHome() {
     setShowPushBanner(false);
   }
 
+  // Refetch begitu tab ini kembali kelihatan (baru saja isi laporan/edit
+  // plan lalu balik ke Beranda) - sama alasannya spt di activities/page.jsx
+  // (mobile): SEBELUMNYA fetch di bawah cuma jalan sekali di mount, jadi
+  // kalau navigasi balik memakai instance halaman yg sudah ada di cache,
+  // ringkasan Beranda (draft/butuh laporan/recent) tetap data lama.
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => {
+    function onVisible() { if (document.visibilityState === "visible") setReloadKey((k) => k + 1); }
+    window.addEventListener("focus", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { window.removeEventListener("focus", onVisible); document.removeEventListener("visibilitychange", onVisible); };
+  }, []);
+
   useEffect(() => {
     if (loading) return;
     let alive = true;
@@ -310,7 +323,7 @@ export default function MartaMobileHome() {
       });
     }
     return () => { alive = false; };
-  }, [loading]);
+  }, [loading, reloadKey]);
 
   // Nama cabang utk filter - diperlukan siapa pun yg baris aktivitasnya
   // lintas cabang: admin/spm_sumatera (nasional), Head TMV (satu region,
@@ -1350,7 +1363,7 @@ function ActivityRow({ r, branchLabel }) {
               </span>
             )}
             <span style={{ fontSize: 11.5, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-              {[branchLabel, r.mc].filter(Boolean).join(" · ")}
+              {[branchLabel, r.mc, r.site_id].filter(Boolean).join(" · ")}
             </span>
           </div>
         </div>

@@ -353,6 +353,18 @@ function Body({ email }) {
     finally { setLoading(false); }
   }, [email]);
   useEffect(() => { load(); }, [load]);
+  // Refetch begitu tab CMS ini kembali kelihatan (user pindah tab lalu
+  // balik, atau baru saja aksi di halaman lain yg mengubah status activity)
+  // - sama alasannya spt versi mobile (app/martahub/m/activities/page.jsx &
+  // m/page.jsx): `load()` di atas cuma jalan sekali saat mount/berubahnya
+  // `email`, jadi tanpa ini daftar/badge status bisa kelihatan "tidak sync"
+  // dgn data server selama tab dibiarkan terbuka lama.
+  useEffect(() => {
+    function onVisible() { if (document.visibilityState === "visible") load(); }
+    window.addEventListener("focus", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { window.removeEventListener("focus", onVisible); document.removeEventListener("visibilitychange", onVisible); };
+  }, [load]);
 
   const cats = useCallback((r) => {
     const arr = Array.isArray(r.event_categories) && r.event_categories.length ? r.event_categories : (r.event_category ? [r.event_category] : []);

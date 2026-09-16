@@ -192,15 +192,23 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, canMark
         setActualSites((sites || []).filter((s) => s.site_kind === "actual").map((s) => s.site_id));
         setEntries(sales || []);
         setEditReqs(edits || []);
+        // Kotak placeholder muncul SEGERA (jumlah sudah pasti dari `docs`
+        // di atas), masing2 py loading spinner sendiri - baru diganti gambar
+        // asli SATU-SATU begitu proxy media-view-nya selesai per foto,
+        // bukan menunggu SEMUA foto selesai baru section-nya muncul
+        // sekaligus spt sebelumnya (bikin section ini kelihatan "telat
+        // muncul" di CMS kalau ada foto yg lambat/banyak).
         const photoDocs = (docs || []).filter((d) => d.file_type === "photo");
         if (photoDocs.length) {
-          const withUrls = await Promise.all(
-            photoDocs.map(async (d) => {
-              try { return { ...d, url: await fetchAuthedPhotoBlobUrl("document", d.id, email) }; }
-              catch { return { ...d, url: null }; }
-            })
-          );
-          if (alive) setPhotos(withUrls.filter((p) => p.url));
+          setPhotos(photoDocs.map((d) => ({ ...d, url: null, loading: true, failed: false })));
+          photoDocs.forEach(async (d) => {
+            try {
+              const url = await fetchAuthedPhotoBlobUrl("document", d.id, email);
+              if (alive) setPhotos((prev) => prev.map((p) => (p.id === d.id ? { ...p, url, loading: false } : p)));
+            } catch {
+              if (alive) setPhotos((prev) => prev.map((p) => (p.id === d.id ? { ...p, loading: false, failed: true } : p)));
+            }
+          });
         } else {
           setPhotos([]);
         }
@@ -465,13 +473,19 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, canMark
                   <SectionCard title={`Dokumentasi Foto (${photos.length})`} icon={<ImageIcon size={13} />} accent="#DB2777">
                     <div className="mh-ad-photos">
                       {photos.map((p) => (
-                        <div key={p.id} style={{ position: "relative", aspectRatio: "1", borderRadius: 12, overflow: "hidden", background: "#F0F0F3" }}>
+                        <div key={p.id} style={{ position: "relative", aspectRatio: "1", borderRadius: 12, overflow: "hidden", background: "#F0F0F3", display: p.url ? undefined : "flex", alignItems: p.url ? undefined : "center", justifyContent: p.url ? undefined : "center" }}>
+                          {!p.url ? (
+                            p.failed ? <ImageIcon size={20} color="#C7C7D1" /> : (
+                              <div style={{ width: 20, height: 20, borderRadius: "50%", border: "2px solid #E3E4E8", borderTopColor: "#DB2777", animation: "mh-ad-photo-spin 0.8s linear infinite" }} />
+                            )
+                          ) : (
                           <button onClick={() => setLightbox(p.url)}
                             style={{ padding: 0, border: "none", cursor: "pointer", width: "100%", height: "100%" }}>
                             <img src={p.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", transition: "transform .18s" }}
                               onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.06)")}
                               onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")} />
                           </button>
+                          )}
                           {/* Link ke Google Drive - foto ini di-mirror ke Drive best-effort
                               lewat edge function media-relay setelah DSF submit (lihat
                               mh_documents.external_ref = Drive file id). Kalau relay-nya
@@ -479,7 +493,7 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, canMark
                               sengaja TIDAK ditampilkan sama sekali drpd link mati, krn
                               foto tetap ada & bisa dilihat dari Storage (klik thumbnail
                               di atas) apa pun status mirror-nya. */}
-                          {p.external_ref && (
+                          {p.url && p.external_ref && (
                             <a href={`https://drive.google.com/file/d/${p.external_ref}/view`} target="_blank" rel="noopener noreferrer"
                               onClick={(e) => e.stopPropagation()}
                               title="Buka di Google Drive"
@@ -494,6 +508,7 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, canMark
                         </div>
                       ))}
                     </div>
+                    <style>{`@keyframes mh-ad-photo-spin { to { transform: rotate(360deg); } }`}</style>
                   </SectionCard>
                 )}
 

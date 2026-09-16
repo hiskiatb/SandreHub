@@ -1,8 +1,20 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
-import { ImageOff, Loader2, RefreshCw, X } from "lucide-react";
+/**
+ * CMS Gallery - redesain UI (permintaan user 2026-09-16: "pada cms
+ * seharusnya foto foto ini muncul di tab gallery yang ada di cms buat ui
+ * nya sangat bagus"; jawaban atas klarifikasi: "Redesign Gallery yang
+ * sudah ada (Recommended)"). Fungsionalitas lama tetap dipertahankan
+ * (filter region, grouping per Plan -> Branch, thumbnail via
+ * gdrive-gallery edge function) - yang berubah cuma tampilan + preview-nya
+ * sekarang pakai PhotoSwipe (sama seperti MartaHub mobile) supaya bisa
+ * pinch-zoom / geser antar foto / download, bukan cuma modal 1 foto statis.
+ */
+
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { ImageOff, Images, Loader2, RefreshCw, Search, X } from "lucide-react";
 import MartaShell, { T } from "../components/MartaShell";
+import { openPhotoLightbox } from "../m/_shared/photoLightbox";
 
 const FUNCTIONS_BASE = (process.env.NEXT_PUBLIC_MARTA_SUPABASE_URL || "").replace(/\/$/, "") + "/functions/v1/gdrive-gallery";
 
@@ -38,27 +50,36 @@ function Body({ email }) {
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
   const [regionFilter, setRegionFilter] = useState("Semua Region");
-  const [preview, setPreview] = useState(null); // { id, name }
+  const [query, setQuery] = useState("");
+  const urlCacheRef = useRef(new Map()); // item.id -> blob url, dipakai bareng oleh Thumb & lightbox biar ga fetch dobel
 
-  async function load() {
+  const load = useCallback(async () => {
     if (!email) return;
     setLoading(true); setErr("");
     try { setItems(await fetchGalleryList(email)); }
     catch (e) { setErr(e.message || "Gagal memuat gallery"); setItems([]); }
     finally { setLoading(false); }
-  }
+  }, [email]);
 
-  useEffect(() => { load(); }, [email]);
+  useEffect(() => { load(); }, [load]);
 
   const regions = useMemo(() => {
     const set = new Set((items || []).map((i) => i.region || "Lainnya"));
     return ["Semua Region", ...Array.from(set).sort()];
   }, [items]);
 
+  const filteredItems = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return (items || []).filter((i) => {
+      if (regionFilter !== "Semua Region" && (i.region || "Lainnya") !== regionFilter) return false;
+      if (!q) return true;
+      return [i.plan_name, i.branch_name, i.name].some((v) => (v || "").toLowerCase().includes(q));
+    });
+  }, [items, regionFilter, query]);
+
   const groups = useMemo(() => {
-    const filtered = (items || []).filter((i) => regionFilter === "Semua Region" || (i.region || "Lainnya") === regionFilter);
     const map = new Map();
-    for (const it of filtered) {
+    for (const it of filteredItems) {
       const key = it.plan_name ? `${it.plan_name}` : UNLINKED_KEY;
       if (!map.has(key)) map.set(key, { plan_name: it.plan_name, items: [] });
       map.get(key).items.push(it);
@@ -71,20 +92,94 @@ function Body({ email }) {
       return a.plan_name.localeCompare(b.plan_name);
     });
     return arr;
-  }, [items, regionFilter]);
+  }, [filteredItems]);
+
+  const openGroupLightbox = useCallback(async (groupItems, clickedItem) => {
+    if (!email) return;
+    const startIndex = Math.max(0, groupItems.findIndex((it) => it.id === clickedItem.id));
+    const resolved = await Promise.all(
+      groupItems.map(async (it) => {
+        let url = urlCacheRef.current.get(it.id);
+        if (!url) {
+          try { url = await fetchImageBlobUrl(email, it.id); urlCacheRef.current.set(it.id, url); }
+          catch { return null; }
+        }
+        return { url, name: it.name };
+      })
+    );
+    const ok = resolved.filter(Boolean);
+    if (!ok.length) return;
+    const okStart = Math.min(startIndex < 0 ? 0 : startIndex, ok.length - 1);
+    openPhotoLightbox(ok, okStart, { filenamePrefix: "gallery" });
+  }, [email]);
+
+  const totalPhotos = items?.length ?? null;
 
   return (
     <div>
-      <style>{"@keyframes mh-spin { to { transform: rotate(360deg); } }"}</style>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
-        <select value={regionFilter} onChange={(e) => setRegionFilter(e.target.value)}
-          style={{ padding: "8px 12px", borderRadius: 9, border: `1px solid ${T.line}`, fontSize: 12.5, fontWeight: 600, color: T.hi, background: "#fff" }}>
-          {regions.map((r) => <option key={r} value={r}>{r}</option>)}
-        </select>
-        <button onClick={load}
-          style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 9, border: `1px solid ${T.line}`, background: "#fff", color: T.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+      <style>{"@keyframes mh-spin { to { transform: rotate(360deg); } } @keyframes mh-gal-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }"}</style>
+
+      <div style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, marginBottom: 18,
+        flexWrap: "wrap", padding: "16px 18px", borderRadius: 16, background: "linear-gradient(135deg, #FFFFFF 0%, #FBF7F8 100%)",
+        border: `1px solid ${T.line}`, boxShadow: "0 1px 3px rgba(13,17,23,0.04)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{
+            width: 42, height: 42, borderRadius: 12, background: T.primaryBg, display: "flex",
+            alignItems: "center", justifyContent: "center", flexShrink: 0,
+          }}>
+            <Images size={20} color={T.primary} />
+          </div>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: T.hi, lineHeight: 1.2 }}>Gallery Dokumentasi</div>
+            <div style={{ fontSize: 12, color: T.lo, marginTop: 2 }}>
+              {totalPhotos === null ? "Memuat…" : `${totalPhotos} foto tersinkron dari Google Drive`}
+              {regionFilter !== "Semua Region" || query ? ` · menampilkan ${filteredItems.length}` : ""}
+            </div>
+          </div>
+        </div>
+
+        <button onClick={load} disabled={loading}
+          style={{
+            display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 10,
+            border: `1px solid ${T.line}`, background: "#fff", color: T.mid, fontSize: 12.5, fontWeight: 700,
+            cursor: loading ? "default" : "pointer", opacity: loading ? 0.6 : 1,
+          }}>
           {loading ? <Loader2 size={14} style={{ animation: "mh-spin .8s linear infinite" }} /> : <RefreshCw size={14} />} Muat ulang
         </button>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", flex: "1 1 220px", minWidth: 200, maxWidth: 320 }}>
+          <Search size={14} color={T.lo} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
+          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari plan, branch, atau nama file…"
+            style={{
+              width: "100%", padding: "9px 12px 9px 32px", borderRadius: 10, border: `1px solid ${T.line}`,
+              fontSize: 12.5, color: T.hi, background: "#fff", boxSizing: "border-box",
+            }} />
+          {query && (
+            <button onClick={() => setQuery("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", border: "none", background: "none", cursor: "pointer", color: T.lo, display: "flex" }}>
+              <X size={13} />
+            </button>
+          )}
+        </div>
+
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {regions.map((r) => {
+            const activeChip = regionFilter === r;
+            return (
+              <button key={r} onClick={() => setRegionFilter(r)}
+                style={{
+                  padding: "7px 13px", borderRadius: 999, border: `1px solid ${activeChip ? T.primary : T.line}`,
+                  background: activeChip ? T.primary : "#fff", color: activeChip ? "#fff" : T.mid,
+                  fontSize: 12, fontWeight: 700, cursor: "pointer", transition: "all .12s ease", whiteSpace: "nowrap",
+                }}>
+                {r}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {err && (
@@ -92,28 +187,29 @@ function Body({ email }) {
       )}
 
       {items === null && !err && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.lo, fontSize: 13, padding: "40px 0", justifyContent: "center" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.lo, fontSize: 13, padding: "60px 0", justifyContent: "center" }}>
           <Loader2 size={16} style={{ animation: "mh-spin .8s linear infinite" }} /> Memuat foto dari Google Drive…
         </div>
       )}
 
-      {items !== null && items.length === 0 && !err && (
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, color: T.lo, fontSize: 13, padding: "60px 0" }}>
-          <ImageOff size={28} />
-          Belum ada foto di folder Google Drive.
+      {items !== null && filteredItems.length === 0 && !err && (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, color: T.lo, fontSize: 13, padding: "70px 0" }}>
+          <div style={{ width: 56, height: 56, borderRadius: 999, background: "#F1F2F5", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <ImageOff size={24} />
+          </div>
+          {items.length === 0 ? "Belum ada foto di folder Google Drive." : "Tidak ada foto yang cocok dengan filter/pencarian."}
         </div>
       )}
 
-      {groups.map((g) => (
-        <PlanGroup key={g.plan_name || UNLINKED_KEY} planName={g.plan_name} items={g.items} onPreview={setPreview} email={email} />
+      {groups.map((g, gi) => (
+        <PlanGroup key={g.plan_name || UNLINKED_KEY} planName={g.plan_name} items={g.items}
+          onPreview={openGroupLightbox} email={email} urlCacheRef={urlCacheRef} animDelay={Math.min(gi, 6) * 0.03} />
       ))}
-
-      {preview && <PreviewModal item={preview} email={email} onClose={() => setPreview(null)} />}
     </div>
   );
 }
 
-function PlanGroup({ planName, items, onPreview, email }) {
+function PlanGroup({ planName, items, onPreview, email, urlCacheRef, animDelay }) {
   const byBranch = useMemo(() => {
     const map = new Map();
     for (const it of items) {
@@ -125,16 +221,32 @@ function PlanGroup({ planName, items, onPreview, email }) {
   }, [items]);
 
   return (
-    <div style={{ marginBottom: 26 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <span style={{ fontSize: 14, fontWeight: 800, color: T.hi }}>{planName || "Belum terhubung ke Plan"}</span>
-        <span style={{ fontSize: 11, fontWeight: 700, color: T.lo, background: "#F1F2F5", borderRadius: 999, padding: "2px 8px" }}>{items.length} foto</span>
+    <div style={{
+      marginBottom: 18, background: "#fff", border: `1px solid ${T.line}`, borderRadius: 16, padding: "16px 18px",
+      boxShadow: "0 1px 2px rgba(13,17,23,0.03)", animation: "mh-gal-fade .25s ease both", animationDelay: `${animDelay}s`,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14 }}>
+        <span style={{
+          fontSize: 14, fontWeight: 800, color: planName ? T.hi : T.lo, fontStyle: planName ? "normal" : "italic",
+        }}>
+          {planName || "Belum terhubung ke Plan"}
+        </span>
+        <span style={{ fontSize: 11, fontWeight: 700, color: T.primary, background: T.primaryBg, borderRadius: 999, padding: "2px 9px" }}>
+          {items.length} foto
+        </span>
       </div>
       {byBranch.map(([branch, branchItems]) => (
         <div key={branch} style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 11.5, fontWeight: 700, color: T.mid, marginBottom: 8 }}>{branch}</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10 }}>
-            {branchItems.map((it) => <Thumb key={it.id} item={it} onPreview={onPreview} email={email} />)}
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 9 }}>
+            <span style={{ width: 5, height: 5, borderRadius: 999, background: T.lo, display: "inline-block" }} />
+            <span style={{ fontSize: 11.5, fontWeight: 700, color: T.mid }}>{branch}</span>
+            <span style={{ fontSize: 10.5, color: T.lo }}>· {branchItems.length}</span>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 10 }}>
+            {branchItems.map((it) => (
+              <Thumb key={it.id} item={it} email={email} urlCacheRef={urlCacheRef}
+                onOpen={() => onPreview(branchItems, it)} />
+            ))}
           </div>
         </div>
       ))}
@@ -142,58 +254,58 @@ function PlanGroup({ planName, items, onPreview, email }) {
   );
 }
 
-function Thumb({ item, onPreview, email }) {
+function Thumb({ item, email, urlCacheRef, onOpen }) {
   const [url, setUrl] = useState(null);
   const [failed, setFailed] = useState(false);
+  const [hover, setHover] = useState(false);
 
   useEffect(() => {
+    // Ref cuma dibaca di dalam effect (bukan saat render) - lihat
+    // https://react.dev/reference/react/useRef, akses ref.current saat
+    // render bisa bikin komponen ga update sesuai ekspektasi.
+    const cached = urlCacheRef.current.get(item.id);
+    if (cached) { setUrl(cached); return; }
     if (!email) return;
     let alive = true;
-    let objUrl = null;
-    fetchImageBlobUrl(email, item.id).then((u) => { if (alive) { objUrl = u; setUrl(u); } }).catch(() => { if (alive) setFailed(true); });
-    return () => { alive = false; if (objUrl) URL.revokeObjectURL(objUrl); };
+    fetchImageBlobUrl(email, item.id).then((u) => {
+      if (!alive) return;
+      urlCacheRef.current.set(item.id, u); setUrl(u);
+    }).catch(() => { if (alive) setFailed(true); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [item.id, email]);
 
   return (
-    <div onClick={() => url && onPreview(item)}
-      style={{ position: "relative", width: "100%", paddingTop: "100%", borderRadius: 10, overflow: "hidden", background: "#F1F2F5", border: `1px solid ${T.line}`, cursor: url ? "pointer" : "default" }}>
+    <div
+      onClick={() => url && onOpen()}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        position: "relative", width: "100%", paddingTop: "100%", borderRadius: 12, overflow: "hidden",
+        background: "#F1F2F5", border: `1px solid ${T.line}`, cursor: url ? "pointer" : "default",
+        boxShadow: hover && url ? "0 6px 16px rgba(13,17,23,0.14)" : "0 1px 2px rgba(13,17,23,0.03)",
+        transition: "box-shadow .15s ease, transform .15s ease", transform: hover && url ? "translateY(-2px)" : "none",
+      }}>
       {url ? (
-        <img src={url} alt={item.name} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+        <>
+          <img src={url} alt={item.name} style={{
+            position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover",
+            transition: "transform .2s ease", transform: hover ? "scale(1.06)" : "scale(1)",
+          }} />
+          <div style={{
+            position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0) 55%, rgba(0,0,0,0.55) 100%)",
+            opacity: hover ? 1 : 0, transition: "opacity .15s ease", display: "flex", alignItems: "flex-end", padding: 8,
+          }}>
+            <span style={{ color: "#fff", fontSize: 10.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {item.name}
+            </span>
+          </div>
+        </>
       ) : failed ? (
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: T.lo }}><ImageOff size={18} /></div>
       ) : (
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: T.lo }}><Loader2 size={16} style={{ animation: "mh-spin .8s linear infinite" }} /></div>
       )}
-    </div>
-  );
-}
-
-function PreviewModal({ item, onClose, email }) {
-  const [url, setUrl] = useState(null);
-
-  useEffect(() => {
-    if (!email) return;
-    let alive = true;
-    let objUrl = null;
-    fetchImageBlobUrl(email, item.id).then((u) => { if (alive) { objUrl = u; setUrl(u); } });
-    return () => { alive = false; if (objUrl) URL.revokeObjectURL(objUrl); };
-  }, [item.id, email]);
-
-  return (
-    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(10,12,20,0.82)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: 20 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ maxWidth: "92vw", maxHeight: "88vh", position: "relative" }}>
-        <button onClick={onClose} style={{ position: "absolute", top: -14, right: -14, width: 32, height: 32, borderRadius: 999, border: "none", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 4px 14px rgba(0,0,0,0.3)" }}>
-          <X size={16} />
-        </button>
-        {url ? (
-          <img src={url} alt={item.name} style={{ maxWidth: "92vw", maxHeight: "80vh", borderRadius: 10, display: "block" }} />
-        ) : (
-          <div style={{ width: 300, height: 300, display: "flex", alignItems: "center", justifyContent: "center" }}><Loader2 size={22} color="#fff" style={{ animation: "mh-spin .8s linear infinite" }} /></div>
-        )}
-        <div style={{ marginTop: 10, color: "#fff", fontSize: 12, textAlign: "center" }}>
-          {item.name} {item.branch_name ? `· ${item.branch_name}` : ""} {item.plan_name ? `· ${item.plan_name}` : ""}
-        </div>
-      </div>
     </div>
   );
 }

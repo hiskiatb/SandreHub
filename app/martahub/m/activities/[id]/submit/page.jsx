@@ -23,6 +23,7 @@ import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../../
 import { isValidMsisdn, normalizeMsisdn } from "../../../_shared/msisdn";
 import { compressToMaxBytes } from "../../../_shared/imageTools";
 import PhotoCollageSheet from "../../../_shared/PhotoCollageSheet";
+import CollageSuggestionCard from "../../../_shared/CollageSuggestionCard";
 import QrScanSheet from "../../../_shared/QrScanSheet";
 import SiteTowerIcon from "../../../_shared/SiteTowerIcon";
 import SitePickerSheet from "../../../_shared/SitePickerSheet";
@@ -1459,6 +1460,26 @@ export default function SubmitActualPage() {
         <Card accent>
           <SectionHeading icon={Images} title="Dokumentasi Foto" subtitle={`Minimal ${MIN_PHOTOS} foto · ${photos.length} terpilih`} />
           <Divider />
+
+          {/* Saran gabungkan jadi kolase - cuma muncul kalau PERSIS 9 foto
+              (pas dgn layout kolase 3x3 paling padat), swipeable/dismiss-able,
+              bukan paksaan (lihat CollageSuggestionCard). */}
+          {photos.length === 9 && (
+            <CollageSuggestionCard
+              previewUrls={photos.map((p) => p.previewUrl)}
+              getBlobs={async () => Promise.all(photos.map((p) => (p.file ? p.file : fetch(p.previewUrl).then((r) => r.blob()))))}
+              onAccept={async (blob, previewUrl) => {
+                setPhotos((prev) => {
+                  const nine = prev.slice(0, 9);
+                  nine.forEach((p) => {
+                    if (p.existing && p.docId) supabaseMarta.from("mh_documents").delete().eq("id", p.docId).then(() => {}).catch(() => {});
+                    URL.revokeObjectURL(p.previewUrl);
+                  });
+                  return [{ file: blob, previewUrl, isCollage: true }, ...prev.slice(9)];
+                });
+              }}
+            />
+          )}
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 12 }}>
             {photos.map((p, i) => (

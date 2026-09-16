@@ -19,6 +19,11 @@ import { unsnake } from "../../_shared/planData";
 import SiteTowerIcon from "../../_shared/SiteTowerIcon";
 import { MetricTile, RebuyTile, RevenueCostBanner, revenueBannerProps } from "../../_shared/MetricTiles";
 import { fetchAuthedPhotoBlobUrl } from "../../_shared/mediaProxy";
+import { openPhotoLightbox } from "../../_shared/photoLightbox";
+import CollageSuggestionCard from "../../_shared/CollageSuggestionCard";
+import { compressToMaxBytes } from "../../_shared/imageTools";
+
+const PHOTO_BUCKET = "mh-photos"; // sama persis dgn submit/page.jsx - satu bucket dipakai bersama
 import DeleteActivitySheet from "../../_shared/DeleteActivitySheet";
 import MarkRevisionSheet from "../../_shared/MarkRevisionSheet";
 
@@ -89,7 +94,6 @@ export default function ActivityDetailPage() {
   const [entries, setEntries] = useState([]);
   const [editReqs, setEditReqs] = useState([]);
   const [err, setErr] = useState("");
-  const [lightbox, setLightbox] = useState(null);
   const [showDeleteSheet, setShowDeleteSheet] = useState(false);
   const [showRevisionSheet, setShowRevisionSheet] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -126,23 +130,36 @@ export default function ActivityDetailPage() {
           : Promise.resolve({ data: null });
 
         const photoDocs = (docs || []).filter((d) => d.file_type === "photo");
+        // Tampilkan KOTAK PLACEHOLDER utk tiap foto SEGERA (jumlahnya sudah
+        // pasti diketahui dari `docs` di atas, tanpa perlu menunggu bytes-nya
+        // sendiri) - masing2 py loading spinner sendiri, baru diganti gambar
+        // asli begitu proxy media-view-nya selesai SATU-SATU (bukan menunggu
+        // SEMUA foto selesai baru section-nya muncul sekaligus spt sebelumnya,
+        // yg bikin section ini kelihatan "telat muncul" kalau ada foto yg
+        // proxy-nya lambat/foto banyak - lihat keluhan user 2026-09-16).
+        if (alive) setPhotos(photoDocs.map((d) => ({ ...d, url: null, loading: true, failed: false })));
         // Lewat proxy media-view (Google Drive kalau sudah dimirror, fallback
         // Storage kalau belum) - browser tidak pernah lihat link Drive-nya.
+        // SETIAP foto di-resolve independen (bukan Promise.all lalu commit
+        // sekaligus) - begitu SATU foto selesai, langsung ditempel ke state
+        // via id-nya sendiri, foto lain yg masih proses TETAP menampilkan
+        // placeholder-nya masing2 sampai gilirannya selesai.
         const photosPromise = photoDocs.length
           ? Promise.all(
               photoDocs.map(async (d) => {
                 try {
                   const url = await fetchAuthedPhotoBlobUrl("document", d.id);
+                  if (alive) setPhotos((prev) => prev.map((p) => (p.id === d.id ? { ...p, url, loading: false } : p)));
                   return { ...d, url };
                 } catch {
+                  if (alive) setPhotos((prev) => prev.map((p) => (p.id === d.id ? { ...p, loading: false, failed: true } : p)));
                   return { ...d, url: null };
                 }
               })
             )
           : Promise.resolve([]);
 
-        const [{ data: siteRows }, withUrls] = await Promise.all([siteNamesPromise, photosPromise]);
-        if (alive) setPhotos(withUrls.filter((p) => p.url));
+        const [{ data: siteRows }] = await Promise.all([siteNamesPromise, photosPromise]);
         if (allSiteIds.length > 0) {
           const map = {};
           (siteRows || []).forEach((s) => { map[s.site_id] = s.site_name; });
@@ -461,17 +478,64 @@ export default function ActivityDetailPage() {
           )}
         </SectionCard>
 
-        {/* Photos */}
+        {/* Photos - kotak placeholder muncul SEGERA (jumlah sudah pasti dari
+            query `mh_documents` awal), tiap kotak py spinner sendiri sampai
+            fotonya sendiri selesai di-load lewat proxy media-view. */}
         {photos.length > 0 && (
           <SectionCard title={`Dokumentasi Foto (${photos.length})`} icon={<ImageIcon size={13} />} accent="#DB2777">
+            {/* Saran gabungkan jadi kolase - HANYA utk pemilik laporan sendiri
+                (bme_user_id/created_by === userId), krn aksi "Gabungkan" di
+                sini benar2 menghapus 9 dokumen lama & upload kolase baru ke
+                server (bukan sekadar preview lokal spt di form submit) -
+                jangan sampai peninjau lain (TMV/head/dst) tidak sengaja
+                mengubah laporan milik orang lain hanya krn melihat detailnya. */}
+            {photos.length === 9 && photos.every((p) => p.url) && userId && (a.bme_user_id === userId || a.created_by === userId) && (
+              <CollageSuggestionCard
+                previewUrls={photos.map((p) => p.url)}
+                getBlobs={async () => Promise.all(photos.map((p) => fetch(p.url).then((r) => r.blob())))}
+                onAccept={async (blob) => {
+                  const oldDocIds = photos.map((p) => p.id);
+                  const compressed = await compressToMaxBytes(blob);
+                  const path = `${activityId}/${Date.now()}_collage.jpg`;
+                  const { error: upErr } = await supabaseMarta.storage.from(PHOTO_BUCKET).upload(path, compressed, { contentType: "image/jpeg" });
+                  if (upErr) throw upErr;
+                  const { data: newDoc, error: docErr } = await supabaseMarta.from("mh_documents")
+                    .insert({ activity_id: activityId, uploader_id: userId, storage_path: path, file_type: "photo" })
+                    .select("id").single();
+                  if (docErr) throw docErr;
+                  supabaseMarta.functions.invoke("media-relay", { body: { bucket: PHOTO_BUCKET, path } }).catch(() => {});
+                  // Dokumen lama dihapus SETELAH kolase baru berhasil tersimpan
+                  // (bukan sebelumnya) - kalau upload kolase gagal di tengah
+                  // jalan, foto asli tetap utuh, tidak ada yg hilang percuma.
+                  await supabaseMarta.from("mh_documents").delete().in("id", oldDocIds);
+                  const url = await fetchAuthedPhotoBlobUrl("document", newDoc.id);
+                  setPhotos([{ id: newDoc.id, url, loading: false, failed: false }]);
+                }}
+              />
+            )}
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
               {photos.map((p) => (
-                <button key={p.id} onClick={() => setLightbox(p.url)}
-                  style={{ padding: 0, border: "none", cursor: "pointer", aspectRatio: "1", borderRadius: 12, overflow: "hidden", background: "#F0F0F3" }}>
-                  <img src={p.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                <button key={p.id} onClick={() => {
+                  if (!p.url) return;
+                  // Index dihitung dari foto2 yg SUDAH siap (`url` terisi)
+                  // saja - PhotoSwipe dibuka langsung menampilkan foto yg
+                  // diklik, & bisa geser (swipe) ke foto siap lain di
+                  // sekitarnya; yg masih loading/gagal otomatis terlewati.
+                  const ready = photos.filter((x) => x.url);
+                  openPhotoLightbox(ready, ready.findIndex((x) => x.id === p.id), { filenamePrefix: "dokumentasi" });
+                }} disabled={!p.url}
+                  style={{ padding: 0, border: "none", cursor: p.url ? "pointer" : "default", aspectRatio: "1", borderRadius: 12, overflow: "hidden", background: "#F0F0F3", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  {p.url ? (
+                    <img src={p.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  ) : p.failed ? (
+                    <ImageIcon size={18} color="#C7C7D1" />
+                  ) : (
+                    <div style={{ width: 18, height: 18, borderRadius: "50%", border: "2px solid #E3E4E8", borderTopColor: "#DB2777", animation: "mh-photo-spin 0.8s linear infinite" }} />
+                  )}
                 </button>
               ))}
             </div>
+            <style>{`@keyframes mh-photo-spin { to { transform: rotate(360deg); } }`}</style>
           </SectionCard>
         )}
 
@@ -570,12 +634,6 @@ export default function ActivityDetailPage() {
               </div>
             )}
           </div>
-        </div>
-      )}
-
-      {lightbox && (
-        <div onClick={() => setLightbox(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.9)", zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
-          <img src={lightbox} alt="" style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 8 }} />
         </div>
       )}
 

@@ -83,6 +83,20 @@ export default function CalendarPage() {
   }, [viewYear, viewMonth]);
   const gridEnd = useMemo(() => { const d = new Date(gridStart); d.setDate(d.getDate() + 41); return d; }, [gridStart]);
 
+  // Refetch begitu tab Kalender ini kembali kelihatan - sama alasannya spt
+  // Aktivitas/Beranda (activities/page.jsx & m/page.jsx): fetch di bawah
+  // sebelumnya cuma jalan sekali per (sessionLoading, gridStart), jadi
+  // status/laporan yg baru saja berubah di layar lain bisa tampil "belum
+  // sync" di sini kalau instance halaman ini tidak remount penuh saat
+  // navigasi balik.
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => {
+    function onVisible() { if (document.visibilityState === "visible") setReloadKey((k) => k + 1); }
+    window.addEventListener("focus", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { window.removeEventListener("focus", onVisible); document.removeEventListener("visibilitychange", onVisible); };
+  }, []);
+
   useEffect(() => {
     if (sessionLoading) return;
     let alive = true;
@@ -113,7 +127,7 @@ export default function CalendarPage() {
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionLoading, gridStart.getTime()]);
+  }, [sessionLoading, gridStart.getTime(), reloadKey]);
 
   const cells = useMemo(() => {
     const arr = [];
@@ -371,7 +385,7 @@ export default function CalendarPage() {
                           </span>
                         )}
                         <span style={{ fontSize: 11.5, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-                          {[branchLabel, a.mc].filter(Boolean).join(" · ")}
+                          {[branchLabel, a.mc, a.site_id].filter(Boolean).join(" · ")}
                         </span>
                       </div>
                       <div style={{ marginTop: 7 }}>

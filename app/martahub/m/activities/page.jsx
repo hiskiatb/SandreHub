@@ -150,6 +150,24 @@ function ActivitiesInner() {
   // sheet konfirmasi yg sama (DeleteActivitySheet), bukan alur terpisah.
   const [deleteTarget, setDeleteTarget] = useState(null); // { id, name } | null
 
+  // Refetch begitu tab ini kembali kelihatan (mis. user baru saja Isi
+  // Laporan Actual di halaman detail lalu tap "Kembali") - SEBELUMNYA
+  // fetch di bawah cuma jalan SEKALI saat mount (deps `[loading]`), jadi
+  // kalau Next.js App Router memakai instance halaman ini yg SUDAH ADA di
+  // cache navigasi (bukan remount penuh), daftar & badge status di sini
+  // tetap menampilkan data LAMA walau status activity-nya di DB sudah
+  // berubah (kelihatan seperti "status tidak sync" antar layar padahal
+  // datanya sendiri di server sudah benar). `reloadKey` dipakai sbg
+  // pemicu tambahan di deps effect fetch di bawah, tanpa mengubah logika
+  // fetch itu sendiri sama sekali.
+  const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => {
+    function onVisible() { if (document.visibilityState === "visible") setReloadKey((k) => k + 1); }
+    window.addEventListener("focus", onVisible);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { window.removeEventListener("focus", onVisible); document.removeEventListener("visibilitychange", onVisible); };
+  }, []);
+
   useEffect(() => {
     if (loading) return;
     let alive = true;
@@ -245,7 +263,7 @@ function ActivitiesInner() {
       }
     })();
     return () => { alive = false; };
-  }, [loading]);
+  }, [loading, reloadKey]);
 
   useEffect(() => {
     if (openId && rows) setDetail(rows.find((r) => r.id === openId) || null);
@@ -927,7 +945,7 @@ function ActivityCard({ r, userId, branchLabel, onOpen }) {
                 </span>
               )}
               <span style={{ fontSize: 11.5, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
-                {[branchLabel, r.mc].filter(Boolean).join(" · ")}
+                {[branchLabel, r.mc, r.site_id].filter(Boolean).join(" · ")}
               </span>
             </div>
           </div>
