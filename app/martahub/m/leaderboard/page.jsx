@@ -31,7 +31,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Trophy, Crown, Medal, TrendingUp, MapPin, Users, ChevronDown } from "lucide-react";
+import { ArrowLeft, Trophy, Crown, Medal, TrendingUp, MapPin, Users, ChevronDown, CalendarDays } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { fmtInt, fmtRp } from "../_shared/activityUi";
@@ -52,6 +52,31 @@ function monthOptions() {
   for (let i = 0; i <= span; i++) {
     const d = new Date(LAUNCH_YEAR, LAUNCH_MONTH + span - i, 1);
     opts.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, label: `${MONTHS_FULL[d.getMonth()]} ${d.getFullYear()}` });
+  }
+  return opts;
+}
+
+const DAY_ABBR = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+
+// Daftar tanggal 1..akhir bulan dari monthKey ("YYYY-MM") - dipakai utk chip
+// pemilih tanggal di leaderboard (mempersempit dari "seluruh bulan" ke
+// SATU hari tertentu saja). Tanggal di masa depan (belum terjadi) tetap
+// ditampilkan tapi ditandai disabled - datanya pasti masih kosong.
+function daysInMonthOptions(monthKey) {
+  if (!monthKey) return [];
+  const [y, m] = monthKey.split("-").map(Number);
+  const last = new Date(y, m, 0).getDate();
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const opts = [];
+  for (let d = 1; d <= last; d++) {
+    const dt = new Date(y, m - 1, d);
+    opts.push({
+      key: `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`,
+      day: d,
+      weekday: DAY_ABBR[dt.getDay()],
+      future: dt.getTime() > today.getTime(),
+      isToday: dt.getTime() === today.getTime(),
+    });
   }
   return opts;
 }
@@ -81,6 +106,9 @@ export default function LeaderboardPage() {
   const { loading: sessionLoading, userId, scope } = useMartaSession();
   const months = useMemo(() => monthOptions(), []);
   const [monthKey, setMonthKey] = useState(() => months[0]?.key || "");
+  const dayOptions = useMemo(() => daysInMonthOptions(monthKey), [monthKey]);
+  const [dateKey, setDateKey] = useState(""); // "" = seluruh bulan, else "YYYY-MM-DD"
+  const onMonthChange = (k) => { setMonthKey(k); setDateKey(""); }; // ganti bulan -> reset ke seluruh bulan
   const [rows, setRows] = useState(null);
   const [loadingRows, setLoadingRows] = useState(true);
   const [err, setErr] = useState("");
@@ -101,7 +129,7 @@ export default function LeaderboardPage() {
     (async () => {
       try {
         const [{ data, error }, { data: branches, error: be }] = await Promise.all([
-          supabaseMarta.rpc("mh_leaderboard_for_me", { p_month: monthKey }).select(COLS),
+          supabaseMarta.rpc("mh_leaderboard_for_me", { p_month: monthKey, p_date: dateKey || null }).select(COLS),
           supabaseMarta.from("mh_branches").select("id,name,region"),
         ]);
         if (error) throw error;
@@ -114,7 +142,7 @@ export default function LeaderboardPage() {
       }
     })();
     return () => { alive = false; };
-  }, [sessionLoading, monthKey]);
+  }, [sessionLoading, monthKey, dateKey]);
 
   // Daftar branch yang BOLEH dipilih role ini - bme_rge/tm (punya SATU
   // branch tetap, scope.branchName terisi) cuma lihat branch-nya sendiri
@@ -170,10 +198,42 @@ export default function LeaderboardPage() {
             <Trophy size={19} color="#ED1C24" style={{ flexShrink: 0 }} />
             <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: "-0.02em" }}>Leaderboard</div>
           </div>
-          <MonthPicker value={monthKey} onChange={setMonthKey} options={months} />
+          <MonthPicker value={monthKey} onChange={onMonthChange} options={months} />
         </div>
         <div style={{ marginTop: 3, fontSize: 12.5, color: "#8A8A96", fontWeight: 500 }}>
-          {mode.desc}
+          {mode.desc}{dateKey ? ` · khusus tanggal terpilih` : ""}
+        </div>
+
+        {/* Pemilih tanggal - default "Semua Tanggal" (agregat sebulan penuh,
+            perilaku lama). Geser chip ke tanggal tertentu -> leaderboard
+            dihitung ULANG server-side (RPC p_date) cuma dari data hari itu
+            saja. Direset otomatis tiap ganti bulan (lihat onMonthChange). */}
+        <div className="mh-hide-scrollbar" style={{ display: "flex", gap: 6, marginTop: 12, overflowX: "auto", paddingBottom: 2, WebkitOverflowScrolling: "touch", scrollbarWidth: "none", msOverflowStyle: "none" }}>
+          <button onClick={() => setDateKey("")}
+            style={{
+              flexShrink: 0, display: "flex", alignItems: "center", gap: 5, padding: "7px 12px", borderRadius: 12,
+              background: !dateKey ? "#17181C" : "#FFFFFF", border: `1px solid ${!dateKey ? "#17181C" : "#E9EAEE"}`,
+              color: !dateKey ? "#FFFFFF" : "#5A5A68", fontSize: 11.5, fontWeight: 800, fontFamily: FF, cursor: "pointer", whiteSpace: "nowrap",
+            }}>
+            <CalendarDays size={12} /> Semua Tanggal
+          </button>
+          {dayOptions.map((d) => {
+            const active = dateKey === d.key;
+            return (
+              <button key={d.key} onClick={() => !d.future && setDateKey(active ? "" : d.key)} disabled={d.future}
+                style={{
+                  flexShrink: 0, width: 40, padding: "6px 0 7px", borderRadius: 12, textAlign: "center",
+                  background: active ? "#ED1C24" : "#FFFFFF",
+                  border: `1px solid ${active ? "#ED1C24" : d.isToday ? "#ED1C24" : "#E9EAEE"}`,
+                  color: d.future ? "#C7C8D1" : active ? "#FFFFFF" : "#17181C",
+                  cursor: d.future ? "default" : "pointer", fontFamily: FF,
+                  opacity: d.future ? 0.55 : 1,
+                }}>
+                <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.2, color: active ? "rgba(255,255,255,0.85)" : d.isToday ? "#ED1C24" : "#B0B0BA" }}>{d.weekday}</div>
+                <div style={{ fontSize: 13, fontWeight: 800, marginTop: 1 }}>{d.day}</div>
+              </button>
+            );
+          })}
         </div>
 
         {/* Mode ranking - scrollable horizontal, biar 6 opsi ga bikin sempit */}

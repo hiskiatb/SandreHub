@@ -34,8 +34,8 @@ import { fetchAuthedPhotoBlobUrl } from "../../../_shared/mediaProxy";
 import { latestPlanDate } from "../../../_shared/activityUi";
 
 const CATS = [
-  { key: "sp", label: "Catat Penjualan SP", icon: CardSim },
-  { key: "fwa", label: "Catat Penjualan FWA", icon: Router },
+  { key: "sp", label: "Catat Aktivasi SP", icon: CardSim },
+  { key: "fwa", label: "Catat Aktivasi FWA", icon: Router },
 ];
 
 const REBUY_TYPES = [

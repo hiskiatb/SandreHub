@@ -5,7 +5,7 @@
  */
 import { useEffect, useMemo, useState, useTransition, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Search, X, Plus, Trash2, CheckCircle2, AlertCircle, ChevronRight, ChevronDown, CardSim, Router, Receipt, MapPin, Pencil, FolderClock, Clock, SlidersHorizontal, Check } from "lucide-react";
+import { Search, X, Plus, Trash2, CheckCircle2, AlertCircle, ChevronRight, ChevronDown, CardSim, Router, Receipt, MapPin, Pencil, FolderClock, Clock, SlidersHorizontal, Check, RefreshCw, Megaphone } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, NAV_HEIGHT } from "../_shared/MobileShell";
 import { fmtDate, fmtTimeLabel, fmtInt, fmtRp, isDraftIncomplete, isActivityFullyComplete, activityStage, statusMeta, revisionKindLabel, READY_STATUSES, earliestPlanDate, planMonthKey, updatedAgoLabel, MONTHS } from "../_shared/activityUi";
@@ -24,7 +24,7 @@ import { unsnake } from "../_shared/planData";
 // yg bikin "Selesai" di sini beda hitungan dgn Beranda/halaman detail. `plan_source`
 // dipakai buat kecualikan hasil Import Excel (cms_import) dari syarat Insight
 // (data historis itu memang tidak pernah punya narasi tsb dari sumbernya).
-const ACTIVITY_COLS = "id,event_name,brand,mc,site_id,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,revision_target,target_sp,target_fwa,actual_sp,actual_fwa,target_rebuy_sp,target_rebuy_fwa,actual_rebuy_sp,actual_rebuy_fwa,target_rev_3m,actual_rev_3m,cost_estimate,cost_actual,insight,plan_source,checkin_valid,validation_note,created_at,created_by,actual_draft_saved_at,updated_at";
+const ACTIVITY_COLS = "id,event_name,brand,mc,site_id,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,revision_target,target_sp,target_fwa,actual_sp,actual_fwa,target_rebuy_sp,target_rebuy_fwa,actual_rebuy_sp,actual_rebuy_fwa,target_rev_3m,actual_rev_3m,cost_estimate,cost_actual,insight,plan_source,checkin_valid,validation_note,created_at,created_by,actual_draft_saved_at,updated_at,campaign_id";
 
 // Warna brand - SAMA PERSIS dgn skema di wizard Buat Plan (ACT_BRAND_COLOR
 // di activities/new/page.jsx): IM3 kuning, 3ID (tri) magenta.
@@ -145,6 +145,11 @@ function ActivitiesInner() {
   const [poiFilter, setPoiFilter] = useState(() => new Set());
   const [siteFilter, setSiteFilter] = useState(() => new Set());
   const [siteFilterQ, setSiteFilterQ] = useState("");
+  // Kecamatan Fokus - flag YES/NO per site (mh_sites.kecamatan_fokus,
+  // diupload lewat List Site/Master Data - lihat lib/martaSiteImport.js).
+  // Checkbox tunggal spt "Perlu Tindakan" (bukan FilterChipGroup multi-
+  // value spt Kabupaten/Kecamatan) krn cuma 2 kemungkinan.
+  const [kecamatanFokusOnly, setKecamatanFokusOnly] = useState(false);
   // SATU state hapus dipakai baik dari kebab-menu kartu daftar maupun dari
   // tombol "Hapus Plan" di DetailSheet quick-view - keduanya cuma memicu
   // sheet konfirmasi yg sama (DeleteActivitySheet), bukan alur terpisah.
@@ -246,11 +251,11 @@ function ActivitiesInner() {
         let metaMap = {};
         if (siteIds.length > 0) {
           const { data: siteRows } = await supabaseMarta.from("mh_sites")
-            .select("site_id,branch,kabupaten,kecamatan_name,kecamatan")
+            .select("site_id,branch,kabupaten,kecamatan_name,kecamatan,kecamatan_fokus")
             .in("site_id", siteIds);
           (siteRows || []).forEach((s) => {
             if (s.branch) map[s.site_id] = s.branch;
-            metaMap[s.site_id] = { branch: s.branch || null, kabupaten: s.kabupaten || null, kecamatan: s.kecamatan_name || s.kecamatan || null };
+            metaMap[s.site_id] = { branch: s.branch || null, kabupaten: s.kabupaten || null, kecamatan: s.kecamatan_name || s.kecamatan || null, kecamatanFokus: s.kecamatan_fokus || "NO" };
           });
         }
         if (alive) {
@@ -420,14 +425,15 @@ function ActivitiesInner() {
     if (branchFilter.size > 0) list = list.filter((r) => { const b = siteMeta[r.site_id]?.branch; return b && branchFilter.has(b); });
     if (kabupatenFilter.size > 0) list = list.filter((r) => { const k = siteMeta[r.site_id]?.kabupaten; return k && kabupatenFilter.has(k); });
     if (kecamatanFilter.size > 0) list = list.filter((r) => { const k = siteMeta[r.site_id]?.kecamatan; return k && kecamatanFilter.has(k); });
+    if (kecamatanFokusOnly) list = list.filter((r) => siteMeta[r.site_id]?.kecamatanFokus === "YES");
     if (poiFilter.size > 0) list = list.filter((r) => r.poi_type && poiFilter.has(r.poi_type));
     if (siteFilter.size > 0) list = list.filter((r) => r.site_id && siteFilter.has(r.site_id));
     return list;
-  }, [rows, tab, q, needsActionOnly, dateRange, monthKey, categories, userId, siteMeta, statusFilter, brandFilter, branchFilter, kabupatenFilter, kecamatanFilter, poiFilter, siteFilter]);
+  }, [rows, tab, q, needsActionOnly, dateRange, monthKey, categories, userId, siteMeta, statusFilter, brandFilter, branchFilter, kabupatenFilter, kecamatanFilter, kecamatanFokusOnly, poiFilter, siteFilter]);
 
   const activeFilterCount = (needsActionOnly ? 1 : 0) + (dateRange !== "all" ? 1 : 0) + (categories.size > 0 ? 1 : 0)
     + (statusFilter.size > 0 ? 1 : 0) + (brandFilter.size > 0 ? 1 : 0) + (branchFilter.size > 0 ? 1 : 0)
-    + (kabupatenFilter.size > 0 ? 1 : 0) + (kecamatanFilter.size > 0 ? 1 : 0) + (poiFilter.size > 0 ? 1 : 0) + (siteFilter.size > 0 ? 1 : 0);
+    + (kabupatenFilter.size > 0 ? 1 : 0) + (kecamatanFilter.size > 0 ? 1 : 0) + (kecamatanFokusOnly ? 1 : 0) + (poiFilter.size > 0 ? 1 : 0) + (siteFilter.size > 0 ? 1 : 0);
 
   function toggleCategory(key) {
     setCategories((prev) => {
@@ -457,6 +463,7 @@ function ActivitiesInner() {
     setBranchFilter(new Set());
     setKabupatenFilter(new Set());
     setKecamatanFilter(new Set());
+    setKecamatanFokusOnly(false);
     setPoiFilter(new Set());
     setSiteFilter(new Set());
     setSiteFilterQ("");
@@ -749,6 +756,31 @@ function ActivitiesInner() {
             <FilterChipGroup title="Branch" options={filterOptionGroups.branch} selected={branchFilter} onToggle={(k) => toggleInSet(setBranchFilter, k)} />
             <FilterChipGroup title="Kabupaten" options={filterOptionGroups.kabupaten} selected={kabupatenFilter} onToggle={(k) => toggleInSet(setKabupatenFilter, k)} />
             <FilterChipGroup title="Kecamatan" options={filterOptionGroups.kecamatan} selected={kecamatanFilter} onToggle={(k) => toggleInSet(setKecamatanFilter, k)} />
+
+            {/* Kecamatan Fokus - checkbox tunggal (bukan chip multi-value spt
+                Kabupaten/Kecamatan di atas) krn cuma YA/TIDAK, sama gaya dgn
+                "Perlu Tindakan" di paling atas. Datanya dari site (mh_sites.
+                kecamatan_fokus) yg diupload lewat Master Data > List Site. */}
+            <div style={{ marginTop: 18 }}>
+              <button onClick={() => startFilterTransition(() => setKecamatanFokusOnly((v) => !v))}
+                style={{
+                  width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                  padding: "12px 14px", borderRadius: 13, border: `1.5px solid ${kecamatanFokusOnly ? BRAND : "#E9EAEE"}`,
+                  background: kecamatanFokusOnly ? "#FDECEC" : "#F8F8FA", cursor: "pointer", fontFamily: FF,
+                }}>
+                <span style={{ textAlign: "left" }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: kecamatanFokusOnly ? BRAND : "#17181C" }}>Kecamatan Fokus</div>
+                  <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96" }}>Hanya tampilkan site yg ditandai kecamatan fokus</div>
+                </span>
+                <span style={{
+                  flexShrink: 0, width: 22, height: 22, borderRadius: 7, border: `1.5px solid ${kecamatanFokusOnly ? BRAND : "#D6D7DD"}`,
+                  background: kecamatanFokusOnly ? BRAND : "transparent", display: "flex", alignItems: "center", justifyContent: "center",
+                }}>
+                  {kecamatanFokusOnly && <Check size={13} color="#fff" />}
+                </span>
+              </button>
+            </div>
+
             <FilterChipGroup title="Tipe POI" options={filterOptionGroups.poi} selected={poiFilter} onToggle={(k) => toggleInSet(setPoiFilter, k)} />
 
             {/* Site - daftarnya berpotensi panjang, jadi BEDA gaya dari
@@ -902,6 +934,12 @@ function ActivityCard({ r, userId, branchLabel, onOpen }) {
   // laporan actual (oren = belum diisi, hijau = sudah selesai) - jauh lebih
   // actionable drpd sekadar warna netral, user langsung tahu kartu mana yg
   // masih perlu ditindaklanjuti tanpa buka satu-satu.
+  // Kartu campaign SENGAJA TIDAK dikasih efek glow/border gradient lagi
+  // (sempat dicoba, tapi user eksplisit minta dihapus - "penanda campaign
+  // dan icon sudah cukup") - kartu campaign sekarang sama persis border/
+  // shadow/latar-nya dgn kartu biasa, pembeda visualnya CUKUP dari badge
+  // ikon megaphone + tag pill "CAMPAIGN" + judul shimmer di bawah ini.
+  const isCampaign = !!r.campaign_id;
   return (
     <div style={{
       position: "relative", background: "#FFFFFF", borderRadius: 18, overflow: "hidden", fontFamily: FF,
@@ -927,13 +965,40 @@ function ActivityCard({ r, userId, branchLabel, onOpen }) {
                 jadi tidak informatif. Baris ke-3+ tetap dipotong "..." spy
                 tinggi kartu tidak melar tanpa batas kalau ada nama SANGAT
                 panjang. */}
-            <div style={{
-              fontSize: 14, fontWeight: 800, color: "#17181C", lineHeight: 1.32,
-              display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
-            }}>
-              {r.event_name || "Plan Tanpa Nama"}
-            </div>
-            {/* Urutan subtitle: Brand (badge) → Branch → MC. */}
+            {r.campaign_id ? (
+              // alignItems "flex-start" - judul bisa 2 baris, "center" bikin
+              // badge ikon melayang di tengah blok teks alih2 sejajar baris
+              // pertama spt bullet biasa.
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+                {/* Badge ikon bulat gradient (bukan cuma ikon polos) +
+                    cincin denyut (pulse) di belakangnya - penanda visual
+                    "ini campaign" yg lebih kuat drpd sekadar ikon kecil,
+                    tetap TIDAK mengubah tinggi/tata letak baris judul. */}
+                <span className="mh-campaign-badge" style={{
+                  position: "relative", flexShrink: 0, width: 20, height: 20, borderRadius: "50%", marginTop: 1,
+                  background: "linear-gradient(135deg,#ED1C24,#EC008C)",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  boxShadow: "0 2px 6px rgba(237,28,36,0.35)",
+                }}>
+                  <Megaphone size={10.5} color="#fff" strokeWidth={2.4} />
+                </span>
+                <div className="mh-campaign-title" style={{
+                  fontSize: 14, fontWeight: 800, lineHeight: 1.32,
+                  display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+                }}>
+                  {(r.event_name || "").replace(/_/g, " ")}
+                </div>
+              </div>
+            ) : (
+              <div style={{
+                fontSize: 14, fontWeight: 800, color: "#17181C", lineHeight: 1.32,
+                display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+              }}>
+                {r.event_name || "Plan Tanpa Nama"}
+              </div>
+            )}
+            {/* Urutan subtitle: Brand (badge) → tag Campaign (kalau ada)
+                → Branch → MC. */}
             <div style={{ marginTop: 5, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
               {r.brand && (
                 <span style={{
@@ -942,6 +1007,15 @@ function ActivityCard({ r, userId, branchLabel, onOpen }) {
                   color: r.brand.toLowerCase() === "tri" ? "#FFFFFF" : "#17181C",
                 }}>
                   {r.brand.toLowerCase() === "tri" ? "3ID" : "IM3"}
+                </span>
+              )}
+              {isCampaign && (
+                <span style={{
+                  flexShrink: 0, fontSize: 9, fontWeight: 800, padding: "2px 7px", borderRadius: 999, whiteSpace: "nowrap",
+                  letterSpacing: 0.3, color: "#fff",
+                  background: "linear-gradient(120deg,#ED1C24,#EC008C)",
+                }}>
+                  CAMPAIGN
                 </span>
               )}
               <span style={{ fontSize: 11.5, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
@@ -962,6 +1036,26 @@ function ActivityCard({ r, userId, branchLabel, onOpen }) {
           <Clock size={12} color="#B0B0BA" style={{ flexShrink: 0 }} />
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fmtDate(r.plan_date)} · {timeLabel}</span>
         </div>
+
+        {/* Ringkasan Actual (Aktivasi SP/FWA + Rebuy) - SATU BARIS, SELALU
+            tampil begitu laporan actual masuk (tidak ikut disembunyikan
+            oleh toggle "Lihat Plan vs Actual" di bawah) supaya angka
+            realisasi kelihatan sekilas tanpa perlu tap tambahan apa pun. */}
+        {hasActual && (
+          <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 10, fontSize: 11, fontWeight: 700, color: "#17181C" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
+              <CardSim size={12} color="#DB2777" /> {fmtInt(r.actual_sp)} <span style={{ color: "#8A8A96", fontWeight: 600 }}>SP</span>
+            </span>
+            <span style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
+              <Router size={12} color="#2563EB" /> {fmtInt(r.actual_fwa)} <span style={{ color: "#8A8A96", fontWeight: 600 }}>FWA</span>
+            </span>
+            <span style={{ display: "flex", alignItems: "center", gap: 3, minWidth: 0 }}>
+              <RefreshCw size={12} color="#B45309" style={{ flexShrink: 0 }} />
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fmtRp((r.actual_rebuy_sp || 0) + (r.actual_rebuy_fwa || 0))}</span>
+              <span style={{ color: "#8A8A96", fontWeight: 600, flexShrink: 0 }}>Rebuy</span>
+            </span>
+          </div>
+        )}
 
         {/* Timestamp "terakhir diperbarui" DISATUKAN sebaris dgn toggle
             "Lihat Plan vs Actual" (dulu masing2 baris sendiri, timestamp
@@ -1069,6 +1163,38 @@ function ActivityCard({ r, userId, branchLabel, onOpen }) {
           lewat DetailSheet (quick-view saat kartu di-tap) atau menu di
           halaman Detail Aktivitas, tidak perlu diulang lagi di sini spy
           kartu lebih bersih. */}
+
+      {/* Treatment visual khusus kartu campaign - CUMA 2 sekarang (border
+          gradient kartu SUDAH DIHAPUS per permintaan user - "penanda
+          campaign & icon sudah cukup"):
+          (1) .mh-campaign-title - teks judul gradasi brand yg "bergerak"
+              pelan (shimmer).
+          (2) .mh-campaign-badge - cincin denyut (pulse ring) di belakang
+              badge ikon megaphone, spy "menarik mata" sekilas tanpa perlu
+              gerakan besar/mengganggu. */}
+      {r.campaign_id && (
+        <style jsx>{`
+          .mh-campaign-title {
+            background: linear-gradient(90deg, #ED1C24 0%, #EC008C 25%, #F5CD46 50%, #ED1C24 75%, #EC008C 100%);
+            background-size: 300% 100%;
+            -webkit-background-clip: text; background-clip: text; color: transparent;
+            animation: mhCampaignShimmer 7s linear infinite;
+          }
+          @keyframes mhCampaignShimmer { 0% { background-position: 0% 50%; } 100% { background-position: 300% 50%; } }
+
+          .mh-campaign-badge::before {
+            content: ""; position: absolute; inset: -4px; border-radius: 50%;
+            background: linear-gradient(135deg,#ED1C24,#EC008C);
+            opacity: 0.55; z-index: -1;
+            animation: mhCampaignPulse 3.4s ease-out infinite;
+          }
+          @keyframes mhCampaignPulse {
+            0% { transform: scale(0.85); opacity: 0.5; }
+            70% { transform: scale(1.7); opacity: 0; }
+            100% { transform: scale(1.7); opacity: 0; }
+          }
+        `}</style>
+      )}
     </div>
   );
 }

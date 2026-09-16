@@ -231,7 +231,7 @@ function SpFwaTypeModal({ row, email, onClose, onSaved, onError }) {
         <input type="number" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} style={inp} placeholder="0" />
       </Field>
       <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: T.mid, marginTop: 4 }}>
-        <input type="checkbox" checked={activeFlag} onChange={(e) => setActiveFlag(e.target.checked)} /> Aktif (muncul di pilihan jenis saat mobile input Penjualan SP/FWA)
+        <input type="checkbox" checked={activeFlag} onChange={(e) => setActiveFlag(e.target.checked)} /> Aktif (muncul di pilihan jenis saat mobile input Aktivasi SP/FWA)
       </label>
       <div style={{ marginTop: 16, display: "flex", justifyContent: "flex-end", gap: 10 }}>
         <button onClick={onClose} style={btn}>Batal</button>

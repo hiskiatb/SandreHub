@@ -58,6 +58,7 @@ const NAV = [
   // cuma tidak lagi muncul di menu. Approval POSM (section POSM di atas)
   // TIDAK disentuh sama sekali.
   { label: "User Management", icon: "users", path: "assignments", route: "/martahub/assignments" },
+  { label: "Kelola Campaign", icon: "send", path: "campaigns", route: "/martahub/campaigns" },
   { label: "Master Data", icon: "db", path: "master", route: "/martahub/master" },
   { label: "Gallery", icon: "gallery", path: "gallery", route: "/martahub/gallery" },
   { label: "Validasi Lokasi", icon: "check", path: "validasi", route: "/martahub/validasi" },

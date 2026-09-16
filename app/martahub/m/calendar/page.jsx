@@ -8,14 +8,22 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, ChevronDown, Plus, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Plus, Loader2, CardSim, Router, RefreshCw, Megaphone, Building2, Tags, ListChecks } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, FF, BRAND, NAV_HEIGHT } from "../_shared/MobileShell";
 // MonthYearPickerSheet dipakai ulang persis dari wizard Buat Plan (kalender
 // di sana yg jadi acuan tampilan "persis seperti ini") - drpd duplikasi
 // komponen wheel bulan/tahun di dua tempat.
 import { MonthYearPickerSheet } from "../_shared/CalendarPickerSheet";
-import { activityStage, fmtDate } from "../_shared/activityUi";
+import { activityStage, fmtDate, fmtInt, fmtRp } from "../_shared/activityUi";
+// loadBranchMap (cache master data mh_branches {id -> {name,region}}) &
+// BRANDS/BRAND_DISPLAY - dipakai persis pola yg sama dgn filter Branch/Brand
+// di Beranda (app/martahub/m/page.jsx: canBrowseBranches/canBrowseBrands) -
+// supaya konsep & rasanya konsisten, cuma tampilannya dirapikan jadi versi
+// ringkas krn tempatnya di sini cuma "menyamping" dari tanggal terpilih,
+// bukan baris filter penuh selebar layar spt di Beranda.
+import { loadBranchMap } from "../../../../lib/martaScope";
+import { BRANDS, BRAND_DISPLAY } from "../_shared/planData";
 
 const MONTH_NAMES_FULL = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 const DOW = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
@@ -66,7 +74,7 @@ function activityDateKeys(a) {
 
 export default function CalendarPage() {
   const router = useRouter();
-  const { loading: sessionLoading } = useMartaSession();
+  const { loading: sessionLoading, scope } = useMartaSession();
   const today = new Date();
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
@@ -76,6 +84,33 @@ export default function CalendarPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
   const [monthPickerOpen, setMonthPickerOpen] = useState(false);
+
+  // Filter Branch/Brand di samping tanggal terpilih - KONSEP SAMA PERSIS
+  // dgn Beranda (app/martahub/m/page.jsx): role yg cakupannya lintas
+  // cabang (unscoped/head/tmv) dapat dropdown beneran; role yg terkunci ke
+  // SATU cabang/brand (bme_rge dst) cuma ditampilkan info cabang/brand
+  // miliknya sendiri, non-interaktif (lihat canBrowseBranches/
+  // canBrowseBrands di bawah, computed setelah branchMap termuat).
+  const [branchMap, setBranchMap] = useState(new Map());
+  const [branchMapLoading, setBranchMapLoading] = useState(false);
+  const [branchFilter, setBranchFilter] = useState(""); // "" = semua branch dlm cakupan; else branch id (mh_branches.id)
+  const [brandFilter, setBrandFilter] = useState(""); // "" = semua brand dlm cakupan; else "im3"/"tri"
+  const canBrowseBranches = !!(scope?.unscoped || scope?.role === "head" || scope?.role === "tmv");
+  const canBrowseBrands = !!(scope?.unscoped || scope?.role === "head");
+
+  useEffect(() => {
+    if (sessionLoading || !canBrowseBranches) return;
+    let alive = true;
+    setBranchMapLoading(true);
+    (async () => {
+      try {
+        const map = await loadBranchMap();
+        if (alive) setBranchMap(map);
+      } catch { /* best-effort */ }
+      finally { if (alive) setBranchMapLoading(false); }
+    })();
+    return () => { alive = false; };
+  }, [sessionLoading, canBrowseBranches]);
 
   const gridStart = useMemo(() => {
     const first = new Date(viewYear, viewMonth, 1);
@@ -146,14 +181,63 @@ export default function CalendarPage() {
     setViewMonth(m); setViewYear(y);
   }
 
+  // Opsi Branch - dari master data mh_branches (loadBranchMap, sama sumber
+  // dgn Beranda), disaring ke region scope role ini dulu (spm_sumatera/
+  // admin/Circle head-tmv lihat semua; Head/Brand TMV region tetap cuma
+  // cabang di region-nya) - DIKELOMPOKKAN per region ({region: [...]})
+  // supaya select-nya bisa dikasih <optgroup> per region (divider yg
+  // diminta), bukan daftar cabang rata tanpa pengelompokan.
+  const branchOptionsByRegion = useMemo(() => {
+    if (!canBrowseBranches) return {};
+    const groups = {};
+    for (const [id, b] of branchMap.entries()) {
+      if (!scope?.unscoped && scope?.region && b.region !== scope.region) continue;
+      (groups[b.region || "Lainnya"] ||= []).push({ value: id, label: b.name });
+    }
+    for (const k of Object.keys(groups)) groups[k].sort((a, b) => a.label.localeCompare(b.label));
+    return groups;
+  }, [branchMap, canBrowseBranches, scope]);
+  const brandOptions = useMemo(
+    () => (canBrowseBrands ? BRANDS.map((b) => ({ value: b, label: BRAND_DISPLAY[b] || b.toUpperCase() })) : []),
+    [canBrowseBrands]
+  );
+  // Info non-interaktif utk role yg terkunci (bukan Circle/unscoped) -
+  // sama polanya persis dgn FilterSelect/BrandTagSelect di Beranda: 1
+  // opsi = cabang/brand miliknya sendiri, ditampilkan sbg info saja.
+  const lockedBranchLabel = scope?.branchName || scope?.region || "";
+  const lockedBrandValue = scope?.brand ? scope.brand.toLowerCase() : "";
+  const lockedBrandLabel = lockedBrandValue ? (BRAND_DISPLAY[lockedBrandValue] || scope.brand.toUpperCase()) : "";
+
   // Diurutkan berdasarkan jam mulai di tanggal terpilih (spy kartu-kartu ini
   // KELIHATAN spt jadwal/timeline sungguhan, bukan cuma daftar acak) -
   // activity "Seharian"/tanpa jam ditaruh PALING BAWAH krn tidak punya slot
-  // waktu spesifik utk dijadikan acuan urutan.
+  // waktu spesifik utk dijadikan acuan urutan. Filter Branch/Brand
+  // (branchFilter/brandFilter) mempersempit di sini SEBELUM diurutkan -
+  // brand dibandingkan case-insensitive krn mh_activities.brand "IM3"/"TRI"
+  // (huruf besar) sedangkan brandFilter/scope.brand "im3"/"tri" (kecil).
   const dayActs = useMemo(
-    () => [...(byDate[selected] || [])].sort((a, b) => dayTimeInfo(a, selected).sortKey - dayTimeInfo(b, selected).sortKey),
-    [byDate, selected]
+    () => (byDate[selected] || [])
+      .filter((a) => !branchFilter || a.branch_id === branchFilter)
+      .filter((a) => !brandFilter || (a.brand || "").toLowerCase() === brandFilter.toLowerCase())
+      .sort((a, b) => dayTimeInfo(a, selected).sortKey - dayTimeInfo(b, selected).sortKey),
+    [byDate, selected, branchFilter, brandFilter]
   );
+  // Total Aktivasi SP/FWA/Rebuy DI TANGGAL TERPILIH - hanya menjumlah
+  // activity yg laporan actual-nya sudah masuk (actual_sp != null), supaya
+  // plan yg belum dilaksanakan tidak ikut dihitung sbg 0 aktivasi (beda
+  // makna dgn "belum ada aktivasi sama sekali").
+  const dayTotals = useMemo(() => {
+    let sp = 0, fwa = 0, rebuy = 0, count = 0;
+    for (const a of dayActs) {
+      if (a.actual_sp == null) continue;
+      count += 1;
+      sp += Number(a.actual_sp || 0);
+      fwa += Number(a.actual_fwa || 0);
+      rebuy += Number(a.actual_rebuy_sp || 0) + Number(a.actual_rebuy_fwa || 0);
+    }
+    return { sp, fwa, rebuy, count };
+  }, [dayActs]);
+
   function selectDate(key) { setSelected(key); }
 
   const goCreatePlan = () => router.push(`/martahub/m/activities/new?date=${selected}`);
@@ -300,25 +384,90 @@ export default function CalendarPage() {
       {/* Detail tanggal terpilih - juga dibungkus 1 kartu, konsisten dgn
           kartu kalender di atasnya. */}
       <div style={{ padding: "14px 20px calc(env(safe-area-inset-bottom,0px) + 24px)" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          <div style={{ minWidth: 0 }}>
-            {/* Tanggal terpilih jadi fokus utama (lebih besar) - badge
-                "HARI INI" TERPISAH sbg pill kecil berwarna brand (bukan
-                menggantikan teks tanggal spt sebelumnya), supaya tetap
-                jelas tanggal PERSIS berapa tanpa perlu menghitung sendiri. */}
-            <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
-              <div style={{ fontSize: 16, fontWeight: 800, color: "#17181C", letterSpacing: "-0.01em" }}>{fmtDate(selected)}</div>
-              {isSelectedToday && (
-                <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.3, padding: "3px 8px", borderRadius: 999, background: "rgba(237,28,36,0.10)", color: "#ED1C24", whiteSpace: "nowrap" }}>
-                  HARI INI
-                </span>
-              )}
-            </div>
-            <div style={{ marginTop: 4, fontSize: 11.5, color: "#8A8A96", fontWeight: 600 }}>
-              {dayActs.length === 0 ? "Belum ada aktivitas" : `${dayActs.length} aktivitas dijadwalkan`}
-            </div>
+        <div style={{ minWidth: 0, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+          {/* Tanggal terpilih jadi fokus utama (lebih besar) - badge
+              "HARI INI" TERPISAH sbg pill kecil berwarna brand (bukan
+              menggantikan teks tanggal spt sebelumnya), supaya tetap
+              jelas tanggal PERSIS berapa tanpa perlu menghitung sendiri. */}
+          <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", minWidth: 0 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: "#17181C", letterSpacing: "-0.01em" }}>{fmtDate(selected)}</div>
+            {isSelectedToday && (
+              <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.3, padding: "3px 8px", borderRadius: 999, background: "rgba(237,28,36,0.10)", color: "#ED1C24", whiteSpace: "nowrap" }}>
+                HARI INI
+              </span>
+            )}
           </div>
+
+          {/* Total aktivitas dijadwalkan - DIPINDAH ke samping label tanggal
+              (dulu baris teks polos di bawahnya) jadi badge ringkas sendiri,
+              spy satu baris header ini langsung menjawab dua hal sekaligus:
+              "tanggal berapa" (kiri) & "ada berapa aktivitas" (kanan) -
+              tanpa mata harus turun baris lagi. Disembunyikan kalau 0 (teks
+              "Belum ada plan di tanggal ini" sudah cukup jelas di kartu
+              kosong di bawah, badge "0 Aktivitas" di sini cuma noise). */}
+          {dayActs.length > 0 && (
+            <span style={{
+              flexShrink: 0, display: "flex", alignItems: "center", gap: 5, padding: "5px 10px 5px 8px", borderRadius: 999,
+              background: "#F1F2F5", fontSize: 11.5, fontWeight: 800, color: "#3A3A44", whiteSpace: "nowrap",
+            }}>
+              <ListChecks size={12} color="#8A8A96" /> {dayActs.length} <span style={{ fontWeight: 600, color: "#8A8A96" }}>Aktivitas</span>
+            </span>
+          )}
         </div>
+        {dayActs.length === 0 && (
+          <div style={{ marginTop: 4, fontSize: 11.5, color: "#8A8A96", fontWeight: 600 }}>Belum ada aktivitas</div>
+        )}
+
+        {/* Filter Branch/Brand - baris TERSENDIRI di bawah info tanggal
+            (bukan lagi kolom di samping kanan yg dulu membentang penuh
+            tinggi & lebar rata, kelihatan kaku/tidak rapi) - sekarang
+            SEBARIS horizontal, lebar chip mengikuti isi kontennya sendiri
+            (spt BrandTagSelect di Beranda), rapi & ringkas persis di bawah
+            "X aktivitas dijadwalkan". Konsep filter-nya (canBrowseBranches/
+            canBrowseBrands, opsi Branch dikelompokkan per region lewat
+            optgroup, role terkunci cuma menampilkan info miliknya sendiri)
+            TETAP SAMA, cuma tata letaknya yg dirapikan. */}
+        {(canBrowseBranches || lockedBranchLabel || canBrowseBrands || lockedBrandLabel) && (
+          <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {(canBrowseBranches || lockedBranchLabel) && (
+              <CalendarBranchSelect
+                value={branchFilter}
+                onChange={setBranchFilter}
+                groups={branchOptionsByRegion}
+                loading={canBrowseBranches && branchMapLoading}
+                lockedLabel={!canBrowseBranches ? lockedBranchLabel : ""}
+              />
+            )}
+            {(canBrowseBrands || lockedBrandLabel) && (
+              <CalendarBrandSelect
+                value={brandFilter}
+                onChange={setBrandFilter}
+                options={brandOptions}
+                lockedLabel={!canBrowseBrands ? lockedBrandLabel : ""}
+                lockedValue={!canBrowseBrands ? lockedBrandValue : ""}
+              />
+            )}
+          </div>
+        )}
+
+        {/* Total Aktivasi SP/FWA/Rebuy di tanggal ini - ringkas SATU BARIS,
+            selalu tampil begitu ada laporan actual masuk (tidak perlu tap
+            apa pun utk melihatnya). */}
+        {dayTotals.count > 0 && (
+          <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 14, padding: "10px 14px", background: "#FFFFFF", border: "1px solid #ECEDF0", borderRadius: 14, boxShadow: "0 2px 10px rgba(23,24,28,0.04)" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>
+              <CardSim size={13} color="#DB2777" /> {fmtInt(dayTotals.sp)} <span style={{ color: "#8A8A96", fontWeight: 600, fontSize: 11 }}>SP</span>
+            </span>
+            <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>
+              <Router size={13} color="#2563EB" /> {fmtInt(dayTotals.fwa)} <span style={{ color: "#8A8A96", fontWeight: 600, fontSize: 11 }}>FWA</span>
+            </span>
+            <span style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 800, color: "#17181C", minWidth: 0 }}>
+              <RefreshCw size={13} color="#B45309" style={{ flexShrink: 0 }} />
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fmtRp(dayTotals.rebuy)}</span>
+              <span style={{ color: "#8A8A96", fontWeight: 600, fontSize: 11, flexShrink: 0 }}>Rebuy</span>
+            </span>
+          </div>
+        )}
 
         {dayActs.length === 0 ? (
           <div style={{ marginTop: 10, textAlign: "center", padding: "26px 20px", background: "#FFFFFF", border: "1px dashed #D8D9E0", borderRadius: 16 }}>
@@ -369,11 +518,37 @@ export default function CalendarPage() {
                     <div style={{ paddingRight: 30 }}>
                       {/* Judul event boleh sampai 2 baris (line-clamp), bukan lagi
                           dipotong 1 baris - konsisten dgn kartu di daftar Aktivitas
-                          & Beranda. */}
-                      <div style={{
-                        fontSize: 14, fontWeight: 800, color: "#17181C", lineHeight: 1.32,
-                        display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
-                      }}>{a.event_name || "-"}</div>
+                          & Beranda. campaign_id (lihat mh_campaigns) dpt treatment
+                          teks bergradasi bergerak (shimmer) + ikon Megaphone -
+                          murni tampilan, event_name asli tidak berubah. */}
+                      {a.campaign_id ? (
+                        // alignItems "flex-start" (bukan "center") - dgn judul
+                        // 2 baris, "center" bikin ikon melayang di tengah blok
+                        // teks (kelihatan "ngambang"/tidak rapi), "flex-start"
+                        // + sedikit marginTop menyejajarkan ikon ke baris
+                        // PERTAMA teks spt bullet biasa.
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+                          <Megaphone size={12.5} color="#EC1E79" style={{ flexShrink: 0, marginTop: 3 }} />
+                          <div className="mh-campaign-title-cal" style={{
+                            fontSize: 14, fontWeight: 800, lineHeight: 1.32,
+                            display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+                          }}>{(a.event_name || "").replace(/_/g, " ")}</div>
+                          <style jsx>{`
+                            .mh-campaign-title-cal {
+                              background: linear-gradient(90deg, #ED1C24 0%, #EC008C 25%, #F5CD46 50%, #ED1C24 75%, #EC008C 100%);
+                              background-size: 300% 100%;
+                              -webkit-background-clip: text; background-clip: text; color: transparent;
+                              animation: mhCampaignShimmerCal 7s linear infinite;
+                            }
+                            @keyframes mhCampaignShimmerCal { 0% { background-position: 0% 50%; } 100% { background-position: 300% 50%; } }
+                          `}</style>
+                        </div>
+                      ) : (
+                        <div style={{
+                          fontSize: 14, fontWeight: 800, color: "#17181C", lineHeight: 1.32,
+                          display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+                        }}>{a.event_name || "-"}</div>
+                      )}
                       <div style={{ marginTop: 5, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                         {a.brand && (
                           <span style={{
@@ -388,10 +563,24 @@ export default function CalendarPage() {
                           {[branchLabel, a.mc, a.site_id].filter(Boolean).join(" · ")}
                         </span>
                       </div>
-                      <div style={{ marginTop: 7 }}>
+                      <div style={{ marginTop: 7, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                         <span style={{ fontSize: 10, fontWeight: 800, padding: "4px 9px", borderRadius: 999, color: stage.color, background: stage.bg, whiteSpace: "nowrap" }}>
                           {stage.label}
                         </span>
+                        {/* Ringkasan Actual (Aktivasi SP/FWA + Rebuy) - SATU
+                            BARIS ringkas, selalu tampil di samping pill status
+                            begitu laporan actual masuk, tanpa perlu buka Detail
+                            Aktivitas dulu. */}
+                        {a.actual_sp != null && (
+                          <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 10, fontWeight: 700, color: "#5A5A68", minWidth: 0 }}>
+                            <span style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}><CardSim size={10.5} color="#DB2777" />{fmtInt(a.actual_sp)}</span>
+                            <span style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}><Router size={10.5} color="#2563EB" />{fmtInt(a.actual_fwa)}</span>
+                            <span style={{ display: "flex", alignItems: "center", gap: 2, minWidth: 0 }}>
+                              <RefreshCw size={10.5} color="#B45309" style={{ flexShrink: 0 }} />
+                              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fmtRp(Number(a.actual_rebuy_sp || 0) + Number(a.actual_rebuy_fwa || 0))}</span>
+                            </span>
+                          </span>
+                        )}
                       </div>
                     </div>
                   </button>
@@ -403,5 +592,108 @@ export default function CalendarPage() {
       </div>
 
     </MobileShell>
+  );
+}
+
+// Singkatan region utk label chip ringkas - sama persis dgn REGION_ABBR di
+// Beranda (app/martahub/m/page.jsx), diduplikasi kecil di sini drpd
+// mengekspor konstanta lintas file cuma utk 3 baris data.
+const REGION_ABBR_CAL = { "NORTH SUMATERA": "North Sumatera", "CENTRAL SUMATERA": "Central Sumatera", "SOUTH SUMATERA": "South Sumatera" };
+
+/** Chip filter Branch versi ringkas utk di samping tanggal terpilih -
+ * KONSEP SAMA dgn FilterSelect di Beranda (interaktif hanya kalau ada >1
+ * opsi utk dipilih; role terkunci ke 1 cabang cuma menampilkan info),
+ * TAMBAHAN di sini: opsi branch dikelompokkan per region pakai <optgroup>
+ * beneran (bukan daftar rata) - itu "divider region" yg diminta. */
+function CalendarBranchSelect({ value, onChange, groups, loading, lockedLabel }) {
+  const regionKeys = Object.keys(groups || {});
+  const totalOptions = regionKeys.reduce((n, k) => n + groups[k].length, 0);
+  const interactive = !lockedLabel && totalOptions > 1;
+  let selectedLabel = lockedLabel;
+  if (!selectedLabel) {
+    for (const k of regionKeys) {
+      const hit = groups[k].find((o) => o.value === value);
+      if (hit) { selectedLabel = hit.label; break; }
+    }
+  }
+  const active = interactive && !!value;
+
+  if (loading) {
+    return (
+      <div style={{ display: "inline-flex", alignItems: "center", gap: 6, minHeight: 32, padding: "0 12px", borderRadius: 999, background: "#FFFFFF", border: "1.5px solid #E4E5EA" }}>
+        <span style={{ width: 11, height: 11, borderRadius: "50%", border: "2px solid #E4E5EA", borderTopColor: "#8A8A96", animation: "mh-cal-filter-spin .7s linear infinite" }} />
+        <style>{`@keyframes mh-cal-filter-spin{to{transform:rotate(360deg)}}`}</style>
+        <span style={{ fontSize: 11, fontWeight: 700, color: "#B0B0BA" }}>Memuat...</span>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      position: "relative", display: "inline-flex", alignItems: "center", gap: 6, width: "max-content", maxWidth: 190, boxSizing: "border-box",
+      minHeight: 32, padding: interactive ? "0 26px 0 12px" : "0 12px", borderRadius: 999,
+      background: active ? "#FDECEC" : "#FFFFFF",
+      border: `1.5px solid ${active ? "#ED1C24" : "#E4E5EA"}`,
+      cursor: interactive ? "pointer" : "default",
+    }}>
+      <Building2 size={12} color={active ? "#ED1C24" : "#8A8A96"} style={{ flexShrink: 0 }} />
+      <span style={{ fontSize: 11.5, fontWeight: 700, color: active ? "#C62828" : "#3A3A44", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        {selectedLabel || "Semua Branch"}
+      </span>
+      {interactive && (
+        <ChevronDown size={11} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color: active ? "#ED1C24" : "#8A8A96", pointerEvents: "none" }} />
+      )}
+      {interactive && (
+        <select value={value} onChange={(e) => onChange(e.target.value)} aria-label="Branch"
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 16 }}>
+          <option value="">Semua Branch</option>
+          {regionKeys.map((region) => (
+            <optgroup key={region} label={REGION_ABBR_CAL[region] || region}>
+              {groups[region].map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </optgroup>
+          ))}
+        </select>
+      )}
+    </div>
+  );
+}
+
+/** Chip filter Brand versi ringkas - pola sama dgn BrandTagSelect di
+ * Beranda (dot warna brand + label singkat), cuma dikecilkan supaya pas
+ * berdampingan dgn CalendarBranchSelect di atas. */
+function CalendarBrandSelect({ value, onChange, options, lockedLabel, lockedValue }) {
+  const interactive = !lockedLabel && options.length > 1;
+  const selected = options.find((o) => o.value === value);
+  const effectiveLabel = lockedLabel || selected?.label || "";
+  const effectiveValue = lockedValue || selected?.value || "";
+  const color = effectiveValue ? (BRAND_COLOR[effectiveValue] || "#8A8A96") : "#9A9AA6";
+
+  return (
+    <div style={{
+      position: "relative", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, width: "max-content", boxSizing: "border-box",
+      minHeight: 32, padding: interactive ? "0 24px 0 12px" : "0 12px", borderRadius: 999,
+      background: value ? `${color}14` : "#FFFFFF",
+      border: `1.5px solid ${value ? color : "#E4E5EA"}`,
+      cursor: interactive ? "pointer" : "default",
+    }}>
+      {effectiveLabel ? (
+        <span style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0, background: color }} />
+      ) : (
+        <Tags size={11} color={color} strokeWidth={2.2} style={{ flexShrink: 0 }} />
+      )}
+      <span style={{ fontSize: 11.5, fontWeight: 800, color: effectiveLabel ? "#3A3A44" : "#5A5A68", whiteSpace: "nowrap" }}>
+        {effectiveLabel || "Semua Brand"}
+      </span>
+      {interactive && (
+        <ChevronDown size={11} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", color, pointerEvents: "none" }} />
+      )}
+      {interactive && (
+        <select value={value} onChange={(e) => onChange(e.target.value)} aria-label="Brand"
+          style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 16 }}>
+          <option value="">Semua Brand</option>
+          {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      )}
+    </div>
   );
 }

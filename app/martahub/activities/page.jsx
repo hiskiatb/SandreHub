@@ -1039,10 +1039,10 @@ function Body({ email }) {
           terpisah), sekarang langsung di atas tabel Activity Plan supaya
           "pantau sekaligus lihat detail" bisa dalam satu layar. */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(172px,1fr))", gap: 14, marginBottom: 18 }}>
-        <Kpi label="Total Penjualan SP" value={<KpiRatio main={fmtInt(kpiStats.spTervalidasi)} suffix={` / ${fmtInt(kpiStats.spPengajuan)} Plan`} />}
+        <Kpi label="Total Aktivasi SP" value={<KpiRatio main={fmtInt(kpiStats.spTervalidasi)} suffix={` / ${fmtInt(kpiStats.spPengajuan)} Plan`} />}
           sub={<KpiSubRow icon={RefreshCw} label="Rebuy SP: Actual / Plan" value={`${fmtRpCompact(kpiStats.actualRebuySp)} / ${fmtRpCompact(kpiStats.targetRebuySp)}`} />}
           icon={CardSim} color={T.success} />
-        <Kpi label="Total Penjualan FWA" value={<KpiRatio main={fmtInt(kpiStats.fwaTervalidasi)} suffix={` / ${fmtInt(kpiStats.fwaPengajuan)} Plan`} />}
+        <Kpi label="Total Aktivasi FWA" value={<KpiRatio main={fmtInt(kpiStats.fwaTervalidasi)} suffix={` / ${fmtInt(kpiStats.fwaPengajuan)} Plan`} />}
           sub={<KpiSubRow icon={RefreshCw} label="Rebuy FWA: Actual / Plan" value={`${fmtRpCompact(kpiStats.actualRebuyFwa)} / ${fmtRpCompact(kpiStats.targetRebuyFwa)}`} />}
           icon={RouterIcon} color={T.success} />
         <Kpi label="Total Revenue (3 Months)" value={fmtRp(kpiStats.actualRev3m)}

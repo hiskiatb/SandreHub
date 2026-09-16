@@ -19,7 +19,7 @@
  */
 import { useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, ArrowRight, ChevronRight, Check, X, Plus, Loader2, Crosshair, Map as MapIcon, Users, CalendarDays, Building2, Tag, CardSim, Router as RouterIcon, AlertTriangle, Save, QrCode, Receipt, MapPin, MapPinned, Wifi, TrendingUp, Send, Trash2, MoreVertical, Info } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronRight, Check, X, Plus, Loader2, Crosshair, Map as MapIcon, Users, CalendarDays, Building2, Tag, CardSim, Router as RouterIcon, AlertTriangle, Save, QrCode, Receipt, MapPin, MapPinned, Wifi, TrendingUp, Send, Trash2, MoreVertical, Info, Megaphone, Lock } from "lucide-react";
 import supabaseMarta from "../../../../../lib/supabaseMarta";
 import { slug } from "../../../../../lib/activityTarget";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../_shared/MobileShell";
@@ -131,8 +131,29 @@ function CreatePlanWizardInner() {
           branchName: scope?.branchName, branchNameDisplay: scope?.branchName,
         };
 
+  // ── Campaign aktif (mis. "Market Blitz Sabtu") yg berlaku utk branch/
+  // brand user saat ini - dipakai sbg kartu shortcut di Step Info (tap =
+  // langsung terisi nama event + tanggal formatnya). HANYA utk plan BARU
+  // (bukan mode edit - plan lama sudah ada datanya sendiri).
+  const [activeCampaign, setActiveCampaign] = useState(null);
+  useEffect(() => {
+    if (editId || !email) return;
+    let alive = true;
+    supabaseMarta.rpc("mh_campaigns_active_for_me", { p_caller_email: email })
+      .then(({ data }) => { if (alive) setActiveCampaign(data?.[0] || null); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [editId, email]);
+
   // ── Step 1: Info ──
   const [categories, setCategories] = useState([]);
+  // Step 1 (Info) TERKUNCI begitu BME/RGE pakai kartu "Campaign Aktif" -
+  // Category, Event Name, & Plan Date/Waktu SUDAH ditentukan Circle/Head
+  // TMV lewat campaign (lihat mh_campaigns.default_categories +
+  // mh_campaigns.keyword), jadi tidak boleh diubah manual lagi. "Lepas
+  // Campaign" di StepInfo membuka kuncinya lagi kalau BME/RGE berubah
+  // pikiran (mis. ternyata plan-nya bukan bagian dari campaign itu).
+  const [campaignLocked, setCampaignLocked] = useState(false);
   const [eventName, setEventName] = useState("");
   const [dates, setDates] = useState(prefillDate ? [prefillDate] : [""]); // tanggal terpilih, apa adanya - rentang/berpencar dideteksi otomatis
   // Waktu WAJIB per tanggal (bukan satu waktu global) - key "yyyy-mm-dd" →
@@ -1151,6 +1172,22 @@ function CreatePlanWizardInner() {
             invalid,
             branchName: effectiveScope.branchNameDisplay,
             isApprover, actingFor, actingForList, actingForLoading, onPickActingFor: () => setActingForSheet(true),
+            activeCampaign, campaignLocked,
+            onUseCampaign: () => {
+              setEventName(activeCampaign.expected_event_name);
+              setDates([activeCampaign.plan_date]);
+              setTimesByDate(syncTimesByDate([activeCampaign.plan_date], {}));
+              // default_categories dari campaign SUDAH final ditentukan
+              // Circle/Head TMV - toggleCategory cuma dukung 1 kategori
+              // (lihat definisinya di atas), jadi ambil elemen pertama saja.
+              setCategories(activeCampaign.default_categories?.length ? [activeCampaign.default_categories[0]] : []);
+              setCampaignLocked(true);
+              // Langsung lompat ke Step 2 (Lokasi) - Step 1 sudah penuh
+              // terisi & terkunci, tidak ada lagi yg perlu BME/RGE lakukan
+              // di step ini.
+              setStep(1);
+            },
+            onUnlockCampaign: () => setCampaignLocked(false),
           }} />
         )}
         {step === 1 && (
@@ -1252,7 +1289,7 @@ function CreatePlanWizardInner() {
 }
 
 // ═════════════════════════════════ Step 1 ═════════════════════════════════
-function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, setDates, timesByDate, setTimesByDate, invalid, branchName, isApprover, actingFor, actingForList, actingForLoading, onPickActingFor }) {
+function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, setDates, timesByDate, setTimesByDate, invalid, branchName, isApprover, actingFor, actingForList, actingForLoading, onPickActingFor, activeCampaign, onUseCampaign, campaignLocked, onUnlockCampaign }) {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const validDates = dates.filter(Boolean);
   // Tidak ada mode manual - ringkasan dihitung otomatis dari keterdekatan
@@ -1279,6 +1316,48 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
 
   return (
     <Card>
+      {/* Belum dipakai - tawaran pakai campaign (SAMA spt sebelumnya). Begitu
+          ditekan, Step 1 langsung terisi PENUH (kategori+nama+tanggal) &
+          BME/RGE dilompatkan ke Step 2 (lihat onUseCampaign di pemanggil). */}
+      {activeCampaign && !campaignLocked && (
+        <button onClick={onUseCampaign}
+          style={{
+            width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: 12, marginBottom: 16,
+            padding: "13px 14px", borderRadius: 14, border: "none", cursor: "pointer", fontFamily: FF,
+            background: BRAND, boxShadow: "0 6px 16px rgba(237,28,36,0.22)",
+          }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(255,255,255,0.18)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Megaphone size={18} color="#fff" />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 10, fontWeight: 800, color: "rgba(255,255,255,0.75)", textTransform: "uppercase", letterSpacing: 0.4 }}>Campaign Aktif</div>
+            <div style={{ marginTop: 1, fontSize: 13.5, fontWeight: 800, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{activeCampaign.name}</div>
+          </div>
+          <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 800, color: "#fff", background: "rgba(255,255,255,0.18)", borderRadius: 999, padding: "6px 12px" }}>Pakai</span>
+        </button>
+      )}
+
+      {/* SUDAH dipakai - banner terkunci + tombol lepas. Field di bawahnya
+          (Category/Event Name/Plan Date) semuanya jadi read-only selama
+          banner ini tampil - lihat prop `campaignLocked` di tiap field. */}
+      {campaignLocked && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 12, marginBottom: 16,
+          padding: "13px 14px", borderRadius: 14, background: "#F0FBF6", border: "1px solid #BBF0D6",
+        }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: "rgba(21,128,61,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Lock size={16} color="#15803D" />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 10, fontWeight: 800, color: "#15803D", textTransform: "uppercase", letterSpacing: 0.4 }}>Step 1 Terkunci · Campaign</div>
+            <div style={{ marginTop: 1, fontSize: 12.5, fontWeight: 700, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{activeCampaign?.name}</div>
+          </div>
+          <button onClick={onUnlockCampaign}
+            style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 800, color: "#5A5A68", background: "#FFFFFF", border: "1px solid #E4E5EA", borderRadius: 999, padding: "6px 11px", cursor: "pointer", fontFamily: FF }}>
+            Lepas
+          </button>
+        </div>
+      )}
       {isApprover && (
         <>
           <FieldLabel id="field-actingFor" text="Buat Untuk" required hint={actingForLoading ? "Memuat…" : "Orang atau branch·brand"} />
@@ -1318,7 +1397,7 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
       )}
 
       <FieldLabel id="field-categories" text="Activity Category" required top={isApprover} />
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, opacity: campaignLocked ? 0.55 : 1, pointerEvents: campaignLocked ? "none" : "auto" }}>
         {CATEGORIES.map((c) => {
           const active = categories.includes(c);
           return (
@@ -1329,7 +1408,7 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
       {invalid.has("categories") && <FieldError text="Pilih minimal satu kategori" />}
 
       <FieldLabel id="field-eventName" text="Event Name" required top />
-      <TextInput value={eventName} onChange={setEventName} placeholder="Masukkan nama event" error={invalid.has("eventName")} />
+      <TextInput value={eventName} onChange={campaignLocked ? () => {} : setEventName} placeholder="Masukkan nama event" error={invalid.has("eventName")} disabled={campaignLocked} />
       {invalid.has("eventName") && <FieldError text="Nama event wajib diisi" />}
 
       <FieldLabel id="field-planDate" text="Plan Date & Waktu" required top hint="Ketuk utk atur - wajib per tanggal" />
@@ -1342,8 +1421,12 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
           Begitu >1 tanggal dipilih, waktu WAJIB diatur PER TANGGAL (list ke
           bawah di dalam sheet yg sama) - dipakai TMV utk urutkan activity
           kalau ada beberapa di tanggal yang sama. */}
-      <button onClick={() => setCalendarOpen(true)}
-        style={{ width: "100%", marginTop: 10, display: "flex", alignItems: "center", gap: 10, padding: "12px 13px", borderRadius: 12, background: "#F6F7F9", border: `1.5px solid ${invalid.has("planDate") || invalid.has("timeRange") ? "#DC2626" : "#ECEDF0"}`, cursor: "pointer", fontFamily: FF }}>
+      <button onClick={() => { if (!campaignLocked) setCalendarOpen(true); }} disabled={campaignLocked}
+        style={{
+          width: "100%", marginTop: 10, display: "flex", alignItems: "center", gap: 10, padding: "12px 13px", borderRadius: 12,
+          background: "#F6F7F9", border: `1.5px solid ${invalid.has("planDate") || invalid.has("timeRange") ? "#DC2626" : "#ECEDF0"}`,
+          cursor: campaignLocked ? "default" : "pointer", fontFamily: FF, opacity: campaignLocked ? 0.7 : 1,
+        }}>
         <div style={{ width: 34, height: 34, borderRadius: 10, background: dateSummary ? "rgba(237,28,36,0.10)" : "#E9EAEE", color: dateSummary ? "#ED1C24" : "#9A9AA6", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <CalendarDays size={16} />
         </div>
@@ -1421,7 +1504,7 @@ function StepTarget({
       <Card style={invalid?.has("target") ? { border: "1.5px solid #F3C6C6" } : undefined}>
         <FieldLabel id="field-target" text="Target" required hint="Minimal 1 dari 4 wajib diisi" />
         <ProductTargetGroup
-          icon={CardSim} accent="#ED1C24" label="Target Penjualan SP"
+          icon={CardSim} accent="#ED1C24" label="Target Aktivasi SP"
           products={spProductOptions}
           getQty={(id) => qtyOf(targetSpProducts, id)}
           onQtyChange={(product, val) => setQty(setTargetSpProducts, product, val)}
@@ -1429,7 +1512,7 @@ function StepTarget({
         />
         <div style={{ height: 1, background: "#F0F0F3", margin: "16px 0" }} />
         <ProductTargetGroup
-          icon={RouterIcon} accent="#C6168D" label="Target Penjualan FWA"
+          icon={RouterIcon} accent="#C6168D" label="Target Aktivasi FWA"
           products={fwaProductOptions}
           getQty={(id) => qtyOf(targetFwaProducts, id)}
           onQtyChange={(product, val) => setQty(setTargetFwaProducts, product, val)}
@@ -2059,11 +2142,15 @@ function FieldLabel({ text, required, hint, top, icon: Icon, id }) {
 function FieldError({ text }) {
   return <div style={{ marginTop: 6, fontSize: 11.5, color: "#DC2626", fontWeight: 600 }}>{text}</div>;
 }
-function TextInput({ value, onChange, placeholder, error, multiline }) {
+function TextInput({ value, onChange, placeholder, error, multiline, disabled }) {
   const Comp = multiline ? "textarea" : "input";
   return (
-    <Comp value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} rows={multiline ? 3 : undefined}
-      style={{ ...inputBase, height: multiline ? 84 : 48, paddingTop: multiline ? 12 : 0, resize: multiline ? "vertical" : undefined, border: `1.5px solid ${error ? "#DC2626" : "#ECEDF0"}` }} />
+    <Comp value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} rows={multiline ? 3 : undefined} disabled={disabled}
+      style={{
+        ...inputBase, height: multiline ? 84 : 48, paddingTop: multiline ? 12 : 0, resize: multiline ? "vertical" : undefined,
+        border: `1.5px solid ${error ? "#DC2626" : "#ECEDF0"}`,
+        background: disabled ? "#F6F7F9" : inputBase.background, color: disabled ? "#8A8A96" : inputBase.color,
+      }} />
   );
 }
 function NumberInput({ value, onChange, prefix }) {

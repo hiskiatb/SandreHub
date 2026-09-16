@@ -21,7 +21,7 @@ import {
   Building2, ChevronRight, ChevronLeft, Clock,
   CalendarPlus, ListChecks, Map as MapIcon, Trophy, ShieldCheck, ClipboardCheck, Lightbulb, PackageCheck,
   Target, CheckCircle2, Wallet, Tags, LayoutDashboard, UserCog, FileEdit, Banknote,
-  CardSim, Router, RefreshCw, Receipt, Globe2, Bell, X,
+  CardSim, Router, RefreshCw, Receipt, Globe2, Bell, X, MapPinned, Megaphone,
 } from "lucide-react";
 import supabaseMarta from "../../../lib/supabaseMarta";
 import { applyMartaScope, loadBranchMap } from "../../../lib/martaScope";
@@ -122,7 +122,7 @@ function fmtRpCompact(n) {
 // (dipakai di pill status kartu Beranda) SELALU menganggap Insight kosong utk
 // SEMUA baris (row.insight jadi undefined walau di DB sudah terisi) - bug lama
 // yg bikin hitungan "Selesai" di Beranda beda dgn tab Aktivitas/halaman detail.
-const ACTIVITY_COLS = "id,event_name,brand,branch_id,mc,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,revision_target,checkin_valid,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,target_rev_3m,cost_estimate,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,cost_actual,actual_rev_3m,insight,plan_source,created_at,site_id";
+const ACTIVITY_COLS = "id,event_name,brand,branch_id,mc,event_category,event_categories,plan_date,plan_date_start,plan_date_end,plan_dates_multi,plan_date_times,is_all_day,start_time,end_time,poi_type,status,revision_target,checkin_valid,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,target_rev_3m,cost_estimate,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,cost_actual,actual_rev_3m,insight,plan_source,created_at,site_id,campaign_id";
 
 // Rotasi harian (getDate() % TIPS.length) - deterministik per hari & ikut
 // menyesuaikan otomatis kalau jumlah tips berubah, jadi tiap tips kebagian
@@ -729,6 +729,23 @@ export default function MartaMobileHome() {
             {Object.prototype.hasOwnProperty.call(ADDABLE_ROLES_FOR, scope?.role) && (
               <MenuItem icon={UserCog} label="Kelola User" color="#7C3AED" onClick={() => router.push("/martahub/m/user-management")} />
             )}
+            {/* Report Kecamatan Fokus - ringkasan per branch (kec fokus,
+                aktivitas plan, plan/actual GA, kec nol GA) + breakdown
+                kecamatan mana saja yg fokus per branch. Tidak digating role
+                spt Management/Kelola User - visibilitas datanya SUDAH
+                dibatasi server-side lewat RPC mh_kecamatan_fokus_report
+                (pakai scoping yg sama dgn Calendar CMS), jadi role yg
+                cakupannya kosong (mis. dsf tanpa branch tetap) cukup lihat
+                daftar kosong, bukan disembunyikan menunya sama sekali. */}
+            <MenuItem icon={MapPinned} label="Report" color="#0EA5A5" onClick={() => router.push("/martahub/m/report")} />
+            {/* Kelola Campaign - KHUSUS spm_sumatera (semua region) & head
+                (Head TMV, region sendiri) - PERSIS aturan yg sama dgn CMS
+                desktop /martahub/campaigns (bukan tmv/bsm/bme_rge). RPC
+                mh_campaign_upsert/delete sendiri TETAP menolak di server
+                kalau ada yg nyasar lewat deep link, ini cuma soal UX. */}
+            {(scope?.role === "spm_sumatera" || scope?.role === "head") && (
+              <MenuItem icon={Megaphone} label="Campaign" color="#ED1C24" onClick={() => router.push("/martahub/m/campaigns")} />
+            )}
           </div>
         </div>
       </div>
@@ -966,7 +983,7 @@ function MonthSelect({ value, onChange, options }) {
 /** Kartu ACHIEVEMENT - SEKARANG kartu FLIP, pola SAMA PERSIS dgn
  * ContributionCard di app Promotor (PTS mobile, app/promotor/page.jsx):
  * sisi depan = ringkasan achievement yg sudah ada, sisi belakang = rincian
- * angka actual bulan ini (Penjualan SP/FWA, Rebuy SP/FWA, Revenue, Cost,
+ * angka actual bulan ini (Aktivasi SP/FWA, Rebuy SP/FWA, Revenue, Cost,
  * jumlah Actual/Plan). Kedua sisi ditumpuk pakai CSS Grid (gridArea sama)
  * + diukur via ResizeObserver spy tinggi kontainer selalu pas sisi yg
  * sedang tampil, dianimasikan bareng rotasi flip 3D (rotateY).
@@ -1093,20 +1110,30 @@ function AchievementCard({
             <span style={{ flexShrink: 0, minWidth: 34, marginLeft: 8, textAlign: "center", fontSize: 8, fontWeight: 800, letterSpacing: 0.3, textTransform: "uppercase", color: "rgba(255,255,255,0.3)" }}>% Ach</span>
           </div>
           <div>
-            <DarkDetailRow icon={CardSim} label="Penjualan SP" actual={actualSp} plan={targetSp} fmt={fmtInt} color="#7FD9C6" />
-            <DarkDetailRow icon={Router} label="Penjualan FWA" actual={actualFwaTotal} plan={targetFwaTotal} fmt={fmtInt} color="#7FD9C6" />
+            <DarkDetailRow icon={CardSim} label="Aktivasi SP" actual={actualSp} plan={targetSp} fmt={fmtInt} color="#7FD9C6" />
+            <DarkDetailRow icon={Router} label="Aktivasi FWA" actual={actualFwaTotal} plan={targetFwaTotal} fmt={fmtInt} color="#7FD9C6" />
             <DarkDetailRow icon={RefreshCw} label="Rebuy SP" actual={rebuySpTotal} plan={targetRebuySpTotal} fmt={fmtRpCompact} color="#F5CD46" />
             <DarkDetailRow icon={RefreshCw} label="Rebuy FWA" actual={rebuyFwaTotal} plan={targetRebuyFwaTotal} fmt={fmtRpCompact} color="#F5CD46" />
             <DarkDetailRow icon={Banknote} label="Revenue (3 Months)" actual={revenueTotal} plan={targetRevTotal} fmt={fmtRpCompact} color="#7FD9C6" />
-            {/* Cost Ratio nilainya SENDIRI sudah persentase (cost/revenue) -
-                "capaian" atas persentase tidak bermakna sbg pencapaian yg
-                lebih tinggi = lebih baik (justru sebaliknya, makin rendah
-                makin sehat), jadi kolom % Capaian di baris ini SENGAJA "-"
-                (bukan dihitung ulang jadi rasio-dari-rasio yg membingungkan). */}
+            {/* Cost Ratio nilainya SENDIRI sudah persentase (cost/revenue),
+                dan MAKIN RENDAH MAKIN BAIK (kebalikan metrik lain di kartu
+                ini) - jadi "% Capaian"-nya TIDAK BOLEH dihitung actual/plan
+                spt baris lain (itu justru bikin actual yg LEBIH IRIT dari
+                budget kelihatan seolah "kurang capaian"/rendah, padahal itu
+                bagus). Dibalik: target/actual*100 - actual jauh di BAWAH
+                target (irit) => %Capaian > 100% (bagus, ditandai hijau),
+                actual jauh di ATAS target (boros) => %Capaian < 100%
+                (kurang baik). "-" cuma kalau salah satu datanya belum ada,
+                atau actual persis 0% (irit sempurna, rasio tak terhingga). */}
             <DarkDetailRow icon={Receipt} label="Cost Ratio"
               actualText={costRatioPct == null ? "-" : `${costRatioPct}%`}
               planText={targetRevTotal > 0 ? `${Math.round((targetCostTotal / targetRevTotal) * 100)}%` : "-"}
-              achText="-" color="#F286B4" />
+              achText={
+                costRatioPct == null || targetRevTotal <= 0 || targetCostTotal <= 0 || costRatioPct <= 0
+                  ? "-"
+                  : `${Math.round((((targetCostTotal / targetRevTotal) * 100) / costRatioPct) * 100)}%`
+              }
+              color="#F286B4" />
             <DarkDetailRow icon={ListChecks} label="Total Selesai / Plan" actual={actualCount} plan={planCount} fmt={fmtInt} color="#FFFFFF" last />
           </div>
         </div>
@@ -1344,13 +1371,39 @@ function ActivityRow({ r, branchLabel }) {
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           {/* Judul event boleh sampai 2 baris (line-clamp), bukan lagi
-              dipotong 1 baris - konsisten dgn kartu di daftar Aktivitas. */}
-          <div style={{
-            fontSize: 14, fontWeight: 800, color: "#17181C", lineHeight: 1.32,
-            display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
-          }}>{r.event_name || "-"}</div>
-          {/* Urutan subtitle: Brand (badge) → Branch → MC - brand paling kiri
-              krn itu identitas paling cepat dikenali (warnanya), baru
+              dipotong 1 baris - konsisten dgn kartu di daftar Aktivitas.
+              campaign_id dpt treatment SAMA PERSIS dgn kartu Aktivitas &
+              Kalender (activities/page.jsx, calendar/page.jsx) - ikon
+              Megaphone bulat gradient + judul teks bergradasi bergerak
+              (shimmer) - murni tampilan, event_name asli tidak berubah.
+              Row "Aktivitas Terbaru" di Beranda ini sebelumnya TIDAK
+              mendapat treatment ini sama sekali (campaign_id bahkan belum
+              ikut di-select), jadi kartu campaign kelihatan polos sama
+              spt kartu biasa di sini padahal di halaman lain sudah ditandai. */}
+          {r.campaign_id ? (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
+              <span className="mh-home-campaign-badge" style={{
+                position: "relative", flexShrink: 0, width: 18, height: 18, borderRadius: "50%", marginTop: 1,
+                background: "linear-gradient(135deg,#ED1C24,#EC008C)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+                boxShadow: "0 2px 6px rgba(237,28,36,0.35)",
+              }}>
+                <Megaphone size={9.5} color="#fff" strokeWidth={2.4} />
+              </span>
+              <div className="mh-home-campaign-title" style={{
+                fontSize: 14, fontWeight: 800, lineHeight: 1.32,
+                display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+              }}>{(r.event_name || "").replace(/_/g, " ")}</div>
+            </div>
+          ) : (
+            <div style={{
+              fontSize: 14, fontWeight: 800, color: "#17181C", lineHeight: 1.32,
+              display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden",
+            }}>{r.event_name || "-"}</div>
+          )}
+          {/* Urutan subtitle: Brand (badge) → tag CAMPAIGN (kalau ada) →
+              Branch → MC - brand paling kiri krn itu identitas paling
+              cepat dikenali (warnanya), baru penanda campaign, baru
               lingkup wilayah (Branch), baru siapa (MC). */}
           <div style={{ marginTop: 5, display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
             {r.brand && (
@@ -1360,6 +1413,15 @@ function ActivityRow({ r, branchLabel }) {
                 color: r.brand.toLowerCase() === "tri" ? "#FFFFFF" : "#17181C",
               }}>
                 {r.brand.toLowerCase() === "tri" ? "3ID" : "IM3"}
+              </span>
+            )}
+            {r.campaign_id && (
+              <span style={{
+                flexShrink: 0, fontSize: 8.5, fontWeight: 800, padding: "2px 6px", borderRadius: 999, whiteSpace: "nowrap",
+                letterSpacing: 0.3, color: "#fff",
+                background: "linear-gradient(120deg,#ED1C24,#EC008C)",
+              }}>
+                CAMPAIGN
               </span>
             )}
             <span style={{ fontSize: 11.5, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
@@ -1376,6 +1438,30 @@ function ActivityRow({ r, branchLabel }) {
         <Clock size={12} color="#B0B0BA" style={{ flexShrink: 0 }} />
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fmtDate(r.plan_date)} · {timeLabel}</span>
       </div>
+
+      {r.campaign_id && (
+        <style jsx>{`
+          .mh-home-campaign-title {
+            background: linear-gradient(90deg, #ED1C24 0%, #EC008C 25%, #F5CD46 50%, #ED1C24 75%, #EC008C 100%);
+            background-size: 300% 100%;
+            -webkit-background-clip: text; background-clip: text; color: transparent;
+            animation: mhHomeCampaignShimmer 7s linear infinite;
+          }
+          @keyframes mhHomeCampaignShimmer { 0% { background-position: 0% 50%; } 100% { background-position: 300% 50%; } }
+
+          .mh-home-campaign-badge::before {
+            content: ""; position: absolute; inset: -4px; border-radius: 50%;
+            background: linear-gradient(135deg,#ED1C24,#EC008C);
+            opacity: 0.55; z-index: -1;
+            animation: mhHomeCampaignPulse 3.4s ease-out infinite;
+          }
+          @keyframes mhHomeCampaignPulse {
+            0% { transform: scale(0.85); opacity: 0.5; }
+            70% { transform: scale(1.7); opacity: 0; }
+            100% { transform: scale(1.7); opacity: 0; }
+          }
+        `}</style>
+      )}
     </button>
   );
 }
