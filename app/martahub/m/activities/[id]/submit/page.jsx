@@ -450,7 +450,17 @@ export default function SubmitActualPage() {
             if (d.entries) setEntries(d.entries);
             if (d.pendingTransfers) setPendingTransfers(d.pendingTransfers);
             if (d.rebuyEntries) setRebuyEntries(d.rebuyEntries.map((r) => ({ ...r, persisted: false, id: undefined })));
-            if (d.costActual != null) setCostActual(d.costActual);
+            // BUG FIX (2026-09-16, laporan DSF: cost sudah diisi/tersimpan
+            // di DB tapi begitu buka lagi malah diminta centang "tidak ada
+            // biaya"): draft lokal SEHARUSNYA cuma menang kalau memang ADA
+            // isinya. `d.costActual != null` dulu tetap true walau isinya
+            // string kosong "" (draft lama yg dibuat sebelum field cost
+            // pernah disentuh sama sekali), jadi draft kosong itu DIAM2
+            // menimpa balik nilai cost_actual asli dari DB yg baru saja
+            // dimuat di atas - costActual jadi "" (baca: 0 begitu dikirim),
+            // padahal DB-nya sudah benar. Sekarang draft cuma dipakai kalau
+            // benar2 berisi angka (termasuk "0" yg sengaja dikonfirmasi).
+            if (d.costActual != null && d.costActual !== "") setCostActual(d.costActual);
             if (d.costActualZeroConfirmed) setCostActualZeroConfirmed(true);
             if (d.insight != null) setInsight(d.insight);
           }

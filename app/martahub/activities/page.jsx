@@ -321,7 +321,11 @@ function Body({ email }) {
       for (const s of sites || []) {
         const kec = s.kecamatan_name || s.kecamatan || null;
         if (!siteMeta[s.site_id] || (!siteMeta[s.site_id].kecamatan && kec)) {
-          siteMeta[s.site_id] = { kabupaten: s.kabupaten || null, kecamatan: kec };
+          // kecamatan_fokus ikut diambil dari baris yg sama yg "menang" -
+          // site_id yg sama SEHARUSNYA konsisten YES/NO-nya lintas brand
+          // (upload List Site per-kecamatan, bukan per-brand), jadi tidak
+          // perlu logic pilih terpisah spt kabupaten/kecamatan.
+          siteMeta[s.site_id] = { kabupaten: s.kabupaten || null, kecamatan: kec, kecamatanFokus: s.kecamatan_fokus || "NO" };
         }
       }
       setSiteMetaMap(siteMeta);
@@ -394,6 +398,7 @@ function Body({ email }) {
     { key: "mc", label: "Micro Cluster", width: 120, filter: true, get: (r) => r.mc || "-" },
     { key: "kabupaten", label: "Kabupaten", width: 150, filter: true, get: (r) => siteMetaMap[r.site_id]?.kabupaten || "-" },
     { key: "kecamatan", label: "Kecamatan", width: 150, filter: true, get: (r) => siteMetaMap[r.site_id]?.kecamatan || "-" },
+    { key: "kecamatanFokus", label: "Kecamatan Fokus", width: 130, filter: true, get: (r) => siteMetaMap[r.site_id]?.kecamatanFokus || "NO" },
     { key: "creator", label: "BME/RGE", width: 150, filter: true, get: (r) => resolveCreatorName(r, { profileMap, bmeAssignMap, branchMap }) || "-" },
     { key: "planDate", label: "Plan Date", width: 100, filter: true, get: (r) => fmtDate(r.plan_date_start || r.plan_date), sortVal: (r) => r.plan_date_start || r.plan_date || "", raw: (r) => dateOnlyToJsDate(r.plan_date_start || r.plan_date), date: true },
     { key: "actualDate", label: "Actual Date", width: 100, filter: true, get: (r) => fmtDate(r.actual_date), sortVal: (r) => r.actual_date || "", raw: (r) => dateOnlyToJsDate(r.actual_date), date: true },

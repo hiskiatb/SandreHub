@@ -50,6 +50,11 @@ function Body({ email }) {
   const [selected, setSelected] = useState(null);
   const [detailId, setDetailId] = useState(null);
   const [hoverDay, setHoverDay] = useState(null);
+  // Filter "Kecamatan Fokus" (site.kecamatan_fokus = YES/NO, diupload lewat
+  // List Site - lihat lib/martaSiteImport.js) - "all" tampil semua spt
+  // sebelumnya, "focus"/"nonfocus" mempersempit grid+ringkasan bulan ini.
+  const [focusFilter, setFocusFilter] = useState("all");
+  const [siteFocusMap, setSiteFocusMap] = useState({});
 
   const load = useCallback(async () => {
     setLoading(true); setErr("");
@@ -72,34 +77,61 @@ function Body({ email }) {
         p_period_end: end,
       });
       if (error) throw new Error(error.message);
-      setRows(data || []);
+      const list = data || [];
+      setRows(list);
       setSelected(null);
+
+      // Site meta (kecamatan_fokus) - dibatasi ke site_id yg BENAR2 dipakai
+      // bulan ini saja (sama pola dgn Activity Plan - lihat activities/page.jsx),
+      // bukan tarik semua site (bisa 25rb+ baris).
+      const siteIds = [...new Set(list.map((r) => r.site_id).filter(Boolean))];
+      if (siteIds.length) {
+        const { data: sites } = await supabaseMarta.rpc("mh_sites_lookup", { p_site_ids: siteIds });
+        const m = {};
+        for (const s of sites || []) { if (!(s.site_id in m) || s.kecamatan_fokus === "YES") m[s.site_id] = s.kecamatan_fokus || "NO"; }
+        setSiteFocusMap(m);
+      } else {
+        setSiteFocusMap({});
+      }
     } catch (e) { setErr(e.message || "Gagal memuat"); }
     finally { setLoading(false); }
   }, [email, cursor.y, cursor.m]);
   useEffect(() => { load(); }, [load]);
 
+  // Baris yg lolos filter Kecamatan Fokus - dipakai SEMUA turunan di bawah
+  // (grid kalender + strip ringkasan) supaya keduanya selalu konsisten,
+  // sama prinsipnya dgn deriveStatusInfo() yg SATU sumber kebenaran warna.
+  const filteredRows = useMemo(() => {
+    if (focusFilter === "all") return rows;
+    return rows.filter((r) => {
+      const v = r.site_id ? (siteFocusMap[r.site_id] || "NO") : "NO";
+      return focusFilter === "focus" ? v === "YES" : v !== "YES";
+    });
+  }, [rows, focusFilter, siteFocusMap]);
+
   const byDay = useMemo(() => {
     const m = new Map();
-    for (const r of rows) {
+    for (const r of filteredRows) {
       const d = (r.plan_date || "").slice(0, 10);
       if (!m.has(d)) m.set(d, []);
       m.get(d).push(r);
     }
     return m;
-  }, [rows]);
+  }, [filteredRows]);
 
   // Ringkasan status bulan ini (dipakai di strip legend/stat header) -
   // dihitung dari deriveStatusInfo() per baris supaya angkanya SELALU
   // sinkron dgn warna/label yg dipakai di grid & panel hari terpilih.
   const monthStats = useMemo(() => {
     const byColor = new Map();
-    for (const r of rows) {
+    for (const r of filteredRows) {
       const [, color] = deriveStatusInfo(r);
       byColor.set(color, (byColor.get(color) || 0) + 1);
     }
     return LEGEND.map((l) => ({ ...l, count: byColor.get(l.color) || 0 }));
-  }, [rows]);
+  }, [filteredRows]);
+
+  const focusCount = useMemo(() => rows.filter((r) => r.site_id && siteFocusMap[r.site_id] === "YES").length, [rows, siteFocusMap]);
 
   const firstDow = new Date(cursor.y, cursor.m, 1).getDay();
   const daysInMonth = new Date(cursor.y, cursor.m + 1, 0).getDate();
@@ -131,6 +163,29 @@ function Body({ email }) {
           <button className="mh-btn" onClick={() => { const n = new Date(); setCursor({ y: n.getFullYear(), m: n.getMonth() }); }}
             style={{ ...navBtn, width: "auto", padding: "0 14px", fontSize: 12, fontWeight: 700 }}>Hari ini</button>
         </div>
+
+        {/* Filter Kecamatan Fokus - site yg ditandai "YES" lewat upload List
+            Site (lihat Master Data > List Site, kolom "Kecamatan Fokus").
+            Cuma tampil kalau ADA site fokus di rows bulan ini, biar tidak
+            bikin bingung region yg belum pernah upload data fokusnya. */}
+        {focusCount > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 4, background: "#F5F6F9", borderRadius: 999, padding: 3 }}>
+            {[
+              { key: "all", label: "Semua" },
+              { key: "focus", label: `Kec. Fokus (${focusCount})` },
+              { key: "nonfocus", label: "Non-Fokus" },
+            ].map((opt) => (
+              <button key={opt.key} className="mh-btn" onClick={() => setFocusFilter(opt.key)}
+                style={{
+                  border: "none", borderRadius: 999, padding: "6px 12px", fontSize: 11.5, fontWeight: 700, cursor: "pointer",
+                  background: focusFilter === opt.key ? T.primary : "transparent",
+                  color: focusFilter === opt.key ? "#fff" : T.mid,
+                }}>
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
