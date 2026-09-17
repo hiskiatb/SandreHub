@@ -86,7 +86,21 @@ function deriveStatusInfo(r, meta) {
   // lengkap. Cek SEMUA kolom mandatory itu di sini & tandai "Belum Lengkap"
   // kalau ada yg masih kosong - TIMPA status lifecycle lain, walau data itu
   // sendiri tadinya dianggap valid & lolos saat proses import.
-  if (r?.plan_source === "cms_import" && meta) {
+  // FIX: override "Belum Lengkap" ini SEBELUMNYA jalan juga utk row yg
+  // status DB-nya sudah "completed" - artinya laporan actual-nya sendiri
+  // sudah disubmit & tervalidasi lengkap (trigger mh_validate_activity_actual),
+  // tapi kalau ada kolom metadata sekunder yg kosong (Micro Cluster, mapping
+  // Kabupaten/Kecamatan dari Site ID, nama BME/RGE, Cost Estimate, dst -
+  // biasanya krn master data pendukungnya belum lengkap, BUKAN krn actual-nya
+  // belum selesai) row itu ikut ditimpa jadi "Belum Lengkap", padahal
+  // sebenarnya sudah Selesai. Ini bikin pill "Selesai" & KPI "Laporan Actual"
+  // di CMS beda dgn "Total Selesai" di MartaHub mobile (m/_shared/activityUi.js
+  // & m/page.jsx), yg cuma pakai status==="completed" apa adanya tanpa cek
+  // kelengkapan metadata ini. Skip override "Belum Lengkap" begitu status
+  // sudah "completed", supaya definisi "Selesai" persis sama dgn mobile -
+  // kelengkapan metadata cukup ditandai lewat drilldown detail, tidak perlu
+  // menimpa status lifecycle-nya.
+  if (r?.plan_source === "cms_import" && meta && r?.status !== "completed") {
     if (getIncompleteImportFields(r, meta).length > 0) return ["Belum Lengkap", T.warning, T.warningBg];
   }
   // "revision_needed" digabung (dulu status terpisah "revision_actual") -
@@ -491,15 +505,42 @@ function Body({ email }) {
   //    "Activity Monitoring" & "Activity Submission" - keduanya cuma
   //    potongan/tampilan lain dari tabel mh_activities yang sama ini, jadi
   //    disatukan langsung di sini: pantauan cepat DAN detail per baris ada
-  //    di satu tempat). Dihitung dari filteredRows supaya ikut mengikuti
-  //    filter/pencarian yang sedang aktif. ─────────────────────────────────
+  //    di satu tempat).
+  // FIX: sebelumnya dihitung dari filteredRows (ikut SEMUA kolom filter yg
+  // aktif, termasuk tab STATUS) - jadi begitu tab "Selesai" dipilih (atau
+  // tab lain), target/plan-nya ikut kepotong sesuai baris yg lolos filter
+  // status itu juga, bikin rasio SP/FWA & %ACH/%PROD kelihatan janggal.
+  // KPI ringkasan ini SEHARUSNYA selalu berarti "laporan yang SUDAH
+  // SELESAI" apa adanya (sama spt kartu "Laporan Actual" & mobile) -
+  // jadi basisnya dipaksa scope ke status==='completed', LEPAS dari tab
+  // STATUS yg sedang dipilih di tabel (biar KPI tetap stabil walau user
+  // sedang lihat tab "Menunggu Hari-H" dsb) - tapi tetap ikut menyempit
+  // kalau user memfilter kolom LAIN (brand/branch/dst) atau search, sesuai
+  // filter yg sedang aktif di kolom2 non-status itu.
+  // "scopedRows" = semua plan (segala status) yg lolos filter kolom LAIN
+  // (brand/branch/dst) + search, TAPI lepas dari tab STATUS - dipakai sbg
+  // penyebut "... / N plan" biar rasio Selesai-vs-total tetap masuk akal
+  // walau user lagi buka tab status lain di tabel.
+  const scopedRows = useMemo(() => {
+    let list = searchFiltered;
+    for (const col of FILTER_COLS) {
+      if (col.key === "status") continue; // status difilter manual di bawah -> selalu "completed"
+      const sel = colFilters[col.key];
+      if (sel && sel.length) list = list.filter((r) => sel.includes(col.get(r)));
+    }
+    return list;
+  }, [searchFiltered, colFilters, FILTER_COLS]);
+
+  const kpiBaseRows = useMemo(() => scopedRows.filter((r) => r.status === "completed"), [scopedRows]);
+
   const kpiStats = useMemo(() => {
-    const total = filteredRows.length;
+    const total = scopedRows.length;
 
     // Achievement & Productivity - rata-rata dari mh_leaderboard_summary
     // (dihitung server-side dari bobot mh_settings.leaderboard_weights),
-    // discope ke BME/RGE yang punya activity di filteredRows saat ini.
-    const bmeIds = Array.from(new Set(filteredRows.map((r) => r.bme_user_id).filter(Boolean)));
+    // discope ke BME/RGE yang punya LAPORAN SELESAI (kpiBaseRows), bukan
+    // filteredRows - konsisten dgn definisi "Selesai" di atas.
+    const bmeIds = Array.from(new Set(kpiBaseRows.map((r) => r.bme_user_id).filter(Boolean)));
     const lbEntries = bmeIds.map((id) => lbMap[id]).filter(Boolean);
     const avgAchievement = lbEntries.length
       ? lbEntries.reduce((s, e) => s + (Number(e.achievement_pct) || 0), 0) / lbEntries.length
@@ -511,8 +552,9 @@ function Body({ email }) {
     // "Pengajuan" = target yg diajukan BME saat plan; "Tervalidasi" = actual
     // yg sudah direalisasikan/tervalidasi saat laporan disubmit. Ditampilkan
     // sbg ANGKA TOTAL (bukan %) sesuai permintaan - lebih mudah dibaca cepat.
+    // Dihitung dari kpiBaseRows (laporan Selesai saja).
     const sumPair = (tKey, aKey) => {
-      const withTarget = filteredRows.filter((r) => r[tKey]);
+      const withTarget = kpiBaseRows.filter((r) => r[tKey]);
       const tgt = withTarget.reduce((s, r) => s + (r[tKey] ?? 0), 0);
       const act = withTarget.reduce((s, r) => s + (r[aKey] ?? 0), 0);
       return { tgt, act, n: withTarget.length };
@@ -524,17 +566,17 @@ function Body({ email }) {
     // "actualRebuy" gabungan ini dipakai utk SUB-ROW "Rebuy SP" maupun
     // "Rebuy FWA" sekaligus, jadi keduanya salah nampilin angka gabungan yg
     // sama persis, bukan porsi masing-masing.
-    const actualRebuySp = filteredRows.reduce((s, r) => s + (r.actual_rebuy_sp ?? 0), 0);
-    const targetRebuySp = filteredRows.reduce((s, r) => s + (r.target_rebuy_sp ?? 0), 0);
-    const actualRebuyFwa = filteredRows.reduce((s, r) => s + (r.actual_rebuy_fwa ?? 0), 0);
-    const targetRebuyFwa = filteredRows.reduce((s, r) => s + (r.target_rebuy_fwa ?? 0), 0);
+    const actualRebuySp = kpiBaseRows.reduce((s, r) => s + (r.actual_rebuy_sp ?? 0), 0);
+    const targetRebuySp = kpiBaseRows.reduce((s, r) => s + (r.target_rebuy_sp ?? 0), 0);
+    const actualRebuyFwa = kpiBaseRows.reduce((s, r) => s + (r.actual_rebuy_fwa ?? 0), 0);
+    const targetRebuyFwa = kpiBaseRows.reduce((s, r) => s + (r.target_rebuy_fwa ?? 0), 0);
     const actualRebuy = actualRebuySp + actualRebuyFwa;
-    const actualRev3m = filteredRows.reduce((s, r) => s + (r.actual_rev_3m ?? 0), 0);
-    const targetRev3m = filteredRows.reduce((s, r) => s + (r.target_rev_3m ?? 0), 0);
-    const totalCostActual = filteredRows.reduce((s, r) => s + (r.cost_actual ?? 0), 0);
-    const totalCostEstimate = filteredRows.reduce((s, r) => s + (r.cost_estimate ?? 0), 0);
+    const actualRev3m = kpiBaseRows.reduce((s, r) => s + (r.actual_rev_3m ?? 0), 0);
+    const targetRev3m = kpiBaseRows.reduce((s, r) => s + (r.target_rev_3m ?? 0), 0);
+    const totalCostActual = kpiBaseRows.reduce((s, r) => s + (r.cost_actual ?? 0), 0);
+    const totalCostEstimate = kpiBaseRows.reduce((s, r) => s + (r.cost_estimate ?? 0), 0);
 
-    const withBudget = filteredRows.filter((r) => r.cost_estimate);
+    const withBudget = kpiBaseRows.filter((r) => r.cost_estimate);
     const budgetEst = withBudget.reduce((s, r) => s + (r.cost_estimate ?? 0), 0);
     const budgetAct = withBudget.reduce((s, r) => s + (r.cost_actual ?? 0), 0);
     const costRatioPct = budgetEst > 0 ? Math.round((budgetAct / budgetEst) * 100) : null;
@@ -544,8 +586,10 @@ function Body({ email }) {
     // Beranda - BUKAN lagi berdasar kolom `actual_date` (legacy, jarang/
     // tidak konsisten terisi, tidak ikut diperbarui trigger validasi
     // mh_validate_activity_actual sama sekali) yg bikin angka KPI ini bisa
-    // meleset jauh dari status Selesai yg sebenarnya.
-    const actualSubmittedCount = filteredRows.filter((r) => r.status === "completed").length;
+    // meleset jauh dari status Selesai yg sebenarnya. Dihitung dari
+    // kpiBaseRows (sudah `status === "completed"`), jadi selalu = jumlah
+    // baris kpiBaseRows itu sendiri.
+    const actualSubmittedCount = kpiBaseRows.length;
 
     return {
       total,
@@ -556,7 +600,7 @@ function Body({ email }) {
       actualSubmittedCount,
       avgAchievement, avgProductivity,
     };
-  }, [filteredRows, lbMap]);
+  }, [kpiBaseRows, scopedRows, lbMap]);
 
   const statusStatusCounts = useMemo(() => {
     const m = new Map();

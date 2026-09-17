@@ -40,6 +40,14 @@ export function revisionKindLabel(a) {
 }
 
 export const MONTHS = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Ags", "Sep", "Okt", "Nov", "Des"];
+// Versi nama bulan LENGKAP - khusus dipakai di tempat yg memang menampilkan
+// SATU bulan sbg identitas periode (mis. pill filter "Bulan" di daftar
+// Aktivitas) - beda kebutuhan dgn MONTHS (singkatan) yg dipakai buat
+// tanggal LENGKAP sehari-hari (mis. "16 Sep 2026" di kartu aktivitas),
+// tetap disingkat krn di situ SUDAH ada angka tanggal & tahun di
+// sampingnya jadi tidak ambigu. Nama bulan sendirian tanpa tanggal (cuma
+// "Sep 2026") kurang jelas dibaca sekilas, makanya user minta dipanjangkan.
+export const MONTHS_FULL = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 
 export function fmtDate(s) {
   if (!s || s.length < 10) return "-";

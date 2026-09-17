@@ -6,9 +6,9 @@
  * Data dari RPC `mh_activity_calendar_for_me` (scoping hierarki sama dgn
  * CalendarPickerSheet di wizard Create Plan - lihat _shared/CalendarPickerSheet.jsx).
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, ChevronRight, ChevronDown, Plus, Loader2, CardSim, Router, RefreshCw, Megaphone, Building2, Tags, ListChecks } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Plus, CardSim, Router, RefreshCw, Megaphone, Building2, Tags, ListChecks } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, FF, BRAND, NAV_HEIGHT } from "../_shared/MobileShell";
 // MonthYearPickerSheet dipakai ulang persis dari wizard Buat Plan (kalender
@@ -175,10 +175,39 @@ export default function CalendarPage() {
 
   const todayKey = toKey(today.getFullYear(), today.getMonth(), today.getDate());
 
+  // Arah pergantian bulan TERAKHIR (1 = maju/next, -1 = mundur/prev) -
+  // dipakai utk animasi slide grid kalender (lihat calGridKey di bawah) -
+  // supaya bulan baru kelihatan "masuk" dari arah yg sesuai (maju masuk
+  // dari kanan, mundur masuk dari kiri), bukan cuma ganti angka instan.
+  const [slideDir, setSlideDir] = useState(1);
+  const swipeRef = useRef({ x: 0, y: 0, active: false });
+
   function changeMonth(delta) {
+    setSlideDir(delta >= 0 ? 1 : -1);
     let m = viewMonth + delta, y = viewYear;
     if (m < 0) { m = 11; y -= 1; } else if (m > 11) { m = 0; y += 1; }
     setViewMonth(m); setViewYear(y);
+  }
+
+  // Swipe kiri/kanan utk ganti bulan - dipasang di KARTU kalender saja
+  // (bukan seluruh halaman), spy tidak bentrok dgn scroll vertikal daftar
+  // aktivitas di bawahnya. Cuma dipicu kalau gesture horizontal jelas
+  // dominan (|dx| > |dy|) & jaraknya cukup jauh (SWIPE_MIN px) - gesture
+  // pendek/lebih vertikal dibiarkan lewat begitu saja (tap tanggal,
+  // scroll, dst tetap jalan normal).
+  const SWIPE_MIN = 42;
+  function onCalendarTouchStart(e) {
+    const t = e.touches[0];
+    swipeRef.current = { x: t.clientX, y: t.clientY, active: true };
+  }
+  function onCalendarTouchEnd(e) {
+    if (!swipeRef.current.active) return;
+    swipeRef.current.active = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - swipeRef.current.x;
+    const dy = t.clientY - swipeRef.current.y;
+    if (Math.abs(dx) < SWIPE_MIN || Math.abs(dx) <= Math.abs(dy)) return;
+    changeMonth(dx < 0 ? 1 : -1); // geser ke kiri = bulan berikutnya, ke kanan = sebelumnya
   }
 
   // Opsi Branch - dari master data mh_branches (loadBranchMap, sama sumber
@@ -291,7 +320,11 @@ export default function CalendarPage() {
         {/* Kartu kalender - navigasi bulan SEKARANG jadi header kartu ini
             sendiri (dulu baris terpisah di luar, mengambang & nambah jarak
             kosong) supaya kalender terasa satu blok yang rapi. */}
-        <div style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 18, padding: "12px 12px 14px", boxShadow: "0 4px 14px rgba(17,17,20,0.04)" }}>
+        <div
+          onTouchStart={onCalendarTouchStart}
+          onTouchEnd={onCalendarTouchEnd}
+          onTouchCancel={() => { swipeRef.current.active = false; }}
+          style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 18, padding: "12px 12px 14px", boxShadow: "0 4px 14px rgba(17,17,20,0.04)" }}>
           {/* Header bulan/tahun - dibuat PERSIS spt di kalender wizard Buat
               Plan (_shared/CalendarPickerSheet.jsx): satu kapsul abu2
               menyatu isinya panah prev/next bulat putih + label bulan-tahun
@@ -309,7 +342,16 @@ export default function CalendarPage() {
                 <span style={{ textAlign: "center", fontSize: 16, fontWeight: 800, color: "#17181C", letterSpacing: -0.3 }}>
                   {MONTH_NAMES_FULL[viewMonth]} <span style={{ color: "#A9A9B4", fontWeight: 700 }}>{viewYear}</span>
                 </span>
-                <ChevronDown size={14} strokeWidth={2.5} color="#A9A9B4" />
+                {/* Titik kecil berputar - indikator refetch LATAR BELAKANG
+                    (lihat catatan "loading" di bawah, grid tanggal TIDAK
+                    lagi disembunyikan di balik spinner besar tiap ganti
+                    bulan) - cuma nongol sekilas di samping label bulan,
+                    tidak memblokir apa pun. */}
+                {loading ? (
+                  <span style={{ width: 11, height: 11, borderRadius: "50%", border: "1.5px solid #E9EAEE", borderTopColor: "#ED1C24", animation: "mspin .8s linear infinite", flexShrink: 0 }} />
+                ) : (
+                  <ChevronDown size={14} strokeWidth={2.5} color="#A9A9B4" />
+                )}
               </button>
               <button onClick={() => changeMonth(1)}
                 style={{ width: 32, height: 32, borderRadius: "50%", background: "#FFFFFF", border: "none", boxShadow: "0 1px 4px rgba(23,24,28,0.10)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#3A3A44" }}>
@@ -326,11 +368,23 @@ export default function CalendarPage() {
               );
             })}
           </div>
-          {loading ? (
-            <div style={{ display: "flex", justifyContent: "center", padding: "30px 0" }}>
-              <Loader2 size={20} color="#ED1C24" style={{ animation: "mspin .9s linear infinite" }} />
-            </div>
-          ) : (
+          {/* Grid tanggal SELALU dirender, TIDAK LAGI diganti spinner besar
+              tiap ganti bulan (dulu: {loading ? <spinner> : <grid>} - setiap
+              swipe/tap panah bulan memicu fetch baru yg langsung
+              menyembunyikan seluruh grid di balik spinner, jadi kelihatan
+              "loading lama" padahal datanya sendiri biasanya cepat).
+              Sekarang byDate LAMA (bulan sebelumnya) tetap tampil apa
+              adanya sampai fetch bulan baru selesai lalu otomatis
+              ter-update diam2 (stale-while-revalidate) - status "sedang
+              memuat" cukup ditandai titik kecil berputar di samping label
+              bulan (lihat di atas), bukan memblokir seluruh kalender. Grid
+              tanggal bulan ini dibungkus overflow:hidden + di-key per
+              bulan (viewYear-viewMonth) - remount tiap ganti bulan memicu
+              animasi CSS masuk (mhCalSlideInR/mhCalSlideInL, lihat <style>
+              di bawah komponen) sesuai arah slideDir, jadi transisi antar
+              bulan (baik lewat tombol panah maupun swipe) kelihatan
+              meluncur mulus, bukan loncat instan. */}
+          <div key={`${viewYear}-${viewMonth}`} style={{ overflow: "hidden" }} className={slideDir >= 0 ? "mh-cal-slide-r" : "mh-cal-slide-l"}>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 4, marginTop: 4 }}>
               {/* Sel tanggal PERSIS spt kalender wizard Buat Plan: lingkaran
                   penuh, SEMUA tanggal (bukan cuma yg terpilih) dikasih
@@ -364,7 +418,7 @@ export default function CalendarPage() {
                 );
               })}
             </div>
-          )}
+          </div>
         </div>
 
         {monthPickerOpen && (
@@ -591,6 +645,27 @@ export default function CalendarPage() {
         )}
       </div>
 
+      {/* Animasi slide masuk grid tanggal saat ganti bulan (tombol panah
+          ATAU swipe kiri/kanan - lihat changeMonth/onCalendarTouchEnd di
+          atas) - arah animasi mengikuti slideDir: maju (next) masuk dari
+          KANAN, mundur (prev) masuk dari KIRI, konsisten dgn arah jari yg
+          menggeser. Durasi singkat (0.28s) + easing decelerate spy terasa
+          responsif, bukan lambat/berat. */}
+      {/* <style> POLOS (bukan <style jsx global>) - komponen ini sudah
+          punya <style jsx> LOKAL lain di dalam .map() (badge judul
+          campaign, lihat mh-campaign-title-cal di atas); Next.js menolak
+          build kalau ada DUA tag <style jsx> dalam satu komponen
+          ("Detected nested styled-jsx tag"). Krn keyframes ini memang
+          global (dipakai lewat className statis, bukan scoped), cukup
+          tag <style> biasa - polanya SAMA dgn keyframes spinner kecil di
+          FilterSelect/CalendarBranchSelect (mh-filter-spin dkk) di file
+          lain, bukan hal baru di codebase ini. */}
+      <style>{`
+        @keyframes mhCalSlideInR { from { transform: translateX(26px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes mhCalSlideInL { from { transform: translateX(-26px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        .mh-cal-slide-r { animation: mhCalSlideInR 0.28s cubic-bezier(0.22,1,0.36,1); }
+        .mh-cal-slide-l { animation: mhCalSlideInL 0.28s cubic-bezier(0.22,1,0.36,1); }
+      `}</style>
     </MobileShell>
   );
 }

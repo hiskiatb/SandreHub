@@ -222,8 +222,27 @@ export function useMartaSession() {
 // spy tetap terasa senada dgn app native (harus tarik SAMPAI penuh baru
 // memicu refresh, bukan cuma nyenggol dikit, sesuai permintaan user).
 const PTR_MAX_PULL = 88; // px - batas jarak visual tarikan
-const PTR_THRESHOLD = 64; // px - jarak MINIMAL yg harus ditarik sblm dilepas spy refresh terpicu
+const PTR_THRESHOLD = 64; // px - jarak MINIMAL yg harus ditarik sblm dilepas spy refresh terpicu (~73% dari PTR_MAX_PULL - senada dgn app native spt Mail/Twitter yg umumnya di kisaran 60-75%, jadi TIDAK diubah, cuma titik AWAL gesture-nya yg diperketat di bawah)
 const PTR_RESIST = 0.52; // rubber-band: jari harus geser lebih jauh dari nilai visualnya
+// BUG YG DIPERBAIKI: gesture cuma dicek scrollTop===0 saat disentuh, TANPA
+// syarat lain - di halaman yg kontennya pendek/pas 1 layar (blm perlu
+// discroll, mis. Leaderboard bulan sepi/Beranda saat semua kartu muat),
+// scrollTop SELALU 0 di mana pun disentuh, jadi menarik ke bawah dari
+// TENGAH layar (misal cuma mau geser2 baca kartu, tap tombol yg jarinya
+// geser dikit, atau scroll horizontal chip) ikut kepicu jadi pull-to-
+// refresh - user melaporkan "sering ketrigger". SEMPAT dicoba batasi ke
+// zona atas layar saja, tapi itu bikin gesture susah dijangkau (thumb
+// reach jelek kalau jari harus mulai dari dekat notch) - jadi PTR TETAP
+// boleh mulai dari mana saja di layar (spt app native pd umumnya), TAPI
+// dipertahankan lebih ketat dgn 2 lapis: (1) deteksi ARAH - gesture
+// dibatalkan penuh kalau geseran HORIZONTAL lebih dominan drpd vertikal
+// di awal tarikan (mis. scroll chip Branch/mode ranking, carousel), (2)
+// SENTUHAN AWAL di elemen interaktif (tombol/link/input/select/kartu yg
+// bisa ditekan) tidak diarmed sama sekali - PTR cuma boleh dipicu dari
+// gesture yg mulai di area KOSONG/teks statis, bukan dari jari yg lagi
+// coba menekan sesuatu tapi kebetulan geser sedikit ke bawah.
+const PTR_DIRECTION_LOCK = 8; // px - jarak gerak minimal sblm arah gesture (vertikal vs horizontal) dikunci
+const PTR_INTERACTIVE_SELECTOR = "button, a, input, select, textarea, label, [role='button'], [onclick]";
 
 function usePullToRefresh(containerRef) {
   const [pull, setPull] = useState(0);
@@ -240,7 +259,10 @@ function usePullToRefresh(containerRef) {
     const getScrollTop = () => window.scrollY || document.documentElement.scrollTop || 0;
 
     let startY = 0;
-    let active = false; // sesi sentuhan ini dimulai dari posisi paling atas (scrollTop 0)
+    let startX = 0;
+    let active = false; // sesi sentuhan ini dimulai dari posisi paling atas (scrollTop 0) & zona atas layar
+    let directionLocked = false; // arah gesture (vertikal/horizontal) sudah ditentukan dari gerakan awal
+    let verticalIntent = true;
 
     // Popup/dialog full-screen tertentu (mis. TimeEditPopup di
     // CalendarPickerSheet) mengunci pull-to-refresh lewat flag global ini
@@ -255,17 +277,36 @@ function usePullToRefresh(containerRef) {
     const onTouchStart = (e) => {
       if (refreshingRef.current || isLocked()) return;
       if (getScrollTop() > 0) { active = false; return; }
+      // Sentuhan yg mulai DI ATAS elemen interaktif (tombol, chip filter,
+      // kartu yg bisa ditekan, dst) tidak diarmed - lihat catatan
+      // PTR_INTERACTIVE_SELECTOR di atas. closest() aman dipanggil di
+      // touch target apa pun (elemen DOM biasa).
+      if (e.target?.closest?.(PTR_INTERACTIVE_SELECTOR)) { active = false; return; }
       active = true;
+      directionLocked = false;
+      verticalIntent = true;
       startY = e.touches[0].clientY;
+      startX = e.touches[0].clientX;
       setDragging(true);
     };
     const onTouchMove = (e) => {
       if (!active || refreshingRef.current || isLocked()) return;
-      const delta = e.touches[0].clientY - startY;
-      if (delta <= 0 || getScrollTop() > 0) { active = false; setPullState(0); return; }
+      const dy = e.touches[0].clientY - startY;
+      const dx = e.touches[0].clientX - startX;
+      // Kunci arah gesture SEKALI di awal tarikan (begitu total gerakan
+      // melewati PTR_DIRECTION_LOCK px) - kalau ternyata geseran horizontal
+      // yg dominan (mis. scroll chip Branch/mode ranking), batalkan sesi
+      // PTR ini sepenuhnya, bukan cuma diabaikan sesaat, spy tidak
+      // "menyala" balik kalau jari lalu digeser turun.
+      if (!directionLocked && (Math.abs(dy) >= PTR_DIRECTION_LOCK || Math.abs(dx) >= PTR_DIRECTION_LOCK)) {
+        directionLocked = true;
+        verticalIntent = Math.abs(dy) > Math.abs(dx);
+      }
+      if (directionLocked && !verticalIntent) { active = false; setPullState(0); return; }
+      if (dy <= 0 || getScrollTop() > 0) { active = false; setPullState(0); return; }
       e.preventDefault();
       // Damping - makin ditarik makin "berat" (bukan linear), terasa elastis spt native.
-      const next = PTR_MAX_PULL * (1 - Math.exp((-delta * PTR_RESIST) / PTR_MAX_PULL));
+      const next = PTR_MAX_PULL * (1 - Math.exp((-dy * PTR_RESIST) / PTR_MAX_PULL));
       setPullState(Math.min(PTR_MAX_PULL, next));
     };
     const onTouchEnd = () => {

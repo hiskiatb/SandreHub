@@ -21,7 +21,7 @@ import {
   Building2, ChevronRight, ChevronLeft, Clock,
   CalendarPlus, ListChecks, Map as MapIcon, Trophy, ShieldCheck, ClipboardCheck, Lightbulb, PackageCheck,
   Target, CheckCircle2, Wallet, Tags, LayoutDashboard, UserCog, FileEdit, Banknote,
-  CardSim, Router, RefreshCw, Receipt, Globe2, Bell, X, MapPinned, Megaphone,
+  CardSim, Router, RefreshCw, Receipt, Globe2, Bell, X, Megaphone, FileBarChart,
 } from "lucide-react";
 import supabaseMarta from "../../../lib/supabaseMarta";
 import { applyMartaScope, loadBranchMap } from "../../../lib/martaScope";
@@ -737,7 +737,10 @@ export default function MartaMobileHome() {
                 (pakai scoping yg sama dgn Calendar CMS), jadi role yg
                 cakupannya kosong (mis. dsf tanpa branch tetap) cukup lihat
                 daftar kosong, bukan disembunyikan menunya sama sekali. */}
-            <MenuItem icon={MapPinned} label="Report" color="#0EA5A5" onClick={() => router.push("/martahub/m/report")} />
+            {/* Ikon Report diganti dari MapPinned (pin lokasi - salah pesan,
+                ini menu LAPORAN bukan peta/lokasi) ke FileBarChart (dokumen
+                bergrafik) - lebih tepat mewakili "Report". */}
+            <MenuItem icon={FileBarChart} label="Report" color="#0EA5A5" onClick={() => router.push("/martahub/m/report")} />
             {/* Kelola Campaign - KHUSUS spm_sumatera (semua region) & head
                 (Head TMV, region sendiri) - PERSIS aturan yg sama dgn CMS
                 desktop /martahub/campaigns (bukan tmv/bsm/bme_rge). RPC
@@ -998,6 +1001,28 @@ function AchievementCard({
   const backRef = useRef(null);
   const [frontH, setFrontH] = useState(null);
   const [backH, setBackH] = useState(null);
+  // Swipe kiri/kanan utk balik kartu (tambahan dari tombol "Lihat Detail"/
+  // "< Ringkasan" yg sudah ada) - geser ke KIRI dari sisi depan membuka
+  // rincian (sama arah spt membalik halaman buku ke depan), geser ke
+  // KANAN dari sisi belakang kembali ke ringkasan. Animasi flip-nya
+  // (rotateY, transition) TIDAK berubah - swipe cuma jalur baru utk
+  // memicu setOpen yg sama, jadi tetap SAMA MULUS spt lewat tombol.
+  const swipeRef = useRef({ x: 0, y: 0, active: false });
+  const SWIPE_MIN = 40;
+  const onCardTouchStart = (e) => {
+    const t = e.touches[0];
+    swipeRef.current = { x: t.clientX, y: t.clientY, active: true };
+  };
+  const onCardTouchEnd = (e) => {
+    if (!swipeRef.current.active) return;
+    swipeRef.current.active = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - swipeRef.current.x;
+    const dy = t.clientY - swipeRef.current.y;
+    if (Math.abs(dx) < SWIPE_MIN || Math.abs(dx) <= Math.abs(dy)) return;
+    if (dx < 0 && !open) setOpen(true);
+    else if (dx > 0 && open) setOpen(false);
+  };
 
   useEffect(() => {
     const measure = () => {
@@ -1022,12 +1047,16 @@ function AchievementCard({
 
   return (
     <div style={{ perspective: 1600 }}>
-      <div style={{
-        position: "relative", display: "grid", transformStyle: "preserve-3d",
-        height: (open ? backH : frontH) ?? undefined,
-        transition: "transform .46s cubic-bezier(.34,1,.4,1), height .42s cubic-bezier(.22,1,.36,1)",
-        transform: open ? "rotateY(180deg)" : "rotateY(0deg)",
-      }}>
+      <div
+        onTouchStart={onCardTouchStart}
+        onTouchEnd={onCardTouchEnd}
+        onTouchCancel={() => { swipeRef.current.active = false; }}
+        style={{
+          position: "relative", display: "grid", transformStyle: "preserve-3d",
+          height: (open ? backH : frontH) ?? undefined,
+          transition: "transform .46s cubic-bezier(.34,1,.4,1), height .42s cubic-bezier(.22,1,.36,1)",
+          transform: open ? "rotateY(180deg)" : "rotateY(0deg)",
+        }}>
         {/* ── Depan: ringkasan achievement (sama spt sebelumnya) ── */}
         <div ref={frontRef} style={{ ...faceBase, padding: "20px 18px 18px", opacity: loading ? 0.55 : 1, transition: "opacity .2s", pointerEvents: open ? "none" : "auto" }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>

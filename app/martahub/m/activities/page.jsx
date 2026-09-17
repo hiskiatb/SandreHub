@@ -3,12 +3,12 @@
  * /martahub/m/activities - Daftar aktivitas BME/RGE dengan tab filter status,
  * data dari `mh_activities_for_me()` (RPC scoping sama dgn app Flutter).
  */
-import { useEffect, useMemo, useState, useTransition, Suspense } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Search, X, Plus, Trash2, CheckCircle2, AlertCircle, ChevronRight, ChevronDown, CardSim, Router, Receipt, MapPin, Pencil, FolderClock, Clock, SlidersHorizontal, Check, RefreshCw, Megaphone } from "lucide-react";
+import { Search, X, Plus, Trash2, CheckCircle2, AlertCircle, ChevronRight, ChevronDown, CardSim, Router, Receipt, MapPin, Pencil, FolderClock, Clock, SlidersHorizontal, Check, RefreshCw, Megaphone, ChevronLeft } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, NAV_HEIGHT } from "../_shared/MobileShell";
-import { fmtDate, fmtTimeLabel, fmtInt, fmtRp, isDraftIncomplete, isActivityFullyComplete, activityStage, statusMeta, revisionKindLabel, READY_STATUSES, earliestPlanDate, planMonthKey, updatedAgoLabel, MONTHS } from "../_shared/activityUi";
+import { fmtDate, fmtTimeLabel, fmtInt, fmtRp, isDraftIncomplete, isActivityFullyComplete, activityStage, statusMeta, revisionKindLabel, READY_STATUSES, earliestPlanDate, planMonthKey, updatedAgoLabel, MONTHS_FULL } from "../_shared/activityUi";
 import { MetricTile, RebuyTile, RevenueCostBanner, revenueBannerProps } from "../_shared/MetricTiles";
 import DeleteActivitySheet from "../_shared/DeleteActivitySheet";
 import BottomSheet from "../_shared/BottomSheet";
@@ -36,7 +36,7 @@ const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
 const FAB_MARGIN = 10; // jarak kanan == jarak bawah ke navbar (simetris), dirapatkan lagi
 
 const TABS = [
-  { key: "all", label: "Semua" },
+  { key: "all", label: "Semua Status" },
   { key: "draft", label: "Draft" },
   { key: "plan_submitted", label: "Plan Diajukan" },
   { key: "revision_needed", label: "Revisi" },
@@ -67,6 +67,33 @@ function needsAction(r, userId) {
   // munculkan sbg "Perlu Tindakan" spy jelas ada yg harus dilengkapi.
   if (r.status === "completed" && !isActivityFullyComplete(r)) return true;
   return false;
+}
+
+const DAY_ABBR = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+
+// Daftar tanggal 1..akhir bulan dari monthKey ("YYYY-MM") - dipakai buat
+// chip pemilih tanggal (persis konsep & gaya di Leaderboard, lihat
+// daysInMonthOptions di app/martahub/m/leaderboard/page.jsx). Tanggal di
+// masa depan TETAP ditampilkan (beda dgn Leaderboard yg data actual-nya
+// pasti kosong di masa depan) - di Aktivitas, plan yg SUDAH dijadwalkan
+// buat tanggal mendatang itu normal & valid utk dilihat, jadi tidak perlu
+// di-disable.
+function daysInMonthOptions(monthKey) {
+  if (!monthKey || monthKey === "all") return [];
+  const [y, m] = monthKey.split("-").map(Number);
+  const last = new Date(y, m, 0).getDate();
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const opts = [];
+  for (let d = 1; d <= last; d++) {
+    const dt = new Date(y, m - 1, d);
+    opts.push({
+      key: `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`,
+      day: d,
+      weekday: DAY_ABBR[dt.getDay()],
+      isToday: dt.getTime() === today.getTime(),
+    });
+  }
+  return opts;
 }
 
 function inDateRange(r, range) {
@@ -131,6 +158,60 @@ function ActivitiesInner() {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   });
+  // Filter TANGGAL persis (bukan cuma bulan) - konsep & gayanya dipinjam
+  // dari strip chip tanggal di Leaderboard (app/martahub/m/leaderboard/
+  // page.jsx: "Semua Tanggal" + chip 1..akhir bulan) krn user suka
+  // tampilannya di sana. "" = seluruh bulan terpilih (default, perilaku
+  // lama - TIDAK menyembunyikan apa pun). Cuma relevan/ditampilkan kalau
+  // monthKey != "all" (butuh SATU bulan konkret dulu spy tahu rentang
+  // tanggalnya) - direset otomatis tiap ganti bulan/balik ke "Semua Bulan"
+  // lewat setMonthKeyFiltered di bawah, spy tidak nyangkut nunjuk tanggal
+  // yg sudah tidak relevan dgn bulan yg baru dipilih.
+  const [dateKey, setDateKey] = useState("");
+  const setMonthKeyFiltered = (k) => { setMonthKey(k); setDateKey(""); };
+  // "Hari Ini" (lihat tombol di baris tab Semua/Plan Diajukan/Selesai) -
+  // lompat LANGSUNG ke bulan+tanggal hari ini (bukan cuma bulan spt
+  // setMonthKeyFiltered) - dua state diset SEKALIGUS dlm satu batch spy
+  // dayOptions (turunan dari monthKey) sudah berisi tanggal hari ini pas
+  // efek auto-scroll di bawah jalan, tidak nunggu render terpisah dulu.
+  const todayDateKey = useMemo(() => {
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+  }, []);
+  const isTodaySelected = dateKey === todayDateKey;
+  function selectToday() {
+    startFilterTransition(() => { setMonthKey(todayDateKey.slice(0, 7)); setDateKey(todayDateKey); });
+  }
+  // Ref per tombol chip tanggal (keyed by tanggalnya, "YYYY-MM-DD") - dipakai
+  // scrollIntoView di bawah utk membawa chip tanggal yg BARU dipilih ke
+  // dlm pandangan kalau kebetulan lagi di luar area scroll horizontal-nya
+  // (mis. lompat "Hari Ini" dari tanggal yg jauh sebelumnya) - scroll
+  // browser bawaan ("smooth") sudah cukup mulus tanpa perlu animasi manual.
+  const dayChipRefs = useRef({});
+  const dayStripRef = useRef(null); // ref container strip chip tanggal - dipakai scroll balik ke awal saat dateKey direset (lihat efek scroll di bawah dayOptions)
+  // Tombol "Hari Ini" <-> "Semua Tanggal" - animasi FLIP 3D turun
+  // (rotateX, spt flip kartu ringkasan di Beranda/page.jsx: AchievementCard,
+  // cuma sumbu-nya X bukan Y spy arah flip-nya ke BAWAH bukan ke samping)
+  // dgn lebar tombol yg SELALU pas ikut panjang teks sisi yg lagi
+  // tampil - BUKAN lagi teknik "ukur lebar lama lalu animasikan ke lebar
+  // baru" (rawan lebar lama nyangkut kalau efeknya tidak sempat jalan di
+  // beberapa jalur trigger), tapi lebar KEDUA sisi ("Hari Ini" & "Semua
+  // Tanggal") diukur SEKALI di awal lewat elemen ukur tersembunyi
+  // (hariIniFrontMeasureRef/hariIniBackMeasureRef, visibility:hidden,
+  // tidak ikut alur layout krn position:absolute) - jadi lebar target
+  // SELALU pasti & konsisten, transisi CSS width tinggal baca dari dua
+  // angka yg sudah diketahui ini, tidak pernah "lupa" resize krn dateKey
+  // brp pun/lewat jalur mana pun (bahkan diakses tanpa lewat tombol ini)
+  // otomatis dpt lebar yg BENAR sesuai isinya skr.
+  const hariIniBtnRef = useRef(null);
+  const hariIniFrontMeasureRef = useRef(null);
+  const hariIniBackMeasureRef = useRef(null);
+  const [hariIniFrontW, setHariIniFrontW] = useState(null);
+  const [hariIniBackW, setHariIniBackW] = useState(null);
+  useLayoutEffect(() => {
+    if (hariIniFrontMeasureRef.current) setHariIniFrontW(hariIniFrontMeasureRef.current.getBoundingClientRect().width);
+    if (hariIniBackMeasureRef.current) setHariIniBackW(hariIniBackMeasureRef.current.getBoundingClientRect().width);
+  }, []);
   // Indikator loading KHUSUS saat filter/periode diubah (bukan initial
   // load - itu sudah dipakai `rows === null`) - useTransition dipakai
   // krn filtering 700+ baris di useMemo bisa terasa "macet" sesaat tanpa
@@ -250,12 +331,26 @@ function ActivitiesInner() {
         let map = {};
         let metaMap = {};
         if (siteIds.length > 0) {
-          const { data: siteRows } = await supabaseMarta.from("mh_sites")
-            .select("site_id,branch,kabupaten,kecamatan_name,kecamatan,kecamatan_fokus")
-            .in("site_id", siteIds);
-          (siteRows || []).forEach((s) => {
-            if (s.branch) map[s.site_id] = s.branch;
-            metaMap[s.site_id] = { branch: s.branch || null, kabupaten: s.kabupaten || null, kecamatan: s.kecamatan_name || s.kecamatan || null, kecamatanFokus: s.kecamatan_fokus || "NO" };
+          // Akun head/tmv bisa punya ratusan site_id (region-wide) - query
+          // .in() dengan array sepanjang itu bikin URL request kepanjangan
+          // dan gagal/silently truncated di beberapa akun, alhasil filter
+          // Branch kosong. Dipecah per-batch lalu digabung.
+          const SITE_CHUNK = 150;
+          const siteChunks = [];
+          for (let i = 0; i < siteIds.length; i += SITE_CHUNK) siteChunks.push(siteIds.slice(i, i + SITE_CHUNK));
+          const chunkResults = await Promise.all(
+            siteChunks.map((chunk) =>
+              supabaseMarta.from("mh_sites")
+                .select("site_id,branch,kabupaten,kecamatan_name,kecamatan,kecamatan_fokus")
+                .in("site_id", chunk)
+            )
+          );
+          chunkResults.forEach(({ data: siteRows, error: siteErr }) => {
+            if (siteErr) { console.error("mh_sites fetch error:", siteErr); return; }
+            (siteRows || []).forEach((s) => {
+              if (s.branch) map[s.site_id] = s.branch;
+              metaMap[s.site_id] = { branch: s.branch || null, kabupaten: s.kabupaten || null, kecamatan: s.kecamatan_name || s.kecamatan || null, kecamatanFokus: s.kecamatan_fokus || "NO" };
+            });
           });
         }
         if (alive) {
@@ -296,7 +391,10 @@ function ActivitiesInner() {
       .sort((a, b) => (a[0] < b[0] ? 1 : -1))
       .map(([key, count]) => {
         const [y, m] = key.split("-").map(Number);
-        return { key, count, label: `${MONTHS[m - 1]} ${y}` };
+        // Nama bulan LENGKAP ("September 2026"), bukan disingkat ("Sep
+        // 2026") - pill filter Bulan ini cuma menampilkan bulan sendirian
+        // tanpa tanggal, jadi disingkat kurang jelas dibaca sekilas.
+        return { key, count, label: `${MONTHS_FULL[m - 1]} ${y}` };
       });
   }, [rows]);
   // Kalau bulan yg lagi dipilih ternyata sudah tidak ada datanya lagi (mis.
@@ -306,6 +404,27 @@ function ActivitiesInner() {
     if (monthKey !== "all" && rows && !monthOptions.some((o) => o.key === monthKey)) setMonthKey("all");
   }, [monthKey, monthOptions, rows]);
   const monthLabel = monthKey === "all" ? "Semua Bulan" : (monthOptions.find((o) => o.key === monthKey)?.label || "Semua Bulan");
+  const dayOptions = useMemo(() => daysInMonthOptions(monthKey), [monthKey]);
+  // Auto-scroll strip chip tanggal ke chip yg lagi terpilih (dateKey) kalau
+  // kebetulan di luar area kelihatan - dipasang di sini (SETELAH dayOptions
+  // dihitung ulang utk bulan yg baru) spy efek "Hari Ini" (selectToday, yg
+  // sekaligus ganti bulan) benar2 nemu ref chip-nya (dayOptions bulan LAMA
+  // belum tentu punya tanggal hari ini). Native scrollIntoView({behavior:
+  // "smooth"}) sudah cukup mulus tanpa perlu animasi manual/library tambahan.
+  // BUG YG DIPERBAIKI: sebelumnya efek ini `return` langsung kalau
+  // dateKey kosong, jadi klik "Semua" (yg mengosongkan dateKey) TIDAK
+  // ikut men-scroll strip balik ke tombol "Semua Tanggal" di ujung kiri -
+  // kalau user lagi geser jauh ke kanan, tombolnya kelihatan diam saja
+  // padahal filternya beneran sudah reset. Sekarang dateKey kosong JUGA
+  // memicu scroll (ke allDatesChipRef), bukan cuma dateKey terisi.
+  useEffect(() => {
+    if (dateKey) {
+      const el = dayChipRefs.current[dateKey];
+      if (el) el.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+    } else if (dayStripRef.current) {
+      dayStripRef.current.scrollTo({ left: 0, behavior: "smooth" });
+    }
+  }, [dateKey, dayOptions]);
 
   // Opsi tiap grup filter lanjutan - SEMUA diturunkan dari data yg BENERAN
   // ada di `rows`/`siteMeta` (bukan daftar master statis) - sama prinsipnya
@@ -403,6 +522,7 @@ function ActivitiesInner() {
     if (needsActionOnly) list = list.filter((r) => needsAction(r, userId));
     if (dateRange !== "all") list = list.filter((r) => inDateRange(r, dateRange));
     if (monthKey !== "all") list = list.filter((r) => planMonthKey(r) === monthKey);
+    if (monthKey !== "all" && dateKey) list = list.filter((r) => earliestPlanDate(r) === dateKey);
     if (categories.size > 0) {
       list = list.filter((r) => {
         const cats = Array.isArray(r.event_categories) && r.event_categories.length ? r.event_categories : (r.event_category ? [r.event_category] : []);
@@ -429,7 +549,7 @@ function ActivitiesInner() {
     if (poiFilter.size > 0) list = list.filter((r) => r.poi_type && poiFilter.has(r.poi_type));
     if (siteFilter.size > 0) list = list.filter((r) => r.site_id && siteFilter.has(r.site_id));
     return list;
-  }, [rows, tab, q, needsActionOnly, dateRange, monthKey, categories, userId, siteMeta, statusFilter, brandFilter, branchFilter, kabupatenFilter, kecamatanFilter, kecamatanFokusOnly, poiFilter, siteFilter]);
+  }, [rows, tab, q, needsActionOnly, dateRange, monthKey, dateKey, categories, userId, siteMeta, statusFilter, brandFilter, branchFilter, kabupatenFilter, kecamatanFilter, kecamatanFokusOnly, poiFilter, siteFilter]);
 
   const activeFilterCount = (needsActionOnly ? 1 : 0) + (dateRange !== "all" ? 1 : 0) + (categories.size > 0 ? 1 : 0)
     + (statusFilter.size > 0 ? 1 : 0) + (brandFilter.size > 0 ? 1 : 0) + (branchFilter.size > 0 ? 1 : 0)
@@ -526,12 +646,28 @@ function ActivitiesInner() {
           (sebelumnya cuma div biasa, jadi judul/search/tab ikut tergulung
           hilang begitu daftar aktivitasnya panjang). Search + tab filter
           disertakan sebagai bagian dari blok sticky karena keduanya juga
-          navigasi, bukan konten yang perlu di-scroll bersama daftar. */}
+          navigasi, bukan konten yang perlu di-scroll bersama daftar.
+          overflowX:"hidden" SENGAJA ditambahkan - BUG YG DIPERBAIKI: baris
+          "Hari Ini"/tab status kelihatan kepotong rata di sisi KIRI stlh
+          scroll-tanggal dipicu. Sebabnya: div ini position:"sticky" (cuma
+          nempel VERTIKAL, horizontalnya tetap ikut alur dokumen normal) -
+          kalau ada konten di dalamnya yg overflow horizontal SEDIKIT saja
+          (mis. subpixel rounding di baris tab), itu bikin HALAMAN
+          keseluruhan jadi bisa discroll horizontal. scrollIntoView di
+          efek chip tanggal lalu bisa "naik" scroll ke leluhur manapun yg
+          perlu (termasuk BODY/halaman) spy chip terpilih kelihatan -
+          akibatnya seluruh viewport tergeser ke kanan, & header sticky
+          ini (horizontalnya ikut gerak bareng halaman, beda dgn posisi
+          vertikalnya yg nempel) ikut tergeser & kepotong kiri.
+          overflowX:"hidden" di sini memastikan konten header (termasuk
+          baris tab) TIDAK PERNAH memicu overflow horizontal di level
+          halaman, apa pun yg terjadi di dalamnya. */}
       <div style={{
         position: "sticky", top: 0, zIndex: 20, maxWidth: 480, margin: "0 auto",
         padding: "calc(env(safe-area-inset-top,0px) + 20px) 20px 12px",
         background: "rgba(244,245,247,0.86)", backdropFilter: "blur(18px) saturate(1.5)", WebkitBackdropFilter: "blur(18px) saturate(1.5)",
         borderBottom: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 6px 20px rgba(23,24,28,0.05)",
+        overflowX: "hidden",
       }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
           {/* Judul mengikuti scope: bme/rge cuma lihat aktivitas di
@@ -561,13 +697,44 @@ function ActivitiesInner() {
               <span style={{ fontSize: 11.5, fontWeight: 700, color: "#5A5A68", whiteSpace: "nowrap" }}>{monthLabel}</span>
             </div>
             <ChevronDown size={13} style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", color: "#9A9AA6", pointerEvents: "none" }} />
-            <select value={monthKey} onChange={(e) => startFilterTransition(() => setMonthKey(e.target.value))} aria-label="Pilih Bulan"
+            <select value={monthKey} onChange={(e) => startFilterTransition(() => setMonthKeyFiltered(e.target.value))} aria-label="Pilih Bulan"
               style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 16 }}>
               <option value="all">Semua Bulan</option>
               {monthOptions.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
             </select>
           </div>
         </div>
+
+        {/* Chip pemilih TANGGAL - konsep & gaya dipinjam dari strip chip di
+            Leaderboard (app/martahub/m/leaderboard/page.jsx). Cuma nongol
+            begitu SATU bulan konkret sudah dipilih (dayOptions kosong utk
+            monthKey==="all" - lihat daysInMonthOptions) krn perlu tahu
+            rentang tanggalnya dulu; "Semua Bulan" tetap seperti dulu,
+            tanpa baris tambahan ini. Tombol "Hari Ini"/"Semua Tanggal"
+            dipindah ke baris tab status di bawah (lihat komentar di sana)
+            spy jadi SATU baris dgn tab, dipisah garis "|" - bukan lagi
+            nempel di strip ini. */}
+        {dayOptions.length > 0 && (
+          <div ref={dayStripRef} className="mh-hide-scrollbar" style={{ display: "flex", gap: 6, marginTop: 10, overflowX: "auto", paddingBottom: 2, WebkitOverflowScrolling: "touch", scrollbarWidth: "none", msOverflowStyle: "none" }}>
+            {dayOptions.map((d) => {
+              const active = dateKey === d.key;
+              return (
+                <button key={d.key} ref={(el) => { dayChipRefs.current[d.key] = el; }}
+                  onClick={() => startFilterTransition(() => setDateKey(active ? "" : d.key))}
+                  style={{
+                    flexShrink: 0, width: 40, padding: "6px 0 7px", borderRadius: 12, textAlign: "center",
+                    background: active ? "#ED1C24" : "#FFFFFF",
+                    border: `1px solid ${active ? "#ED1C24" : d.isToday ? "#ED1C24" : "#E9EAEE"}`,
+                    color: active ? "#FFFFFF" : "#17181C",
+                    cursor: "pointer", fontFamily: FF,
+                  }}>
+                  <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.2, color: active ? "rgba(255,255,255,0.85)" : d.isToday ? "#ED1C24" : "#B0B0BA" }}>{d.weekday}</div>
+                  <div style={{ fontSize: 13, fontWeight: 800, marginTop: 1 }}>{d.day}</div>
+                </button>
+              );
+            })}
+          </div>
+        )}
         {/* Search + tombol Filter - sekarang SEBARIS (dulu tombol filter
             sendirian di pojok kanan judul, sekarang dipindah ke sini spy
             langsung kebaca sebagai "pasangan" alat persempit daftar bareng
@@ -605,14 +772,119 @@ function ActivitiesInner() {
         {/* Tabs - scrollbar-nya DISEMBUNYIKAN (className mh-hide-scrollbar,
             pola sama persis dgn mode-chip Leaderboard) - tetap bisa digeser
             horizontal kalau tab-nya lebih banyak dari lebar layar, cuma bar
-            abu2 di bawahnya yg dihilangkan biar lebih rapi. */}
-        <div className="mh-hide-scrollbar" style={{ display: "flex", gap: 8, marginTop: 14, overflowX: "auto", paddingBottom: 2, WebkitOverflowScrolling: "touch", scrollbarWidth: "none", msOverflowStyle: "none" }}>
+            abu2 di bawahnya yg dihilangkan biar lebih rapi.
+            Tombol "Hari Ini"/"Semua Tanggal" SEKARANG satu baris dgn tab
+            status ini (dulu nempel di strip chip tanggal di atas) - lebih
+            hemat tempat vertikal & user tetap bisa liat kedua "aksi
+            filter" (tanggal & status) dlm satu pandangan tanpa scroll
+            naik-turun. Dipisah garis tegak "|" (bukan garis horizontal
+            lagi spt sblmnya) persis di antara tombol tanggal & tab
+            status, spy dua "SUMBU" filter yg beda ini (tanggal vs status)
+            tetap kebaca sbg dua grup terpisah walau satu baris.
+            Konsep visual tombol ini tetap disamakan dgn tab status di
+            sebelahnya dari sisi BENTUK (radius 999/pil, padding & font-
+            size identik) - TAPI warnanya SENGAJA TETAP PUTIH/outline di
+            kedua state (tidak ikut terisi merah spt sblmnya) krn yg
+            mengomunikasikan perubahan state skr adalah ANIMASI FLIP-nya
+            sendiri (lihat bawah), bukan warna.
+            Animasi flip 3D KE BAWAH (rotateX, bukan rotateY/ke samping) -
+            pola sama persis dgn kartu ringkasan achievement di Beranda
+            (app/martahub/m/page.jsx: AchievementCard) yg jg pakai
+            perspective + transformStyle:"preserve-3d" + backfaceVisibility
+            "hidden" utk 2 sisi yg saling membelakangi, bedanya sumbu
+            rotasinya X (turun) bukan Y (ke samping) sesuai request.
+            Lebar tombol mengikuti panjang teks sisi yg lagi tampil -
+            KEDUA lebar ("Hari Ini" & "Semua Tanggal") diukur SEKALI via
+            elemen ukur tersembunyi (lihat hariIniFrontW/hariIniBackW di
+            atas), jadi transisi width-nya selalu pasti & konsisten balik
+            ke ukuran semula apa pun jalur trigger-nya (bukan lagi rawan
+            "lupa resize" spt versi FLIP-width manual sblmnya). */}
+        {/* Elemen ukur tersembunyi - konten IDENTIK dgn 2 sisi tombol di
+            bawah (padding/font/gap sama) tapi position:"fixed" + dibuang
+            jauh ke luar viewport (top/left negatif besar) + visibility:
+            hidden, SENGAJA diletakkan DI LUAR container scroll tabs di
+            bawah (bukan position:absolute NESTED di dalamnya spt versi
+            sblmnya) - BUG YG DIPERBAIKI: position:absolute tanpa top/left
+            eksplisit itu "static position"-nya masih ngikut urutan alur
+            normal (tetap makan tempat scroll-width container-nya walau
+            visibility:hidden bikin dia tidak kelihatan), alhasil area
+            scroll tabs jadi lebih lebar dari seharusnya & browser bisa
+            landing di posisi scroll yg salah pas render pertama - persis
+            spt bug "Hari Ini" kepotong + garis pemisah dobel yg dilaporkan
+            user. position:"fixed" + top/left jauh negatif memastikan
+            elemen ukur ini BENAR2 lepas dari flow manapun, termasuk dari
+            perhitungan scrollWidth container manapun. */}
+        <span ref={hariIniFrontMeasureRef} aria-hidden style={{ position: "fixed", top: -9999, left: -9999, visibility: "hidden", pointerEvents: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px 13px", borderRadius: 999, border: "1px solid transparent", boxSizing: "border-box", fontSize: 12.5, fontWeight: 700, fontFamily: FF, whiteSpace: "nowrap" }}>
+          Hari Ini <ChevronRight size={13} />
+        </span>
+        <span ref={hariIniBackMeasureRef} aria-hidden style={{ position: "fixed", top: -9999, left: -9999, visibility: "hidden", pointerEvents: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "8px 13px", borderRadius: 999, border: "1px solid transparent", boxSizing: "border-box", fontSize: 12.5, fontWeight: 700, fontFamily: FF, whiteSpace: "nowrap" }}>
+          <ChevronLeft size={13} /> Semua Tanggal
+        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14 }}>
+          {/* Tombol + divider DILETAKKAN DI LUAR container scroll tab
+              (bukan ikut jadi child-nya spt versi sblmnya) - BUG YG
+              DIPERBAIKI: transform 3D (perspective/preserve-3d/rotateX)
+              milik tombol ini dulu nge-render KACAU (dobel/ke-render
+              parsial, teks kepotong) begitu ada di DALAM elemen ber-
+              overflow-x:auto - browser sering flatten/salah hitung
+              konteks 3D kalau leluhurnya sendiri sebuah scroll container,
+              beda dgn kartu flip di Beranda yg TIDAK ada di dalam elemen
+              scroll horizontal. Fix: baris ini skr py DUA area terpisah -
+              tombol+divider (statis, tidak discroll) lalu SATU div scroll
+              terpisah cuma utk daftar tab (biar tab yg banyak ttp bisa
+              digeser tanpa ikut menyeret tombol/divider-nya). */}
+          <button ref={hariIniBtnRef} className="mh-hariini-btn" onClick={() => (dateKey ? startFilterTransition(() => setDateKey("")) : selectToday())}
+            style={{
+              position: "relative", flexShrink: 0, height: 34, borderRadius: 999, border: "none", background: "transparent", padding: 0,
+              boxSizing: "border-box", outline: "none", cursor: "pointer", perspective: 700,
+              width: (dateKey ? hariIniBackW : hariIniFrontW) ?? undefined,
+              transition: "width 0.3s cubic-bezier(0.22,1,0.36,1), transform 0.15s ease",
+            }}
+            onPointerDown={(e) => { e.currentTarget.style.transform = "scale(0.94)"; }}
+            onPointerUp={(e) => { e.currentTarget.style.transform = "scale(1)"; }}
+            onPointerLeave={(e) => { e.currentTarget.style.transform = "scale(1)"; }}>
+            <div style={{
+              position: "relative", width: "100%", height: "100%", transformStyle: "preserve-3d",
+              transition: "transform 0.42s cubic-bezier(0.34,1,0.4,1)",
+              transform: dateKey ? "rotateX(180deg)" : "rotateX(0deg)",
+            }}>
+              <div style={{
+                position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                borderRadius: 999, background: "#FFFFFF", border: "1px solid #E9EAEE", color: "#5A5A68",
+                fontSize: 12.5, fontWeight: 700, fontFamily: FF, whiteSpace: "nowrap",
+                backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden",
+              }}>
+                Hari Ini <ChevronRight size={13} />
+              </div>
+              <div style={{
+                position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                borderRadius: 999, background: "#FFFFFF", border: "1px solid #E9EAEE", color: "#5A5A68",
+                fontSize: 12.5, fontWeight: 700, fontFamily: FF, whiteSpace: "nowrap",
+                backfaceVisibility: "hidden", WebkitBackfaceVisibility: "hidden",
+                transform: "rotateX(180deg)",
+              }}>
+                <ChevronLeft size={13} /> Semua Tanggal
+              </div>
+            </div>
+          </button>
+          <div style={{ flexShrink: 0, width: 1, alignSelf: "stretch", background: "#E2E3E8" }} />
+          <div className="mh-hide-scrollbar" style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0, overflowX: "auto", paddingBottom: 2, WebkitOverflowScrolling: "touch", scrollbarWidth: "none", msOverflowStyle: "none" }}>
           {TABS.map((t) => {
             const active = tab === t.key;
             const n = counts[t.key] || 0;
             if (t.key !== "all" && n === 0) return null;
             return (
-              <button key={t.key} onClick={() => setTab(t.key)}
+              <button key={t.key}
+                onClick={() => startFilterTransition(() => {
+                  setTab(t.key);
+                  // "Semua" jadi TOMBOL RESET jg utk tanggal - klik "Semua"
+                  // membalikkan strip chip tanggal di bawah ke "Semua
+                  // Tanggal" (dateKey="") sekaligus, bukan cuma reset status
+                  // filter - user minta ini eksplisit spy "Semua" beneran
+                  // artinya SEMUA, bukan "semua status TAPI tanggal yg lagi
+                  // dipilih masih nyangkut".
+                  if (t.key === "all") setDateKey("");
+                })}
                 style={{
                   flexShrink: 0, display: "flex", alignItems: "center", gap: 6, padding: "8px 13px", borderRadius: 999,
                   background: active ? "#17181C" : "#FFFFFF", border: `1px solid ${active ? "#17181C" : "#E9EAEE"}`,
@@ -623,9 +895,11 @@ function ActivitiesInner() {
               </button>
             );
           })}
+          </div>
         </div>
         <style jsx>{`
           .mh-hide-scrollbar::-webkit-scrollbar { display: none; height: 0; }
+          .mh-hariini-btn:focus-visible { box-shadow: 0 0 0 3px rgba(237,28,36,0.22) !important; }
         `}</style>
       </div>
 
@@ -876,8 +1150,8 @@ function FilterChipGroup({ title, options, selected, onToggle }) {
             <button key={o.key} onClick={() => onToggle(o.key)}
               style={{
                 display: "flex", alignItems: "center", gap: 6, padding: "8px 13px", borderRadius: 999,
-                border: `1.5px solid ${active ? BRAND : "#E9EAEE"}`,
-                background: active ? "#FDECEC" : "#F8F8FA", color: active ? BRAND : "#5A5A68",
+                border: `1.5px solid ${active ? "#ED1C24" : "#E9EAEE"}`,
+                background: active ? "#FDECEC" : "#F8F8FA", color: active ? "#ED1C24" : "#5A5A68",
                 fontSize: 12, fontWeight: 700, fontFamily: FF, cursor: "pointer", whiteSpace: "nowrap",
               }}>
               {o.label}
