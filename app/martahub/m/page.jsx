@@ -449,18 +449,31 @@ export default function MartaMobileHome() {
     && (!effectiveRegionFilter || branchMap.get(r.branch_id)?.region === effectiveRegionFilter)
   );
   const monthRows = scopedRows.filter((r) => (r.plan_date || "").slice(0, 7) === monthKey);
-  const targetSp = monthRows.reduce((s, r) => s + (r.target_sp || 0), 0);
-  const actualSp = monthRows.reduce((s, r) => s + (r.actual_sp || 0), 0);
-  const targetFwaTotal = monthRows.reduce((s, r) => s + (r.target_fwa || 0), 0);
-  const actualFwaTotal = monthRows.reduce((s, r) => s + (r.actual_fwa || 0), 0);
-  const targetRebuySpTotal = monthRows.reduce((s, r) => s + (r.target_rebuy_sp || 0), 0);
-  const rebuySpTotal = monthRows.reduce((s, r) => s + (r.actual_rebuy_sp || 0), 0);
-  const targetRebuyFwaTotal = monthRows.reduce((s, r) => s + (r.target_rebuy_fwa || 0), 0);
-  const rebuyFwaTotal = monthRows.reduce((s, r) => s + (r.actual_rebuy_fwa || 0), 0);
-  const targetCostTotal = monthRows.reduce((s, r) => s + (r.cost_estimate || 0), 0);
-  const costTotal = monthRows.reduce((s, r) => s + (r.cost_actual || 0), 0);
-  const targetRevTotal = monthRows.reduce((s, r) => s + (r.target_rev_3m || 0), 0);
-  const revenueTotal = monthRows.reduce((s, r) => s + (r.actual_rev_3m || 0), 0);
+  // FIX: Aktivasi SP/FWA, Rebuy SP/FWA, Revenue (3 Months) & Cost Ratio di
+  // kartu ini SEBELUMNYA dijumlah dari monthRows APA ADANYA (segala status
+  // - draft/plan_submitted/completed/revision_needed ikut, selama
+  // plan_date-nya bulan ini) - target ikut kehitung dari plan yg BAHKAN
+  // belum ada laporan actual-nya sama sekali. Ini beda dgn CMS Activity
+  // Plan (app/martahub/activities/page.jsx, kpiBaseRows), yg SUDAH dibatasi
+  // ke status==='completed' saja - jadi kedua layar menampilkan angka
+  // pencapaian yg beda utk data yg sama persis. Disamakan di sini: SEMUA
+  // jumlah SP/FWA/Rebuy/Cost/Revenue di bawah SEKARANG dihitung dari
+  // completedMonthRows (status==='completed' saja), SAMA PERSIS basisnya
+  // dgn kpiBaseRows CMS, supaya kedua layar (mobile & CMS) selalu
+  // menunjukkan angka yg identik utk laporan yg SUDAH selesai.
+  const completedMonthRows = monthRows.filter((r) => r.status === "completed");
+  const targetSp = completedMonthRows.reduce((s, r) => s + (r.target_sp || 0), 0);
+  const actualSp = completedMonthRows.reduce((s, r) => s + (r.actual_sp || 0), 0);
+  const targetFwaTotal = completedMonthRows.reduce((s, r) => s + (r.target_fwa || 0), 0);
+  const actualFwaTotal = completedMonthRows.reduce((s, r) => s + (r.actual_fwa || 0), 0);
+  const targetRebuySpTotal = completedMonthRows.reduce((s, r) => s + (r.target_rebuy_sp || 0), 0);
+  const rebuySpTotal = completedMonthRows.reduce((s, r) => s + (r.actual_rebuy_sp || 0), 0);
+  const targetRebuyFwaTotal = completedMonthRows.reduce((s, r) => s + (r.target_rebuy_fwa || 0), 0);
+  const rebuyFwaTotal = completedMonthRows.reduce((s, r) => s + (r.actual_rebuy_fwa || 0), 0);
+  const targetCostTotal = completedMonthRows.reduce((s, r) => s + (r.cost_estimate || 0), 0);
+  const costTotal = completedMonthRows.reduce((s, r) => s + (r.cost_actual || 0), 0);
+  const targetRevTotal = completedMonthRows.reduce((s, r) => s + (r.target_rev_3m || 0), 0);
+  const revenueTotal = completedMonthRows.reduce((s, r) => s + (r.actual_rev_3m || 0), 0);
 
   // "0%" utk Cost Ratio TIDAK BOLEH dipakai kalau memang belum ada satupun
   // laporan actual cost yg masuk (cost_actual semua masih null) - kalau
@@ -468,7 +481,7 @@ export default function MartaMobileHome() {
   // "beneran menghabiskan Rp0 biaya", padahal dua hal yg beda jauh
   // maknanya. "-" HANYA muncul di keadaan itu; begitu ada 1 laporan cost
   // actual saja, tampilkan rasio beneran (termasuk kalau hasilnya 0%).
-  const hasCostActualData = monthRows.some((r) => r.cost_actual != null);
+  const hasCostActualData = completedMonthRows.some((r) => r.cost_actual != null);
   const costRatioPct = revenueTotal > 0 && hasCostActualData ? Math.round((costTotal / revenueTotal) * 100) : null;
   const planCount = monthRows.length;
   // "Selesai" bulan ini - SAMA PERSIS definisinya dgn tab Aktivitas

@@ -100,7 +100,18 @@ function deriveStatusInfo(r, meta) {
   // sudah "completed", supaya definisi "Selesai" persis sama dgn mobile -
   // kelengkapan metadata cukup ditandai lewat drilldown detail, tidak perlu
   // menimpa status lifecycle-nya.
-  if (r?.plan_source === "cms_import" && meta && r?.status !== "completed") {
+  // Laporan actual dianggap SUDAH disubmit kalau kedua kolom actual utama
+  // (SP & FWA) sudah terisi - dipakai di bawah utk "naikkan" tampilan row
+  // yg secara DB masih "plan_submitted" (trigger mh_validate_activity_actual
+  // belum/tidak sempat menandainya "completed", mis. baris hasil Import
+  // Excel/Backdoor yg actual-nya ditulis langsung ke kolom tanpa lewat
+  // trigger, atau baris lama sebelum trigger ini ada) supaya tetap tampil
+  // "Selesai" - WALAUPUN dari sisi tanggal event masih berjalan/blm lewat
+  // (mis. plan_date-nya hari ini/besok) - krn yg jadi penentu "Selesai"
+  // seharusnya laporan actual-nya sudah masuk, bukan sekedar tanggal event.
+  const actualAlreadySubmitted = r?.actual_sp != null && r?.actual_fwa != null;
+
+  if (r?.plan_source === "cms_import" && meta && r?.status !== "completed" && !actualAlreadySubmitted) {
     if (getIncompleteImportFields(r, meta).length > 0) return ["Belum Lengkap", T.warning, T.warningBg];
   }
   // "revision_needed" digabung (dulu status terpisah "revision_actual") -
@@ -119,6 +130,11 @@ function deriveStatusInfo(r, meta) {
   // lihat m/_shared/activityUi.js) - selama actual belum disubmit, plan yg
   // sudah diajukan tetap berstatus plan_submitted di DB sampai actual masuk.
   if (r?.status === "plan_submitted") {
+    // Laporan actual-nya sudah masuk (actual_sp & actual_fwa terisi) -
+    // langsung anggap "Selesai", TIDAK PERLU lagi diturunkan berdasar
+    // tanggal event (Menunggu Hari-H / Hari-H Berlangsung / Menunggu
+    // Laporan itu semua cuma relevan SELAMA actual belum masuk).
+    if (actualAlreadySubmitted) return STATUS.completed;
     const planDateStr = r.plan_date_start || r.plan_date;
     if (planDateStr) {
       const now = new Date();
@@ -553,11 +569,21 @@ function Body({ email }) {
     // yg sudah direalisasikan/tervalidasi saat laporan disubmit. Ditampilkan
     // sbg ANGKA TOTAL (bukan %) sesuai permintaan - lebih mudah dibaca cepat.
     // Dihitung dari kpiBaseRows (laporan Selesai saja).
+    // FIX: SEBELUMNYA target & actual sama-sama cuma dijumlah dari baris yg
+    // punya target_sp/target_fwa truthy ("withTarget") - jadi begitu ada
+    // laporan Selesai yg target-nya kebetulan 0/kosong (mis. plan tanpa
+    // target formal tapi actual-nya tetap disubmit & tervalidasi), actual
+    // SP/FWA row itu ikut TIDAK terhitung sama sekali di sini, walau row
+    // itu jelas "Selesai". Ini bikin total actual di CMS lebih kecil dari
+    // MartaHub mobile (app/martahub/m/page.jsx), yg menjumlah actual_sp/
+    // actual_fwa APA ADANYA dari SEMUA completedMonthRows, tanpa gate
+    // truthy-target itu. Disamakan persis dgn mobile: jumlah tgt & act
+    // langsung dari SELURUH kpiBaseRows (pakai `?? 0` spy null aman),
+    // TANPA filter withTarget - supaya kedua layar selalu identik.
     const sumPair = (tKey, aKey) => {
-      const withTarget = kpiBaseRows.filter((r) => r[tKey]);
-      const tgt = withTarget.reduce((s, r) => s + (r[tKey] ?? 0), 0);
-      const act = withTarget.reduce((s, r) => s + (r[aKey] ?? 0), 0);
-      return { tgt, act, n: withTarget.length };
+      const tgt = kpiBaseRows.reduce((s, r) => s + (r[tKey] ?? 0), 0);
+      const act = kpiBaseRows.reduce((s, r) => s + (r[aKey] ?? 0), 0);
+      return { tgt, act };
     };
     const sp = sumPair("target_sp", "actual_sp");
     const fwa = sumPair("target_fwa", "actual_fwa");
@@ -727,20 +753,48 @@ function Body({ email }) {
       //    jadi Excel selalu anggap file rusak & "Repair" dgn membuang
       //    semua formula. Diganti ke pendekatan klasik ini spy file selalu
       //    valid di semua versi Excel.)
-      // Kolom acuan di sheet "Activity Plan" (urutan TETAP, lihat EXPORT_COLUMNS
-      // di bawah): F=Brand, G=Branch, O=Event Category, Y=Target SP,
-      // Z=Target FWA, AA=Target Rebuy, AB=Est. Total Rev (3 Months).
-      const dataLastRow = filteredRows.length + 1; // +1 krn baris 1 = header
-      const DATA = `'Activity Plan'!`;
-      const rngBranch = `${DATA}$G$2:$G$${dataLastRow}`;
-      const rngBrand = `${DATA}$F$2:$F$${dataLastRow}`;
-      const rngCat = `${DATA}$O$2:$O$${dataLastRow}`;
-      const rngSp = `${DATA}$Y$2:$Y$${dataLastRow}`;
-      const rngFwa = `${DATA}$Z$2:$Z$${dataLastRow}`;
-      const rngRebuy = `${DATA}$AA$2:$AA$${dataLastRow}`;
-      const rngRev = `${DATA}$AB$2:$AB$${dataLastRow}`;
+      // "pilih" (kolom checkbox rollback) TIDAK punya `get` - itu kolom
+      // UI-only, tidak ada isinya utk di-export. Dulu ikut ke-map & crash
+      // "c.get is not a function" pas ketemu kolom ini. Buang dari sini,
+      // SATU sumber utk semua langkah export di bawah (header, isi baris,
+      // posisi kolom foto/link, autoFilter) spy tidak ada yg lupa disingkron.
+      const EXPORT_COLUMNS = COLUMNS.filter((c) => c.key !== "pilih");
       const colLetter = (n) => { let s = ""; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
       const escStr = (s) => String(s).replace(/"/g, '""');
+      // FIX: kolom acuan di sheet "Activity Plan" (Brand/Branch/Event
+      // Category/Target SP/FWA/Rebuy/Rev, dst) SEBELUMNYA dihardcode ke
+      // huruf kolom tetap (F/G/O/Y/Z/AA/AB) - begitu kolom "Brand Branch"
+      // ditambahkan ke COLUMNS (menggeser SEMUA kolom setelahnya +1), huruf
+      // itu tidak ikut diupdate, jadi tiap rumus SUMIF/SUMIFS ringkasan
+      // diam2 membaca kolom yg SALAH (mis. rngSp nunjuk ke kolom Address yg
+      // isinya teks, bukan Target SP, makanya "Sum Target SP" selalu 0).
+      // Diganti ke lookup DINAMIS: huruf kolom dihitung dari POSISI ASLI
+      // key itu di EXPORT_COLUMNS (persis kolom yg BENERAN ditulis ke sheet
+      // "Activity Plan" di bawah), jadi kalau kolom lain ditambah/dibuang
+      // lagi nanti, rumus ringkasan ini otomatis ikut menyesuaikan - tidak
+      // bisa lagi diam2 melenceng seperti sebelumnya.
+      const exportColLetter = (key) => {
+        const idx = EXPORT_COLUMNS.findIndex((c) => c.key === key);
+        if (idx < 0) throw new Error(`Kolom export "${key}" tidak ditemukan`);
+        return colLetter(idx + 1);
+      };
+      const dataLastRow = filteredRows.length + 1; // +1 krn baris 1 = header
+      const DATA = `'Activity Plan'!`;
+      const rngFor = (key) => {
+        const L = exportColLetter(key);
+        return `${DATA}$${L}$2:$${L}$${dataLastRow}`;
+      };
+      const rngBranch = rngFor("branch");
+      const rngBrand = rngFor("brand");
+      const rngCat = rngFor("eventCategory");
+      const rngSp = rngFor("targetSp");
+      const rngFwa = rngFor("targetFwa");
+      const rngRebuy = rngFor("targetRebuy");
+      const rngRev = rngFor("targetRev");
+      const rngActualSp = rngFor("actualSp");
+      const rngActualFwa = rngFor("actualFwa");
+      const rngActualRebuy = rngFor("actualRebuy");
+      const rngActualRev = rngFor("actualRev");
 
       const brandVariants = [
         { label: "Semua Brand", crit: null },
@@ -809,50 +863,74 @@ function Body({ email }) {
           }
         };
 
-        // ── Tabel A: Ringkasan per Branch (Count Activity, Target SP/FWA/
-        //    Rebuy/Revenue) - 3 sub-tabel bertumpuk (Semua/IM3/3ID). Daftar
-        //    Branch = uniqueBranches (dihitung di JS, lihat catatan di
-        //    atas), tiap sel angka = COUNTIF/SUMIF(S) klasik. ──
+        // ── Tabel A: Ringkasan per Branch (Count Activity, lalu PLAN &
+        //    ACTUAL berdampingan utk tiap metrik: SP/FWA/Rebuy/Revenue) -
+        //    3 sub-tabel bertumpuk (Semua/IM3/3ID). Daftar Branch =
+        //    uniqueBranches (dihitung di JS, lihat catatan di atas), tiap
+        //    sel angka = COUNTIF/SUMIF(S) klasik.
+        // FIX: SEBELUMNYA tabel ini cuma punya kolom "Sum Target ..." tanpa
+        //    padanan Actual-nya sama sekali (tidak bisa lihat pencapaian
+        //    per branch dari sheet Summary ini saja) - sekarang tiap
+        //    metrik dipasangkan Plan & Actual, sejajar, spy kelihatan
+        //    pencapaiannya langsung tanpa buka sheet "Activity Plan". ──
         titleRow("Ringkasan per Branch");
+        const TABLE_A_COLS = 10; // Branch, Count, (Plan+Actual) x SP/FWA/Rebuy/Rev
         brandVariants.forEach((bv) => {
           const hdr = wsSum.getRow(row);
           headerCell(hdr, 1, "Branch");
           headerCell(hdr, 2, "Count Activity");
-          headerCell(hdr, 3, "Sum Target SP");
-          headerCell(hdr, 4, "Sum Target FWA");
-          headerCell(hdr, 5, "Sum Target Rebuy");
-          headerCell(hdr, 6, "Sum Est. Total Rev (3 Months)");
+          headerCell(hdr, 3, "Plan SP");
+          headerCell(hdr, 4, "Actual SP");
+          headerCell(hdr, 5, "Plan FWA");
+          headerCell(hdr, 6, "Actual FWA");
+          headerCell(hdr, 7, "Plan Rebuy");
+          headerCell(hdr, 8, "Actual Rebuy");
+          headerCell(hdr, 9, "Plan Rev (3 Months)");
+          headerCell(hdr, 10, "Actual Rev (3 Months)");
           const firstDataRow = row + 1;
           uniqueBranches.forEach((branchName, idx) => {
             const r2 = wsSum.getRow(firstDataRow + idx);
             r2.getCell(1).value = branchName;
             const critBranch = `"${escStr(branchName)}"`;
             if (bv.crit) {
-              r2.getCell(2).value = { formula: `COUNTIFS(${rngBranch},${critBranch},${rngBrand},"${bv.crit}")` };
-              r2.getCell(3).value = { formula: `SUMIFS(${rngSp},${rngBranch},${critBranch},${rngBrand},"${bv.crit}")` };
-              r2.getCell(4).value = { formula: `SUMIFS(${rngFwa},${rngBranch},${critBranch},${rngBrand},"${bv.crit}")` };
-              r2.getCell(5).value = { formula: `SUMIFS(${rngRebuy},${rngBranch},${critBranch},${rngBrand},"${bv.crit}")` };
-              r2.getCell(6).value = { formula: `SUMIFS(${rngRev},${rngBranch},${critBranch},${rngBrand},"${bv.crit}")` };
+              const brandCrit = `${rngBrand},"${bv.crit}"`;
+              r2.getCell(2).value = { formula: `COUNTIFS(${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(3).value = { formula: `SUMIFS(${rngSp},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(4).value = { formula: `SUMIFS(${rngActualSp},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(5).value = { formula: `SUMIFS(${rngFwa},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(6).value = { formula: `SUMIFS(${rngActualFwa},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(7).value = { formula: `SUMIFS(${rngRebuy},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(8).value = { formula: `SUMIFS(${rngActualRebuy},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(9).value = { formula: `SUMIFS(${rngRev},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(10).value = { formula: `SUMIFS(${rngActualRev},${rngBranch},${critBranch},${brandCrit})` };
             } else {
               r2.getCell(2).value = { formula: `COUNTIF(${rngBranch},${critBranch})` };
               r2.getCell(3).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngSp})` };
-              r2.getCell(4).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngFwa})` };
-              r2.getCell(5).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngRebuy})` };
-              r2.getCell(6).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngRev})` };
+              r2.getCell(4).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualSp})` };
+              r2.getCell(5).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngFwa})` };
+              r2.getCell(6).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualFwa})` };
+              r2.getCell(7).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngRebuy})` };
+              r2.getCell(8).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualRebuy})` };
+              r2.getCell(9).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngRev})` };
+              r2.getCell(10).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualRev})` };
             }
             r2.getCell(2).numFmt = INT_FMT;
             r2.getCell(3).numFmt = INT_FMT;
             r2.getCell(4).numFmt = INT_FMT;
-            r2.getCell(5).numFmt = RP_FMT;
-            r2.getCell(6).numFmt = RP_FMT;
+            r2.getCell(5).numFmt = INT_FMT;
+            r2.getCell(6).numFmt = INT_FMT;
+            r2.getCell(7).numFmt = RP_FMT;
+            r2.getCell(8).numFmt = RP_FMT;
+            r2.getCell(9).numFmt = RP_FMT;
+            r2.getCell(10).numFmt = RP_FMT;
             r2.getCell(1).border = XLSX_THIN_BORDER;
-            for (let c = 2; c <= 6; c++) r2.getCell(c).border = XLSX_THIN_BORDER;
-            bandRow(r2, 1, 6, idx);
+            for (let c = 2; c <= TABLE_A_COLS; c++) r2.getCell(c).border = XLSX_THIN_BORDER;
+            bandRow(r2, 1, TABLE_A_COLS, idx);
           });
           const totalRowIdx = firstDataRow + uniqueBranches.length + 1;
           const totalR = wsSum.getRow(totalRowIdx);
           totalR.getCell(1).value = "Total Keseluruhan";
-          for (let c = 2; c <= 6; c++) {
+          for (let c = 2; c <= TABLE_A_COLS; c++) {
             totalR.getCell(c).value = uniqueBranches.length
               ? { formula: `SUM(${colLetter(c)}${firstDataRow}:${colLetter(c)}${firstDataRow + uniqueBranches.length - 1})` }
               : 0;
@@ -860,9 +938,13 @@ function Body({ email }) {
           totalR.getCell(2).numFmt = INT_FMT;
           totalR.getCell(3).numFmt = INT_FMT;
           totalR.getCell(4).numFmt = INT_FMT;
-          totalR.getCell(5).numFmt = RP_FMT;
-          totalR.getCell(6).numFmt = RP_FMT;
-          totalRowStyle(totalR, 1, 6);
+          totalR.getCell(5).numFmt = INT_FMT;
+          totalR.getCell(6).numFmt = INT_FMT;
+          totalR.getCell(7).numFmt = RP_FMT;
+          totalR.getCell(8).numFmt = RP_FMT;
+          totalR.getCell(9).numFmt = RP_FMT;
+          totalR.getCell(10).numFmt = RP_FMT;
+          totalRowStyle(totalR, 1, TABLE_A_COLS);
           row = totalRowIdx + 2;
         });
 
@@ -927,12 +1009,6 @@ function Body({ email }) {
 
       const ws = wb.addWorksheet("Activity Plan", { views: [{ state: "frozen", ySplit: 1 }] });
 
-      // "pilih" (kolom checkbox rollback) TIDAK punya `get` - itu kolom
-      // UI-only, tidak ada isinya utk di-export. Dulu ikut ke-map & crash
-      // "c.get is not a function" pas ketemu kolom ini. Buang dari sini,
-      // SATU sumber utk semua langkah export di bawah (header, isi baris,
-      // posisi kolom foto/link, autoFilter) spy tidak ada yg lupa disingkron.
-      const EXPORT_COLUMNS = COLUMNS.filter((c) => c.key !== "pilih");
 
       // numFmt per kolom - ditentukan sekali di sini per EXPORT_COLUMNS,
       // dipakai baik utk `ws.columns[].style` (kolom kosong/baris baru yg
