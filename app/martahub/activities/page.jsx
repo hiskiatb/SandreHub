@@ -271,6 +271,8 @@ function Body({ email }) {
   const [docDriveMap, setDocDriveMap] = useState({}); // activity_id -> Google Drive file id foto pertama (mh_documents.external_ref, diisi Edge Function media-relay) - utk link "Buka di Drive" saat export .xlsx
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0); // 0-100, dipakai bar progress export .xlsx
+  const [exportStage, setExportStage] = useState(""); // label singkat tahap export yg sedang berjalan
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
   const [scope, setScope] = useState(null);
@@ -730,6 +732,8 @@ function Body({ email }) {
   //      supaya kelihatan langsung tanpa buka link satu-satu.
   const exportXlsx = useCallback(async () => {
     setExporting(true);
+    setExportProgress(0);
+    setExportStage("Menyiapkan data…");
     try {
       const wb = new ExcelJS.Workbook();
 
@@ -1097,6 +1101,9 @@ function Body({ email }) {
         });
       }
 
+      setExportProgress(20);
+      setExportStage("Menulis sheet Summary…");
+
       const ws = wb.addWorksheet("Activity Plan", { views: [{ state: "frozen", ySplit: 1 }] });
 
 
@@ -1136,8 +1143,14 @@ function Body({ email }) {
       const driveCol = EXPORT_COLUMNS.findIndex((c) => c.key === "drive_link") + 1;
       const THUMB_PX = 54;
 
+      setExportStage("Menulis data activity…");
       // Baris teks dulu (cepat, sinkron) - gambar ditempel belakangan per baris
       exportRows.forEach((r, i) => {
+        // Progress 20% -> 55% mengikuti baris yg sudah ditulis (di-throttle
+        // per 25 baris biar tidak re-render tiap 1 baris & bikin lambat).
+        if (i % 25 === 0 || i === exportRows.length - 1) {
+          setExportProgress(20 + Math.round(((i + 1) / Math.max(1, exportRows.length)) * 35));
+        }
         const rowValues = EXPORT_COLUMNS.map((c) => {
           if (c.key === "no") return i + 1;
           if (c.key === "documentation") return ""; // diisi gambar, bukan teks
@@ -1193,9 +1206,16 @@ function Body({ email }) {
 
       ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: exportRows.length + 1, column: EXPORT_COLUMNS.length } };
 
+      setExportProgress(55);
+
       // Ambil & tempel thumbnail foto pertama tiap activity yg punya dokumentasi.
       // Jalan paralel (Promise.allSettled) supaya 1 foto gagal load tidak
-      // menggagalkan seluruh export.
+      // menggagalkan seluruh export. Progress 55% -> 92% mengikuti jumlah
+      // foto yg SUDAH selesai diproses (bukan cuma baris - foto2 ini yg
+      // paling lama krn network fetch per foto).
+      const photoEligible = exportRows.filter((r) => docCol > 0 && docPhotoMap[r.id]);
+      if (photoEligible.length) setExportStage(`Mengambil foto dokumentasi (0/${photoEligible.length})…`);
+      let photosDone = 0;
       if (docCol > 0) {
         await Promise.allSettled(exportRows.map(async (r, i) => {
           const path = docPhotoMap[r.id];
@@ -1215,11 +1235,19 @@ function Body({ email }) {
               ext: { width: THUMB_PX, height: THUMB_PX },
               editAs: "oneCell",
             });
-          } catch { /* lewati foto yg gagal diambil, baris lain tetap lanjut */ }
+          } catch { /* lewati foto yg gagal diambil, baris lain tetap lanjut */
+          } finally {
+            photosDone += 1;
+            setExportProgress(55 + Math.round((photosDone / photoEligible.length) * 37));
+            setExportStage(`Mengambil foto dokumentasi (${photosDone}/${photoEligible.length})…`);
+          }
         }));
       }
 
+      setExportProgress(94);
+      setExportStage("Menyusun file .xlsx…");
       const buf = await wb.xlsx.writeBuffer();
+      setExportProgress(99);
       const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const stamp = new Date().toISOString().slice(0, 10);
       const a = document.createElement("a");
@@ -1229,10 +1257,15 @@ function Body({ email }) {
       a.click();
       a.remove();
       URL.revokeObjectURL(a.href);
+      setExportProgress(100);
+      setExportStage("Selesai!");
+      await new Promise((res) => setTimeout(res, 650)); // biar bar 100% sempat kelihatan sebelum ditutup
     } catch (e) {
       alert(e.message || "Gagal export .xlsx");
     } finally {
       setExporting(false);
+      setExportProgress(0);
+      setExportStage("");
     }
   }, [COLUMNS, scopedRows, profileMap, siteMetaMap, bmeAssignMap, docPhotoMap, docDriveMap, branchMap, cats]);
 
@@ -1365,9 +1398,36 @@ function Body({ email }) {
             <RotateCcw size={13} /> Clear All Filter
           </button>
 
-          <button onClick={exportXlsx} disabled={scopedRows.length === 0} title="Export SEMUA status (branch/brand/search tetap ikut filter aktif)"
-            style={{ ...btn, opacity: scopedRows.length === 0 ? 0.5 : 1, cursor: scopedRows.length === 0 ? "default" : "pointer", background: "linear-gradient(135deg,#1E8E3E,#0F6B2C)", borderColor: "transparent", color: "#fff" }}>
-            <Download size={13} /> {exporting ? "Menyiapkan file…" : "Export .xlsx"}
+          {/* Tombol Export .xlsx - begitu proses jalan, isinya "berubah
+              bentuk" jadi bar progress kecil (label tahap + persen +
+              track gradient) di dalam tombol yg sama, bukan cuma teks
+              statis "Menyiapkan file…" - biar user tau prosesnya masih
+              berjalan & sejauh mana (export dgn banyak foto dokumentasi
+              bisa makan waktu lumayan lama). */}
+          <button onClick={exportXlsx} disabled={scopedRows.length === 0 || exporting} title="Export SEMUA status (branch/brand/search tetap ikut filter aktif)"
+            style={{ ...btn, minWidth: exporting ? 198 : undefined, opacity: scopedRows.length === 0 ? 0.5 : 1, cursor: (scopedRows.length === 0 || exporting) ? "default" : "pointer", background: "linear-gradient(135deg,#1E8E3E,#0F6B2C)", borderColor: "transparent", color: "#fff" }}>
+            {exporting ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, width: "100%" }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                  <span style={{ fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "rgba(255,255,255,0.92)" }}>
+                    {exportStage || "Menyiapkan…"}
+                  </span>
+                  <span style={{ fontSize: 12, fontWeight: 800, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{exportProgress}%</span>
+                </div>
+                <div style={{ width: "100%", height: 6, borderRadius: 99, background: "rgba(255,255,255,0.28)", overflow: "hidden" }}>
+                  <div style={{
+                    height: "100%", borderRadius: 99, width: `${exportProgress}%`,
+                    background: "linear-gradient(90deg,#B9F6C7,#FFFFFF)",
+                    transition: "width .25s ease",
+                    boxShadow: exportProgress > 0 && exportProgress < 100 ? "0 0 8px rgba(255,255,255,0.55)" : "none",
+                  }} />
+                </div>
+              </div>
+            ) : (
+              <>
+                <Download size={13} /> Export .xlsx
+              </>
+            )}
           </button>
 
           <button onClick={() => router.push("/martahub/activities/import")} title="Import banyak activity plan sekaligus dari file Excel"
