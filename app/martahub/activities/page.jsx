@@ -809,6 +809,15 @@ function Body({ email }) {
       const rngActualFwa = rngFor("actualFwa");
       const rngActualRebuy = rngFor("actualRebuy");
       const rngActualRev = rngFor("actualRev");
+      // "status" di sheet Activity Plan berisi LABEL hasil deriveStatusInfo()
+      // (bukan kolom status DB mentah) - jadi COUNTIFS dgn kriteria teks
+      // "Selesai" di sini otomatis pakai definisi "Selesai" yg SAMA PERSIS
+      // dgn yg dipakai kartu KPI CMS & "Total Selesai/Plan" MartaHub mobile
+      // (lihat isCompletedRow() di atas & completedMonthRows di app/martahub/
+      // m/page.jsx) - status DB 'completed' ATAU plan_submitted yg actual
+      // SP+FWA-nya sudah terisi, dua2nya berlabel "Selesai".
+      const rngStatus = rngFor("status");
+      const DONE_CRIT = `"Selesai"`;
 
       const brandVariants = [
         { label: "Semua Brand", crit: null },
@@ -888,19 +897,28 @@ function Body({ email }) {
         //    metrik dipasangkan Plan & Actual, sejajar, spy kelihatan
         //    pencapaiannya langsung tanpa buka sheet "Activity Plan". ──
         titleRow("Ringkasan per Branch");
-        const TABLE_A_COLS = 10; // Branch, Count, (Plan+Actual) x SP/FWA/Rebuy/Rev
+        // FIX: ditambahkan "Count Activity Done" (jumlah aktivitas yg
+        // SUDAH Selesai) berdampingan dgn "Count Activity Plan" (jumlah
+        // SEMUA aktivitas/plan, apa pun statusnya) - sebelumnya tabel ini
+        // cuma punya 1 kolom count tanpa pemisahan plan-vs-selesai, jadi
+        // tidak kelihatan berapa yg sudah selesai per branch. "Done" pakai
+        // kriteria status = "Selesai" (label dari deriveStatusInfo, lihat
+        // rngStatus/DONE_CRIT di atas) - PERSIS definisi yg sama dgn "Total
+        // Selesai/Plan" MartaHub mobile & kartu KPI "Laporan Actual" CMS.
+        const TABLE_A_COLS = 11; // Branch, Count Plan, Count Done, (Plan+Actual) x SP/FWA/Rebuy/Rev
         brandVariants.forEach((bv) => {
           const hdr = wsSum.getRow(row);
           headerCell(hdr, 1, "Branch");
-          headerCell(hdr, 2, "Count Activity");
-          headerCell(hdr, 3, "Plan SP");
-          headerCell(hdr, 4, "Actual SP");
-          headerCell(hdr, 5, "Plan FWA");
-          headerCell(hdr, 6, "Actual FWA");
-          headerCell(hdr, 7, "Plan Rebuy");
-          headerCell(hdr, 8, "Actual Rebuy");
-          headerCell(hdr, 9, "Plan Rev (3 Months)");
-          headerCell(hdr, 10, "Actual Rev (3 Months)");
+          headerCell(hdr, 2, "Count Activity Plan");
+          headerCell(hdr, 3, "Count Activity Done");
+          headerCell(hdr, 4, "Plan SP");
+          headerCell(hdr, 5, "Actual SP");
+          headerCell(hdr, 6, "Plan FWA");
+          headerCell(hdr, 7, "Actual FWA");
+          headerCell(hdr, 8, "Plan Rebuy");
+          headerCell(hdr, 9, "Actual Rebuy");
+          headerCell(hdr, 10, "Plan Rev (3 Months)");
+          headerCell(hdr, 11, "Actual Rev (3 Months)");
           const firstDataRow = row + 1;
           uniqueBranches.forEach((branchName, idx) => {
             const r2 = wsSum.getRow(firstDataRow + idx);
@@ -909,34 +927,37 @@ function Body({ email }) {
             if (bv.crit) {
               const brandCrit = `${rngBrand},"${bv.crit}"`;
               r2.getCell(2).value = { formula: `COUNTIFS(${rngBranch},${critBranch},${brandCrit})` };
-              r2.getCell(3).value = { formula: `SUMIFS(${rngSp},${rngBranch},${critBranch},${brandCrit})` };
-              r2.getCell(4).value = { formula: `SUMIFS(${rngActualSp},${rngBranch},${critBranch},${brandCrit})` };
-              r2.getCell(5).value = { formula: `SUMIFS(${rngFwa},${rngBranch},${critBranch},${brandCrit})` };
-              r2.getCell(6).value = { formula: `SUMIFS(${rngActualFwa},${rngBranch},${critBranch},${brandCrit})` };
-              r2.getCell(7).value = { formula: `SUMIFS(${rngRebuy},${rngBranch},${critBranch},${brandCrit})` };
-              r2.getCell(8).value = { formula: `SUMIFS(${rngActualRebuy},${rngBranch},${critBranch},${brandCrit})` };
-              r2.getCell(9).value = { formula: `SUMIFS(${rngRev},${rngBranch},${critBranch},${brandCrit})` };
-              r2.getCell(10).value = { formula: `SUMIFS(${rngActualRev},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(3).value = { formula: `COUNTIFS(${rngBranch},${critBranch},${brandCrit},${rngStatus},${DONE_CRIT})` };
+              r2.getCell(4).value = { formula: `SUMIFS(${rngSp},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(5).value = { formula: `SUMIFS(${rngActualSp},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(6).value = { formula: `SUMIFS(${rngFwa},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(7).value = { formula: `SUMIFS(${rngActualFwa},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(8).value = { formula: `SUMIFS(${rngRebuy},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(9).value = { formula: `SUMIFS(${rngActualRebuy},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(10).value = { formula: `SUMIFS(${rngRev},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(11).value = { formula: `SUMIFS(${rngActualRev},${rngBranch},${critBranch},${brandCrit})` };
             } else {
               r2.getCell(2).value = { formula: `COUNTIF(${rngBranch},${critBranch})` };
-              r2.getCell(3).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngSp})` };
-              r2.getCell(4).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualSp})` };
-              r2.getCell(5).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngFwa})` };
-              r2.getCell(6).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualFwa})` };
-              r2.getCell(7).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngRebuy})` };
-              r2.getCell(8).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualRebuy})` };
-              r2.getCell(9).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngRev})` };
-              r2.getCell(10).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualRev})` };
+              r2.getCell(3).value = { formula: `COUNTIFS(${rngBranch},${critBranch},${rngStatus},${DONE_CRIT})` };
+              r2.getCell(4).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngSp})` };
+              r2.getCell(5).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualSp})` };
+              r2.getCell(6).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngFwa})` };
+              r2.getCell(7).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualFwa})` };
+              r2.getCell(8).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngRebuy})` };
+              r2.getCell(9).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualRebuy})` };
+              r2.getCell(10).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngRev})` };
+              r2.getCell(11).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualRev})` };
             }
             r2.getCell(2).numFmt = INT_FMT;
             r2.getCell(3).numFmt = INT_FMT;
             r2.getCell(4).numFmt = INT_FMT;
             r2.getCell(5).numFmt = INT_FMT;
             r2.getCell(6).numFmt = INT_FMT;
-            r2.getCell(7).numFmt = RP_FMT;
+            r2.getCell(7).numFmt = INT_FMT;
             r2.getCell(8).numFmt = RP_FMT;
             r2.getCell(9).numFmt = RP_FMT;
             r2.getCell(10).numFmt = RP_FMT;
+            r2.getCell(11).numFmt = RP_FMT;
             r2.getCell(1).border = XLSX_THIN_BORDER;
             for (let c = 2; c <= TABLE_A_COLS; c++) r2.getCell(c).border = XLSX_THIN_BORDER;
             bandRow(r2, 1, TABLE_A_COLS, idx);
@@ -954,10 +975,11 @@ function Body({ email }) {
           totalR.getCell(4).numFmt = INT_FMT;
           totalR.getCell(5).numFmt = INT_FMT;
           totalR.getCell(6).numFmt = INT_FMT;
-          totalR.getCell(7).numFmt = RP_FMT;
+          totalR.getCell(7).numFmt = INT_FMT;
           totalR.getCell(8).numFmt = RP_FMT;
           totalR.getCell(9).numFmt = RP_FMT;
           totalR.getCell(10).numFmt = RP_FMT;
+          totalR.getCell(11).numFmt = RP_FMT;
           totalRowStyle(totalR, 1, TABLE_A_COLS);
           row = totalRowIdx + 2;
         });

@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../../lib/supabase";
 import { canViewMarta } from "../../../lib/martaAccess";
 import { HubLogo } from "../../../components/HubLogo";
-import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, UserRound, ChevronRight } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, UserRound, ChevronRight, Camera } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -270,6 +270,25 @@ function MartaLoginInner() {
             <span style={{ display: "block", fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em", color: t.hi }}>Login MartaHub Mobile</span>
           </span>
           <ChevronRight size={18} style={{ color: RED, flexShrink: 0 }} />
+        </button>
+
+        {/* Realtime Photo Viewer — photobooth internal: bikin sesi, bagikan
+            link upload (galeri tamu) + layar Viewer (QR download publik +
+            cetak by ID). Ditaruh di bawah kartu Login Mobile, gaya kartu
+            sama tapi warna netral supaya tidak tertukar dgn jalur login. */}
+        <button onClick={() => router.push("/marta/photobooth")}
+          style={{ marginTop: 10, width: "100%", display: "flex", alignItems: "center", gap: 13, padding: "14px 16px", borderRadius: 14, cursor: "pointer", textAlign: "left", fontFamily: FONT,
+            background: d ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.02)", border: `1.5px solid ${t.line}`, transition: "transform .12s, box-shadow .15s, border-color .15s" }}
+          onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 8px 26px rgba(0,0,0,0.10)"; e.currentTarget.style.transform = "translateY(-1px)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.transform = "none"; }}>
+          <span style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", boxShadow: "0 4px 14px rgba(237,28,36,0.32)" }}>
+            <Camera size={20} strokeWidth={2.2} />
+          </span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: "block", fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em", color: t.hi }}>Realtime Photo Viewer</span>
+            <span style={{ display: "block", fontSize: 11.5, color: t.mid, marginTop: 1 }}>Photobooth · upload, viewer, QR &amp; cetak</span>
+          </span>
+          <ChevronRight size={18} style={{ color: t.mid, flexShrink: 0 }} />
         </button>
 
         <div style={{ marginTop: 18, textAlign: "center", fontSize: 10.5, letterSpacing: "0.12em", textTransform: "uppercase", color: t.lo, opacity: 0.35, fontWeight: 600 }}>
