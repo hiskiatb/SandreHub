@@ -471,17 +471,25 @@ export default function MartaMobileHome() {
   // walau dua2nya sama2 mengklaim "laporan Selesai bulan ini".
   const isCompletedRow = (r) => r.status === "completed" || (r.status === "plan_submitted" && r.actual_sp != null && r.actual_fwa != null);
   const completedMonthRows = monthRows.filter(isCompletedRow);
-  const targetSp = completedMonthRows.reduce((s, r) => s + (r.target_sp || 0), 0);
+  // FIX: kolom PLAN/target (targetSp, targetFwaTotal, targetRebuy*,
+  // targetCostTotal, targetRevTotal) SEHARUSNYA = total target dari SEMUA
+  // plan bulan ini (monthRows, apa pun statusnya) - BUKAN cuma dari yg
+  // sudah Selesai (completedMonthRows). Actual/cost_actual TETAP dari
+  // completedMonthRows saja (actual cuma ada kalau laporan sudah
+  // disubmit/tervalidasi) - jadi Plan & Actual sengaja beda basis di sini,
+  // sama persis pola perbaikan "Plan SP" di export Excel CMS
+  // (app/martahub/activities/page.jsx).
+  const targetSp = monthRows.reduce((s, r) => s + (r.target_sp || 0), 0);
   const actualSp = completedMonthRows.reduce((s, r) => s + (r.actual_sp || 0), 0);
-  const targetFwaTotal = completedMonthRows.reduce((s, r) => s + (r.target_fwa || 0), 0);
+  const targetFwaTotal = monthRows.reduce((s, r) => s + (r.target_fwa || 0), 0);
   const actualFwaTotal = completedMonthRows.reduce((s, r) => s + (r.actual_fwa || 0), 0);
-  const targetRebuySpTotal = completedMonthRows.reduce((s, r) => s + (r.target_rebuy_sp || 0), 0);
+  const targetRebuySpTotal = monthRows.reduce((s, r) => s + (r.target_rebuy_sp || 0), 0);
   const rebuySpTotal = completedMonthRows.reduce((s, r) => s + (r.actual_rebuy_sp || 0), 0);
-  const targetRebuyFwaTotal = completedMonthRows.reduce((s, r) => s + (r.target_rebuy_fwa || 0), 0);
+  const targetRebuyFwaTotal = monthRows.reduce((s, r) => s + (r.target_rebuy_fwa || 0), 0);
   const rebuyFwaTotal = completedMonthRows.reduce((s, r) => s + (r.actual_rebuy_fwa || 0), 0);
-  const targetCostTotal = completedMonthRows.reduce((s, r) => s + (r.cost_estimate || 0), 0);
+  const targetCostTotal = monthRows.reduce((s, r) => s + (r.cost_estimate || 0), 0);
   const costTotal = completedMonthRows.reduce((s, r) => s + (r.cost_actual || 0), 0);
-  const targetRevTotal = completedMonthRows.reduce((s, r) => s + (r.target_rev_3m || 0), 0);
+  const targetRevTotal = monthRows.reduce((s, r) => s + (r.target_rev_3m || 0), 0);
   const revenueTotal = completedMonthRows.reduce((s, r) => s + (r.actual_rev_3m || 0), 0);
 
   // "0%" utk Cost Ratio TIDAK BOLEH dipakai kalau memang belum ada satupun

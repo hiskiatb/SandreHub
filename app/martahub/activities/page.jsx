@@ -819,6 +819,56 @@ function Body({ email }) {
       const rngStatus = rngFor("status");
       const DONE_CRIT = `"Selesai"`;
 
+      // FIX: "Count Activity Plan" SEBELUMNYA ikut menghitung dari sheet
+      // "Activity Plan" (= filteredRows) - yg mengikuti tab STATUS yg lagi
+      // aktif di tabel saat export ditekan. Begitu tab "Selesai" yg aktif,
+      // filteredRows CUMA berisi baris Selesai, jadi "Count Activity Plan"
+      // (harusnya = SEMUA plan apa pun statusnya) diam2 ikut kepotong sama
+      // persis dgn "Count Activity Done" (dua2nya jadi angka yg sama, mis.
+      // 248=248 padahal total plan sebenarnya 424). Count Activity Plan
+      // TIDAK BOLEH terpengaruh tab status - jadi disediakan sheet data
+      // terpisah "AllPlanRaw" (hidden) berisi Branch+Brand dari SEMUA
+      // status (scopedRows - sama basis dgn KPI card "... / N plan" di
+      // atas tabel, cuma ikut filter kolom LAIN spt branch/brand/search,
+      // LEPAS dari tab status), dan cuma kolom 2 (Count Activity Plan)
+      // yg reference ke sheet ini - kolom 3 (Count Activity Done) & semua
+      // SP/FWA/Rebuy/Rev tetap reference sheet "Activity Plan" spt semula.
+      const branchGet = EXPORT_COLUMNS.find((c) => c.key === "branch")?.get;
+      const brandGet = EXPORT_COLUMNS.find((c) => c.key === "brand")?.get;
+      // FIX: "Plan SP/FWA/Rebuy/Rev" (kolom TARGET, bukan Actual) SEHARUSNYA
+      // = total target dari SEMUA 424 plan (apa pun statusnya), BUKAN cuma
+      // dari laporan yg sudah Selesai - beda dgn "Actual SP/FWA/Rebuy/Rev"
+      // yg memang HARUS tetap dari laporan Selesai saja (actual cuma ada
+      // kalau laporan sudah disubmit/tervalidasi). Jadi sheet "AllPlanRaw"
+      // ini juga menyimpan angka target mentah dari scopedRows (lepas tab
+      // status), dipakai KHUSUS utk 4 kolom Plan (SP/FWA/Rebuy/Rev) -
+      // kolom Actual-nya tetap reference sheet "Activity Plan" (filteredRows)
+      // spt semula.
+      const targetSpGet = EXPORT_COLUMNS.find((c) => c.key === "targetSp")?.raw;
+      const targetFwaGet = EXPORT_COLUMNS.find((c) => c.key === "targetFwa")?.raw;
+      const targetRebuyGet = EXPORT_COLUMNS.find((c) => c.key === "targetRebuy")?.raw;
+      const targetRevGet = EXPORT_COLUMNS.find((c) => c.key === "targetRev")?.raw;
+      const wsAll = wb.addWorksheet("AllPlanRaw");
+      wsAll.state = "veryHidden";
+      wsAll.getRow(1).values = ["Branch", "Brand", "TargetSP", "TargetFWA", "TargetRebuy", "TargetRev"];
+      scopedRows.forEach((r, i) => {
+        wsAll.getRow(i + 2).values = [
+          branchGet ? branchGet(r) : "-",
+          brandGet ? brandGet(r) : "-",
+          targetSpGet ? (targetSpGet(r) ?? 0) : 0,
+          targetFwaGet ? (targetFwaGet(r) ?? 0) : 0,
+          targetRebuyGet ? (targetRebuyGet(r) ?? 0) : 0,
+          targetRevGet ? (targetRevGet(r) ?? 0) : 0,
+        ];
+      });
+      const allLastRow = scopedRows.length + 1;
+      const rngAllBranch = `'AllPlanRaw'!$A$2:$A$${allLastRow}`;
+      const rngAllBrand = `'AllPlanRaw'!$B$2:$B$${allLastRow}`;
+      const rngAllSp = `'AllPlanRaw'!$C$2:$C$${allLastRow}`;
+      const rngAllFwa = `'AllPlanRaw'!$D$2:$D$${allLastRow}`;
+      const rngAllRebuy = `'AllPlanRaw'!$E$2:$E$${allLastRow}`;
+      const rngAllRev = `'AllPlanRaw'!$F$2:$F$${allLastRow}`;
+
       const brandVariants = [
         { label: "Semua Brand", crit: null },
         { label: "IM3", crit: "IM3" },
@@ -926,26 +976,27 @@ function Body({ email }) {
             const critBranch = `"${escStr(branchName)}"`;
             if (bv.crit) {
               const brandCrit = `${rngBrand},"${bv.crit}"`;
-              r2.getCell(2).value = { formula: `COUNTIFS(${rngBranch},${critBranch},${brandCrit})` };
+              const allBrandCrit = `${rngAllBrand},"${bv.crit}"`;
+              r2.getCell(2).value = { formula: `COUNTIFS(${rngAllBranch},${critBranch},${allBrandCrit})` };
               r2.getCell(3).value = { formula: `COUNTIFS(${rngBranch},${critBranch},${brandCrit},${rngStatus},${DONE_CRIT})` };
-              r2.getCell(4).value = { formula: `SUMIFS(${rngSp},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(4).value = { formula: `SUMIFS(${rngAllSp},${rngAllBranch},${critBranch},${allBrandCrit})` };
               r2.getCell(5).value = { formula: `SUMIFS(${rngActualSp},${rngBranch},${critBranch},${brandCrit})` };
-              r2.getCell(6).value = { formula: `SUMIFS(${rngFwa},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(6).value = { formula: `SUMIFS(${rngAllFwa},${rngAllBranch},${critBranch},${allBrandCrit})` };
               r2.getCell(7).value = { formula: `SUMIFS(${rngActualFwa},${rngBranch},${critBranch},${brandCrit})` };
-              r2.getCell(8).value = { formula: `SUMIFS(${rngRebuy},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(8).value = { formula: `SUMIFS(${rngAllRebuy},${rngAllBranch},${critBranch},${allBrandCrit})` };
               r2.getCell(9).value = { formula: `SUMIFS(${rngActualRebuy},${rngBranch},${critBranch},${brandCrit})` };
-              r2.getCell(10).value = { formula: `SUMIFS(${rngRev},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(10).value = { formula: `SUMIFS(${rngAllRev},${rngAllBranch},${critBranch},${allBrandCrit})` };
               r2.getCell(11).value = { formula: `SUMIFS(${rngActualRev},${rngBranch},${critBranch},${brandCrit})` };
             } else {
-              r2.getCell(2).value = { formula: `COUNTIF(${rngBranch},${critBranch})` };
+              r2.getCell(2).value = { formula: `COUNTIF(${rngAllBranch},${critBranch})` };
               r2.getCell(3).value = { formula: `COUNTIFS(${rngBranch},${critBranch},${rngStatus},${DONE_CRIT})` };
-              r2.getCell(4).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngSp})` };
+              r2.getCell(4).value = { formula: `SUMIF(${rngAllBranch},${critBranch},${rngAllSp})` };
               r2.getCell(5).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualSp})` };
-              r2.getCell(6).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngFwa})` };
+              r2.getCell(6).value = { formula: `SUMIF(${rngAllBranch},${critBranch},${rngAllFwa})` };
               r2.getCell(7).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualFwa})` };
-              r2.getCell(8).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngRebuy})` };
+              r2.getCell(8).value = { formula: `SUMIF(${rngAllBranch},${critBranch},${rngAllRebuy})` };
               r2.getCell(9).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualRebuy})` };
-              r2.getCell(10).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngRev})` };
+              r2.getCell(10).value = { formula: `SUMIF(${rngAllBranch},${critBranch},${rngAllRev})` };
               r2.getCell(11).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualRev})` };
             }
             r2.getCell(2).numFmt = INT_FMT;
@@ -1175,7 +1226,7 @@ function Body({ email }) {
     } finally {
       setExporting(false);
     }
-  }, [COLUMNS, filteredRows, docPhotoMap, docDriveMap, branchMap, cats]);
+  }, [COLUMNS, filteredRows, scopedRows, docPhotoMap, docDriveMap, branchMap, cats]);
 
   const T_FILTER = { hi: T.hi, mid: T.mid, lo: T.lo, blue: T.primary, blueBg: T.primaryBg };
 
