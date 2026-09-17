@@ -20,6 +20,7 @@ export default function RpvPhotoDetailPage() {
   const [state, setState] = useState("loading");
   const [photo, setPhoto] = useState(null);
   const [shared, setShared] = useState(false);
+  const [sharing, setSharing] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -32,10 +33,30 @@ export default function RpvPhotoDetailPage() {
     })();
   }, [photoCode]);
 
+  // FIX (permintaan user): supaya "kalau pilih Instagram Story bisa langsung
+  // post story" - share HARUS mengirim FILE gambarnya sendiri, bukan cuma
+  // URL. Web Share API Level 1 (url saja) TIDAK bisa dipakai IG utk story -
+  // Instagram/aplikasi lain di share sheet OS cuma menerima gambar kalau
+  // kita share via `files:[...]` (Web Share API Level 2, `canShare({files})`).
+  // Alurnya: fetch byte foto -> bungkus jadi File -> cek browser support
+  // share file -> share file (+title/text) supaya OS munculkan semua app yg
+  // bisa terima gambar (termasuk opsi "Add to Story" Instagram). Fallback
+  // berjenjang: share URL biasa -> copy link ke clipboard, utk browser lama/
+  // desktop yg tidak support Web Share sama sekali.
   async function handleShare() {
-    if (!photo) return;
+    if (!photo || sharing) return;
     const shareUrl = typeof window !== "undefined" ? window.location.href : "";
+    setSharing(true);
     try {
+      const res = await fetch(photo.url);
+      if (!res.ok) throw new Error("fetch-failed");
+      const blob = await res.blob();
+      const ext = (blob.type && blob.type.split("/")[1]) || "jpg";
+      const file = new File([blob], `foto-${photo.photo_code}.${ext}`, { type: blob.type || "image/jpeg" });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: `Foto ${photo.photo_code}`, text: "Lihat fotoku dari Photobooth!" });
+        return;
+      }
       if (navigator.share) {
         await navigator.share({ title: `Foto ${photo.photo_code}`, url: shareUrl });
         return;
@@ -49,6 +70,8 @@ export default function RpvPhotoDetailPage() {
       } catch {
         // diamkan saja kalau clipboard pun gagal (browser lama / no permission)
       }
+    } finally {
+      setSharing(false);
     }
   }
 
@@ -92,10 +115,10 @@ export default function RpvPhotoDetailPage() {
         </div>
 
         <div style={{ marginTop: 22, width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-          <button onClick={handleShare}
-            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "14px 6px", borderRadius: 14, border: "1px solid #2C2C33", background: "#1E1E24", color: "#F0F0F2", cursor: "pointer" }}>
-            {shared ? <Check size={18} color="#3DDC84" /> : <Share2 size={18} />}
-            <span style={{ fontSize: 11.5, fontWeight: 700 }}>{shared ? "Tersalin" : "Share"}</span>
+          <button onClick={handleShare} disabled={sharing}
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "14px 6px", borderRadius: 14, border: "1px solid #2C2C33", background: "#1E1E24", color: "#F0F0F2", cursor: sharing ? "default" : "pointer", opacity: sharing ? 0.6 : 1 }}>
+            {sharing ? <Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /> : shared ? <Check size={18} color="#3DDC84" /> : <Share2 size={18} />}
+            <span style={{ fontSize: 11.5, fontWeight: 700 }}>{sharing ? "Menyiapkan…" : shared ? "Tersalin" : "Share"}</span>
           </button>
           <a href={photo.url} download={`foto-${photo.photo_code}.jpg`}
             style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "14px 6px", borderRadius: 14, border: "1px solid #2C2C33", background: "#1E1E24", color: "#F0F0F2", textDecoration: "none", cursor: "pointer" }}>

@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import QRCode from "qrcode";
-import { AlertTriangle, ChevronLeft, ChevronRight, Images, Loader2, Printer, QrCode as QrIcon, Search, Trash2, X } from "lucide-react";
+import { AlertTriangle, Camera, ChevronLeft, ChevronRight, Eye, EyeOff, Images, Loader2, Printer, QrCode as QrIcon, Search, Trash2, X } from "lucide-react";
 import { getRpvSession, listRpvPhotos, subscribeRpvPhotos, rpvPublicUrl, getRpvPhotoByCode, deleteRpvPhoto } from "../../../../../lib/rpv";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -30,6 +30,14 @@ export default function RpvViewerPage() {
   const [lookupError, setLookupError] = useState("");
   const [viewIndex, setViewIndex] = useState(null); // index di photosAsc yg lagi dibuka full-screen, null = tertutup
   const [deletingCode, setDeletingCode] = useState(""); // photo_code yg lagi diproses hapus (disable tombolnya sementara)
+  // Toggle "hide UI" di carousel full-screen - sembunyikan tombol tutup/
+  // hapus/panah/label ID spy foto tampil bersih tanpa gangguan (mis. saat
+  // dipakai foto acara/dipajang), TAPI navigasi geser kiri/kanan TETAP bisa
+  // lewat panah keyboard ATAU tap di tepi kiri/kanan layar (lihat zona tap
+  // di render carousel di bawah) - dan QR pojok kanan bawah ("Ikut Upload
+  // Fotomu") TIDAK PERNAH ikut disembunyikan (itu div terpisah, di luar
+  // blok carousel ini sama sekali).
+  const [chromeHidden, setChromeHidden] = useState(false);
   const unsubRef = useRef(null);
   const touchStartXRef = useRef(null);
 
@@ -109,7 +117,7 @@ export default function RpvViewerPage() {
 
   const openViewer = useCallback((photoCode) => {
     const idx = photosAsc.findIndex((p) => p.photo_code === photoCode);
-    if (idx >= 0) setViewIndex(idx);
+    if (idx >= 0) { setViewIndex(idx); setChromeHidden(false); } // selalu mulai dgn UI terlihat tiap buka carousel
   }, [photosAsc]);
   const closeViewer = useCallback(() => setViewIndex(null), []);
   const goPrev = useCallback(() => {
@@ -245,10 +253,66 @@ export default function RpvViewerPage() {
       {/* QR pojok kanan bawah - SEKARANG mengarah ke halaman Upload (ajakan
           ikut unggah foto), BUKAN lagi download semua foto sesi - download
           per-foto sudah ada di QR kecil di bawah tiap foto pada grid. */}
-      <div style={{ position: "fixed", right: 26, bottom: 26, background: "#fff", borderRadius: 18, padding: 16, boxShadow: "0 12px 40px rgba(0,0,0,0.5)", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, zIndex: 10 }}>
-        {qrUrl ? <img src={qrUrl} alt="QR upload foto" width={140} height={140} /> : <div style={{ width: 140, height: 140, display: "flex", alignItems: "center", justifyContent: "center" }}><QrIcon size={28} color="#8A8A96" /></div>}
-        <div style={{ fontSize: 10.5, fontWeight: 700, color: "#111116", textAlign: "center", lineHeight: 1.4 }}>
-          Scan utk unggah fotomu<br /><span style={{ fontFamily: "monospace", letterSpacing: "0.08em", color: RED }}>{code}</span>
+      {/* Kartu QR pojok kanan bawah - didesain ulang jadi "kartu ajakan"
+          yg lebih jelas & menarik perhatian (dulu cuma kotak putih polos +
+          QR + teks kecil): header gradient brand MartaHub dgn ikon kamera
+          & judul ajakan yg besar, QR dibingkai kotak putih ber-border +
+          aksen sudut spy kelihatan "kartu" bukan cuma gambar mengambang,
+          dan kode sesi ditampilkan sbg badge/pill spy gampang dibaca dari
+          jarak jauh (di lokasi acara). Ring pulsing halus di sekeliling
+          kartu menarik perhatian tanpa mengganggu. */}
+      <div style={{ position: "fixed", right: 26, bottom: 26, zIndex: 10 }}>
+        <div style={{ position: "absolute", inset: -6, borderRadius: 26, border: `2px solid ${RED}`, opacity: 0.35, animation: "rpv-qr-pulse 2.2s ease-out infinite" }} />
+        <div style={{
+          position: "relative", width: 196, background: "#fff", borderRadius: 22, overflow: "hidden",
+          boxShadow: "0 18px 48px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.25)",
+        }}>
+          <div style={{
+            display: "flex", alignItems: "center", gap: 8, padding: "12px 14px",
+            background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff",
+          }}>
+            <div style={{ width: 26, height: 26, borderRadius: 9, background: "rgba(255,255,255,0.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Camera size={14} />
+            </div>
+            <div style={{ fontSize: 12.5, fontWeight: 800, lineHeight: 1.25, letterSpacing: "-0.01em" }}>
+              Ikut Upload<br />Fotomu!
+            </div>
+          </div>
+          <div style={{ padding: "16px 16px 14px", display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+            <div style={{ position: "relative", width: 148, height: 148, borderRadius: 14, border: "1.5px solid #EDEDF2", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {/* Aksen sudut - kesan "kartu QR" yg lebih dirancang, bukan cuma gambar polos ditaruh di kotak. */}
+              {["0,0", "0,1", "1,0", "1,1"].map((pos) => {
+                const [vy, vx] = pos.split(",");
+                const top = vy === "0" ? -1.5 : undefined, bottom = vy === "1" ? -1.5 : undefined;
+                const left = vx === "0" ? -1.5 : undefined, right = vx === "1" ? -1.5 : undefined;
+                return (
+                  <div key={pos} style={{
+                    position: "absolute", top, bottom, left, right, width: 16, height: 16,
+                    borderTop: vy === "0" ? `2.5px solid ${RED}` : "none",
+                    borderBottom: vy === "1" ? `2.5px solid ${RED}` : "none",
+                    borderLeft: vx === "0" ? `2.5px solid ${RED}` : "none",
+                    borderRight: vx === "1" ? `2.5px solid ${RED}` : "none",
+                    borderRadius: 4,
+                  }} />
+                );
+              })}
+              {qrUrl ? (
+                <img src={qrUrl} alt="QR upload foto" width={124} height={124} style={{ display: "block" }} />
+              ) : (
+                <Loader2 size={26} color="#C7C7D1" style={{ animation: "spin 1s linear infinite" }} />
+              )}
+            </div>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#5A5A68", textAlign: "center" }}>
+              Scan pakai kamera HP
+            </div>
+            <div style={{
+              display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 12px", borderRadius: 999,
+              background: "#FBEAEC",
+            }}>
+              <span style={{ width: 5, height: 5, borderRadius: 99, background: RED, flexShrink: 0 }} />
+              <span style={{ fontSize: 12, fontWeight: 800, fontFamily: "monospace", letterSpacing: "0.08em", color: RED }}>{code}</span>
+            </div>
+          </div>
         </div>
       </div>
       {/* Carousel full-screen - geser kiri/kanan mengikuti URUTAN FOTO
@@ -268,45 +332,75 @@ export default function RpvViewerPage() {
             if (dx > 0) goPrev(); else goNext();
           }}
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.94)", zIndex: 50, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
-          <button onClick={closeViewer} aria-label="Tutup"
-            style={{ position: "absolute", top: 22, right: 26, width: 40, height: 40, borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.08)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-            <X size={18} />
-          </button>
-          <button onClick={() => handleDelete(photosAsc[viewIndex])} disabled={deletingCode === photosAsc[viewIndex].photo_code} aria-label="Hapus foto ini"
-            style={{ position: "absolute", top: 22, right: 76, width: 40, height: 40, borderRadius: 999, border: "1px solid rgba(248,113,113,0.35)", background: "rgba(248,113,113,0.14)", color: "#F87171", display: "flex", alignItems: "center", justifyContent: "center", cursor: deletingCode === photosAsc[viewIndex].photo_code ? "not-allowed" : "pointer", opacity: deletingCode === photosAsc[viewIndex].photo_code ? 0.5 : 1 }}>
-            {deletingCode === photosAsc[viewIndex].photo_code ? <Loader2 size={16} style={{ animation: "spin .8s linear infinite" }} /> : <Trash2 size={16} />}
+          {/* Zona tap tepi kiri/kanan - navigasi tetap bisa dipakai (klik
+              atau keyboard ArrowLeft/ArrowRight, lihat effect keyboard di
+              atas) WALAU UI disembunyikan (chromeHidden) & tombol panah
+              ikut hilang - berguna khususnya di layar sentuh tanpa
+              keyboard. Lebarnya cuma di tepi (14%) spy tidak menutupi
+              area foto/klik-buka lain. */}
+          {chromeHidden && photosAsc.length > 1 && (
+            <>
+              <div onClick={goPrev} aria-label="Foto sebelumnya" style={{ position: "absolute", inset: "0 auto 0 0", width: "14%", cursor: "pointer", zIndex: 1 }} />
+              <div onClick={goNext} aria-label="Foto berikutnya" style={{ position: "absolute", inset: "0 0 0 auto", width: "14%", cursor: "pointer", zIndex: 1 }} />
+            </>
+          )}
+
+          {/* Toggle hide/show UI - SELALU tampil (inilah satu2nya kontrol
+              yg tidak ikut disembunyikan, kalau tidak user tidak akan bisa
+              menampilkan lagi UI-nya). */}
+          <button onClick={() => setChromeHidden((v) => !v)} aria-label={chromeHidden ? "Tampilkan UI" : "Sembunyikan UI"}
+            title={chromeHidden ? "Tampilkan UI" : "Sembunyikan UI"}
+            style={{ position: "absolute", top: 22, left: 26, zIndex: 2, width: 40, height: 40, borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.08)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            {chromeHidden ? <Eye size={17} /> : <EyeOff size={17} />}
           </button>
 
-          <div style={{ position: "absolute", top: 24, left: 26, fontSize: 13, fontWeight: 700, color: "#F0F0F2", fontFamily: "monospace", letterSpacing: "0.06em" }}>
-            {viewIndex + 1} / {photosAsc.length} · ID {photosAsc[viewIndex].photo_code}
-          </div>
+          {!chromeHidden && (
+            <>
+              <button onClick={closeViewer} aria-label="Tutup"
+                style={{ position: "absolute", top: 22, right: 26, width: 40, height: 40, borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.08)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                <X size={18} />
+              </button>
+              <button onClick={() => handleDelete(photosAsc[viewIndex])} disabled={deletingCode === photosAsc[viewIndex].photo_code} aria-label="Hapus foto ini"
+                style={{ position: "absolute", top: 22, right: 76, width: 40, height: 40, borderRadius: 999, border: "1px solid rgba(248,113,113,0.35)", background: "rgba(248,113,113,0.14)", color: "#F87171", display: "flex", alignItems: "center", justifyContent: "center", cursor: deletingCode === photosAsc[viewIndex].photo_code ? "not-allowed" : "pointer", opacity: deletingCode === photosAsc[viewIndex].photo_code ? 0.5 : 1 }}>
+                {deletingCode === photosAsc[viewIndex].photo_code ? <Loader2 size={16} style={{ animation: "spin .8s linear infinite" }} /> : <Trash2 size={16} />}
+              </button>
 
-          {photosAsc.length > 1 && (
-            <button onClick={goPrev} aria-label="Foto sebelumnya"
-              style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", width: 52, height: 52, borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.08)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-              <ChevronLeft size={24} />
-            </button>
+              <div style={{ position: "absolute", top: 24, left: 76, fontSize: 13, fontWeight: 700, color: "#F0F0F2", fontFamily: "monospace", letterSpacing: "0.06em" }}>
+                {viewIndex + 1} / {photosAsc.length} · ID {photosAsc[viewIndex].photo_code}
+              </div>
+
+              {photosAsc.length > 1 && (
+                <button onClick={goPrev} aria-label="Foto sebelumnya"
+                  style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", width: 52, height: 52, borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.08)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 2 }}>
+                  <ChevronLeft size={24} />
+                </button>
+              )}
+            </>
           )}
 
           <img src={photosAsc[viewIndex].url} alt="" style={{ maxWidth: "min(92vw, 900px)", maxHeight: "76vh", objectFit: "contain", borderRadius: 10, boxShadow: "0 20px 60px rgba(0,0,0,0.55)" }} />
 
-          {photosAsc.length > 1 && (
-            <button onClick={goNext} aria-label="Foto berikutnya"
-              style={{ position: "absolute", right: 16, top: "50%", transform: "translateY(-50%)", width: 52, height: 52, borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.08)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-              <ChevronRight size={24} />
-            </button>
-          )}
+          {!chromeHidden && (
+            <>
+              {photosAsc.length > 1 && (
+                <button onClick={goNext} aria-label="Foto berikutnya"
+                  style={{ position: "absolute", right: 16, top: "50%", transform: "translateY(-50%)", width: 52, height: 52, borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.08)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 2 }}>
+                  <ChevronRight size={24} />
+                </button>
+              )}
 
-          {photoQr[photosAsc[viewIndex].photo_code] && (
-            <div style={{ marginTop: 18, background: "#fff", borderRadius: 12, padding: 8, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-              <img src={photoQr[photosAsc[viewIndex].photo_code]} alt="QR download foto ini" width={72} height={72} style={{ display: "block" }} />
-              <span style={{ fontSize: 9.5, fontWeight: 700, color: "#111116" }}>Scan utk download</span>
-            </div>
+              {photoQr[photosAsc[viewIndex].photo_code] && (
+                <div style={{ marginTop: 18, background: "#fff", borderRadius: 12, padding: 8, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                  <img src={photoQr[photosAsc[viewIndex].photo_code]} alt="QR download foto ini" width={72} height={72} style={{ display: "block" }} />
+                  <span style={{ fontSize: 9.5, fontWeight: 700, color: "#111116" }}>Scan utk download</span>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
 
-      <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
+      <style>{"@keyframes spin{to{transform:rotate(360deg)}} @keyframes rpv-qr-pulse{0%{transform:scale(0.97);opacity:0.45}70%{transform:scale(1.04);opacity:0}100%{transform:scale(1.04);opacity:0}}"}</style>
     </div>
   );
 }

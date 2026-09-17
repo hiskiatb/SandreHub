@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
-import { Camera, Copy, ExternalLink, Loader2, Monitor, Plus, QrCode, Upload, Check, ArrowLeft } from "lucide-react";
+import { Camera, Loader2, Monitor, Plus, Upload, ArrowLeft } from "lucide-react";
 import { createRpvSession } from "../../../lib/rpv";
 import { supabaseMarta } from "../../../lib/supabaseMarta";
 
@@ -136,13 +136,16 @@ export default function PhotoboothPanel() {
                   <div style={{ fontSize: 14, fontWeight: 700, color: t.hi }}>{s.title}</div>
                   <div style={{ fontSize: 12, color: t.lo, marginTop: 2, fontFamily: "monospace", letterSpacing: "0.06em" }}>KODE SESI: {s.code}</div>
                 </div>
+                {/* FIX: fitur ini disederhanakan jadi CUMA 2 menu inti -
+                    Viewer & Upload (halaman Download terpisah dibuang -
+                    download per-foto sekarang lewat halaman detail yg
+                    dibuka dari QR di tiap foto pada layar Viewer, jadi
+                    halaman download-semua terpisah sudah tidak perlu). */}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <button onClick={() => copy(`${siteOrigin()}/marta/photobooth/upload/${s.code}`, `u-${s.code}`)}
                     style={btnGhost}><Upload size={13} /> {copied === `u-${s.code}` ? "Tersalin!" : "Link Upload"}</button>
                   <button onClick={() => window.open(`/marta/photobooth/viewer/${s.code}`, "_blank")}
                     style={btnGhost}><Monitor size={13} /> Buka Viewer</button>
-                  <button onClick={() => window.open(`/marta/photobooth/download/${s.code}`, "_blank")}
-                    style={btnGhost}><ExternalLink size={13} /> Halaman Download</button>
                 </div>
               </div>
             </motion.div>
