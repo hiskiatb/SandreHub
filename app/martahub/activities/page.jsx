@@ -112,7 +112,7 @@ function deriveStatusInfo(r, meta) {
   const actualAlreadySubmitted = r?.actual_sp != null && r?.actual_fwa != null;
 
   if (r?.plan_source === "cms_import" && meta && r?.status !== "completed" && !actualAlreadySubmitted) {
-    if (getIncompleteImportFields(r, meta).length > 0) return ["Belum Lengkap", T.warning, T.warningBg];
+    if (getIncompleteImportFields(r, meta).length > 0) return ["Plan Belum Lengkap", T.warning, T.warningBg];
   }
   // "revision_needed" digabung (dulu status terpisah "revision_actual") -
   // bedanya plan/actual sekarang ditandai kolom revision_target.
@@ -566,6 +566,25 @@ function Body({ email }) {
   const kpiStats = useMemo(() => {
     const total = scopedRows.length;
 
+    // FIX: kolom PLAN/target di kartu KPI atas (Total Aktivasi SP/FWA,
+    // Rebuy, Revenue, Cost) SEBELUMNYA selalu dijumlah dari kpiBaseRows
+    // (completed-only) - jadi "Plan"-nya sendiri ikut kepotong ke jumlah
+    // laporan yg sudah Selesai saja, padahal "Plan" seharusnya berarti
+    // SELURUH activity plan yg ada (spt di MartaHub mobile & sheet
+    // Summary Excel, lihat FIX serupa di sana). Sekarang basis PLAN-nya:
+    // - Kalau filter status yg AKTIF persis "Selesai" saja (user sengaja
+    //   pilih chip/filter itu) -> Plan ikut menyempit ke laporan Selesai
+    //   saja juga (biar konsisten dgn filter yg dia pilih sendiri).
+    // - Selain itu (tidak ada filter status aktif, ATAU filter status yg
+    //   aktif BUKAN cuma "Selesai") -> Plan = SEMUA activity plan apa pun
+    //   statusnya (scopedRows), TIDAK dipotong ke completed-only.
+    // Actual TETAP SELALU dari kpiBaseRows (laporan Selesai saja) di
+    // KEDUA kondisi itu - actual cuma bermakna kalau laporannya sudah
+    // benar2 selesai/tervalidasi.
+    const activeStatusFilter = colFilters.status || [];
+    const isSelesaiFilterOnly = activeStatusFilter.length > 0 && activeStatusFilter.every((v) => v === "Selesai");
+    const kpiPlanRows = isSelesaiFilterOnly ? kpiBaseRows : scopedRows;
+
     // Achievement & Productivity - rata-rata dari mh_leaderboard_summary
     // (dihitung server-side dari bobot mh_settings.leaderboard_weights),
     // discope ke BME/RGE yang punya LAPORAN SELESAI (kpiBaseRows), bukan
@@ -595,7 +614,7 @@ function Body({ email }) {
     // langsung dari SELURUH kpiBaseRows (pakai `?? 0` spy null aman),
     // TANPA filter withTarget - supaya kedua layar selalu identik.
     const sumPair = (tKey, aKey) => {
-      const tgt = kpiBaseRows.reduce((s, r) => s + (r[tKey] ?? 0), 0);
+      const tgt = kpiPlanRows.reduce((s, r) => s + (r[tKey] ?? 0), 0);
       const act = kpiBaseRows.reduce((s, r) => s + (r[aKey] ?? 0), 0);
       return { tgt, act };
     };
@@ -607,14 +626,14 @@ function Body({ email }) {
     // "Rebuy FWA" sekaligus, jadi keduanya salah nampilin angka gabungan yg
     // sama persis, bukan porsi masing-masing.
     const actualRebuySp = kpiBaseRows.reduce((s, r) => s + (r.actual_rebuy_sp ?? 0), 0);
-    const targetRebuySp = kpiBaseRows.reduce((s, r) => s + (r.target_rebuy_sp ?? 0), 0);
+    const targetRebuySp = kpiPlanRows.reduce((s, r) => s + (r.target_rebuy_sp ?? 0), 0);
     const actualRebuyFwa = kpiBaseRows.reduce((s, r) => s + (r.actual_rebuy_fwa ?? 0), 0);
-    const targetRebuyFwa = kpiBaseRows.reduce((s, r) => s + (r.target_rebuy_fwa ?? 0), 0);
+    const targetRebuyFwa = kpiPlanRows.reduce((s, r) => s + (r.target_rebuy_fwa ?? 0), 0);
     const actualRebuy = actualRebuySp + actualRebuyFwa;
     const actualRev3m = kpiBaseRows.reduce((s, r) => s + (r.actual_rev_3m ?? 0), 0);
-    const targetRev3m = kpiBaseRows.reduce((s, r) => s + (r.target_rev_3m ?? 0), 0);
+    const targetRev3m = kpiPlanRows.reduce((s, r) => s + (r.target_rev_3m ?? 0), 0);
     const totalCostActual = kpiBaseRows.reduce((s, r) => s + (r.cost_actual ?? 0), 0);
-    const totalCostEstimate = kpiBaseRows.reduce((s, r) => s + (r.cost_estimate ?? 0), 0);
+    const totalCostEstimate = kpiPlanRows.reduce((s, r) => s + (r.cost_estimate ?? 0), 0);
 
     const withBudget = kpiBaseRows.filter((r) => r.cost_estimate);
     const budgetEst = withBudget.reduce((s, r) => s + (r.cost_estimate ?? 0), 0);
@@ -640,7 +659,7 @@ function Body({ email }) {
       actualSubmittedCount,
       avgAchievement, avgProductivity,
     };
-  }, [kpiBaseRows, scopedRows, lbMap]);
+  }, [kpiBaseRows, scopedRows, lbMap, colFilters.status]);
 
   const statusStatusCounts = useMemo(() => {
     const m = new Map();
@@ -713,6 +732,22 @@ function Body({ email }) {
     setExporting(true);
     try {
       const wb = new ExcelJS.Workbook();
+
+      // FIX: export SEBELUMNYA pakai filteredRows (ikut tab STATUS yg lagi
+      // aktif di tabel saat tombol Export ditekan) - jadi kalau user lagi
+      // buka tab "Selesai", file yg didownload cuma berisi baris Selesai
+      // saja, bikin rancu (mis. Count Activity Plan ikut kepotong sama
+      // dgn Count Activity Done, lihat FIX AllPlanRaw sebelumnya). SEKARANG
+      // export SELALU mengikutkan SEMUA status (scopedRows - tetap ikut
+      // filter kolom LAIN spt branch/brand/search, TAPI lepas dari tab
+      // status), supaya file yg didownload konsisten & lengkap apa pun tab
+      // yg sedang dibuka di layar. Diurutkan dgn status "Selesai" TAMPIL
+      // DULUAN (baru status lain menyusul, urutan aslinya dipertahankan).
+      const exportRows = [...scopedRows].sort((a, b) => {
+        const aDone = deriveStatusInfo(a, { profileMap, siteMetaMap, bmeAssignMap, branchMap })[0] === "Selesai" ? 0 : 1;
+        const bDone = deriveStatusInfo(b, { profileMap, siteMetaMap, bmeAssignMap, branchMap })[0] === "Selesai" ? 0 : 1;
+        return aDone - bDone;
+      });
 
       // ── Palet warna & number format export - SATU sumber dipakai sheet
       //    Summary & Activity Plan, biar konsisten & gampang diubah sekali
@@ -792,7 +827,7 @@ function Body({ email }) {
         if (idx < 0) throw new Error(`Kolom export "${key}" tidak ditemukan`);
         return colLetter(idx + 1);
       };
-      const dataLastRow = filteredRows.length + 1; // +1 krn baris 1 = header
+      const dataLastRow = exportRows.length + 1; // +1 krn baris 1 = header
       const DATA = `'Activity Plan'!`;
       const rngFor = (key) => {
         const L = exportColLetter(key);
@@ -819,56 +854,18 @@ function Body({ email }) {
       const rngStatus = rngFor("status");
       const DONE_CRIT = `"Selesai"`;
 
-      // FIX: "Count Activity Plan" SEBELUMNYA ikut menghitung dari sheet
-      // "Activity Plan" (= filteredRows) - yg mengikuti tab STATUS yg lagi
-      // aktif di tabel saat export ditekan. Begitu tab "Selesai" yg aktif,
-      // filteredRows CUMA berisi baris Selesai, jadi "Count Activity Plan"
-      // (harusnya = SEMUA plan apa pun statusnya) diam2 ikut kepotong sama
-      // persis dgn "Count Activity Done" (dua2nya jadi angka yg sama, mis.
-      // 248=248 padahal total plan sebenarnya 424). Count Activity Plan
-      // TIDAK BOLEH terpengaruh tab status - jadi disediakan sheet data
-      // terpisah "AllPlanRaw" (hidden) berisi Branch+Brand dari SEMUA
-      // status (scopedRows - sama basis dgn KPI card "... / N plan" di
-      // atas tabel, cuma ikut filter kolom LAIN spt branch/brand/search,
-      // LEPAS dari tab status), dan cuma kolom 2 (Count Activity Plan)
-      // yg reference ke sheet ini - kolom 3 (Count Activity Done) & semua
-      // SP/FWA/Rebuy/Rev tetap reference sheet "Activity Plan" spt semula.
-      const branchGet = EXPORT_COLUMNS.find((c) => c.key === "branch")?.get;
-      const brandGet = EXPORT_COLUMNS.find((c) => c.key === "brand")?.get;
-      // FIX: "Plan SP/FWA/Rebuy/Rev" (kolom TARGET, bukan Actual) SEHARUSNYA
-      // = total target dari SEMUA 424 plan (apa pun statusnya), BUKAN cuma
-      // dari laporan yg sudah Selesai - beda dgn "Actual SP/FWA/Rebuy/Rev"
-      // yg memang HARUS tetap dari laporan Selesai saja (actual cuma ada
-      // kalau laporan sudah disubmit/tervalidasi). Jadi sheet "AllPlanRaw"
-      // ini juga menyimpan angka target mentah dari scopedRows (lepas tab
-      // status), dipakai KHUSUS utk 4 kolom Plan (SP/FWA/Rebuy/Rev) -
-      // kolom Actual-nya tetap reference sheet "Activity Plan" (filteredRows)
-      // spt semula.
-      const targetSpGet = EXPORT_COLUMNS.find((c) => c.key === "targetSp")?.raw;
-      const targetFwaGet = EXPORT_COLUMNS.find((c) => c.key === "targetFwa")?.raw;
-      const targetRebuyGet = EXPORT_COLUMNS.find((c) => c.key === "targetRebuy")?.raw;
-      const targetRevGet = EXPORT_COLUMNS.find((c) => c.key === "targetRev")?.raw;
-      const wsAll = wb.addWorksheet("AllPlanRaw");
-      wsAll.state = "veryHidden";
-      wsAll.getRow(1).values = ["Branch", "Brand", "TargetSP", "TargetFWA", "TargetRebuy", "TargetRev"];
-      scopedRows.forEach((r, i) => {
-        wsAll.getRow(i + 2).values = [
-          branchGet ? branchGet(r) : "-",
-          brandGet ? brandGet(r) : "-",
-          targetSpGet ? (targetSpGet(r) ?? 0) : 0,
-          targetFwaGet ? (targetFwaGet(r) ?? 0) : 0,
-          targetRebuyGet ? (targetRebuyGet(r) ?? 0) : 0,
-          targetRevGet ? (targetRevGet(r) ?? 0) : 0,
-        ];
-      });
-      const allLastRow = scopedRows.length + 1;
-      const rngAllBranch = `'AllPlanRaw'!$A$2:$A$${allLastRow}`;
-      const rngAllBrand = `'AllPlanRaw'!$B$2:$B$${allLastRow}`;
-      const rngAllSp = `'AllPlanRaw'!$C$2:$C$${allLastRow}`;
-      const rngAllFwa = `'AllPlanRaw'!$D$2:$D$${allLastRow}`;
-      const rngAllRebuy = `'AllPlanRaw'!$E$2:$E$${allLastRow}`;
-      const rngAllRev = `'AllPlanRaw'!$F$2:$F$${allLastRow}`;
-
+      // FIX: sheet "Activity Plan" SEKARANG SELALU berisi SEMUA status
+      // (exportRows = scopedRows, lihat catatan di atas) - jadi sheet
+      // terpisah "AllPlanRaw" yg dulu dipakai khusus utk Count Activity
+      // Plan & kolom Plan SP/FWA/Rebuy/Rev (supaya lepas dari tab status)
+      // SUDAH TIDAK PERLU LAGI - rngBranch/rngBrand/rngSp/rngFwa/rngRebuy/
+      // rngRev di atas SENDIRI sudah otomatis mencakup SEMUA plan apa pun
+      // statusnya. "Count Activity Plan" & "Plan SP/FWA/Rebuy/Rev" pakai
+      // rngBranch/rngBrand langsung (TANPA kriteria status) spt semula,
+      // sedangkan "Count Activity Done" & "Actual SP/FWA/Rebuy/Rev" TETAP
+      // ditambah kriteria status="Selesai" (rngStatus,DONE_CRIT) supaya
+      // cuma menghitung baris yg BENAR sudah selesai dari dalam sheet yg
+      // sekarang campur semua status ini.
       const brandVariants = [
         { label: "Semua Brand", crit: null },
         { label: "IM3", crit: "IM3" },
@@ -894,13 +891,13 @@ function Body({ email }) {
       // 100% oleh Excel versi berapa pun (termasuk Excel lama) & oleh
       // ExcelJS, jadi file tidak pernah "Repair" lagi.
       const uniqueBranches = Array.from(
-        new Set(filteredRows.map((r) => branchMap[r.branch_id] || "-"))
+        new Set(exportRows.map((r) => branchMap[r.branch_id] || "-"))
       ).sort((a, b) => a.localeCompare(b));
-      const uniqueCats = Array.from(new Set(filteredRows.map((r) => cats(r)))).sort((a, b) =>
+      const uniqueCats = Array.from(new Set(exportRows.map((r) => cats(r)))).sort((a, b) =>
         a.localeCompare(b)
       );
 
-      if (filteredRows.length) {
+      if (exportRows.length) {
         const wsSum = wb.addWorksheet("Summary");
         wsSum.getColumn(1).width = 22;
         for (let c = 2; c <= 22; c++) wsSum.getColumn(c).width = 15;
@@ -926,6 +923,7 @@ function Body({ email }) {
             cell.font = { bold: true };
             cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLSX_TOTAL_FILL } };
             cell.border = XLSX_THIN_BORDER;
+            cell.alignment = { vertical: "middle", horizontal: c === colFrom ? "left" : "center" };
           }
         };
         const bandRow = (r, colFrom, colTo, idx) => {
@@ -976,28 +974,28 @@ function Body({ email }) {
             const critBranch = `"${escStr(branchName)}"`;
             if (bv.crit) {
               const brandCrit = `${rngBrand},"${bv.crit}"`;
-              const allBrandCrit = `${rngAllBrand},"${bv.crit}"`;
-              r2.getCell(2).value = { formula: `COUNTIFS(${rngAllBranch},${critBranch},${allBrandCrit})` };
-              r2.getCell(3).value = { formula: `COUNTIFS(${rngBranch},${critBranch},${brandCrit},${rngStatus},${DONE_CRIT})` };
-              r2.getCell(4).value = { formula: `SUMIFS(${rngAllSp},${rngAllBranch},${critBranch},${allBrandCrit})` };
-              r2.getCell(5).value = { formula: `SUMIFS(${rngActualSp},${rngBranch},${critBranch},${brandCrit})` };
-              r2.getCell(6).value = { formula: `SUMIFS(${rngAllFwa},${rngAllBranch},${critBranch},${allBrandCrit})` };
-              r2.getCell(7).value = { formula: `SUMIFS(${rngActualFwa},${rngBranch},${critBranch},${brandCrit})` };
-              r2.getCell(8).value = { formula: `SUMIFS(${rngAllRebuy},${rngAllBranch},${critBranch},${allBrandCrit})` };
-              r2.getCell(9).value = { formula: `SUMIFS(${rngActualRebuy},${rngBranch},${critBranch},${brandCrit})` };
-              r2.getCell(10).value = { formula: `SUMIFS(${rngAllRev},${rngAllBranch},${critBranch},${allBrandCrit})` };
-              r2.getCell(11).value = { formula: `SUMIFS(${rngActualRev},${rngBranch},${critBranch},${brandCrit})` };
+              const doneCrit = `${rngStatus},${DONE_CRIT}`;
+              r2.getCell(2).value = { formula: `COUNTIFS(${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(3).value = { formula: `COUNTIFS(${rngBranch},${critBranch},${brandCrit},${doneCrit})` };
+              r2.getCell(4).value = { formula: `SUMIFS(${rngSp},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(5).value = { formula: `SUMIFS(${rngActualSp},${rngBranch},${critBranch},${brandCrit},${doneCrit})` };
+              r2.getCell(6).value = { formula: `SUMIFS(${rngFwa},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(7).value = { formula: `SUMIFS(${rngActualFwa},${rngBranch},${critBranch},${brandCrit},${doneCrit})` };
+              r2.getCell(8).value = { formula: `SUMIFS(${rngRebuy},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(9).value = { formula: `SUMIFS(${rngActualRebuy},${rngBranch},${critBranch},${brandCrit},${doneCrit})` };
+              r2.getCell(10).value = { formula: `SUMIFS(${rngRev},${rngBranch},${critBranch},${brandCrit})` };
+              r2.getCell(11).value = { formula: `SUMIFS(${rngActualRev},${rngBranch},${critBranch},${brandCrit},${doneCrit})` };
             } else {
-              r2.getCell(2).value = { formula: `COUNTIF(${rngAllBranch},${critBranch})` };
+              r2.getCell(2).value = { formula: `COUNTIF(${rngBranch},${critBranch})` };
               r2.getCell(3).value = { formula: `COUNTIFS(${rngBranch},${critBranch},${rngStatus},${DONE_CRIT})` };
-              r2.getCell(4).value = { formula: `SUMIF(${rngAllBranch},${critBranch},${rngAllSp})` };
-              r2.getCell(5).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualSp})` };
-              r2.getCell(6).value = { formula: `SUMIF(${rngAllBranch},${critBranch},${rngAllFwa})` };
-              r2.getCell(7).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualFwa})` };
-              r2.getCell(8).value = { formula: `SUMIF(${rngAllBranch},${critBranch},${rngAllRebuy})` };
-              r2.getCell(9).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualRebuy})` };
-              r2.getCell(10).value = { formula: `SUMIF(${rngAllBranch},${critBranch},${rngAllRev})` };
-              r2.getCell(11).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngActualRev})` };
+              r2.getCell(4).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngSp})` };
+              r2.getCell(5).value = { formula: `SUMIFS(${rngActualSp},${rngBranch},${critBranch},${rngStatus},${DONE_CRIT})` };
+              r2.getCell(6).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngFwa})` };
+              r2.getCell(7).value = { formula: `SUMIFS(${rngActualFwa},${rngBranch},${critBranch},${rngStatus},${DONE_CRIT})` };
+              r2.getCell(8).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngRebuy})` };
+              r2.getCell(9).value = { formula: `SUMIFS(${rngActualRebuy},${rngBranch},${critBranch},${rngStatus},${DONE_CRIT})` };
+              r2.getCell(10).value = { formula: `SUMIF(${rngBranch},${critBranch},${rngRev})` };
+              r2.getCell(11).value = { formula: `SUMIFS(${rngActualRev},${rngBranch},${critBranch},${rngStatus},${DONE_CRIT})` };
             }
             r2.getCell(2).numFmt = INT_FMT;
             r2.getCell(3).numFmt = INT_FMT;
@@ -1010,7 +1008,11 @@ function Body({ email }) {
             r2.getCell(10).numFmt = RP_FMT;
             r2.getCell(11).numFmt = RP_FMT;
             r2.getCell(1).border = XLSX_THIN_BORDER;
-            for (let c = 2; c <= TABLE_A_COLS; c++) r2.getCell(c).border = XLSX_THIN_BORDER;
+            r2.getCell(1).alignment = { vertical: "middle", horizontal: "left" };
+            for (let c = 2; c <= TABLE_A_COLS; c++) {
+              r2.getCell(c).border = XLSX_THIN_BORDER;
+              r2.getCell(c).alignment = { vertical: "middle", horizontal: "center" };
+            }
             bandRow(r2, 1, TABLE_A_COLS, idx);
           });
           const totalRowIdx = firstDataRow + uniqueBranches.length + 1;
@@ -1052,6 +1054,7 @@ function Body({ email }) {
             const r2 = wsSum.getRow(firstDataRow + i);
             r2.getCell(1).value = branchName;
             r2.getCell(1).border = XLSX_THIN_BORDER;
+            r2.getCell(1).alignment = { vertical: "middle", horizontal: "left" };
             const critBranch = `"${escStr(branchName)}"`;
             uniqueCats.forEach((catName, j) => {
               const col = catAnchorCol + j;
@@ -1063,7 +1066,7 @@ function Body({ email }) {
               cell.value = { formula };
               cell.numFmt = INT_FMT;
               cell.border = XLSX_THIN_BORDER;
-              cell.alignment = { horizontal: "center" };
+              cell.alignment = { vertical: "middle", horizontal: "center" };
             });
             const totalCol = catAnchorCol + uniqueCats.length;
             const totalCell = r2.getCell(totalCol);
@@ -1073,7 +1076,7 @@ function Body({ email }) {
             totalCell.font = { bold: true };
             totalCell.numFmt = INT_FMT;
             totalCell.border = XLSX_THIN_BORDER;
-            totalCell.alignment = { horizontal: "center" };
+            totalCell.alignment = { vertical: "middle", horizontal: "center" };
             bandRow(r2, 1, totalCol, i);
           });
           const totalRowIdx = firstDataRow + uniqueBranches.length + 1;
@@ -1087,7 +1090,7 @@ function Body({ email }) {
               ? { formula: `SUM(${cl}${firstDataRow}:${cl}${firstDataRow + uniqueBranches.length - 1})` }
               : 0;
             cell.numFmt = INT_FMT;
-            cell.alignment = { horizontal: "center" };
+            cell.alignment = { vertical: "middle", horizontal: "center" };
           }
           totalRowStyle(totalR, 1, catAnchorCol + uniqueCats.length);
           row = totalRowIdx + 2;
@@ -1112,10 +1115,14 @@ function Body({ email }) {
         return undefined;
       };
 
+      // "rapi"/middle-align: SEMUA sel data (bukan cuma header) diberi
+      // alignment vertical:middle horizontal:center secara default lewat
+      // style kolom - kolom teks panjang (title/notes/dst) TETAP center
+      // spy konsisten & rapi dilihat, sesuai diminta.
       ws.columns = EXPORT_COLUMNS.map((c) => ({
         header: c.label,
         width: Math.max(10, Math.round((c.width || 100) / 7)),
-        style: colNumFmt(c) ? { numFmt: colNumFmt(c) } : undefined,
+        style: { alignment: { vertical: "middle", horizontal: "center" }, ...(colNumFmt(c) ? { numFmt: colNumFmt(c) } : {}) },
       }));
       ws.getRow(1).height = 22;
       ws.getRow(1).eachCell((cell) => {
@@ -1130,7 +1137,7 @@ function Body({ email }) {
       const THUMB_PX = 54;
 
       // Baris teks dulu (cepat, sinkron) - gambar ditempel belakangan per baris
-      filteredRows.forEach((r, i) => {
+      exportRows.forEach((r, i) => {
         const rowValues = EXPORT_COLUMNS.map((c) => {
           if (c.key === "no") return i + 1;
           if (c.key === "documentation") return ""; // diisi gambar, bukan teks
@@ -1157,6 +1164,7 @@ function Body({ email }) {
         const row = ws.addRow(rowValues);
         row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
           cell.border = XLSX_THIN_BORDER;
+          cell.alignment = { vertical: "middle", horizontal: "center" };
           if (i % 2 === 1) {
             cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLSX_ZEBRA_FILL } };
           }
@@ -1183,13 +1191,13 @@ function Body({ email }) {
         }
       });
 
-      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: filteredRows.length + 1, column: EXPORT_COLUMNS.length } };
+      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: exportRows.length + 1, column: EXPORT_COLUMNS.length } };
 
       // Ambil & tempel thumbnail foto pertama tiap activity yg punya dokumentasi.
       // Jalan paralel (Promise.allSettled) supaya 1 foto gagal load tidak
       // menggagalkan seluruh export.
       if (docCol > 0) {
-        await Promise.allSettled(filteredRows.map(async (r, i) => {
+        await Promise.allSettled(exportRows.map(async (r, i) => {
           const path = docPhotoMap[r.id];
           if (!path) return;
           try {
@@ -1226,7 +1234,7 @@ function Body({ email }) {
     } finally {
       setExporting(false);
     }
-  }, [COLUMNS, filteredRows, scopedRows, docPhotoMap, docDriveMap, branchMap, cats]);
+  }, [COLUMNS, scopedRows, profileMap, siteMetaMap, bmeAssignMap, docPhotoMap, docDriveMap, branchMap, cats]);
 
   const T_FILTER = { hi: T.hi, mid: T.mid, lo: T.lo, blue: T.primary, blueBg: T.primaryBg };
 
@@ -1357,8 +1365,8 @@ function Body({ email }) {
             <RotateCcw size={13} /> Clear All Filter
           </button>
 
-          <button onClick={exportXlsx} disabled={filteredRows.length === 0} title="Export data sesuai filter yang sedang diterapkan"
-            style={{ ...btn, opacity: filteredRows.length === 0 ? 0.5 : 1, cursor: filteredRows.length === 0 ? "default" : "pointer", background: "linear-gradient(135deg,#1E8E3E,#0F6B2C)", borderColor: "transparent", color: "#fff" }}>
+          <button onClick={exportXlsx} disabled={scopedRows.length === 0} title="Export SEMUA status (branch/brand/search tetap ikut filter aktif)"
+            style={{ ...btn, opacity: scopedRows.length === 0 ? 0.5 : 1, cursor: scopedRows.length === 0 ? "default" : "pointer", background: "linear-gradient(135deg,#1E8E3E,#0F6B2C)", borderColor: "transparent", color: "#fff" }}>
             <Download size={13} /> {exporting ? "Menyiapkan file…" : "Export .xlsx"}
           </button>
 
@@ -1463,7 +1471,7 @@ function Body({ email }) {
                     if (col.key === "no") return <td key="no" style={{ padding: "8px 10px", color: T.lo, borderRight: `1px solid ${T.line}` }}>{i + 1}</td>;
                     if (col.badgeStatus) {
                       const st = deriveStatusInfo(r, { profileMap, siteMetaMap, bmeAssignMap, branchMap });
-                      const missingFields = st[0] === "Belum Lengkap" ? getIncompleteImportFields(r, { profileMap, siteMetaMap, bmeAssignMap, branchMap }) : [];
+                      const missingFields = st[0] === "Plan Belum Lengkap" ? getIncompleteImportFields(r, { profileMap, siteMetaMap, bmeAssignMap, branchMap }) : [];
                       const badgeTitle = missingFields.length ? `Kolom belum terisi: ${missingFields.map((f) => f.label).join(", ")}` : undefined;
                       return <td key={col.key} style={{ padding: "8px 10px", borderRight: `1px solid ${T.line}` }}><span title={badgeTitle} style={{ fontSize: 10, fontWeight: 800, color: st[1], background: st[2], padding: "2px 8px", borderRadius: 999, cursor: badgeTitle ? "help" : "default" }}>{st[0]}</span></td>;
                     }

@@ -1174,6 +1174,13 @@ function AchievementCard({
             <DarkDetailRow icon={RefreshCw} label="Rebuy SP" actual={rebuySpTotal} plan={targetRebuySpTotal} fmt={fmtRpCompact} color="#F5CD46" />
             <DarkDetailRow icon={RefreshCw} label="Rebuy FWA" actual={rebuyFwaTotal} plan={targetRebuyFwaTotal} fmt={fmtRpCompact} color="#F5CD46" />
             <DarkDetailRow icon={Banknote} label="Revenue (3 Months)" actual={revenueTotal} plan={targetRevTotal} fmt={fmtRpCompact} color="#7FD9C6" />
+            {/* Total Cost Actual / Plan - beda dgn Cost Ratio di bawah ini
+                (yg membandingkan cost thd REVENUE). Baris ini murni
+                Actual vs Plan cost estimate itu sendiri, jadi %Ach-nya
+                dibiarkan dihitung standar (actual/plan*100) sama persis
+                spt baris lain di list ini (Aktivasi SP/FWA, Rebuy, dst -
+                TIDAK dibalik spt Cost Ratio), sesuai diminta. */}
+            <DarkDetailRow icon={Wallet} label="Total Cost Actual / Plan" actual={costTotal} plan={targetCostTotal} fmt={fmtRpCompact} color="#F5CD46" />
             {/* Cost Ratio nilainya SENDIRI sudah persentase (cost/revenue),
                 dan MAKIN RENDAH MAKIN BAIK (kebalikan metrik lain di kartu
                 ini) - jadi "% Capaian"-nya TIDAK BOLEH dihitung actual/plan
