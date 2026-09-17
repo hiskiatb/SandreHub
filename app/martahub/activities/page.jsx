@@ -547,7 +547,21 @@ function Body({ email }) {
     return list;
   }, [searchFiltered, colFilters, FILTER_COLS]);
 
-  const kpiBaseRows = useMemo(() => scopedRows.filter((r) => r.status === "completed"), [scopedRows]);
+  // FIX: SEBELUMNYA kpiBaseRows cuma pakai r.status==='completed' MENTAH -
+  // beda dgn label "Selesai" yg ditampilkan di kolom STATUS tabel (yg SUDAH
+  // dibuatkan pengecualian: row plan_submitted TAPI actual_sp/actual_fwa
+  // sudah terisi juga dianggap "Selesai", lihat deriveStatusInfo di atas).
+  // Akibatnya kalau user filter tabel/export ke tab "Selesai" (yg pakai
+  // label ini, jumlahnya lebih banyak drpd kpiBaseRows lama), sum Actual
+  // SP/FWA di sheet Export beda dgn KPI card di atas tabel - padahal
+  // sama2 mengklaim "Selesai". Disamakan pakai isCompletedRow() yg PERSIS
+  // sama syaratnya dgn deriveStatusInfo, supaya KPI card, tab filter tabel,
+  // DAN hasil Export .xlsx selalu menghitung baris yg sama persis.
+  const isCompletedRow = useCallback(
+    (r) => r?.status === "completed" || (r?.status === "plan_submitted" && r?.actual_sp != null && r?.actual_fwa != null),
+    []
+  );
+  const kpiBaseRows = useMemo(() => scopedRows.filter(isCompletedRow), [scopedRows, isCompletedRow]);
 
   const kpiStats = useMemo(() => {
     const total = scopedRows.length;

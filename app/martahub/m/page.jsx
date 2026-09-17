@@ -461,7 +461,16 @@ export default function MartaMobileHome() {
   // completedMonthRows (status==='completed' saja), SAMA PERSIS basisnya
   // dgn kpiBaseRows CMS, supaya kedua layar (mobile & CMS) selalu
   // menunjukkan angka yg identik utk laporan yg SUDAH selesai.
-  const completedMonthRows = monthRows.filter((r) => r.status === "completed");
+  // FIX: CMS Activity Plan (app/martahub/activities/page.jsx) sekarang
+  // menganggap "Selesai" juga baris yg status DB-nya MASIH plan_submitted
+  // TAPI laporan actual-nya (actual_sp & actual_fwa) sudah terisi - bukan
+  // cuma status==='completed' mentah (lihat isCompletedRow() di sana).
+  // Mobile HARUS pakai syarat yg SAMA PERSIS di sini, kalau tidak, begitu
+  // user di CMS filter tabel/export ke tab "Selesai", angkanya ikut lebih
+  // banyak drpd completedMonthRows versi lama - beda dgn kartu mobile ini
+  // walau dua2nya sama2 mengklaim "laporan Selesai bulan ini".
+  const isCompletedRow = (r) => r.status === "completed" || (r.status === "plan_submitted" && r.actual_sp != null && r.actual_fwa != null);
+  const completedMonthRows = monthRows.filter(isCompletedRow);
   const targetSp = completedMonthRows.reduce((s, r) => s + (r.target_sp || 0), 0);
   const actualSp = completedMonthRows.reduce((s, r) => s + (r.actual_sp || 0), 0);
   const targetFwaTotal = completedMonthRows.reduce((s, r) => s + (r.target_fwa || 0), 0);
@@ -491,7 +500,7 @@ export default function MartaMobileHome() {
   // kebetulan sudah sempat diisi - kehitung "selesai" di sini padahal di
   // tab Aktivitas jelas masuk hitungan Revisi, bukan Selesai, bikin kedua
   // angka beda tanpa alasan yg jelas bagi BME/TMV.
-  const actualCount = monthRows.filter((r) => r.status === "completed").length;
+  const actualCount = completedMonthRows.length;
   // Badge besar di kartu Achievement = persentase Activity ACTUAL dari
   // Activity PLAN bulan ini (actualCount/planCount) - BUKAN dari Penjualan
   // SP seperti sebelumnya (dulu achievementPct = actualSp/targetSp, jadi
