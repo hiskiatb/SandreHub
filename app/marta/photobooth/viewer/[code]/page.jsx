@@ -8,8 +8,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import QRCode from "qrcode";
-import { AlertTriangle, Camera, ChevronLeft, ChevronRight, Eye, EyeOff, Images, Loader2, Printer, QrCode as QrIcon, Search, Trash2, X } from "lucide-react";
-import { getRpvSession, listRpvPhotos, subscribeRpvPhotos, rpvPublicUrl, getRpvPhotoByCode, deleteRpvPhoto } from "../../../../../lib/rpv";
+import { AlertTriangle, Camera, ChevronLeft, ChevronRight, Eye, EyeOff, Images, Link2, Loader2, Maximize2, Minimize2, Printer, QrCode as QrIcon, Search, Sparkles, Trash2, X, Zap } from "lucide-react";
+import { getRpvSession, listRpvPhotos, subscribeRpvPhotos, rpvPublicUrl, getRpvPhotoByCode, deleteRpvPhoto, uploadRpvAiResult, rpvThroughputMbps } from "../../../../../lib/rpv";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED = "#ED1C24";
@@ -38,6 +38,17 @@ export default function RpvViewerPage() {
   // Fotomu") TIDAK PERNAH ikut disembunyikan (itu div terpisah, di luar
   // blok carousel ini sama sekali).
   const [chromeHidden, setChromeHidden] = useState(false);
+  // Indikator kecil di header: "live" kalau socket realtime tersambung,
+  // "reconnecting" saat lagi sambung ulang (jaringan venue putus2) - foto
+  // baru TETAP masuk otomatis walau lagi status ini karena ada fallback
+  // polling di subscribeRpvPhotos (lib/rpv.js).
+  const [liveStatus, setLiveStatus] = useState("connecting");
+  // "Mode TV" - tampilan full-bleed foto terbaru + wordmark + QR raksasa di
+  // bawah, persis konsep mockup TV booth ("SCAN TO DOWNLOAD") - dipisah dari
+  // grid biasa (tetap ada, dipakai panitia utk kelola/hapus/cari-cetak),
+  // jadi toggle saja, bukan ganti halaman.
+  const [tvMode, setTvMode] = useState(false);
+  const [tvIndex, setTvIndex] = useState(0);
   const unsubRef = useRef(null);
   const touchStartXRef = useRef(null);
 
@@ -50,6 +61,34 @@ export default function RpvViewerPage() {
     [photos]
   );
 
+  // Mode TV: kalau SUDAH ada hasil AI (operator upload lewat tombol
+  // sparkle), slideshow HANYA nampilin hasil AI itu (lebih layak dipamerin
+  // ke tamu dibanding foto mentah) - kalau belum ada satupun hasil AI,
+  // fallback nampilin foto mentah dulu spy layar TV tidak kosong nunggu.
+  // `photos` sudah terurut terbaru-dulu jadi tvIndex=0 = yg terbaru.
+  const tvPhotos = useMemo(() => {
+    const aiOnly = photos.filter((p) => p.is_ai_result);
+    return aiOnly.length > 0 ? aiOnly : photos;
+  }, [photos]);
+
+  // Begitu daftar tvPhotos bertambah (foto mentah baru masuk, ATAU hasil AI
+  // baru diupload operator), langsung balik ke index 0 spy yg terbaru
+  // tampil duluan, bukan nunggu giliran slideshow.
+  const prevTvCountRef = useRef(0);
+  useEffect(() => {
+    if (tvPhotos.length > prevTvCountRef.current) setTvIndex(0);
+    prevTvCountRef.current = tvPhotos.length;
+  }, [tvPhotos.length]);
+
+  useEffect(() => {
+    if (!tvMode || tvPhotos.length < 2) return;
+    const t = setInterval(() => setTvIndex((i) => (i + 1) % tvPhotos.length), 6000);
+    return () => clearInterval(t);
+  }, [tvMode, tvPhotos.length]);
+
+  const tvPhoto = tvPhotos[Math.min(tvIndex, Math.max(tvPhotos.length - 1, 0))] || null;
+  const tvShowingAi = !!tvPhoto?.is_ai_result;
+
   useEffect(() => {
     (async () => {
       try {
@@ -60,12 +99,23 @@ export default function RpvViewerPage() {
         setPhotos(list);
         setState("ready");
 
-        unsubRef.current = subscribeRpvPhotos(s.id, (row) => {
-          setPhotos((prev) => {
-            if (prev.some((p) => p.photo_code === row.code)) return prev;
-            return [{ photo_code: row.code, storage_path: row.storage_path, uploaded_at: row.uploaded_at, url: rpvPublicUrl(row.storage_path) }, ...prev];
-          });
-        });
+        unsubRef.current = subscribeRpvPhotos(
+          s.id,
+          (row) => {
+            const photoCode = row.photo_code ?? row.code;
+            setPhotos((prev) => {
+              if (prev.some((p) => p.photo_code === photoCode)) return prev;
+              return [{ photo_code: photoCode, storage_path: row.storage_path, uploaded_at: row.uploaded_at, upload_ms: row.upload_ms, file_size_bytes: row.file_size_bytes, parent_code: row.parent_code, is_ai_result: row.is_ai_result, url: rpvPublicUrl(row.storage_path) }, ...prev];
+            });
+          },
+          {
+            sessionCode: code,
+            onStatusChange: (status) => {
+              if (status === "SUBSCRIBED") setLiveStatus("live");
+              else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") setLiveStatus("reconnecting");
+            },
+          }
+        );
       } catch { setState("notfound"); }
     })();
     return () => unsubRef.current?.();
@@ -179,6 +229,39 @@ export default function RpvViewerPage() {
     }
   }, [code, deletingCode, photosAsc]);
 
+  // Upload hasil edit Gemini (operator, dari file di komputer - lihat
+  // tombol "sparkle" di tiap tile) - di-link ke foto ASLI-nya via
+  // parentCode, tampil sbg tile terpisah begitu selesai (realtime, sama
+  // spt upload tamu biasa).
+  const aiFileRef = useRef(null);
+  const [aiUploadTarget, setAiUploadTarget] = useState(""); // photo_code parent yg lagi ditembak tombol sparkle-nya
+  const [aiUploadingFor, setAiUploadingFor] = useState(""); // photo_code parent yg lagi proses upload
+  const [aiUploadError, setAiUploadError] = useState("");
+
+  const openAiUpload = useCallback((parentCode) => {
+    setAiUploadTarget(parentCode);
+    setAiUploadError("");
+    aiFileRef.current?.click();
+  }, []);
+
+  const onAiFilePicked = useCallback(async (e) => {
+    const file = e.target.files?.[0];
+    const parentCode = aiUploadTarget;
+    e.target.value = "";
+    if (!file || !parentCode) return;
+    setAiUploadingFor(parentCode);
+    setAiUploadError("");
+    try {
+      await uploadRpvAiResult(code, parentCode, file);
+      // Tidak perlu setPhotos manual - realtime INSERT (+ fallback polling
+      // di subscribeRpvPhotos) yg nambahin tile barunya begitu confirm sukses.
+    } catch {
+      setAiUploadError(`Gagal upload hasil AI untuk ${parentCode}.`);
+    } finally {
+      setAiUploadingFor("");
+    }
+  }, [code, aiUploadTarget]);
+
   if (state === "loading") {
     return <Center><Loader2 size={30} color={RED} style={{ animation: "spin 1s linear infinite" }} /></Center>;
   }
@@ -193,24 +276,122 @@ export default function RpvViewerPage() {
 
   return (
     <div style={{ minHeight: "100svh", background: "#0A0A0B", fontFamily: FONT, position: "relative", overflow: "hidden" }}>
+      {/* Ambient glow brand di background - dekoratif saja (pointerEvents:none),
+          bikin layar besar acara terasa "hidup"/mewah, bukan kotak hitam polos. */}
+      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0, background: `radial-gradient(560px 420px at 8% -6%, ${RED}22, transparent 60%), radial-gradient(620px 460px at 104% 108%, ${MAGA}22, transparent 60%)` }} />
+
+      {/* Header */}
+
+      {/* Mode TV - full-bleed foto terbaru (slideshow otomatis kalau >1
+          foto) + wordmark event di atas + QR raksasa "SCAN TO DOWNLOAD" di
+          bawah, meniru persis mockup layar TV booth yg diminta. Overlay
+          fixed di atas segalanya - grid/header di baliknya tetap jalan
+          normal (realtime, dsb), cuma ketutup visual saja. */}
+      {tvMode && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "#000" }}>
+          {tvPhoto ? (
+            <>
+              <img src={tvPhoto.url} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", filter: "blur(28px) brightness(0.55)", transform: "scale(1.15)" }} />
+              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: "min(6vh,64px) min(6vw,64px) min(18vh,220px)" }}>
+                <img key={tvPhoto.photo_code} src={tvPhoto.url} alt="" style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 20, boxShadow: "0 40px 100px -20px rgba(0,0,0,0.7)", objectFit: "contain", animation: "rpv-tv-fade .5s ease" }} />
+              </div>
+            </>
+          ) : (
+            <div style={{ position: "absolute", inset: 0, background: `radial-gradient(700px 520px at 20% 10%, ${RED}33, transparent 60%), radial-gradient(700px 520px at 85% 90%, ${MAGA}33, transparent 60%), #0A0A0B` }} />
+          )}
+
+          {/* Wordmark atas */}
+          <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "min(5vh,42px) min(5vw,56px) min(9vh,80px)", background: "linear-gradient(180deg, rgba(0,0,0,0.65), transparent)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div>
+              <div style={{ fontSize: "clamp(20px,2.6vw,34px)", fontWeight: 800, color: "#fff", letterSpacing: "-0.01em", display: "flex", alignItems: "center", gap: "0.5ch" }}>
+                <span style={{ color: RED }}>5G</span> <span style={{ opacity: 0.6 }}>×</span> <span style={{ color: "#E7A8FF" }}>Gemini</span> <span style={{ opacity: 0.85 }}>Live Photo</span>
+              </div>
+              <div style={{ fontSize: "clamp(12px,1.3vw,16px)", color: "rgba(255,255,255,0.72)", marginTop: 4, fontWeight: 600, display: "flex", alignItems: "center", gap: 8 }}>
+                {session?.title} · Your Moment
+                {tvShowingAi && (
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "clamp(10px,1vw,12px)", fontWeight: 800, color: "#fff", background: `linear-gradient(135deg,${RED},${MAGA})`, borderRadius: 999, padding: "3px 9px 3px 7px" }}>
+                    <Sparkles size={11} /> AI Enhanced
+                  </span>
+                )}
+              </div>
+            </div>
+            <button onClick={() => setTvMode(false)}
+              style={{ display: "flex", alignItems: "center", gap: 8, height: 44, padding: "0 16px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.25)", background: "rgba(0,0,0,0.35)", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+              <Minimize2 size={15} /> Keluar Mode TV
+            </button>
+          </div>
+
+          {/* QR raksasa bawah - "SCAN TO DOWNLOAD" */}
+          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "min(6vh,56px) min(5vw,56px) min(5vh,44px)", background: "linear-gradient(0deg, rgba(0,0,0,0.72), transparent)", display: "flex", alignItems: "center", justifyContent: "center", gap: "min(3vw,32px)" }}>
+            <div style={{ background: "#fff", borderRadius: 18, padding: "clamp(10px,1.4vw,16px)", boxShadow: "0 20px 50px -14px rgba(0,0,0,0.6)" }}>
+              {qrUrl && <img src={qrUrl} alt="QR upload" style={{ width: "clamp(90px,11vw,150px)", height: "clamp(90px,11vw,150px)", display: "block" }} />}
+            </div>
+            <div>
+              <div style={{ fontSize: "clamp(18px,2.4vw,30px)", fontWeight: 800, color: "#fff", letterSpacing: "0.02em" }}>SCAN TO UPLOAD</div>
+              <div style={{ fontSize: "clamp(12px,1.3vw,15px)", color: "rgba(255,255,255,0.75)", marginTop: 4 }}>Arahkan kamera HP ke QR ini untuk ikut unggah fotomu</div>
+              {tvPhoto && (
+                <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: "clamp(11px,1.1vw,13px)", fontFamily: "monospace", color: "rgba(255,255,255,0.6)", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 999, padding: "5px 12px" }}>
+                    <Camera size={13} /> {tvPhoto.photo_code}
+                  </div>
+                  {/* Showcase kecepatan upload 5G Indosat - ini justru INTI
+                      demo-nya (lihat konteks obrolan), jadi dibuat menonjol
+                      (hijau, ikon petir) bukan cuma detail kecil. */}
+                  {!!tvPhoto.upload_ms && (
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: "clamp(11px,1.2vw,14px)", fontWeight: 800, color: "#7CF5A8", background: "rgba(52,211,153,0.14)", border: "1px solid rgba(52,211,153,0.35)", borderRadius: 999, padding: "5px 12px" }}>
+                      <Zap size={13} /> <SpeedLabel ms={tvPhoto.upload_ms} bytes={tvPhoto.file_size_bytes} />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div style={{ padding: "26px 32px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 14 }}>
         <div>
-          <div style={{ fontSize: 24, fontWeight: 800, color: "#F0F0F2", letterSpacing: "-0.02em", display: "flex", alignItems: "center", gap: 10 }}>
-            <Images size={24} color={RED} /> {session?.title}
+          <div style={{ fontSize: 26, fontWeight: 800, color: "#F5F5F7", letterSpacing: "-0.02em", display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 40, height: 40, borderRadius: 12, background: `linear-gradient(135deg,${RED},${MAGA})`, boxShadow: `0 6px 18px -6px ${RED}88` }}>
+              <Images size={20} color="#fff" />
+            </span>
+            {session?.title}
           </div>
-          <div style={{ fontSize: 13, color: "#8A8A96", marginTop: 4 }}>{photos.length} foto · kode sesi {code} · update realtime</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 6 }}>
+            <span style={{ fontSize: 13, color: "#9C9CA8", letterSpacing: "0.01em" }}>
+              <b style={{ color: "#E7E7EC" }}>{photos.length}</b> foto · kode sesi <span style={{ fontFamily: "monospace", color: "#C7C7D1" }}>{code}</span>
+            </span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 700, padding: "3px 9px 3px 7px", borderRadius: 20, color: liveStatus === "live" ? "#7CF5A8" : "#F5C56B", background: liveStatus === "live" ? "rgba(52,211,153,0.12)" : "rgba(245,197,107,0.12)", border: `1px solid ${liveStatus === "live" ? "rgba(52,211,153,0.3)" : "rgba(245,197,107,0.3)"}` }}>
+              <span style={{ width: 6, height: 6, borderRadius: 999, background: liveStatus === "live" ? "#34D399" : "#F5C56B", boxShadow: liveStatus === "live" ? "0 0 0 0 rgba(52,211,153,0.6)" : "none", animation: liveStatus === "live" ? "rpv-live-dot 1.6s ease-out infinite" : "none" }} />
+              {liveStatus === "live" ? "Live" : "Menyambung…"}
+            </span>
+          </div>
         </div>
 
-        {/* Kotak cari ID utk print */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 12, padding: "8px 10px" }}>
-          <Search size={15} color="#8A8A96" />
-          <input value={lookup} onChange={(e) => { setLookup(e.target.value); setLookupState("idle"); }} onKeyDown={(e) => e.key === "Enter" && handleLookup()}
-            placeholder="Masukkan ID foto…" style={{ width: 150, background: "transparent", border: "none", outline: "none", color: "#F0F0F2", fontSize: 14, fontFamily: "monospace", letterSpacing: "0.06em" }} />
-          <button onClick={handleLookup} disabled={lookupState === "loading"}
-            style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 14px", borderRadius: 9, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
-            {lookupState === "loading" ? <Loader2 size={13} style={{ animation: "spin .8s linear infinite" }} /> : <Printer size={13} />} Cetak
-          </button>
+        {/* Toggle "Mode TV" - full-bleed foto terbaru + QR raksasa, sesuai
+            konsep mockup booth. */}
+        <button onClick={() => setTvMode(true)}
+          style={{ display: "flex", alignItems: "center", gap: 8, height: 44, padding: "0 16px", borderRadius: 14, border: "1px solid rgba(255,255,255,0.12)", background: "linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03))", color: "#E7E7EC", fontWeight: 700, fontSize: 13, cursor: "pointer", boxShadow: "0 10px 30px -12px rgba(0,0,0,0.5)" }}>
+          <Maximize2 size={15} /> Mode TV
+        </button>
+
+        {/* Kotak cari ID utk print - dinaikkan jadi card dgn elevasi + label kecil,
+            biar konsisten sama bahasa desain card QR pojok kanan bawah (bukan
+            cuma kotak polos nempel di header). */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, background: "linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03))", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 16, padding: "10px 12px", boxShadow: "0 10px 30px -12px rgba(0,0,0,0.5)" }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, color: "#7A7A88", letterSpacing: "0.08em", textTransform: "uppercase", paddingLeft: 2 }}>Cari &amp; cetak foto</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(0,0,0,0.25)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 10, padding: "8px 10px", flex: 1 }}>
+              <Search size={15} color="#8A8A96" />
+              <input value={lookup} onChange={(e) => { setLookup(e.target.value); setLookupState("idle"); }} onKeyDown={(e) => e.key === "Enter" && handleLookup()}
+                placeholder="cth. 5GMDN-260917-0087" style={{ width: 210, background: "transparent", border: "none", outline: "none", color: "#F0F0F2", fontSize: 13.5, fontFamily: "monospace", letterSpacing: "0.03em" }} />
+            </div>
+            <button onClick={handleLookup} disabled={lookupState === "loading"}
+              style={{ display: "flex", alignItems: "center", gap: 6, height: 38, padding: "0 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontWeight: 700, fontSize: 12.5, cursor: "pointer", boxShadow: `0 6px 16px -6px ${RED}77` }}>
+              {lookupState === "loading" ? <Loader2 size={13} style={{ animation: "spin .8s linear infinite" }} /> : <Printer size={13} />} Cetak
+            </button>
+          </div>
         </div>
       </div>
       {lookupError && (
@@ -222,8 +403,18 @@ export default function RpvViewerPage() {
       {/* Grid foto */}
       <div style={{ padding: "6px 32px 140px", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 14 }}>
         {photos.length === 0 && (
-          <div style={{ gridColumn: "1/-1", textAlign: "center", padding: "80px 0", color: "#5A5A68", fontSize: 14 }}>
-            Menunggu foto pertama masuk — scan QR di pojok kanan bawah utk mengunggah.
+          <div style={{ gridColumn: "1/-1", display: "flex", flexDirection: "column", alignItems: "center", padding: "120px 0 90px", textAlign: "center" }}>
+            <div style={{ position: "relative", width: 84, height: 84, marginBottom: 22 }}>
+              <div style={{ position: "absolute", inset: -10, borderRadius: "50%", border: `1.5px solid ${RED}44`, animation: "rpv-empty-ring 2.4s ease-out infinite" }} />
+              <div style={{ position: "absolute", inset: -10, borderRadius: "50%", border: `1.5px solid ${MAGA}33`, animation: "rpv-empty-ring 2.4s ease-out infinite 0.6s" }} />
+              <div style={{ width: 84, height: 84, borderRadius: 22, background: `linear-gradient(135deg,${RED},${MAGA})`, display: "flex", alignItems: "center", justifyContent: "center", boxShadow: `0 14px 34px -10px ${RED}66` }}>
+                <Camera size={34} color="#fff" />
+              </div>
+            </div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: "#E7E7EC", letterSpacing: "-0.01em" }}>Menunggu foto pertama</div>
+            <div style={{ fontSize: 13.5, color: "#767684", marginTop: 6, maxWidth: 340, lineHeight: 1.55 }}>
+              Foto akan langsung muncul di sini begitu ada yg diunggah — ajak tamu scan QR &ldquo;Ikut Upload Fotomu&rdquo; di pojok kanan bawah.
+            </div>
           </div>
         )}
         {photos.map((p) => (
@@ -235,9 +426,37 @@ export default function RpvViewerPage() {
               style={{ position: "absolute", top: 8, right: 8, width: 30, height: 30, borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(10,10,11,0.72)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: deletingCode === p.photo_code ? "not-allowed" : "pointer", opacity: deletingCode === p.photo_code ? 0.5 : 1 }}>
               {deletingCode === p.photo_code ? <Loader2 size={13} style={{ animation: "spin .8s linear infinite" }} /> : <Trash2 size={13} />}
             </button>
+            {/* Tombol "Upload hasil AI" - cuma di foto ASLI (bukan di tile
+                hasil AI itu sendiri, tidak masuk akal nge-link hasil AI ke
+                hasil AI). Operator klik -> pilih file hasil download Gemini
+                -> otomatis ke-link ke foto ini via parentCode. */}
+            {!p.is_ai_result && (
+              <button onClick={(e) => { e.stopPropagation(); openAiUpload(p.photo_code); }} disabled={aiUploadingFor === p.photo_code}
+                aria-label={`Upload hasil AI utk foto ${p.photo_code}`} title="Upload hasil edit Gemini"
+                style={{ position: "absolute", top: 8, right: 44, width: 30, height: 30, borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)", background: aiUploadingFor === p.photo_code ? "rgba(198,22,141,0.55)" : "rgba(10,10,11,0.72)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: aiUploadingFor === p.photo_code ? "not-allowed" : "pointer" }}>
+                {aiUploadingFor === p.photo_code ? <Loader2 size={13} style={{ animation: "spin .8s linear infinite" }} /> : <Sparkles size={13} />}
+              </button>
+            )}
+            {p.is_ai_result && (
+              <div style={{ position: "absolute", top: 8, left: 8, display: "flex", alignItems: "center", gap: 4, fontSize: 10, fontWeight: 700, color: "#fff", background: `linear-gradient(135deg,${RED},${MAGA})`, borderRadius: 999, padding: "3px 8px 3px 6px" }}>
+                <Sparkles size={10} /> Hasil AI
+              </div>
+            )}
             <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "10px 10px 8px", background: "linear-gradient(180deg,rgba(0,0,0,0) 0%,rgba(0,0,0,0.72) 100%)", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 8 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#fff", fontFamily: "monospace", letterSpacing: "0.06em" }}>
-                ID {p.photo_code}
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#fff", fontFamily: "monospace", letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 5 }}>
+                  {p.is_ai_result && <Link2 size={11} color="#F0A8DC" />}
+                  ID {p.photo_code}
+                </div>
+                {/* Showcase kecepatan upload raw (HP -> Storage) - lihat
+                    SpeedLabel & rpvThroughputMbps di lib/rpv.js utk gimana
+                    ms mentah dikonversi jadi Mbps yg apple-to-apple antar
+                    ukuran file beda-beda. */}
+                {!!p.upload_ms && (
+                  <div style={{ fontSize: 10, color: "#9CE6C4", fontWeight: 600, marginTop: 2, display: "flex", alignItems: "center", gap: 3 }}>
+                    <Zap size={10} /> <SpeedLabel ms={p.upload_ms} bytes={p.file_size_bytes} />
+                  </div>
+                )}
               </div>
               {/* QR unik foto ini - scan utk download LANGSUNG foto ini ke HP, bukan zip semua foto sesi. */}
               {photoQr[p.photo_code] && (
@@ -249,6 +468,16 @@ export default function RpvViewerPage() {
           </div>
         ))}
       </div>
+
+      {/* Input file tersembunyi utk tombol sparkle "Upload hasil AI" - satu
+          input dipakai bergilir utk semua tile (target tile-nya disimpan di
+          aiUploadTarget), bukan 1 input per tile. */}
+      <input ref={aiFileRef} type="file" accept="image/*" onChange={onAiFilePicked} style={{ display: "none" }} />
+      {aiUploadError && (
+        <div style={{ position: "fixed", bottom: 24, left: "50%", transform: "translateX(-50%)", zIndex: 60, background: "rgba(248,113,113,0.16)", border: "1px solid rgba(248,113,113,0.4)", color: "#F87171", fontSize: 13, fontWeight: 600, padding: "10px 16px", borderRadius: 12, display: "flex", alignItems: "center", gap: 8 }}>
+          <AlertTriangle size={14} /> {aiUploadError}
+        </div>
+      )}
 
       {/* QR pojok kanan bawah - SEKARANG mengarah ke halaman Upload (ajakan
           ikut unggah foto), BUKAN lagi download semua foto sesi - download
@@ -400,8 +629,18 @@ export default function RpvViewerPage() {
         </div>
       )}
 
-      <style>{"@keyframes spin{to{transform:rotate(360deg)}} @keyframes rpv-qr-pulse{0%{transform:scale(0.97);opacity:0.45}70%{transform:scale(1.04);opacity:0}100%{transform:scale(1.04);opacity:0}}"}</style>
+      <style>{"@keyframes spin{to{transform:rotate(360deg)}} @keyframes rpv-qr-pulse{0%{transform:scale(0.97);opacity:0.45}70%{transform:scale(1.04);opacity:0}100%{transform:scale(1.04);opacity:0}} @keyframes rpv-live-dot{0%{box-shadow:0 0 0 0 rgba(52,211,153,0.55)}100%{box-shadow:0 0 0 6px rgba(52,211,153,0)}} @keyframes rpv-empty-ring{0%{transform:scale(0.85);opacity:0.9}100%{transform:scale(1.35);opacity:0}} @keyframes rpv-tv-fade{from{opacity:0;transform:scale(0.98)}to{opacity:1;transform:scale(1)}}"}</style>
     </div>
+  );
+}
+
+/** Label kecil showcase kecepatan - "842 ms · 4.1 Mbps" (throughput riil,
+    bukan cuma ms mentah - lihat komentar rpvThroughputMbps di lib/rpv.js). */
+function SpeedLabel({ ms, bytes }) {
+  if (!ms) return null;
+  const mbps = rpvThroughputMbps(bytes, ms);
+  return (
+    <>{ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`}{mbps ? ` · ${mbps.toFixed(1)} Mbps` : ""}</>
   );
 }
 

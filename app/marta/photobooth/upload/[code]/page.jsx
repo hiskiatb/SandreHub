@@ -33,6 +33,22 @@ export default function RpvUploadPage() {
   const [showSuccess, setShowSuccess] = useState(false);
   const celebratedRef = useRef(false); // biar animasi sukses cuma sekali per "gelombang" upload, tidak berulang tiap render
 
+  // Warm-up koneksi ke Storage Supabase SEDINI mungkin (begitu halaman
+  // dibuka, sebelum tamu sempat pilih foto) - biar TLS handshake/koneksi
+  // pertama TIDAK ikut ketimpa ke pengukuran ms upload foto pertama.
+  // Tanpa ini, foto pertama tamu selalu kelihatan "lambat" bukan krn
+  // jaringan 5G-nya lambat, tapi krn cold-start koneksi - itu bikin angka
+  // showcase kecepatan tidak akurat/representatif.
+  useEffect(() => {
+    const storageUrl = process.env.NEXT_PUBLIC_MARTA_SUPABASE_URL;
+    if (!storageUrl) return;
+    fetch(`${storageUrl}/storage/v1/object/public/rpv-photos/`, { mode: "no-cors", cache: "no-store" }).catch(() => {});
+  }, []);
+
+  const storageOrigin = (() => {
+    try { return new URL(process.env.NEXT_PUBLIC_MARTA_SUPABASE_URL || "").origin; } catch { return ""; }
+  })();
+
   useEffect(() => {
     (async () => {
       try {
@@ -121,6 +137,7 @@ export default function RpvUploadPage() {
 
   return (
     <div style={{ minHeight: "100svh", background: "linear-gradient(180deg,#F7F5FA 0%,#F4F4F6 220px)", fontFamily: FONT, display: "flex", flexDirection: "column" }}>
+      {storageOrigin && <link rel="preconnect" href={storageOrigin} />}
       <div style={{ padding: "22px 18px 16px", background: "#fff", borderBottom: "1px solid #E4E2EA", position: "sticky", top: 0, zIndex: 5, boxShadow: "0 2px 10px rgba(17,17,22,0.03)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <span style={{ width: 42, height: 42, borderRadius: 13, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", flexShrink: 0, boxShadow: "0 6px 16px rgba(237,28,36,0.28)" }}>
