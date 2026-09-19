@@ -709,6 +709,7 @@ const COLUMNS = [
   { key: "kecamatan_name", label: "Kecamatan" },
   { key: "kecamatan", label: "Kecamatan Unik" },
   { key: "kecamatan_fokus", label: "Kecamatan Fokus" },
+  { key: "site_lrs", label: "Site LRS" },
 ];
 
 const FCOLS = COLUMNS.map((c) => [c.key, c.label]);
