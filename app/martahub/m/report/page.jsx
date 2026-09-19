@@ -67,6 +67,7 @@ function monthKeyToRange(key) {
 // tampil kalau tab aktif butuh itu).
 const REPORT_TABS = [
   { key: "kecamatan-fokus", label: "Kecamatan Fokus", icon: MapPinned, needsMonth: false },
+  { key: "site-lrs", label: "Site LRS", icon: RadioTower, needsMonth: false },
   { key: "campaign", label: "Campaign", icon: Megaphone, needsMonth: true },
 ];
 
@@ -150,7 +151,7 @@ export default function ReportPage() {
           {/* Checklist multi-bulan Kecamatan Fokus - posisi SAMA PERSIS
               (kanan atas, sejajar judul Report) dgn dropdown bulan
               Campaign di atas, cuma beda tab yg mengaktifkannya. */}
-          {tab === "kecamatan-fokus" && (
+          {(tab === "kecamatan-fokus" || tab === "site-lrs") && (
             <div style={{ position: "relative", flexShrink: 0 }}>
               <button onClick={() => setKecMonthPickerOpen((v) => !v)}
                 style={{
@@ -229,7 +230,8 @@ export default function ReportPage() {
       </div>
 
       <div style={{ fontFamily: FF }}>
-        {tab === "kecamatan-fokus" && <KecamatanFokusReport period={kecPeriod} periodLabel={kecPeriodLabel} />}
+        {tab === "kecamatan-fokus" && <FocusSiteReport mode="kecamatan-fokus" period={kecPeriod} periodLabel={kecPeriodLabel} />}
+        {tab === "site-lrs" && <FocusSiteReport mode="site-lrs" period={kecPeriod} periodLabel={kecPeriodLabel} />}
         {tab === "campaign" && <CampaignComplianceReport monthKey={monthKey} monthLabel={months.find((o) => o.key === monthKey)?.label || ""} />}
       </div>
     </MobileShell>
@@ -237,21 +239,31 @@ export default function ReportPage() {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Report: Kecamatan Fokus - summary per Branch (Kec Focus, Aktivitas Plan,
-// Plan GA, Actual GA, Ach%, Kec nol activity GA) + breakdown per branch
-// berisi daftar kecamatan mana saja yg ditandai fokus.
+// Report: Kecamatan Fokus & Site LRS - DUA report terpisah (dua pill di
+// atas) tapi satu komponen `FocusSiteReport` yg sama - dikonfigurasi lewat
+// `mode` (lihat FOCUS_MODES di bawah) krn struktur & interaksinya identik,
+// cuma beda: sumber RPC, teks, dan warna aksen. Ringkasan per Branch (Site
+// Fokus/LRS, Aktivitas Plan, Plan SP, Actual SP, Ach%, Site 0 SP) + filter
+// Region + breakdown per branch berisi daftar site mana saja yg masuk.
 //
-// Data dari RPC `mh_kecamatan_fokus_report(p_caller_email, p_period_start,
-// p_period_end)` (SECURITY DEFINER) - scoping visibilitas PERSIS pakai
-// _mh_activity_calendar_rows() yg sudah dipakai Calendar CMS, bukan
-// re-implement aturan role/region/branch dari nol.
+// Data dari RPC `mh_kecamatan_fokus_report`/`mh_site_lrs_report`
+// (p_caller_email, p_period_start, p_period_end) (SECURITY DEFINER) -
+// scoping visibilitas PERSIS pakai _mh_activity_calendar_rows() yg sudah
+// dipakai Calendar CMS, bukan re-implement aturan role/region/branch dari
+// nol.
 //
-// GA = SP+FWA (Plan GA = target_sp+target_fwa, Actual GA = actual_sp+
-// actual_fwa) - definisi sama dgn Target/Actual SP&FWA yg sudah ada di
-// seluruh MartaHub, bukan metrik baru.
+// Metrik SEKARANG SP-only (Plan SP = target_sp, Actual SP = actual_sp) -
+// user eksplisit minta ganti dari GA (SP+FWA) sebelumnya krn fokus
+// achievement report ini SP saja, bukan gabungan SP+FWA lagi.
+//
+// Filter Region BARU - RPC skr ikut balikin kolom `region` per site, opsi
+// dropdown diambil dari region2 yg MUNCUL di data (bukan daftar region
+// statis), krn role scoped (mis. BME/RGE) memang cuma akan lihat 1 region
+// atau bahkan 0 opsi (kalau branch-nya lintas region tidak ada) - dropdown
+// otomatis nyembunyiin diri kalau opsi cuma <=1.
 //
 // monthKey/monthLabel SEKARANG dioper dari ReportPage (header) - komponen
-// ini TIDAK lagi punya month picker sendiri (lihat catatan v4 di atas).
+// ini TIDAK punya month picker sendiri (lihat catatan v4 di atas).
 // ──────────────────────────────────────────────────────────────────────────
 
 function achPct(actual, plan) { return plan > 0 ? Math.round((actual / plan) * 100) : 0; }
@@ -261,32 +273,64 @@ function achBg(pct) { return pct >= 40 ? "#E8F5E9" : pct >= 20 ? "#FFF3E0" : "#F
 const SORTS = [
   { key: "ach_asc", label: "Ach % Terendah" },
   { key: "ach_desc", label: "Ach % Tertinggi" },
-  { key: "kecnol_desc", label: "Site 0 GA Terbanyak" },
-  { key: "kecnol_asc", label: "Site 0 GA Tersedikit" },
+  { key: "kecnol_desc", label: "Site 0 SP Terbanyak" },
+  { key: "kecnol_asc", label: "Site 0 SP Tersedikit" },
 ];
 
-function KecamatanFokusReport({ period, periodLabel }) {
+// Konfigurasi per mode - teks & warna aksen beda, struktur & interaksi
+// sama. "site-lrs" pakai aksen biru (bukan pink Kecamatan Fokus) supaya
+// dua report ini kelihatan beda sekilas pandang walau layoutnya identik.
+const FOCUS_MODES = {
+  "kecamatan-fokus": {
+    rpc: "mh_kecamatan_fokus_report",
+    unitLabel: "Site Fokus",
+    totalEntity: "kecamatan",
+    totalUnitLabel: "Kecamatan Fokus",
+    subtitle: "Pencapaian SP di site yang ditandai Kecamatan Fokus, per branch",
+    emptyText: (branchName) => `Belum ada site yang ditandai Kecamatan Fokus${branchName ? ` di branch ${branchName}` : ""} - tandai lewat CMS > Master Data > List Site.`,
+    detailTitle: "Site Kecamatan Fokus di",
+    noteLabel: "kecamatan",
+    accent: "#EC1E79",
+    accentSoft: "#7FD9C6",
+    heroGradient: "linear-gradient(150deg,#38383E 0%,#4A4A50 100%)",
+    totalGradient: "linear-gradient(120deg,#FFFFFF 0%,#F7D9E8 55%,#EC1E79 100%)",
+    barGradient: "linear-gradient(90deg,#E63325,#EC1E79)",
+    dotSite: "#7C3AED",
+    softBg: "rgba(124,58,237,0.1)",
+  },
+  "site-lrs": {
+    rpc: "mh_site_lrs_report",
+    unitLabel: "Site LRS",
+    totalEntity: "site",
+    totalUnitLabel: "Site LRS",
+    subtitle: 'Pencapaian SP di site berkategori "LRS" (kolom Site LRS di List Site), per branch',
+    emptyText: (branchName) => `Belum ada site berkategori LRS${branchName ? ` di branch ${branchName}` : ""} - cek kolom Site LRS di CMS > Master Data > List Site.`,
+    detailTitle: "Site LRS di",
+    noteLabel: "kecamatan",
+    accent: "#0EA5E9",
+    accentSoft: "#8AE0EF",
+    heroGradient: "linear-gradient(150deg,#1B3A4B 0%,#215065 100%)",
+    totalGradient: "linear-gradient(120deg,#FFFFFF 0%,#BFEAFB 55%,#0EA5E9 100%)",
+    barGradient: "linear-gradient(90deg,#0369A1,#0EA5E9)",
+    dotSite: "#0EA5E9",
+    softBg: "rgba(14,165,233,0.1)",
+  },
+};
+
+function FocusSiteReport({ mode, period, periodLabel }) {
+  const cfg = FOCUS_MODES[mode];
   const { loading: sessionLoading, scope, email } = useMartaSession();
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState("");
   const [openBranch, setOpenBranch] = useState(null);
   const [query, setQuery] = useState("");
   const [sortKey, setSortKey] = useState("ach_desc");
-  // Tooltip info Plan GA/Actual GA - SATU state di level report ini (bukan
-  // lagi lokal per CardStat) spy MAKSIMAL 1 tooltip kebuka dlm satu waktu
-  // di SELURUH kartu branch. Klik apa saja selain elemen ber-atribut
-  // data-info-trigger (icon info-nya sendiri / tooltip-nya sendiri)
-  // langsung menutupnya.
+  const [region, setRegion] = useState("");
   const [openInfoId, setOpenInfoId] = useState(null);
   const toggleInfo = (id) => setOpenInfoId((prev) => (prev === id ? null : id));
 
   useEffect(() => {
     if (!openInfoId) return;
-    // Klik di luar trigger/tooltip HARUS "diserap" dulu (stopPropagation +
-    // preventDefault di CAPTURE phase, sebelum event nyampe ke elemen
-    // aslinya) - klik pertama cuma nutup tooltip, BUKAN sekalian ikut
-    // trigger aksi elemen di baliknya (mis. expand/collapse detail site
-    // fokus branch). User harus klik SEKALI LAGI baru aksi itu jalan.
     const closeOnOutsideClick = (e) => {
       if (!e.target.closest || !e.target.closest("[data-info-trigger]")) {
         e.stopPropagation();
@@ -301,10 +345,10 @@ function KecamatanFokusReport({ period, periodLabel }) {
   useEffect(() => {
     if (sessionLoading || !period || !email) return;
     let alive = true;
-    setRows(null); setErr("");
+    setRows(null); setErr(""); setRegion("");
     (async () => {
       try {
-        const { data, error } = await supabaseMarta.rpc("mh_kecamatan_fokus_report", {
+        const { data, error } = await supabaseMarta.rpc(cfg.rpc, {
           p_caller_email: email, p_period_start: period.start, p_period_end: period.end,
         });
         if (error) throw error;
@@ -314,32 +358,49 @@ function KecamatanFokusReport({ period, periodLabel }) {
       }
     })();
     return () => { alive = false; };
-  }, [sessionLoading, period, email]);
+  }, [sessionLoading, period, email, cfg.rpc]);
+
+  const regionOptions = useMemo(() => {
+    const set = new Set();
+    for (const r of rows || []) { if (r.region) set.add(r.region); }
+    return Array.from(set).sort();
+  }, [rows]);
+
+  const scopedRows = useMemo(() => {
+    if (!region) return rows || [];
+    return (rows || []).filter((r) => r.region === region);
+  }, [rows, region]);
 
   const branches = useMemo(() => {
     const map = new Map();
-    const kecSets = new Map();
-    for (const r of rows || []) {
+    const noteSets = new Map();
+    for (const r of scopedRows) {
       const key = r.branch || "-";
-      if (!map.has(key)) { map.set(key, { branch: key, siteList: [], aktivitasPlan: 0, planGa: 0, actualGa: 0, siteNol: 0 }); kecSets.set(key, new Set()); }
+      if (!map.has(key)) { map.set(key, { branch: key, siteList: [], aktivitasPlan: 0, planSp: 0, actualSp: 0, siteNol: 0 }); noteSets.set(key, new Set()); }
       const b = map.get(key);
       b.siteList.push(r);
       b.aktivitasPlan += Number(r.aktivitas_plan || 0);
-      b.planGa += Number(r.plan_ga || 0);
-      b.actualGa += Number(r.actual_ga || 0);
-      if (Number(r.actual_ga || 0) === 0) b.siteNol += 1;
-      if (r.kecamatan_name) kecSets.get(key).add(r.kecamatan_name);
+      b.planSp += Number(r.plan_sp || 0);
+      b.actualSp += Number(r.actual_sp || 0);
+      if (Number(r.actual_sp || 0) === 0) b.siteNol += 1;
+      if (r.kecamatan_name) noteSets.get(key).add(r.kecamatan_name);
     }
-    return Array.from(map.values()).map((b) => ({ ...b, kecCount: kecSets.get(b.branch).size }));
-  }, [rows]);
+    return Array.from(map.values()).map((b) => ({ ...b, noteCount: noteSets.get(b.branch).size }));
+  }, [scopedRows]);
+
+  const totalKecCount = useMemo(() => {
+    const set = new Set();
+    for (const r of scopedRows) { if (r.kecamatan_name) set.add(r.kecamatan_name); }
+    return set.size;
+  }, [scopedRows]);
 
   const total = useMemo(() => branches.reduce((acc, b) => ({
     siteFocus: acc.siteFocus + b.siteList.length,
     aktivitasPlan: acc.aktivitasPlan + b.aktivitasPlan,
-    planGa: acc.planGa + b.planGa,
-    actualGa: acc.actualGa + b.actualGa,
+    planSp: acc.planSp + b.planSp,
+    actualSp: acc.actualSp + b.actualSp,
     siteNol: acc.siteNol + b.siteNol,
-  }), { siteFocus: 0, aktivitasPlan: 0, planGa: 0, actualGa: 0, siteNol: 0 }), [branches]);
+  }), { siteFocus: 0, aktivitasPlan: 0, planSp: 0, actualSp: 0, siteNol: 0 }), [branches]);
 
   const visibleBranches = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -355,9 +416,9 @@ function KecamatanFokusReport({ period, periodLabel }) {
     }
     const sorted = list.slice();
     if (sortKey === "ach_asc") {
-      sorted.sort((a, b) => achPct(a.actualGa, a.planGa) - achPct(b.actualGa, b.planGa) || a.branch.localeCompare(b.branch));
+      sorted.sort((a, b) => achPct(a.actualSp, a.planSp) - achPct(b.actualSp, b.planSp) || a.branch.localeCompare(b.branch));
     } else if (sortKey === "ach_desc") {
-      sorted.sort((a, b) => achPct(b.actualGa, b.planGa) - achPct(a.actualGa, a.planGa) || a.branch.localeCompare(b.branch));
+      sorted.sort((a, b) => achPct(b.actualSp, b.planSp) - achPct(a.actualSp, a.planSp) || a.branch.localeCompare(b.branch));
     } else if (sortKey === "kecnol_desc") {
       sorted.sort((a, b) => b.siteNol - a.siteNol || a.branch.localeCompare(b.branch));
     } else if (sortKey === "kecnol_asc") {
@@ -368,7 +429,7 @@ function KecamatanFokusReport({ period, periodLabel }) {
     return sorted;
   }, [branches, query, sortKey]);
 
-  const totalPct = achPct(total.actualGa, total.planGa);
+  const totalPct = achPct(total.actualSp, total.planSp);
 
   if (sessionLoading || rows === null) {
     return (
@@ -379,7 +440,7 @@ function KecamatanFokusReport({ period, periodLabel }) {
   return (
     <div style={{ padding: "14px 20px 28px" }}>
       <div style={{ fontSize: 12, color: "#8A8A96" }}>
-        Pencapaian GA (SP+FWA) di site yang ditandai Kecamatan Fokus, per branch - {periodLabel}.
+        {cfg.subtitle} - {periodLabel}.
       </div>
 
       {err && (
@@ -388,19 +449,15 @@ function KecamatanFokusReport({ period, periodLabel }) {
 
       {!err && branches.length === 0 && (
         <div style={{ marginTop: 40, textAlign: "center", color: "#8A8A96", fontSize: 13 }}>
-          Belum ada site yang ditandai Kecamatan Fokus{scope?.branchName ? ` di branch ${scope.branchName}` : ""} - tandai lewat CMS &gt; Master Data &gt; List Site.
+          {cfg.emptyText(scope?.branchName)}
         </div>
       )}
 
       {branches.length > 0 && (
         <>
-          {/* HERO - gaya "kartu summary" SAMA dgn kartu Achievement di
-              Beranda: badge ikon bulat translucent di atas tiap label+value
-              (lihat QuadStat/DarkDetailRow di app/martahub/m/page.jsx),
-              bukan lagi grid teks LABEL/value polos. */}
           <div style={{
             marginTop: 14, position: "relative", borderRadius: 22, padding: "20px 18px 18px", overflow: "hidden",
-            background: "linear-gradient(150deg,#38383E 0%,#4A4A50 100%)",
+            background: cfg.heroGradient,
             border: "1px solid rgba(255,255,255,0.06)",
             boxShadow: "0 8px 20px rgba(17,17,20,0.16), 0 2px 5px rgba(17,17,20,0.1)",
           }}>
@@ -409,35 +466,37 @@ function KecamatanFokusReport({ period, periodLabel }) {
                 <div style={{ fontSize: 10.5, fontWeight: 800, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Total {branches.length} Branch</div>
                 <div style={{
                   marginTop: 8, fontSize: 32, fontWeight: 800, letterSpacing: "-0.03em", lineHeight: 1,
-                  background: "linear-gradient(120deg,#FFFFFF 0%,#F7D9E8 55%,#EC1E79 100%)",
+                  background: cfg.totalGradient,
                   WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text",
-                }}>{fmtInt(total.siteFocus)}</div>
-                <div style={{ marginTop: 3, fontSize: 12.5, color: "rgba(255,255,255,0.55)", fontWeight: 600 }}>Site Fokus</div>
+                }}>{fmtInt(cfg.totalEntity === "kecamatan" ? totalKecCount : total.siteFocus)}</div>
+                <div style={{ marginTop: 3, fontSize: 12.5, color: "rgba(255,255,255,0.55)", fontWeight: 600 }}>{cfg.totalUnitLabel}</div>
+                {cfg.totalEntity === "kecamatan" && (
+                  <div style={{ marginTop: 2, fontSize: 10.5, color: "rgba(255,255,255,0.4)", fontWeight: 600 }}>{fmtInt(total.siteFocus)} site fokus</div>
+                )}
               </div>
               <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end" }}>
                 <div style={{ fontSize: 22, fontWeight: 800, color: "#fff" }}>{totalPct}%</div>
-                <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Ach GA</div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.55)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Ach SP</div>
               </div>
             </div>
 
             <div style={{ marginTop: 14, height: 9, borderRadius: 999, background: "rgba(0,0,0,0.25)", overflow: "hidden" }}>
-              <div style={{ height: "100%", width: `${Math.min(100, totalPct)}%`, borderRadius: 999, background: "linear-gradient(90deg,#E63325,#EC1E79)" }} />
+              <div style={{ height: "100%", width: `${Math.min(100, totalPct)}%`, borderRadius: 999, background: cfg.barGradient }} />
             </div>
 
             <div style={{ display: "flex", marginTop: 18, paddingTop: 16, borderTop: "1px solid rgba(255,255,255,0.09)" }}>
               <HeroStat icon={Target} dot="#FFFFFF" label="Aktivitas Plan" value={fmtInt(total.aktivitasPlan)} />
               <HeroDivider />
-              <HeroStat icon={ListChecks} dot="#7FD9C6" label="Plan GA" value={fmtInt(total.planGa)} valueColor="#7FD9C6" />
+              <HeroStat icon={ListChecks} dot={cfg.accentSoft} label="Plan SP" value={fmtInt(total.planSp)} valueColor={cfg.accentSoft} />
               <HeroDivider />
-              <HeroStat icon={CheckCircle2} dot="#EC1E79" label="Actual GA" value={fmtInt(total.actualGa)} valueColor="#F286B4" />
+              <HeroStat icon={CheckCircle2} dot={cfg.accent} label="Actual SP" value={fmtInt(total.actualSp)} valueColor={cfg.accent} />
               <HeroDivider />
-              <HeroStat icon={AlertTriangle} dot="#F5CD46" label="Site 0 GA" value={fmtInt(total.siteNol)} valueColor={total.siteNol > 0 ? "#F5CD46" : undefined} />
+              <HeroStat icon={AlertTriangle} dot="#F5CD46" label="Site 0 SP" value={fmtInt(total.siteNol)} valueColor={total.siteNol > 0 ? "#F5CD46" : undefined} />
             </div>
           </div>
 
-          {/* Pencarian + sort */}
-          <div style={{ marginTop: 16, display: "flex", gap: 8 }}>
-            <div style={{ flex: 1, position: "relative", display: "flex", alignItems: "center" }}>
+          <div style={{ marginTop: 16, display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ flex: "1 1 140px", position: "relative", display: "flex", alignItems: "center" }}>
               <Search size={14} color="#B0B0BA" style={{ position: "absolute", left: 12, pointerEvents: "none" }} />
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari branch atau site..."
                 style={{
@@ -450,6 +509,20 @@ function KecamatanFokusReport({ period, periodLabel }) {
                 </button>
               )}
             </div>
+            {regionOptions.length > 1 && (
+              <div style={{ position: "relative", flexShrink: 0 }}>
+                <select value={region} onChange={(e) => setRegion(e.target.value)}
+                  style={{
+                    appearance: "none", WebkitAppearance: "none", height: "100%", background: region ? "#EDF6FE" : "#F6F7F9",
+                    border: `1px solid ${region ? "#BEE3FB" : "#ECEDF0"}`, borderRadius: 12, padding: "9px 28px 9px 10px",
+                    fontSize: 11.5, fontWeight: 700, color: region ? "#0369A1" : "#17181C", fontFamily: FF, cursor: "pointer", maxWidth: 130,
+                  }}>
+                  <option value="">Semua Region</option>
+                  {regionOptions.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+                <ChevronDown size={12} style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", pointerEvents: "none", color: region ? "#0369A1" : "#8A8A96" }} />
+              </div>
+            )}
             <div style={{ position: "relative", flexShrink: 0 }}>
               <select value={sortKey} onChange={(e) => setSortKey(e.target.value)}
                 style={{
@@ -471,7 +544,7 @@ function KecamatanFokusReport({ period, periodLabel }) {
 
           <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
             {visibleBranches.map((b) => {
-              const pct = achPct(b.actualGa, b.planGa);
+              const pct = achPct(b.actualSp, b.planSp);
               const isOpen = openBranch === b.branch;
               return (
                 <div key={b.branch} style={{ background: "#fff", border: "1px solid #ECEDF0", borderRadius: 18, boxShadow: "0 2px 10px rgba(23,24,28,0.04)" }}>
@@ -493,49 +566,42 @@ function KecamatanFokusReport({ period, periodLabel }) {
                     </div>
                   </button>
 
-                  {/* Grid stat SENGAJA di luar <button> expand/collapse di
-                      atas (bukan lagi ikut jadi bagian dalamnya) - supaya
-                      icon info "i" di Plan GA/Actual GA bisa ditap dgn
-                      aman TANPA resiko tap-nya malah kebaca sbg klik
-                      tombol expand/collapse branch di belakangnya (yg
-                      bikin tooltip keliatan "langsung ketutup" krn kartu
-                      ikut collapse/toggle). */}
                   <div style={{ padding: "0 16px 15px", display: "grid", gridTemplateColumns: "repeat(4, 1fr)" }}>
-                    <CardStat icon={RadioTower} dot="#7C3AED" label="Site Fokus" value={fmtInt(b.siteList.length)} />
-                    <CardStat icon={ListChecks} dot="#2563EB" label="Plan GA" value={fmtInt(b.planGa)}
-                      info={`Mencakup ${fmtInt(b.siteList.length)} site · ${fmtInt(b.kecCount)} kecamatan`}
-                      infoId={`${b.branch}-planga`} openInfoId={openInfoId} onToggleInfo={toggleInfo} />
-                    <CardStat icon={CheckCircle2} dot={achColor(pct)} label="Actual GA" value={fmtInt(b.actualGa)}
-                      info={`Mencakup ${fmtInt(b.siteList.length)} site · ${fmtInt(b.kecCount)} kecamatan`}
-                      infoId={`${b.branch}-actualga`} openInfoId={openInfoId} onToggleInfo={toggleInfo} />
-                    <CardStat icon={AlertTriangle} dot={b.siteNol > 0 ? "#C62828" : "#6B7280"} label="Site 0 GA" value={fmtInt(b.siteNol)} warn={b.siteNol > 0} />
+                    <CardStat icon={RadioTower} dot={cfg.dotSite} label={cfg.unitLabel} value={fmtInt(b.siteList.length)} />
+                    <CardStat icon={ListChecks} dot="#2563EB" label="Plan SP" value={fmtInt(b.planSp)}
+                      info={`Mencakup ${fmtInt(b.siteList.length)} site · ${fmtInt(b.noteCount)} ${cfg.noteLabel}`}
+                      infoId={`${b.branch}-plansp`} openInfoId={openInfoId} onToggleInfo={toggleInfo} />
+                    <CardStat icon={CheckCircle2} dot={achColor(pct)} label="Actual SP" value={fmtInt(b.actualSp)}
+                      info={`Mencakup ${fmtInt(b.siteList.length)} site · ${fmtInt(b.noteCount)} ${cfg.noteLabel}`}
+                      infoId={`${b.branch}-actualsp`} openInfoId={openInfoId} onToggleInfo={toggleInfo} />
+                    <CardStat icon={AlertTriangle} dot={b.siteNol > 0 ? "#C62828" : "#6B7280"} label="Site 0 SP" value={fmtInt(b.siteNol)} warn={b.siteNol > 0} />
                   </div>
 
                   {isOpen && (
                     <div style={{ borderTop: "1px solid #F1F2F5", padding: "10px 16px 14px", background: "#FAFAFB", borderRadius: "0 0 18px 18px" }}>
                       <div style={{ fontSize: 10.5, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 8 }}>
-                        Site Kecamatan Fokus di {b.branch} ({b.siteList.length})
+                        {cfg.detailTitle} {b.branch} ({b.siteList.length})
                       </div>
                       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                        {b.siteList.slice().sort((x, y) => achPct(y.actual_ga, y.plan_ga) - achPct(x.actual_ga, x.plan_ga) || (x.site_name || "").localeCompare(y.site_name || "")).map((k) => {
-                          const kPct = achPct(k.actual_ga, k.plan_ga);
-                          const zero = Number(k.actual_ga || 0) === 0;
+                        {b.siteList.slice().sort((x, y) => achPct(y.actual_sp, y.plan_sp) - achPct(x.actual_sp, x.plan_sp) || (x.site_name || "").localeCompare(y.site_name || "")).map((k) => {
+                          const kPct = achPct(k.actual_sp, k.plan_sp);
+                          const zero = Number(k.actual_sp || 0) === 0;
                           return (
                             <div key={`${b.branch}-${k.site_id}`}
                               style={{ padding: "9px 10px", borderRadius: 10, background: "#fff", border: "1px solid #ECEDF0" }}>
                               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                                 <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                                  <div style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 8, background: "rgba(124,58,237,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                                    <RadioTower size={13} color="#7C3AED" strokeWidth={2.4} />
+                                  <div style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 8, background: cfg.softBg, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                                    <RadioTower size={13} color={cfg.dotSite} strokeWidth={2.4} />
                                   </div>
                                   <div style={{ minWidth: 0 }}>
                                     <div style={{ fontSize: 12.5, fontWeight: 700, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{k.site_name || k.site_id || "-"}</div>
-                                    <div style={{ fontSize: 10.5, color: "#8A8A96", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{k.kecamatan_name || "-"} · {fmtInt(k.aktivitas_plan)} aktivitas · {fmtInt(k.plan_ga)} Plan GA</div>
+                                    <div style={{ fontSize: 10.5, color: "#8A8A96", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{k.kecamatan_name || "-"} · {fmtInt(k.aktivitas_plan)} aktivitas · {fmtInt(k.plan_sp)} Plan SP</div>
                                   </div>
                                 </div>
                                 <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-                                  {zero && <span style={{ fontSize: 10, fontWeight: 800, color: "#C62828", background: "#FFEBEE", borderRadius: 999, padding: "2px 7px" }}>0 GA</span>}
-                                  <span style={{ fontSize: 11.5, fontWeight: 800, color: achColor(kPct) }}>{fmtInt(k.actual_ga)} <span style={{ color: "#B0B0BA", fontWeight: 600 }}>({kPct}%)</span></span>
+                                  {zero && <span style={{ fontSize: 10, fontWeight: 800, color: "#C62828", background: "#FFEBEE", borderRadius: 999, padding: "2px 7px" }}>0 SP</span>}
+                                  <span style={{ fontSize: 11.5, fontWeight: 800, color: achColor(kPct) }}>{fmtInt(k.actual_sp)} <span style={{ color: "#B0B0BA", fontWeight: 600 }}>({kPct}%)</span></span>
                                 </div>
                               </div>
                               <div style={{ marginTop: 6, height: 4, borderRadius: 999, background: "#F1F2F5", overflow: "hidden" }}>

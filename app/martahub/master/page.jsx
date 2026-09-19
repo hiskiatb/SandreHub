@@ -1,7 +1,7 @@
 "use client";
 import { useState, useRef, useEffect, useCallback, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { UploadCloud, Map as MapIcon, ChevronRight, ChevronDown, ArrowLeft, CheckCircle2, AlertTriangle, Clock, Network, Search, Store, UserCheck, UserX, Target as TargetIcon, Tag, Plus, Pencil, Calendar, Database } from "lucide-react";
+import { UploadCloud, Map as MapIcon, ChevronRight, ChevronDown, ArrowLeft, CheckCircle2, AlertTriangle, Clock, Network, Search, Store, UserCheck, UserX, Target as TargetIcon, Tag, Plus, Pencil, Calendar, Database, RefreshCw } from "lucide-react";
 import MartaShell, { T } from "../components/MartaShell";
 import { useGeoLayers, LayerPanel } from "../components/SumatraMap";
 import supabaseMarta from "../../../lib/supabaseMarta";
@@ -727,6 +727,15 @@ function SiteDataByPeriodView({ canManage, history, currentMonth, initialPeriod,
   const [period, setPeriod] = useState(initialPeriod || history[0]?.period || currentMonth);
   const [showUpload, setShowUpload] = useState(false);
   const rowsForPeriod = history.find((h) => h.period === period)?.rows;
+  // Nonce naik tiap kali "Lihat Data Periode Ini" diklik - dipakai bareng
+  // `period` sbg key SitesBrowser di bawah. TANPA ini, klik "Lihat Data
+  // Periode Ini" setelah re-upload ke PERIODE YANG SAMA yg lagi dibuka
+  // (mis. upload ulang September krn perbaikan mapping Site LRS) itu
+  // setPeriod(p) dgn nilai IDENTIK ke period saat ini -> React tidak
+  // rerender apa2 (no-op krn value sama) -> SitesBrowser tidak remount ->
+  // tabel tetap nampilin data LAMA walau import barusan sukses di database.
+  // Nonce bikin key-nya selalu beda tiap klik, jadi selalu remount+refetch.
+  const [reloadNonce, setReloadNonce] = useState(0);
 
   return (
     <div style={{ maxWidth: 1600, width: "100%" }}>
@@ -740,6 +749,14 @@ function SiteDataByPeriodView({ canManage, history, currentMonth, initialPeriod,
         <select value={period} onChange={(e) => setPeriod(e.target.value)} style={{ ...selectStyle, width: 190, fontWeight: 700 }}>
           {periods.map((p) => <option key={p} value={p}>{monthLabel(p)}</option>)}
         </select>
+        {/* Refresh manual - pakai trik reloadNonce yg sama kayak "Lihat
+            Data Periode Ini" (lihat komentar di atas), jaga2 kalau user
+            upload dari tab/device lain atau mau mastiin data terbaru tanpa
+            harus buka modal upload dulu. */}
+        <button onClick={() => setReloadNonce((n) => n + 1)} title="Muat ulang data"
+          style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 12px", borderRadius: 9, border: `1px solid ${T.line}`, background: "#fff", color: T.mid, fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>
+          <RefreshCw size={13} /> Refresh
+        </button>
         {!history.some((h) => h.period === period) && (
           <span style={{ fontSize: 11.5, color: "#8a5b00" }}>Belum pernah diupload - tidak ada data.</span>
         )}
@@ -749,12 +766,12 @@ function SiteDataByPeriodView({ canManage, history, currentMonth, initialPeriod,
           </button>
         )}
       </div>
-      <SitesBrowser key={period} period={period} expectedTotal={rowsForPeriod} />
+      <SitesBrowser key={`${period}-${reloadNonce}`} period={period} expectedTotal={rowsForPeriod} />
 
       {showUpload && (
         <UploadSiteModal canManage={canManage} history={history} currentMonth={currentMonth}
           onClose={() => setShowUpload(false)} onImported={onImported}
-          onViewPeriod={(p) => setPeriod(p)} />
+          onViewPeriod={(p) => { setPeriod(p); setReloadNonce((n) => n + 1); }} />
       )}
     </div>
   );
@@ -803,11 +820,25 @@ function SitesBrowser({ period, expectedTotal }) {
   const shown = filtered.slice(0, MAX_ROWS);
 
   const uniq = (rows, k) => new Set(rows.map((r) => String(r[k] ?? "").trim()).filter(Boolean)).size;
+  // uniqWhere: hitung nilai UNIK kolom `k` tapi cuma dari baris yg kolom
+  // `condKey`-nya sama persis (case-insensitive) dgn `condVal` - dipakai
+  // utk "Kecamatan Fokus" (kecamatan unik ber-kecamatan_fokus = YES) &
+  // "Site LRS" (site unik ber-site_lrs = LRS), sesuai definisi yg diminta
+  // user, bukan cuma hitung total baris.
+  const uniqWhere = (rows, k, condKey, condVal) =>
+    new Set(
+      rows
+        .filter((r) => String(r[condKey] ?? "").trim().toUpperCase() === condVal)
+        .map((r) => String(r[k] ?? "").trim())
+        .filter(Boolean)
+    ).size;
   const stats = useMemo(() => [
     ["Site ID", filtered.length, "Site ID"], ["MC", uniq(filtered, "mc"), "MC"], ["Area", uniq(filtered, "area"), "Area"],
     ["Region", uniq(filtered, "region"), "Region"], ["Branch", uniq(filtered, "branch"), "Branch"],
     ["Kabupaten", uniq(filtered, "kabupaten"), "Kabupaten"], ["Kecamatan", uniq(filtered, "kecamatan_name"), "Kecamatan"],
     ["KEC. UNIK", uniq(filtered, "kecamatan"), "Kecamatan Unik"],
+    ["KEC. FOKUS", uniqWhere(filtered, "kecamatan", "kecamatan_fokus", "YES"), "Kecamatan Fokus (kecamatan unik yang bernilai YES)"],
+    ["SITE LRS", uniqWhere(filtered, "site_id", "site_lrs", "LRS"), "Site LRS (site unik yang bernilai \"LRS\")"],
   ], [filtered]);
 
   const branchList = useMemo(() => {
