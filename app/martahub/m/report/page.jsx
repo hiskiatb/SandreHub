@@ -348,9 +348,11 @@ function FocusSiteReport({ mode, period, periodLabel }) {
     setRows(null); setErr(""); setRegion("");
     (async () => {
       try {
-        const { data, error } = await supabaseMarta.rpc(cfg.rpc, {
-          p_caller_email: email, p_period_start: period.start, p_period_end: period.end,
-        });
+        const { data, error } = await supabaseMarta
+          .rpc(cfg.rpc, {
+            p_caller_email: email, p_period_start: period.start, p_period_end: period.end,
+          })
+          .range(0, 19999); // avoid PostgREST's default 1000-row cap; this report can return 1500+ rows
         if (error) throw error;
         if (alive) setRows(data || []);
       } catch (e) {
