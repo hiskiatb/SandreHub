@@ -5,6 +5,7 @@
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import ActivityFlagBadges from "../_shared/ActivityFlagBadges";
 import { Search, X, Plus, Trash2, CheckCircle2, AlertCircle, ChevronRight, ChevronDown, CardSim, Router, Receipt, MapPin, Pencil, FolderClock, Clock, SlidersHorizontal, Check, RefreshCw, Megaphone, ChevronLeft } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, NAV_HEIGHT } from "../_shared/MobileShell";
@@ -341,7 +342,7 @@ function ActivitiesInner() {
           const chunkResults = await Promise.all(
             siteChunks.map((chunk) =>
               supabaseMarta.from("mh_sites")
-                .select("site_id,branch,kabupaten,kecamatan_name,kecamatan,kecamatan_fokus")
+                .select("site_id,branch,kabupaten,kecamatan_name,kecamatan,kecamatan_fokus,site_lrs")
                 .in("site_id", chunk)
             )
           );
@@ -349,7 +350,7 @@ function ActivitiesInner() {
             if (siteErr) { console.error("mh_sites fetch error:", siteErr); return; }
             (siteRows || []).forEach((s) => {
               if (s.branch) map[s.site_id] = s.branch;
-              metaMap[s.site_id] = { branch: s.branch || null, kabupaten: s.kabupaten || null, kecamatan: s.kecamatan_name || s.kecamatan || null, kecamatanFokus: s.kecamatan_fokus || "NO" };
+              metaMap[s.site_id] = { branch: s.branch || null, kabupaten: s.kabupaten || null, kecamatan: s.kecamatan_name || s.kecamatan || null, kecamatanFokus: s.kecamatan_fokus || "NO", siteLrs: !!s.site_lrs };
             });
           });
         }
@@ -933,7 +934,7 @@ function ActivitiesInner() {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10, opacity: isFiltering ? 0.5 : 1, transition: "opacity .15s" }}>
             {filtered.map((r) => (
-              <ActivityCard key={r.id} r={r} userId={userId} branchLabel={branchBySite[r.site_id]}
+              <ActivityCard key={r.id} r={r} userId={userId} branchLabel={branchBySite[r.site_id]} siteMeta={siteMeta[r.site_id]}
                 onOpen={() => router.push(
                   // Draft = masih tahap pengisian, BUKAN sesuatu yg perlu
                   // "dilihat" dulu di halaman detail (read-only) sebelum
@@ -1164,7 +1165,7 @@ function FilterChipGroup({ title, options, selected, onToggle }) {
   );
 }
 
-function ActivityCard({ r, userId, branchLabel, onOpen }) {
+function ActivityCard({ r, userId, branchLabel, onOpen, siteMeta }) {
   const router = useRouter();
   const isReady = READY_STATUSES.has(r.status);
   // SATU pill status utk seluruh kartu - activityStage() (activityUi.js)
@@ -1193,6 +1194,12 @@ function ActivityCard({ r, userId, branchLabel, onOpen }) {
   // jadi.
   const hasActual = r.actual_sp != null;
   const timeLabel = fmtTimeLabel(r);
+  // Badge Kecamatan Fokus/Site LRS - dari metadata site (siteMeta, di-fetch
+  // sekali di level halaman) berdasarkan site_id aktivitas ini, BUKAN
+  // kolom di tabel mh_activities sendiri. Independen: bisa tampil berdua,
+  // salah satu, atau tidak sama sekali (lihat ActivityFlagBadges).
+  const kecamatanFokus = siteMeta?.kecamatanFokus === "YES";
+  const siteLrs = !!siteMeta?.siteLrs;
 
   // Border kartu balik netral - abu-abu tipis polos spy tidak "ramai",
   // warna status cukup dibawa lewat pill-nya sendiri (planStatus di bawah
@@ -1310,6 +1317,8 @@ function ActivityCard({ r, userId, branchLabel, onOpen }) {
           <Clock size={12} color="#B0B0BA" style={{ flexShrink: 0 }} />
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{fmtDate(r.plan_date)} · {timeLabel}</span>
         </div>
+
+        <ActivityFlagBadges kecamatanFokus={kecamatanFokus} siteLrs={siteLrs} style={{ marginTop: 6 }} />
 
         {/* Ringkasan Actual (Aktivasi SP/FWA + Rebuy) - SATU BARIS, SELALU
             tampil begitu laporan actual masuk (tidak ikut disembunyikan
