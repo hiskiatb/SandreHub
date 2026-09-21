@@ -12,7 +12,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   UploadCloud, ChevronRight, ArrowLeft, Construction, Download, FilePlus2, ClipboardList, KeyRound,
-  FileMinus2, Shuffle, Info, TableProperties, Eye, X, ShieldCheck, Inbox, Mail, FileSpreadsheet,
+  FileMinus2, Shuffle, Info, TableProperties, Eye, X, ShieldCheck, Inbox, Mail, FileSpreadsheet, TrendingUp, ListChecks,
 } from "lucide-react";
 import SDP_UploadTerritory   from "./SDP_UploadTerritory";
 import SDP_RekapCSE          from "./SDP_RekapCSE";
@@ -30,6 +30,8 @@ import SDP_Approval          from "./SDP_Approval";
 import SDP_Drafts            from "./SDP_Drafts";
 import SDP_InitialImport     from "./SDP_InitialImport";
 import SDP_BulkTermReb       from "./SDP_BulkTermReb";
+import SDP_Evaluation        from "./SDP_Evaluation";
+import SDP_ActionTracker     from "./SDP_ActionTracker";
 
 // ─── Theme ─────────────────────────────────────────────────────────────────────
 const mk = (d) => ({
@@ -254,8 +256,22 @@ const EXPORT_CARD = {
   desc   : "Blok siap-paste ke spreadsheet HQ (Sumatera)",
   accent : "teal",
 };
+const EVALUATION_CARD = {
+  id     : "evaluation",
+  icon   : TrendingUp,
+  label  : "SDP Evaluation & PnL",
+  desc   : "Evaluasi kelayakan bisnis SDP Registered — Healthy/Watchlist/Critical & waiver",
+  accent : "mag",
+};
+const ACTION_TRACKER_CARD = {
+  id     : "action_tracker",
+  icon   : ListChecks,
+  label  : "Action Tracker",
+  desc   : "Registrasi macet & evaluasi Critical yang butuh tindak lanjut minggu ini",
+  accent : "acc",
+};
 ["pic_region", "spm_sumatera"].forEach((r) => {
-  MENUS[r] = [...(MENUS[r] || []), SUMMARY_CARD, MONITOR_CARD, EXPORT_CARD];
+  MENUS[r] = [...(MENUS[r] || []), SUMMARY_CARD, MONITOR_CARD, EXPORT_CARD, EVALUATION_CARD, ACTION_TRACKER_CARD];
 });
 
 // ─── Role badge ───────────────────────────────────────────────────────────────
@@ -600,6 +616,22 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile: real
     return (
       <div className="sdp-root sdp-view" style={{ fontFamily: FF }}>
         <SDP_BatchMonitor supabase={supabase} theme={theme} profile={profile} onExit={() => setActiveMenu(null)} />
+      </div>
+    );
+  }
+
+  if (activeMenu === "evaluation") {
+    return (
+      <div className="sdp-root sdp-view" style={{ fontFamily: FF }}>
+        <SDP_Evaluation supabase={supabase} theme={theme} profile={profile} onExit={() => setActiveMenu(null)} />
+      </div>
+    );
+  }
+
+  if (activeMenu === "action_tracker") {
+    return (
+      <div className="sdp-root sdp-view" style={{ fontFamily: FF }}>
+        <SDP_ActionTracker supabase={supabase} theme={theme} profile={profile} onExit={() => setActiveMenu(null)} />
       </div>
     );
   }

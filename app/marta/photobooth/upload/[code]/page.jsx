@@ -1,26 +1,43 @@
 "use client";
 /**
  * /marta/photobooth/upload/[code] — halaman PUBLIK (tanpa login), dibuka
- * tamu lewat link/QR yang dibagikan panitia. Didesain ulang total ("ui
- * sangat bagus dan mewah", "upload dibuat sangat mudah dan ada progress
- * uploadnya", permintaan user) - tiap file kini punya progress bar
- * individual (pakai onProgress dari uploadRpvPhoto di lib/rpv.js, bukan
- * cuma status pending/uploading/done polos spt sebelumnya), dan begitu
- * SEMUA foto di antrean selesai terunggah, muncul layar sukses full-screen
- * dgn animasi confetti + ring "sonar" + checkmark digambar + nada sukses
- * singkat - PERSIS gaya/animasi yg dipakai di layar sukses submit laporan
- * Plan/Actual MartaHub mobile (app/martahub/m/activities/[id]/submit/
- * page.jsx, komponen SubmitSuccessScreen), supaya konsisten & terasa
- * "premium" sesuai diminta, bukan generate ulang gaya baru dari nol.
+ * tamu lewat link/QR yang dibagikan panitia.
+ *
+ * DIROMBAK lagi ("perbaiki ui nya jangan ada efek glow, buat preview dulu,
+ * saat upload ada waktunya dengan jelas utk menguatkan jaringan 5g"):
+ * 1) Semua boxShadow warna/blur ("glow") DIHAPUS - kartu & tombol sekarang
+ *    flat, border tipis netral, tanpa cahaya di sekeliling elemen.
+ * 2) Alur SEKARANG 2 tahap: pilih foto -> PREVIEW dulu (grid foto terpilih,
+ *    bisa hapus salah satu) -> baru tekan "Upload N Foto" utk benar2 mulai
+ *    unggah. Sebelumnya upload langsung jalan begitu foto dipilih.
+ * 3) Selama upload, tiap foto punya TIMER berjalan (mm:ss.d, di-refresh tiap
+ *    100ms) yg jelas kelihatan, bukan cuma progress ring - begitu selesai,
+ *    waktu FINAL + throughput (Mbps) ditampilkan besar & mencolok (hijau,
+ *    ikon petir) utk menguatkan showcase kecepatan jaringan 5G, juga
+ *    dirangkum di layar sukses ("Total X foto dlm Ys, rata-rata Z Mbps").
+ * 4) Begitu sesi diklik, LANGSUNG buka antarmuka KAMERA LIVE (getUserMedia,
+ *    bukan cuma tombol "Pilih dari Galeri") - shutter utk jepret, hasil
+ *    jepretan langsung tampil sbg PREVIEW besar (Ambil Ulang / Upload),
+ *    baru setelah itu diunggah. "Pilih dari Galeri" tetap ada sbg opsi
+ *    sekunder (link kecil) utk device tanpa kamera/izin ditolak.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, Camera, ImagePlus, Loader2, Ticket, X } from "lucide-react";
-import { getRpvSession, uploadRpvPhoto } from "../../../../../lib/rpv";
+import { AlertTriangle, Camera, ImagePlus, Images, Loader2, RefreshCcw, RotateCcw, SwitchCamera, Ticket, Upload, X, Zap } from "lucide-react";
+import Link from "next/link";
+import { getRpvSession, uploadRpvPhoto, rpvThroughputMbps } from "../../../../../lib/rpv";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED = "#ED1C24";
 const MAGA = "#C6168D";
+const INK = "#111116";
+const LINE = "#E4E2EA";
+const SUB = "#8A8A96";
+
+function fmtElapsed(ms) {
+  const s = ms / 1000;
+  return `${s.toFixed(1)}s`;
+}
 
 export default function RpvUploadPage() {
   const params = useParams();
@@ -29,16 +46,94 @@ export default function RpvUploadPage() {
 
   const [state, setState] = useState("loading"); // loading | ready | notfound
   const [session, setSession] = useState(null);
-  const [queue, setQueue] = useState([]); // { id, file, previewUrl, status, progress, photoCode, error }
+  // phase: "pick" (belum ada foto dipilih) | "preview" (sudah dipilih, blm
+  // diupload, bisa dihapus) | "uploading"/"done" (proses & hasil unggah)
+  const [phase, setPhase] = useState("pick");
+  const [queue, setQueue] = useState([]); // { id, file, previewUrl, status, progress, photoCode, error, startedAt, uploadMs, fileSizeBytes }
   const [showSuccess, setShowSuccess] = useState(false);
-  const celebratedRef = useRef(false); // biar animasi sukses cuma sekali per "gelombang" upload, tidak berulang tiap render
+  const [tick, setTick] = useState(0); // re-render tiap 100ms selama ada yg uploading, dipakai hitung elapsed timer live
+  const celebratedRef = useRef(false);
 
-  // Warm-up koneksi ke Storage Supabase SEDINI mungkin (begitu halaman
-  // dibuka, sebelum tamu sempat pilih foto) - biar TLS handshake/koneksi
-  // pertama TIDAK ikut ketimpa ke pengukuran ms upload foto pertama.
-  // Tanpa ini, foto pertama tamu selalu kelihatan "lambat" bukan krn
-  // jaringan 5G-nya lambat, tapi krn cold-start koneksi - itu bikin angka
-  // showcase kecepatan tidak akurat/representatif.
+  // ── Kamera live (getUserMedia) ──────────────────────────────────────────
+  // cameraOpen = TRUE begitu halaman siap (default), supaya tamu langsung
+  // lihat antarmuka kamera - bukan cuma tombol "Pilih dari Galeri" yg
+  // pasif. Dibuka lagi lewat tombol "Ambil Foto Lagi" di tahap preview.
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraState, setCameraState] = useState("idle"); // idle | starting | ready | denied | unsupported
+  const [facing, setFacing] = useState("environment");
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach((tr) => tr.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+  };
+
+  const startCamera = async (mode) => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setCameraState("unsupported");
+      return;
+    }
+    setCameraState("starting");
+    stopCamera();
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: mode }, audio: false });
+      streamRef.current = stream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => {});
+      }
+      setCameraState("ready");
+    } catch {
+      setCameraState("denied");
+    }
+  };
+
+  // Kamera cuma AKTIF selagi cameraOpen true - dimatikan (stopCamera) begitu
+  // ditutup/pindah tahap lain, supaya lampu kamera device tidak nyala terus
+  // & baterai/privasi tamu terjaga.
+  useEffect(() => {
+    if (!cameraOpen) { stopCamera(); return; }
+    startCamera(facing);
+    return () => stopCamera();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraOpen, facing]);
+
+  // Begitu sesi siap & belum ada foto sama sekali di antrean - LANGSUNG
+  // buka kamera (ini yg dimaksud "klik sesi -> langsung interface kamera").
+  useEffect(() => {
+    if (state === "ready" && phase === "pick" && queue.length === 0) setCameraOpen(true);
+  }, [state, phase, queue.length]);
+
+  const flipCamera = () => setFacing((f) => (f === "environment" ? "user" : "environment"));
+
+  const capturePhoto = () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    // Mirror horizontal utk kamera depan ("user") - biar preview terasa
+    // natural spt cermin (kiri-kanan sesuai gerakan tamu), sedangkan kamera
+    // belakang ("environment") dibiarkan apa adanya.
+    if (facing === "user") { ctx.translate(canvas.width, 0); ctx.scale(-1, 1); }
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const file = new File([blob], `camera-${Date.now()}.jpg`, { type: "image/jpeg" });
+      const item = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        file, previewUrl: URL.createObjectURL(blob), status: "pending", progress: 0, photoCode: null, error: "",
+        startedAt: null, uploadMs: null, fileSizeBytes: blob.size || null,
+      };
+      setQueue((q) => [item, ...q]);
+      setCameraOpen(false);
+      setPhase("preview"); // langsung tampil sbg preview - belum diupload
+    }, "image/jpeg", 0.92);
+  };
+
   useEffect(() => {
     const storageUrl = process.env.NEXT_PUBLIC_MARTA_SUPABASE_URL;
     if (!storageUrl) return;
@@ -60,56 +155,78 @@ export default function RpvUploadPage() {
     })();
   }, [code]);
 
+  const activeCount = queue.filter((x) => x.status === "pending" || x.status === "uploading").length;
+
+  // Timer live - tick tiap 100ms SELAMA ada foto yg lagi diunggah, dipakai
+  // menghitung elapsed berjalan tiap item (bukan cuma persentase progress).
+  useEffect(() => {
+    if (activeCount === 0) return;
+    const t = setInterval(() => setTick((n) => n + 1), 100);
+    return () => clearInterval(t);
+  }, [activeCount]);
+
   const onPick = (e) => {
     const files = Array.from(e.target.files || []);
+    e.target.value = "";
     if (!files.length) return;
-    celebratedRef.current = false; // batch baru -> boleh rayakan lagi kalau semua sukses
     const items = files.map((file) => ({
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       file, previewUrl: URL.createObjectURL(file), status: "pending", progress: 0, photoCode: null, error: "",
+      startedAt: null, uploadMs: null, fileSizeBytes: file.size || null,
     }));
     setQueue((q) => [...items, ...q]);
-    items.forEach(uploadOne);
-    e.target.value = ""; // supaya bisa pilih file yg sama lagi kalau perlu
+    setPhase("preview"); // TIDAK langsung upload - tampilkan preview dulu, tamu review sebelum unggah
+  };
+
+  const removeItem = (id) => setQueue((q) => q.filter((x) => x.id !== id));
+
+  const startUpload = async () => {
+    celebratedRef.current = false;
+    setPhase("uploading");
+    const items = queue.filter((x) => x.status === "pending");
+    await Promise.all(items.map(uploadOne));
   };
 
   const uploadOne = async (item) => {
-    setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "uploading", progress: 0.02 } : x)));
+    const startedAt = performance.now();
+    setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "uploading", progress: 0.02, startedAt } : x)));
     try {
-      const { photoCode } = await uploadRpvPhoto(code, item.file, (p) => {
+      const { photoCode, uploadMs, fileSizeBytes } = await uploadRpvPhoto(code, item.file, (p) => {
         setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, progress: p } : x)));
       });
-      setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "done", progress: 1, photoCode } : x)));
+      setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "done", progress: 1, photoCode, uploadMs, fileSizeBytes: fileSizeBytes ?? x.fileSizeBytes } : x)));
     } catch (e) {
       setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "error", error: e.message || "Gagal unggah" } : x)));
     }
   };
 
-  const removeItem = (id) => setQueue((q) => q.filter((x) => x.id !== id));
-
-  const doneCount = queue.filter((x) => x.status === "done").length;
+  const doneItems = queue.filter((x) => x.status === "done");
+  const doneCount = doneItems.length;
   const errorCount = queue.filter((x) => x.status === "error").length;
-  const activeCount = queue.filter((x) => x.status === "pending" || x.status === "uploading").length;
-  // Progress keseluruhan (0-1) - dipakai bar ringkasan di atas grid, rata2
-  // dari progress tiap file (file "done" dihitung penuh 1, "error" juga
-  // dianggap selesai/tidak diproses lagi spy bar tidak nyangkut).
   const overallProgress = useMemo(() => {
     if (!queue.length) return 0;
     const sum = queue.reduce((s, x) => s + (x.status === "done" || x.status === "error" ? 1 : x.progress || 0), 0);
     return sum / queue.length;
   }, [queue]);
 
-  // Begitu SEMUA item di antrean sudah tuntas (done/error) DAN minimal 1
-  // sukses DAN tidak ada lagi yg masih aktif -> tampilkan layar sukses
-  // sekali (celebratedRef mencegah re-trigger tiap re-render/tiap file
-  // baru yg kebetulan juga langsung "done" krn cache dsb).
+  // Rata2 throughput semua foto yg sukses - ditonjolkan di layar sukses
+  // sbg ringkasan showcase kekuatan jaringan 5G ("3 foto dlm 2.1s, rata2 X Mbps").
+  const uploadSummary = useMemo(() => {
+    if (!doneItems.length) return null;
+    const totalMs = doneItems.reduce((s, x) => s + (x.uploadMs || 0), 0);
+    const mbpsList = doneItems.map((x) => rpvThroughputMbps(x.fileSizeBytes, x.uploadMs)).filter(Boolean);
+    const avgMbps = mbpsList.length ? mbpsList.reduce((s, v) => s + v, 0) / mbpsList.length : null;
+    return { totalMs, avgMbps };
+  }, [doneItems]);
+
   useEffect(() => {
-    if (!queue.length || activeCount > 0 || celebratedRef.current) return;
+    if (phase !== "uploading" || activeCount > 0 || celebratedRef.current) return;
     if (doneCount > 0) {
       celebratedRef.current = true;
+      setPhase("done");
       setShowSuccess(true);
     }
-  }, [queue.length, activeCount, doneCount]);
+  }, [phase, activeCount, doneCount]);
 
   if (state === "loading") {
     return <Center><Loader2 size={26} color={RED} style={{ animation: "spin 1s linear infinite" }} /></Center>;
@@ -118,8 +235,8 @@ export default function RpvUploadPage() {
     return (
       <Center>
         <AlertTriangle size={30} color={RED} />
-        <div style={{ marginTop: 12, fontSize: 15, fontWeight: 700, color: "#111116" }}>Sesi tidak ditemukan</div>
-        <div style={{ marginTop: 4, fontSize: 13, color: "#8A8A96", textAlign: "center", maxWidth: 280 }}>Link ini sudah tidak berlaku atau sesi photobooth belum aktif.</div>
+        <div style={{ marginTop: 12, fontSize: 15, fontWeight: 700, color: INK }}>Sesi tidak ditemukan</div>
+        <div style={{ marginTop: 4, fontSize: 13, color: SUB, textAlign: "center", maxWidth: 280 }}>Link ini sudah tidak berlaku atau sesi photobooth belum aktif.</div>
       </Center>
     );
   }
@@ -129,31 +246,54 @@ export default function RpvUploadPage() {
       <UploadSuccessScreen
         doneCount={doneCount}
         errorCount={errorCount}
-        onDone={() => setShowSuccess(false)}
-        onUploadMore={() => { setShowSuccess(false); fileRef.current?.click(); }}
+        summary={uploadSummary}
+        onDone={() => { setShowSuccess(false); setQueue([]); setPhase("pick"); }}
+        onUploadMore={() => { setShowSuccess(false); setQueue([]); setPhase("pick"); setCameraOpen(true); }}
+      />
+    );
+  }
+
+  if (cameraOpen) {
+    return (
+      <CameraView
+        videoRef={videoRef}
+        cameraState={cameraState}
+        facing={facing}
+        onFlip={flipCamera}
+        onCapture={capturePhoto}
+        onRetry={() => startCamera(facing)}
+        onUseGallery={() => { setCameraOpen(false); fileRef.current?.click(); }}
+        canGoBack={queue.length > 0}
+        onBack={() => setCameraOpen(false)}
+        sessionTitle={session?.title}
       />
     );
   }
 
   return (
-    <div style={{ minHeight: "100svh", background: "linear-gradient(180deg,#F7F5FA 0%,#F4F4F6 220px)", fontFamily: FONT, display: "flex", flexDirection: "column" }}>
+    <div style={{ minHeight: "100svh", background: "#F4F4F6", fontFamily: FONT, display: "flex", flexDirection: "column" }}>
       {storageOrigin && <link rel="preconnect" href={storageOrigin} />}
-      <div style={{ padding: "22px 18px 16px", background: "#fff", borderBottom: "1px solid #E4E2EA", position: "sticky", top: 0, zIndex: 5, boxShadow: "0 2px 10px rgba(17,17,22,0.03)" }}>
+      <div style={{ padding: "22px 18px 16px", background: "#fff", borderBottom: `1px solid ${LINE}`, position: "sticky", top: 0, zIndex: 5 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <span style={{ width: 42, height: 42, borderRadius: 13, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", flexShrink: 0, boxShadow: "0 6px 16px rgba(237,28,36,0.28)" }}>
+          <span style={{ width: 42, height: 42, borderRadius: 13, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", flexShrink: 0 }}>
             <Camera size={19} />
           </span>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 16, fontWeight: 800, color: "#111116", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", letterSpacing: "-0.01em" }}>{session?.title}</div>
-            <div style={{ fontSize: 11.5, color: "#8A8A96", marginTop: 1 }}>Kode sesi <b style={{ color: "#5A5A68", fontFamily: "monospace", letterSpacing: "0.05em" }}>{code}</b> · Unggah foto dari galeri kamu</div>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: INK, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", letterSpacing: "-0.01em" }}>{session?.title}</div>
+            <div style={{ fontSize: 11.5, color: SUB, marginTop: 1 }}>Kode sesi <b style={{ color: "#5A5A68", fontFamily: "monospace", letterSpacing: "0.05em" }}>{code}</b> · Unggah foto dari galeri kamu</div>
           </div>
+          <Link href={`/marta/photobooth/upload/${code}/gallery`}
+            style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 5, height: 32, padding: "0 11px", borderRadius: 9, border: `1px solid ${LINE}`, color: "#5A5A68", fontSize: 11.5, fontWeight: 700, textDecoration: "none" }}>
+            <Images size={13} /> Galeri
+          </Link>
         </div>
-        {/* Bar progress ringkasan - cuma muncul kalau ada yg masih diproses,
-            biar header tetap ringkas saat idle. */}
-        {activeCount > 0 && (
+        <Link href="/marta/photobooth/go" style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 8, fontSize: 10.5, color: "#B0B0BA", fontWeight: 600, textDecoration: "none" }}>
+          <RefreshCcw size={10} /> Ganti sesi
+        </Link>
+        {phase === "uploading" && (
           <div style={{ marginTop: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 10.5, fontWeight: 700, color: "#8A8A96", marginBottom: 5 }}>
-              <span>Mengunggah {doneCount + errorCount}/{queue.length}…</span>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 10.5, fontWeight: 700, color: SUB, marginBottom: 5 }}>
+              <span>Mengunggah via 5G {doneCount + errorCount}/{queue.length}…</span>
               <span style={{ color: RED }}>{Math.round(overallProgress * 100)}%</span>
             </div>
             <div style={{ width: "100%", height: 6, borderRadius: 99, background: "#EFEDF3", overflow: "hidden" }}>
@@ -166,58 +306,121 @@ export default function RpvUploadPage() {
       <div style={{ flex: 1, padding: "20px 16px 100px", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
         <input ref={fileRef} type="file" accept="image/*" multiple onChange={onPick} style={{ display: "none" }} />
 
-        <button onClick={() => fileRef.current?.click()}
-          style={{
-            width: "100%", height: 152, borderRadius: 22, border: "none", cursor: "pointer", fontFamily: FONT,
-            background: `linear-gradient(155deg, rgba(237,28,36,0.08), rgba(198,22,141,0.06))`,
-            boxShadow: "inset 0 0 0 2px rgba(237,28,36,0.18)",
-            display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10,
-          }}>
-          <div style={{
-            width: 54, height: 54, borderRadius: 999, display: "flex", alignItems: "center", justifyContent: "center",
-            background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", boxShadow: "0 10px 26px rgba(237,28,36,0.32)",
-          }}>
-            <ImagePlus size={24} />
-          </div>
-          <span style={{ fontSize: 15, fontWeight: 800, color: "#17181C" }}>Pilih Foto dari Galeri</span>
-          <span style={{ fontSize: 11.5, color: "#8A8A96", fontWeight: 600 }}>Bisa pilih beberapa foto sekaligus</span>
-        </button>
+        {/* Tahap "preview": aksi UTAMA utk nambah foto adalah buka kamera
+            LIVE lagi ("Ambil Foto Lagi") - "Pilih dari Galeri" jadi opsi
+            SEKUNDER (link kecil di bawahnya), sama spt pola di CameraView. */}
+        {phase === "preview" && (
+          <button onClick={() => setCameraOpen(true)}
+            style={{
+              width: "100%", height: 96, borderRadius: 18, cursor: "pointer", fontFamily: FONT,
+              background: "#fff", border: `1.5px dashed ${LINE}`,
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 7,
+            }}>
+            <div style={{
+              width: 40, height: 40, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center",
+              background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff",
+            }}>
+              <Camera size={18} />
+            </div>
+            <span style={{ fontSize: 13.5, fontWeight: 800, color: "#17181C" }}>Ambil Foto Lagi</span>
+          </button>
+        )}
+        {phase === "preview" && (
+          <button onClick={() => fileRef.current?.click()}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, width: "100%", marginTop: 8, border: "none", background: "transparent", color: SUB, fontSize: 11.5, fontWeight: 700, fontFamily: FONT, cursor: "pointer", padding: "6px 0" }}>
+            <ImagePlus size={13} /> atau pilih dari galeri
+          </button>
+        )}
 
-        {queue.length > 0 && (
+        {/* Tombol pilih foto dari galeri - dipakai kalau kamera tidak
+            terbuka (mis. fallback state pick tanpa cameraOpen) - FLAT,
+            tanpa efek glow. */}
+        {phase !== "uploading" && phase !== "done" && phase !== "preview" && (
+          <button onClick={() => fileRef.current?.click()}
+            style={{
+              width: "100%", height: 132, borderRadius: 18, cursor: "pointer", fontFamily: FONT,
+              background: "#fff", border: `1.5px dashed ${LINE}`,
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 9,
+            }}>
+            <div style={{
+              width: 46, height: 46, borderRadius: 13, display: "flex", alignItems: "center", justifyContent: "center",
+              background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff",
+            }}>
+              <ImagePlus size={21} />
+            </div>
+            <span style={{ fontSize: 14, fontWeight: 800, color: "#17181C" }}>Pilih Foto dari Galeri</span>
+            <span style={{ fontSize: 11, color: SUB, fontWeight: 600 }}>Bisa pilih beberapa foto sekaligus</span>
+          </button>
+        )}
+
+        {/* Tahap PREVIEW - foto sudah dipilih tapi BELUM diunggah, tamu bisa
+            cek & hapus sebelum benar2 kirim. */}
+        {phase === "preview" && queue.length > 0 && (
+          <>
+            <div style={{ marginTop: 20, fontSize: 12, fontWeight: 700, color: "#5A5A68" }}>Pratinjau · {queue.length} foto dipilih</div>
+            <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(96px, 1fr))", gap: 10 }}>
+              {queue.map((it) => (
+                <div key={it.id} style={{ position: "relative", borderRadius: 14, overflow: "hidden", aspectRatio: "1/1", background: "#E4E2EA", border: `1px solid ${LINE}` }}>
+                  <img src={it.previewUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                  <button onClick={() => removeItem(it.id)} style={{ position: "absolute", top: 5, right: 5, width: 22, height: 22, borderRadius: 999, border: "none", background: "rgba(17,17,22,0.6)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button onClick={startUpload}
+              style={{ marginTop: 18, width: "100%", height: 52, borderRadius: 14, border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 15, fontWeight: 800, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: `linear-gradient(135deg,${RED},${MAGA})` }}>
+              <Upload size={17} /> Upload {queue.length} Foto
+            </button>
+          </>
+        )}
+
+        {(phase === "uploading" || phase === "done") && queue.length > 0 && (
           <div style={{ marginTop: 22 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: "#5A5A68", marginBottom: 10 }}>{doneCount}/{queue.length} foto terunggah</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(96px, 1fr))", gap: 10 }}>
-              {queue.map((it) => (
-                <div key={it.id} style={{ position: "relative", borderRadius: 14, overflow: "hidden", aspectRatio: "1/1", background: "#E4E2EA", boxShadow: "0 2px 8px rgba(17,17,22,0.06)" }}>
-                  <img src={it.previewUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                  {/* Progress ring melingkar di TENGAH foto saat uploading -
-                      jauh lebih jelas & "premium" drpd cuma spinner kecil di
-                      pojok spt versi sebelumnya. */}
-                  {it.status === "uploading" && (
-                    <div style={{ position: "absolute", inset: 0, background: "rgba(17,17,22,0.32)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <CircularProgress value={it.progress || 0} />
+              {queue.map((it) => {
+                const liveElapsedMs = it.status === "uploading" && it.startedAt ? (performance.now() - it.startedAt) : null;
+                const mbps = it.status === "done" ? rpvThroughputMbps(it.fileSizeBytes, it.uploadMs) : null;
+                void tick; // dipakai supaya komponen re-render tiap 100ms & liveElapsedMs ikut ter-update
+                return (
+                  <div key={it.id} style={{ position: "relative", borderRadius: 14, overflow: "hidden", aspectRatio: "1/1", background: "#E4E2EA", border: `1px solid ${LINE}` }}>
+                    <img src={it.previewUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                    {/* Overlay uploading: timer berjalan JELAS (bukan cuma
+                        ring persentase) - permintaan eksplisit user utk
+                        menguatkan showcase kecepatan jaringan 5G. */}
+                    {it.status === "uploading" && (
+                      <div style={{ position: "absolute", inset: 0, background: "rgba(17,17,22,0.42)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4 }}>
+                        <CircularProgress value={it.progress || 0} />
+                        <span style={{ fontSize: 12, fontWeight: 800, color: "#fff", fontFamily: "monospace" }}>{fmtElapsed(liveElapsedMs || 0)}</span>
+                      </div>
+                    )}
+                    <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg,rgba(0,0,0,0) 50%,rgba(0,0,0,0.68) 100%)", display: "flex", flexDirection: "column", alignItems: "flex-start", justifyContent: "flex-end", padding: 7, pointerEvents: "none" }}>
+                      {it.status === "done" && (
+                        <>
+                          <span style={{ display: "flex", alignItems: "center", gap: 4, color: "#fff", fontSize: 11, fontWeight: 700 }}>
+                            <Ticket size={12} /> {it.photoCode}
+                          </span>
+                          {/* Waktu FINAL + Mbps - besar & mencolok (hijau + petir)
+                              spy jadi bukti nyata kecepatan 5G, bukan cuma
+                              detail kecil di pojok. */}
+                          {!!it.uploadMs && (
+                            <span style={{ display: "flex", alignItems: "center", gap: 4, color: "#7CF5A8", fontSize: 12, fontWeight: 800, marginTop: 2 }}>
+                              <Zap size={12} /> {fmtElapsed(it.uploadMs)}{mbps ? ` · ${mbps.toFixed(1)} Mbps` : ""}
+                            </span>
+                          )}
+                        </>
+                      )}
+                      {it.status === "error" && <span style={{ color: "#FCA5A5", fontSize: 10.5, fontWeight: 700 }}>Gagal</span>}
                     </div>
-                  )}
-                  <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg,rgba(0,0,0,0) 55%,rgba(0,0,0,0.62) 100%)", display: "flex", alignItems: "flex-end", padding: 7, pointerEvents: "none" }}>
                     {it.status === "done" && (
-                      <span style={{ display: "flex", alignItems: "center", gap: 4, color: "#fff", fontSize: 11, fontWeight: 700 }}>
-                        <Ticket size={12} /> {it.photoCode}
+                      <span style={{ position: "absolute", top: 5, left: 5, width: 20, height: 20, borderRadius: 999, background: "#16A34A", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M5 12.5l4.5 4.5L19 7.5" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>
                       </span>
                     )}
-                    {it.status === "error" && <span style={{ color: "#FCA5A5", fontSize: 10.5, fontWeight: 700 }}>Gagal</span>}
                   </div>
-                  {it.status !== "uploading" && (
-                    <button onClick={() => removeItem(it.id)} style={{ position: "absolute", top: 5, right: 5, width: 20, height: 20, borderRadius: 999, border: "none", background: "rgba(0,0,0,0.55)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-                      <X size={11} />
-                    </button>
-                  )}
-                  {it.status === "done" && (
-                    <span style={{ position: "absolute", top: 5, left: 5, width: 20, height: 20, borderRadius: 999, background: "#16A34A", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 6px rgba(22,163,74,0.4)" }}>
-                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M5 12.5l4.5 4.5L19 7.5" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                    </span>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -228,34 +431,31 @@ export default function RpvUploadPage() {
 }
 
 /** Ring progress melingkar kecil (SVG, tanpa library) - dipakai di tengah
- * tiap thumbnail foto yg lagi diunggah, jauh lebih jelas drpd spinner
- * generik krn menunjukkan PERSENTASE riil (dari onProgress uploadRpvPhoto),
- * bukan cuma "lagi proses". */
+ * tiap thumbnail foto yg lagi diunggah, menunjukkan PERSENTASE riil,
+ * dipasangkan dgn timer teks (fmtElapsed) di bawahnya. */
 function CircularProgress({ value }) {
   const pct = Math.max(0, Math.min(1, value));
   const r = 15, c = 2 * Math.PI * r;
   return (
-    <div style={{ position: "relative", width: 38, height: 38 }}>
-      <svg width="38" height="38" viewBox="0 0 38 38" style={{ transform: "rotate(-90deg)" }}>
-        <circle cx="19" cy="19" r={r} fill="none" stroke="rgba(255,255,255,0.28)" strokeWidth="3.5" />
-        <circle cx="19" cy="19" r={r} fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round"
+    <div style={{ position: "relative", width: 34, height: 34 }}>
+      <svg width="34" height="34" viewBox="0 0 34 34" style={{ transform: "rotate(-90deg)" }}>
+        <circle cx="17" cy="17" r={r} fill="none" stroke="rgba(255,255,255,0.28)" strokeWidth="3" />
+        <circle cx="17" cy="17" r={r} fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round"
           strokeDasharray={c} strokeDashoffset={c * (1 - pct)} style={{ transition: "stroke-dashoffset .2s ease" }} />
       </svg>
-      <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 800, color: "#fff" }}>
+      <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 800, color: "#fff" }}>
         {Math.round(pct * 100)}
       </span>
     </div>
   );
 }
 
-/** Layar sukses full-screen begitu antrean upload tuntas - animasi & nada
- * PERSIS gaya SubmitSuccessScreen di app/martahub/m/activities/[id]/submit/
- * page.jsx (ring sonar 2 lapis, confetti 14 partikel meletup & jatuh,
- * lingkaran+centang digambar via stroke-dashoffset, nada sukses disintesis
- * Web Audio) - dipertahankan identik sesuai diminta ("gunakan animasi
- * berhasil saat upload plan actual di martahub"), cuma teks & aksi
- * tombolnya disesuaikan konteks Photobooth. */
-function UploadSuccessScreen({ doneCount, errorCount, onDone, onUploadMore }) {
+/** Layar sukses full-screen begitu antrean upload tuntas. Animasi confetti/
+ * ring sonar/checkmark tetap dipertahankan (konsisten dgn SubmitSuccessScreen
+ * MartaHub mobile), tapi TANPA efek glow (shadow warna) di elemen lain,
+ * & sekarang menampilkan ringkasan kecepatan 5G ("3 foto dlm 2.1s, rata2
+ * X Mbps") sbg penguat showcase jaringan. */
+function UploadSuccessScreen({ doneCount, errorCount, summary, onDone, onUploadMore }) {
   const confetti = useMemo(() => {
     const colors = ["#ED1C24", "#F59E0B", "#15803D", "#2563EB", "#EC008C", "#7C3AED"];
     return Array.from({ length: 14 }, (_, i) => {
@@ -312,7 +512,7 @@ function UploadSuccessScreen({ doneCount, errorCount, onDone, onUploadMore }) {
                 background: c.color, borderRadius: c.round ? "50%" : "2px",
               }} />
           ))}
-          <div className="mh-success-pop" style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "linear-gradient(155deg, rgba(21,128,61,0.14), rgba(21,128,61,0.06))", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 8px 24px rgba(21,128,61,0.18)" }}>
+          <div className="mh-success-pop" style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "rgba(21,128,61,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <svg width="52" height="52" viewBox="0 0 52 52">
               <circle className="mh-success-circle" cx="26" cy="26" r="23" fill="none" stroke="#15803D" strokeWidth="2.5" strokeLinecap="round" />
               <path className="mh-success-tick" d="M15 27l7.5 7.5L37.5 18" fill="none" stroke="#15803D" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
@@ -325,6 +525,18 @@ function UploadSuccessScreen({ doneCount, errorCount, onDone, onUploadMore }) {
         <div className="mh-success-text" style={{ marginTop: 8, fontSize: 13, color: "#6B6B76", lineHeight: 1.6, animationDelay: "0.08s" }}>
           Fotomu sudah tampil di layar Viewer - cari ID di bawah fotomu kalau mau cetak.
         </div>
+
+        {/* Ringkasan kecepatan 5G - penguat showcase, ditaruh sbg pill flat
+            (bukan card ber-glow) di bawah teks sukses. */}
+        {summary && (
+          <div className="mh-success-text" style={{ marginTop: 12, display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 999, background: "#EAF9EF", border: "1px solid #CDEED9", animationDelay: "0.12s" }}>
+            <Zap size={13} color="#16A34A" />
+            <span style={{ fontSize: 12, fontWeight: 800, color: "#15803D" }}>
+              {doneCount} foto dlm {fmtElapsed(summary.totalMs)}{summary.avgMbps ? ` · rata-rata ${summary.avgMbps.toFixed(1)} Mbps` : ""}
+            </span>
+          </div>
+        )}
+
         {errorCount > 0 && (
           <div style={{ marginTop: 14, display: "flex", alignItems: "flex-start", gap: 7, padding: "10px 12px", borderRadius: 11, background: "rgba(180,83,9,0.08)", textAlign: "left" }}>
             <AlertTriangle size={14} color="#B45309" style={{ flexShrink: 0, marginTop: 1 }} />
@@ -339,7 +551,7 @@ function UploadSuccessScreen({ doneCount, errorCount, onDone, onUploadMore }) {
             Unggah Foto Lagi
           </button>
           <button onClick={onDone}
-            style={{ width: "100%", height: 48, borderRadius: 12, border: "1.5px solid #E4E2EA", background: "#fff", color: "#5A5A68", fontSize: 14, fontWeight: 700, fontFamily: FONT, cursor: "pointer" }}>
+            style={{ width: "100%", height: 48, borderRadius: 12, border: `1.5px solid ${LINE}`, background: "#fff", color: "#5A5A68", fontSize: 14, fontWeight: 700, fontFamily: FONT, cursor: "pointer" }}>
             Selesai
           </button>
         </div>
@@ -362,10 +574,92 @@ function UploadSuccessScreen({ doneCount, errorCount, onDone, onUploadMore }) {
   );
 }
 
-function Center({ children }) {
+function Center({ children, dark }) {
   return (
-    <div style={{ minHeight: "100svh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#F4F4F6", fontFamily: FONT, padding: 20 }}>
+    <div style={{ minHeight: dark ? "auto" : "100svh", flex: dark ? 1 : undefined, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: dark ? "transparent" : "#F4F4F6", fontFamily: FONT, padding: 20, position: "relative", zIndex: 2 }}>
       {children}
+      {!dark && <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>}
+    </div>
+  );
+}
+
+/** Antarmuka kamera LIVE full-screen (getUserMedia) - dibuka begitu sesi
+ * siap (default) atau lewat tombol "Ambil Foto Lagi". Shutter besar gaya
+ * app kamera, tombol flip depan/belakang, & fallback "Pilih dari Galeri"
+ * utk device tanpa kamera / izin ditolak. */
+function CameraView({ videoRef, cameraState, facing, onFlip, onCapture, onRetry, onUseGallery, canGoBack, onBack, sessionTitle }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#000", fontFamily: FONT, display: "flex", flexDirection: "column", zIndex: 50 }}>
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        style={{
+          position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover",
+          transform: facing === "user" ? "scaleX(-1)" : "none",
+          opacity: cameraState === "ready" ? 1 : 0, transition: "opacity .25s ease",
+        }}
+      />
+
+      {/* Header overlay - judul sesi + tombol kembali (kalau sudah ada foto di antrean) */}
+      <div style={{ position: "relative", zIndex: 2, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 14px", background: "linear-gradient(180deg,rgba(0,0,0,0.55),rgba(0,0,0,0))" }}>
+        {canGoBack ? (
+          <button onClick={onBack} style={{ width: 38, height: 38, borderRadius: 999, border: "none", background: "rgba(255,255,255,0.16)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <X size={18} />
+          </button>
+        ) : <span style={{ width: 38 }} />}
+        <div style={{ fontSize: 12.5, fontWeight: 800, color: "#fff", textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }}>{sessionTitle}</div>
+        {cameraState === "ready" ? (
+          <button onClick={onFlip} style={{ width: 38, height: 38, borderRadius: 999, border: "none", background: "rgba(255,255,255,0.16)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <SwitchCamera size={18} />
+          </button>
+        ) : <span style={{ width: 38 }} />}
+      </div>
+
+      {cameraState === "starting" && (
+        <Center dark>
+          <Loader2 size={26} color="#fff" style={{ animation: "spin 1s linear infinite" }} />
+          <div style={{ marginTop: 10, fontSize: 12.5, color: "rgba(255,255,255,0.8)", fontWeight: 600 }}>Membuka kamera…</div>
+        </Center>
+      )}
+
+      {cameraState === "denied" && (
+        <Center dark>
+          <AlertTriangle size={28} color="#F59E0B" />
+          <div style={{ marginTop: 12, fontSize: 14.5, fontWeight: 800, color: "#fff", textAlign: "center" }}>Izin kamera ditolak</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: "rgba(255,255,255,0.72)", textAlign: "center", maxWidth: 260, lineHeight: 1.5 }}>Aktifkan izin kamera di browser kamu, lalu coba lagi - atau pilih foto dari galeri.</div>
+          <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 9, width: "100%", maxWidth: 240 }}>
+            <button onClick={onRetry} style={{ height: 44, borderRadius: 12, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FONT, cursor: "pointer" }}>Coba Lagi</button>
+            <button onClick={onUseGallery} style={{ height: 44, borderRadius: 12, border: "1.5px solid rgba(255,255,255,0.28)", background: "transparent", color: "#fff", fontSize: 13.5, fontWeight: 700, fontFamily: FONT, cursor: "pointer" }}>Pilih dari Galeri</button>
+          </div>
+        </Center>
+      )}
+
+      {cameraState === "unsupported" && (
+        <Center dark>
+          <AlertTriangle size={28} color="#F59E0B" />
+          <div style={{ marginTop: 12, fontSize: 14.5, fontWeight: 800, color: "#fff", textAlign: "center" }}>Kamera tidak didukung</div>
+          <div style={{ marginTop: 4, fontSize: 12, color: "rgba(255,255,255,0.72)", textAlign: "center", maxWidth: 260, lineHeight: 1.5 }}>Browser ini belum mendukung akses kamera langsung - pilih foto dari galeri saja.</div>
+          <button onClick={onUseGallery} style={{ marginTop: 18, height: 44, padding: "0 22px", borderRadius: 12, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FONT, cursor: "pointer" }}>Pilih dari Galeri</button>
+        </Center>
+      )}
+
+      {/* Shutter + fallback galeri - hanya begitu feed kamera siap */}
+      {cameraState === "ready" && (
+        <div style={{ position: "relative", zIndex: 2, marginTop: "auto", display: "flex", flexDirection: "column", alignItems: "center", gap: 14, padding: "0 20px 30px" }}>
+          <button onClick={onCapture} aria-label="Jepret foto"
+            style={{
+              width: 74, height: 74, borderRadius: 999, border: "4px solid rgba(255,255,255,0.9)",
+              background: "rgba(255,255,255,0.18)", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
+            <span style={{ width: 58, height: 58, borderRadius: 999, background: "#fff" }} />
+          </button>
+          <button onClick={onUseGallery} style={{ display: "flex", alignItems: "center", gap: 6, border: "none", background: "transparent", color: "rgba(255,255,255,0.85)", fontSize: 12, fontWeight: 700, fontFamily: FONT, cursor: "pointer" }}>
+            <ImagePlus size={14} /> Pilih dari Galeri
+          </button>
+        </div>
+      )}
       <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
     </div>
   );

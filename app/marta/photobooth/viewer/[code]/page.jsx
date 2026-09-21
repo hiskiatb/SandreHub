@@ -6,7 +6,7 @@
  * dan kotak "masukkan ID" utk mencari 1 foto by tiket klaim lalu mencetaknya.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import QRCode from "qrcode";
 import { AlertTriangle, Camera, ChevronLeft, ChevronRight, Eye, EyeOff, Images, Link2, Loader2, Maximize2, Minimize2, Printer, QrCode as QrIcon, Search, Sparkles, Trash2, X, Zap } from "lucide-react";
 import { getRpvSession, listRpvPhotos, subscribeRpvPhotos, rpvPublicUrl, getRpvPhotoByCode, deleteRpvPhoto, uploadRpvAiResult, rpvThroughputMbps } from "../../../../../lib/rpv";
@@ -18,7 +18,11 @@ const MAGA = "#C6168D";
 export default function RpvViewerPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const code = (params?.code || "").toString().toUpperCase();
+  // `?tv=1` - dipakai tombol "Buka Mode TV" di halaman Upload Hasil Gemini
+  // biar langsung buka Viewer INI ke Mode TV, tanpa perlu klik lagi.
+  const startInTvMode = searchParams?.get("tv") === "1";
 
   const [state, setState] = useState("loading"); // loading | ready | notfound
   const [session, setSession] = useState(null);
@@ -47,7 +51,7 @@ export default function RpvViewerPage() {
   // bawah, persis konsep mockup TV booth ("SCAN TO DOWNLOAD") - dipisah dari
   // grid biasa (tetap ada, dipakai panitia utk kelola/hapus/cari-cetak),
   // jadi toggle saja, bukan ganti halaman.
-  const [tvMode, setTvMode] = useState(false);
+  const [tvMode, setTvMode] = useState(startInTvMode);
   const [tvIndex, setTvIndex] = useState(0);
   const unsubRef = useRef(null);
   const touchStartXRef = useRef(null);
@@ -98,6 +102,11 @@ export default function RpvViewerPage() {
         const list = await listRpvPhotos(code);
         setPhotos(list);
         setState("ready");
+        // Tampilan pertama LANGSUNG layar preview (foto terbaru), bukan
+        // grid - permintaan eksplisit user ("di viewer tampilan pertama
+        // langsung layar preview saja"). Grid tetap ada, dibuka lewat
+        // tombol "Lihat Semua" di pojok kiri atas carousel.
+        if (list.length > 0) setViewIndex(list.length - 1);
 
         unsubRef.current = subscribeRpvPhotos(
           s.id,
@@ -129,12 +138,16 @@ export default function RpvViewerPage() {
   // per-foto dipindah ke tiap tile foto di grid (lihat effect di bawah &
   // render grid), supaya setiap tamu bisa scan QR TEPAT DI BAWAH fotonya
   // sendiri utk mengunduhnya langsung ke HP.
+  const latestPhoto = photos[0] || null; // `photos` terurut terbaru-dulu
+
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const uploadUrl = `${window.location.origin}/marta/photobooth/upload/${code}`;
-    QRCode.toDataURL(uploadUrl, { margin: 1, width: 220, color: { dark: "#111116", light: "#FFFFFF" } })
+    const target = latestPhoto
+      ? `${window.location.origin}/marta/photobooth/p/${latestPhoto.photo_code}`
+      : `${window.location.origin}/marta/photobooth/upload/${code}`;
+    QRCode.toDataURL(target, { margin: 1, width: 220, color: { dark: "#111116", light: "#FFFFFF" } })
       .then(setQrUrl).catch(() => setQrUrl(""));
-  }, [code]);
+  }, [code, latestPhoto]);
 
   // QR per-foto - generate begitu ada foto baru yg belum punya QR-nya
   // (termasuk yg masuk lewat Realtime), cache di state biar tidak
@@ -164,6 +177,34 @@ export default function RpvViewerPage() {
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [photos]);
+
+  const idleTimerRef = useRef(null);
+  const wakeChrome = useCallback(() => {
+    setChromeHidden(false);
+    clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = setTimeout(() => setChromeHidden(true), 3000);
+  }, []);
+
+  // Auto-hide tombol next/prev & kontrol lain saat carousel terbuka & kursor
+  // diam >3 detik - permintaan eksplisit user. Cuma mousemove/touchstart yg
+  // dianggap "gerakan kursor" (bukan klik navigasi/keyboard), jadi geser
+  // foto lewat panah/keyboard/tap-zone TIDAK memicu tombol muncul lagi.
+  useEffect(() => {
+    if (viewIndex == null) { clearTimeout(idleTimerRef.current); return; }
+    // Mulai idle-timer TANPA setState sinkron di badan effect (aturan
+    // react-hooks/set-state-in-effect) - chromeHidden sudah di-reset ke
+    // false oleh openViewer()/pembuka carousel lain sebelum effect ini
+    // jalan, jadi di sini cukup PASANG timer hide-nya saja.
+    clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = setTimeout(() => setChromeHidden(true), 3000);
+    window.addEventListener("mousemove", wakeChrome);
+    window.addEventListener("touchstart", wakeChrome);
+    return () => {
+      window.removeEventListener("mousemove", wakeChrome);
+      window.removeEventListener("touchstart", wakeChrome);
+      clearTimeout(idleTimerRef.current);
+    };
+  }, [viewIndex, wakeChrome]);
 
   const openViewer = useCallback((photoCode) => {
     const idx = photosAsc.findIndex((p) => p.photo_code === photoCode);
@@ -324,11 +365,11 @@ export default function RpvViewerPage() {
           {/* QR raksasa bawah - "SCAN TO DOWNLOAD" */}
           <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "min(6vh,56px) min(5vw,56px) min(5vh,44px)", background: "linear-gradient(0deg, rgba(0,0,0,0.72), transparent)", display: "flex", alignItems: "center", justifyContent: "center", gap: "min(3vw,32px)" }}>
             <div style={{ background: "#fff", borderRadius: 18, padding: "clamp(10px,1.4vw,16px)", boxShadow: "0 20px 50px -14px rgba(0,0,0,0.6)" }}>
-              {qrUrl && <img src={qrUrl} alt="QR upload" style={{ width: "clamp(90px,11vw,150px)", height: "clamp(90px,11vw,150px)", display: "block" }} />}
+              {qrUrl && <img src={qrUrl} alt={latestPhoto ? "QR lihat & download foto" : "QR upload"} style={{ width: "clamp(90px,11vw,150px)", height: "clamp(90px,11vw,150px)", display: "block" }} />}
             </div>
             <div>
-              <div style={{ fontSize: "clamp(18px,2.4vw,30px)", fontWeight: 800, color: "#fff", letterSpacing: "0.02em" }}>SCAN TO UPLOAD</div>
-              <div style={{ fontSize: "clamp(12px,1.3vw,15px)", color: "rgba(255,255,255,0.75)", marginTop: 4 }}>Arahkan kamera HP ke QR ini untuk ikut unggah fotomu</div>
+              <div style={{ fontSize: "clamp(18px,2.4vw,30px)", fontWeight: 800, color: "#fff", letterSpacing: "0.02em" }}>{tvPhoto ? "SCAN TO DOWNLOAD" : "SCAN TO UPLOAD"}</div>
+              <div style={{ fontSize: "clamp(12px,1.3vw,15px)", color: "rgba(255,255,255,0.75)", marginTop: 4 }}>{tvPhoto ? "Arahkan kamera HP ke QR ini utk lihat, download & share fotomu" : "Arahkan kamera HP ke QR ini untuk ikut unggah fotomu"}</div>
               {tvPhoto && (
                 <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
                   <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: "clamp(11px,1.1vw,13px)", fontFamily: "monospace", color: "rgba(255,255,255,0.6)", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 999, padding: "5px 12px" }}>
@@ -504,7 +545,7 @@ export default function RpvViewerPage() {
               <Camera size={14} />
             </div>
             <div style={{ fontSize: 12.5, fontWeight: 800, lineHeight: 1.25, letterSpacing: "-0.01em" }}>
-              Ikut Upload<br />Fotomu!
+              {latestPhoto ? <>Lihat &amp; Download<br />Fotomu!</> : <>Ikut Upload<br />Fotomu!</>}
             </div>
           </div>
           <div style={{ padding: "16px 16px 14px", display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
@@ -526,13 +567,13 @@ export default function RpvViewerPage() {
                 );
               })}
               {qrUrl ? (
-                <img src={qrUrl} alt="QR upload foto" width={124} height={124} style={{ display: "block" }} />
+                <img src={qrUrl} alt={latestPhoto ? "QR lihat & download foto" : "QR upload foto"} width={124} height={124} style={{ display: "block" }} />
               ) : (
                 <Loader2 size={26} color="#C7C7D1" style={{ animation: "spin 1s linear infinite" }} />
               )}
             </div>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#5A5A68", textAlign: "center" }}>
-              Scan pakai kamera HP
+              {latestPhoto ? "Scan utk preview, download & share" : "Scan pakai kamera HP"}
             </div>
             <div style={{
               display: "inline-flex", alignItems: "center", gap: 5, padding: "4px 12px", borderRadius: 999,
@@ -585,6 +626,10 @@ export default function RpvViewerPage() {
 
           {!chromeHidden && (
             <>
+              <button onClick={closeViewer} aria-label="Lihat semua foto (grid)" title="Lihat semua foto"
+                style={{ position: "absolute", top: 22, left: 76, height: 40, padding: "0 14px", borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.08)", color: "#fff", display: "flex", alignItems: "center", gap: 7, cursor: "pointer", fontSize: 12.5, fontWeight: 700, fontFamily: FONT }}>
+                <Images size={15} /> Lihat Semua
+              </button>
               <button onClick={closeViewer} aria-label="Tutup"
                 style={{ position: "absolute", top: 22, right: 26, width: 40, height: 40, borderRadius: 999, border: "1px solid rgba(255,255,255,0.18)", background: "rgba(255,255,255,0.08)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
                 <X size={18} />
@@ -594,7 +639,7 @@ export default function RpvViewerPage() {
                 {deletingCode === photosAsc[viewIndex].photo_code ? <Loader2 size={16} style={{ animation: "spin .8s linear infinite" }} /> : <Trash2 size={16} />}
               </button>
 
-              <div style={{ position: "absolute", top: 24, left: 76, fontSize: 13, fontWeight: 700, color: "#F0F0F2", fontFamily: "monospace", letterSpacing: "0.06em" }}>
+              <div style={{ position: "absolute", top: 72, left: 76, fontSize: 13, fontWeight: 700, color: "#F0F0F2", fontFamily: "monospace", letterSpacing: "0.06em" }}>
                 {viewIndex + 1} / {photosAsc.length} · ID {photosAsc[viewIndex].photo_code}
               </div>
 

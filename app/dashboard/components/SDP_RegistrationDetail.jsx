@@ -19,11 +19,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft, Loader2, AlertCircle, Check, Pencil, X, Save, MapPin, Home, Truck,
-  Building2, Users, ClipboardCheck, FileText,
+  Building2, Users, ClipboardCheck, FileText, ExternalLink, RefreshCw, CheckCircle2, XCircle, PauseCircle, ShieldCheck,
 } from "lucide-react";
 import {
   SDP_LISTS, validateRegistrationRow, applyDerived, fmtSubmissionMonth,
 } from "../../../lib/sdp";
+import { listSdpDocuments, openSdpDocument, retrySdpDocumentRelay } from "../../../lib/sdp/driveRelay";
 import SDP_MapPicker from "./SDP_MapPicker";
 import SDP_AddressSearch from "./SDP_AddressSearch";
 
@@ -38,7 +39,7 @@ const mk = (d) => ({
   md: d ? "0 6px 20px rgba(0,0,0,.55)" : "0 6px 18px rgba(0,0,0,.09)",
 });
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
-const STATUS_TONE = { validated: "ok", approved: "blue", submitted: "amber", draft: "lo", rejected: "acc" };
+const HQ_TONE = { "Not Reviewed": "amber", Validated: "ok", "Need Revision": "acc", Hold: "mag", Rejected: "acc" };
 
 // Kolom yang boleh diubah (samakan dengan DB_COLS di SDP_QuickForm — kecuali
 // sdp_id_new & pairing_id, yang di-generate sistem dan tidak boleh diketik ulang).
@@ -50,7 +51,7 @@ const EDITABLE_FIELDS = [
   "pic_email_partner", "email_pic_ioh", "kabupaten", "kecamatan_coverage", "partner_territory",
   "bill_to_address", "ship_to_address", "kode_pos",
   "hybrid_type", "cse_name", "cse_partner_id", "cse_number", "bank_name", "bank_branch_kcp",
-  "bank_account_number", "bank_account_name", "commitment_fee_status", "main_document_folder_link",
+  "bank_account_number", "bank_account_name", "commitment_fee_status",
   "branding_update_required", "branding_status", "remarks",
 ];
 
@@ -70,7 +71,6 @@ const FIELD_META = {
   bank_name: ["Bank Name", "text"], bank_branch_kcp: ["Bank Branch / KCP", "text"],
   bank_account_number: ["No. Rekening", "text"], bank_account_name: ["Nama Rekening", "text"],
   commitment_fee_status: ["Commitment Fee Status", "enum:commitment_fee_status"],
-  main_document_folder_link: ["Link Folder OneDrive", "link"],
   branding_update_required: ["Branding Update Required?", "enum:yes_no"], branding_status: ["Branding Status", "enum:branding_status"],
   remarks: ["Remarks", "area"],
 };
@@ -80,7 +80,7 @@ const GROUPS = [
   { title: "Wilayah", icon: MapPin, fields: ["circle", "region", "branch", "kabupaten", "kecamatan_coverage", "partner_territory", "sdp_name"] },
   { title: "Data Partner", icon: Building2, fields: ["partner_company_name", "customer_legal_name", "company_type", "status_company", "ktp_number", "npwp_number"] },
   { title: "Kontak & Bank", icon: Users, fields: ["pic_name_partner", "pic_phone_number", "msisdn_master_trx", "pic_email_partner", "email_pic_ioh", "cse_name", "cse_partner_id", "cse_number", "bank_name", "bank_branch_kcp", "bank_account_number", "bank_account_name", "commitment_fee_status"] },
-  { title: "Dokumen & Catatan", icon: FileText, fields: ["main_document_folder_link", "branding_update_required", "branding_status", "remarks"] },
+  { title: "Branding & Catatan", icon: FileText, fields: ["branding_update_required", "branding_status", "remarks"] },
 ];
 
 const fmtDateTime = (iso) => iso ? new Date(iso).toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
@@ -136,6 +136,9 @@ export default function SDP_RegistrationDetail({ supabase, theme = "dark", profi
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [docs, setDocs] = useState(null);
+  const [reviewNote, setReviewNote] = useState("");
+  const [reviewing, setReviewing] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -148,11 +151,43 @@ export default function SDP_RegistrationDetail({ supabase, theme = "dark", profi
       if (!alive) return;
       setUserId(u?.user?.id || null);
       if (error) setErr(error.message || String(error));
-      else setRow(data);
+      else { setRow(data); setReviewNote(data?.hq_revision_note || ""); }
       setLoading(false);
     })();
     return () => { alive = false; };
   }, [supabase, entry.id]);
+
+  // Dokumen yang diunggah langsung ke database (bukan link folder) untuk SDP ini.
+  useEffect(() => {
+    if (!row?.sdp_id_new) { setDocs([]); return; }
+    let alive = true;
+    listSdpDocuments({ supabase, sdpId: row.sdp_id_new })
+      .then((d) => { if (alive) setDocs(d); })
+      .catch(() => { if (alive) setDocs([]); });
+    return () => { alive = false; };
+  }, [supabase, row?.sdp_id_new]);
+
+  const canReview = role === "pic_region" || role === "spm_sumatera";
+  const doReview = async (verdict) => {
+    setReviewing(true); setMsg(null);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const payload = {
+        hq_validation_status: verdict,
+        hq_validated_at: new Date().toISOString(),
+        hq_validated_by: user?.id || null,
+        hq_revision_note: verdict === "Validated" ? null : (reviewNote.trim() || null),
+        final_registration_status: verdict === "Validated" ? "On Progress" : verdict === "Hold" ? "Hold" : "Need Revision",
+        ...(verdict === "Need Revision" ? { circle_submit_status: "Need Revision" } : {}),
+      };
+      const { data, error } = await supabase.from("sdp_registration").update(payload).eq("id", row.id).select("*").single();
+      if (error) throw error;
+      setRow(data);
+      setMsg({ type: "ok", text: `Ditandai ${verdict}.` });
+      onChanged?.(data);
+    } catch (e) { setMsg({ type: "err", text: "Gagal update: " + (e.message || e) }); }
+    finally { setReviewing(false); }
+  };
 
   const canEdit = useMemo(() => {
     if (!row || !userId) return false;
@@ -214,8 +249,8 @@ export default function SDP_RegistrationDetail({ supabase, theme = "dark", profi
     </div>
   );
 
-  const s = row.status || "submitted";
-  const col = ({ ok: t.ok, blue: t.blue, amber: t.amber, acc: t.acc, lo: t.lo }[STATUS_TONE[s]] || t.mid);
+  const hqS = row.hq_validation_status || "Not Reviewed";
+  const col = ({ ok: t.ok, blue: t.blue, amber: t.amber, acc: t.acc, mag: t.mag, lo: t.lo }[HQ_TONE[hqS]] || t.mid);
   const inStyle = { width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${t.line}`, background: t.inp, color: t.hi, fontSize: 13.5, fontFamily: FF, outline: "none" };
 
   return (
@@ -238,7 +273,10 @@ export default function SDP_RegistrationDetail({ supabase, theme = "dark", profi
             <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em" }}>{row.sdp_name || "—"}</div>
             <div style={{ fontSize: 12.5, fontFamily: "monospace", color: t.mid, marginTop: 3 }}>{row.sdp_id_new || "—"}{row.pairing_id ? ` · pasangan ${row.pairing_id}` : ""}</div>
           </div>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 5, flexShrink: 0, padding: "5px 10px", borderRadius: 99, fontSize: 11.5, fontWeight: 800, color: col, background: `${col}1A`, border: `1px solid ${col}33` }}>{s}</span>
+          <div style={{ display: "flex", gap: 6, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 99, fontSize: 11, fontWeight: 700, color: t.mid, background: t.sub, border: `1px solid ${t.line}` }}>{row.circle_submit_status || "Submitted"}</span>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 99, fontSize: 11.5, fontWeight: 800, color: col, background: `${col}1A`, border: `1px solid ${col}33` }}>{hqS}</span>
+          </div>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", marginTop: 12, fontSize: 12.5, color: t.mid }}>
           <span>{row.brand}</span>{row.branch && <span>· {row.branch}</span>}{row.region && <span>· {row.region}</span>}
@@ -250,6 +288,70 @@ export default function SDP_RegistrationDetail({ supabase, theme = "dark", profi
           </div>
         )}
       </div>
+
+      {/* Catatan revisi/hold dari HQ — tampil ke siapa saja yang buka baris ini */}
+      {row.hq_revision_note && (hqS === "Need Revision" || hqS === "Hold") && (
+        <div style={{ display: "flex", gap: 9, padding: "12px 14px", borderRadius: 12, marginBottom: 14, background: `${col}12`, border: `1px solid ${col}33` }}>
+          <AlertCircle size={16} color={col} style={{ flexShrink: 0, marginTop: 1 }} />
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: col }}>Catatan HQ ({hqS})</div>
+            <div style={{ fontSize: 13, color: t.hi, marginTop: 2 }}>{row.hq_revision_note}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Review HQ — hanya untuk PIC Region / SPM Sumatera */}
+      {canReview && !editing && (
+        <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: 16, boxShadow: t.sm, marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 800, color: t.hi, marginBottom: 10 }}>
+            <ShieldCheck size={15} color={t.tealD} /> Review HQ
+          </div>
+          <textarea value={reviewNote} onChange={(e) => setReviewNote(e.target.value)} rows={2} placeholder="Catatan revisi/hold (opsional untuk Validated)…"
+            style={{ ...inStyle, resize: "vertical", marginBottom: 10 }} />
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={() => doReview("Validated")} disabled={reviewing}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 15px", borderRadius: 9, border: "none", background: t.ok, color: "#fff", fontFamily: FF, fontSize: 12.5, fontWeight: 800, cursor: reviewing ? "default" : "pointer", opacity: reviewing ? 0.6 : 1 }}>
+              {reviewing ? <Loader2 size={14} className="spin" /> : <CheckCircle2 size={14} />} Validated
+            </button>
+            <button onClick={() => doReview("Need Revision")} disabled={reviewing}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 15px", borderRadius: 9, border: "none", background: t.acc, color: "#fff", fontFamily: FF, fontSize: 12.5, fontWeight: 800, cursor: reviewing ? "default" : "pointer", opacity: reviewing ? 0.6 : 1 }}>
+              <XCircle size={14} /> Need Revision
+            </button>
+            <button onClick={() => doReview("Hold")} disabled={reviewing}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "9px 15px", borderRadius: 9, border: `1px solid ${t.line}`, background: t.sub, color: t.hi, fontFamily: FF, fontSize: 12.5, fontWeight: 800, cursor: reviewing ? "default" : "pointer", opacity: reviewing ? 0.6 : 1 }}>
+              <PauseCircle size={14} /> Hold
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Dokumen — diunggah langsung ke database, bukan link folder */}
+      {!editing && (
+        <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: "6px 18px 14px", boxShadow: t.sm, marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase", color: t.lo, padding: "14px 0 10px" }}>
+            <FileText size={13} /> Dokumen ({docs?.length ?? 0})
+          </div>
+          {docs === null ? (
+            <div style={{ fontSize: 12.5, color: t.mid, paddingBottom: 8 }}><Loader2 size={13} className="spin" style={{ verticalAlign: -2, marginRight: 6 }} />Memuat…</div>
+          ) : docs.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: t.lo, paddingBottom: 8 }}>Belum ada dokumen diunggah untuk SDP ini.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingBottom: 8 }}>
+              {docs.map((doc) => (
+                <div key={doc.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 9, background: t.sub, border: `1px solid ${t.line}` }}>
+                  <FileText size={13} color={t.mid} />
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.file_name}</span>
+                  <span style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 99, color: doc.status === "synced" ? t.ok : doc.status === "failed" ? t.acc : t.amber, background: `${doc.status === "synced" ? t.ok : doc.status === "failed" ? t.acc : t.amber}1A` }}>{doc.status}</span>
+                  <button type="button" onClick={() => openSdpDocument({ supabase, storagePath: doc.storage_path })} title="Buka" style={{ border: "none", background: "none", cursor: "pointer", color: t.mid, display: "inline-flex" }}><ExternalLink size={13} /></button>
+                  {doc.status === "failed" && (
+                    <button type="button" onClick={() => retrySdpDocumentRelay({ supabase, doc }).then(() => listSdpDocuments({ supabase, sdpId: row.sdp_id_new }).then(setDocs))} title="Retry" style={{ border: "none", background: "none", cursor: "pointer", color: t.mid, display: "inline-flex" }}><RefreshCw size={13} /></button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {msg && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderRadius: 10, marginBottom: 14, fontSize: 13, fontWeight: 600,

@@ -1,6 +1,5 @@
 import { Geist, Geist_Mono } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
-import Script from "next/script";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -26,13 +25,21 @@ export default function RootLayout({ children }) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <head>
-        {/* Sync theme before React hydrates — eliminates dark flash */}
-        <Script id="theme-init" strategy="beforeInteractive">{`
+        {/* Sync theme before React hydrates — eliminates dark flash.
+            <script> HTML NATIVE (bukan next/script) - lihat catatan di
+            atas kenapa next/script strategy="beforeInteractive" dilepas. */}
+        <script
+          id="theme-init"
+          suppressHydrationWarning
+          dangerouslySetInnerHTML={{
+            __html: `
 try {
   var t = localStorage.getItem('hub-theme') || localStorage.getItem('sh-theme');
   if (t) document.documentElement.setAttribute('data-theme', t);
 } catch(e) {}
-        `}</Script>
+            `,
+          }}
+        />
       </head>
       <body className="min-h-full flex flex-col">
         {children}

@@ -22,8 +22,29 @@ import {
 import SDP_MapPicker from "./SDP_MapPicker";
 import SDP_SearchSelect from "./SDP_SearchSelect";
 import SDP_AddressSearch from "./SDP_AddressSearch";
-import { UploadCloud, FileText, X as XIcon } from "lucide-react";
+import { UploadCloud, FileText, X as XIcon, FileCheck2, ShieldCheck } from "lucide-react";
 import { uploadSdpDocument, sdpDriveFolderUrl } from "../../../lib/sdp/driveRelay";
+
+// Dokumen wajib mengikuti SDP Operation SOP (Section 3: Document Fulfillment
+// & Foldering) — diunggah LANGSUNG ke database kita (Storage bucket `sdp-docs`
+// + tabel `sdp_documents`), BUKAN lagi berupa link folder eksternal. Kategori
+// disisipkan di nama file supaya tetap bisa dibedakan tanpa kolom skema baru.
+//   • Akta Pendirian: wajib khusus badan usaha (PT/CV/Other Business Entity),
+//     tidak wajib untuk partner perorangan (Individual).
+//   • NIB adalah pengganti SIUP+SKDP+TDP (either/or, bukan dua-duanya wajib) —
+//     SOP: "SIUP + SKDP + TDP — Pengganti NIB jika NIB tidak tersedia".
+const DOC_SLOTS = [
+  { key: "ktp", label: "KTP Penanggung Jawab" },
+  { key: "npwp", label: "NPWP Perusahaan" },
+  { key: "akta", label: "Akta Pendirian", conditional: "badan_usaha" },
+  { key: "legalitas", label: "NIB", either: "SIUP + SKDP + TDP (jika tidak punya NIB)" },
+  { key: "rekening", label: "Buku Tabungan / No. Rekening" },
+  { key: "sppkp", label: "SPPKP" },
+  { key: "pks", label: "PKS (Perjanjian Kerja Sama)" },
+];
+// Slot aktif tergantung jenis partner — badan usaha vs perorangan.
+const activeDocSlots = (val) => DOC_SLOTS.filter((s) =>
+  s.conditional !== "badan_usaha" || (val.company_type && val.company_type !== "Individual"));
 
 const mk = (d) => ({
   bg: d ? "#0D0D0F" : "#F2F4F7", card: d ? "#17171B" : "#FFFFFF",
@@ -49,7 +70,7 @@ const DB_COLS = [
   "pic_email_partner", "email_pic_ioh", "kabupaten", "kecamatan_coverage", "partner_territory",
   "bill_to_address", "ship_to_address", "kode_pos", "need_sap_creation", "need_oracle_creation",
   "hybrid_type", "cse_name", "cse_partner_id", "cse_number", "bank_name", "bank_branch_kcp",
-  "bank_account_number", "bank_account_name", "commitment_fee_status", "main_document_folder_link",
+  "bank_account_number", "bank_account_name", "commitment_fee_status",
   "branding_update_required", "branding_status", "remarks",
   "latitude", "longitude", "latitude_gudang", "longitude_gudang",
 ];
@@ -74,8 +95,8 @@ const STEPS = [
              ["pic_email_partner","Email PIC Partner"],["email_pic_ioh","Email PIC IOH"],["cse_name","CSE Name"],["cse_number","CSE Number"],
              ["bank_name","Bank Name"],["bank_branch_kcp","Bank Branch / KCP"],["bank_account_number","No. Rekening"],
              ["bank_account_name","Nama Rekening"],["commitment_fee_status","Commitment Fee Status","enum:commitment_fee_status"]] },
-  { id: "review", title: "Dokumen & Kirim", icon: ClipboardCheck, hint: "Lampirkan dokumen, tinjau ringkasan, lalu kirim.", review: true,
-    fields: [["main_document_folder_link","Link Folder OneDrive (Dokumen Partner)","link"],["remarks","Remarks","area"]] },
+  { id: "review", title: "Dokumen & Kirim", icon: ClipboardCheck, hint: "Lampirkan dokumen wajib, tinjau ringkasan, lalu kirim.", review: true,
+    fields: [["remarks","Remarks","area"]] },
 ];
 // Peta field → indeks step, agar submit bisa melompat ke step yang errornya.
 const FIELD_STEP = {};
@@ -119,10 +140,16 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
   const [savingDraft, setSavingDraft] = useState(false);
   // Dokumen yang dipilih user tapi BELUM diupload — sengaja disimpan terpisah
   // dari `val` (tidak ikut ke-serialize ke localStorage draft), karena File
-  // object tidak bisa di-JSON.stringify. Upload+relay ke Drive baru terjadi
-  // saat submit(), setelah SDP ID final tersedia (folder Drive = SDP/<id>).
-  const [pendingDocs, setPendingDocs] = useState([]);
+  // object tidak bisa di-JSON.stringify. Upload ke database (Storage + tabel
+  // sdp_documents) baru terjadi saat submit(), setelah SDP ID final tersedia
+  // (path = SDP/<id>) — bukan lagi link folder eksternal.
+  // requiredDocs: { [docKey]: File }  ·  extraDocs: File[] (dokumen pendukung lain)
+  const [requiredDocs, setRequiredDocs] = useState({});
+  const [extraDocs, setExtraDocs] = useState([]);
   const [docUploadMsg, setDocUploadMsg] = useState(null);
+  const docSlots = activeDocSlots(val);
+  const requiredDocsFilled = docSlots.filter((s) => requiredDocs[s.key]).length;
+  const requiredDocsComplete = requiredDocsFilled === docSlots.length;
 
   const set = (k, v) => { setVal((p) => ({ ...p, [k]: v })); setDirty(true); };
 
@@ -339,6 +366,13 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
       setMsg({ type: "err", text: "Ada kolom wajib yang belum benar — cek tanda merah." });
       return;
     }
+    // Dokumen wajib harus lengkap sebelum submit, khusus pembuatan SDP baru
+    // (Update/Terminate/Remapping tidak selalu butuh legalitas ulang).
+    if (isNewCreation(row.request_type) && !requiredDocsComplete) {
+      setStep(FIELD_STEP.remarks ?? STEPS.length - 1);
+      setMsg({ type: "err", text: `Lengkapi dulu ${docSlots.length - requiredDocsFilled} dokumen wajib yang belum diunggah.` });
+      return;
+    }
 
     setSaving(true);
     try {
@@ -379,37 +413,52 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
         p.submitter_branch = profile?.bsm_branch || r.branch || null;
         p.submitter_cluster = profile?.cluster || null;
         p.submitter_region = r.region || null;
-        p.status = "submitted";
+        // Lifecycle sesuai SDP Operation SOP — 3 dimensi terpisah, bukan satu
+        // kolom `status` tunggal (lihat docs/sql/sdp_fase1_lifecycle_migration.sql):
+        // Circle baru saja submit → HQ belum meninjau → status akhir masih Draft.
+        p.circle_submit_status = "Submitted";
+        p.hq_validation_status = "Not Reviewed";
+        p.final_registration_status = "Draft";
+        p.status = "submitted"; // kompatibilitas kode lama yang belum di-migrasi
         return p;
       });
 
       const { error } = await supabase.from("sdp_registration").insert(payloads);
       if (error) throw error;
 
-      // Relay dokumen yang dipilih user (kalau ada) ke Drive folder SDP/<id> —
-      // baru bisa jalan di sini karena sdp_id_new baru pasti ada setelah insert
-      // sukses. Best-effort: kalau relay gagal, registrasi TETAP sukses (file
-      // sudah aman di sdp-docs Storage lewat uploadSdpDocument, tinggal retry
-      // manual dari halaman Data SDP nanti).
-      if (pendingDocs.length) {
+      // Simpan dokumen yang dipilih user LANGSUNG ke database kita (Storage
+      // bucket `sdp-docs` + tabel `sdp_documents`) — baru bisa jalan di sini
+      // karena sdp_id_new pasti ada setelah insert sukses. File disimpan dengan
+      // nama berprefiks kategori (mis. "KTP Penanggung Jawab — ktp.pdf") supaya
+      // tetap bisa dikenali per jenis dokumen tanpa kolom skema tambahan.
+      // Relay ke Drive tetap berjalan sebagai salinan cadangan otomatis;
+      // sumber kebenarannya sekarang database, bukan link folder eksternal.
+      // Best-effort: kalau relay ke Drive gagal, dokumen TETAP aman tersimpan
+      // di database — tinggal retry dari halaman Data SDP.
+      const docsToUpload = [
+        ...docSlots.filter((s) => requiredDocs[s.key]).map((s) => ({ file: requiredDocs[s.key].file, label: requiredDocs[s.key].label || s.label })),
+        ...extraDocs.map((file) => ({ file, label: "Dokumen Pendukung" })),
+      ];
+      if (docsToUpload.length) {
         const targetSdpId = rows[0].sdp_id_new;
-        setDocUploadMsg({ type: "ok", text: `Mengirim ${pendingDocs.length} dokumen ke Drive…` });
+        setDocUploadMsg({ type: "ok", text: `Menyimpan ${docsToUpload.length} dokumen ke database…` });
         let okCount = 0;
         let lastFolderId = null;
-        for (const file of pendingDocs) {
+        for (const { file, label } of docsToUpload) {
           try {
+            const named = new File([file], `${label} — ${file.name}`, { type: file.type });
             const res = await uploadSdpDocument({
-              supabase, sdpId: targetSdpId, file,
+              supabase, sdpId: targetSdpId, file: named,
               uploaderId: user.id, uploaderName: profile?.full_name || profile?.username || null,
             });
-            if (res?.status === "synced") { okCount += 1; lastFolderId = res.drive_folder_id || lastFolderId; }
-          } catch { /* dicatat di tabel sdp_documents sbg failed, tidak menggagalkan submit */ }
+            if (res) { okCount += 1; lastFolderId = res.drive_folder_id || lastFolderId; }
+          } catch { /* tersimpan di Storage tapi gagal dicatat — tidak menggagalkan submit */ }
         }
         const folderUrl = sdpDriveFolderUrl(lastFolderId);
-        setDocUploadMsg(okCount === pendingDocs.length
-          ? { type: "ok", text: `${okCount} dokumen tersimpan di Drive (SDP/${targetSdpId}).`, folderUrl }
-          : { type: "err", text: `${okCount}/${pendingDocs.length} dokumen berhasil ke Drive — sisanya bisa di-retry dari halaman Data SDP.`, folderUrl });
-        setPendingDocs([]);
+        setDocUploadMsg(okCount === docsToUpload.length
+          ? { type: "ok", text: `${okCount} dokumen tersimpan di database (SDP/${targetSdpId}).`, folderUrl }
+          : { type: "err", text: `${okCount}/${docsToUpload.length} dokumen berhasil tersimpan — sisanya bisa di-retry dari halaman Data SDP.`, folderUrl });
+        setRequiredDocs({}); setExtraDocs([]);
       }
 
       // Bila berasal dari draft server → tandai finalized (keluar dari inbox Draft & Link).
@@ -668,38 +717,11 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
                 ))}
               </div>
             </div>
-            <div style={{ background: t.sub, border: `1px solid ${t.line}`, borderRadius: 12, padding: 14, marginBottom: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-                <div style={{ fontSize: 11.5, fontWeight: 800, color: t.mid, textTransform: "uppercase", letterSpacing: "0.05em" }}>Upload Dokumen (opsional — auto-tersimpan ke Drive)</div>
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 13px", borderRadius: 9, border: `1px dashed ${t.line}`, background: t.card, color: t.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
-                  <UploadCloud size={14} /> Pilih File
-                  <input type="file" multiple style={{ display: "none" }}
-                    onChange={(e) => { setPendingDocs((p) => [...p, ...Array.from(e.target.files || [])]); e.target.value = ""; }} />
-                </label>
-              </div>
-              {pendingDocs.length === 0 ? (
-                <div style={{ fontSize: 12, color: t.lo }}>Belum ada file dipilih. File akan otomatis dibuatkan folder <b>SDP/&lt;SDP ID&gt;</b> di Drive begitu registrasi dikirim.</div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {pendingDocs.map((file, i) => (
-                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: t.hi }}>
-                      <FileText size={14} color={t.mid} />
-                      <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
-                      <button type="button" onClick={() => setPendingDocs((p) => p.filter((_, idx) => idx !== i))}
-                        style={{ display: "inline-flex", border: "none", background: "transparent", color: t.mid, cursor: "pointer", padding: 2 }}><XIcon size={13} /></button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {docUploadMsg && (
-                <div style={{ fontSize: 11.5, color: docUploadMsg.type === "err" ? t.acc : t.mid, marginTop: 8, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span>{docUploadMsg.text}</span>
-                  {docUploadMsg.folderUrl && (
-                    <a href={docUploadMsg.folderUrl} target="_blank" rel="noreferrer" style={{ color: t.blue, fontWeight: 700, textDecoration: "none" }}>Buka Folder Drive →</a>
-                  )}
-                </div>
-              )}
-            </div>
+            <DocumentChecklist
+              t={t} slots={docSlots} required={requiredDocs} setRequired={setRequiredDocs}
+              extra={extraDocs} setExtra={setExtraDocs}
+              filled={requiredDocsFilled} complete={requiredDocsComplete}
+              enforce={isNewCreation(val.request_type)} docUploadMsg={docUploadMsg} />
             <div className="wz-grid">{cur.fields.map(renderField)}</div>
           </>
         ) : (
@@ -847,5 +869,121 @@ function Field({ k, label, type, t, value, err, onChange, geoOpts, options, bran
       {control}
       {err && <div style={{ fontSize: 11, color: t.acc, marginTop: 3 }}>{err}</div>}
     </label>
+  );
+}
+
+// ── Checklist dokumen wajib — upload langsung ke database (bukan link) ─────────
+// Tiap dokumen wajib punya slot sendiri: kosong → tombol pilih file; terisi →
+// nama file + centang hijau + tombol ganti/hapus. Progress bar menunjukkan
+// berapa dari 7 dokumen sudah dilampirkan. File sungguhan baru dikirim ke
+// Storage/tabel sdp_documents saat "Kirim Registrasi" ditekan (submit()),
+// setelah SDP ID final tersedia.
+function DocumentChecklist({ t, slots, required, setRequired, extra, setExtra, filled, complete, enforce, docUploadMsg }) {
+  const total = slots.length;
+  const pct = total ? Math.round((filled / total) * 100) : 100;
+  return (
+    <div style={{ background: t.sub, border: `1px solid ${t.line}`, borderRadius: 12, padding: 14, marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexWrap: "wrap", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <ShieldCheck size={15} color={complete ? t.ok : t.mid} />
+          <div style={{ fontSize: 11.5, fontWeight: 800, color: t.mid, textTransform: "uppercase", letterSpacing: "0.05em" }}>Dokumen Wajib — langsung ke database</div>
+        </div>
+        <div style={{ fontSize: 12, fontWeight: 800, color: complete ? t.ok : t.hi }}>{filled}/{total} lengkap</div>
+      </div>
+      <div style={{ fontSize: 11.5, color: t.lo, marginBottom: 10, lineHeight: 1.5 }}>
+        Unggah file dokumen aslinya di sini — <b>tidak perlu lagi tempel link folder</b>. File tersimpan aman di database kita begitu registrasi dikirim{enforce ? " (wajib lengkap untuk SDP baru)" : ""}.
+      </div>
+      <div style={{ height: 6, borderRadius: 99, background: t.line, overflow: "hidden", marginBottom: 14 }}>
+        <div style={{ height: "100%", width: `${pct}%`, borderRadius: 99, background: complete ? t.ok : t.acc, transition: "width .35s ease" }} />
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {slots.map((s) => {
+          const entry = required[s.key]; // { file, label }
+          const setFile = (file, label) => setRequired((p) => ({ ...p, [s.key]: { file, label } }));
+          const clear = () => setRequired((p) => { const n = { ...p }; delete n[s.key]; return n; });
+          return (
+            <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 10, background: t.card, border: `1px solid ${entry ? (t.tealBd || t.line) : t.line}` }}>
+              <span style={{ width: 26, height: 26, borderRadius: 8, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: entry ? t.okBg : t.sub, color: entry ? t.ok : t.lo, border: `1px solid ${entry ? t.ok : t.line}` }}>
+                {entry ? <Check size={14} strokeWidth={3} /> : <FileText size={13} />}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>{entry ? entry.label : s.label}</div>
+                {entry ? (
+                  <div style={{ fontSize: 11, color: t.mid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.file.name}</div>
+                ) : s.either ? (
+                  <div style={{ fontSize: 10.5, color: t.lo }}>atau {s.either}</div>
+                ) : null}
+              </div>
+              {entry ? (
+                <>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 11px", borderRadius: 8, border: `1px dashed ${t.line}`, background: t.sub, color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+                    <FileCheck2 size={13} /> Ganti
+                    <input type="file" style={{ display: "none" }}
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) setFile(f, entry.label); e.target.value = ""; }} />
+                  </label>
+                  <button type="button" onClick={clear}
+                    style={{ display: "inline-flex", border: "none", background: "transparent", color: t.mid, cursor: "pointer", padding: 2, flexShrink: 0 }}><XIcon size={14} /></button>
+                </>
+              ) : s.either ? (
+                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 8, border: `1px dashed ${t.line}`, background: t.sub, color: t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                    <UploadCloud size={13} /> NIB
+                    <input type="file" style={{ display: "none" }}
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) setFile(f, s.label); e.target.value = ""; }} />
+                  </label>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 8, border: `1px dashed ${t.line}`, background: t.sub, color: t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                    <UploadCloud size={13} /> SIUP+SKDP+TDP
+                    <input type="file" style={{ display: "none" }}
+                      onChange={(e) => { const f = e.target.files?.[0]; if (f) setFile(f, "SIUP + SKDP + TDP"); e.target.value = ""; }} />
+                  </label>
+                </div>
+              ) : (
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 11px", borderRadius: 8, border: `1px dashed ${t.line}`, background: t.sub, color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+                  <UploadCloud size={13} /> Pilih
+                  <input type="file" style={{ display: "none" }}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) setFile(f, s.label); e.target.value = ""; }} />
+                </label>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px dashed ${t.line}` }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+          <div>
+            <div style={{ fontSize: 11.5, fontWeight: 700, color: t.mid }}>Dokumen Pendukung Lainnya (opsional)</div>
+            <div style={{ fontSize: 10.5, color: t.lo, marginTop: 1 }}>Supplier Form / ABAC / LOI / Authorized Personnel — bila diminta finance/procurement/compliance.</div>
+          </div>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 8, border: `1px dashed ${t.line}`, background: t.card, color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
+            <UploadCloud size={13} /> Tambah File
+            <input type="file" multiple style={{ display: "none" }}
+              onChange={(e) => { setExtra((p) => [...p, ...Array.from(e.target.files || [])]); e.target.value = ""; }} />
+          </label>
+        </div>
+        {extra.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {extra.map((file, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: t.hi }}>
+                <FileText size={13} color={t.mid} />
+                <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
+                <button type="button" onClick={() => setExtra((p) => p.filter((_, idx) => idx !== i))}
+                  style={{ display: "inline-flex", border: "none", background: "transparent", color: t.mid, cursor: "pointer", padding: 2 }}><XIcon size={13} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {docUploadMsg && (
+        <div style={{ fontSize: 11.5, color: docUploadMsg.type === "err" ? t.acc : t.mid, marginTop: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span>{docUploadMsg.text}</span>
+          {docUploadMsg.folderUrl && (
+            <a href={docUploadMsg.folderUrl} target="_blank" rel="noreferrer" style={{ color: t.blue, fontWeight: 700, textDecoration: "none" }}>Lihat salinan Drive →</a>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
