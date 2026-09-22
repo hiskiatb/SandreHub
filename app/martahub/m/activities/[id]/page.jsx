@@ -13,7 +13,7 @@ import {
   CardSim, Router, Receipt, Pencil, MoreVertical, RefreshCw, Target,
 } from "lucide-react";
 import supabaseMarta from "../../../../../lib/supabaseMarta";
-import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../_shared/MobileShell";
+import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, useSmartBack } from "../../_shared/MobileShell";
 import { fmtDate, fmtTimeLabel, fmtInt, fmtRp, isDraftIncomplete, activityStage, revisionKindLabel } from "../../_shared/activityUi";
 import { unsnake } from "../../_shared/planData";
 import SiteTowerIcon from "../../_shared/SiteTowerIcon";
@@ -45,6 +45,7 @@ export default function ActivityDetailPage() {
   const { id: activityId } = useParams();
   const router = useRouter();
   const { loading: sessionLoading, userId, email, scope } = useMartaSession();
+  const goBack = useSmartBack("/martahub/m/activities");
   const [a, setA] = useState(null);
   const [extraSites, setExtraSites] = useState([]);
   const [siteNames, setSiteNames] = useState({}); // site_id -> site_name (mh_sites), utk label di list gabungan
@@ -196,7 +197,7 @@ export default function ActivityDetailPage() {
     return (
       <MobileShell active="activities" hideNav>
         <div style={{ padding: "calc(env(safe-area-inset-top,0px) + 20px) 20px" }}>
-          <button onClick={() => router.back()} aria-label="Kembali"
+          <button onClick={goBack} aria-label="Kembali"
             style={{ width: 34, height: 34, borderRadius: 11, background: "#FFFFFF", border: "1px solid #E4E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
             <ArrowLeft size={16} />
           </button>
@@ -277,7 +278,7 @@ export default function ActivityDetailPage() {
         borderBottom: "1px solid rgba(23,24,28,0.06)", boxShadow: "0 6px 20px rgba(23,24,28,0.05)",
         display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, fontFamily: FF,
       }}>
-        <button onClick={() => router.back()} aria-label="Kembali"
+        <button onClick={goBack} aria-label="Kembali"
           style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 11, background: "#FFFFFF", border: "1px solid #E4E5EA", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
           <ArrowLeft size={16} />
         </button>

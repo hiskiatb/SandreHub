@@ -19,7 +19,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { ArrowLeft, ArrowRight, Plus, QrCode, Trash2, Loader2, CheckCircle2, AlertTriangle, MapPin, Camera, ImagePlus, Images, X, Receipt, RefreshCw, CardSim, Router, Gauge, FolderClock, Map as MapIcon, Navigation, Lightbulb, Save, TrendingUp, ClipboardCheck, Crosshair } from "lucide-react";
 import supabaseMarta from "../../../../../../lib/supabaseMarta";
-import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../../_shared/MobileShell";
+import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, useSmartBack } from "../../../_shared/MobileShell";
 import { isValidMsisdn, normalizeMsisdn } from "../../../_shared/msisdn";
 import { compressToMaxBytes } from "../../../_shared/imageTools";
 import PhotoCollageSheet from "../../../_shared/PhotoCollageSheet";
@@ -93,6 +93,7 @@ function isCostActualIncomplete(v, zeroConfirmed) {
 export default function SubmitActualPage() {
   const { id: activityId } = useParams();
   const router = useRouter();
+  const goSmartBack = useSmartBack(`/martahub/m/activities/${activityId}`);
   const { loading, userId, scope } = useMartaSession();
 
   const [activity, setActivity] = useState(null);
@@ -154,7 +155,7 @@ export default function SubmitActualPage() {
   // keluar dari halaman ini, sama seperti wizard Buat Plan.
   function goBackHeader() {
     if (dirty) { setShowLeaveConfirm(true); return; }
-    router.back();
+    goSmartBack();
   }
 
   // Ditandai true begitu DSF pertama kali coba kirim tapi masih ada field
@@ -621,7 +622,7 @@ export default function SubmitActualPage() {
             Lanjutkan Edit Plan
           </button>
           <button
-            onClick={() => router.back()}
+            onClick={goSmartBack}
             style={{ width: "100%", padding: "12px 16px", marginTop: 10, borderRadius: 12, border: "1.5px solid #E3E5EC", background: "#fff", color: "#5B5C66", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}
           >
             Kembali
@@ -914,7 +915,7 @@ export default function SubmitActualPage() {
   // duluan padahal gagal simpan & isian jadi hilang).
   async function saveDraftAndLeave() {
     const ok = await saveDraft();
-    if (ok) { setShowLeaveConfirm(false); router.back(); }
+    if (ok) { setShowLeaveConfirm(false); goSmartBack(); }
   }
 
   async function submit() {
@@ -1640,7 +1641,7 @@ export default function SubmitActualPage() {
         <LeaveConfirmSheet
           saving={savingDraft}
           onCancel={() => setShowLeaveConfirm(false)}
-          onDiscard={() => { setShowLeaveConfirm(false); router.back(); }}
+          onDiscard={() => { setShowLeaveConfirm(false); goSmartBack(); }}
           onSaveAndLeave={saveDraftAndLeave}
         />
       )}

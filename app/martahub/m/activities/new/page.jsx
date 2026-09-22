@@ -22,7 +22,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ArrowRight, ChevronRight, Check, X, Plus, Loader2, Crosshair, Map as MapIcon, Users, CalendarDays, Building2, Tag, CardSim, Router as RouterIcon, AlertTriangle, Save, QrCode, Receipt, MapPin, MapPinned, Wifi, TrendingUp, Send, Trash2, MoreVertical, Info, Megaphone, Lock } from "lucide-react";
 import supabaseMarta from "../../../../../lib/supabaseMarta";
 import { slug } from "../../../../../lib/activityTarget";
-import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../_shared/MobileShell";
+import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, useSmartBack } from "../../_shared/MobileShell";
 import { fmtInt } from "../../_shared/activityUi";
 import { isValidMsisdn, normalizeMsisdn } from "../../_shared/msisdn";
 import MapPickerSheet from "../../_shared/MapPickerSheet";
@@ -46,6 +46,7 @@ const unsnake = (s) => (s || "").split("_").map((w) => w.charAt(0).toUpperCase()
 function CreatePlanWizardInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const goSmartBack = useSmartBack("/martahub/m/activities");
   const editId = searchParams.get("edit");
   // Tanggal awal dari Kalender (?date=yyyy-mm-dd) - hanya dipakai saat BUAT
   // baru (bukan mode edit, yang prefill-nya datang dari activity tersimpan).
@@ -825,7 +826,7 @@ function CreatePlanWizardInner() {
   // dilewati) - jadi tombol panah cukup satu peran: keluar wizard.
   const goBack = () => {
     if (dirty) { setShowLeaveConfirm(true); return; }
-    router.back();
+    goSmartBack();
   };
 
   // Draft WAJIB bisa disimpan kapan saja - dari step mana pun, asal SUDAH
@@ -1271,7 +1272,7 @@ function CreatePlanWizardInner() {
         <LeaveConfirmSheet
           saving={saving}
           onCancel={() => setShowLeaveConfirm(false)}
-          onDiscard={() => { setShowLeaveConfirm(false); router.back(); }}
+          onDiscard={() => { setShowLeaveConfirm(false); goSmartBack(); }}
           onSaveAndLeave={() => { setShowLeaveConfirm(false); save("draft", { andLeave: true }); }}
         />
       )}

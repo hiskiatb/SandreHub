@@ -10,7 +10,7 @@
  * kena wrapper nav ini.
  */
 import { useEffect, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { Home, ListChecks, CalendarDays, User2, RefreshCw } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../../lib/martaScope";
@@ -18,6 +18,44 @@ import { HubLogoLoader } from "../../../../components/HubLogoLoader";
 
 export const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 export const BRAND = "linear-gradient(135deg,#ED1C24,#EC008C)";
+
+// ── "Kembali" yg aman dari deep-link (notifikasi push, dibuka via URL
+// langsung, dst) ────────────────────────────────────────────────────────
+// BUG YG DIPERBAIKI: tombol "Kembali" di halaman detail (Activity Detail,
+// Submit Laporan Actual, wizard Edit Plan) selama ini selalu router.back()
+// polos - kerja normal kalau halaman itu dibuka dgn navigasi SPA dari
+// dalam app (mis. tap kartu di daftar Notifikasi -> router.push ke detail,
+// riwayat browser jadi 2 entri: [list, detail], back() tinggal pop ke
+// list). TAPI kalau halaman detailnya dibuka LANGSUNG sbg entri pertama di
+// tab (dua kasus nyata: (1) klik notifikasi PUSH saat app belum terbuka -
+// service worker (public/martahub/sw.js notificationclick) pakai
+// clients.openWindow(url) yg bikin tab BARU langsung di URL detail, tidak
+// ada riwayat sebelumnya sama sekali; (2) refresh manual / buka link
+// detail langsung), window.history CUMA punya 1 entri (halaman itu
+// sendiri) - router.back() jadi tidak ada ke mana-mana utk di-pop, kelihatan
+// spt tombolnya "tidak bisa diklik".
+// Fix: hitung berapa kali MobileShell (dipakai di SETIAP halaman ber-nav)
+// sudah mount lewat navigasi client-side di TAB ini (variabel modul-level -
+// bertahan selama tab masih hidup & di-reset otomatis tiap kali tab
+// benar2 reload/dibuka baru, PAS yg dibutuhkan). Kalau baru mount PERTAMA
+// kalinya di tab ini (berarti halaman ini adalah entri pertama, tidak ada
+// riwayat app utk di-back), pakai fallbackHref sbg gantinya (router.replace,
+// bukan push, supaya tidak nambah 1 entri "hantu" lagi di riwayat).
+let _mhNavMounts = 0;
+
+export function useSmartBack(fallbackHref) {
+  const router = useRouter();
+  useEffect(() => {
+    _mhNavMounts += 1;
+  }, []);
+  return () => {
+    if (_mhNavMounts > 1 && typeof window !== "undefined" && window.history.length > 1) {
+      router.back();
+    } else if (fallbackHref) {
+      router.replace(fallbackHref);
+    }
+  };
+}
 // Tinggi nav bawah TANPA safe-area (elemen safe-area-nya sendiri ditambah
 // terpisah via paddingBottom di style nav-nya) - dijadikan konstanta &
 // dipakai jadi `height` eksplisit di nav (bukan cuma dibiarkan setinggi
