@@ -1,45 +1,24 @@
 "use client";
 /**
- * Layout khusus /marta/photobooth/** — bikin fitur Photobooth installable
- * sebagai PWA-nya SENDIRI, TERPISAH dari PWA MartaHub mobile
- * (app/martahub/m/layout.jsx). Sengaja dipisah krn dipakai dgn cara beda:
- * dibuka tamu tanpa login lewat QR di acara (upload/viewer per kode
- * sesi), bukan tim lapangan yg login harian - jadi wajar kalau tamu mau
- * "Add to Home Screen" versi Photobooth-nya sendiri, dgn ikon & nama beda
- * (bukan ikon MartaHub), tanpa scope-nya nyampur ke manifest MartaHub.
+ * Layout /marta/photobooth/** — TIDAK LAGI blanket-install PWA di semua
+ * sub-halaman ("pisahkan yang untuk mobile dan operator, agar bisa di add
+ * to homescreen itu hanya yang bagian kamera hp saja"). Sebelumnya file ini
+ * mendaftarkan manifest + service worker Photobooth utk SEMUA route di
+ * bawah /marta/photobooth/ (termasuk Panel Operator, Galeri, Upload Hasil
+ * Gemini, Viewer) - jadi tombol "Tambah ke Layar Utama" browser bisa muncul
+ * di halaman operator juga, yg tidak masuk akal (operator kerja dari
+ * laptop/PC panitia, bukan aplikasi yg mereka install di HP).
  *
- * metadata di sini TIDAK dieksport sbg `export const metadata` krn file
- * ini "use client" (perlu client component utk registrasi service worker
- * di bawah) - Next.js App Router tidak izinkan export metadata dari client
- * component, jadi manifest/icon di-set manual lewat <head> via komponen
- * kecil <PhotoboothHead/> di bawah (setara efeknya dgn metadata object).
+ * Sekarang link manifest & registrasi service worker dipindah ke
+ * `_pwa.jsx` (PhotoboothPwaHead + usePhotoboothServiceWorker) dan CUMA
+ * dipasang manual di halaman2 Mode Kamera tamu:
+ * - /marta/photobooth/go (pilih sesi)
+ * - /marta/photobooth/upload/[code] (kamera live + upload tamu)
+ * Halaman Panel Operator (root, gallery, gemini, viewer) TIDAK memanggil
+ * helper itu, jadi browser tidak akan menawarkan install di sana.
+ *
+ * Layout ini sendiri sekarang cuma passthrough biasa.
  */
-import { useEffect } from "react";
-
-function PhotoboothHead() {
-  return (
-    <>
-      <link rel="manifest" href="/photobooth/manifest.webmanifest" />
-      <link rel="icon" href="/photobooth/icon-192.png" />
-      <link rel="apple-touch-icon" href="/photobooth/icon-192.png" />
-      <meta name="theme-color" content="#0A0A0B" />
-      <meta name="apple-mobile-web-app-capable" content="yes" />
-      <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-      <meta name="apple-mobile-web-app-title" content="Photobooth" />
-    </>
-  );
-}
-
 export default function PhotoboothLayout({ children }) {
-  useEffect(() => {
-    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
-    navigator.serviceWorker.register("/photobooth/sw.js", { scope: "/marta/photobooth/" }).catch(() => {});
-  }, []);
-
-  return (
-    <>
-      <PhotoboothHead />
-      {children}
-    </>
-  );
+  return children;
 }

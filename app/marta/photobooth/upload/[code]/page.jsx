@@ -26,6 +26,7 @@ import { useParams } from "next/navigation";
 import { AlertTriangle, Camera, ImagePlus, Images, Loader2, RefreshCcw, RotateCcw, SwitchCamera, Ticket, Upload, X, Zap } from "lucide-react";
 import Link from "next/link";
 import { getRpvSession, uploadRpvPhoto, rpvThroughputMbps } from "../../../../../lib/rpv";
+import { PhotoboothPwaHead, usePhotoboothServiceWorker } from "../../_pwa";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED = "#ED1C24";
@@ -53,6 +54,10 @@ export default function RpvUploadPage() {
   const [showSuccess, setShowSuccess] = useState(false);
   const [tick, setTick] = useState(0); // re-render tiap 100ms selama ada yg uploading, dipakai hitung elapsed timer live
   const celebratedRef = useRef(false);
+  // Halaman "Mode Kamera" tamu - manifest/SW Photobooth dipasang di sini
+  // (& /marta/photobooth/go) SAJA, supaya "Tambah ke Layar Utama" tidak
+  // muncul di halaman Panel Operator.
+  usePhotoboothServiceWorker();
 
   // ── Kamera live (getUserMedia) ──────────────────────────────────────────
   // cameraOpen = TRUE begitu halaman siap (default), supaya tamu langsung
@@ -255,7 +260,9 @@ export default function RpvUploadPage() {
 
   if (cameraOpen) {
     return (
-      <CameraView
+      <>
+        <PhotoboothPwaHead />
+        <CameraView
         videoRef={videoRef}
         cameraState={cameraState}
         facing={facing}
@@ -266,12 +273,14 @@ export default function RpvUploadPage() {
         canGoBack={queue.length > 0}
         onBack={() => setCameraOpen(false)}
         sessionTitle={session?.title}
-      />
+        />
+      </>
     );
   }
 
   return (
     <div style={{ minHeight: "100svh", background: "#F4F4F6", fontFamily: FONT, display: "flex", flexDirection: "column" }}>
+      <PhotoboothPwaHead />
       {storageOrigin && <link rel="preconnect" href={storageOrigin} />}
       <div style={{ padding: "22px 18px 16px", background: "#fff", borderBottom: `1px solid ${LINE}`, position: "sticky", top: 0, zIndex: 5 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>

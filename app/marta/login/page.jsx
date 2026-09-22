@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../../lib/supabase";
 import { canViewMarta } from "../../../lib/martaAccess";
 import { HubLogo } from "../../../components/HubLogo";
-import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, UserRound, ChevronRight, Camera } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, UserRound, ChevronRight, ChevronDown, Camera, Smartphone, LayoutDashboard, Wifi } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -41,6 +41,7 @@ function MartaLoginInner() {
   const [loading,  setLoading]  = useState(false);
   const [showPw,   setShowPw]   = useState(false);
   const [checking, setChecking] = useState(true);
+  const [rpvMenuOpen, setRpvMenuOpen] = useState(false); // dropdown "Realtime Photo Viewer" - pilih Mode Kamera (tamu/HP) atau Panel Operator
   const t = mk(d);
 
   const redirect = searchParams.get("redirect") || "/martahub";
@@ -274,22 +275,65 @@ function MartaLoginInner() {
 
         {/* Realtime Photo Viewer — photobooth internal: bikin sesi, bagikan
             link upload (galeri tamu) + layar Viewer (QR download publik +
-            cetak by ID). Ditaruh di bawah kartu Login Mobile, gaya kartu
-            sama tapi warna netral supaya tidak tertukar dgn jalur login. */}
-        <button onClick={() => router.push("/marta/photobooth")}
-          style={{ marginTop: 10, width: "100%", display: "flex", alignItems: "center", gap: 13, padding: "14px 16px", borderRadius: 14, cursor: "pointer", textAlign: "left", fontFamily: FONT,
-            background: d ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.02)", border: `1.5px solid ${t.line}`, transition: "transform .12s, box-shadow .15s, border-color .15s" }}
-          onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 8px 26px rgba(0,0,0,0.10)"; e.currentTarget.style.transform = "translateY(-1px)"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.transform = "none"; }}>
-          <span style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", boxShadow: "0 4px 14px rgba(237,28,36,0.32)" }}>
-            <Camera size={20} strokeWidth={2.2} />
-          </span>
-          <span style={{ flex: 1, minWidth: 0 }}>
-            <span style={{ display: "block", fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em", color: t.hi }}>Realtime Photo Viewer</span>
-            <span style={{ display: "block", fontSize: 11.5, color: t.mid, marginTop: 1 }}>Photobooth · upload, viewer, QR &amp; cetak</span>
-          </span>
-          <ChevronRight size={18} style={{ color: t.mid, flexShrink: 0 }} />
-        </button>
+            cetak by ID). SEKARANG klik kartu ini membuka DROPDOWN dulu
+            ("seharusnya di bagian login ini, ada... saat button diklik,
+            muncul dropdown untuk operator dan mobile") - bukan langsung
+            masuk ke panel operator, supaya jelas ada 2 jalur beda: Mode
+            Kamera (tamu, di HP, PWA installable) vs Panel Operator (panitia,
+            kelola sesi/prompt/hasil Gemini di layar besar/laptop). */}
+        <div style={{ marginTop: 10, position: "relative" }}>
+          <button onClick={() => setRpvMenuOpen((o) => !o)}
+            style={{ width: "100%", display: "flex", alignItems: "center", gap: 13, padding: "14px 16px", borderRadius: 14, cursor: "pointer", textAlign: "left", fontFamily: FONT,
+              background: d ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.02)", border: `1.5px solid ${rpvMenuOpen ? RED : t.line}`, transition: "transform .12s, box-shadow .15s, border-color .15s" }}
+            onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 8px 26px rgba(0,0,0,0.10)"; e.currentTarget.style.transform = "translateY(-1px)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.transform = "none"; }}>
+            <span style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", boxShadow: "0 4px 14px rgba(237,28,36,0.32)" }}>
+              <Camera size={20} strokeWidth={2.2} />
+            </span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em", color: t.hi }}>Realtime Photo Viewer</span>
+              <span style={{ display: "block", fontSize: 11.5, color: t.mid, marginTop: 1 }}>Photobooth · upload, viewer, QR &amp; cetak</span>
+            </span>
+            <ChevronDown size={18} style={{ color: t.mid, flexShrink: 0, transition: "transform .18s", transform: rpvMenuOpen ? "rotate(180deg)" : "none" }} />
+          </button>
+
+          <AnimatePresence>
+            {rpvMenuOpen && (
+              <motion.div key="rpv-menu" initial={{ opacity: 0, y: -6, height: 0 }} animate={{ opacity: 1, y: 0, height: "auto" }} exit={{ opacity: 0, y: -6, height: 0 }} transition={{ duration: 0.18 }}
+                style={{ overflow: "hidden", marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+                <button onClick={() => router.push("/marta/photobooth/go")}
+                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 12, cursor: "pointer", textAlign: "left", fontFamily: FONT,
+                    background: d ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.02)", border: `1.5px solid ${t.line}` }}>
+                  <span style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff" }}>
+                    <Smartphone size={17} strokeWidth={2.2} />
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13.5, fontWeight: 800, color: t.hi }}>
+                      Mode Kamera
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 800, color: "#15803D", background: "rgba(21,128,61,0.14)", borderRadius: 999, padding: "2px 7px" }}>
+                        <Wifi size={8} /> PWA
+                      </span>
+                    </span>
+                    <span style={{ display: "block", fontSize: 11, color: t.mid, marginTop: 1 }}>Utk tamu — ambil &amp; upload foto dari HP</span>
+                  </span>
+                  <ChevronRight size={15} style={{ color: t.mid, flexShrink: 0 }} />
+                </button>
+                <button onClick={() => router.push("/marta/photobooth")}
+                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 12, cursor: "pointer", textAlign: "left", fontFamily: FONT,
+                    background: d ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.02)", border: `1.5px solid ${t.line}` }}>
+                  <span style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: t.hi, color: d ? "#111116" : "#fff" }}>
+                    <LayoutDashboard size={17} strokeWidth={2.2} />
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "block", fontSize: 13.5, fontWeight: 800, color: t.hi }}>Panel Operator</span>
+                    <span style={{ display: "block", fontSize: 11, color: t.mid, marginTop: 1 }}>Utk panitia — kelola sesi, prompt &amp; hasil Gemini</span>
+                  </span>
+                  <ChevronRight size={15} style={{ color: t.mid, flexShrink: 0 }} />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
 
         <div style={{ marginTop: 18, textAlign: "center", fontSize: 10.5, letterSpacing: "0.12em", textTransform: "uppercase", color: t.lo, opacity: 0.35, fontWeight: 600 }}>
           © 2026 MartaHub · Marketing Sumatera

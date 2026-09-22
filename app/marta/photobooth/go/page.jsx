@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Camera, ChevronRight, Loader2, AlertTriangle } from "lucide-react";
 import { listRpvSessions } from "../../../../lib/rpv";
+import { PhotoboothPwaHead, usePhotoboothServiceWorker } from "../_pwa";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED = "#ED1C24";
@@ -19,6 +20,9 @@ export default function RpvGoLanding() {
   const router = useRouter();
   const [state, setState] = useState("loading"); // loading | ready | error
   const [sessions, setSessions] = useState([]);
+  // Halaman "Mode Kamera" tamu - satu2nya tempat manifest/SW Photobooth
+  // dipasang, supaya "Tambah ke Layar Utama" cuma tersedia di sini.
+  usePhotoboothServiceWorker();
 
   useEffect(() => {
     (async () => {
@@ -32,6 +36,7 @@ export default function RpvGoLanding() {
 
   return (
     <div style={{ minHeight: "100svh", background: "linear-gradient(180deg,#F7F5FA 0%,#F4F4F6 260px)", fontFamily: FONT }}>
+      <PhotoboothPwaHead />
       <div style={{ padding: "36px 20px 24px", textAlign: "center" }}>
         <div style={{ width: 62, height: 62, margin: "0 auto", borderRadius: 18, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", boxShadow: `0 12px 30px -8px ${RED}66` }}>
           <Camera size={27} />
