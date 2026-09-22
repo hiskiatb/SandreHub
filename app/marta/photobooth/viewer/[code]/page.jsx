@@ -317,9 +317,15 @@ export default function RpvViewerPage() {
 
   return (
     <div style={{ minHeight: "100svh", background: "#0A0A0B", fontFamily: FONT, position: "relative", overflow: "hidden" }}>
-      {/* Ambient glow brand di background - dekoratif saja (pointerEvents:none),
-          bikin layar besar acara terasa "hidup"/mewah, bukan kotak hitam polos. */}
-      <div style={{ position: "absolute", inset: 0, pointerEvents: "none", zIndex: 0, background: `radial-gradient(560px 420px at 8% -6%, ${RED}22, transparent 60%), radial-gradient(620px 460px at 104% 108%, ${MAGA}22, transparent 60%)` }} />
+      {/* Ambient glow brand di background - versi DINAMIS (drift+pulse),
+          senada persis dgn ambient di /go, /scan, & panel operator ("tidak
+          tiba2 beda") - sebelumnya di sini gradient STATIS saja, sekarang
+          disamakan gaya & animasinya, ukuran blob pakai min(vw,px) jadi
+          tetap responsive di layar TV lebar sekalipun. */}
+      <div className="rpv-vw-ambient" aria-hidden="true">
+        <div className="rpv-vw-ambient-blob rpv-vw-ambient-blob--a" />
+        <div className="rpv-vw-ambient-blob rpv-vw-ambient-blob--b" />
+      </div>
 
       {/* Header */}
 
@@ -674,7 +680,40 @@ export default function RpvViewerPage() {
         </div>
       )}
 
-      <style>{"@keyframes spin{to{transform:rotate(360deg)}} @keyframes rpv-qr-pulse{0%{transform:scale(0.97);opacity:0.45}70%{transform:scale(1.04);opacity:0}100%{transform:scale(1.04);opacity:0}} @keyframes rpv-live-dot{0%{box-shadow:0 0 0 0 rgba(52,211,153,0.55)}100%{box-shadow:0 0 0 6px rgba(52,211,153,0)}} @keyframes rpv-empty-ring{0%{transform:scale(0.85);opacity:0.9}100%{transform:scale(1.35);opacity:0}} @keyframes rpv-tv-fade{from{opacity:0;transform:scale(0.98)}to{opacity:1;transform:scale(1)}}"}</style>
+      <style>{`
+        @keyframes spin{to{transform:rotate(360deg)}}
+        @keyframes rpv-qr-pulse{0%{transform:scale(0.97);opacity:0.45}70%{transform:scale(1.04);opacity:0}100%{transform:scale(1.04);opacity:0}}
+        @keyframes rpv-live-dot{0%{box-shadow:0 0 0 0 rgba(52,211,153,0.55)}100%{box-shadow:0 0 0 6px rgba(52,211,153,0)}}
+        @keyframes rpv-empty-ring{0%{transform:scale(0.85);opacity:0.9}100%{transform:scale(1.35);opacity:0}}
+        @keyframes rpv-tv-fade{from{opacity:0;transform:scale(0.98)}to{opacity:1;transform:scale(1)}}
+        @keyframes rpv-vw-ambient-drift-a {
+          0%, 100% { transform: translate(-14%, 10%) scale(1); }
+          50%       { transform: translate(12%, -8%) scale(1.28); }
+        }
+        @keyframes rpv-vw-ambient-drift-b {
+          0%, 100% { transform: translate(16%, 8%) scale(1.15); }
+          50%       { transform: translate(-12%, -10%) scale(0.88); }
+        }
+        @keyframes rpv-vw-ambient-pulse {
+          0%, 100% { opacity: 0.62; }
+          50%       { opacity: 0.92; }
+        }
+        .rpv-vw-ambient {
+          position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;
+        }
+        .rpv-vw-ambient-blob {
+          position: absolute; border-radius: 50%; filter: blur(min(64px, 8vw));
+          width: min(60vw, 620px); aspect-ratio: 1;
+        }
+        .rpv-vw-ambient-blob--a {
+          left: -6%; top: -14%; background: radial-gradient(circle, ${RED}30 0%, transparent 68%);
+          animation: rpv-vw-ambient-drift-a 15s ease-in-out infinite, rpv-vw-ambient-pulse 7s ease-in-out infinite;
+        }
+        .rpv-vw-ambient-blob--b {
+          right: -8%; bottom: -16%; width: min(54vw, 560px); background: radial-gradient(circle, ${MAGA}2e 0%, transparent 68%);
+          animation: rpv-vw-ambient-drift-b 17s ease-in-out infinite 1.2s, rpv-vw-ambient-pulse 8.5s ease-in-out infinite 1.2s;
+        }
+      `}</style>
     </div>
   );
 }

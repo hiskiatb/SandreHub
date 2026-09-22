@@ -23,8 +23,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ArrowLeft, Camera, Check, ImageOff, ImagePlus, Loader2, Minus, Monitor, Plus, Printer, QrCode, ScanLine, Search, Settings, Sparkles, Trash2, X, ZoomIn } from "lucide-react";
-import { addRpvPrompt, createRpvSession, deleteRpvPrompt, deleteRpvSession, findRpvPhotoByQueue, getRpvSession, listRpvPhotos, listRpvPrompts, listRpvSessions, rpvPublicUrl, subscribeRpvPhotos, uploadRpvPromptImage } from "../../../lib/rpv";
+import { AlertTriangle, ArrowLeft, Camera, Check, Copy, FlipHorizontal2, FlipVertical2, ImageOff, ImagePlus, Loader2, Minus, Monitor, Plus, Printer, QrCode, Radio, RotateCw, Search, Settings, Sparkles, Trash2, X, ZoomIn } from "lucide-react";
+import { addRpvPrompt, createRpvSession, deleteRpvPrompt, deleteRpvSession, findRpvPhotoByQueue, getRpvSession, listRpvPhotos, listRpvPrompts, listRpvSessions, rpvPublicUrl, subscribeRpvOperatorPairing, subscribeRpvPhotos, uploadRpvPromptImage } from "../../../lib/rpv";
 
 const FONT = `"Google Sans","DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED = "#ED1C24";
@@ -32,6 +32,22 @@ const MAGA = "#C6168D";
 const VIO = "#7C3AED";
 const IMG_EXT = /\.(jpe?g|png|webp|gif)$/i;
 const ACTIVE_KEY = "rpv-active-session";
+const OPERATOR_ID_KEY = "rpv-operator-id";
+
+// Jam upload singkat (HH:mm) - kalau bukan hari ini, tambahkan tanggal
+// singkat juga, biar tetap jelas dr sesi yg sudah jalan >1 hari.
+function formatPhotoTime(iso) {
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    const time = d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+    if (sameDay) return time;
+    const date = d.toLocaleDateString("id-ID", { day: "2-digit", month: "short" });
+    return `${date} ${time}`;
+  } catch { return ""; }
+}
 
 const t = {
   bg: "#0E0F10", card: "#1E1F20", cardHi: "#232427", line: "#3C3D40", lineSoft: "#2A2B2D",
@@ -58,7 +74,12 @@ const FRAME_PRESETS = [
   { key: "brand", label: "Aksen 5G" },
 ];
 
-const DEFAULT_CROP = { zoom: 1, panX: 0, panY: 0 };
+const DEFAULT_CROP = { zoom: 1, panX: 0, panY: 0, rotate: 0, flipX: false, flipY: false };
+// Rotasi yg biasa dibutuhkan case cetak (foto kepotret miring/landscape ke
+// potret dst) - dibatasi ke kelipatan 90° saja (bkn rotasi bebas) supaya
+// hasil cetak TETAP presisi ngepas bingkai ukuran cetak, tapi operator
+// tetap bisa lihat derajat persisnya di label tombol.
+const ROTATE_STEP = 90;
 
 /** Satu foto + crop (zoom/pan) + bingkai, dipakai UTUH baik di preview layar
  * (mode="screen", ukuran px tetap) MAUPUN di lembar cetak sungguhan (mode=
@@ -91,7 +112,11 @@ function PhotoFrame({ photo, ratio, crop, frame, mode, queueLabel, sessionTitle,
             style={{
               width: "100%", height: "100%", objectFit: "cover", display: "block",
               cursor: mode === "screen" ? "grab" : "default", touchAction: "none",
-              transform: `scale(${crop.zoom}) translate(${crop.panX}%, ${crop.panY}%)`,
+              // Urutan transform: rotate+flip DULU (posisi/orientasi dasar
+              // foto), baru scale+translate (zoom/pan operator) - supaya
+              // drag-geser & zoom tetap terasa wajar walau foto sudah
+              // diputar/dibalik.
+              transform: `scale(${crop.zoom}) translate(${crop.panX}%, ${crop.panY}%) rotate(${crop.rotate}deg) scaleX(${crop.flipX ? -1 : 1}) scaleY(${crop.flipY ? -1 : 1})`,
               transformOrigin: "center center",
             }} />
         ) : (
@@ -128,10 +153,36 @@ export default function RpvControlRoom() {
   const [camPhotos, setCamPhotos] = useState([]); // foto ASLI kamera tamu
   const [aiPhotos, setAiPhotos] = useState([]); // hasil Gemini yg sudah diupload
   const [selectedCode, setSelectedCode] = useState(""); // photo_code yg dipilih di panel Print Station
-  const [scanOpen, setScanOpen] = useState(false); // sheet scan QR (menggantikan kolom cari)
   const autoPrintCodeRef = useRef(""); // photo_code yg harus auto-print begitu selectedPhoto sinkron (ref, bukan state - efeknya cuma perlu BACA, bukan setState)
 
+  // ── Identitas operator + pairing realtime dgn scanner mobile ───────────
+  // Scan QR SEKARANG dilakukan dr HP (/marta/photobooth/scan/[code]), bukan
+  // lagi dr panel ini - jadi bisa ada BEBERAPA operator (device) sekaligus
+  // aktif per sesi, & tiap HP scanner harus pilih mau pairing ke operator
+  // mana dulu sblm scan (lihat `subscribeRpvOperatorPairing` di lib/rpv.js).
+  const [operatorId, setOperatorId] = useState(""); // id unik per PERANGKAT (localStorage), bukan per sesi
+  const joinedAtRef = useRef(0);
+  const [operators, setOperators] = useState([]); // semua operator yg online di sesi aktif, terurut siapa gabung duluan
+
+  useEffect(() => {
+    // Baca localStorage di dalam async IIFE (bukan langsung di badan effect)
+    // supaya setState-nya tidak dihitung "sync setState in effect" oleh lint.
+    (async () => {
+      let id = "";
+      try {
+        id = localStorage.getItem(OPERATOR_ID_KEY) || "";
+        if (!id) {
+          id = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `op-${Math.random().toString(36).slice(2)}`;
+          localStorage.setItem(OPERATOR_ID_KEY, id);
+        }
+      } catch { id = `op-${Math.random().toString(36).slice(2)}`; }
+      joinedAtRef.current = Date.now();
+      setOperatorId(id);
+    })();
+  }, []);
+
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [scanLinkOpen, setScanLinkOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState("sesi"); // sesi | prompt
 
   // ── Muat daftar sesi (utk panel Settings) & tentukan sesi aktif ─────────
@@ -245,7 +296,8 @@ export default function RpvControlRoom() {
   const selectedPhoto = allPhotos.find((p) => p.photo_code === selectedCode) || null;
 
   // Cari foto by Photo ID (5 digit) persis - dipakai dr kolom pencarian
-  // (Enter) MAUPUN dr sheet Scan QR (`RpvScanSheet` di bawah). `autoPrint`
+  // (Enter) MAUPUN dr HP scanner yg berpasangan (lihat effect pairing di
+  // bawah). `autoPrint`
   // dipakai scanner: begitu foto ketemu & tersinkron ke `selectedPhoto`,
   // langsung cetak tanpa perlu tombol/konfirmasi lagi - lihat efek
   // `autoPrintCode` di bawah (menunggu render foto beres dulu, supaya
@@ -273,6 +325,30 @@ export default function RpvControlRoom() {
   }, [activeCode, allPhotos]);
 
   const searchExact = () => { selectByDigits(searchQuery); };
+
+  // Join channel pairing operator utk sesi aktif - begitu HP scanner yg
+  // berpasangan berhasil scan Photo ID, langsung pilih & auto-print di SINI
+  // saja (operator lain yg pairing ke device lain tidak ikut ter-trigger).
+  useEffect(() => {
+    if (!activeCode || !operatorId) {
+      // Bungkus setState reset ini di microtask supaya tidak dihitung
+      // "sync setState in effect" oleh lint (pola yg sama dgn effect id-operator).
+      Promise.resolve().then(() => setOperators([]));
+      return;
+    }
+    const pairing = subscribeRpvOperatorPairing(
+      activeCode,
+      { id: operatorId, role: "operator", joinedAt: joinedAtRef.current },
+      {
+        onOperatorsChange: setOperators,
+        onSelectPhoto: ({ digits }) => { if (digits) selectByDigits(digits, { autoPrint: true }); },
+      }
+    );
+    return () => pairing.unsubscribe();
+  }, [activeCode, operatorId, selectByDigits]);
+
+  const myOperatorIndex = operators.findIndex((o) => o.id === operatorId);
+  const myOperatorLabel = myOperatorIndex >= 0 ? `Operator ${myOperatorIndex + 1}` : "";
 
   // Begitu `selectedPhoto` sudah SINKRON dgn hasil scan (bukan foto lama),
   // baru trigger window.print() - kalau langsung print di dalam
@@ -316,6 +392,9 @@ export default function RpvControlRoom() {
     window.addEventListener("pointerup", up);
   };
   const zoomBy = (delta) => setCrop((c) => ({ ...c, zoom: Math.max(1, Math.min(4, +(c.zoom + delta).toFixed(2))) }));
+  const rotateBy = (deg) => setCrop((c) => ({ ...c, rotate: (c.rotate + deg + 360) % 360 }));
+  const toggleFlipX = () => setCrop((c) => ({ ...c, flipX: !c.flipX }));
+  const toggleFlipY = () => setCrop((c) => ({ ...c, flipY: !c.flipY }));
   const resetCrop = () => setCrop(DEFAULT_CROP);
 
   // ── Ukuran cetak & bingkai ────────────────────────────────────────────
@@ -338,11 +417,20 @@ export default function RpvControlRoom() {
   const activeSummary = session ? `${session.title} · ${activeCode}` : "Belum ada sesi aktif";
 
   return (
-    <div style={{ height: "100svh", background: t.bg, fontFamily: FONT, color: t.hi, display: "flex", flexDirection: "column", overflow: "hidden", colorScheme: "dark" }}>
+    <div style={{ height: "100svh", background: t.bg, fontFamily: FONT, color: t.hi, display: "flex", flexDirection: "column", overflow: "hidden", colorScheme: "dark", position: "relative" }}>
+      {/* Ambient TIPIS di belakang seluruh panel operator, senada dgn
+          halaman2 tamu/scanner - sengaja opacity/blur lebih rendah supaya
+          tidak ganggu kerja operator (banyak teks/angka), cuma sentuhan
+          brand di sela panel, & responsive (blob width pakai min(vw,px)
+          jadi tidak jadi kotak keras di layar lebar). */}
+      <div className="rpv-op-ambient" aria-hidden="true">
+        <div className="rpv-op-ambient-blob rpv-op-ambient-blob--a" />
+        <div className="rpv-op-ambient-blob rpv-op-ambient-blob--b" />
+      </div>
       {/* Header tipis - responsif: di layar sempit (HP), label "Buka Viewer"
           disembunyikan (ikon-nya tetap ada) & ringkasan sesi menyusut biar
           tidak overflow/kepotong (lihat .rpv-header* di <style> global). */}
-      <div className="rpv-header" style={{ flexShrink: 0, minHeight: 54, display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", background: t.card, borderBottom: `1px solid ${t.line}` }}>
+      <div className="rpv-header" style={{ flexShrink: 0, minHeight: 54, display: "flex", alignItems: "center", gap: 10, padding: "8px 14px", background: t.card, borderBottom: `1px solid ${t.line}`, position: "relative", zIndex: 1 }}>
         <button onClick={() => router.push("/martahub")} className="rpv-header-back" style={{ display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", color: t.mid, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, cursor: "pointer", flexShrink: 0 }}>
           <ArrowLeft size={14} /> <span className="rpv-header-back-label">MartaHub</span>
         </button>
@@ -356,6 +444,12 @@ export default function RpvControlRoom() {
         </button>
 
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          {activeCode && myOperatorLabel && (
+            <button onClick={() => setScanLinkOpen(true)} title="ID perangkat operator ini - klik utk lihat link HP scanner"
+              style={{ display: "flex", alignItems: "center", gap: 5, height: 34, padding: "0 11px", borderRadius: 9, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.mid, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
+              <Radio size={12} color={MAGA} /> {myOperatorLabel}
+            </button>
+          )}
           {activeCode && (
             <button onClick={() => window.open(`/marta/photobooth/viewer/${activeCode}`, "_blank")} title="Buka Viewer"
               style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 12px", borderRadius: 9, border: `1px solid ${t.line}`, background: "transparent", color: t.mid, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
@@ -373,7 +467,7 @@ export default function RpvControlRoom() {
       {!activeCode && sessionsState === "ready" && (
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: 20 }}>
           <Camera size={30} color={t.lo} />
-          <div style={{ fontSize: 14, fontWeight: 800, color: t.hi }}>Belum ada sesi Photobooth</div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: t.hi }}>Belum ada sesi</div>
           <div style={{ fontSize: 12, color: t.lo, textAlign: "center", maxWidth: 280 }}>Buat sesi baru lewat menu Settings di kanan atas utk mulai.</div>
           <button onClick={() => { setSettingsTab("sesi"); setSettingsOpen(true); }}
             style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 7, height: 42, padding: "0 18px", borderRadius: 11, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontWeight: 800, fontSize: 13, cursor: "pointer", fontFamily: FONT }}>
@@ -388,18 +482,12 @@ export default function RpvControlRoom() {
           {/* Kiri: daftar semua foto sesi + pencarian by Photo ID */}
           <div style={{ width: 320, flexShrink: 0, display: "flex", flexDirection: "column", borderRight: `1px solid ${t.line}`, background: t.card }} className="rpv-ps-left">
             <div style={{ padding: 12, borderBottom: `1px solid ${t.lineSoft}`, flexShrink: 0 }}>
-              <div style={{ display: "flex", gap: 6 }}>
-                <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
-                  <Search size={14} color={t.lo} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
-                  <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") searchExact(); }}
-                    placeholder="Cari Photo ID (5 digit)…" inputMode="numeric"
-                    style={{ width: "100%", height: 38, borderRadius: 10, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontSize: 13, fontFamily: "monospace", letterSpacing: "0.04em", padding: "0 12px 0 32px" }} />
-                </div>
-                <button onClick={() => setScanOpen(true)} title="Scan QR - langsung cetak"
-                  style={{ width: 38, height: 38, flexShrink: 0, borderRadius: 10, border: "none", background: `linear-gradient(135deg,${VIO},${MAGA})`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-                  <QrCode size={16} />
-                </button>
+              <div style={{ position: "relative" }}>
+                <Search size={14} color={t.lo} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
+                <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") searchExact(); }}
+                  placeholder="Cari Photo ID (5 digit)…" inputMode="numeric"
+                  style={{ width: "100%", height: 38, borderRadius: 10, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontSize: 13, fontFamily: "monospace", letterSpacing: "0.04em", padding: "0 12px 0 32px", boxSizing: "border-box" }} />
               </div>
               <div style={{ marginTop: 6, fontSize: 10.5, color: t.lo, fontWeight: 600 }}>{filteredPhotos.length} foto{searchQuery ? ` cocok dari ${allPhotos.length}` : ""}</div>
             </div>
@@ -435,7 +523,9 @@ export default function RpvControlRoom() {
                           </span>
                         )}
                       </div>
-                      <div style={{ fontSize: 10, color: t.lo, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.photo_code}</div>
+                      <div style={{ fontSize: 10, color: t.lo, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {p.photo_code}{p.uploaded_at ? ` · ${formatPhotoTime(p.uploaded_at)}` : ""}
+                      </div>
                     </div>
                   </button>
                 );
@@ -472,13 +562,42 @@ export default function RpvControlRoom() {
                         queueLabel={selectedPhoto.queue_label} sessionTitle={session?.title}
                         imgRef={imgRef} onPointerDown={onCropPointerDown} />
                     </div>
+                    {/* Zoom - HANYA lewat scroll (wheel, lihat onWheel di wrapper
+                        di atas) atau tombol/slider di sini. Elemen <img>
+                        sudah diberi touchAction:"none" (lihat PhotoFrame),
+                        jadi gestur pinch bawaan browser TIDAK memicu zoom -
+                        satu2nya jalur zoom yg konsisten & presisi utk
+                        keperluan cetak. */}
                     <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                      <button onClick={() => zoomBy(-0.15)} title="Perkecil" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><Minus size={13} /></button>
-                      <span style={{ fontSize: 11, color: t.lo, fontWeight: 700, width: 40, textAlign: "center" }}>{Math.round(crop.zoom * 100)}%</span>
-                      <button onClick={() => zoomBy(0.15)} title="Perbesar" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><ZoomIn size={13} /></button>
-                      <button onClick={resetCrop} title="Reset posisi/zoom" style={{ marginLeft: 6, fontSize: 10.5, color: t.lo, fontWeight: 700, background: "transparent", border: "none", cursor: "pointer", fontFamily: FONT }}>Reset</button>
+                      <button onClick={() => zoomBy(-0.15)} title="Perkecil" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><Minus size={13} /></button>
+                      <input type="range" min="1" max="4" step="0.01" value={crop.zoom} onChange={(e) => setCrop((c) => ({ ...c, zoom: +Number(e.target.value).toFixed(2) }))}
+                        className="rpv-zoom-slider" style={{ flex: 1, maxWidth: 140, accentColor: MAGA }} />
+                      <span style={{ fontSize: 11, color: t.lo, fontWeight: 700, width: 38, textAlign: "center", flexShrink: 0 }}>{Math.round(crop.zoom * 100)}%</span>
+                      <button onClick={() => zoomBy(0.15)} title="Perbesar" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><ZoomIn size={13} /></button>
                     </div>
-                    <div style={{ marginTop: 2, textAlign: "center", fontSize: 10, color: t.lo }}>Geser gambar utk atur posisi · scroll/tombol utk zoom</div>
+                    <div style={{ marginTop: 2, textAlign: "center", fontSize: 10, color: t.lo }}>Geser gambar utk atur posisi · scroll/slider utk zoom</div>
+
+                    {/* Putar & balik - buat case cetak yg fotonya kepotret
+                        miring/landscape padahal mau dicetak potret, atau
+                        HP scanner tamu megang kamera terbalik. Putar
+                        selalu kelipatan 90° (presisi ngepas bingkai cetak),
+                        label tombol nunjukin derajat saat ini. */}
+                    <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
+                      <button onClick={() => rotateBy(ROTATE_STEP)} title="Putar 90° searah jarum jam"
+                        style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 12px", borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                        <RotateCw size={13} /> Putar 90° <span style={{ color: t.lo, fontWeight: 600 }}>({crop.rotate}°)</span>
+                      </button>
+                      <button onClick={toggleFlipX} title="Balik horizontal (cermin kiri-kanan)"
+                        style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 12px", borderRadius: 8, border: `1.5px solid ${crop.flipX ? MAGA : t.line}`, background: crop.flipX ? `${MAGA}22` : t.card, color: crop.flipX ? "#fff" : t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                        <FlipHorizontal2 size={13} /> Balik H
+                      </button>
+                      <button onClick={toggleFlipY} title="Balik vertikal (cermin atas-bawah)"
+                        style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 12px", borderRadius: 8, border: `1.5px solid ${crop.flipY ? MAGA : t.line}`, background: crop.flipY ? `${MAGA}22` : t.card, color: crop.flipY ? "#fff" : t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                        <FlipVertical2 size={13} /> Balik V
+                      </button>
+                      <button onClick={resetCrop} title="Reset posisi/zoom/rotasi/balik"
+                        style={{ fontSize: 10.5, color: t.lo, fontWeight: 700, background: "transparent", border: "none", cursor: "pointer", fontFamily: FONT }}>Reset Semua</button>
+                    </div>
                   </div>
 
                   {/* Ukuran cetak */}
@@ -542,11 +661,8 @@ export default function RpvControlRoom() {
       )}
       <style>{`@page { size: ${printRatio.w}cm ${printRatio.h}cm; margin: 0; }`}</style>
 
-      {scanOpen && (
-        <RpvScanSheet
-          onClose={() => setScanOpen(false)}
-          onDetect={(digits) => { setScanOpen(false); selectByDigits(digits, { autoPrint: true }); }}
-        />
+      {scanLinkOpen && activeCode && (
+        <ScanLinkPopup code={activeCode} onClose={() => setScanLinkOpen(false)} />
       )}
 
       {settingsOpen && (
@@ -565,6 +681,46 @@ export default function RpvControlRoom() {
         @keyframes spin{to{transform:rotate(360deg)}}
         *{box-sizing:border-box}
         :root{color-scheme: dark;}
+
+        /* Ambient TIPIS panel operator - blob jauh lebih redup/kecil drpd
+           versi tamu/scanner (opacity rendah, blur besar) supaya cuma
+           terasa sbg tekstur brand di sela panel, bukan elemen yg
+           mengganggu fokus kerja. Ukuran pakai min(vw,px) + blur
+           proporsional vw supaya tetap wajar di layar lebar (tidak
+           terpotong kotak keras di desktop). */
+        .rpv-op-ambient {
+          position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;
+          opacity: 0.5;
+        }
+        .rpv-op-ambient-blob {
+          position: absolute; border-radius: 50%; filter: blur(min(64px, 9vw));
+          width: min(46vw, 420px); aspect-ratio: 1;
+        }
+        .rpv-op-ambient-blob--a {
+          left: -6%; top: -12%; background: radial-gradient(circle, ${MAGA}22 0%, transparent 70%);
+          animation: rpv-op-ambient-drift-a 18s ease-in-out infinite;
+        }
+        .rpv-op-ambient-blob--b {
+          right: -8%; bottom: -14%; width: min(40vw, 380px); background: radial-gradient(circle, ${VIO}20 0%, transparent 70%);
+          animation: rpv-op-ambient-drift-b 21s ease-in-out infinite 1.5s;
+        }
+        @keyframes rpv-op-ambient-drift-a {
+          0%, 100% { transform: translate(0%, 0%) scale(1); }
+          50%       { transform: translate(6%, 5%) scale(1.12); }
+        }
+        @keyframes rpv-op-ambient-drift-b {
+          0%, 100% { transform: translate(0%, 0%) scale(1); }
+          50%       { transform: translate(-5%, -6%) scale(1.1); }
+        }
+        @media (max-width: 860px) {
+          .rpv-op-ambient { opacity: 0.35; }
+        }
+
+        /* Slider zoom preview cetak - versi native disederhanakan biar
+           konsisten lintas browser (track tipis, thumb bulat kecil). */
+        .rpv-zoom-slider { -webkit-appearance: none; appearance: none; height: 4px; border-radius: 99px; background: ${t.line}; cursor: pointer; }
+        .rpv-zoom-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; border-radius: 99px; background: ${MAGA}; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.35); cursor: pointer; }
+        .rpv-zoom-slider::-moz-range-thumb { width: 15px; height: 15px; border-radius: 99px; background: ${MAGA}; border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.35); cursor: pointer; }
 
         /* Lembar cetak sungguhan - disembunyikan total di layar biasa,
            HANYA dirender saat print (window.print()) lewat @media print
@@ -596,6 +752,49 @@ export default function RpvControlRoom() {
   );
 }
 
+/** Popup kecil berisi LINK HP scanner (`/marta/photobooth/scan/[code]`) utk
+ * sesi aktif - dibuka dgn klik badge "Operator N" di header. Operator
+ * tinggal share link ini (WA/dsb) ke HP yg mau dijadikan scanner, HP tsb
+ * nanti pilih sendiri mau pairing ke operator device mana sblm scan. */
+function ScanLinkPopup({ code, onClose }) {
+  const [copied, setCopied] = useState(false);
+  const link = typeof window !== "undefined" ? `${window.location.origin}/marta/photobooth/scan/${code}` : `/marta/photobooth/scan/${code}`;
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1600);
+    } catch { /* clipboard tdk tersedia - biarkan, link tetap kelihatan di popup */ }
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(6,6,8,0.6)", zIndex: 260, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 380, background: t.card, border: `1px solid ${t.line}`, borderRadius: 18, padding: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: t.hi, display: "flex", alignItems: "center", gap: 8 }}>
+            <QrCode size={16} color={MAGA} /> Link HP Scanner
+          </div>
+          <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 9, border: "none", background: "rgba(255,255,255,0.08)", color: t.hi, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <X size={14} />
+          </button>
+        </div>
+        <div style={{ fontSize: 12, color: t.mid, lineHeight: 1.6, marginBottom: 14 }}>
+          Buka link ini di HP yang mau dijadikan scanner QR Photo ID. Di HP,
+          pilih dulu operator device mana yang mau dipasangkan sebelum scan.
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderRadius: 11, border: `1px solid ${t.line}`, background: t.fieldBg, marginBottom: 12 }}>
+          <div style={{ flex: 1, fontSize: 11.5, color: t.hi, fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{link}</div>
+        </div>
+        <button onClick={copyLink}
+          style={{ width: "100%", height: 44, borderRadius: 12, border: "none", background: copied ? "#16A34A" : `linear-gradient(135deg,${VIO},${MAGA})`, color: "#fff", fontFamily: FONT, fontSize: 13, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}>
+          {copied ? <><Check size={15} /> Tersalin</> : <><Copy size={15} /> Salin Link</>}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** Panel Settings (drawer kanan) - 2 tab: "Sesi" (daftar/buat/pilih aktif/
  * hapus) & "Prompt" (kelola template prompt milik sesi AKTIF). Menggantikan
  * body halaman lama yg langsung menampilkan form+list di layar utama -
@@ -610,12 +809,12 @@ function SettingsPanel({ onClose, tab, setTab, sessions, sessionsState, activeCo
     setCreating(true);
     try {
       const s = await createRpvSession(title);
-      if (!s?.code) throw new Error("Gagal membuat sesi photobooth.");
+      if (!s?.code) throw new Error("Gagal membuat sesi.");
       setTitle("");
       await refreshSessions();
       setActiveCode(s.code);
     } catch (e) {
-      alert(e.message || "Gagal membuat sesi photobooth.");
+      alert(e.message || "Gagal membuat sesi.");
     } finally { setCreating(false); }
   };
 
@@ -848,233 +1047,3 @@ function DeleteSessionModal({ session, onCancel, onDeleted }) {
   );
 }
 
-
-/** Sheet "Scan QR" - MENGGANTIKAN kolom pencarian manual (bukan pelengkap):
- * arahkan kamera ke QR yg muncul di layar sukses-upload tamu (lihat
- * `upload/[code]/prompt/page.jsx` > GeminiUploadSuccessScreen, QR-nya
- * berisi teks polos 5 digit Photo ID) → begitu 5 digit VALID terbaca,
- * LANGSUNG panggil onDetect (tanpa tombol konfirmasi apa pun, sesuai
- * permintaan: "scan ... maka dia akan memproses langsung mempront") →
- * pemanggil (`RpvControlRoom`) yg urus pilih foto + auto-print.
- *
- * Diadaptasi dari pola `app/martahub/m/_shared/QrScanSheet.jsx` (decoder
- * jsQR murni JS via CDN, jalan di semua browser ber-kamera - BUKAN
- * BarcodeDetector native yg cuma didukung sebagian browser). Loader
- * `loadJsQR()` sengaja DIDUPLIKASI lokal (bukan diimpor dari file
- * MartaHub itu, yg khusus fitur lain) - dgn id script tag berbeda supaya
- * tidak bentrok kalau kedua fitur kebetulan dipakai di tab yg sama. */
-function loadJsQR() {
-  return new Promise((resolve, reject) => {
-    if (typeof window === "undefined") return reject(new Error("no window"));
-    if (window.jsQR) return resolve(window.jsQR);
-    const existing = document.getElementById("rpv-jsqr-cdn");
-    if (existing) {
-      existing.addEventListener("load", () => resolve(window.jsQR));
-      existing.addEventListener("error", () => reject(new Error("load fail")));
-      return;
-    }
-    const scr = document.createElement("script");
-    scr.id = "rpv-jsqr-cdn";
-    scr.src = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js";
-    scr.async = true;
-    scr.onload = () => resolve(window.jsQR);
-    scr.onerror = () => reject(new Error("load fail"));
-    document.head.appendChild(scr);
-  });
-}
-
-function RpvScanSheet({ onClose, onDetect }) {
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const boxRef = useRef(null);
-  const streamRef = useRef(null);
-  const rafRef = useRef(null);
-  const firedRef = useRef(false);
-
-  const [scanning, setScanning] = useState(false);
-  const [detected, setDetected] = useState(false);
-  const [manual, setManual] = useState(false);
-  const [manualVal, setManualVal] = useState("");
-  const [camErr, setCamErr] = useState("");
-
-  const stop = useCallback(() => {
-    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
-    streamRef.current?.getTracks().forEach((tr) => tr.stop());
-    streamRef.current = null;
-  }, []);
-
-  const onDetectRef = useRef(onDetect);
-  useEffect(() => { onDetectRef.current = onDetect; });
-
-  useEffect(() => {
-    let alive = true;
-    firedRef.current = false;
-
-    (async () => {
-      if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-        setCamErr("Kamera tidak tersedia di perangkat ini. Gunakan input manual.");
-        setManual(true);
-        return;
-      }
-      let jsQR;
-      try {
-        jsQR = await loadJsQR();
-      } catch {
-        if (!alive) return;
-        setCamErr("Gagal memuat pemindai QR. Gunakan input manual.");
-        setManual(true);
-        return;
-      }
-      if (!alive) return;
-      try {
-        const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
-        if (!alive) { st.getTracks().forEach((tr) => tr.stop()); return; }
-        streamRef.current = st;
-        const v = videoRef.current;
-        if (v) { v.setAttribute("playsinline", "true"); v.srcObject = st; await v.play().catch(() => {}); }
-        setScanning(true);
-
-        const canvas = canvasRef.current || document.createElement("canvas");
-        const ctx = canvas.getContext("2d", { willReadFrequently: true });
-        let last = 0, lastSeen = 0;
-
-        const tick = (ts) => {
-          if (!alive) return;
-          const vid = videoRef.current, box = boxRef.current;
-          if (vid && vid.readyState >= 2 && vid.videoWidth > 0 && ts - last > 80) {
-            last = ts;
-            const vw = vid.videoWidth, vh = vid.videoHeight;
-            const scale = Math.min(1, 560 / Math.max(vw, vh));
-            const w = Math.round(vw * scale), h = Math.round(vh * scale);
-            canvas.width = w; canvas.height = h;
-            ctx.drawImage(vid, 0, 0, w, h);
-            let img;
-            try { img = ctx.getImageData(0, 0, w, h); } catch { img = null; }
-            const code = img ? jsQR(img.data, w, h, { inversionAttempts: "attemptBoth" }) : null;
-
-            if (box) {
-              if (box.width !== vw) { box.width = vw; box.height = vh; }
-              const bx = box.getContext("2d");
-              bx.clearRect(0, 0, vw, vh);
-              if (code && code.location) {
-                const fx = vw / w, fy = vh / h, L = code.location;
-                const c = [L.topLeftCorner, L.topRightCorner, L.bottomRightCorner, L.bottomLeftCorner].map((p) => ({ x: p.x * fx, y: p.y * fy }));
-                bx.lineWidth = Math.max(3, vw * 0.008); bx.lineCap = "round"; bx.lineJoin = "round";
-                bx.strokeStyle = "#FFD400";
-                const frac = 0.3;
-                for (let i = 0; i < 4; i++) {
-                  const p = c[i], a = c[(i + 3) % 4], b = c[(i + 1) % 4];
-                  const pa = { x: p.x + (a.x - p.x) * frac, y: p.y + (a.y - p.y) * frac };
-                  const pb = { x: p.x + (b.x - p.x) * frac, y: p.y + (b.y - p.y) * frac };
-                  bx.beginPath(); bx.moveTo(pa.x, pa.y); bx.lineTo(p.x, p.y); bx.lineTo(pb.x, pb.y); bx.stroke();
-                }
-              }
-            }
-
-            if (code && code.data) {
-              const digits = String(code.data).trim().replace(/\D/g, "");
-              if (digits.length === 5) {
-                lastSeen = ts; setDetected(true);
-                if (!firedRef.current) {
-                  firedRef.current = true;
-                  stop();
-                  onDetectRef.current(digits);
-                  return;
-                }
-              }
-            } else if (ts - lastSeen > 500) {
-              setDetected(false);
-            }
-          }
-          rafRef.current = requestAnimationFrame(tick);
-        };
-        rafRef.current = requestAnimationFrame(tick);
-      } catch {
-        if (!alive) return;
-        setCamErr("Kamera tidak dapat diakses. Izinkan akses kamera atau gunakan input manual.");
-        setManual(true);
-      }
-    })();
-
-    return () => { alive = false; stop(); };
-  }, [stop]);
-
-  const close = () => { stop(); onClose(); };
-  const manualDigits = manualVal.trim().replace(/\D/g, "");
-  const manualOk = manualDigits.length === 5;
-  const confirmManual = () => {
-    if (!manualOk) return;
-    stop();
-    onDetect(manualDigits);
-  };
-
-  return (
-    <div onClick={close} style={{ position: "fixed", inset: 0, background: "rgba(10,10,12,0.92)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center", fontFamily: FONT }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: t.card, borderRadius: "24px 24px 0 0", padding: "10px 18px calc(env(safe-area-inset-bottom,0px) + 20px)" }}>
-        <div style={{ width: 38, height: 4, borderRadius: 99, background: "rgba(255,255,255,0.18)", margin: "6px auto 14px" }} />
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-          <div style={{ fontSize: 15, fontWeight: 800, color: t.hi, display: "flex", alignItems: "center", gap: 8 }}>
-            <QrCode size={16} /> Scan QR Photo ID
-          </div>
-          <button onClick={close} style={{ width: 30, height: 30, borderRadius: 10, border: "none", background: "rgba(255,255,255,0.08)", color: t.hi, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-            <X size={16} />
-          </button>
-        </div>
-
-        <canvas ref={canvasRef} style={{ display: "none" }} />
-
-        {!manual && (
-          <div style={{ position: "relative", width: "100%", aspectRatio: "1/1", borderRadius: 18, overflow: "hidden", background: "#000" }}>
-            <video ref={videoRef} playsInline muted style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
-            <canvas ref={boxRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }} />
-            {!detected && (
-              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-                <div style={{ width: "64%", aspectRatio: "1/1", borderRadius: 20, border: "2.5px dashed rgba(255,255,255,0.7)" }} />
-              </div>
-            )}
-            <div style={{ position: "absolute", bottom: 12, left: 0, right: 0, textAlign: "center", color: "#fff", fontSize: 12.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>
-              {!scanning
-                ? <><Loader2 size={14} style={{ animation: "spin .85s linear infinite" }} /> Menyalakan kamera…</>
-                : detected
-                  ? <span style={{ color: "#4ADE80" }}>✓ QR terdeteksi, memproses…</span>
-                  : <><ScanLine size={14} /> Arahkan ke QR di layar tamu</>}
-            </div>
-          </div>
-        )}
-
-        {camErr && (
-          <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 9, padding: "11px 13px", borderRadius: 12, background: "rgba(220,38,38,0.14)", border: "1px solid rgba(220,38,38,0.3)" }}>
-            <AlertTriangle size={16} color="#F87171" style={{ flexShrink: 0 }} />
-            <div style={{ fontSize: 12, color: "#FCA5A5", fontWeight: 600, lineHeight: 1.5 }}>{camErr}</div>
-          </div>
-        )}
-
-        {manual ? (
-          <form onSubmit={(e) => { e.preventDefault(); confirmManual(); }} style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-            <div>
-              <label style={{ fontSize: 11.5, fontWeight: 700, color: t.lo }}>Photo ID (5 digit)</label>
-              <input value={manualVal} onChange={(e) => setManualVal(e.target.value)} inputMode="numeric" enterKeyHint="done" placeholder="00042" autoFocus
-                style={{ width: "100%", height: 50, borderRadius: 13, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontFamily: "monospace", fontSize: 18, fontWeight: 800, letterSpacing: "0.1em", padding: "0 14px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
-            </div>
-            <button type="submit" disabled={!manualOk}
-              style={{ height: 50, borderRadius: 13, border: "none", background: manualOk ? `linear-gradient(135deg,${VIO},${MAGA})` : "rgba(255,255,255,0.1)", color: manualOk ? "#fff" : "rgba(255,255,255,0.35)", fontFamily: FONT, fontSize: 14.5, fontWeight: 800, cursor: manualOk ? "pointer" : "not-allowed" }}>
-              Cari &amp; Cetak
-            </button>
-            {!camErr && (
-              <button type="button" onClick={() => setManual(false)}
-                style={{ height: 44, borderRadius: 12, border: `1px solid ${t.line}`, background: "transparent", color: t.mid, fontFamily: FONT, fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}>
-                <QrCode size={14} /> Coba scan kamera lagi
-              </button>
-            )}
-          </form>
-        ) : !camErr && (
-          <button onClick={() => setManual(true)}
-            style={{ marginTop: 14, height: 44, width: "100%", borderRadius: 12, border: `1px solid ${t.line}`, background: "transparent", color: t.mid, fontFamily: FONT, fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}>
-            Ketik Photo ID manual
-          </button>
-        )}
-      </div>
-      <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
-    </div>
-  );
-}

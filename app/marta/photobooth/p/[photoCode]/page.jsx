@@ -8,7 +8,8 @@
  */
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, Check, Download, Loader2, Printer, Share2 } from "lucide-react";
+import QRCode from "qrcode";
+import { AlertTriangle, Check, Download, Loader2, Printer, QrCode as QrIcon, Share2 } from "lucide-react";
 import { getRpvPhotoByCode } from "../../../../../lib/rpv";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -21,6 +22,7 @@ export default function RpvPhotoDetailPage() {
   const [photo, setPhoto] = useState(null);
   const [shared, setShared] = useState(false);
   const [sharing, setSharing] = useState(false);
+  const [pageQrUrl, setPageQrUrl] = useState(""); // QR ke HALAMAN INI SENDIRI - supaya bisa diteruskan/discan lagi oleh org lain
 
   useEffect(() => {
     (async () => {
@@ -32,6 +34,18 @@ export default function RpvPhotoDetailPage() {
       } catch { setState("notfound"); }
     })();
   }, [photoCode]);
+
+  // QR ke URL halaman ini sendiri - jadi tamu yg lagi lihat halaman ini bisa
+  // tunjukkan QR-nya ke org lain, org itu scan & langsung sampai ke halaman
+  // yg SAMA persis (lihat foto, Photo ID, QR lagi, & download).
+  useEffect(() => {
+    if (state !== "ready" || typeof window === "undefined") return;
+    let alive = true;
+    QRCode.toDataURL(window.location.href, { margin: 1, width: 220, color: { dark: "#111116", light: "#FFFFFF" } })
+      .then((url) => { if (alive) setPageQrUrl(url); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [state]);
 
   // FIX (permintaan user): supaya "kalau pilih Instagram Story bisa langsung
   // post story" - share HARUS mengirim FILE gambarnya sendiri, bukan cuma
@@ -54,7 +68,7 @@ export default function RpvPhotoDetailPage() {
       const ext = (blob.type && blob.type.split("/")[1]) || "jpg";
       const file = new File([blob], `foto-${photo.photo_code}.${ext}`, { type: blob.type || "image/jpeg" });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], title: `Foto ${photo.photo_code}`, text: "Lihat fotoku dari Photobooth!" });
+        await navigator.share({ files: [file], title: `Foto ${photo.photo_code}`, text: "Lihat fotoku dari FlashPrint!" });
         return;
       }
       if (navigator.share) {
@@ -112,6 +126,27 @@ export default function RpvPhotoDetailPage() {
         <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 8, background: "#1E1E24", border: "1px solid #2C2C33", borderRadius: 99, padding: "8px 16px" }}>
           <span style={{ fontSize: 11, color: "#8A8A93", fontWeight: 600, letterSpacing: "0.04em" }}>ID FOTO</span>
           <span style={{ fontSize: 15, fontWeight: 800, color: "#fff", fontFamily: "monospace", letterSpacing: "0.08em" }}>{photo.photo_code}</span>
+        </div>
+
+        {/* QR ke halaman ini sendiri - biar tamu bisa terusin/tunjukkan ke
+            org lain, discan lagi & sampai ke halaman yg sama (foto + ID +
+            QR + download) - bukan cuma jalur 1 arah dr layar Viewer/upload. */}
+        <div style={{ marginTop: 16, width: "100%", display: "flex", alignItems: "center", gap: 12, background: "#1E1E24", border: "1px solid #2C2C33", borderRadius: 16, padding: "12px 14px" }}>
+          {pageQrUrl ? (
+            <img src={pageQrUrl} alt="QR halaman ini" style={{ width: 64, height: 64, borderRadius: 8, flexShrink: 0, background: "#fff", padding: 4 }} />
+          ) : (
+            <div style={{ width: 64, height: 64, borderRadius: 8, flexShrink: 0, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Loader2 size={16} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
+            </div>
+          )}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: "#F0F0F2", display: "flex", alignItems: "center", gap: 6 }}>
+              <QrIcon size={12} color={RED} /> Scan untuk buka halaman ini
+            </div>
+            <div style={{ marginTop: 3, fontSize: 10.5, color: "#8A8A93", lineHeight: 1.5 }}>
+              Tunjukkan QR ini ke orang lain supaya mereka juga bisa lihat &amp; unduh foto ini.
+            </div>
+          </div>
         </div>
 
         <div style={{ marginTop: 22, width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>

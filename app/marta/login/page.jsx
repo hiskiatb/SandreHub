@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../../lib/supabase";
 import { canViewMarta } from "../../../lib/martaAccess";
 import { HubLogo } from "../../../components/HubLogo";
-import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, UserRound, ChevronRight, ChevronDown, Camera, Smartphone, LayoutDashboard, Wifi } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, UserRound, ChevronRight, ChevronDown, Smartphone, LayoutDashboard, QrCode } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -273,7 +273,7 @@ function MartaLoginInner() {
           <ChevronRight size={18} style={{ color: RED, flexShrink: 0 }} />
         </button>
 
-        {/* Realtime Photo Viewer — photobooth internal: bikin sesi, bagikan
+        {/* FlashPrint — photobooth internal: bikin sesi, bagikan
             link upload (galeri tamu) + layar Viewer (QR download publik +
             cetak by ID). SEKARANG klik kartu ini membuka DROPDOWN dulu
             ("seharusnya di bagian login ini, ada... saat button diklik,
@@ -287,11 +287,11 @@ function MartaLoginInner() {
               background: d ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.02)", border: `1.5px solid ${rpvMenuOpen ? RED : t.line}`, transition: "transform .12s, box-shadow .15s, border-color .15s" }}
             onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 8px 26px rgba(0,0,0,0.10)"; e.currentTarget.style.transform = "translateY(-1px)"; }}
             onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.transform = "none"; }}>
-            <span style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", boxShadow: "0 4px 14px rgba(237,28,36,0.32)" }}>
-              <Camera size={20} strokeWidth={2.2} />
+            <span style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED},${MAGA})`, boxShadow: "0 4px 14px rgba(237,28,36,0.32)", overflow: "hidden" }}>
+              <img src="/photobooth/icon-192.png" alt="FlashPrint" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
             </span>
             <span style={{ flex: 1, minWidth: 0 }}>
-              <span style={{ display: "block", fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em", color: t.hi }}>Realtime Photo Viewer</span>
+              <span style={{ display: "block", fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em", color: t.hi }}>FlashPrint</span>
               <span style={{ display: "block", fontSize: 11.5, color: t.mid, marginTop: 1 }}>Photobooth · upload, viewer, QR &amp; cetak</span>
             </span>
             <ChevronDown size={18} style={{ color: t.mid, flexShrink: 0, transition: "transform .18s", transform: rpvMenuOpen ? "rotate(180deg)" : "none" }} />
@@ -300,35 +300,30 @@ function MartaLoginInner() {
           <AnimatePresence>
             {rpvMenuOpen && (
               <motion.div key="rpv-menu" initial={{ opacity: 0, y: -6, height: 0 }} animate={{ opacity: 1, y: 0, height: "auto" }} exit={{ opacity: 0, y: -6, height: 0 }} transition={{ duration: 0.18 }}
-                style={{ overflow: "hidden", marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
+                style={{ overflow: "hidden", marginTop: 8, display: "flex", gap: 8 }}>
                 <button onClick={() => router.push("/marta/photobooth/go")}
-                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 12, cursor: "pointer", textAlign: "left", fontFamily: FONT,
+                  style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "16px 10px", borderRadius: 12, cursor: "pointer", fontFamily: FONT,
                     background: d ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.02)", border: `1.5px solid ${t.line}` }}>
-                  <span style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff" }}>
-                    <Smartphone size={17} strokeWidth={2.2} />
+                  <span style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff" }}>
+                    <Smartphone size={18} strokeWidth={2.2} />
                   </span>
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13.5, fontWeight: 800, color: t.hi }}>
-                      Mode Kamera
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9, fontWeight: 800, color: "#15803D", background: "rgba(21,128,61,0.14)", borderRadius: 999, padding: "2px 7px" }}>
-                        <Wifi size={8} /> PWA
-                      </span>
-                    </span>
-                    <span style={{ display: "block", fontSize: 11, color: t.mid, marginTop: 1 }}>Utk tamu — ambil &amp; upload foto dari HP</span>
-                  </span>
-                  <ChevronRight size={15} style={{ color: t.mid, flexShrink: 0 }} />
+                  <span style={{ fontSize: 13, fontWeight: 800, color: t.hi }}>Mobile</span>
                 </button>
                 <button onClick={() => router.push("/marta/photobooth")}
-                  style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", borderRadius: 12, cursor: "pointer", textAlign: "left", fontFamily: FONT,
+                  style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "16px 10px", borderRadius: 12, cursor: "pointer", fontFamily: FONT,
                     background: d ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.02)", border: `1.5px solid ${t.line}` }}>
-                  <span style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: t.hi, color: d ? "#111116" : "#fff" }}>
-                    <LayoutDashboard size={17} strokeWidth={2.2} />
+                  <span style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: t.hi, color: d ? "#111116" : "#fff" }}>
+                    <LayoutDashboard size={18} strokeWidth={2.2} />
                   </span>
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ display: "block", fontSize: 13.5, fontWeight: 800, color: t.hi }}>Panel Operator</span>
-                    <span style={{ display: "block", fontSize: 11, color: t.mid, marginTop: 1 }}>Utk panitia — kelola sesi, prompt &amp; hasil Gemini</span>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: t.hi }}>Operator</span>
+                </button>
+                <button onClick={() => router.push("/marta/photobooth/scan")}
+                  style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "16px 10px", borderRadius: 12, cursor: "pointer", fontFamily: FONT,
+                    background: d ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.02)", border: `1.5px solid ${t.line}` }}>
+                  <span style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,#7C3AED,${MAGA})`, color: "#fff" }}>
+                    <QrCode size={18} strokeWidth={2.2} />
                   </span>
-                  <ChevronRight size={15} style={{ color: t.mid, flexShrink: 0 }} />
+                  <span style={{ fontSize: 13, fontWeight: 800, color: t.hi }}>Scanner</span>
                 </button>
               </motion.div>
             )}

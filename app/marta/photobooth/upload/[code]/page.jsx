@@ -241,7 +241,7 @@ export default function RpvUploadPage() {
       <Center>
         <AlertTriangle size={30} color={RED} />
         <div style={{ marginTop: 12, fontSize: 15, fontWeight: 700, color: INK }}>Sesi tidak ditemukan</div>
-        <div style={{ marginTop: 4, fontSize: 13, color: SUB, textAlign: "center", maxWidth: 280 }}>Link ini sudah tidak berlaku atau sesi photobooth belum aktif.</div>
+        <div style={{ marginTop: 4, fontSize: 13, color: SUB, textAlign: "center", maxWidth: 280 }}>Link ini sudah tidak berlaku atau sesi belum aktif.</div>
       </Center>
     );
   }

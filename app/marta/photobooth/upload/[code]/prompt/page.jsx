@@ -24,11 +24,11 @@
  * operator bisa tambah/edit/hapus template langsung dari HP.
  */
 import { useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import QRCode from "qrcode";
 import {
-  AlertTriangle, Check, ImagePlus, Loader2,
-  Pencil, Plus, Settings2, Sparkles, Ticket, Trash2, X,
+  AlertTriangle, Check, ImagePlus, LogOut, Loader2,
+  Pencil, Plus, QrCode, Settings2, Sparkles, Ticket, Trash2, X,
 } from "lucide-react";
 import { addRpvPrompt, deleteRpvPrompt, getRpvSession, listRpvPrompts, updateRpvPrompt, uploadRpvGeminiResult, uploadRpvPromptImage } from "../../../../../../lib/rpv";
 import { PhotoboothPwaHead, usePhotoboothServiceWorker } from "../../../_pwa";
@@ -51,8 +51,11 @@ const INK = "#F1F1F3";
 const MID = "#B4B4BC";
 const SUB = "#84848C";
 
+const PAGE_LEAVE_MS = 260; // durasi fade-out sblm pindah halaman (mis. "Keluar dari sesi ini") - transisi antar halaman tidak lagi loncat mendadak
+
 export default function RpvPromptUploadPage() {
   const params = useParams();
+  const router = useRouter();
   const code = (params?.code || "").toString().toUpperCase();
   const fileRef = useRef(null);
   usePhotoboothServiceWorker();
@@ -62,10 +65,19 @@ export default function RpvPromptUploadPage() {
   const [prompts, setPrompts] = useState([]);
   const [copiedId, setCopiedId] = useState("");
   const [manageOpen, setManageOpen] = useState(false); // sheet "Kelola Prompt" - tamu/operator bisa tambah & edit template lgs dr HP
+  const [leaving, setLeaving] = useState(false); // fade-out halaman sblm keluar dari sesi
+
+  const exitSession = () => {
+    if (leaving) return;
+    setManageOpen(false);
+    setLeaving(true);
+    setTimeout(() => router.push("/marta/photobooth/go"), PAGE_LEAVE_MS);
+  };
 
   // upload: idle | uploading | done | error
   const [upload, setUpload] = useState({ phase: "idle", progress: 0, error: "", result: null });
   const [qrUrl, setQrUrl] = useState("");
+  const [guestQrUrl, setGuestQrUrl] = useState(""); // QR ke /p/[photoCode] - dipindai TAMU (bukan operator) utk lihat/download fotonya sendiri
 
   useEffect(() => {
     (async () => {
@@ -89,9 +101,20 @@ export default function RpvPromptUploadPage() {
   useEffect(() => {
     if (upload.phase !== "done" || !upload.result?.queueLabel) return;
     let alive = true;
+    // QR ANGKA (Photo ID polos, BUKAN url) - ini yg dipindai operator di
+    // /marta/photobooth/scan/[code] (deteksi jsQR-nya strip semua non-digit,
+    // jadi HARUS tetap teks digit murni, tidak boleh dicampur url).
     QRCode.toDataURL(upload.result.queueLabel, { margin: 1, width: 280, color: { dark: "#111116", light: "#FFFFFF" } })
       .then((url) => { if (alive) setQrUrl(url); })
       .catch(() => {});
+    // QR LINK ke halaman publik foto (/p/[photoCode]) - ini yg dipindai
+    // TAMU LAIN (bukan operator) buat lihat & download foto ini sendiri.
+    if (typeof window !== "undefined" && upload.result.photoCode) {
+      const guestUrl = `${window.location.origin}/marta/photobooth/p/${upload.result.photoCode}`;
+      QRCode.toDataURL(guestUrl, { margin: 1, width: 220, color: { dark: "#111116", light: "#FFFFFF" } })
+        .then((url) => { if (alive) setGuestQrUrl(url); })
+        .catch(() => {});
+    }
     return () => { alive = false; };
   }, [upload.phase, upload.result]);
 
@@ -144,7 +167,7 @@ export default function RpvPromptUploadPage() {
           <AlertTriangle size={26} color={RED} />
         </span>
         <div style={{ marginTop: 16, fontSize: 15.5, fontWeight: 800, color: INK }}>Sesi tidak ditemukan</div>
-        <div style={{ marginTop: 5, fontSize: 12.5, color: SUB, textAlign: "center", maxWidth: 280, lineHeight: 1.55 }}>Link ini sudah tidak berlaku atau sesi photobooth belum aktif.</div>
+        <div style={{ marginTop: 5, fontSize: 12.5, color: SUB, textAlign: "center", maxWidth: 280, lineHeight: 1.55 }}>Link ini sudah tidak berlaku atau sesi belum aktif.</div>
       </Center>
     );
   }
@@ -154,6 +177,7 @@ export default function RpvPromptUploadPage() {
       <GeminiUploadSuccessScreen
         result={upload.result}
         qrUrl={qrUrl}
+        guestQrUrl={guestQrUrl}
         onUploadMore={resetUpload}
         onDone={resetUpload}
       />
@@ -161,7 +185,7 @@ export default function RpvPromptUploadPage() {
   }
 
   return (
-    <div style={{ minHeight: "100svh", background: BG, fontFamily: FONT, display: "flex", flexDirection: "column", colorScheme: "dark", position: "relative" }}>
+    <div className={leaving ? "rpv-m-page rpv-m-page--leaving" : "rpv-m-page"} style={{ minHeight: "100svh", background: BG, fontFamily: FONT, display: "flex", flexDirection: "column", colorScheme: "dark", position: "relative" }}>
       <PhotoboothPwaHead />
       <div className="rpv-m-ambient" aria-hidden="true">
         <div className="rpv-m-ambient-blob rpv-m-ambient-blob--a" />
@@ -283,38 +307,53 @@ export default function RpvPromptUploadPage() {
           prompts={prompts}
           onClose={() => setManageOpen(false)}
           onChanged={(next) => setPrompts(next)}
+          onExitSession={exitSession}
         />
       )}
       <style>{`
+        @keyframes rpv-m-fade-in { 0% { opacity: 0; } 100% { opacity: 1; } }
+        @keyframes rpv-m-fade-out { 0% { opacity: 1; } 100% { opacity: 0; } }
         @keyframes rpv-m-ambient-drift-a {
-          0%, 100% { transform: translate(-8%, 6%) scale(1); }
-          50%       { transform: translate(6%, -4%) scale(1.18); }
+          0%, 100% { transform: translate(-14%, 10%) scale(1); }
+          50%       { transform: translate(12%, -8%) scale(1.28); }
         }
         @keyframes rpv-m-ambient-drift-b {
-          0%, 100% { transform: translate(10%, 4%) scale(1.1); }
-          50%       { transform: translate(-6%, -6%) scale(0.92); }
+          0%, 100% { transform: translate(16%, 8%) scale(1.15); }
+          50%       { transform: translate(-12%, -10%) scale(0.88); }
         }
         @keyframes rpv-m-ambient-pulse {
-          0%, 100% { opacity: 0.45; }
-          50%       { opacity: 0.8; }
+          0%, 100% { opacity: 0.62; }
+          50%       { opacity: 0.92; }
         }
-        .rpv-m-ambient { position: fixed; left: 0; right: 0; bottom: 0; height: 38svh; pointer-events: none; z-index: 0; overflow: hidden; }
-        .rpv-m-ambient-blob { position: absolute; border-radius: 50%; filter: blur(46px); }
+        .rpv-m-page { animation: rpv-m-fade-in .45s ease both; }
+        .rpv-m-page--leaving { animation: rpv-m-fade-out ${PAGE_LEAVE_MS}ms ease both; }
+        .rpv-m-ambient {
+          position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;
+          animation: rpv-m-fade-in 1.1s ease both .1s;
+          /* Mask satu lapisan utk SELURUH ambient (blob + dots) supaya
+             memudar mulus ke atas - bukan lagi dipotong tegas oleh tinggi
+             box tetap (yg kelihatan sbg garis kotak keras di layar lebar/
+             desktop, "tidak responsive"). */
+          -webkit-mask-image: linear-gradient(180deg, transparent 0%, transparent 42%, rgba(0,0,0,0.9) 68%, rgba(0,0,0,0.65) 100%);
+          mask-image: linear-gradient(180deg, transparent 0%, transparent 42%, rgba(0,0,0,0.9) 68%, rgba(0,0,0,0.65) 100%);
+        }
+        .rpv-m-ambient-blob {
+          position: absolute; border-radius: 50%; filter: blur(min(48px, 8vw));
+          width: min(70vw, 560px); aspect-ratio: 1;
+        }
         .rpv-m-ambient-blob--a {
-          left: 6%; bottom: -22%; width: 62%; aspect-ratio: 1; background: radial-gradient(circle, ${MAGA}47 0%, transparent 68%);
-          animation: rpv-m-ambient-drift-a 10s ease-in-out infinite, rpv-m-ambient-pulse 5.5s ease-in-out infinite;
+          left: 4%; bottom: -18%; background: radial-gradient(circle, ${MAGA}52 0%, transparent 68%);
+          animation: rpv-m-ambient-drift-a 11s ease-in-out infinite, rpv-m-ambient-pulse 6s ease-in-out infinite;
         }
         .rpv-m-ambient-blob--b {
-          right: 2%; bottom: -26%; width: 56%; aspect-ratio: 1; background: radial-gradient(circle, ${VIO}40 0%, transparent 68%);
-          animation: rpv-m-ambient-drift-b 12s ease-in-out infinite, rpv-m-ambient-pulse 7s ease-in-out infinite 1.2s;
+          right: 0%; bottom: -22%; width: min(62vw, 500px); background: radial-gradient(circle, ${VIO}46 0%, transparent 68%);
+          animation: rpv-m-ambient-drift-b 13s ease-in-out infinite, rpv-m-ambient-pulse 7.5s ease-in-out infinite 1.3s;
         }
         .rpv-m-ambient-dots {
           position: absolute; inset: 0;
           background-image: radial-gradient(${MAGA}80 1px, transparent 1.6px);
           background-size: 22px 22px;
-          -webkit-mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.75) 60%, rgba(0,0,0,0.4) 100%);
-          mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.75) 60%, rgba(0,0,0,0.4) 100%);
-          animation: rpv-m-ambient-pulse 3.6s ease-in-out infinite;
+          animation: rpv-m-ambient-pulse 4s ease-in-out infinite;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
         * { box-sizing: border-box; }
@@ -361,7 +400,7 @@ function SectionLabel({ n, text, hint, style }) {
  * digit) besar & jelas, supaya tamu tinggal tunjukkan/sebutkan ke petugas
  * cetak, atau petugas scan QR-nya langsung (mode Scanner). Tema gelap,
  * kartu QR tetap PUTIH (kontras scan tetap maksimal). */
-function GeminiUploadSuccessScreen({ result, qrUrl, onUploadMore, onDone }) {
+function GeminiUploadSuccessScreen({ result, qrUrl, guestQrUrl, onUploadMore, onDone }) {
   return (
     <div style={{ minHeight: "100svh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: BG, fontFamily: FONT }}>
       <div style={{ textAlign: "center", maxWidth: 340, width: "100%" }}>
@@ -395,6 +434,25 @@ function GeminiUploadSuccessScreen({ result, qrUrl, onUploadMore, onDone }) {
           </div>
         </div>
 
+        {/* QR KEDUA - beda dr QR Photo ID di atas (itu utk dipindai OPERATOR
+            saat cetak). QR ini link ke halaman publik foto, dipindai tamu
+            LAIN (mis. teman yg mau ikut lihat/download fotonya sendiri) -
+            buka /marta/photobooth/p/[photoCode]: nampilkan foto, Photo ID,
+            QR lagi (utk diteruskan share ke orang lain), & tombol download. */}
+        {guestQrUrl && (
+          <div style={{ marginTop: 14, padding: "16px 18px", borderRadius: 18, background: CARD, border: `1px solid ${LINE}`, display: "flex", alignItems: "center", gap: 14, textAlign: "left" }}>
+            <img src={guestQrUrl} alt="QR lihat & download foto" style={{ width: 68, height: 68, borderRadius: 9, flexShrink: 0, background: "#fff", padding: 4 }} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, color: INK, display: "flex", alignItems: "center", gap: 6 }}>
+                <QrCode size={13} color={MAGA} /> Scan utk lihat &amp; download
+              </div>
+              <div style={{ marginTop: 3, fontSize: 11, color: MID, lineHeight: 1.5 }}>
+                Bagikan QR ini supaya orang lain juga bisa lihat &amp; unduh foto ini dari HP-nya sendiri.
+              </div>
+            </div>
+          </div>
+        )}
+
         <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 10 }}>
           <button onClick={onUploadMore}
             style={{ width: "100%", height: 50, borderRadius: 13, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FONT, cursor: "pointer" }}>
@@ -426,7 +484,7 @@ function GeminiUploadSuccessScreen({ result, qrUrl, onUploadMore, onDone }) {
  * besar) di atas, dan form tambah/edit sbg KARTU TERSENDIRI dgn header +
  * label field yg eksplisit di bawahnya - bukan lagi form padat tanpa label
  * yg nyatu sama tombol upload gambar kecil. */
-function RpvPromptManagerSheet({ code, prompts, onClose, onChanged }) {
+function RpvPromptManagerSheet({ code, prompts, onClose, onChanged, onExitSession }) {
   const [deletingId, setDeletingId] = useState("");
   const [err, setErr] = useState("");
   const [formOpen, setFormOpen] = useState(false); // popup terpisah utk tambah/edit ("pakai pop up saja")
@@ -521,6 +579,14 @@ function RpvPromptManagerSheet({ code, prompts, onClose, onChanged }) {
               ))}
             </div>
           )}
+
+          <div style={{ marginTop: 24, paddingTop: 16, borderTop: `1px solid ${LINE}` }}>
+            <button onClick={onExitSession}
+              style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, height: 44, borderRadius: 12, border: `1px solid rgba(198,40,40,0.35)`, background: "rgba(198,40,40,0.1)", color: "#FF8A8F", fontSize: 12.5, fontWeight: 800, fontFamily: FONT, cursor: "pointer" }}>
+              <LogOut size={15} />
+              Keluar dari Sesi Ini
+            </button>
+          </div>
         </div>
       </div>
 
