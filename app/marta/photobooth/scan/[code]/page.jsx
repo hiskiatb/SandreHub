@@ -167,7 +167,7 @@ export default function RpvScanPage() {
 
 function Center({ children }) {
   return (
-    <div style={{ minHeight: "100svh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: BG, fontFamily: FONT, padding: 20, position: "relative", zIndex: 2, boxSizing: "border-box", colorScheme: "dark" }}>
+    <div className="flashprint-root" style={{ minHeight: "100svh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: BG, fontFamily: FONT, padding: 20, position: "relative", zIndex: 2, boxSizing: "border-box", colorScheme: "dark" }}>
       {children}
       <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
     </div>
@@ -182,7 +182,7 @@ function Center({ children }) {
  * "Pilih Operator" & keterangan menyusul di baris2 terpisah di bawahnya. */
 function OperatorPicker({ sessionTitle, operators, onPick, wasPaired }) {
   return (
-    <div style={{ minHeight: "100svh", background: BG, fontFamily: FONT, display: "flex", flexDirection: "column", padding: "max(20px,env(safe-area-inset-top)) 18px 24px", boxSizing: "border-box", position: "relative", colorScheme: "dark" }}>
+    <div className="flashprint-root" style={{ minHeight: "100svh", background: BG, fontFamily: FONT, display: "flex", flexDirection: "column", padding: "max(20px,env(safe-area-inset-top)) 18px 24px", boxSizing: "border-box", position: "relative", colorScheme: "dark" }}>
       <div className="rpv-sc-ambient" aria-hidden="true">
         <div className="rpv-sc-ambient-blob rpv-sc-ambient-blob--a" />
         <div className="rpv-sc-ambient-blob rpv-sc-ambient-blob--b" />
@@ -410,7 +410,7 @@ function ScannerView({ sessionTitle, pairedLabel, lastSent, onChangeOperator, on
   }, [lastSent]);
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "#0A0A0C", fontFamily: FONT, display: "flex", flexDirection: "column", zIndex: 10 }}>
+    <div className="flashprint-root" style={{ position: "fixed", inset: 0, background: "#0A0A0C", fontFamily: FONT, display: "flex", flexDirection: "column", zIndex: 10 }}>
       <div style={{ padding: "max(14px,env(safe-area-inset-top)) 16px 12px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
           <div style={{ fontSize: 13.5, fontWeight: 800, color: "#fff", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sessionTitle || "Sesi"}</div>

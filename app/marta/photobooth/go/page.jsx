@@ -55,7 +55,7 @@ export default function RpvGoLanding() {
   }, []);
 
   return (
-    <div className={leavingCode ? "rpv-go-page rpv-go-page--leaving" : "rpv-go-page"} style={{ minHeight: "100svh", background: BG, fontFamily: FONT, colorScheme: "dark", position: "relative" }}>
+    <div className={leavingCode ? "rpv-go-page rpv-go-page--leaving flashprint-root" : "rpv-go-page flashprint-root"} style={{ minHeight: "100svh", background: BG, fontFamily: FONT, colorScheme: "dark", position: "relative" }}>
       <PhotoboothPwaHead />
       <div className="rpv-go-ambient" aria-hidden="true">
         <div className="rpv-go-ambient-blob rpv-go-ambient-blob--a" />

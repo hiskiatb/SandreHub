@@ -24,7 +24,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, ArrowLeft, Camera, Check, Copy, FlipHorizontal2, FlipVertical2, ImageOff, ImagePlus, Loader2, Minus, Monitor, Plus, Printer, QrCode, Radio, RotateCw, Search, Settings, Sparkles, Trash2, X, ZoomIn } from "lucide-react";
-import { addRpvPrompt, createRpvSession, deleteRpvPrompt, deleteRpvSession, findRpvPhotoByQueue, getRpvSession, listRpvPhotos, listRpvPrompts, listRpvSessions, rpvPublicUrl, subscribeRpvOperatorPairing, subscribeRpvPhotos, uploadRpvPromptImage } from "../../../lib/rpv";
+import { addRpvPrompt, createRpvSession, deleteRpvPhoto, deleteRpvPrompt, deleteRpvSession, findRpvPhotoByQueue, getRpvSession, listRpvPhotos, listRpvPrompts, listRpvSessions, rpvPublicUrl, subscribeRpvOperatorPairing, subscribeRpvPhotos, uploadRpvPromptImage } from "../../../lib/rpv";
 
 const FONT = `"Google Sans","DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED = "#ED1C24";
@@ -55,15 +55,9 @@ const t = {
 };
 
 // ── Fase 2: Print Station ───────────────────────────────────────────────
-// Ukuran cetak umum photobooth (cm) - operator bisa juga isi custom manual.
-const PRINT_PRESETS = [
-  { key: "4r", label: "4R", w: 10, h: 15 },
-  { key: "strip", label: "Photo Strip", w: 5, h: 15 },
-  { key: "square", label: "Square", w: 10, h: 10 },
-  { key: "postcard", label: "Postcard", w: 10, h: 14.8 },
-  { key: "a4", label: "A4", w: 21, h: 29.7 },
-  { key: "custom", label: "Custom", w: 0, h: 0 },
-];
+// Ukuran cetak DIKUNCI ke 2R (6×9cm) - permintaan operator: semua sesi
+// cetak pakai ukuran ini saja, jadi tidak ada lagi pilihan ukuran di UI.
+const PRINT_SIZE = { label: "2R", w: 6, h: 9 };
 
 // Frame CSS-ONLY (border/caption teks) - SENGAJA tidak pakai gambar bingkai
 // bikinan sendiri (cuma boleh pakai foto asli yg diupload tamu), jadi semua
@@ -153,7 +147,6 @@ export default function RpvControlRoom() {
   const [camPhotos, setCamPhotos] = useState([]); // foto ASLI kamera tamu
   const [aiPhotos, setAiPhotos] = useState([]); // hasil Gemini yg sudah diupload
   const [selectedCode, setSelectedCode] = useState(""); // photo_code yg dipilih di panel Print Station
-  const autoPrintCodeRef = useRef(""); // photo_code yg harus auto-print begitu selectedPhoto sinkron (ref, bukan state - efeknya cuma perlu BACA, bukan setState)
 
   // ── Identitas operator + pairing realtime dgn scanner mobile ───────────
   // Scan QR SEKARANG dilakukan dr HP (/marta/photobooth/scan/[code]), bukan
@@ -297,18 +290,16 @@ export default function RpvControlRoom() {
 
   // Cari foto by Photo ID (5 digit) persis - dipakai dr kolom pencarian
   // (Enter) MAUPUN dr HP scanner yg berpasangan (lihat effect pairing di
-  // bawah). `autoPrint`
-  // dipakai scanner: begitu foto ketemu & tersinkron ke `selectedPhoto`,
-  // langsung cetak tanpa perlu tombol/konfirmasi lagi - lihat efek
-  // `autoPrintCode` di bawah (menunggu render foto beres dulu, supaya
-  // window.print() TIDAK mencetak konten lama/basi).
-  const selectByDigits = useCallback(async (rawDigits, { autoPrint = false } = {}) => {
+  // bawah). SENGAJA TIDAK langsung cetak ("jangan langsung ngetrigger
+  // print") - begitu ketemu, foto cuma dipilih & panel editor (crop/zoom/
+  // rotate/flip) langsung tampil, operator masih bisa atur dulu sebelum
+  // tekan tombol "Cetak" sendiri.
+  const selectByDigits = useCallback(async (rawDigits) => {
     const digits = String(rawDigits || "").trim().replace(/\D/g, "");
     if (!digits || !activeCode) return false;
     const hit = allPhotos.find((p) => p.queue_label === digits.padStart(5, "0"));
     if (hit) {
       setSelectedCode(hit.photo_code);
-      if (autoPrint) autoPrintCodeRef.current = hit.photo_code;
       return true;
     }
     try {
@@ -317,7 +308,6 @@ export default function RpvControlRoom() {
         const item = { photo_code: found.photo_code, storage_path: found.storage_path, uploaded_at: found.uploaded_at, is_ai_result: true, url: found.url, queue_no: found.queue_no, queue_label: found.queue_label };
         setAiPhotos((prev) => (prev.some((x) => x.photo_code === item.photo_code) ? prev : [item, ...prev]));
         setSelectedCode(item.photo_code);
-        if (autoPrint) autoPrintCodeRef.current = item.photo_code;
         return true;
       }
     } catch { /* tidak ketemu - diamkan, list tetap kefilter kosong */ }
@@ -326,9 +316,40 @@ export default function RpvControlRoom() {
 
   const searchExact = () => { selectByDigits(searchQuery); };
 
+  // ── Hapus foto yg sudah masuk - dari daftar kiri panel Print Station.
+  // Two-tap "arm" confirm (tap 1x jadi warna merah/icon centang "yakin?",
+  // tap ke-2 dlm 3s baru benar2 hapus) - biar operator tidak kepencet hapus
+  // foto tamu cuma krn klik ganda tanpa sengaja, tanpa perlu modal terpisah.
+  const [confirmDeleteCode, setConfirmDeleteCode] = useState("");
+  const [deletingPhotoCode, setDeletingPhotoCode] = useState("");
+  const confirmDeleteTimerRef = useRef(null);
+  const handleDeletePhoto = async (e, p) => {
+    e.stopPropagation(); // jangan ikut trigger pilih/preview foto
+    if (deletingPhotoCode) return;
+    if (confirmDeleteCode !== p.photo_code) {
+      clearTimeout(confirmDeleteTimerRef.current);
+      setConfirmDeleteCode(p.photo_code);
+      confirmDeleteTimerRef.current = setTimeout(() => {
+        setConfirmDeleteCode((c) => (c === p.photo_code ? "" : c));
+      }, 3000);
+      return;
+    }
+    clearTimeout(confirmDeleteTimerRef.current);
+    setConfirmDeleteCode("");
+    setDeletingPhotoCode(p.photo_code);
+    try {
+      await deleteRpvPhoto(activeCode, p.photo_code, p.storage_path);
+      if (p.is_ai_result) setAiPhotos((prev) => prev.filter((x) => x.photo_code !== p.photo_code));
+      else setCamPhotos((prev) => prev.filter((x) => x.photo_code !== p.photo_code));
+      setSelectedCode((cur) => (cur === p.photo_code ? "" : cur));
+    } catch { /* gagal hapus (jaringan/permission) - diamkan, operator tinggal coba lagi */ }
+    finally { setDeletingPhotoCode(""); }
+  };
+
   // Join channel pairing operator utk sesi aktif - begitu HP scanner yg
-  // berpasangan berhasil scan Photo ID, langsung pilih & auto-print di SINI
-  // saja (operator lain yg pairing ke device lain tidak ikut ter-trigger).
+  // berpasangan berhasil scan Photo ID, langsung PILIH foto itu di SINI saja
+  // (operator lain yg pairing ke device lain tidak ikut ter-trigger) - TANPA
+  // langsung cetak, operator masih sempat edit crop/rotate/zoom dulu.
   useEffect(() => {
     if (!activeCode || !operatorId) {
       // Bungkus setState reset ini di microtask supaya tidak dihitung
@@ -341,7 +362,7 @@ export default function RpvControlRoom() {
       { id: operatorId, role: "operator", joinedAt: joinedAtRef.current },
       {
         onOperatorsChange: setOperators,
-        onSelectPhoto: ({ digits }) => { if (digits) selectByDigits(digits, { autoPrint: true }); },
+        onSelectPhoto: ({ digits }) => { if (digits) selectByDigits(digits); },
       }
     );
     return () => pairing.unsubscribe();
@@ -349,17 +370,6 @@ export default function RpvControlRoom() {
 
   const myOperatorIndex = operators.findIndex((o) => o.id === operatorId);
   const myOperatorLabel = myOperatorIndex >= 0 ? `Operator ${myOperatorIndex + 1}` : "";
-
-  // Begitu `selectedPhoto` sudah SINKRON dgn hasil scan (bukan foto lama),
-  // baru trigger window.print() - kalau langsung print di dalam
-  // selectByDigits, DOM preview/lembar cetak bisa masih menampilkan foto
-  // sebelumnya (state React belum sempat re-render).
-  useEffect(() => {
-    if (autoPrintCodeRef.current && selectedPhoto?.photo_code === autoPrintCodeRef.current) {
-      autoPrintCodeRef.current = "";
-      window.print();
-    }
-  }, [selectedPhoto]);
 
   // ── Crop (zoom/pan) per foto - direset tiap ganti foto. Pola "adjusting
   // state during render" (dibandingkan langsung di body, BUKAN di dalam
@@ -398,26 +408,15 @@ export default function RpvControlRoom() {
   const resetCrop = () => setCrop(DEFAULT_CROP);
 
   // ── Ukuran cetak & bingkai ────────────────────────────────────────────
-  const [printSizeKey, setPrintSizeKey] = useState("4r");
-  const [customW, setCustomW] = useState("10");
-  const [customH, setCustomH] = useState("15");
   const [frameKey, setFrameKey] = useState("none");
-  const printRatio = useMemo(() => {
-    if (printSizeKey === "custom") {
-      const w = Math.max(1, Math.min(60, Number(customW) || 10));
-      const h = Math.max(1, Math.min(90, Number(customH) || 15));
-      return { w, h };
-    }
-    const preset = PRINT_PRESETS.find((x) => x.key === printSizeKey) || PRINT_PRESETS[0];
-    return { w: preset.w, h: preset.h };
-  }, [printSizeKey, customW, customH]);
+  const printRatio = { w: PRINT_SIZE.w, h: PRINT_SIZE.h };
 
   const handlePrint = () => { if (selectedPhoto) window.print(); };
 
   const activeSummary = session ? `${session.title} · ${activeCode}` : "Belum ada sesi aktif";
 
   return (
-    <div style={{ height: "100svh", background: t.bg, fontFamily: FONT, color: t.hi, display: "flex", flexDirection: "column", overflow: "hidden", colorScheme: "dark", position: "relative" }}>
+    <div className="flashprint-root" style={{ height: "100svh", background: t.bg, fontFamily: FONT, color: t.hi, display: "flex", flexDirection: "column", overflow: "hidden", colorScheme: "dark", position: "relative" }}>
       {/* Ambient TIPIS di belakang seluruh panel operator, senada dgn
           halaman2 tamu/scanner - sengaja opacity/blur lebih rendah supaya
           tidak ganggu kerja operator (banyak teks/angka), cuma sentuhan
@@ -505,11 +504,18 @@ export default function RpvControlRoom() {
               )}
               {filteredPhotos.map((p) => {
                 const active = p.photo_code === selectedCode;
+                const confirming = confirmDeleteCode === p.photo_code;
+                const rowDeleting = deletingPhotoCode === p.photo_code;
                 return (
-                  <button key={p.photo_code} onClick={() => setSelectedCode(p.photo_code)}
+                  // NOTE: pakai <div role="button"> (bukan <button>) di sini krn
+                  // tombol Hapus di dalamnya JUGA <button> - <button> di dalam
+                  // <button> tidak valid HTML & browser akan reparent/rusak.
+                  <div key={p.photo_code} role="button" tabIndex={0}
+                    onClick={() => setSelectedCode(p.photo_code)}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedCode(p.photo_code); } }}
                     style={{
                       width: "100%", display: "flex", alignItems: "center", gap: 10, padding: 8, marginBottom: 6, borderRadius: 12,
-                      border: `1.5px solid ${active ? MAGA : "transparent"}`, background: active ? `${MAGA}1c` : t.fieldBg, cursor: "pointer", fontFamily: FONT, textAlign: "left",
+                      border: `1.5px solid ${confirming ? "#DC2626" : active ? MAGA : "transparent"}`, background: confirming ? "rgba(220,38,38,0.12)" : active ? `${MAGA}1c` : t.fieldBg, cursor: "pointer", fontFamily: FONT, textAlign: "left",
                     }}>
                     <div style={{ width: 42, height: 42, borderRadius: 9, overflow: "hidden", flexShrink: 0, background: "#000" }}>
                       <img src={p.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
@@ -527,7 +533,18 @@ export default function RpvControlRoom() {
                         {p.photo_code}{p.uploaded_at ? ` · ${formatPhotoTime(p.uploaded_at)}` : ""}
                       </div>
                     </div>
-                  </button>
+                    {/* Hapus foto - tap 1x "arm" (jadi merah, minta konfirmasi),
+                        tap ke-2 dlm 3s baru benar2 hapus (storage + baris DB). */}
+                    <button onClick={(e) => handleDeletePhoto(e, p)} disabled={rowDeleting}
+                      title={confirming ? "Yakin? Klik lagi utk hapus" : "Hapus foto ini"}
+                      style={{
+                        width: 26, height: 26, borderRadius: 8, flexShrink: 0, border: `1px solid ${confirming ? "#DC2626" : t.line}`,
+                        background: confirming ? "#DC2626" : "transparent", color: confirming ? "#fff" : "#FF8A8F",
+                        display: "flex", alignItems: "center", justifyContent: "center", cursor: rowDeleting ? "not-allowed" : "pointer",
+                      }}>
+                      {rowDeleting ? <Loader2 size={11} style={{ animation: "spin .8s linear infinite" }} /> : <Trash2 size={11} />}
+                    </button>
+                  </div>
                 );
               })}
             </div>
@@ -600,31 +617,15 @@ export default function RpvControlRoom() {
                     </div>
                   </div>
 
-                  {/* Ukuran cetak */}
+                  {/* Ukuran cetak - dikunci ke 2R (tidak ada lagi pilihan ukuran lain). */}
                   <div style={{ width: "100%", maxWidth: 340 }}>
                     <div style={{ fontSize: 11, fontWeight: 800, color: t.mid, marginBottom: 8 }}>UKURAN CETAK</div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                      {PRINT_PRESETS.map((preset) => (
-                        <button key={preset.key} onClick={() => setPrintSizeKey(preset.key)}
-                          style={{
-                            padding: "7px 11px", borderRadius: 9, border: `1.5px solid ${printSizeKey === preset.key ? MAGA : t.line}`,
-                            background: printSizeKey === preset.key ? `${MAGA}22` : t.card, color: printSizeKey === preset.key ? "#fff" : t.mid,
-                            fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
-                          }}>
-                          {preset.label}{preset.key !== "custom" ? ` · ${preset.w}×${preset.h}cm` : ""}
-                        </button>
-                      ))}
+                    <div style={{
+                      display: "inline-flex", alignItems: "center", gap: 7, padding: "7px 11px", borderRadius: 9,
+                      border: `1.5px solid ${MAGA}`, background: `${MAGA}22`, color: "#fff", fontSize: 11, fontWeight: 700,
+                    }}>
+                      {PRINT_SIZE.label} · {PRINT_SIZE.w}×{PRINT_SIZE.h}cm
                     </div>
-                    {printSizeKey === "custom" && (
-                      <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
-                        <input type="number" min="1" max="60" value={customW} onChange={(e) => setCustomW(e.target.value)}
-                          style={{ width: 64, height: 34, borderRadius: 8, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontSize: 12, textAlign: "center" }} />
-                        <span style={{ fontSize: 11, color: t.lo }}>cm ×</span>
-                        <input type="number" min="1" max="90" value={customH} onChange={(e) => setCustomH(e.target.value)}
-                          style={{ width: 64, height: 34, borderRadius: 8, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontSize: 12, textAlign: "center" }} />
-                        <span style={{ fontSize: 11, color: t.lo }}>cm</span>
-                      </div>
-                    )}
                   </div>
 
                   {/* Bingkai */}

@@ -316,7 +316,7 @@ export default function RpvViewerPage() {
   }
 
   return (
-    <div style={{ minHeight: "100svh", background: "#0A0A0B", fontFamily: FONT, position: "relative", overflow: "hidden" }}>
+    <div className="flashprint-root" style={{ minHeight: "100svh", background: "#0A0A0B", fontFamily: FONT, position: "relative", overflow: "hidden" }}>
       {/* Ambient glow brand di background - versi DINAMIS (drift+pulse),
           senada persis dgn ambient di /go, /scan, & panel operator ("tidak
           tiba2 beda") - sebelumnya di sini gradient STATIS saja, sekarang
@@ -730,7 +730,7 @@ function SpeedLabel({ ms, bytes }) {
 
 function Center({ children }) {
   return (
-    <div style={{ minHeight: "100svh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0A0A0B", fontFamily: FONT }}>
+    <div className="flashprint-root" style={{ minHeight: "100svh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#0A0A0B", fontFamily: FONT }}>
       {children}
       <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
     </div>

@@ -88,3 +88,16 @@ body {
   .sdp-card, .sdp-root button, .sdp-root :is(input,select,textarea) { transition: none !important; }
   .sdp-card:hover, .sdp-root button:not(:disabled):active { transform: none !important; }
 }
+
+/* ── FlashPrint (Photobooth) - full dark mode, no white flash ───────────
+   Semua halaman FlashPrint (tamu, scanner, operator) sudah dark themed per
+   komponen, TAPI <html>/<body> di layout ROOT (dipakai bareng SandraHub yg
+   terang) TIDAK ikut gelap - jadi celah kecil (notch/safe-area, atau saat
+   render pertama sblm komponen sempat mount) masih kelihatan PUTIH dr
+   background body bawaan. Root elemen tiap halaman FlashPrint diberi class
+   `.flashprint-root` - selector :has() ini bikin <body> ikut gelap SELAMA
+   ada halaman FlashPrint yg ter-mount, tanpa mengubah tema SandraHub di
+   halaman lain sama sekali. */
+body:has(.flashprint-root) {
+  background: #0A0A0B;
+}

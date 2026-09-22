@@ -185,7 +185,7 @@ export default function RpvPromptUploadPage() {
   }
 
   return (
-    <div className={leaving ? "rpv-m-page rpv-m-page--leaving" : "rpv-m-page"} style={{ minHeight: "100svh", background: BG, fontFamily: FONT, display: "flex", flexDirection: "column", colorScheme: "dark", position: "relative" }}>
+    <div className={leaving ? "rpv-m-page rpv-m-page--leaving flashprint-root" : "rpv-m-page flashprint-root"} style={{ minHeight: "100svh", background: BG, fontFamily: FONT, display: "flex", flexDirection: "column", colorScheme: "dark", position: "relative" }}>
       <PhotoboothPwaHead />
       <div className="rpv-m-ambient" aria-hidden="true">
         <div className="rpv-m-ambient-blob rpv-m-ambient-blob--a" />
@@ -402,7 +402,7 @@ function SectionLabel({ n, text, hint, style }) {
  * kartu QR tetap PUTIH (kontras scan tetap maksimal). */
 function GeminiUploadSuccessScreen({ result, qrUrl, guestQrUrl, onUploadMore, onDone }) {
   return (
-    <div style={{ minHeight: "100svh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: BG, fontFamily: FONT }}>
+    <div className="flashprint-root" style={{ minHeight: "100svh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: BG, fontFamily: FONT }}>
       <div style={{ textAlign: "center", maxWidth: 340, width: "100%" }}>
         <div style={{ position: "relative", width: 86, height: 86, margin: "0 auto" }}>
           <div className="rpv-m-success-pop" style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "rgba(21,128,61,0.16)", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -729,7 +729,7 @@ function RpvPromptFormPopup({ code, prompts, editingPrompt, onClose, onChanged }
  * dari file MartaHub (beda app/route group). */
 function RpvPhotoboothSplash() {
   return (
-    <div style={{ position: "fixed", inset: 0, background: BG, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, colorScheme: "dark" }}>
+    <div className="flashprint-root" style={{ position: "fixed", inset: 0, background: BG, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, colorScheme: "dark" }}>
       <style suppressHydrationWarning>{`
         @keyframes pbs-ambient-drift-a {
           0%, 100% { transform: translate(-8%, 6%) scale(1); }
@@ -832,7 +832,7 @@ function RpvPhotoboothSplash() {
 
 function Center({ children }) {
   return (
-    <div style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: BG, fontFamily: FONT, padding: 20, boxSizing: "border-box", colorScheme: "dark" }}>
+    <div className="flashprint-root" style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: BG, fontFamily: FONT, padding: 20, boxSizing: "border-box", colorScheme: "dark" }}>
       {children}
       <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
     </div>

@@ -57,5 +57,19 @@ export function usePhotoboothServiceWorker(variant = "camera") {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
     const v = VARIANTS[variant] || VARIANTS.camera;
     navigator.serviceWorker.register(v.sw, { scope: v.scope }).catch(() => {});
+
+    // Bersihkan SW LAMA sebelum PWA dipecah jadi Camera+Scanner (dulu satu
+    // "/photobooth/sw.js" berscope luas /marta/photobooth/ - kalau HP masih
+    // punya registrasi ini dari install lama, dia bisa "menang" ngontrol
+    // salah satu PWA baru & ikut nyampur konten Camera<->Scanner, krn scope
+    // yg sama-lebar/​tumpang-tindih bikin browser (khususnya iOS Safari)
+    // gak konsisten milih SW mana yg aktif). Unregister paksa supaya cuma
+    // sw-camera.js / sw-scanner.js yg tersisa aktif.
+    navigator.serviceWorker.getRegistrations().then((regs) => {
+      regs.forEach((reg) => {
+        const scriptUrl = reg.active?.scriptURL || reg.waiting?.scriptURL || reg.installing?.scriptURL || "";
+        if (scriptUrl.endsWith("/photobooth/sw.js")) reg.unregister().catch(() => {});
+      });
+    }).catch(() => {});
   }, [variant]);
 }

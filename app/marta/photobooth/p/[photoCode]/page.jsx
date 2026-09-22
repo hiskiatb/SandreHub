@@ -96,7 +96,7 @@ export default function RpvPhotoDetailPage() {
 
   if (state === "loading") {
     return (
-      <div style={{ minHeight: "100svh", background: "#111116", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT }}>
+      <div className="flashprint-root" style={{ minHeight: "100svh", background: "#111116", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT }}>
         <Loader2 size={26} color={RED} style={{ animation: "spin 1s linear infinite" }} />
         <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
       </div>
@@ -104,7 +104,7 @@ export default function RpvPhotoDetailPage() {
   }
   if (state === "notfound") {
     return (
-      <div style={{ minHeight: "100svh", background: "#111116", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: FONT, gap: 10, color: "#F0F0F2" }}>
+      <div className="flashprint-root" style={{ minHeight: "100svh", background: "#111116", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: FONT, gap: 10, color: "#F0F0F2" }}>
         <AlertTriangle size={28} color={RED} />
         <div style={{ fontSize: 14, fontWeight: 700 }}>Foto tidak ditemukan.</div>
       </div>
@@ -112,7 +112,7 @@ export default function RpvPhotoDetailPage() {
   }
 
   return (
-    <div style={{ minHeight: "100svh", background: "linear-gradient(180deg,#111116 0%,#1B1B20 100%)", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", padding: "22px 16px 34px" }}>
+    <div className="flashprint-root" style={{ minHeight: "100svh", background: "linear-gradient(180deg,#111116 0%,#1B1B20 100%)", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", padding: "22px 16px 34px" }}>
       <div style={{ width: "100%", maxWidth: 420, display: "flex", flexDirection: "column", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
           <div style={{ width: 7, height: 7, borderRadius: 99, background: RED }} />

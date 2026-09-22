@@ -50,7 +50,7 @@ export default function RpvScanLanding() {
   }, []);
 
   return (
-    <div className={leavingCode ? "rpv-scango-page rpv-scango-page--leaving" : "rpv-scango-page"} style={{ minHeight: "100svh", background: BG, fontFamily: FONT, colorScheme: "dark", position: "relative" }}>
+    <div className={leavingCode ? "rpv-scango-page rpv-scango-page--leaving flashprint-root" : "rpv-scango-page flashprint-root"} style={{ minHeight: "100svh", background: BG, fontFamily: FONT, colorScheme: "dark", position: "relative" }}>
       <PhotoboothPwaHead variant="scanner" />
       <div className="rpv-scango-ambient" aria-hidden="true">
         <div className="rpv-scango-ambient-blob rpv-scango-ambient-blob--a" />
