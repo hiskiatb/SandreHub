@@ -23,7 +23,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, Camera, ImagePlus, Images, Loader2, RefreshCcw, RotateCcw, SwitchCamera, Ticket, Upload, X, Zap } from "lucide-react";
+import { AlertTriangle, Camera, ImagePlus, Images, Loader2, RefreshCcw, RotateCcw, Sparkles, SwitchCamera, Ticket, Upload, X, Zap } from "lucide-react";
 import Link from "next/link";
 import { getRpvSession, uploadRpvPhoto, rpvThroughputMbps } from "../../../../../lib/rpv";
 import { PhotoboothPwaHead, usePhotoboothServiceWorker } from "../../_pwa";
@@ -298,6 +298,16 @@ export default function RpvUploadPage() {
         </div>
         <Link href="/marta/photobooth/go" style={{ display: "inline-flex", alignItems: "center", gap: 4, marginTop: 8, fontSize: 10.5, color: "#B0B0BA", fontWeight: 600, textDecoration: "none" }}>
           <RefreshCcw size={10} /> Ganti sesi
+        </Link>
+        <Link href={`/marta/photobooth/upload/${code}/prompt`}
+          style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 9, padding: "10px 12px", borderRadius: 13, background: "linear-gradient(135deg,#7C3AED14,#C6168D14)", border: "1px solid #7C3AED33", textDecoration: "none" }}>
+          <span style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg,#7C3AED,#C6168D)", color: "#fff" }}>
+            <Sparkles size={14} />
+          </span>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: "#17181C" }}>Edit dengan Gemini AI</div>
+            <div style={{ fontSize: 10, color: "#8A8A96", fontWeight: 600 }}>Pilih template prompt &amp; upload hasil Gemini kamu</div>
+          </div>
         </Link>
         {phase === "uploading" && (
           <div style={{ marginTop: 12 }}>

@@ -23,8 +23,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Camera, Check, ChevronLeft, ChevronRight, Download, FolderOpen, ImageOff, ImagePlus, Loader2, Monitor, Move, Plus, Send, Settings, Sparkles, Trash2, UploadCloud, RefreshCw, X, ArrowLeft, Upload } from "lucide-react";
-import { addRpvPrompt, createRpvSession, deleteRpvPrompt, deleteRpvSession, getRpvSession, listRpvPhotos, listRpvPrompts, listRpvSessions, rpvPublicUrl, subscribeRpvPhotos, uploadRpvAiResult, uploadRpvPromptImage } from "../../../lib/rpv";
+import { AlertTriangle, ArrowLeft, Camera, Check, ImageOff, ImagePlus, Loader2, Minus, Monitor, Plus, Printer, QrCode, ScanLine, Search, Settings, Sparkles, Trash2, X, ZoomIn } from "lucide-react";
+import { addRpvPrompt, createRpvSession, deleteRpvPrompt, deleteRpvSession, findRpvPhotoByQueue, getRpvSession, listRpvPhotos, listRpvPrompts, listRpvSessions, rpvPublicUrl, subscribeRpvPhotos, uploadRpvPromptImage } from "../../../lib/rpv";
 
 const FONT = `"Google Sans","DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED = "#ED1C24";
@@ -38,59 +38,83 @@ const t = {
   hi: "#E8E9EA", mid: "#B4B7BB", lo: "#8A8D91", fieldBg: "#131314",
 };
 
-const DIR_DB_NAME = "rpv-dirhandle-db";
-const DIR_STORE_NAME = "handles";
-const DIR_STORE_KEY = "rpv-connect-folder";
+// ── Fase 2: Print Station ───────────────────────────────────────────────
+// Ukuran cetak umum photobooth (cm) - operator bisa juga isi custom manual.
+const PRINT_PRESETS = [
+  { key: "4r", label: "4R", w: 10, h: 15 },
+  { key: "strip", label: "Photo Strip", w: 5, h: 15 },
+  { key: "square", label: "Square", w: 10, h: 10 },
+  { key: "postcard", label: "Postcard", w: 10, h: 14.8 },
+  { key: "a4", label: "A4", w: 21, h: 29.7 },
+  { key: "custom", label: "Custom", w: 0, h: 0 },
+];
 
-function idbOpenDirDb() {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DIR_DB_NAME, 1);
-    req.onupgradeneeded = () => { req.result.createObjectStore(DIR_STORE_NAME); };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
-async function idbSaveDirHandle(handle) {
-  const db = await idbOpenDirDb();
-  await new Promise((resolve, reject) => {
-    const tx = db.transaction(DIR_STORE_NAME, "readwrite");
-    tx.objectStore(DIR_STORE_NAME).put(handle, DIR_STORE_KEY);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-async function idbLoadDirHandle() {
-  const db = await idbOpenDirDb();
-  return await new Promise((resolve, reject) => {
-    const tx = db.transaction(DIR_STORE_NAME, "readonly");
-    const req = tx.objectStore(DIR_STORE_NAME).get(DIR_STORE_KEY);
-    req.onsuccess = () => resolve(req.result || null);
-    req.onerror = () => reject(req.error);
-  });
-}
-async function idbClearDirHandle() {
-  try {
-    const db = await idbOpenDirDb();
-    await new Promise((resolve) => {
-      const tx = db.transaction(DIR_STORE_NAME, "readwrite");
-      tx.objectStore(DIR_STORE_NAME).delete(DIR_STORE_KEY);
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => resolve();
-    });
-  } catch { /* ignore */ }
-}
+// Frame CSS-ONLY (border/caption teks) - SENGAJA tidak pakai gambar bingkai
+// bikinan sendiri (cuma boleh pakai foto asli yg diupload tamu), jadi semua
+// efek "frame" di sini murni border/warna/teks lewat CSS.
+const FRAME_PRESETS = [
+  { key: "none", label: "Tanpa Bingkai" },
+  { key: "white", label: "Polaroid Putih" },
+  { key: "brand", label: "Aksen 5G" },
+];
 
-function siteOrigin() {
-  if (typeof window === "undefined") return "";
-  return window.location.origin;
+const DEFAULT_CROP = { zoom: 1, panX: 0, panY: 0 };
+
+/** Satu foto + crop (zoom/pan) + bingkai, dipakai UTUH baik di preview layar
+ * (mode="screen", ukuran px tetap) MAUPUN di lembar cetak sungguhan (mode=
+ * "print", ukuran FISIK dlm cm) - crop pakai transform scale+translate(%)
+ * yg resolution-independent, jadi hasil preview & cetak DIJAMIN identik. */
+function PhotoFrame({ photo, ratio, crop, frame, mode, queueLabel, sessionTitle, imgRef, onPointerDown }) {
+  const isPolaroid = frame === "white";
+  const isBrand = frame === "brand";
+  const sizeStyle = mode === "print"
+    ? { width: `${ratio.w}cm`, height: `${ratio.h}cm` }
+    : { width: "100%", aspectRatio: `${ratio.w} / ${ratio.h}` };
+  const photoAreaStyle = isPolaroid
+    ? { position: "absolute", left: "4%", right: "4%", top: "4%", bottom: "16%" }
+    : isBrand
+      ? { position: "absolute", inset: "3%" }
+      : { position: "absolute", inset: 0 };
+  return (
+    <div style={{
+      ...sizeStyle, position: "relative", overflow: "hidden", background: isPolaroid ? "#fff" : "#000",
+      borderRadius: mode === "print" ? 0 : 10,
+      border: isBrand ? `${mode === "print" ? "0.25cm" : "6px"} solid transparent` : "none",
+      backgroundImage: isBrand ? `linear-gradient(#fff,#fff), linear-gradient(135deg,${RED},${MAGA})` : undefined,
+      backgroundOrigin: isBrand ? "border-box" : undefined,
+      backgroundClip: isBrand ? "content-box, border-box" : undefined,
+    }}>
+      <div style={{ ...photoAreaStyle, overflow: "hidden", background: "#000" }}>
+        {photo ? (
+          <img ref={imgRef} src={photo.url} alt="" draggable={false}
+            onPointerDown={mode === "screen" ? onPointerDown : undefined}
+            style={{
+              width: "100%", height: "100%", objectFit: "cover", display: "block",
+              cursor: mode === "screen" ? "grab" : "default", touchAction: "none",
+              transform: `scale(${crop.zoom}) translate(${crop.panX}%, ${crop.panY}%)`,
+              transformOrigin: "center center",
+            }} />
+        ) : (
+          <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: t.lo }}>
+            <ImageOff size={mode === "print" ? 24 : 22} />
+          </div>
+        )}
+      </div>
+      {isPolaroid && (
+        <div style={{ position: "absolute", left: "4%", right: "4%", bottom: "4%", height: "10%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: FONT }}>
+          <span style={{ fontSize: mode === "print" ? "0.32cm" : 10.5, fontWeight: 800, color: "#17181C" }}>{sessionTitle || "Photobooth"}</span>
+          <span style={{ fontSize: mode === "print" ? "0.26cm" : 9, color: "#8A8A96", fontFamily: "monospace", letterSpacing: "0.06em" }}>{queueLabel}</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function RpvControlRoom() {
   const router = useRouter();
   const unsubRef = useRef(null);
-  const dropRef = useRef(null);
-  const fileRef = useRef(null);
-  const dirPollRef = useRef(null);
+  const dragRef = useRef(null); // { startX, startY, startPanX, startPanY, dragging } - crop pan
+  const imgRef = useRef(null);
 
   const [sessions, setSessions] = useState([]);
   const [sessionsState, setSessionsState] = useState("loading"); // loading | ready
@@ -103,7 +127,9 @@ export default function RpvControlRoom() {
 
   const [camPhotos, setCamPhotos] = useState([]); // foto ASLI kamera tamu
   const [aiPhotos, setAiPhotos] = useState([]); // hasil Gemini yg sudah diupload
-  const [selectedCode, setSelectedCode] = useState(""); // foto kamera yg lagi di-preview kiri-atas
+  const [selectedCode, setSelectedCode] = useState(""); // photo_code yg dipilih di panel Print Station
+  const [scanOpen, setScanOpen] = useState(false); // sheet scan QR (menggantikan kolom cari)
+  const autoPrintCodeRef = useRef(""); // photo_code yg harus auto-print begitu selectedPhoto sinkron (ref, bukan state - efeknya cuma perlu BACA, bukan setState)
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState("sesi"); // sesi | prompt
@@ -177,158 +203,6 @@ export default function RpvControlRoom() {
     return () => unsubRef.current?.();
   }, [activeCode]);
 
-  // Urut naik (lama->baru) khusus navigasi geser kiri/kanan preview -
-  // konsisten & bisa diprediksi, terlepas urutan realtime masuknya.
-  const camPhotosAsc = useMemo(
-    () => [...camPhotos].sort((a, b) => new Date(a.uploaded_at) - new Date(b.uploaded_at)),
-    [camPhotos]
-  );
-  const previewIndex = camPhotosAsc.findIndex((p) => p.photo_code === selectedCode);
-  const previewPhoto = previewIndex >= 0 ? camPhotosAsc[previewIndex] : null;
-  const goPrev = () => { if (previewIndex > 0) setSelectedCode(camPhotosAsc[previewIndex - 1].photo_code); };
-  const goNext = () => { if (previewIndex >= 0 && previewIndex < camPhotosAsc.length - 1) setSelectedCode(camPhotosAsc[previewIndex + 1].photo_code); };
-
-  // ── Panel kanan-atas: Connect to Folder ─────────────────────────────────
-  // Handle folder-nya disimpan permanen di IndexedDB (idbSaveDirHandle),
-  // jadi TIDAK perlu showDirectoryPicker lagi tiap buka halaman - begitu
-  // folder pernah di-connect sekali, kunjungan berikutnya otomatis coba
-  // pulihkan lewat idbLoadDirHandle() + queryPermission() di useEffect
-  // bawah. Kalau browser masih nyimpan izinnya ("granted") -> langsung
-  // kebuka tanpa dialog apapun. Kalau browser minta konfirmasi ulang
-  // ("prompt" - ini keputusan browser sendiri, biasanya krn sesi/browser
-  // baru dibuka lagi, BUKAN sesuatu yg bisa kita lewati dari kode), UI
-  // menampilkan tombol "Lanjutkan Akses Folder" (dirNeedsPermission) yg
-  // cukup 1x klik - TIDAK perlu pilih folder dari awal lagi.
-  const [dirSupported] = useState(() => typeof window !== "undefined" && "showDirectoryPicker" in window);
-  const [dirHandle, setDirHandle] = useState(null);
-  const [dirName, setDirName] = useState("");
-  const [dirFiles, setDirFiles] = useState([]);
-  const [dirLoading, setDirLoading] = useState(false);
-  const [dirUploadingName, setDirUploadingName] = useState("");
-  const [dirUploadedNames, setDirUploadedNames] = useState(() => new Set());
-  const [dirNeedsPermission, setDirNeedsPermission] = useState(false); // handle tersimpan, tinggal 1x klik lanjut
-  const [dirRestoring, setDirRestoring] = useState(() => typeof window !== "undefined" && "showDirectoryPicker" in window); // lagi coba pulihkan folder tersimpan saat mount (langsung false kalau browser tdk support)
-
-  const readDirFiles = useCallback(async (handle) => {
-    const items = [];
-    for await (const entry of handle.values()) {
-      if (entry.kind !== "file" || !IMG_EXT.test(entry.name)) continue;
-      try {
-        const file = await entry.getFile();
-        items.push({ name: entry.name, url: URL.createObjectURL(file), lastModified: file.lastModified, file });
-      } catch { /* file mungkin lagi ditulis/terkunci - lewati */ }
-    }
-    items.sort((a, b) => b.lastModified - a.lastModified);
-    return items.slice(0, 40);
-  }, []);
-
-  const activateDirHandle = useCallback(async (handle) => {
-    setDirHandle(handle);
-    setDirName(handle.name);
-    setDirNeedsPermission(false);
-    setDirLoading(true);
-    try { setDirFiles(await readDirFiles(handle)); } finally { setDirLoading(false); }
-  }, [readDirFiles]);
-
-  // Coba pulihkan folder yg pernah di-connect sebelumnya, sekali saat
-  // komponen pertama kali mount.
-  useEffect(() => {
-    if (!dirSupported) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const saved = await idbLoadDirHandle();
-        if (!saved) return;
-        const perm = await saved.queryPermission({ mode: "read" });
-        if (perm === "granted") {
-          await activateDirHandle(saved);
-        } else if (perm === "prompt") {
-          // Izin masih "nempel" tapi browser mau konfirmasi ulang - simpan
-          // handle-nya, tampilkan tombol 1x klik (bukan showDirectoryPicker).
-          setDirHandle(saved);
-          setDirName(saved.name);
-          setDirNeedsPermission(true);
-        } else {
-          await idbClearDirHandle();
-        }
-      } catch { /* handle korup/expired - biarkan user connect ulang */ }
-      finally { if (!cancelled) setDirRestoring(false); }
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const connectFolder = async () => {
-    if (!dirSupported) return;
-    try {
-      const handle = await window.showDirectoryPicker({ mode: "read" });
-      await idbSaveDirHandle(handle);
-      await activateDirHandle(handle);
-    } catch { /* user batal - diamkan */ }
-  };
-
-  // "Putuskan folder" - lupakan folder tersimpan (mis. ganti ke folder lain).
-  const forgetDirFolder = async () => {
-    clearInterval(dirPollRef.current);
-    await idbClearDirHandle();
-    setDirHandle(null); setDirName(""); setDirFiles([]); setDirNeedsPermission(false);
-  };
-
-  // Tombol "Lanjutkan Akses Folder" - 1x klik, TIDAK buka dialog pilih
-  // folder lagi, cuma minta browser mengonfirmasi izin folder yg SAMA persis
-  // yg tersimpan.
-  const continueDirAccess = async () => {
-    if (!dirHandle) return;
-    try {
-      const perm = await dirHandle.requestPermission({ mode: "read" });
-      if (perm === "granted") await activateDirHandle(dirHandle);
-      else setDirNeedsPermission(true);
-    } catch { /* diamkan */ }
-  };
-
-  const refreshDir = useCallback(async () => {
-    if (!dirHandle || dirNeedsPermission) return;
-    setDirLoading(true);
-    try { setDirFiles(await readDirFiles(dirHandle)); } finally { setDirLoading(false); }
-  }, [dirHandle, dirNeedsPermission, readDirFiles]);
-
-  useEffect(() => {
-    if (!dirHandle || dirNeedsPermission) { clearInterval(dirPollRef.current); return; }
-    dirPollRef.current = setInterval(refreshDir, 4000);
-    return () => clearInterval(dirPollRef.current);
-  }, [dirHandle, dirNeedsPermission, refreshDir]);
-
-  const uploadFromDir = async (item) => {
-    if (dirUploadingName || !activeCode) return;
-    setDirUploadingName(item.name);
-    try {
-      await uploadRpvAiResult(activeCode, null, item.file);
-      setDirUploadedNames((prev) => new Set(prev).add(item.name));
-    } catch { /* biarkan operator coba lagi manual */ }
-    finally { setDirUploadingName(""); }
-  };
-
-  // ── Panel kanan-bawah: drag & drop upload hasil Gemini ──────────────────
-  const [dragOver, setDragOver] = useState(false);
-  const [uploading, setUploading] = useState(false);
-
-  const uploadFiles = async (files) => {
-    if (!files.length || !activeCode) return;
-    setUploading(true);
-    for (const file of files) {
-      try { await uploadRpvAiResult(activeCode, null, file); } catch { /* lanjut file berikutnya */ }
-    }
-    setUploading(false);
-  };
-  const onDrop = (e) => {
-    e.preventDefault(); setDragOver(false);
-    uploadFiles(Array.from(e.dataTransfer.files || []).filter((f) => f.type.startsWith("image/")));
-  };
-  const onPick = (e) => {
-    const files = Array.from(e.target.files || []);
-    e.target.value = "";
-    uploadFiles(files);
-  };
 
   // ── Panel kiri-bawah: template/prompt sesi aktif ────────────────────────
   // Sekarang klik 1 kartu template = LANGSUNG copy teks prompt-nya (tanpa
@@ -339,7 +213,6 @@ export default function RpvControlRoom() {
   // Gemini (lihat quadrant "Preview Foto Kamera").
   const [prompts, setPrompts] = useState([]);
   const [promptsState, setPromptsState] = useState("idle");
-  const [copied, setCopied] = useState(""); // key prompt yg baru saja di-copy
 
   const loadPrompts = useCallback(async (code) => {
     if (!code) { setPrompts([]); setPromptsState("idle"); return; }
@@ -353,60 +226,114 @@ export default function RpvControlRoom() {
 
   useEffect(() => { (async () => { await loadPrompts(activeCode); })(); }, [activeCode, loadPrompts]);
 
-  const copy = (text, key) => {
-    navigator.clipboard?.writeText(text).then(() => {
-      setCopied(key);
-      setTimeout(() => setCopied((c) => (c === key ? "" : c)), 1500);
-    }).catch(() => {});
-  };
+  // ── Print Station: gabungan semua foto (kamera + hasil Gemini), terbaru
+  // dulu - dipakai list kiri & pencarian by Photo ID (queue_label). ───────
+  const allPhotos = useMemo(
+    () => [...camPhotos, ...aiPhotos].sort((a, b) => new Date(b.uploaded_at) - new Date(a.uploaded_at)),
+    [camPhotos, aiPhotos]
+  );
+  const [searchQuery, setSearchQuery] = useState("");
+  const filteredPhotos = useMemo(() => {
+    const q = searchQuery.trim().replace(/^0+(?=\d)/, "").toLowerCase();
+    if (!q) return allPhotos;
+    return allPhotos.filter((p) => {
+      const label = (p.queue_label || "").toLowerCase();
+      const bare = label.replace(/^0+(?=\d)/, "");
+      return label.includes(q) || bare.includes(q) || (p.photo_code || "").toLowerCase().includes(q);
+    });
+  }, [allPhotos, searchQuery]);
+  const selectedPhoto = allPhotos.find((p) => p.photo_code === selectedCode) || null;
 
-  // Klik kartu template -> langsung salin teks prompt-nya (instan, tanpa
-  // langkah pilih-dulu). Kunci status per-kartu = id prompt itu sendiri.
-  const copyPromptText = (p) => copy(p.prompt_text || "", p.id);
-
-  // Drag foto preview LANGSUNG jadi FILE gambar sungguhan saat di-drop (persis
-  // spt drag dari Finder/File Explorer ke app lain) - bukan cuma link/teks.
-  // Trik "DownloadURL" (fitur khusus Chrome/Chromium/Edge): browser sendiri
-  // yg mengunduh resource dari URL saat di-drop & menyerahkannya sbg File ke
-  // target, jadi TIDAK butuh fetch()/CORS dari JS kita. Format datanya:
-  // "mime:namafile:url". Ini jugalah cara file dari Google Images / halaman
-  // web lain bisa di-drag ke app native/tab lain sbg file, bukan cuma teks.
-  // Fallback text/uri-list & text/plain disertakan utk browser lain (Firefox
-  // dll) yg tidak mendukung DownloadURL - minimal URL-nya tetap ikut ke-drop.
-  const handlePhotoDragStart = (e, photo) => {
-    if (!photo?.url) return;
-    const ext = (photo.storage_path || photo.photo_code || "").split(".").pop();
-    const safeExt = ext && ext.length <= 4 && /^[a-zA-Z0-9]+$/.test(ext) ? ext.toLowerCase() : "jpg";
-    const mime = safeExt === "png" ? "image/png" : safeExt === "webp" ? "image/webp" : "image/jpeg";
-    const filename = `${photo.photo_code || "foto"}.${safeExt}`;
+  // Cari foto by Photo ID (5 digit) persis - dipakai dr kolom pencarian
+  // (Enter) MAUPUN dr sheet Scan QR (`RpvScanSheet` di bawah). `autoPrint`
+  // dipakai scanner: begitu foto ketemu & tersinkron ke `selectedPhoto`,
+  // langsung cetak tanpa perlu tombol/konfirmasi lagi - lihat efek
+  // `autoPrintCode` di bawah (menunggu render foto beres dulu, supaya
+  // window.print() TIDAK mencetak konten lama/basi).
+  const selectByDigits = useCallback(async (rawDigits, { autoPrint = false } = {}) => {
+    const digits = String(rawDigits || "").trim().replace(/\D/g, "");
+    if (!digits || !activeCode) return false;
+    const hit = allPhotos.find((p) => p.queue_label === digits.padStart(5, "0"));
+    if (hit) {
+      setSelectedCode(hit.photo_code);
+      if (autoPrint) autoPrintCodeRef.current = hit.photo_code;
+      return true;
+    }
     try {
-      e.dataTransfer.setData("DownloadURL", `${mime}:${filename}:${photo.url}`);
-      e.dataTransfer.setData("text/uri-list", photo.url);
-      e.dataTransfer.setData("text/plain", photo.url);
-      e.dataTransfer.effectAllowed = "copy";
-    } catch { /* browser tdk dukung salah satu tipe - biarkan drag native default jalan */ }
-  };
+      const found = await findRpvPhotoByQueue(activeCode, Number(digits));
+      if (found) {
+        const item = { photo_code: found.photo_code, storage_path: found.storage_path, uploaded_at: found.uploaded_at, is_ai_result: true, url: found.url, queue_no: found.queue_no, queue_label: found.queue_label };
+        setAiPhotos((prev) => (prev.some((x) => x.photo_code === item.photo_code) ? prev : [item, ...prev]));
+        setSelectedCode(item.photo_code);
+        if (autoPrint) autoPrintCodeRef.current = item.photo_code;
+        return true;
+      }
+    } catch { /* tidak ketemu - diamkan, list tetap kefilter kosong */ }
+    return false;
+  }, [activeCode, allPhotos]);
 
-  const [downloadedKey, setDownloadedKey] = useState("");
-  const downloadPhoto = async (photo) => {
-    if (!photo?.url) return;
-    try {
-      const resp = await fetch(photo.url);
-      const blob = await resp.blob();
-      const ext = (photo.storage_path || photo.photo_code || "").split(".").pop();
-      const safeExt = ext && ext.length <= 4 && /^[a-zA-Z0-9]+$/.test(ext) ? ext.toLowerCase() : "jpg";
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = `${photo.photo_code || "foto"}.${safeExt}`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 4000);
-      setDownloadedKey(photo.photo_code);
-      setTimeout(() => setDownloadedKey((k) => (k === photo.photo_code ? "" : k)), 2600);
-    } catch { /* biarkan - user bisa klik lagi */ }
+  const searchExact = () => { selectByDigits(searchQuery); };
+
+  // Begitu `selectedPhoto` sudah SINKRON dgn hasil scan (bukan foto lama),
+  // baru trigger window.print() - kalau langsung print di dalam
+  // selectByDigits, DOM preview/lembar cetak bisa masih menampilkan foto
+  // sebelumnya (state React belum sempat re-render).
+  useEffect(() => {
+    if (autoPrintCodeRef.current && selectedPhoto?.photo_code === autoPrintCodeRef.current) {
+      autoPrintCodeRef.current = "";
+      window.print();
+    }
+  }, [selectedPhoto]);
+
+  // ── Crop (zoom/pan) per foto - direset tiap ganti foto. Pola "adjusting
+  // state during render" (dibandingkan langsung di body, BUKAN di dalam
+  // useEffect) - direkomendasikan React resmi utk reset state akibat
+  // perubahan input, tanpa memicu render tambahan yg tidak perlu.
+  const [crop, setCrop] = useState(DEFAULT_CROP);
+  const [prevCropKey, setPrevCropKey] = useState(selectedCode);
+  if (selectedCode !== prevCropKey) {
+    setPrevCropKey(selectedCode);
+    setCrop(DEFAULT_CROP);
+  }
+
+  const onCropPointerDown = (e) => {
+    e.preventDefault();
+    dragRef.current = { startX: e.clientX, startY: e.clientY, startPanX: crop.panX, startPanY: crop.panY, dragging: true };
+    const move = (ev) => {
+      if (!dragRef.current?.dragging || !imgRef.current) return;
+      const w = imgRef.current.offsetWidth || 1;
+      const h = imgRef.current.offsetHeight || 1;
+      const dx = ((ev.clientX - dragRef.current.startX) / w) * 100;
+      const dy = ((ev.clientY - dragRef.current.startY) / h) * 100;
+      setCrop((c) => ({ ...c, panX: dragRef.current.startPanX + dx / c.zoom, panY: dragRef.current.startPanY + dy / c.zoom }));
+    };
+    const up = () => {
+      dragRef.current = null;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
   };
+  const zoomBy = (delta) => setCrop((c) => ({ ...c, zoom: Math.max(1, Math.min(4, +(c.zoom + delta).toFixed(2))) }));
+  const resetCrop = () => setCrop(DEFAULT_CROP);
+
+  // ── Ukuran cetak & bingkai ────────────────────────────────────────────
+  const [printSizeKey, setPrintSizeKey] = useState("4r");
+  const [customW, setCustomW] = useState("10");
+  const [customH, setCustomH] = useState("15");
+  const [frameKey, setFrameKey] = useState("none");
+  const printRatio = useMemo(() => {
+    if (printSizeKey === "custom") {
+      const w = Math.max(1, Math.min(60, Number(customW) || 10));
+      const h = Math.max(1, Math.min(90, Number(customH) || 15));
+      return { w, h };
+    }
+    const preset = PRINT_PRESETS.find((x) => x.key === printSizeKey) || PRINT_PRESETS[0];
+    return { w: preset.w, h: preset.h };
+  }, [printSizeKey, customW, customH]);
+
+  const handlePrint = () => { if (selectedPhoto) window.print(); };
 
   const activeSummary = session ? `${session.title} · ${activeCode}` : "Belum ada sesi aktif";
 
@@ -455,233 +382,171 @@ export default function RpvControlRoom() {
         </div>
       )}
 
-      {/* Grid kerja 2x2 */}
+      {/* Print Station: kiri daftar foto + cari Photo ID, kanan panel cetak */}
       {activeCode && (
-        <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr" }} className="rpv-room-grid">
-          {/* Kiri-atas: preview foto kamera - geser manual, TIDAK auto pindah */}
-          <div style={{ minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", borderRight: `1px solid ${t.line}`, borderBottom: `1px solid ${t.line}`, background: "#000" }}>
-            <div style={{ padding: "8px 12px", background: t.card, borderBottom: `1px solid ${t.lineSoft}`, display: "flex", alignItems: "center", gap: 7, flexShrink: 0 }}>
-              <Camera size={13} color={RED} />
-              <span style={{ fontSize: 11.5, fontWeight: 800, color: t.hi }}>Preview Foto Kamera</span>
-              <span style={{ marginLeft: "auto", fontSize: 10.5, color: t.lo, fontWeight: 700, fontFamily: "monospace" }}>
-                {camPhotosAsc.length > 0 ? `${previewIndex + 1}/${camPhotosAsc.length}` : "0/0"}
-              </span>
-            </div>
-            <div style={{ flex: 1, minHeight: 0, position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              {sessionState === "loading" && <Loader2 size={22} color={t.lo} style={{ animation: "spin .8s linear infinite" }} />}
-              {sessionState === "ready" && !previewPhoto && (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, color: t.lo }}>
-                  <ImageOff size={22} />
-                  <span style={{ fontSize: 11.5 }}>Belum ada foto tamu masuk</span>
+        <div style={{ flex: 1, minHeight: 0, display: "flex" }} className="rpv-ps-layout">
+          {/* Kiri: daftar semua foto sesi + pencarian by Photo ID */}
+          <div style={{ width: 320, flexShrink: 0, display: "flex", flexDirection: "column", borderRight: `1px solid ${t.line}`, background: t.card }} className="rpv-ps-left">
+            <div style={{ padding: 12, borderBottom: `1px solid ${t.lineSoft}`, flexShrink: 0 }}>
+              <div style={{ display: "flex", gap: 6 }}>
+                <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+                  <Search size={14} color={t.lo} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
+                  <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") searchExact(); }}
+                    placeholder="Cari Photo ID (5 digit)…" inputMode="numeric"
+                    style={{ width: "100%", height: 38, borderRadius: 10, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontSize: 13, fontFamily: "monospace", letterSpacing: "0.04em", padding: "0 12px 0 32px" }} />
                 </div>
-              )}
-              {previewPhoto && (
-                <div className="rpv-drag-photo-wrap" style={{ position: "relative", maxWidth: "100%", maxHeight: "100%", display: "flex" }}>
-                  <img src={previewPhoto.url} alt="" draggable="true" title="Geser (drag) foto ini ke tab Gemini"
-                    className="rpv-drag-photo"
-                    onDragStart={(e) => handlePhotoDragStart(e, previewPhoto)}
-                    style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", cursor: "grab" }} />
-                  <button onClick={() => downloadPhoto(previewPhoto)} title="Download foto ini (lalu drag dari Downloads ke Gemini, spt drag dari Finder)"
-                    className="rpv-download-btn"
-                    style={{ position: "absolute", left: "50%", bottom: 10, transform: "translateX(-50%)", display: "flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 999, border: "none", background: downloadedKey === previewPhoto.photo_code ? "#16A34A" : "rgba(0,0,0,0.68)", backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", color: "#fff", cursor: "pointer", fontFamily: FONT }}>
-                    {downloadedKey === previewPhoto.photo_code
-                      ? <Check size={12} />
-                      : <Download size={12} className="rpv-drag-hint-icon" />}
-                    <span style={{ fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap" }}>
-                      {downloadedKey === previewPhoto.photo_code ? "Tersimpan — drag dari Downloads" : "Download foto (lalu drag ke Gemini)"}
-                    </span>
-                  </button>
-                </div>
-              )}
-              {camPhotosAsc.length > 1 && (
-                <>
-                  <button onClick={goPrev} disabled={previewIndex <= 0} title="Foto sebelumnya"
-                    style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", width: 34, height: 34, borderRadius: 999, border: "none", background: "rgba(0,0,0,0.5)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: previewIndex <= 0 ? "default" : "pointer", opacity: previewIndex <= 0 ? 0.3 : 1 }}>
-                    <ChevronLeft size={18} />
-                  </button>
-                  <button onClick={goNext} disabled={previewIndex >= camPhotosAsc.length - 1} title="Foto berikutnya"
-                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", width: 34, height: 34, borderRadius: 999, border: "none", background: "rgba(0,0,0,0.5)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: previewIndex >= camPhotosAsc.length - 1 ? "default" : "pointer", opacity: previewIndex >= camPhotosAsc.length - 1 ? 0.3 : 1 }}>
-                    <ChevronRight size={18} />
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* Kanan-atas: Connect to Folder - handle-nya persisten (IndexedDB),
-              jadi setelah connect sekali, kunjungan berikutnya otomatis coba
-              nyambung lagi tanpa showDirectoryPicker (lihat useEffect restore
-              di atas + fungsi activateDirHandle/continueDirAccess). */}
-          <div style={{ minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", borderBottom: `1px solid ${t.line}`, background: t.card }}>
-            <div style={{ padding: "8px 12px", borderBottom: `1px solid ${t.lineSoft}`, display: "flex", alignItems: "center", gap: 7, flexShrink: 0 }}>
-              <FolderOpen size={13} color={VIO} />
-              <span style={{ fontSize: 11.5, fontWeight: 800, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dirName ? `Folder: ${dirName}` : "Connect to Folder"}</span>
-              {dirHandle && !dirNeedsPermission && (
-                <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-                  <button onClick={refreshDir} title="Refresh" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${t.line}`, background: "transparent", color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-                    {dirLoading ? <Loader2 size={12} style={{ animation: "spin .8s linear infinite" }} /> : <RefreshCw size={12} />}
-                  </button>
-                  <button onClick={forgetDirFolder} title="Putuskan folder ini" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${t.line}`, background: "transparent", color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-                    <X size={12} />
-                  </button>
-                </div>
-              )}
-            </div>
-            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 10 }}>
-              {!dirSupported && (
-                <div style={{ fontSize: 11, color: "#F5C542", background: "rgba(245,197,66,0.1)", border: "1px solid rgba(245,197,66,0.3)", borderRadius: 10, padding: "9px 11px", lineHeight: 1.5 }}>
-                  Browser/perangkat ini belum mendukung &ldquo;Connect to Folder&rdquo; (perlu Chrome/Edge di desktop — belum didukung di HP) — pakai panel drag &amp; drop di bawah.
-                </div>
-              )}
-              {dirSupported && dirRestoring && (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: t.lo, padding: "8px 0" }}>
-                  <Loader2 size={13} style={{ animation: "spin .8s linear infinite" }} /> Memulihkan folder tersimpan…
-                </div>
-              )}
-              {dirSupported && !dirRestoring && dirNeedsPermission && (
-                <button onClick={continueDirAccess}
-                  style={{ width: "100%", height: 96, borderRadius: 13, border: `1.5px dashed #F5C54266`, background: "rgba(245,197,66,0.08)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer", fontFamily: FONT }}>
-                  <FolderOpen size={20} color="#F5C542" />
-                  <span style={{ fontSize: 12, fontWeight: 800, color: t.hi }}>Lanjutkan Akses Folder</span>
-                  <span style={{ fontSize: 10, color: t.lo, textAlign: "center", padding: "0 10px" }}>&ldquo;{dirName}&rdquo; sudah pernah terhubung — 1x klik utk lanjut (tanpa pilih folder lagi)</span>
+                <button onClick={() => setScanOpen(true)} title="Scan QR - langsung cetak"
+                  style={{ width: 38, height: 38, flexShrink: 0, borderRadius: 10, border: "none", background: `linear-gradient(135deg,${VIO},${MAGA})`, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                  <QrCode size={16} />
                 </button>
-              )}
-              {dirSupported && !dirRestoring && !dirNeedsPermission && !dirHandle && (
-                <button onClick={connectFolder}
-                  style={{ width: "100%", height: 96, borderRadius: 13, border: `1.5px dashed ${VIO}66`, background: "rgba(124,58,237,0.08)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 7, cursor: "pointer", fontFamily: FONT }}>
-                  <FolderOpen size={20} color={VIO} />
-                  <span style={{ fontSize: 12, fontWeight: 800, color: t.hi }}>Pilih Folder Download</span>
-                  <span style={{ fontSize: 10, color: t.lo, textAlign: "center", padding: "0 10px" }}>Folder tempat hasil download Gemini tersimpan — cukup 1x, tersimpan otomatis</span>
-                </button>
-              )}
-              {dirHandle && !dirNeedsPermission && dirFiles.length === 0 && !dirLoading && (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, padding: "22px 0", color: t.lo }}>
-                  <ImageOff size={18} />
-                  <span style={{ fontSize: 11 }}>Belum ada gambar di folder ini</span>
-                </div>
-              )}
-              {dirHandle && !dirNeedsPermission && dirFiles.length > 0 && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(78px, 1fr))", gap: 7 }}>
-                  {dirFiles.map((f) => {
-                    const done = dirUploadedNames.has(f.name);
-                    return (
-                      <div key={f.name} style={{ position: "relative", borderRadius: 9, overflow: "hidden", aspectRatio: "1/1", background: "#000", border: `1px solid ${t.lineSoft}` }}>
-                        <img src={f.url} alt={f.name} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                        <button onClick={() => uploadFromDir(f)} disabled={!!dirUploadingName || done} title={done ? "Sudah diupload" : `Upload ${f.name}`}
-                          style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", border: "none", cursor: done ? "default" : "pointer",
-                            background: done ? "rgba(21,128,61,0.45)" : dirUploadingName === f.name ? "rgba(124,58,237,0.55)" : "rgba(0,0,0,0.32)" }}>
-                          {dirUploadingName === f.name ? <Loader2 size={16} color="#fff" style={{ animation: "spin .8s linear infinite" }} /> : done ? <Check size={16} color="#fff" /> : <Send size={14} color="#fff" />}
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Kiri-bawah: template/prompt sesi aktif - klik 1 kartu = LANGSUNG
-              copy teks prompt-nya (instan, dgn animasi status per-kartu),
-              hover thumbnail = zoom halus. Teks prompt lengkap cuma bisa
-              dilihat/diubah lewat "+ Kelola". Gambarnya (foto tamu di kiri-
-              atas) diseret manual ke tab Gemini - lihat quadrant sebelah. */}
-          <div style={{ minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", borderRight: `1px solid ${t.line}`, background: t.card }}>
-            <div style={{ padding: "8px 12px", borderBottom: `1px solid ${t.lineSoft}`, display: "flex", alignItems: "center", gap: 7, flexShrink: 0 }}>
-              <Sparkles size={13} color={MAGA} />
-              <span style={{ fontSize: 11.5, fontWeight: 800, color: t.hi }}>Template Prompt</span>
-              <span style={{ fontSize: 9.5, color: t.lo, fontWeight: 600 }}>· klik = copy teks</span>
-              <button onClick={() => { setSettingsTab("prompt"); setSettingsOpen(true); }} title="Kelola prompt"
-                style={{ marginLeft: "auto", fontSize: 10.5, color: "#E29BDC", fontWeight: 700, background: "transparent", border: "none", cursor: "pointer", fontFamily: FONT }}>
-                + Kelola
-              </button>
-            </div>
-            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 10 }}>
-              {promptsState === "loading" && (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: t.lo, padding: "8px 0" }}>
-                  <Loader2 size={13} style={{ animation: "spin .8s linear infinite" }} /> Memuat template…
-                </div>
-              )}
-              {promptsState === "ready" && prompts.length === 0 && (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "22px 0", color: t.lo }}>
-                  <Sparkles size={18} />
-                  <span style={{ fontSize: 11 }}>Belum ada template — tambah lewat Settings</span>
-                </div>
-              )}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(84px, 1fr))", gap: 9 }}>
-                {prompts.map((p) => {
-                  const justCopied = copied === p.id;
-                  return (
-                    <button key={p.id} onClick={() => copyPromptText(p)} title={`Copy prompt: ${p.label}`}
-                      className="rpv-tpl-card"
-                      style={{ position: "relative", aspectRatio: "1/1", borderRadius: 14, overflow: "hidden", cursor: "pointer", padding: 0,
-                        border: `2px solid ${justCopied ? "#16A34A" : "transparent"}`,
-                        background: t.fieldBg }}>
-                      <span className="rpv-tpl-thumb" style={{ position: "absolute", inset: 0, display: "block" }}>
-                        {p.promptImageUrl ? (
-                          <img src={p.promptImageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                        ) : (
-                          <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: t.lo }}>
-                            <Sparkles size={18} />
-                          </div>
-                        )}
-                      </span>
-                      <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(0,0,0,0) 45%, rgba(0,0,0,0.72) 100%)", pointerEvents: "none" }} />
-                      <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, padding: "5px 6px", textAlign: "center", fontSize: 10.5, fontWeight: 800, color: "#fff", lineHeight: 1.25, textShadow: "0 1px 3px rgba(0,0,0,0.6)", pointerEvents: "none" }}>
-                        {p.label}
-                      </div>
-                      {/* Overlay status copy - fade+scale in saat baru diklik */}
-                      <div className={justCopied ? "rpv-tpl-copied-overlay rpv-tpl-copied-overlay--on" : "rpv-tpl-copied-overlay"}
-                        style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(22,163,74,0.82)", pointerEvents: "none" }}>
-                        <span className="rpv-tpl-copied-badge" style={{ display: "flex", alignItems: "center", gap: 5, color: "#fff", fontSize: 11, fontWeight: 800 }}>
-                          <Check size={16} /> Tersalin
-                        </span>
-                      </div>
-                    </button>
-                  );
-                })}
               </div>
+              <div style={{ marginTop: 6, fontSize: 10.5, color: t.lo, fontWeight: 600 }}>{filteredPhotos.length} foto{searchQuery ? ` cocok dari ${allPhotos.length}` : ""}</div>
             </div>
-          </div>
-
-          {/* Kanan-bawah: drag & drop hasil Gemini - INI YG TAMPIL DI MODE TV */}
-          <div style={{ minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", background: t.card }}>
-            <div style={{ padding: "8px 12px", borderBottom: `1px solid ${t.lineSoft}`, display: "flex", alignItems: "center", gap: 7, flexShrink: 0 }}>
-              <UploadCloud size={13} color={MAGA} />
-              <span style={{ fontSize: 11.5, fontWeight: 800, color: t.hi }}>Upload Hasil Gemini</span>
-              <span style={{ marginLeft: "auto", fontSize: 10.5, color: t.lo, fontWeight: 700 }}>{aiPhotos.length} hasil · tampil di Mode TV</span>
-            </div>
-            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 10 }}>
-              <input ref={fileRef} type="file" accept="image/*" multiple onChange={onPick} style={{ display: "none" }} />
-              <div ref={dropRef}
-                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={onDrop}
-                onClick={() => fileRef.current?.click()}
-                style={{ height: 64, borderRadius: 12, border: `1.5px dashed ${dragOver ? MAGA : `${MAGA}66`}`, background: dragOver ? "rgba(198,22,141,0.16)" : "rgba(198,22,141,0.08)", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, cursor: uploading ? "not-allowed" : "pointer" }}>
-                {uploading ? <Loader2 size={16} color="#E29BDC" style={{ animation: "spin .8s linear infinite" }} /> : <UploadCloud size={16} color="#E29BDC" />}
-                <span style={{ fontSize: 11.5, fontWeight: 800, color: "#E29BDC" }}>{uploading ? "Mengunggah…" : "Seret file hasil Gemini ke sini, atau klik"}</span>
-              </div>
-
-              {aiPhotos.length > 0 ? (
-                <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(78px, 1fr))", gap: 7 }}>
-                  {aiPhotos.map((p) => (
-                    <div key={p.photo_code} style={{ position: "relative", borderRadius: 9, overflow: "hidden", aspectRatio: "1/1", background: "#000" }}>
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 8 }}>
+              {sessionState === "loading" && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: t.lo, padding: "10px 6px" }}>
+                  <Loader2 size={13} style={{ animation: "spin .8s linear infinite" }} /> Memuat foto…
+                </div>
+              )}
+              {sessionState === "ready" && filteredPhotos.length === 0 && (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "30px 0", color: t.lo }}>
+                  <ImageOff size={20} />
+                  <span style={{ fontSize: 11 }}>{searchQuery ? "Photo ID tidak ditemukan" : "Belum ada foto masuk"}</span>
+                </div>
+              )}
+              {filteredPhotos.map((p) => {
+                const active = p.photo_code === selectedCode;
+                return (
+                  <button key={p.photo_code} onClick={() => setSelectedCode(p.photo_code)}
+                    style={{
+                      width: "100%", display: "flex", alignItems: "center", gap: 10, padding: 8, marginBottom: 6, borderRadius: 12,
+                      border: `1.5px solid ${active ? MAGA : "transparent"}`, background: active ? `${MAGA}1c` : t.fieldBg, cursor: "pointer", fontFamily: FONT, textAlign: "left",
+                    }}>
+                    <div style={{ width: 42, height: 42, borderRadius: 9, overflow: "hidden", flexShrink: 0, background: "#000" }}>
                       <img src={p.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-                      <div style={{ position: "absolute", top: 4, left: 4, display: "flex", alignItems: "center", gap: 3, fontSize: 8, fontWeight: 800, color: "#fff", background: `linear-gradient(135deg,${VIO},${MAGA})`, borderRadius: 999, padding: "2px 6px" }}>
-                        <Sparkles size={7} /> AI
-                      </div>
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 5, padding: "22px 0", color: t.lo }}>
-                  <ImageOff size={18} />
-                  <span style={{ fontSize: 11 }}>Belum ada hasil Gemini diunggah</span>
-                </div>
-              )}
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span style={{ fontSize: 13, fontWeight: 800, color: t.hi, fontFamily: "monospace", letterSpacing: "0.04em" }}>{p.queue_label || "—"}</span>
+                        {p.is_ai_result && (
+                          <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 8, fontWeight: 800, color: "#fff", background: `linear-gradient(135deg,${VIO},${MAGA})`, borderRadius: 999, padding: "1.5px 5px" }}>
+                            <Sparkles size={7} /> AI
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: 10, color: t.lo, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.photo_code}</div>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
+          </div>
+
+          {/* Kanan: panel printer - preview crop/zoom + bingkai + ukuran + cetak */}
+          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", background: t.bg }} className="rpv-ps-right">
+            {!selectedPhoto ? (
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, color: t.lo }}>
+                <Printer size={26} />
+                <span style={{ fontSize: 12.5, fontWeight: 700 }}>Pilih foto di daftar kiri (atau scan/cari Photo ID) untuk mulai cetak</span>
+              </div>
+            ) : (
+              <>
+                <div style={{ padding: "10px 16px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                  <Printer size={14} color={RED} />
+                  <span style={{ fontSize: 12.5, fontWeight: 800, color: t.hi }}>Cetak Foto</span>
+                  <span style={{ fontFamily: "monospace", fontSize: 12, color: MAGA, fontWeight: 800, letterSpacing: "0.04em" }}>{selectedPhoto.queue_label}</span>
+                  <button onClick={handlePrint}
+                    style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 7, height: 36, padding: "0 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontWeight: 800, fontSize: 12.5, cursor: "pointer", fontFamily: FONT }}>
+                    <Printer size={14} /> Cetak
+                  </button>
+                </div>
+
+                <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 18, display: "flex", flexDirection: "column", alignItems: "center", gap: 18 }}>
+                  {/* Preview crop/zoom - drag utk geser, tombol/scroll utk zoom */}
+                  <div style={{ width: "100%", maxWidth: 340 }}>
+                    <div
+                      onWheel={(e) => { e.preventDefault(); zoomBy(e.deltaY < 0 ? 0.1 : -0.1); }}
+                      style={{ boxShadow: "0 10px 30px rgba(0,0,0,0.45)" }}>
+                      <PhotoFrame photo={selectedPhoto} ratio={printRatio} crop={crop} frame={frameKey} mode="screen"
+                        queueLabel={selectedPhoto.queue_label} sessionTitle={session?.title}
+                        imgRef={imgRef} onPointerDown={onCropPointerDown} />
+                    </div>
+                    <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                      <button onClick={() => zoomBy(-0.15)} title="Perkecil" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><Minus size={13} /></button>
+                      <span style={{ fontSize: 11, color: t.lo, fontWeight: 700, width: 40, textAlign: "center" }}>{Math.round(crop.zoom * 100)}%</span>
+                      <button onClick={() => zoomBy(0.15)} title="Perbesar" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}><ZoomIn size={13} /></button>
+                      <button onClick={resetCrop} title="Reset posisi/zoom" style={{ marginLeft: 6, fontSize: 10.5, color: t.lo, fontWeight: 700, background: "transparent", border: "none", cursor: "pointer", fontFamily: FONT }}>Reset</button>
+                    </div>
+                    <div style={{ marginTop: 2, textAlign: "center", fontSize: 10, color: t.lo }}>Geser gambar utk atur posisi · scroll/tombol utk zoom</div>
+                  </div>
+
+                  {/* Ukuran cetak */}
+                  <div style={{ width: "100%", maxWidth: 340 }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: t.mid, marginBottom: 8 }}>UKURAN CETAK</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {PRINT_PRESETS.map((preset) => (
+                        <button key={preset.key} onClick={() => setPrintSizeKey(preset.key)}
+                          style={{
+                            padding: "7px 11px", borderRadius: 9, border: `1.5px solid ${printSizeKey === preset.key ? MAGA : t.line}`,
+                            background: printSizeKey === preset.key ? `${MAGA}22` : t.card, color: printSizeKey === preset.key ? "#fff" : t.mid,
+                            fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
+                          }}>
+                          {preset.label}{preset.key !== "custom" ? ` · ${preset.w}×${preset.h}cm` : ""}
+                        </button>
+                      ))}
+                    </div>
+                    {printSizeKey === "custom" && (
+                      <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
+                        <input type="number" min="1" max="60" value={customW} onChange={(e) => setCustomW(e.target.value)}
+                          style={{ width: 64, height: 34, borderRadius: 8, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontSize: 12, textAlign: "center" }} />
+                        <span style={{ fontSize: 11, color: t.lo }}>cm ×</span>
+                        <input type="number" min="1" max="90" value={customH} onChange={(e) => setCustomH(e.target.value)}
+                          style={{ width: 64, height: 34, borderRadius: 8, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontSize: 12, textAlign: "center" }} />
+                        <span style={{ fontSize: 11, color: t.lo }}>cm</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Bingkai */}
+                  <div style={{ width: "100%", maxWidth: 340 }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: t.mid, marginBottom: 8 }}>BINGKAI</div>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {FRAME_PRESETS.map((f) => (
+                        <button key={f.key} onClick={() => setFrameKey(f.key)}
+                          style={{
+                            flex: 1, padding: "9px 8px", borderRadius: 9, border: `1.5px solid ${frameKey === f.key ? MAGA : t.line}`,
+                            background: frameKey === f.key ? `${MAGA}22` : t.card, color: frameKey === f.key ? "#fff" : t.mid,
+                            fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
+                          }}>
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
+      )}
+
+      {/* Lembar cetak sungguhan - TERSEMBUNYI di layar, HANYA muncul saat
+          window.print() (lihat .rpv-print-sheet-wrap di <style> bawah).
+          @page diatur dinamis persis ukuran cetak yg dipilih operator. */}
+      {selectedPhoto && (
+        <div className="rpv-print-sheet-wrap">
+          <PhotoFrame photo={selectedPhoto} ratio={printRatio} crop={crop} frame={frameKey} mode="print"
+            queueLabel={selectedPhoto.queue_label} sessionTitle={session?.title} />
+        </div>
+      )}
+      <style>{`@page { size: ${printRatio.w}cm ${printRatio.h}cm; margin: 0; }`}</style>
+
+      {scanOpen && (
+        <RpvScanSheet
+          onClose={() => setScanOpen(false)}
+          onDetect={(digits) => { setScanOpen(false); selectByDigits(digits, { autoPrint: true }); }}
+        />
       )}
 
       {settingsOpen && (
@@ -701,51 +566,31 @@ export default function RpvControlRoom() {
         *{box-sizing:border-box}
         :root{color-scheme: dark;}
 
-        /* ── Mobile (HP) - overhaul tampilan ─────────────────────────────
-           1) Grid kerja 2x2 jadi 1 kolom (scroll vertikal per-quadrant).
-           2) Header menyusut & tidak overflow: label teks disembunyikan,
-              tinggal ikon; divider disembunyikan.
-           3) Semua <input>/<textarea> dipaksa font-size 16px supaya iOS
-              Safari TIDAK auto-zoom saat difokus (bug klasik mobile web).
-           4) Tombol2 penting diperbesar sedikit biar nyaman disentuh jari
-              (target sentuh minimal ~40px, standar aksesibilitas mobile). */
+        /* Lembar cetak sungguhan - disembunyikan total di layar biasa,
+           HANYA dirender saat print (window.print()) lewat @media print
+           di bawah - operator TIDAK PERNAH melihatnya kecuali di dialog
+           print/hasil cetak fisik. */
+        .rpv-print-sheet-wrap { display: none; }
+        @media print {
+          body * { visibility: hidden !important; }
+          .rpv-print-sheet-wrap, .rpv-print-sheet-wrap * { visibility: visible !important; }
+          .rpv-print-sheet-wrap { display: block !important; position: fixed; inset: 0; margin: 0; padding: 0; }
+        }
+
+        /* ── Mobile (HP) - responsif ──────────────────────────────────── */
         @media (max-width: 860px) {
-          .rpv-room-grid { grid-template-columns: 1fr !important; grid-template-rows: repeat(4, minmax(280px,1fr)) !important; overflow-y: auto; }
+          .rpv-ps-layout { flex-direction: column; overflow-y: auto; }
+          .rpv-ps-left { width: 100% !important; max-height: 40vh; }
           .rpv-header { padding: 8px 10px !important; gap: 6px !important; }
           .rpv-header-back-label { display: none; }
           .rpv-header-divider { display: none; }
           .rpv-header-summary { max-width: 40vw !important; font-size: 11.5px !important; }
           .rpv-header-viewer-label { display: none; }
           input, textarea, select { font-size: 16px !important; }
-          .rpv-tpl-card:hover { transform: none; box-shadow: none; }
-          .rpv-tpl-card:hover .rpv-tpl-thumb img { transform: none; }
         }
         @media (max-width: 480px) {
           .rpv-header-summary { max-width: 32vw !important; }
         }
-
-        /* Kartu Template Prompt: hover = thumbnail zoom halus, klik = pop
-           kecil biar berasa "ngeklik", overlay hijau "Tersalin" fade+scale in. */
-        .rpv-tpl-card { transition: transform .18s ease, box-shadow .18s ease; }
-        .rpv-tpl-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,0.28); }
-        .rpv-tpl-card:active { transform: translateY(0) scale(0.97); }
-        .rpv-tpl-thumb img { transition: transform .35s cubic-bezier(.22,1,.36,1); }
-        .rpv-tpl-card:hover .rpv-tpl-thumb img { transform: scale(1.12); }
-        .rpv-tpl-copied-overlay { opacity: 0; transform: scale(0.85); transition: opacity .2s ease, transform .2s cubic-bezier(.34,1.56,.64,1); }
-        .rpv-tpl-copied-overlay--on { opacity: 1; transform: scale(1); animation: rpv-tpl-flash .55s ease; }
-        @keyframes rpv-tpl-flash { 0%{opacity:0;transform:scale(0.7)} 55%{opacity:1;transform:scale(1.08)} 100%{opacity:1;transform:scale(1)} }
-        .rpv-tpl-copied-badge { animation: rpv-tpl-badge-pop .4s cubic-bezier(.34,1.56,.64,1); }
-        @keyframes rpv-tpl-badge-pop { 0%{transform:scale(0.5);opacity:0} 100%{transform:scale(1);opacity:1} }
-
-        /* Foto preview kamera: draggable ke tab Gemini - kasih affordance
-           visual (grab cursor + badge hint yg pulse halus) & sedikit zoom
-           saat mulai di-drag supaya kerasa "kepegang". */
-        .rpv-drag-photo:active { cursor: grabbing; }
-        .rpv-drag-photo-wrap:hover .rpv-drag-photo { transform: scale(1.015); transition: transform .25s ease; }
-        .rpv-drag-hint { animation: rpv-drag-hint-pulse 2.4s ease-in-out infinite; }
-        @keyframes rpv-drag-hint-pulse { 0%,100%{ transform: translateX(-50%) translateY(0); } 50%{ transform: translateX(-50%) translateY(-3px); } }
-        .rpv-drag-hint-icon { animation: rpv-drag-hint-wiggle 1.6s ease-in-out infinite; }
-        @keyframes rpv-drag-hint-wiggle { 0%,100%{ transform: translateX(0); } 50%{ transform: translateX(2px); } }
       `}</style>
     </div>
   );
@@ -997,6 +842,237 @@ function DeleteSessionModal({ session, onCancel, onDeleted }) {
             {deleting ? <Loader2 size={14} style={{ animation: "spin .8s linear infinite" }} /> : <Trash2 size={14} />} Hapus Sesi
           </button>
         </div>
+      </div>
+      <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
+    </div>
+  );
+}
+
+
+/** Sheet "Scan QR" - MENGGANTIKAN kolom pencarian manual (bukan pelengkap):
+ * arahkan kamera ke QR yg muncul di layar sukses-upload tamu (lihat
+ * `upload/[code]/prompt/page.jsx` > GeminiUploadSuccessScreen, QR-nya
+ * berisi teks polos 5 digit Photo ID) → begitu 5 digit VALID terbaca,
+ * LANGSUNG panggil onDetect (tanpa tombol konfirmasi apa pun, sesuai
+ * permintaan: "scan ... maka dia akan memproses langsung mempront") →
+ * pemanggil (`RpvControlRoom`) yg urus pilih foto + auto-print.
+ *
+ * Diadaptasi dari pola `app/martahub/m/_shared/QrScanSheet.jsx` (decoder
+ * jsQR murni JS via CDN, jalan di semua browser ber-kamera - BUKAN
+ * BarcodeDetector native yg cuma didukung sebagian browser). Loader
+ * `loadJsQR()` sengaja DIDUPLIKASI lokal (bukan diimpor dari file
+ * MartaHub itu, yg khusus fitur lain) - dgn id script tag berbeda supaya
+ * tidak bentrok kalau kedua fitur kebetulan dipakai di tab yg sama. */
+function loadJsQR() {
+  return new Promise((resolve, reject) => {
+    if (typeof window === "undefined") return reject(new Error("no window"));
+    if (window.jsQR) return resolve(window.jsQR);
+    const existing = document.getElementById("rpv-jsqr-cdn");
+    if (existing) {
+      existing.addEventListener("load", () => resolve(window.jsQR));
+      existing.addEventListener("error", () => reject(new Error("load fail")));
+      return;
+    }
+    const scr = document.createElement("script");
+    scr.id = "rpv-jsqr-cdn";
+    scr.src = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js";
+    scr.async = true;
+    scr.onload = () => resolve(window.jsQR);
+    scr.onerror = () => reject(new Error("load fail"));
+    document.head.appendChild(scr);
+  });
+}
+
+function RpvScanSheet({ onClose, onDetect }) {
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const boxRef = useRef(null);
+  const streamRef = useRef(null);
+  const rafRef = useRef(null);
+  const firedRef = useRef(false);
+
+  const [scanning, setScanning] = useState(false);
+  const [detected, setDetected] = useState(false);
+  const [manual, setManual] = useState(false);
+  const [manualVal, setManualVal] = useState("");
+  const [camErr, setCamErr] = useState("");
+
+  const stop = useCallback(() => {
+    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    streamRef.current?.getTracks().forEach((tr) => tr.stop());
+    streamRef.current = null;
+  }, []);
+
+  const onDetectRef = useRef(onDetect);
+  useEffect(() => { onDetectRef.current = onDetect; });
+
+  useEffect(() => {
+    let alive = true;
+    firedRef.current = false;
+
+    (async () => {
+      if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+        setCamErr("Kamera tidak tersedia di perangkat ini. Gunakan input manual.");
+        setManual(true);
+        return;
+      }
+      let jsQR;
+      try {
+        jsQR = await loadJsQR();
+      } catch {
+        if (!alive) return;
+        setCamErr("Gagal memuat pemindai QR. Gunakan input manual.");
+        setManual(true);
+        return;
+      }
+      if (!alive) return;
+      try {
+        const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" } }, audio: false });
+        if (!alive) { st.getTracks().forEach((tr) => tr.stop()); return; }
+        streamRef.current = st;
+        const v = videoRef.current;
+        if (v) { v.setAttribute("playsinline", "true"); v.srcObject = st; await v.play().catch(() => {}); }
+        setScanning(true);
+
+        const canvas = canvasRef.current || document.createElement("canvas");
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        let last = 0, lastSeen = 0;
+
+        const tick = (ts) => {
+          if (!alive) return;
+          const vid = videoRef.current, box = boxRef.current;
+          if (vid && vid.readyState >= 2 && vid.videoWidth > 0 && ts - last > 80) {
+            last = ts;
+            const vw = vid.videoWidth, vh = vid.videoHeight;
+            const scale = Math.min(1, 560 / Math.max(vw, vh));
+            const w = Math.round(vw * scale), h = Math.round(vh * scale);
+            canvas.width = w; canvas.height = h;
+            ctx.drawImage(vid, 0, 0, w, h);
+            let img;
+            try { img = ctx.getImageData(0, 0, w, h); } catch { img = null; }
+            const code = img ? jsQR(img.data, w, h, { inversionAttempts: "attemptBoth" }) : null;
+
+            if (box) {
+              if (box.width !== vw) { box.width = vw; box.height = vh; }
+              const bx = box.getContext("2d");
+              bx.clearRect(0, 0, vw, vh);
+              if (code && code.location) {
+                const fx = vw / w, fy = vh / h, L = code.location;
+                const c = [L.topLeftCorner, L.topRightCorner, L.bottomRightCorner, L.bottomLeftCorner].map((p) => ({ x: p.x * fx, y: p.y * fy }));
+                bx.lineWidth = Math.max(3, vw * 0.008); bx.lineCap = "round"; bx.lineJoin = "round";
+                bx.strokeStyle = "#FFD400";
+                const frac = 0.3;
+                for (let i = 0; i < 4; i++) {
+                  const p = c[i], a = c[(i + 3) % 4], b = c[(i + 1) % 4];
+                  const pa = { x: p.x + (a.x - p.x) * frac, y: p.y + (a.y - p.y) * frac };
+                  const pb = { x: p.x + (b.x - p.x) * frac, y: p.y + (b.y - p.y) * frac };
+                  bx.beginPath(); bx.moveTo(pa.x, pa.y); bx.lineTo(p.x, p.y); bx.lineTo(pb.x, pb.y); bx.stroke();
+                }
+              }
+            }
+
+            if (code && code.data) {
+              const digits = String(code.data).trim().replace(/\D/g, "");
+              if (digits.length === 5) {
+                lastSeen = ts; setDetected(true);
+                if (!firedRef.current) {
+                  firedRef.current = true;
+                  stop();
+                  onDetectRef.current(digits);
+                  return;
+                }
+              }
+            } else if (ts - lastSeen > 500) {
+              setDetected(false);
+            }
+          }
+          rafRef.current = requestAnimationFrame(tick);
+        };
+        rafRef.current = requestAnimationFrame(tick);
+      } catch {
+        if (!alive) return;
+        setCamErr("Kamera tidak dapat diakses. Izinkan akses kamera atau gunakan input manual.");
+        setManual(true);
+      }
+    })();
+
+    return () => { alive = false; stop(); };
+  }, [stop]);
+
+  const close = () => { stop(); onClose(); };
+  const manualDigits = manualVal.trim().replace(/\D/g, "");
+  const manualOk = manualDigits.length === 5;
+  const confirmManual = () => {
+    if (!manualOk) return;
+    stop();
+    onDetect(manualDigits);
+  };
+
+  return (
+    <div onClick={close} style={{ position: "fixed", inset: 0, background: "rgba(10,10,12,0.92)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center", fontFamily: FONT }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, background: t.card, borderRadius: "24px 24px 0 0", padding: "10px 18px calc(env(safe-area-inset-bottom,0px) + 20px)" }}>
+        <div style={{ width: 38, height: 4, borderRadius: 99, background: "rgba(255,255,255,0.18)", margin: "6px auto 14px" }} />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: t.hi, display: "flex", alignItems: "center", gap: 8 }}>
+            <QrCode size={16} /> Scan QR Photo ID
+          </div>
+          <button onClick={close} style={{ width: 30, height: 30, borderRadius: 10, border: "none", background: "rgba(255,255,255,0.08)", color: t.hi, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <X size={16} />
+          </button>
+        </div>
+
+        <canvas ref={canvasRef} style={{ display: "none" }} />
+
+        {!manual && (
+          <div style={{ position: "relative", width: "100%", aspectRatio: "1/1", borderRadius: 18, overflow: "hidden", background: "#000" }}>
+            <video ref={videoRef} playsInline muted style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
+            <canvas ref={boxRef} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }} />
+            {!detected && (
+              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
+                <div style={{ width: "64%", aspectRatio: "1/1", borderRadius: 20, border: "2.5px dashed rgba(255,255,255,0.7)" }} />
+              </div>
+            )}
+            <div style={{ position: "absolute", bottom: 12, left: 0, right: 0, textAlign: "center", color: "#fff", fontSize: 12.5, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, textShadow: "0 1px 4px rgba(0,0,0,0.6)" }}>
+              {!scanning
+                ? <><Loader2 size={14} style={{ animation: "spin .85s linear infinite" }} /> Menyalakan kamera…</>
+                : detected
+                  ? <span style={{ color: "#4ADE80" }}>✓ QR terdeteksi, memproses…</span>
+                  : <><ScanLine size={14} /> Arahkan ke QR di layar tamu</>}
+            </div>
+          </div>
+        )}
+
+        {camErr && (
+          <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 9, padding: "11px 13px", borderRadius: 12, background: "rgba(220,38,38,0.14)", border: "1px solid rgba(220,38,38,0.3)" }}>
+            <AlertTriangle size={16} color="#F87171" style={{ flexShrink: 0 }} />
+            <div style={{ fontSize: 12, color: "#FCA5A5", fontWeight: 600, lineHeight: 1.5 }}>{camErr}</div>
+          </div>
+        )}
+
+        {manual ? (
+          <form onSubmit={(e) => { e.preventDefault(); confirmManual(); }} style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+            <div>
+              <label style={{ fontSize: 11.5, fontWeight: 700, color: t.lo }}>Photo ID (5 digit)</label>
+              <input value={manualVal} onChange={(e) => setManualVal(e.target.value)} inputMode="numeric" enterKeyHint="done" placeholder="00042" autoFocus
+                style={{ width: "100%", height: 50, borderRadius: 13, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontFamily: "monospace", fontSize: 18, fontWeight: 800, letterSpacing: "0.1em", padding: "0 14px", outline: "none", marginTop: 6, boxSizing: "border-box" }} />
+            </div>
+            <button type="submit" disabled={!manualOk}
+              style={{ height: 50, borderRadius: 13, border: "none", background: manualOk ? `linear-gradient(135deg,${VIO},${MAGA})` : "rgba(255,255,255,0.1)", color: manualOk ? "#fff" : "rgba(255,255,255,0.35)", fontFamily: FONT, fontSize: 14.5, fontWeight: 800, cursor: manualOk ? "pointer" : "not-allowed" }}>
+              Cari &amp; Cetak
+            </button>
+            {!camErr && (
+              <button type="button" onClick={() => setManual(false)}
+                style={{ height: 44, borderRadius: 12, border: `1px solid ${t.line}`, background: "transparent", color: t.mid, fontFamily: FONT, fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}>
+                <QrCode size={14} /> Coba scan kamera lagi
+              </button>
+            )}
+          </form>
+        ) : !camErr && (
+          <button onClick={() => setManual(true)}
+            style={{ marginTop: 14, height: 44, width: "100%", borderRadius: 12, border: `1px solid ${t.line}`, background: "transparent", color: t.mid, fontFamily: FONT, fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}>
+            Ketik Photo ID manual
+          </button>
+        )}
       </div>
       <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
     </div>
