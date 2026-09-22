@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../../lib/supabase";
 import { canViewMarta } from "../../../lib/martaAccess";
 import { HubLogo } from "../../../components/HubLogo";
-import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, UserRound, ChevronRight, ChevronDown, Smartphone, LayoutDashboard, QrCode } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, UserRound, ChevronRight, ChevronDown, Camera, LayoutDashboard, QrCode } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -305,9 +305,9 @@ function MartaLoginInner() {
                   style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "16px 10px", borderRadius: 12, cursor: "pointer", fontFamily: FONT,
                     background: d ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.02)", border: `1.5px solid ${t.line}` }}>
                   <span style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff" }}>
-                    <Smartphone size={18} strokeWidth={2.2} />
+                    <Camera size={18} strokeWidth={2.2} />
                   </span>
-                  <span style={{ fontSize: 13, fontWeight: 800, color: t.hi }}>Mobile</span>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: t.hi }}>Camera</span>
                 </button>
                 <button onClick={() => router.push("/marta/photobooth")}
                   style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "16px 10px", borderRadius: 12, cursor: "pointer", fontFamily: FONT,

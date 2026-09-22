@@ -61,7 +61,7 @@ function loadJsQR() {
 export default function RpvScanPage() {
   const params = useParams();
   const code = (params?.code || "").toString().toUpperCase();
-  usePhotoboothServiceWorker();
+  usePhotoboothServiceWorker("scanner");
 
   const [state, setState] = useState("loading"); // loading | ready | notfound
   const [session, setSession] = useState(null);
@@ -140,7 +140,7 @@ export default function RpvScanPage() {
   if (!pairedStillOnline) {
     return (
       <>
-        <PhotoboothPwaHead />
+        <PhotoboothPwaHead variant="scanner" />
         <OperatorPicker
           sessionTitle={session?.title}
           operators={operators}
@@ -153,7 +153,7 @@ export default function RpvScanPage() {
 
   return (
     <>
-      <PhotoboothPwaHead />
+      <PhotoboothPwaHead variant="scanner" />
       <ScannerView
         sessionTitle={session?.title}
         pairedLabel={pairedLabel}

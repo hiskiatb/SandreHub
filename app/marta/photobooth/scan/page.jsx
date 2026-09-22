@@ -37,7 +37,7 @@ export default function RpvScanLanding() {
     setLeavingCode(code);
     setTimeout(() => router.push(`/marta/photobooth/scan/${code}`), PAGE_LEAVE_MS);
   };
-  usePhotoboothServiceWorker();
+  usePhotoboothServiceWorker("scanner");
 
   useEffect(() => {
     (async () => {
@@ -51,7 +51,7 @@ export default function RpvScanLanding() {
 
   return (
     <div className={leavingCode ? "rpv-scango-page rpv-scango-page--leaving" : "rpv-scango-page"} style={{ minHeight: "100svh", background: BG, fontFamily: FONT, colorScheme: "dark", position: "relative" }}>
-      <PhotoboothPwaHead />
+      <PhotoboothPwaHead variant="scanner" />
       <div className="rpv-scango-ambient" aria-hidden="true">
         <div className="rpv-scango-ambient-blob rpv-scango-ambient-blob--a" />
         <div className="rpv-scango-ambient-blob rpv-scango-ambient-blob--b" />
