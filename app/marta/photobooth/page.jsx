@@ -77,7 +77,7 @@ function PhotoFrame({ photo, ratio, crop, frame, mode, queueLabel, sessionTitle,
       : { position: "absolute", inset: 0 };
   return (
     <div style={{
-      ...sizeStyle, position: "relative", overflow: "hidden", background: isPolaroid ? "#fff" : "#000",
+      ...sizeStyle, position: "relative", overflow: "hidden", backgroundColor: isPolaroid ? "#fff" : "#000",
       borderRadius: mode === "print" ? 0 : 10,
       border: isBrand ? `${mode === "print" ? "0.25cm" : "6px"} solid transparent` : "none",
       backgroundImage: isBrand ? `linear-gradient(#fff,#fff), linear-gradient(135deg,${RED},${MAGA})` : undefined,
@@ -102,7 +102,7 @@ function PhotoFrame({ photo, ratio, crop, frame, mode, queueLabel, sessionTitle,
       </div>
       {isPolaroid && (
         <div style={{ position: "absolute", left: "4%", right: "4%", bottom: "4%", height: "10%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: FONT }}>
-          <span style={{ fontSize: mode === "print" ? "0.32cm" : 10.5, fontWeight: 800, color: "#17181C" }}>{sessionTitle || "Photobooth"}</span>
+          <span style={{ fontSize: mode === "print" ? "0.32cm" : 10.5, fontWeight: 800, color: "#17181C" }}>{sessionTitle || "FlashPrint"}</span>
           <span style={{ fontSize: mode === "print" ? "0.26cm" : 9, color: "#8A8A96", fontFamily: "monospace", letterSpacing: "0.06em" }}>{queueLabel}</span>
         </div>
       )}

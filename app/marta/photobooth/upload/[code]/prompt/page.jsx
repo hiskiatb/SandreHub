@@ -1,41 +1,55 @@
 "use client";
 /**
  * /marta/photobooth/upload/[code]/prompt — halaman PUBLIK (tanpa login),
- * versi MOBILE dari fitur "Template Prompt" yang sebelumnya cuma ada di
- * layar operator (Ruang Kontrol web). Sekarang tamu SENDIRI yang:
- *   1. Pilih 1 template di sini -> teks prompt-nya langsung tersalin
- *      (tinggal ditempel/paste di app Gemini).
+ * SEKARANG jadi PINTU MASUK UTAMA tamu (bukan lagi menu kamera manual -
+ * lihat perubahan start_url PWA & redirect /go/[code]) - jadi didesain
+ * ulang total ("masih kurang profesional... redesign total gaya darkmode
+ * profesional rapi"): tema gelap penuh senada dgn Ruang Kontrol operator
+ * (bukan lagi kartu putih di atas app dark), TANPA tombol kembali di
+ * header (halaman ini akar/home, tidak ada "atasnya" utk dikembalikan),
+ * dan pakai SPLASH boot penuh-layar bergaya sama dgn `MartaSplash` di
+ * app/martahub/m/_shared/MobileShell.jsx (logo icon PWA Photobooth +
+ * animasi spring-in/breathe/shimmer + bar loading) selagi sesi & daftar
+ * prompt dimuat - relevan krn halaman ini yg bakal di-install sbg PWA.
+ *
+ * Alur (tak berubah, cuma tampilannya):
+ *   1. Pilih 1 template -> teks prompt-nya langsung tersalin.
  *   2. Pindah ke app Gemini di HP-nya SENDIRI - foto & generate di sana.
  *   3. Download hasilnya ke galeri HP.
  *   4. Balik ke sini, tekan "Upload Gambar Gemini Anda" -> pilih hasil
  *      Gemini dari galeri -> diunggah ke sesi ini.
  *   5. Begitu SUKSES masuk database, tampil layar sukses dgn QR code +
- *      "Photo ID" (nomor antrian 5 digit, unik per sesi - lihat
- *      rpv_confirm_gemini_photo di lib/rpv.js) - ini yang disebutkan tamu
- *      ke petugas cetak / di-scan operator lewat mode Scanner (Fase 2).
- *
- * Operator TIDAK LAGI perlu memilih prompt sendiri di layar Ruang Kontrol -
- * semua sudah selesai di HP tamu sampai foto masuk DB; layar operator
- * (Fase 2) fokus penuh ke pencarian/scan + cetak.
+ *      "Photo ID" (nomor antrian 5 digit, unik per sesi).
+ * "Kelola Template Prompt" (tombol gerigi di header) tetap ada - tamu/
+ * operator bisa tambah/edit/hapus template langsung dari HP.
  */
 import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import Link from "next/link";
 import QRCode from "qrcode";
 import {
-  AlertTriangle, ArrowLeft, Camera, Check, ImagePlus, Loader2,
-  Sparkles, Ticket,
+  AlertTriangle, Check, ImagePlus, Loader2,
+  Pencil, Plus, Settings2, Sparkles, Ticket, Trash2, X,
 } from "lucide-react";
-import { getRpvSession, listRpvPrompts, uploadRpvGeminiResult } from "../../../../../../lib/rpv";
+import { addRpvPrompt, deleteRpvPrompt, getRpvSession, listRpvPrompts, updateRpvPrompt, uploadRpvGeminiResult, uploadRpvPromptImage } from "../../../../../../lib/rpv";
 import { PhotoboothPwaHead, usePhotoboothServiceWorker } from "../../../_pwa";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED = "#ED1C24";
 const MAGA = "#C6168D";
 const VIO = "#7C3AED";
-const INK = "#111116";
-const LINE = "#E4E2EA";
-const SUB = "#8A8A96";
+
+// ── Tema gelap - senada dgn palet Ruang Kontrol operator (app/marta/
+// photobooth/page.jsx > `t`), supaya identitas visual Photobooth konsisten
+// di HP tamu MAUPUN panel operator, bukan lagi kartu terang di app gelap. ──
+const BG = "#0A0A0B";
+const CARD = "#1A1B1D";
+const CARD_HI = "#212226";
+const LINE = "rgba(255,255,255,0.09)";
+const LINE_SOFT = "rgba(255,255,255,0.06)";
+const FIELD = "#111213";
+const INK = "#F1F1F3";
+const MID = "#B4B4BC";
+const SUB = "#84848C";
 
 export default function RpvPromptUploadPage() {
   const params = useParams();
@@ -47,6 +61,7 @@ export default function RpvPromptUploadPage() {
   const [session, setSession] = useState(null);
   const [prompts, setPrompts] = useState([]);
   const [copiedId, setCopiedId] = useState("");
+  const [manageOpen, setManageOpen] = useState(false); // sheet "Kelola Prompt" - tamu/operator bisa tambah & edit template lgs dr HP
 
   // upload: idle | uploading | done | error
   const [upload, setUpload] = useState({ phase: "idle", progress: 0, error: "", result: null });
@@ -66,13 +81,15 @@ export default function RpvPromptUploadPage() {
   }, [code]);
 
   // Begitu berhasil upload, generate QR code (isi = Photo ID 5-digit saja,
-  // BUKAN url) - supaya mode Scanner operator (Fase 2) tinggal decode teks
-  // digitnya langsung tanpa parsing URL, & petugas juga bisa baca angkanya
-  // manual kalau scanner tidak dipakai.
+  // BUKAN url) - supaya mode Scanner operator tinggal decode teks digitnya
+  // langsung tanpa parsing URL, & petugas juga bisa baca angkanya manual
+  // kalau scanner tidak dipakai. Warna QR disesuaikan tema gelap (kotak
+  // putih, modul gelap - QR TETAP kontras tinggi & mudah discan meski
+  // ditampilkan di atas background gelap).
   useEffect(() => {
     if (upload.phase !== "done" || !upload.result?.queueLabel) return;
     let alive = true;
-    QRCode.toDataURL(upload.result.queueLabel, { margin: 1, width: 260, color: { dark: "#111116", light: "#FFFFFF" } })
+    QRCode.toDataURL(upload.result.queueLabel, { margin: 1, width: 280, color: { dark: "#111116", light: "#FFFFFF" } })
       .then((url) => { if (alive) setQrUrl(url); })
       .catch(() => {});
     return () => { alive = false; };
@@ -118,14 +135,16 @@ export default function RpvPromptUploadPage() {
   const resetUpload = () => setUpload({ phase: "idle", progress: 0, error: "", result: null });
 
   if (state === "loading") {
-    return <Center><Loader2 size={26} color={VIO} style={{ animation: "spin 1s linear infinite" }} /></Center>;
+    return <RpvPhotoboothSplash />;
   }
   if (state === "notfound") {
     return (
       <Center>
-        <AlertTriangle size={30} color={VIO} />
-        <div style={{ marginTop: 12, fontSize: 15, fontWeight: 700, color: INK }}>Sesi tidak ditemukan</div>
-        <div style={{ marginTop: 4, fontSize: 13, color: SUB, textAlign: "center", maxWidth: 280 }}>Link ini sudah tidak berlaku atau sesi photobooth belum aktif.</div>
+        <span style={{ width: 58, height: 58, borderRadius: 18, background: "rgba(237,28,36,0.12)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <AlertTriangle size={26} color={RED} />
+        </span>
+        <div style={{ marginTop: 16, fontSize: 15.5, fontWeight: 800, color: INK }}>Sesi tidak ditemukan</div>
+        <div style={{ marginTop: 5, fontSize: 12.5, color: SUB, textAlign: "center", maxWidth: 280, lineHeight: 1.55 }}>Link ini sudah tidak berlaku atau sesi photobooth belum aktif.</div>
       </Center>
     );
   }
@@ -136,36 +155,43 @@ export default function RpvPromptUploadPage() {
         result={upload.result}
         qrUrl={qrUrl}
         onUploadMore={resetUpload}
-        onBackToCamera={() => { resetUpload(); }}
-        code={code}
+        onDone={resetUpload}
       />
     );
   }
 
   return (
-    <div style={{ minHeight: "100svh", background: "#F4F4F6", fontFamily: FONT, display: "flex", flexDirection: "column" }}>
+    <div style={{ minHeight: "100svh", background: BG, fontFamily: FONT, display: "flex", flexDirection: "column", colorScheme: "dark", position: "relative" }}>
       <PhotoboothPwaHead />
-      <div style={{ padding: "18px 18px 14px", background: "#fff", borderBottom: `1px solid ${LINE}`, position: "sticky", top: 0, zIndex: 5 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <Link href={`/marta/photobooth/upload/${code}`}
-            style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 11, background: "#F4F4F6", border: `1px solid ${LINE}`, display: "flex", alignItems: "center", justifyContent: "center", color: "#5A5A68" }}>
-            <ArrowLeft size={16} />
-          </Link>
-          <span style={{ width: 38, height: 38, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${VIO},${MAGA})`, color: "#fff", flexShrink: 0 }}>
-            <Sparkles size={17} />
+      <div className="rpv-m-ambient" aria-hidden="true">
+        <div className="rpv-m-ambient-blob rpv-m-ambient-blob--a" />
+        <div className="rpv-m-ambient-blob rpv-m-ambient-blob--b" />
+        <div className="rpv-m-ambient-dots" />
+      </div>
+      {/* Header - TANPA tombol kembali: halaman ini akar/pintu masuk utama
+          tamu (start_url PWA & redirect /go/[code] mendarat di sini), jadi
+          tidak ada "layar sebelumnya" yg relevan utk dikembalikan. */}
+      <div style={{ padding: "16px 18px", background: CARD, borderBottom: `1px solid ${LINE}`, position: "sticky", top: 0, zIndex: 5, flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+          <span style={{ width: 40, height: 40, borderRadius: 13, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${VIO},${MAGA})`, flexShrink: 0, boxShadow: `0 8px 20px -6px ${VIO}66`, overflow: "hidden" }}>
+            <img src="/photobooth/icon-192.png" alt="FlashPrint" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
           </span>
           <div style={{ minWidth: 0, flex: 1 }}>
-            <div style={{ fontSize: 15, fontWeight: 800, color: INK, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>Edit dengan Gemini AI</div>
-            <div style={{ fontSize: 11, color: SUB, marginTop: 1 }}>{session?.title}</div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: INK, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", letterSpacing: "-0.01em" }}>{session?.title}</div>
           </div>
+          <button onClick={() => setManageOpen(true)} title="Kelola Prompt"
+            style={{ flexShrink: 0, width: 38, height: 38, borderRadius: 12, background: FIELD, border: `1px solid ${LINE}`, display: "flex", alignItems: "center", justifyContent: "center", color: MID, cursor: "pointer" }}>
+            <Settings2 size={16} />
+          </button>
         </div>
       </div>
 
-      <div style={{ flex: 1, padding: "18px 16px 40px", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
+      <div style={{ flex: 1, padding: "20px 16px 44px", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box", position: "relative", zIndex: 1 }}>
         {/* Langkah 1 - pilih template, klik = langsung copy teks prompt */}
         <SectionLabel n={1} text="Pilih Template & Salin Prompt" hint="Ketuk salah satu, teksnya langsung tersalin" />
+
         {prompts.length === 0 ? (
-          <div style={{ padding: "22px 14px", borderRadius: 14, background: "#fff", border: `1.5px dashed ${LINE}`, textAlign: "center" }}>
+          <div style={{ padding: "26px 14px", borderRadius: 16, background: CARD, border: `1.5px dashed ${LINE}`, textAlign: "center" }}>
             <span style={{ fontSize: 12, color: SUB, fontWeight: 600 }}>Belum ada template prompt di sesi ini.</span>
           </div>
         ) : (
@@ -176,18 +202,21 @@ export default function RpvPromptUploadPage() {
                 <button key={p.id} onClick={() => copyPromptText(p)}
                   className="rpv-m-tpl-card"
                   style={{ display: "flex", flexDirection: "column", border: "none", background: "transparent", padding: 0, cursor: "pointer", fontFamily: FONT, textAlign: "left" }}>
-                  <div className="rpv-m-tpl-thumb" style={{ position: "relative", width: "100%", aspectRatio: "1/1", borderRadius: 14, overflow: "hidden", background: "#E4E2EA", border: `1px solid ${LINE}` }}>
+                  <div className="rpv-m-tpl-thumb" style={{ position: "relative", width: "100%", aspectRatio: "1/1", borderRadius: 16, overflow: "hidden", background: CARD_HI, border: `1px solid ${LINE}` }}>
                     {p.promptImageUrl ? (
                       <img src={p.promptImageUrl} alt={p.label} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                     ) : (
                       <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: SUB }}><Sparkles size={18} /></div>
                     )}
-                    <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg,rgba(0,0,0,0) 55%,rgba(0,0,0,0.62) 100%)" }} />
+                    <div style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg,rgba(0,0,0,0) 50%,rgba(0,0,0,0.78) 100%)" }} />
                     <div style={{ position: "absolute", left: 6, right: 6, bottom: 6, fontSize: 10, fontWeight: 800, color: "#fff", textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {p.label}
                     </div>
                     <div className={justCopied ? "rpv-m-tpl-copied rpv-m-tpl-copied--on" : "rpv-m-tpl-copied"}>
-                      <Check size={20} color="#fff" strokeWidth={3} />
+                      <span className="rpv-m-tpl-copied-ring">
+                        <Check size={18} color="#fff" strokeWidth={3.2} />
+                      </span>
+                      <span className="rpv-m-tpl-copied-label">Tersalin!</span>
                     </div>
                   </div>
                 </button>
@@ -197,70 +226,120 @@ export default function RpvPromptUploadPage() {
         )}
 
         {/* Langkah 2 - instruksi singkat ke Gemini */}
-        <div style={{ marginTop: 18, padding: "12px 14px", borderRadius: 14, background: "#F7F4FB", border: `1px solid ${VIO}33`, display: "flex", gap: 10, alignItems: "flex-start" }}>
-          <span style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 999, background: VIO, color: "#fff", fontSize: 12, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>2</span>
-          <div style={{ fontSize: 11.5, color: "#4A3A66", lineHeight: 1.55, fontWeight: 600 }}>
-            Buka app <b>Gemini</b> di HP kamu, tempel (paste) prompt yang tadi tersalin, foto/generate di sana, lalu <b>download hasilnya</b> ke galeri HP.
+        <div style={{ marginTop: 20, padding: "13px 14px", borderRadius: 16, background: `${VIO}14`, border: `1px solid ${VIO}3D`, display: "flex", gap: 10, alignItems: "flex-start" }}>
+          <span style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 8, background: VIO, color: "#fff", fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1 }}>2</span>
+          <div style={{ fontSize: 11.5, color: "#D5C7EE", lineHeight: 1.6, fontWeight: 600 }}>
+            Buka app <b style={{ color: "#fff" }}>Gemini</b> di HP kamu, <b style={{ color: "#fff" }}>ambil/upload foto</b> langsung di sana, lalu tempel (paste) prompt yang tadi tersalin untuk generate, dan <b style={{ color: "#fff" }}>download hasilnya</b> ke galeri HP.
           </div>
         </div>
 
         {/* Langkah 3 - upload hasil Gemini */}
-        <SectionLabel n={3} text="Upload Gambar Gemini Anda" hint="Pilih hasil Gemini dari galeri HP kamu" style={{ marginTop: 20 }} />
+        <SectionLabel n={3} text="Upload Gambar Gemini Anda" hint="Pilih hasil Gemini dari galeri HP kamu" style={{ marginTop: 22 }} />
         <input ref={fileRef} type="file" accept="image/*" onChange={onPickGeminiFile} style={{ display: "none" }} />
 
         {upload.phase === "idle" && (
-          <button onClick={() => fileRef.current?.click()}
+          <button onClick={() => fileRef.current?.click()} className="rpv-m-upload-zone"
             style={{
-              width: "100%", height: 118, borderRadius: 18, cursor: "pointer", fontFamily: FONT,
-              background: "#fff", border: `1.5px dashed ${MAGA}55`,
-              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 9,
+              width: "100%", borderRadius: 18, cursor: "pointer", fontFamily: FONT,
+              background: `linear-gradient(180deg, ${CARD_HI} 0%, ${CARD} 100%)`, border: `1.5px dashed ${MAGA}4D`,
+              padding: "26px 18px", boxSizing: "border-box",
+              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12,
             }}>
-            <div style={{ width: 44, height: 44, borderRadius: 13, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff" }}>
-              <ImagePlus size={20} />
+            <div style={{ width: 50, height: 50, borderRadius: 15, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", boxShadow: `0 10px 22px -8px ${MAGA}88` }}>
+              <ImagePlus size={21} />
             </div>
-            <span style={{ fontSize: 13.5, fontWeight: 800, color: "#17181C" }}>Upload Gambar Gemini Anda</span>
-            <span style={{ fontSize: 10.5, color: SUB, fontWeight: 600 }}>Buka galeri HP kamu</span>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+              <span style={{ fontSize: 13.5, fontWeight: 800, color: INK }}>Upload Gambar Gemini Anda</span>
+              <span style={{ fontSize: 10.5, color: SUB, fontWeight: 600 }}>Ketuk untuk buka galeri HP kamu</span>
+            </div>
           </button>
         )}
 
         {upload.phase === "uploading" && (
-          <div style={{ width: "100%", height: 118, borderRadius: 18, background: "#fff", border: `1.5px solid ${LINE}`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10 }}>
+          <div style={{ width: "100%", padding: "26px 18px", boxSizing: "border-box", borderRadius: 18, background: `linear-gradient(180deg, ${CARD_HI} 0%, ${CARD} 100%)`, border: `1.5px solid ${LINE}`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
             <Loader2 size={24} color={MAGA} style={{ animation: "spin 1s linear infinite" }} />
-            <span style={{ fontSize: 12.5, fontWeight: 700, color: "#5A5A68" }}>Mengunggah… {Math.round(upload.progress * 100)}%</span>
-            <div style={{ width: "70%", height: 5, borderRadius: 99, background: "#EFEDF3", overflow: "hidden" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: MID }}>Mengunggah… {Math.round(upload.progress * 100)}%</span>
+            <div style={{ width: "70%", height: 5, borderRadius: 99, background: FIELD, overflow: "hidden" }}>
               <div style={{ height: "100%", borderRadius: 99, width: `${upload.progress * 100}%`, background: `linear-gradient(90deg,${RED},${MAGA})`, transition: "width .2s ease" }} />
             </div>
           </div>
         )}
 
         {upload.phase === "error" && (
-          <div style={{ width: "100%", borderRadius: 18, background: "#FDEDED", border: "1.5px solid #F3B8B8", padding: "16px 14px", display: "flex", flexDirection: "column", alignItems: "center", gap: 10, textAlign: "center" }}>
-            <AlertTriangle size={22} color="#C62828" />
-            <span style={{ fontSize: 12, fontWeight: 700, color: "#C62828" }}>{upload.error}</span>
+          <div style={{ width: "100%", borderRadius: 18, background: "rgba(198,40,40,0.12)", border: "1.5px solid rgba(198,40,40,0.4)", padding: "18px 14px", display: "flex", flexDirection: "column", alignItems: "center", gap: 11, textAlign: "center" }}>
+            <AlertTriangle size={22} color="#FF8A8F" />
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#FF8A8F" }}>{upload.error}</span>
             <button onClick={resetUpload}
               style={{ height: 38, padding: "0 18px", borderRadius: 10, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 12.5, fontWeight: 800, fontFamily: FONT, cursor: "pointer" }}>
               Coba Lagi
             </button>
           </div>
         )}
-
-        <Link href={`/marta/photobooth/upload/${code}`}
-          style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 5, marginTop: 18, fontSize: 11.5, color: SUB, fontWeight: 700, textDecoration: "none" }}>
-          <Camera size={13} /> atau kembali ke Menu Kamera biasa
-        </Link>
       </div>
+
+      {manageOpen && (
+        <RpvPromptManagerSheet
+          code={code}
+          prompts={prompts}
+          onClose={() => setManageOpen(false)}
+          onChanged={(next) => setPrompts(next)}
+        />
+      )}
       <style>{`
+        @keyframes rpv-m-ambient-drift-a {
+          0%, 100% { transform: translate(-8%, 6%) scale(1); }
+          50%       { transform: translate(6%, -4%) scale(1.18); }
+        }
+        @keyframes rpv-m-ambient-drift-b {
+          0%, 100% { transform: translate(10%, 4%) scale(1.1); }
+          50%       { transform: translate(-6%, -6%) scale(0.92); }
+        }
+        @keyframes rpv-m-ambient-pulse {
+          0%, 100% { opacity: 0.45; }
+          50%       { opacity: 0.8; }
+        }
+        .rpv-m-ambient { position: fixed; left: 0; right: 0; bottom: 0; height: 38svh; pointer-events: none; z-index: 0; overflow: hidden; }
+        .rpv-m-ambient-blob { position: absolute; border-radius: 50%; filter: blur(46px); }
+        .rpv-m-ambient-blob--a {
+          left: 6%; bottom: -22%; width: 62%; aspect-ratio: 1; background: radial-gradient(circle, ${MAGA}47 0%, transparent 68%);
+          animation: rpv-m-ambient-drift-a 10s ease-in-out infinite, rpv-m-ambient-pulse 5.5s ease-in-out infinite;
+        }
+        .rpv-m-ambient-blob--b {
+          right: 2%; bottom: -26%; width: 56%; aspect-ratio: 1; background: radial-gradient(circle, ${VIO}40 0%, transparent 68%);
+          animation: rpv-m-ambient-drift-b 12s ease-in-out infinite, rpv-m-ambient-pulse 7s ease-in-out infinite 1.2s;
+        }
+        .rpv-m-ambient-dots {
+          position: absolute; inset: 0;
+          background-image: radial-gradient(${MAGA}80 1px, transparent 1.6px);
+          background-size: 22px 22px;
+          -webkit-mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.75) 60%, rgba(0,0,0,0.4) 100%);
+          mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.75) 60%, rgba(0,0,0,0.4) 100%);
+          animation: rpv-m-ambient-pulse 3.6s ease-in-out infinite;
+        }
         @keyframes spin { to { transform: rotate(360deg); } }
         * { box-sizing: border-box; }
+        body { background: ${BG}; }
         .rpv-m-tpl-card { transition: transform .15s ease; }
         .rpv-m-tpl-card:active { transform: scale(0.95); }
+        .rpv-m-upload-zone { transition: border-color .15s ease, transform .15s ease; }
+        .rpv-m-upload-zone:active { transform: scale(0.985); border-color: ${MAGA}99; }
         .rpv-m-tpl-copied {
-          position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-          background: rgba(21,128,61,0.0); opacity: 0; pointer-events: none;
-          transition: opacity .18s ease, background .18s ease;
+          position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px;
+          background: rgba(10,10,11,0); backdrop-filter: blur(0px); opacity: 0; pointer-events: none;
+          transition: opacity .2s ease, background .2s ease;
         }
-        .rpv-m-tpl-copied--on { opacity: 1; background: rgba(21,128,61,0.62); animation: rpv-m-flash .5s ease; }
-        @keyframes rpv-m-flash { 0% { transform: scale(0.6); opacity: 0; } 55% { transform: scale(1.12); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+        .rpv-m-tpl-copied--on {
+          opacity: 1; background: rgba(10,10,11,0.62); backdrop-filter: blur(2px);
+          animation: rpv-m-copied-in .42s cubic-bezier(.34,1.56,.64,1) both;
+        }
+        .rpv-m-tpl-copied-ring {
+          width: 34px; height: 34px; border-radius: 999px; display: flex; align-items: center; justify-content: center;
+          background: linear-gradient(135deg,#22C55E,#16A34A); box-shadow: 0 0 0 5px rgba(34,197,94,0.22), 0 6px 16px -4px rgba(0,0,0,0.5);
+          animation: rpv-m-copied-pop .42s cubic-bezier(.34,1.56,.64,1) .04s both;
+        }
+        .rpv-m-tpl-copied-label { font-size: 10px; font-weight: 800; color: #fff; letter-spacing: 0.02em; text-shadow: 0 1px 4px rgba(0,0,0,0.5); }
+        @keyframes rpv-m-copied-in { 0% { opacity: 0; } 100% { opacity: 1; } }
+        @keyframes rpv-m-copied-pop { 0% { transform: scale(0.3); opacity: 0; } 65% { transform: scale(1.14); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
       `}</style>
     </div>
   );
@@ -268,11 +347,11 @@ export default function RpvPromptUploadPage() {
 
 function SectionLabel({ n, text, hint, style }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, ...style }}>
-      <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 999, background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>{n}</span>
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 11, ...style }}>
+      <span style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 8, background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1 }}>{n}</span>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: INK }}>{text}</div>
-        {hint && <div style={{ fontSize: 10.5, color: SUB, fontWeight: 600 }}>{hint}</div>}
+        <div style={{ fontSize: 13.5, fontWeight: 800, color: INK }}>{text}</div>
+        {hint && <div style={{ fontSize: 10.5, color: SUB, fontWeight: 600, marginTop: 1 }}>{hint}</div>}
       </div>
     </div>
   );
@@ -280,50 +359,51 @@ function SectionLabel({ n, text, hint, style }) {
 
 /** Layar sukses upload hasil Gemini - QR code + Photo ID (nomor antrian 5
  * digit) besar & jelas, supaya tamu tinggal tunjukkan/sebutkan ke petugas
- * cetak, atau petugas scan QR-nya langsung (mode Scanner, Fase 2). */
-function GeminiUploadSuccessScreen({ result, qrUrl, onUploadMore, onBackToCamera, code }) {
+ * cetak, atau petugas scan QR-nya langsung (mode Scanner). Tema gelap,
+ * kartu QR tetap PUTIH (kontras scan tetap maksimal). */
+function GeminiUploadSuccessScreen({ result, qrUrl, onUploadMore, onDone }) {
   return (
-    <div style={{ minHeight: "100svh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: "#F4F4F6", fontFamily: FONT }}>
+    <div style={{ minHeight: "100svh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: BG, fontFamily: FONT }}>
       <div style={{ textAlign: "center", maxWidth: 340, width: "100%" }}>
-        <div style={{ position: "relative", width: 84, height: 84, margin: "0 auto" }}>
-          <div className="rpv-m-success-pop" style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "rgba(21,128,61,0.1)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+        <div style={{ position: "relative", width: 86, height: 86, margin: "0 auto" }}>
+          <div className="rpv-m-success-pop" style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "rgba(21,128,61,0.16)", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <svg width="42" height="42" viewBox="0 0 52 52">
-              <circle className="rpv-m-success-circle" cx="26" cy="26" r="23" fill="none" stroke="#15803D" strokeWidth="2.5" strokeLinecap="round" />
-              <path className="rpv-m-success-tick" d="M15 27l7.5 7.5L37.5 18" fill="none" stroke="#15803D" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
+              <circle className="rpv-m-success-circle" cx="26" cy="26" r="23" fill="none" stroke="#4ADE80" strokeWidth="2.5" strokeLinecap="round" />
+              <path className="rpv-m-success-tick" d="M15 27l7.5 7.5L37.5 18" fill="none" stroke="#4ADE80" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </div>
         </div>
-        <div style={{ marginTop: 16, fontSize: 17, fontWeight: 800, color: "#17181C" }}>Foto Gemini Berhasil Diunggah!</div>
-        <div style={{ marginTop: 6, fontSize: 12.5, color: "#6B6B76", lineHeight: 1.6 }}>
-          Tunjukkan atau sebutkan <b>Photo ID</b> di bawah ini ke petugas untuk mencetak fotomu.
+        <div style={{ marginTop: 18, fontSize: 17.5, fontWeight: 800, color: INK }}>Foto Gemini Berhasil Diunggah!</div>
+        <div style={{ marginTop: 7, fontSize: 12.5, color: MID, lineHeight: 1.65 }}>
+          Tunjukkan atau sebutkan <b style={{ color: INK }}>Photo ID</b> di bawah ini ke petugas untuk mencetak fotomu.
         </div>
 
-        <div style={{ marginTop: 20, padding: 18, borderRadius: 20, background: "#fff", border: `1.5px solid ${LINE}` }}>
+        <div style={{ marginTop: 22, padding: 20, borderRadius: 22, background: "#fff" }}>
           {qrUrl ? (
-            <img src={qrUrl} alt="QR Code" style={{ width: 176, height: 176, margin: "0 auto", display: "block", borderRadius: 10 }} />
+            <img src={qrUrl} alt="QR Code" style={{ width: 184, height: 184, margin: "0 auto", display: "block", borderRadius: 12 }} />
           ) : (
-            <div style={{ width: 176, height: 176, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Loader2 size={22} color={SUB} style={{ animation: "spin 1s linear infinite" }} />
+            <div style={{ width: 184, height: 184, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Loader2 size={22} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
             </div>
           )}
-          <div style={{ marginTop: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+          <div style={{ marginTop: 15, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
             <Ticket size={16} color={MAGA} />
-            <span style={{ fontSize: 9.5, fontWeight: 800, color: SUB, letterSpacing: 0.3 }}>PHOTO ID</span>
+            <span style={{ fontSize: 9.5, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.3 }}>PHOTO ID</span>
           </div>
-          <div style={{ marginTop: 2, fontSize: 34, fontWeight: 900, color: INK, letterSpacing: "0.08em", fontFamily: "monospace" }}>
+          <div style={{ marginTop: 2, fontSize: 34, fontWeight: 900, color: "#17181C", letterSpacing: "0.08em", fontFamily: "monospace" }}>
             {result.queueLabel}
           </div>
         </div>
 
-        <div style={{ marginTop: 22, display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 10 }}>
           <button onClick={onUploadMore}
-            style={{ width: "100%", height: 48, borderRadius: 12, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FONT, cursor: "pointer" }}>
+            style={{ width: "100%", height: 50, borderRadius: 13, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FONT, cursor: "pointer" }}>
             Upload Gemini Lagi
           </button>
-          <Link href={`/marta/photobooth/upload/${code}`} onClick={onBackToCamera}
-            style={{ width: "100%", height: 48, borderRadius: 12, border: `1.5px solid ${LINE}`, background: "#fff", color: "#5A5A68", fontSize: 14, fontWeight: 700, fontFamily: FONT, cursor: "pointer", textDecoration: "none", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <button onClick={onDone}
+            style={{ width: "100%", height: 50, borderRadius: 13, border: `1.5px solid ${LINE}`, background: CARD, color: MID, fontSize: 14, fontWeight: 700, fontFamily: FONT, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
             Selesai
-          </Link>
+          </button>
         </div>
       </div>
       <style>{`
@@ -339,9 +419,354 @@ function GeminiUploadSuccessScreen({ result, qrUrl, onUploadMore, onBackToCamera
   );
 }
 
+/** Sheet "Kelola Prompt" - tamu/operator bisa tambah template BARU atau
+ * edit/hapus yg sudah ada, langsung dari HP. Dirombak ulang ("perbaiki lagi
+ * tampilan untuk edit prompt dan tambahkan prompt") jadi 2 bagian yg jelas
+ * terpisah: daftar template tersimpan (kartu lebih lega, thumbnail lebih
+ * besar) di atas, dan form tambah/edit sbg KARTU TERSENDIRI dgn header +
+ * label field yg eksplisit di bawahnya - bukan lagi form padat tanpa label
+ * yg nyatu sama tombol upload gambar kecil. */
+function RpvPromptManagerSheet({ code, prompts, onClose, onChanged }) {
+  const [deletingId, setDeletingId] = useState("");
+  const [err, setErr] = useState("");
+  const [formOpen, setFormOpen] = useState(false); // popup terpisah utk tambah/edit ("pakai pop up saja")
+  const [editingPrompt, setEditingPrompt] = useState(null); // null = mode tambah baru, selain itu = objek prompt yg diedit
+
+  const openAdd = () => { setEditingPrompt(null); setFormOpen(true); };
+  const openEdit = (p) => { setEditingPrompt(p); setFormOpen(true); };
+  const closeForm = () => { setFormOpen(false); setEditingPrompt(null); };
+
+  const handleDelete = async (promptId) => {
+    if (deletingId) return;
+    setDeletingId(promptId);
+    try {
+      await deleteRpvPrompt(code, promptId);
+      onChanged(prompts.filter((p) => p.id !== promptId));
+    } catch { setErr("Gagal menghapus prompt."); }
+    finally { setDeletingId(""); }
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center", fontFamily: FONT }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 520, maxHeight: "92svh", background: BG, borderRadius: "24px 24px 0 0", display: "flex", flexDirection: "column", overflow: "hidden", border: `1px solid ${LINE}`, borderBottom: "none" }}>
+        <div style={{ width: 36, height: 4, borderRadius: 99, background: "rgba(255,255,255,0.18)", margin: "10px auto 4px", flexShrink: 0 }} />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 18px 14px", flexShrink: 0, borderBottom: `1px solid ${LINE}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ width: 32, height: 32, borderRadius: 10, background: `${MAGA}22`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Settings2 size={15} color={MAGA} />
+            </span>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: INK }}>Kelola Template Prompt</div>
+              <div style={{ fontSize: 10.5, color: SUB, fontWeight: 600, marginTop: 1 }}>{prompts.length} template tersimpan</div>
+            </div>
+          </div>
+          <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 10, border: "none", background: FIELD, color: MID, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+            <X size={15} />
+          </button>
+        </div>
+
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 18px 22px" }}>
+          {err && (
+            <div style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 7, padding: "9px 11px", borderRadius: 10, background: "rgba(198,40,40,0.14)", border: "1px solid rgba(198,40,40,0.35)" }}>
+              <AlertTriangle size={13} color="#FF8A8F" style={{ flexShrink: 0 }} />
+              <span style={{ fontSize: 11, color: "#FF8A8F", fontWeight: 700 }}>{err}</span>
+            </div>
+          )}
+
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 9 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 800, color: SUB, textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              Template Tersimpan
+            </div>
+            <button onClick={openAdd}
+              style={{ display: "flex", alignItems: "center", gap: 6, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 11.5, fontWeight: 800, padding: "8px 13px", borderRadius: 10, cursor: "pointer", fontFamily: FONT }}>
+              <Plus size={13} /> Tambah Template
+            </button>
+          </div>
+
+          {prompts.length === 0 ? (
+            <div style={{ padding: "24px 14px", borderRadius: 16, background: CARD, border: `1.5px dashed ${LINE}`, textAlign: "center" }}>
+              <Sparkles size={18} color={SUB} style={{ marginBottom: 6 }} />
+              <div style={{ fontSize: 12, color: SUB, fontWeight: 600 }}>Belum ada template - ketuk &ldquo;Tambah Template&rdquo; utk menambahkan.</div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {prompts.map((p) => (
+                <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 11, background: CARD, border: `1.5px solid ${LINE}`, borderRadius: 14, padding: "10px 12px" }}>
+                  {p.promptImageUrl ? (
+                    <img src={p.promptImageUrl} alt="" style={{ width: 48, height: 48, borderRadius: 11, objectFit: "cover", flexShrink: 0 }} />
+                  ) : (
+                    <div style={{ width: 48, height: 48, borderRadius: 11, flexShrink: 0, background: FIELD, display: "flex", alignItems: "center", justifyContent: "center", color: SUB }}>
+                      <Sparkles size={16} />
+                    </div>
+                  )}
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: INK, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.label}</div>
+                    {p.prompt_text ? (
+                      <div style={{ fontSize: 11, color: SUB, marginTop: 2, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.prompt_text}</div>
+                    ) : (
+                      <div style={{ fontSize: 11, color: SUB, marginTop: 2, fontStyle: "italic" }}>Belum ada teks prompt</div>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
+                    <button onClick={() => openEdit(p)} title="Edit"
+                      style={{ width: 30, height: 30, borderRadius: 9, border: `1px solid ${LINE}`, background: "transparent", color: MID, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                      <Pencil size={13} />
+                    </button>
+                    <button onClick={() => handleDelete(p.id)} disabled={deletingId === p.id} title="Hapus"
+                      style={{ width: 30, height: 30, borderRadius: 9, border: `1px solid ${LINE}`, background: "transparent", color: "#FF8A8F", display: "flex", alignItems: "center", justifyContent: "center", cursor: deletingId === p.id ? "not-allowed" : "pointer" }}>
+                      {deletingId === p.id ? <Loader2 size={13} style={{ animation: "spin .8s linear infinite" }} /> : <Trash2 size={13} />}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {formOpen && (
+        <RpvPromptFormPopup
+          code={code}
+          prompts={prompts}
+          editingPrompt={editingPrompt}
+          onClose={closeForm}
+          onChanged={onChanged}
+        />
+      )}
+      <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
+    </div>
+  );
+}
+
+/** Popup terpisah utk tambah/edit template - dipisah dari sheet daftar
+ * ("untuk tambah template baru dan edit template itu menggunakan pop up
+ * saja"), jadi sheet "Kelola Template Prompt" cuma daftar + tombol Tambah,
+ * dan form-nya sendiri muncul sbg kartu modal di TENGAH layar (di atas
+ * sheet), dgn tombol X utk batal. */
+function RpvPromptFormPopup({ code, prompts, editingPrompt, onClose, onChanged }) {
+  const imgRef = useRef(null);
+  const isEditing = !!editingPrompt;
+  const [label, setLabel] = useState(editingPrompt?.label || "");
+  const [text, setText] = useState(editingPrompt?.prompt_text || "");
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState("");
+  const [existingImageUrl, setExistingImageUrl] = useState(editingPrompt?.promptImageUrl || "");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const thumbUrl = preview || existingImageUrl;
+
+  const onPickImage = (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    setFile(f);
+    setPreview(URL.createObjectURL(f));
+  };
+
+  const removeImage = () => {
+    setFile(null); setPreview(""); setExistingImageUrl("");
+  };
+
+  const handleSave = async () => {
+    if (saving || (!text.trim() && !file && !existingImageUrl)) return;
+    setSaving(true); setErr("");
+    try {
+      let imagePath = null;
+      if (file) imagePath = await uploadRpvPromptImage(code, file);
+      if (isEditing) {
+        const row = await updateRpvPrompt(code, editingPrompt.id, label, text, imagePath);
+        if (row) onChanged(prompts.map((p) => (p.id === editingPrompt.id ? row : p)));
+      } else {
+        const row = await addRpvPrompt(code, label || `Template ${prompts.length + 1}`, text, imagePath);
+        if (row) onChanged([...prompts, row]);
+      }
+      onClose();
+    } catch (e) {
+      setErr(e.message || "Gagal menyimpan prompt.");
+    } finally { setSaving(false); }
+  };
+
+  const canSave = !saving && (text.trim() || file || existingImageUrl);
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.78)", zIndex: 260, display: "flex", alignItems: "center", justifyContent: "center", padding: 18, fontFamily: FONT }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 440, maxHeight: "88svh", overflowY: "auto", background: BG, border: `1.5px solid ${isEditing ? MAGA : LINE}`, borderRadius: 22, padding: 18, boxSizing: "border-box" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+            <span style={{ width: 30, height: 30, borderRadius: 10, background: isEditing ? `${MAGA}25` : `${RED}20`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              {isEditing ? <Pencil size={14} color={MAGA} /> : <Plus size={15} color={RED} />}
+            </span>
+            <span style={{ fontSize: 14.5, fontWeight: 800, color: INK }}>{isEditing ? "Edit Template" : "Tambah Template Baru"}</span>
+          </div>
+          <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 9, border: "none", background: FIELD, color: MID, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+            <X size={14} />
+          </button>
+        </div>
+
+        <div style={{ fontSize: 10.5, fontWeight: 700, color: SUB, marginBottom: 5 }}>Nama Template</div>
+        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="mis. Gaya Neon, Taj Mahal, Colosseum…" autoFocus
+          style={{ width: "100%", height: 42, borderRadius: 11, border: `1px solid ${LINE}`, background: FIELD, padding: "0 13px", fontSize: 13.5, fontFamily: FONT, color: INK, boxSizing: "border-box" }} />
+
+        <div style={{ fontSize: 10.5, fontWeight: 700, color: SUB, marginTop: 13, marginBottom: 5 }}>Isi Prompt Gemini</div>
+        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} placeholder="Tulis instruksi lengkap utk Gemini di sini - mis. latar belakang, pencahayaan, gaya foto…"
+          style={{ width: "100%", borderRadius: 11, border: `1px solid ${LINE}`, background: FIELD, padding: "10px 13px", fontSize: 13, lineHeight: 1.55, fontFamily: FONT, color: INK, boxSizing: "border-box", resize: "vertical" }} />
+
+        <div style={{ fontSize: 10.5, fontWeight: 700, color: SUB, marginTop: 13, marginBottom: 5 }}>Gambar Referensi <span style={{ fontWeight: 500, color: SUB, textTransform: "none" }}>(opsional)</span></div>
+        <input ref={imgRef} type="file" accept="image/*" onChange={onPickImage} style={{ display: "none" }} />
+        {thumbUrl ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 11, padding: 9, borderRadius: 12, background: FIELD, border: `1px solid ${LINE}` }}>
+            <img src={thumbUrl} alt="" style={{ width: 52, height: 52, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
+            <div style={{ minWidth: 0, flex: 1, fontSize: 11, color: MID, fontWeight: 600 }}>
+              {file ? file.name : "Gambar tersimpan"}
+            </div>
+            <button onClick={() => imgRef.current?.click()} title="Ganti gambar"
+              style={{ width: 30, height: 30, borderRadius: 9, border: `1px solid ${LINE}`, background: "transparent", color: MID, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+              <ImagePlus size={13} />
+            </button>
+            <button onClick={removeImage} title="Hapus gambar"
+              style={{ width: 30, height: 30, borderRadius: 9, border: `1px solid ${LINE}`, background: "transparent", color: "#FF8A8F", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+              <X size={13} />
+            </button>
+          </div>
+        ) : (
+          <button onClick={() => imgRef.current?.click()}
+            style={{ width: "100%", height: 58, borderRadius: 12, border: `1.5px dashed ${LINE}`, background: FIELD, color: SUB, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer", fontFamily: FONT }}>
+            <ImagePlus size={16} />
+            <span style={{ fontSize: 12, fontWeight: 700 }}>Tambah gambar referensi</span>
+          </button>
+        )}
+
+        {err && (
+          <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 7, padding: "9px 11px", borderRadius: 10, background: "rgba(198,40,40,0.14)", border: "1px solid rgba(198,40,40,0.35)" }}>
+            <AlertTriangle size={13} color="#FF8A8F" style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: 11, color: "#FF8A8F", fontWeight: 700 }}>{err}</span>
+          </div>
+        )}
+
+        <button onClick={handleSave} disabled={!canSave}
+          style={{ width: "100%", marginTop: 14, height: 46, borderRadius: 12, border: "none", background: canSave ? `linear-gradient(135deg,${RED},${MAGA})` : FIELD, color: canSave ? "#fff" : SUB, fontWeight: 800, fontSize: 13.5, cursor: canSave ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, fontFamily: FONT }}>
+          {saving ? <Loader2 size={15} style={{ animation: "spin .8s linear infinite" }} /> : isEditing ? <Check size={15} /> : <Plus size={15} />}
+          {isEditing ? "Simpan Perubahan" : "Tambah Template"}
+        </button>
+      </div>
+    </div>
+  );
+}
+/** Splash boot penuh-layar - dipakai selagi sesi & daftar prompt dimuat
+ * (`state === "loading"`). Gaya & pola animasi SAMA PERSIS dgn `MartaSplash`
+ * / `HubLogoLoader` di app/martahub/m/_shared/MobileShell.jsx &
+ * components/HubLogoLoader.jsx (spring-in -> shimmer sekali lewat -> breathe
+ * pelan terus-menerus, nama muncul naik, bar loading berdenyut) - cuma
+ * logo/copy-nya diganti identitas Photobooth (pakai ikon PWA yg sama dgn
+ * /photobooth/manifest.webmanifest) & wadahnya gelap, bukan diduplikasi
+ * dari file MartaHub (beda app/route group). */
+function RpvPhotoboothSplash() {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: BG, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, colorScheme: "dark" }}>
+      <style suppressHydrationWarning>{`
+        @keyframes pbs-ambient-drift-a {
+          0%, 100% { transform: translate(-8%, 6%) scale(1); }
+          50%       { transform: translate(6%, -4%) scale(1.18); }
+        }
+        @keyframes pbs-ambient-drift-b {
+          0%, 100% { transform: translate(10%, 4%) scale(1.1); }
+          50%       { transform: translate(-6%, -6%) scale(0.92); }
+        }
+        @keyframes pbs-ambient-pulse {
+          0%, 100% { opacity: 0.55; }
+          50%       { opacity: 0.9; }
+        }
+        @keyframes pbs-spring-in {
+          0%   { transform: scale(0.22) rotate(-8deg); opacity: 0; }
+          60%  { transform: scale(1.07) rotate(1deg);  opacity: 1; }
+          80%  { transform: scale(0.96) rotate(-0.3deg); }
+          100% { transform: scale(1.00) rotate(0deg);  opacity: 1; }
+        }
+        @keyframes pbs-breathe {
+          0%, 100% { transform: scale(1.00); }
+          50%       { transform: scale(1.045); }
+        }
+        @keyframes pbs-up {
+          0%   { transform: translateY(14px); opacity: 0; }
+          100% { transform: translateY(0px);  opacity: 1; }
+        }
+        @keyframes pbs-bar {
+          0%, 100% { transform: scaleX(0.18); opacity: 0.30; }
+          50%       { transform: scaleX(1.00); opacity: 1.00; }
+        }
+        @keyframes pbs-shimmer {
+          0%   { left: -120%; }
+          100% { left:  130%; }
+        }
+        .pbs-logo-box {
+          animation: pbs-spring-in 0.75s cubic-bezier(0.34,1.56,0.64,1) both,
+                     pbs-breathe   2.8s ease-in-out 0.9s infinite;
+        }
+        .pbs-shimmer-wrap { position:relative; overflow:hidden; display:inline-flex; border-radius:20px; }
+        .pbs-shimmer-wrap::after {
+          content:""; position:absolute; inset:0;
+          background:linear-gradient(105deg,transparent 30%,rgba(255,255,255,0.45) 50%,transparent 70%);
+          left:-120%;
+          animation: pbs-shimmer 1.8s ease-out 0.85s 1 forwards;
+        }
+        .pbs-name { animation: pbs-up 0.55s cubic-bezier(0.22,1,0.36,1) 0.55s both; }
+        .pbs-sub  { animation: pbs-up 0.55s cubic-bezier(0.22,1,0.36,1) 0.70s both; }
+        .pbs-bar-track { width:56px; height:3px; border-radius:99px; background:rgba(237,28,36,0.18); overflow:hidden; position:relative; }
+        .pbs-bar-fill  { position:absolute; inset:0; border-radius:99px; background:${RED}; transform-origin:left center; animation: pbs-bar 1.4s cubic-bezier(0.4,0,0.6,1) 0.9s infinite; }
+        .pbs-loader { animation: pbs-up 0.4s ease 1.0s both; }
+        .pbs-ambient { position: absolute; left: 0; right: 0; bottom: 0; height: 46%; pointer-events: none; z-index: 0; }
+        .pbs-ambient-blob { position: absolute; border-radius: 50%; filter: blur(46px); }
+        .pbs-ambient-blob--a {
+          left: 8%; bottom: -18%; width: 70%; aspect-ratio: 1; background: radial-gradient(circle, ${MAGA}59 0%, transparent 68%);
+          animation: pbs-ambient-drift-a 9s ease-in-out infinite, pbs-ambient-pulse 5s ease-in-out infinite;
+        }
+        .pbs-ambient-blob--b {
+          right: 4%; bottom: -22%; width: 62%; aspect-ratio: 1; background: radial-gradient(circle, ${VIO}52 0%, transparent 68%);
+          animation: pbs-ambient-drift-b 11s ease-in-out infinite, pbs-ambient-pulse 6.5s ease-in-out infinite 1.2s;
+        }
+        .pbs-ambient-dots {
+          position: absolute; inset: 0;
+          background-image: radial-gradient(${MAGA}99 1px, transparent 1.6px);
+          background-size: 22px 22px;
+          -webkit-mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.9) 55%, rgba(0,0,0,0.55) 100%);
+          mask-image: linear-gradient(180deg, transparent 0%, rgba(0,0,0,0.9) 55%, rgba(0,0,0,0.55) 100%);
+          animation: pbs-ambient-pulse 3.6s ease-in-out infinite;
+        }
+      `}</style>
+      <div className="pbs-ambient">
+        <div className="pbs-ambient-blob pbs-ambient-blob--a" />
+        <div className="pbs-ambient-blob pbs-ambient-blob--b" />
+        <div className="pbs-ambient-dots" />
+      </div>
+      <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 0 }}>
+        <div className="pbs-logo-box">
+          <div className="pbs-shimmer-wrap">
+            <img src="/photobooth/icon-192.png" alt="FlashPrint" draggable={false}
+              style={{ height: 84, width: 84, display: "block", borderRadius: 19 }} />
+          </div>
+        </div>
+        <div className="pbs-name" style={{ marginTop: 18 }}>
+          <span style={{ fontSize: 23, fontWeight: 700, letterSpacing: "-0.02em", color: "#fff" }}>
+            FlashPrint
+          </span>
+        </div>
+        <div className="pbs-sub" style={{ marginTop: 5 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: SUB }}>
+            Memuat sesi…
+          </span>
+        </div>
+        <div className="pbs-loader" style={{ marginTop: 30 }}>
+          <div className="pbs-bar-track"><div className="pbs-bar-fill" /></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Center({ children }) {
   return (
-    <div style={{ minHeight: "100svh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: "#F4F4F6", fontFamily: FONT, padding: 20 }}>
+    <div style={{ position: "fixed", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", background: BG, fontFamily: FONT, padding: 20, boxSizing: "border-box", colorScheme: "dark" }}>
       {children}
       <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
     </div>

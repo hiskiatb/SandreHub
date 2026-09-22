@@ -17,7 +17,7 @@ export default function RpvGoWithCode() {
   const code = (params?.code || "").toString().toUpperCase();
 
   useEffect(() => {
-    if (code) router.replace(`/marta/photobooth/upload/${code}`);
+    if (code) router.replace(`/marta/photobooth/upload/${code}/prompt`);
   }, [code, router]);
 
   return (

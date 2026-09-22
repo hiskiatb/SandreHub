@@ -1,8 +1,8 @@
 {
-  "name": "MartaHub Photobooth",
-  "short_name": "Photobooth",
-  "description": "Upload & lihat foto acara secara realtime - Photobooth MartaHub.",
-  "start_url": "/marta/photobooth",
+  "name": "FlashPrint by MartaHub",
+  "short_name": "FlashPrint",
+  "description": "Edit foto pakai Gemini AI & cetak instan - FlashPrint MartaHub.",
+  "start_url": "/marta/photobooth/go",
   "scope": "/marta/photobooth",
   "display": "standalone",
   "orientation": "portrait",

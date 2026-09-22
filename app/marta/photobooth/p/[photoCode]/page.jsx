@@ -102,7 +102,7 @@ export default function RpvPhotoDetailPage() {
       <div style={{ width: "100%", maxWidth: 420, display: "flex", flexDirection: "column", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
           <div style={{ width: 7, height: 7, borderRadius: 99, background: RED }} />
-          <span style={{ fontSize: 12, fontWeight: 700, color: "#B8B8C0", letterSpacing: "0.14em", textTransform: "uppercase" }}>Photobooth</span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "#B8B8C0", letterSpacing: "0.14em", textTransform: "uppercase" }}>FlashPrint</span>
         </div>
 
         <div style={{ width: "100%", borderRadius: 20, overflow: "hidden", background: "#000", boxShadow: "0 18px 44px rgba(0,0,0,0.45)" }}>
