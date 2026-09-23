@@ -69,6 +69,40 @@ export default function RpvViewerPage() {
   // jadi toggle saja, bukan ganti halaman.
   const [tvMode, setTvMode] = useState(startInTvMode);
   const [tvIndex, setTvIndex] = useState(0);
+  // "Keluar Mode TV" auto-hide - permintaan user: layar ini ditampilkan di
+  // TV booth (tanpa mouse aktif dipegang siapa2), jadi tombol keluar TIDAK
+  // boleh nongkrong permanen di layar - disembunyikan otomatis begitu
+  // kursor diam 2 DETIK (bukan 3dtk spt idle-hide carousel lightbox di
+  // bawah - lebih cepat krn ini murni tombol admin, bukan kontrol navigasi
+  // yg tamu mungkin masih butuh lihat), muncul lagi begitu ada gerakan
+  // mouse/tap/keyboard (spy operator yg lagi berdiri di depan TV masih bisa
+  // gampang keluar mode).
+  const [tvControlsHidden, setTvControlsHidden] = useState(false);
+  const tvIdleTimerRef = useRef(null);
+  const wakeTvControls = useCallback(() => {
+    setTvControlsHidden(false);
+    clearTimeout(tvIdleTimerRef.current);
+    tvIdleTimerRef.current = setTimeout(() => setTvControlsHidden(true), 2000);
+  }, []);
+  useEffect(() => {
+    if (!tvMode) { clearTimeout(tvIdleTimerRef.current); return; }
+    // Mulai idle-timer TANPA setState sinkron di badan effect (aturan
+    // react-hooks/set-state-in-effect) - tvControlsHidden sudah `false`
+    // secara default (state awal) tiap kali tvMode baru dinyalakan, jadi di
+    // sini cukup PASANG timer hide-nya saja, sama pola dgn idle-hide
+    // carousel (chromeHidden) di atas.
+    clearTimeout(tvIdleTimerRef.current);
+    tvIdleTimerRef.current = setTimeout(() => setTvControlsHidden(true), 2000);
+    window.addEventListener("mousemove", wakeTvControls);
+    window.addEventListener("touchstart", wakeTvControls);
+    window.addEventListener("keydown", wakeTvControls);
+    return () => {
+      window.removeEventListener("mousemove", wakeTvControls);
+      window.removeEventListener("touchstart", wakeTvControls);
+      window.removeEventListener("keydown", wakeTvControls);
+      clearTimeout(tvIdleTimerRef.current);
+    };
+  }, [tvMode, wakeTvControls]);
   const unsubRef = useRef(null);
   const touchStartXRef = useRef(null);
 
@@ -157,13 +191,17 @@ export default function RpvViewerPage() {
     });
   }, []);
 
-  // FIX: QR pojok kanan bawah SEBELUMNYA mengarah ke halaman "download
-  // semua foto sesi ini" - padahal yg dibutuhkan tamu adalah download FOTO
-  // MEREKA SENDIRI satu-satu, bukan zip semua foto orang lain. Diganti jadi
-  // QR ke halaman Upload (ajakan scan utk unggah/upload lagi) - QR download
-  // per-foto dipindah ke tiap tile foto di grid (lihat effect di bawah &
-  // render grid), supaya setiap tamu bisa scan QR TEPAT DI BAWAH fotonya
-  // sendiri utk mengunduhnya langsung ke HP.
+  // FIX (permintaan user - "QR yg ditunjukkan harus QR foto yg SEDANG
+  // tampil, ikut berubah real-time kalau foto ganti"): QR bawah Mode TV
+  // SEBELUMNYA pakai `qrUrl` yg dihitung dari `latestPhoto` (photos[0] -
+  // foto TERBARU diupload) - TIDAK SINKRON dgn `tvPhoto` (foto yg SEDANG
+  // ditampilkan carousel TV, bisa foto lain krn slideshow auto-geser tiap
+  // 6dtk). Sekarang QR Mode TV per-foto diambil LANGSUNG dari cache
+  // `photoQr[tvPhoto.photo_code]` (sudah digenerate proaktif utk SEMUA
+  // foto lewat effect di bawah) - lihat pemakaiannya di render Mode TV,
+  // dijamin selalu QR foto yg sedang tampil & ikut berubah otomatis begitu
+  // tvPhoto berganti. `qrUrl` di sini SEKARANG cuma dipakai utk kondisi
+  // "belum ada foto sama sekali" (ajakan scan utk upload pertama).
   const latestPhoto = photos[0] || null; // `photos` terurut terbaru-dulu
 
   useEffect(() => {
@@ -403,22 +441,36 @@ export default function RpvViewerPage() {
                 )}
               </div>
             </div>
-            <button onClick={() => setTvMode(false)}
-              style={{ display: "flex", alignItems: "center", gap: 8, height: 44, padding: "0 16px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.25)", background: "rgba(0,0,0,0.35)", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+            {/* Auto-hide begitu kursor diam 2dtk (tvControlsHidden) - layar
+                ini ditampilkan di TV booth jadi tombol admin ini tidak boleh
+                nongkrong permanen. Animasi fade+slide+scale halus (bukan
+                cuma toggle tampil/hilang mendadak) via CSS transition,
+                dgn pointerEvents dimatikan saat tersembunyi supaya tidak
+                "tembus klik" ke elemen di baliknya. */}
+            <button onClick={() => { setTvMode(false); setTvControlsHidden(false); }}
+              className="rpv-tv-exit-btn"
+              style={{
+                display: "flex", alignItems: "center", gap: 8, height: 44, padding: "0 16px", borderRadius: 12,
+                border: "1px solid rgba(255,255,255,0.25)", background: "rgba(0,0,0,0.4)", color: "#fff", fontWeight: 700, fontSize: 13,
+                cursor: "pointer", backdropFilter: "blur(6px)",
+                opacity: tvControlsHidden ? 0 : 1,
+                transform: tvControlsHidden ? "translateY(-10px) scale(0.92)" : "translateY(0) scale(1)",
+                pointerEvents: tvControlsHidden ? "none" : "auto",
+                transition: "opacity .5s cubic-bezier(.4,0,.2,1), transform .5s cubic-bezier(.4,0,.2,1), background-color .2s ease",
+              }}>
               <Minimize2 size={15} /> Keluar Mode TV
             </button>
           </div>
 
           {/* QR raksasa bawah - "SCAN TO DOWNLOAD" */}
-          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "min(6vh,56px) min(5vw,56px) min(5vh,44px)", background: "linear-gradient(0deg, rgba(0,0,0,0.72), transparent)", display: "flex", alignItems: "center", justifyContent: "center", gap: "min(3vw,32px)" }}>
-            <div style={{ background: "#fff", borderRadius: 18, padding: "clamp(10px,1.4vw,16px)", boxShadow: "0 20px 50px -14px rgba(0,0,0,0.6)" }}>
-              {qrUrl && <img src={qrUrl} alt={latestPhoto ? "QR lihat & download foto" : "QR upload"} style={{ width: "clamp(90px,11vw,150px)", height: "clamp(90px,11vw,150px)", display: "block" }} />}
-            </div>
-            <div>
+          <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "min(6vh,56px) min(5vw,56px) min(5vh,44px)", background: "linear-gradient(0deg, rgba(0,0,0,0.55), transparent)", display: "flex", alignItems: "flex-end", justifyContent: "flex-end", gap: "min(3vw,32px)" }}>
+            {/* Teks di KIRI, QR paling KANAN BAWAH (pojok layar) - permintaan
+                user ("qr nya di kanan bawah saja"). */}
+            <div style={{ textAlign: "right", maxWidth: "min(46vw, 420px)" }}>
               <div style={{ fontSize: "clamp(18px,2.4vw,30px)", fontWeight: 800, color: "#fff", letterSpacing: "0.02em" }}>{tvPhoto ? "SCAN TO DOWNLOAD" : "SCAN TO UPLOAD"}</div>
               <div style={{ fontSize: "clamp(12px,1.3vw,15px)", color: "rgba(255,255,255,0.75)", marginTop: 4 }}>{tvPhoto ? "Arahkan kamera HP ke QR ini utk lihat, download & share fotomu" : "Arahkan kamera HP ke QR ini untuk ikut unggah fotomu"}</div>
               {tvPhoto && (
-                <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+                <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "flex-end", gap: 8 }}>
                   <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: "clamp(11px,1.1vw,13px)", fontFamily: "monospace", color: "rgba(255,255,255,0.6)", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 999, padding: "5px 12px" }}>
                     <Camera size={13} /> {tvPhoto.queue_label || tvPhoto.photo_code}
                   </div>
@@ -431,6 +483,21 @@ export default function RpvViewerPage() {
                     </div>
                   )}
                 </div>
+              )}
+            </div>
+            <div style={{ background: "#fff", borderRadius: 18, padding: "clamp(10px,1.4vw,16px)", boxShadow: "0 20px 50px -14px rgba(0,0,0,0.6)", flexShrink: 0 }}>
+              {/* QR SELALU milik `tvPhoto` (foto yg SEDANG tampil di
+                  carousel TV, bkn cuma foto terbaru diupload) - diambil dr
+                  cache per-foto `photoQr` yg sudah digenerate utk semua
+                  foto, jadi otomatis ikut berganti begitu slideshow
+                  pindah ke foto lain. */}
+              {tvPhoto ? (
+                photoQr[tvPhoto.photo_code] && (
+                  <img key={tvPhoto.photo_code} src={photoQr[tvPhoto.photo_code]} alt="QR lihat & download foto ini"
+                    style={{ width: "clamp(90px,11vw,150px)", height: "clamp(90px,11vw,150px)", display: "block" }} />
+                )
+              ) : (
+                qrUrl && <img src={qrUrl} alt="QR upload" style={{ width: "clamp(90px,11vw,150px)", height: "clamp(90px,11vw,150px)", display: "block" }} />
               )}
             </div>
           </div>
@@ -459,7 +526,7 @@ export default function RpvViewerPage() {
 
         {/* Toggle "Mode TV" - full-bleed foto terbaru + QR raksasa, sesuai
             konsep mockup booth. */}
-        <button onClick={() => setTvMode(true)}
+        <button onClick={() => { setTvMode(true); setTvControlsHidden(false); }}
           style={{ display: "flex", alignItems: "center", gap: 8, height: 44, padding: "0 16px", borderRadius: 14, border: "1px solid rgba(255,255,255,0.12)", background: "linear-gradient(180deg, rgba(255,255,255,0.07), rgba(255,255,255,0.03))", color: "#E7E7EC", fontWeight: 700, fontSize: 13, cursor: "pointer", boxShadow: "0 10px 30px -12px rgba(0,0,0,0.5)" }}>
           <Maximize2 size={15} /> Mode TV
         </button>
@@ -736,6 +803,7 @@ export default function RpvViewerPage() {
         @keyframes rpv-live-dot{0%{box-shadow:0 0 0 0 rgba(52,211,153,0.55)}100%{box-shadow:0 0 0 6px rgba(52,211,153,0)}}
         @keyframes rpv-empty-ring{0%{transform:scale(0.85);opacity:0.9}100%{transform:scale(1.35);opacity:0}}
         @keyframes rpv-tv-fade{from{opacity:0;transform:scale(0.98)}to{opacity:1;transform:scale(1)}}
+        .rpv-tv-exit-btn:hover{background:rgba(0,0,0,0.55) !important;}
         @keyframes rpv-vw-ambient-drift-a {
           0%, 100% { transform: translate(-14%, 10%) scale(1); }
           50%       { transform: translate(12%, -8%) scale(1.28); }
