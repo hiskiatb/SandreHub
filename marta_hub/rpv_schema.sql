@@ -236,3 +236,27 @@ create policy "rpv anon delete" on storage.objects
 
 -- Realtime — supaya viewer bisa subscribe INSERT baru di rpv_photos.
 alter publication supabase_realtime add table rpv_photos;
+
+-- ============================================================================
+-- UPDATE (23 Sep 2026) — Simpan crop/zoom/pan/rotate/flip PER FOTO (kolom
+-- rpv_photos.crop_json, jsonb: {zoom,panX,panY,rotate,flipX,flipY}) - supaya
+-- penyesuaian operator TIDAK hilang saat pindah foto/reload/dibuka di TV
+-- Viewer. NULL = belum pernah disimpan -> pakai DEFAULT_CROP di client.
+-- rpv_list_photos/rpv_find_photo_by_queue/rpv_get_photo diperbarui utk ikut
+-- kembalikan crop_json (lihat migration rpv_photo_crop +
+-- rpv_photo_crop_fix_normalization utk body lengkap final, termasuk fix
+-- upper(trim(...)) session_code & trim(...) photo_code spy konsisten dgn
+-- versi asli).
+-- ============================================================================
+alter table rpv_photos add column if not exists crop_json jsonb;
+
+create or replace function rpv_save_photo_crop(p_photo_code text, p_crop jsonb)
+returns boolean
+language plpgsql security definer set search_path = public as $$
+declare v_updated int;
+begin
+  update rpv_photos t set crop_json = p_crop where t.code = trim(p_photo_code);
+  get diagnostics v_updated = row_count;
+  return v_updated > 0;
+end $$;
+grant execute on function rpv_save_photo_crop(text, jsonb) to anon, authenticated;

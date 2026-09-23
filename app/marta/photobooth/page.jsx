@@ -23,13 +23,18 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ArrowLeft, Bold, Camera, Check, Copy, FlipHorizontal2, FlipVertical2, FolderOpen, ImageOff, ImagePlus, Layers, Loader2, Minus, Monitor, Plus, Printer, Radio, RotateCw, Save, Search, Settings, Sparkles, Star, Trash2, Type, X, ZoomIn } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Bold, Camera, Check, ChevronDown, ChevronsDown, ChevronsUp, ChevronUp, Copy, FlipHorizontal2, FlipVertical2, FolderOpen, ImageOff, ImagePlus, Layers, Loader2, Minus, Monitor, Plus, Printer, Radio, RotateCw, Save, Search, Settings, Sparkles, Square, Star, Trash2, Type, X, ZoomIn } from "lucide-react";
 import ScanQrGlyph from "./_scan-glyph";
-import { addRpvPrompt, clearRpvDefaultFrameTemplate, createRpvSession, deleteRpvCustomFont, deleteRpvFrameTemplate, deleteRpvPhoto, deleteRpvPrompt, deleteRpvSession, findRpvPhotoByQueue, getRpvSession, listRpvCustomFonts, listRpvFrameTemplates, listRpvPhotos, listRpvPrompts, listRpvSessions, rpvPublicUrl, saveRpvFrameTemplate, setRpvDefaultFrameTemplate, subscribeRpvOperatorPairing, subscribeRpvPhotos, uploadRpvCustomFont, uploadRpvPromptImage, uploadRpvTemplateImage } from "../../../lib/rpv";
+import {
+  FONT, MAGA, PRINT_SIZE, DEFAULT_CROP, ROTATE_STEP,
+  TEMPLATE_FONTS, TEMPLATE_GOOGLE_FONTS_HREF,
+  resolveTemplateFontCss, customFontFaceCss,
+  newTemplateTextElement, newTemplateImageElement, newTemplateShapeElement, clampPct,
+  PhotoFrame, findDefaultFrameTemplate,
+} from "./_frame";
+import { addRpvPrompt, clearRpvDefaultFrameTemplate, createRpvSession, deleteRpvCustomFont, deleteRpvFrameTemplate, deleteRpvPhoto, deleteRpvPrompt, deleteRpvSession, findRpvPhotoByQueue, getRpvSession, listRpvCustomFonts, listRpvFrameTemplates, listRpvPhotos, listRpvPrompts, listRpvSessions, rpvPublicUrl, saveRpvFrameTemplate, saveRpvPhotoCrop, setRpvDefaultFrameTemplate, subscribeRpvOperatorPairing, subscribeRpvPhotos, uploadRpvCustomFont, uploadRpvPromptImage, uploadRpvTemplateImage } from "../../../lib/rpv";
 
-const FONT = `"Google Sans","DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED = "#ED1C24";
-const MAGA = "#C6168D";
 const VIO = "#7C3AED";
 const IMG_EXT = /\.(jpe?g|png|webp|gif)$/i;
 const ACTIVE_KEY = "rpv-active-session";
@@ -58,7 +63,7 @@ const t = {
 // ── Fase 2: Print Station ───────────────────────────────────────────────
 // Ukuran cetak DIKUNCI ke 2R (6×9cm) - permintaan operator: semua sesi
 // cetak pakai ukuran ini saja, jadi tidak ada lagi pilihan ukuran di UI.
-const PRINT_SIZE = { label: "2R", w: 6, h: 9 };
+
 
 // Frame CSS-ONLY (border/caption teks) - SENGAJA tidak pakai gambar bingkai
 // bikinan sendiri (cuma boleh pakai foto asli yg diupload tamu), jadi semua
@@ -80,177 +85,6 @@ const FRAME_PRESETS = [
   { key: "custom", label: "Custom" },
 ];
 
-// Pilihan font utk kotak teks template custom - dimuat lewat Google Fonts
-// (lihat <link> TEMPLATE_GOOGLE_FONTS_HREF di render utama) supaya benar2
-// tampil sesuai nama font-nya baik di layar MAUPUN saat dicetak (window.
-// print ikut memakai stylesheet yg sama).
-const TEMPLATE_FONTS = [
-  { key: "dm-sans", label: "DM Sans", css: `"DM Sans", sans-serif` },
-  { key: "poppins", label: "Poppins", css: `"Poppins", sans-serif` },
-  { key: "playfair", label: "Playfair Display", css: `"Playfair Display", serif` },
-  { key: "oswald", label: "Oswald", css: `"Oswald", sans-serif` },
-  { key: "caveat", label: "Caveat", css: `"Caveat", cursive` },
-  { key: "roboto-mono", label: "Roboto Mono", css: `"Roboto Mono", monospace` },
-];
-const TEMPLATE_FONT_MAP = Object.fromEntries(TEMPLATE_FONTS.map((f) => [f.key, f]));
-const TEMPLATE_GOOGLE_FONTS_HREF = "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;700&family=Poppins:wght@400;700&family=Playfair+Display:wght@400;700&family=Oswald:wght@400;700&family=Caveat:wght@400;700&family=Roboto+Mono:wght@400;700&display=swap";
-
-/** fontKey elemen teks bisa berupa key bawaan ("dm-sans" dkk, lihat
- * TEMPLATE_FONT_MAP) ATAU "custom:<id>" utk font upload sendiri operator
- * (lihat rpv_custom_fonts) - resolver ini yg nentuin nama CSS font-family
- * final dipakai <span> teks di PhotoFrame, cocok dgn @font-face yg
- * diinject dari daftar customFonts (lihat customFontFaceCss di bawah). */
-function resolveTemplateFontCss(fontKey, customFonts) {
-  if (fontKey && fontKey.startsWith("custom:")) {
-    const id = fontKey.slice(7);
-    const found = (customFonts || []).find((f) => f.id === id);
-    return found ? `"rpv-cf-${id}", sans-serif` : FONT;
-  }
-  return TEMPLATE_FONT_MAP[fontKey]?.css || FONT;
-}
-/** @font-face utk semua font custom tersimpan - dibuat sekali dari daftar
- * `customFonts`, format ditebak dari ekstensi file yg diupload. */
-function customFontFaceCss(customFonts) {
-  return (customFonts || []).map((f) => {
-    const ext = (f.storagePath || "").split(".").pop()?.toLowerCase();
-    const fmt = ext === "otf" ? "opentype" : ext === "woff" ? "woff" : ext === "woff2" ? "woff2" : "truetype";
-    return `@font-face { font-family: "rpv-cf-${f.id}"; src: url("${f.url}") format("${fmt}"); font-display: swap; }`;
-  }).join("\n");
-}
-
-/** Elemen kosong baru utk template custom - posisi/ukuran dlm PERSEN thd
- * bingkai (bukan px/cm) supaya resolution-independent: posisi identik baik
- * dipreview di layar (ukuran px berubah2 sesuai lebar panel) MAUPUN dicetak
- * fisik (ukuran cm tetap) MAUPUN dimuat ulang dari template tersimpan -
- * TIDAK ADA transformasi/normalisasi apa pun saat simpan/muat, jadi elemen
- * dijamin TIDAK bergeser sedikit pun dari posisi yg diatur operator. */
-function newTemplateTextElement() {
-  return {
-    id: `el-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    type: "text", xPct: 14, yPct: 40, wPct: 72, hPct: 20,
-    text: "Teks Baru", fontKey: "dm-sans", fontSizePct: 7, bold: false, color: "#FFFFFF", align: "center",
-  };
-}
-function newTemplateImageElement(url) {
-  return {
-    id: `el-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    type: "image", xPct: 30, yPct: 30, wPct: 40, hPct: 40, url,
-  };
-}
-const clampPct = (v, min, max) => Math.round(Math.max(min, Math.min(max, v)) * 100) / 100;
-
-const DEFAULT_CROP = { zoom: 1, panX: 0, panY: 0, rotate: 0, flipX: false, flipY: false };
-// Rotasi yg biasa dibutuhkan case cetak (foto kepotret miring/landscape ke
-// potret dst) - dibatasi ke kelipatan 90° saja (bkn rotasi bebas) supaya
-// hasil cetak TETAP presisi ngepas bingkai ukuran cetak, tapi operator
-// tetap bisa lihat derajat persisnya di label tombol.
-const ROTATE_STEP = 90;
-
-/** Satu foto + crop (zoom/pan) + bingkai, dipakai UTUH baik di preview layar
- * (mode="screen", ukuran px tetap) MAUPUN di lembar cetak sungguhan (mode=
- * "print", ukuran FISIK dlm cm) - crop pakai transform scale+translate(%)
- * yg resolution-independent, jadi hasil preview & cetak DIJAMIN identik. */
-function PhotoFrame({ photo, ratio, crop, frame, mode, queueLabel, sessionTitle, imgRef, onPointerDown, customElements, customBaseStyle, customFonts, onElementPointerDown, selectedElId, wrapperRef }) {
-  const isPolaroid = frame === "white";
-  const isCustom = frame === "custom";
-  // "Custom" bisa pakai bentuk dasar "polaroid" (foto diberi margin putih +
-  // strip putih bawah, spt "Polaroid Putih") supaya operator bisa taruh
-  // elemen (teks/gambar) di area putihnya juga - atau "none" (foto penuh).
-  const isPolaroidShape = isPolaroid || (isCustom && customBaseStyle === "polaroid");
-  const sizeStyle = mode === "print"
-    ? { width: `${ratio.w}cm`, height: `${ratio.h}cm` }
-    : { width: "100%", aspectRatio: `${ratio.w} / ${ratio.h}` };
-  const photoAreaStyle = isPolaroidShape
-    ? { position: "absolute", left: "4%", right: "4%", top: "4%", bottom: "16%" }
-    : { position: "absolute", inset: 0 };
-  const interactive = typeof onElementPointerDown === "function";
-  // Token dinamis dlm kotak teks custom - "{Nama Event}"/"{Photo ID}" diganti
-  // isi sungguhan sesi/foto aktif, SAAT RENDER SAJA (bukan disimpan sbg teks
-  // statis) - jadi 1 template bisa dipakai berulang, teksnya otomatis ikut
-  // sesi manapun yg lagi aktif. Fallback tampil kalau belum ada sesi/foto
-  // (spt di editor) supaya operator tetap lihat di mana token itu muncul.
-  const resolveTemplateText = (text) => String(text || "")
-    .replaceAll("{Nama Event}", sessionTitle || "Nama Event")
-    .replaceAll("{Photo ID}", queueLabel || "00000");
-  return (
-    <div ref={wrapperRef} style={{
-      ...sizeStyle, position: "relative", overflow: "hidden", backgroundColor: isPolaroidShape ? "#fff" : "#000",
-      borderRadius: mode === "print" ? 0 : 10,
-      // containerType:"size" - dasar unit `cqh` dipakai ukuran font elemen
-      // teks custom di bawah, supaya font-size SELALU proporsional thd
-      // TINGGI bingkai sungguhan (bukan thd font induk spt unit % biasa),
-      // baik saat preview layar (lebar berubah2) maupun saat dicetak.
-      containerType: "size",
-    }}>
-      <div style={{ ...photoAreaStyle, overflow: "hidden", background: "#000" }}>
-        {photo ? (
-          <img ref={imgRef} src={photo.url} alt="" draggable={false}
-            onPointerDown={mode === "screen" ? onPointerDown : undefined}
-            style={{
-              width: "100%", height: "100%", objectFit: "cover", display: "block",
-              cursor: mode === "screen" ? "grab" : "default", touchAction: "none",
-              // Urutan transform: rotate+flip DULU (posisi/orientasi dasar
-              // foto), baru scale+translate (zoom/pan operator) - supaya
-              // drag-geser & zoom tetap terasa wajar walau foto sudah
-              // diputar/dibalik.
-              transform: `scale(${crop.zoom}) translate(${crop.panX}%, ${crop.panY}%) rotate(${crop.rotate}deg) scaleX(${crop.flipX ? -1 : 1}) scaleY(${crop.flipY ? -1 : 1})`,
-              transformOrigin: "center center",
-            }} />
-        ) : (
-          <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: t.lo }}>
-            <ImageOff size={mode === "print" ? 24 : 22} />
-          </div>
-        )}
-      </div>
-      {isPolaroid && (
-        <div style={{ position: "absolute", left: "4%", right: "4%", bottom: "4%", height: "10%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: FONT }}>
-          <span style={{ fontSize: mode === "print" ? "0.32cm" : 10.5, fontWeight: 800, color: "#17181C" }}>{sessionTitle || "FlashPrint"}</span>
-          <span style={{ fontSize: mode === "print" ? "0.26cm" : 9, color: "#8A8A96", fontFamily: "monospace", letterSpacing: "0.06em" }}>{queueLabel}</span>
-        </div>
-      )}
-      {/* Bingkai "Custom" - render PERSIS elemen tersimpan (posisi/ukuran %
-          apa adanya, TANPA normalisasi) - dipakai IDENTIK di preview layar,
-          lembar cetak sungguhan, MAUPUN di dalam editor template (lewat
-          prop interaktif opsional di bawah), supaya WYSIWYG & tidak ada
-          celah drift antar tampilan. */}
-      {isCustom && (customElements || []).map((el) => {
-        const isSelected = interactive && el.id === selectedElId;
-        const justify = el.align === "left" ? "flex-start" : el.align === "right" ? "flex-end" : "center";
-        return (
-          <div key={el.id}
-            onPointerDown={interactive ? (e) => onElementPointerDown(e, el, "move") : undefined}
-            style={{
-              position: "absolute", left: `${el.xPct}%`, top: `${el.yPct}%`, width: `${el.wPct}%`, height: `${el.hPct}%`,
-              display: "flex", alignItems: "center", justifyContent: el.type === "text" ? justify : "center",
-              overflow: "visible", cursor: interactive ? "move" : "default",
-              outline: isSelected ? `1.5px dashed ${MAGA}` : "none", outlineOffset: 2,
-            }}>
-            {el.type === "image" ? (
-              <img src={el.url} alt="" draggable={false}
-                style={{ width: "100%", height: "100%", objectFit: "contain", pointerEvents: "none", userSelect: "none" }} />
-            ) : (
-              <span style={{
-                width: "100%", pointerEvents: "none", userSelect: "none",
-                fontFamily: resolveTemplateFontCss(el.fontKey, customFonts),
-                fontWeight: el.bold ? 800 : 400,
-                fontSize: mode === "print" ? `${(el.fontSizePct / 100) * ratio.h}cm` : `${el.fontSizePct}cqh`,
-                color: el.color || "#fff", textAlign: el.align || "center",
-                whiteSpace: "pre-wrap", overflowWrap: "break-word", lineHeight: 1.15,
-              }}>{resolveTemplateText(el.text)}</span>
-            )}
-            {interactive && isSelected && (
-              <div onPointerDown={(e) => onElementPointerDown(e, el, "resize")}
-                style={{
-                  position: "absolute", right: -7, bottom: -7, width: 16, height: 16, borderRadius: 5,
-                  background: MAGA, border: "2px solid #fff", cursor: "nwse-resize", pointerEvents: "auto",
-                }} />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 export default function RpvControlRoom() {
   const router = useRouter();
@@ -522,16 +356,53 @@ export default function RpvControlRoom() {
   const myOperatorIndex = operators.findIndex((o) => o.id === operatorId);
   const myOperatorLabel = myOperatorIndex >= 0 ? `Operator ${myOperatorIndex + 1}` : "";
 
-  // ── Crop (zoom/pan) per foto - direset tiap ganti foto. Pola "adjusting
-  // state during render" (dibandingkan langsung di body, BUKAN di dalam
-  // useEffect) - direkomendasikan React resmi utk reset state akibat
-  // perubahan input, tanpa memicu render tambahan yg tidak perlu.
+  // ── Crop (zoom/pan/rotate/flip) per foto - dimuat dari penyesuaian
+  // TERSIMPAN foto itu (selectedPhoto.crop, dari kolom rpv_photos.crop_json
+  // - lihat lib/rpv.js parsePhotoCrop) tiap ganti foto, BUKAN selalu
+  // direset ke default. Sebelumnya SELALU direset ke DEFAULT_CROP tiap
+  // ganti foto - itulah kenapa "sudah zoom & adjust" terasa "tidak
+  // kesimpan": penyesuaian cuma hidup di state React sesaat, hilang begitu
+  // pindah foto/reload, tidak pernah benar2 ditulis ke database. Pola
+  // "adjusting state during render" (dibandingkan langsung di body, BUKAN
+  // di dalam useEffect) tetap dipakai - direkomendasikan React resmi utk
+  // reset/re-seed state akibat perubahan input, tanpa render tambahan yg
+  // tidak perlu.
   const [crop, setCrop] = useState(DEFAULT_CROP);
+  // Snapshot crop TERAKHIR TERSIMPAN (di database) utk foto yg lagi aktif -
+  // dibandingkan dgn `crop` skrg utk tahu ada perubahan blm disimpan
+  // ("cropDirty") tanpa perlu state boolean terpisah yg gampang telat sync.
+  const [savedCropSnapshot, setSavedCropSnapshot] = useState(DEFAULT_CROP);
   const [prevCropKey, setPrevCropKey] = useState(selectedCode);
   if (selectedCode !== prevCropKey) {
     setPrevCropKey(selectedCode);
-    setCrop(DEFAULT_CROP);
+    const initial = selectedPhoto?.crop || DEFAULT_CROP;
+    setCrop(initial);
+    setSavedCropSnapshot(initial);
   }
+  const [cropSaving, setCropSaving] = useState(false);
+  const cropDirty = JSON.stringify(crop) !== JSON.stringify(savedCropSnapshot);
+  // Patch field `crop` di state list foto lokal (camPhotos/aiPhotos) SEGERA
+  // setelah simpan sukses - supaya kalau operator pindah foto lalu balik
+  // lagi ke foto ini (tanpa reload halaman), penyesuaian yg baru disimpan
+  // langsung kepakai lagi, tanpa perlu re-fetch dari server.
+  const patchPhotoCropLocal = (photoCode, nextCrop) => {
+    const patch = (list) => list.map((p) => (p.photo_code === photoCode ? { ...p, crop: nextCrop } : p));
+    setCamPhotos(patch);
+    setAiPhotos(patch);
+  };
+  const saveCropAdjustment = async () => {
+    if (!selectedPhoto) return;
+    setCropSaving(true);
+    try {
+      await saveRpvPhotoCrop(selectedPhoto.photo_code, crop);
+      patchPhotoCropLocal(selectedPhoto.photo_code, crop);
+      setSavedCropSnapshot(crop);
+    } catch (err) {
+      window.alert(`Gagal menyimpan penyesuaian: ${err?.message || "Terjadi kesalahan tidak diketahui."}`);
+    } finally {
+      setCropSaving(false);
+    }
+  };
 
   const onCropPointerDown = (e) => {
     e.preventDefault();
@@ -645,9 +516,32 @@ export default function RpvControlRoom() {
     } catch { /* gagal upload gambar - diamkan, operator bisa coba lagi */ }
     finally { setTemplateUploading(false); }
   };
+  const addShapeElement = () => {
+    const el = newTemplateShapeElement();
+    setCustomElements((els) => [...els, el]);
+    setSelectedElId(el.id);
+  };
   const removeElement = (id) => {
     setCustomElements((els) => els.filter((e) => e.id !== id));
     setSelectedElId((s) => (s === id ? "" : s));
+  };
+  // Urutan larik `customElements` ITULAH urutan tumpukan (z-order) - elemen
+  // yg lbh belakang di larik dirender belakangan jadi tampil DI ATAS (lihat
+  // .map() di PhotoFrame). Jadi "maju/mundur lapisan" cukup geser posisi
+  // elemen di dlm larik - tanpa perlu kolom zIndex terpisah, otomatis ikut
+  // tersimpan/termuat sbg BAGIAN urutan array template (persis apa adanya,
+  // konsisten dgn prinsip "tidak ada transformasi tersembunyi").
+  const moveElementLayer = (id, dir) => {
+    setCustomElements((els) => {
+      const idx = els.findIndex((e) => e.id === id);
+      if (idx < 0) return els;
+      const newIdx = dir === "front" ? els.length - 1 : dir === "back" ? 0 : Math.max(0, Math.min(els.length - 1, idx + dir));
+      if (newIdx === idx) return els;
+      const copy = [...els];
+      const [moved] = copy.splice(idx, 1);
+      copy.splice(newIdx, 0, moved);
+      return copy;
+    });
   };
 
   // Drag geser (mode "move") & drag pojok utk resize (mode "resize") - pola
@@ -912,7 +806,7 @@ export default function RpvControlRoom() {
                         )}
                       </div>
                       <div style={{ fontSize: 10, color: t.lo, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {p.photo_code}{p.uploaded_at ? ` · ${formatPhotoTime(p.uploaded_at)}` : ""}
+                        {p.uploaded_at ? formatPhotoTime(p.uploaded_at) : ""}
                       </div>
                     </div>
                     {/* Hapus foto - tap 1x "arm" (jadi merah, minta konfirmasi),
@@ -997,6 +891,27 @@ export default function RpvControlRoom() {
                       <button onClick={resetCrop} title="Reset posisi/zoom/rotasi/balik"
                         style={{ fontSize: 10.5, color: t.lo, fontWeight: 700, background: "transparent", border: "none", cursor: "pointer", fontFamily: FONT }}>Reset Semua</button>
                     </div>
+
+                    {/* Simpan penyesuaian zoom/pan/rotate/flip KE DATABASE
+                        (kolom rpv_photos.crop_json, lihat saveRpvPhotoCrop
+                        di lib/rpv.js) - SEBELUMNYA cuma hidup di state React
+                        sesaat & hilang begitu pindah foto/reload, jadi
+                        "sudah di-zoom & adjust tapi tidak kesimpan". Foto
+                        yg sudah disimpan otomatis ikut dipakai di TV Viewer
+                        (lihat viewer/[code]/page.jsx) & tetap sama kalau
+                        dicetak ulang kapan saja. */}
+                    <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}>
+                      <button onClick={saveCropAdjustment} disabled={cropSaving || !cropDirty} title="Simpan penyesuaian foto ini ke database"
+                        style={{
+                          display: "flex", alignItems: "center", gap: 7, height: 34, padding: "0 16px", borderRadius: 9, border: "none",
+                          background: !cropDirty ? t.card : MAGA, color: !cropDirty ? t.lo : "#fff",
+                          fontSize: 11.5, fontWeight: 800, cursor: cropSaving || !cropDirty ? "default" : "pointer", fontFamily: FONT,
+                          opacity: cropSaving ? 0.7 : 1,
+                        }}>
+                        {cropSaving ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={13} />}
+                        {cropSaving ? "Menyimpan..." : cropDirty ? "Simpan Penyesuaian" : "Tersimpan"}
+                      </button>
+                    </div>
                   </div>
 
                   {/* Ukuran cetak - dikunci ke 2R (tidak ada lagi pilihan ukuran lain). */}
@@ -1065,7 +980,8 @@ export default function RpvControlRoom() {
           baseStyle={customBaseStyle} onSetBaseStyle={setCustomBaseStyle}
           customFonts={customFonts} customFontsState={customFontsState} onUploadFont={uploadCustomFont} onDeleteFont={removeCustomFont} fontUploading={fontUploading}
           frameRef={templateFrameRef} onElementPointerDown={onElementPointerDown}
-          onAddText={addTextElement} onAddImage={addImageElementFromFile} onUpdateElement={updateElement} onRemoveElement={removeElement}
+          onAddText={addTextElement} onAddImage={addImageElementFromFile} onAddShape={addShapeElement} onUpdateElement={updateElement} onRemoveElement={removeElement}
+          onMoveElement={moveElementLayer}
           uploading={templateUploading}
           templates={savedTemplates} templatesState={templatesState}
           activeTemplateId={activeTemplateId} activeTemplateName={activeTemplateName}
@@ -1179,7 +1095,7 @@ function TemplateEditorModal({
   photo, ratio, elements, selectedElId, setSelectedElId, frameRef, onElementPointerDown,
   baseStyle, onSetBaseStyle,
   customFonts, customFontsState, onUploadFont, onDeleteFont, fontUploading,
-  onAddText, onAddImage, onUpdateElement, onRemoveElement, uploading,
+  onAddText, onAddImage, onAddShape, onUpdateElement, onRemoveElement, onMoveElement, uploading,
   templates, templatesState, activeTemplateId, activeTemplateName,
   onApplyTemplate, onNewTemplate, onSaveTemplate, onSaveTemplateAs, onDeleteTemplate, saving,
   onSetDefaultTemplate, onUnsetDefaultTemplate,
@@ -1188,6 +1104,7 @@ function TemplateEditorModal({
   const fileInputRef = useRef(null);
   const fontInputRef = useRef(null);
   const selectedEl = elements.find((e) => e.id === selectedElId) || null;
+  const selectedElIndex = selectedEl ? elements.findIndex((e) => e.id === selectedElId) : -1;
 
   return (
     <div style={{
@@ -1257,6 +1174,10 @@ function TemplateEditorModal({
                   </button>
                   <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }}
                     onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onAddImage(f); }} />
+                  <button onClick={onAddShape}
+                    style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, height: 34, borderRadius: 9, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                    <Square size={13} /> Bentuk
+                  </button>
                 </div>
               </div>
 
@@ -1264,10 +1185,34 @@ function TemplateEditorModal({
               {selectedEl ? (
                 <div>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-                    <div style={{ fontSize: 10.5, fontWeight: 800, color: t.mid, letterSpacing: "0.04em" }}>{selectedEl.type === "text" ? "KOTAK TEKS" : "GAMBAR"}</div>
+                    <div style={{ fontSize: 10.5, fontWeight: 800, color: t.mid, letterSpacing: "0.04em" }}>{selectedEl.type === "text" ? "KOTAK TEKS" : selectedEl.type === "shape" ? "BENTUK" : "GAMBAR"}</div>
                     <button onClick={() => onRemoveElement(selectedEl.id)} title="Hapus elemen"
                       style={{ width: 24, height: 24, borderRadius: 6, border: "none", background: "transparent", color: RED, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
                       <Trash2 size={13} />
+                    </button>
+                  </div>
+
+                  {/* Urutan tumpukan (z-order) - "Maju"/"Mundur" geser 1
+                      posisi, "Paling Depan"/"Paling Belakang" langsung
+                      lompat ke ujung. Urutan elemen di larik ITU SENDIRI yg
+                      jadi z-order (lihat moveElementLayer di RpvControlRoom),
+                      jadi otomatis ikut tersimpan sbg bagian template. */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 10 }}>
+                    <button onClick={() => onMoveElement(selectedEl.id, "back")} disabled={selectedElIndex <= 0} title="Paling belakang"
+                      style={{ flex: 1, height: 28, borderRadius: 7, border: `1px solid ${t.line}`, background: t.fieldBg, color: selectedElIndex <= 0 ? t.lo : t.hi, display: "flex", alignItems: "center", justifyContent: "center", cursor: selectedElIndex <= 0 ? "not-allowed" : "pointer", opacity: selectedElIndex <= 0 ? 0.5 : 1 }}>
+                      <ChevronsDown size={13} />
+                    </button>
+                    <button onClick={() => onMoveElement(selectedEl.id, -1)} disabled={selectedElIndex <= 0} title="Mundur 1 lapis"
+                      style={{ flex: 1, height: 28, borderRadius: 7, border: `1px solid ${t.line}`, background: t.fieldBg, color: selectedElIndex <= 0 ? t.lo : t.hi, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 10, fontWeight: 700, cursor: selectedElIndex <= 0 ? "not-allowed" : "pointer", opacity: selectedElIndex <= 0 ? 0.5 : 1, fontFamily: FONT }}>
+                      <ChevronDown size={13} /> Mundur
+                    </button>
+                    <button onClick={() => onMoveElement(selectedEl.id, 1)} disabled={selectedElIndex < 0 || selectedElIndex >= elements.length - 1} title="Maju 1 lapis"
+                      style={{ flex: 1, height: 28, borderRadius: 7, border: `1px solid ${t.line}`, background: t.fieldBg, color: (selectedElIndex < 0 || selectedElIndex >= elements.length - 1) ? t.lo : t.hi, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, fontSize: 10, fontWeight: 700, cursor: (selectedElIndex < 0 || selectedElIndex >= elements.length - 1) ? "not-allowed" : "pointer", opacity: (selectedElIndex < 0 || selectedElIndex >= elements.length - 1) ? 0.5 : 1, fontFamily: FONT }}>
+                      Maju <ChevronUp size={13} />
+                    </button>
+                    <button onClick={() => onMoveElement(selectedEl.id, "front")} disabled={selectedElIndex < 0 || selectedElIndex >= elements.length - 1} title="Paling depan"
+                      style={{ flex: 1, height: 28, borderRadius: 7, border: `1px solid ${t.line}`, background: t.fieldBg, color: (selectedElIndex < 0 || selectedElIndex >= elements.length - 1) ? t.lo : t.hi, display: "flex", alignItems: "center", justifyContent: "center", cursor: (selectedElIndex < 0 || selectedElIndex >= elements.length - 1) ? "not-allowed" : "pointer", opacity: (selectedElIndex < 0 || selectedElIndex >= elements.length - 1) ? 0.5 : 1 }}>
+                      <ChevronsUp size={13} />
                     </button>
                   </div>
 
@@ -1332,6 +1277,24 @@ function TemplateEditorModal({
                               color: selectedEl.align === v ? "#fff" : t.mid,
                             }}>{lbl}</button>
                         ))}
+                      </div>
+                    </div>
+                  ) : selectedEl.type === "shape" ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <label style={{ fontSize: 10, color: t.lo, fontWeight: 700 }}>Warna</label>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <input type="color" value={selectedEl.color || "#C6168D"} onChange={(e) => onUpdateElement(selectedEl.id, { color: e.target.value })}
+                          title="Warna bentuk" style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${t.line}`, background: "none", cursor: "pointer", padding: 0 }} />
+                        <span style={{ fontSize: 11, color: t.mid, fontFamily: "monospace" }}>{(selectedEl.color || "#C6168D").toUpperCase()}</span>
+                      </div>
+
+                      <label style={{ fontSize: 10, color: t.lo, fontWeight: 700 }}>Radius sudut ({selectedEl.radiusPct ?? 0}% — 0 = kotak, 50 = elips/pil)</label>
+                      <input type="range" min="0" max="50" step="1" value={selectedEl.radiusPct ?? 0}
+                        onChange={(e) => onUpdateElement(selectedEl.id, { radiusPct: Number(e.target.value) })}
+                        style={{ width: "100%", accentColor: MAGA }} />
+
+                      <div style={{ fontSize: 10.5, color: t.lo, lineHeight: 1.6, marginTop: 2 }}>
+                        Geser bentuk utk pindah posisi, tarik kotak kecil di pojok kanan-bawah utk ubah ukuran/proporsi.
                       </div>
                     </div>
                   ) : (

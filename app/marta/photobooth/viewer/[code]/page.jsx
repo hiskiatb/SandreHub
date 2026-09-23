@@ -9,11 +9,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import QRCode from "qrcode";
 import { AlertTriangle, Camera, ChevronLeft, ChevronRight, Eye, EyeOff, Images, Link2, Loader2, Maximize2, Minimize2, Printer, QrCode as QrIcon, Search, Sparkles, Trash2, X, Zap } from "lucide-react";
-import { getRpvSession, listRpvPhotos, subscribeRpvPhotos, rpvPublicUrl, getRpvPhotoByCode, deleteRpvPhoto, uploadRpvAiResult, rpvThroughputMbps } from "../../../../../lib/rpv";
+import { getRpvSession, listRpvPhotos, listRpvFrameTemplates, listRpvCustomFonts, subscribeRpvPhotos, rpvPublicUrl, getRpvPhotoByCode, deleteRpvPhoto, uploadRpvAiResult, rpvThroughputMbps } from "../../../../../lib/rpv";
+import { PhotoFrame, PRINT_SIZE, TEMPLATE_GOOGLE_FONTS_HREF, customFontFaceCss, findDefaultFrameTemplate } from "../../_frame";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED = "#ED1C24";
 const MAGA = "#C6168D";
+// Rasio bingkai foto di TV/carousel - DISAMAKAN dgn ukuran cetak (2R,
+// lihat PRINT_SIZE di _frame.jsx) supaya framing yg tampil di TV Viewer
+// PERSIS sama dgn hasil cetak fisik (bukan cuma "mirip").
+const VIEWER_RATIO = { w: PRINT_SIZE.w, h: PRINT_SIZE.h };
 
 export default function RpvViewerPage() {
   const params = useParams();
@@ -26,6 +31,17 @@ export default function RpvViewerPage() {
 
   const [state, setState] = useState("loading"); // loading | ready | notfound
   const [session, setSession] = useState(null);
+  // Bingkai/Template CUSTOM default (rpv_frame_templates.is_default, diatur
+  // operator lewat "Jadikan Default" di Editor Template panel Ruang
+  // Kontrol) - dimuat SEKALI di sini supaya TV Viewer otomatis memakai
+  // template yg sama TANPA operator perlu pilih apa2 lagi di layar TV
+  // (tidak ada UI pemilihan di sini, murni auto - sesuai permintaan
+  // "agar otomatis yang di viewer sudah menggunakan template"). Kalau
+  // belum ada template yg dijadikan default, TV Viewer tetap tampil normal
+  // tanpa bingkai (frame="none"), spt sebelumnya.
+  const [frameTemplates, setFrameTemplates] = useState([]);
+  const [customFonts, setCustomFonts] = useState([]);
+  const defaultTemplate = useMemo(() => findDefaultFrameTemplate(frameTemplates), [frameTemplates]);
   const [photos, setPhotos] = useState([]);
   const [qrUrl, setQrUrl] = useState("");
   const [photoQr, setPhotoQr] = useState({}); // { [photo_code]: dataUrl } - QR unik per FOTO (download langsung foto itu)
@@ -128,8 +144,18 @@ export default function RpvViewerPage() {
       } catch { setState("notfound"); }
     })();
     return () => unsubRef.current?.();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code]);
+
+  // Muat daftar template & font custom sekali - dipakai cari template
+  // DEFAULT di atas. Dibungkus Promise.resolve().then(...) (pola sama spt
+  // panel operator di page.jsx) utk hindari lint "set state during effect"
+  // dari React Compiler.
+  useEffect(() => {
+    Promise.resolve().then(async () => {
+      try { setFrameTemplates(await listRpvFrameTemplates()); } catch { /* gagal muat template - diamkan, TV tetap jalan tanpa bingkai */ }
+      try { setCustomFonts(await listRpvCustomFonts()); } catch { /* gagal muat font kustom - diamkan */ }
+    });
+  }, []);
 
   // FIX: QR pojok kanan bawah SEBELUMNYA mengarah ke halaman "download
   // semua foto sesi ini" - padahal yg dibutuhkan tamu adalah download FOTO
@@ -252,7 +278,7 @@ export default function RpvViewerPage() {
   // dulu (window.confirm) supaya tidak ke-tap tidak sengaja di layar sentuh.
   const handleDelete = useCallback(async (photo) => {
     if (!photo || deletingCode) return;
-    if (typeof window !== "undefined" && !window.confirm(`Hapus foto ID ${photo.photo_code}? Tindakan ini tidak bisa dibatalkan.`)) return;
+    if (typeof window !== "undefined" && !window.confirm(`Hapus foto ID ${photo.queue_label || photo.photo_code}? Tindakan ini tidak bisa dibatalkan.`)) return;
     setDeletingCode(photo.photo_code);
     try {
       await deleteRpvPhoto(code, photo.photo_code, photo.storage_path);
@@ -317,6 +343,11 @@ export default function RpvViewerPage() {
 
   return (
     <div className="flashprint-root" style={{ minHeight: "100svh", background: "#0A0A0B", fontFamily: FONT, position: "relative", overflow: "hidden" }}>
+      {/* Font utk elemen teks template custom (bawaan Google Fonts + font
+          upload sendiri operator) - dirender di root persis spt panel
+          operator, supaya font tampil identik antara editor & TV Viewer. */}
+      <link rel="stylesheet" href={TEMPLATE_GOOGLE_FONTS_HREF} />
+      {customFonts.length > 0 && <style>{customFontFaceCss(customFonts)}</style>}
       {/* Ambient glow brand di background - versi DINAMIS (drift+pulse),
           senada persis dgn ambient di /go, /scan, & panel operator ("tidak
           tiba2 beda") - sebelumnya di sini gradient STATIS saja, sekarang
@@ -340,7 +371,17 @@ export default function RpvViewerPage() {
             <>
               <img src={tvPhoto.url} alt="" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", filter: "blur(28px) brightness(0.55)", transform: "scale(1.15)" }} />
               <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: "min(6vh,64px) min(6vw,64px) min(18vh,220px)" }}>
-                <img key={tvPhoto.photo_code} src={tvPhoto.url} alt="" style={{ maxWidth: "100%", maxHeight: "100%", borderRadius: 20, boxShadow: "0 40px 100px -20px rgba(0,0,0,0.7)", objectFit: "contain", animation: "rpv-tv-fade .5s ease" }} />
+                {/* Bingkai/crop foto TV - PERSIS sama komponen (PhotoFrame)
+                    & template DEFAULT yg dipakai panel operator, sehingga
+                    penyesuaian zoom/crop yg sudah disimpan operator DAN
+                    bingkai/template custom-nya otomatis ikut tampil di sini
+                    tanpa operator perlu atur apa2 lagi khusus utk TV. */}
+                <div key={tvPhoto.photo_code} style={{ height: "100%", maxWidth: "100%", aspectRatio: `${VIEWER_RATIO.w} / ${VIEWER_RATIO.h}`, borderRadius: 20, overflow: "hidden", boxShadow: "0 40px 100px -20px rgba(0,0,0,0.7)", animation: "rpv-tv-fade .5s ease" }}>
+                  <PhotoFrame photo={tvPhoto} ratio={VIEWER_RATIO} crop={tvPhoto.crop} mode="screen"
+                    frame={defaultTemplate ? "custom" : "none"} customBaseStyle={defaultTemplate?.baseStyle}
+                    customElements={defaultTemplate?.elements} customFonts={customFonts}
+                    queueLabel={tvPhoto.queue_label} sessionTitle={session?.title} />
+                </div>
               </div>
             </>
           ) : (
@@ -379,7 +420,7 @@ export default function RpvViewerPage() {
               {tvPhoto && (
                 <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
                   <div style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: "clamp(11px,1.1vw,13px)", fontFamily: "monospace", color: "rgba(255,255,255,0.6)", background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.14)", borderRadius: 999, padding: "5px 12px" }}>
-                    <Camera size={13} /> {tvPhoto.photo_code}
+                    <Camera size={13} /> {tvPhoto.queue_label || tvPhoto.photo_code}
                   </div>
                   {/* Showcase kecepatan upload 5G Indosat - ini justru INTI
                       demo-nya (lihat konteks obrolan), jadi dibuat menonjol
@@ -493,7 +534,7 @@ export default function RpvViewerPage() {
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: "#fff", fontFamily: "monospace", letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 5 }}>
                   {p.is_ai_result && <Link2 size={11} color="#F0A8DC" />}
-                  ID {p.photo_code}
+                  ID {p.queue_label || p.photo_code}
                 </div>
                 {/* Showcase kecepatan upload raw (HP -> Storage) - lihat
                     SpeedLabel & rpvThroughputMbps di lib/rpv.js utk gimana
@@ -646,7 +687,7 @@ export default function RpvViewerPage() {
               </button>
 
               <div style={{ position: "absolute", top: 72, left: 76, fontSize: 13, fontWeight: 700, color: "#F0F0F2", fontFamily: "monospace", letterSpacing: "0.06em" }}>
-                {viewIndex + 1} / {photosAsc.length} · ID {photosAsc[viewIndex].photo_code}
+                {viewIndex + 1} / {photosAsc.length} · ID {photosAsc[viewIndex].queue_label || photosAsc[viewIndex].photo_code}
               </div>
 
               {photosAsc.length > 1 && (
@@ -658,7 +699,16 @@ export default function RpvViewerPage() {
             </>
           )}
 
-          <img src={photosAsc[viewIndex].url} alt="" style={{ maxWidth: "min(92vw, 900px)", maxHeight: "76vh", objectFit: "contain", borderRadius: 10, boxShadow: "0 20px 60px rgba(0,0,0,0.55)" }} />
+          {/* Sama spt Mode TV di atas - pakai PhotoFrame + template DEFAULT
+              + crop tersimpan, bukan <img> mentah, supaya carousel
+              fullscreen ini (yg dibuka tamu/operator dari grid) juga
+              konsisten menampilkan bingkai/penyesuaian yg sama. */}
+          <div style={{ height: "76vh", maxWidth: "min(92vw, 900px)", aspectRatio: `${VIEWER_RATIO.w} / ${VIEWER_RATIO.h}`, borderRadius: 10, overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.55)" }}>
+            <PhotoFrame photo={photosAsc[viewIndex]} ratio={VIEWER_RATIO} crop={photosAsc[viewIndex].crop} mode="screen"
+              frame={defaultTemplate ? "custom" : "none"} customBaseStyle={defaultTemplate?.baseStyle}
+              customElements={defaultTemplate?.elements} customFonts={customFonts}
+              queueLabel={photosAsc[viewIndex].queue_label} sessionTitle={session?.title} />
+          </div>
 
           {!chromeHidden && (
             <>

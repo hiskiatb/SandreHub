@@ -27,11 +27,17 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import QRCode from "qrcode";
 import {
-  AlertTriangle, Check, ImagePlus, LogOut, Loader2,
+  AlertTriangle, Check, Clock, Download, ImagePlus, LogOut, Loader2,
   Pencil, Plus, QrCode, Settings2, Sparkles, Ticket, Trash2, X,
 } from "lucide-react";
-import { addRpvPrompt, deleteRpvPrompt, getRpvSession, listRpvPrompts, updateRpvPrompt, uploadRpvGeminiResult, uploadRpvPromptImage } from "../../../../../../lib/rpv";
+import { addRpvPrompt, deleteRpvPrompt, getRpvSession, listRpvPhotos, listRpvPrompts, rpvPublicUrl, subscribeRpvPhotos, updateRpvPrompt, uploadRpvGeminiResult, uploadRpvPromptImage } from "../../../../../../lib/rpv";
 import { PhotoboothPwaHead, usePhotoboothServiceWorker } from "../../../_pwa";
+
+function fmtHistoryTime(ms) {
+  try {
+    return new Date(ms).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  } catch { return ""; }
+}
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED = "#ED1C24";
@@ -66,6 +72,13 @@ export default function RpvPromptUploadPage() {
   const [copiedId, setCopiedId] = useState("");
   const [manageOpen, setManageOpen] = useState(false); // sheet "Kelola Prompt" - tamu/operator bisa tambah & edit template lgs dr HP
   const [leaving, setLeaving] = useState(false); // fade-out halaman sblm keluar dari sesi
+  // "Riwayat Upload" - permintaan user: tampilkan SEMUA foto yg sudah
+  // diupload di sesi ini oleh SEMUA tamu/device (bukan cuma device sendiri),
+  // spy bisa munculin lagi QR-nya - diambil live dr DB (listRpvPhotos +
+  // subscribeRpvPhotos), sama pola dgn halaman Galeri/kamera.
+  const [uploadHistory, setUploadHistory] = useState([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const historyUnsubRef = useRef(null);
 
   const exitSession = () => {
     if (leaving) return;
@@ -88,8 +101,19 @@ export default function RpvPromptUploadPage() {
         const p = await listRpvPrompts(code).catch(() => []);
         setPrompts(p);
         setState("ready");
+        try {
+          setUploadHistory(await listRpvPhotos(code));
+        } catch { /* diamkan */ }
+        historyUnsubRef.current = subscribeRpvPhotos(s.id, (row) => {
+          const photoCode = row.photo_code ?? row.code;
+          const queueLabel = row.queue_no != null ? String(row.queue_no).padStart(5, "0") : null;
+          setUploadHistory((prev) => (prev.some((x) => x.photo_code === photoCode)
+            ? prev
+            : [{ photo_code: photoCode, storage_path: row.storage_path, url: rpvPublicUrl(row.storage_path), uploaded_at: row.uploaded_at, queue_label: queueLabel, is_ai_result: row.is_ai_result }, ...prev]));
+        }, { sessionCode: code });
       } catch { setState("notfound"); }
     })();
+    return () => historyUnsubRef.current?.();
   }, [code]);
 
   // Begitu berhasil upload, generate QR code (isi = Photo ID 5-digit saja,
@@ -203,12 +227,24 @@ export default function RpvPromptUploadPage() {
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontSize: 16, fontWeight: 800, color: INK, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", letterSpacing: "-0.01em" }}>{session?.title}</div>
           </div>
+          <button onClick={() => setHistoryOpen(true)} title="Riwayat Upload"
+            style={{ flexShrink: 0, width: 38, height: 38, borderRadius: 12, background: FIELD, border: `1px solid ${LINE}`, display: "flex", alignItems: "center", justifyContent: "center", color: MID, cursor: "pointer", position: "relative" }}>
+            <Clock size={16} />
+            {uploadHistory.length > 0 && (
+              <span style={{ position: "absolute", top: -4, right: -4, minWidth: 16, height: 16, padding: "0 3px", borderRadius: 999, background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {uploadHistory.length > 99 ? "99+" : uploadHistory.length}
+              </span>
+            )}
+          </button>
           <button onClick={() => setManageOpen(true)} title="Kelola Prompt"
             style={{ flexShrink: 0, width: 38, height: 38, borderRadius: 12, background: FIELD, border: `1px solid ${LINE}`, display: "flex", alignItems: "center", justifyContent: "center", color: MID, cursor: "pointer" }}>
             <Settings2 size={16} />
           </button>
         </div>
       </div>
+      {historyOpen && (
+        <UploadHistoryPanel history={uploadHistory} onClose={() => setHistoryOpen(false)} />
+      )}
 
       <div style={{ flex: 1, padding: "20px 16px 44px", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box", position: "relative", zIndex: 1 }}>
         {/* Langkah 1 - pilih template, klik = langsung copy teks prompt */}
@@ -380,6 +416,124 @@ export default function RpvPromptUploadPage() {
         @keyframes rpv-m-copied-in { 0% { opacity: 0; } 100% { opacity: 1; } }
         @keyframes rpv-m-copied-pop { 0% { transform: scale(0.3); opacity: 0; } 65% { transform: scale(1.14); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
       `}</style>
+    </div>
+  );
+}
+
+/** Panel "Riwayat Upload" - daftar foto yg sudah diupload di sesi ini oleh
+ * SIAPA PUN (semua device), diambil live dr DB - dgn tombol per-foto utk
+ * menampilkan lagi QR-nya (dibuat on-demand, bukan sekaligus semua), spy
+ * tamu bisa scan ulang & download foto yg sudah pernah diupload. Tema
+ * gelap, senada dgn palet halaman ini (BG/CARD/FIELD/LINE). */
+function UploadHistoryPanel({ history, onClose }) {
+  const [openCode, setOpenCode] = useState(null);
+  // 2 QR terpisah per foto - permintaan user ("seharusnya ada QR Photo ID
+  // utk kebutuhan cetak lengkap dgn Photo ID-nya, DAN ada QR utk share
+  // fotonya"): idQr = QR ANGKA murni (queue_label/photo_code) yg dipindai
+  // operator di /marta/photobooth/scan/[code] utk keperluan CETAK - sama
+  // persis pola QR yg dibuat begitu tamu selesai upload (GeminiUploadSuccessScreen).
+  // shareQr = QR LINK ke /marta/photobooth/p/[photoCode], utk tamu lain
+  // scan & lihat/download/share foto itu sendiri.
+  const [idQrByCode, setIdQrByCode] = useState({});
+  const [shareQrByCode, setShareQrByCode] = useState({});
+  const [qrLoading, setQrLoading] = useState(null);
+
+  const toggleQr = async (it) => {
+    const photoCode = it.photo_code;
+    if (openCode === photoCode) { setOpenCode(null); return; }
+    setOpenCode(photoCode);
+    if (idQrByCode[photoCode] && shareQrByCode[photoCode]) return;
+    setQrLoading(photoCode);
+    try {
+      const idText = (it.queue_label || it.photo_code || "").toString();
+      const shareUrl = `${window.location.origin}/marta/photobooth/p/${photoCode}`;
+      const [idDataUrl, shareDataUrl] = await Promise.all([
+        QRCode.toDataURL(idText, { margin: 1, width: 200, color: { dark: "#111116", light: "#FFFFFF" } }),
+        QRCode.toDataURL(shareUrl, { margin: 1, width: 200, color: { dark: "#111116", light: "#FFFFFF" } }),
+      ]);
+      setIdQrByCode((m) => ({ ...m, [photoCode]: idDataUrl }));
+      setShareQrByCode((m) => ({ ...m, [photoCode]: shareDataUrl }));
+    } catch { /* diamkan - tombol tetap bisa dicoba lagi */ }
+    setQrLoading(null);
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "flex-end", justifyContent: "center" }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()}
+        style={{ width: "100%", maxWidth: 520, maxHeight: "82svh", background: CARD, border: `1px solid ${LINE}`, borderRadius: "20px 20px 0 0", display: "flex", flexDirection: "column", fontFamily: FONT }}>
+        <div style={{ padding: "16px 18px 12px", borderBottom: `1px solid ${LINE}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Clock size={16} color={MAGA} />
+            <span style={{ fontSize: 14.5, fontWeight: 800, color: INK }}>Riwayat Upload</span>
+          </div>
+          <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 999, border: "none", background: FIELD, color: MID, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <X size={14} />
+          </button>
+        </div>
+        <div style={{ overflowY: "auto", padding: "8px 14px 22px" }}>
+          {history.length === 0 && (
+            <div style={{ padding: "34px 10px", textAlign: "center", color: SUB, fontSize: 12.5 }}>
+              Belum ada foto yang diunggah di sesi ini.
+            </div>
+          )}
+          {history.map((it) => (
+            <div key={it.photo_code} style={{ padding: "10px 6px", borderBottom: `1px solid ${LINE}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ flexShrink: 0, width: 40, height: 40, borderRadius: 10, background: FIELD, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" }}>
+                  {it.url ? (
+                    <img src={it.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                  ) : (
+                    <Ticket size={15} color={MAGA} />
+                  )}
+                </span>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: INK, fontFamily: "monospace", letterSpacing: "0.03em" }}>{it.photo_code}</div>
+                  <div style={{ fontSize: 10.5, color: SUB, marginTop: 1 }}>{fmtHistoryTime(it.uploaded_at)}</div>
+                </div>
+                <button onClick={() => toggleQr(it)}
+                  style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 5, height: 30, padding: "0 11px", borderRadius: 9, border: "none", background: openCode === it.photo_code ? FIELD : `linear-gradient(135deg,${RED},${MAGA})`, color: openCode === it.photo_code ? MID : "#fff", fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
+                  <QrCode size={12} /> {openCode === it.photo_code ? "Tutup" : "QR"}
+                </button>
+              </div>
+              {openCode === it.photo_code && (
+                <div style={{ marginTop: 10, display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
+                  {qrLoading === it.photo_code && <Loader2 size={20} color={RED} style={{ animation: "spin 1s linear infinite" }} />}
+                  {idQrByCode[it.photo_code] && shareQrByCode[it.photo_code] && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 14, justifyContent: "center" }}>
+                      {/* QR Photo ID - buat kebutuhan CETAK (dipindai operator di
+                          /marta/photobooth/scan/[code], persis pola QR sukses
+                          upload), lengkap dgn teks Photo ID di bawahnya. */}
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                        <img src={idQrByCode[it.photo_code]} alt={`QR Photo ID ${it.photo_code}`} width={140} height={140} style={{ borderRadius: 10, border: `1px solid ${LINE}` }} />
+                        <span style={{ fontSize: 9.5, fontWeight: 800, color: SUB, letterSpacing: "0.06em", textTransform: "uppercase" }}>QR Photo ID (Cetak)</span>
+                        <span style={{ fontSize: 12.5, fontWeight: 800, color: INK, fontFamily: "monospace" }}>{it.queue_label || it.photo_code}</span>
+                        <a href={idQrByCode[it.photo_code]} download={`qr-id-${it.photo_code}.png`}
+                          style={{ display: "flex", alignItems: "center", gap: 5, height: 28, padding: "0 10px", borderRadius: 9, border: `1px solid ${LINE}`, color: MID, fontSize: 10.5, fontWeight: 700, textDecoration: "none" }}>
+                          <Download size={11} /> Simpan
+                        </a>
+                      </div>
+                      {/* QR Share - buat tamu lain scan & lihat/download/share
+                          foto ini sendiri (link ke /marta/photobooth/p/[photoCode]). */}
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                        <img src={shareQrByCode[it.photo_code]} alt={`QR share ${it.photo_code}`} width={140} height={140} style={{ borderRadius: 10, border: `1px solid ${LINE}` }} />
+                        <span style={{ fontSize: 9.5, fontWeight: 800, color: SUB, letterSpacing: "0.06em", textTransform: "uppercase" }}>QR Share Foto</span>
+                        <a href={`/marta/photobooth/p/${it.photo_code}`} target="_blank" rel="noreferrer"
+                          style={{ fontSize: 12.5, fontWeight: 800, color: MAGA, textDecoration: "none" }}>
+                          Buka Foto
+                        </a>
+                        <a href={shareQrByCode[it.photo_code]} download={`qr-share-${it.photo_code}.png`}
+                          style={{ display: "flex", alignItems: "center", gap: 5, height: 28, padding: "0 10px", borderRadius: 9, border: `1px solid ${LINE}`, color: MID, fontSize: 10.5, fontWeight: 700, textDecoration: "none" }}>
+                          <Download size={11} /> Simpan
+                        </a>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

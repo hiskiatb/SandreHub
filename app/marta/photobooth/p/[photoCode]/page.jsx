@@ -5,15 +5,29 @@
  * dan 3 aksi: Share (Web Share API, fallback copy link), Download (langsung
  * unduh file), Print (buka /marta/photobooth/print/[photoCode] di tab baru,
  * reuse halaman print yang sudah ada supaya logic auto-print tidak dobel).
+ *
+ * UPDATE (permintaan user - "saat qr utk share itu ada muncul foto dengan
+ * template yg sudah kita set default utk dibagikan ke social media, pastikan
+ * sync langsung dgn template operator sehingga sama dgn hasil print & yg
+ * muncul di viewer"): foto TIDAK lagi ditampilkan mentah (<img src=photo.url>)
+ * - sekarang dirender lewat <PhotoFrame> yg SAMA PERSIS dipakai operator
+ * panel & TV Viewer (import dari ../../_frame), dgn crop/zoom/pan tersimpan
+ * milik foto ini + TEMPLATE DEFAULT (is_default) yg lagi aktif - WYSIWYG
+ * penuh dgn hasil cetak & tampilan TV. Krn Web Share/Download butuh FILE
+ * gambar datar (bukan DOM hidup), hasil <PhotoFrame> di-rasterisasi ke PNG
+ * pakai html2canvas sebelum di-share/download, supaya file yg dibagikan ke
+ * medsos/di-download beneran sudah termasuk bingkai template-nya.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import QRCode from "qrcode";
 import { AlertTriangle, Check, Download, Loader2, Printer, QrCode as QrIcon, Share2 } from "lucide-react";
-import { getRpvPhotoByCode } from "../../../../../lib/rpv";
+import { getRpvPhotoByCode, listRpvFrameTemplates, listRpvCustomFonts } from "../../../../../lib/rpv";
+import { PhotoFrame, PRINT_SIZE, TEMPLATE_GOOGLE_FONTS_HREF, customFontFaceCss, findDefaultFrameTemplate } from "../../_frame";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED = "#ED1C24";
+const SHARE_RATIO = { w: PRINT_SIZE.w, h: PRINT_SIZE.h };
 
 export default function RpvPhotoDetailPage() {
   const params = useParams();
@@ -23,6 +37,10 @@ export default function RpvPhotoDetailPage() {
   const [shared, setShared] = useState(false);
   const [sharing, setSharing] = useState(false);
   const [pageQrUrl, setPageQrUrl] = useState(""); // QR ke HALAMAN INI SENDIRI - supaya bisa diteruskan/discan lagi oleh org lain
+  const [frameTemplates, setFrameTemplates] = useState([]);
+  const [customFonts, setCustomFonts] = useState([]);
+  const frameRef = useRef(null); // wrapper <PhotoFrame> - dirasterisasi ke PNG saat Share/Download
+  const defaultTemplate = useMemo(() => findDefaultFrameTemplate(frameTemplates), [frameTemplates]);
 
   useEffect(() => {
     (async () => {
@@ -34,6 +52,16 @@ export default function RpvPhotoDetailPage() {
       } catch { setState("notfound"); }
     })();
   }, [photoCode]);
+
+  // Template default + font kustom - persis pola yg sama dgn TV Viewer, spy
+  // hasil di halaman ini otomatis ikut template default operator tanpa perlu
+  // pilihan manual apa pun di sini.
+  useEffect(() => {
+    Promise.resolve().then(async () => {
+      try { setFrameTemplates(await listRpvFrameTemplates()); } catch { /* diamkan */ }
+      try { setCustomFonts(await listRpvCustomFonts()); } catch { /* diamkan */ }
+    });
+  }, []);
 
   // QR ke URL halaman ini sendiri - jadi tamu yg lagi lihat halaman ini bisa
   // tunjukkan QR-nya ke org lain, org itu scan & langsung sampai ke halaman
@@ -47,26 +75,35 @@ export default function RpvPhotoDetailPage() {
     return () => { alive = false; };
   }, [state]);
 
+  // Rasterisasi <PhotoFrame> (foto + crop + template default) jadi 1 file
+  // PNG datar - dipakai bareng oleh Share & Download supaya keduanya SELALU
+  // ikut menyertakan bingkai template, bukan cuma foto polos.
+  async function renderFramedBlob() {
+    if (!frameRef.current) return null;
+    const html2canvas = (await import("html2canvas")).default;
+    const canvas = await html2canvas(frameRef.current, {
+      backgroundColor: "#ffffff",
+      useCORS: true,
+      scale: Math.min(3, (typeof window !== "undefined" ? window.devicePixelRatio : 1) * 2 || 2),
+    });
+    return new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/png", 0.95));
+  }
+
   // FIX (permintaan user): supaya "kalau pilih Instagram Story bisa langsung
   // post story" - share HARUS mengirim FILE gambarnya sendiri, bukan cuma
   // URL. Web Share API Level 1 (url saja) TIDAK bisa dipakai IG utk story -
   // Instagram/aplikasi lain di share sheet OS cuma menerima gambar kalau
   // kita share via `files:[...]` (Web Share API Level 2, `canShare({files})`).
-  // Alurnya: fetch byte foto -> bungkus jadi File -> cek browser support
-  // share file -> share file (+title/text) supaya OS munculkan semua app yg
-  // bisa terima gambar (termasuk opsi "Add to Story" Instagram). Fallback
-  // berjenjang: share URL biasa -> copy link ke clipboard, utk browser lama/
-  // desktop yg tidak support Web Share sama sekali.
+  // Sekarang file yg dibagikan adalah HASIL RASTER <PhotoFrame> (sudah
+  // termasuk template default), bukan lagi foto mentah dari storage.
   async function handleShare() {
     if (!photo || sharing) return;
     const shareUrl = typeof window !== "undefined" ? window.location.href : "";
     setSharing(true);
     try {
-      const res = await fetch(photo.url);
-      if (!res.ok) throw new Error("fetch-failed");
-      const blob = await res.blob();
-      const ext = (blob.type && blob.type.split("/")[1]) || "jpg";
-      const file = new File([blob], `foto-${photo.photo_code}.${ext}`, { type: blob.type || "image/jpeg" });
+      const blob = await renderFramedBlob();
+      if (!blob) throw new Error("render-failed");
+      const file = new File([blob], `foto-${photo.photo_code}.png`, { type: "image/png" });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({ files: [file], title: `Foto ${photo.photo_code}`, text: "Lihat fotoku dari FlashPrint!" });
         return;
@@ -86,6 +123,30 @@ export default function RpvPhotoDetailPage() {
       }
     } finally {
       setSharing(false);
+    }
+  }
+
+  const [downloading, setDownloading] = useState(false);
+  async function handleDownload() {
+    if (!photo || downloading) return;
+    setDownloading(true);
+    try {
+      const blob = await renderFramedBlob();
+      if (!blob) throw new Error("render-failed");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `foto-${photo.photo_code}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch {
+      // fallback: kalau rasterisasi gagal (mis. gambar CORS blocked), tetap
+      // kasih file foto aslinya spy tombol download tidak mati total.
+      window.open(photo.url, "_blank", "noopener,noreferrer");
+    } finally {
+      setDownloading(false);
     }
   }
 
@@ -113,19 +174,25 @@ export default function RpvPhotoDetailPage() {
 
   return (
     <div className="flashprint-root" style={{ minHeight: "100svh", background: "linear-gradient(180deg,#111116 0%,#1B1B20 100%)", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", padding: "22px 16px 34px" }}>
+      <link rel="stylesheet" href={TEMPLATE_GOOGLE_FONTS_HREF} />
+      {customFonts.length > 0 && <style>{customFontFaceCss(customFonts)}</style>}
       <div style={{ width: "100%", maxWidth: 420, display: "flex", flexDirection: "column", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
           <div style={{ width: 7, height: 7, borderRadius: 99, background: RED }} />
           <span style={{ fontSize: 12, fontWeight: 700, color: "#B8B8C0", letterSpacing: "0.14em", textTransform: "uppercase" }}>FlashPrint</span>
         </div>
 
-        <div style={{ width: "100%", borderRadius: 20, overflow: "hidden", background: "#000", boxShadow: "0 18px 44px rgba(0,0,0,0.45)" }}>
-          <img src={photo.url} alt={`Foto ${photo.photo_code}`} style={{ width: "100%", display: "block", objectFit: "contain", maxHeight: "60svh" }} />
+        <div style={{ width: "100%", maxWidth: 280, borderRadius: 20, overflow: "hidden", boxShadow: "0 18px 44px rgba(0,0,0,0.45)", aspectRatio: `${SHARE_RATIO.w} / ${SHARE_RATIO.h}` }}>
+          <div ref={frameRef} style={{ width: "100%", height: "100%" }}>
+            <PhotoFrame photo={photo} ratio={SHARE_RATIO} crop={photo.crop} mode="screen"
+              frame={defaultTemplate ? "custom" : "none"} customBaseStyle={defaultTemplate?.baseStyle}
+              customElements={defaultTemplate?.elements} customFonts={customFonts} queueLabel={photo.queue_label} />
+          </div>
         </div>
 
         <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 8, background: "#1E1E24", border: "1px solid #2C2C33", borderRadius: 99, padding: "8px 16px" }}>
           <span style={{ fontSize: 11, color: "#8A8A93", fontWeight: 600, letterSpacing: "0.04em" }}>ID FOTO</span>
-          <span style={{ fontSize: 15, fontWeight: 800, color: "#fff", fontFamily: "monospace", letterSpacing: "0.08em" }}>{photo.photo_code}</span>
+          <span style={{ fontSize: 15, fontWeight: 800, color: "#fff", fontFamily: "monospace", letterSpacing: "0.08em" }}>{photo.queue_label || photo.photo_code}</span>
         </div>
 
         {/* QR ke halaman ini sendiri - biar tamu bisa terusin/tunjukkan ke
@@ -155,11 +222,11 @@ export default function RpvPhotoDetailPage() {
             {sharing ? <Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /> : shared ? <Check size={18} color="#3DDC84" /> : <Share2 size={18} />}
             <span style={{ fontSize: 11.5, fontWeight: 700 }}>{sharing ? "Menyiapkan…" : shared ? "Tersalin" : "Share"}</span>
           </button>
-          <a href={photo.url} download={`foto-${photo.photo_code}.jpg`}
-            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "14px 6px", borderRadius: 14, border: "1px solid #2C2C33", background: "#1E1E24", color: "#F0F0F2", textDecoration: "none", cursor: "pointer" }}>
-            <Download size={18} />
-            <span style={{ fontSize: 11.5, fontWeight: 700 }}>Download</span>
-          </a>
+          <button onClick={handleDownload} disabled={downloading}
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "14px 6px", borderRadius: 14, border: "1px solid #2C2C33", background: "#1E1E24", color: "#F0F0F2", cursor: downloading ? "default" : "pointer", opacity: downloading ? 0.6 : 1 }}>
+            {downloading ? <Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={18} />}
+            <span style={{ fontSize: 11.5, fontWeight: 700 }}>{downloading ? "Menyiapkan…" : "Download"}</span>
+          </button>
           <button onClick={handlePrint}
             style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "14px 6px", borderRadius: 14, border: "1px solid #2C2C33", background: "#1E1E24", color: "#F0F0F2", cursor: "pointer" }}>
             <Printer size={18} />
@@ -167,10 +234,11 @@ export default function RpvPhotoDetailPage() {
           </button>
         </div>
 
-        <a href={photo.url} download={`foto-${photo.photo_code}.jpg`}
-          style={{ marginTop: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", height: 48, borderRadius: 14, background: RED, color: "#fff", fontWeight: 800, fontSize: 14, textDecoration: "none" }}>
-          <Download size={16} /> Download Foto Ini
-        </a>
+        <button onClick={handleDownload} disabled={downloading}
+          style={{ marginTop: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", height: 48, borderRadius: 14, border: "none", background: RED, color: "#fff", fontWeight: 800, fontSize: 14, cursor: downloading ? "default" : "pointer", opacity: downloading ? 0.7 : 1 }}>
+          {downloading ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={16} />}
+          {downloading ? "Menyiapkan…" : "Download Foto Ini"}
+        </button>
       </div>
     </div>
   );
