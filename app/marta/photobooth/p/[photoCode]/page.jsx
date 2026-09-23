@@ -1,29 +1,38 @@
 "use client";
 /**
  * /marta/photobooth/p/[photoCode] — halaman detail 1 foto, dibuka saat tamu
- * scan QR per-foto di layar Viewer. Tampilkan foto + ID-nya secara jelas,
- * dan 3 aksi: Share (Web Share API, fallback copy link), Download (langsung
- * unduh file), Print (buka /marta/photobooth/print/[photoCode] di tab baru,
- * reuse halaman print yang sudah ada supaya logic auto-print tidak dobel).
+ * scan QR per-foto di layar Viewer. Tampilkan foto (WYSIWYG dgn template
+ * default operator) + 2 QR TERPISAH (Cetak & Share), dan 2 aksi: Share
+ * (Web Share API, fallback copy link) & Download.
  *
- * UPDATE (permintaan user - "saat qr utk share itu ada muncul foto dengan
- * template yg sudah kita set default utk dibagikan ke social media, pastikan
- * sync langsung dgn template operator sehingga sama dgn hasil print & yg
- * muncul di viewer"): foto TIDAK lagi ditampilkan mentah (<img src=photo.url>)
- * - sekarang dirender lewat <PhotoFrame> yg SAMA PERSIS dipakai operator
- * panel & TV Viewer (import dari ../../_frame), dgn crop/zoom/pan tersimpan
- * milik foto ini + TEMPLATE DEFAULT (is_default) yg lagi aktif - WYSIWYG
- * penuh dgn hasil cetak & tampilan TV. Krn Web Share/Download butuh FILE
- * gambar datar (bukan DOM hidup), hasil <PhotoFrame> di-rasterisasi ke PNG
- * pakai html2canvas sebelum di-share/download, supaya file yg dibagikan ke
- * medsos/di-download beneran sudah termasuk bingkai template-nya.
+ * UPDATE 1 (template default sync - lihat _frame.jsx): foto dirender lewat
+ * <PhotoFrame> yg SAMA PERSIS dipakai operator panel & TV Viewer, dgn
+ * crop/zoom/pan tersimpan milik foto ini + TEMPLATE DEFAULT (is_default)
+ * yg lagi aktif.
+ *
+ * UPDATE 2 (permintaan user - "hasil foto yg didownload stretch & jangan
+ * ada kompresi sama sekali, & di laman ini masih ada ID mentah 5GMDN...,
+ * seharusnya 2 QR terpisah aja (QR cetak & QR share), hilangkan tombol
+ * Print"):
+ * 1) Share/Download SEBELUMNYA pakai html2canvas menangkap <div> hasil
+ *    render di layar (kecil, & html2canvas kadang salah hitung aspect-ratio
+ *    CSS -> hasil stretch) - SEKARANG diganti `renderPhotoFrameToBlob`
+ *    (lihat _frame.jsx), yg gambar ulang foto ASLI + crop + template
+ *    LANGSUNG di <canvas> beresolusi penuh (bukan capture DOM), export PNG
+ *    (lossless, TANPA kompresi kualitas apa pun).
+ * 2) Badge "ID FOTO 5GMDN-..." (kode mentah) DIHAPUS. Diganti 2 kartu QR
+ *    terpisah: "QR Cetak" (QR angka Photo ID murni, dipindai operator di
+ *    /marta/photobooth/scan/[code] utk keperluan cetak) & "QR Share"
+ *    (link ke halaman ini sendiri, utk tamu lain lihat/unduh foto ini).
+ * 3) Tombol Print DIHAPUS dari halaman tamu ini - cetak fisik HANYA lewat
+ *    panel operator (Print Station).
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import QRCode from "qrcode";
-import { AlertTriangle, Check, Download, Loader2, Printer, QrCode as QrIcon, Share2 } from "lucide-react";
+import { AlertTriangle, Check, Download, Loader2, Printer, Share2 } from "lucide-react";
 import { getRpvPhotoByCode, listRpvFrameTemplates, listRpvCustomFonts } from "../../../../../lib/rpv";
-import { PhotoFrame, PRINT_SIZE, TEMPLATE_GOOGLE_FONTS_HREF, customFontFaceCss, findDefaultFrameTemplate } from "../../_frame";
+import { PhotoFrame, PRINT_SIZE, TEMPLATE_GOOGLE_FONTS_HREF, customFontFaceCss, findDefaultFrameTemplate, renderPhotoFrameToBlob } from "../../_frame";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED = "#ED1C24";
@@ -36,10 +45,10 @@ export default function RpvPhotoDetailPage() {
   const [photo, setPhoto] = useState(null);
   const [shared, setShared] = useState(false);
   const [sharing, setSharing] = useState(false);
-  const [pageQrUrl, setPageQrUrl] = useState(""); // QR ke HALAMAN INI SENDIRI - supaya bisa diteruskan/discan lagi oleh org lain
+  const [shareQrUrl, setShareQrUrl] = useState(""); // QR ke HALAMAN INI SENDIRI - dipindai tamu lain utk lihat/unduh foto ini
+  const [printQrUrl, setPrintQrUrl] = useState(""); // QR ANGKA Photo ID murni - dipindai OPERATOR di /scan/[code] utk cetak
   const [frameTemplates, setFrameTemplates] = useState([]);
   const [customFonts, setCustomFonts] = useState([]);
-  const frameRef = useRef(null); // wrapper <PhotoFrame> - dirasterisasi ke PNG saat Share/Download
   const defaultTemplate = useMemo(() => findDefaultFrameTemplate(frameTemplates), [frameTemplates]);
 
   useEffect(() => {
@@ -63,30 +72,32 @@ export default function RpvPhotoDetailPage() {
     });
   }, []);
 
-  // QR ke URL halaman ini sendiri - jadi tamu yg lagi lihat halaman ini bisa
-  // tunjukkan QR-nya ke org lain, org itu scan & langsung sampai ke halaman
-  // yg SAMA persis (lihat foto, Photo ID, QR lagi, & download).
+  // 2 QR terpisah - Cetak (angka Photo ID murni, sama persis pola QR yg
+  // dibuat begitu tamu selesai upload) & Share (link ke halaman ini sendiri).
   useEffect(() => {
-    if (state !== "ready" || typeof window === "undefined") return;
+    if (state !== "ready" || typeof window === "undefined" || !photo) return;
     let alive = true;
     QRCode.toDataURL(window.location.href, { margin: 1, width: 220, color: { dark: "#111116", light: "#FFFFFF" } })
-      .then((url) => { if (alive) setPageQrUrl(url); })
+      .then((url) => { if (alive) setShareQrUrl(url); })
+      .catch(() => {});
+    const idText = (photo.queue_label || photo.photo_code || "").toString();
+    QRCode.toDataURL(idText, { margin: 1, width: 220, color: { dark: "#111116", light: "#FFFFFF" } })
+      .then((url) => { if (alive) setPrintQrUrl(url); })
       .catch(() => {});
     return () => { alive = false; };
-  }, [state]);
+  }, [state, photo]);
 
-  // Rasterisasi <PhotoFrame> (foto + crop + template default) jadi 1 file
-  // PNG datar - dipakai bareng oleh Share & Download supaya keduanya SELALU
-  // ikut menyertakan bingkai template, bukan cuma foto polos.
+  // Bikin 1 file PNG (foto + crop + template default), beresolusi PENUH &
+  // TANPA kompresi - dipakai bareng oleh Share & Download.
   async function renderFramedBlob() {
-    if (!frameRef.current) return null;
-    const html2canvas = (await import("html2canvas")).default;
-    const canvas = await html2canvas(frameRef.current, {
-      backgroundColor: "#ffffff",
-      useCORS: true,
-      scale: Math.min(3, (typeof window !== "undefined" ? window.devicePixelRatio : 1) * 2 || 2),
+    if (!photo) return null;
+    return renderPhotoFrameToBlob({
+      photo, ratio: SHARE_RATIO, crop: photo.crop,
+      frame: defaultTemplate ? "custom" : "none",
+      customBaseStyle: defaultTemplate?.baseStyle,
+      customElements: defaultTemplate?.elements,
+      customFonts, queueLabel: photo.queue_label,
     });
-    return new Promise((resolve) => canvas.toBlob((b) => resolve(b), "image/png", 0.95));
   }
 
   // FIX (permintaan user): supaya "kalau pilih Instagram Story bisa langsung
@@ -94,8 +105,6 @@ export default function RpvPhotoDetailPage() {
   // URL. Web Share API Level 1 (url saja) TIDAK bisa dipakai IG utk story -
   // Instagram/aplikasi lain di share sheet OS cuma menerima gambar kalau
   // kita share via `files:[...]` (Web Share API Level 2, `canShare({files})`).
-  // Sekarang file yg dibagikan adalah HASIL RASTER <PhotoFrame> (sudah
-  // termasuk template default), bukan lagi foto mentah dari storage.
   async function handleShare() {
     if (!photo || sharing) return;
     const shareUrl = typeof window !== "undefined" ? window.location.href : "";
@@ -103,13 +112,13 @@ export default function RpvPhotoDetailPage() {
     try {
       const blob = await renderFramedBlob();
       if (!blob) throw new Error("render-failed");
-      const file = new File([blob], `foto-${photo.photo_code}.png`, { type: "image/png" });
+      const file = new File([blob], `foto-${photo.queue_label || photo.photo_code}.png`, { type: "image/png" });
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ files: [file], title: `Foto ${photo.photo_code}`, text: "Lihat fotoku dari FlashPrint!" });
+        await navigator.share({ files: [file], title: `Foto ${photo.queue_label || photo.photo_code}`, text: "Lihat fotoku dari FlashPrint!" });
         return;
       }
       if (navigator.share) {
-        await navigator.share({ title: `Foto ${photo.photo_code}`, url: shareUrl });
+        await navigator.share({ title: `Foto ${photo.queue_label || photo.photo_code}`, url: shareUrl });
         return;
       }
       throw new Error("no-web-share");
@@ -136,7 +145,7 @@ export default function RpvPhotoDetailPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `foto-${photo.photo_code}.png`;
+      a.download = `foto-${photo.queue_label || photo.photo_code}.png`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -148,11 +157,6 @@ export default function RpvPhotoDetailPage() {
     } finally {
       setDownloading(false);
     }
-  }
-
-  function handlePrint() {
-    if (!photo) return;
-    window.open(`/marta/photobooth/print/${photo.photo_code}`, "_blank", "noopener,noreferrer");
   }
 
   if (state === "loading") {
@@ -183,40 +187,45 @@ export default function RpvPhotoDetailPage() {
         </div>
 
         <div style={{ width: "100%", maxWidth: 280, borderRadius: 20, overflow: "hidden", boxShadow: "0 18px 44px rgba(0,0,0,0.45)", aspectRatio: `${SHARE_RATIO.w} / ${SHARE_RATIO.h}` }}>
-          <div ref={frameRef} style={{ width: "100%", height: "100%" }}>
-            <PhotoFrame photo={photo} ratio={SHARE_RATIO} crop={photo.crop} mode="screen"
-              frame={defaultTemplate ? "custom" : "none"} customBaseStyle={defaultTemplate?.baseStyle}
-              customElements={defaultTemplate?.elements} customFonts={customFonts} queueLabel={photo.queue_label} />
+          <PhotoFrame photo={photo} ratio={SHARE_RATIO} crop={photo.crop} mode="screen"
+            frame={defaultTemplate ? "custom" : "none"} customBaseStyle={defaultTemplate?.baseStyle}
+            customElements={defaultTemplate?.elements} customFonts={customFonts} queueLabel={photo.queue_label} />
+        </div>
+
+        {/* 2 QR terpisah - permintaan user: "seharusnya ada QR Photo ID utk
+            kebutuhan cetak lengkap dgn Photo ID-nya, DAN ada QR utk share
+            fotonya" - tidak ada lagi badge ID mentah, cukup 2 kartu ini. */}
+        <div style={{ marginTop: 16, width: "100%", display: "flex", gap: 10 }}>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "#1E1E24", border: "1px solid #2C2C33", borderRadius: 16, padding: "14px 10px" }}>
+            {printQrUrl ? (
+              <img src={printQrUrl} alt="QR Photo ID untuk cetak" style={{ width: 96, height: 96, borderRadius: 8, background: "#fff", padding: 4 }} />
+            ) : (
+              <div style={{ width: 96, height: 96, borderRadius: 8, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Loader2 size={16} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
+              </div>
+            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 800, color: "#F0F0F2" }}>
+              <Printer size={12} color={RED} /> QR Cetak
+            </div>
+            <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", fontFamily: "monospace", letterSpacing: "0.06em" }}>{photo.queue_label || photo.photo_code}</span>
+            <span style={{ fontSize: 9.5, color: "#8A8A93", textAlign: "center", lineHeight: 1.4 }}>Tunjukkan ke petugas utk dicetak</span>
+          </div>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "#1E1E24", border: "1px solid #2C2C33", borderRadius: 16, padding: "14px 10px" }}>
+            {shareQrUrl ? (
+              <img src={shareQrUrl} alt="QR share halaman ini" style={{ width: 96, height: 96, borderRadius: 8, background: "#fff", padding: 4 }} />
+            ) : (
+              <div style={{ width: 96, height: 96, borderRadius: 8, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Loader2 size={16} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
+              </div>
+            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 800, color: "#F0F0F2" }}>
+              <Share2 size={12} color={RED} /> QR Share
+            </div>
+            <span style={{ fontSize: 9.5, color: "#8A8A93", textAlign: "center", lineHeight: 1.4 }}>Scan utk buka &amp; unduh halaman ini</span>
           </div>
         </div>
 
-        <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 8, background: "#1E1E24", border: "1px solid #2C2C33", borderRadius: 99, padding: "8px 16px" }}>
-          <span style={{ fontSize: 11, color: "#8A8A93", fontWeight: 600, letterSpacing: "0.04em" }}>ID FOTO</span>
-          <span style={{ fontSize: 15, fontWeight: 800, color: "#fff", fontFamily: "monospace", letterSpacing: "0.08em" }}>{photo.queue_label || photo.photo_code}</span>
-        </div>
-
-        {/* QR ke halaman ini sendiri - biar tamu bisa terusin/tunjukkan ke
-            org lain, discan lagi & sampai ke halaman yg sama (foto + ID +
-            QR + download) - bukan cuma jalur 1 arah dr layar Viewer/upload. */}
-        <div style={{ marginTop: 16, width: "100%", display: "flex", alignItems: "center", gap: 12, background: "#1E1E24", border: "1px solid #2C2C33", borderRadius: 16, padding: "12px 14px" }}>
-          {pageQrUrl ? (
-            <img src={pageQrUrl} alt="QR halaman ini" style={{ width: 64, height: 64, borderRadius: 8, flexShrink: 0, background: "#fff", padding: 4 }} />
-          ) : (
-            <div style={{ width: 64, height: 64, borderRadius: 8, flexShrink: 0, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Loader2 size={16} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
-            </div>
-          )}
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 12, fontWeight: 800, color: "#F0F0F2", display: "flex", alignItems: "center", gap: 6 }}>
-              <QrIcon size={12} color={RED} /> Scan untuk buka halaman ini
-            </div>
-            <div style={{ marginTop: 3, fontSize: 10.5, color: "#8A8A93", lineHeight: 1.5 }}>
-              Tunjukkan QR ini ke orang lain supaya mereka juga bisa lihat &amp; unduh foto ini.
-            </div>
-          </div>
-        </div>
-
-        <div style={{ marginTop: 22, width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+        <div style={{ marginTop: 22, width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
           <button onClick={handleShare} disabled={sharing}
             style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "14px 6px", borderRadius: 14, border: "1px solid #2C2C33", background: "#1E1E24", color: "#F0F0F2", cursor: sharing ? "default" : "pointer", opacity: sharing ? 0.6 : 1 }}>
             {sharing ? <Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /> : shared ? <Check size={18} color="#3DDC84" /> : <Share2 size={18} />}
@@ -226,11 +235,6 @@ export default function RpvPhotoDetailPage() {
             style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "14px 6px", borderRadius: 14, border: "1px solid #2C2C33", background: "#1E1E24", color: "#F0F0F2", cursor: downloading ? "default" : "pointer", opacity: downloading ? 0.6 : 1 }}>
             {downloading ? <Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={18} />}
             <span style={{ fontSize: 11.5, fontWeight: 700 }}>{downloading ? "Menyiapkan…" : "Download"}</span>
-          </button>
-          <button onClick={handlePrint}
-            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "14px 6px", borderRadius: 14, border: "1px solid #2C2C33", background: "#1E1E24", color: "#F0F0F2", cursor: "pointer" }}>
-            <Printer size={18} />
-            <span style={{ fontSize: 11.5, fontWeight: 700 }}>Print</span>
           </button>
         </div>
 
