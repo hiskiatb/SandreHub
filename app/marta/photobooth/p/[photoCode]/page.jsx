@@ -45,21 +45,38 @@ export default function RpvPhotoDetailPage() {
   const [photo, setPhoto] = useState(null);
   const [shared, setShared] = useState(false);
   const [sharing, setSharing] = useState(false);
-  const [shareQrUrl, setShareQrUrl] = useState(""); // QR ke HALAMAN INI SENDIRI - dipindai tamu lain utk lihat/unduh foto ini
   const [printQrUrl, setPrintQrUrl] = useState(""); // QR ANGKA Photo ID murni - dipindai OPERATOR di /scan/[code] utk cetak
   const [frameTemplates, setFrameTemplates] = useState([]);
   const [customFonts, setCustomFonts] = useState([]);
   const defaultTemplate = useMemo(() => findDefaultFrameTemplate(frameTemplates), [frameTemplates]);
 
+  // FIX (permintaan user - "kenapa Photo ID tidak langsung muncul, harus
+  // refresh dulu"): tepat setelah upload, row rpv_photos yg baru saja
+  // di-insert/reserve queue_no-nya kadang belum sepenuhnya "terlihat" oleh
+  // request GET berikutnya (replica/connection lag di sisi Supabase) - jadi
+  // queue_label bisa balik null/kosong sesaat. Solusi: retry singkat
+  // (polling) kalau queue_label masih kosong, sebelum nampilin apa adanya.
   useEffect(() => {
+    let alive = true;
     (async () => {
       try {
-        const p = await getRpvPhotoByCode(photoCode);
-        if (!p) { setState("notfound"); return; }
+        let p = await getRpvPhotoByCode(photoCode);
+        if (!p) { if (alive) setState("notfound"); return; }
+        let tries = 0;
+        while (alive && !p.queue_label && tries < 4) {
+          await new Promise((r) => setTimeout(r, 500));
+          tries += 1;
+          try {
+            const fresh = await getRpvPhotoByCode(photoCode);
+            if (fresh) p = fresh;
+          } catch { /* diamkan, pakai data terakhir yg berhasil */ }
+        }
+        if (!alive) return;
         setPhoto(p);
         setState("ready");
-      } catch { setState("notfound"); }
+      } catch { if (alive) setState("notfound"); }
     })();
+    return () => { alive = false; };
   }, [photoCode]);
 
   // Template default + font kustom - persis pola yg sama dgn TV Viewer, spy
@@ -72,14 +89,13 @@ export default function RpvPhotoDetailPage() {
     });
   }, []);
 
-  // 2 QR terpisah - Cetak (angka Photo ID murni, sama persis pola QR yg
-  // dibuat begitu tamu selesai upload) & Share (link ke halaman ini sendiri).
+  // QR Cetak - angka Photo ID murni, sama persis pola QR yg dibuat begitu
+  // tamu selesai upload. (QR Share dihapus - permintaan user: halaman ini
+  // dipakai panitia utk ditunjukkan ke tamu utk discan operator saat cetak,
+  // jadi cukup 1 QR Photo ID saja, tidak perlu QR balik ke halaman ini.)
   useEffect(() => {
     if (state !== "ready" || typeof window === "undefined" || !photo) return;
     let alive = true;
-    QRCode.toDataURL(window.location.href, { margin: 1, width: 220, color: { dark: "#111116", light: "#FFFFFF" } })
-      .then((url) => { if (alive) setShareQrUrl(url); })
-      .catch(() => {});
     const idText = (photo.queue_label || photo.photo_code || "").toString();
     QRCode.toDataURL(idText, { margin: 1, width: 220, color: { dark: "#111116", light: "#FFFFFF" } })
       .then((url) => { if (alive) setPrintQrUrl(url); })
@@ -192,37 +208,22 @@ export default function RpvPhotoDetailPage() {
             customElements={defaultTemplate?.elements} customFonts={customFonts} queueLabel={photo.queue_label} />
         </div>
 
-        {/* 2 QR terpisah - permintaan user: "seharusnya ada QR Photo ID utk
-            kebutuhan cetak lengkap dgn Photo ID-nya, DAN ada QR utk share
-            fotonya" - tidak ada lagi badge ID mentah, cukup 2 kartu ini. */}
-        <div style={{ marginTop: 16, width: "100%", display: "flex", gap: 10 }}>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "#1E1E24", border: "1px solid #2C2C33", borderRadius: 16, padding: "14px 10px" }}>
-            {printQrUrl ? (
-              <img src={printQrUrl} alt="QR Photo ID untuk cetak" style={{ width: 96, height: 96, borderRadius: 8, background: "#fff", padding: 4 }} />
-            ) : (
-              <div style={{ width: 96, height: 96, borderRadius: 8, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Loader2 size={16} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
-              </div>
-            )}
-            <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 800, color: "#F0F0F2" }}>
-              <Printer size={12} color={RED} /> QR Cetak
+        {/* QR Cetak saja - permintaan user: halaman ini dipakai panitia utk
+            ditunjukkan ke tamu/discan operator saat cetak, QR Share ke
+            halaman ini sendiri tidak diperlukan lagi di sini. */}
+        <div style={{ marginTop: 16, width: "100%", maxWidth: 220, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "#1E1E24", border: "1px solid #2C2C33", borderRadius: 16, padding: "18px 14px" }}>
+          {printQrUrl ? (
+            <img src={printQrUrl} alt="QR Photo ID untuk cetak" style={{ width: 140, height: 140, borderRadius: 8, background: "#fff", padding: 6 }} />
+          ) : (
+            <div style={{ width: 140, height: 140, borderRadius: 8, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Loader2 size={18} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
             </div>
-            <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", fontFamily: "monospace", letterSpacing: "0.06em" }}>{photo.queue_label || photo.photo_code}</span>
-            <span style={{ fontSize: 9.5, color: "#8A8A93", textAlign: "center", lineHeight: 1.4 }}>Tunjukkan ke petugas utk dicetak</span>
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 800, color: "#F0F0F2" }}>
+            <Printer size={12} color={RED} /> QR Cetak
           </div>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "#1E1E24", border: "1px solid #2C2C33", borderRadius: 16, padding: "14px 10px" }}>
-            {shareQrUrl ? (
-              <img src={shareQrUrl} alt="QR share halaman ini" style={{ width: 96, height: 96, borderRadius: 8, background: "#fff", padding: 4 }} />
-            ) : (
-              <div style={{ width: 96, height: 96, borderRadius: 8, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <Loader2 size={16} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
-              </div>
-            )}
-            <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 800, color: "#F0F0F2" }}>
-              <Share2 size={12} color={RED} /> QR Share
-            </div>
-            <span style={{ fontSize: 9.5, color: "#8A8A93", textAlign: "center", lineHeight: 1.4 }}>Scan utk buka &amp; unduh halaman ini</span>
-          </div>
+          <span style={{ fontSize: 15, fontWeight: 800, color: "#fff", fontFamily: "monospace", letterSpacing: "0.06em" }}>{photo.queue_label || photo.photo_code}</span>
+          <span style={{ fontSize: 9.5, color: "#8A8A93", textAlign: "center", lineHeight: 1.4 }}>Tunjukkan ke petugas utk dicetak</span>
         </div>
 
         <div style={{ marginTop: 22, width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
