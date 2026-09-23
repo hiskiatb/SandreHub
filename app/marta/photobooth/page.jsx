@@ -23,7 +23,8 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ArrowLeft, Camera, Check, Copy, FlipHorizontal2, FlipVertical2, ImageOff, ImagePlus, Loader2, Minus, Monitor, Plus, Printer, QrCode, Radio, RotateCw, Search, Settings, Sparkles, Trash2, X, ZoomIn } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Camera, Check, Copy, FlipHorizontal2, FlipVertical2, ImageOff, ImagePlus, Loader2, Minus, Monitor, Plus, Printer, Radio, RotateCw, Search, Settings, Sparkles, Trash2, X, ZoomIn } from "lucide-react";
+import ScanQrGlyph from "./_scan-glyph";
 import { addRpvPrompt, createRpvSession, deleteRpvPhoto, deleteRpvPrompt, deleteRpvSession, findRpvPhotoByQueue, getRpvSession, listRpvPhotos, listRpvPrompts, listRpvSessions, rpvPublicUrl, subscribeRpvOperatorPairing, subscribeRpvPhotos, uploadRpvPromptImage } from "../../../lib/rpv";
 
 const FONT = `"Google Sans","DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -774,7 +775,7 @@ function ScanLinkPopup({ code, onClose }) {
       <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 380, background: t.card, border: `1px solid ${t.line}`, borderRadius: 18, padding: 20 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
           <div style={{ fontSize: 14, fontWeight: 800, color: t.hi, display: "flex", alignItems: "center", gap: 8 }}>
-            <QrCode size={16} color={MAGA} /> Link HP Scanner
+            <ScanQrGlyph size={16} color={MAGA} strokeWidth={1.8} /> Link HP Scanner
           </div>
           <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 9, border: "none", background: "rgba(255,255,255,0.08)", color: t.hi, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
             <X size={14} />

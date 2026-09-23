@@ -10,7 +10,8 @@
  */
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRight, Loader2, AlertTriangle, QrCode } from "lucide-react";
+import { ChevronRight, Loader2, AlertTriangle } from "lucide-react";
+import ScanQrGlyph from "../_scan-glyph";
 import { listRpvSessions } from "../../../../lib/rpv";
 import { PhotoboothPwaHead, usePhotoboothServiceWorker } from "../_pwa";
 
@@ -59,7 +60,7 @@ export default function RpvScanLanding() {
       </div>
       <div style={{ position: "relative", zIndex: 1, padding: "40px 20px 24px", textAlign: "center" }}>
         <div style={{ width: 64, height: 64, margin: "0 auto", borderRadius: 19, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${VIO},${MAGA})`, boxShadow: `0 12px 30px -8px ${MAGA}77` }}>
-          <QrCode size={28} color="#fff" />
+          <ScanQrGlyph size={28} color="#fff" strokeWidth={1.8} />
         </div>
         <div style={{ marginTop: 16, fontSize: 19, fontWeight: 800, color: INK, letterSpacing: "-0.01em" }}>Scanner Operator</div>
         <div style={{ marginTop: 5, fontSize: 12.5, color: SUB, fontWeight: 600, lineHeight: 1.5 }}>
@@ -86,7 +87,7 @@ export default function RpvScanLanding() {
             className="rpv-scango-card"
             style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, textAlign: "left", background: `linear-gradient(180deg, ${CARD_HI} 0%, ${CARD} 100%)`, border: `1px solid ${LINE}`, borderRadius: 16, padding: "14px 14px", marginBottom: 10, cursor: leavingCode ? "default" : "pointer", fontFamily: FONT, opacity: leavingCode && leavingCode !== s.code ? 0.4 : 1, transition: "opacity .2s ease" }}>
             <span style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${VIO}22,${MAGA}22)`, color: MAGA }}>
-              <QrCode size={18} />
+              <ScanQrGlyph size={18} strokeWidth={1.8} />
             </span>
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 800, color: INK, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</div>

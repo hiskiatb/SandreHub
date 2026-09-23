@@ -16,7 +16,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, Check, Loader2, QrCode, Radio, ScanLine, Users } from "lucide-react";
+import { AlertTriangle, Check, Loader2, Radio, ScanLine, Users } from "lucide-react";
+import ScanQrGlyph from "../../_scan-glyph";
 import { getRpvSession, subscribeRpvOperatorPairing } from "../../../../../lib/rpv";
 import { PhotoboothPwaHead, usePhotoboothServiceWorker } from "../../_pwa";
 
@@ -191,7 +192,7 @@ function OperatorPicker({ sessionTitle, operators, onPick, wasPaired }) {
 
       <div style={{ position: "relative", zIndex: 1, textAlign: "center", marginTop: 8, marginBottom: 22 }}>
         <div style={{ width: 46, height: 46, borderRadius: 14, background: `linear-gradient(135deg,${VIO},${MAGA})`, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px" }}>
-          <QrCode size={22} color="#fff" />
+          <ScanQrGlyph size={22} color="#fff" strokeWidth={1.8} />
         </div>
         <div style={{ fontSize: 17, fontWeight: 800, color: INK, letterSpacing: "-0.01em" }}>{sessionTitle || "Sesi"}</div>
         <div style={{ fontSize: 12.5, color: MAGA, fontWeight: 700, marginTop: 6 }}>Pilih Operator</div>
@@ -473,7 +474,7 @@ function ScannerView({ sessionTitle, pairedLabel, lastSent, onChangeOperator, on
             {!camErr && (
               <button type="button" onClick={() => setManual(false)}
                 style={{ height: 44, borderRadius: 12, border: "1px solid rgba(255,255,255,0.18)", background: "transparent", color: "rgba(255,255,255,0.7)", fontFamily: FONT, fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer" }}>
-                <QrCode size={14} /> Coba scan kamera lagi
+                <ScanQrGlyph size={14} strokeWidth={1.8} /> Coba scan kamera lagi
               </button>
             )}
           </form>
