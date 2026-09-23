@@ -29,7 +29,7 @@ import {
   FONT, MAGA, PRINT_SIZE, DEFAULT_CROP, ROTATE_STEP,
   TEMPLATE_FONTS, TEMPLATE_GOOGLE_FONTS_HREF,
   resolveTemplateFontCss, customFontFaceCss,
-  newTemplateTextElement, newTemplateImageElement, newTemplateShapeElement, clampPct,
+  newTemplateTextElement, newTemplateImageElement, newTemplateFrameOverlayElement, newTemplateShapeElement, clampPct,
   PhotoFrame, findDefaultFrameTemplate,
 } from "./_frame";
 import { addRpvPrompt, clearRpvDefaultFrameTemplate, createRpvSession, deleteRpvCustomFont, deleteRpvFrameTemplate, deleteRpvPhoto, deleteRpvPrompt, deleteRpvSession, findRpvPhotoByQueue, getRpvSession, listRpvCustomFonts, listRpvFrameTemplates, listRpvPhotos, listRpvPrompts, listRpvSessions, rpvPublicUrl, saveRpvFrameTemplate, saveRpvPhotoCrop, setRpvDefaultFrameTemplate, subscribeRpvOperatorPairing, subscribeRpvPhotos, uploadRpvCustomFont, uploadRpvPromptImage, uploadRpvTemplateImage } from "../../../lib/rpv";
@@ -516,6 +516,22 @@ export default function RpvControlRoom() {
     } catch { /* gagal upload gambar - diamkan, operator bisa coba lagi */ }
     finally { setTemplateUploading(false); }
   };
+  // Bingkai (PNG Lubang) - permintaan user: upload template yg SUDAH
+  // disiapkan bagian bolong/transparan-nya utk foto, langsung terpasang
+  // PENUH menutup seluruh bingkai (bukan kotak kecil 40% di tengah spt
+  // "Gambar" biasa) supaya lubangnya otomatis pas menampakkan foto di
+  // baliknya tanpa perlu digeser/diresize manual dulu.
+  const addFrameOverlayElementFromFile = async (file) => {
+    if (!file) return;
+    setTemplateUploading(true);
+    try {
+      const url = await uploadRpvTemplateImage(file);
+      const el = newTemplateFrameOverlayElement(url);
+      setCustomElements((els) => [...els, el]);
+      setSelectedElId(el.id);
+    } catch { /* gagal upload bingkai - diamkan, operator bisa coba lagi */ }
+    finally { setTemplateUploading(false); }
+  };
   const addShapeElement = () => {
     const el = newTemplateShapeElement();
     setCustomElements((els) => [...els, el]);
@@ -980,7 +996,7 @@ export default function RpvControlRoom() {
           baseStyle={customBaseStyle} onSetBaseStyle={setCustomBaseStyle}
           customFonts={customFonts} customFontsState={customFontsState} onUploadFont={uploadCustomFont} onDeleteFont={removeCustomFont} fontUploading={fontUploading}
           frameRef={templateFrameRef} onElementPointerDown={onElementPointerDown}
-          onAddText={addTextElement} onAddImage={addImageElementFromFile} onAddShape={addShapeElement} onUpdateElement={updateElement} onRemoveElement={removeElement}
+          onAddText={addTextElement} onAddImage={addImageElementFromFile} onAddFrameOverlay={addFrameOverlayElementFromFile} onAddShape={addShapeElement} onUpdateElement={updateElement} onRemoveElement={removeElement}
           onMoveElement={moveElementLayer}
           uploading={templateUploading}
           templates={savedTemplates} templatesState={templatesState}
@@ -1095,13 +1111,14 @@ function TemplateEditorModal({
   photo, ratio, elements, selectedElId, setSelectedElId, frameRef, onElementPointerDown,
   baseStyle, onSetBaseStyle,
   customFonts, customFontsState, onUploadFont, onDeleteFont, fontUploading,
-  onAddText, onAddImage, onAddShape, onUpdateElement, onRemoveElement, onMoveElement, uploading,
+  onAddText, onAddImage, onAddFrameOverlay, onAddShape, onUpdateElement, onRemoveElement, onMoveElement, uploading,
   templates, templatesState, activeTemplateId, activeTemplateName,
   onApplyTemplate, onNewTemplate, onSaveTemplate, onSaveTemplateAs, onDeleteTemplate, saving,
   onSetDefaultTemplate, onUnsetDefaultTemplate,
   onClose,
 }) {
   const fileInputRef = useRef(null);
+  const frameOverlayInputRef = useRef(null);
   const fontInputRef = useRef(null);
   const selectedEl = elements.find((e) => e.id === selectedElId) || null;
   const selectedElIndex = selectedEl ? elements.findIndex((e) => e.id === selectedElId) : -1;
@@ -1179,6 +1196,22 @@ function TemplateEditorModal({
                     <Square size={13} /> Bentuk
                   </button>
                 </div>
+                {/* Bingkai (PNG Lubang) - permintaan user: pakai template
+                    siap pakai yg SUDAH ada bagian bolong/transparan utk
+                    fotonya (dibuat di software desain lain), langsung
+                    terpasang PENUH menutup seluruh bingkai (0/0/100/100%)
+                    supaya lubangnya pas menampakkan foto tanpa perlu
+                    digeser/diresize manual - beda dari "Gambar" biasa yg
+                    default kecil 40% di tengah utk dekorasi. */}
+                <button onClick={() => frameOverlayInputRef.current?.click()} disabled={uploading}
+                  style={{ width: "100%", marginTop: 6, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, height: 34, borderRadius: 9, border: `1px dashed ${MAGA}`, background: `${MAGA}14`, color: t.hi, fontSize: 11.5, fontWeight: 700, cursor: uploading ? "not-allowed" : "pointer", fontFamily: FONT, opacity: uploading ? 0.6 : 1 }}>
+                  {uploading ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <ImagePlus size={13} />} Bingkai (PNG Lubang)
+                </button>
+                <div style={{ fontSize: 9.5, color: t.lo, lineHeight: 1.5, marginTop: 4 }}>
+                  Upload PNG template yg sudah ada bagian transparan/bolong utk fotonya - langsung dipasang penuh menutupi bingkai, lubangnya otomatis menampakkan foto di baliknya.
+                </div>
+                <input ref={frameOverlayInputRef} type="file" accept="image/*" style={{ display: "none" }}
+                  onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onAddFrameOverlay(f); }} />
               </div>
 
               {/* Inspector elemen terpilih */}
@@ -1298,8 +1331,20 @@ function TemplateEditorModal({
                       </div>
                     </div>
                   ) : (
-                    <div style={{ fontSize: 11, color: t.lo, lineHeight: 1.6 }}>
-                      Geser gambar utk pindah posisi, tarik kotak kecil di pojok kanan-bawah utk ubah ukuran.
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ fontSize: 11, color: t.lo, lineHeight: 1.6 }}>
+                        Geser gambar utk pindah posisi, tarik kotak kecil di pojok kanan-bawah utk ubah ukuran.
+                      </div>
+                      {/* Pusatkan Penuh - permintaan user: pastikan hasil
+                          bingkai (PNG lubang) yg diupload bisa CENTER -
+                          reset cepat kalau elemen kegeser dikit pas
+                          drag/resize manual, balik ke 0/0/100/100% (nutup
+                          penuh & center persis, sama spt posisi awal saat
+                          baru diupload lewat tombol "Bingkai (PNG Lubang)"). */}
+                      <button onClick={() => onUpdateElement(selectedEl.id, { xPct: 0, yPct: 0, wPct: 100, hPct: 100 })}
+                        style={{ height: 30, borderRadius: 8, border: `1px dashed ${t.line}`, background: t.fieldBg, color: t.mid, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                        Pusatkan &amp; Penuhi Bingkai
+                      </button>
                     </div>
                   )}
                 </div>

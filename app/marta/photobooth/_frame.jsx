@@ -26,11 +26,15 @@ export const FONT = `"Google Sans","DM Sans",-apple-system,BlinkMacSystemFont,"S
 export const MAGA = "#C6168D";
 const MUTED = "#8A8D91";
 
-// Ukuran cetak DIKUNCI ke 2R (6x9cm) - dipakai baik utk lembar cetak
-// sungguhan (window.print) MAUPUN sbg rasio aspek foto di preview
-// operator & TV Viewer, supaya framing yg operator lihat & atur (crop/
-// zoom/template) BENAR2 sama dgn hasil cetak fisik, bukan cuma "mirip".
-export const PRINT_SIZE = { label: "2R", w: 6, h: 9 };
+// Ukuran cetak DIKUNCI ke 2R - dipakai baik utk lembar cetak sungguhan
+// (window.print) MAUPUN sbg rasio aspek foto di preview operator & TV
+// Viewer, supaya framing yg operator lihat & atur (crop/zoom/template)
+// BENAR2 sama dgn hasil cetak fisik, bukan cuma "mirip".
+// UPDATE (permintaan user - konfirmasi ukuran 2R yg benar): 2R standar
+// internasional = 2.5 x 3.5 inch = 750 x 1050 px @300dpi (rasio 5:7,
+// ~0.714) - BUKAN 6x9cm (rasio 2:3, ~0.667) yg dipakai sebelumnya.
+// 2.5in = 6.35cm, 3.5in = 8.89cm.
+export const PRINT_SIZE = { label: "2R", w: 6.35, h: 8.89 };
 
 // Crop/zoom/pan/rotate/flip default sebuah foto sblm operator menyesuaikan
 // & menyimpannya (lihat saveRpvPhotoCrop di lib/rpv.js - disimpan PER FOTO
@@ -100,6 +104,23 @@ export function newTemplateImageElement(url) {
   return {
     id: `el-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     type: "image", xPct: 30, yPct: 30, wPct: 40, hPct: 40, url,
+  };
+}
+/** Elemen "Bingkai (PNG Lubang)" - permintaan user: upload template siap
+ * pakai yg SUDAH ada bagian bolong/transparan utk fotonya (dibuat di app
+ * desain lain), lalu dipasang di FlashPrint tinggal pakai, bukan nyusun
+ * dari nol pakai kotak gambar kecil yg harus digeser/diresize manual dulu.
+ * Beda dari newTemplateImageElement (default 40x40% di tengah, ukuran
+ * dekorasi kecil) - elemen ini langsung dipasang PENUH 0/0/100/100% (nutup
+ * seluruh bingkai persis di atas foto), jadi bagian PNG yg transparan
+ * (lubangnya) otomatis "menampakkan" foto di baliknya tanpa operator perlu
+ * atur posisi/ukuran sama sekali - upload langsung jadi. Tetap elemen tipe
+ * "image" biasa (bisa digeser/diresize lagi kalau perlu), cuma beda titik
+ * awal. */
+export function newTemplateFrameOverlayElement(url) {
+  return {
+    id: `el-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    type: "image", xPct: 0, yPct: 0, wPct: 100, hPct: 100, url,
   };
 }
 export function newTemplateShapeElement() {

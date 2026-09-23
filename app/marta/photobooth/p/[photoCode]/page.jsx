@@ -51,11 +51,16 @@ export default function RpvPhotoDetailPage() {
   const defaultTemplate = useMemo(() => findDefaultFrameTemplate(frameTemplates), [frameTemplates]);
 
   // FIX (permintaan user - "kenapa Photo ID tidak langsung muncul, harus
-  // refresh dulu"): tepat setelah upload, row rpv_photos yg baru saja
-  // di-insert/reserve queue_no-nya kadang belum sepenuhnya "terlihat" oleh
-  // request GET berikutnya (replica/connection lag di sisi Supabase) - jadi
-  // queue_label bisa balik null/kosong sesaat. Solusi: retry singkat
-  // (polling) kalau queue_label masih kosong, sebelum nampilin apa adanya.
+  // refresh dulu, QR yg discan operator malah balik ID mentah 5GMDN...
+  // padahal seharusnya 00007"): ROOT CAUSE ketemu di DB - RPC
+  // `rpv_get_photo` (dipakai halaman ini) TIDAK PERNAH ikut select
+  // queue_no/queue_label sama sekali (beda dgn rpv_list_photos yg sudah
+  // benar), jadi photo.queue_label selalu undefined & fallback ke
+  // photo_code mentah - BUKAN soal refresh/timing. Sudah diperbaiki lewat
+  // migrasi SQL (rpv_get_photo sekarang ikut lpad(queue_no,5,'0') sbg
+  // queue_label, sama persis rpv_list_photos). Retry singkat di bawah ini
+  // dibiarkan sbg jaring pengaman kalau suatu saat memang ada race
+  // insert/reserve queue_no yg genuinely belum commit.
   useEffect(() => {
     let alive = true;
     (async () => {

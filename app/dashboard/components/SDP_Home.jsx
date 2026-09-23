@@ -232,9 +232,11 @@ function stepsFor(role, listMenuId) {
     { label: "Data SDP", sub: "Kelola & lengkapi",     id: listMenuId,  icon: CheckCircle2 },
     { label: "Registrasi", sub: "Daftarkan SDP baru",  id: "quickform", icon: FilePlus2 },
   ];
-  // cse_rse (pengisi utama)
+  // cse_rse (pengisi utama) — "Registrasi SDP" mengarah ke SDP Management
+  // (Baru) hasil rebuild; form lama tetap ada di "Semua Menu" untuk aksi
+  // lain (terminate/rebordering/massal) yang belum dibangun ulang.
   return [
-    { label: "Registrasi SDP", sub: "Daftarkan SDP baru",     id: "quickform",  icon: FilePlus2 },
+    { label: "Registrasi SDP", sub: "Daftarkan SDP baru",     id: "sdp2_home",  icon: FilePlus2 },
     { label: "Lengkapi Data",  sub: "Isi detail outlet",      id: listMenuId,   icon: Pencil },
     { label: "Status Approval", sub: "Ikuti persetujuan PIC Region", id: "approval",   icon: ShieldCheck },
   ];
@@ -247,7 +249,7 @@ function stepsFor(role, listMenuId) {
 function menuGroupsFor(role, listMenuId, has) {
   const groups = [
     { title: "Isi & Ubah Data", items: [
-      { id: "quickform", icon: FilePlus2, label: "Registrasi SDP", sub: "Daftarkan SDP baru — ID otomatis", tint: "teal" },
+      { id: role === "cse_rse" ? "sdp2_home" : "quickform", icon: FilePlus2, label: "Registrasi SDP", sub: role === "cse_rse" ? "Versi baru — daftar SDP Anda + progres" : "Daftarkan SDP baru — ID otomatis", tint: "teal" },
       { id: "submission_forms:termination", icon: FileMinus2, label: "Terminate SDP", sub: "Akhiri kemitraan SDP existing", tint: "brand" },
       { id: "submission_forms:rebordering", icon: Shuffle, label: "Rebordering SDP", sub: "Pindahkan cakupan kecamatan", tint: "blue" },
       { id: "bulkgrid", icon: FileText, label: "Registrasi Massal", sub: "Tempel dari Excel sekaligus", tint: "mag" },

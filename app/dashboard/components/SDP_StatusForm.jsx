@@ -12,7 +12,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   UploadCloud, ChevronRight, ArrowLeft, Construction, Download, FilePlus2, ClipboardList, KeyRound,
-  FileMinus2, Shuffle, Info, TableProperties, Eye, X, ShieldCheck, Inbox, Mail, FileSpreadsheet, TrendingUp, ListChecks,
+  FileMinus2, Shuffle, Info, TableProperties, Eye, X, ShieldCheck, Inbox, Mail, FileSpreadsheet, TrendingUp, ListChecks, Sparkles,
 } from "lucide-react";
 import SDP_UploadTerritory   from "./SDP_UploadTerritory";
 import SDP_RekapCSE          from "./SDP_RekapCSE";
@@ -32,6 +32,7 @@ import SDP_InitialImport     from "./SDP_InitialImport";
 import SDP_BulkTermReb       from "./SDP_BulkTermReb";
 import SDP_Evaluation        from "./SDP_Evaluation";
 import SDP_ActionTracker     from "./SDP_ActionTracker";
+import SDP2_Home             from "./SDP2_Home";
 
 // ─── Theme ─────────────────────────────────────────────────────────────────────
 const mk = (d) => ({
@@ -110,6 +111,18 @@ const REPORT_CARD = {
   accent : "teal",
 };
 ["cse_rse", "bsm", "spm_sumatera", "pic_region"].forEach((r) => { MENUS[r] = [FIELD_CARD, REPORT_CARD, ...(MENUS[r] || [])]; });
+
+// ── SDP Management (Baru) — hasil rebuild, dimulai dari modul Registrasi.
+// Hanya untuk CSE/RSE dulu (prioritas rebuild), ditaruh paling atas supaya
+// jadi pintu masuk utama tanpa menghapus/mengubah menu lama di bawahnya.
+const REGISTER_NEW_CARD = {
+  id     : "sdp2_home",
+  icon   : Sparkles,
+  label  : "Registrasi SDP (Baru)",
+  desc   : "Versi baru: daftar SDP Anda + progres 1 tahapan yang jelas, lebih sedikit langkah",
+  accent : "teal",
+};
+MENUS.cse_rse = [REGISTER_NEW_CARD, ...(MENUS.cse_rse || [])];
 
 const MYCODES_CARD = {
   id     : "mycodes",
@@ -536,6 +549,14 @@ export default function SDP_StatusForm({ supabase, theme = "dark", profile: real
   );
 
   // ── Active sub-view ─────────────────────────────────────────────────────────
+  if (activeMenu === "sdp2_home") {
+    return (
+      <div className="sdp-root sdp-view" style={{ fontFamily: FF }}>
+        <SDP2_Home supabase={supabase} theme={theme} profile={profile} onExit={() => setActiveMenu(null)} />
+      </div>
+    );
+  }
+
   if (activeMenu === "submission_forms") {
     // Back ditangani oleh komponen (landing → SDP Management, form → landing).
     return (
