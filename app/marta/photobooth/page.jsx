@@ -23,9 +23,9 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ArrowLeft, Camera, Check, Copy, FlipHorizontal2, FlipVertical2, ImageOff, ImagePlus, Loader2, Minus, Monitor, Plus, Printer, Radio, RotateCw, Search, Settings, Sparkles, Trash2, X, ZoomIn } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Bold, Camera, Check, Copy, FlipHorizontal2, FlipVertical2, FolderOpen, ImageOff, ImagePlus, Layers, Loader2, Minus, Monitor, Plus, Printer, Radio, RotateCw, Save, Search, Settings, Sparkles, Star, Trash2, Type, X, ZoomIn } from "lucide-react";
 import ScanQrGlyph from "./_scan-glyph";
-import { addRpvPrompt, createRpvSession, deleteRpvPhoto, deleteRpvPrompt, deleteRpvSession, findRpvPhotoByQueue, getRpvSession, listRpvPhotos, listRpvPrompts, listRpvSessions, rpvPublicUrl, subscribeRpvOperatorPairing, subscribeRpvPhotos, uploadRpvPromptImage } from "../../../lib/rpv";
+import { addRpvPrompt, clearRpvDefaultFrameTemplate, createRpvSession, deleteRpvCustomFont, deleteRpvFrameTemplate, deleteRpvPhoto, deleteRpvPrompt, deleteRpvSession, findRpvPhotoByQueue, getRpvSession, listRpvCustomFonts, listRpvFrameTemplates, listRpvPhotos, listRpvPrompts, listRpvSessions, rpvPublicUrl, saveRpvFrameTemplate, setRpvDefaultFrameTemplate, subscribeRpvOperatorPairing, subscribeRpvPhotos, uploadRpvCustomFont, uploadRpvPromptImage, uploadRpvTemplateImage } from "../../../lib/rpv";
 
 const FONT = `"Google Sans","DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED = "#ED1C24";
@@ -62,12 +62,82 @@ const PRINT_SIZE = { label: "2R", w: 6, h: 9 };
 
 // Frame CSS-ONLY (border/caption teks) - SENGAJA tidak pakai gambar bingkai
 // bikinan sendiri (cuma boleh pakai foto asli yg diupload tamu), jadi semua
-// efek "frame" di sini murni border/warna/teks lewat CSS.
+// efek "frame" di sini murni border/warna/teks lewat CSS. "custom" (dulu
+// "Aksen 5G" - permintaan: "jangan buat aksen 5g namun custom saja") =
+// operator susun sendiri kotak teks (bold/tidak, ukuran, font bebas) & taruh
+// gambar apa saja di mana saja, lalu simpan sbg TEMPLATE di database (lihat
+// TemplateEditorModal & marta_hub/rpv_frame_templates_schema.sql) supaya
+// bisa dipakai lagi kapan saja dari device manapun.
+// Cuma NAMA/ID template terakhir dipakai yg diingat di localStorage (bukan
+// isi templatenya - isi selalu dari DATABASE) - supaya begitu operator pilih
+// Bingkai "Custom" lagi (device sama, reload halaman, atau foto/sesi baru),
+// template yg terakhir dipakai otomatis kepasang lagi tanpa harus buka
+// Editor Template & klik ulang tiap kali.
+const LAST_TEMPLATE_ID_KEY = "rpv_last_frame_template_id";
 const FRAME_PRESETS = [
   { key: "none", label: "Tanpa Bingkai" },
   { key: "white", label: "Polaroid Putih" },
-  { key: "brand", label: "Aksen 5G" },
+  { key: "custom", label: "Custom" },
 ];
+
+// Pilihan font utk kotak teks template custom - dimuat lewat Google Fonts
+// (lihat <link> TEMPLATE_GOOGLE_FONTS_HREF di render utama) supaya benar2
+// tampil sesuai nama font-nya baik di layar MAUPUN saat dicetak (window.
+// print ikut memakai stylesheet yg sama).
+const TEMPLATE_FONTS = [
+  { key: "dm-sans", label: "DM Sans", css: `"DM Sans", sans-serif` },
+  { key: "poppins", label: "Poppins", css: `"Poppins", sans-serif` },
+  { key: "playfair", label: "Playfair Display", css: `"Playfair Display", serif` },
+  { key: "oswald", label: "Oswald", css: `"Oswald", sans-serif` },
+  { key: "caveat", label: "Caveat", css: `"Caveat", cursive` },
+  { key: "roboto-mono", label: "Roboto Mono", css: `"Roboto Mono", monospace` },
+];
+const TEMPLATE_FONT_MAP = Object.fromEntries(TEMPLATE_FONTS.map((f) => [f.key, f]));
+const TEMPLATE_GOOGLE_FONTS_HREF = "https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;700&family=Poppins:wght@400;700&family=Playfair+Display:wght@400;700&family=Oswald:wght@400;700&family=Caveat:wght@400;700&family=Roboto+Mono:wght@400;700&display=swap";
+
+/** fontKey elemen teks bisa berupa key bawaan ("dm-sans" dkk, lihat
+ * TEMPLATE_FONT_MAP) ATAU "custom:<id>" utk font upload sendiri operator
+ * (lihat rpv_custom_fonts) - resolver ini yg nentuin nama CSS font-family
+ * final dipakai <span> teks di PhotoFrame, cocok dgn @font-face yg
+ * diinject dari daftar customFonts (lihat customFontFaceCss di bawah). */
+function resolveTemplateFontCss(fontKey, customFonts) {
+  if (fontKey && fontKey.startsWith("custom:")) {
+    const id = fontKey.slice(7);
+    const found = (customFonts || []).find((f) => f.id === id);
+    return found ? `"rpv-cf-${id}", sans-serif` : FONT;
+  }
+  return TEMPLATE_FONT_MAP[fontKey]?.css || FONT;
+}
+/** @font-face utk semua font custom tersimpan - dibuat sekali dari daftar
+ * `customFonts`, format ditebak dari ekstensi file yg diupload. */
+function customFontFaceCss(customFonts) {
+  return (customFonts || []).map((f) => {
+    const ext = (f.storagePath || "").split(".").pop()?.toLowerCase();
+    const fmt = ext === "otf" ? "opentype" : ext === "woff" ? "woff" : ext === "woff2" ? "woff2" : "truetype";
+    return `@font-face { font-family: "rpv-cf-${f.id}"; src: url("${f.url}") format("${fmt}"); font-display: swap; }`;
+  }).join("\n");
+}
+
+/** Elemen kosong baru utk template custom - posisi/ukuran dlm PERSEN thd
+ * bingkai (bukan px/cm) supaya resolution-independent: posisi identik baik
+ * dipreview di layar (ukuran px berubah2 sesuai lebar panel) MAUPUN dicetak
+ * fisik (ukuran cm tetap) MAUPUN dimuat ulang dari template tersimpan -
+ * TIDAK ADA transformasi/normalisasi apa pun saat simpan/muat, jadi elemen
+ * dijamin TIDAK bergeser sedikit pun dari posisi yg diatur operator. */
+function newTemplateTextElement() {
+  return {
+    id: `el-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    type: "text", xPct: 14, yPct: 40, wPct: 72, hPct: 20,
+    text: "Teks Baru", fontKey: "dm-sans", fontSizePct: 7, bold: false, color: "#FFFFFF", align: "center",
+  };
+}
+function newTemplateImageElement(url) {
+  return {
+    id: `el-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    type: "image", xPct: 30, yPct: 30, wPct: 40, hPct: 40, url,
+  };
+}
+const clampPct = (v, min, max) => Math.round(Math.max(min, Math.min(max, v)) * 100) / 100;
 
 const DEFAULT_CROP = { zoom: 1, panX: 0, panY: 0, rotate: 0, flipX: false, flipY: false };
 // Rotasi yg biasa dibutuhkan case cetak (foto kepotret miring/landscape ke
@@ -80,25 +150,37 @@ const ROTATE_STEP = 90;
  * (mode="screen", ukuran px tetap) MAUPUN di lembar cetak sungguhan (mode=
  * "print", ukuran FISIK dlm cm) - crop pakai transform scale+translate(%)
  * yg resolution-independent, jadi hasil preview & cetak DIJAMIN identik. */
-function PhotoFrame({ photo, ratio, crop, frame, mode, queueLabel, sessionTitle, imgRef, onPointerDown }) {
+function PhotoFrame({ photo, ratio, crop, frame, mode, queueLabel, sessionTitle, imgRef, onPointerDown, customElements, customBaseStyle, customFonts, onElementPointerDown, selectedElId, wrapperRef }) {
   const isPolaroid = frame === "white";
-  const isBrand = frame === "brand";
+  const isCustom = frame === "custom";
+  // "Custom" bisa pakai bentuk dasar "polaroid" (foto diberi margin putih +
+  // strip putih bawah, spt "Polaroid Putih") supaya operator bisa taruh
+  // elemen (teks/gambar) di area putihnya juga - atau "none" (foto penuh).
+  const isPolaroidShape = isPolaroid || (isCustom && customBaseStyle === "polaroid");
   const sizeStyle = mode === "print"
     ? { width: `${ratio.w}cm`, height: `${ratio.h}cm` }
     : { width: "100%", aspectRatio: `${ratio.w} / ${ratio.h}` };
-  const photoAreaStyle = isPolaroid
+  const photoAreaStyle = isPolaroidShape
     ? { position: "absolute", left: "4%", right: "4%", top: "4%", bottom: "16%" }
-    : isBrand
-      ? { position: "absolute", inset: "3%" }
-      : { position: "absolute", inset: 0 };
+    : { position: "absolute", inset: 0 };
+  const interactive = typeof onElementPointerDown === "function";
+  // Token dinamis dlm kotak teks custom - "{Nama Event}"/"{Photo ID}" diganti
+  // isi sungguhan sesi/foto aktif, SAAT RENDER SAJA (bukan disimpan sbg teks
+  // statis) - jadi 1 template bisa dipakai berulang, teksnya otomatis ikut
+  // sesi manapun yg lagi aktif. Fallback tampil kalau belum ada sesi/foto
+  // (spt di editor) supaya operator tetap lihat di mana token itu muncul.
+  const resolveTemplateText = (text) => String(text || "")
+    .replaceAll("{Nama Event}", sessionTitle || "Nama Event")
+    .replaceAll("{Photo ID}", queueLabel || "00000");
   return (
-    <div style={{
-      ...sizeStyle, position: "relative", overflow: "hidden", backgroundColor: isPolaroid ? "#fff" : "#000",
+    <div ref={wrapperRef} style={{
+      ...sizeStyle, position: "relative", overflow: "hidden", backgroundColor: isPolaroidShape ? "#fff" : "#000",
       borderRadius: mode === "print" ? 0 : 10,
-      border: isBrand ? `${mode === "print" ? "0.25cm" : "6px"} solid transparent` : "none",
-      backgroundImage: isBrand ? `linear-gradient(#fff,#fff), linear-gradient(135deg,${RED},${MAGA})` : undefined,
-      backgroundOrigin: isBrand ? "border-box" : undefined,
-      backgroundClip: isBrand ? "content-box, border-box" : undefined,
+      // containerType:"size" - dasar unit `cqh` dipakai ukuran font elemen
+      // teks custom di bawah, supaya font-size SELALU proporsional thd
+      // TINGGI bingkai sungguhan (bukan thd font induk spt unit % biasa),
+      // baik saat preview layar (lebar berubah2) maupun saat dicetak.
+      containerType: "size",
     }}>
       <div style={{ ...photoAreaStyle, overflow: "hidden", background: "#000" }}>
         {photo ? (
@@ -126,6 +208,46 @@ function PhotoFrame({ photo, ratio, crop, frame, mode, queueLabel, sessionTitle,
           <span style={{ fontSize: mode === "print" ? "0.26cm" : 9, color: "#8A8A96", fontFamily: "monospace", letterSpacing: "0.06em" }}>{queueLabel}</span>
         </div>
       )}
+      {/* Bingkai "Custom" - render PERSIS elemen tersimpan (posisi/ukuran %
+          apa adanya, TANPA normalisasi) - dipakai IDENTIK di preview layar,
+          lembar cetak sungguhan, MAUPUN di dalam editor template (lewat
+          prop interaktif opsional di bawah), supaya WYSIWYG & tidak ada
+          celah drift antar tampilan. */}
+      {isCustom && (customElements || []).map((el) => {
+        const isSelected = interactive && el.id === selectedElId;
+        const justify = el.align === "left" ? "flex-start" : el.align === "right" ? "flex-end" : "center";
+        return (
+          <div key={el.id}
+            onPointerDown={interactive ? (e) => onElementPointerDown(e, el, "move") : undefined}
+            style={{
+              position: "absolute", left: `${el.xPct}%`, top: `${el.yPct}%`, width: `${el.wPct}%`, height: `${el.hPct}%`,
+              display: "flex", alignItems: "center", justifyContent: el.type === "text" ? justify : "center",
+              overflow: "visible", cursor: interactive ? "move" : "default",
+              outline: isSelected ? `1.5px dashed ${MAGA}` : "none", outlineOffset: 2,
+            }}>
+            {el.type === "image" ? (
+              <img src={el.url} alt="" draggable={false}
+                style={{ width: "100%", height: "100%", objectFit: "contain", pointerEvents: "none", userSelect: "none" }} />
+            ) : (
+              <span style={{
+                width: "100%", pointerEvents: "none", userSelect: "none",
+                fontFamily: resolveTemplateFontCss(el.fontKey, customFonts),
+                fontWeight: el.bold ? 800 : 400,
+                fontSize: mode === "print" ? `${(el.fontSizePct / 100) * ratio.h}cm` : `${el.fontSizePct}cqh`,
+                color: el.color || "#fff", textAlign: el.align || "center",
+                whiteSpace: "pre-wrap", overflowWrap: "break-word", lineHeight: 1.15,
+              }}>{resolveTemplateText(el.text)}</span>
+            )}
+            {interactive && isSelected && (
+              <div onPointerDown={(e) => onElementPointerDown(e, el, "resize")}
+                style={{
+                  position: "absolute", right: -7, bottom: -7, width: 16, height: 16, borderRadius: 5,
+                  background: MAGA, border: "2px solid #fff", cursor: "nwse-resize", pointerEvents: "auto",
+                }} />
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -148,6 +270,11 @@ export default function RpvControlRoom() {
   const [camPhotos, setCamPhotos] = useState([]); // foto ASLI kamera tamu
   const [aiPhotos, setAiPhotos] = useState([]); // hasil Gemini yg sudah diupload
   const [selectedCode, setSelectedCode] = useState(""); // photo_code yg dipilih di panel Print Station
+  // Toast singkat kalau HP scanner scan Photo ID yg TIDAK ketemu di sesi ini
+  // (misal foto blm selesai diupload/diproses Gemini saat itu, atau typo/QR
+  // rusak) - supaya beda jelas dr kasus "scanner-nya sendiri yg bermasalah".
+  const [scanNotFound, setScanNotFound] = useState(null); // { digits, at }
+  const scanNotFoundTimerRef = useRef(null);
 
   // ── Identitas operator + pairing realtime dgn scanner mobile ───────────
   // Scan QR SEKARANG dilakukan dr HP (/marta/photobooth/scan/[code]), bukan
@@ -295,16 +422,31 @@ export default function RpvControlRoom() {
   // print") - begitu ketemu, foto cuma dipilih & panel editor (crop/zoom/
   // rotate/flip) langsung tampil, operator masih bisa atur dulu sebelum
   // tekan tombol "Cetak" sendiri.
+  // PENTING: selectByDigits HARUS stabil (identitas fungsi tdk berubah²) -
+  // dipakai sbg dependency effect pairing channel scanner<->operator di
+  // bawah. Sebelumnya fungsi ini dibuat ulang tiap `allPhotos` berubah
+  // (yaitu TIAP ADA FOTO BARU MASUK dari tamu manapun), yg bikin effect
+  // pairing ikut unsubscribe+resubscribe channel Realtime tiap saat itu -
+  // kalau scan dari HP scanner kebetulan lewat PAS lagi resubscribe,
+  // broadcast-nya hilang begitu saja (Supabase broadcast tidak di-retry),
+  // makanya kadang "sudah pilih operator tapi scan tidak muncul". Fix:
+  // baca activeCode/allPhotos dr ref terbaru, bukan dr closure dependency.
+  const activeCodeRef = useRef("");
+  const allPhotosRef = useRef([]);
+  useEffect(() => { activeCodeRef.current = activeCode; }, [activeCode]);
+  useEffect(() => { allPhotosRef.current = allPhotos; }, [allPhotos]);
+
   const selectByDigits = useCallback(async (rawDigits) => {
     const digits = String(rawDigits || "").trim().replace(/\D/g, "");
-    if (!digits || !activeCode) return false;
-    const hit = allPhotos.find((p) => p.queue_label === digits.padStart(5, "0"));
+    const code = activeCodeRef.current;
+    if (!digits || !code) return false;
+    const hit = allPhotosRef.current.find((p) => p.queue_label === digits.padStart(5, "0"));
     if (hit) {
       setSelectedCode(hit.photo_code);
       return true;
     }
     try {
-      const found = await findRpvPhotoByQueue(activeCode, Number(digits));
+      const found = await findRpvPhotoByQueue(code, Number(digits));
       if (found) {
         const item = { photo_code: found.photo_code, storage_path: found.storage_path, uploaded_at: found.uploaded_at, is_ai_result: true, url: found.url, queue_no: found.queue_no, queue_label: found.queue_label };
         setAiPhotos((prev) => (prev.some((x) => x.photo_code === item.photo_code) ? prev : [item, ...prev]));
@@ -313,7 +455,7 @@ export default function RpvControlRoom() {
       }
     } catch { /* tidak ketemu - diamkan, list tetap kefilter kosong */ }
     return false;
-  }, [activeCode, allPhotos]);
+  }, []);
 
   const searchExact = () => { selectByDigits(searchQuery); };
 
@@ -363,7 +505,15 @@ export default function RpvControlRoom() {
       { id: operatorId, role: "operator", joinedAt: joinedAtRef.current },
       {
         onOperatorsChange: setOperators,
-        onSelectPhoto: ({ digits }) => { if (digits) selectByDigits(digits); },
+        onSelectPhoto: ({ digits }) => {
+          if (!digits) return;
+          selectByDigits(digits).then((ok) => {
+            if (ok) return;
+            clearTimeout(scanNotFoundTimerRef.current);
+            setScanNotFound({ digits, at: Date.now() });
+            scanNotFoundTimerRef.current = setTimeout(() => setScanNotFound(null), 4000);
+          });
+        },
       }
     );
     return () => pairing.unsubscribe();
@@ -412,12 +562,229 @@ export default function RpvControlRoom() {
   const [frameKey, setFrameKey] = useState("none");
   const printRatio = { w: PRINT_SIZE.w, h: PRINT_SIZE.h };
 
+  // ── Bingkai "Custom": elemen teks/gambar bebas + template tersimpan di
+  // DATABASE (bukan localStorage - lihat lib/rpv.js listRpvFrameTemplates
+  // dkk & marta_hub/rpv_frame_templates_schema.sql), supaya bisa dipakai
+  // lagi dari sesi/device manapun. `customElements` inilah yg benar2
+  // dipakai render PhotoFrame (preview & cetak) SEKALIGUS yg diedit lewat
+  // TemplateEditorModal - satu sumber data, jadi tidak ada celah drift
+  // antara apa yg diedit vs apa yg dicetak/disimpan.
+  const [customElements, setCustomElements] = useState([]);
+  const [customBaseStyle, setCustomBaseStyle] = useState("none"); // "none" | "polaroid"
+  const [selectedElId, setSelectedElId] = useState("");
+  const [templateEditorOpen, setTemplateEditorOpen] = useState(false);
+  const [savedTemplates, setSavedTemplates] = useState([]);
+  const [templatesState, setTemplatesState] = useState("idle"); // idle|loading|ready
+  const [activeTemplateId, setActiveTemplateId] = useState("");
+  const [activeTemplateName, setActiveTemplateName] = useState("Template Baru");
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [templateUploading, setTemplateUploading] = useState(false);
+  const templateFrameRef = useRef(null);
+  const elDragRef = useRef(null);
+
+  // Font custom (upload sendiri operator, lihat lib/rpv.js + rpv_custom_
+  // fonts_schema.sql) - dimuat SEKALI di level halaman (bukan cuma di
+  // editor) supaya preview panel print & lembar cetak sungguhan JUGA bisa
+  // render font custom yg dipakai template tersimpan, bukan cuma di dalam
+  // editor-nya saja.
+  const [customFonts, setCustomFonts] = useState([]);
+  const [customFontsState, setCustomFontsState] = useState("idle");
+  const [fontUploading, setFontUploading] = useState(false);
+
+  const loadTemplateList = useCallback(async () => {
+    setTemplatesState("loading");
+    try { setSavedTemplates(await listRpvFrameTemplates()); }
+    catch { /* gagal muat daftar - diamkan, operator bisa coba lagi */ }
+    finally { setTemplatesState("ready"); }
+  }, []);
+  const loadCustomFonts = useCallback(async () => {
+    setCustomFontsState("loading");
+    try { setCustomFonts(await listRpvCustomFonts()); }
+    catch { /* gagal muat daftar font - diamkan */ }
+    finally { setCustomFontsState("ready"); }
+  }, []);
+  useEffect(() => {
+    if (!templateEditorOpen) return;
+    Promise.resolve().then(() => { loadTemplateList(); loadCustomFonts(); });
+  }, [templateEditorOpen, loadTemplateList, loadCustomFonts]);
+  // Font custom dipakai di render cetak/preview print panel JUGA (bukan
+  // cuma saat editor dibuka) - muat sekali begitu halaman siap.
+  useEffect(() => { Promise.resolve().then(() => loadCustomFonts()); }, [loadCustomFonts]);
+
+  const uploadCustomFont = async (file) => {
+    if (!file) return;
+    const name = (window.prompt("Nama font ini (utk ditampilkan di daftar):", file.name.replace(/\.[^.]+$/, "")) || "").trim();
+    if (!name) return;
+    setFontUploading(true);
+    try { await uploadRpvCustomFont(file, name); await loadCustomFonts(); }
+    catch { /* gagal upload font - diamkan, operator bisa coba lagi */ }
+    finally { setFontUploading(false); }
+  };
+  const removeCustomFont = async (id) => {
+    if (!window.confirm("Hapus font custom ini? Kotak teks yg masih memakainya akan kembali ke font bawaan.")) return;
+    try { await deleteRpvCustomFont(id); await loadCustomFonts(); }
+    catch { /* gagal hapus - diamkan */ }
+  };
+
+  const updateElement = useCallback((id, patch) => {
+    setCustomElements((els) => els.map((e) => (e.id === id ? { ...e, ...patch } : e)));
+  }, []);
+  const addTextElement = () => {
+    const el = newTemplateTextElement();
+    setCustomElements((els) => [...els, el]);
+    setSelectedElId(el.id);
+  };
+  const addImageElementFromFile = async (file) => {
+    if (!file) return;
+    setTemplateUploading(true);
+    try {
+      const url = await uploadRpvTemplateImage(file);
+      const el = newTemplateImageElement(url);
+      setCustomElements((els) => [...els, el]);
+      setSelectedElId(el.id);
+    } catch { /* gagal upload gambar - diamkan, operator bisa coba lagi */ }
+    finally { setTemplateUploading(false); }
+  };
+  const removeElement = (id) => {
+    setCustomElements((els) => els.filter((e) => e.id !== id));
+    setSelectedElId((s) => (s === id ? "" : s));
+  };
+
+  // Drag geser (mode "move") & drag pojok utk resize (mode "resize") - pola
+  // sama dgn onCropPointerDown (window pointermove/pointerup, hitung delta
+  // dlm % thd bounding box bingkai) - SEMUA dlm PERSEN supaya konsisten dgn
+  // penyimpanan template (lihat newTemplateTextElement/Image di atas).
+  const onElementPointerDown = useCallback((e, el, mode) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setSelectedElId(el.id);
+    const rect = templateFrameRef.current?.getBoundingClientRect();
+    if (!rect || !rect.width || !rect.height) return;
+    elDragRef.current = {
+      id: el.id, mode, startClientX: e.clientX, startClientY: e.clientY,
+      rectW: rect.width, rectH: rect.height,
+      startXPct: el.xPct, startYPct: el.yPct, startWPct: el.wPct, startHPct: el.hPct,
+    };
+    const move = (ev) => {
+      const d = elDragRef.current;
+      if (!d) return;
+      const dxPct = ((ev.clientX - d.startClientX) / d.rectW) * 100;
+      const dyPct = ((ev.clientY - d.startClientY) / d.rectH) * 100;
+      if (d.mode === "move") {
+        updateElement(d.id, { xPct: clampPct(d.startXPct + dxPct, -20, 96), yPct: clampPct(d.startYPct + dyPct, -20, 96) });
+      } else {
+        updateElement(d.id, { wPct: clampPct(d.startWPct + dxPct, 4, 200), hPct: clampPct(d.startHPct + dyPct, 4, 200) });
+      }
+    };
+    const up = () => {
+      elDragRef.current = null;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }, [updateElement]);
+
+  const applyTemplate = (tpl) => {
+    // Muat APA ADANYA (tanpa transformasi) - jaminan "tidak bergeser jika
+    // sudah disimpan templatenya".
+    setCustomElements(Array.isArray(tpl.elements) ? tpl.elements : []);
+    setCustomBaseStyle(tpl.baseStyle || "none");
+    setActiveTemplateId(tpl.id);
+    setActiveTemplateName(tpl.name);
+    setSelectedElId("");
+    // Ingat template ini sbg "terakhir dipakai" di device ini, supaya lain
+    // kali (foto baru, reload halaman) otomatis kepasang lagi tanpa perlu
+    // buka Editor Template & pilih manual lagi.
+    try { window.localStorage.setItem(LAST_TEMPLATE_ID_KEY, tpl.id); } catch { /* localStorage tdk tersedia - diamkan */ }
+  };
+  const startBlankTemplate = () => {
+    setCustomElements([]);
+    setCustomBaseStyle("none");
+    setActiveTemplateId("");
+    setActiveTemplateName("Template Baru");
+    setSelectedElId("");
+    try { window.localStorage.removeItem(LAST_TEMPLATE_ID_KEY); } catch { /* diamkan */ }
+  };
+
+  // Daftar template JUGA dimuat sekali di awal (bukan cuma saat Editor
+  // Template dibuka) - supaya template terakhir dipakai (localStorage,
+  // lihat LAST_TEMPLATE_ID_KEY) bisa otomatis kepasang begitu halaman
+  // dibuka / pindah ke foto lain, tanpa operator harus buka editor dulu.
+  useEffect(() => { Promise.resolve().then(() => loadTemplateList()); }, [loadTemplateList]);
+  useEffect(() => {
+    if (templatesState !== "ready" || activeTemplateId || savedTemplates.length === 0) return;
+    // Prioritas: (1) template terakhir dipakai DI DEVICE INI (localStorage -
+    // continuity kerja yg sedang berjalan), lalu (2) kalau belum ada,
+    // template yg ditandai DEFAULT di DATABASE (rpv_frame_templates.is_default
+    // - jadi berlaku utk device/operator manapun, bukan cuma browser ini).
+    let lastId = "";
+    try { lastId = window.localStorage.getItem(LAST_TEMPLATE_ID_KEY) || ""; } catch { /* diamkan */ }
+    const tpl = (lastId && savedTemplates.find((t) => t.id === lastId)) || savedTemplates.find((t) => t.isDefault);
+    if (!tpl) return;
+    Promise.resolve().then(() => {
+      applyTemplate(tpl);
+      setFrameKey("custom");
+    });
+  }, [templatesState, savedTemplates, activeTemplateId]);
+  const saveTemplate = async (asNew) => {
+    const name = (window.prompt("Nama template:", asNew ? "" : activeTemplateName) || "").trim();
+    if (!name) return;
+    setTemplateSaving(true);
+    try {
+      const saved = await saveRpvFrameTemplate(asNew ? null : activeTemplateId, name, customElements, customBaseStyle);
+      if (saved) {
+        setActiveTemplateId(saved.id);
+        setActiveTemplateName(saved.name);
+        try { window.localStorage.setItem(LAST_TEMPLATE_ID_KEY, saved.id); } catch { /* diamkan */ }
+        await loadTemplateList();
+      }
+    } catch (err) {
+      window.alert(`Gagal menyimpan template: ${err?.message || "Terjadi kesalahan tidak diketahui."}`);
+    } finally { setTemplateSaving(false); }
+  };
+  const deleteTemplate = async (id) => {
+    if (!window.confirm("Hapus template ini? Tindakan ini tidak bisa dibatalkan.")) return;
+    try {
+      await deleteRpvFrameTemplate(id);
+      if (id === activeTemplateId) startBlankTemplate();
+      await loadTemplateList();
+    } catch { /* gagal hapus - diamkan */ }
+  };
+  // Set/lepas template DEFAULT (tersimpan di kolom is_default, bukan
+  // localStorage) - dipakai otomatis utk foto/sesi/device baru yg belum
+  // pernah pilih template sendiri (lihat effect auto-apply di atas).
+  const setDefaultTemplate = async (id) => {
+    try {
+      await setRpvDefaultFrameTemplate(id);
+      await loadTemplateList();
+    } catch (err) {
+      window.alert(`Gagal menjadikan default: ${err?.message || "Terjadi kesalahan tidak diketahui."}`);
+    }
+  };
+  const unsetDefaultTemplate = async () => {
+    try {
+      await clearRpvDefaultFrameTemplate();
+      await loadTemplateList();
+    } catch (err) {
+      window.alert(`Gagal melepas default: ${err?.message || "Terjadi kesalahan tidak diketahui."}`);
+    }
+  };
+
   const handlePrint = () => { if (selectedPhoto) window.print(); };
 
   const activeSummary = session ? `${session.title} · ${activeCode}` : "Belum ada sesi aktif";
 
   return (
     <div className="flashprint-root" style={{ height: "100svh", background: t.bg, fontFamily: FONT, color: t.hi, display: "flex", flexDirection: "column", overflow: "hidden", colorScheme: "dark", position: "relative" }}>
+      {/* Font pilihan kotak teks template Custom - dimuat sekali di sini
+          (bukan next/font krn daftarnya dinamis/opsional) supaya nama font
+          benar2 tampil sesuai pilihan, baik di preview layar maupun saat
+          window.print(). */}
+      <link rel="stylesheet" href={TEMPLATE_GOOGLE_FONTS_HREF} />
+      {/* @font-face utk font custom upload sendiri operator - lihat
+          customFontFaceCss/resolveTemplateFontCss di atas. */}
+      {customFonts.length > 0 && <style>{customFontFaceCss(customFonts)}</style>}
       {/* Ambient TIPIS di belakang seluruh panel operator, senada dgn
           halaman2 tamu/scanner - sengaja opacity/blur lebih rendah supaya
           tidak ganggu kerja operator (banyak teks/angka), cuma sentuhan
@@ -427,6 +794,20 @@ export default function RpvControlRoom() {
         <div className="rpv-op-ambient-blob rpv-op-ambient-blob--a" />
         <div className="rpv-op-ambient-blob rpv-op-ambient-blob--b" />
       </div>
+      {/* Toast: HP scanner scan Photo ID yg tidak ketemu di sesi aktif ini -
+          beda jelas dr kesan "scanner tidak berfungsi" (lihat catatan di
+          effect pairing di atas). */}
+      {scanNotFound && (
+        <div style={{
+          position: "fixed", top: 14, left: "50%", transform: "translateX(-50%)", zIndex: 50,
+          display: "flex", alignItems: "center", gap: 8, padding: "9px 14px", borderRadius: 11,
+          background: "#2A1416", border: `1.5px solid ${RED}66`, color: "#FFD9DA", fontSize: 12.5, fontWeight: 700,
+          fontFamily: FONT, boxShadow: "0 10px 26px -8px rgba(0,0,0,0.5)", maxWidth: "92vw",
+        }}>
+          <AlertTriangle size={15} color={RED} style={{ flexShrink: 0 }} />
+          Photo ID {scanNotFound.digits} tidak ditemukan di sesi ini - pastikan foto sudah selesai diupload.
+        </div>
+      )}
       {/* Header tipis - responsif: di layar sempit (HP), label "Buka Viewer"
           disembunyikan (ikon-nya tetap ada) & ringkasan sesi menyusut biar
           tidak overflow/kepotong (lihat .rpv-header* di <style> global). */}
@@ -578,7 +959,7 @@ export default function RpvControlRoom() {
                       style={{ boxShadow: "0 10px 30px rgba(0,0,0,0.45)" }}>
                       <PhotoFrame photo={selectedPhoto} ratio={printRatio} crop={crop} frame={frameKey} mode="screen"
                         queueLabel={selectedPhoto.queue_label} sessionTitle={session?.title}
-                        imgRef={imgRef} onPointerDown={onCropPointerDown} />
+                        imgRef={imgRef} onPointerDown={onCropPointerDown} customElements={customElements} customBaseStyle={customBaseStyle} customFonts={customFonts} />
                     </div>
                     {/* Zoom - HANYA lewat scroll (wheel, lihat onWheel di wrapper
                         di atas) atau tombol/slider di sini. Elemen <img>
@@ -644,6 +1025,16 @@ export default function RpvControlRoom() {
                         </button>
                       ))}
                     </div>
+                    {frameKey === "custom" && (
+                      <button onClick={() => setTemplateEditorOpen(true)}
+                        style={{
+                          marginTop: 8, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                          height: 34, borderRadius: 9, border: `1.5px solid ${MAGA}66`, background: `${MAGA}18`, color: "#fff",
+                          fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+                        }}>
+                        <Layers size={13} /> Editor Template {activeTemplateName ? `· ${activeTemplateName}` : ""}
+                      </button>
+                    )}
                   </div>
                 </div>
               </>
@@ -658,13 +1049,32 @@ export default function RpvControlRoom() {
       {selectedPhoto && (
         <div className="rpv-print-sheet-wrap">
           <PhotoFrame photo={selectedPhoto} ratio={printRatio} crop={crop} frame={frameKey} mode="print"
-            queueLabel={selectedPhoto.queue_label} sessionTitle={session?.title} />
+            queueLabel={selectedPhoto.queue_label} sessionTitle={session?.title} customElements={customElements} customBaseStyle={customBaseStyle} customFonts={customFonts} />
         </div>
       )}
       <style>{`@page { size: ${printRatio.w}cm ${printRatio.h}cm; margin: 0; }`}</style>
 
       {scanLinkOpen && activeCode && (
         <ScanLinkPopup code={activeCode} onClose={() => setScanLinkOpen(false)} />
+      )}
+
+      {templateEditorOpen && (
+        <TemplateEditorModal
+          photo={selectedPhoto} ratio={printRatio}
+          elements={customElements} selectedElId={selectedElId} setSelectedElId={setSelectedElId}
+          baseStyle={customBaseStyle} onSetBaseStyle={setCustomBaseStyle}
+          customFonts={customFonts} customFontsState={customFontsState} onUploadFont={uploadCustomFont} onDeleteFont={removeCustomFont} fontUploading={fontUploading}
+          frameRef={templateFrameRef} onElementPointerDown={onElementPointerDown}
+          onAddText={addTextElement} onAddImage={addImageElementFromFile} onUpdateElement={updateElement} onRemoveElement={removeElement}
+          uploading={templateUploading}
+          templates={savedTemplates} templatesState={templatesState}
+          activeTemplateId={activeTemplateId} activeTemplateName={activeTemplateName}
+          onApplyTemplate={applyTemplate} onNewTemplate={startBlankTemplate}
+          onSaveTemplate={() => saveTemplate(false)} onSaveTemplateAs={() => saveTemplate(true)} onDeleteTemplate={deleteTemplate}
+          onSetDefaultTemplate={setDefaultTemplate} onUnsetDefaultTemplate={unsetDefaultTemplate}
+          saving={templateSaving}
+          onClose={() => { setTemplateEditorOpen(false); setSelectedElId(""); }}
+        />
       )}
 
       {settingsOpen && (
@@ -758,6 +1168,282 @@ export default function RpvControlRoom() {
  * sesi aktif - dibuka dgn klik badge "Operator N" di header. Operator
  * tinggal share link ini (WA/dsb) ke HP yg mau dijadikan scanner, HP tsb
  * nanti pilih sendiri mau pairing ke operator device mana sblm scan. */
+/** Editor bingkai "Custom" - full-screen: kiri kanvas preview (drag utk
+ * geser elemen, drag pojok kanan-bawah elemen terpilih utk resize),
+ * kanan toolbar (tambah teks/gambar, inspector elemen terpilih: teks, font,
+ * ukuran, bold, warna, align) + panel Template (simpan/simpan-sbg/muat/
+ * hapus - SEMUA lewat database, lihat lib/rpv.js). Kanvas re-pakai
+ * <PhotoFrame mode="screen" frame="custom"> APA ADANYA (bukan re-impl
+ * terpisah) supaya WYSIWYG 100% sama dgn preview & hasil cetak sungguhan. */
+function TemplateEditorModal({
+  photo, ratio, elements, selectedElId, setSelectedElId, frameRef, onElementPointerDown,
+  baseStyle, onSetBaseStyle,
+  customFonts, customFontsState, onUploadFont, onDeleteFont, fontUploading,
+  onAddText, onAddImage, onUpdateElement, onRemoveElement, uploading,
+  templates, templatesState, activeTemplateId, activeTemplateName,
+  onApplyTemplate, onNewTemplate, onSaveTemplate, onSaveTemplateAs, onDeleteTemplate, saving,
+  onSetDefaultTemplate, onUnsetDefaultTemplate,
+  onClose,
+}) {
+  const fileInputRef = useRef(null);
+  const fontInputRef = useRef(null);
+  const selectedEl = elements.find((e) => e.id === selectedElId) || null;
+
+  return (
+    <div style={{
+      position: "fixed", inset: 0, zIndex: 90, background: "rgba(6,6,8,0.86)", backdropFilter: "blur(6px)",
+      display: "flex", alignItems: "stretch", justifyContent: "center", fontFamily: FONT,
+    }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{
+        margin: "auto", width: "min(96vw, 1040px)", height: "min(92vh, 720px)", background: t.bg,
+        border: `1px solid ${t.line}`, borderRadius: 16, display: "flex", flexDirection: "column", overflow: "hidden",
+        boxShadow: "0 30px 80px -20px rgba(0,0,0,0.6)",
+      }}>
+        {/* Header */}
+        <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderBottom: `1px solid ${t.line}`, background: t.card }}>
+          <Layers size={16} color={MAGA} />
+          <div style={{ fontSize: 13, fontWeight: 800, color: t.hi }}>Editor Template Custom</div>
+          <div style={{ fontSize: 11, color: t.lo, fontWeight: 600 }}>{activeTemplateName}{activeTemplateId ? "" : " (belum disimpan)"}</div>
+          <button onClick={onClose} title="Tutup"
+            style={{ marginLeft: "auto", width: 30, height: 30, borderRadius: 8, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <X size={15} />
+          </button>
+        </div>
+
+        {/* Body: kanvas + toolbar */}
+        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "row" }} className="rpv-tpl-body">
+          {/* Kanvas */}
+          <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", justifyContent: "center", padding: 22, background: "#000", overflow: "auto" }}
+            onPointerDown={() => setSelectedElId("")}>
+            <div style={{ width: "min(100%, 420px)", boxShadow: "0 10px 40px rgba(0,0,0,0.5)" }}>
+              <PhotoFrame photo={photo} ratio={ratio} crop={DEFAULT_CROP} frame="custom" customBaseStyle={baseStyle} mode="screen"
+                queueLabel={photo?.queue_label} sessionTitle="" wrapperRef={frameRef}
+                customElements={elements} customFonts={customFonts} onElementPointerDown={onElementPointerDown} selectedElId={selectedElId} />
+            </div>
+          </div>
+
+          {/* Toolbar kanan */}
+          <div style={{ width: 280, flexShrink: 0, borderLeft: `1px solid ${t.line}`, background: t.card, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 16 }}>
+              {/* Bentuk dasar - "Polaroid Putih" ngasih margin+strip putih
+                  (spt preset "white") tapi elemen tetap bisa ditaruh di
+                  area putihnya juga (elemen selalu overlay di SELURUH
+                  bingkai, lihat PhotoFrame) - "Penuh" = foto tanpa margin. */}
+              <div>
+                <div style={{ fontSize: 10.5, fontWeight: 800, color: t.mid, marginBottom: 8, letterSpacing: "0.04em" }}>BENTUK DASAR</div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {[["none", "Penuh"], ["polaroid", "Polaroid Putih"]].map(([v, lbl]) => (
+                    <button key={v} onClick={() => onSetBaseStyle(v)}
+                      style={{
+                        flex: 1, height: 32, borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
+                        border: `1.5px solid ${baseStyle === v ? MAGA : t.line}`, background: baseStyle === v ? `${MAGA}22` : t.fieldBg,
+                        color: baseStyle === v ? "#fff" : t.mid,
+                      }}>{lbl}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Tambah elemen */}
+              <div>
+                <div style={{ fontSize: 10.5, fontWeight: 800, color: t.mid, marginBottom: 8, letterSpacing: "0.04em" }}>TAMBAH ELEMEN</div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button onClick={onAddText}
+                    style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, height: 34, borderRadius: 9, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                    <Type size={13} /> Teks
+                  </button>
+                  <button onClick={() => fileInputRef.current?.click()} disabled={uploading}
+                    style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, height: 34, borderRadius: 9, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontSize: 11.5, fontWeight: 700, cursor: uploading ? "not-allowed" : "pointer", fontFamily: FONT, opacity: uploading ? 0.6 : 1 }}>
+                    {uploading ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <ImagePlus size={13} />} Gambar
+                  </button>
+                  <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }}
+                    onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onAddImage(f); }} />
+                </div>
+              </div>
+
+              {/* Inspector elemen terpilih */}
+              {selectedEl ? (
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                    <div style={{ fontSize: 10.5, fontWeight: 800, color: t.mid, letterSpacing: "0.04em" }}>{selectedEl.type === "text" ? "KOTAK TEKS" : "GAMBAR"}</div>
+                    <button onClick={() => onRemoveElement(selectedEl.id)} title="Hapus elemen"
+                      style={{ width: 24, height: 24, borderRadius: 6, border: "none", background: "transparent", color: RED, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+
+                  {selectedEl.type === "text" ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <textarea value={selectedEl.text} onChange={(e) => onUpdateElement(selectedEl.id, { text: e.target.value })}
+                        rows={2} placeholder="Tulis teks... atau sisipkan token di bawah"
+                        style={{ width: "100%", resize: "vertical", borderRadius: 8, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontSize: 12, padding: 8, fontFamily: FONT }} />
+
+                      {/* Token dinamis - diganti otomatis dgn nama sesi/Photo
+                          ID SUNGGUHAN saat render (preview & cetak), jadi 1
+                          template bisa dipakai berulang utk sesi manapun -
+                          lihat resolveTemplateText di PhotoFrame. */}
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {["{Nama Event}", "{Photo ID}"].map((token) => (
+                          <button key={token} type="button"
+                            onClick={() => onUpdateElement(selectedEl.id, { text: `${selectedEl.text || ""}${selectedEl.text ? " " : ""}${token}` })}
+                            style={{ height: 24, padding: "0 9px", borderRadius: 6, border: `1px dashed ${t.line}`, background: "transparent", color: t.mid, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: "monospace" }}>
+                            + {token}
+                          </button>
+                        ))}
+                      </div>
+
+                      <label style={{ fontSize: 10, color: t.lo, fontWeight: 700 }}>Font</label>
+                      <select value={selectedEl.fontKey} onChange={(e) => onUpdateElement(selectedEl.id, { fontKey: e.target.value })}
+                        style={{ width: "100%", height: 32, borderRadius: 8, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontSize: 12, padding: "0 8px" }}>
+                        <optgroup label="Bawaan">
+                          {TEMPLATE_FONTS.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+                        </optgroup>
+                        {customFonts.length > 0 && (
+                          <optgroup label="Font Kustom Anda">
+                            {customFonts.map((f) => <option key={f.id} value={`custom:${f.id}`}>{f.name}</option>)}
+                          </optgroup>
+                        )}
+                      </select>
+
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <button onClick={() => onUpdateElement(selectedEl.id, { bold: !selectedEl.bold })}
+                          style={{
+                            flex: 1, height: 32, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                            border: `1.5px solid ${selectedEl.bold ? MAGA : t.line}`, background: selectedEl.bold ? `${MAGA}22` : t.fieldBg,
+                            color: selectedEl.bold ? "#fff" : t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
+                          }}>
+                          <Bold size={12} /> Bold
+                        </button>
+                        <input type="color" value={selectedEl.color} onChange={(e) => onUpdateElement(selectedEl.id, { color: e.target.value })}
+                          title="Warna teks" style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${t.line}`, background: "none", cursor: "pointer", padding: 0 }} />
+                      </div>
+
+                      <label style={{ fontSize: 10, color: t.lo, fontWeight: 700 }}>Ukuran font ({selectedEl.fontSizePct}% tinggi bingkai)</label>
+                      <input type="range" min="2" max="26" step="0.5" value={selectedEl.fontSizePct}
+                        onChange={(e) => onUpdateElement(selectedEl.id, { fontSizePct: Number(e.target.value) })}
+                        style={{ width: "100%", accentColor: MAGA }} />
+
+                      <label style={{ fontSize: 10, color: t.lo, fontWeight: 700 }}>Perataan</label>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {[["left", "Kiri"], ["center", "Tengah"], ["right", "Kanan"]].map(([v, lbl]) => (
+                          <button key={v} onClick={() => onUpdateElement(selectedEl.id, { align: v })}
+                            style={{
+                              flex: 1, height: 28, borderRadius: 7, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
+                              border: `1.5px solid ${selectedEl.align === v ? MAGA : t.line}`, background: selectedEl.align === v ? `${MAGA}22` : t.fieldBg,
+                              color: selectedEl.align === v ? "#fff" : t.mid,
+                            }}>{lbl}</button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 11, color: t.lo, lineHeight: 1.6 }}>
+                      Geser gambar utk pindah posisi, tarik kotak kecil di pojok kanan-bawah utk ubah ukuran.
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ fontSize: 11, color: t.lo, lineHeight: 1.6 }}>
+                  Klik salah satu elemen di kanvas utk mengatur teks/font/ukuran/warna, atau tambah elemen baru di atas.
+                </div>
+              )}
+
+              {/* Template tersimpan */}
+              <div>
+                <div style={{ fontSize: 10.5, fontWeight: 800, color: t.mid, marginBottom: 8, letterSpacing: "0.04em" }}>TEMPLATE TERSIMPAN</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: 140, overflowY: "auto" }}>
+                  {templatesState === "loading" && (
+                    <div style={{ display: "flex", justifyContent: "center", padding: 10 }}><Loader2 size={16} color={MAGA} style={{ animation: "spin 1s linear infinite" }} /></div>
+                  )}
+                  {templatesState === "ready" && templates.length === 0 && (
+                    <div style={{ fontSize: 10.5, color: t.lo, padding: "6px 2px" }}>Belum ada template tersimpan.</div>
+                  )}
+                  {templates.map((tpl) => (
+                    <div key={tpl.id} onClick={() => onApplyTemplate(tpl)}
+                      style={{
+                        display: "flex", alignItems: "center", gap: 6, padding: "7px 9px", borderRadius: 8, cursor: "pointer",
+                        border: `1.5px solid ${tpl.id === activeTemplateId ? MAGA : t.lineSoft}`, background: tpl.id === activeTemplateId ? `${MAGA}18` : t.fieldBg,
+                      }}>
+                      <FolderOpen size={12} color={tpl.id === activeTemplateId ? MAGA : t.lo} style={{ flexShrink: 0 }} />
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 11, fontWeight: 700, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tpl.name}</span>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); tpl.isDefault ? onUnsetDefaultTemplate() : onSetDefaultTemplate(tpl.id); }}
+                        title={tpl.isDefault ? "Default saat ini - klik utk lepas" : "Jadikan template default (otomatis dipakai foto/sesi baru)"}
+                        style={{ width: 20, height: 20, borderRadius: 6, border: "none", background: "transparent", color: tpl.isDefault ? "#F5B400" : t.lo, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                        <Star size={11} fill={tpl.isDefault ? "#F5B400" : "none"} />
+                      </button>
+                      <button onClick={(e) => { e.stopPropagation(); onDeleteTemplate(tpl.id); }} title="Hapus template"
+                        style={{ width: 20, height: 20, borderRadius: 6, border: "none", background: "transparent", color: t.lo, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Font custom - upload sendiri (.ttf/.otf/.woff/.woff2),
+                  tersimpan di database+storage, langsung muncul di dropdown
+                  Font kotak teks di atas ("Font Kustom Anda"). */}
+              <div>
+                <div style={{ fontSize: 10.5, fontWeight: 800, color: t.mid, marginBottom: 8, letterSpacing: "0.04em" }}>FONT KUSTOM</div>
+                <button onClick={() => fontInputRef.current?.click()} disabled={fontUploading}
+                  style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, height: 32, borderRadius: 8, border: `1px dashed ${t.line}`, background: "transparent", color: t.mid, fontSize: 11, fontWeight: 700, cursor: fontUploading ? "not-allowed" : "pointer", fontFamily: FONT, opacity: fontUploading ? 0.6 : 1 }}>
+                  {fontUploading ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <ImagePlus size={12} />} Upload Font (.ttf/.otf/.woff)
+                </button>
+                <input ref={fontInputRef} type="file" accept=".ttf,.otf,.woff,.woff2" style={{ display: "none" }}
+                  onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onUploadFont(f); }} />
+                <div style={{ display: "flex", flexDirection: "column", gap: 5, maxHeight: 110, overflowY: "auto", marginTop: 8 }}>
+                  {customFontsState === "loading" && (
+                    <div style={{ display: "flex", justifyContent: "center", padding: 6 }}><Loader2 size={14} color={MAGA} style={{ animation: "spin 1s linear infinite" }} /></div>
+                  )}
+                  {customFontsState === "ready" && customFonts.length === 0 && (
+                    <div style={{ fontSize: 10.5, color: t.lo, padding: "4px 2px" }}>Belum ada font custom.</div>
+                  )}
+                  {customFonts.map((f) => (
+                    <div key={f.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 9px", borderRadius: 8, border: `1px solid ${t.lineSoft}`, background: t.fieldBg }}>
+                      <span style={{ flex: 1, minWidth: 0, fontSize: 11, fontWeight: 700, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: `"rpv-cf-${f.id}", ${FONT}` }}>{f.name}</span>
+                      <button onClick={() => onDeleteFont(f.id)} title="Hapus font"
+                        style={{ width: 20, height: 20, borderRadius: 6, border: "none", background: "transparent", color: t.lo, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Aksi simpan - fixed di bawah toolbar */}
+            <div style={{ flexShrink: 0, padding: 12, borderTop: `1px solid ${t.line}`, display: "flex", flexDirection: "column", gap: 6 }}>
+              <button onClick={onSaveTemplate} disabled={saving}
+                style={{
+                  height: 36, borderRadius: 9, border: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                  background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 12, fontWeight: 800, cursor: saving ? "not-allowed" : "pointer",
+                  fontFamily: FONT, opacity: saving ? 0.7 : 1,
+                }}>
+                {saving ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={13} />}
+                {activeTemplateId ? "Simpan Perubahan" : "Simpan Template"}
+              </button>
+              <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={onSaveTemplateAs} disabled={saving}
+                  style={{ flex: 1, height: 30, borderRadius: 8, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.mid, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                  Simpan Sbg Baru
+                </button>
+                <button onClick={onNewTemplate}
+                  style={{ flex: 1, height: 30, borderRadius: 8, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.mid, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                  Kosongkan
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <style>{`
+        @media (max-width: 720px) {
+          .rpv-tpl-body { flex-direction: column !important; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 function ScanLinkPopup({ code, onClose }) {
   const [copied, setCopied] = useState(false);
   const link = typeof window !== "undefined" ? `${window.location.origin}/marta/photobooth/scan/${code}` : `/marta/photobooth/scan/${code}`;
