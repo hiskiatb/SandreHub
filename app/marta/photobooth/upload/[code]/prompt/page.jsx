@@ -28,7 +28,7 @@ import { useParams, useRouter } from "next/navigation";
 import QRCode from "qrcode";
 import {
   AlertTriangle, Check, Clock, Download, ImagePlus, LogOut, Loader2,
-  Pencil, Plus, QrCode, Settings2, Sparkles, Ticket, Trash2, X,
+  Pencil, Plus, QrCode, Settings2, Share2, Sparkles, Ticket, Trash2, X,
 } from "lucide-react";
 import { addRpvPrompt, deleteRpvPrompt, getRpvSession, listRpvPhotos, listRpvPrompts, rpvPublicUrl, subscribeRpvPhotos, updateRpvPrompt, uploadRpvGeminiResult, uploadRpvPromptImage } from "../../../../../../lib/rpv";
 import { PhotoboothPwaHead, usePhotoboothServiceWorker } from "../../../_pwa";
@@ -554,7 +554,41 @@ function SectionLabel({ n, text, hint, style }) {
  * digit) besar & jelas, supaya tamu tinggal tunjukkan/sebutkan ke petugas
  * cetak, atau petugas scan QR-nya langsung (mode Scanner). Tema gelap,
  * kartu QR tetap PUTIH (kontras scan tetap maksimal). */
+// FIX ulang (permintaan user - "seharusnya QR yg muncul setelah selesai
+// upload hanya QR utk SHARE saja, lalu setelah di-share akan muncul foto
+// tamunya, di situ baru QR yg muncul cuma QR Photo ID saja utk ditunjukkan
+// ke operator utk print"): sebelumnya KEDUA qr (Photo ID + Share) tampil
+// SEKALIGUS di 1 layar begitu upload selesai, foto tamunya sendiri malah
+// tidak pernah ditampilkan. Sekarang jadi 2 TAHAP jelas:
+//  1) "share" (tampil PERTAMA) - HANYA QR Share (link ke halaman publik
+//     foto), tanpa Photo ID sama sekali, + tombol Share (Web Share API) -
+//     begitu tamu bagikan (atau tekan "Lanjut" kalau device tidak support
+//     Web Share), baru pindah ke tahap 2.
+//  2) "reveal" (tampil SETELAH share) - foto tamunya sendiri ditampilkan
+//     besar, DI BAWAHNYA baru muncul QR Photo ID (murni utk ditunjukkan ke
+//     petugas operator saat cetak) - tidak ada lagi QR share di tahap ini.
 function GeminiUploadSuccessScreen({ result, qrUrl, guestQrUrl, onUploadMore, onDone }) {
+  const [stage, setStage] = useState("share"); // "share" | "reveal"
+  const [sharing, setSharing] = useState(false);
+  const shareUrl = typeof window !== "undefined" ? `${window.location.origin}/marta/photobooth/p/${result.photoCode}` : "";
+
+  const handleShare = async () => {
+    if (sharing) return;
+    setSharing(true);
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: `Foto ${result.queueLabel}`, text: "Lihat fotoku dari FlashPrint!", url: shareUrl });
+      } else if (navigator.clipboard) {
+        await navigator.clipboard.writeText(shareUrl);
+      }
+    } catch {
+      // diamkan - batal share (mis. tamu tutup sheet) BUKAN error, tetap lanjut ke tahap reveal
+    } finally {
+      setSharing(false);
+      setStage("reveal");
+    }
+  };
+
   return (
     <div className="flashprint-root" style={{ minHeight: "100svh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: BG, fontFamily: FONT }}>
       <div style={{ textAlign: "center", maxWidth: 340, width: "100%" }}>
@@ -567,65 +601,88 @@ function GeminiUploadSuccessScreen({ result, qrUrl, guestQrUrl, onUploadMore, on
           </div>
         </div>
         <div style={{ marginTop: 18, fontSize: 17.5, fontWeight: 800, color: INK }}>Foto Gemini Berhasil Diunggah!</div>
-        <div style={{ marginTop: 7, fontSize: 12.5, color: MID, lineHeight: 1.65 }}>
-          Tunjukkan atau sebutkan <b style={{ color: INK }}>Photo ID</b> di bawah ini ke petugas untuk mencetak fotomu.
-        </div>
 
-        <div style={{ marginTop: 22, padding: 20, borderRadius: 22, background: "#fff" }}>
-          {qrUrl ? (
-            <img src={qrUrl} alt="QR Code" style={{ width: 184, height: 184, margin: "0 auto", display: "block", borderRadius: 12 }} />
-          ) : (
-            <div style={{ width: 184, height: 184, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Loader2 size={22} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
+        {stage === "share" ? (
+          <>
+            <div style={{ marginTop: 7, fontSize: 12.5, color: MID, lineHeight: 1.65 }}>
+              Bagikan foto ini dulu ke media sosialmu, baru lanjut ambil Photo ID utk dicetak.
             </div>
-          )}
-          <div style={{ marginTop: 15, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-            <Ticket size={16} color={MAGA} />
-            <span style={{ fontSize: 9.5, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.3 }}>PHOTO ID</span>
-          </div>
-          <div style={{ marginTop: 2, fontSize: 34, fontWeight: 900, color: "#17181C", letterSpacing: "0.08em", fontFamily: "monospace" }}>
-            {result.queueLabel}
-          </div>
-        </div>
-
-        {/* QR KEDUA - beda dr QR Photo ID di atas (itu utk dipindai OPERATOR
-            saat cetak). QR ini link ke halaman publik foto, dipindai tamu
-            LAIN (mis. teman yg mau ikut lihat/download fotonya sendiri) -
-            buka /marta/photobooth/p/[photoCode]: nampilkan foto, Photo ID,
-            QR lagi (utk diteruskan share ke orang lain), & tombol download. */}
-        {guestQrUrl && (
-          <div style={{ marginTop: 14, padding: "16px 18px", borderRadius: 18, background: CARD, border: `1px solid ${LINE}`, display: "flex", alignItems: "center", gap: 14, textAlign: "left" }}>
-            <img src={guestQrUrl} alt="QR lihat & download foto" style={{ width: 68, height: 68, borderRadius: 9, flexShrink: 0, background: "#fff", padding: 4 }} />
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 800, color: INK, display: "flex", alignItems: "center", gap: 6 }}>
-                <QrCode size={13} color={MAGA} /> Scan utk lihat &amp; download
-              </div>
-              <div style={{ marginTop: 3, fontSize: 11, color: MID, lineHeight: 1.5 }}>
-                Bagikan QR ini supaya orang lain juga bisa lihat &amp; unduh foto ini dari HP-nya sendiri.
+            <div key="share-card" className="rpv-m-stage-fade" style={{ marginTop: 22, padding: 22, borderRadius: 22, background: "#fff" }}>
+              {guestQrUrl ? (
+                <img src={guestQrUrl} alt="QR share foto" style={{ width: 184, height: 184, margin: "0 auto", display: "block", borderRadius: 12 }} />
+              ) : (
+                <div style={{ width: 184, height: 184, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Loader2 size={22} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
+                </div>
+              )}
+              <div style={{ marginTop: 15, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                <QrCode size={16} color={MAGA} />
+                <span style={{ fontSize: 9.5, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.3 }}>SCAN UTK LIHAT &amp; SHARE FOTOMU</span>
               </div>
             </div>
-          </div>
+            <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 10 }}>
+              <button onClick={handleShare} disabled={sharing}
+                style={{ width: "100%", height: 50, borderRadius: 13, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FONT, cursor: sharing ? "default" : "pointer", opacity: sharing ? 0.7 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                {sharing ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Share2 size={16} />}
+                {sharing ? "Menyiapkan…" : "Share Fotoku"}
+              </button>
+              <button onClick={() => setStage("reveal")}
+                style={{ width: "100%", height: 44, borderRadius: 13, border: "none", background: "transparent", color: MID, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, cursor: "pointer" }}>
+                Lewati, langsung ambil Photo ID
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ marginTop: 7, fontSize: 12.5, color: MID, lineHeight: 1.65 }}>
+              Tunjukkan atau sebutkan <b style={{ color: INK }}>Photo ID</b> di bawah ini ke petugas untuk mencetak fotomu.
+            </div>
+
+            <div key="reveal-photo" className="rpv-m-stage-fade" style={{ marginTop: 20, borderRadius: 18, overflow: "hidden", border: `1px solid ${LINE}` }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={result.url} alt={`Foto ${result.queueLabel}`} style={{ width: "100%", display: "block", maxHeight: 280, objectFit: "cover" }} />
+            </div>
+
+            <div style={{ marginTop: 16, padding: 20, borderRadius: 22, background: "#fff" }}>
+              {qrUrl ? (
+                <img src={qrUrl} alt="QR Photo ID" style={{ width: 160, height: 160, margin: "0 auto", display: "block", borderRadius: 12 }} />
+              ) : (
+                <div style={{ width: 160, height: 160, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Loader2 size={22} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
+                </div>
+              )}
+              <div style={{ marginTop: 15, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                <Ticket size={16} color={MAGA} />
+                <span style={{ fontSize: 9.5, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.3 }}>PHOTO ID</span>
+              </div>
+              <div style={{ marginTop: 2, fontSize: 34, fontWeight: 900, color: "#17181C", letterSpacing: "0.08em", fontFamily: "monospace" }}>
+                {result.queueLabel}
+              </div>
+            </div>
+
+            <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 10 }}>
+              <button onClick={onUploadMore}
+                style={{ width: "100%", height: 50, borderRadius: 13, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FONT, cursor: "pointer" }}>
+                Upload Gemini Lagi
+              </button>
+              <button onClick={onDone}
+                style={{ width: "100%", height: 50, borderRadius: 13, border: `1.5px solid ${LINE}`, background: CARD, color: MID, fontSize: 14, fontWeight: 700, fontFamily: FONT, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                Selesai
+              </button>
+            </div>
+          </>
         )}
-
-        <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 10 }}>
-          <button onClick={onUploadMore}
-            style={{ width: "100%", height: 50, borderRadius: 13, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FONT, cursor: "pointer" }}>
-            Upload Gemini Lagi
-          </button>
-          <button onClick={onDone}
-            style={{ width: "100%", height: 50, borderRadius: 13, border: `1.5px solid ${LINE}`, background: CARD, color: MID, fontSize: 14, fontWeight: 700, fontFamily: FONT, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            Selesai
-          </button>
-        </div>
       </div>
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes rpv-m-success-pop { 0% { transform: scale(0.4); opacity: 0; } 60% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); } }
         @keyframes rpv-m-success-circle { from { stroke-dasharray: 145; stroke-dashoffset: 145; } to { stroke-dasharray: 145; stroke-dashoffset: 0; } }
         @keyframes rpv-m-success-tick { from { stroke-dasharray: 34; stroke-dashoffset: 34; } to { stroke-dasharray: 34; stroke-dashoffset: 0; } }
+        @keyframes rpv-m-stage-fade { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
         .rpv-m-success-pop { animation: rpv-m-success-pop 0.42s cubic-bezier(.34,1.56,.64,1) both; }
         .rpv-m-success-circle { animation: rpv-m-success-circle 0.55s 0.05s cubic-bezier(.65,0,.35,1) both; }
         .rpv-m-success-tick { animation: rpv-m-success-tick 0.35s 0.5s cubic-bezier(.65,0,.35,1) both; }
+        .rpv-m-stage-fade { animation: rpv-m-stage-fade 0.4s cubic-bezier(.4,0,.2,1) both; }
       `}</style>
     </div>
   );
