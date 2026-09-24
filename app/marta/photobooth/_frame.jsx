@@ -30,11 +30,10 @@ const MUTED = "#8A8D91";
 // (window.print) MAUPUN sbg rasio aspek foto di preview operator & TV
 // Viewer, supaya framing yg operator lihat & atur (crop/zoom/template)
 // BENAR2 sama dgn hasil cetak fisik, bukan cuma "mirip".
-// UPDATE (permintaan user - ganti dari 2R ke 4R): 4R standar = 4 x 6 inch
-// = 1200 x 1800 px @300dpi (rasio 2:3, sama dgn 0.667 yg dipakai 2R versi
-// 6x9cm sebelumnya - kebetulan rasionya identik, cuma ukuran fisiknya yg
-// membesar). 4in = 10.16cm, 6in = 15.24cm.
-export const PRINT_SIZE = { label: "4R", w: 10.16, h: 15.24 };
+// UPDATE (permintaan user - presisi 1205 x 1795 px @300dpi, gantikan
+// 1200x1800 sebelumnya). 1205px/300dpi = 4.01667in = 10.2023cm,
+// 1795px/300dpi = 5.98333in = 15.1997cm.
+export const PRINT_SIZE = { label: "4R", w: 10.2023, h: 15.1997 };
 
 // Crop/zoom/pan/rotate/flip default sebuah foto sblm operator menyesuaikan
 // & menyimpannya (lihat saveRpvPhotoCrop di lib/rpv.js - disimpan PER FOTO

@@ -239,13 +239,22 @@ export default function RpvControlRoom() {
     [camPhotos, aiPhotos]
   );
   const [searchQuery, setSearchQuery] = useState("");
+  // FIX (permintaan user - ketik "11" tapi muncul jg "00002"): sblmnya
+  // pencarian ikut nyocokkan substring ke photo_code mentah (internal
+  // id/uuid foto, BUKAN Photo ID yg operator lihat/ketik), jadi angka apa
+  // pun yg kebetulan nyempil di dalam photo_code ikut ke-match walau tidak
+  // related sama sekali ke Photo ID (mis. "00002" ke-match search "11"
+  // krn ada "11" tersembunyi di photo_code-nya). Sekarang HANYA cocokkan
+  // ke queue_label (Photo ID 5 digit yg ditampilkan, mis. "00011") - baik
+  // versi lengkap maupun versi tanpa leading zero - jadi hasil pencarian
+  // selalu sesuai apa yg operator lihat di layar.
   const filteredPhotos = useMemo(() => {
     const q = searchQuery.trim().replace(/^0+(?=\d)/, "").toLowerCase();
     if (!q) return allPhotos;
     return allPhotos.filter((p) => {
       const label = (p.queue_label || "").toLowerCase();
       const bare = label.replace(/^0+(?=\d)/, "");
-      return label.includes(q) || bare.includes(q) || (p.photo_code || "").toLowerCase().includes(q);
+      return label.includes(q) || bare.includes(q);
     });
   }, [allPhotos, searchQuery]);
   const selectedPhoto = allPhotos.find((p) => p.photo_code === selectedCode) || null;
