@@ -605,19 +605,34 @@ function GeminiUploadSuccessScreen({ result, qrUrl, onUploadMore }) {
         </div>
 
         <div style={{ marginTop: 22, padding: 22, borderRadius: 22, background: "#fff" }}>
+          {/* FIX (permintaan user - "seharusnya dia menampilkan qr share
+              bukan photo id"): QR-nya SUDAH benar isi link share/download
+              (lihat useEffect di atas), tapi tanpa label apa2 tepat di atas
+              QR & langsung disusul teks besar "PHOTO ID" di bawahnya, jadi
+              KELIATANNYA spt QR itu utk Photo ID. Sekarang dikasih label
+              eksplisit "QR SHARE & DOWNLOAD" tepat di atas QR, & bagian
+              Photo ID dipisah jelas pakai garis pembatas - supaya jelas 2
+              hal beda: QR = scan utk download foto sendiri, angka di bawah
+              garis = Photo ID utk disebutkan ke petugas. */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+            <QrCode size={14} color={MAGA} />
+            <span style={{ fontSize: 10, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.4 }}>QR SHARE &amp; DOWNLOAD</span>
+          </div>
           {qrUrl ? (
-            <img src={qrUrl} alt="QR share & download foto" style={{ width: 184, height: 184, margin: "0 auto", display: "block", borderRadius: 12 }} />
+            <img src={qrUrl} alt="QR share & download foto" style={{ marginTop: 10, width: 184, height: 184, margin: "10px auto 0", display: "block", borderRadius: 12 }} />
           ) : (
-            <div style={{ width: 184, height: 184, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ marginTop: 10, width: 184, height: 184, margin: "10px auto 0", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Loader2 size={22} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
             </div>
           )}
-          <div style={{ marginTop: 15, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-            <Ticket size={16} color={MAGA} />
-            <span style={{ fontSize: 9.5, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.3 }}>PHOTO ID</span>
-          </div>
-          <div style={{ marginTop: 2, fontSize: 34, fontWeight: 900, color: "#17181C", letterSpacing: "0.08em", fontFamily: "monospace" }}>
-            {result.queueLabel}
+          <div style={{ marginTop: 18, borderTop: "1.5px dashed #E4E4EA", paddingTop: 15 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              <Ticket size={16} color={MAGA} />
+              <span style={{ fontSize: 9.5, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.3 }}>PHOTO ID (sebutkan ke petugas)</span>
+            </div>
+            <div style={{ marginTop: 2, fontSize: 34, fontWeight: 900, color: "#17181C", letterSpacing: "0.08em", fontFamily: "monospace" }}>
+              {result.queueLabel}
+            </div>
           </div>
         </div>
 
