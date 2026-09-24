@@ -235,7 +235,7 @@ export default function RpvPromptUploadPage() {
         <UploadHistoryPanel history={uploadHistory} onClose={() => setHistoryOpen(false)} />
       )}
 
-      <div style={{ flex: 1, minHeight: 0, padding: "10px 14px 12px", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box", position: "relative", zIndex: 1, display: "flex", flexDirection: "column" }}>
+      <div style={{ flex: 1, minHeight: 0, padding: "10px 14px 20px", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box", position: "relative", zIndex: 1, display: "flex", flexDirection: "column" }}>
         {/* Langkah 1 - pilih template, klik = langsung copy teks prompt.
             FIX (permintaan user - "kepotong, harusnya ukurannya menyesuaikan
             tinggi layar sehingga tidak perlu scroll"): sebelumnya thumbnail
@@ -314,7 +314,7 @@ export default function RpvPromptUploadPage() {
             style={{
               width: "100%", borderRadius: 14, cursor: "pointer", fontFamily: FONT,
               background: `linear-gradient(135deg,${RED},${MAGA})`, border: "none", boxShadow: "none",
-              padding: "14px 14px", boxSizing: "border-box",
+              padding: "14px 14px", boxSizing: "border-box", marginTop: 12, marginBottom: 6, flexShrink: 0,
               display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
             }}>
             <ImagePlus size={16} color="#fff" style={{ flexShrink: 0 }} />
@@ -326,7 +326,7 @@ export default function RpvPromptUploadPage() {
         )}
 
         {upload.phase === "uploading" && (
-          <div style={{ flexShrink: 0, width: "100%", padding: "18px 16px", boxSizing: "border-box", borderRadius: 16, background: `linear-gradient(180deg, ${CARD_HI} 0%, ${CARD} 100%)`, border: `1.5px solid ${LINE}`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10 }}>
+          <div style={{ flexShrink: 0, width: "100%", padding: "18px 16px", boxSizing: "border-box", borderRadius: 16, background: `linear-gradient(180deg, ${CARD_HI} 0%, ${CARD} 100%)`, border: `1.5px solid ${LINE}`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, marginTop: 12, marginBottom: 6 }}>
             <Loader2 size={24} color={MAGA} style={{ animation: "spin 1s linear infinite" }} />
             <span style={{ fontSize: 12.5, fontWeight: 700, color: MID }}>Mengunggah… {Math.round(upload.progress * 100)}%</span>
             <div style={{ width: "70%", height: 5, borderRadius: 99, background: FIELD, overflow: "hidden" }}>
@@ -336,7 +336,7 @@ export default function RpvPromptUploadPage() {
         )}
 
         {upload.phase === "error" && (
-          <div style={{ flexShrink: 0, width: "100%", borderRadius: 16, background: "rgba(198,40,40,0.12)", border: "1.5px solid rgba(198,40,40,0.4)", padding: "14px 14px", display: "flex", flexDirection: "column", alignItems: "center", gap: 9, textAlign: "center" }}>
+          <div style={{ flexShrink: 0, width: "100%", borderRadius: 16, background: "rgba(198,40,40,0.12)", border: "1.5px solid rgba(198,40,40,0.4)", padding: "14px 14px", display: "flex", flexDirection: "column", alignItems: "center", gap: 9, textAlign: "center", marginTop: 12, marginBottom: 6 }}>
             <AlertTriangle size={22} color="#FF8A8F" />
             <span style={{ fontSize: 12, fontWeight: 700, color: "#FF8A8F" }}>{upload.error}</span>
             <button onClick={resetUpload}
