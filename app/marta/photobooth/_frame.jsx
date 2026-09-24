@@ -26,15 +26,15 @@ export const FONT = `"Google Sans","DM Sans",-apple-system,BlinkMacSystemFont,"S
 export const MAGA = "#C6168D";
 const MUTED = "#8A8D91";
 
-// Ukuran cetak DIKUNCI ke 2R - dipakai baik utk lembar cetak sungguhan
+// Ukuran cetak DIKUNCI - dipakai baik utk lembar cetak sungguhan
 // (window.print) MAUPUN sbg rasio aspek foto di preview operator & TV
 // Viewer, supaya framing yg operator lihat & atur (crop/zoom/template)
 // BENAR2 sama dgn hasil cetak fisik, bukan cuma "mirip".
-// UPDATE (permintaan user - konfirmasi ukuran 2R yg benar): 2R standar
-// internasional = 2.5 x 3.5 inch = 750 x 1050 px @300dpi (rasio 5:7,
-// ~0.714) - BUKAN 6x9cm (rasio 2:3, ~0.667) yg dipakai sebelumnya.
-// 2.5in = 6.35cm, 3.5in = 8.89cm.
-export const PRINT_SIZE = { label: "2R", w: 6.35, h: 8.89 };
+// UPDATE (permintaan user - ganti dari 2R ke 4R): 4R standar = 4 x 6 inch
+// = 1200 x 1800 px @300dpi (rasio 2:3, sama dgn 0.667 yg dipakai 2R versi
+// 6x9cm sebelumnya - kebetulan rasionya identik, cuma ukuran fisiknya yg
+// membesar). 4in = 10.16cm, 6in = 15.24cm.
+export const PRINT_SIZE = { label: "4R", w: 10.16, h: 15.24 };
 
 // Crop/zoom/pan/rotate/flip default sebuah foto sblm operator menyesuaikan
 // & menyimpannya (lihat saveRpvPhotoCrop di lib/rpv.js - disimpan PER FOTO

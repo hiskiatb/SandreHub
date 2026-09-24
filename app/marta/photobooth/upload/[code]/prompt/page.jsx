@@ -28,7 +28,7 @@ import { useParams, useRouter } from "next/navigation";
 import QRCode from "qrcode";
 import {
   AlertTriangle, Check, Clock, Download, ImagePlus, LogOut, Loader2,
-  Pencil, Plus, QrCode, Settings2, Share2, Sparkles, Ticket, Trash2, X,
+  Pencil, Plus, QrCode, Settings2, Sparkles, Ticket, Trash2, X,
 } from "lucide-react";
 import { addRpvPrompt, deleteRpvPrompt, getRpvSession, listRpvPhotos, listRpvPrompts, rpvPublicUrl, subscribeRpvPhotos, updateRpvPrompt, uploadRpvGeminiResult, uploadRpvPromptImage } from "../../../../../../lib/rpv";
 import { PhotoboothPwaHead, usePhotoboothServiceWorker } from "../../../_pwa";
@@ -90,7 +90,6 @@ export default function RpvPromptUploadPage() {
   // upload: idle | uploading | done | error
   const [upload, setUpload] = useState({ phase: "idle", progress: 0, error: "", result: null });
   const [qrUrl, setQrUrl] = useState("");
-  const [guestQrUrl, setGuestQrUrl] = useState(""); // QR ke /p/[photoCode] - dipindai TAMU (bukan operator) utk lihat/download fotonya sendiri
 
   useEffect(() => {
     (async () => {
@@ -131,14 +130,6 @@ export default function RpvPromptUploadPage() {
     QRCode.toDataURL(upload.result.queueLabel, { margin: 1, width: 280, color: { dark: "#111116", light: "#FFFFFF" } })
       .then((url) => { if (alive) setQrUrl(url); })
       .catch(() => {});
-    // QR LINK ke halaman publik foto (/p/[photoCode]) - ini yg dipindai
-    // TAMU LAIN (bukan operator) buat lihat & download foto ini sendiri.
-    if (typeof window !== "undefined" && upload.result.photoCode) {
-      const guestUrl = `${window.location.origin}/marta/photobooth/p/${upload.result.photoCode}`;
-      QRCode.toDataURL(guestUrl, { margin: 1, width: 220, color: { dark: "#111116", light: "#FFFFFF" } })
-        .then((url) => { if (alive) setGuestQrUrl(url); })
-        .catch(() => {});
-    }
     return () => { alive = false; };
   }, [upload.phase, upload.result]);
 
@@ -201,15 +192,13 @@ export default function RpvPromptUploadPage() {
       <GeminiUploadSuccessScreen
         result={upload.result}
         qrUrl={qrUrl}
-        guestQrUrl={guestQrUrl}
         onUploadMore={resetUpload}
-        onDone={resetUpload}
       />
     );
   }
 
   return (
-    <div className={leaving ? "rpv-m-page rpv-m-page--leaving flashprint-root" : "rpv-m-page flashprint-root"} style={{ minHeight: "100svh", background: BG, fontFamily: FONT, display: "flex", flexDirection: "column", colorScheme: "dark", position: "relative" }}>
+    <div className={leaving ? "rpv-m-page rpv-m-page--leaving flashprint-root" : "rpv-m-page flashprint-root"} style={{ height: "100svh", background: BG, fontFamily: FONT, display: "flex", flexDirection: "column", colorScheme: "dark", position: "relative", overflowY: "auto" }}>
       <PhotoboothPwaHead />
       <div className="rpv-m-ambient" aria-hidden="true">
         <div className="rpv-m-ambient-blob rpv-m-ambient-blob--a" />
@@ -219,7 +208,7 @@ export default function RpvPromptUploadPage() {
       {/* Header - TANPA tombol kembali: halaman ini akar/pintu masuk utama
           tamu (start_url PWA & redirect /go/[code] mendarat di sini), jadi
           tidak ada "layar sebelumnya" yg relevan utk dikembalikan. */}
-      <div style={{ padding: "16px 18px", background: CARD, borderBottom: `1px solid ${LINE}`, position: "sticky", top: 0, zIndex: 5, flexShrink: 0 }}>
+      <div style={{ padding: "10px 16px", background: CARD, borderBottom: `1px solid ${LINE}`, position: "sticky", top: 0, zIndex: 5, flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
           <span style={{ width: 40, height: 40, borderRadius: 13, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${VIO},${MAGA})`, flexShrink: 0, boxShadow: `0 8px 20px -6px ${VIO}66`, overflow: "hidden" }}>
             <img src="/photobooth/icon-192.png" alt="FlashPrint" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
@@ -246,23 +235,38 @@ export default function RpvPromptUploadPage() {
         <UploadHistoryPanel history={uploadHistory} onClose={() => setHistoryOpen(false)} />
       )}
 
-      <div style={{ flex: 1, padding: "20px 16px 44px", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box", position: "relative", zIndex: 1 }}>
-        {/* Langkah 1 - pilih template, klik = langsung copy teks prompt */}
-        <SectionLabel n={1} text="Pilih Template & Salin Prompt" hint="Ketuk salah satu, teksnya langsung tersalin" />
+      <div style={{ flex: 1, minHeight: 0, padding: "10px 14px 12px", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box", position: "relative", zIndex: 1, display: "flex", flexDirection: "column" }}>
+        {/* Langkah 1 - pilih template, klik = langsung copy teks prompt.
+            FIX (permintaan user - "kepotong, harusnya ukurannya menyesuaikan
+            tinggi layar sehingga tidak perlu scroll"): sebelumnya thumbnail
+            dipaksa persegi (aspectRatio 1/1) dgn tinggi TETAP tanpa peduli
+            sisa ruang layar, jadi kalau totalnya lebih tinggi dari layar ya
+            kepotong/harus scroll. Sekarang bagian grid ini dibuat flex:1 +
+            minHeight:0 (ngambil PERSIS sisa tinggi layar stlh header/step2/
+            step3), dan grid pakai gridTemplateRows (bukan aspect-ratio)
+            supaya barisnya ikut menyusut/melebar otomatis sesuai tinggi
+            layar sungguhan - thumbnail selalu utuh kelihatan, TIDAK kepotong,
+            TANPA perlu scroll, di layar berapa pun tingginya. */}
+        <div style={{ flexShrink: 0 }}>
+          <SectionLabel n={1} text="Pilih Template & Salin Prompt" hint="Ketuk salah satu, teksnya langsung tersalin" />
+        </div>
 
         {prompts.length === 0 ? (
-          <div style={{ padding: "26px 14px", borderRadius: 16, background: CARD, border: `1.5px dashed ${LINE}`, textAlign: "center" }}>
+          <div style={{ padding: "26px 14px", borderRadius: 16, background: CARD, border: `1.5px dashed ${LINE}`, textAlign: "center", flexShrink: 0 }}>
             <span style={{ fontSize: 12, color: SUB, fontWeight: 600 }}>Belum ada template prompt di sesi ini.</span>
           </div>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+          <div style={{
+            flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "repeat(2, 1fr)",
+            gridTemplateRows: `repeat(${Math.ceil(prompts.length / 2)}, 1fr)`, gap: 8,
+          }}>
             {prompts.map((p) => {
               const justCopied = copiedId === p.id;
               return (
                 <button key={p.id} onClick={() => copyPromptText(p)}
                   className="rpv-m-tpl-card"
-                  style={{ display: "flex", flexDirection: "column", border: "none", background: "transparent", padding: 0, cursor: "pointer", fontFamily: FONT, textAlign: "left" }}>
-                  <div className="rpv-m-tpl-thumb" style={{ position: "relative", width: "100%", aspectRatio: "1/1", borderRadius: 16, overflow: "hidden", background: CARD_HI, border: `1px solid ${LINE}` }}>
+                  style={{ display: "flex", flexDirection: "column", minHeight: 0, border: "none", background: "transparent", padding: 0, cursor: "pointer", fontFamily: FONT, textAlign: "left" }}>
+                  <div className="rpv-m-tpl-thumb" style={{ position: "relative", width: "100%", height: "100%", minHeight: 0, borderRadius: 16, overflow: "hidden", background: CARD_HI, border: `1px solid ${LINE}` }}>
                     {p.promptImageUrl ? (
                       <img src={p.promptImageUrl} alt={p.label} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                     ) : (
@@ -286,37 +290,43 @@ export default function RpvPromptUploadPage() {
         )}
 
         {/* Langkah 2 - instruksi singkat ke Gemini */}
-        <div style={{ marginTop: 20, padding: "13px 14px", borderRadius: 16, background: `${VIO}14`, border: `1px solid ${VIO}3D`, display: "flex", gap: 10, alignItems: "flex-start" }}>
-          <span style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 8, background: VIO, color: "#fff", fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1 }}>2</span>
-          <div style={{ fontSize: 11.5, color: "#D5C7EE", lineHeight: 1.6, fontWeight: 600 }}>
+        <div style={{ flexShrink: 0, marginTop: 10, padding: "8px 12px", borderRadius: 14, background: `${VIO}14`, border: `1px solid ${VIO}3D`, display: "flex", gap: 8, alignItems: "flex-start" }}>
+          <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 7, background: VIO, color: "#fff", fontSize: 10.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1 }}>2</span>
+          <div style={{ fontSize: 10.5, color: "#D5C7EE", lineHeight: 1.45, fontWeight: 600 }}>
             Buka app <b style={{ color: "#fff" }}>Gemini</b> di HP kamu, <b style={{ color: "#fff" }}>ambil/upload foto</b> langsung di sana, lalu tempel (paste) prompt yang tadi tersalin untuk generate, dan <b style={{ color: "#fff" }}>download hasilnya</b> ke galeri HP.
           </div>
         </div>
 
         {/* Langkah 3 - upload hasil Gemini */}
-        <SectionLabel n={3} text="Upload Gambar Gemini Anda" hint="Pilih hasil Gemini dari galeri HP kamu" style={{ marginTop: 22 }} />
+        <div style={{ flexShrink: 0 }}>
+          <SectionLabel n={3} text="Upload Gambar Gemini Anda" hint="Pilih hasil Gemini dari galeri HP kamu" style={{ marginTop: 10, marginBottom: 8 }} />
+        </div>
         <input ref={fileRef} type="file" accept="image/*" onChange={onPickGeminiFile} style={{ display: "none" }} />
 
         {upload.phase === "idle" && (
+          // Tombol PRIMARY sesungguhnya - ini alur utama halaman (bukan
+          // sekadar opsi tambahan), jadi TIDAK pakai kartu dashed/glow spt
+          // sebelumnya (itu kesannya opsional/sekunder). Sekarang solid
+          // penuh warna brand, teks putih kontras, TANPA box-shadow/glow
+          // sama sekali (permintaan user - "highlight sempurna tanpa efek
+          // glow, seperti primary key").
           <button onClick={() => fileRef.current?.click()} className="rpv-m-upload-zone"
             style={{
-              width: "100%", borderRadius: 18, cursor: "pointer", fontFamily: FONT,
-              background: `linear-gradient(180deg, ${CARD_HI} 0%, ${CARD} 100%)`, border: `1.5px dashed ${MAGA}4D`,
-              padding: "26px 18px", boxSizing: "border-box",
-              display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12,
+              width: "100%", borderRadius: 14, cursor: "pointer", fontFamily: FONT,
+              background: `linear-gradient(135deg,${RED},${MAGA})`, border: "none", boxShadow: "none",
+              padding: "14px 14px", boxSizing: "border-box",
+              display: "flex", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10,
             }}>
-            <div style={{ width: 50, height: 50, borderRadius: 15, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", boxShadow: `0 10px 22px -8px ${MAGA}88` }}>
-              <ImagePlus size={21} />
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
-              <span style={{ fontSize: 13.5, fontWeight: 800, color: INK }}>Upload Gambar Gemini Anda</span>
-              <span style={{ fontSize: 10.5, color: SUB, fontWeight: 600 }}>Ketuk untuk buka galeri HP kamu</span>
+            <ImagePlus size={16} color="#fff" style={{ flexShrink: 0 }} />
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1 }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>Upload Gambar Gemini Anda</span>
+              <span style={{ fontSize: 9.5, color: "rgba(255,255,255,0.82)", fontWeight: 600 }}>Ketuk untuk buka galeri HP kamu</span>
             </div>
           </button>
         )}
 
         {upload.phase === "uploading" && (
-          <div style={{ width: "100%", padding: "26px 18px", boxSizing: "border-box", borderRadius: 18, background: `linear-gradient(180deg, ${CARD_HI} 0%, ${CARD} 100%)`, border: `1.5px solid ${LINE}`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
+          <div style={{ flexShrink: 0, width: "100%", padding: "18px 16px", boxSizing: "border-box", borderRadius: 16, background: `linear-gradient(180deg, ${CARD_HI} 0%, ${CARD} 100%)`, border: `1.5px solid ${LINE}`, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10 }}>
             <Loader2 size={24} color={MAGA} style={{ animation: "spin 1s linear infinite" }} />
             <span style={{ fontSize: 12.5, fontWeight: 700, color: MID }}>Mengunggah… {Math.round(upload.progress * 100)}%</span>
             <div style={{ width: "70%", height: 5, borderRadius: 99, background: FIELD, overflow: "hidden" }}>
@@ -326,7 +336,7 @@ export default function RpvPromptUploadPage() {
         )}
 
         {upload.phase === "error" && (
-          <div style={{ width: "100%", borderRadius: 18, background: "rgba(198,40,40,0.12)", border: "1.5px solid rgba(198,40,40,0.4)", padding: "18px 14px", display: "flex", flexDirection: "column", alignItems: "center", gap: 11, textAlign: "center" }}>
+          <div style={{ flexShrink: 0, width: "100%", borderRadius: 16, background: "rgba(198,40,40,0.12)", border: "1.5px solid rgba(198,40,40,0.4)", padding: "14px 14px", display: "flex", flexDirection: "column", alignItems: "center", gap: 9, textAlign: "center" }}>
             <AlertTriangle size={22} color="#FF8A8F" />
             <span style={{ fontSize: 12, fontWeight: 700, color: "#FF8A8F" }}>{upload.error}</span>
             <button onClick={resetUpload}
@@ -396,8 +406,8 @@ export default function RpvPromptUploadPage() {
         body { background: ${BG}; }
         .rpv-m-tpl-card { transition: transform .15s ease; }
         .rpv-m-tpl-card:active { transform: scale(0.95); }
-        .rpv-m-upload-zone { transition: border-color .15s ease, transform .15s ease; }
-        .rpv-m-upload-zone:active { transform: scale(0.985); border-color: ${MAGA}99; }
+        .rpv-m-upload-zone { transition: filter .15s ease, transform .15s ease; box-shadow: none !important; }
+        .rpv-m-upload-zone:active { transform: scale(0.985); filter: brightness(0.92); }
         .rpv-m-tpl-copied {
           position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px;
           background: rgba(10,10,11,0); backdrop-filter: blur(0px); opacity: 0; pointer-events: none;
@@ -567,28 +577,14 @@ function SectionLabel({ n, text, hint, style }) {
 //  2) "reveal" (tampil SETELAH share) - foto tamunya sendiri ditampilkan
 //     besar, DI BAWAHNYA baru muncul QR Photo ID (murni utk ditunjukkan ke
 //     petugas operator saat cetak) - tidak ada lagi QR share di tahap ini.
-function GeminiUploadSuccessScreen({ result, qrUrl, guestQrUrl, onUploadMore, onDone }) {
-  const [stage, setStage] = useState("share"); // "share" | "reveal"
-  const [sharing, setSharing] = useState(false);
-  const shareUrl = typeof window !== "undefined" ? `${window.location.origin}/marta/photobooth/p/${result.photoCode}` : "";
-
-  const handleShare = async () => {
-    if (sharing) return;
-    setSharing(true);
-    try {
-      if (navigator.share) {
-        await navigator.share({ title: `Foto ${result.queueLabel}`, text: "Lihat fotoku dari FlashPrint!", url: shareUrl });
-      } else if (navigator.clipboard) {
-        await navigator.clipboard.writeText(shareUrl);
-      }
-    } catch {
-      // diamkan - batal share (mis. tamu tutup sheet) BUKAN error, tetap lanjut ke tahap reveal
-    } finally {
-      setSharing(false);
-      setStage("reveal");
-    }
-  };
-
+// FIX (permintaan user - "setelah selesai upload harusnya hanya ada QR dan
+// tombol kembali ke laman pilih prompt dan upload lagi agar lebih simple"):
+// dirombak dari alur 2-tahap (share dulu -> baru reveal foto+Photo ID QR)
+// jadi SATU layar simpel: cuma QR Photo ID + 1 tombol kembali ke laman
+// pilih template & upload (yg sekaligus artinya "upload lagi", tidak perlu
+// 2 tombol Upload Lagi/Selesai terpisah lagi). Tahap share ke sosmed &
+// reveal foto DIHAPUS dari layar ini.
+function GeminiUploadSuccessScreen({ result, qrUrl, onUploadMore }) {
   return (
     <div className="flashprint-root" style={{ minHeight: "100svh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: BG, fontFamily: FONT }}>
       <div style={{ textAlign: "center", maxWidth: 340, width: "100%" }}>
@@ -601,77 +597,31 @@ function GeminiUploadSuccessScreen({ result, qrUrl, guestQrUrl, onUploadMore, on
           </div>
         </div>
         <div style={{ marginTop: 18, fontSize: 17.5, fontWeight: 800, color: INK }}>Foto Gemini Berhasil Diunggah!</div>
+        <div style={{ marginTop: 7, fontSize: 12.5, color: MID, lineHeight: 1.65 }}>
+          Tunjukkan atau sebutkan <b style={{ color: INK }}>Photo ID</b> di bawah ini ke petugas untuk mencetak fotomu.
+        </div>
 
-        {stage === "share" ? (
-          <>
-            <div style={{ marginTop: 7, fontSize: 12.5, color: MID, lineHeight: 1.65 }}>
-              Bagikan foto ini dulu ke media sosialmu, baru lanjut ambil Photo ID utk dicetak.
+        <div style={{ marginTop: 22, padding: 22, borderRadius: 22, background: "#fff" }}>
+          {qrUrl ? (
+            <img src={qrUrl} alt="QR Photo ID" style={{ width: 184, height: 184, margin: "0 auto", display: "block", borderRadius: 12 }} />
+          ) : (
+            <div style={{ width: 184, height: 184, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Loader2 size={22} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
             </div>
-            <div key="share-card" className="rpv-m-stage-fade" style={{ marginTop: 22, padding: 22, borderRadius: 22, background: "#fff" }}>
-              {guestQrUrl ? (
-                <img src={guestQrUrl} alt="QR share foto" style={{ width: 184, height: 184, margin: "0 auto", display: "block", borderRadius: 12 }} />
-              ) : (
-                <div style={{ width: 184, height: 184, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Loader2 size={22} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
-                </div>
-              )}
-              <div style={{ marginTop: 15, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                <QrCode size={16} color={MAGA} />
-                <span style={{ fontSize: 9.5, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.3 }}>SCAN UTK LIHAT &amp; SHARE FOTOMU</span>
-              </div>
-            </div>
-            <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 10 }}>
-              <button onClick={handleShare} disabled={sharing}
-                style={{ width: "100%", height: 50, borderRadius: 13, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FONT, cursor: sharing ? "default" : "pointer", opacity: sharing ? 0.7 : 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                {sharing ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Share2 size={16} />}
-                {sharing ? "Menyiapkan…" : "Share Fotoku"}
-              </button>
-              <button onClick={() => setStage("reveal")}
-                style={{ width: "100%", height: 44, borderRadius: 13, border: "none", background: "transparent", color: MID, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, cursor: "pointer" }}>
-                Lewati, langsung ambil Photo ID
-              </button>
-            </div>
-          </>
-        ) : (
-          <>
-            <div style={{ marginTop: 7, fontSize: 12.5, color: MID, lineHeight: 1.65 }}>
-              Tunjukkan atau sebutkan <b style={{ color: INK }}>Photo ID</b> di bawah ini ke petugas untuk mencetak fotomu.
-            </div>
+          )}
+          <div style={{ marginTop: 15, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+            <Ticket size={16} color={MAGA} />
+            <span style={{ fontSize: 9.5, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.3 }}>PHOTO ID</span>
+          </div>
+          <div style={{ marginTop: 2, fontSize: 34, fontWeight: 900, color: "#17181C", letterSpacing: "0.08em", fontFamily: "monospace" }}>
+            {result.queueLabel}
+          </div>
+        </div>
 
-            <div key="reveal-photo" className="rpv-m-stage-fade" style={{ marginTop: 20, borderRadius: 18, overflow: "hidden", border: `1px solid ${LINE}` }}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={result.url} alt={`Foto ${result.queueLabel}`} style={{ width: "100%", display: "block", maxHeight: 280, objectFit: "cover" }} />
-            </div>
-
-            <div style={{ marginTop: 16, padding: 20, borderRadius: 22, background: "#fff" }}>
-              {qrUrl ? (
-                <img src={qrUrl} alt="QR Photo ID" style={{ width: 160, height: 160, margin: "0 auto", display: "block", borderRadius: 12 }} />
-              ) : (
-                <div style={{ width: 160, height: 160, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Loader2 size={22} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
-                </div>
-              )}
-              <div style={{ marginTop: 15, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                <Ticket size={16} color={MAGA} />
-                <span style={{ fontSize: 9.5, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.3 }}>PHOTO ID</span>
-              </div>
-              <div style={{ marginTop: 2, fontSize: 34, fontWeight: 900, color: "#17181C", letterSpacing: "0.08em", fontFamily: "monospace" }}>
-                {result.queueLabel}
-              </div>
-            </div>
-
-            <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 10 }}>
-              <button onClick={onUploadMore}
-                style={{ width: "100%", height: 50, borderRadius: 13, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FONT, cursor: "pointer" }}>
-                Upload Gemini Lagi
-              </button>
-              <button onClick={onDone}
-                style={{ width: "100%", height: 50, borderRadius: 13, border: `1.5px solid ${LINE}`, background: CARD, color: MID, fontSize: 14, fontWeight: 700, fontFamily: FONT, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                Selesai
-              </button>
-            </div>
-          </>
-        )}
+        <button onClick={onUploadMore}
+          style={{ width: "100%", marginTop: 22, height: 50, borderRadius: 13, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FONT, cursor: "pointer" }}>
+          Kembali &amp; Upload Lagi
+        </button>
       </div>
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }

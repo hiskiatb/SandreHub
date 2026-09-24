@@ -23,7 +23,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ArrowLeft, Bold, Camera, Check, ChevronDown, ChevronsDown, ChevronsUp, ChevronUp, Copy, FlipHorizontal2, FlipVertical2, FolderOpen, ImageOff, ImagePlus, Layers, Loader2, Minus, Monitor, Plus, Printer, Radio, RotateCw, Save, Search, Settings, Sparkles, Square, Star, Trash2, Type, X, ZoomIn } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Bold, Camera, Check, ChevronDown, ChevronsDown, ChevronsUp, ChevronUp, Copy, FlipHorizontal2, FlipVertical2, FolderOpen, ImageOff, ImagePlus, Layers, Loader2, Minus, Monitor, Pencil, Plus, Printer, Radio, RotateCw, Save, Search, Settings, Sparkles, Square, Star, Trash2, Type, X, ZoomIn } from "lucide-react";
 import ScanQrGlyph from "./_scan-glyph";
 import {
   FONT, MAGA, PRINT_SIZE, DEFAULT_CROP, ROTATE_STEP,
@@ -32,7 +32,7 @@ import {
   newTemplateTextElement, newTemplateImageElement, newTemplateFrameOverlayElement, newTemplateShapeElement, clampPct,
   PhotoFrame, findDefaultFrameTemplate,
 } from "./_frame";
-import { addRpvPrompt, clearRpvDefaultFrameTemplate, createRpvSession, deleteRpvCustomFont, deleteRpvFrameTemplate, deleteRpvPhoto, deleteRpvPrompt, deleteRpvSession, findRpvPhotoByQueue, getRpvSession, listRpvCustomFonts, listRpvFrameTemplates, listRpvPhotos, listRpvPrompts, listRpvSessions, rpvPublicUrl, saveRpvFrameTemplate, saveRpvPhotoCrop, setRpvDefaultFrameTemplate, subscribeRpvOperatorPairing, subscribeRpvPhotos, uploadRpvCustomFont, uploadRpvPromptImage, uploadRpvTemplateImage } from "../../../lib/rpv";
+import { addRpvPrompt, clearRpvDefaultFrameTemplate, createRpvSession, deleteRpvCustomFont, deleteRpvFrameTemplate, deleteRpvPhoto, deleteRpvPrompt, deleteRpvSession, findRpvPhotoByQueue, getRpvSession, listRpvCustomFonts, listRpvFrameTemplates, listRpvPhotos, listRpvPrompts, listRpvSessions, rpvPublicUrl, saveRpvFrameTemplate, saveRpvPhotoCrop, setRpvDefaultFrameTemplate, subscribeRpvOperatorPairing, subscribeRpvPhotos, updateRpvPrompt, uploadRpvCustomFont, uploadRpvPromptImage, uploadRpvTemplateImage } from "../../../lib/rpv";
 
 const RED = "#ED1C24";
 const VIO = "#7C3AED";
@@ -1593,38 +1593,32 @@ function SettingsPanel({ onClose, tab, setTab, sessions, sessionsState, activeCo
   );
 }
 
-/** Kelola prompt (list + tambah + hapus) utk sesi aktif - dipindah dr
- * PromptsPanel lama, sekarang tinggal di tab "Prompt" Settings. */
+/** Kelola prompt (grid + tambah/EDIT + hapus) utk sesi aktif - dipindah dr
+ * PromptsPanel lama, sekarang tinggal di tab "Prompt" Settings.
+ * UPDATE (permintaan user - "mengapa tidak bisa edit prompt dari tampilan
+ * operator, thumbnail dibuat 2x4 & lebih besar, upload cukup 1 tombol"):
+ * 1) EDIT PROMPT: sebelumnya `updateRpvPrompt` (lib/rpv.js) SUDAH ada &
+ *    dipakai di sheet "Kelola Prompt" versi mobile tamu, TAPI panel
+ *    operator ini tidak pernah di-wire ke situ (cuma tambah+hapus) - jadi
+ *    ini BUKAN keterbatasan sistem, cuma UI operator belum dipasangi
+ *    tombol edit. Sekarang ditambah popup Tambah/Edit (RpvPromptFormPopup)
+ *    yg dipakai bareng utk 2 mode itu, persis pola yg sudah terbukti di
+ *    versi mobile.
+ * 2) GRID 2x4: daftar template diganti dari list 1 kolom jadi CSS grid 2
+ *    kolom (otomatis jadi 4 baris utk 8 template pertama, lanjut baris
+ *    berikutnya kalau lebih), thumbnail persegi PENUH lebar kolom (jauh
+ *    lebih besar dari 32px sebelumnya).
+ * 3) UPLOAD 1 TOMBOL: form Tambah/Edit sekarang cuma 1 tombol "Upload
+ *    Gambar" - begitu file dipilih, tombol itu SENDIRI berubah jadi
+ *    preview besar (bukan lagi tombol kecil + thumbnail 26px terpisah). */
 function PromptsManager({ code, items, state, onChanged }) {
-  const imgRef = useRef(null);
-  const [label, setLabel] = useState("");
-  const [text, setText] = useState("");
-  const [file, setFile] = useState(null);
-  const [preview, setPreview] = useState("");
-  const [adding, setAdding] = useState(false);
   const [deletingId, setDeletingId] = useState("");
+  const [formOpen, setFormOpen] = useState(false);
+  const [editingPrompt, setEditingPrompt] = useState(null); // null = mode tambah baru
 
-  const onPickImage = (e) => {
-    const f = e.target.files?.[0];
-    e.target.value = "";
-    if (!f) return;
-    setFile(f);
-    setPreview(URL.createObjectURL(f));
-  };
-
-  const handleAdd = async () => {
-    if (adding || (!text.trim() && !file)) return;
-    setAdding(true);
-    try {
-      let imagePath = null;
-      if (file) imagePath = await uploadRpvPromptImage(code, file);
-      const row = await addRpvPrompt(code, label || `Template ${items.length + 1}`, text, imagePath);
-      if (row) onChanged([...items, row]);
-      setLabel(""); setText(""); setFile(null); setPreview("");
-    } catch (e) {
-      alert(e.message || "Gagal menambah prompt.");
-    } finally { setAdding(false); }
-  };
+  const openAdd = () => { setEditingPrompt(null); setFormOpen(true); };
+  const openEdit = (p) => { setEditingPrompt(p); setFormOpen(true); };
+  const closeForm = () => { setFormOpen(false); setEditingPrompt(null); };
 
   const handleDelete = async (promptId) => {
     if (deletingId) return;
@@ -1644,40 +1638,156 @@ function PromptsManager({ code, items, state, onChanged }) {
         </div>
       )}
       {items.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
           {items.map((p) => (
-            <div key={p.id} style={{ display: "flex", alignItems: "flex-start", gap: 8, background: t.fieldBg, border: `1px solid ${t.lineSoft}`, borderRadius: 11, padding: "9px 10px" }}>
-              {p.promptImageUrl && <img src={p.promptImageUrl} alt="" style={{ width: 32, height: 32, borderRadius: 7, objectFit: "cover", flexShrink: 0 }} />}
-              <div style={{ minWidth: 0, flex: 1 }}>
-                <div style={{ fontSize: 11.5, fontWeight: 800, color: t.hi }}>{p.label}</div>
-                {p.prompt_text && <div style={{ fontSize: 11.5, color: t.mid, marginTop: 2, lineHeight: 1.4 }}>{p.prompt_text}</div>}
+            <div key={p.id} style={{ display: "flex", flexDirection: "column", background: t.fieldBg, border: `1px solid ${t.lineSoft}`, borderRadius: 13, overflow: "hidden" }}>
+              {p.promptImageUrl ? (
+                <img src={p.promptImageUrl} alt="" style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", display: "block" }} />
+              ) : (
+                <div style={{ width: "100%", aspectRatio: "1 / 1", display: "flex", alignItems: "center", justifyContent: "center", color: t.lo, background: t.card }}>
+                  <Sparkles size={22} />
+                </div>
+              )}
+              <div style={{ padding: "8px 9px", display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+                <div style={{ fontSize: 11.5, fontWeight: 800, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.label}</div>
+                {p.prompt_text && (
+                  <div style={{ fontSize: 10.5, color: t.mid, lineHeight: 1.4, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{p.prompt_text}</div>
+                )}
+                <div style={{ marginTop: "auto", display: "flex", gap: 6, paddingTop: 4 }}>
+                  <button onClick={() => openEdit(p)} title="Edit prompt"
+                    style={{ flex: 1, height: 26, borderRadius: 7, border: `1px solid ${t.line}`, background: "transparent", color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                    <Pencil size={12} />
+                  </button>
+                  <button onClick={() => handleDelete(p.id)} disabled={deletingId === p.id} title="Hapus prompt"
+                    style={{ flex: 1, height: 26, borderRadius: 7, border: `1px solid ${t.line}`, background: "transparent", color: "#FF8A8F", display: "flex", alignItems: "center", justifyContent: "center", cursor: deletingId === p.id ? "not-allowed" : "pointer" }}>
+                    {deletingId === p.id ? <Loader2 size={11} style={{ animation: "spin .8s linear infinite" }} /> : <Trash2 size={11} />}
+                  </button>
+                </div>
               </div>
-              <button onClick={() => handleDelete(p.id)} disabled={deletingId === p.id} title="Hapus prompt"
-                style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.line}`, background: "transparent", color: "#FF8A8F", display: "flex", alignItems: "center", justifyContent: "center", cursor: deletingId === p.id ? "not-allowed" : "pointer", flexShrink: 0 }}>
-                {deletingId === p.id ? <Loader2 size={12} style={{ animation: "spin .8s linear infinite" }} /> : <Trash2 size={12} />}
-              </button>
             </div>
           ))}
         </div>
       )}
 
-      <div style={{ fontSize: 10.5, fontWeight: 800, color: t.lo, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>Tambah Template</div>
-      <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label (mis. Gaya Neon)"
-        style={{ width: "100%", height: 36, borderRadius: 9, border: `1px solid ${t.line}`, background: t.fieldBg, padding: "0 11px", fontSize: 12.5, fontFamily: FONT, color: t.hi, boxSizing: "border-box" }} />
-      <textarea value={text} onChange={(e) => setText(e.target.value)} rows={3} placeholder="Isi prompt Gemini..."
-        style={{ width: "100%", marginTop: 6, borderRadius: 9, border: `1px solid ${t.line}`, background: t.fieldBg, padding: "8px 11px", fontSize: 12.5, fontFamily: FONT, color: t.hi, boxSizing: "border-box", resize: "vertical" }} />
-      <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <button onClick={openAdd}
+        style={{ width: "100%", height: 36, borderRadius: 9, border: "none", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontWeight: 800, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>
+        <Plus size={13} /> Tambah Template
+      </button>
+
+      {formOpen && (
+        <RpvPromptFormPopup code={code} items={items} editingPrompt={editingPrompt} onClose={closeForm} onChanged={onChanged} />
+      )}
+    </>
+  );
+}
+
+/** Popup Tambah/Edit 1 template prompt - dipakai bareng utk 2 mode (null
+ * editingPrompt = tambah baru). Upload gambar SENGAJA cuma 1 tombol -
+ * belum ada gambar: tombol besar "Upload Gambar"; sudah ada (baru dipilih
+ * ATAU sudah tersimpan sblmnya): tombol itu SENDIRI jadi preview gambar
+ * penuh dgn label "Ganti Gambar" mengambang di atasnya, klik lagi utk
+ * ganti - TIDAK ADA lagi baris preview kecil terpisah. */
+function RpvPromptFormPopup({ code, items, editingPrompt, onClose, onChanged }) {
+  const imgRef = useRef(null);
+  const isEditing = !!editingPrompt;
+  const [label, setLabel] = useState(editingPrompt?.label || "");
+  const [text, setText] = useState(editingPrompt?.prompt_text || "");
+  const [file, setFile] = useState(null);
+  const [preview, setPreview] = useState("");
+  const [existingImageUrl, setExistingImageUrl] = useState(editingPrompt?.promptImageUrl || "");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const thumbUrl = preview || existingImageUrl;
+
+  const onPickImage = (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    setFile(f);
+    setPreview(URL.createObjectURL(f));
+    setExistingImageUrl("");
+  };
+
+  const handleSave = async () => {
+    if (saving || (!text.trim() && !file && !existingImageUrl)) return;
+    setSaving(true); setErr("");
+    try {
+      let imagePath = null;
+      if (file) imagePath = await uploadRpvPromptImage(code, file);
+      if (isEditing) {
+        const row = await updateRpvPrompt(code, editingPrompt.id, label || editingPrompt.label, text, imagePath);
+        if (row) onChanged(items.map((p) => (p.id === editingPrompt.id ? row : p)));
+      } else {
+        const row = await addRpvPrompt(code, label || `Template ${items.length + 1}`, text, imagePath);
+        if (row) onChanged([...items, row]);
+      }
+      onClose();
+    } catch (e) {
+      setErr(e.message || "Gagal menyimpan prompt.");
+    } finally { setSaving(false); }
+  };
+
+  const canSave = !saving && (text.trim() || file || existingImageUrl);
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(6,6,8,0.8)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18, fontFamily: FONT }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 420, maxHeight: "88svh", overflowY: "auto", background: t.bg, border: `1.5px solid ${isEditing ? MAGA : t.line}`, borderRadius: 18, padding: 18, boxSizing: "border-box" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {isEditing ? <Pencil size={15} color={MAGA} /> : <Plus size={15} color={RED} />}
+            <span style={{ fontSize: 14, fontWeight: 800, color: t.hi }}>{isEditing ? "Edit Template" : "Tambah Template Baru"}</span>
+          </div>
+          <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 8, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <X size={13} />
+          </button>
+        </div>
+
+        <div style={{ fontSize: 10.5, fontWeight: 700, color: t.lo, marginBottom: 5 }}>Nama Template</div>
+        <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="mis. Gaya Neon, Taj Mahal, Colosseum…" autoFocus
+          style={{ width: "100%", height: 38, borderRadius: 9, border: `1px solid ${t.line}`, background: t.fieldBg, padding: "0 11px", fontSize: 12.5, fontFamily: FONT, color: t.hi, boxSizing: "border-box" }} />
+
+        <div style={{ fontSize: 10.5, fontWeight: 700, color: t.lo, marginTop: 12, marginBottom: 5 }}>Isi Prompt Gemini</div>
+        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} placeholder="Tulis instruksi lengkap utk Gemini di sini..."
+          style={{ width: "100%", borderRadius: 9, border: `1px solid ${t.line}`, background: t.fieldBg, padding: "9px 11px", fontSize: 12.5, lineHeight: 1.5, fontFamily: FONT, color: t.hi, boxSizing: "border-box", resize: "vertical" }} />
+
+        <div style={{ fontSize: 10.5, fontWeight: 700, color: t.lo, marginTop: 12, marginBottom: 5 }}>Gambar Referensi</div>
         <input ref={imgRef} type="file" accept="image/*" onChange={onPickImage} style={{ display: "none" }} />
-        <button onClick={() => imgRef.current?.click()} style={{ display: "flex", alignItems: "center", gap: 5, height: 30, padding: "0 10px", borderRadius: 8, border: `1px solid ${t.line}`, background: "transparent", color: t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
-          <ImagePlus size={12} /> {file ? "Ganti Gambar" : "Gambar Referensi"}
+        <button onClick={() => imgRef.current?.click()}
+          style={{
+            width: "100%", height: thumbUrl ? 160 : 56, borderRadius: 12, cursor: "pointer", position: "relative", overflow: "hidden",
+            border: thumbUrl ? "none" : `1.5px dashed ${t.line}`, background: t.fieldBg, padding: 0,
+          }}>
+          {thumbUrl ? (
+            <>
+              <img src={thumbUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+              <div style={{ position: "absolute", inset: 0, background: "rgba(6,6,8,0.35)", opacity: 0, transition: "opacity .15s", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, color: "#fff", fontSize: 12, fontWeight: 800 }}
+                onMouseEnter={(e) => { e.currentTarget.style.opacity = 1; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = 0; }}>
+                <ImagePlus size={14} /> Ganti Gambar
+              </div>
+            </>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: t.mid, height: "100%" }}>
+              <ImagePlus size={16} /> <span style={{ fontSize: 12, fontWeight: 700 }}>Upload Gambar</span>
+            </div>
+          )}
         </button>
-        {preview && <img src={preview} alt="" style={{ width: 26, height: 26, borderRadius: 6, objectFit: "cover" }} />}
-        <button onClick={handleAdd} disabled={adding || (!text.trim() && !file)}
-          style={{ marginLeft: "auto", height: 30, padding: "0 12px", borderRadius: 8, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontWeight: 800, fontSize: 11.5, cursor: adding ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 5, opacity: adding || (!text.trim() && !file) ? 0.6 : 1 }}>
-          {adding ? <Loader2 size={12} style={{ animation: "spin .8s linear infinite" }} /> : <Plus size={12} />} Tambah
+
+        {err && (
+          <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 7, padding: "9px 11px", borderRadius: 10, background: "rgba(198,40,40,0.14)", border: "1px solid rgba(198,40,40,0.35)" }}>
+            <AlertTriangle size={13} color="#FF8A8F" style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: 11, color: "#FF8A8F", fontWeight: 700 }}>{err}</span>
+          </div>
+        )}
+
+        <button onClick={handleSave} disabled={!canSave}
+          style={{ width: "100%", marginTop: 16, height: 42, borderRadius: 11, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontWeight: 800, fontSize: 13, cursor: canSave ? "pointer" : "not-allowed", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, opacity: canSave ? 1 : 0.6 }}>
+          {saving ? <Loader2 size={14} style={{ animation: "spin .8s linear infinite" }} /> : (isEditing ? <Pencil size={14} /> : <Plus size={14} />)}
+          {saving ? "Menyimpan…" : isEditing ? "Simpan Perubahan" : "Tambah Template"}
         </button>
       </div>
-    </>
+      <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
+    </div>
   );
 }
 

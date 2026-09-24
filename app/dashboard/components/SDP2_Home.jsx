@@ -101,34 +101,35 @@ export default function SDP2_Home({ supabase, theme = "dark", profile, onExit })
   }
 
   return (
-    <div style={{ fontFamily: FF, color: t.hi, maxWidth: 640, margin: "0 auto" }}>
-      <button onClick={onExit} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: t.mid, fontFamily: FF, fontSize: 13, fontWeight: 600, padding: 0, marginBottom: 16 }}>
+    <div style={{ fontFamily: FF, color: t.hi, width: "100%" }}>
+      <button onClick={onExit} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: t.mid, fontFamily: FF, fontSize: 13, fontWeight: 600, padding: 0, marginBottom: 20 }}>
         <ArrowLeft size={15} /> Kembali
       </button>
 
-      <div style={{ marginBottom: 18 }}>
-        <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: -0.4 }}>SDP Saya</div>
-        <div style={{ fontSize: 12.5, color: t.mid, marginTop: 3 }}>Registrasi yang pernah Anda ajukan, dengan progres tiap tahapnya.</div>
+      <div className="sdp2-header" style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 18, marginBottom: 22, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontSize: 24, fontWeight: 800, letterSpacing: -0.5 }}>SDP Saya</div>
+          <div style={{ fontSize: 13, color: t.mid, marginTop: 4 }}>Registrasi yang pernah Anda ajukan, dengan progres tiap tahapnya.</div>
+        </div>
+        {/* Aksi utama — paling menonjol, sejajar judul di layar lebar */}
+        <button onClick={() => setScreen("new")}
+          style={{ flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 9, padding: "14px 22px", borderRadius: 14, border: "none",
+            background: `linear-gradient(135deg, ${t.tealD} 0%, ${t.teal} 100%)`, color: "#06231F", fontFamily: FF, fontSize: 14.5, fontWeight: 800, cursor: "pointer", boxShadow: t.md }}>
+          <Plus size={18} /> Registrasi SDP Baru
+        </button>
       </div>
 
-      {/* Aksi utama — paling atas & paling menonjol, sesuai keputusan landing */}
-      <button onClick={() => setScreen("new")}
-        style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 9, padding: "15px 18px", borderRadius: 16, border: "none",
-          background: `linear-gradient(135deg, ${t.tealD} 0%, ${t.teal} 100%)`, color: "#06231F", fontFamily: FF, fontSize: 15, fontWeight: 800, cursor: "pointer", boxShadow: t.md, marginBottom: 16 }}>
-        <Plus size={19} /> Registrasi SDP Baru
-      </button>
-
       {needsAttention.length > 0 && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 13px", borderRadius: 12, marginBottom: 14, background: t.accBg, border: `1px solid ${t.acc}33` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 15px", borderRadius: 12, marginBottom: 16, background: t.accBg, border: `1px solid ${t.acc}33` }}>
           <AlertCircle size={15} color={t.acc} />
           <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>{needsAttention.length} SDP butuh tindakan Anda (Need Revision/Hold).</span>
         </div>
       )}
 
-      <div style={{ position: "relative", marginBottom: 14 }}>
-        <Search size={14} color={t.lo} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+      <div style={{ position: "relative", marginBottom: 18, maxWidth: 420 }}>
+        <Search size={14} color={t.lo} style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }} />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama SDP, SDP ID, atau branch…"
-          style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px 10px 34px", borderRadius: 12, border: `1px solid ${t.line}`, background: t.inp, color: t.hi, fontSize: 13.5, fontFamily: FF, outline: "none" }} />
+          style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px 10px 36px", borderRadius: 12, border: `1px solid ${t.line}`, background: t.inp, color: t.hi, fontSize: 13.5, fontFamily: FF, outline: "none" }} />
       </div>
 
       {loading ? (
@@ -136,15 +137,17 @@ export default function SDP2_Home({ supabase, theme = "dark", profile, onExit })
       ) : err ? (
         <div style={{ fontSize: 13, color: t.acc }}>{err}</div>
       ) : withProgress.length === 0 ? (
-        <div style={{ padding: "40px 22px", textAlign: "center", color: t.mid, background: t.card, border: `1px solid ${t.line}`, borderRadius: 16 }}>
-          <Inbox size={26} style={{ opacity: 0.5, marginBottom: 8 }} />
+        <div style={{ padding: "48px 22px", textAlign: "center", color: t.mid, background: t.card, border: `1px solid ${t.line}`, borderRadius: 18 }}>
+          <Inbox size={28} style={{ opacity: 0.5, marginBottom: 10 }} />
           <div style={{ fontSize: 13.5 }}>{q ? "Tidak ada yang cocok." : "Belum ada SDP yang Anda ajukan. Mulai dari tombol di atas."}</div>
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div className="sdp2-list-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 12 }}>
           {withProgress.map(({ row: r, prog }) => (
             <button key={r.id} onClick={() => { setOpenRow(r); setScreen("detail"); }}
-              style={{ textAlign: "left", display: "block", width: "100%", background: t.card, border: `1px solid ${prog.blocked ? `${t.acc}55` : t.line}`, borderRadius: 15, padding: 15, boxShadow: t.sm, cursor: "pointer", fontFamily: FF, color: t.hi }}>
+              style={{ textAlign: "left", display: "block", width: "100%", background: t.card, border: `1px solid ${prog.blocked ? `${t.acc}55` : t.line}`, borderRadius: 16, padding: 17, boxShadow: t.sm, cursor: "pointer", fontFamily: FF, color: t.hi, transition: "transform .15s, box-shadow .15s" }}
+              onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = t.md; }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = t.sm; }}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 14.5, fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.sdp_name || "(Belum ada nama)"}</div>
@@ -152,14 +155,21 @@ export default function SDP2_Home({ supabase, theme = "dark", profile, onExit })
                 </div>
                 <span style={{ flexShrink: 0, fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 99, color: TONE_COL(t, prog.tone), background: TONE_BG(t, prog.tone) }}>{prog.headline}</span>
               </div>
-              <div style={{ marginTop: 12 }}>
+              <div style={{ marginTop: 13 }}>
                 <MiniStages t={t} stageIndex={prog.stageIndex} tone={prog.tone} />
               </div>
             </button>
           ))}
         </div>
       )}
-      <style>{`.spin{animation:sp 1s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}`}</style>
+      <style>{`
+        .spin{animation:sp 1s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}
+        @media (max-width: 560px) {
+          .sdp2-header{flex-direction:column; align-items:stretch;}
+          .sdp2-header button{width:100%;}
+          .sdp2-list-grid{grid-template-columns:1fr !important;}
+        }
+      `}</style>
     </div>
   );
 }

@@ -20,7 +20,7 @@ import {
   LogOut, ChevronRight, Calendar, Box, Layers,
   Shield, Globe, Building2, Store, SlidersHorizontal,
   Table2, Wallet, PanelLeftClose, PanelLeftOpen,
-  FileSpreadsheet, Users, Key, Briefcase, Wrench, Mail,
+  FileSpreadsheet, Users, Key, Briefcase, Wrench, Mail, Sparkles,
 } from "lucide-react";
 
 import FormPendapatan   from "./components/PNL_FormPendapatan";
@@ -33,6 +33,7 @@ import NotificationBell from "./components/NotificationBell";
 import AdminPanel       from "./components/PNL_AdminPanel";
 import PNL_ImportWizard from "./components/PNL_ImportWizard";
 import SDP_StatusForm   from "./components/SDP_StatusForm";
+import SDP2_StatusForm  from "./components/SDP2_StatusForm";
 import MC_ClusterMapping from "./components/MC_ClusterMapping";
 import KodeOtoritas     from "./components/KodeOtoritas";
 import MFTS_Module      from "./components/MFTS_Module";
@@ -174,8 +175,8 @@ const CURRENT_YEAR        = CURRENT_DATE.getFullYear();
 const getCurrentMonth     = () => MONTHS[CURRENT_MONTH_INDEX];
 const getCurrentYear      = () => CURRENT_YEAR.toString();
 
-const HIDE_DATE_PICKER_VIEWS    = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","mc-cluster","kode-otoritas","mfts","menu-access","promotor-tracking"]);
-const HIDE_SIDEBAR_FILTER_VIEWS = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","mc-cluster","kode-otoritas","menu-access","promotor-tracking"]);
+const HIDE_DATE_PICKER_VIEWS    = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","sdp2","mc-cluster","kode-otoritas","mfts","menu-access","promotor-tracking"]);
+const HIDE_SIDEBAR_FILTER_VIEWS = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","sdp2","mc-cluster","kode-otoritas","menu-access","promotor-tracking"]);
 const PNL_VIEWS = new Set(["summary","pendapatan","pengeluaran"]);
 
 // Sub-menu yang ketersediaannya dapat dikontrol SPM per-role (maintenance).
@@ -184,7 +185,7 @@ const CONTROLLABLE_MENUS = {
   "control-center": "PNL Control Center",
   "pivot-summary":  "Pivot P&L Summary",
   "payout-tracker": "Payout Tracker",
-  "sdp-status":     "SDP Management",
+  "sdp-status":     "SDP Management (Archive)",
   "mfts":           "Pemenuhan Manpower",
 };
 const menuKeyForView = (v) => (PNL_VIEWS.has(v) ? "summary" : v);
@@ -532,8 +533,11 @@ export default function DashboardPage() {
       const lockedRegion = IOH_ROLE_REGION_MAP[prof?.role];
       if (lockedRegion) setActiveRegion(lockedRegion);
 
-      // CSE/SDP: default view ke sdp-status
-      if (isCseOrSdp) setView("sdp-status");
+      // CSE: default ke SDP Management (Baru) — modul Registrasi hasil rebuild.
+      // BSM/PIC Region masih ke sdp-status (Archive) karena modul mereka
+      // belum dibangun ulang.
+      if (prof?.role === "cse_rse") setView("sdp2");
+      else if (isCseOrSdp) setView("sdp-status");
 
       setLoading(false);
     })();
@@ -753,7 +757,8 @@ export default function DashboardPage() {
                   {canMonitor && <SNavItem icon={<Table2 size={14} />}        label="Pivot P&L Summary"    active={view === "pivot-summary"}  maint={menuMaint("pivot-summary")} onClick={() => navigate("pivot-summary")} />}
                   {!isSDPMember && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
                   {!isSDPMember && <SNavItem icon={<PieChart size={14} />}    label="Laporan P&L"          active={PNL_VIEWS.has(view)}       maint={menuMaint("summary")} onClick={() => navigate("summary")} />}
-                  {canSdp       && <SNavItem icon={<Users size={14} />}       label="SDP Management"       active={view === "sdp-status"}     maint={menuMaint("sdp-status")} onClick={() => navigate("sdp-status")} />}
+                  {canSdp       && <SNavItem icon={<Sparkles size={14} />}    label="SDP Management"       active={view === "sdp2"}           onClick={() => navigate("sdp2")} />}
+                  {canSdp       && <SNavItem icon={<Users size={14} />}       label="SDP Management (Archive)" active={view === "sdp-status"}  maint={menuMaint("sdp-status")} onClick={() => navigate("sdp-status")} />}
                   {canMfts && <SNavItem icon={<Briefcase size={14} />} label="Pemenuhan Manpower" active={view === "mfts"}          maint={menuMaint("mfts")} onClick={() => navigate("mfts")} />}
                   {(isSPM || isPICRegion || isSFM || isCSE) && <SNavItem icon={<Store size={14} />} label="Promotor Tracking" active={view === "promotor-tracking"} onClick={() => navigate("promotor-tracking")} />}
                   {isSPM        && <SNavItem icon={<Wrench size={14} />}      label="Kelola Menu"          active={view === "menu-access"}    onClick={() => navigate("menu-access")} />}
@@ -910,7 +915,14 @@ export default function DashboardPage() {
 
                   {/* SDP Management — SPM, BSM, CSE, PIC, dan IOH (lihat saja) */}
                   {canSdp && (
-                    <DashCard icon={<Users size={20} />} title="SDP Management"
+                    <DashCard icon={<Sparkles size={20} />} title="SDP Management"
+                      desc="Versi baru — registrasi SDP dengan progres 1 tahapan yang jelas, lebih sedikit langkah."
+                      tag="Baru" active={true} onClick={() => navigate("sdp2")} t={t} d={d}
+                      accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.12)" : "rgba(26,158,144,0.08)", bd: d ? "rgba(50,188,173,0.3)" : "rgba(26,158,144,0.2)", shadow: "rgba(50,188,173,0.16)" }} />
+                  )}
+
+                  {canSdp && (
+                    <DashCard icon={<Users size={20} />} title="SDP Management (Archive)"
                       desc={
                         isSPM       ? "Upload territory, mapping kode otoritas, rekap data, dan pantau status seluruh SDP Sumatera." :
                         isCSE       ? `Isi formulir data SDP di cluster ${profile?.cluster || "Anda"}.` :
@@ -1071,6 +1083,18 @@ export default function DashboardPage() {
             {view === "report-merge" && canReportMerge && !viewUnderMaint && (
               <motion.div key="report-merge" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <ReportMerge_Module t={t} profile={profile} />
+              </motion.div>
+            )}
+
+            {view === "sdp2" && canSdp && (
+              <motion.div key="sdp2" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                {/* SDP Management (Baru) — rebuild bertahap, dimulai dari modul
+                    Registrasi (lihat docs plan). Modul lain masih di Archive. */}
+                <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
+                  <div style={{ padding: "24px 28px" }}>
+                    <SDP2_StatusForm supabase={supabase} theme={theme} profile={profile} onExit={() => navigate("overview")} />
+                  </div>
+                </div>
               </motion.div>
             )}
 

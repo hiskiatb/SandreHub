@@ -115,39 +115,15 @@ export default function SDP2_Detail({ supabase, theme = "dark", profile, entry, 
   const prog = computeSdpProgress(row);
 
   return (
-    <div style={{ fontFamily: FF, color: t.hi, maxWidth: 640, margin: "0 auto" }}>
+    <div style={{ fontFamily: FF, color: t.hi, width: "100%" }}>
       <button onClick={onBack} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: t.mid, fontFamily: FF, fontSize: 13, fontWeight: 600, padding: 0, marginBottom: 16 }}>
         <ArrowLeft size={15} /> Kembali ke SDP Saya
       </button>
 
       <div style={{ marginBottom: 20 }}>
-        <div style={{ fontSize: 19, fontWeight: 800, letterSpacing: -0.3 }}>{row.sdp_name || "(Belum ada nama)"}</div>
+        <div style={{ fontSize: 21, fontWeight: 800, letterSpacing: -0.3 }}>{row.sdp_name || "(Belum ada nama)"}</div>
         <div style={{ fontSize: 12, fontFamily: "monospace", color: t.mid, marginTop: 3 }}>{row.sdp_id_new || "Draft"}{row.branch ? ` · ${row.branch}` : ""}</div>
       </div>
-
-      <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: "20px 18px 18px", boxShadow: t.sm, marginBottom: 14 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-          <span style={{ fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 99, color: TONE_COL(t, prog.tone), background: TONE_BG(t, prog.tone) }}>{prog.headline}</span>
-        </div>
-        <BigStages t={t} stageIndex={prog.stageIndex} tone={prog.tone} blocked={prog.blocked} />
-      </div>
-
-      {prog.blocked && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "14px 16px", borderRadius: 14, marginBottom: 14, background: TONE_BG(t, prog.tone), border: `1px solid ${TONE_COL(t, prog.tone)}44` }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-            <AlertCircle size={15} color={TONE_COL(t, prog.tone)} style={{ flexShrink: 0, marginTop: 1 }} />
-            <div>
-              <div style={{ fontSize: 12, fontWeight: 800, color: TONE_COL(t, prog.tone) }}>Catatan HQ</div>
-              <div style={{ fontSize: 13, color: t.hi, marginTop: 2 }}>{prog.blockedNote}</div>
-            </div>
-          </div>
-          <button onClick={() => setEditing(true)}
-            style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 15px", borderRadius: 10, border: "none",
-              background: TONE_COL(t, prog.tone), color: "#fff", fontFamily: FF, fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}>
-            <Pencil size={14} /> Perbaiki Data
-          </button>
-        </div>
-      )}
 
       {msg && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 13px", borderRadius: 10, marginBottom: 14, fontSize: 12.5, fontWeight: 600,
@@ -156,44 +132,81 @@ export default function SDP2_Detail({ supabase, theme = "dark", profile, entry, 
         </div>
       )}
 
-      <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: "6px 18px 16px", boxShadow: t.sm }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 0 10px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase", color: t.lo }}>
-            <FileText size={13} /> Dokumen ({docs?.length ?? 0})
+      <div className="sdp2-detail-grid" style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.35fr) minmax(280px, 1fr)", gap: 16, alignItems: "start" }}>
+        {/* Kolom kiri: progres + catatan revisi */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
+          <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: "22px 22px 20px", boxShadow: t.sm }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
+              <span style={{ fontSize: 11, fontWeight: 800, padding: "4px 10px", borderRadius: 99, color: TONE_COL(t, prog.tone), background: TONE_BG(t, prog.tone) }}>{prog.headline}</span>
+            </div>
+            <BigStages t={t} stageIndex={prog.stageIndex} tone={prog.tone} blocked={prog.blocked} />
           </div>
-          <button onClick={() => fileInput.current?.click()} disabled={uploading}
-            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 9, border: `1px solid ${t.line}`, background: t.sub, color: t.hi, fontFamily: FF, fontSize: 11.5, fontWeight: 700, cursor: uploading ? "default" : "pointer" }}>
-            {uploading ? <Loader2 size={13} className="spin" /> : <UploadCloud size={13} />} Unggah
-          </button>
-          <input ref={fileInput} type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) doUpload(f); e.target.value = ""; }} />
-        </div>
-        {docs === null ? (
-          <div style={{ fontSize: 12.5, color: t.mid, paddingBottom: 8 }}><Loader2 size={13} className="spin" style={{ verticalAlign: -2, marginRight: 6 }} />Memuat…</div>
-        ) : docs.length === 0 ? (
-          <div style={{ fontSize: 12.5, color: t.lo, paddingBottom: 8 }}>Belum ada dokumen diunggah.</div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingBottom: 8 }}>
-            {docs.map((doc) => (
-              <div key={doc.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 9, background: t.sub, border: `1px solid ${t.line}` }}>
-                <FileText size={13} color={t.mid} />
-                <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.file_name}</span>
-                <span style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 99, color: doc.status === "synced" ? t.ok : doc.status === "failed" ? t.acc : t.amber, background: `${doc.status === "synced" ? t.ok : doc.status === "failed" ? t.acc : t.amber}1A` }}>{doc.status}</span>
-                <button type="button" onClick={() => openSdpDocument({ supabase, storagePath: doc.storage_path })} style={{ border: "none", background: "none", cursor: "pointer", color: t.mid, display: "inline-flex" }}><ExternalLink size={13} /></button>
-                {doc.status === "failed" && (
-                  <button type="button" onClick={() => retrySdpDocumentRelay({ supabase, doc }).then(() => listSdpDocuments({ supabase, sdpId: row.sdp_id_new }).then(setDocs))} style={{ border: "none", background: "none", cursor: "pointer", color: t.mid, display: "inline-flex" }}><RefreshCw size={13} /></button>
-                )}
+
+          {prog.blocked && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: "16px 18px", borderRadius: 14, background: TONE_BG(t, prog.tone), border: `1px solid ${TONE_COL(t, prog.tone)}44` }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                <AlertCircle size={15} color={TONE_COL(t, prog.tone)} style={{ flexShrink: 0, marginTop: 1 }} />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: TONE_COL(t, prog.tone) }}>Catatan HQ</div>
+                  <div style={{ fontSize: 13, color: t.hi, marginTop: 2 }}>{prog.blockedNote}</div>
+                </div>
               </div>
-            ))}
+              <button onClick={() => setEditing(true)}
+                style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 7, padding: "9px 15px", borderRadius: 10, border: "none",
+                  background: TONE_COL(t, prog.tone), color: "#fff", fontFamily: FF, fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}>
+                <Pencil size={14} /> Perbaiki Data
+              </button>
+            </div>
+          )}
+
+          {!prog.blocked && (
+            <button onClick={() => setEditing(true)}
+              style={{ alignSelf: "flex-start", display: "inline-flex", alignItems: "center", gap: 7, padding: "11px 17px", borderRadius: 11, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.sm, cursor: "pointer", color: t.hi, fontFamily: FF, fontSize: 12.5, fontWeight: 700 }}>
+              <Pencil size={13} /> Lihat / ubah detail lengkap
+            </button>
+          )}
+        </div>
+
+        {/* Kolom kanan: dokumen — jadi panel sendiri, bukan ditumpuk ke bawah */}
+        <div style={{ background: t.card, border: `1px solid ${t.line}`, borderRadius: 16, padding: "6px 18px 16px", boxShadow: t.sm }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 0 10px", gap: 8, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11.5, fontWeight: 800, letterSpacing: "0.05em", textTransform: "uppercase", color: t.lo }}>
+              <FileText size={13} /> Dokumen ({docs?.length ?? 0})
+            </div>
+            <button onClick={() => fileInput.current?.click()} disabled={uploading}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 9, border: `1px solid ${t.line}`, background: t.sub, color: t.hi, fontFamily: FF, fontSize: 11.5, fontWeight: 700, cursor: uploading ? "default" : "pointer" }}>
+              {uploading ? <Loader2 size={13} className="spin" /> : <UploadCloud size={13} />} Unggah
+            </button>
+            <input ref={fileInput} type="file" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) doUpload(f); e.target.value = ""; }} />
           </div>
-        )}
+          {docs === null ? (
+            <div style={{ fontSize: 12.5, color: t.mid, paddingBottom: 8 }}><Loader2 size={13} className="spin" style={{ verticalAlign: -2, marginRight: 6 }} />Memuat…</div>
+          ) : docs.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: t.lo, paddingBottom: 8 }}>Belum ada dokumen diunggah.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingBottom: 8 }}>
+              {docs.map((doc) => (
+                <div key={doc.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 9, background: t.sub, border: `1px solid ${t.line}` }}>
+                  <FileText size={13} color={t.mid} />
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.file_name}</span>
+                  <span style={{ fontSize: 10.5, fontWeight: 800, padding: "2px 8px", borderRadius: 99, color: doc.status === "synced" ? t.ok : doc.status === "failed" ? t.acc : t.amber, background: `${doc.status === "synced" ? t.ok : doc.status === "failed" ? t.acc : t.amber}1A` }}>{doc.status}</span>
+                  <button type="button" onClick={() => openSdpDocument({ supabase, storagePath: doc.storage_path })} style={{ border: "none", background: "none", cursor: "pointer", color: t.mid, display: "inline-flex" }}><ExternalLink size={13} /></button>
+                  {doc.status === "failed" && (
+                    <button type="button" onClick={() => retrySdpDocumentRelay({ supabase, doc }).then(() => listSdpDocuments({ supabase, sdpId: row.sdp_id_new }).then(setDocs))} style={{ border: "none", background: "none", cursor: "pointer", color: t.mid, display: "inline-flex" }}><RefreshCw size={13} /></button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
-      {!prog.blocked && (
-        <button onClick={() => setEditing(true)} style={{ marginTop: 14, display: "inline-flex", alignItems: "center", gap: 7, background: "none", border: "none", cursor: "pointer", color: t.mid, fontFamily: FF, fontSize: 12.5, fontWeight: 700, padding: 0 }}>
-          <Pencil size={13} /> Lihat / ubah detail lengkap
-        </button>
-      )}
-      <style>{`.spin{animation:sp 1s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}`}</style>
+      <style>{`
+        .spin{animation:sp 1s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}
+        @media (max-width: 860px) {
+          .sdp2-detail-grid{grid-template-columns:1fr !important;}
+        }
+      `}</style>
     </div>
   );
 }
