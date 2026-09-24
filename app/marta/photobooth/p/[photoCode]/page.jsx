@@ -36,6 +36,7 @@ import { PhotoFrame, PRINT_SIZE, TEMPLATE_GOOGLE_FONTS_HREF, customFontFaceCss, 
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED = "#ED1C24";
+const MAGA = "#C6168D";
 const SHARE_RATIO = { w: PRINT_SIZE.w, h: PRINT_SIZE.h };
 
 export default function RpvPhotoDetailPage() {
@@ -197,17 +198,28 @@ export default function RpvPhotoDetailPage() {
     );
   }
 
+  // FIX (permintaan user - "highlight nomor antriannya, dan buat responsive
+  // jangan sampai dia bisa discroll"): sblmnya root cuma minHeight:"100svh" +
+  // padding tetap, jadi begitu total konten (foto + kartu QR + 2 baris
+  // tombol) lebih tinggi dari layar HP, halaman jadi bisa discroll (spt
+  // screenshot user). Sekarang root diubah height:"100svh" (BUKAN minHeight)
+  // + overflowY:"auto" (fallback aman), dibungkus flex column dgn SATU
+  // bagian fleksibel (foto, pakai flex+minHeight:0+maxHeight cair via vh -
+  // BUKAN aspectRatio kaku spt sblmnya) yg otomatis menyusut ngikutin sisa
+  // tinggi layar sungguhan, sisanya (QR/tombol) flexShrink:0 & padding
+  // dirampingkan - jadi semuanya selalu utuh kelihatan tanpa perlu scroll,
+  // di tinggi layar berapa pun.
   return (
-    <div className="flashprint-root" style={{ minHeight: "100svh", background: "linear-gradient(180deg,#111116 0%,#1B1B20 100%)", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", padding: "22px 16px 34px" }}>
+    <div className="flashprint-root" style={{ height: "100svh", overflowY: "auto", background: "linear-gradient(180deg,#111116 0%,#1B1B20 100%)", fontFamily: FONT, display: "flex", flexDirection: "column", alignItems: "center", padding: "14px 16px 16px", boxSizing: "border-box" }}>
       <link rel="stylesheet" href={TEMPLATE_GOOGLE_FONTS_HREF} />
       {customFonts.length > 0 && <style>{customFontFaceCss(customFonts)}</style>}
-      <div style={{ width: "100%", maxWidth: 420, display: "flex", flexDirection: "column", alignItems: "center" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+      <div style={{ width: "100%", maxWidth: 420, minHeight: 0, flex: 1, display: "flex", flexDirection: "column", alignItems: "center" }}>
+        <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
           <div style={{ width: 7, height: 7, borderRadius: 99, background: RED }} />
           <span style={{ fontSize: 12, fontWeight: 700, color: "#B8B8C0", letterSpacing: "0.14em", textTransform: "uppercase" }}>FlashPrint</span>
         </div>
 
-        <div style={{ width: "100%", maxWidth: 280, borderRadius: 20, overflow: "hidden", boxShadow: "0 18px 44px rgba(0,0,0,0.45)", aspectRatio: `${SHARE_RATIO.w} / ${SHARE_RATIO.h}` }}>
+        <div style={{ flex: "1 1 auto", minHeight: 0, width: "auto", maxWidth: 280, maxHeight: "100%", aspectRatio: `${SHARE_RATIO.w} / ${SHARE_RATIO.h}`, borderRadius: 20, overflow: "hidden", boxShadow: "0 18px 44px rgba(0,0,0,0.45)" }}>
           <PhotoFrame photo={photo} ratio={SHARE_RATIO} crop={photo.crop} mode="screen"
             frame={defaultTemplate ? "custom" : "none"} customBaseStyle={defaultTemplate?.baseStyle}
             customElements={defaultTemplate?.elements} customFonts={customFonts} queueLabel={photo.queue_label} />
@@ -215,37 +227,43 @@ export default function RpvPhotoDetailPage() {
 
         {/* QR Cetak saja - permintaan user: halaman ini dipakai panitia utk
             ditunjukkan ke tamu/discan operator saat cetak, QR Share ke
-            halaman ini sendiri tidak diperlukan lagi di sini. */}
-        <div style={{ marginTop: 16, width: "100%", maxWidth: 220, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "#1E1E24", border: "1px solid #2C2C33", borderRadius: 16, padding: "18px 14px" }}>
+            halaman ini sendiri tidak diperlukan lagi di sini. Nomor
+            antrian di-HIGHLIGHT (badge merah-magenta kontras, bukan cuma
+            teks putih polos) spy langsung kebaca operator dari jarak jauh. */}
+        <div style={{ flexShrink: 0, marginTop: 10, width: "100%", maxWidth: 220, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "#1E1E24", border: "1px solid #2C2C33", borderRadius: 16, padding: "12px 14px" }}>
           {printQrUrl ? (
-            <img src={printQrUrl} alt="QR Photo ID untuk cetak" style={{ width: 140, height: 140, borderRadius: 8, background: "#fff", padding: 6 }} />
+            <img src={printQrUrl} alt="QR Photo ID untuk cetak" style={{ width: 108, height: 108, borderRadius: 8, background: "#fff", padding: 6 }} />
           ) : (
-            <div style={{ width: 140, height: 140, borderRadius: 8, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ width: 108, height: 108, borderRadius: 8, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Loader2 size={18} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
             </div>
           )}
-          <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, fontWeight: 800, color: "#F0F0F2" }}>
-            <Printer size={12} color={RED} /> QR Cetak
+          <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 800, color: "#F0F0F2" }}>
+            <Printer size={11} color={RED} /> QR Cetak
           </div>
-          <span style={{ fontSize: 15, fontWeight: 800, color: "#fff", fontFamily: "monospace", letterSpacing: "0.06em" }}>{photo.queue_label || photo.photo_code}</span>
+          <span style={{
+            fontSize: 20, fontWeight: 900, color: "#fff", fontFamily: "monospace", letterSpacing: "0.08em",
+            padding: "4px 14px", borderRadius: 10, background: `linear-gradient(135deg,${RED},${MAGA})`,
+            boxShadow: `0 6px 16px -4px ${MAGA}80`,
+          }}>{photo.queue_label || photo.photo_code}</span>
           <span style={{ fontSize: 9.5, color: "#8A8A93", textAlign: "center", lineHeight: 1.4 }}>Tunjukkan ke petugas utk dicetak</span>
         </div>
 
-        <div style={{ marginTop: 22, width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <div style={{ flexShrink: 0, marginTop: 12, width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           <button onClick={handleShare} disabled={sharing}
-            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "14px 6px", borderRadius: 14, border: "1px solid #2C2C33", background: "#1E1E24", color: "#F0F0F2", cursor: sharing ? "default" : "pointer", opacity: sharing ? 0.6 : 1 }}>
-            {sharing ? <Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /> : shared ? <Check size={18} color="#3DDC84" /> : <Share2 size={18} />}
-            <span style={{ fontSize: 11.5, fontWeight: 700 }}>{sharing ? "Menyiapkan…" : shared ? "Tersalin" : "Share"}</span>
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "10px 6px", borderRadius: 14, border: "1px solid #2C2C33", background: "#1E1E24", color: "#F0F0F2", cursor: sharing ? "default" : "pointer", opacity: sharing ? 0.6 : 1 }}>
+            {sharing ? <Loader2 size={17} style={{ animation: "spin 1s linear infinite" }} /> : shared ? <Check size={17} color="#3DDC84" /> : <Share2 size={17} />}
+            <span style={{ fontSize: 11, fontWeight: 700 }}>{sharing ? "Menyiapkan…" : shared ? "Tersalin" : "Share"}</span>
           </button>
           <button onClick={handleDownload} disabled={downloading}
-            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6, padding: "14px 6px", borderRadius: 14, border: "1px solid #2C2C33", background: "#1E1E24", color: "#F0F0F2", cursor: downloading ? "default" : "pointer", opacity: downloading ? 0.6 : 1 }}>
-            {downloading ? <Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={18} />}
-            <span style={{ fontSize: 11.5, fontWeight: 700 }}>{downloading ? "Menyiapkan…" : "Download"}</span>
+            style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "10px 6px", borderRadius: 14, border: "1px solid #2C2C33", background: "#1E1E24", color: "#F0F0F2", cursor: downloading ? "default" : "pointer", opacity: downloading ? 0.6 : 1 }}>
+            {downloading ? <Loader2 size={17} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={17} />}
+            <span style={{ fontSize: 11, fontWeight: 700 }}>{downloading ? "Menyiapkan…" : "Download"}</span>
           </button>
         </div>
 
         <button onClick={handleDownload} disabled={downloading}
-          style={{ marginTop: 20, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", height: 48, borderRadius: 14, border: "none", background: RED, color: "#fff", fontWeight: 800, fontSize: 14, cursor: downloading ? "default" : "pointer", opacity: downloading ? 0.7 : 1 }}>
+          style={{ flexShrink: 0, marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", height: 44, borderRadius: 14, border: "none", background: RED, color: "#fff", fontWeight: 800, fontSize: 13.5, cursor: downloading ? "default" : "pointer", opacity: downloading ? 0.7 : 1 }}>
           {downloading ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={16} />}
           {downloading ? "Menyiapkan…" : "Download Foto Ini"}
         </button>
