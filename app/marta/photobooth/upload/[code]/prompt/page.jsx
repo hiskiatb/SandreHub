@@ -115,19 +115,22 @@ export default function RpvPromptUploadPage() {
     return () => historyUnsubRef.current?.();
   }, [code]);
 
-  // Begitu berhasil upload, generate QR code (isi = Photo ID 5-digit saja,
-  // BUKAN url) - supaya mode Scanner operator tinggal decode teks digitnya
-  // langsung tanpa parsing URL, & petugas juga bisa baca angkanya manual
-  // kalau scanner tidak dipakai. Warna QR disesuaikan tema gelap (kotak
-  // putih, modul gelap - QR TETAP kontras tinggi & mudah discan meski
-  // ditampilkan di atas background gelap).
+  // FIX (permintaan user - "QR yg ditunjukkan setelah upload harusnya QR
+  // SHARE ke tamu biar bisa download, BUKAN QR nomor antrian"): sblmnya QR
+  // di layar sukses ini isinya Photo ID 5-digit polos (ditujukan utk mode
+  // Scanner operator) - padahal di layar tamu sendiri, yg dibutuhkan tamu
+  // adalah cara CEPAT nyimpen/download fotonya sendiri (bukan buat operator
+  // scan). Sekarang QR-nya isi LINK ke /marta/photobooth/p/[photoCode]
+  // (halaman share publik foto ini, sama persis pola shareUrl di panel
+  // "Riwayat Upload" di bawah) - tamu tinggal scan pakai HP lain/kamera
+  // apapun utk buka & download fotonya sendiri. Nomor Photo ID tetap
+  // ditampilkan sbg teks besar di bawah QR (itu yg disebutkan ke petugas
+  // utk cetak - bukan lewat scan QR ini).
   useEffect(() => {
-    if (upload.phase !== "done" || !upload.result?.queueLabel) return;
+    if (upload.phase !== "done" || !upload.result?.photoCode) return;
     let alive = true;
-    // QR ANGKA (Photo ID polos, BUKAN url) - ini yg dipindai operator di
-    // /marta/photobooth/scan/[code] (deteksi jsQR-nya strip semua non-digit,
-    // jadi HARUS tetap teks digit murni, tidak boleh dicampur url).
-    QRCode.toDataURL(upload.result.queueLabel, { margin: 1, width: 280, color: { dark: "#111116", light: "#FFFFFF" } })
+    const shareUrl = `${window.location.origin}/marta/photobooth/p/${upload.result.photoCode}`;
+    QRCode.toDataURL(shareUrl, { margin: 1, width: 280, color: { dark: "#111116", light: "#FFFFFF" } })
       .then((url) => { if (alive) setQrUrl(url); })
       .catch(() => {});
     return () => { alive = false; };
@@ -598,12 +601,12 @@ function GeminiUploadSuccessScreen({ result, qrUrl, onUploadMore }) {
         </div>
         <div style={{ marginTop: 18, fontSize: 17.5, fontWeight: 800, color: INK }}>Foto Gemini Berhasil Diunggah!</div>
         <div style={{ marginTop: 7, fontSize: 12.5, color: MID, lineHeight: 1.65 }}>
-          Tunjukkan atau sebutkan <b style={{ color: INK }}>Photo ID</b> di bawah ini ke petugas untuk mencetak fotomu.
+          Scan QR di bawah ini utk <b style={{ color: INK }}>menyimpan/download fotomu sendiri</b>, lalu sebutkan <b style={{ color: INK }}>Photo ID</b>-nya ke petugas untuk dicetak.
         </div>
 
         <div style={{ marginTop: 22, padding: 22, borderRadius: 22, background: "#fff" }}>
           {qrUrl ? (
-            <img src={qrUrl} alt="QR Photo ID" style={{ width: 184, height: 184, margin: "0 auto", display: "block", borderRadius: 12 }} />
+            <img src={qrUrl} alt="QR share & download foto" style={{ width: 184, height: 184, margin: "0 auto", display: "block", borderRadius: 12 }} />
           ) : (
             <div style={{ width: 184, height: 184, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Loader2 size={22} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />

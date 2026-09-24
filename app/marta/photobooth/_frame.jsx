@@ -215,6 +215,17 @@ export function PhotoFrame({ photo, ratio, crop, frame, mode, queueLabel, sessio
               display: "flex", alignItems: "center", justifyContent: el.type === "text" ? justify : "center",
               overflow: "visible", cursor: interactive ? "move" : "default",
               outline: isSelected ? `1.5px dashed ${MAGA}` : "none", outlineOffset: 2,
+              // FIX (permintaan user - "masih belum bisa digeser"): di luar
+              // Template Editor (mis. preview Print Station), div elemen
+              // custom ini (termasuk bingkai PNG lubang full-cover 100x100%)
+              // TIDAK interactive (tidak ada onElementPointerDown), TAPI
+              // sblmnya tetap pointerEvents:"auto" bawaan browser - jadi
+              // div transparan ini nangkring PALING ATAS nutupin seluruh
+              // foto & nyerap semua pointerdown, bikin drag foto di
+              // bawahnya (onCropPointerDown) TIDAK PERNAH kesampaian sama
+              // sekali. Sekarang non-interactive -> pointerEvents:"none",
+              // jadi drag tembus ke foto di baliknya spt seharusnya.
+              pointerEvents: interactive ? "auto" : "none",
             }}>
             {el.type === "image" ? (
               <img src={el.url} alt="" draggable={false}
