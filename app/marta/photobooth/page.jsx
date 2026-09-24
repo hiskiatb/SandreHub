@@ -892,19 +892,21 @@ export default function RpvControlRoom() {
                 <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 18, display: "flex", flexDirection: "column", alignItems: "center", gap: 18 }}>
                   {/* Preview crop/zoom - drag utk geser, tombol/scroll utk zoom */}
                   <div style={{ width: "100%", maxWidth: 340 }}>
-                    <div
-                      onWheel={(e) => { e.preventDefault(); zoomBy(e.deltaY < 0 ? 0.1 : -0.1); }}
-                      style={{ boxShadow: "0 10px 30px rgba(0,0,0,0.45)" }}>
+                    <div style={{ boxShadow: "0 10px 30px rgba(0,0,0,0.45)" }}>
                       <PhotoFrame photo={selectedPhoto} ratio={printRatio} crop={crop} frame={frameKey} mode="screen"
                         queueLabel={selectedPhoto.queue_label} sessionTitle={session?.title}
                         imgRef={imgRef} onPointerDown={onCropPointerDown} customElements={customElements} customBaseStyle={customBaseStyle} customFonts={customFonts} />
                     </div>
-                    {/* Zoom - HANYA lewat scroll (wheel, lihat onWheel di wrapper
-                        di atas) atau tombol/slider di sini. Elemen <img>
-                        sudah diberi touchAction:"none" (lihat PhotoFrame),
-                        jadi gestur pinch bawaan browser TIDAK memicu zoom -
-                        satu2nya jalur zoom yg konsisten & presisi utk
-                        keperluan cetak. */}
+                    {/* FIX (permintaan user - "pinch to zoom dihilangkan,
+                        interaksi di area gambar cuma drag geser, zoom cuma
+                        dari slider"): sblmnya ada onWheel di wrapper atas
+                        yg bikin scroll/pinch-trackpad ikut memicu zoom (gestur
+                        pinch trackpad Mac dikirim browser sbg wheel event +
+                        ctrlKey, jadi ikut ke-tangkap onWheel walau elemen
+                        <img>-nya sendiri sudah touchAction:"none"). Sekarang
+                        onWheel itu DIHAPUS - area gambar murni cuma drag
+                        (onCropPointerDown) utk geser posisi, zoom SATU2NYA
+                        jalur cuma lewat tombol +/- & slider di bawah ini. */}
                     <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                       <button onClick={() => zoomBy(-0.15)} title="Perkecil" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><Minus size={13} /></button>
                       <input type="range" min="1" max="4" step="0.01" value={crop.zoom} onChange={(e) => setCrop((c) => ({ ...c, zoom: +Number(e.target.value).toFixed(2) }))}
