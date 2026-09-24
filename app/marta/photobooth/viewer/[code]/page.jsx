@@ -164,7 +164,9 @@ export default function RpvViewerPage() {
             const photoCode = row.photo_code ?? row.code;
             setPhotos((prev) => {
               if (prev.some((p) => p.photo_code === photoCode)) return prev;
-              return [{ photo_code: photoCode, storage_path: row.storage_path, uploaded_at: row.uploaded_at, upload_ms: row.upload_ms, file_size_bytes: row.file_size_bytes, parent_code: row.parent_code, is_ai_result: row.is_ai_result, url: rpvPublicUrl(row.storage_path) }, ...prev];
+              // Sertakan queue_no/queue_label sedari row INSERT pertama
+              // (kalau sudah ada) - lihat catatan onUpdate di bawah.
+              return [{ photo_code: photoCode, storage_path: row.storage_path, uploaded_at: row.uploaded_at, upload_ms: row.upload_ms, file_size_bytes: row.file_size_bytes, parent_code: row.parent_code, is_ai_result: row.is_ai_result, url: rpvPublicUrl(row.storage_path), queue_no: row.queue_no, queue_label: row.queue_label }, ...prev];
             });
           },
           {
@@ -172,6 +174,16 @@ export default function RpvViewerPage() {
             onStatusChange: (status) => {
               if (status === "SUBSCRIBED") setLiveStatus("live");
               else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") setLiveStatus("reconnecting");
+            },
+            // FIX (Photo ID tampil "-" saat baru upload): queue_no/
+            // queue_label baru terisi lewat UPDATE row stlh upload
+            // dikonfirmasi, bukan pas INSERT awal - merge field terbaru
+            // ke foto yg sudah ada di TV Viewer begitu event UPDATE (atau
+            // hasil poll fallback) nyampe.
+            onUpdate: (row) => {
+              const photoCode = row.photo_code ?? row.code;
+              const patch = { storage_path: row.storage_path, queue_no: row.queue_no, queue_label: row.queue_label };
+              setPhotos((prev) => prev.map((p) => (p.photo_code === photoCode ? { ...p, ...patch } : p)));
             },
           }
         );

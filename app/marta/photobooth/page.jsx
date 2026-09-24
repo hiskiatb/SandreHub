@@ -194,7 +194,11 @@ export default function RpvControlRoom() {
         if (cam.length > 0) setSelectedCode(cam[0].photo_code);
         unsubRef.current = subscribeRpvPhotos(s.id, (row) => {
           const photoCode = row.photo_code ?? row.code;
-          const item = { photo_code: photoCode, storage_path: row.storage_path, uploaded_at: row.uploaded_at, is_ai_result: row.is_ai_result, url: rpvPublicUrl(row.storage_path) };
+          // Sertakan queue_no/queue_label sedari row INSERT pertama (kalau
+          // sudah ada) - dulu 2 field ini tdk pernah dimasukkan ke item sama
+          // sekali, jadi Photo ID selalu tampil "-" walau row aslinya sudah
+          // punya nomor antrian.
+          const item = { photo_code: photoCode, storage_path: row.storage_path, uploaded_at: row.uploaded_at, is_ai_result: row.is_ai_result, url: rpvPublicUrl(row.storage_path), queue_no: row.queue_no, queue_label: row.queue_label };
           if (row.is_ai_result) {
             setAiPhotos((prev) => (prev.some((p) => p.photo_code === photoCode) ? prev : [item, ...prev]));
           } else {
@@ -203,7 +207,22 @@ export default function RpvControlRoom() {
             // memang belum ada foto sama sekali (kosong -> baru dpt 1).
             setSelectedCode((cur) => cur || photoCode);
           }
-        }, { sessionCode: activeCode });
+        }, {
+          sessionCode: activeCode,
+          // FIX (permintaan user - "Photo ID masih -" saat baru upload):
+          // Photo ID (queue_no/queue_label) baru diisi via UPDATE row stlh
+          // upload dikonfirmasi, BUKAN pas INSERT awal - jadi begitu event
+          // UPDATE (atau hasil poll fallback) nyampe, MERGE field terbaru
+          // ke item yg sudah ada di list kiri (camPhotos/aiPhotos), bukan
+          // diabaikan spt sebelumnya.
+          onUpdate: (row) => {
+            const photoCode = row.photo_code ?? row.code;
+            const patch = { storage_path: row.storage_path, queue_no: row.queue_no, queue_label: row.queue_label, crop_json: row.crop_json };
+            const merge = (list) => list.map((p) => (p.photo_code === photoCode ? { ...p, ...patch } : p));
+            if (row.is_ai_result) setAiPhotos(merge);
+            else setCamPhotos(merge);
+          },
+        });
       } catch { setSessionState("notfound"); }
     })();
     return () => unsubRef.current?.();
