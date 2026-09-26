@@ -27,12 +27,12 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import QRCode from "qrcode";
 import {
-  AlertTriangle, Check, Clock, Download, FlipHorizontal2, FlipVertical2, ImagePlus, LogOut, Loader2,
-  Minus, Pencil, Plus, QrCode, RotateCw, Save, Settings2, Sparkles, Ticket, Trash2, X, ZoomIn,
+  AlertTriangle, Check, Clock, Download, ImagePlus, LogOut, Loader2, Minus,
+  Move, Pencil, Plus, QrCode, Settings2, Sparkles, Ticket, Trash2, X, ZoomIn,
 } from "lucide-react";
-import { addRpvPrompt, deleteRpvPrompt, getRpvSession, listRpvCustomFonts, listRpvFrameTemplates, listRpvPhotos, listRpvPrompts, rpvPublicUrl, saveRpvPhotoCrop, subscribeRpvPhotos, updateRpvPrompt, uploadRpvGeminiResult, uploadRpvPromptImage } from "../../../../../../lib/rpv";
+import { addRpvPrompt, deleteRpvPrompt, getRpvSession, listRpvCustomFonts, listRpvFrameTemplates, listRpvPhotos, listRpvPrompts, rpvPublicUrl, subscribeRpvPhotos, updateRpvPrompt, uploadRpvGeminiResult, uploadRpvPromptImage } from "../../../../../../lib/rpv";
 import { PhotoboothPwaHead, usePhotoboothServiceWorker } from "../../../_pwa";
-import { customFontFaceCss, DEFAULT_CROP, findDefaultFrameTemplate, PhotoFrame, PRINT_SIZE } from "../../../_frame";
+import { customFontFaceCss, findDefaultFrameTemplate, PhotoFrame, PRINT_SIZE } from "../../../_frame";
 
 function fmtHistoryTime(ms) {
   try {
@@ -291,7 +291,9 @@ export default function RpvPromptUploadPage() {
                   style={{ display: "flex", flexDirection: "column", minHeight: 0, border: "none", background: "transparent", padding: 0, cursor: "pointer", fontFamily: FONT, textAlign: "left" }}>
                   <div className="rpv-m-tpl-thumb" style={{ position: "relative", width: "100%", height: "100%", minHeight: 0, borderRadius: 16, overflow: "hidden", background: CARD_HI, border: `1px solid ${LINE}` }}>
                     {p.promptImageUrl ? (
-                      <img src={p.promptImageUrl} alt={p.label} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+                      <div style={{ width: "100%", height: "100%", overflow: "hidden" }}>
+                        <img src={p.promptImageUrl} alt={p.label} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", transform: `scale(${p.thumbZoom ?? 1}) translate(${p.thumbPanX ?? 0}%, ${p.thumbPanY ?? 0}%)`, transformOrigin: "center center" }} />
+                      </div>
                     ) : (
                       <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: SUB }}><Sparkles size={18} /></div>
                     )}
@@ -467,7 +469,6 @@ function UploadHistoryPanel({ history, onClose }) {
   // persis pola QR yg dibuat begitu tamu selesai upload (GeminiUploadSuccessScreen).
   // shareQr = QR LINK ke /marta/photobooth/p/[photoCode], utk tamu lain
   // scan & lihat/download/share foto itu sendiri.
-  const [idQrByCode, setIdQrByCode] = useState({});
   const [shareQrByCode, setShareQrByCode] = useState({});
   const [qrLoading, setQrLoading] = useState(null);
 
@@ -475,16 +476,11 @@ function UploadHistoryPanel({ history, onClose }) {
     const photoCode = it.photo_code;
     if (openCode === photoCode) { setOpenCode(null); return; }
     setOpenCode(photoCode);
-    if (idQrByCode[photoCode] && shareQrByCode[photoCode]) return;
+    if (shareQrByCode[photoCode]) return;
     setQrLoading(photoCode);
     try {
-      const idText = (it.queue_label || it.photo_code || "").toString();
       const shareUrl = `${window.location.origin}/marta/photobooth/p/${photoCode}`;
-      const [idDataUrl, shareDataUrl] = await Promise.all([
-        QRCode.toDataURL(idText, { margin: 1, width: 200, color: { dark: "#111116", light: "#FFFFFF" } }),
-        QRCode.toDataURL(shareUrl, { margin: 1, width: 200, color: { dark: "#111116", light: "#FFFFFF" } }),
-      ]);
-      setIdQrByCode((m) => ({ ...m, [photoCode]: idDataUrl }));
+      const shareDataUrl = await QRCode.toDataURL(shareUrl, { margin: 1, width: 200, color: { dark: "#111116", light: "#FFFFFF" } });
       setShareQrByCode((m) => ({ ...m, [photoCode]: shareDataUrl }));
     } catch { /* diamkan - tombol tetap bisa dicoba lagi */ }
     setQrLoading(null);
@@ -531,34 +527,24 @@ function UploadHistoryPanel({ history, onClose }) {
               {openCode === it.photo_code && (
                 <div style={{ marginTop: 10, display: "flex", flexDirection: "column", alignItems: "center", gap: 10 }}>
                   {qrLoading === it.photo_code && <Loader2 size={20} color={RED} style={{ animation: "spin 1s linear infinite" }} />}
-                  {idQrByCode[it.photo_code] && shareQrByCode[it.photo_code] && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 14, justifyContent: "center" }}>
-                      {/* QR Photo ID - buat kebutuhan CETAK (dipindai operator di
-                          /marta/photobooth/scan/[code], persis pola QR sukses
-                          upload), lengkap dgn teks Photo ID di bawahnya. */}
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-                        <img src={idQrByCode[it.photo_code]} alt={`QR Photo ID ${it.photo_code}`} width={140} height={140} style={{ borderRadius: 10, border: `1px solid ${LINE}` }} />
-                        <span style={{ fontSize: 9.5, fontWeight: 800, color: SUB, letterSpacing: "0.06em", textTransform: "uppercase" }}>QR Photo ID (Cetak)</span>
-                        <span style={{ fontSize: 12.5, fontWeight: 800, color: INK, fontFamily: "monospace" }}>{it.queue_label || it.photo_code}</span>
-                        <a href={idQrByCode[it.photo_code]} download={`qr-id-${it.photo_code}.png`}
-                          style={{ display: "flex", alignItems: "center", gap: 5, height: 28, padding: "0 10px", borderRadius: 9, border: `1px solid ${LINE}`, color: MID, fontSize: 10.5, fontWeight: 700, textDecoration: "none" }}>
-                          <Download size={11} /> Simpan
-                        </a>
-                      </div>
-                      {/* QR Share - buat tamu lain scan & lihat/download/share
-                          foto ini sendiri (link ke /marta/photobooth/p/[photoCode]). */}
-                      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-                        <img src={shareQrByCode[it.photo_code]} alt={`QR share ${it.photo_code}`} width={140} height={140} style={{ borderRadius: 10, border: `1px solid ${LINE}` }} />
-                        <span style={{ fontSize: 9.5, fontWeight: 800, color: SUB, letterSpacing: "0.06em", textTransform: "uppercase" }}>QR Share Foto</span>
-                        <a href={`/marta/photobooth/p/${it.photo_code}`} target="_blank" rel="noreferrer"
-                          style={{ fontSize: 12.5, fontWeight: 800, color: MAGA, textDecoration: "none" }}>
-                          Buka Foto
-                        </a>
-                        <a href={shareQrByCode[it.photo_code]} download={`qr-share-${it.photo_code}.png`}
-                          style={{ display: "flex", alignItems: "center", gap: 5, height: 28, padding: "0 10px", borderRadius: 9, border: `1px solid ${LINE}`, color: MID, fontSize: 10.5, fontWeight: 700, textDecoration: "none" }}>
-                          <Download size={11} /> Simpan
-                        </a>
-                      </div>
+                  {shareQrByCode[it.photo_code] && (
+                    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+                      {/* Photo ID polos (sebutkan lisan ke petugas - sudah
+                          tidak ada lagi QR/scanner utk cetak) + 1 QR Share
+                          (link ke /marta/photobooth/p/[photoCode]) utk tamu
+                          lain scan & lihat/download/share foto ini sendiri. */}
+                      <span style={{ fontSize: 9.5, fontWeight: 800, color: SUB, letterSpacing: "0.06em", textTransform: "uppercase" }}>Photo ID (sebutkan ke petugas)</span>
+                      <span style={{ fontSize: 20, fontWeight: 900, color: INK, fontFamily: "monospace", letterSpacing: "0.06em" }}>{it.queue_label || it.photo_code}</span>
+                      <img src={shareQrByCode[it.photo_code]} alt={`QR share ${it.photo_code}`} width={140} height={140} style={{ marginTop: 4, borderRadius: 10, border: `1px solid ${LINE}` }} />
+                      <span style={{ fontSize: 9.5, fontWeight: 800, color: SUB, letterSpacing: "0.06em", textTransform: "uppercase" }}>QR Share Foto</span>
+                      <a href={`/marta/photobooth/p/${it.photo_code}`} target="_blank" rel="noreferrer"
+                        style={{ fontSize: 12.5, fontWeight: 800, color: MAGA, textDecoration: "none" }}>
+                        Buka Foto
+                      </a>
+                      <a href={shareQrByCode[it.photo_code]} download={`qr-share-${it.photo_code}.png`}
+                        style={{ display: "flex", alignItems: "center", gap: 5, height: 28, padding: "0 10px", borderRadius: 9, border: `1px solid ${LINE}`, color: MID, fontSize: 10.5, fontWeight: 700, textDecoration: "none" }}>
+                        <Download size={11} /> Simpan
+                      </a>
                     </div>
                   )}
                 </div>
@@ -608,198 +594,179 @@ function SectionLabel({ n, text, hint, style }) {
 // 2 tombol Upload Lagi/Selesai terpisah lagi). Tahap share ke sosmed &
 // reveal foto DIHAPUS dari layar ini.
 function GeminiUploadSuccessScreen({ result, qrUrl, onUploadMore, sessionTitle, defaultTemplate, customFonts }) {
-  // Preview + penyesuaian LANGSUNG di layar sukses upload (permintaan user:
-  // sebelumnya cuma <img> polos tanpa bingkai - "harusnya langsung sudah
-  // menggunakan frame custom yang sudah di set default dan juga 4R dan bisa
-  // kita adjust langsung"). Pola crop/zoom/pan/rotate/flip IDENTIK dgn Print
-  // Station operator (lihat app/marta/photobooth/page.jsx), supaya tamu bisa
-  // atur posisi fotonya sendiri di dalam bingkai 4R sblm dicetak - operator
-  // tinggal cek/lanjut cetak, tidak perlu atur ulang dari nol.
-  const [crop, setCrop] = useState(DEFAULT_CROP);
-  const [savedCrop, setSavedCrop] = useState(DEFAULT_CROP);
-  const [cropSaving, setCropSaving] = useState(false);
-  const cropDirty = JSON.stringify(crop) !== JSON.stringify(savedCrop);
-  const imgRef = useRef(null);
-  const dragRef = useRef(null);
+  // FIX (permintaan user - "mengapa jadi putih, seharusnya dark mode spt
+  // halaman lain, samakan ambience-nya utk kedua layar (sukses & QR
+  // share)"): sempat di-shadow ke tema TERANG khusus layar ini (permintaan
+  // sblmnya soal "ambience spt beranda"), tapi ternyata yg dimaksud
+  // konsisten dgn tema GELAP `BG/CARD/LINE/INK/MID/SUB` yg sudah dipakai di
+  // SELURUH halaman ini (kamera/pilih template/dll) & panel operator -
+  // shadow terang di atas DIHAPUS, sekarang ikut tema gelap global lagi,
+  // sama persis dgn /p/[photoCode].
+  // FIX (permintaan user - "fitur penyesuaian hanya ketika QR share saja,
+  // untuk preview pertama ini tidak perlu"): crop/zoom/pan/rotate/flip
+  // DIPINDAHKAN ke halaman QR Share (/marta/photobooth/p/[photoCode]) saja
+  // - preview di layar sukses upload ini SEKARANG statis lagi (cuma
+  // menampilkan hasilnya di bingkai 4R + template default, tanpa kontrol
+  // apa pun), lebih ringkas & tidak duplikat dgn halaman share.
 
-  // Permintaan user: animasi centang sukses SEBELUMNYA nempel permanen
-  // berdampingan dgn foto+QR (semua muncul sekaligus). Sekarang dipentaskan
-  // 2 tahap - animasi centang muncul & main dulu SENDIRIAN, begitu selesai
-  // (~1.05s, pas dgn total durasi keyframe pop+circle+tick di bawah) dia
-  // fade-out & digantikan foto+QR yg fade-in, bukan tampil bebarengan.
+  // FIX (permintaan user - "animasi berhasil uploadnya belum center dan
+  // belum bagus"): ROOT CAUSE-nya struktural, bukan cuma soal styling -
+  // sebelumnya animasi centang & konten foto+QR SAMA-SAMA berada di DOM
+  // sejak awal (yg foto+QR cuma disembunyikan pakai opacity:0), jadi tinggi
+  // total blok yg dipusatkan flex container = tinggi animasi + tinggi
+  // foto+QR (walau tak terlihat) - bikin animasi centang keliatan nempel ke
+  // atas/miring, BUKAN benar2 center di layar. Sekarang animasi & konten
+  // di-MOUNT BERGANTIAN (bukan cuma opacity) - saat animasi main, HANYA itu
+  // yg ada di DOM, jadi flex-center murni memusatkan cuma badge itu sendiri.
   const [revealed, setRevealed] = useState(false);
   useEffect(() => {
-    const t = setTimeout(() => setRevealed(true), 1050);
+    const t = setTimeout(() => setRevealed(true), 1150);
     return () => clearTimeout(t);
   }, []);
 
-  const onCropPointerDown = (e) => {
-    e.preventDefault();
-    dragRef.current = { startX: e.clientX, startY: e.clientY, startPanX: crop.panX, startPanY: crop.panY, dragging: true };
-    const move = (ev) => {
-      if (!dragRef.current?.dragging || !imgRef.current) return;
-      const w = imgRef.current.offsetWidth || 1;
-      const h = imgRef.current.offsetHeight || 1;
-      const dx = ((ev.clientX - dragRef.current.startX) / w) * 100;
-      const dy = ((ev.clientY - dragRef.current.startY) / h) * 100;
-      setCrop((c) => ({ ...c, panX: dragRef.current.startPanX + dx / c.zoom, panY: dragRef.current.startPanY + dy / c.zoom }));
-    };
-    const up = () => {
-      dragRef.current = null;
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  };
-  const zoomBy = (delta) => setCrop((c) => ({ ...c, zoom: Math.max(1, Math.min(4, +(c.zoom + delta).toFixed(2))) }));
-  const rotateBy = (deg) => setCrop((c) => ({ ...c, rotate: (c.rotate + deg + 360) % 360 }));
-  const toggleFlipX = () => setCrop((c) => ({ ...c, flipX: !c.flipX }));
-  const toggleFlipY = () => setCrop((c) => ({ ...c, flipY: !c.flipY }));
-
-  const saveCrop = async () => {
-    if (!result?.photoCode) return;
-    setCropSaving(true);
-    try {
-      await saveRpvPhotoCrop(result.photoCode, crop);
-      setSavedCrop(crop);
-    } catch { /* gagal simpan - operator masih bisa atur ulang lewat Print Station */ }
-    finally { setCropSaving(false); }
-  };
-
-  return (
-    <div className="flashprint-root" style={{ minHeight: "100svh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: BG, fontFamily: FONT }}>
-      <div style={{ textAlign: "center", maxWidth: 340, width: "100%" }}>
-        {/* Tahap 1: animasi centang sukses SENDIRIAN dulu - fade+collapse
-            keluar begitu `revealed` true, digantikan tahap 2 (foto+QR). */}
-        <div style={{
-          overflow: "hidden",
-          maxHeight: revealed ? 0 : 140, opacity: revealed ? 0 : 1,
-          transition: "max-height 0.4s cubic-bezier(.4,0,.2,1), opacity 0.3s ease",
-        }}>
-          <div style={{ position: "relative", width: 86, height: 86, margin: "0 auto" }}>
+  if (!revealed) {
+    // Gaya "tagging berhasil" - badge lingkaran pop-in + cincin sonar yg
+    // memudar keluar di belakangnya + centang digambar, BENAR2 sendirian
+    // di tengah layar (lihat catatan di atas).
+    return (
+      <div className="flashprint-root" style={{ minHeight: "100svh", display: "flex", alignItems: "center", justifyContent: "center", background: BG, fontFamily: FONT }}>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ position: "relative", width: 92, height: 92, margin: "0 auto" }}>
+            <div className="rpv-m-success-ring" style={{ position: "absolute", inset: 0, borderRadius: "50%", border: "2px solid #4ADE80" }} />
             <div className="rpv-m-success-pop" style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "rgba(21,128,61,0.16)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <svg width="42" height="42" viewBox="0 0 52 52">
+              <svg width="46" height="46" viewBox="0 0 52 52">
                 <circle className="rpv-m-success-circle" cx="26" cy="26" r="23" fill="none" stroke="#4ADE80" strokeWidth="2.5" strokeLinecap="round" />
                 <path className="rpv-m-success-tick" d="M15 27l7.5 7.5L37.5 18" fill="none" stroke="#4ADE80" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             </div>
           </div>
-          <div style={{ marginTop: 18, fontSize: 17.5, fontWeight: 800, color: INK }}>Foto Gemini Berhasil Diunggah!</div>
+          <div className="rpv-m-success-label" style={{ marginTop: 20, fontSize: 17.5, fontWeight: 800, color: INK }}>Foto Berhasil Diunggah!</div>
         </div>
+        <style>{`
+          @keyframes rpv-m-success-pop { 0% { transform: scale(0.4); opacity: 0; } 60% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); } }
+          @keyframes rpv-m-success-circle { from { stroke-dasharray: 145; stroke-dashoffset: 145; } to { stroke-dasharray: 145; stroke-dashoffset: 0; } }
+          @keyframes rpv-m-success-tick { from { stroke-dasharray: 34; stroke-dashoffset: 34; } to { stroke-dasharray: 34; stroke-dashoffset: 0; } }
+          @keyframes rpv-m-success-ring { 0% { transform: scale(0.8); opacity: 0.9; } 100% { transform: scale(1.55); opacity: 0; } }
+          @keyframes rpv-m-label-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+          .rpv-m-success-pop { animation: rpv-m-success-pop 0.42s cubic-bezier(.34,1.56,.64,1) both; }
+          .rpv-m-success-circle { animation: rpv-m-success-circle 0.55s 0.05s cubic-bezier(.65,0,.35,1) both; }
+          .rpv-m-success-tick { animation: rpv-m-success-tick 0.35s 0.5s cubic-bezier(.65,0,.35,1) both; }
+          .rpv-m-success-ring { animation: rpv-m-success-ring 0.9s 0.05s cubic-bezier(.22,1,.36,1) both; }
+          .rpv-m-success-label { animation: rpv-m-label-in 0.4s 0.5s cubic-bezier(.22,1,.36,1) both; }
+        `}</style>
+      </div>
+    );
+  }
 
-        {/* Tahap 2: judul ringkas + foto (bingkai 4R, bisa di-adjust) + QR -
-            fade-in setelah tahap 1 selesai. */}
-        <div style={{
-          opacity: revealed ? 1 : 0, transform: revealed ? "translateY(0)" : "translateY(6px)",
-          transition: "opacity 0.4s ease 0.05s, transform 0.4s cubic-bezier(.22,1,.36,1) 0.05s",
-          marginTop: revealed ? 4 : 0,
-        }}>
-        <div style={{ fontSize: 12.5, color: MID, lineHeight: 1.65 }}>
-          Geser/zoom fotomu di bawah biar pas di bingkai, lalu scan QR utk <b style={{ color: INK }}>menyimpan/download</b> &amp; sebutkan <b style={{ color: INK }}>Photo ID</b>-nya ke petugas.
+  // FIX (permintaan user - "qr share dibuat lebih kecil, desain lebih
+  // bagus, & 1 layar saja tanpa perlu scroll"): root sblmnya cuma
+  // minHeight:"100svh" (bisa discroll kalau konten kepanjangan). Sekarang
+  // dipakai pola SAMA PERSIS spt halaman QR Share (/p/[photoCode]):
+  // height:"100svh" (BUKAN minHeight) + flex column dgn SATU bagian
+  // fleksibel (kartu foto, menyusut ngikutin sisa tinggi layar), sisanya
+  // (teks, kartu QR+Photo ID, tombol) flexShrink:0 & dirampingkan - jadi
+  // semuanya selalu utuh kelihatan tanpa scroll. Kartu QR jg dirombak: QR
+  // diperkecil (140px -> 68px) & digabung 1 baris bareng Photo ID (bukan 2
+  // blok bertumpuk terpisah garis) spy lebih ringkas & rapi.
+  return (
+    <div className="flashprint-root rpv-m-stage-fade" style={{ height: "100svh", overflowY: "auto", display: "flex", flexDirection: "column", alignItems: "center", padding: "16px 20px", boxSizing: "border-box", background: BG, fontFamily: FONT, position: "relative" }}>
+      {/* FIX (permintaan user - "mengapa tidak ada ambience-nya yg di
+          bawah"): layar sukses ini SEBELUMNYA solid gelap polos tanpa dekor
+          apa pun - halaman utama (pilih template) & layar kamera punya
+          "ambience" (blob gradient magenta/ungu blur + tekstur titik yg
+          bergerak halus) yg jadi identitas visual gelap FlashPrint. Dekor
+          yg SAMA PERSIS (markup + animasi) ditambahkan di sini jg spy
+          konsisten - lihat definisi kelasnya di <style> di bawah. */}
+      <div className="rpv-m-ambient" aria-hidden="true">
+        <div className="rpv-m-ambient-blob rpv-m-ambient-blob--a" />
+        <div className="rpv-m-ambient-blob rpv-m-ambient-blob--b" />
+        <div className="rpv-m-ambient-dots" />
+      </div>
+      <div style={{ width: "100%", maxWidth: 300, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", position: "relative", zIndex: 1 }}>
+        <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ width: 7, height: 7, borderRadius: 99, background: RED }} />
+          <span style={{ fontSize: 12, fontWeight: 700, color: SUB, letterSpacing: "0.14em", textTransform: "uppercase" }}>FlashPrint</span>
         </div>
 
         {result.url && (
-          <div style={{ marginTop: 22, padding: 16, borderRadius: 22, background: CARD, border: `1px solid ${LINE}` }}>
-            <div style={{ maxWidth: 210, margin: "0 auto" }}>
-              <PhotoFrame photo={result} ratio={PRINT_SIZE} crop={crop} frame={defaultTemplate ? "custom" : "none"} mode="screen"
+          <div style={{ flexShrink: 0, marginTop: 12, width: "100%", display: "flex", flexDirection: "column", alignItems: "center" }}>
+            <div style={{ width: `min(230px, calc(46vh * ${PRINT_SIZE.w} / ${PRINT_SIZE.h}))`, borderRadius: 18, overflow: "hidden", background: CARD, border: `1px solid ${LINE}` }}>
+              <PhotoFrame photo={result} ratio={PRINT_SIZE} frame={defaultTemplate ? "custom" : "none"} mode="screen"
                 queueLabel={result.queueLabel} sessionTitle={sessionTitle}
-                imgRef={imgRef} onPointerDown={onCropPointerDown}
                 customElements={defaultTemplate?.elements} customBaseStyle={defaultTemplate?.baseStyle} customFonts={customFonts} />
             </div>
-            <div style={{ marginTop: 12, fontSize: 9.5, color: SUB, fontWeight: 700 }}>{PRINT_SIZE.label} &middot; {PRINT_SIZE.w}&times;{PRINT_SIZE.h}cm</div>
-
-            <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-              <button onClick={() => zoomBy(-0.15)} title="Perkecil"
-                style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${LINE}`, background: FIELD, color: MID, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
-                <Minus size={13} />
-              </button>
-              <input type="range" min="1" max="4" step="0.01" value={crop.zoom} onChange={(e) => setCrop((c) => ({ ...c, zoom: +Number(e.target.value).toFixed(2) }))}
-                style={{ flex: 1, maxWidth: 130, accentColor: MAGA }} />
-              <span style={{ fontSize: 11, color: MID, fontWeight: 700, width: 36, textAlign: "center", flexShrink: 0 }}>{Math.round(crop.zoom * 100)}%</span>
-              <button onClick={() => zoomBy(0.15)} title="Perbesar"
-                style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${LINE}`, background: FIELD, color: MID, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
-                <ZoomIn size={13} />
-              </button>
-            </div>
-
-            <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, flexWrap: "wrap" }}>
-              <button onClick={() => rotateBy(90)} title="Putar 90°"
-                style={{ display: "flex", alignItems: "center", gap: 5, height: 30, padding: "0 10px", borderRadius: 8, border: `1px solid ${LINE}`, background: FIELD, color: MID, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
-                <RotateCw size={12} /> {crop.rotate}°
-              </button>
-              <button onClick={toggleFlipX} title="Balik horizontal"
-                style={{ display: "flex", alignItems: "center", gap: 5, height: 30, padding: "0 10px", borderRadius: 8, border: `1.5px solid ${crop.flipX ? MAGA : LINE}`, background: crop.flipX ? `${MAGA}33` : FIELD, color: crop.flipX ? "#fff" : MID, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
-                <FlipHorizontal2 size={12} /> H
-              </button>
-              <button onClick={toggleFlipY} title="Balik vertikal"
-                style={{ display: "flex", alignItems: "center", gap: 5, height: 30, padding: "0 10px", borderRadius: 8, border: `1.5px solid ${crop.flipY ? MAGA : LINE}`, background: crop.flipY ? `${MAGA}33` : FIELD, color: crop.flipY ? "#fff" : MID, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
-                <FlipVertical2 size={12} /> V
-              </button>
-              <button onClick={() => setCrop(DEFAULT_CROP)} style={{ fontSize: 10, color: SUB, fontWeight: 700, background: "transparent", border: "none", cursor: "pointer", fontFamily: FONT }}>Reset</button>
-            </div>
-
-            <button onClick={saveCrop} disabled={cropSaving || !cropDirty}
-              style={{
-                marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", height: 34, borderRadius: 9, border: "none",
-                background: !cropDirty ? FIELD : MAGA, color: !cropDirty ? SUB : "#fff",
-                fontSize: 11.5, fontWeight: 800, cursor: cropSaving || !cropDirty ? "default" : "pointer", fontFamily: FONT, opacity: cropSaving ? 0.7 : 1,
-              }}>
-              {cropSaving ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={13} />}
-              {cropSaving ? "Menyimpan..." : cropDirty ? "Simpan Penyesuaian" : "Tersimpan"}
-            </button>
+            <div style={{ flexShrink: 0, marginTop: 6, fontSize: 8.5, color: SUB, fontWeight: 700 }}>{PRINT_SIZE.label} &middot; {PRINT_SIZE.w}&times;{PRINT_SIZE.h}cm</div>
           </div>
         )}
 
-        <div style={{ marginTop: 14, padding: 22, borderRadius: 22, background: "#fff" }}>
-          {/* FIX (permintaan user - "seharusnya dia menampilkan qr share
-              bukan photo id"): QR-nya SUDAH benar isi link share/download
-              (lihat useEffect di atas), tapi tanpa label apa2 tepat di atas
-              QR & langsung disusul teks besar "PHOTO ID" di bawahnya, jadi
-              KELIATANNYA spt QR itu utk Photo ID. Sekarang dikasih label
-              eksplisit "QR SHARE & DOWNLOAD" tepat di atas QR, & bagian
-              Photo ID dipisah jelas pakai garis pembatas - supaya jelas 2
-              hal beda: QR = scan utk download foto sendiri, angka di bawah
-              garis = Photo ID utk disebutkan ke petugas. */}
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
-            <QrCode size={14} color={MAGA} />
-            <span style={{ fontSize: 10, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.4 }}>QR SHARE &amp; DOWNLOAD</span>
-          </div>
+        <div style={{ flexShrink: 0, marginTop: 12, width: "100%", padding: "12px 14px", borderRadius: 18, background: "#fff", border: `1px solid ${LINE}`, display: "flex", alignItems: "center", gap: 12 }}>
           {qrUrl ? (
-            <img src={qrUrl} alt="QR share & download foto" style={{ marginTop: 10, width: 140, height: 140, margin: "10px auto 0", display: "block", borderRadius: 12 }} />
+            <img src={qrUrl} alt="QR share & download foto" style={{ width: 68, height: 68, borderRadius: 9, flexShrink: 0 }} />
           ) : (
-            <div style={{ marginTop: 10, width: 140, height: 140, margin: "10px auto 0", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Loader2 size={22} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
+            <div style={{ width: 68, height: 68, borderRadius: 9, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#F4F4F7" }}>
+              <Loader2 size={18} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
             </div>
           )}
-          <div style={{ marginTop: 18, borderTop: "1.5px dashed #E4E4EA", paddingTop: 15 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-              <Ticket size={16} color={MAGA} />
-              <span style={{ fontSize: 9.5, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.3 }}>PHOTO ID (sebutkan ke petugas)</span>
+          <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <QrCode size={11} color={MAGA} />
+              <span style={{ fontSize: 8.5, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.3 }}>QR SHARE &amp; DOWNLOAD</span>
             </div>
-            <div style={{ marginTop: 2, fontSize: 34, fontWeight: 900, color: "#17181C", letterSpacing: "0.08em", fontFamily: "monospace" }}>
+            <div style={{ marginTop: 9, display: "flex", alignItems: "center", gap: 5 }}>
+              <Ticket size={11} color={MAGA} />
+              <span style={{ fontSize: 8, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.2 }}>PHOTO ID</span>
+            </div>
+            <div style={{ marginTop: 1, fontSize: 22, fontWeight: 900, color: "#17181C", letterSpacing: "0.06em", fontFamily: "monospace" }}>
               {result.queueLabel}
             </div>
           </div>
         </div>
 
         <button onClick={onUploadMore}
-          style={{ width: "100%", marginTop: 22, height: 50, borderRadius: 13, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FONT, cursor: "pointer" }}>
+          style={{ flexShrink: 0, width: "100%", marginTop: 12, height: 44, borderRadius: 12, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FONT, cursor: "pointer" }}>
           Kembali &amp; Upload Lagi
         </button>
-        </div>
       </div>
       {customFonts?.length > 0 && <style>{customFontFaceCss(customFonts)}</style>}
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes rpv-m-success-pop { 0% { transform: scale(0.4); opacity: 0; } 60% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); } }
-        @keyframes rpv-m-success-circle { from { stroke-dasharray: 145; stroke-dashoffset: 145; } to { stroke-dasharray: 145; stroke-dashoffset: 0; } }
-        @keyframes rpv-m-success-tick { from { stroke-dasharray: 34; stroke-dashoffset: 34; } to { stroke-dasharray: 34; stroke-dashoffset: 0; } }
         @keyframes rpv-m-stage-fade { from { opacity: 0; transform: translateY(8px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
-        .rpv-m-success-pop { animation: rpv-m-success-pop 0.42s cubic-bezier(.34,1.56,.64,1) both; }
-        .rpv-m-success-circle { animation: rpv-m-success-circle 0.55s 0.05s cubic-bezier(.65,0,.35,1) both; }
-        .rpv-m-success-tick { animation: rpv-m-success-tick 0.35s 0.5s cubic-bezier(.65,0,.35,1) both; }
         .rpv-m-stage-fade { animation: rpv-m-stage-fade 0.4s cubic-bezier(.4,0,.2,1) both; }
+        @keyframes rpv-m-ambient-drift-a {
+          0%, 100% { transform: translate(-14%, 10%) scale(1); }
+          50%       { transform: translate(12%, -8%) scale(1.28); }
+        }
+        @keyframes rpv-m-ambient-drift-b {
+          0%, 100% { transform: translate(16%, 8%) scale(1.15); }
+          50%       { transform: translate(-12%, -10%) scale(0.88); }
+        }
+        @keyframes rpv-m-ambient-pulse {
+          0%, 100% { opacity: 0.62; }
+          50%       { opacity: 0.92; }
+        }
+        .rpv-m-ambient {
+          position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;
+          -webkit-mask-image: linear-gradient(180deg, transparent 0%, transparent 42%, rgba(0,0,0,0.9) 68%, rgba(0,0,0,0.65) 100%);
+          mask-image: linear-gradient(180deg, transparent 0%, transparent 42%, rgba(0,0,0,0.9) 68%, rgba(0,0,0,0.65) 100%);
+        }
+        .rpv-m-ambient-blob {
+          position: absolute; border-radius: 50%; filter: blur(min(48px, 8vw));
+          width: min(70vw, 560px); aspect-ratio: 1;
+        }
+        .rpv-m-ambient-blob--a {
+          left: 4%; bottom: -18%; background: radial-gradient(circle, ${MAGA}52 0%, transparent 68%);
+          animation: rpv-m-ambient-drift-a 11s ease-in-out infinite, rpv-m-ambient-pulse 6s ease-in-out infinite;
+        }
+        .rpv-m-ambient-blob--b {
+          right: 0%; bottom: -22%; width: min(62vw, 500px); background: radial-gradient(circle, ${VIO}46 0%, transparent 68%);
+          animation: rpv-m-ambient-drift-b 13s ease-in-out infinite, rpv-m-ambient-pulse 7.5s ease-in-out infinite 1.3s;
+        }
+        .rpv-m-ambient-dots {
+          position: absolute; inset: 0;
+          background-image: radial-gradient(${MAGA}80 1px, transparent 1.6px);
+          background-size: 22px 22px;
+          animation: rpv-m-ambient-pulse 4s ease-in-out infinite;
+        }
       `}</style>
     </div>
   );
@@ -879,7 +846,9 @@ function RpvPromptManagerSheet({ code, prompts, onClose, onChanged, onExitSessio
               {prompts.map((p) => (
                 <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 11, background: CARD, border: `1.5px solid ${LINE}`, borderRadius: 14, padding: "10px 12px" }}>
                   {p.promptImageUrl ? (
-                    <img src={p.promptImageUrl} alt="" style={{ width: 48, height: 48, borderRadius: 11, objectFit: "cover", flexShrink: 0 }} />
+                    <div style={{ width: 48, height: 48, borderRadius: 11, overflow: "hidden", flexShrink: 0 }}>
+                      <img src={p.promptImageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", transform: `scale(${p.thumbZoom ?? 1}) translate(${p.thumbPanX ?? 0}%, ${p.thumbPanY ?? 0}%)`, transformOrigin: "center center" }} />
+                    </div>
                   ) : (
                     <div style={{ width: 48, height: 48, borderRadius: 11, flexShrink: 0, background: FIELD, display: "flex", alignItems: "center", justifyContent: "center", color: SUB }}>
                       <Sparkles size={16} />
@@ -945,10 +914,50 @@ function RpvPromptFormPopup({ code, prompts, editingPrompt, onClose, onChanged }
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState("");
   const [existingImageUrl, setExistingImageUrl] = useState(editingPrompt?.promptImageUrl || "");
+  // Fokus thumbnail (permintaan user - "atur posisi thumbnail" -> "maksud
+  // saya bisa di zoom dan geser"): zoom+pan interaktif via drag lgsg di atas
+  // preview + slider zoom, pola sama dgn kontrol crop foto tamu di halaman
+  // lain - dipakai jg di grid pemilihan template & sheet "Kelola Prompt".
+  const [thumbPanX, setThumbPanX] = useState(editingPrompt?.thumbPanX ?? 0);
+  const [thumbPanY, setThumbPanY] = useState(editingPrompt?.thumbPanY ?? 0);
+  const [thumbZoom, setThumbZoom] = useState(editingPrompt?.thumbZoom ?? 1);
+  const thumbImgRef = useRef(null);
+  const thumbDragRef = useRef(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
   const thumbUrl = preview || existingImageUrl;
+
+  const clampThumbPan = (zoom, x, y) => {
+    const limit = zoom >= 1 ? ((zoom - 1) * 50) / zoom : (1 - zoom) * 70;
+    return [Math.max(-limit, Math.min(limit, x)), Math.max(-limit, Math.min(limit, y))];
+  };
+  const onThumbPointerDown = (e) => {
+    e.preventDefault();
+    thumbDragRef.current = { startX: e.clientX, startY: e.clientY, startPanX: thumbPanX, startPanY: thumbPanY, dragging: true };
+    const move = (ev) => {
+      if (!thumbDragRef.current?.dragging || !thumbImgRef.current) return;
+      const w = thumbImgRef.current.offsetWidth || 1;
+      const h = thumbImgRef.current.offsetHeight || 1;
+      const dx = ((ev.clientX - thumbDragRef.current.startX) / w) * 100;
+      const dy = ((ev.clientY - thumbDragRef.current.startY) / h) * 100;
+      const [nx, ny] = clampThumbPan(thumbZoom, thumbDragRef.current.startPanX + dx / thumbZoom, thumbDragRef.current.startPanY + dy / thumbZoom);
+      setThumbPanX(nx); setThumbPanY(ny);
+    };
+    const up = () => {
+      thumbDragRef.current = null;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  const thumbZoomBy = (delta) => {
+    const nz = Math.max(0.4, Math.min(4, +(thumbZoom + delta).toFixed(2)));
+    const [nx, ny] = clampThumbPan(nz, thumbPanX, thumbPanY);
+    setThumbZoom(nz); setThumbPanX(nx); setThumbPanY(ny);
+  };
+  const resetThumbFocus = () => { setThumbZoom(1); setThumbPanX(0); setThumbPanY(0); };
 
   const onPickImage = (e) => {
     const f = e.target.files?.[0];
@@ -969,10 +978,10 @@ function RpvPromptFormPopup({ code, prompts, editingPrompt, onClose, onChanged }
       let imagePath = null;
       if (file) imagePath = await uploadRpvPromptImage(code, file);
       if (isEditing) {
-        const row = await updateRpvPrompt(code, editingPrompt.id, label, text, imagePath);
+        const row = await updateRpvPrompt(code, editingPrompt.id, label, text, imagePath, thumbPanX, thumbPanY, thumbZoom);
         if (row) onChanged(prompts.map((p) => (p.id === editingPrompt.id ? row : p)));
       } else {
-        const row = await addRpvPrompt(code, label || `Template ${prompts.length + 1}`, text, imagePath);
+        const row = await addRpvPrompt(code, label || `Template ${prompts.length + 1}`, text, imagePath, thumbPanX, thumbPanY, thumbZoom);
         if (row) onChanged([...prompts, row]);
       }
       onClose();
@@ -1009,20 +1018,43 @@ function RpvPromptFormPopup({ code, prompts, editingPrompt, onClose, onChanged }
         <div style={{ fontSize: 10.5, fontWeight: 700, color: SUB, marginTop: 13, marginBottom: 5 }}>Gambar Referensi <span style={{ fontWeight: 500, color: SUB, textTransform: "none" }}>(opsional)</span></div>
         <input ref={imgRef} type="file" accept="image/*" onChange={onPickImage} style={{ display: "none" }} />
         {thumbUrl ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 11, padding: 9, borderRadius: 12, background: FIELD, border: `1px solid ${LINE}` }}>
-            <img src={thumbUrl} alt="" style={{ width: 52, height: 52, borderRadius: 10, objectFit: "cover", flexShrink: 0 }} />
-            <div style={{ minWidth: 0, flex: 1, fontSize: 11, color: MID, fontWeight: 600 }}>
-              {file ? file.name : "Gambar tersimpan"}
+          <>
+            {/* FIX (permintaan user - "atur posisi thumbnail" -> "maksud
+                saya bisa di zoom dan geser"): preview ini SEKARANG bisa
+                di-drag lgsg (geser jari) utk pan + slider zoom, bukan lagi
+                grid 3x3 titik statis. */}
+            <div style={{ width: "100%", height: 180, borderRadius: 14, overflow: "hidden", position: "relative", background: FIELD, border: `1px solid ${LINE}`, touchAction: "none", cursor: "grab" }}
+              onPointerDown={onThumbPointerDown}>
+              <img ref={thumbImgRef} src={thumbUrl} alt="" draggable={false}
+                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", transform: `scale(${thumbZoom}) translate(${thumbPanX}%, ${thumbPanY}%)`, transformOrigin: "center center", userSelect: "none" }} />
+              <button type="button" onClick={() => imgRef.current?.click()} title="Ganti gambar"
+                style={{ position: "absolute", right: 8, top: 8, width: 32, height: 32, borderRadius: 99, border: "none", background: "rgba(0,0,0,0.55)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                <ImagePlus size={14} />
+              </button>
+              <button type="button" onClick={removeImage} title="Hapus gambar"
+                style={{ position: "absolute", right: 8, bottom: 8, width: 32, height: 32, borderRadius: 99, border: "none", background: "rgba(0,0,0,0.55)", color: "#FF8A8F", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                <X size={14} />
+              </button>
             </div>
-            <button onClick={() => imgRef.current?.click()} title="Ganti gambar"
-              style={{ width: 30, height: 30, borderRadius: 9, border: `1px solid ${LINE}`, background: "transparent", color: MID, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
-              <ImagePlus size={13} />
-            </button>
-            <button onClick={removeImage} title="Hapus gambar"
-              style={{ width: 30, height: 30, borderRadius: 9, border: `1px solid ${LINE}`, background: "transparent", color: "#FF8A8F", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
-              <X size={13} />
-            </button>
-          </div>
+            <div style={{ marginTop: 9, display: "flex", alignItems: "center", gap: 8 }}>
+              <button type="button" onClick={() => thumbZoomBy(-0.15)} title="Perkecil"
+                style={{ width: 28, height: 28, borderRadius: 9, border: `1px solid ${LINE}`, background: FIELD, color: MID, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                <Minus size={12} />
+              </button>
+              <input type="range" min="0.4" max="4" step="0.01" value={thumbZoom}
+                onChange={(e) => { const nz = +Number(e.target.value).toFixed(2); const [nx, ny] = clampThumbPan(nz, thumbPanX, thumbPanY); setThumbZoom(nz); setThumbPanX(nx); setThumbPanY(ny); }}
+                style={{ flex: 1, accentColor: MAGA }} />
+              <button type="button" onClick={() => thumbZoomBy(0.15)} title="Perbesar"
+                style={{ width: 28, height: 28, borderRadius: 9, border: `1px solid ${LINE}`, background: FIELD, color: MID, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                <ZoomIn size={12} />
+              </button>
+              <button type="button" onClick={resetThumbFocus} style={{ fontSize: 10, color: SUB, fontWeight: 700, background: "transparent", border: "none", cursor: "pointer", flexShrink: 0 }}>Reset</button>
+            </div>
+            <div style={{ marginTop: 5, display: "flex", alignItems: "center", gap: 5, color: SUB }}>
+              <Move size={10} />
+              <span style={{ fontSize: 9.5 }}>Geser gambar utk atur posisi thumbnail</span>
+            </div>
+          </>
         ) : (
           <button onClick={() => imgRef.current?.click()}
             style={{ width: "100%", height: 58, borderRadius: 12, border: `1.5px dashed ${LINE}`, background: FIELD, color: SUB, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, cursor: "pointer", fontFamily: FONT }}>

@@ -23,7 +23,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ArrowLeft, Bold, Camera, Check, ChevronDown, ChevronsDown, ChevronsUp, ChevronUp, Copy, FlipHorizontal2, FlipVertical2, FolderOpen, ImageOff, ImagePlus, Layers, Loader2, Minus, Monitor, Pencil, Plus, Printer, Radio, RotateCw, Save, Search, Settings, Sparkles, Square, Star, Trash2, Type, X, ZoomIn } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Bold, Camera, Check, ChevronDown, ChevronsDown, ChevronsUp, ChevronUp, Copy, FlipHorizontal2, FlipVertical2, FolderOpen, ImageOff, ImagePlus, Layers, Loader2, Minus, Monitor, Move, Pencil, Plus, Printer, Radio, RotateCw, Save, Search, Settings, Sparkles, Square, Star, Trash2, Type, X, ZoomIn } from "lucide-react";
 import QRCode from "qrcode";
 import ScanQrGlyph from "./_scan-glyph";
 import { isAiFile, rasterizeAiToPngFile } from "./_ai-import";
@@ -1729,7 +1729,9 @@ function PromptsManager({ code, items, state, onChanged }) {
           {items.map((p) => (
             <div key={p.id} style={{ display: "flex", flexDirection: "column", background: t.fieldBg, border: `1px solid ${t.lineSoft}`, borderRadius: 13, overflow: "hidden" }}>
               {p.promptImageUrl ? (
-                <img src={p.promptImageUrl} alt="" style={{ width: "100%", aspectRatio: "1 / 1", objectFit: "cover", display: "block" }} />
+                <div style={{ width: "100%", aspectRatio: "1 / 1", overflow: "hidden" }}>
+                  <img src={p.promptImageUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", transform: `scale(${p.thumbZoom ?? 1}) translate(${p.thumbPanX ?? 0}%, ${p.thumbPanY ?? 0}%)`, transformOrigin: "center center" }} />
+                </div>
               ) : (
                 <div style={{ width: "100%", aspectRatio: "1 / 1", display: "flex", alignItems: "center", justifyContent: "center", color: t.lo, background: t.card }}>
                   <Sparkles size={22} />
@@ -1782,10 +1784,51 @@ function RpvPromptFormPopup({ code, items, editingPrompt, onClose, onChanged }) 
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState("");
   const [existingImageUrl, setExistingImageUrl] = useState(editingPrompt?.promptImageUrl || "");
+  // Fokus thumbnail (permintaan user - "atur posisi thumbnail" -> "maksud
+  // saya bisa di zoom dan geser"): zoom+pan interaktif (drag lgsg di atas
+  // preview + slider zoom), pola SAMA PERSIS dgn kontrol crop foto tamu di
+  // halaman lain (_frame.jsx) - dipakai jg di thumbnail grid daftar
+  // template & di mana pun gambar prompt ini ditampilkan tamu.
+  const [thumbPanX, setThumbPanX] = useState(editingPrompt?.thumbPanX ?? 0);
+  const [thumbPanY, setThumbPanY] = useState(editingPrompt?.thumbPanY ?? 0);
+  const [thumbZoom, setThumbZoom] = useState(editingPrompt?.thumbZoom ?? 1);
+  const thumbImgRef = useRef(null);
+  const thumbDragRef = useRef(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
   const thumbUrl = preview || existingImageUrl;
+
+  const clampThumbPan = (zoom, x, y) => {
+    const limit = zoom >= 1 ? ((zoom - 1) * 50) / zoom : (1 - zoom) * 70;
+    return [Math.max(-limit, Math.min(limit, x)), Math.max(-limit, Math.min(limit, y))];
+  };
+  const onThumbPointerDown = (e) => {
+    e.preventDefault();
+    thumbDragRef.current = { startX: e.clientX, startY: e.clientY, startPanX: thumbPanX, startPanY: thumbPanY, dragging: true };
+    const move = (ev) => {
+      if (!thumbDragRef.current?.dragging || !thumbImgRef.current) return;
+      const w = thumbImgRef.current.offsetWidth || 1;
+      const h = thumbImgRef.current.offsetHeight || 1;
+      const dx = ((ev.clientX - thumbDragRef.current.startX) / w) * 100;
+      const dy = ((ev.clientY - thumbDragRef.current.startY) / h) * 100;
+      const [nx, ny] = clampThumbPan(thumbZoom, thumbDragRef.current.startPanX + dx / thumbZoom, thumbDragRef.current.startPanY + dy / thumbZoom);
+      setThumbPanX(nx); setThumbPanY(ny);
+    };
+    const up = () => {
+      thumbDragRef.current = null;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  const thumbZoomBy = (delta) => {
+    const nz = Math.max(0.4, Math.min(4, +(thumbZoom + delta).toFixed(2)));
+    const [nx, ny] = clampThumbPan(nz, thumbPanX, thumbPanY);
+    setThumbZoom(nz); setThumbPanX(nx); setThumbPanY(ny);
+  };
+  const resetThumbFocus = () => { setThumbZoom(1); setThumbPanX(0); setThumbPanY(0); };
 
   const onPickImage = (e) => {
     const f = e.target.files?.[0];
@@ -1803,10 +1846,10 @@ function RpvPromptFormPopup({ code, items, editingPrompt, onClose, onChanged }) 
       let imagePath = null;
       if (file) imagePath = await uploadRpvPromptImage(code, file);
       if (isEditing) {
-        const row = await updateRpvPrompt(code, editingPrompt.id, label || editingPrompt.label, text, imagePath);
+        const row = await updateRpvPrompt(code, editingPrompt.id, label || editingPrompt.label, text, imagePath, thumbPanX, thumbPanY, thumbZoom);
         if (row) onChanged(items.map((p) => (p.id === editingPrompt.id ? row : p)));
       } else {
-        const row = await addRpvPrompt(code, label || `Template ${items.length + 1}`, text, imagePath);
+        const row = await addRpvPrompt(code, label || `Template ${items.length + 1}`, text, imagePath, thumbPanX, thumbPanY, thumbZoom);
         if (row) onChanged([...items, row]);
       }
       onClose();
@@ -1835,30 +1878,53 @@ function RpvPromptFormPopup({ code, items, editingPrompt, onClose, onChanged }) 
           style={{ width: "100%", height: 38, borderRadius: 9, border: `1px solid ${t.line}`, background: t.fieldBg, padding: "0 11px", fontSize: 12.5, fontFamily: FONT, color: t.hi, boxSizing: "border-box" }} />
 
         <div style={{ fontSize: 10.5, fontWeight: 700, color: t.lo, marginTop: 12, marginBottom: 5 }}>Isi Prompt Gemini</div>
-        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} placeholder="Tulis instruksi lengkap utk Gemini di sini..."
-          style={{ width: "100%", borderRadius: 9, border: `1px solid ${t.line}`, background: t.fieldBg, padding: "9px 11px", fontSize: 12.5, lineHeight: 1.5, fontFamily: FONT, color: t.hi, boxSizing: "border-box", resize: "vertical" }} />
+        <textarea value={text} onChange={(e) => setText(e.target.value)} placeholder="Tulis instruksi lengkap utk Gemini di sini..."
+          style={{ width: "100%", minHeight: 92, maxHeight: 160, borderRadius: 9, border: `1px solid ${t.line}`, background: t.fieldBg, padding: "9px 11px", fontSize: 12.5, lineHeight: 1.5, fontFamily: FONT, color: t.hi, boxSizing: "border-box", resize: "vertical", overflowY: "auto" }} />
 
         <div style={{ fontSize: 10.5, fontWeight: 700, color: t.lo, marginTop: 12, marginBottom: 5 }}>Gambar Referensi</div>
         <input ref={imgRef} type="file" accept="image/*" onChange={onPickImage} style={{ display: "none" }} />
-        <button onClick={() => imgRef.current?.click()}
-          style={{
-            width: "100%", height: thumbUrl ? 160 : 56, borderRadius: 12, cursor: "pointer", position: "relative", overflow: "hidden",
-            border: thumbUrl ? "none" : `1.5px dashed ${t.line}`, background: t.fieldBg, padding: 0,
-          }}>
-          {thumbUrl ? (
-            <>
-              <img src={thumbUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-              <div style={{ position: "absolute", inset: 0, background: "rgba(6,6,8,0.35)", opacity: 0, transition: "opacity .15s", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, color: "#fff", fontSize: 12, fontWeight: 800 }}
-                onMouseEnter={(e) => { e.currentTarget.style.opacity = 1; }} onMouseLeave={(e) => { e.currentTarget.style.opacity = 0; }}>
-                <ImagePlus size={14} /> Ganti Gambar
-              </div>
-            </>
-          ) : (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: t.mid, height: "100%" }}>
-              <ImagePlus size={16} /> <span style={{ fontSize: 12, fontWeight: 700 }}>Upload Gambar</span>
+        {thumbUrl ? (
+          <>
+            {/* FIX (permintaan user - "atur posisi thumbnail" -> "maksud
+                saya bisa di zoom dan geser"): preview ini SEKARANG bisa
+                di-drag langsung (geser jari/mouse) utk pan, & slider zoom
+                di bawahnya - bukan lagi grid 3x3 titik statis. Tombol
+                "Ganti Gambar" dipindah jadi ikon kecil mengambang di pojok
+                (drag di TENGAH gambar tidak lagi ke-trigger ganti gambar). */}
+            <div style={{ width: "100%", height: 190, borderRadius: 12, overflow: "hidden", position: "relative", background: t.fieldBg, touchAction: "none", cursor: "grab" }}
+              onPointerDown={onThumbPointerDown}>
+              <img ref={thumbImgRef} src={thumbUrl} alt="" draggable={false}
+                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", transform: `scale(${thumbZoom}) translate(${thumbPanX}%, ${thumbPanY}%)`, transformOrigin: "center center", userSelect: "none" }} />
+              <button type="button" onClick={() => imgRef.current?.click()} title="Ganti gambar"
+                style={{ position: "absolute", right: 8, top: 8, width: 30, height: 30, borderRadius: 99, border: "none", background: "rgba(6,6,8,0.6)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                <ImagePlus size={13} />
+              </button>
             </div>
-          )}
-        </button>
+            <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 8 }}>
+              <button type="button" onClick={() => thumbZoomBy(-0.15)} title="Perkecil"
+                style={{ width: 26, height: 26, borderRadius: 8, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                <Minus size={11} />
+              </button>
+              <input type="range" min="0.4" max="4" step="0.01" value={thumbZoom}
+                onChange={(e) => { const nz = +Number(e.target.value).toFixed(2); const [nx, ny] = clampThumbPan(nz, thumbPanX, thumbPanY); setThumbZoom(nz); setThumbPanX(nx); setThumbPanY(ny); }}
+                style={{ flex: 1, accentColor: MAGA }} />
+              <button type="button" onClick={() => thumbZoomBy(0.15)} title="Perbesar"
+                style={{ width: 26, height: 26, borderRadius: 8, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                <ZoomIn size={11} />
+              </button>
+              <button type="button" onClick={resetThumbFocus} style={{ fontSize: 9.5, color: t.lo, fontWeight: 700, background: "transparent", border: "none", cursor: "pointer", flexShrink: 0 }}>Reset</button>
+            </div>
+            <div style={{ marginTop: 5, display: "flex", alignItems: "center", gap: 5, color: t.lo }}>
+              <Move size={10} />
+              <span style={{ fontSize: 9.5 }}>Geser gambar utk atur posisi thumbnail</span>
+            </div>
+          </>
+        ) : (
+          <button onClick={() => imgRef.current?.click()}
+            style={{ width: "100%", height: 56, borderRadius: 12, cursor: "pointer", border: `1.5px dashed ${t.line}`, background: t.fieldBg, padding: 0, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, color: t.mid }}>
+            <ImagePlus size={16} /> <span style={{ fontSize: 12, fontWeight: 700 }}>Upload Gambar</span>
+          </button>
+        )}
 
         {err && (
           <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 7, padding: "9px 11px", borderRadius: 10, background: "rgba(198,40,40,0.14)", border: "1px solid rgba(198,40,40,0.35)" }}>
