@@ -34,7 +34,7 @@ import {
   newTemplateTextElement, newTemplateImageElement, newTemplateFrameOverlayElement, newTemplateShapeElement, clampPct,
   PhotoFrame, findDefaultFrameTemplate,
 } from "./_frame";
-import { addRpvPrompt, clearRpvDefaultFrameTemplate, createRpvSession, deleteRpvCustomFont, deleteRpvFrameTemplate, deleteRpvPhoto, deleteRpvPrompt, deleteRpvSession, findRpvPhotoByQueue, getRpvSession, listRpvCustomFonts, listRpvFrameTemplates, listRpvPhotos, listRpvPrompts, listRpvSessions, rpvPublicUrl, saveRpvFrameTemplate, saveRpvPhotoCrop, setRpvDefaultFrameTemplate, subscribeRpvOperatorPairing, subscribeRpvPhotos, updateRpvPrompt, uploadRpvCustomFont, uploadRpvPromptImage, uploadRpvTemplateImage } from "../../../lib/rpv";
+import { addRpvPrompt, clearRpvDefaultFrameTemplate, createRpvSession, deleteRpvCustomFont, deleteRpvFrameTemplate, deleteRpvPhoto, deleteRpvPrompt, deleteRpvSession, findRpvPhotoByQueue, getRpvSession, listRpvCustomFonts, listRpvFrameTemplates, listRpvPhotos, listRpvPrompts, listRpvSessions, renameRpvSession, rpvPublicUrl, saveRpvFrameTemplate, saveRpvPhotoCrop, setRpvDefaultFrameTemplate, subscribeRpvOperatorPairing, subscribeRpvPhotos, updateRpvPrompt, uploadRpvCustomFont, uploadRpvPromptImage, uploadRpvTemplateImage } from "../../../lib/rpv";
 
 const RED = "#ED1C24";
 const VIO = "#7C3AED";
@@ -96,6 +96,7 @@ export default function RpvControlRoom() {
   const router = useRouter();
   const unsubRef = useRef(null);
   const dragRef = useRef(null); // { startX, startY, startPanX, startPanY, dragging } - crop pan
+  const dragRefCleanupRef = useRef(null); // simpan cleanup drag terakhir, spy listener window tak pernah menumpuk kalau pointerup/pointercancel gagal ke-fire pas geser cepat
   const imgRef = useRef(null);
 
   const [sessions, setSessions] = useState([]);
@@ -440,6 +441,7 @@ export default function RpvControlRoom() {
 
   const onCropPointerDown = (e) => {
     e.preventDefault();
+    if (dragRefCleanupRef.current) { dragRefCleanupRef.current(); dragRefCleanupRef.current = null; }
     dragRef.current = { startX: e.clientX, startY: e.clientY, startPanX: crop.panX, startPanY: crop.panY, dragging: true };
     const move = (ev) => {
       if (!dragRef.current?.dragging || !imgRef.current) return;
@@ -449,13 +451,17 @@ export default function RpvControlRoom() {
       const dy = ((ev.clientY - dragRef.current.startY) / h) * 100;
       setCrop((c) => ({ ...c, panX: dragRef.current.startPanX + dx / c.zoom, panY: dragRef.current.startPanY + dy / c.zoom }));
     };
-    const up = () => {
+    const end = () => {
       dragRef.current = null;
       window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      dragRefCleanupRef.current = null;
     };
     window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    dragRefCleanupRef.current = end;
   };
   const zoomBy = (delta) => setCrop((c) => ({ ...c, zoom: Math.max(1, Math.min(4, +(c.zoom + delta).toFixed(2))) }));
   const rotateBy = (deg) => setCrop((c) => ({ ...c, rotate: (c.rotate + deg + 360) % 360 }));
@@ -507,6 +513,9 @@ export default function RpvControlRoom() {
   const [templatesState, setTemplatesState] = useState("idle"); // idle|loading|ready
   const [activeTemplateId, setActiveTemplateId] = useState("");
   const [activeTemplateName, setActiveTemplateName] = useState("Template Baru");
+  // Dipakai utk tanda "Template Default" di bawah pilihan Bingkai "Custom"
+  // (permintaan user - "beri tanda utk default template yg digunakan").
+  const defaultTemplate = useMemo(() => findDefaultFrameTemplate(savedTemplates), [savedTemplates]);
   const [templateSaving, setTemplateSaving] = useState(false);
   const [templateUploading, setTemplateUploading] = useState(false);
   const templateFrameRef = useRef(null);
@@ -748,7 +757,27 @@ export default function RpvControlRoom() {
     }
   };
 
-  const handlePrint = () => { if (selectedPhoto) window.print(); };
+  // FIX (permintaan user - "cetak ini juga buat jadi simpan dan cetak,
+  // karena mungkin ada perubahan yg belum tersimpan ketika dicetak, takutnya
+  // perubahannya tidak tersimpan"): SEBELUMNYA window.print() langsung
+  // jalan dgn crop TERAKHIR di state React saja - kalau operator lupa klik
+  // "Simpan Penyesuaian" dulu, hasil cetak & lembar cetak fisiknya tetap
+  // benar (pakai state `crop` yg sama), TAPI penyesuaian itu jadi TIDAK
+  // pernah kesimpan ke database (hilang kalau pindah/reload foto) walau
+  // sudah kadung dicetak. Sekarang simpan ke DB DULU (kalau ada perubahan
+  // yg belum tersimpan) baru window.print(), jadi hasil cetak & data yg
+  // tersimpan selalu konsisten satu sama lain.
+  const [printing, setPrinting] = useState(false);
+  const handlePrint = async () => {
+    if (!selectedPhoto || printing) return;
+    setPrinting(true);
+    try {
+      if (cropDirty) await saveCropAdjustment();
+      window.print();
+    } finally {
+      setPrinting(false);
+    }
+  };
 
   const activeSummary = session ? `${session.title} · ${activeCode}` : "Belum ada sesi aktif";
 
@@ -882,11 +911,6 @@ export default function RpvControlRoom() {
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                         <span style={{ fontSize: 13, fontWeight: 800, color: t.hi, fontFamily: "monospace", letterSpacing: "0.04em" }}>{p.queue_label || "—"}</span>
-                        {p.is_ai_result && (
-                          <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 8, fontWeight: 800, color: "#fff", background: `linear-gradient(135deg,${VIO},${MAGA})`, borderRadius: 999, padding: "1.5px 5px" }}>
-                            <Sparkles size={7} /> AI
-                          </span>
-                        )}
                       </div>
                       <div style={{ fontSize: 10, color: t.lo, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {p.uploaded_at ? formatPhotoTime(p.uploaded_at) : ""}
@@ -922,137 +946,179 @@ export default function RpvControlRoom() {
                   <Printer size={14} color={RED} />
                   <span style={{ fontSize: 12.5, fontWeight: 800, color: t.hi }}>Cetak Foto</span>
                   <span style={{ fontFamily: "monospace", fontSize: 12, color: MAGA, fontWeight: 800, letterSpacing: "0.04em" }}>{selectedPhoto.queue_label}</span>
-                  <button onClick={handlePrint}
-                    style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 7, height: 36, padding: "0 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontWeight: 800, fontSize: 12.5, cursor: "pointer", fontFamily: FONT }}>
-                    <Printer size={14} /> Cetak
+                  {/* FIX (permintaan user - "cetak ini juga buat jadi simpan dan
+                      cetak, karena mungkin ada perubahan yg belum tersimpan"):
+                      1 tombol ini SEKARANG selalu simpan penyesuaian (kalau
+                      ada yg belum tersimpan) SEBELUM window.print() (lihat
+                      handlePrint di atas), jadi hasil cetak & data yg
+                      tersimpan di database tidak pernah berbeda. */}
+                  <button onClick={handlePrint} disabled={printing}
+                    style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 7, height: 36, padding: "0 16px", borderRadius: 10, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontWeight: 800, fontSize: 12.5, cursor: printing ? "default" : "pointer", fontFamily: FONT, opacity: printing ? 0.75 : 1 }}>
+                    {printing ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Printer size={14} />} Simpan &amp; Cetak
                   </button>
                 </div>
 
-                <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 18, display: "flex", flexDirection: "column", alignItems: "center", gap: 18 }}>
-                  {/* Preview crop/zoom - drag utk geser, tombol/scroll utk zoom */}
-                  <div style={{ width: "100%", maxWidth: 340 }}>
-                    <div style={{ boxShadow: "0 10px 30px rgba(0,0,0,0.45)" }}>
+                <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 22, padding: 18, boxSizing: "border-box" }} className="rpv-print-panel">
+                  {/* Kiri: preview foto + section "Penyesuaian" (zoom/putar/
+                      balik/simpan) TEPAT DI BAWAHNYA - FIX (permintaan user -
+                      "penyesuaian buat di bawah foto, porsinya pas bagian
+                      foto+penyesuaian, & QR/ukuran/bingkai di kanan"):
+                      SEBELUMNYA "Penyesuaian" ikut nempel di kolom kanan
+                      bareng QR/ukuran/bingkai - sekarang kolom kiri ini
+                      isinya foto + kontrol penyesuaiannya SATU KESATUAN
+                      (scroll sendiri kalau kepanjangan di layar pendek),
+                      kolom kanan murni utk QR Share + Ukuran Cetak + Bingkai. */}
+                  <div style={{ flex: "1 1 55%", minWidth: 0, maxWidth: 460, overflowY: "auto", display: "flex", flexDirection: "column", alignItems: "center", gap: 16 }}>
+                    <div style={{ width: `min(320px, calc(56vh * ${printRatio.w} / ${printRatio.h}))`, flexShrink: 0, boxShadow: "0 10px 30px rgba(0,0,0,0.45)" }}>
                       <PhotoFrame photo={selectedPhoto} ratio={printRatio} crop={crop} frame={frameKey} mode="screen"
                         queueLabel={selectedPhoto.queue_label} sessionTitle={session?.title}
                         imgRef={imgRef} onPointerDown={onCropPointerDown} customElements={customElements} customBaseStyle={customBaseStyle} customFonts={customFonts} />
                     </div>
-                    {/* FIX (permintaan user - "pinch to zoom dihilangkan,
-                        interaksi di area gambar cuma drag geser, zoom cuma
-                        dari slider"): sblmnya ada onWheel di wrapper atas
-                        yg bikin scroll/pinch-trackpad ikut memicu zoom (gestur
-                        pinch trackpad Mac dikirim browser sbg wheel event +
-                        ctrlKey, jadi ikut ke-tangkap onWheel walau elemen
-                        <img>-nya sendiri sudah touchAction:"none"). Sekarang
-                        onWheel itu DIHAPUS - area gambar murni cuma drag
-                        (onCropPointerDown) utk geser posisi, zoom SATU2NYA
-                        jalur cuma lewat tombol +/- & slider di bawah ini. */}
-                    <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                      <button onClick={() => zoomBy(-0.15)} title="Perkecil" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><Minus size={13} /></button>
-                      <input type="range" min="1" max="4" step="0.01" value={crop.zoom} onChange={(e) => setCrop((c) => ({ ...c, zoom: +Number(e.target.value).toFixed(2) }))}
-                        className="rpv-zoom-slider" style={{ flex: 1, maxWidth: 140, accentColor: MAGA }} />
-                      <span style={{ fontSize: 11, color: t.lo, fontWeight: 700, width: 38, textAlign: "center", flexShrink: 0 }}>{Math.round(crop.zoom * 100)}%</span>
-                      <button onClick={() => zoomBy(0.15)} title="Perbesar" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><ZoomIn size={13} /></button>
+
+                    {/* FIX (permintaan user - "zoom dan putar balik itu dalam
+                        satu section, beserta simpan"): zoom, putar 90°, balik
+                        H/V, & tombol Simpan Penyesuaian 1 kartu utuh, dipisah
+                        pakai divider tipis antar kelompok biar tetap jelas. */}
+                    <div style={{ width: "100%", maxWidth: 340, borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, overflow: "hidden" }}>
+                      <div style={{ padding: "10px 14px", fontSize: 10.5, fontWeight: 800, color: t.mid, letterSpacing: "0.04em", borderBottom: `1px solid ${t.lineSoft}` }}>PENYESUAIAN</div>
+                      <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 12 }}>
+                        {/* Zoom - FIX (permintaan user - "pinch to zoom
+                            dihilangkan, interaksi di area gambar cuma drag
+                            geser, zoom cuma dari slider"): area gambar murni
+                            cuma drag (onCropPointerDown) utk geser posisi,
+                            zoom SATU2NYA jalur cuma lewat tombol +/- &
+                            slider ini. */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <button onClick={() => zoomBy(-0.15)} title="Perkecil" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><Minus size={13} /></button>
+                          <input type="range" min="1" max="4" step="0.01" value={crop.zoom} onChange={(e) => setCrop((c) => ({ ...c, zoom: +Number(e.target.value).toFixed(2) }))}
+                            className="rpv-zoom-slider" style={{ flex: 1, accentColor: MAGA }} />
+                          <span style={{ fontSize: 11, color: t.lo, fontWeight: 700, width: 38, textAlign: "center", flexShrink: 0 }}>{Math.round(crop.zoom * 100)}%</span>
+                          <button onClick={() => zoomBy(0.15)} title="Perbesar" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><ZoomIn size={13} /></button>
+                        </div>
+
+                        <div style={{ height: 1, background: t.lineSoft, margin: "2px 0" }} />
+
+                        {/* Putar & balik - buat case cetak yg fotonya
+                            kepotret miring/landscape padahal mau dicetak
+                            potret, atau HP scanner tamu megang kamera
+                            terbalik. Putar selalu kelipatan 90° (presisi
+                            ngepas bingkai cetak), label tombol nunjukin
+                            derajat saat ini. */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <button onClick={() => rotateBy(ROTATE_STEP)} title="Putar 90° searah jarum jam"
+                            style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 12px", borderRadius: 8, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                            <RotateCw size={13} /> Putar 90° <span style={{ color: t.lo, fontWeight: 600 }}>({crop.rotate}°)</span>
+                          </button>
+                          <button onClick={toggleFlipX} title="Balik horizontal (cermin kiri-kanan)"
+                            style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 12px", borderRadius: 8, border: `1.5px solid ${crop.flipX ? MAGA : t.line}`, background: crop.flipX ? `${MAGA}22` : t.fieldBg, color: crop.flipX ? "#fff" : t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                            <FlipHorizontal2 size={13} /> Balik H
+                          </button>
+                          <button onClick={toggleFlipY} title="Balik vertikal (cermin atas-bawah)"
+                            style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 12px", borderRadius: 8, border: `1.5px solid ${crop.flipY ? MAGA : t.line}`, background: crop.flipY ? `${MAGA}22` : t.fieldBg, color: crop.flipY ? "#fff" : t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                            <FlipVertical2 size={13} /> Balik V
+                          </button>
+                          <button onClick={resetCrop} title="Reset posisi/zoom/rotasi/balik"
+                            style={{ fontSize: 10.5, color: t.lo, fontWeight: 700, background: "transparent", border: "none", cursor: "pointer", fontFamily: FONT }}>Reset Semua</button>
+                        </div>
+
+                        <div style={{ height: 1, background: t.lineSoft, margin: "2px 0" }} />
+
+                        {/* Simpan penyesuaian zoom/pan/rotate/flip KE DATABASE
+                            (kolom rpv_photos.crop_json, lihat saveRpvPhotoCrop
+                            di lib/rpv.js) - foto yg sudah disimpan otomatis
+                            ikut dipakai di TV Viewer & tetap sama kalau
+                            dicetak ulang kapan saja. Tombol "Simpan & Cetak"
+                            di atas JUGA otomatis manggil ini, jadi tombol di
+                            sini lebih utk simpan cepat tanpa langsung cetak. */}
+                        <button onClick={saveCropAdjustment} disabled={cropSaving || !cropDirty} title="Simpan penyesuaian foto ini ke database"
+                          style={{
+                            display: "flex", alignItems: "center", justifyContent: "center", gap: 7, height: 36, padding: "0 16px", borderRadius: 9, border: "none",
+                            background: !cropDirty ? t.fieldBg : MAGA, color: !cropDirty ? t.lo : "#fff",
+                            fontSize: 11.5, fontWeight: 800, cursor: cropSaving || !cropDirty ? "default" : "pointer", fontFamily: FONT,
+                            opacity: cropSaving ? 0.7 : 1,
+                          }}>
+                          {cropSaving ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={13} />}
+                          {cropSaving ? "Menyimpan..." : cropDirty ? "Simpan Penyesuaian" : "Tersimpan"}
+                        </button>
+                      </div>
                     </div>
-                    {/* QR Share - operator bisa langsung tunjukkan hasil +
-                        link share/download ke tamu di sini juga, tanpa perlu
-                        arahan teks terpisah (drag/slider sudah cukup jelas
-                        dari interaksinya sendiri). Link identik dgn yg tamu
-                        terima saat upload (/marta/photobooth/p/[photoCode]),
-                        jadi selalu menampilkan versi TERBARU (ikut crop/
-                        bingkai yg operator atur di sini). */}
+                  </div>
+
+                  {/* Kanan: QR Share (diperbesar lagi) + Ukuran Cetak +
+                      Bingkai - kolom sendiri yg scroll independen dari kiri. */}
+                  <div style={{ flex: "1 1 45%", minWidth: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 16 }}>
+                    {/* QR Share - FIX (permintaan user - "QR lebih besar
+                        lagi"): diperbesar lagi dari 96px -> 132px supaya
+                        makin gampang di-scan tamu dari jarak agak jauh.
+                        Operator bisa langsung tunjukkan hasil + link share/
+                        download ke tamu di sini juga, tanpa perlu arahan
+                        teks terpisah. Link identik dgn yg tamu terima saat
+                        upload (/marta/photobooth/p/[photoCode]), jadi selalu
+                        menampilkan versi TERBARU (ikut crop/bingkai yg
+                        operator atur di sini). */}
                     {qrShareUrl && (
-                      <div style={{ marginTop: 14, padding: "12px 14px", borderRadius: 12, border: `1px solid ${t.line}`, background: t.card, display: "flex", alignItems: "center", gap: 14 }}>
+                      <div style={{ padding: 18, borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, display: "flex", flexDirection: "column", alignItems: "center", gap: 12, textAlign: "center" }}>
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={qrShareUrl} alt="QR share" width={68} height={68} style={{ borderRadius: 6, flexShrink: 0 }} />
+                        <img src={qrShareUrl} alt="QR share" width={132} height={132} style={{ borderRadius: 10 }} />
                         <div>
-                          <div style={{ fontSize: 11, fontWeight: 800, color: t.hi, display: "flex", alignItems: "center", gap: 6 }}>
-                            <ScanQrGlyph size={13} color={MAGA} strokeWidth={1.8} /> Tunjukkan ke Tamu
+                          <div style={{ fontSize: 12, fontWeight: 800, color: t.hi, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                            <ScanQrGlyph size={14} color={MAGA} strokeWidth={1.8} /> Tunjukkan ke Tamu
                           </div>
-                          <div style={{ marginTop: 3, fontSize: 10.5, color: t.mid, lineHeight: 1.4 }}>Scan utk lihat &amp; download hasil ini.</div>
+                          <div style={{ marginTop: 4, fontSize: 11, color: t.mid, lineHeight: 1.4 }}>Scan utk lihat &amp; download hasil ini.</div>
                         </div>
                       </div>
                     )}
 
-                    {/* Putar & balik - buat case cetak yg fotonya kepotret
-                        miring/landscape padahal mau dicetak potret, atau
-                        HP scanner tamu megang kamera terbalik. Putar
-                        selalu kelipatan 90° (presisi ngepas bingkai cetak),
-                        label tombol nunjukin derajat saat ini. */}
-                    <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, flexWrap: "wrap" }}>
-                      <button onClick={() => rotateBy(ROTATE_STEP)} title="Putar 90° searah jarum jam"
-                        style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 12px", borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
-                        <RotateCw size={13} /> Putar 90° <span style={{ color: t.lo, fontWeight: 600 }}>({crop.rotate}°)</span>
-                      </button>
-                      <button onClick={toggleFlipX} title="Balik horizontal (cermin kiri-kanan)"
-                        style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 12px", borderRadius: 8, border: `1.5px solid ${crop.flipX ? MAGA : t.line}`, background: crop.flipX ? `${MAGA}22` : t.card, color: crop.flipX ? "#fff" : t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
-                        <FlipHorizontal2 size={13} /> Balik H
-                      </button>
-                      <button onClick={toggleFlipY} title="Balik vertikal (cermin atas-bawah)"
-                        style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 12px", borderRadius: 8, border: `1.5px solid ${crop.flipY ? MAGA : t.line}`, background: crop.flipY ? `${MAGA}22` : t.card, color: crop.flipY ? "#fff" : t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
-                        <FlipVertical2 size={13} /> Balik V
-                      </button>
-                      <button onClick={resetCrop} title="Reset posisi/zoom/rotasi/balik"
-                        style={{ fontSize: 10.5, color: t.lo, fontWeight: 700, background: "transparent", border: "none", cursor: "pointer", fontFamily: FONT }}>Reset Semua</button>
+                    {/* Ukuran cetak - dikunci ke 2R (tidak ada lagi pilihan ukuran lain). */}
+                    <div style={{ padding: 14, borderRadius: 14, border: `1px solid ${t.line}`, background: t.card }}>
+                      <div style={{ fontSize: 10.5, fontWeight: 800, color: t.mid, marginBottom: 8, letterSpacing: "0.04em" }}>UKURAN CETAK</div>
+                      <div style={{
+                        display: "inline-flex", alignItems: "center", gap: 7, padding: "7px 11px", borderRadius: 9,
+                        border: `1.5px solid ${MAGA}`, background: `${MAGA}22`, color: "#fff", fontSize: 11, fontWeight: 700,
+                      }}>
+                        {PRINT_SIZE.label} · {PRINT_SIZE.w}×{PRINT_SIZE.h}cm
+                      </div>
                     </div>
 
-                    {/* Simpan penyesuaian zoom/pan/rotate/flip KE DATABASE
-                        (kolom rpv_photos.crop_json, lihat saveRpvPhotoCrop
-                        di lib/rpv.js) - SEBELUMNYA cuma hidup di state React
-                        sesaat & hilang begitu pindah foto/reload, jadi
-                        "sudah di-zoom & adjust tapi tidak kesimpan". Foto
-                        yg sudah disimpan otomatis ikut dipakai di TV Viewer
-                        (lihat viewer/[code]/page.jsx) & tetap sama kalau
-                        dicetak ulang kapan saja. */}
-                    <div style={{ marginTop: 10, display: "flex", justifyContent: "center" }}>
-                      <button onClick={saveCropAdjustment} disabled={cropSaving || !cropDirty} title="Simpan penyesuaian foto ini ke database"
-                        style={{
-                          display: "flex", alignItems: "center", gap: 7, height: 34, padding: "0 16px", borderRadius: 9, border: "none",
-                          background: !cropDirty ? t.card : MAGA, color: !cropDirty ? t.lo : "#fff",
-                          fontSize: 11.5, fontWeight: 800, cursor: cropSaving || !cropDirty ? "default" : "pointer", fontFamily: FONT,
-                          opacity: cropSaving ? 0.7 : 1,
-                        }}>
-                        {cropSaving ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={13} />}
-                        {cropSaving ? "Menyimpan..." : cropDirty ? "Simpan Penyesuaian" : "Tersimpan"}
-                      </button>
+                    {/* Bingkai - FIX (permintaan user - "beri tanda utk
+                        default template yg digunakan"): tanda "Default"
+                        muncul di bawah pilihan "Custom" kalau template yg
+                        lagi aktif dipakai memang template default (lihat
+                        defaultTemplate/findDefaultFrameTemplate) - sesuai
+                        dgn tanda bintang emas yg sama di daftar "Template
+                        Tersimpan" di Editor Template. */}
+                    <div style={{ padding: 14, borderRadius: 14, border: `1px solid ${t.line}`, background: t.card }}>
+                      <div style={{ fontSize: 10.5, fontWeight: 800, color: t.mid, marginBottom: 8, letterSpacing: "0.04em" }}>BINGKAI</div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {FRAME_PRESETS.map((f) => (
+                          <button key={f.key} onClick={() => setFrameKey(f.key)}
+                            style={{
+                              flex: 1, padding: "9px 8px", borderRadius: 9, border: `1.5px solid ${frameKey === f.key ? MAGA : t.line}`,
+                              background: frameKey === f.key ? `${MAGA}22` : t.fieldBg, color: frameKey === f.key ? "#fff" : t.mid,
+                              fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
+                            }}>
+                            {f.label}
+                          </button>
+                        ))}
+                      </div>
+                      {frameKey === "custom" && (
+                        <>
+                          <button onClick={() => setTemplateEditorOpen(true)}
+                            style={{
+                              marginTop: 8, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                              height: 34, borderRadius: 9, border: `1.5px solid ${MAGA}66`, background: `${MAGA}18`, color: "#fff",
+                              fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+                            }}>
+                            <Layers size={13} /> Editor Template {activeTemplateName ? `· ${activeTemplateName}` : ""}
+                          </button>
+                          {defaultTemplate && activeTemplateId === defaultTemplate.id && (
+                            <div style={{ marginTop: 7, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, fontSize: 10, fontWeight: 800, color: "#F5B400" }}>
+                              <Star size={10} fill="#F5B400" /> Template Default
+                            </div>
+                          )}
+                        </>
+                      )}
                     </div>
-                  </div>
-
-                  {/* Ukuran cetak - dikunci ke 2R (tidak ada lagi pilihan ukuran lain). */}
-                  <div style={{ width: "100%", maxWidth: 340 }}>
-                    <div style={{ fontSize: 11, fontWeight: 800, color: t.mid, marginBottom: 8 }}>UKURAN CETAK</div>
-                    <div style={{
-                      display: "inline-flex", alignItems: "center", gap: 7, padding: "7px 11px", borderRadius: 9,
-                      border: `1.5px solid ${MAGA}`, background: `${MAGA}22`, color: "#fff", fontSize: 11, fontWeight: 700,
-                    }}>
-                      {PRINT_SIZE.label} · {PRINT_SIZE.w}×{PRINT_SIZE.h}cm
-                    </div>
-                  </div>
-
-                  {/* Bingkai */}
-                  <div style={{ width: "100%", maxWidth: 340 }}>
-                    <div style={{ fontSize: 11, fontWeight: 800, color: t.mid, marginBottom: 8 }}>BINGKAI</div>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      {FRAME_PRESETS.map((f) => (
-                        <button key={f.key} onClick={() => setFrameKey(f.key)}
-                          style={{
-                            flex: 1, padding: "9px 8px", borderRadius: 9, border: `1.5px solid ${frameKey === f.key ? MAGA : t.line}`,
-                            background: frameKey === f.key ? `${MAGA}22` : t.card, color: frameKey === f.key ? "#fff" : t.mid,
-                            fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
-                          }}>
-                          {f.label}
-                        </button>
-                      ))}
-                    </div>
-                    {frameKey === "custom" && (
-                      <button onClick={() => setTemplateEditorOpen(true)}
-                        style={{
-                          marginTop: 8, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
-                          height: 34, borderRadius: 9, border: `1.5px solid ${MAGA}66`, background: `${MAGA}18`, color: "#fff",
-                          fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
-                        }}>
-                        <Layers size={13} /> Editor Template {activeTemplateName ? `· ${activeTemplateName}` : ""}
-                      </button>
-                    )}
                   </div>
                 </div>
               </>
@@ -1103,6 +1169,7 @@ export default function RpvControlRoom() {
           sessions={sessions} sessionsState={sessionsState}
           activeCode={activeCode} setActiveCode={setActiveCode}
           refreshSessions={refreshSessions}
+          onSessionRenamed={(updated) => { if (updated && updated.code === activeCode) setSession((prev) => (prev ? { ...prev, title: updated.title } : prev)); }}
           prompts={prompts} promptsState={promptsState}
           onPromptsChanged={(items) => setPrompts(items)}
         />
@@ -1458,7 +1525,20 @@ function TemplateEditorModal({
                         border: `1.5px solid ${tpl.id === activeTemplateId ? MAGA : t.lineSoft}`, background: tpl.id === activeTemplateId ? `${MAGA}18` : t.fieldBg,
                       }}>
                       <FolderOpen size={12} color={tpl.id === activeTemplateId ? MAGA : t.lo} style={{ flexShrink: 0 }} />
-                      <span style={{ flex: 1, minWidth: 0, fontSize: 11, fontWeight: 700, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tpl.name}</span>
+                      <span style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
+                        <span style={{ minWidth: 0, fontSize: 11, fontWeight: 700, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tpl.name}</span>
+                        {/* FIX (permintaan user - "beri tanda utk default
+                            template yg digunakan"): SEBELUMNYA cuma
+                            bintang emas (bisa kurang jelas) - sekarang
+                            ditambah label teks "Default" eksplisit, &
+                            daftar ini SUDAH terurut default-first dari DB
+                            (lihat rpv_list_frame_templates: order by
+                            is_default desc), jadi template default SELALU
+                            di baris paling atas. */}
+                        {tpl.isDefault && (
+                          <span style={{ flexShrink: 0, fontSize: 8.5, fontWeight: 800, color: "#171205", background: "#F5B400", borderRadius: 999, padding: "1.5px 6px", letterSpacing: "0.02em" }}>DEFAULT</span>
+                        )}
+                      </span>
                       <button
                         onClick={(e) => { e.stopPropagation(); tpl.isDefault ? onUnsetDefaultTemplate() : onSetDefaultTemplate(tpl.id); }}
                         title={tpl.isDefault ? "Default saat ini - klik utk lepas" : "Jadikan template default (otomatis dipakai foto/sesi baru)"}
@@ -1582,7 +1662,7 @@ function ScanLinkPopup({ code, onClose }) {
  * hapus) & "Prompt" (kelola template prompt milik sesi AKTIF). Menggantikan
  * body halaman lama yg langsung menampilkan form+list di layar utama -
  * sekarang disembunyikan di sini supaya layar utama fokus kerja. */
-function SettingsPanel({ onClose, tab, setTab, sessions, sessionsState, activeCode, setActiveCode, refreshSessions, prompts, promptsState, onPromptsChanged }) {
+function SettingsPanel({ onClose, tab, setTab, sessions, sessionsState, activeCode, setActiveCode, refreshSessions, onSessionRenamed, prompts, promptsState, onPromptsChanged }) {
   const [title, setTitle] = useState("");
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
@@ -1605,6 +1685,28 @@ function SettingsPanel({ onClose, tab, setTab, sessions, sessionsState, activeCo
     setDeleteTarget(null);
     await refreshSessions();
     if (activeCode === code) setActiveCode("");
+  };
+
+  // FIX (permintaan user - "pada cms ini bisa edit nama sesi"): rename
+  // inline langsung di kartu sesi (tab Sesi), tanpa perlu hapus & bikin
+  // ulang sesi baru cuma utk ganti nama.
+  const [renamingCode, setRenamingCode] = useState("");
+  const [renameValue, setRenameValue] = useState("");
+  const [renaming, setRenaming] = useState(false);
+
+  const startRename = (s) => { setRenamingCode(s.code); setRenameValue(s.title); };
+  const cancelRename = () => { setRenamingCode(""); setRenameValue(""); };
+  const handleRename = async (s) => {
+    if (!renameValue.trim() || renaming) return;
+    setRenaming(true);
+    try {
+      const updated = await renameRpvSession(s.code, renameValue);
+      await refreshSessions();
+      onSessionRenamed?.(updated);
+      setRenamingCode("");
+    } catch (e) {
+      alert(e.message || "Gagal ganti nama sesi.");
+    } finally { setRenaming(false); }
   };
 
   return (
@@ -1637,25 +1739,51 @@ function SettingsPanel({ onClose, tab, setTab, sessions, sessionsState, activeCo
                 Semua Sesi {sessionsState === "loading" && <Loader2 size={11} style={{ animation: "spin .8s linear infinite" }} />}
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {sessions.map((s) => (
+                {sessions.map((s) => {
+                  const isRenaming = renamingCode === s.code;
+                  return (
                   <div key={s.code} style={{ borderRadius: 12, border: `1.5px solid ${s.code === activeCode ? RED : t.lineSoft}`, background: s.code === activeCode ? "rgba(237,28,36,0.08)" : t.fieldBg, padding: "10px 11px" }}>
                     <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 12.5, fontWeight: 800, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</div>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        {isRenaming ? (
+                          <input autoFocus value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") handleRename(s); if (e.key === "Escape") cancelRename(); }}
+                            style={{ width: "100%", height: 28, borderRadius: 7, border: `1.5px solid ${MAGA}`, background: t.bg, padding: "0 8px", fontSize: 12.5, fontWeight: 700, fontFamily: FONT, color: t.hi, boxSizing: "border-box" }} />
+                        ) : (
+                          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                            <div style={{ fontSize: 12.5, fontWeight: 800, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</div>
+                            <button onClick={() => startRename(s)} title="Ganti nama sesi"
+                              style={{ width: 20, height: 20, borderRadius: 6, border: "none", background: "transparent", color: t.lo, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                              <Pencil size={11} />
+                            </button>
+                          </div>
+                        )}
                         <div style={{ fontSize: 10, color: t.lo, marginTop: 2, fontFamily: "monospace" }}>{s.code} · {s.photo_count ?? 0} foto</div>
                       </div>
-                      {s.code === activeCode && <span style={{ fontSize: 9.5, fontWeight: 800, color: RED, flexShrink: 0 }}>AKTIF</span>}
+                      {!isRenaming && s.code === activeCode && <span style={{ fontSize: 9.5, fontWeight: 800, color: RED, flexShrink: 0 }}>AKTIF</span>}
                     </div>
-                    <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
-                      {s.code !== activeCode && (
-                        <button onClick={() => setActiveCode(s.code)} style={{ flex: 1, height: 30, borderRadius: 8, border: `1px solid ${t.line}`, background: "transparent", color: t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>Jadikan Aktif</button>
-                      )}
-                      <button onClick={() => setDeleteTarget(s)} title="Hapus sesi" style={{ height: 30, padding: "0 10px", borderRadius: 8, border: "1px solid rgba(198,40,40,0.4)", background: "rgba(198,40,40,0.14)", color: "#FF8A8F", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT, display: "flex", alignItems: "center", gap: 5 }}>
-                        <Trash2 size={11} /> Hapus
-                      </button>
-                    </div>
+                    {isRenaming ? (
+                      <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
+                        <button onClick={() => handleRename(s)} disabled={renaming || !renameValue.trim()}
+                          style={{ flex: 1, height: 30, borderRadius: 8, border: "none", background: MAGA, color: "#fff", fontSize: 11, fontWeight: 800, cursor: renaming ? "default" : "pointer", fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, opacity: renaming ? 0.7 : 1 }}>
+                          {renaming ? <Loader2 size={11} style={{ animation: "spin .8s linear infinite" }} /> : <Check size={11} />} Simpan
+                        </button>
+                        <button onClick={cancelRename} disabled={renaming}
+                          style={{ height: 30, padding: "0 12px", borderRadius: 8, border: `1px solid ${t.line}`, background: "transparent", color: t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>Batal</button>
+                      </div>
+                    ) : (
+                      <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
+                        {s.code !== activeCode && (
+                          <button onClick={() => setActiveCode(s.code)} style={{ flex: 1, height: 30, borderRadius: 8, border: `1px solid ${t.line}`, background: "transparent", color: t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>Jadikan Aktif</button>
+                        )}
+                        <button onClick={() => setDeleteTarget(s)} title="Hapus sesi" style={{ height: 30, padding: "0 10px", borderRadius: 8, border: "1px solid rgba(198,40,40,0.4)", background: "rgba(198,40,40,0.14)", color: "#FF8A8F", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT, display: "flex", alignItems: "center", gap: 5 }}>
+                          <Trash2 size={11} /> Hapus
+                        </button>
+                      </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
                 {sessionsState === "ready" && sessions.length === 0 && (
                   <div style={{ fontSize: 12, color: t.lo, textAlign: "center", padding: "16px 0" }}>Belum ada sesi dibuat.</div>
                 )}
@@ -1794,17 +1922,48 @@ function RpvPromptFormPopup({ code, items, editingPrompt, onClose, onChanged }) 
   const [thumbZoom, setThumbZoom] = useState(editingPrompt?.thumbZoom ?? 1);
   const thumbImgRef = useRef(null);
   const thumbDragRef = useRef(null);
+  const thumbDragRefCleanupRef = useRef(null); // simpan cleanup drag terakhir, spy listener window tak pernah menumpuk kalau pointerup/pointercancel gagal ke-fire pas geser cepat
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
   const thumbUrl = preview || existingImageUrl;
 
+  // FIX (permintaan user - "mengapa bisa digeser ke kanan bukannya harus
+  // center, kenapa jadi ada ruang kosong"): rumus clamp SEBELUMNYA
+  // (`(zoom-1)*50/zoom`) diturunkan dari asumsi objectFit:"cover" (foto
+  // SELALU pas menutup penuh kotak di zoom 1x, jadi limit geser = 0 baru
+  // muncul begitu zoom > 1). Base fit thumbnail ini sudah diganti ke
+  // "contain" (spy foto asli utuh selalu kelihatan, lihat fix sebelumnya),
+  // yg artinya di zoom 1x foto BISA lebih kecil dari kotak (letterbox) -
+  // rumus lama itu jadi tidak nyambung lagi dgn geometri sebenarnya & malah
+  // ngasih jatah geser yg salah (foto ke-geser jauh ninggalin area kosong).
+  // Sekarang limit dihitung LANGSUNG dari ukuran render nyata: ukuran
+  // konten hasil "contain" (dibandingkan rasio gambar asli vs kotak),
+  // dikali zoom, dikurangi ukuran kotak - kalau hasilnya negatif (konten
+  // masih lebih kecil/pas dgn kotak) limitnya 0 (tidak bisa digeser sama
+  // sekali, otomatis tetap center), baru begitu konten sudah melebihi
+  // kotak di sumbu tsb, limit gesernya = persis selisih itu (jadi TIDAK
+  // PERNAH bisa nyingkap area kosong di luar foto).
   const clampThumbPan = (zoom, x, y) => {
-    const limit = zoom >= 1 ? ((zoom - 1) * 50) / zoom : (1 - zoom) * 70;
-    return [Math.max(-limit, Math.min(limit, x)), Math.max(-limit, Math.min(limit, y))];
+    const el = thumbImgRef.current;
+    const cw = el?.offsetWidth || 0;
+    const ch = el?.offsetHeight || 0;
+    const iw = el?.naturalWidth || 0;
+    const ih = el?.naturalHeight || 0;
+    if (!cw || !ch || !iw || !ih) return [0, 0];
+    const imgAspect = iw / ih;
+    const boxAspect = cw / ch;
+    const contentW = imgAspect > boxAspect ? cw : ch * imgAspect;
+    const contentH = imgAspect > boxAspect ? cw / imgAspect : ch;
+    const overflowX = Math.max(0, (contentW * zoom - cw) / 2);
+    const overflowY = Math.max(0, (contentH * zoom - ch) / 2);
+    const limitX = (overflowX * 100) / (cw * zoom);
+    const limitY = (overflowY * 100) / (ch * zoom);
+    return [Math.max(-limitX, Math.min(limitX, x)), Math.max(-limitY, Math.min(limitY, y))];
   };
   const onThumbPointerDown = (e) => {
     e.preventDefault();
+    if (thumbDragRefCleanupRef.current) { thumbDragRefCleanupRef.current(); thumbDragRefCleanupRef.current = null; }
     thumbDragRef.current = { startX: e.clientX, startY: e.clientY, startPanX: thumbPanX, startPanY: thumbPanY, dragging: true };
     const move = (ev) => {
       if (!thumbDragRef.current?.dragging || !thumbImgRef.current) return;
@@ -1815,13 +1974,17 @@ function RpvPromptFormPopup({ code, items, editingPrompt, onClose, onChanged }) 
       const [nx, ny] = clampThumbPan(thumbZoom, thumbDragRef.current.startPanX + dx / thumbZoom, thumbDragRef.current.startPanY + dy / thumbZoom);
       setThumbPanX(nx); setThumbPanY(ny);
     };
-    const up = () => {
+    const end = () => {
       thumbDragRef.current = null;
       window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      thumbDragRefCleanupRef.current = null;
     };
     window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    thumbDragRefCleanupRef.current = end;
   };
   const thumbZoomBy = (delta) => {
     const nz = Math.max(0.4, Math.min(4, +(thumbZoom + delta).toFixed(2)));
@@ -1891,10 +2054,23 @@ function RpvPromptFormPopup({ code, items, editingPrompt, onClose, onChanged }) 
                 di bawahnya - bukan lagi grid 3x3 titik statis. Tombol
                 "Ganti Gambar" dipindah jadi ikon kecil mengambang di pojok
                 (drag di TENGAH gambar tidak lagi ke-trigger ganti gambar). */}
-            <div style={{ width: "100%", height: 190, borderRadius: 12, overflow: "hidden", position: "relative", background: t.fieldBg, touchAction: "none", cursor: "grab" }}
+            {/* FIX (permintaan user - "khusus di cms bagian ini tambahkan
+                grid dan outline frame tipis karena nyaru dgn latar belakang
+                popup ini"): kotak preview ini sebelumnya nyaris tanpa batas
+                yg kelihatan (background-nya senada dgn background popup),
+                jadi tepi kotak susah dibedakan. Ditambah outline tipis +
+                overlay grid rule-of-thirds (3x3, garis tipis semi-transparan,
+                pointer-events:none spy tidak ganggu drag) biar batas frame &
+                komposisi gambar lebih kebayang. */}
+            <div style={{ width: "100%", maxWidth: 240, aspectRatio: "1 / 1", borderRadius: 12, overflow: "hidden", position: "relative", background: t.fieldBg, border: `1px solid ${t.line}`, touchAction: "none", cursor: "grab", margin: "0 auto" }}
               onPointerDown={onThumbPointerDown}>
               <img ref={thumbImgRef} src={thumbUrl} alt="" draggable={false}
-                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", transform: `scale(${thumbZoom}) translate(${thumbPanX}%, ${thumbPanY}%)`, transformOrigin: "center center", userSelect: "none" }} />
+                style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", transform: `scale(${thumbZoom}) translate(${thumbPanX}%, ${thumbPanY}%)`, transformOrigin: "center center", userSelect: "none" }} />
+              <div aria-hidden="true" style={{
+                position: "absolute", inset: 0, pointerEvents: "none",
+                backgroundImage: "linear-gradient(rgba(255,255,255,0.3) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.3) 1px, transparent 1px)",
+                backgroundSize: "33.333% 33.333%",
+              }} />
               <button type="button" onClick={() => imgRef.current?.click()} title="Ganti gambar"
                 style={{ position: "absolute", right: 8, top: 8, width: 30, height: 30, borderRadius: 99, border: "none", background: "rgba(6,6,8,0.6)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
                 <ImagePlus size={13} />

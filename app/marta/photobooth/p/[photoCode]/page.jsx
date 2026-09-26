@@ -79,6 +79,7 @@ export default function RpvPhotoDetailPage() {
   const cropDirty = JSON.stringify(crop) !== JSON.stringify(savedCrop);
   const imgRef = useRef(null);
   const dragRef = useRef(null);
+  const dragRefCleanupRef = useRef(null); // simpan cleanup drag terakhir, spy listener window tak pernah menumpuk kalau pointerup/pointercancel gagal ke-fire pas geser cepat
   const [frameTemplates, setFrameTemplates] = useState([]);
   const [customFonts, setCustomFonts] = useState([]);
   const defaultTemplate = useMemo(() => findDefaultFrameTemplate(frameTemplates), [frameTemplates]);
@@ -160,6 +161,7 @@ export default function RpvPhotoDetailPage() {
 
   const onCropPointerDown = (e) => {
     e.preventDefault();
+    if (dragRefCleanupRef.current) { dragRefCleanupRef.current(); dragRefCleanupRef.current = null; }
     dragRef.current = { startX: e.clientX, startY: e.clientY, startPanX: crop.panX, startPanY: crop.panY, dragging: true };
     const move = (ev) => {
       if (!dragRef.current?.dragging || !imgRef.current) return;
@@ -169,13 +171,17 @@ export default function RpvPhotoDetailPage() {
       const dy = ((ev.clientY - dragRef.current.startY) / h) * 100;
       setCrop((c) => clampCrop({ ...c, panX: dragRef.current.startPanX + dx / c.zoom, panY: dragRef.current.startPanY + dy / c.zoom }));
     };
-    const up = () => {
+    const end = () => {
       dragRef.current = null;
       window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      dragRefCleanupRef.current = null;
     };
     window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    dragRefCleanupRef.current = end;
   };
   const zoomBy = (delta) => setCrop((c) => clampCrop({ ...c, zoom: Math.max(1, Math.min(4, +(c.zoom + delta).toFixed(2))) }));
   const rotateBy = (deg) => setCrop((c) => clampCrop({ ...c, rotate: (c.rotate + deg + 360) % 360 }));

@@ -193,12 +193,10 @@ export function PhotoFrame({ photo, ratio, crop, frame, mode, queueLabel, sessio
           </div>
         )}
       </div>
-      {isPolaroid && (
-        <div style={{ position: "absolute", left: "4%", right: "4%", bottom: "4%", height: "10%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: FONT }}>
-          <span style={{ fontSize: mode === "print" ? "0.32cm" : 10.5, fontWeight: 800, color: "#17181C" }}>{sessionTitle || "FlashPrint"}</span>
-          <span style={{ fontSize: mode === "print" ? "0.26cm" : 9, color: "#8A8A96", fontFamily: "monospace", letterSpacing: "0.06em" }}>{queueLabel}</span>
-        </div>
-      )}
+      {/* FIX (permintaan user - "polaroid putih hilangkan saja teksnya, betul2
+          polos"): strip putih polaroid SEBELUMNYA otomatis diisi nama sesi +
+          Photo ID - sekarang dikosongkan total jadi margin putih polos khas
+          polaroid asli (tidak perlu render apa2 lagi di sini). */}
       {/* Bingkai "Custom" - render PERSIS elemen tersimpan (posisi/ukuran %
           apa adanya, TANPA normalisasi) - dipakai IDENTIK di preview layar,
           lembar cetak sungguhan, TV Viewer, MAUPUN di dalam editor template
@@ -371,17 +369,6 @@ export async function renderPhotoFrameToBlob({ photo, ratio, crop, frame, queueL
   ctx.scale(1, c.flipY ? -1 : 1);
   ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
   ctx.restore();
-
-  if (frame === "white") {
-    ctx.fillStyle = "#17181C";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.font = `800 ${Math.round(H * 0.022)}px ${FONT}`;
-    ctx.fillText(sessionTitle || "FlashPrint", W / 2, H * 0.9);
-    ctx.fillStyle = "#8A8A96";
-    ctx.font = `400 ${Math.round(H * 0.017)}px monospace`;
-    ctx.fillText(queueLabel || "", W / 2, H * 0.945);
-  }
 
   if (isCustom && Array.isArray(customElements) && customElements.length > 0) {
     const fontFamilies = new Set();

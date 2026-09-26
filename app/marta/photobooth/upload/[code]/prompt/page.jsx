@@ -27,7 +27,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import QRCode from "qrcode";
 import {
-  AlertTriangle, Check, Clock, Download, ImagePlus, LogOut, Loader2, Minus,
+  AlertTriangle, Check, ChevronLeft, Clock, Download, ImagePlus, LogOut, Loader2, Minus,
   Move, Pencil, Plus, QrCode, Settings2, Sparkles, Ticket, Trash2, X, ZoomIn,
 } from "lucide-react";
 import { addRpvPrompt, deleteRpvPrompt, getRpvSession, listRpvCustomFonts, listRpvFrameTemplates, listRpvPhotos, listRpvPrompts, rpvPublicUrl, subscribeRpvPhotos, updateRpvPrompt, uploadRpvGeminiResult, uploadRpvPromptImage } from "../../../../../../lib/rpv";
@@ -147,7 +147,7 @@ export default function RpvPromptUploadPage() {
     if (upload.phase !== "done" || !upload.result?.photoCode) return;
     let alive = true;
     const shareUrl = `${window.location.origin}/marta/photobooth/p/${upload.result.photoCode}`;
-    QRCode.toDataURL(shareUrl, { margin: 1, width: 220, color: { dark: "#111116", light: "#FFFFFF" } })
+    QRCode.toDataURL(shareUrl, { margin: 1, width: 300, color: { dark: "#111116", light: "#FFFFFF" } })
       .then((url) => { if (alive) setQrUrl(url); })
       .catch(() => {});
     return () => { alive = false; };
@@ -281,7 +281,17 @@ export default function RpvPromptUploadPage() {
         ) : (
           <div style={{
             flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "repeat(2, 1fr)",
-            gridTemplateRows: `repeat(${Math.ceil(prompts.length / 2)}, 1fr)`, gap: 8,
+            // FIX (permintaan user - "tidak harus full ratio, square saja
+            // biar memaksimalkan, saya tidak mau laman ini harus discroll"):
+            // sempat dicoba pakai aspectRatio PERSIS rasio foto cetak 4R
+            // (supaya representatif), tapi itu bikin totalnya lebih tinggi
+            // drpd layar utk sesi dgn banyak prompt & perlu discroll -
+            // ditolak user. Sekarang balik ke gridTemplateRows (repeat n,
+            // 1fr) yg SELALU membagi rata PERSIS sisa tinggi layar (bentuk
+            // kartu jadi lebih persegi/kompak & memenuhi ruang, bukan lagi
+            // rasio foto), jadi grid ini DIJAMIN tidak pernah perlu scroll.
+            gridTemplateRows: `repeat(${Math.ceil(prompts.length / 2)}, 1fr)`,
+            gap: 8,
           }}>
             {prompts.map((p) => {
               const justCopied = copiedId === p.id;
@@ -314,10 +324,15 @@ export default function RpvPromptUploadPage() {
           </div>
         )}
 
-        {/* Langkah 2 - instruksi singkat ke Gemini */}
-        <div style={{ flexShrink: 0, marginTop: 10, padding: "8px 12px", borderRadius: 14, background: `${VIO}14`, border: `1px solid ${VIO}3D`, display: "flex", gap: 8, alignItems: "flex-start" }}>
-          <span style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 7, background: VIO, color: "#fff", fontSize: 10.5, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1 }}>2</span>
-          <div style={{ fontSize: 10.5, color: "#D5C7EE", lineHeight: 1.45, fontWeight: 600 }}>
+        {/* Langkah 2 - instruksi singkat ke Gemini. FIX (permintaan user -
+            "dari ui langkah2nya, perbaiki agar sejajar dan rapi"): badge
+            nomor "2" ini SEBELUMNYA ukurannya beda sendiri (22x22, radius 7,
+            font 10.5) drpd badge nomor "1"/"3" yg pakai SectionLabel
+            (24x24, radius 8, font 11) - jadi kelihatan tidak sejajar/rapi
+            dibanding langkah lain. Disamakan persis dimensinya di sini. */}
+        <div style={{ flexShrink: 0, marginTop: 10, padding: "8px 12px", borderRadius: 14, background: `${VIO}14`, border: `1px solid ${VIO}3D`, display: "flex", gap: 10, alignItems: "flex-start" }}>
+          <span style={{ flexShrink: 0, width: 24, height: 24, borderRadius: 8, background: VIO, color: "#fff", fontSize: 11, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", marginTop: 1 }}>2</span>
+          <div style={{ fontSize: 10.5, color: "#D5C7EE", lineHeight: 1.45, fontWeight: 600, paddingTop: 2 }}>
             Buka app <b style={{ color: "#fff" }}>Gemini</b> di HP kamu, <b style={{ color: "#fff" }}>ambil/upload foto</b> langsung di sana, lalu tempel (paste) prompt yang tadi tersalin untuk generate, dan <b style={{ color: "#fff" }}>download hasilnya</b> ke galeri HP.
           </div>
         </div>
@@ -668,6 +683,7 @@ function GeminiUploadSuccessScreen({ result, qrUrl, onUploadMore, sessionTitle, 
   // semuanya selalu utuh kelihatan tanpa scroll. Kartu QR jg dirombak: QR
   // diperkecil (140px -> 68px) & digabung 1 baris bareng Photo ID (bukan 2
   // blok bertumpuk terpisah garis) spy lebih ringkas & rapi.
+  const cardW = `min(320px, calc(64vh * ${PRINT_SIZE.w} / ${PRINT_SIZE.h}), 92vw)`;
   return (
     <div className="flashprint-root rpv-m-stage-fade" style={{ height: "100svh", overflowY: "auto", display: "flex", flexDirection: "column", alignItems: "center", padding: "16px 20px", boxSizing: "border-box", background: BG, fontFamily: FONT, position: "relative" }}>
       {/* FIX (permintaan user - "mengapa tidak ada ambience-nya yg di
@@ -682,15 +698,15 @@ function GeminiUploadSuccessScreen({ result, qrUrl, onUploadMore, sessionTitle, 
         <div className="rpv-m-ambient-blob rpv-m-ambient-blob--b" />
         <div className="rpv-m-ambient-dots" />
       </div>
-      <div style={{ width: "100%", maxWidth: 300, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", position: "relative", zIndex: 1 }}>
+      <div style={{ width: "100%", maxWidth: 380, flex: 1, minHeight: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", position: "relative", zIndex: 1 }}>
         <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8 }}>
           <div style={{ width: 7, height: 7, borderRadius: 99, background: RED }} />
           <span style={{ fontSize: 12, fontWeight: 700, color: SUB, letterSpacing: "0.14em", textTransform: "uppercase" }}>FlashPrint</span>
         </div>
 
         {result.url && (
-          <div style={{ flexShrink: 0, marginTop: 12, width: "100%", display: "flex", flexDirection: "column", alignItems: "center" }}>
-            <div style={{ width: `min(230px, calc(46vh * ${PRINT_SIZE.w} / ${PRINT_SIZE.h}))`, borderRadius: 18, overflow: "hidden", background: CARD, border: `1px solid ${LINE}` }}>
+          <div style={{ flexShrink: 0, marginTop: 14, width: cardW, display: "flex", flexDirection: "column", alignItems: "center" }}>
+            <div style={{ width: "100%", borderRadius: 18, overflow: "hidden", background: CARD, border: `1px solid ${LINE}` }}>
               <PhotoFrame photo={result} ratio={PRINT_SIZE} frame={defaultTemplate ? "custom" : "none"} mode="screen"
                 queueLabel={result.queueLabel} sessionTitle={sessionTitle}
                 customElements={defaultTemplate?.elements} customBaseStyle={defaultTemplate?.baseStyle} customFonts={customFonts} />
@@ -699,32 +715,33 @@ function GeminiUploadSuccessScreen({ result, qrUrl, onUploadMore, sessionTitle, 
           </div>
         )}
 
-        <div style={{ flexShrink: 0, marginTop: 12, width: "100%", padding: "12px 14px", borderRadius: 18, background: "#fff", border: `1px solid ${LINE}`, display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ flexShrink: 0, marginTop: 14, width: cardW, padding: "16px", borderRadius: 20, background: "#fff", border: `1px solid ${LINE}`, display: "flex", flexDirection: "column", alignItems: "center", boxSizing: "border-box" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <QrCode size={12} color={MAGA} />
+            <span style={{ fontSize: 9.5, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.4 }}>QR SHARE &amp; DOWNLOAD</span>
+          </div>
+
           {qrUrl ? (
-            <img src={qrUrl} alt="QR share & download foto" style={{ width: 68, height: 68, borderRadius: 9, flexShrink: 0 }} />
+            <img src={qrUrl} alt="QR share & download foto" style={{ width: "min(176px, 100%)", height: "auto", aspectRatio: "1 / 1", borderRadius: 12, marginTop: 12 }} />
           ) : (
-            <div style={{ width: 68, height: 68, borderRadius: 9, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "#F4F4F7" }}>
-              <Loader2 size={18} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
+            <div style={{ width: "min(176px, 100%)", aspectRatio: "1 / 1", borderRadius: 12, marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", background: "#F4F4F7" }}>
+              <Loader2 size={26} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
             </div>
           )}
-          <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-              <QrCode size={11} color={MAGA} />
-              <span style={{ fontSize: 8.5, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.3 }}>QR SHARE &amp; DOWNLOAD</span>
-            </div>
-            <div style={{ marginTop: 9, display: "flex", alignItems: "center", gap: 5 }}>
-              <Ticket size={11} color={MAGA} />
-              <span style={{ fontSize: 8, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.2 }}>PHOTO ID</span>
-            </div>
-            <div style={{ marginTop: 1, fontSize: 22, fontWeight: 900, color: "#17181C", letterSpacing: "0.06em", fontFamily: "monospace" }}>
+
+          <div style={{ marginTop: 8, width: "100%", paddingTop: 8, borderTop: `1px dashed ${LINE}`, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+            <Ticket size={12} color={MAGA} />
+            <span style={{ fontSize: 9, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.3 }}>PHOTO ID</span>
+            <span style={{ fontSize: 20, fontWeight: 900, color: "#17181C", letterSpacing: "0.08em", fontFamily: "monospace" }}>
               {result.queueLabel}
-            </div>
+            </span>
           </div>
         </div>
 
         <button onClick={onUploadMore}
-          style={{ flexShrink: 0, width: "100%", marginTop: 12, height: 44, borderRadius: 12, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 13, fontWeight: 800, fontFamily: FONT, cursor: "pointer" }}>
-          Kembali &amp; Upload Lagi
+          style={{ flexShrink: 0, width: cardW, marginTop: 10, height: 48, borderRadius: 14, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FONT, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, lineHeight: 1, padding: 0 }}>
+          <ChevronLeft size={17} strokeWidth={2.6} style={{ display: "block", flexShrink: 0 }} />
+          <span style={{ display: "block", lineHeight: 1 }}>Kembali &amp; Upload Lagi</span>
         </button>
       </div>
       {customFonts?.length > 0 && <style>{customFontFaceCss(customFonts)}</style>}
@@ -923,17 +940,48 @@ function RpvPromptFormPopup({ code, prompts, editingPrompt, onClose, onChanged }
   const [thumbZoom, setThumbZoom] = useState(editingPrompt?.thumbZoom ?? 1);
   const thumbImgRef = useRef(null);
   const thumbDragRef = useRef(null);
+  const thumbDragRefCleanupRef = useRef(null); // simpan cleanup drag terakhir, spy listener window tak pernah menumpuk kalau pointerup/pointercancel gagal ke-fire pas geser cepat
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
 
   const thumbUrl = preview || existingImageUrl;
 
+  // FIX (permintaan user - "mengapa bisa digeser ke kanan bukannya harus
+  // center, kenapa jadi ada ruang kosong"): rumus clamp SEBELUMNYA
+  // (`(zoom-1)*50/zoom`) diturunkan dari asumsi objectFit:"cover" (foto
+  // SELALU pas menutup penuh kotak di zoom 1x, jadi limit geser = 0 baru
+  // muncul begitu zoom > 1). Base fit thumbnail ini sudah diganti ke
+  // "contain" (spy foto asli utuh selalu kelihatan, lihat fix sebelumnya),
+  // yg artinya di zoom 1x foto BISA lebih kecil dari kotak (letterbox) -
+  // rumus lama itu jadi tidak nyambung lagi dgn geometri sebenarnya & malah
+  // ngasih jatah geser yg salah (foto ke-geser jauh ninggalin area kosong).
+  // Sekarang limit dihitung LANGSUNG dari ukuran render nyata: ukuran
+  // konten hasil "contain" (dibandingkan rasio gambar asli vs kotak),
+  // dikali zoom, dikurangi ukuran kotak - kalau hasilnya negatif (konten
+  // masih lebih kecil/pas dgn kotak) limitnya 0 (tidak bisa digeser sama
+  // sekali, otomatis tetap center), baru begitu konten sudah melebihi
+  // kotak di sumbu tsb, limit gesernya = persis selisih itu (jadi TIDAK
+  // PERNAH bisa nyingkap area kosong di luar foto).
   const clampThumbPan = (zoom, x, y) => {
-    const limit = zoom >= 1 ? ((zoom - 1) * 50) / zoom : (1 - zoom) * 70;
-    return [Math.max(-limit, Math.min(limit, x)), Math.max(-limit, Math.min(limit, y))];
+    const el = thumbImgRef.current;
+    const cw = el?.offsetWidth || 0;
+    const ch = el?.offsetHeight || 0;
+    const iw = el?.naturalWidth || 0;
+    const ih = el?.naturalHeight || 0;
+    if (!cw || !ch || !iw || !ih) return [0, 0];
+    const imgAspect = iw / ih;
+    const boxAspect = cw / ch;
+    const contentW = imgAspect > boxAspect ? cw : ch * imgAspect;
+    const contentH = imgAspect > boxAspect ? cw / imgAspect : ch;
+    const overflowX = Math.max(0, (contentW * zoom - cw) / 2);
+    const overflowY = Math.max(0, (contentH * zoom - ch) / 2);
+    const limitX = (overflowX * 100) / (cw * zoom);
+    const limitY = (overflowY * 100) / (ch * zoom);
+    return [Math.max(-limitX, Math.min(limitX, x)), Math.max(-limitY, Math.min(limitY, y))];
   };
   const onThumbPointerDown = (e) => {
     e.preventDefault();
+    if (thumbDragRefCleanupRef.current) { thumbDragRefCleanupRef.current(); thumbDragRefCleanupRef.current = null; }
     thumbDragRef.current = { startX: e.clientX, startY: e.clientY, startPanX: thumbPanX, startPanY: thumbPanY, dragging: true };
     const move = (ev) => {
       if (!thumbDragRef.current?.dragging || !thumbImgRef.current) return;
@@ -944,13 +992,17 @@ function RpvPromptFormPopup({ code, prompts, editingPrompt, onClose, onChanged }
       const [nx, ny] = clampThumbPan(thumbZoom, thumbDragRef.current.startPanX + dx / thumbZoom, thumbDragRef.current.startPanY + dy / thumbZoom);
       setThumbPanX(nx); setThumbPanY(ny);
     };
-    const up = () => {
+    const end = () => {
       thumbDragRef.current = null;
       window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      thumbDragRefCleanupRef.current = null;
     };
     window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+    thumbDragRefCleanupRef.current = end;
   };
   const thumbZoomBy = (delta) => {
     const nz = Math.max(0.4, Math.min(4, +(thumbZoom + delta).toFixed(2)));
@@ -1023,10 +1075,10 @@ function RpvPromptFormPopup({ code, prompts, editingPrompt, onClose, onChanged }
                 saya bisa di zoom dan geser"): preview ini SEKARANG bisa
                 di-drag lgsg (geser jari) utk pan + slider zoom, bukan lagi
                 grid 3x3 titik statis. */}
-            <div style={{ width: "100%", height: 180, borderRadius: 14, overflow: "hidden", position: "relative", background: FIELD, border: `1px solid ${LINE}`, touchAction: "none", cursor: "grab" }}
+            <div style={{ width: "100%", maxWidth: 220, aspectRatio: "1 / 1", borderRadius: 14, overflow: "hidden", position: "relative", background: FIELD, border: `1px solid ${LINE}`, touchAction: "none", cursor: "grab", margin: "0 auto" }}
               onPointerDown={onThumbPointerDown}>
               <img ref={thumbImgRef} src={thumbUrl} alt="" draggable={false}
-                style={{ width: "100%", height: "100%", objectFit: "cover", display: "block", transform: `scale(${thumbZoom}) translate(${thumbPanX}%, ${thumbPanY}%)`, transformOrigin: "center center", userSelect: "none" }} />
+                style={{ width: "100%", height: "100%", objectFit: "contain", display: "block", transform: `scale(${thumbZoom}) translate(${thumbPanX}%, ${thumbPanY}%)`, transformOrigin: "center center", userSelect: "none" }} />
               <button type="button" onClick={() => imgRef.current?.click()} title="Ganti gambar"
                 style={{ position: "absolute", right: 8, top: 8, width: 32, height: 32, borderRadius: 99, border: "none", background: "rgba(0,0,0,0.55)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
                 <ImagePlus size={14} />
