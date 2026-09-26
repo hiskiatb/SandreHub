@@ -27,12 +27,11 @@
  * 3) Tombol Print DIHAPUS dari halaman tamu ini - cetak fisik HANYA lewat
  *    panel operator (Print Station).
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import QRCode from "qrcode";
-import { AlertTriangle, Check, Download, Loader2, Printer, Share2 } from "lucide-react";
-import { getRpvPhotoByCode, listRpvFrameTemplates, listRpvCustomFonts } from "../../../../../lib/rpv";
-import { PhotoFrame, PRINT_SIZE, TEMPLATE_GOOGLE_FONTS_HREF, customFontFaceCss, findDefaultFrameTemplate, renderPhotoFrameToBlob } from "../../_frame";
+import { AlertTriangle, Check, Download, FlipHorizontal2, FlipVertical2, Minus, Move, RotateCw, Save, Share2, Loader2, ZoomIn } from "lucide-react";
+import { getRpvPhotoByCode, listRpvFrameTemplates, listRpvCustomFonts, saveRpvPhotoCrop } from "../../../../../lib/rpv";
+import { DEFAULT_CROP, PhotoFrame, PRINT_SIZE, TEMPLATE_GOOGLE_FONTS_HREF, customFontFaceCss, findDefaultFrameTemplate, renderPhotoFrameToBlob } from "../../_frame";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED = "#ED1C24";
@@ -46,7 +45,19 @@ export default function RpvPhotoDetailPage() {
   const [photo, setPhoto] = useState(null);
   const [shared, setShared] = useState(false);
   const [sharing, setSharing] = useState(false);
-  const [printQrUrl, setPrintQrUrl] = useState(""); // QR ANGKA Photo ID murni - dipindai OPERATOR di /scan/[code] utk cetak
+  // Penyesuaian posisi/zoom/rotate/flip LANGSUNG di halaman share ini
+  // (permintaan user: "di sisi orang yang foto saat share dia juga bisa
+  // atur penyesuaian ke dalam framenya sebelum mereka download") - simpan
+  // lewat saveRpvPhotoCrop yg SAMA PERSIS dipakai operator/tamu pengupload,
+  // jadi otomatis ke-sync ke Print Station operator juga (kolom
+  // rpv_photos.crop_json yg sama).
+  const [crop, setCrop] = useState(DEFAULT_CROP);
+  const [savedCrop, setSavedCrop] = useState(DEFAULT_CROP);
+  const [adjustMode, setAdjustMode] = useState(false);
+  const [cropSaving, setCropSaving] = useState(false);
+  const cropDirty = JSON.stringify(crop) !== JSON.stringify(savedCrop);
+  const imgRef = useRef(null);
+  const dragRef = useRef(null);
   const [frameTemplates, setFrameTemplates] = useState([]);
   const [customFonts, setCustomFonts] = useState([]);
   const defaultTemplate = useMemo(() => findDefaultFrameTemplate(frameTemplates), [frameTemplates]);
@@ -79,6 +90,8 @@ export default function RpvPhotoDetailPage() {
         }
         if (!alive) return;
         setPhoto(p);
+        setCrop(p.crop || DEFAULT_CROP);
+        setSavedCrop(p.crop || DEFAULT_CROP);
         setState("ready");
       } catch { if (alive) setState("notfound"); }
     })();
@@ -95,31 +108,57 @@ export default function RpvPhotoDetailPage() {
     });
   }, []);
 
-  // QR Cetak - angka Photo ID murni, sama persis pola QR yg dibuat begitu
-  // tamu selesai upload. (QR Share dihapus - permintaan user: halaman ini
-  // dipakai panitia utk ditunjukkan ke tamu utk discan operator saat cetak,
-  // jadi cukup 1 QR Photo ID saja, tidak perlu QR balik ke halaman ini.)
-  useEffect(() => {
-    if (state !== "ready" || typeof window === "undefined" || !photo) return;
-    let alive = true;
-    const idText = (photo.queue_label || photo.photo_code || "").toString();
-    QRCode.toDataURL(idText, { margin: 1, width: 220, color: { dark: "#111116", light: "#FFFFFF" } })
-      .then((url) => { if (alive) setPrintQrUrl(url); })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, [state, photo]);
-
   // Bikin 1 file PNG (foto + crop + template default), beresolusi PENUH &
   // TANPA kompresi - dipakai bareng oleh Share & Download.
   async function renderFramedBlob() {
     if (!photo) return null;
     return renderPhotoFrameToBlob({
-      photo, ratio: SHARE_RATIO, crop: photo.crop,
+      photo, ratio: SHARE_RATIO, crop,
       frame: defaultTemplate ? "custom" : "none",
       customBaseStyle: defaultTemplate?.baseStyle,
       customElements: defaultTemplate?.elements,
       customFonts, queueLabel: photo.queue_label,
     });
+  }
+
+  const onCropPointerDown = (e) => {
+    e.preventDefault();
+    dragRef.current = { startX: e.clientX, startY: e.clientY, startPanX: crop.panX, startPanY: crop.panY, dragging: true };
+    const move = (ev) => {
+      if (!dragRef.current?.dragging || !imgRef.current) return;
+      const w = imgRef.current.offsetWidth || 1;
+      const h = imgRef.current.offsetHeight || 1;
+      const dx = ((ev.clientX - dragRef.current.startX) / w) * 100;
+      const dy = ((ev.clientY - dragRef.current.startY) / h) * 100;
+      setCrop((c) => ({ ...c, panX: dragRef.current.startPanX + dx / c.zoom, panY: dragRef.current.startPanY + dy / c.zoom }));
+    };
+    const up = () => {
+      dragRef.current = null;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  const zoomBy = (delta) => setCrop((c) => ({ ...c, zoom: Math.max(1, Math.min(4, +(c.zoom + delta).toFixed(2))) }));
+  const rotateBy = (deg) => setCrop((c) => ({ ...c, rotate: (c.rotate + deg + 360) % 360 }));
+  const toggleFlipX = () => setCrop((c) => ({ ...c, flipX: !c.flipX }));
+  const toggleFlipY = () => setCrop((c) => ({ ...c, flipY: !c.flipY }));
+
+  // Tombol tunggal "Kembali" - kalau ada perubahan blm tersimpan, otomatis
+  // jadi "Simpan & Kembali" (simpan dulu ke DB, baru keluar mode adjust).
+  async function handleBackFromAdjust() {
+    if (!cropDirty) { setAdjustMode(false); return; }
+    setCropSaving(true);
+    try {
+      await saveRpvPhotoCrop(photo.photo_code, crop);
+      setSavedCrop(crop);
+      setPhoto((p) => (p ? { ...p, crop } : p));
+    } catch { /* gagal simpan - tamu masih bisa buka lagi & coba ulang */ }
+    finally {
+      setCropSaving(false);
+      setAdjustMode(false);
+    }
   }
 
   // FIX (permintaan user): supaya "kalau pilih Instagram Story bisa langsung
@@ -220,33 +259,79 @@ export default function RpvPhotoDetailPage() {
         </div>
 
         <div style={{ flex: "1 1 auto", minHeight: 0, width: "auto", maxWidth: 280, maxHeight: "100%", aspectRatio: `${SHARE_RATIO.w} / ${SHARE_RATIO.h}`, borderRadius: 20, overflow: "hidden", boxShadow: "0 18px 44px rgba(0,0,0,0.45)" }}>
-          <PhotoFrame photo={photo} ratio={SHARE_RATIO} crop={photo.crop} mode="screen"
+          <PhotoFrame photo={photo} ratio={SHARE_RATIO} crop={crop} mode="screen"
             frame={defaultTemplate ? "custom" : "none"} customBaseStyle={defaultTemplate?.baseStyle}
-            customElements={defaultTemplate?.elements} customFonts={customFonts} queueLabel={photo.queue_label} />
+            customElements={defaultTemplate?.elements} customFonts={customFonts} queueLabel={photo.queue_label}
+            imgRef={imgRef} onPointerDown={adjustMode ? onCropPointerDown : undefined} />
         </div>
 
-        {/* QR Cetak saja - permintaan user: halaman ini dipakai panitia utk
-            ditunjukkan ke tamu/discan operator saat cetak, QR Share ke
-            halaman ini sendiri tidak diperlukan lagi di sini. Nomor
-            antrian di-HIGHLIGHT (badge merah-magenta kontras, bukan cuma
-            teks putih polos) spy langsung kebaca operator dari jarak jauh. */}
-        <div style={{ flexShrink: 0, marginTop: 10, width: "100%", maxWidth: 220, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "#1E1E24", border: "1px solid #2C2C33", borderRadius: 16, padding: "12px 14px" }}>
-          {printQrUrl ? (
-            <img src={printQrUrl} alt="QR Photo ID untuk cetak" style={{ width: 108, height: 108, borderRadius: 8, background: "#fff", padding: 6 }} />
-          ) : (
-            <div style={{ width: 108, height: 108, borderRadius: 8, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <Loader2 size={18} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
+        {/* Kontrol penyesuaian - permintaan user: "di sisi orang yang foto
+            saat share dia juga bisa atur penyesuaian ke dalam framenya
+            sebelum mereka download". Sembunyi dulu di balik 1 tombol kecil
+            (bukan langsung tampil) spy tampilan default tetap ringkas. */}
+        {!adjustMode ? (
+          <button onClick={() => setAdjustMode(true)}
+            style={{ flexShrink: 0, marginTop: 10, display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 14px", borderRadius: 100, border: "1px solid #2C2C33", background: "#1E1E24", color: "#F0F0F2", fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+            <Move size={13} color={MAGA} /> Sesuaikan Posisi
+          </button>
+        ) : (
+          <div style={{ flexShrink: 0, marginTop: 10, width: "100%", maxWidth: 260, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, background: "#1E1E24", border: "1px solid #2C2C33", borderRadius: 16, padding: "12px 14px" }}>
+            <div style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              <button onClick={() => zoomBy(-0.15)} title="Perkecil"
+                style={{ width: 28, height: 28, borderRadius: 8, border: "1px solid #2C2C33", background: "#111116", color: "#B4B4BC", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                <Minus size={12} />
+              </button>
+              <input type="range" min="1" max="4" step="0.01" value={crop.zoom} onChange={(e) => setCrop((c) => ({ ...c, zoom: +Number(e.target.value).toFixed(2) }))}
+                style={{ flex: 1, maxWidth: 120, accentColor: MAGA }} />
+              <span style={{ fontSize: 10.5, color: "#B4B4BC", fontWeight: 700, width: 34, textAlign: "center", flexShrink: 0 }}>{Math.round(crop.zoom * 100)}%</span>
+              <button onClick={() => zoomBy(0.15)} title="Perbesar"
+                style={{ width: 28, height: 28, borderRadius: 8, border: "1px solid #2C2C33", background: "#111116", color: "#B4B4BC", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                <ZoomIn size={12} />
+              </button>
             </div>
-          )}
-          <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, fontWeight: 800, color: "#F0F0F2" }}>
-            <Printer size={11} color={RED} /> QR Cetak
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, flexWrap: "wrap" }}>
+              <button onClick={() => rotateBy(90)} title="Putar 90°"
+                style={{ display: "flex", alignItems: "center", gap: 4, height: 28, padding: "0 9px", borderRadius: 8, border: "1px solid #2C2C33", background: "#111116", color: "#B4B4BC", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                <RotateCw size={11} /> {crop.rotate}°
+              </button>
+              <button onClick={toggleFlipX} title="Balik horizontal"
+                style={{ display: "flex", alignItems: "center", gap: 4, height: 28, padding: "0 9px", borderRadius: 8, border: `1.5px solid ${crop.flipX ? MAGA : "#2C2C33"}`, background: crop.flipX ? `${MAGA}33` : "#111116", color: crop.flipX ? "#fff" : "#B4B4BC", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                <FlipHorizontal2 size={11} /> H
+              </button>
+              <button onClick={toggleFlipY} title="Balik vertikal"
+                style={{ display: "flex", alignItems: "center", gap: 4, height: 28, padding: "0 9px", borderRadius: 8, border: `1.5px solid ${crop.flipY ? MAGA : "#2C2C33"}`, background: crop.flipY ? `${MAGA}33` : "#111116", color: crop.flipY ? "#fff" : "#B4B4BC", fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                <FlipVertical2 size={11} /> V
+              </button>
+              <button onClick={() => setCrop(DEFAULT_CROP)} style={{ fontSize: 9.5, color: "#8A8A93", fontWeight: 700, background: "transparent", border: "none", cursor: "pointer", fontFamily: FONT }}>Reset</button>
+            </div>
+            {/* Satu tombol - permintaan user: "ada tombol kembali, namun
+                kalau ada perubahan simpan dan kembali". Kalau blm ada
+                perubahan cukup keluar mode adjust; kalau ada, simpan dulu
+                (saveRpvPhotoCrop - otomatis ke-sync ke Print Station
+                operator) baru keluar. */}
+            <button onClick={handleBackFromAdjust} disabled={cropSaving}
+              style={{
+                width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, height: 32, borderRadius: 9, border: "none",
+                background: cropDirty ? MAGA : "#2C2C33", color: "#fff", fontSize: 11, fontWeight: 800, cursor: cropSaving ? "default" : "pointer",
+                fontFamily: FONT, opacity: cropSaving ? 0.7 : 1,
+              }}>
+              {cropSaving ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={12} />}
+              {cropSaving ? "Menyimpan..." : cropDirty ? "Simpan & Kembali" : "Kembali"}
+            </button>
           </div>
+        )}
+
+        {/* Photo ID - QR Cetak DIHAPUS (permintaan user: sudah tidak ada
+            lagi fitur HP Scanner, jadi cukup sebutkan Photo ID ini lisan ke
+            petugas operator, tidak perlu di-scan lagi). Nomor tetap
+            di-HIGHLIGHT (badge merah-magenta kontras) spy gampang dibaca. */}
+        <div style={{ flexShrink: 0, marginTop: 10, width: "100%", maxWidth: 220, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, background: "#1E1E24", border: "1px solid #2C2C33", borderRadius: 16, padding: "12px 14px" }}>
           <span style={{
-            fontSize: 20, fontWeight: 900, color: "#fff", fontFamily: "monospace", letterSpacing: "0.08em",
-            padding: "4px 14px", borderRadius: 10, background: `linear-gradient(135deg,${RED},${MAGA})`,
+            fontSize: 22, fontWeight: 900, color: "#fff", fontFamily: "monospace", letterSpacing: "0.08em",
+            padding: "5px 16px", borderRadius: 10, background: `linear-gradient(135deg,${RED},${MAGA})`,
             boxShadow: `0 6px 16px -4px ${MAGA}80`,
           }}>{photo.queue_label || photo.photo_code}</span>
-          <span style={{ fontSize: 9.5, color: "#8A8A93", textAlign: "center", lineHeight: 1.4 }}>Tunjukkan ke petugas utk dicetak</span>
+          <span style={{ fontSize: 9.5, color: "#8A8A93", textAlign: "center", lineHeight: 1.4 }}>Sebutkan Photo ID ini ke petugas operator utk dicetak</span>
         </div>
 
         <div style={{ flexShrink: 0, marginTop: 12, width: "100%", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>

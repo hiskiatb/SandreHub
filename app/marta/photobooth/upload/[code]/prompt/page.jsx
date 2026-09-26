@@ -27,11 +27,12 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import QRCode from "qrcode";
 import {
-  AlertTriangle, Check, Clock, Download, ImagePlus, LogOut, Loader2,
-  Pencil, Plus, QrCode, Settings2, Sparkles, Ticket, Trash2, X,
+  AlertTriangle, Check, Clock, Download, FlipHorizontal2, FlipVertical2, ImagePlus, LogOut, Loader2,
+  Minus, Pencil, Plus, QrCode, RotateCw, Save, Settings2, Sparkles, Ticket, Trash2, X, ZoomIn,
 } from "lucide-react";
-import { addRpvPrompt, deleteRpvPrompt, getRpvSession, listRpvPhotos, listRpvPrompts, rpvPublicUrl, subscribeRpvPhotos, updateRpvPrompt, uploadRpvGeminiResult, uploadRpvPromptImage } from "../../../../../../lib/rpv";
+import { addRpvPrompt, deleteRpvPrompt, getRpvSession, listRpvCustomFonts, listRpvFrameTemplates, listRpvPhotos, listRpvPrompts, rpvPublicUrl, saveRpvPhotoCrop, subscribeRpvPhotos, updateRpvPrompt, uploadRpvGeminiResult, uploadRpvPromptImage } from "../../../../../../lib/rpv";
 import { PhotoboothPwaHead, usePhotoboothServiceWorker } from "../../../_pwa";
+import { customFontFaceCss, DEFAULT_CROP, findDefaultFrameTemplate, PhotoFrame, PRINT_SIZE } from "../../../_frame";
 
 function fmtHistoryTime(ms) {
   try {
@@ -78,6 +79,10 @@ export default function RpvPromptUploadPage() {
   // subscribeRpvPhotos), sama pola dgn halaman Galeri/kamera.
   const [uploadHistory, setUploadHistory] = useState([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Bingkai/template custom DEFAULT (utk preview di layar sukses upload) +
+  // font custom yg dipakainya - lihat effect pemuatan sesi di bawah.
+  const [defaultTemplate, setDefaultTemplate] = useState(null);
+  const [customFonts, setCustomFonts] = useState([]);
   const historyUnsubRef = useRef(null);
 
   const exitSession = () => {
@@ -110,6 +115,18 @@ export default function RpvPromptUploadPage() {
             ? prev
             : [{ photo_code: photoCode, storage_path: row.storage_path, url: rpvPublicUrl(row.storage_path), uploaded_at: row.uploaded_at, queue_label: queueLabel, is_ai_result: row.is_ai_result }, ...prev]));
         }, { sessionCode: code });
+        // Bingkai/template CUSTOM yg lagi ditandai DEFAULT (diatur operator
+        // di Editor Template) - permintaan user: layar sukses upload tamu
+        // "harusnya langsung sudah menggunakan frame custom yang sudah di
+        // set default", bukan foto polos tanpa bingkai. Gagal dimuat (mis.
+        // belum ada template default sama sekali) diamkan saja - preview
+        // tetap tampil TANPA bingkai (frame="none"), tidak menghalangi tamu
+        // lanjut upload.
+        try {
+          const [templates, fonts] = await Promise.all([listRpvFrameTemplates(), listRpvCustomFonts()]);
+          setDefaultTemplate(findDefaultFrameTemplate(templates));
+          setCustomFonts(fonts);
+        } catch { /* diamkan - preview tetap jalan tanpa bingkai custom */ }
       } catch { setState("notfound"); }
     })();
     return () => historyUnsubRef.current?.();
@@ -130,7 +147,7 @@ export default function RpvPromptUploadPage() {
     if (upload.phase !== "done" || !upload.result?.photoCode) return;
     let alive = true;
     const shareUrl = `${window.location.origin}/marta/photobooth/p/${upload.result.photoCode}`;
-    QRCode.toDataURL(shareUrl, { margin: 1, width: 280, color: { dark: "#111116", light: "#FFFFFF" } })
+    QRCode.toDataURL(shareUrl, { margin: 1, width: 220, color: { dark: "#111116", light: "#FFFFFF" } })
       .then((url) => { if (alive) setQrUrl(url); })
       .catch(() => {});
     return () => { alive = false; };
@@ -196,6 +213,9 @@ export default function RpvPromptUploadPage() {
         result={upload.result}
         qrUrl={qrUrl}
         onUploadMore={resetUpload}
+        sessionTitle={session?.title}
+        defaultTemplate={defaultTemplate}
+        customFonts={customFonts}
       />
     );
   }
@@ -587,24 +607,151 @@ function SectionLabel({ n, text, hint, style }) {
 // pilih template & upload (yg sekaligus artinya "upload lagi", tidak perlu
 // 2 tombol Upload Lagi/Selesai terpisah lagi). Tahap share ke sosmed &
 // reveal foto DIHAPUS dari layar ini.
-function GeminiUploadSuccessScreen({ result, qrUrl, onUploadMore }) {
+function GeminiUploadSuccessScreen({ result, qrUrl, onUploadMore, sessionTitle, defaultTemplate, customFonts }) {
+  // Preview + penyesuaian LANGSUNG di layar sukses upload (permintaan user:
+  // sebelumnya cuma <img> polos tanpa bingkai - "harusnya langsung sudah
+  // menggunakan frame custom yang sudah di set default dan juga 4R dan bisa
+  // kita adjust langsung"). Pola crop/zoom/pan/rotate/flip IDENTIK dgn Print
+  // Station operator (lihat app/marta/photobooth/page.jsx), supaya tamu bisa
+  // atur posisi fotonya sendiri di dalam bingkai 4R sblm dicetak - operator
+  // tinggal cek/lanjut cetak, tidak perlu atur ulang dari nol.
+  const [crop, setCrop] = useState(DEFAULT_CROP);
+  const [savedCrop, setSavedCrop] = useState(DEFAULT_CROP);
+  const [cropSaving, setCropSaving] = useState(false);
+  const cropDirty = JSON.stringify(crop) !== JSON.stringify(savedCrop);
+  const imgRef = useRef(null);
+  const dragRef = useRef(null);
+
+  // Permintaan user: animasi centang sukses SEBELUMNYA nempel permanen
+  // berdampingan dgn foto+QR (semua muncul sekaligus). Sekarang dipentaskan
+  // 2 tahap - animasi centang muncul & main dulu SENDIRIAN, begitu selesai
+  // (~1.05s, pas dgn total durasi keyframe pop+circle+tick di bawah) dia
+  // fade-out & digantikan foto+QR yg fade-in, bukan tampil bebarengan.
+  const [revealed, setRevealed] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setRevealed(true), 1050);
+    return () => clearTimeout(t);
+  }, []);
+
+  const onCropPointerDown = (e) => {
+    e.preventDefault();
+    dragRef.current = { startX: e.clientX, startY: e.clientY, startPanX: crop.panX, startPanY: crop.panY, dragging: true };
+    const move = (ev) => {
+      if (!dragRef.current?.dragging || !imgRef.current) return;
+      const w = imgRef.current.offsetWidth || 1;
+      const h = imgRef.current.offsetHeight || 1;
+      const dx = ((ev.clientX - dragRef.current.startX) / w) * 100;
+      const dy = ((ev.clientY - dragRef.current.startY) / h) * 100;
+      setCrop((c) => ({ ...c, panX: dragRef.current.startPanX + dx / c.zoom, panY: dragRef.current.startPanY + dy / c.zoom }));
+    };
+    const up = () => {
+      dragRef.current = null;
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  const zoomBy = (delta) => setCrop((c) => ({ ...c, zoom: Math.max(1, Math.min(4, +(c.zoom + delta).toFixed(2))) }));
+  const rotateBy = (deg) => setCrop((c) => ({ ...c, rotate: (c.rotate + deg + 360) % 360 }));
+  const toggleFlipX = () => setCrop((c) => ({ ...c, flipX: !c.flipX }));
+  const toggleFlipY = () => setCrop((c) => ({ ...c, flipY: !c.flipY }));
+
+  const saveCrop = async () => {
+    if (!result?.photoCode) return;
+    setCropSaving(true);
+    try {
+      await saveRpvPhotoCrop(result.photoCode, crop);
+      setSavedCrop(crop);
+    } catch { /* gagal simpan - operator masih bisa atur ulang lewat Print Station */ }
+    finally { setCropSaving(false); }
+  };
+
   return (
     <div className="flashprint-root" style={{ minHeight: "100svh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, background: BG, fontFamily: FONT }}>
       <div style={{ textAlign: "center", maxWidth: 340, width: "100%" }}>
-        <div style={{ position: "relative", width: 86, height: 86, margin: "0 auto" }}>
-          <div className="rpv-m-success-pop" style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "rgba(21,128,61,0.16)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <svg width="42" height="42" viewBox="0 0 52 52">
-              <circle className="rpv-m-success-circle" cx="26" cy="26" r="23" fill="none" stroke="#4ADE80" strokeWidth="2.5" strokeLinecap="round" />
-              <path className="rpv-m-success-tick" d="M15 27l7.5 7.5L37.5 18" fill="none" stroke="#4ADE80" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+        {/* Tahap 1: animasi centang sukses SENDIRIAN dulu - fade+collapse
+            keluar begitu `revealed` true, digantikan tahap 2 (foto+QR). */}
+        <div style={{
+          overflow: "hidden",
+          maxHeight: revealed ? 0 : 140, opacity: revealed ? 0 : 1,
+          transition: "max-height 0.4s cubic-bezier(.4,0,.2,1), opacity 0.3s ease",
+        }}>
+          <div style={{ position: "relative", width: 86, height: 86, margin: "0 auto" }}>
+            <div className="rpv-m-success-pop" style={{ position: "absolute", inset: 0, borderRadius: "50%", background: "rgba(21,128,61,0.16)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="42" height="42" viewBox="0 0 52 52">
+                <circle className="rpv-m-success-circle" cx="26" cy="26" r="23" fill="none" stroke="#4ADE80" strokeWidth="2.5" strokeLinecap="round" />
+                <path className="rpv-m-success-tick" d="M15 27l7.5 7.5L37.5 18" fill="none" stroke="#4ADE80" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
           </div>
-        </div>
-        <div style={{ marginTop: 18, fontSize: 17.5, fontWeight: 800, color: INK }}>Foto Gemini Berhasil Diunggah!</div>
-        <div style={{ marginTop: 7, fontSize: 12.5, color: MID, lineHeight: 1.65 }}>
-          Scan QR di bawah ini utk <b style={{ color: INK }}>menyimpan/download fotomu sendiri</b>, lalu sebutkan <b style={{ color: INK }}>Photo ID</b>-nya ke petugas untuk dicetak.
+          <div style={{ marginTop: 18, fontSize: 17.5, fontWeight: 800, color: INK }}>Foto Gemini Berhasil Diunggah!</div>
         </div>
 
-        <div style={{ marginTop: 22, padding: 22, borderRadius: 22, background: "#fff" }}>
+        {/* Tahap 2: judul ringkas + foto (bingkai 4R, bisa di-adjust) + QR -
+            fade-in setelah tahap 1 selesai. */}
+        <div style={{
+          opacity: revealed ? 1 : 0, transform: revealed ? "translateY(0)" : "translateY(6px)",
+          transition: "opacity 0.4s ease 0.05s, transform 0.4s cubic-bezier(.22,1,.36,1) 0.05s",
+          marginTop: revealed ? 4 : 0,
+        }}>
+        <div style={{ fontSize: 12.5, color: MID, lineHeight: 1.65 }}>
+          Geser/zoom fotomu di bawah biar pas di bingkai, lalu scan QR utk <b style={{ color: INK }}>menyimpan/download</b> &amp; sebutkan <b style={{ color: INK }}>Photo ID</b>-nya ke petugas.
+        </div>
+
+        {result.url && (
+          <div style={{ marginTop: 22, padding: 16, borderRadius: 22, background: CARD, border: `1px solid ${LINE}` }}>
+            <div style={{ maxWidth: 210, margin: "0 auto" }}>
+              <PhotoFrame photo={result} ratio={PRINT_SIZE} crop={crop} frame={defaultTemplate ? "custom" : "none"} mode="screen"
+                queueLabel={result.queueLabel} sessionTitle={sessionTitle}
+                imgRef={imgRef} onPointerDown={onCropPointerDown}
+                customElements={defaultTemplate?.elements} customBaseStyle={defaultTemplate?.baseStyle} customFonts={customFonts} />
+            </div>
+            <div style={{ marginTop: 12, fontSize: 9.5, color: SUB, fontWeight: 700 }}>{PRINT_SIZE.label} &middot; {PRINT_SIZE.w}&times;{PRINT_SIZE.h}cm</div>
+
+            <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+              <button onClick={() => zoomBy(-0.15)} title="Perkecil"
+                style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${LINE}`, background: FIELD, color: MID, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                <Minus size={13} />
+              </button>
+              <input type="range" min="1" max="4" step="0.01" value={crop.zoom} onChange={(e) => setCrop((c) => ({ ...c, zoom: +Number(e.target.value).toFixed(2) }))}
+                style={{ flex: 1, maxWidth: 130, accentColor: MAGA }} />
+              <span style={{ fontSize: 11, color: MID, fontWeight: 700, width: 36, textAlign: "center", flexShrink: 0 }}>{Math.round(crop.zoom * 100)}%</span>
+              <button onClick={() => zoomBy(0.15)} title="Perbesar"
+                style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${LINE}`, background: FIELD, color: MID, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+                <ZoomIn size={13} />
+              </button>
+            </div>
+
+            <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, flexWrap: "wrap" }}>
+              <button onClick={() => rotateBy(90)} title="Putar 90°"
+                style={{ display: "flex", alignItems: "center", gap: 5, height: 30, padding: "0 10px", borderRadius: 8, border: `1px solid ${LINE}`, background: FIELD, color: MID, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                <RotateCw size={12} /> {crop.rotate}°
+              </button>
+              <button onClick={toggleFlipX} title="Balik horizontal"
+                style={{ display: "flex", alignItems: "center", gap: 5, height: 30, padding: "0 10px", borderRadius: 8, border: `1.5px solid ${crop.flipX ? MAGA : LINE}`, background: crop.flipX ? `${MAGA}33` : FIELD, color: crop.flipX ? "#fff" : MID, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                <FlipHorizontal2 size={12} /> H
+              </button>
+              <button onClick={toggleFlipY} title="Balik vertikal"
+                style={{ display: "flex", alignItems: "center", gap: 5, height: 30, padding: "0 10px", borderRadius: 8, border: `1.5px solid ${crop.flipY ? MAGA : LINE}`, background: crop.flipY ? `${MAGA}33` : FIELD, color: crop.flipY ? "#fff" : MID, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                <FlipVertical2 size={12} /> V
+              </button>
+              <button onClick={() => setCrop(DEFAULT_CROP)} style={{ fontSize: 10, color: SUB, fontWeight: 700, background: "transparent", border: "none", cursor: "pointer", fontFamily: FONT }}>Reset</button>
+            </div>
+
+            <button onClick={saveCrop} disabled={cropSaving || !cropDirty}
+              style={{
+                marginTop: 12, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: "100%", height: 34, borderRadius: 9, border: "none",
+                background: !cropDirty ? FIELD : MAGA, color: !cropDirty ? SUB : "#fff",
+                fontSize: 11.5, fontWeight: 800, cursor: cropSaving || !cropDirty ? "default" : "pointer", fontFamily: FONT, opacity: cropSaving ? 0.7 : 1,
+              }}>
+              {cropSaving ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={13} />}
+              {cropSaving ? "Menyimpan..." : cropDirty ? "Simpan Penyesuaian" : "Tersimpan"}
+            </button>
+          </div>
+        )}
+
+        <div style={{ marginTop: 14, padding: 22, borderRadius: 22, background: "#fff" }}>
           {/* FIX (permintaan user - "seharusnya dia menampilkan qr share
               bukan photo id"): QR-nya SUDAH benar isi link share/download
               (lihat useEffect di atas), tapi tanpa label apa2 tepat di atas
@@ -619,9 +766,9 @@ function GeminiUploadSuccessScreen({ result, qrUrl, onUploadMore }) {
             <span style={{ fontSize: 10, fontWeight: 800, color: "#9A9AA6", letterSpacing: 0.4 }}>QR SHARE &amp; DOWNLOAD</span>
           </div>
           {qrUrl ? (
-            <img src={qrUrl} alt="QR share & download foto" style={{ marginTop: 10, width: 184, height: 184, margin: "10px auto 0", display: "block", borderRadius: 12 }} />
+            <img src={qrUrl} alt="QR share & download foto" style={{ marginTop: 10, width: 140, height: 140, margin: "10px auto 0", display: "block", borderRadius: 12 }} />
           ) : (
-            <div style={{ marginTop: 10, width: 184, height: 184, margin: "10px auto 0", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <div style={{ marginTop: 10, width: 140, height: 140, margin: "10px auto 0", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Loader2 size={22} color="#B4B4BC" style={{ animation: "spin 1s linear infinite" }} />
             </div>
           )}
@@ -640,7 +787,9 @@ function GeminiUploadSuccessScreen({ result, qrUrl, onUploadMore }) {
           style={{ width: "100%", marginTop: 22, height: 50, borderRadius: 13, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 800, fontFamily: FONT, cursor: "pointer" }}>
           Kembali &amp; Upload Lagi
         </button>
+        </div>
       </div>
+      {customFonts?.length > 0 && <style>{customFontFaceCss(customFonts)}</style>}
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes rpv-m-success-pop { 0% { transform: scale(0.4); opacity: 0; } 60% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); } }
