@@ -23,7 +23,6 @@ import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND, useSmartBack } f
 import { isValidMsisdn, normalizeMsisdn } from "../../../_shared/msisdn";
 import { compressToMaxBytes } from "../../../_shared/imageTools";
 import PhotoCollageSheet from "../../../_shared/PhotoCollageSheet";
-import CollageSuggestionCard from "../../../_shared/CollageSuggestionCard";
 import QrScanSheet from "../../../_shared/QrScanSheet";
 import SiteTowerIcon from "../../../_shared/SiteTowerIcon";
 import SitePickerSheet from "../../../_shared/SitePickerSheet";
@@ -62,6 +61,13 @@ const SUBMIT_TABS = [
 ];
 
 const MIN_PHOTOS = 1;
+// FIX (permintaan user - "batasi upload dokumentasi hanya boleh satu,
+// kalau mau lebih dari satu pakai fitur Kolase agar hasilnya tetap 1
+// gambar"): dulu photos bisa nambah bebas sampai 9 (baru dikasih SARAN
+// gabung ke Kolase pas PERSIS 9). Sekarang dokumentasi DIBATASI KETAT
+// max 1 foto - kalau mau lebih dari 1 foto fisik, WAJIB digabung dulu
+// lewat Kolase (PhotoCollageSheet) supaya hasil akhirnya tetap 1 gambar.
+const MAX_PHOTOS = 1;
 const PHOTO_BUCKET = "mh-photos";
 // Draft otomatis - hanya data teks/nomor (MSISDN, rebuy, cost, insight)
 // yg disimpan; foto TIDAK disertakan krn File/Blob tidak bisa di-serialize
@@ -254,7 +260,14 @@ export default function SubmitActualPage() {
   function addPhotoFiles(fileList) {
     const files = Array.from(fileList || []).filter((f) => f.type.startsWith("image/"));
     if (files.length === 0) return;
-    setPhotos((prev) => [...prev, ...files.map((file) => ({ file, previewUrl: URL.createObjectURL(file) }))]);
+    setPhotos((prev) => {
+      const slot = MAX_PHOTOS - prev.length;
+      if (slot <= 0) return prev; // sudah penuh (max 1) - abaikan, tombol tambah juga sudah disembunyikan
+      // Hanya ambil sisa slot yg tersedia (skrg cuma 1) - kalau tamu pilih
+      // banyak file sekaligus dari galeri, sisanya diabaikan begitu saja
+      // (bukan ditumpuk) supaya total tetap max 1.
+      return [...prev, ...files.slice(0, slot).map((file) => ({ file, previewUrl: URL.createObjectURL(file) }))];
+    });
   }
   function removePhoto(i) {
     setPhotos((prev) => {
@@ -274,7 +287,16 @@ export default function SubmitActualPage() {
   // yang SAMA - dari sisi upload/hapus/preview diperlakukan sama persis
   // dgn foto tunggal, cuma sumbernya beda (isCollage cuma penanda visual).
   function addCollagePhoto(blob, previewUrl) {
-    setPhotos((prev) => [...prev, { file: blob, previewUrl, isCollage: true }]);
+    // Hasil Kolase SELALU 1 gambar gabungan - kalau sebelumnya sudah ada
+    // foto tunggal tersisa (jarang, tp bisa terjadi), GANTI foto lama itu
+    // (bukan ditambah di samping) supaya total dokumentasi tetap max 1.
+    setPhotos((prev) => {
+      prev.forEach((p) => {
+        if (p.existing && p.docId) supabaseMarta.from("mh_documents").delete().eq("id", p.docId).then(() => {}).catch(() => {});
+        URL.revokeObjectURL(p.previewUrl);
+      });
+      return [{ file: blob, previewUrl, isCollage: true }];
+    });
     setCollageOpen(false);
   }
   useEffect(() => () => photos.forEach((p) => URL.revokeObjectURL(p.previewUrl)), []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1469,28 +1491,8 @@ export default function SubmitActualPage() {
             di atas grid. */}
         {tab === "dokumentasi" && (
         <Card accent>
-          <SectionHeading icon={Images} title="Dokumentasi Foto" subtitle={`Minimal ${MIN_PHOTOS} foto · ${photos.length} terpilih`} />
+          <SectionHeading icon={Images} title="Dokumentasi Foto" subtitle={photos.length >= MAX_PHOTOS ? "Maks 1 foto terpilih" : `Minimal ${MIN_PHOTOS} foto · ${photos.length} terpilih`} />
           <Divider />
-
-          {/* Saran gabungkan jadi kolase - cuma muncul kalau PERSIS 9 foto
-              (pas dgn layout kolase 3x3 paling padat), swipeable/dismiss-able,
-              bukan paksaan (lihat CollageSuggestionCard). */}
-          {photos.length === 9 && (
-            <CollageSuggestionCard
-              previewUrls={photos.map((p) => p.previewUrl)}
-              getBlobs={async () => Promise.all(photos.map((p) => (p.file ? p.file : fetch(p.previewUrl).then((r) => r.blob()))))}
-              onAccept={async (blob, previewUrl) => {
-                setPhotos((prev) => {
-                  const nine = prev.slice(0, 9);
-                  nine.forEach((p) => {
-                    if (p.existing && p.docId) supabaseMarta.from("mh_documents").delete().eq("id", p.docId).then(() => {}).catch(() => {});
-                    URL.revokeObjectURL(p.previewUrl);
-                  });
-                  return [{ file: blob, previewUrl, isCollage: true }, ...prev.slice(9)];
-                });
-              }}
-            />
-          )}
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 12 }}>
             {photos.map((p, i) => (
@@ -1507,20 +1509,28 @@ export default function SubmitActualPage() {
                 </button>
               </div>
             ))}
-            <button onClick={() => setPhotoPickerOpen(true)}
-              style={{
-                aspectRatio: "1", borderRadius: 12, border: `1.5px dashed ${attemptedSubmit && photos.length < MIN_PHOTOS ? "#DC2626" : "#D8D9E0"}`, background: attemptedSubmit && photos.length < MIN_PHOTOS ? "rgba(220,38,38,0.05)" : "#F6F7F9",
-                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4,
-                color: attemptedSubmit && photos.length < MIN_PHOTOS ? "#DC2626" : "#8A8A96", cursor: "pointer", fontFamily: FF,
-              }}>
-              <ImagePlus size={18} />
-              <span style={{ fontSize: 9.5, fontWeight: 700 }}>Tambah</span>
-            </button>
+            {/* FIX (permintaan user - dokumentasi max 1 foto): tombol
+                "Tambah" cuma muncul kalau BELUM ada foto sama sekali -
+                begitu sudah 1 foto/kolase terisi, hapus dulu foto yg ada
+                baru bisa pilih lagi (lewat Kamera/Galeri/Kolase), TIDAK
+                bisa numpuk lebih dari 1. */}
+            {photos.length < MAX_PHOTOS && (
+              <button onClick={() => setPhotoPickerOpen(true)}
+                style={{
+                  aspectRatio: "1", borderRadius: 12, border: `1.5px dashed ${attemptedSubmit && photos.length < MIN_PHOTOS ? "#DC2626" : "#D8D9E0"}`, background: attemptedSubmit && photos.length < MIN_PHOTOS ? "rgba(220,38,38,0.05)" : "#F6F7F9",
+                  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 4,
+                  color: attemptedSubmit && photos.length < MIN_PHOTOS ? "#DC2626" : "#8A8A96", cursor: "pointer", fontFamily: FF,
+                }}>
+                <ImagePlus size={18} />
+                <span style={{ fontSize: 9.5, fontWeight: 700 }}>Tambah</span>
+              </button>
+            )}
           </div>
+          <div style={{ marginTop: 8, fontSize: 10.5, color: "#B0B0BA" }}>Dokumentasi hanya boleh 1 foto - kalau mau lebih dari 1, gabungkan dulu lewat &ldquo;Kolase&rdquo; supaya hasilnya tetap 1 gambar.</div>
 
-          <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" multiple hidden
+          <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" hidden
             onChange={(e) => { addPhotoFiles(e.target.files); e.target.value = ""; }} />
-          <input ref={galleryInputRef} type="file" accept="image/*" multiple hidden
+          <input ref={galleryInputRef} type="file" accept="image/*" hidden
             onChange={(e) => { addPhotoFiles(e.target.files); e.target.value = ""; }} />
           {collageOpen && <PhotoCollageSheet onClose={() => setCollageOpen(false)} onDone={addCollagePhoto} />}
           {photoPickerOpen && (

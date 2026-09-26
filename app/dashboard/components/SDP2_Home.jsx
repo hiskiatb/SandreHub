@@ -137,9 +137,11 @@ export default function SDP2_Home({ supabase, theme = "dark", profile, onExit })
       ) : err ? (
         <div style={{ fontSize: 13, color: t.acc }}>{err}</div>
       ) : withProgress.length === 0 ? (
-        <div style={{ padding: "48px 22px", textAlign: "center", color: t.mid, background: t.card, border: `1px solid ${t.line}`, borderRadius: 18 }}>
-          <Inbox size={28} style={{ opacity: 0.5, marginBottom: 10 }} />
-          <div style={{ fontSize: 13.5 }}>{q ? "Tidak ada yang cocok." : "Belum ada SDP yang Anda ajukan. Mulai dari tombol di atas."}</div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "56px 22px", color: t.mid, background: t.card, border: `1px dashed ${t.line}`, borderRadius: 18 }}>
+          <div style={{ width: 52, height: 52, borderRadius: 16, background: t.sub, border: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
+            <Inbox size={22} color={t.lo} />
+          </div>
+          <div style={{ fontSize: 13.5, maxWidth: 320, lineHeight: 1.5 }}>{q ? "Tidak ada yang cocok." : "Belum ada SDP yang Anda ajukan. Mulai dari tombol di atas."}</div>
         </div>
       ) : (
         <div className="sdp2-list-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 12 }}>

@@ -24,7 +24,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, ArrowLeft, Bold, Camera, Check, ChevronDown, ChevronsDown, ChevronsUp, ChevronUp, Copy, FlipHorizontal2, FlipVertical2, FolderOpen, ImageOff, ImagePlus, Layers, Loader2, Minus, Monitor, Pencil, Plus, Printer, Radio, RotateCw, Save, Search, Settings, Sparkles, Square, Star, Trash2, Type, X, ZoomIn } from "lucide-react";
+import QRCode from "qrcode";
 import ScanQrGlyph from "./_scan-glyph";
+import { isAiFile, rasterizeAiToPngFile } from "./_ai-import";
 import {
   FONT, MAGA, PRINT_SIZE, DEFAULT_CROP, ROTATE_STEP,
   TEMPLATE_FONTS, TEMPLATE_GOOGLE_FONTS_HREF,
@@ -36,6 +38,10 @@ import { addRpvPrompt, clearRpvDefaultFrameTemplate, createRpvSession, deleteRpv
 
 const RED = "#ED1C24";
 const VIO = "#7C3AED";
+// Fitur "HP Scanner" (pairing HP lain jadi scanner Photo ID via QR)
+// disembunyikan dulu dari UI sesuai permintaan user - logic/kode pairingnya
+// TETAP ada (tidak dihapus), tinggal set true lagi kalau mau diaktifkan lagi.
+const SCANNER_FEATURE_ENABLED = false;
 const IMG_EXT = /\.(jpe?g|png|webp|gif)$/i;
 const ACTIVE_KEY = "rpv-active-session";
 const OPERATOR_ID_KEY = "rpv-operator-id";
@@ -356,7 +362,7 @@ export default function RpvControlRoom() {
   // (operator lain yg pairing ke device lain tidak ikut ter-trigger) - TANPA
   // langsung cetak, operator masih sempat edit crop/rotate/zoom dulu.
   useEffect(() => {
-    if (!activeCode || !operatorId) {
+    if (!SCANNER_FEATURE_ENABLED || !activeCode || !operatorId) {
       // Bungkus setState reset ini di microtask supaya tidak dihitung
       // "sync setState in effect" oleh lint (pola yg sama dgn effect id-operator).
       Promise.resolve().then(() => setOperators([]));
@@ -457,6 +463,31 @@ export default function RpvControlRoom() {
   const toggleFlipY = () => setCrop((c) => ({ ...c, flipY: !c.flipY }));
   const resetCrop = () => setCrop(DEFAULT_CROP);
 
+  // QR Share - permintaan user: operator bisa LANGSUNG tunjukkan hasil foto
+  // + link share/download ke tamu di panel Cetak Foto ini juga (sebelumnya
+  // QR share cuma ada di layar HP tamu sendiri stlh upload - operator tidak
+  // punya cara nunjukkan ulang kalau tamu sudah lewat dari layar itu / pakai
+  // HP orang lain utk scan). Link yg sama persis dgn yg tamu dapat
+  // (/marta/photobooth/p/[photoCode]), jadi hasil apa pun yg tamu scan di
+  // sini SELALU versi terbaru (ikut crop/bingkai/dll yg operator atur).
+  const [qrShareUrl, setQrShareUrl] = useState("");
+  useEffect(() => {
+    let alive = true;
+    const photoCode = selectedPhoto?.photo_code;
+    if (!photoCode) {
+      // Reset lewat microtask (bukan langsung di body effect) - hindari
+      // "setState synchronously within an effect" saat cuma membersihkan
+      // state akibat berganti/kehilangan foto terpilih.
+      Promise.resolve().then(() => { if (alive) setQrShareUrl(""); });
+      return () => { alive = false; };
+    }
+    const shareUrl = `${window.location.origin}/marta/photobooth/p/${photoCode}`;
+    QRCode.toDataURL(shareUrl, { margin: 1, width: 200, color: { dark: "#111116", light: "#FFFFFF" } })
+      .then((url) => { if (alive) setQrShareUrl(url); })
+      .catch(() => { if (alive) setQrShareUrl(""); });
+    return () => { alive = false; };
+  }, [selectedPhoto?.photo_code]);
+
   // ── Ukuran cetak & bingkai ────────────────────────────────────────────
   const [frameKey, setFrameKey] = useState("none");
   const printRatio = { w: PRINT_SIZE.w, h: PRINT_SIZE.h };
@@ -537,11 +568,15 @@ export default function RpvControlRoom() {
     if (!file) return;
     setTemplateUploading(true);
     try {
-      const url = await uploadRpvTemplateImage(file);
+      const uploadFile = isAiFile(file) ? await rasterizeAiToPngFile(file) : file;
+      const url = await uploadRpvTemplateImage(uploadFile);
       const el = newTemplateImageElement(url);
       setCustomElements((els) => [...els, el]);
       setSelectedElId(el.id);
-    } catch { /* gagal upload gambar - diamkan, operator bisa coba lagi */ }
+    } catch (err) {
+      if (isAiFile(file)) window.alert(err?.message || "Gagal memproses file .ai.");
+      /* gagal upload gambar - diamkan, operator bisa coba lagi */
+    }
     finally { setTemplateUploading(false); }
   };
   // Bingkai (PNG Lubang) - permintaan user: upload template yg SUDAH
@@ -553,11 +588,15 @@ export default function RpvControlRoom() {
     if (!file) return;
     setTemplateUploading(true);
     try {
-      const url = await uploadRpvTemplateImage(file);
+      const uploadFile = isAiFile(file) ? await rasterizeAiToPngFile(file) : file;
+      const url = await uploadRpvTemplateImage(uploadFile);
       const el = newTemplateFrameOverlayElement(url);
       setCustomElements((els) => [...els, el]);
       setSelectedElId(el.id);
-    } catch { /* gagal upload bingkai - diamkan, operator bisa coba lagi */ }
+    } catch (err) {
+      if (isAiFile(file)) window.alert(err?.message || "Gagal memproses file .ai.");
+      /* gagal upload bingkai - diamkan, operator bisa coba lagi */
+    }
     finally { setTemplateUploading(false); }
   };
   const addShapeElement = () => {
@@ -763,7 +802,7 @@ export default function RpvControlRoom() {
         </button>
 
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          {activeCode && myOperatorLabel && (
+          {SCANNER_FEATURE_ENABLED && activeCode && myOperatorLabel && (
             <button onClick={() => setScanLinkOpen(true)} title="ID perangkat operator ini - klik utk lihat link HP scanner"
               style={{ display: "flex", alignItems: "center", gap: 5, height: 34, padding: "0 11px", borderRadius: 9, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.mid, fontSize: 11.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
               <Radio size={12} color={MAGA} /> {myOperatorLabel}
@@ -914,7 +953,25 @@ export default function RpvControlRoom() {
                       <span style={{ fontSize: 11, color: t.lo, fontWeight: 700, width: 38, textAlign: "center", flexShrink: 0 }}>{Math.round(crop.zoom * 100)}%</span>
                       <button onClick={() => zoomBy(0.15)} title="Perbesar" style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${t.line}`, background: t.card, color: t.mid, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><ZoomIn size={13} /></button>
                     </div>
-                    <div style={{ marginTop: 2, textAlign: "center", fontSize: 10, color: t.lo }}>Geser gambar utk atur posisi · scroll/slider utk zoom</div>
+                    {/* QR Share - operator bisa langsung tunjukkan hasil +
+                        link share/download ke tamu di sini juga, tanpa perlu
+                        arahan teks terpisah (drag/slider sudah cukup jelas
+                        dari interaksinya sendiri). Link identik dgn yg tamu
+                        terima saat upload (/marta/photobooth/p/[photoCode]),
+                        jadi selalu menampilkan versi TERBARU (ikut crop/
+                        bingkai yg operator atur di sini). */}
+                    {qrShareUrl && (
+                      <div style={{ marginTop: 14, padding: "12px 14px", borderRadius: 12, border: `1px solid ${t.line}`, background: t.card, display: "flex", alignItems: "center", gap: 14 }}>
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={qrShareUrl} alt="QR share" width={68} height={68} style={{ borderRadius: 6, flexShrink: 0 }} />
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 800, color: t.hi, display: "flex", alignItems: "center", gap: 6 }}>
+                            <ScanQrGlyph size={13} color={MAGA} strokeWidth={1.8} /> Tunjukkan ke Tamu
+                          </div>
+                          <div style={{ marginTop: 3, fontSize: 10.5, color: t.mid, lineHeight: 1.4 }}>Scan utk lihat &amp; download hasil ini.</div>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Putar & balik - buat case cetak yg fotonya kepotret
                         miring/landscape padahal mau dicetak potret, atau
@@ -1219,7 +1276,7 @@ function TemplateEditorModal({
                     style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, height: 34, borderRadius: 9, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontSize: 11.5, fontWeight: 700, cursor: uploading ? "not-allowed" : "pointer", fontFamily: FONT, opacity: uploading ? 0.6 : 1 }}>
                     {uploading ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <ImagePlus size={13} />} Gambar
                   </button>
-                  <input ref={fileInputRef} type="file" accept="image/*" style={{ display: "none" }}
+                  <input ref={fileInputRef} type="file" accept="image/*,.ai" style={{ display: "none" }}
                     onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onAddImage(f); }} />
                   <button onClick={onAddShape}
                     style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, height: 34, borderRadius: 9, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontSize: 11.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
@@ -1240,7 +1297,7 @@ function TemplateEditorModal({
                 <div style={{ fontSize: 9.5, color: t.lo, lineHeight: 1.5, marginTop: 4 }}>
                   Upload PNG template yg sudah ada bagian transparan/bolong utk fotonya - langsung dipasang penuh menutupi bingkai, lubangnya otomatis menampakkan foto di baliknya.
                 </div>
-                <input ref={frameOverlayInputRef} type="file" accept="image/*" style={{ display: "none" }}
+                <input ref={frameOverlayInputRef} type="file" accept="image/*,.ai" style={{ display: "none" }}
                   onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onAddFrameOverlay(f); }} />
               </div>
 
