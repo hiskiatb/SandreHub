@@ -364,18 +364,34 @@ function Body({ email }) {
 
       const ids = list.map((r) => r.id);
       if (ids.length) {
-        const { data: docs } = await supabaseMarta.from("mh_documents").select("activity_id, file_type, storage_path, external_ref, created_at").in("activity_id", ids).eq("file_type", "photo").order("created_at");
+        // Bisa sampai ~1000 activity_id (mh_activities di atas di-fetch dgn
+        // .limit(1000)) - .in() dgn array sepanjang itu bikin URL request
+        // kepanjangan dan gagal/silently truncated di beberapa akun (SAMA
+        // masalahnya spt SITE_CHUNK di app/martahub/m/activities/page.jsx),
+        // alhasil kolom Dokumentasi & export Excel kelihatan kosong padahal
+        // datanya ada. Dipecah per-batch (Promise.all, konkuren) lalu digabung.
+        const DOC_CHUNK = 150;
+        const idChunks = [];
+        for (let i = 0; i < ids.length; i += DOC_CHUNK) idChunks.push(ids.slice(i, i + DOC_CHUNK));
+        const chunkResults = await Promise.all(
+          idChunks.map((chunk) =>
+            supabaseMarta.from("mh_documents").select("activity_id, file_type, storage_path, external_ref, created_at").in("activity_id", chunk).eq("file_type", "photo").order("created_at")
+          )
+        );
         const counts = {};
         const firstPhoto = {};
         const firstDrive = {};
-        (docs || []).forEach((d) => {
-          counts[d.activity_id] = (counts[d.activity_id] || 0) + 1;
-          if (!firstPhoto[d.activity_id]) firstPhoto[d.activity_id] = d.storage_path;
-          // external_ref = Google Drive file id (diisi async oleh Edge Function
-          // media-relay setelah foto berhasil di-mirror ke Drive) - bisa null
-          // kalau mirror-nya gagal/belum jalan, makanya diambil per-baris (bukan
-          // cuma dari foto pertama yg storage_path-nya kepakai utk thumbnail).
-          if (!firstDrive[d.activity_id] && d.external_ref) firstDrive[d.activity_id] = d.external_ref;
+        chunkResults.forEach(({ data: docs, error }, idx) => {
+          if (error) { console.error(`Gagal memuat data dokumentasi (batch ${idx + 1}/${idChunks.length}):`, error); return; }
+          (docs || []).forEach((d) => {
+            counts[d.activity_id] = (counts[d.activity_id] || 0) + 1;
+            if (!firstPhoto[d.activity_id]) firstPhoto[d.activity_id] = d.storage_path;
+            // external_ref = Google Drive file id (diisi async oleh Edge Function
+            // media-relay setelah foto berhasil di-mirror ke Drive) - bisa null
+            // kalau mirror-nya gagal/belum jalan, makanya diambil per-baris (bukan
+            // cuma dari foto pertama yg storage_path-nya kepakai utk thumbnail).
+            if (!firstDrive[d.activity_id] && d.external_ref) firstDrive[d.activity_id] = d.external_ref;
+          });
         });
         setDocCountMap(counts);
         setDocPhotoMap(firstPhoto);
@@ -1216,26 +1232,42 @@ function Body({ email }) {
       const photoEligible = exportRows.filter((r) => docCol > 0 && docPhotoMap[r.id]);
       if (photoEligible.length) setExportStage(`Mengambil foto dokumentasi (0/${photoEligible.length})…`);
       let photosDone = 0;
+      let photosFailed = 0; // foto yg gagal ditempel & jatuh ke fallback teks "N foto"
       if (docCol > 0) {
+        const docTextFallback = (rowIdx) => {
+          // Foto gagal ditempel (atau memang tidak ada path) - tulis teks
+          // "N foto" spy sel Documentation tidak kosong padahal aktivitas
+          // ini sebenarnya PUNYA dokumentasi (docCountMap[r.id] > 0).
+          const row = ws.getRow(rowIdx + 1);
+          row.getCell(docCol).value = docCountMap[r.id] ? `${docCountMap[r.id]} foto` : "-";
+          photosFailed += 1;
+        };
         await Promise.allSettled(exportRows.map(async (r, i) => {
           const path = docPhotoMap[r.id];
-          if (!path) return;
+          const rowIdx = i + 1; // 0-based row index di bawah header (baris data ke-1 = index 1 di sheet)
+          if (!path) {
+            docTextFallback(rowIdx);
+            return;
+          }
           try {
             const url = photoUrl(path);
             const res = await fetch(url);
-            if (!res.ok) return;
+            if (!res.ok) {
+              docTextFallback(rowIdx);
+              return;
+            }
             const buffer = await res.arrayBuffer();
             const ext = (path.split(".").pop() || "jpeg").toLowerCase();
             const extension = ["png", "jpeg", "jpg", "gif"].includes(ext) ? (ext === "jpg" ? "jpeg" : ext) : "jpeg";
             const imageId = wb.addImage({ buffer, extension });
-            const rowIdx = i + 1; // 0-based row index di bawah header (baris data ke-1 = index 1 di sheet)
             ws.getRow(rowIdx + 1).height = Math.max(ws.getRow(rowIdx + 1).height || 0, THUMB_PX * 0.78);
             ws.addImage(imageId, {
               tl: { col: docCol - 1 + 0.05, row: rowIdx + 0.05 },
               ext: { width: THUMB_PX, height: THUMB_PX },
               editAs: "oneCell",
             });
-          } catch { /* lewati foto yg gagal diambil, baris lain tetap lanjut */
+          } catch { /* gagal diambil - fallback teks spy sel tidak kosong */
+            docTextFallback(rowIdx);
           } finally {
             photosDone += 1;
             setExportProgress(55 + Math.round((photosDone / photoEligible.length) * 37));
@@ -1258,7 +1290,7 @@ function Body({ email }) {
       a.remove();
       URL.revokeObjectURL(a.href);
       setExportProgress(100);
-      setExportStage("Selesai!");
+      setExportStage(photosFailed > 0 ? `Selesai! (${photosFailed} foto gagal ditempel, ditulis sbg teks)` : "Selesai!");
       await new Promise((res) => setTimeout(res, 650)); // biar bar 100% sempat kelihatan sebelum ditutup
     } catch (e) {
       alert(e.message || "Gagal export .xlsx");
@@ -1267,7 +1299,7 @@ function Body({ email }) {
       setExportProgress(0);
       setExportStage("");
     }
-  }, [COLUMNS, scopedRows, profileMap, siteMetaMap, bmeAssignMap, docPhotoMap, docDriveMap, branchMap, cats]);
+  }, [COLUMNS, scopedRows, profileMap, siteMetaMap, bmeAssignMap, docPhotoMap, docDriveMap, docCountMap, branchMap, cats]);
 
   const T_FILTER = { hi: T.hi, mid: T.mid, lo: T.lo, blue: T.primary, blueBg: T.primaryBg };
 
