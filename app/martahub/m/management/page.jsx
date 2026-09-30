@@ -44,7 +44,7 @@ import { BRAND_DISPLAY } from "../_shared/planData";
 
 const ACTIVITY_COLS = "id,event_name,brand,branch_id,plan_date,status,target_sp,actual_sp,cost_actual,actual_rev_3m";
 const MONTH_NAMES_FULL = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
-const LAUNCH_YEAR = 2026, LAUNCH_MONTH = 7; // Agustus 2026 - sama dgn Home
+const LAUNCH_YEAR = 2026, LAUNCH_MONTH = 8; // September 2026 - sama dgn Home
 
 function monthOptions() {
   const now = new Date();

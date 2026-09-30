@@ -15,7 +15,7 @@
  * sendiri cuma scatter-plot custom, bukan basemap asli). Notifikasi sudah
  * punya inbox penuh di /martahub/m/notifications.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Building2, ChevronRight, ChevronLeft, Clock,
@@ -145,10 +145,10 @@ const TIPS = [
 // sengaja tetap disingkat krn dipakai tampilan lain yg ruangnya lebih sempit).
 const MONTHS_FULL = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 
-// MartaHub mobile mulai dipakai Agustus 2026 - jangan tampilkan bulan
+// MartaHub mobile mulai dipakai September 2026 - jangan tampilkan bulan
 // sebelum itu di selector periode (tidak ada data plan sebelum tanggal
 // ini, jadi cuma bikin daftar panjang isinya kosong semua).
-const LAUNCH_YEAR = 2026, LAUNCH_MONTH = 7; // Agustus = index 7
+const LAUNCH_YEAR = 2026, LAUNCH_MONTH = 8; // September = index 8
 
 function monthOptions() {
   const now = new Date();
@@ -161,6 +161,41 @@ function monthOptions() {
     opts.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, label: `${MONTHS_FULL[d.getMonth()]} ${d.getFullYear()}` });
   }
   return opts;
+}
+
+// Plan aktivitas biasanya DIBUAT sebulan sblm bulan berjalannya (mis. plan
+// Oktober sudah dibuat & disubmit sepanjang September) - kalau selector cuma
+// ikut kalender asli (monthOptions() di atas), bulan yg plan-nya SUDAH ada
+// jadi belum bisa dipilih sampai kalender beneran ganti bulan. Fungsi ini
+// menambah opsi bulan MENDATANG (di atas bulan berjalan kalender) HANYA
+// kalau minimal 1 baris `rows` (mh_activities, plan_date/plan_date_start)
+// sudah ada di bulan itu - jadi didorong oleh DATA, bukan cuma kalender.
+// Dibatasi maks 2 bulan ke depan dr bulan berjalan supaya salah tanggal
+// input (mis. plan_date ketik tahun depan) tidak bikin daftar ini kebanjiran
+// opsi kosong nun jauh ke depan.
+const FUTURE_MONTH_CAP = 2;
+function extendMonthsWithPlanData(baseMonths, rows) {
+  if (!rows || rows.length === 0 || baseMonths.length === 0) return baseMonths;
+  const currentKey = baseMonths[0].key;
+  const [cy, cm] = currentKey.split("-").map(Number);
+  const capDate = new Date(cy, cm - 1 + FUTURE_MONTH_CAP, 1);
+  const capKey = `${capDate.getFullYear()}-${String(capDate.getMonth() + 1).padStart(2, "0")}`;
+  const existingKeys = new Set(baseMonths.map((m) => m.key));
+  const extraKeys = new Set();
+  for (const r of rows) {
+    const raw = r.plan_date || r.plan_date_start;
+    if (!raw) continue;
+    const alreadyReported = r.actual_sp != null && r.actual_fwa != null;
+    if (alreadyReported) continue;
+    const key = String(raw).slice(0, 7);
+    if (key > currentKey && key <= capKey && !existingKeys.has(key)) extraKeys.add(key);
+  }
+  if (extraKeys.size === 0) return baseMonths;
+  const extraOpts = Array.from(extraKeys).sort().reverse().map((key) => {
+    const [y, m] = key.split("-").map(Number);
+    return { key, label: `${MONTHS_FULL[m - 1]} ${y}` };
+  });
+  return [...extraOpts, ...baseMonths];
 }
 
 export default function MartaMobileHome() {
@@ -185,8 +220,34 @@ export default function MartaMobileHome() {
   // & utk banyak baris branch_id-nya ternyata tidak match ke mh_branches
   // sama sekali (makanya branch sempat tidak muncul di kartu ini).
   const [branchBySite, setBranchBySite] = useState({});
-  const months = useMemo(monthOptions, []);
-  const [monthKey, setMonthKey] = useState(months[0].key);
+  // `months` TIDAK LAGI di-freeze via useMemo([]) - dulu daftar bulan &
+  // default-nya beku sejak mount pertama, jadi sesi mobile/PWA yg dibiarkan
+  // terbuka lintas pergantian bulan tidak pernah maju ke bulan berjalan yg
+  // baru. Dihitung ulang tiap render (murni aritmetika tanggal, sangat
+  // murah) supaya selalu mengikuti waktu nyata.
+  // `baseMonths` = daftar bulan MURNI dr kalender (dipakai utk default
+  // auto-advance di bawah - TIDAK ikut melompat cuma krn data plan bulan
+  // depan numpang muncul). `months` = daftar yg ditampilkan ke user, sudah
+  // ditambah bulan mendatang yg plan-nya sudah ada (lihat
+  // extendMonthsWithPlanData di atas).
+  const baseMonths = monthOptions();
+  const months = extendMonthsWithPlanData(baseMonths, rows);
+  const [monthKey, setMonthKey] = useState(baseMonths[0].key);
+  // Lacak apakah user SUDAH PERNAH pilih bulan sendiri lewat MonthSelect -
+  // kalau sudah, jangan pernah timpa pilihannya walau bulan berjalan maju
+  // (dia sengaja mau lihat bulan lama). Kalau belum, ikuti pola "adjust
+  // state during render" (sama spt reset visibleCount di activities/page.jsx)
+  // supaya monthKey otomatis ikut ke months[0].key begitu bulan berjalan
+  // berganti - TANPA useEffect+setState (menghindari lint
+  // react-hooks/set-state-in-effect & tanpa render "kedip" ekstra).
+  const [monthTouchedByUser, setMonthTouchedByUser] = useState(false);
+  const currentMonthKey = baseMonths[0]?.key;
+  const prevCurrentMonthKeyRef = useRef(currentMonthKey);
+  if (prevCurrentMonthKeyRef.current !== currentMonthKey) {
+    prevCurrentMonthKeyRef.current = currentMonthKey;
+    if (!monthTouchedByUser && monthKey !== currentMonthKey) setMonthKey(currentMonthKey);
+  }
+  const handleMonthChange = (key) => { setMonthTouchedByUser(true); setMonthKey(key); };
   const [branchFilter, setBranchFilter] = useState(() => loadSavedFilters().branchFilter || "");
   const [brandFilter, setBrandFilter] = useState(() => loadSavedFilters().brandFilter || "");
   // Region HANYA relevan utk akun "Circle" (head/tmv dgn scope.region
@@ -697,7 +758,7 @@ export default function MartaMobileHome() {
       <div style={{ padding: "18px 20px 0" }}>
         <AchievementCard
           loading={rows === null && !err}
-          monthKey={monthKey} setMonthKey={setMonthKey} months={months}
+          monthKey={monthKey} onMonthChange={handleMonthChange} months={months}
           achievementPct={achievementPct} targetSp={targetSp}
           planCount={planCount} actualCount={actualCount}
           revenueTotal={revenueTotal} targetRevTotal={targetRevTotal} costRatioPct={costRatioPct} costTotal={costTotal} targetCostTotal={targetCostTotal}
@@ -1022,7 +1083,7 @@ function MonthSelect({ value, onChange, options }) {
  * sedang tampil, dianimasikan bareng rotasi flip 3D (rotateY).
  */
 function AchievementCard({
-  loading, monthKey, setMonthKey, months, achievementPct, targetSp, planCount, actualCount,
+  loading, monthKey, onMonthChange, months, achievementPct, targetSp, planCount, actualCount,
   revenueTotal, targetRevTotal, costRatioPct, costTotal, targetCostTotal,
   actualSp, actualFwaTotal, targetFwaTotal, rebuySpTotal, targetRebuySpTotal, rebuyFwaTotal, targetRebuyFwaTotal,
 }) {
@@ -1098,7 +1159,7 @@ function AchievementCard({
               )}
               <div style={{ fontSize: 10.5, fontWeight: 800, color: "rgba(255,255,255,0.6)", letterSpacing: 1, textTransform: "uppercase" }}>Achievement</div>
             </div>
-            <MonthSelect value={monthKey} onChange={setMonthKey} options={months} />
+            <MonthSelect value={monthKey} onChange={onMonthChange} options={months} />
           </div>
 
           <div style={{ position: "relative", display: "flex", alignItems: "baseline", gap: 8, marginTop: 18 }}>

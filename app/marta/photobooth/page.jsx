@@ -23,7 +23,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, ArrowLeft, Bold, Camera, Check, ChevronDown, ChevronsDown, ChevronsUp, ChevronUp, Copy, FlipHorizontal2, FlipVertical2, FolderOpen, ImageOff, ImagePlus, Layers, Loader2, Minus, Monitor, Move, Pencil, Plus, Printer, Radio, RotateCw, Save, Search, Settings, Sparkles, Square, Star, Trash2, Type, X, ZoomIn } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Bold, Camera, Check, CheckSquare, ChevronDown, ChevronsDown, ChevronsUp, ChevronUp, Copy, FlipHorizontal2, FlipVertical2, FolderOpen, ImageOff, ImagePlus, Layers, Loader2, Minus, Monitor, Move, Pencil, Plus, Printer, Radio, RotateCw, Save, Search, Settings, Sparkles, Square, Star, Trash2, Type, X, ZoomIn } from "lucide-react";
 import QRCode from "qrcode";
 import ScanQrGlyph from "./_scan-glyph";
 import { isAiFile, rasterizeAiToPngFile } from "./_ai-import";
@@ -178,6 +178,12 @@ export default function RpvControlRoom() {
     if (activeCode) { try { localStorage.setItem(ACTIVE_KEY, activeCode); } catch { /* best-effort */ } }
   }, [activeCode]);
 
+  const [selectedCodes, setSelectedCodes] = useState(() => new Set());
+  const [bulkArmed, setBulkArmed] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0 });
+  const bulkArmTimerRef = useRef(null);
+
   // ── Muat sesi aktif penuh + foto2nya + realtime ─────────────────────────
   useEffect(() => {
     unsubRef.current?.();
@@ -185,6 +191,7 @@ export default function RpvControlRoom() {
     (async () => {
       setSelectedCode("");
       setCamPhotos([]); setAiPhotos([]);
+      setSelectedCodes(new Set()); setBulkArmed(false);
       if (!activeCode) { setSession(null); setSessionState("idle"); return; }
       setSessionState("loading");
       try {
@@ -356,6 +363,66 @@ export default function RpvControlRoom() {
       setSelectedCode((cur) => (cur === p.photo_code ? "" : cur));
     } catch { /* gagal hapus (jaringan/permission) - diamkan, operator tinggal coba lagi */ }
     finally { setDeletingPhotoCode(""); }
+  };
+
+  // ── Tandai Semua / Hapus Semua (permintaan operator - butuh cara cepat
+  // bersihkan sesi lama sebelum acara baru, bukan hapus 1-per-1). Reuse
+  // PERSIS `deleteRpvPhoto` yg sama dgn tombol hapus single di atas -
+  // artinya urutannya jg SAMA (hapus file byte di Storage dulu, baru baris
+  // rpv_photos-nya) utk tiap foto yg dipilih, jadi storage benar2 kepakai
+  // ulang/hemat, bukan cuma disembunyikan dari UI doang. Dijalankan
+  // SEKUENSIAL (bukan Promise.all) supaya tidak membanjiri Storage API
+  // kalau operator pilih puluhan foto sekaligus, & kalau 1 foto gagal
+  // hapus (network flaky) yg lain tetap lanjut dicoba.
+  const toggleSelectCode = (e, code) => {
+    e.stopPropagation();
+    setSelectedCodes((prev) => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+  };
+
+  const allFilteredSelected = filteredPhotos.length > 0 && filteredPhotos.every((p) => selectedCodes.has(p.photo_code));
+  const toggleSelectAll = () => {
+    setSelectedCodes((prev) => {
+      if (allFilteredSelected) return new Set();
+      return new Set(filteredPhotos.map((p) => p.photo_code));
+    });
+  };
+
+  const handleBulkDelete = async () => {
+    if (bulkDeleting || selectedCodes.size === 0) return;
+    if (!bulkArmed) {
+      clearTimeout(bulkArmTimerRef.current);
+      setBulkArmed(true);
+      bulkArmTimerRef.current = setTimeout(() => setBulkArmed(false), 3000);
+      return;
+    }
+    clearTimeout(bulkArmTimerRef.current);
+    setBulkArmed(false);
+    const targets = allPhotos.filter((p) => selectedCodes.has(p.photo_code));
+    setBulkDeleting(true);
+    setBulkProgress({ done: 0, total: targets.length });
+    const deletedCodes = [];
+    for (const p of targets) {
+      try {
+        await deleteRpvPhoto(activeCode, p.photo_code, p.storage_path);
+        deletedCodes.push(p.photo_code);
+      } catch { /* gagal hapus foto ini (jaringan/permission) - lanjut ke foto berikutnya */ }
+      setBulkProgress((prev) => ({ ...prev, done: prev.done + 1 }));
+    }
+    const deletedSet = new Set(deletedCodes);
+    setCamPhotos((prev) => prev.filter((x) => !deletedSet.has(x.photo_code)));
+    setAiPhotos((prev) => prev.filter((x) => !deletedSet.has(x.photo_code)));
+    setSelectedCode((cur) => (deletedSet.has(cur) ? "" : cur));
+    setSelectedCodes((prev) => {
+      const next = new Set(prev);
+      deletedCodes.forEach((c) => next.delete(c));
+      return next;
+    });
+    setBulkDeleting(false);
   };
 
   // Join channel pairing operator utk sesi aktif - begitu HP scanner yg
@@ -876,7 +943,30 @@ export default function RpvControlRoom() {
                   placeholder="Cari Photo ID (5 digit)…" inputMode="numeric"
                   style={{ width: "100%", height: 38, borderRadius: 10, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontSize: 13, fontFamily: "monospace", letterSpacing: "0.04em", padding: "0 12px 0 32px", boxSizing: "border-box" }} />
               </div>
-              <div style={{ marginTop: 6, fontSize: 10.5, color: t.lo, fontWeight: 600 }}>{filteredPhotos.length} foto{searchQuery ? ` cocok dari ${allPhotos.length}` : ""}</div>
+              <div style={{ marginTop: 8, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                <span style={{ fontSize: 10.5, color: t.lo, fontWeight: 600 }}>{filteredPhotos.length} foto{searchQuery ? ` cocok dari ${allPhotos.length}` : ""}</span>
+                {filteredPhotos.length > 0 && (
+                  <button onClick={toggleSelectAll}
+                    style={{ display: "flex", alignItems: "center", gap: 5, border: "none", background: "transparent", color: MAGA, fontSize: 10.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, padding: 0 }}>
+                    {allFilteredSelected ? <CheckSquare size={13} /> : <Square size={13} />}
+                    {allFilteredSelected ? "Batal Tandai" : "Tandai Semua"}
+                  </button>
+                )}
+              </div>
+              {selectedCodes.size > 0 && (
+                <button onClick={handleBulkDelete} disabled={bulkDeleting}
+                  title={bulkArmed ? "Yakin? Klik lagi utk hapus semua terpilih" : "Hapus semua foto yg ditandai"}
+                  style={{
+                    marginTop: 8, width: "100%", height: 34, borderRadius: 9, border: `1px solid ${bulkArmed ? "#DC2626" : "#DC262666"}`,
+                    background: bulkArmed ? "#DC2626" : "rgba(220,38,38,0.12)", color: bulkArmed ? "#fff" : "#FF8A8F",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 7, fontSize: 11.5, fontWeight: 800, fontFamily: FONT,
+                    cursor: bulkDeleting ? "not-allowed" : "pointer",
+                  }}>
+                  {bulkDeleting
+                    ? <><Loader2 size={12} style={{ animation: "spin .8s linear infinite" }} /> Menghapus {bulkProgress.done}/{bulkProgress.total}…</>
+                    : <><Trash2 size={12} /> {bulkArmed ? "Yakin? Klik Lagi" : `Hapus Terpilih (${selectedCodes.size})`}</>}
+                </button>
+              )}
             </div>
             <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 8 }}>
               {sessionState === "loading" && (
@@ -894,6 +984,7 @@ export default function RpvControlRoom() {
                 const active = p.photo_code === selectedCode;
                 const confirming = confirmDeleteCode === p.photo_code;
                 const rowDeleting = deletingPhotoCode === p.photo_code;
+                const checked = selectedCodes.has(p.photo_code);
                 return (
                   // NOTE: pakai <div role="button"> (bukan <button>) di sini krn
                   // tombol Hapus di dalamnya JUGA <button> - <button> di dalam
@@ -905,6 +996,12 @@ export default function RpvControlRoom() {
                       width: "100%", display: "flex", alignItems: "center", gap: 10, padding: 8, marginBottom: 6, borderRadius: 12,
                       border: `1.5px solid ${confirming ? "#DC2626" : active ? MAGA : "transparent"}`, background: confirming ? "rgba(220,38,38,0.12)" : active ? `${MAGA}1c` : t.fieldBg, cursor: "pointer", fontFamily: FONT, textAlign: "left",
                     }}>
+                    {/* Checkbox tandai utk hapus massal - stop propagation biar
+                        klik centang tidak ikut trigger pilih/preview foto. */}
+                    <button onClick={(e) => toggleSelectCode(e, p.photo_code)} title={checked ? "Batal tandai" : "Tandai foto ini"}
+                      style={{ flexShrink: 0, width: 18, height: 18, border: "none", background: "transparent", padding: 0, color: checked ? MAGA : t.lo, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                      {checked ? <CheckSquare size={16} /> : <Square size={16} />}
+                    </button>
                     <div style={{ width: 42, height: 42, borderRadius: 9, overflow: "hidden", flexShrink: 0, background: "#000" }}>
                       <img src={p.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
                     </div>

@@ -36,6 +36,26 @@ const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
 // simetris/rapi.
 const FAB_MARGIN = 10; // jarak kanan == jarak bawah ke navbar (simetris), dirapatkan lagi
 
+// Urutan grup filter lanjutan di sheet ini - TIDAK penting urutannya
+// (semuanya AND), konstanta module-level (bukan dibuat ulang tiap
+// render) dipakai baik utk `filtered` (AND semua grup) maupun utk
+// hitung facet tiap grup (AND semua grup KECUALI grup itu sendiri,
+// lihat `baseRowsExcept` di useMemo filterOptionGroups).
+const FACET_GROUP_IDS = ["status", "categories", "brand", "branch", "kabupaten", "kecamatan", "kecamatanFokus", "siteLrs", "poi", "site"];
+// Status DB `plan_submitted` ditampilkan sbg salah satu dari 3 turunan
+// (Terjadwal/Berjalan/Menunggu Laporan) via activityStage() - dipakai
+// bareng oleh `filtered` & count facet Status supaya key-nya SAMA
+// PERSIS dgn label yg dilihat BME di kartu.
+const PLAN_STAGE_KEYS = { "Terjadwal": "stage:scheduled", "Berjalan": "stage:ongoing", "Menunggu Laporan": "stage:waiting_report" };
+function statusFacetKeyOf(r) {
+  if (r.status === "plan_submitted") return PLAN_STAGE_KEYS[activityStage(r).label] || null;
+  return r.status;
+}
+function categoryKeysOf(r) {
+  return Array.isArray(r.event_categories) && r.event_categories.length ? r.event_categories : (r.event_category ? [r.event_category] : []);
+}
+
+
 const TABS = [
   { key: "all", label: "Semua Status" },
   { key: "draft", label: "Draft" },
@@ -130,6 +150,16 @@ function ActivitiesInner() {
   // ada di dua tempat itu.
   const [siteMeta, setSiteMeta] = useState({});
   const [err, setErr] = useState("");
+  // Windowed rendering - daftar aktivitas bisa ratusan baris; render SEMUA
+  // sekaligus ke DOM (tiap ActivityCard = nested divs + gradient + inline
+  // style objects) bikin tap filter kerasa lag khususnya di HP. `visibleCount`
+  // membatasi berapa baris dari `filtered` yg DI-RENDER, BUKAN mengubah
+  // `filtered` itu sendiri (hasil filter/jumlah total tetap dari
+  // filtered.length, lihat pemakaiannya di footer sheet Filter) - jadi
+  // akurasi filter tidak berubah sama sekali, cuma performa render.
+  const PAGE_SIZE_ACTIVITIES = 30;
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE_ACTIVITIES);
+  const loadMoreSentinelRef = useRef(null);
   const [tab, setTab] = useState(initialTab && TABS.some((t) => t.key === initialTab) ? initialTab : "all");
   const [q, setQ] = useState("");
   const [detail, setDetail] = useState(null);
@@ -169,7 +199,16 @@ function ActivitiesInner() {
   // lewat setMonthKeyFiltered di bawah, spy tidak nyangkut nunjuk tanggal
   // yg sudah tidak relevan dgn bulan yg baru dipilih.
   const [dateKey, setDateKey] = useState("");
-  const setMonthKeyFiltered = (k) => { setMonthKey(k); setDateKey(""); };
+  // Waktu Event (sheet Filter Aktivitas) menyatukan DUA sumbu waktu ini jadi
+  // SATU grup pilihan yg saling eksklusif drpd dua section terpisah yg bisa
+  // "nabrak" (mis. pill relatif "Bulan Ini" AKTIF bersamaan dgn bulan
+  // spesifik "September 2026" - membingungkan, mana yg sebenarnya berlaku).
+  // setMonthKeyFiltered (pilih bulan spesifik) SELALU ikut mengembalikan
+  // dateRange ke "all", & setDateRangeFiltered (pilih pill relatif) SELALU
+  // ikut mengembalikan monthKey ke "all" (+ dateKey kosong) - jadi hanya
+  // SATU dari keduanya yg pernah aktif di satu waktu, tidak pernah dua-duanya.
+  const setMonthKeyFiltered = (k) => { setMonthKey(k); setDateKey(""); setDateRange("all"); };
+  const setDateRangeFiltered = (k) => { setDateRange(k); setMonthKey("all"); setDateKey(""); };
   // "Hari Ini" (lihat tombol di baris tab Semua/Plan Diajukan/Selesai) -
   // lompat LANGSUNG ke bulan+tanggal hari ini (bukan cuma bulan spt
   // setMonthKeyFiltered) - dua state diset SEKALIGUS dlm satu batch spy
@@ -181,7 +220,7 @@ function ActivitiesInner() {
   }, []);
   const isTodaySelected = dateKey === todayDateKey;
   function selectToday() {
-    startFilterTransition(() => { setMonthKey(todayDateKey.slice(0, 7)); setDateKey(todayDateKey); });
+    startFilterTransition(() => { setMonthKey(todayDateKey.slice(0, 7)); setDateKey(todayDateKey); setDateRange("all"); });
   }
   // Ref per tombol chip tanggal (keyed by tanggalnya, "YYYY-MM-DD") - dipakai
   // scrollIntoView di bawah utk membawa chip tanggal yg BARU dipilih ke
@@ -210,8 +249,21 @@ function ActivitiesInner() {
   const [hariIniFrontW, setHariIniFrontW] = useState(null);
   const [hariIniBackW, setHariIniBackW] = useState(null);
   useLayoutEffect(() => {
-    if (hariIniFrontMeasureRef.current) setHariIniFrontW(hariIniFrontMeasureRef.current.getBoundingClientRect().width);
-    if (hariIniBackMeasureRef.current) setHariIniBackW(hariIniBackMeasureRef.current.getBoundingClientRect().width);
+    let cancelled = false;
+    const measure = () => {
+      if (cancelled) return;
+      if (hariIniFrontMeasureRef.current) setHariIniFrontW(hariIniFrontMeasureRef.current.getBoundingClientRect().width);
+      if (hariIniBackMeasureRef.current) setHariIniBackW(hariIniBackMeasureRef.current.getBoundingClientRect().width);
+    };
+    measure();
+    // Ukuran awal di atas bisa salah kalau web font custom (FF) belum
+    // selesai dimuat saat measure() pertama jalan (metrics fallback font
+    // lebih sempit ke-lock permanen ke state) - re-measure sekali lagi
+    // begitu document.fonts.ready resolve utk koreksi lebar yg akurat.
+    if (typeof document !== "undefined" && document.fonts && document.fonts.ready) {
+      document.fonts.ready.then(measure);
+    }
+    return () => { cancelled = true; };
   }, []);
   // Indikator loading KHUSUS saat filter/periode diubah (bukan initial
   // load - itu sudah dipakai `rows === null`) - useTransition dipakai
@@ -232,6 +284,11 @@ function ActivitiesInner() {
   // Checkbox tunggal spt "Perlu Tindakan" (bukan FilterChipGroup multi-
   // value spt Kabupaten/Kecamatan) krn cuma 2 kemungkinan.
   const [kecamatanFokusOnly, setKecamatanFokusOnly] = useState(false);
+  // Site LRS - flag boolean per site (mh_sites.site_lrs), gaya SAMA persis
+  // dgn kecamatanFokusOnly di atas (checkbox tunggal, bukan chip multi-
+  // value) krn siteMeta cuma menyimpan versi boolean-nya (lihat fetch
+  // siteMeta di bawah), bukan tier tekstual PROFIT/LRS/NO/dst.
+  const [siteLrsOnly, setSiteLrsOnly] = useState(false);
   // SATU state hapus dipakai baik dari kebab-menu kartu daftar maupun dari
   // tombol "Hapus Plan" di DetailSheet quick-view - keduanya cuma memicu
   // sheet konfirmasi yg sama (DeleteActivitySheet), bukan alur terpisah.
@@ -307,13 +364,18 @@ function ActivitiesInner() {
         // dgn syarat wajib minimal foto di form Isi Laporan Actual/
         // submit/page.jsx - dua tempat ini SENGAJA disamakan, sama alasannya
         // kayak Actual SP/FWA/Cost/Insight di atas).
+        // docCountPromise DISIAPKAN dulu (belum di-await) supaya jalan
+        // BARENGAN dgn query site-metadata di bawah (yg sendiri sudah pakai
+        // Promise.all utk tiap chunk mh_sites) - sebelumnya dua fase ini
+        // sequential (doc_count nunggu selesai dulu baru site-metadata
+        // mulai), padahal keduanya independen thd data yg sama (`data`),
+        // jadi cukup ditembak sekaligus lalu ditunggu bareng di bawah.
+        // Tidak mengubah data yg diambil/cara dipakai sama sekali, cuma
+        // timing-nya jadi konkuren.
         const activityIds = data.map((r) => r.id).filter(Boolean);
-        if (activityIds.length > 0) {
-          const { data: docRows } = await supabaseMarta.from("mh_documents").select("activity_id").in("activity_id", activityIds);
-          const docCountMap = new Map();
-          for (const d of docRows || []) docCountMap.set(d.activity_id, (docCountMap.get(d.activity_id) || 0) + 1);
-          for (const r of data) r.doc_count = docCountMap.get(r.id) || 0;
-        }
+        const docCountPromise = activityIds.length > 0
+          ? supabaseMarta.from("mh_documents").select("activity_id").in("activity_id", activityIds)
+          : Promise.resolve({ data: [] });
 
         // Nama branch per site - dibatch SEKALI utk semua site_id yg muncul
         // di daftar (bukan satu query per kartu), dipakai di subtitle kartu
@@ -339,13 +401,20 @@ function ActivitiesInner() {
           const SITE_CHUNK = 150;
           const siteChunks = [];
           for (let i = 0; i < siteIds.length; i += SITE_CHUNK) siteChunks.push(siteIds.slice(i, i + SITE_CHUNK));
-          const chunkResults = await Promise.all(
+          const siteMetaPromise = Promise.all(
             siteChunks.map((chunk) =>
               supabaseMarta.from("mh_sites")
                 .select("site_id,branch,kabupaten,kecamatan_name,kecamatan,kecamatan_fokus,site_lrs")
                 .in("site_id", chunk)
             )
           );
+          // Ditunggu BARENGAN dgn docCountPromise (disiapkan di atas) - dua
+          // fase query yg sebelumnya sequential skr jalan konkuren, tanpa
+          // mengubah data yg diambil/error handling masing-masing.
+          const [{ data: docRows }, chunkResults] = await Promise.all([docCountPromise, siteMetaPromise]);
+          const docCountMap = new Map();
+          for (const d of docRows || []) docCountMap.set(d.activity_id, (docCountMap.get(d.activity_id) || 0) + 1);
+          for (const r of data) r.doc_count = docCountMap.get(r.id) || 0;
           chunkResults.forEach(({ data: siteRows, error: siteErr }) => {
             if (siteErr) { console.error("mh_sites fetch error:", siteErr); return; }
             (siteRows || []).forEach((s) => {
@@ -353,6 +422,13 @@ function ActivitiesInner() {
               metaMap[s.site_id] = { branch: s.branch || null, kabupaten: s.kabupaten || null, kecamatan: s.kecamatan_name || s.kecamatan || null, kecamatanFokus: s.kecamatan_fokus || "NO", siteLrs: !!s.site_lrs };
             });
           });
+        } else {
+          // Tidak ada site_id sama sekali (jarang) - doc-count tetap perlu
+          // di-await & diterapkan spy kartu tetap punya doc_count yg benar.
+          const { data: docRows } = await docCountPromise;
+          const docCountMap = new Map();
+          for (const d of docRows || []) docCountMap.set(d.activity_id, (docCountMap.get(d.activity_id) || 0) + 1);
+          for (const r of data) r.doc_count = docCountMap.get(r.id) || 0;
         }
         if (alive) {
           setBranchBySite(map);
@@ -427,21 +503,69 @@ function ActivitiesInner() {
     }
   }, [dateKey, dayOptions]);
 
+  // Predikat per-dimensi filter - SATU sumber kebenaran dipakai bareng oleh
+  // `filtered` (daftar yg ditampilkan) DAN `filterOptionGroups` (angka count
+  // di tiap pill "Filter Aktivitas") supaya keduanya TIDAK PERNAH bisa
+  // berbeda/drift. Sebelumnya count pill dihitung statis dari SELURUH
+  // `rows` (mengabaikan filter lain yg sedang aktif) - skrg tiap pill
+  // menghitung ulang thd subset yg sudah dipersempit oleh SEMUA filter
+  // aktif LAINNYA (faceted/cross-filter count, pola umum di search UI),
+  // persis spt yg sudah ada di CMS desktop (filterOptionsMap,
+  // app/martahub/activities/page.jsx) - tapi di sini dibuat PAKAI 1 pass
+  // filter per grup (bukan loop kolom² × rows) spy tetap O(grup × rows),
+  // bukan O(grup² × rows), krn daftar aktivitas bisa ratusan baris.
+  // "external" = filter yg BUKAN bagian dari sheet ini (tab atas, search
+  // box, checkbox Perlu Tindakan, rentang/bulan/tanggal) tapi tetap ikut
+  // jadi syarat baseline utk semua pill di sheet - kalau tidak, count pill
+  // bisa nyebut angka yg lebih besar drpd yg beneran match "Terapkan".
+  const filterPredicates = useMemo(() => ({
+    external: (r) => {
+      if (tab !== "all" && r.status !== tab) return false;
+      const term = q.trim().toLowerCase();
+      if (term && !((r.event_name || "").toLowerCase().includes(term) || (r.mc || "").toLowerCase().includes(term) || (r.site_id || "").toLowerCase().includes(term))) return false;
+      if (needsActionOnly && !needsAction(r, userId)) return false;
+      if (dateRange !== "all" && !inDateRange(r, dateRange)) return false;
+      if (monthKey !== "all" && planMonthKey(r) !== monthKey) return false;
+      if (monthKey !== "all" && dateKey && earliestPlanDate(r) !== dateKey) return false;
+      return true;
+    },
+    status: (r) => statusFilter.size === 0 || statusFilter.has(statusFacetKeyOf(r)),
+    categories: (r) => categories.size === 0 || categoryKeysOf(r).some((c) => categories.has(c)),
+    brand: (r) => brandFilter.size === 0 || (r.brand && brandFilter.has(r.brand.toLowerCase())),
+    branch: (r) => branchFilter.size === 0 || (!!siteMeta[r.site_id]?.branch && branchFilter.has(siteMeta[r.site_id].branch)),
+    kabupaten: (r) => kabupatenFilter.size === 0 || (!!siteMeta[r.site_id]?.kabupaten && kabupatenFilter.has(siteMeta[r.site_id].kabupaten)),
+    kecamatan: (r) => kecamatanFilter.size === 0 || (!!siteMeta[r.site_id]?.kecamatan && kecamatanFilter.has(siteMeta[r.site_id].kecamatan)),
+    kecamatanFokus: (r) => !kecamatanFokusOnly || siteMeta[r.site_id]?.kecamatanFokus === "YES",
+    siteLrs: (r) => !siteLrsOnly || !!siteMeta[r.site_id]?.siteLrs,
+    poi: (r) => poiFilter.size === 0 || (!!r.poi_type && poiFilter.has(r.poi_type)),
+    site: (r) => siteFilter.size === 0 || (!!r.site_id && siteFilter.has(r.site_id)),
+  }), [tab, q, needsActionOnly, dateRange, monthKey, dateKey, userId, categories, statusFilter, brandFilter, branchFilter, kabupatenFilter, kecamatanFilter, kecamatanFokusOnly, siteLrsOnly, poiFilter, siteFilter, siteMeta]);
+
   // Opsi tiap grup filter lanjutan - SEMUA diturunkan dari data yg BENERAN
   // ada di `rows`/`siteMeta` (bukan daftar master statis) - sama prinsipnya
   // dgn monthOptions di atas: kalau DSF cuma py 2 brand/3 branch, cuma itu
   // yg muncul jadi opsi, bukan daftar kosongan yg kalau dipilih hasilnya
-  // nol. Tiap opsi bawa `count` (jumlah aktivitas yg cocok) spy DSF bisa
-  // langsung lihat mana yg "gemuk" tanpa coba-coba.
+  // nol. Tiap opsi bawa `count` = jumlah aktivitas yg cocok DENGAN SEMUA
+  // FILTER LAIN YG SEDANG AKTIF (faceted), bukan lagi count global thd
+  // seluruh `rows` - spy DSF langsung lihat efek gabungan filter yg sudah
+  // dipilih (mis. pilih Brand=3ID dulu, pill Status ikut menyesuaikan).
   const filterOptionGroups = useMemo(() => {
-    const status = new Map(), brand = new Map(), branch = new Map(), kabupaten = new Map(), kecamatan = new Map(), poi = new Map(), site = new Map();
+    const preds = filterPredicates;
+    // Baris yg cocok dgn SEMUA filter aktif KECUALI grup `exceptId` -
+    // inilah dasar tiap pill "Semua X" (total ignoring hanya dimensi itu)
+    // & dasar hitung per-opsi (poin 5 & 3 di instruksi). Satu `.filter()`
+    // per grup (bukan nested loop antar grup) → total kerja O(grup×rows).
+    const baseRowsExcept = (exceptId) => (rows || []).filter((r) => preds.external(r) && FACET_GROUP_IDS.every((id) => id === exceptId || preds[id](r)));
+
+    const bump = (map, key, label) => { if (!key) return; const cur = map.get(key); if (cur) cur.count++; else map.set(key, { key, label: label ?? key, count: 1 }); };
+
     // Status SENGAJA di-seed dari SELURUH status yang dikenal siklus hidup
     // plan (sama persis dgn daftar tab di atas, TABS) dgn count 0 dulu -
-    // BUKAN cuma status yg kebetulan ada di `rows` saat ini. Grup filter
+    // BUKAN cuma status yg kebetulan ada di subset saat ini. Grup filter
     // lain (Brand/Branch/dst.) memang sengaja hanya menampilkan opsi yg
     // beneran ada datanya (lihat catatan di atas), tapi utk Status ini
     // beda kasusnya: BME/TMV perlu bisa memfilter "Draft"/"Revisi Plan"/
-    // "Revisi Report" WALAU kebetulan sedang 0 di region-nya sekarang -
+    // "Revisi Report" WALAU kebetulan sedang 0 di kombinasi filter skrg -
     // opsi status tidak boleh "menghilang" begitu kebetulan tidak ada
     // datanya (mis. dipakai orang lain lewat link/screenshot yg
     // menyebutkan status itu, atau memang mau memastikan benar2 kosong).
@@ -452,7 +576,7 @@ function ActivitiesInner() {
     // jam & tanggal event), jadi filternya HARUS ikut 3 turunan itu juga
     // spy label yg dipilih di filter SAMA PERSIS dgn label yg dilihat BME
     // di kartu - bukan label "Plan Diajukan" yg tidak pernah kelihatan.
-    const PLAN_STAGE_KEYS = { "Terjadwal": "stage:scheduled", "Berjalan": "stage:ongoing", "Menunggu Laporan": "stage:waiting_report" };
+    const status = new Map();
     for (const t of TABS) {
       if (t.key === "all") continue;
       if (t.key === "plan_submitted") {
@@ -463,47 +587,44 @@ function ActivitiesInner() {
       }
       status.set(t.key, { key: t.key, label: t.label, count: 0 });
     }
-    const bump = (map, key, label) => { if (!key) return; const cur = map.get(key); if (cur) cur.count++; else map.set(key, { key, label: label ?? key, count: 1 }); };
-    for (const r of rows || []) {
-      const meta = siteMeta[r.site_id];
-      // Status dihitung APA ADANYA sesuai kolom `status` di DB - tidak ada
-      // lagi bucket virtual "Plan Kurang"/"Actual Kurang" (dihapus): trigger
-      // DB (mh_validate_activity_actual, BEFORE INSERT OR UPDATE) sudah
-      // menjamin baris 'completed' SELALU lengkap sebelum status itu
-      // tersimpan, jadi tidak ada lagi kasus 'completed' tapi bolong yg
-      // perlu ditandai terpisah - satu status DB = satu opsi filter.
-      // KHUSUS plan_submitted: dihitung ke salah satu dari 3 turunan
-      // tampilan (Terjadwal/Berjalan/Menunggu Laporan) via activityStage(),
-      // BUKAN ke "Plan Diajukan" mentah - label filter harus sama persis
-      // dgn yg dilihat BME di kartu.
-      if (r.status === "plan_submitted") {
-        const stageKey = PLAN_STAGE_KEYS[activityStage(r).label];
-        if (stageKey) bump(status, stageKey, status.get(stageKey)?.label);
-      } else {
-        bump(status, r.status, statusMeta(r.status).label);
-      }
-      if (r.brand) bump(brand, r.brand.toLowerCase(), r.brand.toLowerCase() === "tri" ? "3ID" : "IM3");
-      if (meta?.branch) bump(branch, meta.branch, meta.branch);
-      if (meta?.kabupaten) bump(kabupaten, meta.kabupaten, meta.kabupaten);
-      if (meta?.kecamatan) bump(kecamatan, meta.kecamatan, meta.kecamatan);
-      if (r.poi_type) bump(poi, r.poi_type, unsnake(r.poi_type));
-      if (r.site_id) bump(site, r.site_id, r.site_id);
+    for (const r of baseRowsExcept("status")) {
+      const key = statusFacetKeyOf(r);
+      if (key && status.has(key)) status.get(key).count++;
     }
+
+    // Kategori Event - sebelumnya TIDAK PUNYA count sama sekali (count:
+    // null, dihitung langsung di JSX) - skrg ikut faceted spt grup lain.
+    const categoriesMap = new Map();
+    for (const key of Object.keys(CAT_LABEL)) categoriesMap.set(key, { key, label: CAT_LABEL[key], count: 0 });
+    for (const r of baseRowsExcept("categories")) {
+      for (const c of categoryKeysOf(r)) { if (categoriesMap.has(c)) categoriesMap.get(c).count++; }
+    }
+
+    const brand = new Map(), branch = new Map(), kabupaten = new Map(), kecamatan = new Map(), poi = new Map(), site = new Map();
+    for (const r of baseRowsExcept("brand")) { if (r.brand) bump(brand, r.brand.toLowerCase(), r.brand.toLowerCase() === "tri" ? "3ID" : "IM3"); }
+    for (const r of baseRowsExcept("branch")) { const b = siteMeta[r.site_id]?.branch; if (b) bump(branch, b, b); }
+    for (const r of baseRowsExcept("kabupaten")) { const k = siteMeta[r.site_id]?.kabupaten; if (k) bump(kabupaten, k, k); }
+    for (const r of baseRowsExcept("kecamatan")) { const k = siteMeta[r.site_id]?.kecamatan; if (k) bump(kecamatan, k, k); }
+    for (const r of baseRowsExcept("poi")) { if (r.poi_type) bump(poi, r.poi_type, unsnake(r.poi_type)); }
+    for (const r of baseRowsExcept("site")) { if (r.site_id) bump(site, r.site_id, r.site_id); }
+
     const toSorted = (map) => Array.from(map.values()).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
-    // Status TIDAK ikut disortir by count (toSorted) - urutannya tetap
-    // ikut urutan siklus hidup (sama seperti TABS: Draft → Plan Diajukan →
-    // Revisi Plan → Selesai → Revisi Report), bukan diacak berdasar count
-    // (yg akan bikin status 0 selalu terlempar ke paling bawah/belakang
-    // tanpa pola yg jelas tiap kali data berubah).
+    // Status & Kategori Event TIDAK ikut disortir by count (toSorted) -
+    // urutannya tetap ikut urutan siklus hidup (Status, sama seperti TABS:
+    // Draft → Plan Diajukan → Revisi Plan → Selesai → Revisi Report) atau
+    // urutan CAT_LABEL (Kategori Event), bukan diacak berdasar count (yg
+    // akan bikin opsi 0 selalu terlempar ke paling bawah/belakang tanpa
+    // pola yg jelas tiap kali filter lain berubah).
     const statusOrdered = TABS.filter((t) => t.key !== "all").flatMap((t) => t.key === "plan_submitted"
       ? [status.get("stage:scheduled"), status.get("stage:ongoing"), status.get("stage:waiting_report")]
       : [status.get(t.key)]).filter(Boolean);
+    const categoriesOrdered = Object.keys(CAT_LABEL).map((k) => categoriesMap.get(k)).filter(Boolean);
     return {
-      status: statusOrdered, brand: toSorted(brand), branch: toSorted(branch),
+      status: statusOrdered, categories: categoriesOrdered, brand: toSorted(brand), branch: toSorted(branch),
       kabupaten: toSorted(kabupaten), kecamatan: toSorted(kecamatan), poi: toSorted(poi),
       site: toSorted(site),
     };
-  }, [rows, siteMeta]);
+  }, [rows, siteMeta, filterPredicates]);
 
   const siteOptionsFiltered = useMemo(() => {
     const term = siteFilterQ.trim().toLowerCase();
@@ -511,50 +632,48 @@ function ActivitiesInner() {
     return filterOptionGroups.site.filter((o) => o.label.toLowerCase().includes(term));
   }, [filterOptionGroups.site, siteFilterQ]);
 
+  // Daftar aktivitas yg ditampilkan = AND semua grup (predikat yg SAMA
+  // PERSIS dipakai `filterOptionGroups` di atas utk hitung facet tiap
+  // pill) - SATU implementasi filtering, dipakai dua kali, supaya tidak
+  // ada logic paralel yg bisa drift dari satu sama lain.
   const filtered = useMemo(() => {
-    let list = rows || [];
-    // Tab "Selesai" (completed) ikut mensyaratkan kolom lengkap - SAMA
-    // PERSIS dgn definisi di filterOptionGroups di atas & activityStage()
-    // - supaya isi daftar yg tampil benar2 cocok dgn angka yg tertulis di
-    // tab/chip-nya.
-    if (tab !== "all") list = list.filter((r) => r.status === tab);
-    const term = q.trim().toLowerCase();
-    if (term) list = list.filter((r) => (r.event_name || "").toLowerCase().includes(term) || (r.mc || "").toLowerCase().includes(term) || (r.site_id || "").toLowerCase().includes(term));
-    if (needsActionOnly) list = list.filter((r) => needsAction(r, userId));
-    if (dateRange !== "all") list = list.filter((r) => inDateRange(r, dateRange));
-    if (monthKey !== "all") list = list.filter((r) => planMonthKey(r) === monthKey);
-    if (monthKey !== "all" && dateKey) list = list.filter((r) => earliestPlanDate(r) === dateKey);
-    if (categories.size > 0) {
-      list = list.filter((r) => {
-        const cats = Array.isArray(r.event_categories) && r.event_categories.length ? r.event_categories : (r.event_category ? [r.event_category] : []);
-        return cats.some((c) => categories.has(c));
-      });
-    }
-    // Grup filter lanjutan BARU - tiap grup non-kosong jadi syarat AND
-    // tambahan (di dalam grup sendiri OR, lihat komentar di state-nya).
-    // Filter status APA ADANYA sesuai kolom `status` di DB - tidak ada lagi
-    // kasus virtual "completed tapi bolong" (lihat catatan di activityStage()).
-    // Utk plan_submitted, dicocokkan ke turunan tampilannya (stage:scheduled/
-    // ongoing/waiting_report), BUKAN ke key "plan_submitted" mentah - itu
-    // sendiri sudah tidak ada lagi sbg opsi filter (lihat filterOptionGroups).
-    const PLAN_STAGE_FILTER_KEYS = { "Terjadwal": "stage:scheduled", "Berjalan": "stage:ongoing", "Menunggu Laporan": "stage:waiting_report" };
-    if (statusFilter.size > 0) list = list.filter((r) => {
-      if (r.status === "plan_submitted") return statusFilter.has(PLAN_STAGE_FILTER_KEYS[activityStage(r).label]);
-      return statusFilter.has(r.status);
-    });
-    if (brandFilter.size > 0) list = list.filter((r) => r.brand && brandFilter.has(r.brand.toLowerCase()));
-    if (branchFilter.size > 0) list = list.filter((r) => { const b = siteMeta[r.site_id]?.branch; return b && branchFilter.has(b); });
-    if (kabupatenFilter.size > 0) list = list.filter((r) => { const k = siteMeta[r.site_id]?.kabupaten; return k && kabupatenFilter.has(k); });
-    if (kecamatanFilter.size > 0) list = list.filter((r) => { const k = siteMeta[r.site_id]?.kecamatan; return k && kecamatanFilter.has(k); });
-    if (kecamatanFokusOnly) list = list.filter((r) => siteMeta[r.site_id]?.kecamatanFokus === "YES");
-    if (poiFilter.size > 0) list = list.filter((r) => r.poi_type && poiFilter.has(r.poi_type));
-    if (siteFilter.size > 0) list = list.filter((r) => r.site_id && siteFilter.has(r.site_id));
-    return list;
-  }, [rows, tab, q, needsActionOnly, dateRange, monthKey, dateKey, categories, userId, siteMeta, statusFilter, brandFilter, branchFilter, kabupatenFilter, kecamatanFilter, kecamatanFokusOnly, poiFilter, siteFilter]);
+    const preds = filterPredicates;
+    return (rows || []).filter((r) => preds.external(r) && FACET_GROUP_IDS.every((id) => preds[id](r)));
+  }, [rows, filterPredicates]);
 
-  const activeFilterCount = (needsActionOnly ? 1 : 0) + (dateRange !== "all" ? 1 : 0) + (categories.size > 0 ? 1 : 0)
+  // Reset jumlah baris yg dirender tiap kali HASIL filter benar2 berubah
+  // (bukan cuma re-render biasa) - supaya ganti tab/cari/filter selalu
+  // mulai lagi dari PAGE_SIZE_ACTIVITIES teratas, konsisten dgn scroll yg
+  // ikut kembali ke atas. Disengaja pakai pola "adjust state during render"
+  // (bukan useEffect+setState) - dites thd referensi `filtered` sebelumnya
+  // via ref, supaya tidak kena lint react-hooks/set-state-in-effect &
+  // tidak ada render "kedip" ekstra spt effect based reset.
+  const prevFilteredRef = useRef(filtered);
+  if (prevFilteredRef.current !== filtered) {
+    prevFilteredRef.current = filtered;
+    if (visibleCount !== PAGE_SIZE_ACTIVITIES) setVisibleCount(PAGE_SIZE_ACTIVITIES);
+  }
+
+  // Sentinel "load more" - begitu elemen kosong di akhir daftar masuk
+  // viewport, tambah PAGE_SIZE_ACTIVITIES baris lagi (dibatasi filtered.length).
+  // Tidak ada apa pun yg perlu di-render kalau semua baris yg lolos filter
+  // sudah tampil (visibleCount >= filtered.length) - effect ini memang jadi
+  // no-op krn elemen sentinel-nya sendiri tidak dirender (lihat JSX di bawah).
+  useEffect(() => {
+    const el = loadMoreSentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        setVisibleCount((v) => Math.min(v + PAGE_SIZE_ACTIVITIES, filtered.length));
+      }
+    }, { rootMargin: "200px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [filtered, visibleCount]);
+
+  const activeFilterCount = (needsActionOnly ? 1 : 0) + (dateRange !== "all" ? 1 : 0) + (monthKey !== "all" ? 1 : 0) + (categories.size > 0 ? 1 : 0)
     + (statusFilter.size > 0 ? 1 : 0) + (brandFilter.size > 0 ? 1 : 0) + (branchFilter.size > 0 ? 1 : 0)
-    + (kabupatenFilter.size > 0 ? 1 : 0) + (kecamatanFilter.size > 0 ? 1 : 0) + (kecamatanFokusOnly ? 1 : 0) + (poiFilter.size > 0 ? 1 : 0) + (siteFilter.size > 0 ? 1 : 0);
+    + (kabupatenFilter.size > 0 ? 1 : 0) + (kecamatanFilter.size > 0 ? 1 : 0) + (kecamatanFokusOnly ? 1 : 0) + (siteLrsOnly ? 1 : 0) + (poiFilter.size > 0 ? 1 : 0) + (siteFilter.size > 0 ? 1 : 0);
 
   function toggleCategory(key) {
     setCategories((prev) => {
@@ -578,6 +697,7 @@ function ActivitiesInner() {
   function resetFilters() {
     setNeedsActionOnly(false);
     setDateRange("all");
+    setMonthKeyFiltered("all");
     setCategories(new Set());
     setStatusFilter(new Set());
     setBrandFilter(new Set());
@@ -585,6 +705,7 @@ function ActivitiesInner() {
     setKabupatenFilter(new Set());
     setKecamatanFilter(new Set());
     setKecamatanFokusOnly(false);
+    setSiteLrsOnly(false);
     setPoiFilter(new Set());
     setSiteFilter(new Set());
     setSiteFilterQ("");
@@ -933,7 +1054,7 @@ function ActivitiesInner() {
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 10, opacity: isFiltering ? 0.5 : 1, transition: "opacity .15s" }}>
-            {filtered.map((r) => (
+            {filtered.slice(0, visibleCount).map((r) => (
               <ActivityCard key={r.id} r={r} userId={userId} branchLabel={branchBySite[r.site_id]} siteMeta={siteMeta[r.site_id]}
                 onOpen={() => router.push(
                   // Draft = masih tahap pengisian, BUKAN sesuatu yg perlu
@@ -950,6 +1071,15 @@ function ActivitiesInner() {
                       : `/martahub/m/activities/${r.id}`
                 )} />
             ))}
+            {/* Sentinel "load more" - tidak dirender sama sekali kalau semua
+                baris yg lolos filter (filtered.length) sudah tampil, supaya
+                tidak ada elemen/indikator nongkrong percuma di ujung daftar
+                begitu sudah lengkap. */}
+            {visibleCount < filtered.length && (
+              <div ref={loadMoreSentinelRef} style={{ textAlign: "center", padding: "10px 0", fontSize: 11.5, fontWeight: 600, color: "#8A8A96" }}>
+                Memuat lebih banyak...
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -1009,11 +1139,21 @@ function ActivitiesInner() {
               </button>
             </div>
 
+            {/* Waktu Event - SATU grup gabungan (dulu dua section terpisah:
+                "Tanggal Event"/pill relatif & "Bulan Event"/bulan spesifik)
+                yg bisa nabrak krn dua-duanya bisa "aktif" bersamaan tanpa
+                saling terkait (mis. pill "Bulan Ini" + chip bulan spesifik
+                "September 2026" nyala bareng - membingungkan mana yg
+                sebenarnya berlaku). Sekarang keduanya SALING EKSKLUSIF dlm
+                satu grup: pilih pill relatif otomatis melepas bulan
+                spesifik (setDateRangeFiltered), pilih bulan spesifik
+                otomatis melepas pill relatif (setMonthKeyFiltered) - lihat
+                definisi keduanya di atas. */}
             <div style={{ marginTop: 18 }}>
-              <div style={{ fontSize: 11, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: "0.03em" }}>Tanggal Event</div>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: "0.03em" }}>Waktu Event</div>
               <div style={{ marginTop: 8, display: "flex", gap: 7 }}>
                 {[{ key: "all", label: "Semua" }, { key: "week", label: "Minggu Ini" }, { key: "month", label: "Bulan Ini" }].map((o) => (
-                  <button key={o.key} onClick={() => startFilterTransition(() => setDateRange(o.key))}
+                  <button key={o.key} onClick={() => startFilterTransition(() => setDateRangeFiltered(o.key))}
                     style={{
                       flex: 1, padding: "9px 0", borderRadius: 11, border: `1.5px solid ${dateRange === o.key ? BRAND : "#E9EAEE"}`,
                       background: dateRange === o.key ? "#FDECEC" : "#F8F8FA", color: dateRange === o.key ? BRAND : "#5A5A68",
@@ -1023,40 +1163,97 @@ function ActivitiesInner() {
                   </button>
                 ))}
               </div>
+              {/* Sub-pilihan "bulan spesifik" - tampil sbg baris kedua di
+                  BAWAH pill relatif (bukan section berjudul sendiri lagi),
+                  ditandai garis pemisah tipis + label kecil spy jelas ini
+                  masih bagian dari Waktu Event yg sama, cuma cara pilih yg
+                  beda (bulan konkret apa saja yg ada plan-nya, bukan
+                  relatif thd hari ini). */}
+              <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed #E9EAEE" }}>
+                <div style={{ fontSize: 10.5, fontWeight: 700, color: "#B0B0BA" }}>atau pilih bulan spesifik</div>
+                <div style={{ marginTop: 7, display: "flex", flexWrap: "wrap", gap: 7 }}>
+                  <button onClick={() => startFilterTransition(() => setMonthKeyFiltered("all"))}
+                    style={{
+                      padding: "9px 14px", borderRadius: 11, border: `1.5px solid ${monthKey === "all" ? BRAND : "#E9EAEE"}`,
+                      background: monthKey === "all" ? "#FDECEC" : "#F8F8FA", color: monthKey === "all" ? BRAND : "#5A5A68",
+                      fontSize: 12, fontWeight: 800, fontFamily: FF, cursor: "pointer",
+                    }}>
+                    Semua Bulan
+                  </button>
+                  {monthOptions.map((o) => (
+                    <button key={o.key} onClick={() => startFilterTransition(() => setMonthKeyFiltered(o.key))}
+                      style={{
+                        padding: "9px 14px", borderRadius: 11, border: `1.5px solid ${monthKey === o.key ? BRAND : "#E9EAEE"}`,
+                        background: monthKey === o.key ? "#FDECEC" : "#F8F8FA", color: monthKey === o.key ? BRAND : "#5A5A68",
+                        fontSize: 12, fontWeight: 800, fontFamily: FF, cursor: "pointer",
+                      }}>
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
 
             <FilterChipGroup title="Status" options={filterOptionGroups.status} selected={statusFilter} onToggle={(k) => toggleInSet(setStatusFilter, k)} />
-            <FilterChipGroup title="Kategori Event" options={Object.entries(CAT_LABEL).map(([key, label]) => ({ key, label, count: null }))} selected={categories} onToggle={toggleCategory} />
+            <FilterChipGroup title="Kategori Event" options={filterOptionGroups.categories} selected={categories} onToggle={toggleCategory} />
             <FilterChipGroup title="Brand" options={filterOptionGroups.brand} selected={brandFilter} onToggle={(k) => toggleInSet(setBrandFilter, k)} />
             <FilterChipGroup title="Branch" options={filterOptionGroups.branch} selected={branchFilter} onToggle={(k) => toggleInSet(setBranchFilter, k)} />
-            <FilterChipGroup title="Kabupaten" options={filterOptionGroups.kabupaten} selected={kabupatenFilter} onToggle={(k) => toggleInSet(setKabupatenFilter, k)} />
-            <FilterChipGroup title="Kecamatan" options={filterOptionGroups.kecamatan} selected={kecamatanFilter} onToggle={(k) => toggleInSet(setKecamatanFilter, k)} />
-
-            {/* Kecamatan Fokus - checkbox tunggal (bukan chip multi-value spt
-                Kabupaten/Kecamatan di atas) krn cuma YA/TIDAK, sama gaya dgn
-                "Perlu Tindakan" di paling atas. Datanya dari site (mh_sites.
-                kecamatan_fokus) yg diupload lewat Master Data > List Site. */}
-            <div style={{ marginTop: 18 }}>
-              <button onClick={() => startFilterTransition(() => setKecamatanFokusOnly((v) => !v))}
-                style={{
-                  width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
-                  padding: "12px 14px", borderRadius: 13, border: `1.5px solid ${kecamatanFokusOnly ? BRAND : "#E9EAEE"}`,
-                  background: kecamatanFokusOnly ? "#FDECEC" : "#F8F8FA", cursor: "pointer", fontFamily: FF,
-                }}>
-                <span style={{ textAlign: "left" }}>
-                  <div style={{ fontSize: 13, fontWeight: 800, color: kecamatanFokusOnly ? BRAND : "#17181C" }}>Kecamatan Fokus</div>
-                  <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96" }}>Hanya tampilkan site yg ditandai kecamatan fokus</div>
-                </span>
-                <span style={{
-                  flexShrink: 0, width: 22, height: 22, borderRadius: 7, border: `1.5px solid ${kecamatanFokusOnly ? BRAND : "#D6D7DD"}`,
-                  background: kecamatanFokusOnly ? BRAND : "transparent", display: "flex", alignItems: "center", justifyContent: "center",
-                }}>
-                  {kecamatanFokusOnly && <Check size={13} color="#fff" />}
-                </span>
-              </button>
-            </div>
 
             <FilterChipGroup title="Tipe POI" options={filterOptionGroups.poi} selected={poiFilter} onToggle={(k) => toggleInSet(setPoiFilter, k)} />
+
+            {/* LOKASI - grup header BARU yg menaungi 4 filter terkait
+                site/lokasi (Kabupaten, Kecamatan, Kecamatan Fokus, Site
+                LRS) sekaligus, dipindah ke bagian ATAS sheet (tepat di
+                bawah Waktu Event) drpd tersebar di tengah/bawah spt
+                sebelumnya - biar filter yg paling sering dipakai utk
+                menyaring site (fokus/LRS) tidak "tenggelam" di antara
+                Status/Brand/Branch. */}
+            <div style={{ marginTop: 18 }}>
+              <div style={{ fontSize: 11, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: "0.03em" }}>Lokasi</div>
+              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                <button onClick={() => startFilterTransition(() => setKecamatanFokusOnly((v) => !v))}
+                  style={{
+                    width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                    padding: "12px 14px", borderRadius: 13, border: `1.5px solid ${kecamatanFokusOnly ? BRAND : "#E9EAEE"}`,
+                    background: kecamatanFokusOnly ? "#FDECEC" : "#F8F8FA", cursor: "pointer", fontFamily: FF,
+                  }}>
+                  <span style={{ textAlign: "left" }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: kecamatanFokusOnly ? BRAND : "#17181C" }}>Kecamatan Fokus</div>
+                    <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96" }}>Hanya tampilkan site yg ditandai kecamatan fokus</div>
+                  </span>
+                  <span style={{
+                    flexShrink: 0, width: 22, height: 22, borderRadius: 7, border: `1.5px solid ${kecamatanFokusOnly ? BRAND : "#D6D7DD"}`,
+                    background: kecamatanFokusOnly ? BRAND : "transparent", display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    {kecamatanFokusOnly && <Check size={13} color="#fff" />}
+                  </span>
+                </button>
+
+                {/* Site LRS - flag boolean sama gaya dgn Kecamatan Fokus di
+                    atas (siteMeta cuma simpan versi boolean-nya, lihat
+                    komentar di state siteLrsOnly). */}
+                <button onClick={() => startFilterTransition(() => setSiteLrsOnly((v) => !v))}
+                  style={{
+                    width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                    padding: "12px 14px", borderRadius: 13, border: `1.5px solid ${siteLrsOnly ? BRAND : "#E9EAEE"}`,
+                    background: siteLrsOnly ? "#FDECEC" : "#F8F8FA", cursor: "pointer", fontFamily: FF,
+                  }}>
+                  <span style={{ textAlign: "left" }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: siteLrsOnly ? BRAND : "#17181C" }}>Site LRS</div>
+                    <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96" }}>Hanya tampilkan site yg ditandai LRS</div>
+                  </span>
+                  <span style={{
+                    flexShrink: 0, width: 22, height: 22, borderRadius: 7, border: `1.5px solid ${siteLrsOnly ? BRAND : "#D6D7DD"}`,
+                    background: siteLrsOnly ? BRAND : "transparent", display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    {siteLrsOnly && <Check size={13} color="#fff" />}
+                  </span>
+                </button>
+
+                <FilterChipGroup title="Kabupaten" options={filterOptionGroups.kabupaten} selected={kabupatenFilter} onToggle={(k) => toggleInSet(setKabupatenFilter, k)} />
+                <FilterChipGroup title="Kecamatan" options={filterOptionGroups.kecamatan} selected={kecamatanFilter} onToggle={(k) => toggleInSet(setKecamatanFilter, k)} />
+              </div>
+            </div>
 
             {/* Site - daftarnya berpotensi panjang, jadi BEDA gaya dari
                 grup chip di atas: kotak list dgn search box sendiri +

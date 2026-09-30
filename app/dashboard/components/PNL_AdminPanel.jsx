@@ -16,7 +16,7 @@ import React, {
 import { createPortal } from "react-dom";
 import supabase from "../../../lib/supabase";
 import {
-  Shield, Key, Building2, Plus, Trash2, RotateCcw,
+  Key, Building2, Plus, Trash2,
   Check, X, RefreshCw, Copy, ChevronDown, Search,
   CheckCircle2, XCircle, AlertCircle, Loader2,
   Edit3, Save, Zap,
@@ -30,16 +30,6 @@ const ALL_ROLES = [
   { value: "ioh_north_sumatera",   label: "IOH North Sumatera",         color: "#3B82F6" },
   { value: "ioh_central_sumatera", label: "IOH Central Sumatera",       color: "#F59E0B" },
   { value: "ioh_south_sumatera",   label: "IOH South Sumatera",         color: "#10B981" },
-];
-
-const PERMISSION_COLS = [
-  { key: "can_view_control_center",  label: "Control Center",    icon: "👁"  },
-  { key: "can_view_pivot_summary",   label: "Pivot Summary",     icon: "📊" },
-  { key: "can_view_payout_tracker",  label: "Payout Tracker",    icon: "💳" },
-  { key: "can_view_pnl_forms",       label: "Lihat Form P&L",    icon: "📄" },
-  { key: "can_edit_pnl_forms",       label: "Edit Form P&L",     icon: "✏️"  },
-  { key: "can_disable_months",       label: "Nonaktifkan Bulan", icon: "🔒" },
-  { key: "can_upload_payout",        label: "Upload Payout",     icon: "📤" },
 ];
 
 const REGIONS_LIST = [
@@ -240,210 +230,7 @@ function FieldLabel({ children, t }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SECTION 1 — Role Permissions
-// ═══════════════════════════════════════════════════════════════════════════════
-function RolePermissionsSection({ t, d }) {
-  const [perms,   setPerms]   = useState({});
-  const [orig,    setOrig]    = useState({});
-  const [saving,  setSaving]  = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [toasts,  showToast]  = useToast();
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    const { data, error } = await supabase.from("role_permissions").select("*");
-    if (error) {
-      showToast("error", "Gagal memuat permission: " + error.message);
-      setLoading(false);
-      return;
-    }
-
-    const map = {};
-    (data || []).forEach(r => { map[r.role] = { ...r }; });
-
-    // Seed default entry for any role not yet in DB
-    ALL_ROLES.forEach(r => {
-      if (!map[r.value]) {
-        map[r.value] = {
-          role: r.value,
-          can_view_control_center: r.value === "spm_sumatera",
-          can_view_pivot_summary:  r.value === "spm_sumatera",
-          can_view_payout_tracker: r.value === "spm_sumatera",
-          can_view_pnl_forms:      r.value === "spm_sumatera",
-          can_edit_pnl_forms:      r.value === "spm_sumatera",
-          can_disable_months:      r.value === "spm_sumatera",
-          can_upload_payout:       r.value === "spm_sumatera",
-          region_filter: null,
-          _isNew: true,
-        };
-      }
-    });
-
-    setPerms(JSON.parse(JSON.stringify(map)));
-    setOrig(JSON.parse(JSON.stringify(map)));
-    setLoading(false);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => { load(); }, [load]);
-
-  const dirty = JSON.stringify(perms) !== JSON.stringify(orig);
-
-  const toggle = (role, key) => {
-    if (role === "spm_sumatera") return;
-    setPerms(prev => ({
-      ...prev,
-      [role]: { ...prev[role], [key]: !prev[role]?.[key] },
-    }));
-  };
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      const rows = Object.values(perms)
-        .filter(p => p.role !== "spm_sumatera")
-        .map(p => ({
-          role:                    p.role,
-          can_view_control_center: !!p.can_view_control_center,
-          can_view_pivot_summary:  !!p.can_view_pivot_summary,
-          can_view_payout_tracker: !!p.can_view_payout_tracker,
-          can_view_pnl_forms:      !!p.can_view_pnl_forms,
-          can_edit_pnl_forms:      !!p.can_edit_pnl_forms,
-          can_disable_months:      !!p.can_disable_months,
-          can_upload_payout:       !!p.can_upload_payout,
-          region_filter:           p.region_filter ?? null,
-          updated_at:              new Date().toISOString(),
-        }));
-
-      const { error } = await supabase
-        .from("role_permissions")
-        .upsert(rows, { onConflict: "role" });
-
-      if (error) throw error;
-      showToast("success", "Permission berhasil disimpan");
-      await load();
-    } catch (e) {
-      showToast("error", e.message || "Gagal menyimpan");
-    }
-    setSaving(false);
-  };
-
-  const reset = () => setPerms(JSON.parse(JSON.stringify(orig)));
-
-  if (loading) return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 240, gap: 10, color: t.mid, fontFamily: FONT }}>
-      <Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} />
-      <span style={{ fontSize: 13 }}>Memuat permission…</span>
-    </div>
-  );
-
-  return (
-    <div>
-      <ToastStack toasts={toasts} t={t} d={d} />
-
-      {/* Header row */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 20, gap: 12, flexWrap: "wrap" }}>
-        <div>
-          <div style={{ fontSize: 15, fontWeight: 700, color: t.hi }}>Permission per Role</div>
-          <div style={{ fontSize: 12, color: t.mid, marginTop: 3 }}>
-            Toggle modul yang dapat diakses setiap role. SPM Sumatera selalu memiliki akses penuh.
-          </div>
-        </div>
-        {dirty && (
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={reset} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", borderRadius: 9, border: `1px solid ${t.line}`, background: "transparent", color: t.mid, cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: FONT }}>
-              <RotateCcw size={13} /> Reset
-            </button>
-            <button onClick={save} disabled={saving} style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 18px", borderRadius: 9, border: "none", background: t.violet, color: "#fff", cursor: saving ? "not-allowed" : "pointer", fontSize: 13, fontWeight: 700, fontFamily: FONT, opacity: saving ? 0.7 : 1 }}>
-              {saving ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Save size={13} />}
-              Simpan
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Responsive: table ≥700px, cards <700px */}
-      <style>{`
-        @media(max-width:700px){ .pt{display:none!important} .pc{display:flex!important} }
-        @media(min-width:701px){ .pt{display:block!important} .pc{display:none!important} }
-      `}</style>
-
-      {/* Desktop table */}
-      <div className="pt" style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 640, fontFamily: FONT }}>
-          <thead>
-            <tr style={{ borderBottom: `1px solid ${t.line}`, background: t.sub }}>
-              <th style={{ padding: "10px 14px", textAlign: "left", fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: t.mid, minWidth: 180 }}>
-                Role
-              </th>
-              {PERMISSION_COLS.map(col => (
-                <th key={col.key} style={{ padding: "10px 8px", textAlign: "center", fontSize: 10, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: t.mid, minWidth: 80 }}>
-                  <div style={{ fontSize: 15 }}>{col.icon}</div>
-                  <div style={{ marginTop: 2 }}>{col.label}</div>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {ALL_ROLES.map((role, ri) => {
-              const p = perms[role.value] || {};
-              const isSPM = role.value === "spm_sumatera";
-              return (
-                <tr key={role.value} style={{ borderBottom: `1px solid ${t.lineH}`, background: ri % 2 === 0 ? "transparent" : t.hover }}>
-                  <td style={{ padding: "12px 14px" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                      <div style={{ width: 10, height: 10, borderRadius: "50%", background: role.color, flexShrink: 0 }} />
-                      <div>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: t.hi }}>{role.label}</div>
-                        {isSPM && <div style={{ fontSize: 10, color: t.violet, fontWeight: 600, marginTop: 1 }}>PENUH · tidak dapat diubah</div>}
-                      </div>
-                    </div>
-                  </td>
-                  {PERMISSION_COLS.map(col => (
-                    <td key={col.key} style={{ padding: "12px 8px", textAlign: "center" }}>
-                      {isSPM
-                        ? <CheckCircle2 size={16} style={{ color: t.green }} />
-                        : <Toggle value={!!p[col.key]} onChange={() => toggle(role.value, col.key)} t={t} />}
-                    </td>
-                  ))}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Mobile cards */}
-      <div className="pc" style={{ display: "none", flexDirection: "column", gap: 12 }}>
-        {ALL_ROLES.map(role => {
-          const p = perms[role.value] || {};
-          const isSPM = role.value === "spm_sumatera";
-          return (
-            <div key={role.value} style={{ borderRadius: 10, border: `1px solid ${t.line}`, overflow: "hidden" }}>
-              <div style={{ padding: "12px 14px", background: t.sub, display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{ width: 10, height: 10, borderRadius: "50%", background: role.color, flexShrink: 0 }} />
-                <span style={{ fontSize: 13.5, fontWeight: 700, color: t.hi, flex: 1 }}>{role.label}</span>
-                {isSPM && <span style={{ fontSize: 10, color: t.violet, fontWeight: 700 }}>PENUH</span>}
-              </div>
-              <div>
-                {PERMISSION_COLS.map((col, ci) => (
-                  <div key={col.key} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", borderBottom: ci < PERMISSION_COLS.length - 1 ? `1px solid ${t.lineH}` : "none" }}>
-                    <span style={{ fontSize: 13, color: t.mid }}>{col.icon} {col.label}</span>
-                    {isSPM
-                      ? <CheckCircle2 size={16} style={{ color: t.green }} />
-                      : <Toggle value={!!p[col.key]} onChange={() => toggle(role.value, col.key)} t={t} />}
-                  </div>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// SECTION 2 — Access Codes
+// SECTION — Access Codes
 // ═══════════════════════════════════════════════════════════════════════════════
 function AccessCodesSection({ t, d, refreshTrigger }) {
   const [codes,        setCodes]        = useState([]);
@@ -1115,7 +902,7 @@ function PartnerBranchesSection({ t, d, onBranchAdded, onChanged }) {
 export default function PNL_AdminPanel({ theme, profile, onBranchesChanged }) {
   const d = theme === "dark";
   const t = tk(d);
-  const [tab, setTab] = useState("permissions");
+  const [tab, setTab] = useState("codes");
   const [codeRefresh, setCodeRefresh] = useState(0);
 
   if (profile?.role !== "spm_sumatera") {
@@ -1147,20 +934,18 @@ export default function PNL_AdminPanel({ theme, profile, onBranchesChanged }) {
           Panel Administrasi
         </h1>
         <p style={{ fontSize: 13.5, color: t.mid, margin: 0 }}>
-          Kelola role, permission, kode otoritas, dan partner branches seluruh Sumatera.
+          Kelola kode otoritas dan partner branches seluruh Sumatera. Akses per role sudah ditentukan tetap di kode aplikasi.
         </p>
       </div>
 
       {/* Tabs */}
       <div style={{ display: "flex", gap: 2, borderBottom: `1px solid ${t.line}`, overflowX: "auto", WebkitOverflowScrolling: "touch" }}>
-        <Tab icon={Shield}    label="Role & Permission" active={tab === "permissions"} onClick={() => setTab("permissions")} t={t} />
         <Tab icon={Key}       label="Kode Otoritas"     active={tab === "codes"}       onClick={() => setTab("codes")}       t={t} />
         <Tab icon={Building2} label="Partner Branches"  active={tab === "branches"}    onClick={() => setTab("branches")}    t={t} />
       </div>
 
       {/* Content */}
       <div style={{ background: t.card, borderRadius: "0 0 14px 14px", border: `1px solid ${t.line}`, borderTop: "none", padding: "clamp(14px,3vw,24px)", boxShadow: t.shadow }}>
-        {tab === "permissions" && <RolePermissionsSection t={t} d={d} />}
         {tab === "codes"       && <AccessCodesSection     t={t} d={d} refreshTrigger={codeRefresh} />}
         {tab === "branches"    && <PartnerBranchesSection t={t} d={d} onBranchAdded={() => setCodeRefresh(c => c + 1)} onChanged={onBranchesChanged} />}
       </div>
@@ -1171,21 +956,15 @@ export default function PNL_AdminPanel({ theme, profile, onBranchesChanged }) {
           Catatan Database &amp; RLS
         </summary>
         <div style={{ marginTop: 8, padding: "14px 16px", borderRadius: 8, background: t.sub, border: `1px solid ${t.line}`, lineHeight: 1.8 }}>
-          <p style={{ margin: "0 0 8px", fontWeight: 700, color: t.hi }}>Jalankan di Supabase SQL Editor agar permission &amp; branch bisa tersimpan:</p>
+          <p style={{ margin: "0 0 8px", fontWeight: 700, color: t.hi }}>Jalankan di Supabase SQL Editor agar kode otoritas &amp; branch bisa tersimpan:</p>
           <pre style={{ fontFamily: MONO, fontSize: 11, color: t.mid, overflowX: "auto", margin: 0, whiteSpace: "pre-wrap" }}>{
-`-- 1. Izinkan spm_sumatera upsert role_permissions
-CREATE POLICY "spm_upsert_role_perms"
-ON public.role_permissions FOR ALL
-USING  ((auth.jwt() ->> 'user_role') = 'spm_sumatera')
-WITH CHECK ((auth.jwt() ->> 'user_role') = 'spm_sumatera');
-
--- 2. Izinkan spm_sumatera kelola access_codes
+`-- 1. Izinkan spm_sumatera kelola access_codes
 CREATE POLICY "spm_manage_access_codes"
 ON public.access_codes FOR ALL
 USING  ((auth.jwt() ->> 'user_role') = 'spm_sumatera')
 WITH CHECK ((auth.jwt() ->> 'user_role') = 'spm_sumatera');
 
--- 3. Izinkan spm_sumatera kelola partner_branches
+-- 2. Izinkan spm_sumatera kelola partner_branches
 CREATE POLICY "spm_manage_branches"
 ON public.partner_branches FOR ALL
 USING  ((auth.jwt() ->> 'user_role') = 'spm_sumatera')

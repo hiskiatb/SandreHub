@@ -89,7 +89,7 @@ export default function SDP2_Home({ supabase, theme = "dark", profile, onExit })
 
   if (screen === "new") {
     return (
-      <SDP_QuickForm supabase={supabase} theme={theme} profile={profile}
+      <SDP_QuickForm supabase={supabase} theme={theme} profile={profile} lockRequestType="New"
         onExit={() => { setScreen("list"); load(); }} />
     );
   }

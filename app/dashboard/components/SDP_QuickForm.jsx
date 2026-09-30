@@ -8,7 +8,12 @@
  *   Hybrid IM3+3ID → dua baris berpasangan (SDP + KSK, seq sama).
  * - Insert mengisi submitted_by = auth.uid() (syarat RLS sdp_registration).
  *
- * Props: { supabase, theme = "dark", profile, onExit }
+ * Props: { supabase, theme = "dark", profile, onExit, initialDraft, lockRequestType }
+ *   lockRequestType: kunci Request Type ke satu nilai (mis. "New") dan
+ *   sembunyikan pilihan "Mau melakukan apa?" — dipakai oleh SDP2_Home agar
+ *   menu "Registrasi SDP" khusus untuk pendaftaran baru, tidak bercampur
+ *   dengan Update/Terminate/Remapping/Hybrid Pairing yang membingungkan di
+ *   sana. Form induk (Archive) tetap memanggil tanpa prop ini → tak berubah.
  */
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -24,6 +29,7 @@ import SDP_SearchSelect from "./SDP_SearchSelect";
 import SDP_AddressSearch from "./SDP_AddressSearch";
 import { UploadCloud, FileText, X as XIcon, FileCheck2, ShieldCheck } from "lucide-react";
 import { uploadSdpDocument, sdpDriveFolderUrl } from "../../../lib/sdp/driveRelay";
+import { supabaseMarta } from "../../../lib/supabaseMarta";
 
 // Dokumen wajib mengikuti SDP Operation SOP (Section 3: Document Fulfillment
 // & Foldering) — diunggah LANGSUNG ke database kita (Storage bucket `sdp-docs`
@@ -104,7 +110,7 @@ STEPS.forEach((s, i) => (s.fields || []).forEach(([k]) => { FIELD_STEP[k] = i; }
 
 const uniq = (arr) => [...new Set(arr.filter((v) => v != null && String(v).trim() !== ""))].sort((a, b) => String(a).localeCompare(String(b)));
 
-export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExit, initialDraft = null }) {
+export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExit, initialDraft = null, lockRequestType = null }) {
   const d = theme === "dark";
   const t = mk(d);
   const role = profile?.role ?? "";
@@ -123,6 +129,7 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
     brand: brandLock || "", submission_date: new Date().toISOString().slice(0, 10),
     circle: "Sumatera", region: profile?.region || "",
     cse_name: profile?.full_name || profile?.username || "", email_pic_ioh: profile?.email || "",
+    request_type: lockRequestType || "",
   });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
@@ -153,7 +160,10 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
 
   const set = (k, v) => { setVal((p) => ({ ...p, [k]: v })); setDirty(true); };
 
-  // ── Draft (localStorage) & proteksi perubahan belum tersimpan ────────────────
+  // ── Draft cadangan lokal (localStorage) — instan & bekerja offline, tapi
+  // hanya terbaca dari perangkat/browser yang sama. Draft "resmi" yang bisa
+  // dilanjutkan dari perangkat lain ada di saveServerDraft() / sdp_draft di
+  // bawah — itu yang dipakai tombol "Simpan Draft" utama (saveDraftEverywhere).
   const saveDraft = (silent = false) => {
     try {
       window.localStorage.setItem(draftKey, JSON.stringify({ val, step, existingSdpId, sameGudang, ts: Date.now() }));
@@ -163,7 +173,6 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
   };
   const handleLeave = () => { if (dirty) setConfirmLeave(true); else onExit(); };
   const discardAndExit = () => { try { window.localStorage.removeItem(draftKey); } catch { /* ignore */ } setConfirmLeave(false); onExit(); };
-  const saveAndExit = () => { saveDraft(true); setConfirmLeave(false); onExit(); };
 
   // ── Draft SERVER (sdp_draft) + Bagikan Link ─────────────────────────────────
   const buildDraftRow = () => ({
@@ -198,6 +207,15 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
     } catch (e) { setMsg({ type: "err", text: "Gagal simpan draft: " + (e.message || e) }); return null; }
     finally { setSavingDraft(false); }
   };
+  // Tombol "Simpan Draft" utama — sebelumnya cuma menulis ke localStorage
+  // (device-only), sekarang draft disimpan ke database (`sdp_draft`) supaya
+  // bisa dilanjutkan dari perangkat lain / setelah cache browser hilang.
+  // localStorage tetap ditulis diam-diam sebagai cadangan instan bila offline.
+  const saveDraftEverywhere = async () => {
+    saveDraft(true);
+    return saveServerDraft();
+  };
+  const saveAndExit = async () => { await saveDraftEverywhere(); setConfirmLeave(false); onExit(); };
   const shareLink = async () => {
     const id = await saveServerDraft();
     if (!id) return;
@@ -264,15 +282,28 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
       let sq = supabase.from("sdp_master")
         .select("sdp_id, sdp_name, sdp_type, pt_name, region, branch, area, cluster")
         .order("period", { ascending: false });
+      // PENTING: region cuma dipakai utk scope role "pic_region" — pola yang
+      // SAMA dipakai di semua modul SDP lain (SDP_Evaluation, SDP_BatchMonitor,
+      // SDP_ActionTracker, dst: `role === "pic_region" && profile?.region`).
+      // Sebelumnya di sini kondisinya `else if (profile?.region)` TANPA cek
+      // role — jadi role apa pun yang kebetulan punya profile.region terisi
+      // (termasuk "spm_sumatera", yang seharusnya UNSCOPED / lihat "Seluruh
+      // Sumatera") ikut ke-filter ke 1 region saja. Itu penyebab akun SPM
+      // Sumatera cuma melihat data 1 region (mis. Sumatera Utara) alih-alih
+      // seluruh Sumatera.
       if (role === "cse_rse" && profile?.cluster) sq = sq.eq("cluster", profile.cluster);
       else if (role === "bsm" && profile?.bsm_branch) sq = sq.eq("branch", profile.bsm_branch);
-      else if (profile?.region) sq = sq.eq("region", profile.region);
+      else if (role === "pic_region" && profile?.region) sq = sq.eq("region", profile.region);
 
-      // Territory IOH → dropdown Kecamatan/Kab (scope per role).
-      let tq = supabase.from("mf_territory").select("kec_id, mc_cluster, branch, region").eq("active", true);
-      if (role === "cse_rse" && profile?.cluster) tq = tq.eq("mc_cluster", profile.cluster);
+      // Data Site MartaHub (mh_sites) → dropdown Kecamatan/Kab (scope per role).
+      // Sebelumnya pakai mf_territory (master lama, kurang lengkap/akurat per
+      // site) — sekarang mengacu ke data site MartaHub yang sama dipakai tim
+      // lapangan (mh_sites.kabupaten/kecamatan_name), lewat project Supabase
+      // MartaHub (supabaseMarta), anon read-only.
+      let tq = supabaseMarta.from("mh_sites").select("kecamatan, kabupaten, mc, branch, region").eq("active", true);
+      if (role === "cse_rse" && profile?.cluster) tq = tq.eq("mc", profile.cluster);
       else if (role === "bsm" && profile?.bsm_branch) tq = tq.eq("branch", profile.bsm_branch);
-      else if (profile?.region) tq = tq.eq("region", profile.region);
+      else if (role === "pic_region" && profile?.region) tq = tq.eq("region", profile.region);
 
       const [{ data: c }, { data: s }, { data: terr }] = await Promise.all([
         supabase.rpc("sdp_territory_combos"),
@@ -304,7 +335,7 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
   const scopeFilter = useMemo(() => (r) => {
     if (role === "cse_rse" && profile?.cluster) return r.mc_cluster === profile.cluster;
     if (role === "bsm" && profile?.bsm_branch) return r.branch === profile.bsm_branch;
-    if (profile?.region) return r.region === profile.region;
+    if (role === "pic_region" && profile?.region) return r.region === profile.region;
     return true;
   }, [role, profile?.cluster, profile?.bsm_branch, profile?.region]);
 
@@ -340,12 +371,63 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
   // Jenis pembuatan baru → tak perlu SDP existing; bersihkan pilihan lama.
   useEffect(() => { if (isNewCreation(val.request_type)) setExistingSdpId(""); }, [val.request_type]);
 
-  // Kab/Kota & Kecamatan Coverage dipersempit sesuai Micro Cluster yang dipilih
-  // (mf_territory punya kolom mc_cluster per baris kecamatan) — bukan lagi
-  // menggabungkan kab/kota dari seluruh branch/region sekaligus.
+  // Kab/Kota & Kecamatan Coverage dipersempit berjenjang: Branch → Region →
+  // Micro Cluster, sesuai filter yang SUDAH dipilih user di atas (mh_sites
+  // punya kolom branch/region/mc per baris site) — jadi kalau Region diisi
+  // "North Sumatera" misalnya, hitungan kecamatan unik di bawah otomatis
+  // mengikuti scope itu. Kolom `kecamatan` di mh_sites (CMS MartaHub, lihat
+  // "KECAMATAN UNIK" di Data Site) SUDAH berupa pasangan unik
+  // "KECAMATAN|KABUPATEN" per baris — PERSIS format kec_id yang dipakai
+  // buildKecIndex, jadi dipakai apa adanya (JANGAN digabung ulang dengan
+  // kabupaten, itu bug sebelumnya yang bikin ID unik-nya rusak/dobel).
+  const scopedTerritory = useMemo(() => {
+    let rows = territory;
+    if (val.branch) rows = rows.filter((r) => r.branch === val.branch);
+    else if (val.region) rows = rows.filter((r) => r.region === val.region);
+    if (val.micro_cluster) rows = rows.filter((r) => r.mc === val.micro_cluster);
+    return rows;
+  }, [territory, val.region, val.branch, val.micro_cluster]);
   const kecIndex = useMemo(() => buildKecIndex(
-    val.micro_cluster ? territory.filter((r) => r.mc_cluster === val.micro_cluster) : territory
-  ), [territory, val.micro_cluster]);
+    scopedTerritory.map((r) => ({ kec_id: r.kecamatan || "" }))
+  ), [scopedTerritory]);
+
+  // Label + jumlah kecamatan unik utk scope filter yang aktif saat ini —
+  // dipakai sbg summary crosscheck di bawah field Kecamatan Coverage.
+  // PENTING: hitung dari NILAI KOMPOSIT "kecamatan" (kecIndex.kecamatanFor
+  // dedupe berdasarkan NAMA kecamatan saja lewat parseKecId, jadi 2 kecamatan
+  // bernama sama di kab berbeda akan ke-collapse jadi 1 — beda dgn definisi
+  // "Kecamatan Unik" di CMS Data Site MartaHub, yang menghitung unik per
+  // pasangan "KECAMATAN|KABUPATEN" apa adanya). Dihitung langsung dari baris
+  // scopedTerritory (bukan lewat kecIndex) supaya angkanya PERSIS sama dengan
+  // kolom "KEC. UNIK" di CMS untuk scope yang sama.
+  //
+  // CATATAN: "territory" itu sendiri SUDAH di-scope dari server (lihat query
+  // mh_sites di atas) sesuai akun yg login — cse_rse dibatasi ke MC-nya, bsm
+  // ke branch-nya, dan role lain (termasuk BU/region) ke profile?.region-nya.
+  // Jadi walau tidak ada filter Region/Branch/MC yg dipilih MANUAL di form
+  // ini, angkanya TETAP hanya mencakup scope akun tsb, bukan seluruh Indonesia
+  // — makanya bisa jauh lebih kecil dari total "KEC. UNIK" global di CMS
+  // (yg tidak difilter akun sama sekali). Supaya jujur & bisa di-crosscheck,
+  // label & angka di bawah harus menyebut scope AKUN itu juga, bukan cuma
+  // filter manual yg dipilih.
+  const kecAccountScopeLabel =
+    (role === "cse_rse" && profile?.cluster) ? `MC ${profile.cluster} (scope akun Anda)`
+    : (role === "bsm" && profile?.bsm_branch) ? `Branch ${profile.bsm_branch} (scope akun Anda)`
+    : (role === "pic_region" && profile?.region) ? `Region ${profile.region} (scope akun Anda)`
+    : null;
+  const kecManualScopeLabel = [
+    val.branch ? `Branch ${val.branch}` : (val.region ? `Region ${val.region}` : null),
+    val.micro_cluster ? `MC ${val.micro_cluster}` : null,
+  ].filter(Boolean).join(" · ");
+  const kecScopeLabel = kecManualScopeLabel || kecAccountScopeLabel || "seluruh Sumatera";
+  const kecTotalInScope = useMemo(
+    () => new Set(scopedTerritory.map((r) => r.kecamatan).filter(Boolean)).size,
+    [scopedTerritory]
+  );
+  const kecTotalInKab = useMemo(() => {
+    if (!val.kabupaten) return null;
+    return new Set(scopedTerritory.filter((r) => r.kabupaten === val.kabupaten).map((r) => r.kecamatan).filter(Boolean)).size;
+  }, [scopedTerritory, val.kabupaten]);
 
   const willGenerate = isNewCreation(val.request_type);
   const idPreview = willGenerate
@@ -355,7 +437,13 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
   // ── Submit ────────────────────────────────────────────────────────────────
   const submit = async () => {
     setMsg(null);
-    const row = { ...val, submission_month: val.cycle_month || val.submission_month };
+    const row = {
+      ...val, submission_month: val.cycle_month || val.submission_month,
+      // lockRequestType (menu "Registrasi SDP"): Tanggal Submit tidak lagi
+      // diisi manual — dicatat otomatis sebagai tanggal saat data ini benar-
+      // benar dikirim, bukan tanggal form dibuka.
+      ...(lockRequestType ? { submission_date: new Date().toISOString().slice(0, 10) } : null),
+    };
     // Gudang sama dengan SDP → salin alamat & koordinat.
     if (sameGudang) { row.ship_to_address = row.bill_to_address || null; row.latitude_gudang = row.latitude ?? null; row.longitude_gudang = row.longitude ?? null; }
     const { valid, errors: errs } = validateRegistrationRow(row);
@@ -498,9 +586,21 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
     if (k === "kecamatan_coverage") return wrap(
       <label style={{ display: "block" }}>
         <div style={lblStyle}>{label} <span style={{ fontWeight: 600, textTransform: "none", letterSpacing: 0, color: t.lo }}>· bisa banyak</span></div>
+        {/* TIDAK lagi auto-isi Kab/Kota dari pilihan pertama — sebelumnya itu
+            langsung mempersempit daftar ke 1 kab setelah klik pertama,
+            sehingga kecamatan dari kab lain "hilang" & tidak bisa dipilih
+            (kelihatan seperti error saat mau pilih lebih dari satu). Kab/Kota
+            sekarang murni filter opsional yang diatur manual oleh user. */}
         <SDP_SearchSelect t={t} multi value={val.kecamatan_coverage ?? ""} options={kecIndex.kecamatanFor(val.kabupaten)}
-          onChange={(v) => { setVal((p) => { const first = v.split(",")[0]?.trim(); return { ...p, kecamatan_coverage: v, kabupaten: p.kabupaten || (first ? kecIndex.kabOf(first) : "") }; }); setDirty(true); }}
+          optionSub={(o) => kecIndex.kabOf(o)}
+          onChange={(v) => { setVal((p) => ({ ...p, kecamatan_coverage: v })); setDirty(true); }}
           placeholder="— pilih kecamatan —" searchPlaceholder="Cari kecamatan…" />
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11.5, color: t.lo, marginTop: 6, flexWrap: "wrap" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 99, background: t.tealBg, color: t.tealD, fontWeight: 700 }}>
+            {val.kabupaten ? kecTotalInKab : kecTotalInScope} kecamatan unik
+          </span>
+          <span>{val.kabupaten ? <>di Kab/Kota <strong style={{ color: t.mid }}>{val.kabupaten}</strong> ({kecScopeLabel}) — kosongkan Kab/Kota untuk lihat semua.</> : <>tersedia di {kecScopeLabel} — dari Data Site MartaHub terbaru.</>}</span>
+        </div>
       </label>);
     return wrap(
       <Field k={k} label={label} type={type} t={t} value={val[k] ?? ""}
@@ -509,8 +609,38 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
         brandLock={k === "brand" ? brandLock : ""} />);
   };
 
-  const cur = STEPS[step];
-  const isLast = step === STEPS.length - 1;
+  // Saat request_type dikunci (mis. dari menu "Registrasi SDP" → khusus
+  // New), langkah pertama tidak perlu lagi menawarkan pilihan New/Update/
+  // Terminate/Remapping/Hybrid Pairing. Brand & Circle juga dipindah ke
+  // langkah pertama ini (dari langkah "Wilayah & Brand") supaya begitu
+  // langkah pertama selesai diisi, SDP ID langsung bisa dibentuk dan
+  // ditampilkan — tidak perlu pindah langkah dulu baru ID muncul.
+  const stepsForForm = lockRequestType
+    ? STEPS.map((s, i) => {
+        if (i === 0) {
+          return {
+            ...s, title: "Scope & Brand", hint: "Isi ini dulu — begitu lengkap, SDP ID langsung dibuatkan otomatis di bawah.",
+            fields: [
+              ["registration_scope","Registration Scope","enum:registration_scope"],
+              ["brand","Brand","enum:brand"],
+              ["circle","Circle","geo"],
+              ["cycle_month","Bulan Siklus (target live)","month"],
+              ["hybrid_type","Hybrid Type","enum:hybrid_type"],
+            ],
+          };
+        }
+        if (i === 1) {
+          return {
+            ...s, title: "Wilayah Operasional", hint: "Detail wilayah & nama SDP — Brand dan Circle sudah diisi di langkah sebelumnya.",
+            fields: [["region","Region","geo"],["branch","Branch","geo"],["micro_cluster","Micro Cluster","geo"],
+                     ["kabupaten","Kab/Kota"],["kecamatan_coverage","Kecamatan Coverage"],["partner_territory","Partner Territory"],["sdp_name","SDP Name"]],
+          };
+        }
+        return s;
+      })
+    : STEPS;
+  const cur = stepsForForm[step];
+  const isLast = step === stepsForForm.length - 1;
 
   return (
     <div style={{ fontFamily: FF, color: t.hi, maxWidth: 880, margin: "0 auto", paddingBottom: 8 }}>
@@ -520,7 +650,7 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
       </button>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
         <div>
-          <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: -0.4 }}>Registrasi &amp; Perubahan SDP</div>
+          <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: -0.4 }}>{lockRequestType ? "Registrasi SDP Baru" : "Registrasi & Perubahan SDP"}</div>
           <div style={{ fontSize: 12.5, color: t.mid, marginTop: 2 }}>Isi bertahap{profile?.cluster ? ` · cluster ${profile.cluster}` : profile?.region ? ` · region ${profile.region}` : ""}.</div>
         </div>
         <div style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 12px", borderRadius: 10, background: t.tealBg, border: `1px solid ${t.tealBd}`, color: t.tealD, fontSize: 12.5, fontWeight: 800 }}>
@@ -528,37 +658,46 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
         </div>
       </div>
 
-      {/* Toolbar: simpan ke server & bagikan link (expiring) */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
-        <button onClick={saveServerDraft} disabled={savingDraft}
-          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 13px", borderRadius: 9, border: `1px solid ${t.line}`, background: t.card, color: t.hi, fontFamily: FF, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
-          {savingDraft ? <Loader2 size={14} className="spin" /> : <Save size={14} />} Simpan ke server
-        </button>
-        <span style={{ width: 1, height: 22, background: t.line }} />
-        <span style={{ fontSize: 12, color: t.mid }}>Bagikan link, berlaku</span>
-        <div style={{ position: "relative" }}>
-          <select value={shareDays} onChange={(e) => setShareDays(+e.target.value)}
-            style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", fontFamily: FF, fontSize: 12.5, fontWeight: 700, color: t.hi, background: t.card, border: `1px solid ${t.line}`, borderRadius: 9, padding: "8px 26px 8px 10px", cursor: "pointer" }}>
-            {[1, 2, 3, 5, 7].map((n) => <option key={n} value={n}>{n} hari</option>)}
-          </select>
-          <ChevronDown size={13} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", color: t.mid, pointerEvents: "none" }} />
-        </div>
-        <button onClick={shareLink}
-          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 9, border: "none", background: t.mag, color: "#fff", fontFamily: FF, fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}>
-          <Link2 size={14} /> Bagikan &amp; Salin
-        </button>
-      </div>
-      {sharedInfo && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 10, marginBottom: 14, background: t.magBg, border: `1px solid ${t.magBd}`, fontSize: 12, color: t.hi, flexWrap: "wrap" }}>
-          <Link2 size={14} color={t.mag} />
-          <span style={{ fontFamily: "monospace", wordBreak: "break-all" }}>{sharedInfo.url}</span>
-          <span style={{ color: t.mid }}>· berlaku sampai {new Date(sharedInfo.expires_at).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
-        </div>
+      {/* Toolbar: simpan ke server & bagikan link (expiring) — fitur untuk
+          alur lama (Archive) yang bisa dikerjakan lintas orang/perangkat via
+          link. Disembunyikan di menu "Registrasi SDP" (lockRequestType):
+          satu tombol "Simpan Draft" di footer sudah cukup dan sudah
+          menyimpan ke server juga, jadi dua tombol simpan sekaligus di sini
+          hanya bikin bingung. */}
+      {!lockRequestType && (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+            <button onClick={saveServerDraft} disabled={savingDraft}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 13px", borderRadius: 9, border: `1px solid ${t.line}`, background: t.card, color: t.hi, fontFamily: FF, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+              {savingDraft ? <Loader2 size={14} className="spin" /> : <Save size={14} />} Simpan ke server
+            </button>
+            <span style={{ width: 1, height: 22, background: t.line }} />
+            <span style={{ fontSize: 12, color: t.mid }}>Bagikan link, berlaku</span>
+            <div style={{ position: "relative" }}>
+              <select value={shareDays} onChange={(e) => setShareDays(+e.target.value)}
+                style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", fontFamily: FF, fontSize: 12.5, fontWeight: 700, color: t.hi, background: t.card, border: `1px solid ${t.line}`, borderRadius: 9, padding: "8px 26px 8px 10px", cursor: "pointer" }}>
+                {[1, 2, 3, 5, 7].map((n) => <option key={n} value={n}>{n} hari</option>)}
+              </select>
+              <ChevronDown size={13} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", color: t.mid, pointerEvents: "none" }} />
+            </div>
+            <button onClick={shareLink}
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 9, border: "none", background: t.mag, color: "#fff", fontFamily: FF, fontSize: 12.5, fontWeight: 800, cursor: "pointer" }}>
+              <Link2 size={14} /> Bagikan &amp; Salin
+            </button>
+          </div>
+          {sharedInfo && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px", borderRadius: 10, marginBottom: 14, background: t.magBg, border: `1px solid ${t.magBd}`, fontSize: 12, color: t.hi, flexWrap: "wrap" }}>
+              <Link2 size={14} color={t.mag} />
+              <span style={{ fontFamily: "monospace", wordBreak: "break-all" }}>{sharedInfo.url}</span>
+              <span style={{ color: t.mid }}>· berlaku sampai {new Date(sharedInfo.expires_at).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+            </div>
+          )}
+        </>
       )}
 
       {/* Stepper */}
       <div className="wz-steps">
-        {STEPS.map((s, i) => {
+        {stepsForForm.map((s, i) => {
           const done = i < step, active = i === step;
           const StepIcon = s.icon;
           return (
@@ -569,7 +708,7 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
                 </span>
                 {active && <span className="wz-steplabel">{s.title}</span>}
               </button>
-              {i < STEPS.length - 1 && <span className="wz-line"><i style={{ width: done ? "100%" : "0%" }} /></span>}
+              {i < stepsForForm.length - 1 && <span className="wz-line"><i style={{ width: done ? "100%" : "0%" }} /></span>}
             </React.Fragment>
           );
         })}
@@ -589,30 +728,31 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
 
         {cur.intro ? (
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {/* Request Type sebagai pilihan besar */}
-            <div>
-              <div style={lblStyle}>Mau melakukan apa?</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                {SDP_LISTS.request_type.map((rt) => {
-                  const on = val.request_type === rt;
-                  return (
-                    <button key={rt} type="button" onClick={() => set("request_type", rt)}
-                      style={{ padding: "11px 18px", borderRadius: 11, cursor: "pointer", fontFamily: FF, fontSize: 14, fontWeight: 700,
-                        border: `1.5px solid ${on ? t.acc : t.line}`, background: on ? t.accBg : t.inp, color: on ? t.acc : t.hi, transition: "all .16s ease" }}>
-                      {rt}
-                    </button>
-                  );
-                })}
+            {/* Request Type sebagai pilihan besar — disembunyikan bila dikunci
+                (mis. menu "Registrasi SDP" khusus New), supaya tidak
+                menampilkan opsi Update/Terminate/Remapping/Hybrid Pairing
+                yang tidak relevan di sana. */}
+            {!lockRequestType && (
+              <div>
+                <div style={lblStyle}>Mau melakukan apa?</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {SDP_LISTS.request_type.map((rt) => {
+                    const on = val.request_type === rt;
+                    return (
+                      <button key={rt} type="button" onClick={() => set("request_type", rt)}
+                        style={{ padding: "11px 18px", borderRadius: 11, cursor: "pointer", fontFamily: FF, fontSize: 14, fontWeight: 700,
+                          border: `1.5px solid ${on ? t.acc : t.line}`, background: on ? t.accBg : t.inp, color: on ? t.acc : t.hi, transition: "all .16s ease" }}>
+                        {rt}
+                      </button>
+                    );
+                  })}
+                </div>
+                {errors.request_type && <div style={{ fontSize: 11.5, color: t.acc, marginTop: 7 }}>{errors.request_type}</div>}
               </div>
-              {errors.request_type && <div style={{ fontSize: 11.5, color: t.acc, marginTop: 7 }}>{errors.request_type}</div>}
-            </div>
+            )}
 
             {/* Kontekstual — mengalir ke bawah sesuai jenis */}
-            {val.request_type && (isNewCreation(val.request_type) ? (
-              <div className="sdp-fade" style={{ display: "flex", alignItems: "center", gap: 9, padding: "12px 14px", borderRadius: 12, background: t.tealBg, border: `1px solid ${t.tealBd}`, color: t.tealD, fontSize: 13, fontWeight: 700 }}>
-                <Sparkles size={15} /> SDP baru — ID dibuat otomatis: <span style={{ fontFamily: "monospace" }}>{idPreview || "lengkapi Brand & Bulan Siklus"}</span>{isHybridScope(val.registration_scope) && idPreview ? " (+ pasangan KSK/SDP)" : ""}
-              </div>
-            ) : (
+            {val.request_type && (isNewCreation(val.request_type) ? null : (
               <div style={{ padding: 14, borderRadius: 12, background: t.magBg, border: `1px solid ${t.magBd}`, position: "relative", zIndex: 5 }}>
                 <div style={{ fontSize: 11.5, fontWeight: 800, color: t.mag, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.03em" }}>Pilih SDP yang akan di-{String(val.request_type).toLowerCase()} · wajib</div>
                 <SDP_SearchSelect t={t}
@@ -630,6 +770,28 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
                 .filter(([k]) => k !== "request_type" && !(["pairing_id", "hybrid_type"].includes(k) && !isHybridScope(val.registration_scope)))
                 .map(renderField)}
             </div>
+
+            {/* Konfirmasi ID — muncul begitu Brand + Circle + Bulan Siklus
+                lengkap, jadi user langsung tahu ID SDP-nya tanpa pindah
+                langkah. Lebih besar & tegas dari notice di atas. */}
+            {val.request_type && isNewCreation(val.request_type) && (
+              <div className="sdp-fade" style={{ display: "flex", alignItems: "center", gap: 12, padding: "16px 18px", borderRadius: 14,
+                background: idPreview ? t.tealBg : t.sub, border: `1.5px solid ${idPreview ? t.tealBd : t.line}` }}>
+                <span style={{ width: 38, height: 38, borderRadius: 11, flexShrink: 0, background: idPreview ? t.tealD : t.line, color: idPreview ? "#06231F" : t.lo, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Sparkles size={18} />
+                </span>
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: idPreview ? t.tealD : t.mid, textTransform: "uppercase", letterSpacing: "0.05em" }}>SDP ID</div>
+                  {idPreview ? (
+                    <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "monospace", color: t.hi, marginTop: 2 }}>
+                      {idPreview}{isHybridScope(val.registration_scope) ? <span style={{ fontSize: 12.5, fontWeight: 700, color: t.mid, fontFamily: FF }}> {" "}+ pasangan KSK/SDP otomatis</span> : null}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 13, color: t.mid, marginTop: 2 }}>Lengkapi Registration Scope, Brand, Circle &amp; Bulan Siklus di atas untuk melihat ID.</div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         ) : cur.custom ? (
           <div className="wz-loc">
@@ -742,9 +904,9 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
           style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "11px 18px", borderRadius: 11, border: `1px solid ${t.line}`, background: t.card, color: t.hi, fontFamily: FF, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}>
           <ChevronLeft size={16} /> {step === 0 ? "Batal" : "Kembali"}
         </button>
-        <button onClick={() => saveDraft()} title="Simpan sebagai draft (di perangkat ini)"
-          style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "11px 16px", borderRadius: 11, border: `1px solid ${dirty ? t.acc : t.line}`, background: t.card, color: dirty ? t.acc : t.mid, fontFamily: FF, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-          <Save size={15} /> Simpan Draft{dirty ? <span style={{ width: 6, height: 6, borderRadius: 99, background: t.acc, display: "inline-block", marginLeft: 1 }} /> : null}
+        <button onClick={saveDraftEverywhere} disabled={savingDraft} title="Simpan draft ke server — bisa dilanjutkan dari perangkat lain"
+          style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "11px 16px", borderRadius: 11, border: `1px solid ${dirty ? t.acc : t.line}`, background: t.card, color: dirty ? t.acc : t.mid, fontFamily: FF, fontSize: 13, fontWeight: 700, cursor: savingDraft ? "default" : "pointer" }}>
+          {savingDraft ? <Loader2 size={15} className="spin" /> : <Save size={15} />} Simpan Draft{dirty ? <span style={{ width: 6, height: 6, borderRadius: 99, background: t.acc, display: "inline-block", marginLeft: 1 }} /> : null}
         </button>
         <div style={{ flex: 1, minWidth: 60, textAlign: "center", fontSize: 12, color: t.mid }}>Langkah {step + 1} dari {STEPS.length}{dirty ? " · belum disimpan" : ""}</div>
         {isLast ? (
