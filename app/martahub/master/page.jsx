@@ -1,7 +1,8 @@
 "use client";
 import { useState, useRef, useEffect, useCallback, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { UploadCloud, Map as MapIcon, ChevronRight, ChevronDown, ArrowLeft, CheckCircle2, AlertTriangle, Clock, Network, Search, Store, UserCheck, UserX, Target as TargetIcon, Tag, Plus, Pencil, Calendar, Database, RefreshCw } from "lucide-react";
+import { UploadCloud, Map as MapIcon, ChevronRight, ChevronDown, ArrowLeft, CheckCircle2, AlertTriangle, Clock, Network, Search, Store, UserCheck, UserX, Target as TargetIcon, Tag, Plus, Pencil, Calendar, Database, RefreshCw, Download } from "lucide-react";
+import ExcelJS from "exceljs";
 import MartaShell, { T } from "../components/MartaShell";
 import { useGeoLayers, LayerPanel } from "../components/SumatraMap";
 import supabaseMarta from "../../../lib/supabaseMarta";
@@ -713,6 +714,28 @@ const COLUMNS = [
 ];
 
 const FCOLS = COLUMNS.map((c) => [c.key, c.label]);
+
+// Export .xlsx - SEMUA 17 kolom mh_sites_monthly (bukan cuma 12 kolom yg
+// ditampilkan di tabel UI) - sesuai permintaan "full data site".
+const EXPORT_COLUMNS = [
+  { key: "site_id", label: "Site ID" },
+  { key: "site_name", label: "Site Name" },
+  { key: "brand", label: "Brand" },
+  { key: "mc", label: "MC" },
+  { key: "branch_id", label: "Branch ID" },
+  { key: "branch", label: "Branch" },
+  { key: "region", label: "Region" },
+  { key: "area", label: "Area" },
+  { key: "circle", label: "Circle" },
+  { key: "kabupaten", label: "Kabupaten" },
+  { key: "kecamatan_name", label: "Kecamatan" },
+  { key: "kecamatan", label: "Kecamatan Unik" },
+  { key: "kecamatan_fokus", label: "Kecamatan Fokus" },
+  { key: "site_lrs", label: "Site LRS" },
+  { key: "coverage", label: "Coverage" },
+  { key: "month", label: "Month" },
+  { key: "updated_at", label: "Updated At" },
+];
 const FT_T = { card: "#FFFFFF", line: T.line, sub: "#F5F6F9", hi: T.hi, mid: T.mid, lo: T.lo, teal: T.primary, tealBg: "#FFF0F0" };
 const MAX_ROWS = 1000;
 
@@ -786,6 +809,7 @@ function SitesBrowser({ period, expectedTotal }) {
   const [openCol, setOpenCol] = useState("");
   const [rect, setRect] = useState(null);
   const [showBranches, setShowBranches] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -847,6 +871,73 @@ function SitesBrowser({ period, expectedTotal }) {
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [filtered]);
 
+  // Export .xlsx - SELALU dari `filtered` (ikut filter kolom aktif), BUKAN
+  // `shown` yg dibatasi MAX_ROWS utk performa render tabel saja.
+  const exportXlsx = useCallback(async () => {
+    setExporting(true);
+    try {
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet("Master Data");
+
+      const XLSX_HEADER_FILL = "FFED1C24"; // brand MartaHub (T.primary)
+      const XLSX_HEADER_FONT = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
+      const XLSX_ZEBRA_FILL = "FFF7F9FC";
+      const XLSX_BORDER_COLOR = "FFD7DCE5";
+      const XLSX_THIN_BORDER = {
+        top: { style: "thin", color: { argb: XLSX_BORDER_COLOR } },
+        left: { style: "thin", color: { argb: XLSX_BORDER_COLOR } },
+        bottom: { style: "thin", color: { argb: XLSX_BORDER_COLOR } },
+        right: { style: "thin", color: { argb: XLSX_BORDER_COLOR } },
+      };
+
+      ws.columns = EXPORT_COLUMNS.map((c) => ({
+        header: c.label,
+        key: c.key,
+        width: Math.max(12, c.label.length + 4),
+      }));
+      ws.getRow(1).height = 22;
+      ws.getRow(1).eachCell((cell) => {
+        cell.font = XLSX_HEADER_FONT;
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLSX_HEADER_FILL } };
+        cell.alignment = { vertical: "middle", horizontal: "center" };
+        cell.border = XLSX_THIN_BORDER;
+      });
+
+      filtered.forEach((r, i) => {
+        const row = ws.addRow(EXPORT_COLUMNS.map((c) => {
+          const v = r[c.key];
+          if (c.key === "updated_at" && v) {
+            const d = new Date(v);
+            return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString("id-ID");
+          }
+          return v == null ? "" : v;
+        }));
+        if (i % 2 === 1) {
+          row.eachCell((cell) => {
+            cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLSX_ZEBRA_FILL } };
+          });
+        }
+        row.eachCell((cell) => { cell.border = XLSX_THIN_BORDER; });
+      });
+
+      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: filtered.length + 1, column: EXPORT_COLUMNS.length } };
+
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const stamp = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `MartaHub_MasterData_${period}_${stamp}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExporting(false);
+    }
+  }, [filtered, period]);
+
   return (
     <div style={{ ...card, padding: 0, overflow: "hidden" }}>
       <style>{`@keyframes mhSpin{to{transform:rotate(360deg)}}@keyframes mhIndet{0%{transform:translateX(-100%)}100%{transform:translateX(400%)}}`}</style>
@@ -858,7 +949,19 @@ function SitesBrowser({ period, expectedTotal }) {
           </span>
         )}
         {!loading && anyFilter && <span style={{ fontSize: 11.5, color: T.mid }}>{filtered.length.toLocaleString()} dari {allSites.length.toLocaleString()} baris</span>}
-        {!loading && anyFilter && <button onClick={() => setFilters({})} style={{ ...linkBtn, marginLeft: "auto", color: T.primary }}>Hapus semua filter</button>}
+        {!loading && anyFilter && <button onClick={() => setFilters({})} style={{ ...linkBtn, color: T.primary }}>Hapus semua filter</button>}
+        <button onClick={exportXlsx} disabled={allSites.length === 0 || exporting}
+          title="Export seluruh kolom (17 kolom) - ikut filter aktif"
+          style={{
+            display: "flex", alignItems: "center", gap: 6, height: 30, padding: "0 12px", borderRadius: 8,
+            border: "1px solid transparent", fontWeight: 700, fontSize: 12,
+            marginLeft: anyFilter ? 0 : "auto",
+            background: "linear-gradient(135deg,#1E8E3E,#0F6B2C)", color: "#fff",
+            opacity: (allSites.length === 0 || exporting) ? 0.5 : 1,
+            cursor: (allSites.length === 0 || exporting) ? "default" : "pointer",
+          }}>
+          {exporting ? <><Spinner size={12} /> Mengekspor…</> : <><Download size={13} /> Export .xlsx</>}
+        </button>
       </div>
 
       {/* Progress bar pemuatan data (determinate bila total diketahui) */}
