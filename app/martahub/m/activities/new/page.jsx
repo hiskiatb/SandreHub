@@ -57,6 +57,15 @@ function CreatePlanWizardInner() {
   const [sites, setSites] = useState([]);
   const [poiTypes, setPoiTypes] = useState([]);
   const [dataLoading, setDataLoading] = useState(true);
+  // Refetch site SETELAH load pertama (mis. ganti "Buat Untuk"/bulk-region
+  // ke branch lain) TIDAK memicu gate halaman penuh (`dataLoading`) lagi -
+  // itu akan membuat seluruh wizard hilang diganti ShellSpinner generik
+  // padahal user mungkin lagi di tengah isi field lain. Sinyal loading utk
+  // refetch ini ditaruh terpisah (`sitesRefreshing`), lalu field SITE di
+  // StepLocation yang menampilkan indikatornya sendiri secara lokal (lihat
+  // `sitesLoading` di bawah & AddSiteRow).
+  const [sitesRefreshing, setSitesRefreshing] = useState(false);
+  const sitesLoadedOnceRef = useRef(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState("");
   const [invalid, setInvalid] = useState(new Set());
@@ -101,6 +110,17 @@ function CreatePlanWizardInner() {
   const [actingForLoading, setActingForLoading] = useState(false);
   const [actingForSheet, setActingForSheet] = useState(false);
   const actingForKey = actingForList.map((a) => a.id).join(",");
+
+  // ── "Pilih semua BME di region ini" (bulk-region) - HANYA superadmin
+  // (spm_sumatera), mode buat baru. Mengganti seleksi "Buat Untuk" normal
+  // dgn SELURUH branch×brand (+ orangnya kalau ada, placeholder kalau
+  // belum ada) di satu region sekaligus - tiap target jadi SATU baris plan
+  // terpisah saat disimpan (lihat save()), bukan cuma kombinasi utama+
+  // perluasan site spt mode "Buat Untuk" biasa.
+  const isSuperadmin = scope?.role === "spm_sumatera";
+  const [isBulkRegion, setIsBulkRegion] = useState(false);
+  const [bulkRegionInfo, setBulkRegionInfo] = useState(null); // {region, count}
+  const [bulkResultMsg, setBulkResultMsg] = useState("");
 
   // Scope efektif utk site/branch - punya sendiri (BME/RGE) atau scope orang
   // yg diwakilkan (approver via "Buat Untuk"). Kalau beberapa branch
@@ -182,8 +202,9 @@ function CreatePlanWizardInner() {
   const [costEstimate, setCostEstimate] = useState("0");
   const targetSp = targetSpProducts.reduce((s, p) => s + (Number(p.qty) || 0), 0);
   const targetFwa = targetFwaProducts.reduce((s, p) => s + (Number(p.qty) || 0), 0);
-  const targetSpRevenue = targetSpProducts.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.unitPrice) || 0), 0);
-  const targetFwaRevenue = targetFwaProducts.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.unitPrice) || 0), 0);
+  // Revenue 3 Bulan: qty x unit_price x 3 (proyeksi recurring 3 bulan per unit) + rebuy apa adanya (sudah angka final, bukan per bulan)
+  const targetSpRevenue = targetSpProducts.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.unitPrice) || 0) * 3, 0);
+  const targetFwaRevenue = targetFwaProducts.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.unitPrice) || 0) * 3, 0);
   const targetRebuyTotal = (Number(targetRebuySp) || 0) + (Number(targetRebuyFwa) || 0);
   const targetEstRevenue = targetSpRevenue + targetFwaRevenue + targetRebuyTotal;
   const targetCostRatio = targetEstRevenue > 0 ? ((Number(costEstimate) || 0) / targetEstRevenue) * 100 : null;
@@ -454,8 +475,14 @@ function CreatePlanWizardInner() {
     // (layar sempat kosong/berkedip sebelum akhirnya stabil).
     if (loading || !scope?.found || (editId && !editBranchSlug)) return;
     let alive = true;
+    // Load PERTAMA (belum pernah sukses sebelumnya) pakai gate halaman
+    // penuh (`dataLoading`, sama spt sebelumnya - belum ada apa pun utk
+    // ditampilkan). Refetch2 SETELAHNYA (ganti "Buat Untuk"/bulk-region)
+    // pakai sinyal lokal `sitesRefreshing` saja - lihat catatan di
+    // deklarasi state-nya di atas.
+    const isFirstLoad = !sitesLoadedOnceRef.current;
     (async () => {
-      setDataLoading(true);
+      if (isFirstLoad) setDataLoading(true); else setSitesRefreshing(true);
       try {
         // Kalau beberapa branch dipilih sekaligus (multi "Buat Untuk"),
         // ambil site dari SEMUA branch itu lalu gabung (dedup by site_id) -
@@ -480,7 +507,10 @@ function CreatePlanWizardInner() {
       } catch (e) {
         if (alive) setErr(e.message || "Gagal memuat data referensi");
       } finally {
-        if (alive) setDataLoading(false);
+        if (alive) {
+          sitesLoadedOnceRef.current = true;
+          if (isFirstLoad) setDataLoading(false); else setSitesRefreshing(false);
+        }
       }
     })();
     return () => { alive = false; };
@@ -882,7 +912,7 @@ function CreatePlanWizardInner() {
       }
     }
 
-    setSaving(true); setErr("");
+    setSaving(true); setErr(""); setBulkResultMsg("");
     try {
       const categoryCodes = categories.map(snake);
       const siteIds = [primarySite?.site_id, ...extraSites.map((s) => s.site_id)].filter(Boolean);
@@ -923,6 +953,57 @@ function CreatePlanWizardInner() {
         // layar detail sbg "Revenue 3 Bulan"/"Estimasi Total Revenue".
         target_rev_3m: targetEstRevenue,
       };
+
+      // ── Mode bulk-region (superadmin, "Pilih semua BME di region ini") ──
+      // Jalur TERPISAH SEPENUHNYA dari alur single insert/update di bawah -
+      // satu baris mh_activities per target (orang sungguhan ATAU slot
+      // kosong/placeholder) di region yang dipilih. Site/MC yg dipilih di
+      // step Lokasi (commonFields.site_id/mc, dipool dari SELURUH site di
+      // region - lihat effectiveBranchIds) dipakai SAMA utk setiap baris -
+      // superadmin bebas pilih site(s) dari semua site di region tersebut,
+      // lalu syncActivitySites dipanggil per baris (mh_activity_sites
+      // di-keyed per activity_id, jadi tiap baris butuh panggilan sendiri).
+      if (isBulkRegion) {
+        let successCount = 0, failCount = 0, siteSyncFailCount = 0;
+        for (const target of actingForList) {
+          try {
+            const resolvedBranchId = await resolveBranchUuid(target.branch_id, target.branch_name);
+            if (!resolvedBranchId) throw new Error(`Branch "${target.branch_name || target.branch_id}" tidak ditemukan.`);
+            const isPlaceholderTarget = !target.email;
+            const ownerId = target.email ? await resolveProfileIdByEmail(target.email) : null;
+            if (target.email && !ownerId) throw new Error(`Profil "${target.email}" tidak ditemukan.`);
+            const { data: insertedBulk, error } = await supabaseMarta.from("mh_activities").insert({
+              bme_user_id: ownerId,
+              created_by: isPlaceholderTarget ? userId : ownerId,
+              branch_id: resolvedBranchId,
+              brand: (target.brand || "").toUpperCase(),
+              status: finalStatus,
+              ...commonFields,
+            }).select("id").single();
+            if (error) throw error;
+            successCount++;
+            if (siteIds.length > 0) {
+              try {
+                await syncActivitySites(insertedBulk.id, siteIds);
+              } catch (syncErr) {
+                siteSyncFailCount++;
+                console.error(`Bulk-region: gagal sync site utk ${target.branch_name || target.branch_id} · ${target.brand}`, syncErr);
+              }
+            }
+          } catch (e) {
+            failCount++;
+            console.error(`Bulk-region: gagal membuat plan utk ${target.branch_name || target.branch_id} · ${target.brand}`, e);
+          }
+        }
+        setBulkResultMsg(`${successCount} plan dibuat${failCount > 0 ? `, ${failCount} gagal` : ""}${siteSyncFailCount > 0 ? ` (${siteSyncFailCount} gagal sync site)` : ""} - ${bulkRegionInfo?.region || "region terpilih"}.`);
+        if (finalStatus === "plan_submitted") {
+          router.replace(`/martahub/m/activities`);
+        } else {
+          setDirty(false);
+          setDraftSavedAt(new Date().toISOString());
+        }
+        return;
+      }
 
       // Setelah draft PERTAMA tersimpan (plan baru, belum ada di URL
       // ?edit=), simpan id-nya di state lokal `savedActivityId` supaya
@@ -1164,6 +1245,9 @@ function CreatePlanWizardInner() {
       {err && (
         <div style={{ margin: "14px 20px 0", padding: "10px 12px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 12, fontWeight: 600 }}>{err}</div>
       )}
+      {bulkResultMsg && (
+        <div style={{ margin: "14px 20px 0", padding: "10px 12px", borderRadius: 10, background: "#F0FBF6", color: "#15803D", fontSize: 12, fontWeight: 600 }}>{bulkResultMsg}</div>
+      )}
 
       <div style={{ padding: "18px 20px 24px", paddingBottom: `calc(env(safe-area-inset-bottom,0px) + ${actionBarH + 24}px)` }}>
         {step === 0 && (
@@ -1173,6 +1257,7 @@ function CreatePlanWizardInner() {
             invalid,
             branchName: effectiveScope.branchNameDisplay,
             isApprover, actingFor, actingForList, actingForLoading, onPickActingFor: () => setActingForSheet(true),
+            isBulkRegion, bulkRegionInfo,
             activeCampaign, campaignLocked,
             onUseCampaign: () => {
               setEventName(activeCampaign.expected_event_name);
@@ -1196,6 +1281,7 @@ function CreatePlanWizardInner() {
             sites, primarySite, setPrimarySite, extraSites, setExtraSites,
             poiType, setPoiType, poiTypes, network, setNetwork, area, setArea,
             address, setAddress, manualLat, manualLng, setManualLat, setManualLng, invalid,
+            sitesLoading: sitesRefreshing, branchCount: effectiveScope.branchIds.length,
           }} />
         )}
         {step === 2 && (
@@ -1263,8 +1349,14 @@ function CreatePlanWizardInner() {
           groups={actingForGroups}
           loading={actingForLoading}
           initialSelected={actingForList}
+          allowBulkRegion={isSuperadmin}
           onClose={() => setActingForSheet(false)}
-          onConfirm={(list) => { setActingForList(list); setActingForSheet(false); }}
+          onConfirm={(list, bulkMeta) => {
+            setActingForList(list);
+            setIsBulkRegion(!!bulkMeta?.isBulkRegion);
+            setBulkRegionInfo(bulkMeta?.isBulkRegion ? { region: bulkMeta.region, count: bulkMeta.count } : null);
+            setActingForSheet(false);
+          }}
         />
       )}
 
@@ -1290,7 +1382,7 @@ function CreatePlanWizardInner() {
 }
 
 // ═════════════════════════════════ Step 1 ═════════════════════════════════
-function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, setDates, timesByDate, setTimesByDate, invalid, branchName, isApprover, actingFor, actingForList, actingForLoading, onPickActingFor, activeCampaign, onUseCampaign, campaignLocked, onUnlockCampaign }) {
+function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, setDates, timesByDate, setTimesByDate, invalid, branchName, isApprover, actingFor, actingForList, actingForLoading, onPickActingFor, isBulkRegion, bulkRegionInfo, activeCampaign, onUseCampaign, campaignLocked, onUnlockCampaign }) {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const validDates = dates.filter(Boolean);
   // Tidak ada mode manual - ringkasan dihitung otomatis dari keterdekatan
@@ -1364,11 +1456,23 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
           <FieldLabel id="field-actingFor" text="Buat Untuk" required hint={actingForLoading ? "Memuat…" : "Orang atau branch·brand"} />
           <button onClick={onPickActingFor}
             style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "12px 13px", borderRadius: 12, background: "#F6F7F9", border: `1.5px solid ${invalid.has("actingFor") ? "#DC2626" : "#ECEDF0"}`, cursor: "pointer", fontFamily: FF }}>
-            <div style={{ width: 30, height: 30, borderRadius: "50%", background: actingFor ? (actingFor.email ? "rgba(237,28,36,0.10)" : "#FDF2E3") : "#E9EAEE", color: actingFor ? (actingFor.email ? "#ED1C24" : "#B45309") : "#9A9AA6", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              {actingFor && !actingFor.email ? <Building2 size={14} /> : <Users size={14} />}
+            <div style={{ width: 30, height: 30, borderRadius: "50%", background: isBulkRegion ? "rgba(21,128,61,0.12)" : actingFor ? (actingFor.email ? "rgba(237,28,36,0.10)" : "#FDF2E3") : "#E9EAEE", color: isBulkRegion ? "#15803D" : actingFor ? (actingFor.email ? "#ED1C24" : "#B45309") : "#9A9AA6", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              {isBulkRegion ? <Users size={14} /> : actingFor && !actingFor.email ? <Building2 size={14} /> : <Users size={14} />}
             </div>
             <div style={{ flex: 1, textAlign: "left", minWidth: 0 }}>
-              {actingFor ? actingFor.email ? (
+              {isBulkRegion && bulkRegionInfo ? (
+                // Mode "Pilih semua BME di region ini" (superadmin saja) -
+                // satu plan akan dibuat per branch×brand/orang di region ini
+                // sekaligus, bukan satu kombinasi tunggal spt biasa.
+                <>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    Semua BME — {bulkRegionInfo.region}
+                  </div>
+                  <div style={{ fontSize: 11, color: "#15803D", fontWeight: 700 }}>
+                    Dibuat untuk: Semua BME · {bulkRegionInfo.count} target
+                  </div>
+                </>
+              ) : actingFor ? actingFor.email ? (
                 <>
                   <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{actingFor.full_name || actingFor.email}</div>
                   {/* Lebih dari satu branch dipilih (BME/RGE yg sama, beberapa
@@ -1804,7 +1908,7 @@ function TagConflictSheet({ conflict, onClose, onConfirm }) {
 }
 
 // ═════════════════════════════════ Step 3 ═════════════════════════════════
-function StepLocation({ sites, primarySite, setPrimarySite, extraSites, setExtraSites, poiType, setPoiType, poiTypes, network, setNetwork, area, setArea, address, setAddress, manualLat, manualLng, setManualLat, setManualLng, invalid }) {
+function StepLocation({ sites, primarySite, setPrimarySite, extraSites, setExtraSites, poiType, setPoiType, poiTypes, network, setNetwork, area, setArea, address, setAddress, manualLat, manualLng, setManualLat, setManualLng, invalid, sitesLoading, branchCount }) {
   const [picking, setPicking] = useState(null); // 'primary' | 'extra' | null
   const [mapPicking, setMapPicking] = useState(false);
   const taken = new Set([primarySite?.site_id, ...extraSites.map((s) => s.site_id)].filter(Boolean));
@@ -1824,14 +1928,20 @@ function StepLocation({ sites, primarySite, setPrimarySite, extraSites, setExtra
             <SiteRow badge="Site 1" badgeColor="#8A8A96" label={`${primarySite.site_id}${primarySite.site_name ? ` · ${primarySite.site_name}` : ""}`}
               onTap={() => setPicking("primary")} onRemove={extraSites.length ? () => { setPrimarySite(extraSites[0]); setExtraSites(extraSites.slice(1)); } : null} />
           ) : (
-            <AddSiteRow label={sites.length ? "Cari & pilih site" : "Tidak ada site di scope Anda"} enabled={sites.length > 0} error={invalid.has("site")} onClick={() => setPicking("primary")} />
+            <AddSiteRow
+              label={sitesLoading ? (branchCount > 1 ? `Memuat site dari ${branchCount} branch…` : "Memuat data site…") : (sites.length ? "Cari & pilih site" : "Tidak ada site di scope Anda")}
+              enabled={sites.length > 0 && !sitesLoading} loading={sitesLoading} error={invalid.has("site")} onClick={() => setPicking("primary")}
+            />
           )}
           {extraSites.map((s, i) => (
             <SiteRow key={s.site_id} badge={`Site ${i + 2}`} badgeColor="#8A8A96" label={`${s.site_id}${s.site_name ? ` · ${s.site_name}` : ""}`}
               onRemove={() => setExtraSites(extraSites.filter((x) => x.site_id !== s.site_id))} />
           ))}
           {primarySite && (
-            <AddSiteRow label="Tambah site lain" compact enabled={available.length > 0} onClick={() => setPicking("extra")} />
+            <AddSiteRow
+              label={sitesLoading ? "Memuat data site…" : "Tambah site lain"} compact
+              enabled={available.length > 0 && !sitesLoading} loading={sitesLoading} onClick={() => setPicking("extra")}
+            />
           )}
         </div>
         {invalid.has("site") && <FieldError text="Site wajib dipilih" />}
@@ -2212,7 +2322,7 @@ function SiteRow({ badge, badgeColor, label, onTap, onRemove }) {
           bukan sekadar badge teks polos tanpa penanda visual jenisnya. */}
       <span style={{ flexShrink: 0, display: "flex" }}><SiteTowerIcon size={16} /></span>
       <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 800, padding: "4px 9px", borderRadius: 8, color: badgeColor, background: `${badgeColor}20` }}>{badge}</span>
-      <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 700, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+      <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 700, color: "#17181C", whiteSpace: "normal", wordBreak: "break-word" }}>{label}</span>
       {onRemove && (
         <button onClick={(e) => { e.stopPropagation(); onRemove(); }} style={{ flexShrink: 0, background: "none", border: "none", cursor: "pointer", color: "#B0B0BA", display: "flex" }}>
           <X size={16} />
@@ -2221,11 +2331,18 @@ function SiteRow({ badge, badgeColor, label, onTap, onRemove }) {
     </div>
   );
 }
-function AddSiteRow({ label, enabled, error, compact, onClick }) {
+function AddSiteRow({ label, enabled, error, compact, loading, onClick }) {
+  // `loading` = fetchScopeSites (planData.js) masih berjalan (first load
+  // halaman sudah di-gate penuh di CreatePlanWizardInner, jadi ini cuma
+  // kejadian saat REFETCH - ganti "Buat Untuk"/bulk-region ke branch lain
+  // di StepInfo, lihat `sitesRefreshing`) - tombol dinonaktifkan sementara
+  // & diberi spinner + teks supaya jelas BUKAN "tidak ada site", cuma lagi
+  // dimuat. Dipakai Loader2 + animasi `mspin` yg SAMA dgn spinner lain di
+  // app ini (Save/Submit Plan di wizard ini sendiri, dll) - bukan pola baru.
   return (
     <button onClick={enabled ? onClick : undefined} disabled={!enabled}
-      style={{ display: "flex", alignItems: "center", gap: 8, padding: compact ? "9px 12px" : "12px", borderRadius: 12, background: compact ? "transparent" : (enabled ? "#F6F7F9" : "#F0F0F3"), border: compact ? `1px dashed ${error ? "#DC2626" : "#D8D9E0"}` : "none", color: enabled ? "#ED1C24" : "#B0B0BA", fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: enabled ? "pointer" : "default" }}>
-      <Plus size={16} /> {label}
+      style={{ display: "flex", alignItems: "center", gap: 8, padding: compact ? "9px 12px" : "12px", borderRadius: 12, background: compact ? "transparent" : (enabled ? "#F6F7F9" : "#F0F0F3"), border: compact ? `1px dashed ${error ? "#DC2626" : "#D8D9E0"}` : "none", color: loading ? "#8A8A96" : (enabled ? "#ED1C24" : "#B0B0BA"), fontSize: 13, fontWeight: 700, fontFamily: FF, cursor: enabled ? "pointer" : "default" }}>
+      {loading ? <Loader2 size={16} style={{ animation: "mspin .85s linear infinite" }} /> : <Plus size={16} />} {label}
     </button>
   );
 }
@@ -2324,9 +2441,14 @@ function LeaveConfirmSheet({ saving, onCancel, onDiscard, onSaveAndLeave }) {
   );
 }
 
-function ActingForSheet({ groups, loading, initialSelected, onClose, onConfirm }) {
+function ActingForSheet({ groups, loading, initialSelected, allowBulkRegion, onClose, onConfirm }) {
   const [branchQ, setBranchQ] = useState("");
   const [expandedBranch, setExpandedBranch] = useState(null);
+  // "Pilih semua BME di region ini" (superadmin saja) - region (string) yg
+  // sedang dipilih utk bulk mode, atau null. Mutually exclusive dgn `combos`
+  // (seleksi branch×brand manual) - siapa pun yg diinteraksi TERAKHIR yang
+  // menang (lihat selectBulkRegion & toggleCombo/klik chip branch di bawah).
+  const [bulkRegion, setBulkRegion] = useState(null);
   // Kombinasi branch×brand yang sudah "masuk daftar", urut sesuai kapan
   // ditambahkan (bukan Set biasa) - urutan ini menentukan mana yang jadi
   // kombinasi utama (index 0).
@@ -2383,6 +2505,7 @@ function ActingForSheet({ groups, loading, initialSelected, onClose, onConfirm }
   // ketuk lagi chip branch-nya (callout kebuka ulang, brand yg sudah masuk
   // kelihatan tercentang di sana).
   const toggleCombo = (branchName, brand) => {
+    setBulkRegion(null); // seleksi manual menang - batalkan mode bulk-region
     setCombos((prev) => comboSet.has(comboKey(branchName, brand))
       ? prev.filter((c) => !(c.branchName === branchName && c.brand === brand))
       : [...prev, { branchName, brand }]);
@@ -2390,6 +2513,20 @@ function ActingForSheet({ groups, loading, initialSelected, onClose, onConfirm }
   };
   const removeCombo = (branchName, brand) => setCombos((prev) => prev.filter((c) => !(c.branchName === branchName && c.brand === brand)));
   const clearCombos = () => setCombos([]);
+
+  // "Pilih semua BME di region ini" - ambil ALIH dari seleksi manual
+  // (combos dikosongkan, bulk menang - lihat catatan `bulkRegion` di atas).
+  const selectBulkRegion = (region) => { setBulkRegion(region); setCombos([]); setExpandedBranch(null); };
+  const countForRegion = (region) => (groups || []).filter((g) => g.region === region)
+    .reduce((n, g) => n + (g.people.length > 0 ? g.people.length : 1), 0);
+  const bulkTargets = useMemo(() => {
+    if (!bulkRegion) return [];
+    return (groups || []).filter((g) => g.region === bulkRegion).flatMap((g) => {
+      if (g.people.length > 0) return g.people;
+      const ph = placeholders.find((p) => p.id === `empty:${g.key}`);
+      return ph ? [ph] : [];
+    });
+  }, [bulkRegion, groups, placeholders]);
 
   // Info per kombinasi (SUDAH ada BME/RGE atau belum) - urut persis sesuai
   // `combos`, satu-satunya sumber kebenaran, tidak ada seleksi terpisah lagi.
@@ -2399,6 +2536,13 @@ function ActingForSheet({ groups, loading, initialSelected, onClose, onConfirm }
   }), [combos, groups]);
 
   const confirm = () => {
+    if (bulkRegion) {
+      // Bulk-region: SELURUH branch×brand di region ini jadi target - tiap
+      // satu jadi SATU baris plan terpisah saat disimpan (lihat save() di
+      // induk), bukan cuma kombinasi utama+perluasan site spt biasa.
+      onConfirm(bulkTargets, { isBulkRegion: true, region: bulkRegion, count: bulkTargets.length });
+      return;
+    }
     // Target akhir diturunkan LANGSUNG dari `combos` (bukan seleksi manual
     // lagi) - kombinasi dgn orang sungguhan ikut sertakan orangnya, kombinasi
     // kosong ikut sertakan placeholder-nya. Yang benar-benar tersimpan
@@ -2411,7 +2555,7 @@ function ActingForSheet({ groups, loading, initialSelected, onClose, onConfirm }
       const ph = placeholders.find((p) => p.id === `empty:${g.key}`);
       return ph ? [ph] : [];
     });
-    onConfirm(targets);
+    onConfirm(targets, null);
   };
 
   return (
@@ -2447,14 +2591,25 @@ function ActingForSheet({ groups, loading, initialSelected, onClose, onConfirm }
                 )}
                 {visibleRegionGroups.map((r) => (
                   <div key={r.region || "-"}>
-                    <div style={{ fontSize: 9.5, fontWeight: 800, color: "#B0B0BA", letterSpacing: 0.4, textTransform: "uppercase", marginBottom: 5 }}>{r.region || "Lainnya"}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
+                      <div style={{ fontSize: 9.5, fontWeight: 800, color: "#B0B0BA", letterSpacing: 0.4, textTransform: "uppercase" }}>{r.region || "Lainnya"}</div>
+                      {allowBulkRegion && (
+                        <button onClick={() => selectBulkRegion(r.region)}
+                          style={{
+                            marginLeft: "auto", background: "none", border: "none", cursor: "pointer", padding: 0,
+                            fontSize: 10, fontWeight: 800, fontFamily: FF, color: bulkRegion === r.region ? "#15803D" : "#ED1C24",
+                          }}>
+                          {bulkRegion === r.region ? `✓ Semua BME dipilih (${countForRegion(r.region)})` : "Pilih semua BME di region ini"}
+                        </button>
+                      )}
+                    </div>
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                       {r.branches.map((name) => {
                         const branchCombos = combos.filter((c) => c.branchName === name);
                         const isOpen = expandedBranch === name;
                         const hasCombos = branchCombos.length > 0;
                         return (
-                          <button key={name} onClick={() => setExpandedBranch(isOpen ? null : name)}
+                          <button key={name} onClick={() => { setExpandedBranch(isOpen ? null : name); if (!isOpen) setBulkRegion(null); }}
                             style={{
                               display: "flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 999, fontSize: 11.5, fontWeight: 700, fontFamily: FF, cursor: "pointer",
                               background: hasCombos ? "#17181C" : "#F6F7F9",
@@ -2510,6 +2665,15 @@ function ActingForSheet({ groups, loading, initialSelected, onClose, onConfirm }
                   </div>
                 ))}
               </div>
+
+              {bulkRegion && (
+                <div style={{ marginTop: 16, padding: 12, borderRadius: 12, background: "rgba(21,128,61,0.06)", border: "1px solid rgba(21,128,61,0.2)" }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 800, color: "#15803D" }}>Semua BME — {bulkRegion}</div>
+                  <div style={{ fontSize: 11, color: "#5A5A68", marginTop: 3, lineHeight: 1.5 }}>
+                    {bulkTargets.length} target akan dibuatkan plan masing-masing (satu plan per branch×brand/orang). Site/lokasi yang dipilih di step Lokasi akan diterapkan ke SEMUA plan ini.
+                  </div>
+                </div>
+              )}
 
               {/* Pemisah menuju daftar "Sudah dipilih" - garis + label di
                   tengah (pola pemisah standar, langsung kebaca sbg "di atas
@@ -2572,10 +2736,10 @@ function ActingForSheet({ groups, loading, initialSelected, onClose, onConfirm }
           )}
         </div>
         <div style={{ padding: "12px 20px calc(env(safe-area-inset-bottom,0px) + 20px)", borderTop: "1px solid #F0F0F3", flexShrink: 0 }}>
-          <button onClick={confirm} disabled={combos.length === 0}
+          <button onClick={confirm} disabled={!bulkRegion && combos.length === 0}
             style={{ width: "100%", height: 46, borderRadius: 12, border: "none", fontFamily: FF, fontSize: 14, fontWeight: 800, color: "#FFFFFF",
-              background: combos.length === 0 ? "#D8D9E0" : BRAND, cursor: combos.length === 0 ? "not-allowed" : "pointer" }}>
-            {combos.length === 0 ? "Pilih branch & brand dulu" : `Gunakan ${combos.length} kombinasi`}
+              background: !bulkRegion && combos.length === 0 ? "#D8D9E0" : BRAND, cursor: !bulkRegion && combos.length === 0 ? "not-allowed" : "pointer" }}>
+            {bulkRegion ? `Gunakan Semua BME — ${bulkRegion} (${bulkTargets.length})` : combos.length === 0 ? "Pilih branch & brand dulu" : `Gunakan ${combos.length} kombinasi`}
           </button>
         </div>
       </div>

@@ -429,11 +429,24 @@ export default function ActivityDetailPage() {
         {/* Site - satu list gabungan (Utama + Tambahan sekaligus), tiap
             baris berupa kartu dgn badge label + nama site, bukan cuma
             teks kode yg digabung koma spt sebelumnya. */}
-        {a.site_id && (
+        {a.site_id ? (
           <SectionCard title={`Site (${extraSites.length + 1})`} icon={<SiteTowerIcon size={13} color="#7C3AED" />} accent="#7C3AED">
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <SiteCard label="Site 1" siteId={a.site_id} siteName={siteNames[a.site_id]} />
               {extraSites.map((s, i) => <SiteCard key={s} label={`Site ${i + 2}`} siteId={s} siteName={siteNames[s]} />)}
+            </div>
+          </SectionCard>
+        ) : (
+          // Plan dibuat lewat "Pilih semua BME di region ini" (bulk-region,
+          // superadmin) sengaja TANPA site - bukan error, tinggal menunggu
+          // BME-nya sendiri memilih site via Edit Plan. Kartu netral/info,
+          // BUKAN merah/alarm - sekadar pemberitahuan, bukan sesuatu yg salah.
+          <SectionCard title="Site" icon={<SiteTowerIcon size={13} color="#8A8A96" />} accent="#8A8A96">
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#F8F8FA", border: "1px solid #EFEFF2", borderRadius: 13, padding: "9px 11px" }}>
+              <MapPin size={14} color="#B0B0BA" style={{ flexShrink: 0 }} />
+              <div style={{ fontSize: 11.5, color: "#5A5A68", fontWeight: 600, lineHeight: 1.5 }}>
+                Lokasi belum dipilih — BME perlu memilih site lewat Edit Plan.
+              </div>
             </div>
           </SectionCard>
         )}

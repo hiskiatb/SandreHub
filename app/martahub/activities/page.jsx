@@ -440,34 +440,37 @@ function Body({ email }) {
       sortVal: (r) => (r.plan_source === "cms_import" ? (batchMap[r.import_batch_id]?.created_at || r.created_at || "") : "") },
     { key: "status", label: "Status", width: 150, filter: true, get: (r) => deriveStatusInfo(r, { profileMap, siteMetaMap, bmeAssignMap, branchMap })[0], badgeStatus: true },
     { key: "month", label: "Month", width: 118, filter: true, get: (r) => monthLabel(r.plan_date_start || r.plan_date) },
-    { key: "brand", label: "Brand", width: 66, filter: true, get: (r) => brandLabel(r.brand), badgeBrand: true },
+    { key: "eventName", label: "Event Name", width: 230, filter: true, get: (r) => r.event_name || "-" },
     { key: "branch", label: "Branch", width: 140, filter: true, get: (r) => branchMap[r.branch_id] || "-" },
     { key: "brandBranch", label: "Brand Branch", width: 160, filter: true, get: (r) => `${brandLabel(r.brand)} - ${branchMap[r.branch_id] || "-"}` },
-    { key: "mc", label: "Micro Cluster", width: 120, filter: true, get: (r) => r.mc || "-" },
+    { key: "address", label: "Address", width: 240, filter: true, get: (r) => r.address || "-" },
     { key: "kabupaten", label: "Kabupaten", width: 150, filter: true, get: (r) => siteMetaMap[r.site_id]?.kabupaten || "-" },
-    { key: "kecamatan", label: "Kecamatan", width: 150, filter: true, get: (r) => siteMetaMap[r.site_id]?.kecamatan || "-" },
-    { key: "kecamatanFokus", label: "Kecamatan Fokus", width: 130, filter: true, get: (r) => siteMetaMap[r.site_id]?.kecamatanFokus || "NO" },
-    { key: "creator", label: "BME/RGE", width: 150, filter: true, get: (r) => resolveCreatorName(r, { profileMap, bmeAssignMap, branchMap }) || "-" },
-    { key: "planDate", label: "Plan Date", width: 100, filter: true, get: (r) => fmtDate(r.plan_date_start || r.plan_date), sortVal: (r) => r.plan_date_start || r.plan_date || "", raw: (r) => dateOnlyToJsDate(r.plan_date_start || r.plan_date), date: true },
-    { key: "actualDate", label: "Actual Date", width: 100, filter: true, get: (r) => fmtDate(r.actual_date), sortVal: (r) => r.actual_date || "", raw: (r) => dateOnlyToJsDate(r.actual_date), date: true },
+    { key: "brand", label: "Brand", width: 66, filter: true, get: (r) => brandLabel(r.brand), badgeBrand: true },
     { key: "eventCategory", label: "Event Category", width: 160, filter: true, get: (r) => cats(r) },
     { key: "network", label: "Network Category", width: 130, filter: true, get: (r) => unsnake(r.network_category) },
-    { key: "eventName", label: "Event Name", width: 230, filter: true, get: (r) => r.event_name || "-" },
     { key: "areaPotential", label: "Area Potential", width: 120, filter: true, get: (r) => unsnake(r.area_potential) },
+    { key: "actualDate", label: "Actual Date", width: 100, filter: true, get: (r) => fmtDate(r.actual_date), sortVal: (r) => r.actual_date || "", raw: (r) => dateOnlyToJsDate(r.actual_date), date: true },
+    { key: "poi", label: "POI", width: 110, filter: true, get: (r) => unsnake(r.poi_type) },
+    { key: "mc", label: "Micro Cluster", width: 120, filter: true, get: (r) => r.mc || "-" },
+    { key: "kecamatan", label: "Kecamatan", width: 150, filter: true, get: (r) => siteMetaMap[r.site_id]?.kecamatan || "-" },
+    { key: "creator", label: "BME/RGE", width: 150, filter: true, get: (r) => resolveCreatorName(r, { profileMap, bmeAssignMap, branchMap }) || "-" },
     { key: "siteId", label: "Site Plan", width: 100, filter: true, get: (r) => r.site_id || "-" },
     { key: "actualSiteId", label: "Site Actual", width: 100, filter: true, get: (r) => r.actual_site_id || "-" },
     { key: "long", label: "Long", width: 90, filter: true, get: (r) => (r.longitude != null ? String(r.longitude) : "-"), raw: (r) => r.longitude, numeric: true },
     { key: "lat", label: "Lat", width: 90, filter: true, get: (r) => (r.latitude != null ? String(r.latitude) : "-"), raw: (r) => r.latitude, numeric: true },
-    { key: "poi", label: "POI", width: 110, filter: true, get: (r) => unsnake(r.poi_type) },
-    { key: "address", label: "Address", width: 240, filter: true, get: (r) => r.address || "-" },
+    { key: "planDate", label: "Plan Date", width: 100, filter: true, get: (r) => fmtDate(r.plan_date_start || r.plan_date), sortVal: (r) => r.plan_date_start || r.plan_date || "", raw: (r) => dateOnlyToJsDate(r.plan_date_start || r.plan_date), date: true },
     { key: "targetSp", label: "Target SP", width: 92, filter: true, get: (r) => fmtInt(r.target_sp), raw: (r) => r.target_sp, numeric: true },
     { key: "targetFwa", label: "Target FWA", width: 96, filter: true, get: (r) => fmtInt(r.target_fwa), raw: (r) => r.target_fwa, numeric: true },
     { key: "targetRebuy", label: "Target Rebuy", width: 110, filter: true, get: (r) => fmtRp(rebuySum(r.target_rebuy_sp, r.target_rebuy_fwa)), raw: (r) => rebuySum(r.target_rebuy_sp, r.target_rebuy_fwa), numeric: true },
+    { key: "targetRebuySp", label: "Target Rebuy SP", width: 110, filter: true, get: (r) => fmtRp(r.target_rebuy_sp), raw: (r) => (r.target_rebuy_sp ?? null), numeric: true },
+    { key: "targetRebuyFwa", label: "Target Rebuy FWA", width: 110, filter: true, get: (r) => fmtRp(r.target_rebuy_fwa), raw: (r) => (r.target_rebuy_fwa ?? null), numeric: true },
     { key: "targetRev", label: "Est. Total Rev (3 Months)", width: 170, filter: true, get: (r) => fmtRp(r.target_rev_3m), raw: (r) => r.target_rev_3m, numeric: true },
     { key: "costEstimate", label: "Cost Estimate", width: 120, filter: true, get: (r) => fmtRp(r.cost_estimate), raw: (r) => r.cost_estimate, numeric: true },
     { key: "actualSp", label: "Actual SP", width: 92, filter: true, get: (r) => fmtInt(r.actual_sp), raw: (r) => r.actual_sp, numeric: true },
     { key: "actualFwa", label: "Actual FWA", width: 96, filter: true, get: (r) => fmtInt(r.actual_fwa), raw: (r) => r.actual_fwa, numeric: true },
     { key: "actualRebuy", label: "Actual Rebuy", width: 110, filter: true, get: (r) => fmtRp(rebuySum(r.actual_rebuy_sp, r.actual_rebuy_fwa)), raw: (r) => rebuySum(r.actual_rebuy_sp, r.actual_rebuy_fwa), numeric: true },
+    { key: "actualRebuySp", label: "Actual Rebuy SP", width: 110, filter: true, get: (r) => fmtRp(r.actual_rebuy_sp), raw: (r) => (r.actual_rebuy_sp ?? null), numeric: true },
+    { key: "actualRebuyFwa", label: "Actual Rebuy FWA", width: 110, filter: true, get: (r) => fmtRp(r.actual_rebuy_fwa), raw: (r) => (r.actual_rebuy_fwa ?? null), numeric: true },
     { key: "actualRev", label: "Actual Total Rev (3 Months)", width: 170, filter: true, get: (r) => fmtRp(r.actual_rev_3m), raw: (r) => r.actual_rev_3m, numeric: true },
     { key: "costActual", label: "Cost Actual", width: 120, filter: true, get: (r) => fmtRp(r.cost_actual), raw: (r) => r.cost_actual, numeric: true },
     { key: "acvSp", label: "ACV SP", width: 84, filter: true, get: (r) => pctLabel(r.actual_sp, r.target_sp), raw: (r) => pctVal(r.actual_sp, r.target_sp), numeric: true, acv: true },
@@ -476,6 +479,7 @@ function Body({ email }) {
     { key: "costRatio", label: "Cost Ratio", width: 92, filter: true, get: (r) => pctLabel(r.cost_actual, r.cost_estimate), raw: (r) => pctVal(r.cost_actual, r.cost_estimate), numeric: true, acv: true, invertGood: true },
     { key: "insight", label: "Insight (Optional)", width: 220, filter: true, get: (r) => r.insight || "-" },
     { key: "documentation", label: "Documentation", width: 120, filter: true, get: (r) => (docCountMap[r.id] ? `${docCountMap[r.id]} foto` : "-") },
+    { key: "kecamatanFokus", label: "Kecamatan Fokus", width: 130, filter: true, get: (r) => siteMetaMap[r.site_id]?.kecamatanFokus || "NO" },
     { key: "drive_link", label: "Link Google Drive", width: 140, get: (r) => (docDriveMap[r.id] ? "Buka di Drive" : "-") },
   ], [branchMap, profileMap, bmeAssignMap, docCountMap, cats, batchMap, canRollback, siteMetaMap]);
 
@@ -775,6 +779,16 @@ function Body({ email }) {
       //    MartaShell.jsx), bukan asal pilih.
       const XLSX_HEADER_FILL = "FFED1C24"; // brand MartaHub (T.primary)
       const XLSX_HEADER_FONT = { bold: true, color: { argb: "FFFFFFFF" }, size: 11 };
+      // Kolom yg TIDAK ada padanannya di format copy-paste target (lihat
+      // permintaan user) - tetap diekspor di posisi aslinya (TIDAK dihapus/
+      // dipindah), cuma header-nya dikasih warna beda (abu-abu) biar gampang
+      // dikenali & bisa di-hide manual oleh user kalau mau.
+      const HIDE_CANDIDATE_KEYS = new Set([
+        "sumber", "uploadDate", "status", "month", "brandBranch", "kabupaten",
+        "actualDate", "actualSiteId", "long", "lat", "targetRebuySp",
+        "targetRebuyFwa", "actualRebuySp", "actualRebuyFwa", "drive_link",
+      ]);
+      const XLSX_HIDE_CANDIDATE_FILL = "FFD9D9D9"; // abu-abu netral, beda dr header normal
       const XLSX_SUBHEADER_FILL = "FF1565C0"; // brand blue (T.blue) - header sub-tabel Summary
       const XLSX_SUBHEADER_FONT = { bold: true, color: { argb: "FFFFFFFF" } };
       const XLSX_TOTAL_FILL = "FFE3E8F0"; // T.line - baris "Total Keseluruhan"
@@ -804,7 +818,7 @@ function Body({ email }) {
       const DATE_FMT = "dd/mm/yyyy"; // format Short Date Excel standar - sel tetap angka/date asli, cuma tampilannya, jadi user masih bebas ganti format tanggalnya sendiri di Excel kapan saja
       // Kolom mana yg uang/integer/GPS - dicocokkan by key ke EXPORT_COLUMNS
       // (kolom ACV pakai flag c.acv yg sudah ada, tidak perlu didaftar di sini).
-      const MONEY_KEYS = new Set(["targetRebuy", "targetRev", "costEstimate", "actualRebuy", "actualRev", "costActual"]);
+      const MONEY_KEYS = new Set(["targetRebuySp", "targetRebuyFwa", "targetRebuy", "targetRev", "costEstimate", "actualRebuySp", "actualRebuyFwa", "actualRebuy", "actualRev", "costActual"]);
       const INT_KEYS = new Set(["no", "targetSp", "targetFwa", "actualSp", "actualFwa"]);
       const GPS_KEYS = new Set(["long", "lat"]);
 
@@ -1148,9 +1162,10 @@ function Body({ email }) {
         style: { alignment: { vertical: "middle", horizontal: "center" }, ...(colNumFmt(c) ? { numFmt: colNumFmt(c) } : {}) },
       }));
       ws.getRow(1).height = 22;
-      ws.getRow(1).eachCell((cell) => {
+      ws.getRow(1).eachCell((cell, colNumber) => {
+        const isHideCandidate = HIDE_CANDIDATE_KEYS.has(EXPORT_COLUMNS[colNumber - 1]?.key);
         cell.font = XLSX_HEADER_FONT;
-        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLSX_HEADER_FILL } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: isHideCandidate ? XLSX_HIDE_CANDIDATE_FILL : XLSX_HEADER_FILL } };
         cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
         cell.border = XLSX_THIN_BORDER;
       });
@@ -1160,6 +1175,29 @@ function Body({ email }) {
       const THUMB_PX = 54;
 
       setExportStage("Menulis data activity…");
+      // Huruf kolom (post-insertion Target/Actual Rebuy SP/FWA) utk rumus
+      // per-baris Target Rebuy/Actual Rebuy/ACV SP/ACV FWA/ACV Rebuy/Cost
+      // Ratio di bawah - dihitung SEKALI di sini dari posisi EXPORT_COLUMNS
+      // yg sebenarnya (sama pola spt exportColLetter() di atas utk sheet
+      // Summary), jadi kalau kolom lain ditambah/dibuang lagi nanti huruf
+      // ini otomatis ikut menyesuaikan, tidak di-hardcode.
+      const colL = (key) => colLetter(EXPORT_COLUMNS.findIndex((c) => c.key === key) + 1);
+      const L_targetSp = colL("targetSp");
+      const L_targetFwa = colL("targetFwa");
+      const L_targetRebuySp = colL("targetRebuySp");
+      const L_targetRebuyFwa = colL("targetRebuyFwa");
+      const L_targetRebuy = colL("targetRebuy");
+      const L_costEstimate = colL("costEstimate");
+      const L_actualSp = colL("actualSp");
+      const L_actualFwa = colL("actualFwa");
+      const L_actualRebuySp = colL("actualRebuySp");
+      const L_actualRebuyFwa = colL("actualRebuyFwa");
+      const L_actualRebuy = colL("actualRebuy");
+      const L_costActual = colL("costActual");
+      const L_acvSp = colL("acvSp");
+      const L_acvFwa = colL("acvFwa");
+      const L_acvRebuy = colL("acvRebuy");
+      const L_costRatio = colL("costRatio");
       // Baris teks dulu (cepat, sinkron) - gambar ditempel belakangan per baris
       exportRows.forEach((r, i) => {
         // Progress 20% -> 55% mengikuti baris yg sudah ditulis (di-throttle
@@ -1198,6 +1236,21 @@ function Body({ email }) {
             cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: XLSX_ZEBRA_FILL } };
           }
         });
+        // Target Rebuy/Actual Rebuy/ACV SP/ACV FWA/ACV Rebuy/Cost Ratio -
+        // RUMUS Excel asli (bukan angka statis) yg reference ke sel lain
+        // di baris yg sama, supaya kalau salah satu komponennya (Target
+        // SP/FWA/Rebuy SP/Rebuy FWA/Cost Estimate/Actual SP/FWA/Rebuy SP/
+        // Rebuy FWA/Cost Actual) diedit manual di Excel, kolom hasil ini
+        // ikut ke-update otomatis. Dibungkus IFERROR(...,"") spy sel kosong
+        // kalau pembaginya 0 (persis perilaku pctVal() sebelumnya yg
+        // nampilin "-").
+        const xr = row.number; // nomor baris sheet (bukan index array `i`)
+        row.getCell(L_targetRebuy).value = { formula: `IFERROR(${L_targetRebuySp}${xr}+${L_targetRebuyFwa}${xr},"")` };
+        row.getCell(L_actualRebuy).value = { formula: `IFERROR(${L_actualRebuySp}${xr}+${L_actualRebuyFwa}${xr},"")` };
+        row.getCell(L_acvSp).value = { formula: `IFERROR(${L_actualSp}${xr}/${L_targetSp}${xr},"")` };
+        row.getCell(L_acvFwa).value = { formula: `IFERROR(${L_actualFwa}${xr}/${L_targetFwa}${xr},"")` };
+        row.getCell(L_acvRebuy).value = { formula: `IFERROR(${L_actualRebuy}${xr}/${L_targetRebuy}${xr},"")` };
+        row.getCell(L_costRatio).value = { formula: `IFERROR(${L_costActual}${xr}/${L_costEstimate}${xr},"")` };
         // Sel ACV/Cost Ratio diwarnai per-baris sesuai capaian (hijau
         // tercapai / kuning mendekati / merah jauh) - fill zebra di atas
         // (kalau ada) ditimpa warna ini spy tetap jelas kebaca.

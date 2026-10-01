@@ -977,7 +977,8 @@ export default function SubmitActualPage() {
       }
       const actualSp = effectiveQty("sp");
       const actualFwa = effectiveQty("fwa");
-      const revenue = catRevenue("sp") + catRevenue("fwa");
+      // Revenue 3 Bulan: catRevenue() sudah termasuk x3 (lihat definisinya) + rebuy apa adanya
+      const revenue = catRevenue("sp") + catRevenue("fwa") + rebuyGrandTotal;
 
       // Upload foto dokumentasi - SEBELUM update status ke "pending_validation"
       // (dulu SETELAH-nya). Trigger backend `mh_validate_activity_actual` yg
@@ -1067,15 +1068,16 @@ export default function SubmitActualPage() {
   function effectiveQty(cat) {
     return entries[cat].length > 0 ? entries[cat].length : (Number(qtyManual[cat]) || 0);
   }
+  // Revenue 3 Bulan: qty x unit_price x 3 (proyeksi recurring 3 bulan per unit) - rebuy ditambahkan terpisah di luar fungsi ini (apa adanya, bukan x3)
   function catRevenue(cat) {
     if (entries[cat].length > 0) {
       return entries[cat].reduce((sum, e) => {
         const t = types[cat].find((x) => x.id === e.typeId);
-        return sum + (t?.unit_price || 0);
+        return sum + (t?.unit_price || 0) * 3;
       }, 0);
     }
     const t = types[cat].find((x) => x.id === selectedType[cat]);
-    return (Number(qtyManual[cat]) || 0) * (t?.unit_price || 0);
+    return (Number(qtyManual[cat]) || 0) * (t?.unit_price || 0) * 3;
   }
   const revenueEstimate = catRevenue("sp") + catRevenue("fwa") + rebuyGrandTotal;
 
@@ -1085,7 +1087,7 @@ export default function SubmitActualPage() {
   // siteMcConstraint di-reset ke null oleh removeSite().
   async function loadSiteCandidates(branchId, mcConstraint, excludeIds) {
     if (!branchId) return;
-    let q = supabaseMarta.from("mh_sites").select("site_id,site_name,mc,kecamatan").eq("branch_id", branchId);
+    let q = supabaseMarta.from("mh_sites").select("site_id,site_name,mc,kecamatan,kabupaten,kecamatan_fokus,site_lrs").eq("branch_id", branchId);
     if (mcConstraint) q = q.eq("mc", mcConstraint);
     const { data: mcSites } = await q;
     setSiteCandidates((mcSites || []).filter((s) => !(excludeIds || []).includes(s.site_id)));
@@ -1250,7 +1252,7 @@ export default function SubmitActualPage() {
               return (
                 <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 11px", borderRadius: 11, background: "#F6F7F9" }}>
                   <SiteTowerIcon size={14} />
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#3A3A44", flex: 1 }}>{label}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#3A3A44", flex: 1, minWidth: 0, whiteSpace: "normal", wordBreak: "break-word" }}>{label}</span>
                   {row?.site_id && (
                     <button
                       type="button"
@@ -1644,7 +1646,7 @@ export default function SubmitActualPage() {
       )}
 
       {sitePicking && (
-        <SitePickerSheet items={siteCandidates} onClose={() => setSitePicking(false)} onSelect={addSite} title={siteMcConstraint ? `Tambah Site · MC - ${siteMcConstraint}` : "Tambah Site"} />
+        <SitePickerSheet items={siteCandidates} selectedItems={siteRows} onRemove={(s) => removeSite(s.site_id)} onClose={() => setSitePicking(false)} onSelect={addSite} title={siteMcConstraint ? `Tambah Site · MC - ${siteMcConstraint}` : "Tambah Site"} />
       )}
 
       {showLeaveConfirm && (
