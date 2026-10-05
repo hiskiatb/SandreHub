@@ -1,6 +1,6 @@
 "use client";
-import { useState, useEffect, useCallback, useMemo } from "react";
-import { AlertTriangle, Plus, Check, Copy, Lock, Save, UserX, Building2, MapPin, Crown, Loader2, Pencil, UserPlus, History, LogIn, LogOut, UserCog, Search, ChevronLeft, ChevronRight } from "lucide-react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { AlertTriangle, Plus, Check, Copy, Lock, Save, UserX, Building2, MapPin, Crown, Loader2, Pencil, UserPlus, History, LogIn, LogOut, UserCog, Search, ChevronLeft, ChevronRight, ImageDown } from "lucide-react";
 import MartaShell, { T, FONT } from "../components/MartaShell";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../lib/martaScope";
@@ -26,6 +26,9 @@ const mcLabelForBrand = (brand) => (brand === "tri" ? "Cluster" : "MC");
 const ROLES = [
   ["spm_sumatera", "SPM Sumatera (Superadmin Nasional)"],
   ["head", "Head TMV (per Region)"],
+  ["head_of_regional_operation", "Head of Regional Operation (per Region)"],
+  ["visibility_region_lead", "Visibility Region Lead (per Region)"],
+  ["gtm_region_lead", "GTM Region Lead (per Region)"],
   ["tmv", "Brand TMV (Region × Brand)"],
   ["bme_rge", "DMO (Branch)"],
   ["tl_dsf", "TL DSF (Team Leader DSF)"],
@@ -67,7 +70,7 @@ const SUPERVISOR_ROLES_FOR = {
 };
 // Role yang BISA jadi "atasan langsung" bme/rge lewat picker multi-select
 // (bukan cuma tmv brand-scoped, head region-scoped juga boleh).
-const isSupervisorCapableRole = (role) => role === "tmv" || role === "head";
+const isSupervisorCapableRole = (role) => role === "tmv" || role === "head" || role === "head_of_regional_operation";
 const isHierarchyRole = (role) => Object.prototype.hasOwnProperty.call(SUPERVISOR_ROLES_FOR, role);
 
 const badge = (txt, c, bg) => <span style={{ fontSize: 10.5, fontWeight: 800, color: c, background: bg, border: `1px solid ${c}33`, padding: "2px 8px", borderRadius: 999, whiteSpace: "nowrap" }}>{txt}</span>;
@@ -115,7 +118,7 @@ function mergePresence(people, presenceRows) {
 function LoginStatusBadge({ person, style }) {
   const st = loginStatus(person);
   return (
-    <div style={{ marginTop: 1, fontSize: 9.5, fontWeight: 700, color: st.color, display: "flex", alignItems: "center", gap: 4, ...style }}>
+    <div style={{ marginTop: 1, fontSize: 9.5, fontWeight: 700, color: st.color, display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap", ...style }}>
       {st.active && <span style={{ width: 6, height: 6, borderRadius: "50%", background: T.success, flexShrink: 0, boxShadow: `0 0 0 3px ${T.success}26` }} />}
       {st.label}
     </div>
@@ -295,15 +298,42 @@ function Body({ canManage, callerEmail, period }) {
         && (region === null ? !p.region : p.region === region)
         && (brand === null ? !p.brand : (p.brand || "").toLowerCase() === brand));
     }
+    // Dedup per email utk role region-level (brand-agnostic) - dipakai utk
+    // tmv & 3 tier baru (head_of_regional_operation, visibility_region_lead,
+    // gtm_region_lead) spy data lama yg msh brand-spesifik tidak tampil dobel.
+    function regionRoleDeduped(role, region) {
+      const all = people.filter((p) => p.role === role && !p.branch_id
+        && (region === null ? !p.region : p.region === region));
+      const byEmail = new Map();
+      for (const p of all) {
+        const k = (p.email || p.id || "").toLowerCase();
+        if (!byEmail.has(k)) byEmail.set(k, p);
+      }
+      return Array.from(byEmail.values());
+    }
     function roleTriplet(region) {
-      return { head: roleSlot("head", region, null), tmvIm3: roleSlot("tmv", region, "im3"), tmvTri: roleSlot("tmv", region, "tri") };
+      return {
+        head: roleSlot("head", region, null),
+        // Tier baru di antara Head of Region & Visibility/GTM Region Lead -
+        // otoritas sama dgn "head" (region-locked saat assign, full-scope
+        // saat lihat data - lihat mh_home_scope/mh_assign_user).
+        headOfRegionalOperation: regionRoleDeduped("head_of_regional_operation", region),
+        visibilityRegionLead: regionRoleDeduped("visibility_region_lead", region),
+        gtmRegionLead: regionRoleDeduped("gtm_region_lead", region),
+        tmv: regionRoleDeduped("tmv", region),
+      };
     }
     function branchGroups(branchesInRegion) {
       const groups = [];
       for (const b of branchesInRegion) {
         const slug = toBranchSlug(b.name);
         for (const brand of ["im3", "tri"]) {
-          const combo = people.filter((p) => (p.branch_id === slug || p.branch_id === b.id) && (p.brand || "").toLowerCase() === brand);
+          // Head of Area (bsm) & DMO (bme_rge) kini SATU slot per cabang,
+          // dipakai lintas brand (brand=null) - baris brand=null utk kedua
+          // role ini ikut tampil di combo IM3 MAUPUN 3ID (data lama yg msh
+          // brand-spesifik tetap kebaca spt biasa, tidak hilang).
+          const combo = people.filter((p) => (p.branch_id === slug || p.branch_id === b.id)
+            && ((p.brand || "").toLowerCase() === brand || (!p.brand && (p.role === "bsm" || p.role === "bme_rge"))));
           const byRole = new Map();
           for (const p of combo) { if (!byRole.has(p.role)) byRole.set(p.role, []); byRole.get(p.role).push(p); }
           groups.push({ branchId: b.id, branchSlug: slug, branchName: b.name, region: b.region, brand, byRole });
@@ -326,6 +356,18 @@ function Body({ canManage, callerEmail, period }) {
   // refresh data konsisten dgn jalur Tambah/Edit lama.
   async function quickAssign({ targetEmail, fullName, role, region, brand, branchSlug, branchName, dsfOrgId }) {
     await addAssignments([{ email: targetEmail, fullName, role, region, brand, branchId: branchSlug, branchName, dsfOrgId }]);
+  }
+
+  // Varian quickAssign KHUSUS DMO (role bme_rge) - isi SATU email yg sama
+  // sekaligus utk kedua brand (IM3 & 3ID) di cabang yg sama, supaya tidak
+  // perlu input manual dua kali. Dikirim sbg 2 item ke addAssignments
+  // (masing2 brand jadi baris mh_assignments sendiri - arsitektur multi-slot
+  // per (email,role,brand,branch) sudah mendukung email yg sama di 2 brand).
+  async function quickAssignBoth({ targetEmail, fullName, role, region, branchSlug, branchName, dsfOrgId }) {
+    await addAssignments([
+      { email: targetEmail, fullName, role, region, brand: "im3", branchId: branchSlug, branchName, dsfOrgId },
+      { email: targetEmail, fullName, role, region, brand: "tri", branchId: branchSlug, branchName, dsfOrgId },
+    ]);
   }
 
   // Sama spt mobile - pengguna tidak boleh menghapus assignment/akun
@@ -545,7 +587,7 @@ function Body({ canManage, callerEmail, period }) {
         </div>
 
         {viewMode === "cards" ? (
-          <CardsView orgTree={orgTree} canManage={canManage} callerEmail={callerEmail} onAdd={quickAssign} onRemove={requestRemove} onEdit={setCardEditRow} loading={loading} />
+          <CardsView orgTree={orgTree} canManage={canManage} callerEmail={callerEmail} onAdd={quickAssign} onAddBoth={quickAssignBoth} onRemove={requestRemove} onEdit={setCardEditRow} loading={loading} />
         ) : viewMode === "log" ? (
           <ActivityLogView callerEmail={callerEmail} />
         ) : viewMode === "tree" ? (
@@ -1627,7 +1669,7 @@ const selectStyle = { ...inp, appearance: "none", WebkitAppearance: "none", MozA
 // ditampilkan bertingkat langsung di bawahnya - SATU SUMBER visual dgn
 // app/martahub/m/user-management/page.jsx (mobile), cuma disusun ulang jadi
 // grid responsif (auto-fit) utk layar lebar alih-alih ditumpuk vertikal.
-function CardsView({ orgTree, canManage, callerEmail, onAdd, onRemove, onEdit, loading }) {
+function CardsView({ orgTree, canManage, callerEmail, onAdd, onAddBoth, onRemove, onEdit, loading }) {
   // Pilih SATU region dulu sebelum kartunya ditampilkan - menampilkan
   // ketiga region sekaligus (spt semula) bikin halaman terlalu penuh/
   // berantakan krn tiap region sudah berisi banyak cabang×brand. null =
@@ -1656,7 +1698,7 @@ function CardsView({ orgTree, canManage, callerEmail, onAdd, onRemove, onEdit, l
 
       {selected ? (
         <div style={{ marginTop: 14 }}>
-          <RegionCard region={selected} canManage={canManage} callerEmail={callerEmail} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} />
+          <RegionCard region={selected} canManage={canManage} callerEmail={callerEmail} onAdd={onAdd} onAddBoth={onAddBoth} onRemove={onRemove} onEdit={onEdit} />
         </div>
       ) : (
         <div style={{ marginTop: 14, padding: "34px 20px", textAlign: "center", color: T.lo, background: "#fff", border: `1px dashed ${T.line}`, borderRadius: 16, fontSize: 13 }}>
@@ -1682,10 +1724,8 @@ function CircleCard({ circle, canManage, callerEmail, onAdd, onRemove, onEdit })
       <div style={{ padding: "12px 18px 16px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "4px 22px" }}>
         <SlotRow title="Head Trade Marketing & Visibility Sumatera" role="head" people={circle.head} canAdd={canManage}
           context={{ region: null, brand: null, branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} />
-        <SlotRow title="Trade Marketing & Visibility IM3 Sumatera" role="tmv" people={circle.tmvIm3} canAdd={canManage}
-          context={{ region: null, brand: "im3", branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} accent={BRAND_COLOR_POP.im3} />
-        <SlotRow title="Trade Marketing & Visibility 3ID Sumatera" role="tmv" people={circle.tmvTri} canAdd={canManage}
-          context={{ region: null, brand: "tri", branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} accent={BRAND_COLOR_POP.tri} />
+        <SlotRow title="Trade Marketing & Visibility Sumatera" role="tmv" people={circle.tmv} canAdd={canManage}
+          context={{ region: null, brand: null, branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} />
       </div>
     </div>
   );
@@ -1693,7 +1733,7 @@ function CircleCard({ circle, canManage, callerEmail, onAdd, onRemove, onEdit })
 
 const titleCaseRegion = (s) => (s || "").toLowerCase().replace(/(^|\s)\S/g, (c) => c.toUpperCase());
 
-function RegionCard({ region, canManage, callerEmail, onAdd, onRemove, onEdit }) {
+function RegionCard({ region, canManage, callerEmail, onAdd, onAddBoth, onRemove, onEdit }) {
   // Gabungkan kombo cabang×brand jadi satu blok per cabang (IM3 & 3ID
   // bersebelahan), sama spt mobile.
   const branchGroups = useMemo(() => {
@@ -1705,43 +1745,398 @@ function RegionCard({ region, canManage, callerEmail, onAdd, onRemove, onEdit })
     return Array.from(byBranch.values());
   }, [region.branches]);
 
+  const orgChartRef = useRef(null);
+  const [exportingPng, setExportingPng] = useState(false);
+  // Export struktur organisasi (seluruh org chart region ini) jadi PNG
+  // resolusi tinggi (scale 3 ~ setara @3x) - sama pola spt export poster di
+  // activity-dashboard/m/report (html2canvas, import dinamis).
+  // Percobaan pertama (onclone saja) masih banyak terpotong - 2 akar
+  // masalah: (1) baris cabang discroll horizontal (overflowX:auto) dgn
+  // lebar CSS tetap, meng-clip anak yg melebihi lebar itu di screenshot
+  // TERLEPAS dari windowWidth yg kita set - diubah LANGSUNG di DOM asli
+  // (bukan lewat onclone yg ternyata timing-nya tidak selalu kepakai utk
+  // ukur width/height awal html2canvas), baru diukur ulang scrollWidth
+  // SETELAH dilebarkan, baru dikembalikan di finally; (2) nama/teks
+  // kepotong separuh krn html2canvas mulai nge-render SEBELUM web font
+  // selesai load (font metrics fallback beda tinggi dr font asli) - fix
+  // dgn await document.fonts.ready sebelum capture.
+  const handleExportPng = useCallback(async () => {
+    const el = orgChartRef.current;
+    if (!el) return;
+    setExportingPng(true);
+    const scrollers = Array.from(el.querySelectorAll("[data-mh-scrollx]"));
+    const scrollRestoreFns = scrollers.map((n) => {
+      const prevOverflow = n.style.overflow;
+      const prevWidth = n.style.width;
+      n.style.overflow = "visible";
+      n.style.width = "max-content";
+      return () => { n.style.overflow = prevOverflow; n.style.width = prevWidth; };
+    });
+    // Nama/email di layar sengaja 1-baris + ellipsis (ada title tooltip utk
+    // lihat lengkapnya) - tapi PNG statis tidak punya tooltip, jadi malah
+    // kelihatan "terpotong". Khusus saat export, lepas nowrap/ellipsis spy
+    // teks wrap penuh & utuh, kasih sedikit line-height ekstra biar lega.
+    const textNodes = Array.from(el.querySelectorAll("[data-mh-exporttext]"));
+    const textRestoreFns = textNodes.map((n) => {
+      const prev = { whiteSpace: n.style.whiteSpace, overflow: n.style.overflow, textOverflow: n.style.textOverflow, wordBreak: n.style.wordBreak, lineHeight: n.style.lineHeight };
+      n.style.whiteSpace = "normal";
+      n.style.overflow = "visible";
+      n.style.textOverflow = "clip";
+      n.style.wordBreak = "break-word";
+      n.style.lineHeight = "1.45";
+      return () => { n.style.whiteSpace = prev.whiteSpace; n.style.overflow = prev.overflow; n.style.textOverflow = prev.textOverflow; n.style.wordBreak = prev.wordBreak; n.style.lineHeight = prev.lineHeight; };
+    });
+    const restoreFns = [...scrollRestoreFns, ...textRestoreFns];
+    try {
+      if (document.fonts && document.fonts.ready) await document.fonts.ready;
+      // Satu frame tambahan spy reflow dari pelebaran di atas sudah settle
+      // sebelum html2canvas mulai mengukur/merender.
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+      const fullWidth = el.scrollWidth;
+      const fullHeight = el.scrollHeight;
+      const html2canvas = (await import("html2canvas")).default;
+      const canvas = await html2canvas(el, {
+        scale: 3, backgroundColor: "#FFFFFF", useCORS: true, logging: false,
+        width: fullWidth, height: fullHeight,
+        windowWidth: fullWidth, windowHeight: fullHeight,
+        scrollX: -window.scrollX, scrollY: -window.scrollY,
+      });
+      const url = canvas.toDataURL("image/png");
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `struktur-organisasi-${(region.label || "region").toLowerCase().replace(/\s+/g, "-")}.png`;
+      a.click();
+    } catch (e) {
+      alert("Gagal export PNG: " + (e?.message || String(e)));
+    } finally {
+      restoreFns.forEach((fn) => fn());
+      setExportingPng(false);
+    }
+  }, [region.label]);
+
   return (
     <div style={{ background: "#FFFFFF", border: `1px solid ${T.line}`, borderRadius: 16, overflow: "hidden", boxShadow: "0 2px 8px rgba(17,17,20,0.05)", display: "flex", flexDirection: "column" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 11, padding: "13px 16px", borderBottom: `1px solid ${T.line}` }}>
         <div style={{ width: 34, height: 34, borderRadius: 10, background: "rgba(15,110,86,0.09)", color: "#0F6E56", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <MapPin size={15} />
         </div>
-        <div style={{ fontSize: 14, fontWeight: 800, color: T.hi }}>Region {titleCaseRegion(region.label)}</div>
+        <div style={{ fontSize: 14, fontWeight: 800, color: T.hi, flex: 1 }}>Region {titleCaseRegion(region.label)}</div>
+        <button onClick={handleExportPng} disabled={exportingPng} type="button" title="Export struktur organisasi sebagai PNG resolusi tinggi" style={{
+          display: "flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 8, fontSize: 11, fontWeight: 800, fontFamily: FONT,
+          border: `1px solid ${T.line}`, background: "#fff", color: T.mid, cursor: exportingPng ? "default" : "pointer", opacity: exportingPng ? 0.6 : 1, flexShrink: 0,
+        }}>
+          {exportingPng ? <Loader2 size={13} style={{ animation: "spin .8s linear infinite" }} /> : <ImageDown size={13} />}
+          {exportingPng ? "Mengekspor…" : "Export PNG"}
+        </button>
       </div>
-      <div style={{ padding: "12px 16px 16px" }}>
-        <SlotRow title="Head TMV" role="head" people={region.head} canAdd={canManage}
-          context={{ region: region.key, brand: null, branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} />
-        <SlotRow title="TMV IM3" role="tmv" people={region.tmvIm3} canAdd={canManage}
-          context={{ region: region.key, brand: "im3", branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} accent={BRAND_COLOR_POP.im3} />
-        <SlotRow title="TMV 3ID" role="tmv" people={region.tmvTri} canAdd={canManage}
-          context={{ region: region.key, brand: "tri", branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} accent={BRAND_COLOR_POP.tri} />
-
-        <div style={{ marginTop: 14, fontSize: 11, fontWeight: 800, color: T.mid, textTransform: "uppercase", letterSpacing: "0.04em", display: "flex", alignItems: "center", gap: 6 }}>
-          <Building2 size={12} /> BRANCH ({branchGroups.length})
+      <div style={{ padding: "10px 14px 12px" }}>
+        <div style={{ fontSize: 11, fontWeight: 800, color: T.mid, textTransform: "uppercase", letterSpacing: "0.04em", display: "flex", alignItems: "center", gap: 6 }}>
+          <Building2 size={12} /> STRUKTUR ORGANISASI ({branchGroups.length})
         </div>
-        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
-          {branchGroups.map((b) => (
-            <BranchCard key={b.branchId} branchName={b.branchName} combos={b.combos} canAdd={canManage}
-              onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} />
-          ))}
+
+        <div ref={orgChartRef} style={{ background: "#FFFFFF" }}>
+          <OrgChart region={region} branchGroups={branchGroups} canAdd={canManage}
+            onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} />
         </div>
       </div>
     </div>
   );
 }
 
-function BranchCard({ branchName, combos, canAdd, onAdd, onRemove, onEdit, callerEmail }) {
+/** Visual org-chart (Head of Region -> Head of Area per cabang -> DMO per
+ * cabang) - mengganti grid kartu cabang lama, meniru referensi gambar
+ * "Area Operation Structure" yg dikirim user: satu kotak gelap di atas,
+ * sebaris kotak "HEAD OF AREA" per cabang, masing2 terhubung garis turun ke
+ * kotak "DMO" di bawahnya. Role & data SAMA PERSIS (head=region.head,
+ * bsm=Head of Area, bme_rge=DMO per cabang×brand) - ini murni presentasi. */
+// Gabungkan orang yg sama (per email) dari beberapa kombo brand jadi satu
+// daftar - DIPAKAI utk Head of Area (bsm) & DMO (bme_rge) yg skrg SATU slot
+// per cabang lintas brand (tidak dipisah IM3/3ID lagi). Data lama yg msh
+// brand-spesifik (2 baris, sama/beda orang) ikut digabung di sini supaya
+// chart tetap tampil rapi SATU kotak, bukan dobel.
+function mergePeopleAcrossCombos(combos, role) {
+  const byEmail = new Map();
+  for (const c of combos) {
+    for (const p of (c.byRole?.get(role) || [])) {
+      const key = (p.email || p.id || "").toLowerCase();
+      if (!byEmail.has(key)) byEmail.set(key, p);
+    }
+  }
+  return Array.from(byEmail.values());
+}
+
+function OrgChart({ region, branchGroups, canAdd, onAdd, onRemove, onEdit, callerEmail }) {
+  const lineColor = "#DADFE6";
+  const dmoLineColor = "#0F6E56";
+  // Celah antara garis horizontal & kotak HARUS sama persis dgn tinggi
+  // Stem di bawahnya - kalau tidak, ada jarak "mati" tanpa garis sama
+  // sekali (persis bug yg bikin tampilannya kelihatan terputus sebelumnya).
+  const gapToRow = 16;
   return (
-    <div style={{ background: "#FBFBFC", border: `1px solid ${T.line}`, borderRadius: 13, padding: "10px 12px" }}>
+    <div style={{ marginTop: 16 }}>
+      <div style={{ display: "flex", justifyContent: "center" }}>
+        <ChartNode kind="head" headerLabel={`Head of Region ${titleCaseRegion(region.label)}`} people={region.head} role="head"
+          context={{ region: region.key, brand: null, branchSlug: null, branchName: null }}
+          canAdd={canAdd} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} />
+      </div>
+      <div style={{ display: "flex", justifyContent: "center" }}><Stem color={lineColor} height={gapToRow} /></div>
+      {/* Head of Regional Operation - tier baru di bawah Head of Region,
+          otoritas sama (region-scoped, lintas brand), satu kotak di tengah
+          persis spt Head of Region. */}
+      <div style={{ display: "flex", justifyContent: "center" }}>
+        <ChartNode kind="regional_ops" headerLabel="Head of Regional Operation" people={region.headOfRegionalOperation} role="head_of_regional_operation"
+          context={{ region: region.key, brand: null, branchSlug: null, branchName: null }}
+          canAdd={canAdd} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} />
+      </div>
+      <div style={{ display: "flex", justifyContent: "center" }}><Stem color={lineColor} height={gapToRow} /></div>
+      {/* Visibility Region Lead & GTM Region Lead - tier baru di atas
+          DMO/DMP, dua kotak bersebelahan di bawah Head of Regional
+          Operation. Garis penghubung per-kolom (sama teknik spt baris
+          cabang di bawah) biar tidak ada "ekor" nongol di kiri/kanan. */}
+      <div style={{ display: "flex", justifyContent: "center" }}>
+        <div style={{ display: "flex", gap: "clamp(10px, 1.6vw, 20px)" }}>
+          {[
+            { key: "visibility", label: "Visibility Region Lead", role: "visibility_region_lead", people: region.visibilityRegionLead },
+            { key: "gtm", label: "GTM Region Lead", role: "gtm_region_lead", people: region.gtmRegionLead },
+          ].map((lead, idx, arr) => {
+            const isFirst = idx === 0;
+            const isLast = idx === arr.length - 1;
+            const halfGap = "calc(clamp(10px, 1.6vw, 20px) / 2)";
+            const connectorLeft = isFirst ? "50%" : `calc(-1 * ${halfGap})`;
+            const connectorRight = isLast ? "50%" : `calc(-1 * ${halfGap})`;
+            return (
+              <div key={lead.key} style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center" }}>
+                <div style={{ position: "absolute", top: 0, left: connectorLeft, right: connectorRight, height: 2, background: lineColor }} />
+                <Stem color={lineColor} height={gapToRow} />
+                <ChartNode kind="region_lead" headerLabel={lead.label} people={lead.people} role={lead.role}
+                  context={{ region: region.key, brand: null, branchSlug: null, branchName: null }}
+                  canAdd={canAdd} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      <div style={{ display: "flex", justifyContent: "center" }}><Stem color={lineColor} height={gapToRow} /></div>
+      {/* Baris cabang - scroll horizontal (pola umum utk data sepadat ini,
+          lebih rapi drpd memaksa wrap yg bikin garis konektor berantakan).
+          PENTING: garis horizontal (borderTop) dipasang pada div yg SAMA
+          dgn yg discroll dan lebarnya width:"max-content" (ngepas isi, BUKAN
+          100% viewport) - jadi garisnya PERSIS mentok di kartu
+          pertama/terakhir, ikut scroll bareng, tidak pernah "nongol" lewat
+          di kiri/kanan walau sudah discroll mentok. */}
+      <div data-mh-scrollx style={{ overflowX: "auto", scrollbarWidth: "thin", paddingBottom: 4 }}>
+        <div style={{
+          display: "flex", width: "max-content", minWidth: "100%", boxSizing: "border-box",
+          gap: "clamp(10px, 1.6vw, 20px)",
+        }}>
+          {branchGroups.map((b, idx) => {
+            const headArea = mergePeopleAcrossCombos(b.combos, "bsm");
+            const dmo = mergePeopleAcrossCombos(b.combos, "bme_rge");
+            // Slot baru (+ Tambah) SELALU dibuat brand=null - satu DMO /
+            // Head of Area berlaku lintas IM3 & 3ID, tidak perlu isi 2x lagi.
+            const ctx = { region: region.key, brand: null, branchSlug: b.combos[0]?.branchSlug, branchName: b.branchName };
+            const isFirst = idx === 0;
+            const isLast = idx === branchGroups.length - 1;
+            // Garis horizontal per-kolom, bukan satu garis lebar penuh di
+            // parent - itu yg bikin ada "ekor" garis nongol di kiri kartu
+            // pertama / kanan kartu terakhir (garis parent selebar row,
+            // sementara stem vertikal cuma di tengah kartu). Di sini garis
+            // dibatasi persis: mulai dr tengah kartu pertama, berakhir di
+            // tengah kartu terakhir, nyambung mulus lewat gap di antaranya.
+            const halfGap = "calc(clamp(10px, 1.6vw, 20px) / 2)";
+            const connectorLeft = isFirst ? "50%" : `calc(-1 * ${halfGap})`;
+            const connectorRight = isLast ? "50%" : `calc(-1 * ${halfGap})`;
+            return (
+              <div key={b.branchId} style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
+                <div style={{ position: "absolute", top: 0, left: connectorLeft, right: connectorRight, height: 2, background: lineColor }} />
+                <Stem color={lineColor} height={gapToRow} />
+                <ChartNode kind="area" headerLabel="Head of Area" subLabel={b.branchName} people={headArea} role="bsm"
+                  context={ctx} canAdd={canAdd} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} />
+                <Stem color={dmoLineColor} height={gapToRow} />
+                <ChartNode kind="dmo" headerLabel="DMO · District Marketing Operation" people={dmo} role="bme_rge"
+                  context={ctx} canAdd={canAdd} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} />
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ textAlign: "center", fontSize: 10, color: T.lo, marginTop: 6 }}>← geser utk lihat semua {branchGroups.length} cabang →</div>
+      </div>
+    </div>
+  );
+}
+
+const Stem = ({ color, height }) => <div style={{ width: 2, height, background: color, flexShrink: 0 }} />;
+
+const CHART_THEME = {
+  head: { bg: "linear-gradient(160deg,#1C2638,#283349)", color: "#fff", labelColor: "#A9B6CC", width: "clamp(260px, 26vw, 340px)", shadow: "0 4px 14px rgba(20,26,40,0.25)" },
+  regional_ops: { bg: "linear-gradient(160deg,#1E3A5F,#15283F)", color: "#fff", labelColor: "#AFC6E6", width: "clamp(238px, 19vw, 272px)", shadow: "0 3px 10px rgba(21,40,63,0.22)" },
+  region_lead: { bg: "linear-gradient(160deg,#6B3FA0,#4A2B73)", color: "#fff", labelColor: "#E3D4F5", width: "clamp(220px, 17vw, 250px)", shadow: "0 3px 10px rgba(74,43,115,0.2)" },
+  area: { bg: "linear-gradient(160deg,#10785F,#0B5745)", color: "#fff", labelColor: "#CFEFE4", width: "clamp(238px, 19vw, 272px)", shadow: "0 3px 10px rgba(15,110,86,0.2)" },
+  dmo: { bg: "#F5F6F8", color: T.hi, labelColor: "#0F6E56", width: "clamp(238px, 19vw, 272px)", border: `1px solid ${T.line}`, shadow: "none" },
+};
+
+/** Satu baris orang di dalam ChartNode - avatar inisial + nama/status di
+ * kiri, tombol edit/hapus di kanan (sebaris, bukan ditumpuk di bawah nama)
+ * supaya node yg isinya >1 orang (mis. data lama blom di-cleanup) tetap
+ * ringkas & rapi, bukan makin tinggi menumpuk tak beraturan. */
+function ChartPersonRow({ person, kind, onEdit, onRemove, isSelf }) {
+  const dark = kind !== "dmo";
+  const initials = (person.full_name || person.email || "?").trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
+  // Head of Region butuh sedikit lebih "lega" (kotaknya jg lebih lebar)
+  // drpd Head of Area/DMO - skala avatar, font & tombol ikon ikut kind
+  // spy tetap proporsional & rapi di kedua ukuran kotak.
+  const big = kind === "head";
+  const avatarSize = big ? 34 : 26;
+  const btnSize = big ? 26 : 21;
+  const iconSize = big ? 12 : 10;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: big ? 10 : 7, textAlign: "left" }}>
+      <div style={{
+        width: avatarSize, height: avatarSize, borderRadius: "50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: big ? 12 : 9.5, fontWeight: 800, background: dark ? "rgba(255,255,255,0.14)" : "rgba(15,110,86,0.12)", color: dark ? "#fff" : "#0F6E56",
+      }}>{initials}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {/* data-mh-exporttext: ditandai krn di layar sengaja 1-baris +
+            ellipsis (ada title tooltip), tapi saat export PNG tooltip
+            tidak kebaca sama sekali - jadi kelihatan "terpotong". Saat
+            export, atribut ini dipakai utk sementara melepas nowrap/ellipsis
+            jadi teks boleh wrap penuh & utuh (lihat handleExportPng). */}
+        <div data-mh-exporttext title={person.full_name || person.email} style={{
+          fontSize: big ? 14.5 : 11, fontWeight: 800, lineHeight: 1.3,
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>{person.full_name || person.email}</div>
+        {!!person.email && (
+          <div data-mh-exporttext title={person.email} style={{
+            fontSize: big ? 11.5 : 9.5, fontWeight: 600, marginTop: 2, lineHeight: 1.4,
+            color: dark ? "rgba(255,255,255,0.58)" : T.mid, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+          }}>{person.email}</div>
+        )}
+        <LoginStatusBadge person={person} style={{ marginTop: 3, color: kind === "dmo" ? undefined : "currentColor", opacity: kind === "dmo" ? 1 : 0.75 }} />
+      </div>
+      <div style={{ flexShrink: 0, display: "flex", gap: big ? 6 : 4 }}>
+        <button onClick={() => onEdit(person)} title="Edit email/nama" style={{
+          width: btnSize, height: btnSize, borderRadius: big ? 9 : 6, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+          background: dark ? "rgba(255,255,255,0.14)" : "#fff", color: dark ? "#fff" : T.mid, border: dark ? "none" : `1px solid ${T.line}`,
+        }}><Pencil size={iconSize} /></button>
+        {!isSelf && (
+          <button onClick={() => onRemove(person)} title="Hapus" style={{
+            width: btnSize, height: btnSize, borderRadius: big ? 9 : 6, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+            background: dark ? "rgba(255,255,255,0.14)" : T.errorBg, color: dark ? "#fff" : T.error,
+          }}><UserX size={iconSize} /></button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ChartNode({ kind, headerLabel, subLabel, people, role, context, canAdd, onAdd, onRemove, onEdit, callerEmail }) {
+  const theme = CHART_THEME[kind];
+  const [adding, setAdding] = useState(false);
+  const hasPeople = people.length > 0;
+  return (
+    <div style={{
+      width: theme.width, background: theme.bg, color: theme.color, borderRadius: 12,
+      padding: "14px 14px", textAlign: "center", border: theme.border, boxShadow: theme.shadow, boxSizing: "border-box",
+    }}>
+      {subLabel && (
+        <div style={{ fontSize: 11.5, fontWeight: 800, color: theme.color, marginBottom: 5, wordBreak: "break-word" }}>{subLabel}</div>
+      )}
+      <div style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: 0.3, color: theme.labelColor, textTransform: "uppercase", marginBottom: hasPeople ? 9 : 2, textAlign: subLabel ? "left" : "center" }}>{headerLabel}</div>
+      {hasPeople && (
+        <div style={{ display: "flex", flexDirection: "column", gap: kind === "head" ? 16 : 10 }}>
+          {people.map((person, i) => {
+            const isSelf = !!(callerEmail && person.email && person.email.toLowerCase() === callerEmail.toLowerCase());
+            return (
+              <div key={person.id || person.email} style={i > 0 ? { paddingTop: kind === "head" ? 16 : 10, borderTop: `1px solid ${kind === "dmo" ? T.line : "rgba(255,255,255,0.14)"}` } : undefined}>
+                <ChartPersonRow person={person} kind={kind} onEdit={onEdit} onRemove={onRemove} isSelf={isSelf} />
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {!hasPeople && !canAdd && (
+        <div style={{ fontSize: 10.5, opacity: 0.65, fontStyle: "italic" }}>Belum ada</div>
+      )}
+      {canAdd && (
+        adding ? (
+          <div style={{ marginTop: hasPeople ? (kind === "head" ? 12 : 8) : 0, paddingTop: hasPeople ? (kind === "head" ? 12 : 8) : 0, borderTop: hasPeople ? `1px solid ${kind === "dmo" ? T.line : "rgba(255,255,255,0.14)"}` : "none" }}>
+            <ChartQuickAdd dark={kind !== "dmo"}
+              onCancel={() => setAdding(false)}
+              onSave={async (email, name) => { await onAdd({ targetEmail: email, fullName: name, role, ...context }); setAdding(false); }} />
+          </div>
+        ) : (
+          <button onClick={() => setAdding(true)} type="button" style={{
+            width: "100%", marginTop: hasPeople ? (kind === "head" ? 12 : 8) : 0,
+            padding: "6px 6px", borderRadius: 7, fontSize: 10.5, fontWeight: 800, fontFamily: FONT, cursor: "pointer",
+            border: kind === "dmo" ? `1.5px dashed ${T.primary}66` : "1.5px dashed rgba(255,255,255,0.4)",
+            background: kind === "dmo" ? T.primaryBg : "rgba(255,255,255,0.08)",
+            color: kind === "dmo" ? T.primary : "#fff",
+          }}>+ Tambah</button>
+        )
+      )}
+    </div>
+  );
+}
+
+/** Form mini (email + nama) dipakai ChartNode saat slot kosong diklik "+
+ * Tambah" - versi ringkas dari QuickAddRow, dgn varian warna gelap/terang
+ * (`dark`) supaya tetap kebaca di atas kotak Head/Head of Area yg gelap. */
+function ChartQuickAdd({ onSave, onCancel, dark }) {
+  const [emailInput, setEmailInput] = useState("");
+  const [name, setName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const ready = !!(emailInput.trim() && name.trim());
+
+  async function submit() {
+    if (!ready || saving) return;
+    setSaving(true); setErr("");
+    try { await onSave(emailInput.trim(), name.trim()); }
+    catch (e) { setErr(e.message || "Gagal"); setSaving(false); }
+  }
+
+  const fieldStyle = {
+    width: "100%", height: 26, padding: "0 7px", borderRadius: 6, fontSize: 10.5, fontFamily: FONT, outline: "none", boxSizing: "border-box",
+    border: dark ? "1px solid rgba(255,255,255,0.3)" : `1px solid ${T.line}`,
+    background: dark ? "rgba(255,255,255,0.1)" : "#fff",
+    color: dark ? "#fff" : T.hi,
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5, textAlign: "left" }}>
+      <input value={emailInput} onChange={(e) => setEmailInput(e.target.value)} placeholder="Email" type="email" style={fieldStyle} autoFocus />
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nama" style={fieldStyle} />
+      {err && <div style={{ fontSize: 9.5, color: dark ? "#FFB4B4" : T.error, fontWeight: 700 }}>{err}</div>}
+      <div style={{ display: "flex", gap: 4 }}>
+        <button onClick={submit} disabled={!ready || saving} type="button" style={{
+          flex: 1, padding: "4px 6px", borderRadius: 6, border: "none", fontSize: 10, fontWeight: 800, fontFamily: FONT, cursor: "pointer",
+          background: dark ? "#fff" : T.primary, color: dark ? "#1C2638" : "#fff", opacity: !ready || saving ? 0.6 : 1,
+        }}>{saving ? "…" : "Simpan"}</button>
+        <button onClick={onCancel} type="button" disabled={saving} style={{
+          padding: "4px 6px", borderRadius: 6, fontSize: 10, fontWeight: 700, fontFamily: FONT, cursor: "pointer",
+          border: dark ? "1px solid rgba(255,255,255,0.3)" : `1px solid ${T.line}`, background: "transparent", color: dark ? "#fff" : T.mid,
+        }}>Batal</button>
+      </div>
+    </div>
+  );
+}
+
+function BranchCard({ branchName, combos, canAdd, onAdd, onAddBoth, onRemove, onEdit, callerEmail }) {
+  // DMO (bme_rge) msh kosong di KEDUA brand -> tawarkan opsi isi email yg
+  // sama sekaligus utk IM3 & 3ID, drpd isi manual 2x di tiap SlotRow brand.
+  const dmoEmptyIm3 = (combos.find((c) => c.brand === "im3")?.byRole?.get("bme_rge") || []).length === 0;
+  const dmoEmptyTri = (combos.find((c) => c.brand === "tri")?.byRole?.get("bme_rge") || []).length === 0;
+  const baseCombo = combos[0];
+  const bothCtx = baseCombo ? { region: baseCombo.region, branchSlug: baseCombo.branchSlug, branchName: baseCombo.branchName } : null;
+  return (
+    <div style={{ background: "#FBFBFC", border: `1px solid ${T.line}`, borderRadius: 13, padding: "8px 10px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
         <Building2 size={13} color={T.mid} style={{ flexShrink: 0 }} />
         <span style={{ fontSize: 12.5, fontWeight: 800, color: T.hi }}>{branchName}</span>
       </div>
+      {canAdd && dmoEmptyIm3 && dmoEmptyTri && bothCtx && onAddBoth && (
+        <SameEmailBothBrandsButton ctx={bothCtx} onAddBoth={onAddBoth} />
+      )}
       {combos.map((combo) => {
         const brandColor = BRAND_COLOR_POP[combo.brand] || T.mid;
         const bmeRge = combo.byRole?.get("bme_rge") || [];
@@ -1756,7 +2151,7 @@ function BranchCard({ branchName, combos, canAdd, onAdd, onRemove, onEdit, calle
         const executorRows = EXECUTOR_ROLES.map((r) => [r, combo.byRole?.get(r) || []]).filter(([, list]) => list.length > 0);
         const ctx = { region: combo.region, brand: combo.brand, branchSlug: combo.branchSlug, branchName: combo.branchName };
         return (
-          <div key={combo.brand} style={{ marginTop: 8, paddingTop: 8, borderTop: `1px dashed ${T.line}` }}>
+          <div key={combo.brand} style={{ marginTop: 6, paddingTop: 6, borderTop: `1px dashed ${T.line}` }}>
             <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.2, padding: "2px 7px", borderRadius: 999, color: brandColor, background: `${brandColor}17` }}>
               {combo.brand === "tri" ? "3ID" : "IM3"}
             </span>
@@ -1778,6 +2173,65 @@ function BranchCard({ branchName, combos, canAdd, onAdd, onRemove, onEdit, calle
   );
 }
 
+/** Opsi "Gunakan email yang sama untuk IM3 & 3ID" - khusus role DMO
+ * (bme_rge), ditampilkan di atas kedua SlotRow brand selama slot DMO IM3
+ * maupun 3ID masih kosong. Isi satu email+nama sekali, onAddBoth akan
+ * menyimpan 2 baris assignment (brand im3 & tri) sekaligus - email yg sama
+ * dipakai lintas brand sudah didukung penuh oleh arsitektur multi-slot
+ * (mh_assign_user keyed on email+role+brand+branch), jadi ini murni
+ * mempercepat input, bukan fitur baru di level data. */
+function SameEmailBothBrandsButton({ ctx, onAddBoth }) {
+  const [open, setOpen] = useState(false);
+  const [emailInput, setEmailInput] = useState("");
+  const [name, setName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+  const ready = !!(emailInput.trim() && name.trim());
+
+  async function submit() {
+    if (!ready || saving) return;
+    setSaving(true); setErr("");
+    try {
+      await onAddBoth({ targetEmail: emailInput.trim(), fullName: name.trim(), role: "bme_rge", ...ctx });
+      setEmailInput(""); setName(""); setOpen(false);
+    } catch (e) { setErr(e.message || "Gagal menyimpan"); }
+    finally { setSaving(false); }
+  }
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} type="button"
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 6, width: "100%",
+          padding: "6px 10px", marginBottom: 2, borderRadius: 9, border: `1.5px dashed ${T.primary}66`, background: T.primaryBg,
+          color: T.primary, fontSize: 11, fontWeight: 800, fontFamily: FONT, cursor: "pointer",
+        }}>
+        <UserPlus size={12} /> Email sama untuk IM3 & 3ID
+      </button>
+    );
+  }
+
+  const miniInput = { minWidth: 0, height: 32, padding: "0 10px", borderRadius: 8, border: `1.5px dashed ${T.line}`, background: "#fff", fontSize: 12, fontFamily: FONT, outline: "none", boxSizing: "border-box", width: "100%" };
+  return (
+    <div style={{ background: "#fff", border: `1.5px dashed ${T.primary}66`, borderRadius: 10, padding: 8, marginBottom: 4 }}>
+      <div style={{ fontSize: 10.5, fontWeight: 800, color: T.primary, marginBottom: 6 }}>DMO - sama utk IM3 & 3ID</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <input value={emailInput} onChange={(e) => setEmailInput(e.target.value)} placeholder="Email" type="email" style={miniInput} />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nama lengkap" style={miniInput} />
+      </div>
+      {err && <div style={{ marginTop: 6, fontSize: 11, color: T.error, fontWeight: 600 }}>{err}</div>}
+      <div style={{ display: "flex", gap: 6, marginTop: 7 }}>
+        <button onClick={submit} disabled={!ready || saving} type="button"
+          style={{ ...pbtn, flex: 1, padding: "7px 10px", fontSize: 11.5, opacity: !ready || saving ? 0.5 : 1 }}>
+          {saving ? "Menyimpan…" : "Simpan utk 2 Brand"}
+        </button>
+        <button onClick={() => { setOpen(false); setErr(""); }} type="button" disabled={saving}
+          style={{ ...btn, padding: "7px 10px", fontSize: 11.5 }}>Batal</button>
+      </div>
+    </div>
+  );
+}
+
 /** Tombol "+ Tambahkan Executor" - satu pintu masuk utk menambah SIAPA PUN
  * di bawah DMO (MD, DSF, TL DSF, DSE, GSE, AE, Promotor, CSE/RSE, BSM).
  * Klik -> modal: pilih role dulu (grid pill), baru isi email/nama (+ORG ID
@@ -1789,8 +2243,8 @@ function AddExecutorButton({ ctx, onAdd }) {
     <>
       <button onClick={() => setOpen(true)} type="button"
         style={{
-          marginTop: 9, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
-          padding: "9px 12px", borderRadius: 10, border: `1.5px dashed ${T.primary}66`, background: T.primaryBg,
+          marginTop: 7, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+          padding: "7px 12px", borderRadius: 10, border: `1.5px dashed ${T.primary}66`, background: T.primaryBg,
           color: T.primary, fontSize: 11.5, fontWeight: 800, fontFamily: FONT, cursor: "pointer", transition: "background .15s, border-color .15s",
         }}
         onMouseEnter={(e) => { e.currentTarget.style.background = "#fff"; e.currentTarget.style.borderColor = T.primary; }}
@@ -1887,22 +2341,22 @@ function ExecutorPickerModal({ ctx, onAdd, onClose }) {
  * InlineRoleRow (mobile) ke palet desktop (T/FONT). */
 function SlotRow({ title, role, mixedRoles, people, canAdd, context, onAdd, onRemove, onEdit, callerEmail, compact, nested, needsOrgId, accent, single }) {
   return (
-    <div style={{ marginTop: compact ? 6 : 10, ...(nested ? { marginLeft: 14, paddingLeft: 10, borderLeft: `2px solid ${T.line}` } : {}) }}>
-      <div style={{ fontSize: compact ? 10 : 10.5, fontWeight: 700, color: accent || T.mid, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+    <div style={{ marginTop: compact ? 3 : 8, ...(nested ? { marginLeft: 14, paddingLeft: 10, borderLeft: `2px solid ${T.line}` } : {}) }}>
+      <div style={{ fontSize: compact ? 10 : 10.5, fontWeight: 700, color: accent || T.mid, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 2, display: "flex", alignItems: "center", gap: 6 }}>
         {title}
         {single && people.length > 0 && (
           <span style={{ fontSize: 8.5, fontWeight: 800, letterSpacing: 0.2, padding: "1px 6px", borderRadius: 999, color: T.success, background: T.successBg, textTransform: "none" }}>Slot terisi</span>
         )}
       </div>
       {people.length === 0 && !canAdd && (
-        <div style={{ fontSize: 12, color: T.lo, fontStyle: "italic", padding: "4px 2px" }}>Belum ada</div>
+        <div style={{ fontSize: 11.5, color: T.lo, fontStyle: "italic", padding: "2px 2px" }}>Belum ada</div>
       )}
       {people.map((p) => {
         const isSelf = !!(callerEmail && p.email && p.email.toLowerCase() === callerEmail.toLowerCase());
         const pColor = ROLE_COLOR_CARD[p.role] || accent || T.mid;
         return (
-          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 9, background: T.hover || "#F6F7F9", borderRadius: 11, padding: "7px 10px", marginBottom: 5 }}>
-            <div style={{ width: 28, height: 28, borderRadius: "50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10.5, fontWeight: 800, color: pColor, background: `${pColor}17` }}>
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, background: T.hover || "#F6F7F9", borderRadius: 10, padding: "5px 9px", marginBottom: 3 }}>
+            <div style={{ width: 24, height: 24, borderRadius: "50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9.5, fontWeight: 800, color: pColor, background: `${pColor}17` }}>
               {(p.full_name || p.email || "?").trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?"}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
