@@ -85,7 +85,7 @@ function fmtIndoDate(dateStr) {
 // Cost Actual dianggap BELUM lengkap kalau: kosong/bukan angka/negatif
 // (SAMA seperti sebelumnya), ATAU nilainya PERSIS 0 tapi user belum
 // centang konfirmasi "memang tidak ada biaya" - field ini TIDAK LAGI
-// default ke "0" (lihat useState di bawah), supaya BME/RGE tidak bisa
+// default ke "0" (lihat useState di bawah), supaya DMO tidak bisa
 // lolos kirim laporan tanpa benar2 mengisi/mengonfirmasi cost aktualnya
 // (sebelumnya default "0" bikin ~81% laporan actual diam2 tersimpan
 // dgn cost 0 tanpa pernah disentuh sama sekali, bikin metrik Cost Ratio

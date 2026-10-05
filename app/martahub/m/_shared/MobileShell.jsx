@@ -228,6 +228,16 @@ export function useMartaSession() {
       // = auth.uid()-nya) supaya begitu baris itu berubah jadi tidak aktif,
       // sesi langsung di-sign-out paksa & diarahkan ke login - real-time,
       // tanpa perlu refresh manual.
+      // Live-refresh (bukan cuma revoke) - kalau admin MENGUBAH assignment
+      // user ini (branch/brand/role baru, atau SLOT KEDUA ditambahkan utk
+      // brand lain spt strukturisasi Oktober - email sama pegang IM3 & 3ID)
+      // SAAT sesi ini masih terbuka, mh_profiles baris user ini belum tentu
+      // ikut ter-update (mirror slot→profile cuma jalan kalau belum ada
+      // current_slot aktif - lihat mh_assign_user), jadi dengarkan JUGA
+      // mh_profile_slots milik EMAIL user ini (bukan cuma id) - begitu ada
+      // baris baru/berubah, cache scope lokal langsung dibuang & halaman
+      // dimuat ulang, supaya DMO yg lagi buka app TIDAK perlu refresh
+      // manual utk melihat assignment/slot barunya.
       try {
         channel = supabaseMarta
           .channel(`mh-profile-guard-${session.user.id}`)
@@ -237,7 +247,17 @@ export function useMartaSession() {
               _sessionCache = null;
               try { await supabaseMarta.auth.signOut(); } catch { /* noop */ }
               router.replace(`/martahub/m/login?revoked=1`);
+              return;
             }
+            // Masih aktif tapi datanya berubah (branch/brand/role dll) -
+            // buang cache & muat ulang supaya langsung kepakai, tanpa
+            // perlu paksa logout spt kasus revoke di atas.
+            _sessionCache = null;
+            window.location.reload();
+          })
+          .on("postgres_changes", { event: "*", schema: "public", table: "mh_profile_slots", filter: `email=eq.${session.user.email.toLowerCase()}` }, () => {
+            _sessionCache = null;
+            window.location.reload();
           })
           .subscribe();
       } catch { /* realtime opsional - kegagalan di sini tidak boleh menghalangi sesi normal */ }

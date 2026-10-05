@@ -1,10 +1,11 @@
 "use client";
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { AlertTriangle, Plus, Check, Copy, Lock, Save, UserX, Building2, MapPin, Crown, Loader2, Pencil, UserPlus, History, LogIn, LogOut, UserCog, Search } from "lucide-react";
+import { AlertTriangle, Plus, Check, Copy, Lock, Save, UserX, Building2, MapPin, Crown, Loader2, Pencil, UserPlus, History, LogIn, LogOut, UserCog, Search, ChevronLeft, ChevronRight } from "lucide-react";
 import MartaShell, { T, FONT } from "../components/MartaShell";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../lib/martaScope";
 import { useLivePresenceRows } from "../../../lib/martaPresence";
+import { BranchesBody } from "../branches/page";
 
 // Label field Cluster/MC berbeda per brand - konvensi yg sudah ada di spec
 // (IM3 disebut "MC", 3ID disebut "Cluster"), keduanya sama-sama kolom
@@ -16,8 +17,8 @@ const mcLabelForBrand = (brand) => (brand === "tri" ? "Cluster" : "MC");
 // TIDAK berubah. Role tl_dsf/dsf/md/spm_sumatera baru (§4.2/§4.5).
 // ✅ dse/gse/ae/promotor/cse_rse ditambahkan (§ POSMAT semua level) - role
 // baru khusus pencatat POSMAT, branch-scoped spt bme/rge, TANPA atasan.
-// ✅ "bsm" SEKARANG setara BME/RGE penuh (bukan lagi role POSMAT executor) -
-// bisa buat plan & lihat aktivitas BME/RGE lain sendiri di branch×brand yg
+// ✅ "bsm" SEKARANG setara DMO penuh (bukan lagi role POSMAT executor) -
+// bisa buat plan & lihat aktivitas DMO lain sendiri di branch×brand yg
 // sama (lihat migrasi add_bsm_role_as_bme_rge_peer di project MartaHub).
 // `mh_profiles.role`/`mh_assignments.role` TIDAK LAGI dibatasi enum CHECK di
 // database (cuma validasi format) - role baru ke depannya CUKUP ditambah di
@@ -26,7 +27,7 @@ const ROLES = [
   ["spm_sumatera", "SPM Sumatera (Superadmin Nasional)"],
   ["head", "Head TMV (per Region)"],
   ["tmv", "Brand TMV (Region × Brand)"],
-  ["bme_rge", "BME/RGE (Branch)"],
+  ["bme_rge", "DMO (Branch)"],
   ["tl_dsf", "TL DSF (Team Leader DSF)"],
   ["dsf", "DSF (Field Sales)"],
   ["md", "MD (Material Distributor)"],
@@ -35,7 +36,7 @@ const ROLES = [
   ["ae", "AE"],
   ["promotor", "Promotor"],
   ["cse_rse", "CSE/RSE"],
-  ["bsm", "BSM"],
+  ["bsm", "HEAD OF AREA"],
 ];
 const REGIONS = [["NORTH SUMATERA", "NORTH SUMATERA"], ["CENTRAL SUMATERA", "CENTRAL SUMATERA"], ["SOUTH SUMATERA", "SOUTH SUMATERA"]];
 const BRANDS = [["im3", "IM3"], ["tri", "3ID (TRI)"]];
@@ -57,7 +58,7 @@ const isProtectedRole = (role) => role === "spm_sumatera";
 // bme/rge sekarang boleh langsung di bawah "head" (Head TMV, region-only,
 // SEMUA brand) juga - bukan cuma "tmv" (Brand TMV) spt sebelumnya. Ini
 // dipakai DUA arah: dropdown "Atasan Langsung" di form bme/rge sendiri,
-// DAN picker multi-select "BME/RGE di bawah ini" di form tmv/head (lihat
+// DAN picker multi-select "DMO di bawah ini" di form tmv/head (lihat
 // `SubordinatePicker`) - satu sumber kebenaran utk role atasan yg valid.
 const SUPERVISOR_ROLES_FOR = {
   bme_rge: ["tmv", "head"],
@@ -136,31 +137,92 @@ const ACTION_META = {
 // magenta 3ID sengaja lebih terang/kontras drpd T.im3/T.tri (dipakai badge
 // tabel lama) supaya dua brand ini tidak ketuker sekilas pandang.
 const BRAND_COLOR_POP = { im3: "#EAB308", tri: "#D946EF" };
-// Warna per role BME/RGE/MD/DSF/TL DSF - dipakai avatar & badge kecil di
+// Warna per role DMO/MD/DSF/TL DSF - dipakai avatar & badge kecil di
 // kartu, konsisten dgn palet mobile (app/martahub/m/user-management).
 const ROLE_COLOR_CARD = { bme_rge: "#ED1C24", md: "#185FA5", dsf: "#B45309", tl_dsf: "#B45309" };
 const toBranchSlug = (name) => (name || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-+|-+$)/g, "");
-// Role lain (selain BME/RGE/MD/DSF) yang bisa langsung ditambah di bawah
-// BME/RGE lewat kartu cabang - SEMUA role branch-scoped yg ada di ROLES,
+
+// Periode (bulan) yang dilihat di tabel/hierarki assignment & cabang - SAMA
+// PERSIS pola & tujuan dgn app/martahub/m/user-management (mobile): bulan
+// berjalan dikirim sbg p_period=null (identik dgn perilaku sebelum selector
+// ini ada), bulan lain mengirim tanggal 1 bulan tsb. Menjelajah bulan apa
+// pun TIDAK pernah mengunci tombol Tambah/Edit/Hapus - RPC-nya selalu
+// berlaku "mulai sekarang" dan aman krn soft-revoke, jadi selector ini
+// murni utk MELIHAT riwayat/rencana, bukan pembatasan akses.
+function isSameMonth(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth(); }
+function monthLabel(d) { return d.toLocaleDateString("id-ID", { month: "long", year: "numeric" }); }
+function periodToISO(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; }
+// Role lain (selain DMO/MD/DSF) yang bisa langsung ditambah di bawah
+// DMO lewat kartu cabang - SEMUA role branch-scoped yg ada di ROLES,
 // bukan cuma MD/DSF. Ditampilkan lewat toggle "+ Role lain" spy default
 // tidak penuh, tapi begitu dibuka SEMUA jenis role bisa diisi > 1 orang.
-// "bsm" DIKELUARKAN - sekarang setara BME/RGE penuh (ditampilkan sbg
-// SlotRow sendiri sejajar BME/RGE di bawah), bukan lagi bawahannya.
+// "bsm" DIKELUARKAN - sekarang setara DMO penuh (ditampilkan sbg
+// SlotRow sendiri sejajar DMO di bawah), bukan lagi bawahannya.
 const BRANCH_SUBROLES = ROLES.map(([v]) => v).filter((v) => !["spm_sumatera", "head", "tmv", "bme_rge", "bsm", "md", "dsf"].includes(v));
-// Semua role "executor" di bawah BME/RGE (MD, DSF, + role cabang lain) -
+// Semua role "executor" di bawah DMO (MD, DSF, + role cabang lain) -
 // digabung jadi satu daftar pilihan utk tombol "+ Tambahkan Executor".
 const EXECUTOR_ROLES = ["md", "dsf", ...BRANCH_SUBROLES];
 
+// Kelola Cabang (dulu nav terpisah /martahub/branches) DISATUKAN ke sini
+// sbg tab kedua - satu halaman "User & Branch Management" shg admin tidak
+// perlu loncat menu buat dua hal yg sama-sama bagian dari strukturisasi
+// Oktober (akun per cabang x 2 brand). Route /martahub/branches sendiri
+// TETAP ada (deep link lama masih jalan), cuma sudah tidak muncul di nav.
 export default function AssignmentsPage() {
+  const [tab, setTab] = useState("users"); // "users" | "branches"
+  // Satu periode (bulan) dipakai BERSAMA oleh tab Assignment & Cabang -
+  // pindah tab TIDAK mereset bulan yang sedang dilihat, supaya "struktur
+  // cabang di bulan X" & "siapa menjabat di bulan X" selalu konsisten.
+  const [period, setPeriod] = useState(() => { const d = new Date(); d.setDate(1); return d; });
+  const isCurrentPeriod = isSameMonth(period, new Date());
   return (
-    <MartaShell active="assignments" title="User Management">
-      {(ctx) => <Body canManage={ctx?.canManage} callerEmail={ctx?.session?.user?.email} />}
+    <MartaShell active="assignments" title="User Management" subtitle="Kelola siapa menjabat di mana, dan master data cabang - satu tempat, satu periode yang sama.">
+      {(ctx) => (
+        <div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={() => setTab("users")} style={{ padding: "9px 16px", borderRadius: 10, fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+                border: `1.5px solid ${tab === "users" ? T.primary : T.line}`, background: tab === "users" ? T.primaryBg : "#fff", color: tab === "users" ? T.primary : T.mid }}>
+                Assignment (User)
+              </button>
+              <button onClick={() => setTab("branches")} style={{ padding: "9px 16px", borderRadius: 10, fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+                border: `1.5px solid ${tab === "branches" ? T.primary : T.line}`, background: tab === "branches" ? T.primaryBg : "#fff", color: tab === "branches" ? T.primary : T.mid }}>
+                Cabang
+              </button>
+            </div>
+            {/* Selector periode (bulan) - dipakai BERSAMA kedua tab (lihat
+                catatan isSameMonth/periodToISO). Menjelajah bulan apa pun
+                TIDAK pernah mengunci Tambah/Edit/Hapus - murni utk melihat
+                riwayat/rencana dgn aman. */}
+            <div style={{ display: "flex", alignItems: "center", gap: 2, border: `1px solid ${T.line}`, borderRadius: 9, padding: "2px 4px", background: "#fff" }}>
+              <button onClick={() => setPeriod((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))} title="Bulan sebelumnya"
+                style={{ width: 26, height: 26, borderRadius: 7, border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: T.mid }}>
+                <ChevronLeft size={14} />
+              </button>
+              <div style={{ minWidth: 112, textAlign: "center" }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: T.hi }}>{monthLabel(period)}</div>
+                <div style={{ fontSize: 9.5, color: T.lo }}>{isCurrentPeriod ? "Bulan berjalan" : "Mengikuti susunan terakhir"}</div>
+              </div>
+              <button onClick={() => setPeriod((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))} title="Bulan berikutnya"
+                style={{ width: 26, height: 26, borderRadius: 7, border: "none", background: "transparent", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: T.mid }}>
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          </div>
+          {tab === "users" ? (
+            <Body canManage={ctx?.canManage} callerEmail={ctx?.session?.user?.email} period={period} />
+          ) : (
+            <BranchesBody canManage={ctx?.canManage} period={period} />
+          )}
+        </div>
+      )}
     </MartaShell>
   );
 }
 
-function Body({ canManage, callerEmail }) {
+function Body({ canManage, callerEmail, period }) {
   const [viewMode, setViewMode] = useState("cards"); // "cards" | "table" | "tree"
+  const periodParam = isSameMonth(period, new Date()) ? null : periodToISO(period);
   const [rows, setRows] = useState([]);
   const [branches, setBranches] = useState([]); // mh_branches - dipakai grid Kartu (org-hierarchy)
   const [pending, setPending] = useState([]);
@@ -194,7 +256,7 @@ function Body({ canManage, callerEmail }) {
     setLoading(true); setErr("");
     try {
       const [a, p] = await Promise.all([
-        supabaseMarta.rpc("mh_list_assignments"),
+        supabaseMarta.rpc("mh_list_assignments", { p_period: periodParam }),
         supabaseMarta.from("mh_profiles").select("id, email, full_name, status").eq("status", "pending"),
       ]);
       if (a.error) throw new Error(a.error.message);
@@ -204,7 +266,7 @@ function Body({ canManage, callerEmail }) {
       return freshRows; // dikembalikan supaya caller (mis. addAssignments) bisa langsung pakai data segar tanpa menunggu state re-render
     } catch (e) { setErr(e.message || "Gagal memuat"); return []; }
     finally { setLoading(false); }
-  }, []);
+  }, [periodParam]);
   useEffect(() => { load(); }, [load]);
 
   // Presence realtime bersama (lib/martaPresence.js) - status "Aktif
@@ -217,9 +279,9 @@ function Body({ canManage, callerEmail }) {
   if (rows.length) mergePresence(rows, presenceRows);
   useEffect(() => {
     let on = true;
-    supabaseMarta.from("mh_branches").select("id,name,region").eq("active", true).then(({ data }) => { if (on) setBranches(data || []); });
+    supabaseMarta.rpc("mh_list_branches", { p_period: periodParam }).then(({ data }) => { if (on) setBranches(data || []); });
     return () => { on = false; };
-  }, []);
+  }, [periodParam]);
 
   // Susun ulang `visibleRows` (SUDAH difilter spm_sumatera) jadi struktur
   // Circle Sumatera → 3 Region → cabang×brand - SAMA PERSIS logika
@@ -309,7 +371,7 @@ function Body({ canManage, callerEmail }) {
   }
 
   // Set/lepas atasan utk sekumpulan bme/rge sekaligus - dipakai saat picker
-  // multi-select "BME/RGE di bawah ini" di form tmv/head disimpan. Tiap baris
+  // multi-select "DMO di bawah ini" di form tmv/head disimpan. Tiap baris
   // ditulis ulang lewat mh_update_assignment dgn SEMUA field aslinya utuh,
   // cuma p_supervisor_assignment_id yg berubah (jadi id tmv/head ini utk yg
   // baru dicentang, null utk yg baru dilepas).
@@ -330,7 +392,7 @@ function Body({ canManage, callerEmail }) {
     if (failed?.error) throw new Error(failed.error.message);
   }
 
-  // Simpan satu / banyak assignment sekaligus (BME/RGE bisa pilih banyak branch×brand).
+  // Simpan satu / banyak assignment sekaligus (DMO bisa pilih banyak branch×brand).
   // `subordinateIds` (opsional) - dipakai KHUSUS saat role tmv/head: daftar
   // id bme/rge yg langsung ditautkan sbg bawahan begitu assignment tmv/head
   // ini selesai dibuat (baru dapat id-nya SETELAH insert, makanya di-link
@@ -379,7 +441,7 @@ function Body({ canManage, callerEmail }) {
   }
 
   // `subChanges` (opsional) - { added, removed } id bme/rge, dipakai KHUSUS
-  // saat mengedit assignment role tmv/head lewat picker "BME/RGE di bawah
+  // saat mengedit assignment role tmv/head lewat picker "DMO di bawah
   // ini" (lihat SubordinatePicker) - ditautkan/dilepas SETELAH update baris
   // tmv/head-nya sendiri berhasil.
   async function updateAssignment(id, form, subChanges) {
@@ -471,7 +533,7 @@ function Body({ canManage, callerEmail }) {
       <div style={{ ...card, padding: 0, overflow: "hidden" }}>
         <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.line}`, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
           <div style={{ fontWeight: 800, fontSize: 14 }}>Daftar Assignment <span style={{ color: T.mid, fontWeight: 500 }}>· {visibleRows.length}</span></div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <div style={{ display: "flex", border: `1px solid ${T.line}`, borderRadius: 9, overflow: "hidden" }}>
               <button onClick={() => setViewMode("cards")} style={{ ...btn, border: "none", borderRadius: 0, background: viewMode === "cards" ? T.hover || "#F0F2F5" : "#fff", fontWeight: viewMode === "cards" ? 800 : 600 }}>Kartu</button>
               <button onClick={() => setViewMode("table")} style={{ ...btn, border: "none", borderRadius: 0, background: viewMode === "table" ? T.hover || "#F0F2F5" : "#fff", fontWeight: viewMode === "table" ? 800 : 600 }}>Tabel</button>
@@ -556,7 +618,7 @@ function Body({ canManage, callerEmail }) {
 }
 
 // Tampilan pohon hierarki (§4.2/§4.5a): SPM Sumatera → Head TMV (per region)
-// → Brand TMV (region × brand) → BME/RGE → TL DSF/MD → DSF. Head↔Brand TMV
+// → Brand TMV (region × brand) → DMO → TL DSF/MD → DSF. Head↔Brand TMV
 // dicocokkan lewat kesamaan `region` (bukan supervisor_assignment_id - lihat
 // §4.5a); level di bawahnya lewat `supervisor_assignment_id`.
 function HierarchyTree({ rows }) {
@@ -822,7 +884,7 @@ function CardEditModal({ row, callerEmail, onClose, onSave, onSaved, onDelete })
 /** Log Aktivitas - audit trail: siapa melakukan apa, kapan, ke siapa/posisi
  * apa. Scoping-nya PERSIS ditegakkan di server (mh_list_audit_log): SPM
  * Sumatera/Admin lihat SEMUA aktivitas; Head/Brand TMV cuma lihat aktivitas
- * di region (+brand utk TMV) miliknya; BME/RGE/TL DSF cuma lihat aktivitas
+ * di region (+brand utk TMV) miliknya; DMO/TL DSF cuma lihat aktivitas
  * diri sendiri + tim langsung mereka - jadi caller di sini TIDAK PERNAH
  * melihat lebih dari yg diizinkan, apa pun filter di UI. */
 function ActivityLogView({ callerEmail }) {
@@ -1513,11 +1575,11 @@ function SubordinatePicker({ candidates, selected, onToggle, region, brandLabel 
   return (
     <div>
       <div style={{ fontSize: 11.5, fontWeight: 700, color: T.mid, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: 6 }}>
-        BME/RGE di Bawah Ini · {REGION_LABEL[region] || region}{brandLabel ? ` · ${brandLabel}` : " · semua brand"}
+        DMO di Bawah Ini · {REGION_LABEL[region] || region}{brandLabel ? ` · ${brandLabel}` : " · semua brand"}
       </div>
       <div style={{ border: `1px solid ${T.line}`, borderRadius: 10, maxHeight: 240, overflowY: "auto" }}>
         {candidates.length === 0 && (
-          <div style={{ padding: 14, fontSize: 12, color: T.lo }}>Belum ada BME/RGE di region{brandLabel ? " & brand" : ""} ini.</div>
+          <div style={{ padding: 14, fontSize: 12, color: T.lo }}>Belum ada DMO di region{brandLabel ? " & brand" : ""} ini.</div>
         )}
         {candidates.map((c, i) => {
           const isSel = selected.has(c.id);
@@ -1560,7 +1622,7 @@ const CHEV = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' wi
 const selectStyle = { ...inp, appearance: "none", WebkitAppearance: "none", MozAppearance: "none", cursor: "pointer", backgroundImage: `url("${CHEV}")`, backgroundRepeat: "no-repeat", backgroundPosition: "right 11px center", backgroundSize: "13px", paddingRight: 32 };
 
 // ═══════════════════════ Tampilan Kartu (org-hierarchy, spt mobile) ═══════
-// Circle Sumatera → 3 Region → cabang×brand, BME/RGE digabung jadi satu
+// Circle Sumatera → 3 Region → cabang×brand, DMO digabung jadi satu
 // daftar (bukan role yg beda, cuma brand/cabang yg membedakan), MD & DSF
 // ditampilkan bertingkat langsung di bawahnya - SATU SUMBER visual dgn
 // app/martahub/m/user-management/page.jsx (mobile), cuma disusun ulang jadi
@@ -1683,10 +1745,10 @@ function BranchCard({ branchName, combos, canAdd, onAdd, onRemove, onEdit, calle
       {combos.map((combo) => {
         const brandColor = BRAND_COLOR_POP[combo.brand] || T.mid;
         const bmeRge = combo.byRole?.get("bme_rge") || [];
-        // BSM - setara BME/RGE penuh (lihat migrasi add_bsm_role_as_bme_rge_peer),
+        // BSM - setara DMO penuh (lihat migrasi add_bsm_role_as_bme_rge_peer),
         // ditampilkan sbg SlotRow sejajar, bukan masuk daftar executor.
         const bsm = combo.byRole?.get("bsm") || [];
-        // Semua "executor" di bawah BME/RGE (MD, DSF, TL DSF, DSE, GSE, AE,
+        // Semua "executor" di bawah DMO (MD, DSF, TL DSF, DSE, GSE, AE,
         // Promotor, CSE/RSE) - ditampilkan sbg daftar per role yg SUDAH
         // terisi, penambahan orang baru (role apa pun, boleh dobel) lewat
         // satu tombol "+ Tambahkan Executor" di bawah, bukan lagi baris
@@ -1698,14 +1760,14 @@ function BranchCard({ branchName, combos, canAdd, onAdd, onRemove, onEdit, calle
             <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: 0.2, padding: "2px 7px", borderRadius: 999, color: brandColor, background: `${brandColor}17` }}>
               {combo.brand === "tri" ? "3ID" : "IM3"}
             </span>
-            {/* BME/RGE - hanya 1 slot per cabang×brand */}
+            {/* DMO - hanya 1 slot per cabang×brand */}
             <SlotRow title="BME / RGE" role="bme_rge" people={bmeRge} canAdd={canAdd && bmeRge.length === 0} single
               context={ctx} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} compact />
-            {/* BSM - hanya 1 slot per cabang×brand, sama pola BME/RGE */}
-            <SlotRow title="BSM" role="bsm" people={bsm} canAdd={canAdd && bsm.length === 0} single
+            {/* BSM - hanya 1 slot per cabang×brand, sama pola DMO */}
+            <SlotRow title="HEAD OF AREA" role="bsm" people={bsm} canAdd={canAdd && bsm.length === 0} single
               context={ctx} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} compact />
             {executorRows.map(([r, list]) => (
-              <SlotRow key={r} title={`${ROLE_LABEL[r] || r} (di bawah BME/RGE)`} role={r} people={list} canAdd={false}
+              <SlotRow key={r} title={`${ROLE_LABEL[r] || r} (di bawah DMO)`} role={r} people={list} canAdd={false}
                 context={ctx} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} compact nested />
             ))}
             {canAdd && <AddExecutorButton ctx={ctx} onAdd={onAdd} />}
@@ -1717,7 +1779,7 @@ function BranchCard({ branchName, combos, canAdd, onAdd, onRemove, onEdit, calle
 }
 
 /** Tombol "+ Tambahkan Executor" - satu pintu masuk utk menambah SIAPA PUN
- * di bawah BME/RGE (MD, DSF, TL DSF, DSE, GSE, AE, Promotor, CSE/RSE, BSM).
+ * di bawah DMO (MD, DSF, TL DSF, DSE, GSE, AE, Promotor, CSE/RSE, BSM).
  * Klik -> modal: pilih role dulu (grid pill), baru isi email/nama (+ORG ID
  * kalau DSF). Menggantikan baris tambah terpisah per-role + toggle "role
  * lain" yg lama, supaya kartu cabang tetap ringkas & rapi. */
@@ -1772,7 +1834,7 @@ function ExecutorPickerModal({ ctx, onAdd, onClose }) {
           </div>
           <div>
             <div style={{ fontSize: 14.5, fontWeight: 800, color: T.hi }}>Tambahkan Executor</div>
-            <div style={{ fontSize: 11, color: T.mid, fontWeight: 600 }}>{ctx.branchName} · {ctx.brand === "tri" ? "3ID" : "IM3"} · di bawah BME/RGE</div>
+            <div style={{ fontSize: 11, color: T.mid, fontWeight: 600 }}>{ctx.branchName} · {ctx.brand === "tri" ? "3ID" : "IM3"} · di bawah DMO</div>
           </div>
         </div>
 

@@ -16,7 +16,7 @@ import { passesRow, optionsFor, FilterTh, FilterMenu } from "../../dashboard/com
 
 export default function MasterDataPage() {
   return (
-    <MartaShell active="master" title="Master Data" subtitle="Data bulanan MartaHub - List Site (branch BME/RGE) & Batas Wilayah.">
+    <MartaShell active="master" title="Master Data" subtitle="Data bulanan MartaHub - List Site (branch DMO) & Batas Wilayah.">
       {(ctx) => (
         // Suspense wajib di sini krn Body pakai useSearchParams() (baca
         // ?section=... utk buka langsung ke satu sub-menu, mis. dari tombol
@@ -86,7 +86,7 @@ function Body({ canManage, email }) {
       <div style={{ fontSize: 13, color: T.mid, marginBottom: 18 }}>Data yang perlu diperbarui tiap bulan.</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
         <MenuCard
-          icon={Database} label="Data Site (Branch BME/RGE)"
+          icon={Database} label="Data Site (Branch DMO)"
           desc={`Lihat & filter data List Site per periode (Site ID, Branch, Kabupaten, Kecamatan, dst) - upload data baru lewat tombol "+ Upload Data Site" di dalamnya.`}
           onClick={() => { setSiteDataPeriod(null); setActive("site_data"); }}
           status={
@@ -103,7 +103,7 @@ function Body({ canManage, email }) {
         />
         <MenuCard
           icon={Network} label="Struktur Branch & Brand"
-          desc="Hirarki Region → Brand → Branch beserta akun (TMV / BME / RGE) yang termapping, plus status pengisian (Terisi/Kosong)."
+          desc="Hirarki Region → Brand → Branch beserta akun (TMV / DMO) yang termapping, plus status pengisian (Terisi/Kosong)."
           onClick={() => setActive("hierarchy")}
         />
         <MenuCard
@@ -1115,7 +1115,7 @@ function HierarchyView() {
         const brNode = rNode.brands.get(brand); if (!brNode) continue;
         brNode.tmv.push(a);
       } else if (a.role === "bme_rge" || a.role === "bsm") {
-        // "bsm" setara BME/RGE penuh (branch/brand-scoped, sama-sama
+        // "bsm" setara DMO penuh (branch/brand-scoped, sama-sama
         // "petugas lapangan" cabang) - digabung ke daftar yg sama, cuma
         // tag chip-nya beda (lihat AccountChip di bawah).
         for (const rNode of regions.values()) {
@@ -1170,7 +1170,7 @@ function HierarchyView() {
   return (
     <div style={{ maxWidth: 1600, width: "100%" }}>
       <div style={{ fontSize: 18, fontWeight: 800, color: T.hi, marginBottom: 3 }}>Struktur Branch & Brand</div>
-      <div style={{ fontSize: 13, color: T.mid, marginBottom: 14 }}>Hirarki wilayah & pemetaan akun. Badge <b>Kosong</b> menandai branch×brand yang belum punya petugas lapangan. BME/RGE hanya label - fungsinya sama.</div>
+      <div style={{ fontSize: 13, color: T.mid, marginBottom: 14 }}>Hirarki wilayah & pemetaan akun. Badge <b>Kosong</b> menandai branch×brand yang belum punya petugas lapangan. DMO hanya label - fungsinya sama.</div>
 
       {heads.length > 0 && (
         <div style={{ ...card, marginBottom: 12, display: "flex", alignItems: "center", gap: 12, background: "linear-gradient(135deg,#FFF5F7,#FFFFFF)", borderColor: T.primaryBd }}>
@@ -1253,7 +1253,7 @@ function TreeRow({ depth = 0, open, onClick, icon, title, meta, right }) {
 
 function BranchRow({ bn }) {
   // BME & RGE fungsional identik → cukup ada minimal satu petugas lapangan.
-  // Label BME/RGE tetap ditampilkan sebagai remark per akun.
+  // Label DMO tetap ditampilkan sebagai remark per akun.
   const filled = bn.bmeRge.length > 0;
   const cov = filled
     ? { t: "Terisi", c: T.success, bg: T.successBg, icon: <UserCheck size={11} /> }
@@ -1270,7 +1270,7 @@ function BranchRow({ bn }) {
         {bn.bmeRge.length === 0
           ? <span style={{ fontSize: 11.5, color: T.lo, fontStyle: "italic" }}>- belum ada -</span>
           : <>
-              {bn.bmeRge.map((a) => <AccountChip key={a.id} a={a} tag={a.role === "bsm" ? "BSM" : "BME/RGE"} />)}
+              {bn.bmeRge.map((a) => <AccountChip key={a.id} a={a} tag={a.role === "bsm" ? "HEAD OF AREA" : "DMO"} />)}
             </>}
       </div>
     </div>

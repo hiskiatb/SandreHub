@@ -1,6 +1,6 @@
 "use client";
 /**
- * /martahub/m/activities - Daftar aktivitas BME/RGE dengan tab filter status,
+ * /martahub/m/activities - Daftar aktivitas DMO dengan tab filter status,
  * data dari `mh_activities_for_me()` (RPC scoping sama dgn app Flutter).
  */
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition, Suspense } from "react";
@@ -72,7 +72,7 @@ const CAT_LABEL = { directSelling: "Direct Selling", jointEvent: "Joint Event", 
 // mentah manapun, krn maksudnya murni "mana yg harus saya beresin sekarang":
 // draft plan yg belum lengkap, plan/report yg diminta revisi, ATAU plan yg
 // event-nya sudah tiba/lewat tapi actual belum diisi. Ini yg paling
-// membantu semua level (BME/RGE - tahu apa yg harus dikerjakan; TMV/Head -
+// membantu semua level (DMO - tahu apa yg harus dikerjakan; TMV/Head -
 // tahu siapa yg butuh ditindaklanjuti).
 function needsAction(r, userId) {
   if (r.status === "revision_needed") return true;

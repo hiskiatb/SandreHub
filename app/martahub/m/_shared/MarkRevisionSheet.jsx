@@ -58,8 +58,8 @@ export default function MarkRevisionSheet({ activityId, eventName, isActualStage
 
       <div style={{ marginTop: 12, fontSize: 12.5, color: "#5A5A68", lineHeight: 1.6 }}>
         {isActualStage
-          ? "Laporan actual akan dikembalikan ke BME/RGE untuk diperbaiki."
-          : "Plan akan dikembalikan ke BME/RGE untuk diperbaiki sebelum bisa dieksekusi."}
+          ? "Laporan actual akan dikembalikan ke DMO untuk diperbaiki."
+          : "Plan akan dikembalikan ke DMO untuk diperbaiki sebelum bisa dieksekusi."}
         {" "}Tulis dengan jelas apa yang perlu diperbaiki - catatan ini langsung tampil ke pemilik plan.
       </div>
 

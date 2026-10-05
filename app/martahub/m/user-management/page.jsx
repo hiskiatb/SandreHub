@@ -9,7 +9,7 @@
  *   1. spm_sumatera/admin/head/tmv → TABEL ORGANISASI 4 LEVEL, LANGSUNG
  *      TERBUKA PENUH (tanpa accordion/tap-untuk-buka sheet):
  *        Circle Sumatera → Region (North/Central/South Sumatera) → Cabang
- *        → kombo cabang×brand (BME/RGE).
+ *        → kombo cabang×brand (DMO).
  *      Circle & tiap Region SENDIRI juga punya 3 slot posisi tetap: Head
  *      TMV, TMV IM3, TMV 3ID (bukan orang cabang - lihat fetchOrgHierarchy
  *      di planData.js). spm_sumatera/admin lihat pohon PENUH (4 level);
@@ -47,20 +47,35 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft, Search, Loader2, X, Check, Save, Plus,
   Building2, Users, MapPin, Crown, UserX, UserPlus,
-  History, LogIn, LogOut, UserCog, Pencil,
+  History, LogIn, LogOut, UserCog, Pencil, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { ADDABLE_ROLES_FOR, EXECUTOR_ROLES, fetchOrgHierarchy, REGIONS, BRAND_DISPLAY } from "../_shared/planData";
 import { useLivePresenceRows } from "../../../../lib/martaPresence";
 
-const ROLE_LABEL = { spm_sumatera: "SPM Sumatera", head: "Head TMV", tmv: "Brand TMV", bme_rge: "BME/RGE", tl_dsf: "TL DSF", dsf: "DSF", md: "MD", dse: "DSE", gse: "GSE", ae: "AE", promotor: "Promotor", cse_rse: "CSE/RSE", bsm: "BSM", admin: "Admin" };
+const ROLE_LABEL = { spm_sumatera: "SPM Sumatera", head: "Head TMV", tmv: "Brand TMV", bme_rge: "DMO", tl_dsf: "TL DSF", dsf: "DSF", md: "MD", dse: "DSE", gse: "GSE", ae: "AE", promotor: "Promotor", cse_rse: "CSE/RSE", bsm: "HEAD OF AREA", admin: "Admin" };
 const ROLE_COLOR = {
   spm_sumatera: "#7C3AED", head: "#0F6E56", tmv: "#0F6E56", admin: "#7C3AED",
   bme_rge: "#ED1C24", tl_dsf: "#B45309", dsf: "#B45309",
   md: "#185FA5", dse: "#185FA5", gse: "#185FA5", ae: "#185FA5", promotor: "#185FA5", cse_rse: "#185FA5", bsm: "#185FA5",
 };
 const BRAND_COLOR = { im3: "#EAB308", tri: "#D946EF" }; // im3 = kuning terang, 3ID = magenta terang - sengaja dibuat pop/kontras spy dua brand ini tidak ketuker
+
+// Periode (bulan) yang sedang dilihat di tabel organisasi. Tanggal
+// disimpan sebagai tanggal 1 bulan tsb (lokal) - dibandingkan via
+// getFullYear()/getMonth() shg aman dari offset timezone. Bulan BERJALAN
+// (sama dgn hari ini) selalu dikirim sbg p_period=null ke fetchOrgHierarchy
+// supaya perilakunya identik dgn sebelum fitur ini ada (bukan dibekukan ke
+// tanggal 1). Struktur cabang/assignment OTOMATIS "mengikuti upload
+// terakhir" utk bulan yg belum pernah diubah - ini bukan logika UI, tapi
+// konsekuensi alami valid_to/effective_from yang defaultnya NULL (RPC
+// mh_list_assignments & mh_list_branches di Supabase) - jadi memilih bulan
+// depan yang belum disentuh otomatis menampilkan data final yg sama dgn
+// bulan ini, tanpa perlu re-upload apa pun tiap bulan.
+function isSameMonth(a, b) { return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth(); }
+function monthLabel(d) { return d.toLocaleDateString("id-ID", { month: "long", year: "numeric" }); }
+function periodToISO(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`; }
 
 // Format "terakhir aktif" (last_login_at) relatif - sama pola dgn desktop
 // (app/martahub/assignments/page.jsx). null = belum pernah login sama sekali.
@@ -138,7 +153,7 @@ const ACTION_META = {
 /** Log Aktivitas (mobile) - versi ringkas dari ActivityLogView desktop,
  * scoping-nya SAMA PERSIS krn keduanya manggil RPC mh_list_audit_log yg
  * sama (SPM Sumatera/Admin lihat semua; Head/TMV lihat region/brand
- * sendiri; BME/RGE/TL DSF cuma lihat diri sendiri + tim langsung). */
+ * sendiri; DMO/TL DSF cuma lihat diri sendiri + tim langsung). */
 function ActivityLogView({ callerEmail }) {
   const [logs, setLogs] = useState(null);
   const [err, setErr] = useState("");
@@ -217,7 +232,7 @@ function ActivityLogView({ callerEmail }) {
 // Halaman ini khusus role yang punya "bawahan" utk dikelola - dsf/md/dst di
 // bawah tl_dsf tidak dapat akses krn mereka bukan atasan siapa pun & juga
 // tidak punya kapabilitas tambah (lihat ADDABLE_ROLES_FOR).
-// "bsm" ditambahkan - setara BME/RGE penuh (Kelola Tim sendiri, lihat
+// "bsm" ditambahkan - setara DMO penuh (Kelola Tim sendiri, lihat
 // ADDABLE_ROLES_FOR.bsm di planData.js), jadi dapat akses yg sama.
 const ALLOWED_ROLES = ["spm_sumatera", "admin", "head", "tmv", "bme_rge", "bsm", "tl_dsf"];
 const GRID_ROLES = ["spm_sumatera", "admin", "head", "tmv"];
@@ -317,6 +332,11 @@ function OrgHierarchyView({ scope, email }) {
   const [removeTarget, setRemoveTarget] = useState(null); // person row
   const [removing, setRemoving] = useState(false);
   const [removeErr, setRemoveErr] = useState("");
+  // Periode (bulan) yang dilihat - default bulan berjalan. Lihat catatan
+  // isSameMonth/periodToISO di atas utk kenapa bulan berjalan tetap kirim
+  // p_period=null (identik dgn perilaku sebelum selector ini ada).
+  const [period, setPeriod] = useState(() => { const d = new Date(); d.setDate(1); return d; });
+  const isCurrentPeriod = isSameMonth(period, new Date());
 
   const circleRef = useRef(null);
   const regionRefs = useRef({});
@@ -324,11 +344,11 @@ function OrgHierarchyView({ scope, email }) {
   const load = useCallback(async () => {
     setErr("");
     try {
-      const d = await fetchOrgHierarchy(scope, null);
+      const d = await fetchOrgHierarchy(scope, isCurrentPeriod ? null : periodToISO(period));
       setData(d);
     } catch (e) { setErr(e.message || "Gagal memuat data"); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope.role, scope.region, scope.brand]);
+  }, [scope.role, scope.region, scope.brand, period, isCurrentPeriod]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -424,6 +444,12 @@ function OrgHierarchyView({ scope, email }) {
 
   if (data === null && !err) return <ShellSpinner />;
 
+  // Tambah/Edit/Hapus TETAP bisa dilakukan di bulan apa pun yang sedang
+  // dilihat (TIDAK dikunci/strict) - perubahan selalu berlaku "mulai
+  // sekarang" (RPC mh_assign_user/mh_delete_assignment tidak punya konsep
+  // back-date dari UI ini), aman krn soft-revoke (valid_to ditutup, baris
+  // lama tidak pernah hilang) - jadi menjelajah bulan lampau murni utk
+  // MELIHAT riwayat dgn aman, bukan pembatasan akses edit.
   const addableRoles = ADDABLE_ROLES_FOR[scope.role] || [];
 
   function scrollToNode(node) {
@@ -434,6 +460,28 @@ function OrgHierarchyView({ scope, email }) {
     <div>
       {err && <Notice color="#C62828" bg="#FDECEC">{err}</Notice>}
       <SearchBox value={q} onChange={setQ} placeholder="Cari nama, email, Branch, atau posisi…" />
+
+      {/* Selector periode (bulan) - lihat catatan isSameMonth/periodToISO
+          di atas. Bulan lampau = read-only (riwayat); bulan berjalan/depan
+          tetap bisa diedit dan otomatis mengikuti susunan terakhir yang
+          di-upload kalau belum ada perubahan baru utk bulan itu. */}
+      <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+        padding: "8px 10px", borderRadius: 10, border: "1px solid #E4E5EA", background: "#fff" }}>
+        <button type="button" onClick={() => setPeriod((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
+          style={{ width: 28, height: 28, borderRadius: 8, border: "1px solid #E4E5EA", background: "#F7F7F9", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
+          <ChevronLeft size={15} />
+        </button>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>{monthLabel(period)}</div>
+          <div style={{ fontSize: 10.5, color: "#8A8A96", marginTop: 1 }}>
+            {isCurrentPeriod ? "Bulan berjalan" : period < new Date(new Date().getFullYear(), new Date().getMonth(), 1) ? "Riwayat - bisa tetap diedit" : "Mengikuti susunan terakhir"}
+          </div>
+        </div>
+        <button type="button" onClick={() => setPeriod((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
+          style={{ width: 28, height: 28, borderRadius: 8, border: "1px solid #E4E5EA", background: "#F7F7F9", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
+          <ChevronRight size={15} />
+        </button>
+      </div>
 
       {/* Navigasi cepat - halaman ini sengaja menampilkan SEMUA level
           sekaligus (tanpa accordion), jadi bisa jadi panjang. Pill ini
@@ -704,7 +752,7 @@ function RegionPanel({ region, addableRoles, onSaveAssignment, onRemove, current
  * langsung menampilkan baris BME & RGE siap-isi. Role LAIN yang kebetulan
  * sudah ter-assign ke kombo ini (data lama) tetap ditampilkan (jangan
  * pernah disembunyikan/hilang), tapi TANPA form tambah baru - role inti
- * yang sengaja dikelola dari tabel ini cuma BME/RGE. */
+ * yang sengaja dikelola dari tabel ini cuma DMO. */
 function BranchBlock({ branchName, combos, addableRoles, onSaveAssignment, onRemove, currentEmail }) {
   return (
     <div style={{ background: "#FBFBFC", border: "1px solid #ECEDF0", borderRadius: 14, padding: "11px 12px" }}>
@@ -719,12 +767,12 @@ function BranchBlock({ branchName, combos, addableRoles, onSaveAssignment, onRem
         // (sudah dipisah lewat kartu combo ini sendiri), bukan role di DB -
         // dan cuma SATU slot per cabang×brand (spt Head TMV/Brand TMV).
         const bmeRge = combo.byRole?.get("bme_rge") || [];
-        // BSM - role setara BME/RGE penuh (bisa buat plan & lihat aktivitas
-        // BME/RGE lain sendiri di cabang×brand yg sama - lihat migrasi
+        // BSM - role setara DMO penuh (bisa buat plan & lihat aktivitas
+        // DMO lain sendiri di cabang×brand yg sama - lihat migrasi
         // add_bsm_role_as_bme_rge_peer), jadi DITAMPILKAN sbg baris
         // sejajar "BME / RGE" (bukan masuk daftar executor di bawahnya lagi).
         const bsm = combo.byRole?.get("bsm") || [];
-        // Semua "executor" di bawah BME/RGE (MD, DSF, TL DSF, DSE, GSE, AE,
+        // Semua "executor" di bawah DMO (MD, DSF, TL DSF, DSE, GSE, AE,
         // Promotor, CSE/RSE) - yg SUDAH terisi ditampilkan sbg daftar
         // per role, penambahan orang baru (role apa pun yg diizinkan utk
         // caller ini, boleh dobel) lewat satu tombol gabungan di bawah.
@@ -745,12 +793,12 @@ function BranchBlock({ branchName, combos, addableRoles, onSaveAssignment, onRem
               people={bmeRge} canAdd={canAddBmeRge}
               context={ctx} onSaveAssignment={onSaveAssignment} onRemove={onRemove} compact currentEmail={currentEmail} />
             {/* Baris BSM - satu slot per cabang×brand, sama persis pola
-                BME/RGE di atas (bukan bawahannya). */}
-            <InlineRoleRow title="BSM" role="bsm" single
+                DMO di atas (bukan bawahannya). */}
+            <InlineRoleRow title="HEAD OF AREA" role="bsm" single
               people={bsm} canAdd={canAddBsm}
               context={ctx} onSaveAssignment={onSaveAssignment} onRemove={onRemove} compact currentEmail={currentEmail} />
             {executorRows.map(([r, list]) => (
-              <InlineRoleRow key={r} title={`${ROLE_LABEL[r] || r} (di bawah BME/RGE)`} role={r} people={list} canAdd={false}
+              <InlineRoleRow key={r} title={`${ROLE_LABEL[r] || r} (di bawah DMO)`} role={r} people={list} canAdd={false}
                 context={ctx} onSaveAssignment={onSaveAssignment} onRemove={onRemove} compact currentEmail={currentEmail} nested />
             ))}
             {executorOptions.length > 0 && (
@@ -764,7 +812,7 @@ function BranchBlock({ branchName, combos, addableRoles, onSaveAssignment, onRem
 }
 
 /** Tombol "+ Tambahkan Executor" (mobile) - satu pintu masuk utk menambah
- * SIAPA PUN di bawah BME/RGE (MD, DSF, atau role cabang lain), opsi role yg
+ * SIAPA PUN di bawah DMO (MD, DSF, atau role cabang lain), opsi role yg
  * ditawarkan sudah disaring sesuai ADDABLE_ROLES_FOR caller. Membuka bottom
  * sheet: pilih role dulu (grid pill), baru isi email/nama (+ORG ID kalau
  * DSF). Menggantikan baris tambah terpisah per-role yg lama. */
@@ -820,7 +868,7 @@ function ExecutorPickerSheet({ ctx, executorOptions, onClose, onSave }) {
           </div>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 14.5, fontWeight: 800, color: "#17181C" }}>Tambahkan Executor</div>
-            <div style={{ fontSize: 11, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ctx.branchName} · {BRAND_DISPLAY[ctx.brand] || ctx.brand} · di bawah BME/RGE</div>
+            <div style={{ fontSize: 11, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{ctx.branchName} · {BRAND_DISPLAY[ctx.brand] || ctx.brand} · di bawah DMO</div>
           </div>
         </div>
 
@@ -871,7 +919,7 @@ function ExecutorPickerSheet({ ctx, executorOptions, onClose, onSave }) {
  * sudah ada TIDAK PERNAH hilang dari render ini kecuali admin menekan
  * Hapus (dgn konfirmasi terpisah, lihat RemoveConfirmSheet). */
 function InlineRoleRow({ title, role, mixedRoles, people, canAdd, context, onSaveAssignment, onRemove, compact, currentEmail, nested, needsOrgId, single }) {
-  // mixedRoles: sisa prop lama dari saat BME/RGE masih 2 role terpisah -
+  // mixedRoles: sisa prop lama dari saat DMO masih 2 role terpisah -
   // sekarang role="bme_rge" tunggal, prop ini sudah tidak dipakai lagi
   // di sini tapi dibiarkan ada di signature komponen (tidak bahaya, cuma
   // tidak pernah true).
@@ -1030,7 +1078,7 @@ function RemoveConfirmSheet({ person, loading, err, onCancel, onConfirm }) {
 
 // ═══════════════════════════ Tampilan tim sendiri (bme/rge/tl_dsf) ══════════
 
-/** BME/RGE/TL DSF tidak mengelola wilayah - cuma tim langsung mereka
+/** DMO/TL DSF tidak mengelola wilayah - cuma tim langsung mereka
  * sendiri (supervisor_assignment_id = assignment_id mereka). Ambil
  * assignment_id sendiri dari mh_profiles (via email), lalu filter hasil
  * mh_list_assignments (sudah difilter periode) berdasarkan itu. */

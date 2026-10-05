@@ -36,17 +36,17 @@ const STATUS = {
 // Daftar kolom MANDATORY utk sebuah Plan (baik diisi manual lewat app maupun
 // lewat Import Excel/Backdoor) - dipakai utk cek kelengkapan data backdoor,
 // krn validasi minimal di RPC import (mh_import_plan_batch) TIDAK mengecek
-// semuanya (mis. Target SP/FWA & BME/RGE tidak divalidasi di RPC spy row yg
+// semuanya (mis. Target SP/FWA & DMO tidak divalidasi di RPC spy row yg
 // datanya sebagian kosong tetap kequarantine krn alasan lain, bkn ke-block
 // total). Balikin daftar {key,label} kolom yg masih kosong utk row tsb.
-// Nama BME/RGE utk ditampilkan - PRIORITAS: pemilik SUNGGUHAN (created_by,
+// Nama DMO utk ditampilkan - PRIORITAS: pemilik SUNGGUHAN (created_by,
 // diisi RPC saat activity dibuat/diklaim oleh akun login asli) dulu. Kalau
 // kosong DAN baris ini hasil Import Excel (Backdoor), tarik nama dari
 // assignment User Management (mh_profiles role=bme_rge aktif, dicocokkan
-// branch+brand activity ini) SEKALIPUN BME/RGE itu belum pernah login -
+// branch+brand activity ini) SEKALIPUN DMO itu belum pernah login -
 // supaya kolom tidak kosong padahal assignment-nya sudah ada. Ini MURNI
 // tampilan (get()/export, TIDAK ditulis ke kolom bme_user_id yg terkunci
-// foreign key ke auth.users) - begitu BME/RGE aslinya login & activity ini
+// foreign key ke auth.users) - begitu DMO aslinya login & activity ini
 // benar2 ke-assign ke akun asli (created_by terisi), baris ini otomatis
 // pakai nama asli tsb (cabang pertama menang duluan).
 function resolveCreatorName(r, meta) {
@@ -65,7 +65,7 @@ function getIncompleteImportFields(r, meta) {
   const siteMeta = meta?.siteMetaMap?.[r.site_id];
   if (!siteMeta?.kabupaten) missing.push({ key: "kabupaten", label: "Kabupaten" });
   if (!siteMeta?.kecamatan) missing.push({ key: "kecamatan", label: "Kecamatan" });
-  if (!resolveCreatorName(r, meta)) missing.push({ key: "creator", label: "BME/RGE" });
+  if (!resolveCreatorName(r, meta)) missing.push({ key: "creator", label: "DMO" });
   if (!r.event_category) missing.push({ key: "eventCategory", label: "Event Category" });
   if (!r.poi_type) missing.push({ key: "poi", label: "POI" });
   if (!r.network_category) missing.push({ key: "network", label: "Network Category" });
@@ -80,9 +80,9 @@ function deriveStatusInfo(r, meta) {
   // (lihat mh_import_plan_batch - cuma cek event_name/brand/plan_date/
   // network_category/area_potential/site_id), TAPI itu tidak berarti semua
   // kolom mandatory plan sudah terisi lengkap - kolom lain (target SP/FWA,
-  // BME/RGE dari User Management, Kabupaten/Kecamatan dari mapping Site ID,
+  // DMO dari User Management, Kabupaten/Kecamatan dari mapping Site ID,
   // Micro Cluster) bisa saja masih kosong krn cell Excel-nya memang kosong
-  // atau master data pendukungnya (assignment BME/RGE, mapping site) belum
+  // atau master data pendukungnya (assignment DMO, mapping site) belum
   // lengkap. Cek SEMUA kolom mandatory itu di sini & tandai "Belum Lengkap"
   // kalau ada yg masih kosong - TIMPA status lifecycle lain, walau data itu
   // sendiri tadinya dianggap valid & lolos saat proses import.
@@ -90,7 +90,7 @@ function deriveStatusInfo(r, meta) {
   // status DB-nya sudah "completed" - artinya laporan actual-nya sendiri
   // sudah disubmit & tervalidasi lengkap (trigger mh_validate_activity_actual),
   // tapi kalau ada kolom metadata sekunder yg kosong (Micro Cluster, mapping
-  // Kabupaten/Kecamatan dari Site ID, nama BME/RGE, Cost Estimate, dst -
+  // Kabupaten/Kecamatan dari Site ID, nama DMO, Cost Estimate, dst -
   // biasanya krn master data pendukungnya belum lengkap, BUKAN krn actual-nya
   // belum selesai) row itu ikut ditimpa jadi "Belum Lengkap", padahal
   // sebenarnya sudah Selesai. Ini bikin pill "Selesai" & KPI "Laporan Actual"
@@ -261,7 +261,7 @@ function Body({ email }) {
   // sudah dipakai daftar activities mobile (app/martahub/m/activities/page.jsx).
   const [siteMetaMap, setSiteMetaMap] = useState({});
   const [profileMap, setProfileMap] = useState({});
-  // Assignment BME/RGE SEKARANG (User Management) - key `${brand}|${BRANCH}`,
+  // Assignment DMO SEKARANG (User Management) - key `${brand}|${BRANCH}`,
   // dipakai resolveCreatorName() sbg fallback tampilan utk baris Import
   // Excel yg belum ke-assign ke akun login asli. Lihat catatan di
   // resolveCreatorName().
@@ -315,7 +315,7 @@ function Body({ email }) {
       const [{ data: branches }, { data: profiles }, { data: bmeAssignRows }, { data: lbRows }, { data: batches }, { data: sites }] = await Promise.all([
         supabaseMarta.from("mh_branches").select("id, name"),
         supabaseMarta.from("mh_profiles").select("id, full_name"),
-        // Assignment BME/RGE aktif (User Management) - TERPISAH dari query
+        // Assignment DMO aktif (User Management) - TERPISAH dari query
         // profiles di atas krn butuh brand/branch_name/valid_from, & dipakai
         // resolveCreatorName() sbg fallback nama utk baris Import Excel yg
         // belum ke-assign ke akun login asli (lihat catatan di fungsi itu).
@@ -453,7 +453,7 @@ function Body({ email }) {
     { key: "poi", label: "POI", width: 110, filter: true, get: (r) => unsnake(r.poi_type) },
     { key: "mc", label: "Micro Cluster", width: 120, filter: true, get: (r) => r.mc || "-" },
     { key: "kecamatan", label: "Kecamatan", width: 150, filter: true, get: (r) => siteMetaMap[r.site_id]?.kecamatan || "-" },
-    { key: "creator", label: "BME/RGE", width: 150, filter: true, get: (r) => resolveCreatorName(r, { profileMap, bmeAssignMap, branchMap }) || "-" },
+    { key: "creator", label: "DMO", width: 150, filter: true, get: (r) => resolveCreatorName(r, { profileMap, bmeAssignMap, branchMap }) || "-" },
     { key: "siteId", label: "Site Plan", width: 100, filter: true, get: (r) => r.site_id || "-" },
     { key: "actualSiteId", label: "Site Actual", width: 100, filter: true, get: (r) => r.actual_site_id || "-" },
     { key: "long", label: "Long", width: 90, filter: true, get: (r) => (r.longitude != null ? String(r.longitude) : "-"), raw: (r) => r.longitude, numeric: true },
@@ -609,7 +609,7 @@ function Body({ email }) {
 
     // Achievement & Productivity - rata-rata dari mh_leaderboard_summary
     // (dihitung server-side dari bobot mh_settings.leaderboard_weights),
-    // discope ke BME/RGE yang punya LAPORAN SELESAI (kpiBaseRows), bukan
+    // discope ke DMO yang punya LAPORAN SELESAI (kpiBaseRows), bukan
     // filteredRows - konsisten dgn definisi "Selesai" di atas.
     const bmeIds = Array.from(new Set(kpiBaseRows.map((r) => r.bme_user_id).filter(Boolean)));
     const lbEntries = bmeIds.map((id) => lbMap[id]).filter(Boolean);
@@ -707,7 +707,7 @@ function Body({ email }) {
   const [showSuggest, setShowSuggest] = useState(false);
 
   // ── Saran pencarian - dibangun dari nilai unik yg SUDAH ada di data
-  //    (event, branch, MC, BME/RGE, site, alamat - field yg sama persis dgn
+  //    (event, branch, MC, DMO, site, alamat - field yg sama persis dgn
   //    yg dicocokkan searchFiltered di atas), difilter oleh ketikan saat
   //    ini, maks 8 item, tanpa duplikat. ─────────────────────────────────
   const searchSuggestions = useMemo(() => {
@@ -720,7 +720,7 @@ function Body({ email }) {
       if (branch) pool.push({ label: branch, kind: "Branch" });
       if (r.mc) pool.push({ label: r.mc, kind: "MC" });
       const creator = resolveCreatorName(r, { profileMap, bmeAssignMap, branchMap });
-      if (creator) pool.push({ label: creator, kind: "BME/RGE" });
+      if (creator) pool.push({ label: creator, kind: "DMO" });
       if (r.site_id) pool.push({ label: r.site_id, kind: "Site" });
       if (r.address) pool.push({ label: r.address, kind: "Alamat" });
     }

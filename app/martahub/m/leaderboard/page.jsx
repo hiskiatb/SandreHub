@@ -1,6 +1,6 @@
 "use client";
 /**
- * /martahub/m/leaderboard - Peringkat BME/RGE (web mobile).
+ * /martahub/m/leaderboard - Peringkat DMO (web mobile).
  * Baca dari RPC `mh_leaderboard_for_me(p_month)` (SECURITY DEFINER), BUKAN
  * lagi langsung dari view `mh_leaderboard_summary` - view lama dulu
  * dikembalikan MENTAH ke client tanpa scoping DB sama sekali (500 baris
@@ -308,7 +308,7 @@ export default function LeaderboardPage() {
                 <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginTop: 3 }}>
                   <div style={{ fontSize: 26, fontWeight: 800 }}>#{fmtInt(myRow[mode.rankField])}</div>
                   {myRow.total_participants > 0 && (
-                    <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.8 }}>dari {fmtInt(myRow.total_participants)} BME/RGE</div>
+                    <div style={{ fontSize: 12, fontWeight: 700, opacity: 0.8 }}>dari {fmtInt(myRow.total_participants)} DMO</div>
                   )}
                 </div>
               </div>

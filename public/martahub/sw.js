@@ -75,7 +75,7 @@ self.addEventListener("fetch", (event) => {
 
 /**
  * Web Push — notifikasi TMV saat ada plan/laporan actual baru masuk sesuai
- * scope-nya, dan reminder BME/RGE 07.00/12.00/18.00 WIB utk laporan actual
+ * scope-nya, dan reminder DMO 07.00/12.00/18.00 WIB utk laporan actual
  * yg belum diisi. Payload dikirim server-side (edge function mh-send-push,
  * dipicu trigger/cron Postgres) sbg JSON: { title, body, url, tag }.
  */

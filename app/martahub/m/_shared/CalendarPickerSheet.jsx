@@ -20,7 +20,7 @@
  * ringkasan waktu & diketuk utk membuka POPUP kecil (bukan bottom sheet
  * berat spt sebelumnya) tempat mengatur Seharian/Mulai/Berakhir - gaya
  * "productivity app" yang umum (Google Calendar/Todoist): tap baris → popup
- * kecil di tengah layar → atur → tutup. Ini supaya kalau BME/RGE berbeda
+ * kecil di tengah layar → atur → tutup. Ini supaya kalau DMO berbeda
  * punya beberapa activity plan di tanggal yang sama, sisi TMV yang melihat
  * kalender gabungan bisa mengurutkan activity² tsb berdasarkan jam mulainya
  * masing-masing - rapi & tidak ambigu. Lihat `planData.js`:

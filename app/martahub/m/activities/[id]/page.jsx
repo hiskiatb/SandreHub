@@ -27,7 +27,7 @@ const PHOTO_BUCKET = "mh-photos"; // sama persis dgn submit/page.jsx - satu buck
 import DeleteActivitySheet from "../../_shared/DeleteActivitySheet";
 import MarkRevisionSheet from "../../_shared/MarkRevisionSheet";
 
-// Roles di ATAS BME/RGE (Brand TMV/'tmv', Head TMV/'head', SPM Sumatera/
+// Roles di ATAS DMO (Brand TMV/'tmv', Head TMV/'head', SPM Sumatera/
 // 'spm_sumatera', Admin) yang boleh menandai Activity Plan perlu direvisi -
 // SAMA PERSIS dgn daftar peran di versi desktop (ActivityDetail.jsx,
 // REVISION_ROLES) & di RPC mh_activity_mark_revision sendiri (pengecekan
@@ -320,7 +320,7 @@ export default function ActivityDetailPage() {
 
                 {/* Tandai Revisi - SATU-SATUNYA jalan (bareng versi desktop
                     ActivityDetail.jsx) utk memicu status Revisi, cuma tampil
-                    utk role di atas BME/RGE & cuma di status yg masuk akal
+                    utk role di atas DMO & cuma di status yg masuk akal
                     utk direvisi (Plan Diajukan/Selesai). */}
                 {REVISION_ROLES.includes(scope?.role) && (a.status === "plan_submitted" || a.status === "completed") && (
                   <>

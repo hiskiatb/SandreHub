@@ -10,7 +10,7 @@ function mdPhotoUrl(path) {
 }
 
 // ── Hierarki approval MartaHub (bottom-up) ──────────────────────────────────
-//   BME/RGE (lapangan)  → mengajukan plan (status: plan_submitted)
+//   DMO (lapangan)  → mengajukan plan (status: plan_submitted)
 //   Brand TMV           → menyetujui/menolak, TERBATAS ke brand & region miliknya
 //   Head TMV / Admin     → menyetujui/menolak SEMUA brand & region
 // Otorisasi nyata (bukan sekadar UI) ditegakkan di RPC mh_web_decide_plan /
@@ -27,7 +27,7 @@ function mdPhotoUrl(path) {
 // di sini hanya jadi katup pengaman manual (mh_activity_manual_override) utk
 // laporan actual yg sebenarnya valid (mis. kolom kosong krn alasan wajar).
 
-const ROLE_LABEL = { admin: "Admin", head: "Head TMV", tmv: "Brand TMV", bme_rge: "BME/RGE", bsm: "BSM", pending: "Pending" };
+const ROLE_LABEL = { admin: "Admin", head: "Head TMV", tmv: "Brand TMV", bme_rge: "DMO", bsm: "HEAD OF AREA", pending: "Pending" };
 const CAT_LABEL = { directSelling: "Direct Selling", jointEvent: "Joint Event", openBooth: "Open Booth", project: "Project", sponsorship: "Sponsorship", thematic: "Thematic" };
 
 const fmtDate = (s) => {
@@ -57,7 +57,7 @@ const HISTORY_COLS = "id, event_name, brand, mc, site_id, status, revision_targe
 
 export default function ApprovalPage() {
   return (
-    <MartaShell active="approval" title="Approval Center" subtitle="Alur persetujuan bottom-up: BME/RGE mengajukan → Brand TMV / Head TMV menyetujui.">
+    <MartaShell active="approval" title="Approval Center" subtitle="Alur persetujuan bottom-up: DMO mengajukan → Brand TMV / Head TMV menyetujui.">
       {(ctx) => <Body email={ctx?.session?.user?.email} />}
     </MartaShell>
   );
@@ -405,7 +405,7 @@ function Body({ email }) {
               Catatan {dialog.kind === "plan" ? "(wajib)" : "(opsional)"}
             </label>
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3}
-              placeholder={dialog.kind === "plan" ? "Apa yang perlu direvisi dari plan ini… (wajib diisi)" : dialog.kind === "override" ? "Alasan tetap perlu revisi…" : "Catatan tambahan untuk BME/RGE…"}
+              placeholder={dialog.kind === "plan" ? "Apa yang perlu direvisi dari plan ini… (wajib diisi)" : dialog.kind === "override" ? "Alasan tetap perlu revisi…" : "Catatan tambahan untuk DMO…"}
               style={{ width: "100%", marginTop: 6, padding: "9px 11px", borderRadius: 9, border: `1px solid ${T.line}`, fontSize: 12.5, fontFamily: FONT, resize: "vertical", outline: "none", boxSizing: "border-box" }} />
             {actionErr && <div style={{ marginTop: 10, fontSize: 12, color: T.error }}>{actionErr}</div>}
             <div style={{ display: "flex", gap: 10, marginTop: 18 }}>

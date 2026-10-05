@@ -1,7 +1,7 @@
 "use client";
 /**
  * /martahub/m/posm - Hub POSM (dulu "POSMAT" di Flutter, nama tampilan
- * disederhanakan jadi "POSM") utk BME/RGE & tim lapangan: progress target
+ * disederhanakan jadi "POSM") utk DMO & tim lapangan: progress target
  * cabang bulan ini, ringkasan stok per jenis material, riwayat instalasi
  * yang sudah dicatat, + jalur pengajuan klaim stok (khusus role BME).
  * Padanan `md_activities_screen.dart` (Flutter).

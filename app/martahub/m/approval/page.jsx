@@ -28,7 +28,7 @@ import { applyMartaScope, regionLabel } from "../../../../lib/martaScope";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
 import { BRAND_DISPLAY } from "../_shared/planData";
 
-const ROLE_LABEL = { admin: "Admin", head: "Head TMV", tmv: "Brand TMV", bme_rge: "BME/RGE", bsm: "BSM", spm_sumatera: "SPM Sumatera" };
+const ROLE_LABEL = { admin: "Admin", head: "Head TMV", tmv: "Brand TMV", bme_rge: "DMO", bsm: "HEAD OF AREA", spm_sumatera: "SPM Sumatera" };
 const CAN_APPROVE_ROLES = ["admin", "head", "tmv", "spm_sumatera"];
 
 const PENDING_COLS = "id, event_name, brand, mc, site_id, plan_date_start, plan_date, target_sp, target_fwa, created_at";
@@ -100,7 +100,7 @@ export default function MobileApprovalPage() {
 
   async function quickApprove(row, kind) {
     // Setuju TANPA catatan bisa langsung dari kartu - cuma jalur Revisi/Tolak
-    // yang wajib lewat dialog (perlu alasan utk BME/RGE).
+    // yang wajib lewat dialog (perlu alasan utk DMO).
     setBusyRowId(row.id);
     try {
       let error;
@@ -192,7 +192,7 @@ export default function MobileApprovalPage() {
         {tab === "plan" && (
           <>
             {/* Plan TIDAK PERLU disetujui lagi utk bisa dieksekusi - begitu
-                tanggal event tiba, BME/RGE langsung bisa Check In/Isi
+                tanggal event tiba, DMO langsung bisa Check In/Isi
                 Laporan Actual tanpa menunggu keputusan siapa pun di sini.
                 Tab ini murni utk PENGAWASAN: atasan bisa meninjau plan yang
                 baru disubmit, dan kalau memang dirasa kurang sesuai, beri

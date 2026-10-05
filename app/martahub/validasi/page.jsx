@@ -414,7 +414,7 @@ function Body({ email }) {
           </button>
         </div>
         <div style={{ color: T.mid, fontSize: 12.5, marginBottom: 12 }}>
-          Radius toleransi: <b>{mdRadius} m</b>. Pemasangan POSM oleh MD/BME/RGE mode Terikat Activity/Outlet menunggu rekonsiliasi - stok baru berkurang setelah langkah ini dijalankan (§8.2), terlepas hasilnya tervalidasi atau tidak cocok. Muat referensi Outlet Lat/Lng di langkah 1 dulu untuk melihat pratinjau.
+          Radius toleransi: <b>{mdRadius} m</b>. Pemasangan POSM oleh MD/DMO mode Terikat Activity/Outlet menunggu rekonsiliasi - stok baru berkurang setelah langkah ini dijalankan (§8.2), terlepas hasilnya tervalidasi atau tidak cocok. Muat referensi Outlet Lat/Lng di langkah 1 dulu untuk melihat pratinjau.
         </div>
 
         {mdErr && <div style={{ ...note, marginBottom: 12, background: T.errorBg, borderColor: T.error, color: T.error }}>{mdErr}</div>}
@@ -428,7 +428,7 @@ function Body({ email }) {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, whiteSpace: "nowrap" }}>
             <thead>
               <tr style={{ background: "#F7F9FC", color: T.mid }}>
-                {["MD/BME/RGE", "Mode", "Activity / Site", "Jarak", "Status Baru (pratinjau)"].map((h) => (
+                {["MD/DMO", "Mode", "Activity / Site", "Jarak", "Status Baru (pratinjau)"].map((h) => (
                   <th key={h} style={{ padding: "8px 12px", textAlign: "left", fontWeight: 700 }}>{h}</th>
                 ))}
               </tr>

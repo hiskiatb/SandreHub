@@ -3,7 +3,7 @@
  * /martahub/campaigns - Kelola Campaign (CMS desktop). Campaign reusable
  * spt "Market Blitz Sabtu" - SPM Sumatera (semua region) & Head TMV (region
  * sendiri) bikin campaign dgn TEMPLATE nama event WAJIB (placeholder
- * {BRANCH}/{BRAND}, otomatis diganti sesuai branch/brand masing2 BME/RGE).
+ * {BRANCH}/{BRAND}, otomatis diganti sesuai branch/brand masing2 DMO).
  *
  * Plan campaign TETAP lewat mh_activities biasa (draft/plan_submitted/
  * completed - siklus SAMA PERSIS dgn plan lain) - campaign_id cuma
@@ -206,7 +206,7 @@ function CampaignForm({ form, role, region, saving, onCancel, onSave }) {
         <Field label="Nama Campaign">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Market Blitz Sabtu" style={inputStyle} />
         </Field>
-        <Field label="Keyword Awalan Nama Event (wajib)" hint="BME/RGE cukup ketik ini di AWAL nama event (besar/kecil bebas) - sisanya (Nama Branch + Brand) DISUSUN OTOMATIS, bukan diketik manual.">
+        <Field label="Keyword Awalan Nama Event (wajib)" hint="DMO cukup ketik ini di AWAL nama event (besar/kecil bebas) - sisanya (Nama Branch + Brand) DISUSUN OTOMATIS, bukan diketik manual.">
           <input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="Market Blitz Sabtu_" style={{ ...inputStyle, fontFamily: "monospace" }} />
           {keyword.trim() && <div style={{ marginTop: 5, fontSize: 11, color: T.lo }}>Contoh hasil otomatis: <span style={{ fontFamily: "monospace" }}>{keyword.trim()}Nama Branch_IM3</span></div>}
         </Field>
@@ -214,7 +214,7 @@ function CampaignForm({ form, role, region, saving, onCancel, onSave }) {
           <input type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)} style={inputStyle} />
         </Field>
 
-        <Field label="Activity Category (wajib)" hint="Ditentukan di sini - BME/RGE tidak pilih sendiri lagi, Step 1 Wizard mereka terkunci otomatis.">
+        <Field label="Activity Category (wajib)" hint="Ditentukan di sini - DMO tidak pilih sendiri lagi, Step 1 Wizard mereka terkunci otomatis.">
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {CATEGORIES.map((c) => (
               <button key={c} type="button" onClick={() => setDefaultCategory(c)}
@@ -320,13 +320,13 @@ function ComplianceModal({ state, onClose }) {
           <div style={{ fontSize: 15, fontWeight: 800, color: T.hi }}>Kepatuhan - {campaign.name}</div>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: T.lo }}><X size={18} /></button>
         </div>
-        {rows && <div style={{ fontSize: 12.5, color: T.mid, marginBottom: 14 }}>{totalDone} / {rows.length} BME/RGE sudah submit plan.</div>}
+        {rows && <div style={{ fontSize: 12.5, color: T.mid, marginBottom: 14 }}>{totalDone} / {rows.length} DMO sudah submit plan.</div>}
 
         {err && <div style={{ padding: "10px 12px", borderRadius: 10, background: T.errorBg, color: T.error, fontSize: 12.5 }}>{err}</div>}
         {rows === null ? (
           <div style={{ display: "flex", justifyContent: "center", padding: 30 }}><Loader2 size={18} color={T.primary} style={{ animation: "cspin .9s linear infinite" }} /></div>
         ) : rows.length === 0 && !err ? (
-          <div style={{ textAlign: "center", padding: 20, color: T.lo, fontSize: 13 }}>Tidak ada BME/RGE dlm cakupan campaign ini.</div>
+          <div style={{ textAlign: "center", padding: 20, color: T.lo, fontSize: 13 }}>Tidak ada DMO dlm cakupan campaign ini.</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {branches.map((b) => (

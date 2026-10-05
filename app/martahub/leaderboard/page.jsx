@@ -5,7 +5,7 @@ import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 
 export default function LeaderboardPage() {
   return (
-    <MartaShell active="leaderboard" title="Leaderboard" subtitle="Peringkat performa BME/RGE.">
+    <MartaShell active="leaderboard" title="Leaderboard" subtitle="Peringkat performa DMO.">
       {() => <Body />}
     </MartaShell>
   );

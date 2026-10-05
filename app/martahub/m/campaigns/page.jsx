@@ -6,7 +6,7 @@
  *
  * Akses SAMA PERSIS dgn aturan yg sudah disepakati sebelumnya: SPM Sumatera
  * (semua region) & Head TMV (region sendiri saja) - BUKAN Brand TMV, BUKAN
- * BSM (BSM sejajar dgn BME/RGE, bukan di atasnya). Role lain yg nyasar ke
+ * BSM (BSM sejajar dgn DMO, bukan di atasnya). Role lain yg nyasar ke
  * sini (deep link dsb) dikasih layar "tidak punya akses", bukan redirect
  * diam2 - RPC-nya sendiri (mh_campaign_upsert/delete) TETAP menolak di
  * server-side apa pun yg terjadi di client, jadi ini murni soal UX.
@@ -312,14 +312,14 @@ function CampaignFormSheet({ form, role, region, saving, onCancel, onSave }) {
         <FormField label="Nama Campaign">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="mis. Market Blitz Sabtu" style={inputStyle} />
         </FormField>
-        <FormField label="Keyword Awalan Nama Event (wajib)" hint="BME/RGE cukup ketik ini di AWAL nama event (besar/kecil bebas) - sisanya (Nama Branch + Brand) disusun otomatis.">
+        <FormField label="Keyword Awalan Nama Event (wajib)" hint="DMO cukup ketik ini di AWAL nama event (besar/kecil bebas) - sisanya (Nama Branch + Brand) disusun otomatis.">
           <input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="Market Blitz Sabtu_" style={{ ...inputStyle, fontFamily: "monospace", fontSize: 12.5 }} />
           {keyword.trim() && <div style={{ marginTop: 5, fontSize: 10.5, color: "#8A8A96" }}>Contoh hasil otomatis: <span style={{ fontFamily: "monospace" }}>{keyword.trim()}Nama Branch_IM3</span></div>}
         </FormField>
         <FormField label="Tanggal">
           <input type="date" value={planDate} onChange={(e) => setPlanDate(e.target.value)} style={inputStyle} />
         </FormField>
-        <FormField label="Activity Category (wajib)" hint="Ditentukan di sini - BME/RGE tidak pilih sendiri lagi, Step 1 Wizard mereka terkunci otomatis.">
+        <FormField label="Activity Category (wajib)" hint="Ditentukan di sini - DMO tidak pilih sendiri lagi, Step 1 Wizard mereka terkunci otomatis.">
           <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
             {CATEGORIES.map((c) => (
               <button key={c} type="button" onClick={() => setDefaultCategory(c)}
@@ -439,13 +439,13 @@ function ComplianceSheet({ state, onClose }) {
           <div style={{ fontSize: 15, fontWeight: 800, color: "#17181C" }}>Kepatuhan - {campaign.name}</div>
           <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "#8A8A96" }}><X size={19} /></button>
         </div>
-        {rows && <div style={{ fontSize: 12, color: "#8A8A96", marginBottom: 14 }}>{totalDone} / {rows.length} BME/RGE sudah submit plan.</div>}
+        {rows && <div style={{ fontSize: 12, color: "#8A8A96", marginBottom: 14 }}>{totalDone} / {rows.length} DMO sudah submit plan.</div>}
 
         {err && <div style={{ padding: "10px 12px", borderRadius: 10, background: "#FFEBEE", color: "#C62828", fontSize: 12.5 }}>{err}</div>}
         {rows === null ? (
           <div style={{ display: "flex", justifyContent: "center", padding: 30 }}><Loader2 size={18} color="#ED1C24" style={{ animation: "cmspin .9s linear infinite" }} /></div>
         ) : rows.length === 0 && !err ? (
-          <div style={{ textAlign: "center", padding: 20, color: "#8A8A96", fontSize: 13 }}>Tidak ada BME/RGE dlm cakupan campaign ini.</div>
+          <div style={{ textAlign: "center", padding: 20, color: "#8A8A96", fontSize: 13 }}>Tidak ada DMO dlm cakupan campaign ini.</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {branches.map((b) => (

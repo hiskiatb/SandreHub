@@ -413,7 +413,7 @@ function MappingCard({ table, headerIdx, mapping, setMap, unmap, onBack, onNext,
             })}
           </div>
           <div style={{ marginTop: 10, fontSize: 11, color: T.lo }}>
-            Alamat & BME/RGE sengaja tidak ada di daftar - alamat menunggu konfirmasi GPS oleh DSF, BME/RGE menunggu di-assign lewat User Management.
+            Alamat & DMO sengaja tidak ada di daftar - alamat menunggu konfirmasi GPS oleh DSF, DMO menunggu di-assign lewat User Management.
           </div>
         </div>
       </div>

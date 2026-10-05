@@ -1,6 +1,6 @@
 "use client";
 /**
- * /martahub/m/calendar - Kalender aktivitas BME/RGE (web mobile), menggantikan
+ * /martahub/m/calendar - Kalender aktivitas DMO (web mobile), menggantikan
  * slot Leaderboard di bottom nav. Pilih tanggal → lihat plan yang sudah ada
  * di tanggal itu → langsung "Buat Plan" baru dgn tanggal tsb ter-prefill.
  * Data dari RPC `mh_activity_calendar_for_me` (scoping hierarki sama dgn

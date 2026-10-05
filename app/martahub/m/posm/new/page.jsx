@@ -65,7 +65,7 @@ export default function PosmNewPage() {
   }
 
   // Branch & brand yang SEBENARNYA dipakai utk site list + stok tersedia:
-  // approver pakai pilihan manual mereka, BME/RGE dkk pakai scope sendiri
+  // approver pakai pilihan manual mereka, DMO dkk pakai scope sendiri
   // (perilaku lama, tidak berubah).
   const effBranchId = isApprover ? targetBranchId : scope?.branchId;
   const effBrand = isApprover ? (scope?.brand || targetBrand) : scope?.brand;

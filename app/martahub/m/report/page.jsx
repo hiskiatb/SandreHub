@@ -276,7 +276,7 @@ export default function ReportPage() {
 //
 // Filter Region BARU - RPC skr ikut balikin kolom `region` per site, opsi
 // dropdown diambil dari region2 yg MUNCUL di data (bukan daftar region
-// statis), krn role scoped (mis. BME/RGE) memang cuma akan lihat 1 region
+// statis), krn role scoped (mis. DMO) memang cuma akan lihat 1 region
 // atau bahkan 0 opsi (kalau branch-nya lintas region tidak ada) - dropdown
 // otomatis nyembunyiin diri kalau opsi cuma <=1.
 //
@@ -2131,7 +2131,7 @@ function CardStat({ icon: Icon, dot, label, value, warn, info, infoId, openInfoI
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Report: Campaign - LEADERBOARD BME/RGE utk 1 campaign terpilih (mis.
+// Report: Campaign - LEADERBOARD DMO utk 1 campaign terpilih (mis.
 // "Market Blitz Sabtu") - dipilih lewat dropdown campaign (bukan month
 // picker, krn campaign attach ke tanggalnya sendiri2, bukan periode).
 // Data dari RPC mh_campaigns_list_for_me (utk isi dropdown) +
@@ -2378,7 +2378,7 @@ function CampaignComplianceReport({ monthKey, monthLabel }) {
         {rows === null ? (
           <div style={{ padding: "40px 0" }}><ShellSpinner /></div>
         ) : rows.length === 0 && !err ? (
-          <div style={{ textAlign: "center", padding: 30, color: "#8A8A96", fontSize: 13 }}>Tidak ada BME/RGE dlm cakupan campaign ini.</div>
+          <div style={{ textAlign: "center", padding: 30, color: "#8A8A96", fontSize: 13 }}>Tidak ada DMO dlm cakupan campaign ini.</div>
         ) : (
           ranked.map((p, i) => {
             const rank = i + 1;

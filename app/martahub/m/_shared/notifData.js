@@ -26,7 +26,7 @@ export const NOTIF_TYPE_META = {
   // pada mh_activities (migration add_push_notifications_infra).
   activity_plan_submitted: { label: "Plan Baru Disubmit", color: "#2563EB", bg: "rgba(37,99,235,0.10)" },
   activity_actual_submitted: { label: "Laporan Actual Baru", color: "#2563EB", bg: "rgba(37,99,235,0.10)" },
-  // Reminder utk BME/RGE (07.00/12.00/18.00 WIB) - diisi server-side dari
+  // Reminder utk DMO (07.00/12.00/18.00 WIB) - diisi server-side dari
   // mh_run_actual_reminder() (pg_cron).
   activity_actual_reminder: { label: "Laporan Actual Belum Diisi", color: "#B45309", bg: "rgba(180,83,9,0.10)" },
 };

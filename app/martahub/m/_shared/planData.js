@@ -157,7 +157,7 @@ export function syncTimesByDate(dates, prevTimesByDate) {
 /** Cek semua tanggal terpilih sudah punya waktu yang valid (Seharian OK,
  * atau start < end kalau pakai rentang jam) - MANDATORY utk tiap tanggal,
  * inilah yang menentukan urutan tampil kalau ada beberapa activity plan
- * (dari BME/RGE berbeda) di tanggal yang sama pada kalender sisi TMV. */
+ * (dari DMO berbeda) di tanggal yang sama pada kalender sisi TMV. */
 export function allDateTimesValid(dates, timesByDate) {
   return (dates || []).every((d) => {
     const t = timesByDate?.[d];
@@ -290,11 +290,11 @@ export async function deleteRebuyEntry(entryId) {
 
 // ── "Buat Untuk" (delegate / acting-for) ────────────────────────────────
 // Approver (Head/Brand TMV/SPM Sumatera/Admin) TIDAK punya branch sendiri,
-// jadi Create Plan mereka HARUS dibuat atas nama BME/RGE/dsb yang mereka
+// jadi Create Plan mereka HARUS dibuat atas nama DMO/dsb yang mereka
 // naungi - SAMA PERSIS dgn `_pickActingFor()`/`_effectiveOwnerId()` di
 // create_plan_screen.dart (Flutter).
 export const APPROVER_ROLES = ["head", "tmv", "spm_sumatera", "admin"];
-// "bsm" TIDAK termasuk di sini - sejak §BSM-peer, bsm setara BME/RGE
+// "bsm" TIDAK termasuk di sini - sejak §BSM-peer, bsm setara DMO
 // (buat plan & kelola tim sendiri), BUKAN lagi "orang yang dibuatkan plan
 // oleh atasan" spt executor role lain.
 const TARGETABLE_ROLES = ["bme_rge", "tl_dsf", "dsf", "md", "dse", "gse", "ae", "promotor", "cse_rse"];
@@ -330,7 +330,7 @@ export async function fetchAssignableTargets(scope) {
  * branch × brand (di-scope sama persis: Head → region-nya, Brand TMV →
  * region+brand-nya, SPM Sumatera/Admin → semua) - bukan cuma baris yang
  * kebetulan sudah punya orang. Kombinasi branch×brand yang belum ada
- * BME/RGE-nya tetap muncul dgn `people: []`, supaya approver sadar ada
+ * DMO-nya tetap muncul dgn `people: []`, supaya approver sadar ada
  * cabang yang "kosong" (belum ada yang di-assign) alih-alih cabang itu diam-
  * diam hilang dari daftar. */
 // `mh_list_assignments` (dipakai fetchAssignableTargets) mengembalikan
@@ -345,23 +345,23 @@ const toSlug = (name) => (name || "").trim().toLowerCase().replace(/[^a-z0-9]+/g
 // mh_bme_assign_member utk bme/rge, mh_tl_dsf_assign_dsf utk tl_dsf) - bukan
 // aturan baru, cuma dicerminkan di UI supaya pilihan yg ditampilkan sudah
 // sesuai sebelum submit (RPC tetap jadi penjaga akhir di server).
-// Semua role "executor" di bawah BME/RGE (MD, DSF, + role cabang lain) -
+// Semua role "executor" di bawah DMO (MD, DSF, + role cabang lain) -
 // dipakai tombol gabungan "+ Tambahkan Executor" di User Management (mobile
 // & desktop), opsi yg ditawarkan ke satu caller tetap disaring lagi lewat
 // ADDABLE_ROLES_FOR di bawah.
 // "bsm" DIKELUARKAN dari daftar ini (lihat catatan TARGETABLE_ROLES di
-// atas) - bsm sekarang setara BME/RGE, bukan executor di bawahnya.
+// atas) - bsm sekarang setara DMO, bukan executor di bawahnya.
 export const EXECUTOR_ROLES = ["md", "dsf", "tl_dsf", "dse", "gse", "ae", "promotor", "cse_rse"];
 
 export const ADDABLE_ROLES_FOR = {
   spm_sumatera: ["head", "tmv", "bme_rge", "bsm", "tl_dsf", "md", "dsf", "dse", "gse", "ae", "promotor", "cse_rse"],
   admin: ["head", "tmv", "bme_rge", "bsm", "tl_dsf", "md", "dsf", "dse", "gse", "ae", "promotor", "cse_rse"],
   // Head TMV & Brand TMV boleh langsung men-set MD/DSF utk region mereka
-  // sendiri (bukan cuma lewat BME/RGE) - sesuai tingkatan hirarki, atasan
+  // sendiri (bukan cuma lewat DMO) - sesuai tingkatan hirarki, atasan
   // boleh mengisi posisi di bawah bawahannya juga, bukan cuma satu level.
   head: ["tmv", "bme_rge", "bsm", "md", "dsf"],
   tmv: ["bme_rge", "bsm", "md", "dsf"],
-  // BSM setara BME/RGE - boleh Kelola Tim yang SAMA (MD/DSF/TL DSF/DSE/GSE/
+  // BSM setara DMO - boleh Kelola Tim yang SAMA (MD/DSF/TL DSF/DSE/GSE/
   // AE/Promotor/CSE-RSE), TIDAK termasuk bme_rge/bsm sendiri (itu peer,
   // bukan bawahan - lihat mh_bme_assign_member yg juga menolaknya).
   bme_rge: ["tl_dsf", "md", "dse", "gse", "ae", "promotor", "cse_rse", "dsf"],
@@ -381,7 +381,7 @@ export async function fetchUserManagementGrid(scope, period) {
   if (error) throw error;
   let people = data || [];
 
-  const { data: branchRows, error: bErr } = await supabaseMarta.from("mh_branches").select("id,name,region").eq("active", true);
+  const { data: branchRows, error: bErr } = await supabaseMarta.rpc("mh_list_branches", { p_period: period || null });
   if (bErr) throw bErr;
 
   let branches = (branchRows || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
@@ -431,10 +431,10 @@ export const BRAND_DISPLAY = { im3: "IM3", tri: "3ID" };
 
 /** Bentuk org-chart 4 level utk halaman User Management (mobile):
  *   Circle Sumatera (region kosong) → Region (North/Central/South Sumatera)
- *   → cabang di region itu → kombo cabang×brand (BME/RGE).
+ *   → cabang di region itu → kombo cabang×brand (DMO).
  * Circle & tiap Region SENDIRI juga punya 3 "slot" posisi tetap: Head TMV,
  * TMV IM3, TMV 3ID (role='head'/'tmv', branch_id KOSONG, brand sesuai slot
- * utk tmv / kosong utk head) - beda dari slot BME/RGE yang terikat cabang.
+ * utk tmv / kosong utk head) - beda dari slot DMO yang terikat cabang.
  * Satu RPC (`mh_list_assignments`, SUDAH di-filter periode) dipakai utk
  * SEMUA level sekaligus - cukup dikelompokkan ulang di sini, tidak perlu
  * request terpisah per level.
@@ -456,7 +456,7 @@ export async function fetchOrgHierarchy(scope, period) {
   // walau logika pengelompokan di bawah berubah di masa depan.
   const people = (data || []).filter((p) => p.role !== "spm_sumatera");
 
-  const { data: branchRows, error: bErr } = await supabaseMarta.from("mh_branches").select("id,name,region").eq("active", true);
+  const { data: branchRows, error: bErr } = await supabaseMarta.rpc("mh_list_branches", { p_period: period || null });
   if (bErr) throw bErr;
   const allBranches = (branchRows || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 
@@ -518,7 +518,7 @@ export async function fetchOrgHierarchy(scope, period) {
 export async function fetchAssignableGroups(scope) {
   const people = await fetchAssignableTargets(scope);
 
-  const { data: branchRows, error: bErr } = await supabaseMarta.from("mh_branches").select("id,name,region").eq("active", true);
+  const { data: branchRows, error: bErr } = await supabaseMarta.rpc("mh_list_branches", { p_period: null });
   if (bErr) throw bErr;
 
   let branches = (branchRows || []).slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));

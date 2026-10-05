@@ -32,7 +32,7 @@ function MartaLoginInner() {
   // Sama pola dgn /sandra/login: email dulu (satu langkah), password baru
   // muncul di langkah berikutnya - BUKAN dua field sekaligus di satu layar
   // spt sebelumnya. Halaman ini tetap KHUSUS SPM Sumatera (tidak digabung
-  // dgn jalur OTP BME/RGE di /martahub/m/login - itu sengaja dipisah biar
+  // dgn jalur OTP DMO di /martahub/m/login - itu sengaja dipisah biar
   // bisa dibuatkan shortcut PWA sendiri).
   const [stage, setStage] = useState("email"); // email | password
   const [form,     setForm]     = useState({ email: "", password: "" });
@@ -252,7 +252,7 @@ function MartaLoginInner() {
           </div>
         </div>
 
-        {/* Jalur MartaHub Mobile — dulu khusus BME/RGE, sekarang jalur login
+        {/* Jalur MartaHub Mobile — dulu khusus DMO, sekarang jalur login
             ini juga dipakai TMV & SPM Sumatera dari perangkat mobile (akun
             terpisah dari CMS admin di atas, langsung ke project Supabase
             MartaHub sendiri, bukan lewat gerbang SandraHub). Fitur yang

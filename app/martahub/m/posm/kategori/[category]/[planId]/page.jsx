@@ -1,7 +1,7 @@
 "use client";
 /**
  * /martahub/m/posm/kategori/[category]/[planId] - Detail satu Plan POSM
- * dari sisi BME/RGE lapangan: visual, periode, progress pemasangan per
+ * dari sisi DMO lapangan: visual, periode, progress pemasangan per
  * material di Branch-nya. Khusus kategori Retailer Installment ada tombol
  * "Cari Outlet & Pasang" menuju alur pencarian outlet dari mapping DSE.
  */

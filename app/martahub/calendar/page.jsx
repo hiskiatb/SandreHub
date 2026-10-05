@@ -67,9 +67,9 @@ function Body({ email }) {
       // Visibilitas hierarki penuh §1.1a - scoping SEPENUHNYA di server lewat
       // RPC `mh_activity_calendar_for_email` (pola sama dgn Geo Compliance),
       // BUKAN lagi `applyMartaScope` (yang cuma tahu region×brand, tidak tahu
-      // konsep subtree TL DSF/DSF/MD di bawah BME/RGE - lihat §4). Head/TMV
+      // konsep subtree TL DSF/DSF/MD di bawah DMO - lihat §4). Head/TMV
       // sudah benar semula lewat applyMartaScope; RPC ini meneruskan aturan
-      // yang sama untuk mereka SEKALIGUS menambah subtree utk BME/RGE/TL DSF.
+      // yang sama untuk mereka SEKALIGUS menambah subtree utk DMO/TL DSF.
       if (!email) { setRows([]); setSelected(null); return; }
       const { data, error } = await supabaseMarta.rpc("mh_activity_calendar_for_email", {
         p_caller_email: email,

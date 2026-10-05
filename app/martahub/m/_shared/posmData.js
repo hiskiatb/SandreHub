@@ -19,7 +19,7 @@ async function rpc(name, args) {
   return data;
 }
 
-// ── BME/RGE (recorder) ──────────────────────────────────────────────────
+// ── DMO (recorder) ──────────────────────────────────────────────────
 export const fetchMyBranchProgress = (month) => rpc("mh_posmat_my_branch_progress", { p_month: month || null });
 export const fetchMyTypeSummary = () => rpc("mh_posmat_my_type_summary");
 export const fetchMyAvailableTypes = () => rpc("mh_posmat_my_available_types");
@@ -40,7 +40,7 @@ export function submitInstallation({ mode, activityId, siteId, streetDescription
     // Override branch/brand tujuan - dipakai approver (Head/Brand TMV dkk)
     // yang TIDAK punya branch tetap sendiri, supaya bisa pilih mau pasang
     // di branch mana & stok yang dikonsumsi mengurangi alokasi branch itu.
-    // NULL (default) = BME/RGE biasa, perilaku lama (branch ikut perekam).
+    // NULL (default) = DMO biasa, perilaku lama (branch ikut perekam).
     p_branch_id: branchId || null,
     p_brand: brand || null,
     // Plan POSM yang sedang dikerjakan - wajib dipilih dulu di /posm/new
@@ -236,7 +236,7 @@ export function moveAllocation({ allocationId, newBranchId, newBranchName, newRe
     p_new_region: newRegion, p_new_qty: Number(newQty) || 0, p_caller_email: callerEmail,
   });
 }
-/** Plan aktif yang punya alokasi di branch+brand ini - dipakai BME/RGE utk
+/** Plan aktif yang punya alokasi di branch+brand ini - dipakai DMO utk
  * pilih Plan sebelum pilih material di /posm/new. */
 export const fetchPlansForBranch = (branchId, brand) =>
   rpc("mh_posm_plans_available_for_branch", { p_branch_id: branchId, p_brand: brand });

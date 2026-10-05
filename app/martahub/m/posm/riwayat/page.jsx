@@ -3,7 +3,7 @@
  * /martahub/m/posm/riwayat - Riwayat Instalasi POSM lengkap (dipisah dari
  * Beranda POSM supaya halaman utama tetap ringkas - Beranda cuma tampilkan
  * kartu ringkasan yang mengarah ke sini). Padanan histori instalasi
- * `md_activities_screen.dart` (Flutter), sisi BME/RGE.
+ * `md_activities_screen.dart` (Flutter), sisi DMO.
  */
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";

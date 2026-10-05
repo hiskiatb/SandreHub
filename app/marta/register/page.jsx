@@ -33,7 +33,7 @@ const mk = (d) => ({
 });
 
 const ROLES = [
-  { value: "bme_rge", label: "BME/RGE", desc: "Branch Marketing / Retail Grassroot Executive" },
+  { value: "bme_rge", label: "DMO", desc: "Branch Marketing / Retail Grassroot Executive" },
   { value: "tm_im3",  label: "TM IM3",  desc: "Territory Manager — IM3" },
   { value: "tm_tri",  label: "TM Tri",  desc: "Territory Manager — Tri" },
   { value: "head_tm", label: "Head TM", desc: "Head of Territory Management" },
@@ -187,7 +187,7 @@ export default function MartaRegisterPage() {
 
     // Catatan: trigger DB (mh_handle_new_user) sudah otomatis membuat/merge
     // baris mh_profiles utk userId ini persis saat auth.signUp() berhasil -
-    // termasuk kasus admin sudah pre-assign role/brand/branch (misal BME/RGE)
+    // termasuk kasus admin sudah pre-assign role/brand/branch (misal DMO)
     // sebelum orang ini pernah login (baris "placeholder" ikut ke-merge via
     // id-swap by email). Jadi di sini kita HARUS pakai UPDATE (bukan INSERT),
     // dan kalau baris itu ternyata sudah punya assignment asli dari admin
@@ -207,7 +207,7 @@ export default function MartaRegisterPage() {
 
     const updatePayload = alreadyAssigned
       ? {
-          // Sudah di-assign admin sebelumnya (mis. BME/RGE North Sumatera) -
+          // Sudah di-assign admin sebelumnya (mis. DMO North Sumatera) -
           // pertahankan role/brand/is_active dari admin, cuma lengkapi
           // full_name & auth_code_id.
           full_name:    fullName.trim(),

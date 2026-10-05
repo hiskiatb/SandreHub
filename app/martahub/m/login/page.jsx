@@ -1,6 +1,6 @@
 "use client";
 /**
- * /martahub/m/login - Login mobile-web MartaHub (BME/RGE, TMV, & SPM
+ * /martahub/m/login - Login mobile-web MartaHub (DMO, TMV, & SPM
  * Sumatera sama-sama masuk lewat sini - fitur yg tampil sesudahnya
  * menyesuaikan role masing-masing, lihat ADDABLE_ROLES_FOR di planData.js).
  *
@@ -12,7 +12,7 @@
  * token"), jadi tidak akan bentrok sesi dgn SandraHub di browser yang sama.
  *
  * Konsepnya SENGAJA meniru /promotor/login (SandraHub): kartu mobile-first,
- * ringkas, Google SSO sbg jalur utama (paling cepat utk BME/RGE lapangan),
+ * ringkas, Google SSO sbg jalur utama (paling cepat utk DMO lapangan),
  * kode email 6-digit sbg alternatif (dipakai jalur email non-Gmail spt
  * Outlook, sama seperti pilihan di app Flutter).
  */
@@ -26,7 +26,7 @@ import { HubLogo } from "../../../../components/HubLogo";
 import { MartaSplash } from "../_shared/MobileShell";
 
 const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
-const ROLE_LABEL = { bme_rge: "BME/RGE", bsm: "BSM", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
+const ROLE_LABEL = { bme_rge: "DMO", bsm: "HEAD OF AREA", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
 
 export default function MartaMobileLogin() {
   const router = useRouter();
@@ -237,7 +237,7 @@ export default function MartaMobileLogin() {
           )}
 
           {/* Email - jalur utama, SELALU tampil (bukan di balik toggle),
-              karena sebagian besar BME/RGE pakai email kantor non-Gmail
+              karena sebagian besar DMO pakai email kantor non-Gmail
               (mis. Outlook) yang tidak bisa lewat tombol Google. */}
           <div style={{ marginTop: 34, width: "100%" }}>
             <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: "#8A8A96" }}>Masuk dengan Email</label>

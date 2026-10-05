@@ -1,6 +1,6 @@
 "use client";
 /**
- * /martahub/m - Beranda sesi mobile-web MartaHub (BME/RGE).
+ * /martahub/m - Beranda sesi mobile-web MartaHub (DMO).
  *
  * Padanan `dashboard_screen.dart` (Flutter) - sebelumnya versi web ini cuma
  * kartu ringkasan sederhana; direstrukturisasi supaya elemen yang sudah
@@ -103,7 +103,7 @@ const MOCK_HOME_ACTIVITIES = [
   { id: "mock-h10", event_name: "Project Perluasan Way Halim Lampung", brand: "IM3", branch_id: MHB["BANDAR LAMPUNG"], mc: "MC-11", event_category: "project", event_categories: null, plan_date: "2026-08-19", plan_date_start: null, plan_dates_multi: null, poi_type: "outdoor", status: "completed", checkin_valid: true, target_sp: 10, target_fwa: 5, actual_sp: 11, actual_fwa: 6, cost_actual: 3300000, actual_rev_3m: 7900000, created_at: "2026-08-19T08:50:00+07:00", site_id: "TLK-021" },
 ];
 
-const ROLE_LABEL = { bme_rge: "BME/RGE", bsm: "BSM", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
+const ROLE_LABEL = { bme_rge: "DMO", bsm: "HEAD OF AREA", tmv: "Brand TMV", head: "Head TMV", admin: "Admin", spm_sumatera: "SPM Sumatera" };
 
 // Ringkas angka Rupiah besar utk tile 4-kolom yg sempit / baris detail -
 // "1,2jt"/"850rb" dst, drpd angka penuh yg gampang overflow di lebar
@@ -390,7 +390,7 @@ export default function MartaMobileHome() {
   // lintas cabang: admin/spm_sumatera (nasional), Head TMV (satu region,
   // tapi banyak cabang di dalamnya), maupun Brand TMV (region sendiri, tapi
   // brand-nya sendiri sudah terkunci - lihat canBrowseBranches/canBrowseBrands
-  // di bawah). BME/RGE/TL DSF dst TETAP terkunci ke satu cabang saja, jadi
+  // di bawah). DMO/TL DSF dst TETAP terkunci ke satu cabang saja, jadi
   // TIDAK perlu peta ini. Pakai loadBranchMap() yang sudah di-cache di
   // lib/martaScope.js (dipakai bareng applyMartaScope di bawah).
   const canBrowseBranches = !!(scope?.unscoped || scope?.role === "head" || scope?.role === "tmv");
@@ -619,7 +619,7 @@ export default function MartaMobileHome() {
             berbeda antara role unscoped vs scoped seperti sebelumnya) -
             bedanya cuma DAFTAR OPSI: role unscoped (admin/head/spm_sumatera)
             dapat daftar penuh dari data & benar-benar bisa memfilter, role
-            scoped (BME/RGE dst) cuma dikasih satu opsi (cabang/brand
+            scoped (DMO dst) cuma dikasih satu opsi (cabang/brand
             miliknya sendiri) sehingga field otomatis tampil non-interaktif
             (abu-abu, tanpa panah) - user langsung paham itu TIDAK BISA
             ditekan utk diganti, bukan cuma dropdown kosong yg mubazir. */}

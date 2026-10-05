@@ -125,7 +125,7 @@ function Body({ email, role }) {
         const a = norm(e.org_id), b = norm(e.matched_org_id);
         if (!a || !b) return "-"; return a === b ? "Sesuai" : "Tidak Sesuai";
       } },
-    { key: "bme", label: "BME/RGE", width: 150, filter: true, get: (e) => profileMap[activityMap[e.activity_id]?.bme_user_id] || "-" },
+    { key: "bme", label: "DMO", width: 150, filter: true, get: (e) => profileMap[activityMap[e.activity_id]?.bme_user_id] || "-" },
     { key: "status", label: "Status", width: 100, filter: true, get: (e) => statusStyleOf(e.validation_status).label },
     { key: "aksi", label: "Aksi", width: 100 },
   ], [activityMap, profileMap]);

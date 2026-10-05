@@ -33,19 +33,24 @@ export function HubLogo({
   pad      = 0,   // extra padding inside the box (px)
 }) {
   const isMarta = variant === "marta";
+  const isFitra = variant === "fitra";
 
-  // Square icon - Sandra always light bg; Marta respects dark prop
-  const iconSrc = (dark && isMarta)
-    ? "/logos/marta-icon-dark.png"
-    : (isMarta ? "/logos/marta-icon.png" : "/logos/sandra-icon.png");
+  // Square icon - Sandra always light bg; Marta respects dark prop; Fitra has one flat icon
+  const iconSrc = isFitra
+    ? "/logos/fitra-icon.png"
+    : (dark && isMarta)
+      ? "/logos/marta-icon-dark.png"
+      : (isMarta ? "/logos/marta-icon.png" : "/logos/sandra-icon.png");
 
   // Wide wordmark files (no background, used for large headers)
-  // Sandra always uses light mark; Marta respects dark prop
-  const markSrc = (dark && isMarta)
-    ? "/logos/marta-mark-dark.png"
-    : (isMarta ? "/logos/marta-mark.png" : "/logos/sandra-mark.png");
+  // Sandra always uses light mark; Marta respects dark prop; Fitra falls back to its icon
+  const markSrc = isFitra
+    ? "/logos/fitra-icon.png"
+    : (dark && isMarta)
+      ? "/logos/marta-mark-dark.png"
+      : (isMarta ? "/logos/marta-mark.png" : "/logos/sandra-mark.png");
 
-  const alt = isMarta ? "MartaHub" : "SandraHub";
+  const alt = isFitra ? "FitraHub" : (isMarta ? "MartaHub" : "SandraHub");
 
   /* ── Wide wordmark mode - no box ───────────────────────────────────── */
   if (markOnly) {

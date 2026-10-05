@@ -149,7 +149,7 @@ const btn = { padding: "9px 15px", borderRadius: 11, border: `1px solid ${T.line
 // SPM Sumatera bisa menghapus Activity Plan langsung dari modal detail ini,
 // dengan konfirmasi ketik "HAPUS" (lihat DeleteConfirm di bawah) supaya tidak
 // kepencet tidak sengaja - aksi ini permanen (hard delete row mh_activities).
-// Roles di ATAS BME/RGE (Brand TMV/'tmv', Head TMV/'head', SPM Sumatera/
+// Roles di ATAS DMO (Brand TMV/'tmv', Head TMV/'head', SPM Sumatera/
 // 'spm_sumatera', Admin) yang boleh menandai Activity Plan perlu direvisi -
 // SATU-SATUNYA daftar peran dipakai jg oleh RPC mh_activity_mark_revision
 // sendiri (pengecekan asli tetap di server, ini cuma nentuin tombolnya
@@ -347,7 +347,7 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, canMark
                 )}
                 {/* Tandai Revisi - SATU-SATUNYA tombol di seluruh app yg bisa
                     memicu status "Revisi" (plan maupun laporan actual),
-                    cuma tampil utk role di atas BME/RGE & cuma di dua
+                    cuma tampil utk role di atas DMO & cuma di dua
                     status yg masuk akal utk direvisi (Plan Diajukan atau
                     Selesai) - draft/revision_needed/pending_validation
                     sengaja tidak dikasih tombol ini. */}
@@ -616,7 +616,7 @@ function DeleteConfirm({ eventName, deleting, onCancel, onConfirm }) {
 // ATAU laporan actual, arahnya ditentukan server sendiri lewat RPC
 // mh_activity_mark_revision berdasar tahap activity ini sekarang).
 // Catatan WAJIB diisi (tombol nonaktif kalau kosong) krn catatan inilah
-// yg langsung dibaca BME/RGE pemilik plan sbg alasan revisinya - "biarkan
+// yg langsung dibaca DMO pemilik plan sbg alasan revisinya - "biarkan
 // komentar yang berbicara", bukan label status generik yg ambigu.
 function RevisionConfirm({ eventName, isActualStage, submitting, err, onCancel, onConfirm }) {
   const [note, setNote] = useState("");
@@ -630,8 +630,8 @@ function RevisionConfirm({ eventName, isActualStage, submitting, err, onCancel, 
         </div>
         <div style={{ fontSize: 12.5, color: T.mid, lineHeight: 1.55, marginBottom: 14 }}>
           {isActualStage
-            ? <>Laporan actual{eventName ? <> untuk <b>{eventName}</b></> : ""} akan dikembalikan ke BME/RGE untuk diperbaiki.</>
-            : <>Plan{eventName ? <> untuk <b>{eventName}</b></> : ""} akan dikembalikan ke BME/RGE untuk diperbaiki sebelum bisa dieksekusi.</>}
+            ? <>Laporan actual{eventName ? <> untuk <b>{eventName}</b></> : ""} akan dikembalikan ke DMO untuk diperbaiki.</>
+            : <>Plan{eventName ? <> untuk <b>{eventName}</b></> : ""} akan dikembalikan ke DMO untuk diperbaiki sebelum bisa dieksekusi.</>}
           {" "}Tulis dengan jelas apa yang perlu diperbaiki - catatan ini langsung tampil ke pemilik plan.
         </div>
         <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={4} autoFocus

@@ -79,7 +79,7 @@ function CreatePlanWizardInner() {
   // Branch×brand ASLI dari ACTIVITY yang diedit - BUKAN scope akun yang lagi
   // login. Sebelumnya effectiveScope mode edit (di bawah) salah pakai scope
   // login sendiri: kalau yang mengedit admin/approver (tidak punya branch
-  // sendiri) atau BME/RGE yang scope-nya sudah beda dari saat plan ini
+  // sendiri) atau DMO yang scope-nya sudah beda dari saat plan ini
   // dibuat (mis. dipindah branch, atau assignment sempat direset), daftar
   // site jadi kosong total - lalu effect prefill field lain (nama, kategori,
   // tanggal, target, POI, dst.) IKUT GAGAL semua krn dulu menunggu daftar
@@ -100,7 +100,7 @@ function CreatePlanWizardInner() {
   }, [editId, editData]);
 
   // ── "Buat Untuk" (acting-for) - hanya utk approver, mode buat baru ──
-  // Sekarang MULTI-SELECT (satu BME/RGE bisa punya lebih dari satu baris
+  // Sekarang MULTI-SELECT (satu DMO bisa punya lebih dari satu baris
   // assignment kalau dia pegang beberapa branch - dulu cuma bisa pilih satu
   // baris/branch sekaligus, sekarang bisa dicentang semuanya sekaligus).
   const isApprover = !editId && APPROVER_ROLES.includes(scope?.role);
@@ -122,7 +122,7 @@ function CreatePlanWizardInner() {
   const [bulkRegionInfo, setBulkRegionInfo] = useState(null); // {region, count}
   const [bulkResultMsg, setBulkResultMsg] = useState("");
 
-  // Scope efektif utk site/branch - punya sendiri (BME/RGE) atau scope orang
+  // Scope efektif utk site/branch - punya sendiri (DMO) atau scope orang
   // yg diwakilkan (approver via "Buat Untuk"). Kalau beberapa branch
   // dipilih sekaligus, `branchIds` dipakai utk gabungkan daftar site dari
   // SEMUA branch terpilih, `branchName` (primer, tunggal) tetap dipakai
@@ -168,11 +168,11 @@ function CreatePlanWizardInner() {
 
   // ── Step 1: Info ──
   const [categories, setCategories] = useState([]);
-  // Step 1 (Info) TERKUNCI begitu BME/RGE pakai kartu "Campaign Aktif" -
+  // Step 1 (Info) TERKUNCI begitu DMO pakai kartu "Campaign Aktif" -
   // Category, Event Name, & Plan Date/Waktu SUDAH ditentukan Circle/Head
   // TMV lewat campaign (lihat mh_campaigns.default_categories +
   // mh_campaigns.keyword), jadi tidak boleh diubah manual lagi. "Lepas
-  // Campaign" di StepInfo membuka kuncinya lagi kalau BME/RGE berubah
+  // Campaign" di StepInfo membuka kuncinya lagi kalau DMO berubah
   // pikiran (mis. ternyata plan-nya bukan bagian dari campaign itu).
   const [campaignLocked, setCampaignLocked] = useState(false);
   const [eventName, setEventName] = useState("");
@@ -776,7 +776,7 @@ function CreatePlanWizardInner() {
       <MobileShell active="activities" hideNav>
         <div style={{ padding: "60px 20px", textAlign: "center" }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: "#3A3A44" }}>Belum bisa membuat plan</div>
-          <div style={{ marginTop: 6, fontSize: 12.5, color: "#8A8A96" }}>Email Anda belum terdaftar sebagai BME/RGE di MartaHub.</div>
+          <div style={{ marginTop: 6, fontSize: 12.5, color: "#8A8A96" }}>Email Anda belum terdaftar sebagai DMO di MartaHub.</div>
         </div>
       </MobileShell>
     );
@@ -1053,12 +1053,12 @@ function CreatePlanWizardInner() {
         // `_effectiveOwnerId()`/createPlan() Flutter (tidak ada kolom
         // "true creator" terpisah).
         //
-        // Target boleh "slot kosong" (branch×brand yg belum ada BME/RGE-nya
+        // Target boleh "slot kosong" (branch×brand yg belum ada DMO-nya
         // sama sekali) - actingFor tidak punya email utk kasus ini.
         // bme_user_id disimpan NULL (kolom sudah dibuat nullable di DB),
         // created_by dicatat sbg approver sendiri (bukan null, supaya tetap
         // ada jejak siapa yang membuat). Baris ini otomatis "diklaim"
-        // (bme_user_id terisi) oleh RPC mh_rebind_email begitu ada BME/RGE
+        // (bme_user_id terisi) oleh RPC mh_rebind_email begitu ada DMO
         // yang di-assign & login ke branch×brand yg sama.
         const isPlaceholderTarget = isApprover && actingFor && !actingFor.email;
         const ownerId = isApprover && actingFor && actingFor.email ? await resolveProfileIdByEmail(actingFor.email) : (isPlaceholderTarget ? null : userId);
@@ -1269,7 +1269,7 @@ function CreatePlanWizardInner() {
               setCategories(activeCampaign.default_categories?.length ? [activeCampaign.default_categories[0]] : []);
               setCampaignLocked(true);
               // Langsung lompat ke Step 2 (Lokasi) - Step 1 sudah penuh
-              // terisi & terkunci, tidak ada lagi yg perlu BME/RGE lakukan
+              // terisi & terkunci, tidak ada lagi yg perlu DMO lakukan
               // di step ini.
               setStep(1);
             },
@@ -1411,7 +1411,7 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
     <Card>
       {/* Belum dipakai - tawaran pakai campaign (SAMA spt sebelumnya). Begitu
           ditekan, Step 1 langsung terisi PENUH (kategori+nama+tanggal) &
-          BME/RGE dilompatkan ke Step 2 (lihat onUseCampaign di pemanggil). */}
+          DMO dilompatkan ke Step 2 (lihat onUseCampaign di pemanggil). */}
       {activeCampaign && !campaignLocked && (
         <button onClick={onUseCampaign}
           style={{
@@ -1475,24 +1475,24 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
               ) : actingFor ? actingFor.email ? (
                 <>
                   <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{actingFor.full_name || actingFor.email}</div>
-                  {/* Lebih dari satu branch dipilih (BME/RGE yg sama, beberapa
+                  {/* Lebih dari satu branch dipilih (DMO yg sama, beberapa
                       branch sekaligus) - digabung koma di sini. */}
                   <div style={{ fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>
                     {(actingFor.role || "").toUpperCase()} · {actingForList.map((a) => a.branch_name).filter(Boolean).join(", ") || "-"}
                   </div>
                 </>
               ) : (
-                // Slot kosong (branch×brand belum ada BME/RGE) - plan tetap
+                // Slot kosong (branch×brand belum ada DMO) - plan tetap
                 // tersimpan, tinggal menunggu diklaim otomatis begitu ada
                 // yang di-assign.
                 <>
                   <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {actingForList.map((a) => a.branch_name).filter(Boolean).join(", ") || actingFor.branch_name}
                   </div>
-                  <div style={{ fontSize: 11, color: "#B45309", fontWeight: 600 }}>Belum ada BME/RGE - plan menunggu di-assign</div>
+                  <div style={{ fontSize: 11, color: "#B45309", fontWeight: 600 }}>Belum ada DMO - plan menunggu di-assign</div>
                 </>
               ) : (
-                <div style={{ fontSize: 12.5, color: "#8A8A96", fontWeight: 600 }}>Pilih BME/RGE yang diwakilkan</div>
+                <div style={{ fontSize: 12.5, color: "#8A8A96", fontWeight: 600 }}>Pilih DMO yang diwakilkan</div>
               )}
             </div>
             <ChevronRight size={16} color="#B0B0BA" style={{ flexShrink: 0 }} />
@@ -1519,7 +1519,7 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
       <FieldLabel id="field-planDate" text="Plan Date & Waktu" required top hint="Ketuk utk atur - wajib per tanggal" />
 
       {/* Kalender bulanan - padanan activity_calendar_sheet.dart (Flutter):
-          titik status di tanggal yg SUDAH punya plan, supaya BME/RGE bisa
+          titik status di tanggal yg SUDAH punya plan, supaya DMO bisa
           lihat aktivitas yg sudah di-planning sebelum menambah tanggal baru.
           Tidak ada lagi mode Tunggal/Rentang/Beberapa - tinggal tap tanggal,
           rentang/berpencar terbentuk otomatis dari keterdekatan tanggal.
@@ -2393,7 +2393,7 @@ const ACT_BRAND_LABEL = { im3: "IM3", tri: "3ID" };
  * di satu waktu.
  *
  * Daftar "Sudah dipilih" PURE INFORMASI, tidak ada checklist lagi - tiap
- * baris cuma menandai apakah branch×brand itu sudah ada BME/RGE-nya atau
+ * baris cuma menandai apakah branch×brand itu sudah ada DMO-nya atau
  * belum (bukan sesuatu yang perlu dipilih ulang, karena pemilihannya sudah
  * selesai begitu kombinasinya ditambahkan). Kombinasi PERTAMA yang
  * ditambahkan jadi branch×brand utama (pemilik plan ini); kombinasi lain
@@ -2463,11 +2463,11 @@ function ActingForSheet({ groups, loading, initialSelected, allowBulkRegion, onC
     return list;
   });
 
-  // Kombinasi branch×brand yang belum punya BME/RGE SAMA SEKALI kini bisa
+  // Kombinasi branch×brand yang belum punya DMO SAMA SEKALI kini bisa
   // ikut dipilih - direpresentasikan sbg target "placeholder" (id
   // `empty:<branchId>:<brand>`, tanpa email/nama). Datanya tetap tersimpan
   // di branch×brand tsb (bme_user_id NULL di DB) & otomatis "diklaim" begitu
-  // ada BME/RGE yang benar-benar di-assign & login ke situ - lihat migrasi
+  // ada DMO yang benar-benar di-assign & login ke situ - lihat migrasi
   // mh_rebind_email(). branch_id di sini WAJIB slug (g.branchSlug), bukan
   // uuid mh_branches.id - supaya bentuknya SAMA PERSIS dgn baris orang
   // sungguhan (dari mh_list_assignments) yg dikonsumsi effectiveScope/
@@ -2528,7 +2528,7 @@ function ActingForSheet({ groups, loading, initialSelected, allowBulkRegion, onC
     });
   }, [bulkRegion, groups, placeholders]);
 
-  // Info per kombinasi (SUDAH ada BME/RGE atau belum) - urut persis sesuai
+  // Info per kombinasi (SUDAH ada DMO atau belum) - urut persis sesuai
   // `combos`, satu-satunya sumber kebenaran, tidak ada seleksi terpisah lagi.
   const comboInfos = useMemo(() => combos.map((c, i) => {
     const g = (groups || []).find((gr) => gr.branchName === c.branchName && gr.brand === c.brand);
@@ -2718,7 +2718,7 @@ function ActingForSheet({ groups, loading, initialSelected, allowBulkRegion, onC
                             <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
                               {hasOwner ? <Check size={11} color="#15803D" strokeWidth={3} /> : <Building2 size={11} color="#B45309" />}
                               <span style={{ fontSize: 11, fontWeight: 700, color: hasOwner ? "#15803D" : "#B45309", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                                {hasOwner ? `${owner.full_name || owner.email}${extra > 0 ? ` +${extra} lainnya` : ""}` : "Belum ada BME/RGE - menunggu di-assign"}
+                                {hasOwner ? `${owner.full_name || owner.email}${extra > 0 ? ` +${extra} lainnya` : ""}` : "Belum ada DMO - menunggu di-assign"}
                               </span>
                             </div>
                           </div>
