@@ -293,7 +293,12 @@ export async function deleteRebuyEntry(entryId) {
 // jadi Create Plan mereka HARUS dibuat atas nama DMO/dsb yang mereka
 // naungi - SAMA PERSIS dgn `_pickActingFor()`/`_effectiveOwnerId()` di
 // create_plan_screen.dart (Flutter).
-export const APPROVER_ROLES = ["head", "tmv", "spm_sumatera", "admin"];
+// head_of_regional_operation/visibility_region_lead/gtm_region_lead - tier
+// region-level baru di antara Head of Region & DMO (lihat assignments/page.jsx
+// desktop) - brand-agnostic spt head, jadi diperlakukan SAMA PERSIS dgn
+// "head" di semua pengecekan scope region di bawah (REGION_HEAD_LIKE_ROLES).
+export const APPROVER_ROLES = ["head", "head_of_regional_operation", "visibility_region_lead", "gtm_region_lead", "tmv", "spm_sumatera", "admin"];
+const REGION_HEAD_LIKE_ROLES = ["head", "head_of_regional_operation", "visibility_region_lead", "gtm_region_lead"];
 // "bsm" TIDAK termasuk di sini - sejak §BSM-peer, bsm setara DMO
 // (buat plan & kelola tim sendiri), BUKAN lagi "orang yang dibuatkan plan
 // oleh atasan" spt executor role lain.
@@ -317,7 +322,7 @@ export async function fetchAssignableTargets(scope) {
   // tidak pernah cocok) - diperlakukan sbg "tanpa batas region" spt
   // unscoped, konsisten dgn applyMartaScope() di lib/martaScope.js yg
   // sudah begini dari awal.
-  if (scope.role === "head" && scope.region) {
+  if (REGION_HEAD_LIKE_ROLES.includes(scope.role) && scope.region) {
     list = list.filter((r) => r.region === scope.region);
   } else if (scope.role === "tmv") {
     if (scope.region) list = list.filter((r) => r.region === scope.region);
@@ -389,7 +394,7 @@ export async function fetchUserManagementGrid(scope, period) {
   // Sama seperti fetchAssignableTargets di atas - region KOSONG pada
   // head/tmv (akun lintas-region spt "Circle Sumatera") tidak boleh
   // menyaring branch jadi kosong semua.
-  if (scope.role === "head" && scope.region) {
+  if (REGION_HEAD_LIKE_ROLES.includes(scope.role) && scope.region) {
     branches = branches.filter((b) => b.region === scope.region);
   } else if (scope.role === "tmv") {
     if (scope.region) branches = branches.filter((b) => b.region === scope.region);
@@ -491,7 +496,7 @@ export async function fetchOrgHierarchy(scope, period) {
   // head/tmv HANYA mengelola region (dan utk tmv, brand) miliknya sendiri -
   // Circle & region lain tidak relevan buat mereka sama sekali (RPC juga
   // menolak kalau dipaksa), jadi hasilnya cuma SATU region, bukan pohon penuh.
-  if (scope.role === "head" || scope.role === "tmv") {
+  if (REGION_HEAD_LIKE_ROLES.includes(scope.role) || scope.role === "tmv") {
     const brandsAllowed = scope.role === "tmv" ? [(scope.brand || "").toLowerCase()].filter(Boolean) : BRANDS;
     const branchesInRegion = allBranches.filter((b) => b.region === scope.region);
     const regionMeta = REGIONS.find((r) => r.key === scope.region);
@@ -526,7 +531,7 @@ export async function fetchAssignableGroups(scope) {
   // Sama seperti fetchAssignableTargets di atas - region KOSONG pada
   // head/tmv (akun lintas-region spt "Circle Sumatera") tidak boleh
   // menyaring branch jadi kosong semua.
-  if (scope.role === "head" && scope.region) {
+  if (REGION_HEAD_LIKE_ROLES.includes(scope.role) && scope.region) {
     branches = branches.filter((b) => b.region === scope.region);
   } else if (scope.role === "tmv") {
     if (scope.region) branches = branches.filter((b) => b.region === scope.region);

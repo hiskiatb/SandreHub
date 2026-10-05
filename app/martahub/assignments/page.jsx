@@ -1994,7 +1994,11 @@ function ChartPersonRow({ person, kind, onEdit, onRemove, isSelf }) {
     <div style={{ display: "flex", alignItems: "center", gap: big ? 10 : 7, textAlign: "left" }}>
       <div style={{
         width: avatarSize, height: avatarSize, borderRadius: "50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
-        fontSize: big ? 12 : 9.5, fontWeight: 800, background: dark ? "rgba(255,255,255,0.14)" : "rgba(15,110,86,0.12)", color: dark ? "#fff" : "#0F6E56",
+        // lineHeight:1 WAJIB - tanpa ini browser kasih "line box" lebih
+        // tinggi drpd glyph-nya sendiri (warisan line-height font/body),
+        // jadi walau div-nya sudah flex-center, inisial kelihatan nongkrong
+        // sedikit di atas pusat lingkaran, bukan benar2 center.
+        fontSize: big ? 12 : 9.5, fontWeight: 800, lineHeight: 1, background: dark ? "rgba(255,255,255,0.14)" : "rgba(15,110,86,0.12)", color: dark ? "#fff" : "#0F6E56",
       }}>{initials}</div>
       <div style={{ flex: 1, minWidth: 0 }}>
         {/* data-mh-exporttext: ditandai krn di layar sengaja 1-baris +
