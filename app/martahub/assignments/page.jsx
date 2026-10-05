@@ -5,7 +5,7 @@ import MartaShell, { T, FONT } from "../components/MartaShell";
 import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../lib/martaScope";
 import { useLivePresenceRows } from "../../../lib/martaPresence";
-import { BranchesBody } from "../branches/page";
+import { BranchesBody } from "../branches/BranchesBody";
 
 // Label field Cluster/MC berbeda per brand - konvensi yg sudah ada di spec
 // (IM3 disebut "MC", 3ID disebut "Cluster"), keduanya sama-sama kolom
