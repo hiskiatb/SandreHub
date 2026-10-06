@@ -41,7 +41,24 @@ import { X } from "lucide-react";
 // supaya konsisten se-app, bukan nilai baru yg beda sumber.
 const REGION_ABBR = { "NORTH SUMATERA": "NSA", "CENTRAL SUMATERA": "CSA", "SOUTH SUMATERA": "SSA" };
 import { fmtInt, fmtRp } from "../_shared/activityUi";
-import { BRAND_DISPLAY } from "../_shared/planData"; // dipakai di LeaderRow (badge brand per aktivitas), bukan lagi filter scope
+import { BRAND_DISPLAY, REGIONS } from "../_shared/planData"; // BRAND_DISPLAY dipakai di LeaderRow (badge brand per aktivitas); REGIONS utk filter Region akun "Circle" (head/tmv region kosong, atau unscoped)
+
+// Kunci localStorage utk mengingat pilihan filter Region di Leaderboard
+// antar sesi (device ini saja) - SAMA pola dgn FILTERS_STORAGE_KEY di
+// Beranda (app/martahub/m/page.jsx), tapi key terpisah krn konteksnya beda
+// (leaderboard tidak ikut nyimpan branchFilter/brandFilter krn branchPick
+// di sini sudah state lokal biasa, cukup regionFilter saja yg perlu
+// bertahan antar sesi).
+const LB_FILTERS_STORAGE_KEY = "mh_leaderboard_filters_v1";
+function loadSavedLbFilters() {
+  if (typeof window === "undefined") return {};
+  try { return JSON.parse(window.localStorage.getItem(LB_FILTERS_STORAGE_KEY) || "{}") || {}; }
+  catch { return {}; }
+}
+function saveLbFilters(f) {
+  if (typeof window === "undefined") return;
+  try { window.localStorage.setItem(LB_FILTERS_STORAGE_KEY, JSON.stringify(f)); } catch { /* best-effort */ }
+}
 
 // Sama persis dgn LAUNCH_YEAR/MONTH di Beranda (app/martahub/m/page.jsx) &
 // CalendarPickerSheet - MartaHub mobile mulai Agustus 2026, jadi pemilihan
@@ -127,6 +144,30 @@ export default function LeaderboardPage() {
   const [branchList, setBranchList] = useState([]); // {id,name,region}[] - dari mh_branches, difilter cakupan role di bawah
   const [branchPick, setBranchPick] = useState(""); // "" = semua branch dlm cakupan
 
+  // Filter Region - HANYA relevan utk akun "Circle" (head/tmv dgn
+  // scope.region KOSONG, mencakup ketiga region sekaligus - mis. "TMV
+  // Sumatera") atau unscoped (admin/spm_sumatera) - SAMA PERSIS pola
+  // canBrowseRegions di Beranda (app/martahub/m/page.jsx). Akun yg
+  // terkunci ke SATU region (scope.region terisi, bukan Circle) tetap
+  // lihat badge region sendiri yg non-interaktif spt sebelumnya (lihat
+  // render di bawah) - cuma akun Circle/unscoped yg dapat dropdown ini.
+  const canBrowseRegions = !!(scope?.unscoped || ((scope?.role === "head" || scope?.role === "tmv") && !scope?.region));
+  // Default "" (belum disentuh) - diperlakukan SAMA dgn "ALL" (semua
+  // region, tanpa filter) persis spt permintaan user: "secara default
+  // filter yang terpilih Semua Region". Dipulihkan dari localStorage
+  // device ini supaya pilihan terakhir "nempel" antar sesi (permintaan
+  // user: "filter yang digunakan terakhir tersimpan dengan baik").
+  const [regionFilter, setRegionFilter] = useState(() => loadSavedLbFilters().regionFilter || "");
+  useEffect(() => { saveLbFilters({ regionFilter }); }, [regionFilter]);
+  // Region efektif yg BENAR-BENAR dipakai menyaring data - "" (default,
+  // belum disentuh) ATAU "ALL" (sengaja dipilih "Semua Region") DUA-DUANYA
+  // berarti TIDAK ADA filter region tambahan (RPC tetap membatasi ke
+  // cakupan role spt biasa, cuma tidak dipersempit lagi oleh dropdown ini).
+  const effectiveRegionFilter = canBrowseRegions && regionFilter && regionFilter !== "ALL" ? regionFilter : "";
+  const regionOptions = canBrowseRegions
+    ? [{ value: "ALL", label: "Semua Region" }, ...REGIONS.map((r) => ({ value: r.key, label: REGION_ABBR[r.key] || r.label }))]
+    : [];
+
   // Baris leaderboard yg sedang dibuka detail legacy-nya (klik baris) -
   // null = popup tertutup. Lihat LegacyContributorsSheet di bawah: popup
   // ini SATU-SATUNYA tempat kontributor lama (org yg pernah log activity
@@ -165,10 +206,28 @@ export default function LeaderboardPage() {
   // ke branch-branch DALAM region mereka; admin/spm_sumatera (unscoped)
   // lihat semua branch.
   const allowedBranches = useMemo(() => {
-    if (scope?.unscoped) return branchList.slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-    if (scope?.region) return branchList.filter((b) => b.region === scope.region).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-    return [];
-  }, [branchList, scope]);
+    // BUG YG DIPERBAIKI (sama kelasnya dgn Beranda/app/martahub/m/page.jsx):
+    // scope.region KOSONG pada role head/tmv berarti akun "Circle" (mis.
+    // "TMV Sumatera" - sengaja TIDAK dipatok ke satu region, mencakup
+    // ketiganya) - dulu kondisi di bawah (`if (scope?.region)`) salah
+    // menganggap region kosong = "tidak ada branch yg boleh dipilih sama
+    // sekali" (return []), padahal harusnya SAMA leluasanya dgn unscoped.
+    // Sekarang: unscoped ATAU region kosong pada head/tmv = semua branch;
+    // scope.region terisi = tetap dibatasi ke branch dalam region itu saja.
+    let list;
+    if (scope?.unscoped || (!scope?.region && (scope?.role === "head" || scope?.role === "tmv"))) {
+      list = branchList.slice();
+    } else if (scope?.region) {
+      list = branchList.filter((b) => b.region === scope.region);
+    } else {
+      list = [];
+    }
+    // Filter Region dari dropdown (effectiveRegionFilter) mempersempit
+    // LEBIH LANJUT - cuma berlaku utk akun yg memang "Circle"/unscoped
+    // (canBrowseRegions), tidak pernah menambah akses baru di luar scope.
+    if (effectiveRegionFilter) list = list.filter((b) => b.region === effectiveRegionFilter);
+    return list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  }, [branchList, scope, effectiveRegionFilter]);
 
   // "Peringkat Anda" - SELALU dari baris is_me (RPC selalu mengirim baris
   // sendiri apa pun scope-nya, terlepas dari filter branch/brand/mode yang
@@ -192,9 +251,14 @@ export default function LeaderboardPage() {
   const filtered = useMemo(() => {
     let list = rows || [];
     if (scope?.region && !scope?.unscoped) list = list.filter((r) => r.region === scope.region);
+    // Filter Region dari dropdown - cuma aktif kalau akun ini Circle/
+    // unscoped (effectiveRegionFilter sudah "" kalau bukan, lihat
+    // canBrowseRegions di atas), jadi tidak pernah bocor ke luar cakupan
+    // role yang sebenarnya (RPC server tetap sumber kebenaran utama).
+    if (effectiveRegionFilter) list = list.filter((r) => r.region === effectiveRegionFilter);
     if (branchPick) list = list.filter((r) => r.branch_id === branchPick);
     return list.slice().sort((a, b) => (a[mode.rankField] || 9999) - (b[mode.rankField] || 9999));
-  }, [rows, scope, branchPick, mode]);
+  }, [rows, scope, branchPick, mode, effectiveRegionFilter]);
 
   if (sessionLoading || rows === null) {
     return (
@@ -284,10 +348,28 @@ export default function LeaderboardPage() {
             mempersempit DALAM region itu, tidak pernah bisa "bocor" ke
             region lain. */}
         <div className="mh-hide-scrollbar" style={{ display: "flex", gap: 7, marginTop: 10, overflowX: "auto", paddingBottom: 2, WebkitOverflowScrolling: "touch", scrollbarWidth: "none", msOverflowStyle: "none" }}>
+          {/* Akun terkunci SATU region (bukan Circle) - badge statis spt
+              sebelumnya, tidak interaktif krn memang cuma 1 pilihan. */}
           {scope?.region && !scope?.unscoped && (
             <div style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 11px", borderRadius: 999, background: "#F5F5F7", border: "1px solid #E9EAEE", whiteSpace: "nowrap" }}>
               <MapPin size={12} color="#5A5A68" />
               <span style={{ fontSize: 11.5, fontWeight: 700, color: "#5A5A68", fontFamily: FF }}>{REGION_ABBR[scope.region] || scope.region}</span>
+            </div>
+          )}
+          {/* Akun Circle (head/tmv region kosong, mis. "TMV Sumatera") atau
+              unscoped (admin/spm_sumatera) - dropdown Region beneran,
+              default "Semua Region", tersimpan ke localStorage tiap
+              berubah (lihat saveLbFilters di atas) supaya pilihan terakhir
+              tetap nempel kalau DMO buka lagi nanti. */}
+          {canBrowseRegions && (
+            <div style={{ flexShrink: 0 }}>
+              <SelectPill
+                value={regionFilter}
+                onChange={(v) => { setRegionFilter(v); setBranchPick(""); }}
+                active={!!effectiveRegionFilter}
+              >
+                {regionOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </SelectPill>
             </div>
           )}
           {allowedBranches.length > 0 && (
@@ -345,7 +427,7 @@ export default function LeaderboardPage() {
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {filtered.map((r) => <LeaderRow key={r.id} r={r} mode={mode} isMe={r.user_id === userId} onOpenLegacy={() => setLegacyRow(r)} />)}
+            {filtered.map((r, i) => <LeaderRow key={r.id} r={r} mode={mode} isMe={r.user_id === userId} onOpenLegacy={() => setLegacyRow(r)} displayRank={i + 1} />)}
           </div>
         )}
       </div>
@@ -413,8 +495,16 @@ function rankVisual(rank) {
   return { icon: null, bg: null };
 }
 
-function LeaderRow({ r, mode, isMe, onOpenLegacy }) {
-  const rv = rankVisual(r[mode.rankField]);
+function LeaderRow({ r, mode, isMe, onOpenLegacy, displayRank }) {
+  // Badge rank pakai POSISI LOKAL di daftar yg SEDANG ditampilkan
+  // (displayRank = index+1 setelah filter Region/Branch & sort), BUKAN
+  // r[mode.rankField] (rank GLOBAL se-Sumatera dari RPC) - dulu pakai
+  // rank global, jadi begitu daftar dipersempit lewat filter, angkanya
+  // bisa "loncat" (mis. 1, 3, 4, 8, 12...) krn orang2 di antaranya ada
+  // di luar filter. Sekarang SELALU rapi berurutan 1,2,3,4,5... dan ikon
+  // mahkota/medali SELALU cuma utk 3 TERATAS DALAM TAMPILAN SAAT INI
+  // (konsisten dgn permintaan user), bukan tergantung rank global mereka.
+  const rv = rankVisual(displayRank);
   return (
     <button onClick={r.has_legacy ? onOpenLegacy : undefined}
       style={{
@@ -423,7 +513,7 @@ function LeaderRow({ r, mode, isMe, onOpenLegacy }) {
         textAlign: "left", cursor: r.has_legacy ? "pointer" : "default",
       }}>
       <div style={{ flexShrink: 0, width: 30, height: 30, borderRadius: "50%", background: rv.bg || "#F0F0F3", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#5A5A68" }}>
-        {rv.icon || fmtInt(r[mode.rankField])}
+        {rv.icon || fmtInt(displayRank)}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

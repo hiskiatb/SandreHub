@@ -333,14 +333,15 @@ function Body({ email }) {
       setBranchMap(Object.fromEntries((branches || []).map((b) => [b.id, b.name])));
       setProfileMap(Object.fromEntries((profiles || []).map((p) => [p.id, p.full_name])));
       // Kalau satu branch+brand kebetulan py >1 assignment aktif, ambil yg
-      // valid_from PALING BARU (konsisten dgn urutan RPC mh_import_plan_batch
-      // sendiri: "order by p.valid_from desc nulls last limit 1").
+      // valid_from PALING LAMA (org yg PERTAMA di-assign jadi PIC utama;
+      // org yg di-assign belakangan dianggap kontributor tambahan saja,
+      // jadi tidak dipakai utk atribusi "dibuat oleh" di sini).
       {
         const byKey = {};
         for (const p of bmeAssignRows || []) {
           const key = `${String(p.brand || "").toLowerCase()}|${String(p.branch_name || "").toUpperCase()}`;
           const prevDate = byKey[key]?.valid_from;
-          if (!byKey[key] || (p.valid_from || "") > (prevDate || "")) byKey[key] = p;
+          if (!byKey[key] || (p.valid_from || "") < (prevDate || "")) byKey[key] = p;
         }
         setBmeAssignMap(Object.fromEntries(Object.entries(byKey).map(([k, p]) => [k, p.full_name])));
       }
