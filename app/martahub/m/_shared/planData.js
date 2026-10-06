@@ -25,15 +25,27 @@ export async function resolveBranchUuid(branchIdOrSlug, branchName) {
 /** Semua site dalam scope brand×branch user (branch_id slug langsung cocok
  * dgn mh_sites.branch_id, TIDAK perlu resolve uuid di sini). */
 export async function fetchScopeSites(branchIdSlug, brand) {
-  if (!branchIdSlug || !brand) return [];
-  const { data, error } = await supabaseMarta
+  if (!branchIdSlug) return [];
+  // brand=null = slot gabungan (DMO/Head of Area skrg satu slot lintas
+  // IM3+3ID, bukan lagi dipisah per brand) - dulu brand WAJIB ada jadi
+  // langsung pulang kosong kalau null, akibatnya DMO dgn slot gabungan
+  // (yg sekarang jadi kasus NORMAL, bukan pengecualian) selalu dapat
+  // "Tidak ada site di scope Anda" walau branch-nya valid & ada sitenya.
+  // Tanpa brand spesifik, ambil site dari KEDUA brand di branch itu.
+  let q = supabaseMarta
     .from("mh_sites")
-    .select("site_id, site_name, mc, network_cat, area_potential, latitude, longitude, kecamatan_name, kabupaten, kecamatan, branch, region, area, circle, kecamatan_fokus, site_lrs")
+    .select("site_id, site_name, mc, network_cat, area_potential, latitude, longitude, kecamatan_name, kabupaten, kecamatan, branch, region, area, circle, kecamatan_fokus, site_lrs, brand")
     .eq("branch_id", branchIdSlug)
-    .eq("brand", brand.toLowerCase())
     .eq("active", true);
+  if (brand) q = q.eq("brand", brand.toLowerCase());
+  const { data, error } = await q;
   if (error) throw error;
-  return data || [];
+  // brand=null bisa dapat >1 baris per site_id (satu per brand) - dedup
+  // by site_id spy picker tidak nampilin site yg sama dua kali.
+  if (brand) return data || [];
+  const seen = new Set(); const out = [];
+  for (const s of data || []) { if (!seen.has(s.site_id)) { seen.add(s.site_id); out.push(s); } }
+  return out;
 }
 
 export function mcListFromSites(sites) {
@@ -276,9 +288,15 @@ export async function fetchRebuyEntries(activityId) {
   if (error) throw error;
   return data || [];
 }
-export async function addRebuyEntryDb({ activityId, type, transactionId, msisdn, amount }) {
+export async function addRebuyEntryDb({ activityId, type, transactionId, msisdn, amount, brand }) {
   const { data, error } = await supabaseMarta.rpc("mh_activity_add_rebuy_entry", {
     p_activity_id: activityId, p_type: type, p_transaction_id: transactionId, p_msisdn: msisdn, p_amount: amount,
+    // Brand (im3/tri) per entri rebuy - permintaan user: "sebelumnya satu
+    // event satu brand, sekarang bisa dalam satu event menjual dua produk
+    // sekaligus", jadi detail rebuy per-transaksi juga perlu kekenali
+    // brand-nya (null = data lama sblm kolom ini ada / brand tidak
+    // dipilih).
+    p_brand: brand || null,
   });
   if (error) throw error;
   return data;

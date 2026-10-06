@@ -34,8 +34,14 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Trophy, Crown, Medal, TrendingUp, MapPin, Users, ChevronDown, CalendarDays } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../_shared/MobileShell";
+import BottomSheet from "../_shared/BottomSheet";
+import { X } from "lucide-react";
+
+// Singkatan region - SAMA PERSIS dgn REGION_ABBR di Beranda (app/martahub/m/page.jsx)
+// supaya konsisten se-app, bukan nilai baru yg beda sumber.
+const REGION_ABBR = { "NORTH SUMATERA": "NSA", "CENTRAL SUMATERA": "CSA", "SOUTH SUMATERA": "SSA" };
 import { fmtInt, fmtRp } from "../_shared/activityUi";
-import { BRAND_DISPLAY } from "../_shared/planData";
+import { BRAND_DISPLAY } from "../_shared/planData"; // dipakai di LeaderRow (badge brand per aktivitas), bukan lagi filter scope
 
 // Sama persis dgn LAUNCH_YEAR/MONTH di Beranda (app/martahub/m/page.jsx) &
 // CalendarPickerSheet - MartaHub mobile mulai Agustus 2026, jadi pemilihan
@@ -86,7 +92,7 @@ const COLS =
   "target_rev_3m,actual_rev_3m,target_sp,actual_sp,target_fwa,actual_fwa," +
   "target_rebuy_total,actual_rebuy_total,ach_revenue_pct,ach_sp_pct,ach_fwa_pct,geo_compliance," +
   "rank_actual_rev,rank_target_rev,rank_total_activities,rank_actual_sp,rank_actual_fwa,rank_actual_rebuy," +
-  "total_participants,in_scope,is_me";
+  "total_participants,in_scope,is_me,has_legacy,legacy_activities,legacy_actual_rev,legacy_contributors";
 
 // Mode ranking - tiap mode bawa `field` (angka yg ditampilkan) & `rankField`
 // (kolom rank_* dari RPC, dihitung server dari SELURUH populasi - lihat
@@ -120,7 +126,16 @@ export default function LeaderboardPage() {
   // tetap bisa mempersempit ke branch/brand TERTENTU dalam cakupannya.
   const [branchList, setBranchList] = useState([]); // {id,name,region}[] - dari mh_branches, difilter cakupan role di bawah
   const [branchPick, setBranchPick] = useState(""); // "" = semua branch dlm cakupan
-  const [brandPick, setBrandPick] = useState(""); // "" = semua brand dlm cakupan (cuma relevan kalau scope.brand kosong)
+
+  // Baris leaderboard yg sedang dibuka detail legacy-nya (klik baris) -
+  // null = popup tertutup. Lihat LegacyContributorsSheet di bawah: popup
+  // ini SATU-SATUNYA tempat kontributor lama (org yg pernah log activity
+  // di branch ini sebelum struktur baru 5 Okt 2026, tapi sekarang bukan
+  // DMO resmi branch itu lagi) ditampilkan - tidak lagi dicampur ke nama
+  // utama via suffix " dkk" spt sebelumnya (permintaan user: tampilan
+  // pertama HARUS pakai struktur baru/DMO resmi saja, riwayat lama cuma
+  // muncul kalau user sengaja klik utk lihat).
+  const [legacyRow, setLegacyRow] = useState(null);
 
   useEffect(() => {
     if (sessionLoading || !monthKey) return;
@@ -130,7 +145,7 @@ export default function LeaderboardPage() {
       try {
         const [{ data, error }, { data: branches, error: be }] = await Promise.all([
           supabaseMarta.rpc("mh_leaderboard_for_me", { p_month: monthKey, p_date: dateKey || null }).select(COLS),
-          supabaseMarta.from("mh_branches").select("id,name,region"),
+          supabaseMarta.from("mh_branches").select("id,name,region").eq("active", true), // cuma branch AKTIF - RPC leaderboard sudah tidak pernah ngirim branch legacy lagi (lihat catatan besar di mh_leaderboard_for_me), jadi dropdown filter di sini jangan nawarin opsi yg pasti kosong hasilnya
         ]);
         if (error) throw error;
         if (be) throw be;
@@ -150,7 +165,6 @@ export default function LeaderboardPage() {
   // ke branch-branch DALAM region mereka; admin/spm_sumatera (unscoped)
   // lihat semua branch.
   const allowedBranches = useMemo(() => {
-    if (scope?.branchName) return [];
     if (scope?.unscoped) return branchList.slice().sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     if (scope?.region) return branchList.filter((b) => b.region === scope.region).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
     return [];
@@ -168,17 +182,19 @@ export default function LeaderboardPage() {
   // cakupan yg memang sudah dikirim server) + urutkan berdasarkan rank
   // GLOBAL (r[mode.rankField]) - BUKAN index lokal - supaya urutan tampil
   // konsisten dgn badge rank yg ditulis di tiap baris.
+  // Brand TIDAK LAGI relevan sbg filter di sini - grain leaderboard sekarang
+  // PER BRANCH (bukan per DMO/brand lagi, lihat catatan besar di RPC
+  // `mh_leaderboard_for_me`), satu baris branch bisa mewakili DMO IM3 & 3ID
+  // sekaligus, jadi kolom `brand` dari RPC SELALU null & filter brand lama
+  // (scope.brand/brandPick) dihapus - sebelumnya ini DIAM2 bikin daftar
+  // kosong total utk akun yg scope.brand-nya masih terisi (field brand di
+  // profil masih ada, RPC sudah tidak pernah ngirim nilainya lagi).
   const filtered = useMemo(() => {
     let list = rows || [];
-    if (scope?.brand) list = list.filter((r) => (r.brand || "").toLowerCase() === scope.brand.toLowerCase());
-    else if (brandPick) list = list.filter((r) => (r.brand || "").toLowerCase() === brandPick.toLowerCase());
-    if (scope?.branchName) list = list.filter((r) => r.branch_name === scope.branchName);
-    else {
-      if (scope?.region && !scope?.unscoped) list = list.filter((r) => r.region === scope.region);
-      if (branchPick) list = list.filter((r) => r.branch_id === branchPick);
-    }
+    if (scope?.region && !scope?.unscoped) list = list.filter((r) => r.region === scope.region);
+    if (branchPick) list = list.filter((r) => r.branch_id === branchPick);
     return list.slice().sort((a, b) => (a[mode.rankField] || 9999) - (b[mode.rankField] || 9999));
-  }, [rows, scope, branchPick, brandPick, mode]);
+  }, [rows, scope, branchPick, mode]);
 
   if (sessionLoading || rows === null) {
     return (
@@ -257,46 +273,32 @@ export default function LeaderboardPage() {
           })}
         </div>
 
-        {/* Cakupan: branch tetap (bme_rge/tm) ditampilkan sbg badge info saja
-            (tidak bisa diganti - memang scope akunnya). Role region-scope
-            (head/tmv) & unscoped (admin/spm_sumatera) dapat DROPDOWN Branch
-            beneran + dropdown Brand kalau brand mereka memang tidak
-            terkunci ke satu brand - tetap dibatasi ke cakupan role-nya
-            (lihat allowedBranches di atas - RPC jg sudah membatasi data yg
-            terkirim, jadi dropdown ini cuma mempersempit lagi, tidak pernah
-            bisa "bocor" lihat region lain). */}
-        {scope?.branchName ? (
-          <div style={{ marginTop: 10, display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: "#F5F5F7", border: "1px solid #E9EAEE" }}>
-            <MapPin size={12} color="#5A5A68" />
-            <span style={{ fontSize: 11.5, fontWeight: 700, color: "#5A5A68", fontFamily: FF }}>{scope.branchName}{scope?.brand ? ` · ${BRAND_DISPLAY[scope.brand.toLowerCase()] || scope.brand.toUpperCase()}` : ""}</span>
-          </div>
-        ) : (
-          <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-            {scope?.region && !scope?.unscoped && (
-              <div style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 999, background: "#F5F5F7", border: "1px solid #E9EAEE" }}>
-                <MapPin size={12} color="#5A5A68" />
-                <span style={{ fontSize: 11.5, fontWeight: 700, color: "#5A5A68", fontFamily: FF }}>{scope.region}</span>
-              </div>
-            )}
-            {allowedBranches.length > 0 && (
+        {/* Cakupan: SEMUA role (termasuk bme_rge/bsm yg branch-nya sendiri
+            tetap/terkunci) sekarang lihat ranking SATU REGION, bukan cuma
+            branch sendiri - jadi badge Region + dropdown Branch ("Semua
+            Branch" = seluruh region, atau persempit ke 1 branch tertentu
+            termasuk branch sendiri) SELALU ditampilkan dgn pola yg SAMA,
+            tidak lagi dibedakan jadi "badge statis" (branch-locked) vs
+            "dropdown" (region-scope) spt sebelumnya - RPC tetap yg
+            menentukan batas sebenarnya (region caller), dropdown ini cuma
+            mempersempit DALAM region itu, tidak pernah bisa "bocor" ke
+            region lain. */}
+        <div className="mh-hide-scrollbar" style={{ display: "flex", gap: 7, marginTop: 10, overflowX: "auto", paddingBottom: 2, WebkitOverflowScrolling: "touch", scrollbarWidth: "none", msOverflowStyle: "none" }}>
+          {scope?.region && !scope?.unscoped && (
+            <div style={{ flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 11px", borderRadius: 999, background: "#F5F5F7", border: "1px solid #E9EAEE", whiteSpace: "nowrap" }}>
+              <MapPin size={12} color="#5A5A68" />
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: "#5A5A68", fontFamily: FF }}>{REGION_ABBR[scope.region] || scope.region}</span>
+            </div>
+          )}
+          {allowedBranches.length > 0 && (
+            <div style={{ flexShrink: 0 }}>
               <SelectPill value={branchPick} onChange={setBranchPick} active={!!branchPick}>
                 <option value="">Semua Branch</option>
                 {allowedBranches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
               </SelectPill>
-            )}
-            {scope?.brand ? (
-              <div style={{ display: "inline-flex", alignItems: "center", padding: "7px 12px", borderRadius: 999, background: "#F5F5F7", border: "1px solid #E9EAEE" }}>
-                <span style={{ fontSize: 11.5, fontWeight: 700, color: "#5A5A68", fontFamily: FF }}>{BRAND_DISPLAY[scope.brand.toLowerCase()] || scope.brand.toUpperCase()}</span>
-              </div>
-            ) : (
-              <SelectPill value={brandPick} onChange={setBrandPick} active={!!brandPick}>
-                <option value="">Semua Brand</option>
-                <option value="im3">IM3</option>
-                <option value="tri">3ID</option>
-              </SelectPill>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+        </div>
       </div>
 
       {myRow && (
@@ -343,10 +345,12 @@ export default function LeaderboardPage() {
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {filtered.map((r) => <LeaderRow key={r.id} r={r} mode={mode} isMe={r.user_id === userId} />)}
+            {filtered.map((r) => <LeaderRow key={r.id} r={r} mode={mode} isMe={r.user_id === userId} onOpenLegacy={() => setLegacyRow(r)} />)}
           </div>
         )}
       </div>
+
+      {legacyRow && <LegacyContributorsSheet row={legacyRow} onClose={() => setLegacyRow(null)} />}
 
       <style jsx global>{`
         .mh-hide-scrollbar::-webkit-scrollbar { display: none; height: 0; }
@@ -409,13 +413,15 @@ function rankVisual(rank) {
   return { icon: null, bg: null };
 }
 
-function LeaderRow({ r, mode, isMe }) {
+function LeaderRow({ r, mode, isMe, onOpenLegacy }) {
   const rv = rankVisual(r[mode.rankField]);
   return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: 12, background: isMe ? "#FFF5F6" : "#FFFFFF",
-      border: `1px solid ${isMe ? "#F7C6C9" : "#E9EAEE"}`, borderRadius: 14, padding: "11px 13px", fontFamily: FF,
-    }}>
+    <button onClick={r.has_legacy ? onOpenLegacy : undefined}
+      style={{
+        display: "flex", alignItems: "center", gap: 12, background: isMe ? "#FFF5F6" : "#FFFFFF", width: "100%",
+        border: `1px solid ${isMe ? "#F7C6C9" : "#E9EAEE"}`, borderRadius: 14, padding: "11px 13px", fontFamily: FF,
+        textAlign: "left", cursor: r.has_legacy ? "pointer" : "default",
+      }}>
       <div style={{ flexShrink: 0, width: 30, height: 30, borderRadius: "50%", background: rv.bg || "#F0F0F3", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#5A5A68" }}>
         {rv.icon || fmtInt(r[mode.rankField])}
       </div>
@@ -438,6 +444,47 @@ function LeaderRow({ r, mode, isMe }) {
         </div>
         <div style={{ fontSize: 9.5, color: "#B0B0BA", fontWeight: 600 }}>{mode.label}</div>
       </div>
-    </div>
+    </button>
+  );
+}
+
+// Popup detail kontributor lama - dibuka dgn klik baris yg `has_legacy`
+// true. Isinya daftar orang yg log activity di branch ini bulan yg dipilih
+// TAPI secara struktur (mh_profiles) bukan DMO resmi branch itu lagi
+// (biasanya krn restrukturisasi 5 Okt 2026) - angka utama baris
+// (total_activities/revenue dkk) SUDAH menjumlahkan SEMUA kontributor
+// (current + legacy digabung, permintaan user: "di tampilan awal gunakan
+// total dari semua kontributor") - popup ini cuma RINCIAN siapa
+// menyumbang berapa dari total itu, bukan angka yg dikecualikan.
+function LegacyContributorsSheet({ row, onClose }) {
+  const contributors = row.legacy_contributors || [];
+  return (
+    <BottomSheet onClose={onClose} zIndex={200} borderRadius="24px 24px 0 0">
+      <div style={{ padding: "4px 20px 28px", fontFamily: FF }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ fontSize: 15, fontWeight: 800, color: "#17181C" }}>Riwayat Kontributor Lama</div>
+          <button onClick={onClose} style={{ background: "#F5F5F7", border: "none", borderRadius: "50%", width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <X size={14} color="#5A5A68" />
+          </button>
+        </div>
+        <div style={{ marginTop: 4, fontSize: 11.5, color: "#8A8A96", fontWeight: 500 }}>
+          {row.branch_name} · DMO resmi saat ini: <span style={{ color: "#17181C", fontWeight: 700 }}>{row.user_name || "-"}</span>
+        </div>
+        <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+          {contributors.map((c, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: 12, background: "#F7F7F9", border: "1px solid #ECECF0" }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: "#17181C" }}>{c.name}</div>
+              <div style={{ textAlign: "right" }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: "#17181C" }}>{fmtInt(c.activities)} plan</div>
+                {c.actual_rev > 0 && <div style={{ fontSize: 10, color: "#8A8A96", fontWeight: 600 }}>{fmtRp(c.actual_rev)}</div>}
+              </div>
+            </div>
+          ))}
+          {contributors.length === 0 && (
+            <div style={{ fontSize: 11.5, color: "#8A8A96", textAlign: "center", padding: "12px 0" }}>Tidak ada detail kontributor.</div>
+          )}
+        </div>
+      </div>
+    </BottomSheet>
   );
 }

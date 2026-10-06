@@ -90,6 +90,21 @@ function fmtIndoDate(dateStr) {
 // (sebelumnya default "0" bikin ~81% laporan actual diam2 tersimpan
 // dgn cost 0 tanpa pernah disentuh sama sekali, bikin metrik Cost Ratio
 // di Beranda selalu ~0% dan tidak akurat).
+// Deteksi brand (IM3/3ID) dari nama produk - dipakai utk kasih aksen
+// warna brand di MsisdnCard/RebuyCard (permintaan user: "untuk msisdnnya
+// juga dibuat jelas untuk warnanya mana yang im3 dan mana yang 3id"),
+// SAMA PERSIS konvensi warnanya dgn wizard Buat Plan (IM3 kuning, 3ID
+// magenta) - lihat detectActBrand di activities/new/page.jsx.
+const BRAND_SWATCH = {
+  im3: { color: "#F5CD46", text: "#17181C", label: "IM3" },
+  tri: { color: "#E23B86", text: "#FFFFFF", label: "3ID" },
+};
+function detectMsisdnBrand(name) {
+  const n = (name || "").toUpperCase();
+  if (n.includes("3ID") || n.includes("TRI")) return "tri";
+  if (n.includes("IM3")) return "im3";
+  return null;
+}
 function isCostActualIncomplete(v, zeroConfirmed) {
   if (v === "" || v == null || Number.isNaN(Number(v)) || Number(v) < 0) return true;
   if (Number(v) === 0 && !zeroConfirmed) return true;
@@ -200,46 +215,99 @@ export default function SubmitActualPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ownOrgId]);
   const [selectedType, setSelectedType] = useState({ sp: null, fwa: null });
+  // Brand yg lagi "aktif" utk tagging MSISDN per kategori (im3/tri) -
+  // permintaan user: 1 event skr bisa jual KEDUA brand sekaligus, jadi
+  // sebelum nge-tag nomor, DSF pilih dulu nomor itu buat brand yg mana
+  // (toggle di SalesSection) - selectedType[cat] otomatis ikut brand ini
+  // (lihat effect di bawah), jadi addMsisdn/addMsisdnBulk/catRevenue yg
+  // SUDAH ada (baca selectedType[cat]) TIDAK PERLU diubah logikanya.
+  const [activeTagBrand, setActiveTagBrand] = useState({ sp: "im3", fwa: "im3" });
   const [entries, setEntries] = useState({ sp: [], fwa: [] }); // {msisdn, typeId, typeName, orgId}
   // Simplifikasi: MSISDN sekarang OPSIONAL - DSF boleh cukup isi angka
-  // qty (spQtyManual/fwaQtyManual) tanpa nge-tag nomor satu-satu. Begitu
-  // ada minimal 1 nomor ditag, qty WAJIB ikut jumlah nomor yg ditag
-  // (read-only) - MSISDN yg ditag dianggap lebih akurat drpd angka manual.
-  const [qtyManual, setQtyManual] = useState({ sp: "0", fwa: "0" });
+  // qty (qtyManual) tanpa nge-tag nomor satu-satu. Begitu ada minimal 1
+  // nomor ditag UTK BRAND TERTENTU, qty brand itu WAJIB ikut jumlah nomor
+  // yg ditag (read-only) - MSISDN yg ditag dianggap lebih akurat drpd
+  // angka manual. qtyManual SEKARANG per-brand (im3/tri terpisah, bukan 1
+  // angka gabungan) - permintaan user: "sebelumnya satu event satu brand,
+  // sekarang bisa dalam satu event menjual dua produk sekaligus".
+  const [qtyManual, setQtyManual] = useState({ sp: { im3: "0", tri: "0" }, fwa: { im3: "0", tri: "0" } });
+  // selectedType[cat] SELALU ikut produk yg brand-nya cocok dgn
+  // activeTagBrand[cat] (begitu types[cat]/activeTagBrand berubah) -
+  // addMsisdn/addMsisdnBulk/catRevenue yg sudah ada (baca selectedType[cat]
+  // polos) otomatis dpt typeId yg benar tanpa perlu disentuh. Fallback ke
+  // produk brand lain/generik kalau produk utk brand aktif belum tersedia
+  // (mis. master data cuma py 1 brand aktif).
+  useEffect(() => {
+    for (const cat of ["sp", "fwa"]) {
+      const wanted = types[cat].find((t) => (t.brand || "").toLowerCase() === activeTagBrand[cat]);
+      const fallback = types[cat][0];
+      const nextId = (wanted || fallback)?.id || null;
+      setSelectedType((s) => (s[cat] === nextId ? s : { ...s, [cat]: nextId }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [types, activeTagBrand]);
   const [pendingTransfers, setPendingTransfers] = useState({ sp: [], fwa: [] });
   const [msisdnInput, setMsisdnInput] = useState({ sp: "", fwa: "" });
   const [msisdnErr, setMsisdnErr] = useState({ sp: null, fwa: null });
   const [msisdnBulkBusy, setMsisdnBulkBusy] = useState({ sp: false, fwa: false });
+  // Guard anti-duplikat-ganda: tombol "+" (dan QR) mem-blur input teks
+  // dulu SEBELUM onClick-nya sendiri jalan, jadi SATU tap bisa memicu DUA
+  // panggilan addMsisdn hampir bersamaan (satu dari onBlur, satu dari
+  // onClick) - keduanya lolos cek isDuplicateLocal krn sama2 baca state
+  // `entries` yg SAMA (belum sempat ke-update oleh panggilan pertama),
+  // hasilnya nomor yg sama ketambah 2x. Ref ini mengunci per-kategori
+  // selama satu addMsisdn masih berjalan, panggilan ke-2 yg nyusul
+  // langsung diabaikan. Tombol "+"/QR SENDIRI juga sudah dipatch supaya
+  // tidak lagi memicu blur sama sekali (lihat onMouseDown di SalesSection).
+  const addMsisdnLockRef = useRef({ sp: false, fwa: false });
 
   // Rebuy - per-transaksi: Transaction ID + nomor tujuan (wajib 62xxx,
   // dikunci lewat Phone62Input - tidak mungkin tersimpan diawali 0/8) + jenis
   // SP/FWA + nominal. Setiap entri dipersist ke mh_activity_rebuy_entries
   // (bukan cuma dijumlah lalu dibuang) supaya Transaction ID bisa ditelusuri.
-  const [rebuyEntries, setRebuyEntries] = useState([]); // {msisdn, type:'sp'|'fwa', amount, transactionId, persisted?, id?}
+  const [rebuyEntries, setRebuyEntries] = useState([]); // {msisdn, type:'sp'|'fwa', brand:'im3'|'tri'|null, amount, transactionId, persisted?, id?}
   const [rebuyTransactionId, setRebuyTransactionId] = useState("");
   const [rebuyMsisdn, setRebuyMsisdn] = useState("");
   const [rebuyType, setRebuyType] = useState(null);
+  // Brand detail rebuy per-transaksi (im3/tri) - kolom DB baru `brand` di
+  // mh_activity_rebuy_entries (lihat migrasi + RPC mh_activity_add_rebuy_
+  // entry yg sudah py p_brand). Default "im3", DSF tinggal toggle kalau
+  // transaksinya utk 3ID.
+  const [rebuyBrand, setRebuyBrand] = useState("im3");
   const [rebuyAmount, setRebuyAmount] = useState("");
   const [rebuyErr, setRebuyErr] = useState(null);
   const [rebuyDetailOpen, setRebuyDetailOpen] = useState(false);
-  // Simplifikasi: Rebuy SP/FWA sekarang cukup 1 angka TOTAL per jenis
-  // (rebuySpTotalManual/rebuyFwaTotalManual) - breakdown per-transaksi
-  // (rebuyEntries) TETAP ada tapi jadi opsional ("+ Tambah Detail Rebuy").
-  // Begitu ada minimal 1 detail utk jenis tsb, totalnya WAJIB ikut jumlah
-  // detailnya (read-only) supaya tidak dobel-catat/ tidak sinkron - kalau
-  // belum ada detail sama sekali, field totalnya bebas diketik manual.
-  const [rebuySpTotalManual, setRebuySpTotalManual] = useState("0");
-  const [rebuyFwaTotalManual, setRebuyFwaTotalManual] = useState("0");
-  const rebuySpDetailTotal = rebuyEntries.filter((r) => r.type === "sp").reduce((s, r) => s + (Number(r.amount) || 0), 0);
-  const rebuyFwaDetailTotal = rebuyEntries.filter((r) => r.type === "fwa").reduce((s, r) => s + (Number(r.amount) || 0), 0);
-  const rebuySpHasDetail = rebuyEntries.some((r) => r.type === "sp");
-  const rebuyFwaHasDetail = rebuyEntries.some((r) => r.type === "fwa");
+  // Rebuy SP/FWA SEKARANG dipisah per brand (im3/tri) - permintaan user:
+  // "sebelumnya satu event satu brand, sekarang bisa dalam satu event
+  // menjual dua produk sekaligus", jadi "Total Rebuy SP"/"Total Rebuy FWA"
+  // masing2 jadi 2 angka (IM3 & 3ID) bukan 1 lagi - breakdown per-transaksi
+  // (rebuyEntries) TETAP opsional lewat "+ Tambah Detail Rebuy". Begitu ada
+  // minimal 1 detail utk kombinasi jenis+brand tsb, totalnya WAJIB ikut
+  // jumlah detailnya (read-only) - kalau belum ada detail utk kombinasi
+  // itu, fieldnya bebas diketik manual.
+  const [rebuyTotalManual, setRebuyTotalManual] = useState({ sp: { im3: "0", tri: "0" }, fwa: { im3: "0", tri: "0" } });
+  // Detail per-transaksi (Transaction ID dst) SEKARANG murni tambahan utk
+  // VALIDASI - permintaan user sama persis dgn qty SP/FWA di atas ("ini
+  // harusnya tidak nglink"): total rebuy yg diakui tetap angka manual yg
+  // diketik DMO, BUKAN otomatis dikunci/ditimpa jumlah detail transaksi yg
+  // sempat dicatat. Jumlah detail dipakai HANYA utk actual_validated_rebuy_*.
+  function rebuyDetailTotal(type, brand) {
+    return rebuyEntries.filter((r) => r.type === type && (r.brand || "im3") === brand).reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  }
+  function rebuyHasDetail(type, brand) {
+    return rebuyEntries.some((r) => r.type === type && (r.brand || "im3") === brand);
+  }
+  function rebuyTotal(type, brand) {
+    return Number(rebuyTotalManual[type][brand]) || 0;
+  }
   // actual_rebuy_sp/actual_rebuy_fwa - dulu bernama actual_rebuy_pulsa/
   // actual_rebuy_data di DB (istilah produk, bukan kategori SP/FWA spt di
   // semua tempat lain) - sudah di-rename ke sp/fwa di level database supaya
-  // konsisten, tidak ada lagi dua istilah utk konsep yang sama.
-  const rebuySpTotal = rebuySpHasDetail ? rebuySpDetailTotal : (Number(rebuySpTotalManual) || 0);
-  const rebuyFwaTotal = rebuyFwaHasDetail ? rebuyFwaDetailTotal : (Number(rebuyFwaTotalManual) || 0);
+  // konsisten, tidak ada lagi dua istilah utk konsep yang sama. SEKARANG
+  // kolom scalar ini tetap ditulis sbg TOTAL gabungan (im3+tri) - lihat
+  // kolom baru actual_rebuy_sp_im3/_tri dst yg ditulis terpisah di submit.
+  const rebuySpTotal = rebuyTotal("sp", "im3") + rebuyTotal("sp", "tri");
+  const rebuyFwaTotal = rebuyTotal("fwa", "im3") + rebuyTotal("fwa", "tri");
 
   const [costActual, setCostActual] = useState("");
   // Centang eksplisit "memang tidak ada biaya" - WAJIB kalau costActual
@@ -384,30 +452,29 @@ export default function SubmitActualPage() {
         // Simpan/Kirim) TETAP menang menimpa nilai DB ini kalau ada -
         // hanya jadi FALLBACK ke nilai DB kalau tidak ada draft lokal.
         if (a?.cost_actual != null) setCostActual(String(a.cost_actual));
-        if (a?.cost_actual === 0) setCostActualZeroConfirmed(true);
+        // SENGAJA TIDAK auto-centang confirmed walau cost_actual lama
+        // persis 0 - DMO wajib centang ulang sendiri tiap kali buka
+        // laporan ini (bukan diam2 "sudah confirmed" dari load DB), supaya
+        // kalau DSF lanjut mengetik angka cost yg beda, tidak ada flag
+        // confirmed nyangkut yg keliru nyambung ke angka baru itu.
         if (a?.insight) setInsight(a.insight);
-        // Produk yg PUNYA brand hanya boleh dijual utk brand event ini
-        // sendiri (mis. "SP 3GB 3ID" tidak boleh muncul di event brand IM3)
-        // - produk tanpa brand (generik) tetap muncul di semua event.
-        // Sebelumnya query ini tidak difilter brand sama sekali, jadi
-        // produk brand lain ikut kepilih tanpa sengaja.
-        const evBrand = (a?.brand || "").toLowerCase();
-        const byBrand = (t) => !t.brand || t.brand.toLowerCase() === evBrand;
-        const spByBrand = (sp || []).filter(byBrand);
-        const fwaByBrand = (fwa || []).filter(byBrand);
-        setTypes({ sp: spByBrand, fwa: fwaByBrand });
-        // Jenis SP/FWA tidak lagi dipilih manual oleh DSF - otomatis pakai
-        // jenis pertama yg aktif utk brand ybs (transparan di belakang layar).
-        // HARUS diambil dari daftar yg SUDAH difilter brand (spByBrand/
-        // fwaByBrand) - sebelumnya diambil dari daftar mentah SEMUA brand
-        // (sp[0]/fwa[0]), jadi kalau produk brand LAIN kebetulan lebih dulu
-        // scr alfabetis, selectedType keisi id yg TIDAK ADA di types[cat]
-        // (yg sudah difilter brand) -> catRevenue()/addMsisdn() gagal
-        // menemukan unit_price-nya (types[cat].find balik undefined) ->
-        // revenue actual (actual_rev_3m) selalu ketulis 0 walau qty sudah
-        // diisi. Ini akar masalah "Revenue & Cost Ratio di Beranda belum
-        // terisi padahal actual sudah ada".
-        setSelectedType({ sp: spByBrand[0]?.id || null, fwa: fwaByBrand[0]?.id || null });
+        // PERUBAHAN BESAR (permintaan user: "sebelumnya satu event satu
+        // brand, sekarang bisa dalam satu event menjual dua produk
+        // sekaligus") - produk SEKARANG TIDAK difilter ke brand event ini
+        // lagi (dulu: "SP 3GB 3ID" disembunyikan total kalau event
+        // brand-nya IM3). Kolom `mh_activities.brand` TETAP ada (brand
+        // "utama"/historis event ini), tapi actual penjualan SEKARANG bisa
+        // dicatat utk KEDUA brand sekaligus - lihat qtyManual/activeTagBrand
+        // di bawah (state per-brand, bukan lagi 1 angka polos per
+        // kategori) & kolom DB baru actual_sp_im3/actual_sp_tri/dst.
+        setTypes({ sp: sp || [], fwa: fwa || [] });
+        // `selectedType[cat]` SEKARANG mengikuti brand yg lagi "aktif"
+        // utk tagging (activeTagBrand, lihat effect terpisah di bawah)
+        // - bukan lagi auto-pick statis sekali di sini. Diset awal ke
+        // produk brand pertama yg tersedia per kategori supaya addMsisdn/
+        // catRevenue tetap py fallback valid SEBELUM effect activeTagBrand
+        // sempat jalan.
+        setSelectedType({ sp: (sp || [])[0]?.id || null, fwa: (fwa || [])[0]?.id || null });
         if (profile?.dsf_org_id) setOwnOrgId(profile.dsf_org_id);
 
         // Site yg dipilih sebelumnya (waktu Create Plan/Check-In) - tampilkan
@@ -484,7 +551,13 @@ export default function SubmitActualPage() {
             // padahal DB-nya sudah benar. Sekarang draft cuma dipakai kalau
             // benar2 berisi angka (termasuk "0" yg sengaja dikonfirmasi).
             if (d.costActual != null && d.costActual !== "") setCostActual(d.costActual);
-            if (d.costActualZeroConfirmed) setCostActualZeroConfirmed(true);
+            // Flag "confirmed" draft HANYA dipulihkan kalau draft itu juga
+            // benar2 menyimpan cost "0" - mencegah flag basi dari draft lama
+            // (mis. sempat diisi 0+dicentang, lalu diketik ulang jadi angka
+            // lain tapi draft blob-nya sempat tersimpan tidak sinkron) ikut
+            // kepulihkan & dikira sudah "confirmed" utk angka yg SEKARANG,
+            // padahal angka itu belum pernah benar2 dikonfirmasi.
+            if (d.costActualZeroConfirmed && d.costActual === "0") setCostActualZeroConfirmed(true);
             if (d.insight != null) setInsight(d.insight);
           }
         } catch { /* draft rusak/kosong - abaikan, mulai dari kosong */ }
@@ -501,7 +574,7 @@ export default function SubmitActualPage() {
           const rebuyRows = await fetchRebuyEntries(activityId);
           if (alive && rebuyRows.length > 0) {
             setRebuyEntries((prev) => [
-              ...rebuyRows.map((r) => ({ id: r.id, msisdn: r.msisdn, type: r.type, amount: Number(r.amount), transactionId: r.transaction_id, persisted: true })),
+              ...rebuyRows.map((r) => ({ id: r.id, msisdn: r.msisdn, type: r.type, brand: r.brand || "im3", amount: Number(r.amount), transactionId: r.transaction_id, persisted: true })),
               ...prev.filter((e) => !rebuyRows.some((r) => r.id === e.id)),
             ]);
           }
@@ -589,7 +662,7 @@ export default function SubmitActualPage() {
     if (!readyRef.current) { readyRef.current = true; return; }
     setDirty(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataLoading, costActual, costActualZeroConfirmed, insight, address, photos.length, entries, pendingTransfers, rebuyEntries, qtyManual, rebuySpTotalManual, rebuyFwaTotalManual, gpsCorrected, gpsLat, gpsLng]);
+  }, [dataLoading, costActual, costActualZeroConfirmed, insight, address, photos.length, entries, pendingTransfers, rebuyEntries, qtyManual, rebuyTotalManual, activeTagBrand, rebuyBrand, gpsCorrected, gpsLat, gpsLng]);
 
   // Set berisi key tab yang masih ada field wajib kosong - dipakai stepper
   // utk kasih titik merah, dan sbg sumber kebenaran tunggal biar konsisten
@@ -665,36 +738,46 @@ export default function SubmitActualPage() {
   }
 
   async function addMsisdn(cat, rawMsisdn) {
-    // Jenis sudah diisi otomatis di belakang layar - DSF cukup fokus
-    // memasukkan nomor MSISDN, tapi ORG ID Aktif WAJIB dipilih dulu (bisa
-    // beda-beda per nomor kalau event ini dicatat oleh beberapa org_id).
-    const typeId = selectedType[cat];
-    const norm = normalizeMsisdn(rawMsisdn);
-    if (!isValidMsisdn(norm)) { setMsisdnErr((e) => ({ ...e, [cat]: 'Format MSISDN tidak valid - wajib diawali "62".' })); return; }
-    if (isDuplicateLocal(cat, norm)) { setMsisdnErr((e) => ({ ...e, [cat]: "Nomor ini sudah ditambahkan." })); return; }
-
-    const typeObj = types[cat].find((t) => t.id === typeId);
-    const entryOrgId = (activeOrgId || ownOrgId || "").trim();
-    setMsisdnErr((e) => ({ ...e, [cat]: null }));
-
-    // Cek kepemilikan - kalau sudah ditag di event lain, tawarkan pemindahan
-    // alih-alih langsung menambahkan (mencegah double-count SP/FWA).
+    // Kunci per-kategori - cegah panggilan ganda nyusul (blur+click dari
+    // satu tap tombol "+", atau tap dobel krn jaringan agak lambat)
+    // sama2 lolos pengecekan duplikat di bawah sblm salah satunya sempat
+    // commit ke state. Lihat catatan panjang di addMsisdnLockRef.
+    if (addMsisdnLockRef.current[cat]) return;
+    addMsisdnLockRef.current[cat] = true;
     try {
-      const { data: ownerRows } = await supabaseMarta.rpc("mh_dsf_check_msisdn_owner", { p_msisdn: norm });
-      const owner = ownerRows && ownerRows.length > 0 ? ownerRows[0] : null;
-      if (owner) {
-        setConflict({ category: cat, typeId, typeName: typeObj?.name, msisdn: norm, owner, orgId: entryOrgId });
-        return;
-      }
-    } catch {
-      // best-effort - kalau cek gagal, tetap lanjut tambahkan (jangan blokir input)
-    }
+      // Jenis sudah diisi otomatis di belakang layar - DSF cukup fokus
+      // memasukkan nomor MSISDN, tapi ORG ID Aktif WAJIB dipilih dulu (bisa
+      // beda-beda per nomor kalau event ini dicatat oleh beberapa org_id).
+      const typeId = selectedType[cat];
+      const norm = normalizeMsisdn(rawMsisdn);
+      if (!isValidMsisdn(norm)) { setMsisdnErr((e) => ({ ...e, [cat]: 'Format MSISDN tidak valid - wajib diawali "62".' })); return; }
+      if (isDuplicateLocal(cat, norm)) { setMsisdnErr((e) => ({ ...e, [cat]: "Nomor ini sudah ditambahkan." })); return; }
 
-    // Longlat saat tagging TIDAK dicatat lagi - tidak pernah benar-benar
-    // dipakai utk validasi apa pun (beda dgn check-in yg divalidasi jarak ke
-    // site), jadi cuma menambah izin lokasi yg diminta tanpa manfaat nyata.
-    setEntries((prev) => ({ ...prev, [cat]: [...prev[cat], { msisdn: norm, typeId, typeName: typeObj?.name, taggedAt: new Date().toISOString(), orgId: entryOrgId }] }));
-    setMsisdnInput((prev) => ({ ...prev, [cat]: "" }));
+      const typeObj = types[cat].find((t) => t.id === typeId);
+      const entryOrgId = (activeOrgId || ownOrgId || "").trim();
+      setMsisdnErr((e) => ({ ...e, [cat]: null }));
+
+      // Cek kepemilikan - kalau sudah ditag di event lain, tawarkan pemindahan
+      // alih-alih langsung menambahkan (mencegah double-count SP/FWA).
+      try {
+        const { data: ownerRows } = await supabaseMarta.rpc("mh_dsf_check_msisdn_owner", { p_msisdn: norm });
+        const owner = ownerRows && ownerRows.length > 0 ? ownerRows[0] : null;
+        if (owner) {
+          setConflict({ category: cat, typeId, typeName: typeObj?.name, msisdn: norm, owner, orgId: entryOrgId });
+          return;
+        }
+      } catch {
+        // best-effort - kalau cek gagal, tetap lanjut tambahkan (jangan blokir input)
+      }
+
+      // Longlat saat tagging TIDAK dicatat lagi - tidak pernah benar-benar
+      // dipakai utk validasi apa pun (beda dgn check-in yg divalidasi jarak ke
+      // site), jadi cuma menambah izin lokasi yg diminta tanpa manfaat nyata.
+      setEntries((prev) => ({ ...prev, [cat]: [...prev[cat], { msisdn: norm, typeId, typeName: typeObj?.name, taggedAt: new Date().toISOString(), orgId: entryOrgId }] }));
+      setMsisdnInput((prev) => ({ ...prev, [cat]: "" }));
+    } finally {
+      addMsisdnLockRef.current[cat] = false;
+    }
   }
 
   /** Sama persis dgn splitGluedMsisdn di halaman Buat Plan Baru
@@ -822,7 +905,7 @@ export default function SubmitActualPage() {
     const amt = Number(rebuyAmount);
     if (!amt || amt <= 0) { setRebuyErr("Masukkan nominal rebuy-nya."); return; }
     setRebuyErr(null);
-    setRebuyEntries((prev) => [...prev, { msisdn: norm, type: rebuyType, amount: amt, transactionId: txId, persisted: false }]);
+    setRebuyEntries((prev) => [...prev, { msisdn: norm, type: rebuyType, brand: rebuyBrand, amount: amt, transactionId: txId, persisted: false }]);
     setRebuyTransactionId(""); setRebuyMsisdn(""); setRebuyType(null); setRebuyAmount("");
   }
   // Sama spt removeEntry() utk nomor SP/FWA - optimistic, rollback kalau RPC
@@ -879,7 +962,7 @@ export default function SubmitActualPage() {
     // walau ada entri yg gagal tersimpan individual.
     for (const e of rebuyEntries.filter((e) => !e.persisted)) {
       try {
-        await addRebuyEntryDb({ activityId, type: e.type, transactionId: e.transactionId, msisdn: e.msisdn, amount: e.amount });
+        await addRebuyEntryDb({ activityId, type: e.type, transactionId: e.transactionId, msisdn: e.msisdn, amount: e.amount, brand: e.brand });
       } catch { /* best-effort, lanjut entri berikutnya */ }
     }
 
@@ -977,6 +1060,39 @@ export default function SubmitActualPage() {
       }
       const actualSp = effectiveQty("sp");
       const actualFwa = effectiveQty("fwa");
+      // Kolom baru per-brand (im3/tri) - scalar actual_sp/actual_fwa di atas
+      // TETAP ditulis sbg total gabungan spy konsumen lama (dashboard,
+      // leaderboard, dst) tidak perlu diubah sama sekali.
+      const actualSpIm3 = effectiveQtyByBrand("sp", "im3");
+      const actualSpTri = effectiveQtyByBrand("sp", "tri");
+      const actualFwaIm3 = effectiveQtyByBrand("fwa", "im3");
+      const actualFwaTri = effectiveQtyByBrand("fwa", "tri");
+      const actualRebuySpIm3 = rebuyTotal("sp", "im3");
+      const actualRebuySpTri = rebuyTotal("sp", "tri");
+      const actualRebuyFwaIm3 = rebuyTotal("fwa", "im3");
+      const actualRebuyFwaTri = rebuyTotal("fwa", "tri");
+      // Kolom "diajukan validasi" (actual_validated_*) - dari jumlah MSISDN/
+      // detail transaksi yg SUDAH DIAJUKAN (ditag), belum tentu lolos
+      // validasi sistem CMS - TERPISAH
+      // dari actual_sp/fwa/rebuy_* di atas (yg tetap angka manual DMO).
+      // Permintaan user: "untuk saat ini tetap yang diakui revenue dari
+      // actual qty saja dulu" - kolom ini baru informasi pendamping,
+      // belum dipakai hitung actual_rev_3m.
+      // actual_validated_sp/fwa (+im3/tri) TIDAK ditulis dari sini lagi -
+      // sekarang dihitung otomatis oleh trigger DB begitu entry MSISDN-nya
+      // BENAR-BENAR divalidasi (validation_status='valid') lewat fitur CMS
+      // msisdn-validation yg SUDAH ADA (mh_validate_msisdn_entry/
+      // mh_msisdn_reconcile_batch, role spm_sumatera) - lihat trigger
+      // trg_mh_dsf_sales_entries_validated. Permintaan user: "pakai yang
+      // sudah ada, bukan bikin baru" - jadi dipakai sumber kebenaran yg
+      // SUNGGUHAN tervalidasi, bukan sekadar jumlah nomor yg diajukan.
+      // Rebuy BELUM punya alur validasi serupa (tidak ada CMS-nya), jadi
+      // actual_validated_rebuy_* di bawah tetap simple: jumlah detail
+      // transaksi yg diajukan DMO sendiri.
+      const validatedRebuySpIm3 = rebuyDetailTotal("sp", "im3");
+      const validatedRebuySpTri = rebuyDetailTotal("sp", "tri");
+      const validatedRebuyFwaIm3 = rebuyDetailTotal("fwa", "im3");
+      const validatedRebuyFwaTri = rebuyDetailTotal("fwa", "tri");
       // Revenue 3 Bulan: catRevenue() sudah termasuk x3 (lihat definisinya) + rebuy apa adanya
       const revenue = catRevenue("sp") + catRevenue("fwa") + rebuyGrandTotal;
 
@@ -1014,8 +1130,22 @@ export default function SubmitActualPage() {
         actual_date: new Date().toISOString().slice(0, 10),
         actual_sp: actualSp,
         actual_fwa: actualFwa,
+        actual_sp_im3: actualSpIm3,
+        actual_sp_tri: actualSpTri,
+        actual_fwa_im3: actualFwaIm3,
+        actual_fwa_tri: actualFwaTri,
         actual_rebuy_sp: rebuySpTotal,
         actual_rebuy_fwa: rebuyFwaTotal,
+        actual_rebuy_sp_im3: actualRebuySpIm3,
+        actual_rebuy_sp_tri: actualRebuySpTri,
+        actual_rebuy_fwa_im3: actualRebuyFwaIm3,
+        actual_rebuy_fwa_tri: actualRebuyFwaTri,
+        actual_validated_rebuy_sp: validatedRebuySpIm3 + validatedRebuySpTri,
+        actual_validated_rebuy_sp_im3: validatedRebuySpIm3,
+        actual_validated_rebuy_sp_tri: validatedRebuySpTri,
+        actual_validated_rebuy_fwa: validatedRebuyFwaIm3 + validatedRebuyFwaTri,
+        actual_validated_rebuy_fwa_im3: validatedRebuyFwaIm3,
+        actual_validated_rebuy_fwa_tri: validatedRebuyFwaTri,
         actual_rev_3m: revenue,
         cost_actual: Number(costActual) || 0,
         insight: insight.trim() || null,
@@ -1065,19 +1195,45 @@ export default function SubmitActualPage() {
   // Qty efektif per kategori - kalau ada minimal 1 MSISDN yg ditag,
   // itu yg dipakai (lebih akurat); kalau belum ada satupun, pakai angka
   // manual (qtyManual) - MSISDN sekarang opsional, DSF boleh cukup isi qty.
-  function effectiveQty(cat) {
-    return entries[cat].length > 0 ? entries[cat].length : (Number(qtyManual[cat]) || 0);
+  // Entries per-brand - sejak "1 event bisa jual 2 brand sekaligus" tiap
+  // nomor yg ditag distempel typeId yg brand-nya ikut activeTagBrand saat
+  // itu (lihat effect selectedType), jadi brand satu entry dicari balik
+  // dari types[cat] berdasarkan typeId-nya.
+  function brandEntries(cat, brand) {
+    return entries[cat].filter((e) => {
+      const t = types[cat].find((x) => x.id === e.typeId);
+      return (t?.brand || "im3").toLowerCase() === brand;
+    });
   }
-  // Revenue 3 Bulan: qty x unit_price x 3 (proyeksi recurring 3 bulan per unit) - rebuy ditambahkan terpisah di luar fungsi ini (apa adanya, bukan x3)
+  // PERBAIKAN (permintaan user: "ini harusnya ini tidak nglink"): qty
+  // SELALU angka manual yg diketik DMO - TIDAK LAGI otomatis "dikunci" &
+  // ditimpa jumlah MSISDN yg ditag. Dulu begitu ada >=1 nomor ditag,
+  // field qty jadi read-only & ikut count nomornya - ini bikin DMO yg
+  // mau isi angka actual sendiri (krn blm sempat tag semua nomor, atau
+  // memang menolak tag satu-satu) malah kejegal jumlah nomor yg kebetulan
+  // ketag. SEKARANG: qty manual = SATU-SATUNYA sumber actual_sp/actual_fwa
+  // (yg dipakai hitung revenue), nomor yg ditag HANYA dipakai hitung
+  // "diajukan validasi" (actual_validated_*, kolom terpisah) - tidak saling
+  // mempengaruhi lagi.
+  function effectiveQtyByBrand(cat, brand) {
+    return Number(qtyManual[cat][brand]) || 0;
+  }
+  function effectiveQty(cat) {
+    return effectiveQtyByBrand(cat, "im3") + effectiveQtyByBrand(cat, "tri");
+  }
+  // Jumlah MSISDN yg SUDAH ditag/diajukan (brandEntries(cat,brand).length,
+  // dipakai langsung di SalesSection utk label "Diajukan validasi: X
+  // nomor") BELUM TENTU lolos validasi - actual_validated_sp/fwa yg
+  // SUNGGUHAN (validation_status='valid') dihitung otomatis oleh trigger
+  // DB (mh_recompute_activity_validated_sales) begitu entry-nya benar2
+  // divalidasi lewat CMS msisdn-validation yg sudah ada, BUKAN dari sini.
+  // Revenue 3 Bulan: qty manual x unit_price x 3 (proyeksi recurring 3 bulan per unit) - rebuy ditambahkan terpisah di luar fungsi ini (apa adanya, bukan x3)
+  function catRevenueByBrand(cat, brand) {
+    const t = types[cat].find((x) => (x.brand || "").toLowerCase() === brand) || types[cat].find((x) => x.id === selectedType[cat]);
+    return (Number(qtyManual[cat][brand]) || 0) * (t?.unit_price || 0) * 3;
+  }
   function catRevenue(cat) {
-    if (entries[cat].length > 0) {
-      return entries[cat].reduce((sum, e) => {
-        const t = types[cat].find((x) => x.id === e.typeId);
-        return sum + (t?.unit_price || 0) * 3;
-      }, 0);
-    }
-    const t = types[cat].find((x) => x.id === selectedType[cat]);
-    return (Number(qtyManual[cat]) || 0) * (t?.unit_price || 0) * 3;
+    return catRevenueByBrand(cat, "im3") + catRevenueByBrand(cat, "tri");
   }
   const revenueEstimate = catRevenue("sp") + catRevenue("fwa") + rebuyGrandTotal;
 
@@ -1441,7 +1597,8 @@ export default function SubmitActualPage() {
             onScanResult={(msisdn) => addMsisdn(c.key, msisdn)}
             activeOrgId={activeOrgId} setActiveOrgId={setActiveOrgId} ownOrgId={ownOrgId} ownLabel={scope?.fullName}
             orgChips={orgChips} setOrgChips={setOrgChips} usedOrgIds={usedOrgIds}
-            qty={qtyManual[c.key]} onQtyChange={(v) => setQtyManual((s) => ({ ...s, [c.key]: v }))}
+            qty={qtyManual[c.key]} onQtyChange={(brand, v) => setQtyManual((s) => ({ ...s, [c.key]: { ...s[c.key], [brand]: v } }))}
+            activeTagBrand={activeTagBrand[c.key]} onActiveTagBrandChange={(b) => setActiveTagBrand((s) => ({ ...s, [c.key]: b }))}
           />
         ))}
 
@@ -1449,14 +1606,14 @@ export default function SubmitActualPage() {
             FWA), breakdown per-transaksi (Transaction ID/nomor tujuan)
             jadi opsional lewat "+ Tambah Detail Rebuy". */}
         <RebuySection
-          spTotalManual={rebuySpTotalManual} onSpTotalManualChange={setRebuySpTotalManual}
-          fwaTotalManual={rebuyFwaTotalManual} onFwaTotalManualChange={setRebuyFwaTotalManual}
-          spTotal={rebuySpTotal} fwaTotal={rebuyFwaTotal}
-          spHasDetail={rebuySpHasDetail} fwaHasDetail={rebuyFwaHasDetail}
+          totalManual={rebuyTotalManual}
+          onTotalManualChange={(type, brand, v) => setRebuyTotalManual((s) => ({ ...s, [type]: { ...s[type], [brand]: v } }))}
+          rebuyTotal={rebuyTotal} rebuyHasDetail={rebuyHasDetail} rebuyDetailTotal={rebuyDetailTotal}
           detailOpen={rebuyDetailOpen} onToggleDetail={() => setRebuyDetailOpen((v) => !v)}
           transactionId={rebuyTransactionId} onTransactionIdChange={setRebuyTransactionId}
           msisdn={rebuyMsisdn} onMsisdnChange={setRebuyMsisdn}
           type={rebuyType} onTypeChange={setRebuyType}
+          rebuyBrand={rebuyBrand} onRebuyBrandChange={setRebuyBrand}
           amount={rebuyAmount} onAmountChange={setRebuyAmount}
           onAdd={addRebuyEntry} error={rebuyErr}
           entries={rebuyEntries} onRemove={removeRebuyEntry}
@@ -1662,21 +1819,68 @@ export default function SubmitActualPage() {
 }
 
 // ═══════════════════════════════ Sections ══════════════════════════════════
-function SalesSection({ cat, label, icon, types, selectedType, onSelectType, input, onInputChange, onAdd, onBulkAdd, bulkBusy, entries, onRemove, pending, error, onScanResult, activeOrgId, setActiveOrgId, ownOrgId, ownLabel, orgChips, setOrgChips, usedOrgIds, qty, onQtyChange }) {
+function SalesSection({ cat, label, icon, types, selectedType, onSelectType, input, onInputChange, onAdd, onBulkAdd, bulkBusy, entries, onRemove, pending, error, onScanResult, activeOrgId, setActiveOrgId, ownOrgId, ownLabel, orgChips, setOrgChips, usedOrgIds, qty, onQtyChange, activeTagBrand, onActiveTagBrandChange }) {
   const [scanning, setScanning] = useState(false);
-  const hasDetail = entries.length > 0;
-  const effectiveTotal = hasDetail ? entries.length : (Number(qty) || 0);
   const unitLabel = cat === "sp" ? "SP" : "FWA";
+  // Qty SEKARANG dipisah per brand (im3/tri) - permintaan user: "sekarang
+  // bisa dalam satu event menjual dua produk sekaligus". Entri MSISDN yg
+  // sudah ditag dicocokkan balik ke brand produknya (types) supaya kuncinya
+  // per-brand, bukan per-kategori spt sebelumnya (brand lain tetap bebas
+  // diketik manual walau brand ini sudah dikunci oleh tag MSISDN).
+  const brandEntries = (brand) => entries.filter((e) => {
+    const t = types.find((x) => x.id === e.typeId);
+    return (t?.brand || "im3").toLowerCase() === brand;
+  });
+  const entriesIm3 = brandEntries("im3");
+  const entriesTri = brandEntries("tri");
+  const hasDetail = entriesIm3.length > 0 || entriesTri.length > 0;
 
   return (
     <Card accent>
       <SectionHeading icon={icon} title={label} />
       <Divider />
 
-      <FieldLabel text={"Jumlah " + unitLabel + " Terjual"} top />
-      <NumberInput value={hasDetail ? String(entries.length) : qty} onChange={onQtyChange} disabled={hasDetail} />
+      {/* PERBAIKAN (permintaan user: "ini harusnya ini tidak nglink"):
+          Jumlah SP/FWA SELALU angka manual yg diketik DMO sendiri - TIDAK
+          LAGI otomatis terkunci/ditimpa jumlah MSISDN yg ditag di bawah.
+          Dulu begitu ada nomor ditag, field ini jadi read-only & ikut
+          jumlah nomor - sekarang keduanya berjalan independen: nomor yg
+          ditag HANYA dipakai hitung "Diajukan validasi" (info di bawah field,
+          nanti jadi acuan kolom actual_validated_*), revenue/actual tetap
+          dari angka manual ini. */}
+      <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <FieldLabel text={"Jumlah " + unitLabel + " · IM3"} top />
+          <NumberInput value={qty.im3} onChange={(v) => onQtyChange("im3", v)} />
+          {entriesIm3.length > 0 && <div style={{ marginTop: 4, fontSize: 10, fontWeight: 700, color: "#B45309" }}>Diajukan validasi: {entriesIm3.length} nomor</div>}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <FieldLabel text={"Jumlah " + unitLabel + " · 3ID"} top />
+          <NumberInput value={qty.tri} onChange={(v) => onQtyChange("tri", v)} />
+          {entriesTri.length > 0 && <div style={{ marginTop: 4, fontSize: 10, fontWeight: 700, color: "#B45309" }}>Diajukan validasi: {entriesTri.length} nomor</div>}
+        </div>
+      </div>
 
-      <FieldLabel text="Catat MSISDN Terjual (opsional)" top hint='Wajib diawali "62" kalau diisi' />
+      <FieldLabel text="Catat MSISDN Terjual" top hint='Wajib diawali "62" kalau diisi' />
+
+      {/* Toggle brand aktif utk tagging - nomor yg ditambahkan berikutnya
+          distempel ke brand yg lagi dipilih di sini (lihat activeTagBrand
+          di submit/page.jsx). */}
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+        {[{ key: "im3", label: "IM3", color: "#F5CD46", text: "#17181C" }, { key: "tri", label: "3ID", color: "#E23B86", text: "#FFFFFF" }].map((b) => {
+          const active = activeTagBrand === b.key;
+          return (
+            <button key={b.key} type="button" onClick={() => onActiveTagBrandChange(b.key)}
+              style={{
+                flex: 1, height: 38, borderRadius: 11, border: active ? "none" : "1.5px solid #ECEDF0",
+                background: active ? b.color : "#F6F7F9", color: active ? b.text : "#5A5A68",
+                fontSize: 12, fontWeight: 800, fontFamily: FF, cursor: "pointer",
+              }}>
+              {b.label}
+            </button>
+          );
+        })}
+      </div>
 
       {/* Kontrol "ORG ID Aktif" (chip + "Tambah Org ID") SENGAJA DIHAPUS -
           DSF tidak perlu insert org_id manual sama sekali di Isi Laporan
@@ -1706,10 +1910,18 @@ function SalesSection({ cat, label, icon, types, selectedType, onSelectType, inp
           disabled={bulkBusy}
           placeholder="Contoh: 628123456789 (bisa tempel banyak sekaligus)"
           style={{ flex: 1, minWidth: 0, height: 46, padding: "0 14px", borderRadius: 12, background: "#F6F7F9", border: "1.5px solid #ECEDF0", fontSize: 13.5, fontFamily: FF, color: "#17181C", outline: "none" }} />
-        <button onClick={() => setScanning(true)} style={{ width: 46, height: 46, borderRadius: 12, background: "#F6F7F9", border: "1.5px solid #ECEDF0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
+        {/* onMouseDown preventDefault di 2 tombol ini - TANPA ini, nge-tap
+            tombol memindah fokus dari input teks ke tombol DULU (blur)
+            SEBELUM onClick-nya sendiri sempat jalan, dan blur itu sendiri
+            memicu onAdd() lewat handler di atas - hasilnya SATU tap bisa
+            memanggil onAdd() DUA KALI (sekali dari blur, sekali dari
+            click) dan nomor yg sama ketambah dobel. preventDefault di
+            sini bikin fokus TETAP di input, blur-nya tidak pernah
+            terpicu sama sekali, jadi cuma onClick yg jalan (sekali). */}
+        <button onMouseDown={(e) => e.preventDefault()} onClick={() => setScanning(true)} style={{ width: 46, height: 46, borderRadius: 12, background: "#F6F7F9", border: "1.5px solid #ECEDF0", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: "#5A5A68" }}>
           <QrCode size={17} />
         </button>
-        <button onClick={onAdd} style={{ width: 46, height: 46, borderRadius: 12, background: BRAND, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 4px 12px rgba(237,28,36,0.25)" }}>
+        <button onMouseDown={(e) => e.preventDefault()} onClick={onAdd} style={{ width: 46, height: 46, borderRadius: 12, background: BRAND, border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 4px 12px rgba(237,28,36,0.25)" }}>
           <Plus size={18} color="#fff" />
         </button>
       </div>
@@ -1775,20 +1987,41 @@ function Phone62Input({ value, onChange, placeholder }) {
  * SP/FWA dihitung otomatis dari daftar entri utk dikirim ke
  * `actual_rebuy_sp`/`actual_rebuy_fwa`. */
 function RebuySection({
-  spTotalManual, onSpTotalManualChange, fwaTotalManual, onFwaTotalManualChange,
-  spTotal, fwaTotal, spHasDetail, fwaHasDetail, detailOpen, onToggleDetail,
-  transactionId, onTransactionIdChange, msisdn, onMsisdnChange, type, onTypeChange, amount, onAmountChange, onAdd, error, entries, onRemove,
+  totalManual, onTotalManualChange, rebuyTotal, rebuyHasDetail, rebuyDetailTotal, detailOpen, onToggleDetail,
+  transactionId, onTransactionIdChange, msisdn, onMsisdnChange, type, onTypeChange,
+  rebuyBrand, onRebuyBrandChange, amount, onAmountChange, onAdd, error, entries, onRemove,
 }) {
+  const BRANDS = [{ key: "im3", label: "IM3", color: "#F5CD46", text: "#17181C" }, { key: "tri", label: "3ID", color: "#E23B86", text: "#FFFFFF" }];
   return (
     <Card accent>
 <SectionHeading icon={RefreshCw} title="Rebuy SP & FWA" />
       <Divider />
 
-      <FieldLabel text="Total Rebuy SP" top hint={spHasDetail ? "Mengikuti jumlah detail di bawah" : "Opsional kalau mau dirinci per transaksi"} />
-      <NumberInput value={spHasDetail ? String(spTotal) : spTotalManual} onChange={onSpTotalManualChange} prefix="Rp" disabled={spHasDetail} />
-
-      <FieldLabel text="Total Rebuy FWA" top hint={fwaHasDetail ? "Mengikuti jumlah detail di bawah" : "Opsional kalau mau dirinci per transaksi"} />
-      <NumberInput value={fwaHasDetail ? String(fwaTotal) : fwaTotalManual} onChange={onFwaTotalManualChange} prefix="Rp" disabled={fwaHasDetail} />
+      {/* Total rebuy dipisah per brand (im3/tri) - 4 field (SP-IM3,
+          SP-3ID, FWA-IM3, FWA-3ID). PERBAIKAN (permintaan user: "ini
+          harusnya tidak nglink"): field ini SELALU angka manual yg
+          diketik DMO sendiri, TIDAK LAGI otomatis terkunci/ditimpa jumlah
+          detail transaksi - detail transaksi (kalau diisi) cuma
+          ditampilkan sbg info "Diajukan validasi" di bawah field, tidak
+          memaksa nilainya. */}
+      {["sp", "fwa"].map((t) => (
+        <div key={t} style={{ display: "flex", gap: 10, marginTop: 10 }}>
+          {BRANDS.map((b) => {
+            const hasDetail = rebuyHasDetail(t, b.key);
+            return (
+              <div key={b.key} style={{ flex: 1, minWidth: 0 }}>
+                <FieldLabel text={`Total Rebuy ${t.toUpperCase()} · ${b.label}`} hint="Opsional" />
+                <NumberInput value={totalManual[t][b.key]} onChange={(v) => onTotalManualChange(t, b.key, v)} prefix="Rp" />
+                {hasDetail && (
+                  <div style={{ marginTop: 4, fontSize: 10, fontWeight: 700, color: "#B45309" }}>
+                    Diajukan validasi (detail): Rp {Number(rebuyDetailTotal(t, b.key)).toLocaleString("id-ID")}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ))}
 
       <button type="button" onClick={onToggleDetail}
         style={{ marginTop: 14, width: "100%", height: 40, borderRadius: 11, border: "1.5px dashed #D8D9E0", background: "#FFFFFF", color: "#5A5A68", fontSize: 12, fontWeight: 700, fontFamily: FF, cursor: "pointer" }}>
@@ -1824,7 +2057,24 @@ function RebuySection({
             })}
           </div>
 
-          <FieldLabel text="4. Amount" top />
+          <FieldLabel text="4. Brand" top />
+          <div style={{ display: "flex", gap: 8 }}>
+            {BRANDS.map((b) => {
+              const active = rebuyBrand === b.key;
+              return (
+                <button key={b.key} type="button" onClick={() => onRebuyBrandChange(b.key)}
+                  style={{
+                    flex: 1, height: 42, borderRadius: 11, border: active ? "none" : "1.5px solid #ECEDF0",
+                    background: active ? b.color : "#F6F7F9", color: active ? b.text : "#5A5A68",
+                    fontSize: 12, fontWeight: 800, fontFamily: FF, cursor: "pointer",
+                  }}>
+                  {b.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <FieldLabel text="5. Amount" top />
           <div style={{ display: "flex", gap: 8 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <NumberInput value={amount} onChange={onAmountChange} prefix="Rp" />
@@ -1849,13 +2099,20 @@ function RebuySection({
 function RebuyCard({ entry, onRemove }) {
   const isSp = entry.type === "sp";
   const Icon = isSp ? CardSim : Router;
+  // Brand (IM3/3ID) rebuy ini - entri rebuy SUDAH punya kolom brand
+  // langsung (tidak perlu dicocokkan dari nama produk spt MSISDN
+  // SP/FWA), default im3 kalau data lama blm pernah diisi brand-nya.
+  const swatch = BRAND_SWATCH[(entry.brand || "im3").toLowerCase()] || BRAND_SWATCH.im3;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#F6F7F9", border: "1px solid #ECEDF0", borderRadius: 14, padding: "10px 8px 10px 12px" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#F6F7F9", border: `1px solid ${swatch.color}`, borderLeft: `4px solid ${swatch.color}`, borderRadius: 14, padding: "10px 8px 10px 12px" }}>
       <div style={{ width: 34, height: 34, borderRadius: 10, background: isSp ? "rgba(237,28,36,0.08)" : "rgba(236,0,140,0.08)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <Icon size={15} color={isSp ? "#ED1C24" : "#C6168D"} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C", fontVariantNumeric: "tabular-nums" }}>{entry.msisdn}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: "#17181C", fontVariantNumeric: "tabular-nums" }}>{entry.msisdn}</span>
+          <span style={{ fontSize: 9.5, fontWeight: 800, color: swatch.text, background: swatch.color, borderRadius: 999, padding: "2px 7px", flexShrink: 0 }}>{swatch.label}</span>
+        </div>
         <div style={{ fontSize: 10.5, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{isSp ? "SP" : "FWA"} · {entry.transactionId} · Rp {Number(entry.amount).toLocaleString("id-ID")}</div>
       </div>
       <button onClick={onRemove} style={{ width: 32, height: 32, borderRadius: 9, border: "none", background: "transparent", color: "#DC2626", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -2072,14 +2329,24 @@ function SectionHeading({ icon: Icon, title, subtitle }) {
 function MsisdnCard({ entry, cat, onRemove }) {
   const Icon = cat === "fwa" ? Router : CardSim;
   const accent = cat === "fwa" ? "#2563EB" : "#ED1C24";
+  // Brand (IM3/3ID) nomor ini - dicocokkan dari nama produknya
+  // (entry.typeName, mis. "SP 3GB 3ID") spy langsung kelihatan warnanya
+  // tanpa harus baca teks satu-satu.
+  const brand = detectMsisdnBrand(entry.typeName);
+  const swatch = brand ? BRAND_SWATCH[brand] : null;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#F6F7F9", border: "1px solid #ECEDF0", borderRadius: 14, padding: "10px 8px 10px 12px" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#F6F7F9", border: `1px solid ${swatch ? swatch.color : "#ECEDF0"}`, borderLeft: swatch ? `4px solid ${swatch.color}` : "1px solid #ECEDF0", borderRadius: 14, padding: "10px 8px 10px 12px" }}>
       <div style={{ width: 34, height: 34, borderRadius: 10, background: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <Icon size={15} color={accent} />
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
           <span style={{ fontSize: 13, fontWeight: 800, color: "#17181C", fontVariantNumeric: "tabular-nums" }}>{entry.msisdn}</span>
+          {/* Badge brand (IM3 kuning/3ID magenta) - konsisten dgn warna yg
+              sama di toggle brand & wizard Buat Plan. */}
+          {swatch && (
+            <span style={{ fontSize: 9.5, fontWeight: 800, color: swatch.text, background: swatch.color, borderRadius: 999, padding: "2px 7px", flexShrink: 0 }}>{swatch.label}</span>
+          )}
           {/* Badge org_id - satu event bisa dicatat oleh beberapa org_id
               sekaligus, jadi tetap jelas nomor mana milik org_id mana. */}
           {entry.orgId && (

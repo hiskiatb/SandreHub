@@ -152,6 +152,22 @@ function CreatePlanWizardInner() {
           branchName: scope?.branchName, branchNameDisplay: scope?.branchName,
         };
 
+  // ── Pilih brand plan (hanya utk slot "merged"/brand-null: DMO/Head of
+  // Area yang sekarang handle IM3 & 3ID sekaligus) ──
+  // SENGAJA TIDAK ditawarkan ke approver ("Buat Untuk"/bulk-region) - jalur
+  // itu sudah punya cara sendiri pilih branch×brand yang konkret (combo
+  // IM3/3ID terpisah via toggleCombo, lihat ActingForSheet di bawah), jadi
+  // brand di sana SELALU sudah pasti satu nilai, tidak pernah null di sini.
+  // Juga tidak ditawarkan mode edit - plan lama SELALU sudah punya brand
+  // pasti sendiri (kolom brand di DB NOT NULL), tidak pernah diubah saat
+  // diedit (sama seperti branch/pemilik - lihat catatan di save()).
+  // "Semua Brand (IM3 + 3ID)" akan membuat DUA baris mh_activities sekaligus
+  // (satu per brand) dgn isian yang SAMA, krn skema `mh_activities.brand`
+  // tetap wajib satu nilai per baris (CHECK IN ('IM3','TRI')) - data lama
+  // (selalu single-brand) TIDAK TERSENTUH/tidak perlu migrasi sama sekali.
+  const needsBrandPick = !editId && !isApprover && !isBulkRegion && !effectiveScope.brand;
+  const [selectedPlanBrand, setSelectedPlanBrand] = useState("both"); // "im3" | "tri" | "both" - default "both" (cocok dgn slot merged: handle IM3 & 3ID sekaligus kecuali DSF sengaja pilih salah satu)
+
   // ── Campaign aktif (mis. "Market Blitz Sabtu") yg berlaku utk branch/
   // brand user saat ini - dipakai sbg kartu shortcut di Step Info (tap =
   // langsung terisi nama event + tanggal formatnya). HANYA utk plan BARU
@@ -197,15 +213,36 @@ function CreatePlanWizardInner() {
   // qty produk/rebuy/budget cost berubah - tidak perlu tombol "hitung".
   const [targetSpProducts, setTargetSpProducts] = useState([]); // [{productTypeId,name,unitPrice,qty}]
   const [targetFwaProducts, setTargetFwaProducts] = useState([]);
-  const [targetRebuySp, setTargetRebuySp] = useState("0");
-  const [targetRebuyFwa, setTargetRebuyFwa] = useState("0");
-  const [costEstimate, setCostEstimate] = useState("0");
+  // Rebuy SEKARANG dipisah per brand (IM3/3ID) - sebelumnya 1 angka
+  // gabungan "Target Rebuy SP"/"Target Rebuy FWA" (permintaan user: "buat
+  // sangat baik... pisahkan juga untuk rebuy untuk brandnya"). Pola ini
+  // SAMA dgn Target Aktivasi SP/FWA yg sudah lama per-produk per-brand
+  // (mis. "SP 3GB 3ID" vs "SP 3GB IM3" sbg baris qty terpisah) - kolom DB
+  // `target_rebuy_sp`/`target_rebuy_fwa` TETAP 1 angka scalar (TIDAK ada
+  // migrasi skema), jadi `targetRebuySp`/`targetRebuyFwa` di bawah skr
+  // JUMLAH dari kedua brand (nama variabel sengaja dipertahankan sama spy
+  // semua pemakaian lama - commonFields, hasAnyTarget, Review step, dst -
+  // tetap jalan tanpa perlu diubah satu2, PERSIS cara targetSp/targetFwa
+  // sendiri sudah jadi derived sum dari targetSpProducts/targetFwaProducts).
+  const [targetRebuySpIm3, setTargetRebuySpIm3] = useState("0");
+  const [targetRebuySpTri, setTargetRebuySpTri] = useState("0");
+  const [targetRebuyFwaIm3, setTargetRebuyFwaIm3] = useState("0");
+  const [targetRebuyFwaTri, setTargetRebuyFwaTri] = useState("0");
+  // TIDAK LAGI default "0" - field ini dulu mulai dgn "0" terisi otomatis
+  // (kerasa "udah dijawab" padahal DSF belum sentuh sama sekali), sama
+  // persis gejala yg sempat diperbaiki di Cost Actual (Isi Laporan Actual).
+  // Sekarang mulai kosong spy DSF WAJIB mengetik sendiri (termasuk kalau
+  // mau mengisi 0 - itu tetap valid, cuma harus hasil ketikan sendiri,
+  // bukan nilai bawaan yg kebetulan sama).
+  const [costEstimate, setCostEstimate] = useState("");
   const targetSp = targetSpProducts.reduce((s, p) => s + (Number(p.qty) || 0), 0);
   const targetFwa = targetFwaProducts.reduce((s, p) => s + (Number(p.qty) || 0), 0);
   // Revenue 3 Bulan: qty x unit_price x 3 (proyeksi recurring 3 bulan per unit) + rebuy apa adanya (sudah angka final, bukan per bulan)
   const targetSpRevenue = targetSpProducts.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.unitPrice) || 0) * 3, 0);
   const targetFwaRevenue = targetFwaProducts.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.unitPrice) || 0) * 3, 0);
-  const targetRebuyTotal = (Number(targetRebuySp) || 0) + (Number(targetRebuyFwa) || 0);
+  const targetRebuySp = (Number(targetRebuySpIm3) || 0) + (Number(targetRebuySpTri) || 0);
+  const targetRebuyFwa = (Number(targetRebuyFwaIm3) || 0) + (Number(targetRebuyFwaTri) || 0);
+  const targetRebuyTotal = targetRebuySp + targetRebuyFwa;
   const targetEstRevenue = targetSpRevenue + targetFwaRevenue + targetRebuyTotal;
   const targetCostRatio = targetEstRevenue > 0 ? ((Number(costEstimate) || 0) / targetEstRevenue) * 100 : null;
 
@@ -250,14 +287,20 @@ function CreatePlanWizardInner() {
         // (mis. "SP 3GB 3ID" tidak boleh kepilih di plan brand IM3) - produk
         // tanpa brand (generik) tetap muncul di semua brand. Sebelumnya
         // query ini sama sekali tidak difilter brand.
-        const planBrand = (effectiveScope.brand || "").toLowerCase();
-        const byBrand = (t) => !t.brand || t.brand.toLowerCase() === planBrand;
+        // `selectedPlanBrand` (dipilih DSF sendiri di StepInfo utk slot
+        // brand-null/merged) dipakai kalau ada - kalau belum dipilih atau
+        // "both", produk brand-spesifik TIDAK difilter (biar semua kelihatan
+        // dulu; validasi step 0 tetap wajibkan brand dipilih sblm lanjut).
+        const productBrandFilter = needsBrandPick
+          ? (selectedPlanBrand && selectedPlanBrand !== "both" ? selectedPlanBrand.toLowerCase() : null)
+          : (effectiveScope.brand || "").toLowerCase();
+        const byBrand = (t) => !t.brand || productBrandFilter == null || t.brand.toLowerCase() === productBrandFilter;
         setTagTypes({ sp: (sp || []).filter(byBrand), fwa: (fwa || []).filter(byBrand) });
         if (profile?.dsf_org_id) setTagOwnOrgId(profile.dsf_org_id);
       } catch { /* best-effort - tagging opsional, jangan blokir wizard kalau gagal */ }
     })();
     return () => { alive = false; };
-  }, [loading, email, effectiveScope.brand]);
+  }, [loading, email, effectiveScope.brand, needsBrandPick, selectedPlanBrand]);
 
   // Mode edit: nomor yang SUDAH tercatat di DB (mis. di-booking sebelumnya
   // lewat langkah ini, atau dilanjutkan dari Isi Laporan) harus muncul lagi
@@ -605,8 +648,17 @@ function CreatePlanWizardInner() {
     // (site_id) yang dicocokkan di effect terpisah di bawah.
     setTargetSpProducts(Array.isArray(a.target_sp_products) ? a.target_sp_products : []);
     setTargetFwaProducts(Array.isArray(a.target_fwa_products) ? a.target_fwa_products : []);
-    setTargetRebuySp(String(a.target_rebuy_sp ?? 0));
-    setTargetRebuyFwa(String(a.target_rebuy_fwa ?? 0));
+    // Baris plan yg diedit SUDAH brand tunggal (kolom `brand` di DB), jadi
+    // nilai rebuy-nya taruh ke input brand yg sesuai (IM3 input kalau
+    // brand="IM3", 3ID input kalau brand="TRI") - input brand yg LAIN
+    // dibiarkan "0" krn baris ini memang tidak merepresentasikan brand itu.
+    if ((a.brand || "").toUpperCase() === "TRI") {
+      setTargetRebuySpTri(String(a.target_rebuy_sp ?? 0));
+      setTargetRebuyFwaTri(String(a.target_rebuy_fwa ?? 0));
+    } else {
+      setTargetRebuySpIm3(String(a.target_rebuy_sp ?? 0));
+      setTargetRebuyFwaIm3(String(a.target_rebuy_fwa ?? 0));
+    }
     setCostEstimate(String(a.cost_estimate ?? 0));
     setPoiType(unsnake(a.poi_type));
     setNetwork(unsnake(a.network_category));
@@ -725,7 +777,7 @@ function CreatePlanWizardInner() {
   const readyRef = useRef(false);
   const [dirty, setDirty] = useState(false);
   const [draftSavedAt, setDraftSavedAt] = useState(null);
-  const [savedActivityId, setSavedActivityId] = useState(null); // id plan baru begitu draft pertama tersimpan (belum ada di URL ?edit=)
+  const [savedActivityIds, setSavedActivityIds] = useState({}); // { BRAND: id } - id plan baru begitu draft pertama tersimpan (belum ada di URL ?edit=), per brand (biasanya cuma 1 key, kecuali plan "Semua Brand")
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
   // Menu titik-3 header (cuma muncul mode Edit Plan - `editId` ada) → satu
   // aksi: Hapus Plan, lewat DeleteActivitySheet yg SAMA PERSIS dipakai di
@@ -739,7 +791,7 @@ function CreatePlanWizardInner() {
     if (!readyRef.current) { readyRef.current = true; return; }
     setDirty(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [wizardGateReady, categories, eventName, dates, timesByDate, targetSpProducts, targetFwaProducts, targetRebuySp, targetRebuyFwa, costEstimate, primarySite, extraSites, poiType, network, area, address, manualLat, manualLng]);
+  }, [wizardGateReady, categories, eventName, dates, timesByDate, targetSpProducts, targetFwaProducts, targetRebuySpIm3, targetRebuySpTri, targetRebuyFwaIm3, targetRebuyFwaTri, costEstimate, primarySite, extraSites, poiType, network, area, address, manualLat, manualLng]);
 
   // Tinggi bar aksi bawah (Lanjut/Submit Plan) DIUKUR LANGSUNG - SAMA
   // polanya dgn action bar di halaman Laporan Actual/Detail Aktivitas.
@@ -790,6 +842,7 @@ function CreatePlanWizardInner() {
     const bad = new Set();
     if (i === 0) {
       if (isApprover && actingForList.length === 0) bad.add("actingFor");
+      if (needsBrandPick && !selectedPlanBrand) bad.add("planBrand");
       if (categories.length === 0) bad.add("categories");
       if (!eventName.trim()) bad.add("eventName");
       if (validDates.length === 0) bad.add("planDate");
@@ -906,6 +959,12 @@ function CreatePlanWizardInner() {
         setStep(0);
         return;
       }
+      if (needsBrandPick && !selectedPlanBrand) {
+        setErr("Pilih brand plan dulu sebelum menyimpan draft.");
+        setInvalid(new Set(["planBrand"]));
+        setStep(0);
+        return;
+      }
       if (!hasAnyDraftContent()) {
         setErr("Isi minimal satu bagian dulu sebelum menyimpan draft.");
         return;
@@ -943,8 +1002,22 @@ function CreatePlanWizardInner() {
         target_fwa: Number(targetFwa) || 0,
         target_sp_products: targetSpProducts.filter((p) => Number(p.qty) > 0),
         target_fwa_products: targetFwaProducts.filter((p) => Number(p.qty) > 0),
+        // Kolom breakdown per-brand (im3/tri) utk SP/FWA/Rebuy - dulu cuma
+        // kebaca via target_sp_products/target_fwa_products (JSON, perlu
+        // di-parse ulang tiap konsumen) atau malah hilang sama sekali
+        // (rebuy, cuma totalnya yg disimpan) - sekarang ditulis eksplisit
+        // sbg kolom numeric sendiri spy tabel CMS (app/martahub/activities)
+        // bisa tampilkan breakdown IM3/3ID langsung tanpa parsing apa pun.
+        target_sp_im3: targetSpProducts.filter((p) => detectActBrand(p.name) !== "tri").reduce((s, p) => s + (Number(p.qty) || 0), 0),
+        target_sp_tri: targetSpProducts.filter((p) => detectActBrand(p.name) === "tri").reduce((s, p) => s + (Number(p.qty) || 0), 0),
+        target_fwa_im3: targetFwaProducts.filter((p) => detectActBrand(p.name) !== "tri").reduce((s, p) => s + (Number(p.qty) || 0), 0),
+        target_fwa_tri: targetFwaProducts.filter((p) => detectActBrand(p.name) === "tri").reduce((s, p) => s + (Number(p.qty) || 0), 0),
         target_rebuy_sp: Number(targetRebuySp) || 0,
         target_rebuy_fwa: Number(targetRebuyFwa) || 0,
+        target_rebuy_sp_im3: Number(targetRebuySpIm3) || 0,
+        target_rebuy_sp_tri: Number(targetRebuySpTri) || 0,
+        target_rebuy_fwa_im3: Number(targetRebuyFwaIm3) || 0,
+        target_rebuy_fwa_tri: Number(targetRebuyFwaTri) || 0,
         cost_estimate: Number(costEstimate) || 0,
         // Estimasi Total Revenue (sum qty×harga produk SP+FWA + rebuy) -
         // dihitung otomatis di sisi klien (lihat targetEstRevenue di atas)
@@ -953,6 +1026,15 @@ function CreatePlanWizardInner() {
         // layar detail sbg "Revenue 3 Bulan"/"Estimasi Total Revenue".
         target_rev_3m: targetEstRevenue,
       };
+
+      // Brand konkret yang akan disimpan ke mh_activities.brand (kolom
+      // WAJIB satu nilai, lihat catatan needsBrandPick di atas) - 1 nilai
+      // utk kasus normal (brand akun sudah pasti), 1 nilai (hasil pilihan
+      // StepInfo) utk slot merged, atau 2 nilai (["IM3","TRI"]) kalau DSF
+      // pilih "Semua Brand" - akan membuat DUA baris plan identik.
+      const resolvedBrands = needsBrandPick
+        ? (selectedPlanBrand === "both" ? ["IM3", "TRI"] : selectedPlanBrand ? [selectedPlanBrand.toUpperCase()] : [])
+        : [(effectiveScope.brand || "").toUpperCase()].filter(Boolean);
 
       // ── Mode bulk-region (superadmin, "Pilih semua BME di region ini") ──
       // Jalur TERPISAH SEPENUHNYA dari alur single insert/update di bawah -
@@ -1005,128 +1087,139 @@ function CreatePlanWizardInner() {
         return;
       }
 
-      // Setelah draft PERTAMA tersimpan (plan baru, belum ada di URL
-      // ?edit=), simpan id-nya di state lokal `savedActivityId` supaya
-      // "Simpan Draft" berikutnya UPDATE baris yg sama (bukan INSERT baris
-      // baru tiap ditekan) - TANPA mengubah URL/`editId` (yg akan memicu
-      // ulang seluruh effect prefill mode-edit & bisa menimpa isian lokal
-      // yg belum tersimpan).
-      const targetId = editId || savedActivityId;
-      let activityId = targetId;
-      if (targetId) {
-        // Plan "slot kosong" (bme_user_id & created_by MASIH NULL - hasil
-        // Import Excel/Backdoor yg belum ada pemiliknya) HARUS diklaim dulu
-        // lewat RPC SEBELUM update biasa di bawah - policy RLS UPDATE
-        // mh_activities cuma mengizinkan auth.uid() = bme_user_id ATAU
-        // auth.uid() = created_by (atau admin), jadi tanpa ini update dari
-        // BME biasa ke baris begini akan DIAM-DIAM tersaring RLS (0 baris
-        // berubah, TIDAK ADA error krn .update() tanpa .select() tidak
-        // mendeteksi 0-row-match) - persis gejala "kelihatan tersimpan tapi
-        // begitu dibuka lagi datanya balik kosong lagi". RPC ini menolak
-        // (throw) dgn pesan jelas kalau plan di luar cakupan branch/brand
-        // akun ybs, supaya DSF TAHU kenapa gagal, bukan diam2 gagal.
-        if (editData?.activity?.bme_user_id == null && editData?.activity?.created_by == null) {
-          const { error: claimErr } = await supabaseMarta.rpc("mh_claim_activity_if_unclaimed", { p_activity_id: targetId });
-          if (claimErr) throw new Error(claimErr.message || "Plan ini belum ter-assign ke akun manapun - hubungi admin/SPM Sumatera.");
-        }
-        // Update - brand/branch/pemilik TIDAK diubah (sama spt updatePlan()
-        // Flutter). "Simpan Draft" TIDAK menyentuh status (biarkan apa
-        // adanya, draft/revision_needed); "Ajukan Plan" set plan_submitted.
-        const payload = { ...commonFields, updated_at: new Date().toISOString() };
-        if (finalStatus === "plan_submitted") payload.status = "plan_submitted";
-        // `.select("id")` SENGAJA ditambahkan - tanpa ini, kalau RLS
-        // menyaring baris (mis. tetap tidak match krn sebab lain di luar
-        // dugaan), supabase-js TIDAK melempar error sama sekali (update yg
-        // 0-row-match bukan dianggap error) - form kelihatan "berhasil
-        // disimpan" padahal DB-nya tidak berubah. Dengan `.select()`, kalau
-        // `data` yg balik kosong (bukan array berisi 1 baris), berarti
-        // update-nya TIDAK KENA baris manapun - lempar error yg jelas
-        // drpd diam2 lolos seolah berhasil.
-        const { data: updated, error } = await supabaseMarta.from("mh_activities").update(payload).eq("id", targetId).select("id");
-        if (error) throw error;
-        if (!updated || updated.length === 0) {
-          throw new Error("Plan tidak tersimpan - akun Anda kemungkinan belum berwenang mengedit plan ini. Hubungi admin/SPM Sumatera.");
-        }
-      } else {
-        // "Buat Untuk": kedua kolom bme_user_id & created_by diisi id TARGET,
-        // bukan id approver yang membuatkannya - SAMA PERSIS dgn
-        // `_effectiveOwnerId()`/createPlan() Flutter (tidak ada kolom
-        // "true creator" terpisah).
-        //
-        // Target boleh "slot kosong" (branch×brand yg belum ada DMO-nya
-        // sama sekali) - actingFor tidak punya email utk kasus ini.
-        // bme_user_id disimpan NULL (kolom sudah dibuat nullable di DB),
-        // created_by dicatat sbg approver sendiri (bukan null, supaya tetap
-        // ada jejak siapa yang membuat). Baris ini otomatis "diklaim"
-        // (bme_user_id terisi) oleh RPC mh_rebind_email begitu ada DMO
-        // yang di-assign & login ke branch×brand yg sama.
-        const isPlaceholderTarget = isApprover && actingFor && !actingFor.email;
-        const ownerId = isApprover && actingFor && actingFor.email ? await resolveProfileIdByEmail(actingFor.email) : (isPlaceholderTarget ? null : userId);
-        if (isApprover && actingFor && actingFor.email && !ownerId) throw new Error("Profil target tidak ditemukan. Coba pilih ulang.");
-        const resolvedBranchId = await resolveBranchUuid(effectiveScope.branchId, effectiveScope.branchName);
-        if (!resolvedBranchId) throw new Error(`Branch "${effectiveScope.branchName || effectiveScope.branchId}" tidak ditemukan di master data Branch.`);
-        const { data: inserted, error } = await supabaseMarta.from("mh_activities").insert({
-          bme_user_id: ownerId,
-          created_by: isPlaceholderTarget ? userId : ownerId,
-          branch_id: resolvedBranchId,
-          brand: (effectiveScope.brand || "").toUpperCase(),
-          status: finalStatus,
-          ...commonFields,
-        }).select("id").single();
-        if (error) throw error;
-        activityId = inserted.id;
+      if (resolvedBrands.length === 0) {
+        throw new Error("Pilih brand plan dulu (IM3/3ID/Semua Brand) sebelum menyimpan.");
       }
 
-      if (siteIds.length > 0) await syncActivitySites(activityId, siteIds);
+      // Owner/branch RESOLVED SEKALI di luar loop brand - sama utk semua
+      // baris brand yang dibuat/diupdate (DMO/approver target-nya SAMA,
+      // cuma brand kolomnya yang beda per baris kalau "Semua Brand").
+      const isPlaceholderTarget = isApprover && actingFor && !actingFor.email;
+      const ownerId = isApprover && actingFor && actingFor.email ? await resolveProfileIdByEmail(actingFor.email) : (isPlaceholderTarget ? null : userId);
+      if (isApprover && actingFor && actingFor.email && !ownerId) throw new Error("Profil target tidak ditemukan. Coba pilih ulang.");
+      const resolvedBranchId = await resolveBranchUuid(effectiveScope.branchId, effectiveScope.branchName);
+      if (!resolvedBranchId) throw new Error(`Branch "${effectiveScope.branchName || effectiveScope.branchId}" tidak ditemukan di master data Branch.`);
 
-      // Tagging nomor (opsional) - baru BENAR-BENAR ditulis ke DB sekarang,
-      // setelah activityId pasti ada. Best-effort per kelompok (sama spt
-      // Isi Laporan) supaya plan pokok TETAP tersimpan walau sebagian
-      // tagging gagal.
-      // Dikelompokkan per typeId+orgId (bukan typeId saja) - satu event bisa
-      // punya beberapa org_id sekaligus (lihat OrgIdBar), jadi tiap kelompok
-      // org_id-nya harus dikirim terpisah krn mh_dsf_submit_sales_entries
-      // cuma menerima SATU p_org_id per panggilan.
-      for (const cat of ["sp", "fwa"]) {
-        const byGroup = new Map();
-        // `persisted` = sudah tercatat di DB sebelumnya (dimuat lewat
-        // fetchSalesEntries di mode edit) - JANGAN dikirim ulang, cuma
-        // entry baru yang belum tersimpan yang perlu di-submit di sini.
-        for (const e of tagEntries[cat].filter((e) => !e.persisted)) {
-          const key = `${e.typeId}|${e.orgId}`;
-          if (!byGroup.has(key)) byGroup.set(key, { typeId: e.typeId, orgId: e.orgId, list: [] });
-          byGroup.get(key).list.push(e);
+      // Satu baris mh_activities PER BRAND di `resolvedBrands` - normalnya
+      // cuma 1 brand (behaviour PERSIS seperti sebelumnya, data lama/single-
+      // brand sama sekali tidak tersentuh oleh perubahan ini), KECUALI DSF
+      // pilih "Semua Brand" di slot merged → 2 baris identik (IM3 & TRI)
+      // dibuat/diupdate sekaligus, masing2 dgn `savedActivityIds[brand]`
+      // sendiri supaya "Simpan Draft" berikutnya UPDATE baris yg sama per
+      // brand (bukan INSERT dobel tiap ditekan).
+      const nextSavedActivityIds = { ...savedActivityIds };
+      let primaryActivityId = null;
+      for (const brand of resolvedBrands) {
+        const targetId = editId || savedActivityIds[brand];
+        let activityId = targetId;
+        if (targetId) {
+          // Plan "slot kosong" (bme_user_id & created_by MASIH NULL - hasil
+          // Import Excel/Backdoor yg belum ada pemiliknya) HARUS diklaim dulu
+          // lewat RPC SEBELUM update biasa di bawah - policy RLS UPDATE
+          // mh_activities cuma mengizinkan auth.uid() = bme_user_id ATAU
+          // auth.uid() = created_by (atau admin), jadi tanpa ini update dari
+          // BME biasa ke baris begini akan DIAM-DIAM tersaring RLS (0 baris
+          // berubah, TIDAK ADA error krn .update() tanpa .select() tidak
+          // mendeteksi 0-row-match) - persis gejala "kelihatan tersimpan tapi
+          // begitu dibuka lagi datanya balik kosong lagi". RPC ini menolak
+          // (throw) dgn pesan jelas kalau plan di luar cakupan branch/brand
+          // akun ybs, supaya DSF TAHU kenapa gagal, bukan diam2 gagal.
+          if (editData?.activity?.bme_user_id == null && editData?.activity?.created_by == null) {
+            const { error: claimErr } = await supabaseMarta.rpc("mh_claim_activity_if_unclaimed", { p_activity_id: targetId });
+            if (claimErr) throw new Error(claimErr.message || "Plan ini belum ter-assign ke akun manapun - hubungi admin/SPM Sumatera.");
+          }
+          // Update - brand/branch/pemilik TIDAK diubah (sama spt updatePlan()
+          // Flutter). "Simpan Draft" TIDAK menyentuh status (biarkan apa
+          // adanya, draft/revision_needed); "Ajukan Plan" set plan_submitted.
+          const payload = { ...commonFields, updated_at: new Date().toISOString() };
+          if (finalStatus === "plan_submitted") payload.status = "plan_submitted";
+          // `.select("id")` SENGAJA ditambahkan - tanpa ini, kalau RLS
+          // menyaring baris (mis. tetap tidak match krn sebab lain di luar
+          // dugaan), supabase-js TIDAK melempar error sama sekali (update yg
+          // 0-row-match bukan dianggap error) - form kelihatan "berhasil
+          // disimpan" padahal DB-nya tidak berubah. Dengan `.select()`, kalau
+          // `data` yg balik kosong (bukan array berisi 1 baris), berarti
+          // update-nya TIDAK KENA baris manapun - lempar error yg jelas
+          // drpd diam2 lolos seolah berhasil.
+          const { data: updated, error } = await supabaseMarta.from("mh_activities").update(payload).eq("id", targetId).select("id");
+          if (error) throw error;
+          if (!updated || updated.length === 0) {
+            throw new Error("Plan tidak tersimpan - akun Anda kemungkinan belum berwenang mengedit plan ini. Hubungi admin/SPM Sumatera.");
+          }
+        } else {
+          // "Buat Untuk": kedua kolom bme_user_id & created_by diisi id TARGET,
+          // bukan id approver yang membuatkannya - SAMA PERSIS dgn
+          // `_effectiveOwnerId()`/createPlan() Flutter (tidak ada kolom
+          // "true creator" terpisah).
+          //
+          // Target boleh "slot kosong" (branch×brand yg belum ada DMO-nya
+          // sama sekali) - actingFor tidak punya email utk kasus ini.
+          // bme_user_id disimpan NULL (kolom sudah dibuat nullable di DB),
+          // created_by dicatat sbg approver sendiri (bukan null, supaya tetap
+          // ada jejak siapa yang membuat). Baris ini otomatis "diklaim"
+          // (bme_user_id terisi) oleh RPC mh_rebind_email begitu ada DMO
+          // yang di-assign & login ke branch×brand yg sama.
+          const { data: inserted, error } = await supabaseMarta.from("mh_activities").insert({
+            bme_user_id: ownerId,
+            created_by: isPlaceholderTarget ? userId : ownerId,
+            branch_id: resolvedBranchId,
+            brand,
+            status: finalStatus,
+            ...commonFields,
+          }).select("id").single();
+          if (error) throw error;
+          activityId = inserted.id;
         }
-        for (const { typeId, orgId, list } of byGroup.values()) {
-          try {
-            await supabaseMarta.rpc("mh_dsf_submit_sales_entries", {
-              p_activity_id: activityId, p_org_id: orgId, p_category: cat, p_product_type_id: typeId,
-              p_entries: list.map((e) => ({ msisdn: e.msisdn, imei: null, tagged_at: e.taggedAt })),
-            });
-          } catch { /* best-effort - lanjut kelompok berikutnya */ }
+
+        nextSavedActivityIds[brand] = activityId;
+        if (!primaryActivityId) primaryActivityId = activityId;
+
+        if (siteIds.length > 0) await syncActivitySites(activityId, siteIds);
+
+        // Tagging nomor (opsional) - baru BENAR-BENAR ditulis ke DB sekarang,
+        // setelah activityId pasti ada. Best-effort per kelompok (sama spt
+        // Isi Laporan) supaya plan pokok TETAP tersimpan walau sebagian
+        // tagging gagal. Dikelompokkan per typeId+orgId (bukan typeId saja) -
+        // satu event bisa punya beberapa org_id sekaligus (lihat OrgIdBar),
+        // jadi tiap kelompok org_id-nya harus dikirim terpisah krn
+        // mh_dsf_submit_sales_entries cuma menerima SATU p_org_id per
+        // panggilan. Kalau "Semua Brand" (2 baris), tagging yg sama dikirim
+        // ke KEDUA baris - ini cuma shortcut "1 event, 2 baris brand", bukan
+        // split data, jadi wajar nomor yg sama tercatat di keduanya.
+        for (const cat of ["sp", "fwa"]) {
+          const byGroup = new Map();
+          for (const e of tagEntries[cat].filter((e) => !e.persisted)) {
+            const key = `${e.typeId}|${e.orgId}`;
+            if (!byGroup.has(key)) byGroup.set(key, { typeId: e.typeId, orgId: e.orgId, list: [] });
+            byGroup.get(key).list.push(e);
+          }
+          for (const { typeId, orgId, list } of byGroup.values()) {
+            try {
+              await supabaseMarta.rpc("mh_dsf_submit_sales_entries", {
+                p_activity_id: activityId, p_org_id: orgId, p_category: cat, p_product_type_id: typeId,
+                p_entries: list.map((e) => ({ msisdn: e.msisdn, imei: null, tagged_at: e.taggedAt })),
+              });
+            } catch { /* best-effort - lanjut kelompok berikutnya */ }
+          }
+          for (const p of tagPending[cat]) {
+            try {
+              await supabaseMarta.rpc("mh_dsf_request_msisdn_transfer", {
+                p_entry_id: p.entryId, p_to_activity_id: activityId, p_category: p.category, p_product_type_id: p.typeId, p_org_id: p.orgId,
+              });
+            } catch { /* best-effort - lanjut nomor berikutnya */ }
+          }
         }
-        for (const p of tagPending[cat]) {
-          try {
-            await supabaseMarta.rpc("mh_dsf_request_msisdn_transfer", {
-              p_entry_id: p.entryId, p_to_activity_id: activityId, p_category: p.category, p_product_type_id: p.typeId, p_org_id: p.orgId,
-            });
-          } catch { /* best-effort - lanjut nomor berikutnya */ }
-        }
+
+        // Log Aktivitas (menu User Management) - best-effort, JANGAN sampai
+        // menggagalkan penyimpanan plan kalau logging-nya sendiri error.
+        try {
+          const action = finalStatus === "plan_submitted" ? "activity_plan_submit" : targetId ? "activity_plan_update" : "activity_plan_create";
+          await supabaseMarta.rpc("mh_activity_log_event", {
+            p_activity_id: activityId, p_action: action,
+            p_detail: `${eventName.trim() || "(tanpa nama)"} · ${finalStatus === "plan_submitted" ? "diajukan" : "draft disimpan"}${resolvedBrands.length > 1 ? ` · ${brand}` : ""}`,
+          });
+        } catch { /* best-effort - jangan blokir penyimpanan plan */ }
       }
-
-      // Log Aktivitas (menu User Management) - best-effort, JANGAN sampai
-      // menggagalkan penyimpanan plan kalau logging-nya sendiri error.
-      // Aksinya dibedakan create/update/submit spy jejaknya jelas: plan
-      // baru dibuat, plan lama diedit, atau plan diajukan (status →
-      // plan_submitted) - ketiganya kini WAJIB tercatat krn plan tidak lagi
-      // lewat approval TMV yang otomatis meninggalkan jejak sendiri.
-      try {
-        const action = finalStatus === "plan_submitted" ? "activity_plan_submit" : targetId ? "activity_plan_update" : "activity_plan_create";
-        await supabaseMarta.rpc("mh_activity_log_event", {
-          p_activity_id: activityId, p_action: action,
-          p_detail: `${eventName.trim() || "(tanpa nama)"} · ${finalStatus === "plan_submitted" ? "diajukan" : "draft disimpan"}`,
-        });
-      } catch { /* best-effort - jangan blokir penyimpanan plan */ }
 
       if (finalStatus === "plan_submitted") {
         // Submit final - SELALU keluar dari wizard, tidak ada alasan utk
@@ -1143,13 +1236,13 @@ function CreatePlanWizardInner() {
         // sering menyimpan draft sambil masih lanjut mengisi bagian lain,
         // dulu setiap "Simpan Draft" otomatis melempar keluar ke daftar
         // Aktivitas, jadi harus buka ulang plan-nya lagi cuma utk
-        // melanjutkan isi). `savedActivityId` dicatat supaya draft
-        // berikutnya UPDATE baris yg sama, `draftSavedAt`/`dirty` di-reset
-        // supaya tombol berubah jadi "Draft Tersimpan" & Kembali tidak lagi
-        // minta konfirmasi (sampai ada perubahan baru lagi) - KECUALI
-        // dipanggil dari alur "Simpan Draft & Kembali" (andLeave), yg
-        // langsung keluar setelah tersimpan.
-        setSavedActivityId(activityId);
+        // melanjutkan isi). `savedActivityIds` dicatat (per brand) supaya
+        // draft berikutnya UPDATE baris yg sama, `draftSavedAt`/`dirty`
+        // di-reset supaya tombol berubah jadi "Draft Tersimpan" & Kembali
+        // tidak lagi minta konfirmasi (sampai ada perubahan baru lagi) -
+        // KECUALI dipanggil dari alur "Simpan Draft & Kembali" (andLeave),
+        // yg langsung keluar setelah tersimpan.
+        setSavedActivityIds(nextSavedActivityIds);
         setDraftSavedAt(new Date().toISOString());
         setDirty(false);
         if (andLeave) router.back();
@@ -1258,6 +1351,7 @@ function CreatePlanWizardInner() {
             branchName: effectiveScope.branchNameDisplay,
             isApprover, actingFor, actingForList, actingForLoading, onPickActingFor: () => setActingForSheet(true),
             isBulkRegion, bulkRegionInfo,
+            needsBrandPick, selectedPlanBrand, setSelectedPlanBrand,
             activeCampaign, campaignLocked,
             onUseCampaign: () => {
               setEventName(activeCampaign.expected_event_name);
@@ -1289,7 +1383,8 @@ function CreatePlanWizardInner() {
             targetSpProducts, setTargetSpProducts, targetFwaProducts, setTargetFwaProducts,
             spProductOptions: tagTypes.sp, fwaProductOptions: tagTypes.fwa,
             targetSp, targetFwa, targetSpRevenue, targetFwaRevenue, targetRebuyTotal, targetEstRevenue, targetCostRatio,
-            targetRebuySp, setTargetRebuySp, targetRebuyFwa, setTargetRebuyFwa, costEstimate, setCostEstimate,
+            targetRebuySpIm3, setTargetRebuySpIm3, targetRebuySpTri, setTargetRebuySpTri,
+            targetRebuyFwaIm3, setTargetRebuyFwaIm3, targetRebuyFwaTri, setTargetRebuyFwaTri, costEstimate, setCostEstimate,
             tagOwnOrgId, tagActiveOrgId, setTagActiveOrgId, tagInput, setTagInput, tagFieldErr, tagEntries, tagPending, addTagMsisdn, addTagMsisdnBulk, tagBulkBusy, removeTagEntry,
             tagConflict, setTagConflict, confirmTagConflict, ownLabel: scope?.fullName, invalid,
           }} />
@@ -1382,7 +1477,7 @@ function CreatePlanWizardInner() {
 }
 
 // ═════════════════════════════════ Step 1 ═════════════════════════════════
-function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, setDates, timesByDate, setTimesByDate, invalid, branchName, isApprover, actingFor, actingForList, actingForLoading, onPickActingFor, isBulkRegion, bulkRegionInfo, activeCampaign, onUseCampaign, campaignLocked, onUnlockCampaign }) {
+function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, setDates, timesByDate, setTimesByDate, invalid, branchName, isApprover, actingFor, actingForList, actingForLoading, onPickActingFor, isBulkRegion, bulkRegionInfo, activeCampaign, onUseCampaign, campaignLocked, onUnlockCampaign, needsBrandPick, selectedPlanBrand, setSelectedPlanBrand }) {
   const [calendarOpen, setCalendarOpen] = useState(false);
   const validDates = dates.filter(Boolean);
   // Tidak ada mode manual - ringkasan dihitung otomatis dari keterdekatan
@@ -1501,7 +1596,24 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
         </>
       )}
 
-      <FieldLabel id="field-categories" text="Activity Category" required top={isApprover} />
+      {/* Pilih Brand - HANYA muncul utk slot "merged" (DMO/Head of Area yang
+          sekarang handle IM3 & 3ID sekaligus, brand akun = null). "Semua
+          Brand" akan membuat 2 baris plan (IM3 + 3ID) dgn isian yang sama -
+          lihat catatan `needsBrandPick`/`resolvedBrands` di save(). Plan
+          lama (selalu sudah single-brand) SAMA SEKALI tidak terpengaruh. */}
+      {needsBrandPick && (
+        <>
+          <FieldLabel id="field-planBrand" text="Brand" required top />
+          <div style={{ display: "flex", gap: 8, paddingBottom: 18, borderBottom: "1px solid #ECEDF0" }}>
+            {[{ v: "both", l: "Both Brand" }, { v: "im3", l: "IM3" }, { v: "tri", l: "3ID" }].map((o) => (
+              <Chip key={o.v} active={selectedPlanBrand === o.v} onClick={() => setSelectedPlanBrand(o.v)} label={o.l} />
+            ))}
+          </div>
+          {invalid.has("planBrand") && <FieldError text="Pilih brand plan ini dulu" />}
+        </>
+      )}
+
+      <FieldLabel id="field-categories" text="Activity Category" required top={isApprover || needsBrandPick} />
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, opacity: campaignLocked ? 0.55 : 1, pointerEvents: campaignLocked ? "none" : "auto" }}>
         {CATEGORIES.map((c) => {
           const active = categories.includes(c);
@@ -1579,7 +1691,8 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
 function StepTarget({
   targetSpProducts, setTargetSpProducts, targetFwaProducts, setTargetFwaProducts, spProductOptions, fwaProductOptions,
   targetSp, targetFwa, targetSpRevenue, targetFwaRevenue, targetRebuyTotal, targetEstRevenue, targetCostRatio,
-  targetRebuySp, setTargetRebuySp, targetRebuyFwa, setTargetRebuyFwa, costEstimate, setCostEstimate,
+  targetRebuySpIm3, setTargetRebuySpIm3, targetRebuySpTri, setTargetRebuySpTri,
+  targetRebuyFwaIm3, setTargetRebuyFwaIm3, targetRebuyFwaTri, setTargetRebuyFwaTri, costEstimate, setCostEstimate,
   tagOwnOrgId, tagActiveOrgId, setTagActiveOrgId, tagInput, setTagInput, tagFieldErr, tagEntries, tagPending, addTagMsisdn, addTagMsisdnBulk, tagBulkBusy, removeTagEntry,
   tagConflict, setTagConflict, confirmTagConflict, ownLabel, invalid,
 }) {
@@ -1625,13 +1738,24 @@ function StepTarget({
         />
 
         <div style={{ height: 1, background: "#F0F0F3", margin: "16px 0" }} />
-        {/* Rebuy TETAP pakai amount langsung (bukan produk×qty) - sesuai
-            permintaan, rebuy tidak dipecah per jenis produk - tapi headernya
-            (ikon bulat + label) disamakan gayanya dgn Target Penjualan
-            SP/FWA di atas supaya satu kartu ini terasa konsisten. */}
-        <AmountTargetGroup icon={CardSim} accent="#B45309" label="Target Rebuy SP" value={targetRebuySp} onChange={setTargetRebuySp} />
+        {/* Rebuy SEKARANG dipisah per brand (IM3/3ID) - sama spt Target
+            Aktivasi SP/FWA di atas yg sudah per-brand per-produk, jadi
+            satu kartu Target ini konsisten penuh: SEMUA angka target (SP,
+            FWA, Rebuy SP, Rebuy FWA) kekenali per brand-nya, bukan cuma
+            SP/FWA aktivasi saja. Headernya (ikon bulat+label) tetap SAMA
+            gayanya dgn Target Penjualan SP/FWA, cuma di bawahnya skr 2
+            input bersisian (IM3 kuning | 3ID magenta) bukan 1 input polos. */}
+        <RebuySplitGroup
+          icon={CardSim} label="Target Rebuy SP"
+          im3Value={targetRebuySpIm3} onIm3Change={setTargetRebuySpIm3}
+          triValue={targetRebuySpTri} onTriChange={setTargetRebuySpTri}
+        />
         <div style={{ marginTop: 14 }}>
-          <AmountTargetGroup icon={RouterIcon} accent="#0D9488" label="Target Rebuy FWA" value={targetRebuyFwa} onChange={setTargetRebuyFwa} />
+          <RebuySplitGroup
+            icon={RouterIcon} label="Target Rebuy FWA"
+            im3Value={targetRebuyFwaIm3} onIm3Change={setTargetRebuyFwaIm3}
+            triValue={targetRebuyFwaTri} onTriChange={setTargetRebuyFwaTri}
+          />
         </div>
         {invalid?.has("target") && <FieldError text="Isi minimal satu target (SP, FWA, Rebuy SP, atau Rebuy FWA) - tidak boleh kosong semua." />}
       </Card>
@@ -1669,6 +1793,17 @@ function StepTarget({
  * tombol "Tambah" terpisah spt di Catat Rencana Penjualan di bawahnya,
  * karena di sini cuma set qty per produk yg SUDAH ada di master data
  * (bukan mencatat MSISDN individual). */
+// Deteksi brand (IM3/3ID) dari NAMA produk - dipakai utk kasih aksen warna
+// brand (lihat ACT_BRAND_COLOR/ACT_BRAND_LABEL di bawah) di tiap baris
+// qty produk SP/FWA (mis. "SP 3GB 3ID" vs "SP 3GB IM3"), supaya langsung
+// kelihatan baris mana punya brand mana tanpa harus baca teksnya pelan2.
+function detectActBrand(name) {
+  const n = (name || "").toUpperCase();
+  if (n.includes("3ID") || n.includes("TRI")) return "tri";
+  if (n.includes("IM3")) return "im3";
+  return null;
+}
+
 function ProductTargetGroup({ icon: Icon, accent, label, products, getQty, onQtyChange, totalUnit, totalRevenue }) {
   return (
     <div>
@@ -1691,18 +1826,39 @@ function ProductTargetGroup({ icon: Icon, accent, label, products, getQty, onQty
           {products.map((product) => {
             const qty = getQty(product.id);
             const subtotal = (Number(qty) || 0) * (Number(product.unit_price) || 0);
+            // Aksen brand (IM3 kuning / 3ID magenta, lihat ACT_BRAND_COLOR)
+            // per baris produk - permintaan user eksplisit, jadi tiap baris
+            // qty langsung kekenali brand-nya dari warna + badge kecil,
+            // bukan cuma dari teks nama produknya saja.
+            const brandKey = detectActBrand(product.name);
+            const brandColor = brandKey ? ACT_BRAND_COLOR[brandKey] : accent;
             return (
-              <div key={product.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 10px", borderRadius: 12, background: "#F6F7F9", border: "1px solid #ECEDF0" }}>
+              <div key={product.id} style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "9px 10px 9px 9px", borderRadius: 12,
+                background: "#F6F7F9", border: "1px solid #ECEDF0",
+                borderLeft: brandKey ? `3px solid ${brandColor}` : "1px solid #ECEDF0",
+              }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 700, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{product.name}</div>
-                  <div style={{ marginTop: 2, fontSize: 10.5, color: "#8A8A96", fontWeight: 600 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                    {brandKey && (
+                      <span style={{
+                        flexShrink: 0, fontSize: 9, fontWeight: 800, letterSpacing: "0.02em",
+                        padding: "2px 6px", borderRadius: 999,
+                        background: ACT_BRAND_COLOR[brandKey], color: ACT_BRAND_TEXT[brandKey],
+                      }}>
+                        {ACT_BRAND_LABEL[brandKey]}
+                      </span>
+                    )}
+                    <div style={{ fontSize: 12.5, fontWeight: 700, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{product.name}</div>
+                  </div>
+                  <div style={{ marginTop: 3, fontSize: 10.5, color: "#8A8A96", fontWeight: 600 }}>
                     Rp {Number(product.unit_price).toLocaleString("id-ID")}/unit
-                    {Number(qty) > 0 && <span style={{ color: accent, fontWeight: 800 }}> · Rp {subtotal.toLocaleString("id-ID")}</span>}
+                    {Number(qty) > 0 && <span style={{ color: brandColor, fontWeight: 800 }}> · Rp {subtotal.toLocaleString("id-ID")}</span>}
                   </div>
                 </div>
                 <div style={{ width: 78, flexShrink: 0 }}>
                   <input value={qty} onChange={(e) => onQtyChange(product, e.target.value)} inputMode="numeric" placeholder="0"
-                    style={{ width: "100%", height: 38, borderRadius: 10, background: "#FFFFFF", border: "1.5px solid #ECEDF0", textAlign: "center", fontSize: 13.5, fontWeight: 800, fontFamily: FF, color: "#17181C", outline: "none", boxSizing: "border-box" }} />
+                    style={{ width: "100%", height: 38, borderRadius: 10, background: "#FFFFFF", border: `1.5px solid ${Number(qty) > 0 && brandKey ? `${brandColor}66` : "#ECEDF0"}`, textAlign: "center", fontSize: 13.5, fontWeight: 800, fontFamily: FF, color: "#17181C", outline: "none", boxSizing: "border-box" }} />
                 </div>
               </div>
             );
@@ -1735,6 +1891,40 @@ function AmountTargetGroup({ icon: Icon, accent, label, value, onChange, require
       </div>
       <div style={{ marginTop: 8 }}>
         <NumberInput value={value} onChange={onChange} prefix="Rp" />
+      </div>
+    </div>
+  );
+}
+
+/** Rebuy per brand (IM3/3ID) - header SAMA persis gayanya dgn
+ * AmountTargetGroup/ProductTargetGroup di atas (ikon bulat + label), tapi
+ * body-nya 2 input bersisian, masing2 dibadge warna brand-nya sendiri
+ * (ACT_BRAND_COLOR - IM3 kuning, 3ID magenta) spy jelas kekenali angka
+ * mana punya brand mana tanpa baca label text-nya. */
+function RebuySplitGroup({ icon: Icon, label, im3Value, onIm3Change, triValue, onTriChange }) {
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+        <div style={{ width: 26, height: 26, borderRadius: 8, background: "#B4530914", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Icon size={13} color="#B45309" />
+        </div>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>{label}</span>
+      </div>
+      <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 6 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: ACT_BRAND_COLOR.im3, flexShrink: 0 }} />
+            <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: "0.03em" }}>{ACT_BRAND_LABEL.im3}</span>
+          </div>
+          <NumberInput value={im3Value} onChange={onIm3Change} prefix="Rp" />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 6 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: ACT_BRAND_COLOR.tri, flexShrink: 0 }} />
+            <span style={{ fontSize: 10, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: "0.03em" }}>{ACT_BRAND_LABEL.tri}</span>
+          </div>
+          <NumberInput value={triValue} onChange={onTriChange} prefix="Rp" />
+        </div>
       </div>
     </div>
   );
