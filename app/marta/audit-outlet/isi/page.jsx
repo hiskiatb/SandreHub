@@ -305,21 +305,18 @@ const inputStyle = {
   color: INK, colorScheme: "light",
 };
 
-function BottomBar({ children, bottomGap = 0 }) {
-  // position:"fixed" (bukan "sticky" di dalam container scroll custom) -
-  // biar kotak putih ini ANCHOR LANGSUNG ke bawah viewport asli, gak
-  // bergantung sama tinggi container pembungkusnya (yg di iOS PWA kadang
-  // kepotong dikit px dari viewport sebenarnya). Jarak amannya (notch/home
-  // indicator) ditaruh sbg padding internal di SINI saja - kotak putihnya
-  // sendiri tetap full lengket ke tepi paling bawah layar, cuma TOMBOL di
-  // dalamnya yg digeser naik dikit via padding-bottom.
-  // "bottom" DIKASIH `bottomGap` (bukan selalu 0) - itu selisih layout vs
-  // visual viewport (lihat hook `vvBottomGap`), biar gak ada gap abu2
-  // nganggur dibawahnya pas browser chrome mobile lagi nutupin sebagian
-  // visual viewport beneran.
+function BottomBar({ children }) {
+  // Dibuat PERSIS spt action bar MartaHub Mobile (app/martahub/m/activities/
+  // [id]/submit/page.jsx) yg sudah terbukti selalu lengket rapi ke bawah
+  // tanpa gap - position:"fixed" + bottom:0 POLOS (gak perlu hitungan
+  // visualViewport yg malah bisa nyisain gap kalau browsernya ngasih
+  // angka offsetTop/height yg gak pas persis), jarak amannya (notch/home
+  // indicator) CUKUP via padding-bottom env(safe-area-inset-bottom) di
+  // dalam, kotak putihnya sendiri tetap full lengket ke tepi paling bawah
+  // layar beneran.
   return (
     <div style={{
-      position: "fixed", left: 0, right: 0, bottom: bottomGap, zIndex: 40,
+      position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 40,
       background: "#fff", borderTop: `1px solid ${BORDER}`,
     }}>
       <div className="ao-wrap" style={{
@@ -1313,9 +1310,11 @@ export default function AuditOutletFormPage() {
   const [isStandalone, setIsStandalone] = useState(false);
   const [showIOSGuide, setShowIOSGuide] = useState(false);
   const [installingApp, setInstallingApp] = useState(false);
+  const [isMobileDevice, setIsMobileDevice] = useState(false);
   useEffect(() => {
     const ua = window.navigator.userAgent || "";
     setIsIOS(/iphone|ipad|ipod/i.test(ua) && !window.MSStream);
+    setIsMobileDevice(/android|iphone|ipad|ipod|mobile/i.test(ua));
     setIsStandalone(
       window.matchMedia?.("(display-mode: standalone)").matches || window.navigator.standalone === true
     );
@@ -1343,36 +1342,6 @@ export default function AuditOutletFormPage() {
       vv?.removeEventListener("resize", update);
       window.removeEventListener("resize", update);
       window.removeEventListener("orientationchange", update);
-    };
-  }, []);
-
-  // BottomBar pakai position:"fixed" + bottom:0, tapi "bottom:0" itu
-  // sebenarnya nempel ke LAYOUT viewport, bukan VISUAL viewport - begitu
-  // address bar browser mobile lagi muncul/separuh-collapse (atau pas
-  // ada browser chrome lain di bawah), layout viewport-nya lebih tinggi
-  // drpd yg BENERAN kelihatan, jadi ada gap abu2 nganggur di bawah
-  // BottomBar (persis laporan user "tombol selanjutnya belum nempel ke
-  // bawah"). vvBottomGap = selisih itu (window.innerHeight - bagian
-  // visual viewport yg beneran kelihatan), dipakai sbg nilai "bottom"
-  // BottomBar (bukan selalu 0) biar dia auto-geser ngikutin visual
-  // viewport asli, bukan layout viewport.
-  const [vvBottomGap, setVvBottomGap] = useState(0);
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const vv = window.visualViewport;
-    if (!vv) return;
-    const updateGap = () => {
-      const gap = window.innerHeight - (vv.height + vv.offsetTop);
-      setVvBottomGap(gap > 0.5 ? gap : 0);
-    };
-    updateGap();
-    vv.addEventListener("resize", updateGap);
-    vv.addEventListener("scroll", updateGap);
-    window.addEventListener("orientationchange", updateGap);
-    return () => {
-      vv.removeEventListener("resize", updateGap);
-      vv.removeEventListener("scroll", updateGap);
-      window.removeEventListener("orientationchange", updateGap);
     };
   }, []);
 
@@ -1465,6 +1434,7 @@ export default function AuditOutletFormPage() {
   // PhotoSlot (yg masih bisa dipakai manual per-slot spt biasa).
   const [cameraOpen, setCameraOpen] = useState(false);
   const cameraTargetRef = useRef(null); // callback(file) dipanggil saat shutter ditekan
+  const nativeCameraInputRef = useRef(null); // <input capture> tersembunyi, khusus HP (lihat openCameraFor)
   // Lightbox foto di step Review - klik thumbnail Foto Etalase/Tampak Depan
   // buat lihat ukuran penuh, sama pola kayak lightbox foto referensi di
   // PhotoGuide. Simpan SELURUH daftar foto + index aktif (bukan 1 url
@@ -1596,7 +1566,28 @@ export default function AuditOutletFormPage() {
   // callback yg dipanggil dgn File hasil jepretan.
   const openCameraFor = (onCaptured) => {
     cameraTargetRef.current = onCaptured;
+    if (isMobileDevice) {
+      // HP: pakai kamera BAWAAN HP langsung (native camera app), bukan
+      // overlay getUserMedia custom - jauh lebih stabil (gak ada lagi
+      // error izin/preview/rotasi yg sering muncul di sejumlah browser &
+      // in-app WebView HP). `capture="environment"` juga memastikan ini
+      // SELALU buka kamera, TIDAK PERNAH galeri/album foto.
+      nativeCameraInputRef.current?.click();
+      return;
+    }
+    // Laptop/desktop: gak ada "kamera bawaan" native app yg bisa dipanggil
+    // spt di HP, jadi tetap pakai overlay getUserMedia (webcam laptop) -
+    // supaya tetap WAJIB pakai kamera langsung, bukan buka file
+    // picker/galeri biasa.
     setCameraOpen(true);
+  };
+  const handleNativeCameraChange = (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = ""; // reset biar bisa jepret foto baru dgn nama file sama lagi
+    if (!f) { cameraTargetRef.current = null; return; }
+    const cb = cameraTargetRef.current;
+    cameraTargetRef.current = null;
+    cb?.(f);
   };
   const handleCameraCapture = (file) => {
     setCameraOpen(false);
@@ -1902,6 +1893,17 @@ export default function AuditOutletFormPage() {
         @media (min-width: 900px) { .ao-wrap { max-width: 640px; } }
       `}</style>
       <CameraCapture open={cameraOpen} onClose={handleCameraClose} onCapture={handleCameraCapture} />
+      {/* Input tersembunyi khusus HP - capture="environment" memaksa buka
+          kamera belakang HP langsung (bukan galeri). Dipicu programatis
+          lewat nativeCameraInputRef.current.click() dari openCameraFor(). */}
+      <input
+        ref={nativeCameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleNativeCameraChange}
+        style={{ display: "none" }}
+      />
       <div style={{ background: BRAND_GRADIENT, position: "sticky", top: 0, zIndex: 30 }}>
         <Header title={<HeaderTitle showInstall={showInstallButton} onInstallClick={handleInstallClick} installing={installingApp} />} />
         <div style={{ background: "#fff", borderRadius: "22px 22px 0 0", marginTop: 0, boxShadow: "0 -8px 20px rgba(0,0,0,0.06)" }}>
@@ -2244,7 +2246,7 @@ export default function AuditOutletFormPage() {
         )}
       </div>
 
-      <BottomBar bottomGap={vvBottomGap}>
+      <BottomBar>
         {step > 0 && <GhostBtn onClick={() => setStep((s) => s - 1)}><ChevronLeft size={16} /> Kembali</GhostBtn>}
         {step === 0 && (
           <PrimaryBtn onClick={goNextFromData}>Selanjutnya <ChevronRight size={16} /></PrimaryBtn>
