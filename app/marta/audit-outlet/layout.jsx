@@ -4,15 +4,16 @@ export const metadata = {
   manifest: "/marta/audit-outlet/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    // "black" (OPAQUE, bukan "black-translucent") - sebelumnya translucent
-    // bikin status bar nunjukin gradient Header di belakangnya, TAPI iOS
-    // nambahin scrim/overlay legibility yg warnanya IKUT ADAPT ke light/
-    // dark mode device (gelap pas device dark mode, pucat/putih pas device
-    // light mode) - user gak mau warnanya ikut2an berubah begitu. "black"
-    // = status bar SELALU solid hitam polos, konsisten di light/dark mode
-    // apapun, gak nyambung ke konten di belakangnya sama sekali (viewport
-    // konten otomatis dimulai di bawah status bar, bukan di belakangnya).
-    statusBarStyle: "black",
+    // "black-translucent" - status bar TRANSPARAN, gradient Header (lihat
+    // BRAND_GRADIENT di isi/page.jsx) ikut nembus sampai ke belakang
+    // notch/status bar -> ini yg bikin app kerasa truly fullscreen/edge-
+    // to-edge (dipilih user walau iOS tetap nambahin scrim legibility
+    // tipis-SELALU buatan Apple sendiri di area jam/baterai, di luar
+    // kendali kita - lihat diskusi). Sebelumnya sempat diganti ke "black"
+    // (solid opaque) krn scrim itu dulu ikut2an dark/light mode DEVICE,
+    // tapi form ini sekarang sudah dikunci light mode total (color-scheme:
+    // light, lihat isi/page.jsx) jadi dampaknya sudah minim.
+    statusBarStyle: "black-translucent",
     title: "Pendataan Outlet",
   },
   icons: {
