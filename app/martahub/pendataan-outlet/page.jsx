@@ -173,10 +173,10 @@ const SUB_COLUMNS = [
   // Availability (step baru di mobile - 4 checklist Ya/Tidak) + GPS - lihat
   // ao_list_submissions: availability_score/completeness/status dihitung
   // server-side persis definisi Download_Guide template.
-  { key: "sp_im3", label: "SP IM3 ≥2" },
-  { key: "sp_3id", label: "SP 3ID ≥2" },
-  { key: "voucher_im3", label: "Voucher IM3 ≥3" },
-  { key: "voucher_3id", label: "Voucher 3ID ≥3" },
+  { key: "sp_im3", label: "Varian SP IM3" },
+  { key: "sp_3id", label: "Varian SP 3ID" },
+  { key: "voucher_im3", label: "Varian Voucher IM3" },
+  { key: "voucher_3id", label: "Varian Voucher 3ID" },
   { key: "availability_score", label: "Availability Score" },
   { key: "completeness", label: "Completeness" },
   { key: "status", label: "Status" },
@@ -380,10 +380,10 @@ function SubmissionBody() {
   ];
   const TEXT_COLS_AFTER_PHOTO = [
     ["Social Media", (r) => r.social_media || ""],
-    ["SP IM3 >= 2 Varian", (r) => (r.sp_im3 == null ? "" : (r.sp_im3 ? "Yes" : "No"))],
-    ["SP 3ID >= 2 Varian", (r) => (r.sp_3id == null ? "" : (r.sp_3id ? "Yes" : "No"))],
-    ["Voucher IM3 >= 3 Varian", (r) => (r.voucher_im3 == null ? "" : (r.voucher_im3 ? "Yes" : "No"))],
-    ["Voucher 3ID >= 3 Varian", (r) => (r.voucher_3id == null ? "" : (r.voucher_3id ? "Yes" : "No"))],
+    ["Varian SP IM3", (r) => r.sp_im3 || ""],
+    ["Varian SP 3ID", (r) => r.sp_3id || ""],
+    ["Varian Voucher IM3", (r) => r.voucher_im3 || ""],
+    ["Varian Voucher 3ID", (r) => r.voucher_3id || ""],
     ["Availability Score", (r) => r.availability_score ?? ""],
     ["Completeness", (r) => r.completeness || ""],
     ["Status", (r) => r.status || ""],
@@ -584,10 +584,15 @@ function SubmissionBody() {
                 {SUB_COLUMNS.map((c) => {
                   const v = s[c.key];
                   const mono = c.key === "id_outlet";
-                  const isBool = ["sp_im3", "sp_3id", "voucher_im3", "voucher_3id"].includes(c.key);
+                  // Sebelumnya boolean Ya/Tidak - sekarang slab jumlah varian (text:
+                  // "0-1"/"2-4"/"5++" utk SP, "0-2"/"3-5"/"6++" utk Voucher).
+                  // Skor per slab dihitung server-side (lihat kolom
+                  // availability_score), di sini cuma tampilkan slab apa
+                  // adanya sbg badge netral.
+                  const isSlab = ["sp_im3", "sp_3id", "voucher_im3", "voucher_3id"].includes(c.key);
                   let display = v == null || v === "" ? "-" : String(v);
                   let color = T.mid;
-                  if (isBool && v != null) { display = v ? "Ya" : "Tidak"; color = v ? "#16A34A" : "#DC2626"; }
+                  if (isSlab && v != null) { color = T.primary; }
                   if (c.key === "status") color = v === "Submitted" ? "#16A34A" : "#C2760C";
                   if (c.key === "completeness") color = v === "Complete" ? "#16A34A" : "#C2760C";
                   // Jarak ke outlet - tandai merah+bold kalau jauh (>200m,
@@ -601,7 +606,7 @@ function SubmissionBody() {
                     display = v === 1 ? "Dalam Radius" : "Di Luar Radius";
                     color = v === 1 ? "#16A34A" : "#DC2626";
                   }
-                  return <td key={c.key} style={{ padding: "8px 12px", color, fontFamily: mono ? "monospace" : undefined, fontWeight: isBool || c.key === "status" || c.key === "completeness" || c.key === "radius_score" ? 700 : undefined }}>{display}</td>;
+                  return <td key={c.key} style={{ padding: "8px 12px", color, fontFamily: mono ? "monospace" : undefined, fontWeight: isSlab || c.key === "status" || c.key === "completeness" || c.key === "radius_score" ? 700 : undefined }}>{display}</td>;
                 })}
                 <td style={{ padding: "8px 12px" }}>
                   <Btn variant="ghost" onClick={() => openPreview(s)}>Lihat</Btn>

@@ -17,7 +17,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle, ArrowLeft, AtSign, Calendar, Camera, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
   ClipboardList, Download, Image as ImageIcon, Loader2, MapPin, Pencil, PlusSquare, ScanBarcode, Search, Send,
-  Share, Store, User, X,
+  Share, Store, Ticket, User, X,
 } from "lucide-react";
 import lottie from "lottie-web";
 import successAnimData from "../../../../public/promotor/success-animation.json";
@@ -64,13 +64,49 @@ const STEPS = [
 // 4 parameter availability (sesuai mockup "Cek Availability Produk") - key
 // dipakai jadi nama state DAN dikirim ke ao_create_submission (spIm3/sp3id/
 // voucherIm3/voucher3id).
+// Slab jumlah varian (bukan Ya/Tidak lagi) - tiap item dijawab salah satu
+// dari 3 opsi jumlah varian yg kelihatan di outlet. Skor per slab dihitung
+// di CMS (bukan di form ini): SP 0-1=skor 0, 2-4=skor 2, 5++=skor 5;
+// Voucher 0-2=skor 0, 3-5=skor 2, 6++=skor 5 - jadi sender cuma milih
+// jumlah varian apa adanya, tanpa perlu tau/liat skornya.
+const SP_SLABS = [
+  { value: "0-1", label: "0-1" },
+  { value: "2-4", label: "2-4" },
+  { value: "5++", label: "5++" },
+];
+const VOUCHER_SLABS = [
+  { value: "0-2", label: "0-2" },
+  { value: "3-5", label: "3-5" },
+  { value: "6++", label: "6++" },
+];
 const AVAILABILITY_ITEMS = [
-  { key: "spIm3", brand: "im3", no: 1, group: "sp", label: "Varian SP IM3 ≥ 2?", desc: "Contoh: Freedom, IM3, Yellow." },
-  { key: "sp3id", brand: "3id", no: 2, group: "sp", label: "Varian SP 3ID ≥ 2?", desc: "Contoh: AlwaysOn, Happy, AON." },
-  { key: "voucherIm3", brand: "im3", no: 3, group: "voucher", label: "Varian Voucher IM3 ≥ 3?", desc: "Contoh: 5K, 10K, 25K, 50K." },
-  { key: "voucher3id", brand: "3id", no: 4, group: "voucher", label: "Varian Voucher 3ID ≥ 3?", desc: "Contoh: 5K, 10K, 20K, 50K." },
+  { key: "spIm3", brand: "im3", no: 1, group: "sp", label: "Jumlah Varian SP IM3", desc: "Contoh: Freedom, IM3, Yellow.", slabs: SP_SLABS },
+  { key: "sp3id", brand: "3id", no: 2, group: "sp", label: "Jumlah Varian SP 3ID", desc: "Contoh: AlwaysOn, Happy, AON.", slabs: SP_SLABS },
+  { key: "voucherIm3", brand: "im3", no: 3, group: "voucher", label: "Jumlah Varian Voucher IM3", desc: "Contoh: 5K, 10K, 25K, 50K.", slabs: VOUCHER_SLABS },
+  { key: "voucher3id", brand: "3id", no: 4, group: "voucher", label: "Jumlah Varian Voucher 3ID", desc: "Contoh: 5K, 10K, 20K, 50K.", slabs: VOUCHER_SLABS },
 ];
 const AVAILABILITY_GROUP_LABEL = { sp: "Starter Pack (SP)", voucher: "Voucher / Isi Ulang" };
+// Ikon kartu SIM - sama persis dgn yg dipakai di app Promotor (MartaHub
+// mobile, lihat SimCardIcon @ app/promotor/page.jsx) biar representasi
+// "Starter Pack/kartu perdana" konsisten se-ekosistem, bukan ikon
+// kotak/paket generik.
+function SimCardIcon({ size = 16, color = "currentColor", strokeWidth = 1.7 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M6.5 3h8.5l4.5 4.5V20a1 1 0 0 1-1 1h-12a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" stroke={color} strokeWidth={strokeWidth} strokeLinejoin="round" />
+      <rect x="8.3" y="10.2" width="7.4" height="6.3" rx="1.3" stroke={color} strokeWidth={strokeWidth * 0.8} />
+      <line x1="8.3" y1="13.35" x2="15.7" y2="13.35" stroke={color} strokeWidth={strokeWidth * 0.65} />
+      <line x1="12" y1="10.2" x2="12" y2="16.5" stroke={color} strokeWidth={strokeWidth * 0.65} />
+    </svg>
+  );
+}
+// Tone warna beda total per grup (pink/magenta utk SP, biru-indigo utk
+// Voucher) - bukan cuma garis tipis lagi, biar transisi antar grup
+// kerasa jelas sekilas mata, gak perlu baca teksnya dulu.
+const AVAILABILITY_GROUP_META = {
+  sp: { icon: SimCardIcon, color: PINK_DK, tint: "rgba(236,11,111,0.08)", border: "rgba(236,11,111,0.22)" },
+  voucher: { icon: Ticket, color: "#4338CA", tint: "rgba(79,70,229,0.08)", border: "rgba(79,70,229,0.22)" },
+};
 
 function Stepper({ step, onStepClick }) {
   return (
@@ -197,25 +233,34 @@ function HeaderTitle({ showInstall, onInstallClick, installing }) {
   );
 }
 
-function SectionCard({ icon, title, badge, children }) {
+function SectionCard({ icon, title, subtitle, badge, children }) {
   return (
     <div style={{
       background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 18, padding: 18, marginBottom: 16,
       boxShadow: "0 2px 4px rgba(20,18,28,0.02), 0 10px 28px rgba(20,18,28,0.05)",
     }}>
       {title && (
-        <div style={{ display: "flex", alignItems: "center", gap: 11, paddingBottom: 16, marginBottom: 16, borderBottom: `1px solid ${BORDER}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 16, marginBottom: 16, borderBottom: `1px solid ${BORDER}` }}>
           {icon && (
+            // Badge ikon solid (bukan kotak tint pucat lagi) - kesannya
+            // lebih "premium" drpd flat polos, TANPA glow di luar (cuma
+            // shadow jarak-dekat yg wajar + inner highlight tipis di atas
+            // buat kedalaman) - sesuai permintaan "jangan ada glownya".
             <div style={{
-              width: 36, height: 36, borderRadius: 11, flexShrink: 0,
-              background: `linear-gradient(135deg, rgba(236,11,111,0.14), rgba(247,148,29,0.12))`,
-              border: "1px solid rgba(236,11,111,0.12)",
+              width: 40, height: 40, borderRadius: 13, flexShrink: 0, position: "relative", overflow: "hidden",
+              background: `linear-gradient(145deg, ${PINK} 0%, ${PINK_DK} 100%)`,
+              boxShadow: "0 1.5px 3px rgba(20,18,28,0.12), inset 0 1px 0 rgba(255,255,255,0.25)",
               display: "flex", alignItems: "center", justifyContent: "center",
             }}>
               {icon}
             </div>
           )}
-          <div style={{ flex: 1, fontSize: 16.5, fontWeight: 800, color: INK, letterSpacing: -0.1 }}>{title}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 16.5, fontWeight: 800, color: INK, letterSpacing: -0.1, lineHeight: 1.25 }}>{title}</div>
+            {subtitle && (
+              <div style={{ fontSize: 11.5, color: MID, marginTop: 2, lineHeight: 1.3 }}>{subtitle}</div>
+            )}
+          </div>
           {badge && (
             <span style={{
               fontSize: 10, fontWeight: 800, color: "#fff", letterSpacing: 0.3, textTransform: "uppercase",
@@ -260,7 +305,7 @@ const inputStyle = {
   color: INK, colorScheme: "light",
 };
 
-function BottomBar({ children }) {
+function BottomBar({ children, bottomGap = 0 }) {
   // position:"fixed" (bukan "sticky" di dalam container scroll custom) -
   // biar kotak putih ini ANCHOR LANGSUNG ke bawah viewport asli, gak
   // bergantung sama tinggi container pembungkusnya (yg di iOS PWA kadang
@@ -268,13 +313,17 @@ function BottomBar({ children }) {
   // indicator) ditaruh sbg padding internal di SINI saja - kotak putihnya
   // sendiri tetap full lengket ke tepi paling bawah layar, cuma TOMBOL di
   // dalamnya yg digeser naik dikit via padding-bottom.
+  // "bottom" DIKASIH `bottomGap` (bukan selalu 0) - itu selisih layout vs
+  // visual viewport (lihat hook `vvBottomGap`), biar gak ada gap abu2
+  // nganggur dibawahnya pas browser chrome mobile lagi nutupin sebagian
+  // visual viewport beneran.
   return (
     <div style={{
-      position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 40,
+      position: "fixed", left: 0, right: 0, bottom: bottomGap, zIndex: 40,
       background: "#fff", borderTop: `1px solid ${BORDER}`,
     }}>
-      <div style={{
-        maxWidth: 480, margin: "0 auto", display: "flex", gap: 10,
+      <div className="ao-wrap" style={{
+        margin: "0 auto", display: "flex", gap: 10,
         padding: "16px 20px calc(16px + env(safe-area-inset-bottom))",
       }}>
         {children}
@@ -311,7 +360,7 @@ function GhostBtn({ children, onClick }) {
 function OutletInfoItem({ label, value }) {
   return (
     <div style={{ minWidth: 0 }}>
-      <div style={{ fontSize: 9.5, color: PINK_DK, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
+      <div style={{ fontSize: 9.5, color: PINK_DK, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
       <div style={{ fontSize: 12.5, color: INK, fontWeight: 500, wordBreak: "break-word", lineHeight: 1.3 }}>{value || "-"}</div>
     </div>
   );
@@ -319,20 +368,48 @@ function OutletInfoItem({ label, value }) {
 
 // ── Chip status GPS (auto-capture, bukan input manual) ─────────────────────
 function GpsChip({ lat, lng, locating, error, onRetry }) {
+  // marginTop dikasih di SINI (bukan cuma marginBottom) - biar chip ini
+  // (loading MAUPUN error) konsisten punya jarak napas dari Stepper di
+  // atasnya, gak pernah nempel mepet kayak sebelumnya ("tetap dibawah
+  // stepper, buat dengan rapi").
   if (locating) {
     return (
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 13px", borderRadius: 11, background: "#F7F6FA", border: `1px solid ${BORDER}`, marginBottom: 14, fontSize: 12 }}>
-        <Loader2 size={14} color={MID} style={{ animation: "spin 1s linear infinite", flexShrink: 0 }} />
-        <span style={{ color: MID, fontWeight: 600 }}>Mengambil lokasi GPS...</span>
+      <div style={{
+        display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 13,
+        background: "#F7F6FA", border: `1px solid ${BORDER}`, marginTop: 2, marginBottom: 14, fontSize: 12.5,
+      }}>
+        <Loader2 size={15} color={MID} style={{ animation: "spin 1s linear infinite", flexShrink: 0 }} />
+        <span style={{ color: MID, fontWeight: 700 }}>Mengambil lokasi GPS...</span>
       </div>
     );
   }
   if (error) {
+    // Tombol balik ke kanan (spt sebelumnya) - tapi icon+teks di-align ke
+    // ATAS ("flex-start"), bukan center, jadi walau teksnya sampai 2-3
+    // baris (kasus "izin diblokir") dia tetap kelihatan rapi/sejajar;
+    // tombolnya sendiri di-"self-center" vertikal di tengah tinggi baris
+    // teks itu + dikasih sedikit marginTop biar pas optis sama baseline
+    // baris pertama teks, bukan ngambang ketinggian.
     return (
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 13px", borderRadius: 11, background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.18)", marginBottom: 14 }}>
-        <MapPin size={14} color="#DC2626" style={{ flexShrink: 0 }} />
-        <span style={{ fontSize: 11.5, color: "#DC2626", fontWeight: 600, flex: 1 }}>{error}</span>
-        <button onClick={onRetry} style={{ border: "none", background: "transparent", color: "#DC2626", fontSize: 11.5, fontWeight: 800, cursor: "pointer" }}>Coba lagi</button>
+      <div style={{
+        display: "flex", alignItems: "flex-start", gap: 12, padding: "14px 16px", borderRadius: 14,
+        background: "#fff", border: "1.5px solid rgba(220,38,38,0.35)", marginTop: 2, marginBottom: 14,
+        boxShadow: "0 2px 8px rgba(220,38,38,0.08)",
+      }}>
+        <div style={{
+          flexShrink: 0, alignSelf: "center", width: 34, height: 34, borderRadius: 10, background: "rgba(220,38,38,0.1)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <MapPin size={17} color="#DC2626" strokeWidth={2.2} />
+        </div>
+        <span style={{ fontSize: 12.5, color: "#991B1B", fontWeight: 700, flex: 1, lineHeight: 1.45, alignSelf: "center" }}>{error}</span>
+        <button onClick={onRetry} style={{
+          flexShrink: 0, alignSelf: "center", border: "none", borderRadius: 999, background: "#DC2626", color: "#fff",
+          fontSize: 12, fontWeight: 800, cursor: "pointer", padding: "8px 14px", whiteSpace: "nowrap",
+          boxShadow: "0 2px 6px rgba(220,38,38,0.3)",
+        }}>
+          Coba Lagi
+        </button>
       </div>
     );
   }
@@ -441,8 +518,8 @@ function PhotoGuide({ title, desc, dos, donts, refs, onCapture, onOpen }) {
             position: "absolute", inset: 0, background: "rgba(20,18,28,0.55)",
             opacity: show ? 1 : 0, transition: "opacity .32s ease",
           }} />
-          <div style={{
-            position: "relative", width: "100%", maxWidth: 480, height: "min(99vh, 800px)", background: "#fff",
+          <div className="ao-wrap" style={{
+            position: "relative", width: "100%", height: "min(99vh, 800px)", background: "#fff",
             borderRadius: "22px 22px 0 0", display: "flex", flexDirection: "column", overflow: "hidden",
             boxShadow: "0 -10px 40px rgba(0,0,0,0.25)", fontFamily: FONT,
             transform: `translateY(${show ? dragY : 9999}px)`,
@@ -523,21 +600,41 @@ function PhotoGuide({ title, desc, dos, donts, refs, onCapture, onOpen }) {
                 <span style={{ fontSize: 14.5, fontWeight: 800, color: "#DC2626" }}>Contoh Foto yang Salah</span>
               </div>
               {hasSalahPhotos ? (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
                   {refs.salah.map((r) => (
                     <div key={r.urutan}>
                       <div style={{ position: "relative" }}>
-                        <img src={r.url} alt="" onClick={() => setLightbox(r.url)} style={{ width: "100%", aspectRatio: "0.85", objectFit: "cover", borderRadius: 10, border: `1px solid ${BORDER}`, cursor: "zoom-in" }} />
-                        <div style={{ position: "absolute", bottom: 4, right: 4, background: "rgba(220,38,38,0.92)", borderRadius: 999, width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                          <X size={11} color="#fff" />
+                        <img src={r.url} alt="" onClick={() => setLightbox(r.url)} style={{ width: "100%", aspectRatio: "0.85", objectFit: "cover", borderRadius: 10, border: "1.5px solid rgba(220,38,38,0.4)", cursor: "zoom-in" }} />
+                        {/* Badge "salah" dipindah ke pojok KIRI-ATAS, bentuk
+                            pill kecil (bukan lingkaran putih+X merah) - biar
+                            gak ketuker sama tombol "hapus foto" beneran (yg
+                            selalu lingkaran putih+X merah di pojok KANAN-ATAS
+                            di slot upload lain) dan gak kesan "bisa diklik". */}
+                        <div style={{
+                          position: "absolute", bottom: 6, right: 6, background: "#DC2626", borderRadius: 7,
+                          width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center",
+                          boxShadow: "0 2px 5px rgba(220,38,38,0.4), inset 0 1px 0 rgba(255,255,255,0.25)", pointerEvents: "none",
+                        }}>
+                          <X size={15} color="#fff" strokeWidth={3.2} />
                         </div>
                       </div>
-                      {r.label && <div style={{ fontSize: 11.5, color: INK, fontWeight: 500, marginTop: 4, lineHeight: 1.25 }}>{r.label}</div>}
+                      {/* Keterangan "kenapa salah"-nya dibuat pill merah
+                          muda (bukan teks polos abu2/hitam) - biar langsung
+                          kebaca sbg alasan kesalahan, senada sama badge X
+                          di foto, bukan cuma caption biasa. */}
+                      {r.label && (
+                        <div style={{
+                          display: "inline-block", marginTop: 6, padding: "3px 8px", borderRadius: 6,
+                          background: "rgba(220,38,38,0.1)", fontSize: 11, color: "#DC2626", fontWeight: 700, lineHeight: 1.3,
+                        }}>
+                          {r.label}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
               ) : (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
                   {donts.map((d, i) => (
                     <div key={i}>
                       <div style={{
@@ -545,11 +642,20 @@ function PhotoGuide({ title, desc, dos, donts, refs, onCapture, onOpen }) {
                         display: "flex", alignItems: "center", justifyContent: "center",
                       }}>
                         <ImageIcon size={20} color={MID} />
-                        <div style={{ position: "absolute", bottom: 4, right: 4, background: "rgba(220,38,38,0.92)", borderRadius: 999, width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                          <X size={11} color="#fff" />
+                        <div style={{
+                          position: "absolute", bottom: 6, right: 6, background: "#DC2626", borderRadius: 7,
+                          width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center",
+                          boxShadow: "0 2px 5px rgba(220,38,38,0.4), inset 0 1px 0 rgba(255,255,255,0.25)", pointerEvents: "none",
+                        }}>
+                          <X size={15} color="#fff" strokeWidth={3.2} />
                         </div>
                       </div>
-                      <div style={{ fontSize: 11.5, color: INK, fontWeight: 500, marginTop: 4, lineHeight: 1.25 }}>{d}</div>
+                      <div style={{
+                        display: "inline-block", marginTop: 6, padding: "3px 8px", borderRadius: 6,
+                        background: "rgba(220,38,38,0.1)", fontSize: 11, color: "#DC2626", fontWeight: 700, lineHeight: 1.3,
+                      }}>
+                        {d}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -598,61 +704,95 @@ function PhotoGuide({ title, desc, dos, donts, refs, onCapture, onOpen }) {
 // ditumpuk vertikal di kanan (bukan 2 tombol lebar di bawah), seluruh
 // kartu dikasih tint hijau/merah halus begitu dijawab biar progres
 // kelihatan sekilas tanpa perlu baca teks. ────────────────────────────────
-function AvailabilityCheck({ label, checked, onClick, tone = "pink" }) {
-  // "Ya" dikasih tone hijau (produk tersedia = positif), "Tidak" tetap
-  // merah (senada sama tint kartu & progress bar yg udah pakai hijau/merah
-  // yg sama utk makna ini) - bukan pink generik lagi.
-  const toneColor = tone === "green" ? "#16A34A" : tone === "red" ? "#DC2626" : PINK;
-  const toneColorDk = tone === "green" ? "#128037" : tone === "red" ? "#B91C1C" : PINK_DK;
+// Segmented control 3 opsi (jumlah varian) dgn highlight yg "geser" pakai
+// transition transform - bukan cuma ganti warna background tiap tombol,
+// biar kepilihnya kerasa smooth & jelas ("animasinya sangat bagus").
+function AvailabilitySlabs({ slabs, value, onChange, brand = "pink" }) {
+  const idx = slabs.findIndex((s) => s.value === value);
+  // im3 = kuning (cocok sama badge logo IM3), 3id = magenta (cocok sama
+  // badge logo 3ID) - teks pill aktif disesuaikan kontrasnya per warna
+  // (gelap di atas kuning, putih di atas magenta).
+  const activeBg = brand === "im3" ? `linear-gradient(135deg, ${YELLOW}, #E8AE00)` : `linear-gradient(135deg, ${PINK}, ${PINK_DK})`;
+  const activeShadow = brand === "im3" ? "0 3px 10px rgba(255,194,14,0.45)" : "0 3px 10px rgba(236,11,111,0.3)";
+  const activeTextColor = brand === "im3" ? "#5C4300" : "#fff";
   return (
-    <button onClick={onClick} style={{
-      display: "flex", alignItems: "center", gap: 7, border: "none", background: "transparent",
-      cursor: "pointer", padding: "3px 2px", fontFamily: FONT,
-      // outline:none - browser nampilin outline fokus biru default begitu
-      // tombol di-tap (nempel keliatan terus di mobile, bukan cuma pas
-      // navigasi keyboard) - dimatikan total sesuai permintaan, tanpa
-      // pengganti ring apapun.
-      outline: "none",
+    <div style={{
+      position: "relative", display: "flex", background: "#F1EFF6", borderRadius: 12, padding: 4,
     }}>
-      <span style={{
-        flexShrink: 0, width: 19, height: 19, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center",
-        border: `1.5px solid ${checked ? toneColor : "#D9D6E0"}`,
-        background: checked ? `linear-gradient(135deg, ${toneColor}, ${toneColorDk})` : "#fff",
-        boxShadow: checked ? `0 2px 5px ${tone === "green" ? "rgba(22,163,74,0.3)" : tone === "red" ? "rgba(220,38,38,0.3)" : "rgba(236,11,111,0.3)"}` : "none",
-        transition: "background .15s ease, border-color .15s ease, box-shadow .15s ease",
-      }}>
-        {checked && <Check size={12} color="#fff" strokeWidth={3.2} />}
-      </span>
-      <span style={{ fontSize: 12.5, fontWeight: 700, color: checked ? INK : "#9A98A8" }}>{label}</span>
-    </button>
+      {idx >= 0 && (
+        <div style={{
+          position: "absolute", top: 4, bottom: 4, left: 4,
+          width: `calc(${100 / slabs.length}% - ${8 / slabs.length}px)`,
+          transform: `translateX(${idx * 100}%)`,
+          background: activeBg,
+          borderRadius: 9, boxShadow: activeShadow,
+          transition: "transform .28s cubic-bezier(.34,1.3,.64,1)",
+        }} />
+      )}
+      {slabs.map((slab) => {
+        const active = slab.value === value;
+        return (
+          <button key={slab.value} onClick={() => onChange(slab.value)} style={{
+            position: "relative", zIndex: 1, flex: 1, border: "none", background: "transparent",
+            padding: "9px 6px", borderRadius: 9, cursor: "pointer", fontFamily: FONT, outline: "none",
+            fontSize: 13.5, fontWeight: 800, color: active ? activeTextColor : "#8784A0",
+            transition: "color .2s ease .05s",
+          }}>
+            {slab.label}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
 function AvailabilityRow({ item, value, onChange, error }) {
-  const cardBg = value === true ? "rgba(22,163,74,0.045)" : value === false ? "rgba(220,38,38,0.035)" : "#fff";
-  const cardBorder = error ? "#DC2626" : value === true ? "rgba(22,163,74,0.3)" : value === false ? "rgba(220,38,38,0.25)" : BORDER;
+  const isIm3 = item.brand === "im3";
+  // Aksen kiri + badge brand kecil di atas desc - penguat visual kedua
+  // (selain warna badge logo) biar baris IM3 vs 3ID gak ketuker pas user
+  // buru2 ngisi 4 baris yg bentuknya mirip semua.
+  const brandColor = isIm3 ? "#C9900A" : PINK_DK;
+  const cardBg = value != null ? (isIm3 ? "rgba(255,194,14,0.05)" : "rgba(236,11,111,0.03)") : "#fff";
+  const cardBorder = error ? "#DC2626" : value != null ? (isIm3 ? "rgba(201,144,10,0.28)" : "rgba(236,11,111,0.22)") : BORDER;
   return (
     <div style={{
-      borderRadius: 16, border: `1.5px solid ${cardBorder}`, background: cardBg, padding: 15, marginBottom: 12,
-      boxShadow: value !== null ? "0 2px 8px rgba(20,18,28,0.04)" : "0 1px 3px rgba(20,18,28,0.03)",
+      // Non-shorthand penuh (borderTop/Right/Bottom/Left terpisah, BUKAN
+      // "border" shorthand + "borderLeft" override) - React warn kalau 2
+      // properti itu dicampur krn bisa beda hasil antar render ("Updating
+      // a style property... border/borderLeft conflicting").
+      borderRadius: 16,
+      borderTop: `1.5px solid ${cardBorder}`, borderRight: `1.5px solid ${cardBorder}`, borderBottom: `1.5px solid ${cardBorder}`,
+      // Pas error, aksen kiri ikut jadi merah solid (BUKAN warna
+      // brand/pucat lagi) - sebelumnya border kanan-atas-bawah udah merah
+      // tapi kiri masih warna brand/pucat, jadi 1 kartu kelihatan 2 warna
+      // beda di sisi yg nyambung ("jelek"/gak nyatu).
+      borderLeft: `4px solid ${error ? "#DC2626" : value != null ? brandColor : (isIm3 ? "rgba(255,194,14,0.55)" : "rgba(236,11,111,0.3)")}`,
+      background: cardBg, padding: 15,
+      boxShadow: value != null ? "0 2px 8px rgba(20,18,28,0.04)" : "0 1px 3px rgba(20,18,28,0.03)",
       transition: "background .25s ease, border-color .25s ease, box-shadow .25s ease",
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
         <div style={{
-          flexShrink: 0, width: 52, height: 52, borderRadius: 13, display: "flex", alignItems: "center", justifyContent: "center",
-          background: item.brand === "im3" ? YELLOW : `linear-gradient(135deg, ${PINK}, ${PINK_DK})`,
+          flexShrink: 0, width: 44, height: 44, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center",
+          background: isIm3 ? YELLOW : `linear-gradient(135deg, ${PINK}, ${PINK_DK})`,
           boxShadow: "0 3px 8px rgba(20,18,28,0.1)",
         }}>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={item.brand === "im3" ? "/brand/logo-im3.png" : "/brand/logo-3id.png"}
-            alt={item.brand === "im3" ? "IM3" : "3ID"}
+            src={isIm3 ? "/brand/logo-im3.png" : "/brand/logo-3id.png"}
+            alt={isIm3 ? "IM3" : "3ID"}
             style={{
-              width: 34, height: 34, objectFit: "contain", display: "block",
+              // Logo IM3 asetnya punya whitespace lebih lebar di sisi kiri
+              // drpd kanan - digeser dikit ke kanan (marginLeft) biar
+              // optically center di tengah badge. Logo 3ID dikecilkan
+              // sedikit (24 drpd 28) krn bentuknya lebih "padat"/kotak,
+              // jadi 28px kerasa agak besar sebelah dibanding badge IM3.
+              width: isIm3 ? 27 : 23, height: isIm3 ? 27 : 23, objectFit: "contain", display: "block",
+              marginLeft: isIm3 ? 1 : 0,
               // Aset logo-3id.png warnanya hitam solid (bukan putih) - di-invert
               // jadi putih biar kontras di atas background magenta, sesuai
               // tampilan resmi logo Tri/3ID (putih di atas magenta).
-              ...(item.brand !== "im3" ? { filter: "brightness(0) invert(1)" } : {}),
+              ...(!isIm3 ? { filter: "brightness(0) invert(1)" } : {}),
             }}
           />
         </div>
@@ -660,14 +800,21 @@ function AvailabilityRow({ item, value, onChange, error }) {
           <div style={{ fontSize: 13.5, fontWeight: 800, color: INK, lineHeight: 1.3 }}>{item.label}</div>
           <div style={{ fontSize: 11.5, color: MID, marginTop: 3, lineHeight: 1.4 }}>{item.desc}</div>
         </div>
-        <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 7 }}>
-          <AvailabilityCheck label="Ya" tone="green" checked={value === true} onClick={() => onChange(true)} />
-          <AvailabilityCheck label="Tidak" tone="red" checked={value === false} onClick={() => onChange(false)} />
-        </div>
+        {value != null && (
+          <div style={{
+            flexShrink: 0, width: 24, height: 24, borderRadius: "50%", background: "#16A34A",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            animation: "slabCheckPop .25s cubic-bezier(.34,1.56,.64,1) both",
+          }}>
+            <Check size={13} color="#fff" strokeWidth={3.2} />
+          </div>
+        )}
       </div>
+      <AvailabilitySlabs slabs={item.slabs} value={value} onChange={onChange} brand={isIm3 ? "im3" : "3id"} />
       {error && (
         <div style={{ fontSize: 11, color: "#DC2626", fontWeight: 700, marginTop: 10 }}>Wajib dijawab sebelum lanjut</div>
       )}
+      <style>{`@keyframes slabCheckPop { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }`}</style>
     </div>
   );
 }
@@ -1199,6 +1346,36 @@ export default function AuditOutletFormPage() {
     };
   }, []);
 
+  // BottomBar pakai position:"fixed" + bottom:0, tapi "bottom:0" itu
+  // sebenarnya nempel ke LAYOUT viewport, bukan VISUAL viewport - begitu
+  // address bar browser mobile lagi muncul/separuh-collapse (atau pas
+  // ada browser chrome lain di bawah), layout viewport-nya lebih tinggi
+  // drpd yg BENERAN kelihatan, jadi ada gap abu2 nganggur di bawah
+  // BottomBar (persis laporan user "tombol selanjutnya belum nempel ke
+  // bawah"). vvBottomGap = selisih itu (window.innerHeight - bagian
+  // visual viewport yg beneran kelihatan), dipakai sbg nilai "bottom"
+  // BottomBar (bukan selalu 0) biar dia auto-geser ngikutin visual
+  // viewport asli, bukan layout viewport.
+  const [vvBottomGap, setVvBottomGap] = useState(0);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const updateGap = () => {
+      const gap = window.innerHeight - (vv.height + vv.offsetTop);
+      setVvBottomGap(gap > 0.5 ? gap : 0);
+    };
+    updateGap();
+    vv.addEventListener("resize", updateGap);
+    vv.addEventListener("scroll", updateGap);
+    window.addEventListener("orientationchange", updateGap);
+    return () => {
+      vv.removeEventListener("resize", updateGap);
+      vv.removeEventListener("scroll", updateGap);
+      window.removeEventListener("orientationchange", updateGap);
+    };
+  }, []);
+
   const handleInstallClick = async () => {
     if (isIOS) { setShowIOSGuide(true); return; }
     if (!installPrompt) return;
@@ -1304,34 +1481,56 @@ export default function AuditOutletFormPage() {
   const [gpsLocating, setGpsLocating] = useState(false);
   const [gpsError, setGpsError] = useState("");
   // Longlat ini WAJIB akurat (dipakai validasi radius vs outlet terpilih),
-  // jadi kalau gagal/ditolak TIDAK boleh cuma diam nunggu sender nge-tap
-  // "Coba lagi" manual - otomatis di-retry tiap beberapa detik sampai
-  // berhasil. Request browser permission yg BENAR2 di-block permanen
-  // ("Never allow") memang tidak akan memunculkan prompt baru dari JS
-  // (batasan keamanan browser, bukan sesuatu yg bisa dipaksa dari sini),
-  // tapi retry berkala ini tetap otomatis "nangkep" begitu sender ubah
-  // izinnya lewat Settings browser tanpa perlu reload halaman - dan utk
-  // error sementara (timeout/sinyal GPS lemah) langsung ke-retry sendiri
-  // tanpa butuh aksi apa pun dari sender.
-  const gpsRetryTimerRef = useRef(null);
-
+  // TAPI auto-retry tiap 5 detik DIHAPUS (sebelumnya ada) - kalau gagal,
+  // sender tap tombol "Coba Lagi" sendiri dan itu langsung manggil
+  // getCurrentPosition lagi (prompt izin browser muncul ulang kalau
+  // statusnya masih "belum ditentukan"/prompt; kalau user sempat pilih
+  // "Block"/"Never allow" permanen, itu batasan keamanan browser - gak ada
+  // API JS yg bisa paksa prompt itu muncul lagi, user wajib ubah sendiri
+  // lewat Settings browser lalu tap "Coba Lagi").
   const captureGps = () => {
-    clearTimeout(gpsRetryTimerRef.current);
     if (!navigator.geolocation) { setGpsError("Browser ini tidak mendukung GPS."); return; }
+    // Kalau izinnya sudah di-"Block" permanen, getCurrentPosition gagal
+    // SEKETIKA (gak ada network/GPS delay sama sekali) - makanya tap
+    // "Coba Lagi" kelihatan "tidak terjadi apa apa" (locating cuma nyala
+    // sepersekian detik lalu balik ke error yang sama persis). Dikasih
+    // delay minimum biar spinner sempat kelihatan jalan (ada feedback nyata
+    // tiap tap), dan pesan errornya dibedain khusus utk kasus "denied"
+    // permanen - supaya jelas itu bukan diam/ngebug, tapi emang perlu
+    // diaktifkan manual lewat Settings browser.
     setGpsLocating(true); setGpsError("");
+    const startedAt = Date.now();
+    const MIN_SPIN_MS = 500;
+    const finish = (fn) => {
+      const elapsed = Date.now() - startedAt;
+      const wait = Math.max(0, MIN_SPIN_MS - elapsed);
+      setTimeout(fn, wait);
+    };
     navigator.geolocation.getCurrentPosition(
-      (pos) => { setGpsLat(pos.coords.latitude); setGpsLng(pos.coords.longitude); setGpsLocating(false); },
-      () => {
-        setGpsError("Gagal mengambil lokasi. Pastikan izin lokasi diaktifkan.");
-        setGpsLocating(false);
-        gpsRetryTimerRef.current = setTimeout(captureGps, 5000);
+      (pos) => {
+        finish(() => {
+          setGpsLat(pos.coords.latitude); setGpsLng(pos.coords.longitude); setGpsLocating(false);
+        });
+      },
+      (err) => {
+        finish(() => {
+          setGpsError(
+            err && err.code === err.PERMISSION_DENIED
+              ? "Izin lokasi diblokir. Aktifkan lewat pengaturan browser (ikon gembok di address bar), lalu tap Coba Lagi."
+              : "Gagal mengambil lokasi. Pastikan izin lokasi diaktifkan."
+          );
+          setGpsLocating(false);
+        });
       },
       { enableHighAccuracy: true, timeout: 12000 }
     );
   };
-  // Dicoba sekali otomatis saat form dibuka - supaya sender tidak perlu tap
-  // apa2, cukup izinkan permission browser saat diminta.
-  useEffect(() => { captureGps(); return () => clearTimeout(gpsRetryTimerRef.current); }, []);
+  // Dicoba otomatis saat form dibuka, DAN diulang tiap kali pindah step
+  // (bukan cuma sekali di awal) - supaya kalau GPS sempat gagal/izin
+  // belum diizinkan saat awal buka, begitu sender lanjut ke step
+  // berikutnya dia dicoba ulang lagi secara diam2 (gak perlu sender tap
+  // apa2). Kalau akhirnya sukses, chip errornya otomatis hilang.
+  useEffect(() => { captureGps(); }, [step]);
 
   // 4 jawaban availability (step "Cek Availability Produk" di mockup) -
   // null = belum dijawab (dibedakan dari false/"Tidak").
@@ -1687,13 +1886,21 @@ export default function AuditOutletFormPage() {
           background GELAP (var(--background) #0a0a0a) di dark mode device -
           kalau container fixed di atas ini ternyata gak pas 100% nutup
           tinggi viewport asli (beda hitungan "layout viewport" vs "visual
-          viewport" di sejumlah device/browser versi iOS pas PWA standalone),
+          viewport" di sejumlah device/browser versi iOS pas PWA standalone,
+          atau pas keyboard muncul/overlay dropdown spt "Cari ID Outlet"),
           bagian yg "bocor" di bawah/atasnya bakal nunjukin hitam pekat body
-          itu - persis laporan user "bagian bawahnya hitam". Override
-          html/body jadi warna BG form ini (cuma aktif selagi halaman ini
-          ke-mount) supaya walau ada gap sekecil apapun, yg kelihatan tetap
-          senada BG form, bukan hitam. */}
-      <style>{`html, body { background: linear-gradient(180deg, #2A0E1D 0%, #140810 100%) !important; }`}</style>
+          itu - persis laporan user "bagian hitam saat pemilihan outlet".
+          Form ini DIBUAT LIGHT MODE SAJA, gak boleh ada dark mode sama
+          sekali - jadi override-nya pakai warna BG TERANG form ini (bukan
+          gradient gelap spt sebelumnya), dan color-scheme dipaksa "light"
+          biar keyboard/native UI browser juga ikut terang, bukan ngikut
+          dark mode OS device. */}
+      <style>{`
+        html, body { background: ${BG} !important; color-scheme: light !important; }
+        .ao-wrap { max-width: 480px; }
+        @media (min-width: 640px) { .ao-wrap { max-width: 560px; } }
+        @media (min-width: 900px) { .ao-wrap { max-width: 640px; } }
+      `}</style>
       <CameraCapture open={cameraOpen} onClose={handleCameraClose} onCapture={handleCameraCapture} />
       <div style={{ background: BRAND_GRADIENT, position: "sticky", top: 0, zIndex: 30 }}>
         <Header title={<HeaderTitle showInstall={showInstallButton} onInstallClick={handleInstallClick} installing={installingApp} />} />
@@ -1702,9 +1909,16 @@ export default function AuditOutletFormPage() {
         </div>
       </div>
 
-      <div style={{ flex: 1, maxWidth: 480, width: "100%", margin: "0 auto", padding: "18px 18px calc(92px + env(safe-area-inset-bottom))", boxSizing: "border-box" }}>
+      <div className="ao-wrap" style={{ flex: 1, width: "100%", margin: "0 auto", padding: "18px 18px calc(92px + env(safe-area-inset-bottom))", boxSizing: "border-box" }}>
+        {/* GPS dicek ulang tiap pindah step (lihat useEffect([step])) dan
+            chip-nya dipasang di SINI (di luar blok per-step) - jadi dia
+            selalu nongol pas di bawah Stepper, masih di dalam kontainer
+            putih yang sama, di step manapun user lagi berada. Kalau
+            aman/belum ada apa2 (locating selesai & gak error) GpsChip
+            return null - gak kelihatan sama sekali. */}
+        <GpsChip lat={gpsLat} lng={gpsLng} locating={gpsLocating} error={gpsError} onRetry={captureGps} />
         {step === 0 && (
-          <SectionCard icon={<ClipboardList size={16} color={PINK} />} title="Data Outlet">
+          <SectionCard icon={<ClipboardList size={17} color="#fff" />} title="Data Outlet" subtitle="Informasi dasar outlet">
             <Field label="Nama Sender" required>
               <div style={{ position: "relative" }}>
                 <User size={15} color={MID} style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }} />
@@ -1756,7 +1970,7 @@ export default function AuditOutletFormPage() {
                 {/* Info lengkap lokasi outlet terpilih - Region TIDAK
                     ditampilkan (cuma 1 region yg dipakai saat ini: North
                     Sumatera) jadi tinggal 6 field, pas 3x2 kolom. */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "repeat(3, auto)", gridAutoFlow: "column", gap: "12px 12px", padding: "14px", alignItems: "start" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gridTemplateRows: "repeat(3, auto)", gridAutoFlow: "column", gap: "12px 12px", padding: "14px", alignItems: "start" }}>
                   <OutletInfoItem label="Area" value={selectedOutlet?.area} />
                   <OutletInfoItem label="Branch" value={selectedOutlet?.branch} />
                   <OutletInfoItem label="MC" value={selectedOutlet?.mc} />
@@ -1777,12 +1991,9 @@ export default function AuditOutletFormPage() {
 
         {step === 1 && (
           <>
-            <GpsChip lat={gpsLat} lng={gpsLng} locating={gpsLocating} error={gpsError} onRetry={captureGps} />
-            <SectionCard icon={<ImageIcon size={16} color={PINK} />} title="Foto Etalase Outlet" badge="Wajib">
-              <div style={{ fontSize: 12, color: MID, marginBottom: 14, marginTop: -8 }}>
-                Upload maksimal 3 foto etalase produk yang dijual. <strong>{etalaseCount}/3</strong>
-              </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+            <SectionCard icon={<ImageIcon size={17} color="#fff" />} title="Foto Etalase Outlet"
+              subtitle={<>Maks. 3 foto produk <strong>({etalaseCount}/3)</strong></>} badge="Wajib">
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10, marginTop: -2 }}>
                 {[0, 1, 2].map((i) => (
                   <PhotoSlot key={i} file={etalaseFiles[i]} label={`Tambah Foto ${i + 1}`}
                     onRequestCamera={() => captureEtalaseSlot(i)}
@@ -1795,11 +2006,8 @@ export default function AuditOutletFormPage() {
                 donts={["Terlalu dekat (hanya sebagian)", "Gelap / blur", "Terhalang orang atau objek lain"]}
                 onCapture={startEtalaseCapture} />
             </SectionCard>
-            <SectionCard icon={<Store size={16} color={PINK} />} title="Foto Tampak Depan Outlet" badge="Wajib">
-              <div style={{ fontSize: 12, color: MID, marginBottom: 14, marginTop: -8 }}>
-                Upload 1 foto tampak depan outlet dengan kondisi lingkungan sekitar.
-              </div>
-              <div style={{ maxWidth: 150 }}>
+            <SectionCard icon={<Store size={17} color="#fff" />} title="Foto Tampak Depan Outlet" subtitle="1 foto, lingkungan sekitar terlihat" badge="Wajib">
+              <div style={{ maxWidth: 150, marginTop: -2 }}>
                 <PhotoSlot file={tapakFile} label="Tambah Foto Tampak Depan Outlet"
                   onRequestCamera={() => openCameraFor((f) => setTapakFile(f))}
                   onRemove={() => setTapakFile(null)} error={attempted1 && !tapakFile} />
@@ -1814,183 +2022,220 @@ export default function AuditOutletFormPage() {
         )}
 
         {step === 2 && (
-          <SectionCard icon={<CheckCircle2 size={16} color={PINK} />} title="Cek Availability Produk">
-            <div style={{
-              display: "flex", alignItems: "center", gap: 12, marginBottom: 20, marginTop: -8,
-              padding: "12px 14px", borderRadius: 12,
-              background: availabilityAnsweredCount === AVAILABILITY_ITEMS.length ? "rgba(22,163,74,0.06)" : "#FAFAFC",
-              border: `1px solid ${availabilityAnsweredCount === AVAILABILITY_ITEMS.length ? "rgba(22,163,74,0.18)" : BORDER}`,
-              transition: "background .25s ease, border-color .25s ease",
-            }}>
-              <div style={{ fontSize: 12.5, color: INK, fontWeight: 500, flex: 1, lineHeight: 1.4 }}>
-                Pastikan ketersediaan tiap varian produk berikut di outlet ini.
-              </div>
-              <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
-                <span style={{
-                  fontSize: 12, fontWeight: 800, whiteSpace: "nowrap",
-                  color: availabilityAnsweredCount === AVAILABILITY_ITEMS.length ? "#16A34A" : PINK_DK,
-                }}>
-                  {availabilityAnsweredCount}/{AVAILABILITY_ITEMS.length} {availabilityAnsweredCount === AVAILABILITY_ITEMS.length ? "Lengkap" : "Terjawab"}
-                </span>
-                <div style={{ width: 64, height: 6, borderRadius: 999, background: "#E7E5ED", overflow: "hidden" }}>
-                  <div style={{
-                    width: `${(availabilityAnsweredCount / AVAILABILITY_ITEMS.length) * 100}%`, height: "100%", borderRadius: 999,
-                    background: availabilityAnsweredCount === AVAILABILITY_ITEMS.length ? "#16A34A" : `linear-gradient(90deg, ${PINK}, ${ORANGE})`,
-                    transition: "width .35s cubic-bezier(.4,0,.2,1), background .3s ease",
-                  }} />
-                </div>
-              </div>
-            </div>
-            {AVAILABILITY_ITEMS.map((item, i) => {
-              const [val, setVal] = availabilityState[item.key];
-              const showGroupHeader = i === 0 || AVAILABILITY_ITEMS[i - 1].group !== item.group;
+          <SectionCard icon={<Search size={17} color="#fff" />} title="Cek Availability Produk" subtitle="Jumlah varian tiap produk">
+            {Object.entries(
+              AVAILABILITY_ITEMS.reduce((acc, item) => {
+                (acc[item.group] = acc[item.group] || []).push(item);
+                return acc;
+              }, {})
+            ).map(([group, items], gi) => {
+              const meta = AVAILABILITY_GROUP_META[group];
+              const GroupIcon = meta.icon;
               return (
-                <div key={item.key}>
-                  {showGroupHeader && (
+                // Dibungkus jadi SATU kartu per grup (bukan header lepas +
+                // kartu item ngambang) - lebih kerasa "SP ini satu kesatuan,
+                // Voucher kesatuan lain" drpd cuma dipisah banner tipis.
+                // Pembungkusnya SENGAJA netral (putih/abu2, bukan tinted
+                // warna grup) - kalau wrapper-nya ikut berwarna + badge
+                // ikon + border kiri tiap item juga berwarna, kesannya jadi
+                // kebanyakan warna ("terlalu rame"). Pembeda grup cukup di
+                // ikon+teks judul grup aja, cukup jelas tanpa bikin ramai.
+                <div key={group} style={{
+                  borderRadius: 18, border: `1.5px solid ${BORDER}`, background: "#FBFAFC",
+                  padding: 12, marginTop: gi === 0 ? 0 : 16,
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, padding: "0 2px" }}>
                     <div style={{
-                      display: "flex", alignItems: "center", gap: 8,
-                      marginBottom: 10, marginTop: i === 0 ? 0 : 20,
+                      flexShrink: 0, width: 30, height: 30, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center",
+                      background: meta.color,
                     }}>
-                      <span style={{ width: 3, height: 13, borderRadius: 999, background: `linear-gradient(180deg, ${PINK}, ${ORANGE})`, flexShrink: 0 }} />
-                      <span style={{ fontSize: 11.5, fontWeight: 800, color: "#6B6878", textTransform: "uppercase", letterSpacing: 0.6 }}>
-                        {AVAILABILITY_GROUP_LABEL[item.group]}
-                      </span>
-                      <span style={{ flex: 1, height: 1, background: BORDER }} />
+                      <GroupIcon size={16} color="#fff" strokeWidth={2.3} />
                     </div>
-                  )}
-                  <AvailabilityRow item={item} value={val} onChange={setVal}
-                    error={attempted2 && val === null} />
+                    <span style={{ fontSize: 14, fontWeight: 800, color: meta.color, letterSpacing: 0.1 }}>
+                      {AVAILABILITY_GROUP_LABEL[group]}
+                    </span>
+                  </div>
+                  {items.map((item, i) => {
+                    const [val, setVal] = availabilityState[item.key];
+                    return (
+                      <div key={item.key} style={{ marginBottom: i === items.length - 1 ? 0 : 10 }}>
+                        <AvailabilityRow item={item} value={val} onChange={setVal}
+                          error={attempted2 && val === null} />
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}
-            <div style={{
-              display: "flex", gap: 10, alignItems: "flex-start", padding: "13px 14px", borderRadius: 13, marginTop: 6,
-              background: "linear-gradient(135deg, rgba(247,148,29,0.08), rgba(247,148,29,0.04))",
-              border: "1px solid rgba(247,148,29,0.22)",
-            }}>
-              <div style={{
-                flexShrink: 0, width: 26, height: 26, borderRadius: 8, background: "rgba(247,148,29,0.16)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-              }}>
-                <AlertTriangle size={14} color={ORANGE} />
-              </div>
-              <div style={{ fontSize: 12, color: "#7A5110", lineHeight: 1.5, paddingTop: 2 }}>
-                <strong style={{ color: "#5C3D0C" }}>Catatan:</strong> jika salah satu produk tidak tersedia, pastikan outlet mendapat arahan restock sesuai area coverage.
-              </div>
-            </div>
           </SectionCard>
         )}
 
         {step === 3 && (
           <>
-            <SectionCard icon={<CheckCircle2 size={16} color={PINK} />} title="Review Data">
-              <div style={{ fontSize: 12, color: MID, marginBottom: 16, marginTop: -8 }}>Pastikan semua data sudah benar sebelum dikirim.</div>
+            {/* Header halaman polos (BUKAN kartu lagi) - 3 section di
+                bawahnya (Data Outlet/Foto Outlet/Availability Produk)
+                sekarang masing2 jadi kartu BERDIRI SENDIRI (lihat
+                ReviewSection), bukan digabung 1 kartu besar lagi. */}
+            <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, padding: "0 2px" }}>
+              <div style={{
+                width: 40, height: 40, borderRadius: 13, flexShrink: 0,
+                background: `linear-gradient(145deg, ${PINK} 0%, ${PINK_DK} 100%)`,
+                boxShadow: "0 1.5px 3px rgba(20,18,28,0.12), inset 0 1px 0 rgba(255,255,255,0.25)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <CheckCircle2 size={17} color="#fff" />
+              </div>
+              <div>
+                <div style={{ fontSize: 16.5, fontWeight: 800, color: INK, letterSpacing: -0.1 }}>Review Data</div>
+                <div style={{ fontSize: 11.5, color: MID, marginTop: 2 }}>Pastikan semua sudah benar</div>
+              </div>
+            </div>
+            <ReviewSection icon={<User size={17} color="#fff" />} title="Data Outlet" subtitle="Nama, ID & lokasi outlet" onUbah={() => setStep(0)}>
+              {/* SEMUA jadi 1 kartu bertingkat: Nama Outlet -> Social Media
+                  (kosong aja kalau gak diisi, BUKAN "-") -> ID Outlet ->
+                  badge IM3/3ID -> grid Area/Branch/MC/dst - urutan sesuai
+                  permintaan, dibungkus 1 border+shadow yg sama, bukan lagi
+                  2 blok terpisah (rows polos di atas + kartu sendiri di
+                  bawah). */}
+              <>
+                <div style={{ padding: "0 0 12px", minWidth: 0 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 700, color: "#9A98A8", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 3 }}>Nama Outlet</div>
+                  <div style={{ fontSize: 15.5, fontWeight: 800, color: INK, wordBreak: "break-word", lineHeight: 1.25 }}>{namaOutlet || "-"}</div>
+                  {socialMedia && (
+                    <div style={{
+                      fontSize: 11.5, color: MID, fontWeight: 600, marginTop: 5,
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    }}>
+                      {socialMedia}
+                    </div>
+                  )}
+                </div>
+                {(selectedOutlet?.outlet_id_im3 || selectedOutlet?.outlet_id_3id) && (
+                  <>
+                    {/* Divider di-inset (margin "0 14px", bukan borderTop
+                        full-bleed) - konsisten sama divider lain di kartu
+                        ini, biar gak nabrak lengkungan sudut kartu yg
+                        kelihatan "gak rapi". */}
+                    <div style={{ height: 1, background: BORDER, margin: "0 14px" }} />
+                    <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", padding: "12px 14px" }}>
+                    {selectedOutlet?.outlet_id_im3 && (
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+                        <span style={{ fontSize: 9.5, fontWeight: 700, padding: "3px 8px", borderRadius: 999, background: YELLOW, color: "#5C4300" }}>IM3</span>
+                        <span style={{ fontSize: 13.5, fontWeight: 800, color: INK }}>{selectedOutlet.outlet_id_im3}</span>
+                      </div>
+                    )}
+                    {selectedOutlet?.outlet_id_3id && (
+                      <div style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+                        <span style={{ fontSize: 9.5, fontWeight: 700, padding: "3px 8px", borderRadius: 999, background: PINK_DK, color: "#fff" }}>3ID</span>
+                        <span style={{ fontSize: 13.5, fontWeight: 800, color: INK }}>{selectedOutlet.outlet_id_3id}</span>
+                      </div>
+                    )}
+                  </div>
+                  </>
+                )}
+                {(selectedOutlet?.outlet_id_im3 || selectedOutlet?.outlet_id_3id) && (selectedOutlet?.area || selectedOutlet?.branch || selectedOutlet?.mc || selectedOutlet?.city || selectedOutlet?.district || selectedOutlet?.village) && (
+                  <div style={{ height: 1, background: BORDER, margin: "0 14px" }} />
+                )}
+                {/* Grid 2 kolom label magenta (OutletInfoItem) - komponen yg
+                    SAMA PERSIS dgn kartu konfirmasi di step Data Outlet,
+                    biar visualnya konsisten antara step 1 & step Review ini. */}
+                {(selectedOutlet?.area || selectedOutlet?.branch || selectedOutlet?.mc || selectedOutlet?.city || selectedOutlet?.district || selectedOutlet?.village) && (
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: "12px 12px", padding: "14px" }}>
+                    {selectedOutlet?.area && <OutletInfoItem label="Area" value={selectedOutlet.area} />}
+                    {selectedOutlet?.city && <OutletInfoItem label="Kota/Kabupaten" value={selectedOutlet.city} />}
+                    {selectedOutlet?.branch && <OutletInfoItem label="Branch" value={selectedOutlet.branch} />}
+                    {selectedOutlet?.district && <OutletInfoItem label="Kecamatan" value={selectedOutlet.district} />}
+                    {selectedOutlet?.mc && <OutletInfoItem label="MC" value={selectedOutlet.mc} />}
+                    {selectedOutlet?.village && <OutletInfoItem label="Desa" value={selectedOutlet.village} />}
+                  </div>
+                )}
+              </>
+            </ReviewSection>
 
-              <ReviewSection icon={<User size={14} color={PINK} />} title="Data Sender" onUbah={() => setStep(0)}>
-                <SummaryRow label="Nama Sender" value={namaSender} last />
-              </ReviewSection>
-            </SectionCard>
-
-            <SectionCard>
-              <ReviewSection icon={<Store size={14} color={PINK} />} title="Informasi Outlet" onUbah={() => setStep(0)}>
-                <SummaryRow label="Nama Outlet" value={namaOutlet} />
-                <SummaryRow label="ID Outlet" value={idOutlet} />
-                {selectedOutlet?.outlet_id_im3 && <SummaryRow label="ID Outlet IM3" value={selectedOutlet.outlet_id_im3} />}
-                {selectedOutlet?.outlet_id_3id && <SummaryRow label="ID Outlet 3ID" value={selectedOutlet.outlet_id_3id} />}
-                {selectedOutlet?.area && <SummaryRow label="Area" value={selectedOutlet.area} />}
-                {selectedOutlet?.branch && <SummaryRow label="Branch" value={selectedOutlet.branch} />}
-                {selectedOutlet?.mc && <SummaryRow label="MC" value={selectedOutlet.mc} />}
-                {selectedOutlet?.city && <SummaryRow label="Kota/Kabupaten" value={selectedOutlet.city} />}
-                {selectedOutlet?.district && <SummaryRow label="Kecamatan" value={selectedOutlet.district} />}
-                {selectedOutlet?.village && <SummaryRow label="Desa" value={selectedOutlet.village} />}
-                <SummaryRow label="Social Media" value={socialMedia || "-"} last />
-              </ReviewSection>
-            </SectionCard>
-
-            <SectionCard>
-              <ReviewSection icon={<ImageIcon size={14} color={PINK} />} title={`Foto Etalase Outlet (${etalaseCount}/3)`} onUbah={() => setStep(1)}>
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-                  {etalaseFiles.filter(Boolean).map((f, i) => (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img key={i} src={URL.createObjectURL(f)} alt=""
-                      onClick={() => setReviewLightbox({ urls: etalaseFiles.filter(Boolean).map((x) => URL.createObjectURL(x)), index: i })}
-                      style={{ width: 92, height: 92, objectFit: "cover", borderRadius: 11, border: `1px solid ${BORDER}`, boxShadow: "0 2px 6px rgba(20,18,28,0.06)", cursor: "zoom-in" }} />
+            <ReviewSection icon={<ImageIcon size={17} color="#fff" />} title="Foto Outlet" subtitle={`${etalaseCount + (tapakFile ? 1 : 0)}/4 foto`} onUbah={() => setStep(1)}>
+              {/* Dibungkus 1 kartu (konsisten sama section Data Outlet) +
+                  SEMUA foto (etalase maks 3 + tampak depan maks 1 = maks 4)
+                  digabung jadi SATU baris flex, bukan 2 blok bertumpuk lagi
+                  - biar gak banyak scroll ke bawah. */}
+                <div style={{ display: "flex", gap: 7 }}>
+                  {[
+                    ...etalaseFiles.filter(Boolean).map((f, i) => ({ f, label: `Etalase ${i + 1}`, urls: etalaseFiles.filter(Boolean).map((x) => URL.createObjectURL(x)), index: i })),
+                    ...(tapakFile ? [{ f: tapakFile, label: "Tampak Depan", urls: [URL.createObjectURL(tapakFile)], index: 0 }] : []),
+                  ].map((p, i) => (
+                    <div key={i} style={{ flex: "1 1 0", minWidth: 0 }}>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={URL.createObjectURL(p.f)} alt=""
+                        onClick={() => setReviewLightbox({ urls: p.urls, index: p.index })}
+                        style={{ width: "100%", aspectRatio: "1/1", objectFit: "cover", borderRadius: 10, border: `1px solid ${BORDER}`, cursor: "zoom-in", display: "block" }} />
+                      <div style={{ fontSize: 9.5, fontWeight: 700, color: "#9A98A8", textAlign: "center", marginTop: 4 }}>{p.label}</div>
+                    </div>
                   ))}
                 </div>
-              </ReviewSection>
-            </SectionCard>
+            </ReviewSection>
 
-            <SectionCard>
-              <ReviewSection icon={<Store size={14} color={PINK} />} title={`Foto Tampak Depan Outlet (${tapakFile ? 1 : 0}/1)`} onUbah={() => setStep(1)}>
-                {tapakFile && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={URL.createObjectURL(tapakFile)} alt="" onClick={() => setReviewLightbox({ urls: [URL.createObjectURL(tapakFile)], index: 0 })}
-                    style={{ width: 92, height: 92, objectFit: "cover", borderRadius: 11, border: `1px solid ${BORDER}`, boxShadow: "0 2px 6px rgba(20,18,28,0.06)", marginTop: 10, display: "block", cursor: "zoom-in" }} />
-                )}
-              </ReviewSection>
-            </SectionCard>
-
-            <SectionCard>
-              <ReviewSection icon={<CheckCircle2 size={14} color={PINK} />} title="Availability Produk" onUbah={() => setStep(2)}>
-                {Object.entries(
-                  AVAILABILITY_ITEMS.reduce((acc, item) => {
-                    (acc[item.group] = acc[item.group] || []).push(item);
-                    return acc;
-                  }, {})
-                ).map(([group, items], gi) => (
-                  <div key={group} style={{
-                    borderRadius: 13, background: "#FBFAFC", border: `1px solid ${BORDER}`,
-                    padding: "10px 12px", marginTop: gi === 0 ? 0 : 10,
-                  }}>
-                    <div style={{
-                      fontSize: 10.5, fontWeight: 800, color: "#9A98A8", textTransform: "uppercase", letterSpacing: 0.6,
-                      marginBottom: 6,
-                    }}>
+            <ReviewSection icon={<Search size={17} color="#fff" />} title="Availability Produk" subtitle="Jumlah varian tiap produk" onUbah={() => setStep(2)}>
+              {/* Dibungkus 1 kartu luar (konsisten sama 2 section di atas) -
+                  grup SP/Voucher di dalamnya tetap kebedain lewat box+warna
+                  masing2 spt sebelumnya. */}
+              {Object.entries(
+                AVAILABILITY_ITEMS.reduce((acc, item) => {
+                  (acc[item.group] = acc[item.group] || []).push(item);
+                  return acc;
+                }, {})
+              ).map(([group, items], gi) => {
+                const groupMeta = AVAILABILITY_GROUP_META[group];
+                const GroupIcon = groupMeta.icon;
+                return (
+                <div key={group} style={{
+                  borderRadius: 12, background: "#FBFAFC", border: `1px solid ${BORDER}`,
+                  padding: "8px 10px", marginTop: gi === 0 ? 0 : 8,
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                    <GroupIcon size={12} color={groupMeta.color} strokeWidth={2.4} />
+                    <span style={{ fontSize: 11, fontWeight: 800, color: groupMeta.color, letterSpacing: 0.2 }}>
                       {AVAILABILITY_GROUP_LABEL[group]}
-                    </div>
-                    {items.map((item, i) => {
-                      const [val] = availabilityState[item.key];
-                      return (
-                        <div key={item.key} style={{
-                          display: "flex", alignItems: "center", gap: 10, padding: "8px 0",
-                          borderTop: i > 0 ? `1px solid ${BORDER}` : "none",
-                          fontSize: 12.5,
-                        }}>
-                          <span style={{
-                            flexShrink: 0, width: 30, height: 30, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center",
-                            background: item.brand === "im3" ? YELLOW : `linear-gradient(135deg, ${PINK}, ${PINK_DK})`,
-                            boxShadow: "0 2px 5px rgba(20,18,28,0.08)",
-                          }}>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={item.brand === "im3" ? "/brand/logo-im3.png" : "/brand/logo-3id.png"}
-                              alt={item.brand === "im3" ? "IM3" : "3ID"}
-                              style={{
-                                width: 18, height: 18, objectFit: "contain", display: "block",
-                                filter: item.brand === "3id" ? "brightness(0) invert(1)" : "none",
-                              }}
-                            />
-                          </span>
-                          <span style={{ color: INK, flex: 1, fontWeight: 500 }}>{item.label.replace(" ?", "").replace("?", "")}</span>
-                          <span style={{
-                            display: "inline-flex", alignItems: "center", gap: 4,
-                            fontSize: 11, fontWeight: 800, padding: "3.5px 10px 3.5px 8px", borderRadius: 999, flexShrink: 0,
-                            background: val ? "rgba(22,163,74,0.12)" : "rgba(220,38,38,0.1)",
-                            color: val ? "#16A34A" : "#DC2626",
-                          }}>
-                            {val ? <Check size={12} strokeWidth={3} /> : <X size={12} strokeWidth={3} />}
-                            {val ? "Ya" : "Tidak"}
-                          </span>
-                        </div>
-                      );
-                    })}
+                    </span>
                   </div>
-                ))}
-              </ReviewSection>
-            </SectionCard>
+                  {items.map((item, i) => {
+                    const [val] = availabilityState[item.key];
+                    return (
+                      <div key={item.key} style={{
+                        display: "flex", alignItems: "center", gap: 8, padding: "5px 0",
+                        borderTop: i > 0 ? `1px solid ${BORDER}` : "none",
+                        fontSize: 12,
+                      }}>
+                        <span style={{
+                          flexShrink: 0, width: 24, height: 24, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center",
+                          background: item.brand === "im3" ? YELLOW : `linear-gradient(135deg, ${PINK}, ${PINK_DK})`,
+                        }}>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={item.brand === "im3" ? "/brand/logo-im3.png" : "/brand/logo-3id.png"}
+                            alt={item.brand === "im3" ? "IM3" : "3ID"}
+                            style={{
+                              width: 14, height: 14, objectFit: "contain", display: "block",
+                              filter: item.brand === "3id" ? "brightness(0) invert(1)" : "none",
+                            }}
+                          />
+                        </span>
+                        <span style={{ color: INK, flex: 1, fontWeight: 500 }}>{item.label}</span>
+                        <span style={{
+                          display: "inline-flex", alignItems: "center", gap: 4,
+                          fontSize: 10.5, fontWeight: 800, padding: "3px 9px 3px 7px", borderRadius: 999, flexShrink: 0,
+                          background: "rgba(236,11,111,0.1)", color: PINK_DK,
+                        }}>
+                          {val ?? "-"} varian
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                );
+              })}
+            </ReviewSection>
 
             {err && (
-              <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "11px 13px", borderRadius: 11, background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.2)", marginBottom: 16 }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "11px 13px", borderRadius: 11, background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.2)" }}>
                 <AlertTriangle size={16} color="#DC2626" style={{ flexShrink: 0, marginTop: 1 }} />
                 <div style={{ fontSize: 13, color: "#DC2626" }}>{err}</div>
               </div>
@@ -1999,7 +2244,7 @@ export default function AuditOutletFormPage() {
         )}
       </div>
 
-      <BottomBar>
+      <BottomBar bottomGap={vvBottomGap}>
         {step > 0 && <GhostBtn onClick={() => setStep((s) => s - 1)}><ChevronLeft size={16} /> Kembali</GhostBtn>}
         {step === 0 && (
           <PrimaryBtn onClick={goNextFromData}>Selanjutnya <ChevronRight size={16} /></PrimaryBtn>
@@ -2094,8 +2339,8 @@ export default function AuditOutletFormPage() {
       {showIOSGuide && (
         <div onClick={() => setShowIOSGuide(false)} style={{ position: "fixed", inset: 0, zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center", fontFamily: FONT }}>
           <div style={{ position: "absolute", inset: 0, background: "rgba(20,18,28,0.55)" }} />
-          <div onClick={(e) => e.stopPropagation()} style={{
-            position: "relative", width: "100%", maxWidth: 480, boxSizing: "border-box",
+          <div onClick={(e) => e.stopPropagation()} className="ao-wrap" style={{
+            position: "relative", width: "100%", boxSizing: "border-box",
             background: "#fff", borderRadius: "22px 22px 0 0",
             padding: "22px 20px calc(env(safe-area-inset-bottom,0px) + 20px)",
             boxShadow: "0 -10px 32px rgba(17,17,20,0.16)",
@@ -2130,22 +2375,33 @@ export default function AuditOutletFormPage() {
   );
 }
 
-function ReviewSection({ icon, title, onUbah, children }) {
+function ReviewSection({ icon, title, subtitle, onUbah, children }) {
+  // Sekarang kartu BERDIRI SENDIRI (border+radius+shadow+padding persis
+  // SectionCard) - bukan lagi 1 section di dalam 1 kartu besar gabungan.
+  // Header (badge ikon + judul + subtitle + tombol Ubah) ikut DI DALAM
+  // kartu yg sama, jadi "Data Outlet"/"Foto Outlet"/"Availability Produk"
+  // masing2 jadi kartu-nya sendiri yg rapi dan utuh.
   return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+    <div style={{
+      background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 18, padding: 16, marginBottom: 14,
+      boxShadow: "0 2px 4px rgba(20,18,28,0.02), 0 10px 28px rgba(20,18,28,0.05)",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14 }}>
         <div style={{
-          width: 28, height: 28, borderRadius: 9, flexShrink: 0,
-          background: `linear-gradient(135deg, rgba(236,11,111,0.12), rgba(247,148,29,0.1))`,
-          border: "1px solid rgba(236,11,111,0.12)",
+          width: 36, height: 36, borderRadius: 12, flexShrink: 0, position: "relative", overflow: "hidden",
+          background: `linear-gradient(145deg, ${PINK} 0%, ${PINK_DK} 100%)`,
+          boxShadow: "0 1.5px 3px rgba(20,18,28,0.12), inset 0 1px 0 rgba(255,255,255,0.25)",
           display: "flex", alignItems: "center", justifyContent: "center",
         }}>
           {icon}
         </div>
-        <div style={{ flex: 1, fontSize: 14, fontWeight: 800, color: INK, letterSpacing: -0.1 }}>{title}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 14.5, fontWeight: 800, color: INK, letterSpacing: -0.1, lineHeight: 1.25 }}>{title}</div>
+          {subtitle && <div style={{ fontSize: 11, color: MID, marginTop: 1, lineHeight: 1.3 }}>{subtitle}</div>}
+        </div>
         <button onClick={onUbah} style={{
-          border: "1px solid rgba(236,11,111,0.22)", background: "rgba(236,11,111,0.06)", borderRadius: 999,
-          color: PINK_DK, fontSize: 11.5, fontWeight: 800, padding: "5px 10px",
+          border: "none", background: "rgba(236,11,111,0.08)", borderRadius: 999,
+          color: PINK_DK, fontSize: 11.5, fontWeight: 800, padding: "6px 12px",
           display: "flex", alignItems: "center", gap: 4, cursor: "pointer", flexShrink: 0,
         }}>
           <Pencil size={11} /> Ubah
@@ -2156,14 +2412,17 @@ function ReviewSection({ icon, title, onUbah, children }) {
   );
 }
 
-function SummaryRow({ label, value, last }) {
+function SummaryRow({ label, value, last, blankIfEmpty }) {
+  // blankIfEmpty - khusus field opsional (mis. Social Media): kalau
+  // kosong, kolom kanan dibiarkan kosong beneran (bukan tanda "-"), krn
+  // "-" di situ kesannya kayak field wajib yg kelupaan diisi.
   return (
     <div style={{
       display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline",
-      padding: "9px 0", borderBottom: last ? "none" : `1px solid ${BORDER}`, fontSize: 12.5,
+      padding: "6px 0", borderBottom: last ? "none" : `1px solid ${BORDER}`, fontSize: 12.5,
     }}>
       <div style={{ color: "#8A8795", flexShrink: 0 }}>{label}</div>
-      <div style={{ color: INK, fontWeight: 700, textAlign: "right" }}>{value || "-"}</div>
+      <div style={{ color: INK, fontWeight: 700, textAlign: "right" }}>{value || (blankIfEmpty ? "" : "-")}</div>
     </div>
   );
 }

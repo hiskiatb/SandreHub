@@ -36,6 +36,12 @@ export const viewport = {
   // pernah dideklarasikan utk route /marta/audit-outlet/**.
   viewportFit: "cover",
   themeColor: "#EC0B6F",
+  // Form ini light mode saja, jangan ikut dark mode device sama sekali -
+  // kalau tidak, native UI browser (keyboard, dropdown/select bawaan, dll)
+  // ikut gelap pas device di-set dark mode, padahal konten form-nya sendiri
+  // tetap terang -> muncul bagian hitam yg nabrak (lihat laporan user
+  // "bagian hitam saat pemilihan outlet").
+  colorScheme: "light",
 };
 
 export default function AuditOutletLayout({ children }) {
