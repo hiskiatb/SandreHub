@@ -423,7 +423,13 @@ export async function fetchUserManagementGrid(scope, period) {
   for (const b of branches) {
     const slug = toSlug(b.name);
     for (const brand of brands) {
-      const combo = people.filter((p) => (p.branch_id === slug || p.branch_id === b.id) && (p.brand || "").toLowerCase() === brand);
+      // Head of Area (bsm) & DMO (bme_rge) SATU slot per cabang, brand=null
+      // dipakai lintas brand (im3 & 3ID) - baris brand=null utk kedua role
+      // ini ikut tampil di combo IM3 MAUPUN 3ID (sama persis logikanya dgn
+      // branchGroups() di app/martahub/assignments/page.jsx), data lama yg
+      // msh brand-spesifik tetap kebaca spt biasa.
+      const combo = people.filter((p) => (p.branch_id === slug || p.branch_id === b.id)
+        && ((p.brand || "").toLowerCase() === brand || (!p.brand && (p.role === "bsm" || p.role === "bme_rge"))));
       const byRole = new Map();
       for (const p of combo) {
         if (!byRole.has(p.role)) byRole.set(p.role, []);
@@ -502,7 +508,13 @@ export async function fetchOrgHierarchy(scope, period) {
     for (const b of branchesInRegion) {
       const slug = toSlug(b.name);
       for (const brand of brandsAllowed) {
-        const combo = people.filter((p) => (p.branch_id === slug || p.branch_id === b.id) && (p.brand || "").toLowerCase() === brand);
+        // Head of Area (bsm) & DMO (bme_rge) SATU slot per cabang, brand=null
+      // dipakai lintas brand (im3 & 3ID) - baris brand=null utk kedua role
+      // ini ikut tampil di combo IM3 MAUPUN 3ID (sama persis logikanya dgn
+      // branchGroups() di app/martahub/assignments/page.jsx), data lama yg
+      // msh brand-spesifik tetap kebaca spt biasa.
+      const combo = people.filter((p) => (p.branch_id === slug || p.branch_id === b.id)
+        && ((p.brand || "").toLowerCase() === brand || (!p.brand && (p.role === "bsm" || p.role === "bme_rge"))));
         const byRole = new Map();
         for (const p of combo) { if (!byRole.has(p.role)) byRole.set(p.role, []); byRole.get(p.role).push(p); }
         groups.push({ key: `${b.id}:${brand}`, branchId: b.id, branchSlug: slug, branchName: b.name, region: b.region, brand, people: combo, byRole });
@@ -565,7 +577,10 @@ export async function fetchAssignableGroups(scope) {
         // Cocokkan lewat slug (bentuk asli branch_id di mh_assignments/
         // mh_profiles) - fallback ke uuid kalau suatu saat datanya berubah
         // format, supaya tidak diam-diam kembali kosong semua.
-        people: people.filter((p) => (p.branch_id === slug || p.branch_id === b.id) && (p.brand || "").toLowerCase() === brand),
+        // Sama seperti fetchUserManagementGrid di atas - DMO/Head of Area
+        // (bme_rge/bsm) brand=null dianggap berlaku utk kedua brand.
+        people: people.filter((p) => (p.branch_id === slug || p.branch_id === b.id)
+          && ((p.brand || "").toLowerCase() === brand || (!p.brand && (p.role === "bsm" || p.role === "bme_rge")))),
       });
     }
   }

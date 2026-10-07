@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../../lib/supabase";
 import { canViewMarta } from "../../../lib/martaAccess";
 import { HubLogo } from "../../../components/HubLogo";
-import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, UserRound, ChevronRight, ChevronDown, Camera, LayoutDashboard, QrCode } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, UserRound, ChevronRight, ChevronDown, Camera, LayoutDashboard, QrCode, Store } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -329,6 +329,25 @@ function MartaLoginInner() {
             )}
           </AnimatePresence>
         </div>
+
+        {/* Audit Outlet — pendataan outlet (foto etalase + tapak depan) oleh
+            DSE/Sender di lapangan. CMS-nya SUDAH pindah ke dalam CMS MartaHub
+            sendiri (/martahub/pendataan-outlet, lihat MartaShell nav "POSM"),
+            jadi di sini tinggal 1 tujuan publik: langsung ke form isi
+            (tanpa login) - tidak perlu dropdown Isi Form/CMS lagi. */}
+        <button onClick={() => router.push("/marta/audit-outlet/isi")}
+          style={{ marginTop: 10, width: "100%", display: "flex", alignItems: "center", gap: 13, padding: "14px 16px", borderRadius: 14, cursor: "pointer", textAlign: "left", fontFamily: FONT,
+            background: d ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.02)", border: `1.5px solid ${t.line}`, transition: "transform .12s, box-shadow .15s, border-color .15s" }}
+          onMouseEnter={(e) => { e.currentTarget.style.boxShadow = "0 8px 26px rgba(0,0,0,0.10)"; e.currentTarget.style.transform = "translateY(-1px)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.transform = "none"; }}>
+          <span style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "linear-gradient(135deg,#EC0B6F,#F7941D)", boxShadow: "0 4px 14px rgba(236,11,111,0.32)" }}>
+            <Store size={20} color="#fff" strokeWidth={2.2} />
+          </span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: "block", fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em", color: t.hi }}>Pendataan Outlet</span>
+            <span style={{ display: "block", fontSize: 11.5, color: t.mid, marginTop: 1 }}>Pendataan outlet · data &amp; foto etalase</span>
+          </span>
+        </button>
 
         <div style={{ marginTop: 18, textAlign: "center", fontSize: 10.5, letterSpacing: "0.12em", textTransform: "uppercase", color: t.lo, opacity: 0.35, fontWeight: 600 }}>
           © 2026 MartaHub · Marketing Sumatera

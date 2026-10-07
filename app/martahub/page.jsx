@@ -173,6 +173,7 @@ const NAV = [
   { label: "Geo Compliance", icon: "pin", path: "geo-compliance" },
   { section: "POSM" },
   { label: "POSM", icon: "posm", path: "posmat" },
+  { label: "Pendataan Outlet", icon: "building", path: "pendataan-outlet", route: "/martahub/pendataan-outlet" },
   { section: "MANAGEMENT" },
   // Approval Center (Activity) DIHAPUS dari menu - lihat catatan sama di
   // MartaShell.jsx. Route/NAV_ROUTES.approval TIDAK dihapus (deep link lama
@@ -199,6 +200,7 @@ const NAV_ROUTES = {
   approval: "/martahub/approval",
   master: "/martahub/master",
   posmat: "/martahub/posmat",
+  "pendataan-outlet": "/martahub/pendataan-outlet",
   gallery: "/martahub/gallery",
   validasi: "/martahub/validasi",
   "msisdn-validation": "/martahub/msisdn-validation",
@@ -252,6 +254,7 @@ function Icon({ name, size = 16, color = "currentColor" }) {
     posm:      <svg style={s} viewBox="0 0 24 24" {...p}><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>,
     sim:       <svg style={s} viewBox="0 0 24 24" {...p}><path d="M15 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z"/><path d="M15 2v5h5"/><path d="M9 13h6M9 17h4"/></svg>,
     gallery:   <svg style={s} viewBox="0 0 24 24" {...p}><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>,
+    building:  <svg style={s} viewBox="0 0 24 24" {...p}><rect x="4" y="2" width="16" height="20" rx="1"/><line x1="8" y1="6" x2="8" y2="6.01"/><line x1="12" y1="6" x2="12" y2="6.01"/><line x1="16" y1="6" x2="16" y2="6.01"/><line x1="8" y1="10" x2="8" y2="10.01"/><line x1="12" y1="10" x2="12" y2="10.01"/><line x1="16" y1="10" x2="16" y2="10.01"/><line x1="8" y1="14" x2="8" y2="14.01"/><line x1="12" y1="14" x2="12" y2="14.01"/><line x1="16" y1="14" x2="16" y2="14.01"/><path d="M9 22v-4h6v4"/></svg>,
   };
   return icons[name] || null;
 }

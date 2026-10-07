@@ -49,6 +49,7 @@ const NAV = [
   { label: "Geo Compliance", icon: "pin", path: "geo-compliance", route: "/martahub/geo-compliance" },
   { section: "POSM" },
   { label: "POSM", icon: "posm", path: "posmat", route: "/martahub/posmat" },
+  { label: "Pendataan Outlet", icon: "building", path: "pendataan-outlet", route: "/martahub/pendataan-outlet" },
   { section: "MANAGEMENT" },
   // Approval Center (Activity Plan) DIHAPUS dari menu - approval manusia utk
   // Plan sudah tidak dipakai lagi (proses activity sekarang langsung jalan
