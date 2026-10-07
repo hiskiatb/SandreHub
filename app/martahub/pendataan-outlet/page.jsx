@@ -24,8 +24,8 @@ import MartaShell, { T } from "../components/MartaShell";
 import { readWorkbook, deriveTable } from "../../../lib/martaSiteImport";
 import { passesRow, optionsFor, FilterTh, FilterMenu } from "../../dashboard/components/MFTS_TableFilter";
 import {
-  aoExportList, aoImportOutletMaster, aoListOutlets, aoListPhotos,
-  aoListReferencePhotos, aoListSubmissions, aoPublicUrl,
+  aoExportList, aoGetRadiusSetting, aoImportOutletMaster, aoListOutlets, aoListPhotos,
+  aoListReferencePhotos, aoListSubmissions, aoPublicUrl, aoSetRadiusSetting,
   aoUpdateReferencePhotoLabel, aoUploadReferencePhoto,
 } from "../../../lib/ao";
 
@@ -159,7 +159,7 @@ export default function PendataanOutletPage() {
 // belum dimasukkan dulu (keputusan user: "tabel dulu pakai data existing").
 const SUB_COLUMNS = [
   { key: "tanggal", label: "Tanggal" },
-  { key: "jam", label: "Jam" },
+  { key: "jam", label: "Waktu" },
   { key: "nama_sender", label: "Nama Sender" },
   { key: "nama_outlet", label: "Nama Outlet" },
   { key: "id_outlet", label: "ID Outlet" },
@@ -181,11 +181,21 @@ const SUB_COLUMNS = [
   { key: "status", label: "Status" },
   { key: "latitude", label: "GPS Latitude" },
   { key: "longitude", label: "GPS Longitude" },
+  // Jarak (meter, haversine) antara titik GPS saat sender ambil foto dgn
+  // longlat outlet di master data (yg diupload admin lewat import
+  // Outlet_Hybrid di CMS) - dihitung server-side di ao_list_submissions
+  // (distance_to_outlet_m). NULL kalau GPS sender gagal atau outlet belum
+  // punya longlat di master - ditampilkan "-" spt field kosong lainnya.
+  { key: "distance_to_outlet_m", label: "Jarak ke Outlet (m)" },
+  // 1/0 - apakah distance_to_outlet_m masih di dalam radius toleransi yg
+  // di-set admin (lihat kontrol "Radius Toleransi" di atas tabel). NULL
+  // kalau distance_to_outlet_m sendiri NULL (GPS/longlat outlet kosong).
+  { key: "radius_score", label: "Radius Score" },
 ];
 // Kolom yang bisa di-filter ala-Excel - yg kontinu/hampir unik per baris
 // (tanggal/jam/jumlah foto/GPS/score) dikecualikan, dropdown filter jadi
 // tidak berguna utk itu (sama alasan Lat/Long di Data Outlet).
-const SUB_FCOLS = SUB_COLUMNS.filter((c) => !["tanggal", "jam", "foto_etalase_count", "foto_tapak_count", "availability_score", "latitude", "longitude"].includes(c.key)).map((c) => [c.key, c.label]);
+const SUB_FCOLS = SUB_COLUMNS.filter((c) => !["tanggal", "jam", "foto_etalase_count", "foto_tapak_count", "availability_score", "latitude", "longitude", "distance_to_outlet_m", "radius_score"].includes(c.key)).map((c) => [c.key, c.label]);
 const SUB_FT_T = { line: "#E4E2EA", hi: "#1A1A20", mid: "#4A5568", lo: "#767485", teal: "#ED1C24", tealBg: "#FFF0F0", card: "#FFFFFF", sub: "#F7F7FA" };
 
 function SubmissionBody() {
@@ -201,6 +211,32 @@ function SubmissionBody() {
   const [filters, setFilters] = useState({});
   const [openCol, setOpenCol] = useState("");
   const [rect, setRect] = useState(null);
+
+  // Radius toleransi (meter) utk "Radius Score" - setting bersama (bukan
+  // per-browser) krn disimpan di DB (ao_settings), supaya semua admin CMS
+  // lihat & pakai angka yg sama. radiusInput = draft yg lagi diketik admin
+  // (belum tentu sudah disimpan) - dipisah dari radiusM (nilai AKTIF yg
+  // dipakai server utk hitung radius_score di ao_list_submissions) supaya
+  // mengetik tidak langsung keliatan "tersimpan" sebelum tombol Simpan diklik.
+  const [radiusM, setRadiusM] = useState(null);
+  const [radiusInput, setRadiusInput] = useState("");
+  const [savingRadius, setSavingRadius] = useState(false);
+  useEffect(() => {
+    aoGetRadiusSetting().then((v) => { setRadiusM(v); setRadiusInput(String(v)); }).catch(() => {});
+  }, []);
+  const saveRadius = async () => {
+    const n = Number(radiusInput);
+    if (!n || n <= 0) { alert("Radius harus angka lebih besar dari 0."); return; }
+    setSavingRadius(true);
+    try {
+      const saved = await aoSetRadiusSetting(n);
+      setRadiusM(saved);
+      setRadiusInput(String(saved));
+      await load(); // radius_score di tabel yg sedang tampil harus ikut re-hitung
+    } catch (e) {
+      alert("Gagal menyimpan radius: " + (e.message || e));
+    } finally { setSavingRadius(false); }
+  };
 
   // Rentang tanggal tetap jadi filter SERVER (dataset submission relatif
   // kecil dibanding Data Outlet, jadi aman di-load penuh per rentang),
@@ -276,7 +312,7 @@ function SubmissionBody() {
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       const tag = dateFrom || dateTo ? `_${dateFrom || "awal"}_${dateTo || "akhir"}` : "";
-      a.download = `pendataan-outlet${tag}.zip`;
+      a.download = `Foto Etalase dan Tampak Depan Outlet${tag}.zip`;
       a.click();
     } catch {
       alert("Gagal membuat file ZIP.");
@@ -286,46 +322,113 @@ function SubmissionBody() {
   // Export .xlsx - kolomnya mengikuti "Result Download" di template CMS yg
   // user berikan (URL foto per slot, bukan cuma jumlah foto, krn sheet yg
   // didownload dipakai sbg arsip/bukti, bukan cuma ringkasan tabel).
+  // Kolom teks biasa (bukan foto) - urutan HARUS sinkron dgn PHOTO_COLS di
+  // bawah (disisipkan di antara "Nama DSE" & "Social Media", persis posisi
+  // 4 kolom foto yg lama).
+  const TEXT_COLS_BEFORE_PHOTO = [
+    ["Submission ID", (r) => r.id],
+    ["Tanggal", (r) => r.tanggal],
+    ["Waktu", (r) => r.jam],
+    ["Nama Sender", (r) => r.nama_sender || ""],
+    ["Nama Outlet", (r) => r.nama_outlet || ""],
+    ["ID Outlet", (r) => r.id_outlet || ""],
+    ["Branch", (r) => r.branch || ""],
+    ["Kecamatan", (r) => r.district || ""],
+    ["Nama DSE", (r) => r.dse_name || ""],
+  ];
+  const TEXT_COLS_AFTER_PHOTO = [
+    ["Social Media", (r) => r.social_media || ""],
+    ["SP IM3 >= 2 Varian", (r) => (r.sp_im3 == null ? "" : (r.sp_im3 ? "Yes" : "No"))],
+    ["SP 3ID >= 2 Varian", (r) => (r.sp_3id == null ? "" : (r.sp_3id ? "Yes" : "No"))],
+    ["Voucher IM3 >= 3 Varian", (r) => (r.voucher_im3 == null ? "" : (r.voucher_im3 ? "Yes" : "No"))],
+    ["Voucher 3ID >= 3 Varian", (r) => (r.voucher_3id == null ? "" : (r.voucher_3id ? "Yes" : "No"))],
+    ["Availability Score", (r) => r.availability_score ?? ""],
+    ["Completeness", (r) => r.completeness || ""],
+    ["Status", (r) => r.status || ""],
+    ["GPS Latitude", (r) => r.latitude ?? ""],
+    ["GPS Longitude", (r) => r.longitude ?? ""],
+    ["Jarak ke Outlet (m)", (r) => (r.distance_to_outlet_m == null ? "" : Math.round(r.distance_to_outlet_m))],
+    ["Radius Score", (r) => (r.radius_score == null ? "" : r.radius_score)],
+    ["Submitted At", (r) => r.created_at],
+  ];
+  // 4 kolom foto - sekarang bener2 nampilin GAMBARnya langsung di cell
+  // (bukan URL text lagi), supaya CMS-nya bisa dibuka & di-scroll sbg
+  // "album foto" per outlet tanpa perlu klik tiap link satu2 - diminta
+  // user krn tabel .xlsx yg lama cuma berisi link mentah.
+  const PHOTO_COLS = [
+    ["Foto Etalase 1", (r) => (r.photos || []).find((p) => p.jenis === "etalase" && p.urutan === 1)],
+    ["Foto Etalase 2", (r) => (r.photos || []).find((p) => p.jenis === "etalase" && p.urutan === 2)],
+    ["Foto Etalase 3", (r) => (r.photos || []).find((p) => p.jenis === "etalase" && p.urutan === 3)],
+    ["Foto Tampak Depan", (r) => (r.photos || []).find((p) => p.jenis === "tapak_depan")],
+  ];
+  const PHOTO_CELL_PX = 110; // sisi kotak thumbnail (persegi) di dalam cell
+  const PHOTO_ROW_PT = 86;   // tinggi baris (point) - kira2 pas utk thumbnail 110px
+
   const exportXlsx = useCallback(async () => {
     setExporting(true);
     try {
-      const XLSX = await import("xlsx");
-      const data = filtered.map((r) => {
-        const byJenis = (jenis, urutan) => (r.photos || []).find((p) => p.jenis === jenis && (urutan == null || p.urutan === urutan));
-        const etalase = (n) => { const p = byJenis("etalase", n); return p ? aoPublicUrl(p.storage_path) : ""; };
-        const tapak = byJenis("tapak_depan");
-        return {
-          "Submission ID": r.id,
-          "Tanggal": r.tanggal,
-          "Jam": r.jam,
-          "Nama Sender": r.nama_sender || "",
-          "Nama Outlet": r.nama_outlet || "",
-          "ID Outlet": r.id_outlet || "",
-          "Branch": r.branch || "",
-          "Kecamatan": r.district || "",
-          "Nama DSE": r.dse_name || "",
-          "Foto Etalase 1": etalase(1),
-          "Foto Etalase 2": etalase(2),
-          "Foto Etalase 3": etalase(3),
-          "Foto Tampak Depan": tapak ? aoPublicUrl(tapak.storage_path) : "",
-          "Social Media": r.social_media || "",
-          "SP IM3 >= 2 Varian": r.sp_im3 == null ? "" : (r.sp_im3 ? "Yes" : "No"),
-          "SP 3ID >= 2 Varian": r.sp_3id == null ? "" : (r.sp_3id ? "Yes" : "No"),
-          "Voucher IM3 >= 3 Varian": r.voucher_im3 == null ? "" : (r.voucher_im3 ? "Yes" : "No"),
-          "Voucher 3ID >= 3 Varian": r.voucher_3id == null ? "" : (r.voucher_3id ? "Yes" : "No"),
-          "Availability Score": r.availability_score ?? "",
-          "Completeness": r.completeness || "",
-          "Status": r.status || "",
-          "GPS Latitude": r.latitude ?? "",
-          "GPS Longitude": r.longitude ?? "",
-          "Submitted At": r.created_at,
-        };
-      });
-      const ws = XLSX.utils.json_to_sheet(data);
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Data Submission");
+      const ExcelJS = (await import("exceljs")).default;
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet("Data Submission");
+
+      const headers = [
+        ...TEXT_COLS_BEFORE_PHOTO.map(([label]) => label),
+        ...PHOTO_COLS.map(([label]) => label),
+        ...TEXT_COLS_AFTER_PHOTO.map(([label]) => label),
+      ];
+      ws.addRow(headers).font = { bold: true };
+      ws.views = [{ state: "frozen", ySplit: 1 }];
+      ws.columns = headers.map((h) => ({
+        width: PHOTO_COLS.some(([label]) => label === h) ? 18 : Math.max(12, Math.min(28, h.length + 4)),
+      }));
+
+      // Isi baris teks dulu (foto disisipkan belakangan per baris, setelah
+      // byte-nya selesai di-fetch) - index kolom foto (0-based) dihitung
+      // dari posisi TEXT_COLS_BEFORE_PHOTO.
+      const photoColStart = TEXT_COLS_BEFORE_PHOTO.length; // 0-based index kolom foto pertama
+
+      for (let i = 0; i < filtered.length; i++) {
+        const r = filtered[i];
+        const rowVals = [
+          ...TEXT_COLS_BEFORE_PHOTO.map(([, get]) => get(r)),
+          ...PHOTO_COLS.map(() => ""), // placeholder - diisi gambar, bukan teks
+          ...TEXT_COLS_AFTER_PHOTO.map(([, get]) => get(r)),
+        ];
+        const row = ws.addRow(rowVals);
+        row.height = PHOTO_ROW_PT;
+        const rowNumber = row.number; // 1-based (header = baris 1)
+
+        // Download + tempel tiap foto yg ada di baris ini secara paralel.
+        await Promise.all(PHOTO_COLS.map(async ([, getPhoto], colOffset) => {
+          const p = getPhoto(r);
+          if (!p) return;
+          const url = aoPublicUrl(p.storage_path);
+          if (!url) return;
+          try {
+            const res = await fetch(url);
+            if (!res.ok) return;
+            const buf = await res.arrayBuffer();
+            const ext = /\.png($|\?)/i.test(p.storage_path) ? "png" : "jpeg";
+            const imageId = wb.addImage({ buffer: buf, extension: ext });
+            const col0 = photoColStart + colOffset; // 0-based kolom
+            ws.addImage(imageId, {
+              tl: { col: col0 + 0.06, row: (rowNumber - 1) + 0.06 },
+              ext: { width: PHOTO_CELL_PX, height: PHOTO_CELL_PX },
+              editAs: "oneCell",
+            });
+          } catch { /* 1 foto gagal di-fetch jangan sampai gagalkan export semua baris */ }
+        }));
+      }
+
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
       const stamp = new Date().toISOString().slice(0, 10);
-      XLSX.writeFile(wb, `MartaHub_DataSubmission_${stamp}.xlsx`);
+      a.download = `MartaHub_DataSubmission_${stamp}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
     } finally { setExporting(false); }
   }, [filtered]);
 
@@ -342,6 +445,31 @@ function SubmissionBody() {
         <span style={{ color: T.lo, fontSize: 12 }}>s/d</span>
         <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={{ padding: "8px 10px", borderRadius: 9, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: FONT }} />
         {anyFilter && <button onClick={() => setFilters({})} style={{ border: "none", background: "transparent", cursor: "pointer", color: T.primary, fontSize: 12, fontWeight: 700 }}>Hapus filter</button>}
+
+        {/* Setting radius toleransi "Radius Score" - disimpan di DB
+            (ao_settings) jadi berlaku global utk semua admin, bukan cuma
+            browser ini. radiusInput cuma draft; radius_score di tabel baru
+            ikut berubah setelah tombol Simpan diklik (load() dipanggil
+            ulang supaya ao_list_submissions re-hitung pakai radius baru). */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 9, background: T.sub, border: `1px solid ${BORDER}` }}>
+          <span style={{ fontSize: 11.5, color: T.lo, fontWeight: 700, whiteSpace: "nowrap" }}>Radius Toleransi</span>
+          <input
+            type="number" min={1} value={radiusInput} onChange={(e) => setRadiusInput(e.target.value)}
+            style={{ width: 62, padding: "5px 7px", borderRadius: 7, border: `1px solid ${BORDER}`, fontSize: 12.5, fontFamily: FONT }}
+          />
+          <span style={{ fontSize: 11.5, color: T.lo }}>m</span>
+          <button
+            onClick={saveRadius}
+            disabled={savingRadius || Number(radiusInput) === radiusM}
+            style={{
+              border: "none", borderRadius: 7, padding: "5px 10px", fontSize: 11.5, fontWeight: 800, fontFamily: FONT, cursor: "pointer",
+              background: Number(radiusInput) === radiusM ? BORDER : T.primary, color: Number(radiusInput) === radiusM ? T.lo : "#fff",
+            }}
+          >
+            {savingRadius ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : "Simpan"}
+          </button>
+        </div>
+
         {loading && (
           <span style={{ fontSize: 11.5, color: T.primary, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
             <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> Memuat...
@@ -407,7 +535,18 @@ function SubmissionBody() {
                   if (isBool && v != null) { display = v ? "Ya" : "Tidak"; color = v ? "#16A34A" : "#DC2626"; }
                   if (c.key === "status") color = v === "Submitted" ? "#16A34A" : "#C2760C";
                   if (c.key === "completeness") color = v === "Complete" ? "#16A34A" : "#C2760C";
-                  return <td key={c.key} style={{ padding: "8px 12px", color, fontFamily: mono ? "monospace" : undefined, fontWeight: isBool || c.key === "status" || c.key === "completeness" ? 700 : undefined }}>{display}</td>;
+                  // Jarak ke outlet - tandai merah+bold kalau jauh (>200m,
+                  // indikasi foto diambil bukan di lokasi outlet), hijau
+                  // kalau dekat (<=50m), abu2 biasa kalau di antaranya.
+                  if (c.key === "distance_to_outlet_m" && v != null) {
+                    display = `${Math.round(v).toLocaleString("id-ID")} m`;
+                    color = v > 200 ? "#DC2626" : v <= 50 ? "#16A34A" : T.mid;
+                  }
+                  if (c.key === "radius_score" && v != null) {
+                    display = v === 1 ? "Dalam Radius" : "Di Luar Radius";
+                    color = v === 1 ? "#16A34A" : "#DC2626";
+                  }
+                  return <td key={c.key} style={{ padding: "8px 12px", color, fontFamily: mono ? "monospace" : undefined, fontWeight: isBool || c.key === "status" || c.key === "completeness" || c.key === "radius_score" ? 700 : undefined }}>{display}</td>;
                 })}
                 <td style={{ padding: "8px 12px" }}>
                   <Btn variant="ghost" onClick={() => openPreview(s)}>Lihat</Btn>

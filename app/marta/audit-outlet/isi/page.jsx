@@ -15,10 +15,32 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle, AtSign, Camera, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
+  AlertTriangle, ArrowLeft, AtSign, Calendar, Camera, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
   ClipboardList, Image as ImageIcon, Loader2, MapPin, Pencil, ScanBarcode, Search, Send, Store, User, X,
 } from "lucide-react";
+import lottie from "lottie-web";
+import successAnimData from "../../../../public/promotor/success-animation.json";
 import { aoCreateSubmission, aoListOutlets, aoListReferencePhotos, aoUploadPhoto } from "../../../../lib/ao";
+
+// Ikon animasi sukses (dipakai sesaat sebelum layar konfirmasi tampil) -
+// Lottie yg sama persis dgn yg dipakai utk "tagging sukses" di Promotor App
+// (app/promotor/page.jsx), supaya konsisten se-ekosistem MartaHub. Diputar
+// sekali (loop:false), lebih besar (220px) krn jadi hero penuh di sini.
+function SuccessLottieIcon({ size = 220 }) {
+  const hostRef = useRef(null);
+  useEffect(() => {
+    if (!hostRef.current) return;
+    const anim = lottie.loadAnimation({
+      container: hostRef.current,
+      renderer: "svg",
+      loop: false,
+      autoplay: true,
+      animationData: successAnimData,
+    });
+    return () => anim.destroy();
+  }, []);
+  return <div ref={hostRef} style={{ width: size, height: size }} />;
+}
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const PINK = "#EC0B6F";
@@ -260,7 +282,7 @@ function GpsChip({ lat, lng, locating, error, onRetry }) {
 // utk jenis ybs, fallback ke checklist teks dos/donts - dibungkus kartu +
 // banner hijau/merah yg sama persis gaya-nya dgn versi berfoto, supaya
 // tampilannya tetap konsisten dgn template walau foto belum diupload admin.
-function PhotoGuide({ title, desc, dos, donts, refs, onCapture }) {
+function PhotoGuide({ title, desc, dos, donts, refs, onCapture, onOpen }) {
   const [open, setOpen] = useState(false); // tetap mounted selama animasi tutup jalan
   const [show, setShow] = useState(false); // true = sheet digeser ke posisi terbuka (translateY 0)
   const [dragY, setDragY] = useState(0);
@@ -282,6 +304,13 @@ function PhotoGuide({ title, desc, dos, donts, refs, onCapture }) {
     clearTimeout(closeTimerRef.current);
     setDragY(0);
     setOpen(true);
+    // Refresh foto referensi tiap kali sheet dibuka - sebelumnya cuma
+    // di-fetch SEKALI saat form pertama kali dimount, jadi kalau admin
+    // upload foto referensi baru dari CMS SETELAH sender sudah buka form
+    // di HP-nya, foto baru itu tidak pernah muncul sampai sender reload
+    // manual. onOpen (refetchRefPhotos di parent) diteriakkan tiap buka
+    // sheet supaya selalu dapat data terbaru tanpa perlu reload halaman.
+    onOpen?.();
     requestAnimationFrame(() => requestAnimationFrame(() => setShow(true)));
   };
   const closeSheet = () => {
@@ -784,6 +813,17 @@ export default function AuditOutletFormPage() {
   const [step, setStep] = useState(0); // 0=Data Outlet, 1=Foto Outlet, 2=Review, 3=Konfirmasi(terpisah)
   const [done, setDone] = useState(false);
   const [doneAt, setDoneAt] = useState(null);
+  const [showSuccessAnim, setShowSuccessAnim] = useState(false);
+
+  // Begitu submit sukses: tampilkan animasi Lottie full-screen dulu
+  // ("Pendaftaran Berhasil"), baru setelah itu layar konfirmasi detail
+  // muncul - bukan langsung tanpa transisi.
+  useEffect(() => {
+    if (!done) return;
+    setShowSuccessAnim(true);
+    const id = setTimeout(() => setShowSuccessAnim(false), 2200);
+    return () => clearTimeout(id);
+  }, [done]);
 
   const [outlets, setOutlets] = useState([]);
   const [outletsLoading, setOutletsLoading] = useState(true);
@@ -823,11 +863,8 @@ export default function AuditOutletFormPage() {
   // cuma teks. Kalau belum ada yg diupload (slot kosong), PhotoGuide jatuh
   // balik ke daftar teks dos/donts seperti sebelumnya.
   const [refPhotos, setRefPhotos] = useState([]);
-  useEffect(() => {
-    let alive = true;
-    aoListReferencePhotos().then((rows) => { if (alive) setRefPhotos(rows); }).catch(() => {});
-    return () => { alive = false; };
-  }, []);
+  const refetchRefPhotos = () => { aoListReferencePhotos().then(setRefPhotos).catch(() => {}); };
+  useEffect(() => { refetchRefPhotos(); }, []);
   const refsFor = (jenis) => ({
     benar: refPhotos.find((r) => r.jenis === jenis && r.kind === "benar" && r.url)?.url || "",
     salah: [1, 2, 3]
@@ -887,6 +924,7 @@ export default function AuditOutletFormPage() {
 
   const [submitting, setSubmitting] = useState(false);
   const [progressMsg, setProgressMsg] = useState("");
+  const [progressStep, setProgressStep] = useState({ current: 0, total: 1 });
   const [err, setErr] = useState("");
   const [attempted0, setAttempted0] = useState(false); // true setelah "Selanjutnya" step Data Outlet ditekan - baru di sini field kosong ditandai merah
   const [attempted1, setAttempted1] = useState(false); // sama utk step Foto Outlet
@@ -970,28 +1008,35 @@ export default function AuditOutletFormPage() {
 
   const submit = async () => {
     setSubmitting(true); setErr("");
+    const etalase = etalaseFiles.filter(Boolean);
+    const totalSteps = 2 + etalase.length; // simpan data + tiap foto etalase + foto tapak depan
+    let stepsDone = 0;
+    setProgressStep({ current: 0, total: totalSteps });
+    const advance = () => { stepsDone += 1; setProgressStep({ current: stepsDone, total: totalSteps }); };
     try {
-      setProgressMsg("Menyimpan data...");
+      setProgressMsg("Menyimpan data outlet ke sistem...");
       const submissionId = await aoCreateSubmission({
         namaSender: namaSender.trim(), namaOutlet: namaOutlet.trim(), idOutlet: idOutlet.trim(),
         socialMedia: socialMedia.trim(),
         latitude: gpsLat, longitude: gpsLng,
         spIm3, sp3id, voucherIm3, voucher3id,
       });
-      const etalase = etalaseFiles.filter(Boolean);
+      advance();
       for (let i = 0; i < etalase.length; i++) {
-        setProgressMsg(`Mengunggah foto etalase ${i + 1}/${etalase.length}...`);
+        setProgressMsg(`Mengunggah foto etalase ${i + 1} dari ${etalase.length}...`);
         await aoUploadPhoto(submissionId, "etalase", i + 1, etalase[i]);
+        advance();
       }
       setProgressMsg("Mengunggah foto tampak depan outlet...");
       await aoUploadPhoto(submissionId, "tapak_depan", 1, tapakFile);
+      advance();
       setDoneAt(new Date());
       setDone(true);
     } catch (e) {
       setErr(e?.message || "Gagal mengirim data, coba lagi.");
       setStep(3);
     } finally {
-      setSubmitting(false); setProgressMsg("");
+      setSubmitting(false); setProgressMsg(""); setProgressStep({ current: 0, total: 1 });
     }
   };
 
@@ -1004,35 +1049,167 @@ export default function AuditOutletFormPage() {
     captureGps();
   };
 
+  if (submitting) {
+    const pct = Math.min(100, Math.round((progressStep.current / progressStep.total) * 100));
+    const phase = progressMsg.includes("tampak depan") ? 2 : progressMsg.includes("etalase") ? 1 : 0;
+    const PHASES = ["Data Outlet", "Foto Etalase", "Foto Tampak Depan"];
+    return (
+      <div style={{
+        minHeight: "100svh", background: BG, fontFamily: FONT, display: "flex",
+        flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 28, textAlign: "center",
+      }}>
+        <div style={{ position: "relative", width: 112, height: 112, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <svg width={112} height={112} style={{ position: "absolute", transform: "rotate(-90deg)" }}>
+            <circle cx={56} cy={56} r={50} stroke={BORDER} strokeWidth={6} fill="none" />
+            <circle
+              cx={56} cy={56} r={50} stroke={PINK} strokeWidth={6} fill="none" strokeLinecap="round"
+              strokeDasharray={2 * Math.PI * 50}
+              strokeDashoffset={2 * Math.PI * 50 * (1 - pct / 100)}
+              style={{ transition: "stroke-dashoffset .45s ease" }}
+            />
+          </svg>
+          <span style={{ fontSize: 20, fontWeight: 800, color: INK }}>{pct}%</span>
+        </div>
+
+        <div style={{ fontSize: 17, fontWeight: 800, color: INK, marginTop: 20, letterSpacing: "-0.02em" }}>
+          Mengirim Data Outlet
+        </div>
+        <div style={{ fontSize: 13, color: MID, marginTop: 5, minHeight: 18 }}>{progressMsg}</div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 24 }}>
+          {PHASES.map((label, i) => (
+            <div key={label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{
+                width: 22, height: 22, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 10, fontWeight: 800, flexShrink: 0, transition: "all .3s ease",
+                background: i < phase ? "#16A34A" : i === phase ? PINK : "#fff",
+                color: i <= phase ? "#fff" : "#B7B4C0",
+                border: i === phase ? `2px solid ${PINK}` : i < phase ? "none" : `1.5px solid ${BORDER}`,
+                boxShadow: i === phase ? "0 0 0 4px rgba(236,11,111,0.14)" : "none",
+              }}>
+                {i < phase ? <Check size={11} /> : i + 1}
+              </div>
+              {i < PHASES.length - 1 && (
+                <div style={{ width: 20, height: 2, borderRadius: 999, background: i < phase ? "#16A34A" : BORDER, transition: "background .3s ease" }} />
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div style={{ fontSize: 10.5, color: "#B7B4C0", marginTop: 20 }}>Mohon tunggu, jangan tutup halaman ini.</div>
+      </div>
+    );
+  }
+
+  if (done && showSuccessAnim) {
+    return (
+      <div style={{
+        minHeight: "100vh", background: "#fff", fontFamily: FONT, display: "flex",
+        flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 28, textAlign: "center",
+      }}>
+        <div style={{ position: "relative", animation: "successPopBig .55s cubic-bezier(.19,1.28,.32,1.02) both" }}>
+          <SuccessLottieIcon size={340} />
+        </div>
+        <style>{`
+          @keyframes successPopBig{0%{opacity:0;transform:scale(.72) translateY(10px)}100%{opacity:1;transform:scale(1) translateY(0)}}
+        `}</style>
+      </div>
+    );
+  }
+
   if (done) {
     return (
-      <div style={{ minHeight: "100vh", background: BG, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 28, textAlign: "center" }}>
-          <div style={{
-            width: 96, height: 96, borderRadius: "50%", background: "linear-gradient(135deg, rgba(236,11,111,0.12), rgba(247,148,29,0.12))",
-            display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 22, position: "relative",
-          }}>
-            <Store size={40} color={PINK} />
-            <div style={{
-              position: "absolute", bottom: -2, right: -2, width: 30, height: 30, borderRadius: "50%",
-              background: "#16A34A", display: "flex", alignItems: "center", justifyContent: "center", border: "3px solid #fff",
-            }}>
-              <Check size={16} color="#fff" />
-            </div>
+      <div style={{ minHeight: "100svh", background: BG, fontFamily: FONT, display: "flex", flexDirection: "column", animation: "fadeIn .4s both" }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-start", padding: "40px 24px 12px", textAlign: "center" }}>
+          <div style={{ position: "relative", width: 380, height: 380, marginBottom: -36, display: "flex", alignItems: "center", justifyContent: "center", animation: "doneRise .5s cubic-bezier(.19,1.1,.32,1.02) both" }}>
+            <div style={{ position: "absolute", width: 210, height: 210, borderRadius: "50%", background: "rgba(236,11,111,0.07)", top: 48, left: 46, animation: "doneBlobA 6.5s ease-in-out infinite" }} />
+            <div style={{ position: "absolute", width: 168, height: 168, borderRadius: "50%", background: "rgba(247,148,29,0.08)", bottom: 48, right: 60, animation: "doneBlobB 7.5s ease-in-out infinite" }} />
+            <div style={{ position: "absolute", width: 108, height: 108, borderRadius: "50%", background: "rgba(255,194,14,0.09)", top: 70, right: 68, animation: "doneBlobA 8.5s ease-in-out infinite .4s" }} />
+            <img src="/marta/audit-outlet/success-outlet.png" alt="Outlet berhasil didaftarkan" style={{ position: "relative", width: 380, height: 380, objectFit: "contain", filter: "drop-shadow(0 14px 26px rgba(236,11,111,0.2))" }} />
           </div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: INK, marginBottom: 8 }}>Data Outlet<br />Berhasil Dikirim!</div>
-          <div style={{ fontSize: 13.5, color: MID, maxWidth: 280, marginBottom: 24 }}>
+
+          <div style={{ fontSize: 25, fontWeight: 800, color: INK, marginBottom: 7, letterSpacing: "-0.02em", animation: "doneUp .4s .12s both" }}>
+            Data Outlet<br />Berhasil Dikirim!
+          </div>
+          <div style={{ fontSize: 13.5, color: MID, maxWidth: 280, marginBottom: 22, lineHeight: 1.5, animation: "doneUp .4s .18s both" }}>
             Terima kasih, data outlet telah berhasil disimpan dalam sistem.
           </div>
-          <div style={{ width: "100%", maxWidth: 320, background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 14, padding: 16, textAlign: "left" }}>
-            <SummaryRow label="ID Outlet" value={idOutlet} />
-            <SummaryRow label="Nama Outlet" value={namaOutlet} />
-            <SummaryRow label="Tanggal" value={doneAt ? doneAt.toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : ""} last />
+
+          <div style={{
+            width: "100%", maxWidth: 320, background: "#fff", borderRadius: 18, padding: "6px 18px 4px",
+            textAlign: "left", boxShadow: "0 10px 30px rgba(20,18,28,0.08)", border: `1px solid ${BORDER}`,
+            animation: "doneUp .4s .24s both",
+          }}>
+            <div style={{
+              display: "flex", alignItems: "center", gap: 7, padding: "12px 0", fontSize: 13, fontWeight: 800,
+              color: "#6B6875", textTransform: "uppercase", letterSpacing: "0.03em",
+            }}>
+              <CheckCircle2 size={15} color="#16A34A" /> Ringkasan Pendaftaran
+            </div>
+            <div style={{ height: 1, background: BORDER, marginBottom: 4 }} />
+
+            {(selectedOutlet?.outlet_id_im3 || selectedOutlet?.outlet_id_3id) ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "13px 0", borderBottom: `1px solid ${BORDER}` }}>
+                {selectedOutlet?.outlet_id_im3 && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 9.5, fontWeight: 800, padding: "2.5px 7px", borderRadius: 999, background: YELLOW, color: "#5C4300" }}>IM3</span>
+                    <span style={{ fontSize: 13.5, fontWeight: 800, color: INK }}>{selectedOutlet.outlet_id_im3}</span>
+                  </div>
+                )}
+                {selectedOutlet?.outlet_id_im3 && selectedOutlet?.outlet_id_3id && <div style={{ width: 1, height: 14, background: BORDER }} />}
+                {selectedOutlet?.outlet_id_3id && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 9.5, fontWeight: 800, padding: "2.5px 7px", borderRadius: 999, background: PINK_DK, color: "#fff" }}>3ID</span>
+                    <span style={{ fontSize: 13.5, fontWeight: 800, color: INK }}>{selectedOutlet.outlet_id_3id}</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 0", borderBottom: `1px solid ${BORDER}` }}>
+                <div style={{ width: 28, height: 28, borderRadius: 9, background: "rgba(236,11,111,0.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <ScanBarcode size={14} color={PINK} />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 10.5, color: "#8A8795" }}>ID Outlet</div>
+                  <div style={{ fontSize: 13.5, fontWeight: 800, color: INK }}>{idOutlet}</div>
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 0", borderBottom: `1px solid ${BORDER}` }}>
+              <div style={{ width: 28, height: 28, borderRadius: 9, background: "rgba(247,148,29,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Store size={14} color={ORANGE} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 10.5, color: "#8A8795" }}>Nama Outlet</div>
+                <div style={{ fontSize: 13.5, fontWeight: 800, color: INK, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{namaOutlet || "-"}</div>
+              </div>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "13px 0" }}>
+              <div style={{ width: 28, height: 28, borderRadius: 9, background: "rgba(16,163,74,0.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Calendar size={14} color="#16A34A" />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 10.5, color: "#8A8795" }}>Tanggal</div>
+                <div style={{ fontSize: 13.5, fontWeight: 800, color: INK }}>
+                  {doneAt ? doneAt.toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : ""}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ width: "100%", maxWidth: 320, marginTop: 20, paddingBottom: "env(safe-area-inset-bottom)", display: "flex", animation: "doneUp .4s .3s both" }}>
+            <PrimaryBtn onClick={resetAll} full><ArrowLeft size={16} /> Daftar Outlet Lain</PrimaryBtn>
           </div>
         </div>
-        <div style={{ padding: 20 }}>
-          <PrimaryBtn onClick={resetAll} full>Isi Outlet Lain</PrimaryBtn>
-        </div>
+        <style>{`
+          @keyframes fadeIn{0%{opacity:0}100%{opacity:1}}
+          @keyframes doneUp{0%{opacity:0;transform:translateY(10px)}100%{opacity:1;transform:translateY(0)}}
+          @keyframes doneRise{0%{opacity:0;transform:scale(.82) translateY(6px)}100%{opacity:1;transform:scale(1) translateY(0)}}
+          @keyframes doneBlobA{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(8px,10px) scale(1.1)}}
+          @keyframes doneBlobB{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-7px,-9px) scale(1.12)}}
+        `}</style>
       </div>
     );
   }
@@ -1133,7 +1310,7 @@ export default function AuditOutletFormPage() {
                     onRemove={() => setEtalaseAt(i, null)} error={attempted1 && etalaseCount < 1 && !etalaseFiles[i]} />
                 ))}
               </div>
-              <PhotoGuide title="Panduan Foto Etalase Outlet" refs={refsFor("etalase")}
+              <PhotoGuide title="Panduan Foto Etalase Outlet" refs={refsFor("etalase")} onOpen={refetchRefPhotos}
                 desc="Foto etalase harus jelas dan fokus, mencakup seluruh produk dan materi promosi yang dipajang."
                 dos={["Seluruh etalase terlihat jelas", "Produk & materi promosi terlihat", "Foto fokus dan tidak blur", "Pencahayaan cukup"]}
                 donts={["Terlalu dekat (hanya sebagian)", "Gelap / blur", "Terhalang orang atau objek lain"]}
@@ -1149,7 +1326,7 @@ export default function AuditOutletFormPage() {
                   onPick={(e) => { const f = e.target.files?.[0]; if (f) setTapakFile(f); e.target.value = ""; }}
                   onRemove={() => setTapakFile(null)} error={attempted1 && !tapakFile} />
               </div>
-              <PhotoGuide title="Panduan Foto Tampak Depan Outlet" refs={refsFor("tapak_depan")}
+              <PhotoGuide title="Panduan Foto Tampak Depan Outlet" refs={refsFor("tapak_depan")} onOpen={refetchRefPhotos}
                 desc="Foto tampak depan harus diambil dari jarak yang cukup, sehingga seluruh fasad toko beserta lingkungan sekitarnya terlihat jelas."
                 dos={["Seluruh tampak depan outlet terlihat", "Nama outlet / signage terlihat jelas", "Lingkungan sekitar terlihat", "Foto fokus dan tidak blur", "Pencahayaan cukup"]}
                 donts={["Terlalu dekat (hanya sebagian)", "Sudut tidak lengkap (fasad tidak terlihat)", "Gelap / blur"]}
