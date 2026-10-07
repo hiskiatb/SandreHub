@@ -214,9 +214,18 @@ function Field({ label, required, optional, children }) {
   );
 }
 
+// `color` & `colorScheme` di-set eksplisit - SEBELUMNYA field ini gak
+// nentuin warna teks/placeholder sendiri, jadi browser mobile yg system-nya
+// dark mode (atau in-app WebView spt WhatsApp/Instagram yg ikut dark mode
+// device) bakal render teks input & placeholder jadi putih/abu terang di
+// atas background abu muda form ini - kebaca sangat tipis/gak kontras.
+// `colorScheme:"light"` maksa browser pakai skema terang utk kontrol form
+// (teks, placeholder, caret, UI native select/date) walau device-nya dark
+// mode, jadi kontrasnya konsisten di semua kondisi.
 const inputStyle = {
   width: "100%", boxSizing: "border-box", padding: "12px 14px", borderRadius: 11,
   border: `1.5px solid ${BORDER}`, fontSize: 16, fontFamily: FONT, outline: "none", background: "#FAFAFC",
+  color: INK, colorScheme: "light",
 };
 
 function BottomBar({ children }) {
@@ -955,7 +964,7 @@ function CameraCapture({ open, onClose, onCapture }) {
           transition: "transform .25s ease",
         }} />
       )}
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "18px 16px", display: "flex", justifyContent: "flex-end", zIndex: 2 }}>
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "calc(18px + env(safe-area-inset-top)) 16px 18px", display: "flex", justifyContent: "flex-end", zIndex: 2 }}>
         <button onClick={handleClose} style={{
           width: 38, height: 38, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.18)",
           color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
@@ -979,7 +988,7 @@ function CameraCapture({ open, onClose, onCapture }) {
           }}>Tutup</button>
         </div>
       ) : (
-        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "0 0 36px", display: "flex", justifyContent: "center", zIndex: 2 }}>
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "0 0 calc(36px + env(safe-area-inset-bottom))", display: "flex", justifyContent: "center", zIndex: 2 }}>
           <button onClick={handleShutter} disabled={!ready} style={{
             width: 72, height: 72, borderRadius: "50%", border: "4px solid #fff",
             background: ready ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.08)",
@@ -1467,7 +1476,20 @@ export default function AuditOutletFormPage() {
   }
 
   return (
-    <div style={{ minHeight: "100vh", background: BG, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
+    // position:fixed + inset:0 (bukan cuma minHeight:100vh biasa) - supaya
+    // <body> gak ikut jadi scroll container-nya. Sebelumnya body yg
+    // scroll, jadi pas standalone PWA di-scroll/rubber-band dikit aja,
+    // background <body> (yg di dark mode device = gelap/hampir hitam, lihat
+    // globals.css) sempat kesorot persis di belakang notch/status bar -
+    // itu salah satu sumber "bagian atas jadi dark" yg dilaporkan user,
+    // bukan cuma soal status-bar translucency iOS. Dengan div ini sendiri
+    // yg jadi scroll container (overflowY:auto + -webkit-overflow-scrolling
+    // utk momentum scroll iOS), gak ada lagi body yg kesorot - app ini
+    // kerasa penuh layar (fullscreen) & konsisten di semua ukuran device.
+    <div style={{
+      position: "fixed", inset: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "none",
+      background: BG, fontFamily: FONT, display: "flex", flexDirection: "column",
+    }}>
       <CameraCapture open={cameraOpen} onClose={handleCameraClose} onCapture={handleCameraCapture} />
       <div style={{ background: BRAND_GRADIENT, position: "sticky", top: 0, zIndex: 30 }}>
         <Header title={<HeaderTitle showInstall={showInstallButton} onInstallClick={handleInstallClick} installing={installingApp} />} />
