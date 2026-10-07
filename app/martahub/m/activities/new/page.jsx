@@ -33,7 +33,7 @@ import SiteTowerIcon from "../../_shared/SiteTowerIcon";
 import SitePickerSheet from "../../_shared/SitePickerSheet";
 import {
   resolveBranchUuid, fetchScopeSites, fetchPoiTypes, fetchActivityForEdit,
-  CATEGORIES, NETWORK_OPTIONS, AREA_OPTIONS, snake, syncActivitySites, planDateFields,
+  CATEGORIES, AUTO_NAME_CATEGORIES, NETWORK_OPTIONS, AREA_OPTIONS, snake, syncActivitySites, planDateFields,
   groupContiguousDates, syncTimesByDate, allDateTimesValid, planTimeFields, timesByDateFromActivity,
   APPROVER_ROLES, fetchAssignableGroups, resolveProfileIdByEmail,
   fetchSalesEntries, deleteSalesEntry,
@@ -834,7 +834,23 @@ function CreatePlanWizardInner() {
     );
   }
 
-  const toggleCategory = (c) => setCategories((prev) => (prev[0] === c ? [] : [c]));
+  // Kategori "DTU_*" (DTU_MKT/DTU_DSE/DTU_IS/DTU_PROMOTOR/DTU_OTHERS) -
+  // begitu DIPILIH (bukan dibatalkan), Nama Event otomatis diisi/ditimpa
+  // jadi "{KATEGORI}_{NamaBranch}" (permintaan user) - BUKAN cuma lewat
+  // campaign CMS, berlaku langsung di wizard biasa siapa pun yg klik
+  // kategori ini. Kalau nama branch belum ketahuan (mis. approver yg
+  // acting-for-nya belum dipilih), pakai nama kategorinya saja dulu
+  // (tanpa trailing underscore nyangkut kosong).
+  const toggleCategory = (c) => {
+    setCategories((prev) => {
+      const next = prev[0] === c ? [] : [c];
+      if (next.length && AUTO_NAME_CATEGORIES.includes(c)) {
+        const branch = effectiveScope.branchNameDisplay;
+        setEventName(branch ? `${c}_${branch}` : c);
+      }
+      return next;
+    });
+  };
 
   const validDates = dates.filter(Boolean);
 

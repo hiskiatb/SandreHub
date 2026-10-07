@@ -83,7 +83,13 @@ export async function fetchPoiTypes() {
   return data.map((r) => r.name);
 }
 
-export const CATEGORIES = ["Direct Selling", "Open Booth", "Sponsorship", "Thematic", "Joint Event", "Project"];
+export const CATEGORIES = ["Direct Selling", "Open Booth", "Sponsorship", "Thematic", "Joint Event", "Project", "DTU_MKT", "DTU_DSE", "DTU_IS", "DTU_PROMOTOR", "DTU_OTHERS"];
+// 5 kategori "DTU_*" (Oktober) - beda dari kategori lain di atas: begitu
+// DSF/DMO klik salah satunya di Step 1 (toggleCategory di
+// activities/new/page.jsx), Nama Event otomatis diisi/ditimpa jadi
+// "{KATEGORI}_{NamaBranch}" (lihat toggleCategory). Dipakai juga utk
+// nge-cek "apakah kategori ini salah satu dari 5 kategori auto-nama ini".
+export const AUTO_NAME_CATEGORIES = ["DTU_MKT", "DTU_DSE", "DTU_IS", "DTU_PROMOTOR", "DTU_OTHERS"];
 export const NETWORK_OPTIONS = ["Strong", "Medium", "Weak"];
 export const AREA_OPTIONS = ["High", "Medium", "Low"];
 

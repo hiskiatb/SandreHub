@@ -1590,7 +1590,13 @@ export default function AuditOutletFormPage() {
     // utk momentum scroll iOS), gak ada lagi body yg kesorot - app ini
     // kerasa penuh layar (fullscreen) & konsisten di semua ukuran device.
     <div style={{
-      position: "fixed", inset: 0, height: "100dvh", overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "none",
+      // height:"100dvh" eksplisit DIHAPUS - sempat ditambahkan sbg "extra
+      // safety" tapi di sejumlah device malah bisa mismatch tipis dgn
+      // inset:0 (beda engine menghitung dvh vs inset), ninggalin gap
+      // kecil di bawah BottomBar yg nunjukin background di belakangnya.
+      // inset:0 SENDIRI sudah cukup & paling reliable (position:fixed
+      // selalu dihitung relatif viewport asli, gak perlu height manual).
+      position: "fixed", inset: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "none",
       background: BG, fontFamily: FONT, display: "flex", flexDirection: "column",
     }}>
       {/* Jaring pengaman: <html>/<body> global (globals.css) punya

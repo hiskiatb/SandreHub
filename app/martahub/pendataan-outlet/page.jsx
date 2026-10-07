@@ -19,12 +19,12 @@
  *      cocok ke ID IM3 ATAU ID 3ID.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, CheckCircle2, ClipboardList, Download, Image as ImageIcon, Loader2, Package, RefreshCw, Search, Store, Upload, UploadCloud, X, XCircle } from "lucide-react";
+import { Check, CheckCircle2, ClipboardList, Download, Image as ImageIcon, Loader2, Package, RefreshCw, Search, Store, Trash2, Upload, UploadCloud, X, XCircle } from "lucide-react";
 import MartaShell, { T } from "../components/MartaShell";
 import { readWorkbook, deriveTable } from "../../../lib/martaSiteImport";
 import { passesRow, optionsFor, FilterTh, FilterMenu } from "../../dashboard/components/MFTS_TableFilter";
 import {
-  aoExportList, aoGetRadiusSetting, aoImportOutletMaster, aoListOutlets, aoListPhotos,
+  aoDeleteSubmissions, aoExportList, aoGetRadiusSetting, aoImportOutletMaster, aoListOutlets, aoListPhotos,
   aoListReferencePhotos, aoListSubmissions, aoPublicUrl, aoSetRadiusSetting,
   aoUpdateReferencePhotoLabel, aoUploadReferencePhoto,
 } from "../../../lib/ao";
@@ -106,6 +106,7 @@ function Btn({ children, onClick, disabled, variant = "primary", ...rest }) {
   const styles = {
     primary: { background: disabled ? "#D8D6DF" : `linear-gradient(135deg, ${T.primary}, ${T.primaryD})`, color: "#fff" },
     ghost: { background: "#fff", color: T.hi, border: `1px solid ${BORDER}` },
+    danger: { background: disabled ? "#D8D6DF" : "#DC2626", color: "#fff" },
   };
   return <button onClick={onClick} disabled={disabled} style={{ ...base, ...styles[variant] }} {...rest}>{children}</button>;
 }
@@ -212,6 +213,13 @@ function SubmissionBody() {
   const [openCol, setOpenCol] = useState("");
   const [rect, setRect] = useState(null);
 
+  // Select-all + delete massal - Set berisi id submission yg dicentang.
+  // Direset tiap kali hasil filter/search berubah (lihat useEffect bawah)
+  // supaya gak ada centang "nyangkut" ke baris yg sudah gak kelihatan lagi
+  // krn filter berubah.
+  const [selected, setSelected] = useState(() => new Set());
+  const [deleting, setDeleting] = useState(false);
+
   // Radius toleransi (meter) utk "Radius Score" - setting bersama (bukan
   // per-browser) krn disimpan di DB (ao_settings), supaya semua admin CMS
   // lihat & pakai angka yg sama. radiusInput = draft yg lagi diketik admin
@@ -271,6 +279,40 @@ function SubmissionBody() {
 
   const filtered = useMemo(() => searched.filter((r) => passesRow(r, filters, SUB_FCOLS, null)), [searched, filters]);
   const anyFilter = SUB_FCOLS.some(([k]) => (filters[k] || []).length);
+
+  // Reset centang begitu daftar yg tampil berubah (search/filter baru,
+  // atau reload) - centang yg "nyangkut" ke baris yg sudah gak kelihatan
+  // (tersaring keluar) bikin delete massal ngehapus baris yg gak keliatan
+  // user, bahaya.
+  useEffect(() => { setSelected(new Set()); }, [filtered.length === 0 ? "empty" : filtered.map((r) => r.id).join(",")]);
+
+  const allSelected = filtered.length > 0 && filtered.every((r) => selected.has(r.id));
+  const toggleSelectAll = () => {
+    setSelected(allSelected ? new Set() : new Set(filtered.map((r) => r.id)));
+  };
+  const toggleSelectOne = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const deleteSelected = async () => {
+    const ids = Array.from(selected);
+    if (!ids.length) return;
+    if (!confirm(`Hapus ${ids.length} submission terpilih? Foto-fotonya juga akan ikut terhapus permanen dari storage. Tindakan ini tidak bisa dibatalkan.`)) return;
+    setDeleting(true);
+    try {
+      await aoDeleteSubmissions(ids);
+      setSelected(new Set());
+      await load();
+    } catch (e) {
+      alert("Gagal menghapus submission: " + (e.message || e));
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const uniq = (rows, k) => new Set(rows.map((r) => String(r[k] ?? "").trim()).filter(Boolean)).size;
   const sumCount = (rows, k) => rows.reduce((n, r) => n + Number(r[k] || 0), 0);
@@ -476,6 +518,11 @@ function SubmissionBody() {
           </span>
         )}
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          {selected.size > 0 && (
+            <Btn variant="danger" onClick={deleteSelected} disabled={deleting}>
+              {deleting ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={14} />} Hapus ({selected.size})
+            </Btn>
+          )}
           <Btn variant="ghost" onClick={load}><RefreshCw size={13} /></Btn>
           <Btn variant="ghost" onClick={exportXlsx} disabled={filtered.length === 0 || exporting}>
             {exporting ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={14} />} Export .xlsx
@@ -502,6 +549,10 @@ function SubmissionBody() {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, whiteSpace: "nowrap" }}>
           <thead>
             <tr style={{ background: "#F7F9FC", color: T.lo }}>
+              <th style={{ padding: "9px 10px", width: 1 }}>
+                <input type="checkbox" checked={allSelected} onChange={toggleSelectAll}
+                  style={{ width: 15, height: 15, cursor: "pointer" }} aria-label="Pilih semua" />
+              </th>
               {SUB_COLUMNS.map((c) => (
                 SUB_FCOLS.some(([k]) => k === c.key) ? (
                   <FilterTh key={c.key} t={SUB_FT_T} label={c.label} colKey={c.key} filters={filters}
@@ -515,17 +566,21 @@ function SubmissionBody() {
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={SUB_COLUMNS.length + 1} style={{ padding: 34, textAlign: "center", color: T.lo }}>
+              <tr><td colSpan={SUB_COLUMNS.length + 2} style={{ padding: 34, textAlign: "center", color: T.lo }}>
                 <Loader2 size={20} style={{ animation: "spin 1s linear infinite" }} />
               </td></tr>
             )}
             {!loading && filtered.length === 0 && (
-              <tr><td colSpan={SUB_COLUMNS.length + 1} style={{ padding: 34, textAlign: "center", color: T.lo, fontSize: 13 }}>
+              <tr><td colSpan={SUB_COLUMNS.length + 2} style={{ padding: 34, textAlign: "center", color: T.lo, fontSize: 13 }}>
                 {rawRows.length === 0 ? "Belum ada submission." : "Tidak ada data yang cocok filter/pencarian."}
               </td></tr>
             )}
             {!loading && filtered.map((s) => (
-              <tr key={s.id} style={{ borderTop: `1px solid ${BORDER}` }}>
+              <tr key={s.id} style={{ borderTop: `1px solid ${BORDER}`, background: selected.has(s.id) ? "#FEF2F2" : undefined }}>
+                <td style={{ padding: "8px 10px" }}>
+                  <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggleSelectOne(s.id)}
+                    style={{ width: 15, height: 15, cursor: "pointer" }} aria-label={`Pilih ${s.nama_outlet || s.id_outlet || ""}`} />
+                </td>
                 {SUB_COLUMNS.map((c) => {
                   const v = s[c.key];
                   const mono = c.key === "id_outlet";

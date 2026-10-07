@@ -4,10 +4,15 @@ export const metadata = {
   manifest: "/marta/audit-outlet/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    // "black-translucent" - sama pola dgn app/martahub/m/layout.jsx, biar
-    // status bar iOS transparan & gradient Header nutup sampai belakang
-    // notch (dipadukan padding env(safe-area-inset-top) di Header).
-    statusBarStyle: "black-translucent",
+    // "black" (OPAQUE, bukan "black-translucent") - sebelumnya translucent
+    // bikin status bar nunjukin gradient Header di belakangnya, TAPI iOS
+    // nambahin scrim/overlay legibility yg warnanya IKUT ADAPT ke light/
+    // dark mode device (gelap pas device dark mode, pucat/putih pas device
+    // light mode) - user gak mau warnanya ikut2an berubah begitu. "black"
+    // = status bar SELALU solid hitam polos, konsisten di light/dark mode
+    // apapun, gak nyambung ke konten di belakangnya sama sekali (viewport
+    // konten otomatis dimulai di bawah status bar, bukan di belakangnya).
+    statusBarStyle: "black",
     title: "Pendataan Outlet",
   },
   icons: {
