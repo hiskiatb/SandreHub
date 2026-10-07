@@ -990,10 +990,12 @@ export default function SubmitActualPage() {
       // update ini tidak DIAM-DIAM tersaring RLS (0 baris berubah, tanpa
       // error krn update ini tidak pakai .select()) - lihat catatan lengkap
       // di submit().
-      if (activity?.plan_source === "cms_import") {
-        const { error: claimErr } = await supabaseMarta.rpc("mh_claim_activity_if_unclaimed", { p_activity_id: activityId });
-        if (claimErr) throw new Error(claimErr.message || "Plan ini belum ter-assign ke akun manapun - hubungi admin/SPM Sumatera.");
-      }
+      // Selalu panggil (bukan cuma utk cms_import) - RPC-nya sendiri sudah
+      // aman: diam saja / tidak mengubah apapun kalau plan memang bukan
+      // "slot kosong" atau "plan limpahan" yg pemiliknya sudah pindah
+      // branch/brand lain (lihat definisi mh_claim_activity_if_unclaimed).
+      const { error: claimErr } = await supabaseMarta.rpc("mh_claim_activity_if_unclaimed", { p_activity_id: activityId });
+      if (claimErr) throw new Error(claimErr.message || "Plan ini belum ter-assign ke akun manapun - hubungi admin/SPM Sumatera.");
       const nowIso = new Date().toISOString();
       const { data: updated, error } = await supabaseMarta.from("mh_activities").update({
         cost_actual: costActual ? Number(costActual) || 0 : null,
@@ -1054,10 +1056,12 @@ export default function SubmitActualPage() {
       // laporannya salah, tapi krn akun ybs belum berwenang nulis ke baris
       // ini sama sekali. Sama persis dgn perbaikan di wizard Buat/Edit
       // Plan (activities/new/page.jsx) - lihat catatan di sana.
-      if (activity?.plan_source === "cms_import") {
-        const { error: claimErr } = await supabaseMarta.rpc("mh_claim_activity_if_unclaimed", { p_activity_id: activityId });
-        if (claimErr) throw new Error(claimErr.message || "Plan ini belum ter-assign ke akun manapun - hubungi admin/SPM Sumatera.");
-      }
+      // Selalu panggil (bukan cuma utk cms_import) - RPC-nya sendiri sudah
+      // aman: diam saja / tidak mengubah apapun kalau plan memang bukan
+      // "slot kosong" atau "plan limpahan" yg pemiliknya sudah pindah
+      // branch/brand lain (lihat definisi mh_claim_activity_if_unclaimed).
+      const { error: claimErr } = await supabaseMarta.rpc("mh_claim_activity_if_unclaimed", { p_activity_id: activityId });
+      if (claimErr) throw new Error(claimErr.message || "Plan ini belum ter-assign ke akun manapun - hubungi admin/SPM Sumatera.");
       const actualSp = effectiveQty("sp");
       const actualFwa = effectiveQty("fwa");
       // Kolom baru per-brand (im3/tri) - scalar actual_sp/actual_fwa di atas

@@ -114,6 +114,35 @@ export default function ActivityDetailPage() {
         if (e1) throw e1;
         if (!alive) return;
         setA(act);
+
+        // Self-heal kepemilikan: kalau activity ini "plan limpahan" yg
+        // sudah ditarik ke branch/brand akun ybs (mh_apply_activity_branch_
+        // reconcile cuma pindahin branch_id, TIDAK ikut pindahin bme_user_id
+        // /created_by - lihat investigasi error PGRST116 "Cannot coerce..."
+        // & "akun blm berwenang mengedit plan ini", 2026-10-07) tapi
+        // kepemilikannya masih nyangkut di pemilik lama, tombol Edit/Hapus
+        // Plan di bawah (digate `a.created_by === userId`) jadi tidak
+        // pernah muncul utk DSF yg SEKARANG menangani branch ini - padahal
+        // RPC-nya sendiri sudah dibuat aman (no-op kalau memang bukan
+        // haknya, lihat definisi mh_claim_activity_if_unclaimed). Coba
+        // klaim di sini juga (bukan cuma di wizard Edit/Submit) supaya
+        // tombolnya langsung muncul begitu DSF yg benar membuka halaman
+        // ini - best-effort, tidak menghalangi render halaman kalau gagal.
+        if (act && userId && act.created_by !== userId && act.bme_user_id !== userId) {
+          supabaseMarta.rpc("mh_claim_activity_if_unclaimed", { p_activity_id: activityId })
+            .then(({ error: claimErr }) => {
+              if (claimErr || !alive) return;
+              return supabaseMarta.from("mh_activities").select("bme_user_id,created_by").eq("id", activityId).maybeSingle();
+            })
+            .then((res) => {
+              const fresh = res?.data;
+              if (alive && fresh && (fresh.created_by === userId || fresh.bme_user_id === userId)) {
+                setA((prev) => (prev ? { ...prev, ...fresh } : prev));
+              }
+            })
+            .catch(() => { /* best-effort - biarkan halaman tetap read-only kalau gagal */ });
+        }
+
         setExtraSites((sites || []).map((s) => s.site_id));
         setEntries(sales || []);
         setEditReqs(edits || []);
