@@ -692,20 +692,31 @@ function OutletPicker({ outlets, loading, loaded, value, onChange, error }) {
           }}>
             <div style={{
               display: "flex", alignItems: "center", gap: 10,
-              padding: "calc(12px + env(safe-area-inset-top)) 14px 12px",
-              borderBottom: `1px solid ${BORDER}`, flexShrink: 0,
+              // Jarak atas ditambah (24px, bukan 12px) - sebelumnya search
+              // box ketarik terlalu nempel ke status bar, kerasa sempit.
+              padding: "calc(24px + env(safe-area-inset-top)) 14px 14px",
+              borderBottom: `1px solid ${BORDER}`, flexShrink: 0, background: "#fff",
             }}>
               <button onClick={() => { setOpen(false); setQ(""); }} aria-label="Tutup"
-                style={{ width: 34, height: 34, borderRadius: 9, border: "none", background: "#F4F3F7", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer" }}>
+                style={{ width: 36, height: 36, borderRadius: 10, border: "none", background: "#F4F3F7", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer" }}>
                 <ChevronLeft size={19} color={INK} />
               </button>
               <div style={{ position: "relative", flex: 1 }}>
-                <Search size={15} color={MID} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+                <Search size={16} color={MID} style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }} />
+                {/* color + colorScheme eksplisit - sama alasannya spt
+                    inputStyle: tanpa ini teks & placeholder kebaca putih/
+                    pudar di device dark mode, gak kontras di atas background
+                    abu muda field ini. */}
                 <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari ID Outlet, nama, cabang..."
-                  style={{ width: "100%", boxSizing: "border-box", padding: "11px 12px 11px 34px", borderRadius: 11, border: `1.5px solid ${BORDER}`, fontSize: 16, fontFamily: FONT, outline: "none", background: "#FAFAFC" }} />
+                  style={{
+                    width: "100%", boxSizing: "border-box", padding: "12px 14px 12px 36px", borderRadius: 12,
+                    border: `1.5px solid ${BORDER}`, fontSize: 15.5, fontFamily: FONT, outline: "none",
+                    background: "#FAFAFC", color: INK, colorScheme: "light",
+                    boxShadow: "0 2px 6px rgba(20,18,28,0.04)",
+                  }} />
                 {q && (
                   <button onClick={() => setQ("")} aria-label="Hapus pencarian"
-                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", width: 22, height: 22, borderRadius: "50%", border: "none", background: BORDER, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                    style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", width: 22, height: 22, borderRadius: "50%", border: "none", background: BORDER, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
                     <X size={12} color={MID} />
                   </button>
                 )}
@@ -865,10 +876,33 @@ function CameraCapture({ open, onClose, onCapture }) {
   const [cameraErr, setCameraErr] = useState("");
   const [ready, setReady] = useState(false);
   const [angle, setAngle] = useState(0); // 0/90/180/270 - rotasi utk kompensasi preview & capture
+  // Hasil jepretan ditahan dulu di sini (preview) - BELUM langsung dikirim
+  // ke parent via onCapture. User wajib konfirmasi "Gunakan Foto" dulu,
+  // atau "Ambil Ulang" kalau hasilnya miring/kurang pas (lihat permintaan
+  // user). Stream kamera TIDAK dimatikan saat preview supaya "Ambil Ulang"
+  // instan tanpa perlu minta izin kamera ulang.
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const previewFileRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
-    const updateAngle = () => setAngle(getScreenAngle());
+    const updateAngle = () => {
+      let a = getScreenAngle();
+      // Fallback utk WebView yg API screen.orientation-nya gak akurat
+      // (laporan user: sejumlah in-app browser chat spt WhatsApp/Messenger/
+      // Instagram gak update `angle` walau device udah diputar ke
+      // landscape) - kalau API bilang tegak (0/180) padahal window jelas2
+      // lebih lebar dari tinggi (landscape), paksa anggap 90° supaya
+      // kompensasi rotasi TETAP jalan (prioritas: foto gak boleh miring,
+      // drpd ikut info API yg salah).
+      const dimLandscape = window.innerWidth > window.innerHeight;
+      if (dimLandscape && (a === 0 || a === 180)) a = 90;
+      if (!dimLandscape && (a === 90 || a === 270) && window.innerHeight <= window.innerWidth) {
+        // kebalikannya (API bilang landscape tp window jelas potrait) - abaikan API, anggap tegak
+        a = 0;
+      }
+      setAngle(a);
+    };
     updateAngle();
     window.screen?.orientation?.addEventListener?.("change", updateAngle);
     window.addEventListener("orientationchange", updateAngle);
@@ -883,7 +917,7 @@ function CameraCapture({ open, onClose, onCapture }) {
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setCameraErr(""); setReady(false);
+    setCameraErr(""); setReady(false); setPreviewUrl(null); previewFileRef.current = null;
     const start = async () => {
       try {
         if (!navigator.mediaDevices?.getUserMedia) {
@@ -915,11 +949,18 @@ function CameraCapture({ open, onClose, onCapture }) {
     return () => {
       cancelled = true;
       if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
+      setPreviewUrl((u) => { if (u) URL.revokeObjectURL(u); return null; });
     };
   }, [open]);
 
-  const handleClose = () => {
+  const stopStream = () => {
     if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
+  };
+
+  const handleClose = () => {
+    stopStream();
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null); previewFileRef.current = null;
     onClose();
   };
 
@@ -945,10 +986,27 @@ function CameraCapture({ open, onClose, onCapture }) {
     canvas.toBlob((blob) => {
       if (!blob) return;
       const file = new File([blob], `foto-${Date.now()}.jpg`, { type: "image/jpeg" });
-      if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
-      onCapture(file);
+      previewFileRef.current = file;
+      setPreviewUrl(URL.createObjectURL(blob));
     }, "image/jpeg", 0.92);
   };
+
+  const handleRetake = () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    previewFileRef.current = null;
+  };
+
+  const handleUsePhoto = () => {
+    const file = previewFileRef.current;
+    stopStream();
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl(null);
+    previewFileRef.current = null;
+    if (file) onCapture(file);
+  };
+
+  const isLandscape = angle === 90 || angle === 270;
 
   if (!open) return null;
   return (
@@ -957,17 +1015,41 @@ function CameraCapture({ open, onClose, onCapture }) {
       display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
       overflow: "hidden",
     }}>
-      {!cameraErr && (
+      {!cameraErr && !previewUrl && (
         <video ref={videoRef} playsInline muted style={{
           width: "100%", height: "100%", objectFit: "cover", position: "absolute", inset: 0,
           transform: `rotate(${-angle}deg)`,
           transition: "transform .25s ease",
         }} />
       )}
-      <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "calc(18px + env(safe-area-inset-top)) 16px 18px", display: "flex", justifyContent: "flex-end", zIndex: 2 }}>
+      {/* Preview hasil jepretan - full-screen, ikut konfirmasi "Gunakan
+          Foto" / "Ambil Ulang" sebelum benar2 dikirim ke form. */}
+      {previewUrl && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={previewUrl} alt="Pratinjau foto" style={{
+          width: "100%", height: "100%", objectFit: "contain", position: "absolute", inset: 0, background: "#000",
+        }} />
+      )}
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "calc(18px + env(safe-area-inset-top)) 16px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", zIndex: 2 }}>
+        {/* Badge indikator orientasi - biar user tau kamera ini udah
+            kedeteksi landscape atau belum, bukan cuma nebak2 dari hasil
+            fotonya nanti. Icon ikut ngikutin bentuk persegi yg di-rotate
+            sesuai sudut terdeteksi. */}
+        {!cameraErr && !previewUrl ? (
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px 6px 8px", borderRadius: 999,
+            background: "rgba(255,255,255,0.16)", color: "#fff", fontSize: 11.5, fontWeight: 700,
+          }}>
+            <span style={{
+              width: 14, height: 10, border: "1.6px solid #fff", borderRadius: 2.5, display: "inline-block",
+              transform: `rotate(${isLandscape ? 90 : 0}deg)`, transition: "transform .25s ease",
+            }} />
+            {isLandscape ? "Landscape" : "Potret"}
+          </div>
+        ) : <span />}
         <button onClick={handleClose} style={{
           width: 38, height: 38, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.18)",
-          color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+          color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0,
         }}>
           <X size={20} />
         </button>
@@ -986,6 +1068,27 @@ function CameraCapture({ open, onClose, onCapture }) {
             padding: "10px 22px", borderRadius: 999, border: "none", background: "#fff", color: "#14121C",
             fontSize: 13, fontWeight: 700, cursor: "pointer",
           }}>Tutup</button>
+        </div>
+      ) : previewUrl ? (
+        <div style={{
+          position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 2,
+          padding: "16px 20px calc(20px + env(safe-area-inset-bottom))",
+          display: "flex", gap: 10, background: "linear-gradient(0deg, rgba(0,0,0,0.6), rgba(0,0,0,0))",
+        }}>
+          <button onClick={handleRetake} style={{
+            flex: 1, padding: "13px 16px", borderRadius: 12, border: "1.5px solid rgba(255,255,255,0.4)",
+            background: "rgba(255,255,255,0.08)", color: "#fff", fontWeight: 700, fontSize: 14, fontFamily: FONT,
+            cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+          }}>
+            Ambil Ulang
+          </button>
+          <button onClick={handleUsePhoto} style={{
+            flex: 1, padding: "13px 16px", borderRadius: 12, border: "none",
+            background: PINK, color: "#fff", fontWeight: 800, fontSize: 14, fontFamily: FONT,
+            cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+          }}>
+            <Check size={16} strokeWidth={3} /> Gunakan Foto
+          </button>
         </div>
       ) : (
         <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "0 0 calc(36px + env(safe-area-inset-bottom))", display: "flex", justifyContent: "center", zIndex: 2 }}>
@@ -1487,9 +1590,20 @@ export default function AuditOutletFormPage() {
     // utk momentum scroll iOS), gak ada lagi body yg kesorot - app ini
     // kerasa penuh layar (fullscreen) & konsisten di semua ukuran device.
     <div style={{
-      position: "fixed", inset: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "none",
+      position: "fixed", inset: 0, height: "100dvh", overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "none",
       background: BG, fontFamily: FONT, display: "flex", flexDirection: "column",
     }}>
+      {/* Jaring pengaman: <html>/<body> global (globals.css) punya
+          background GELAP (var(--background) #0a0a0a) di dark mode device -
+          kalau container fixed di atas ini ternyata gak pas 100% nutup
+          tinggi viewport asli (beda hitungan "layout viewport" vs "visual
+          viewport" di sejumlah device/browser versi iOS pas PWA standalone),
+          bagian yg "bocor" di bawah/atasnya bakal nunjukin hitam pekat body
+          itu - persis laporan user "bagian bawahnya hitam". Override
+          html/body jadi warna BG form ini (cuma aktif selagi halaman ini
+          ke-mount) supaya walau ada gap sekecil apapun, yg kelihatan tetap
+          senada BG form, bukan hitam. */}
+      <style>{`html, body { background: ${BG} !important; }`}</style>
       <CameraCapture open={cameraOpen} onClose={handleCameraClose} onCapture={handleCameraCapture} />
       <div style={{ background: BRAND_GRADIENT, position: "sticky", top: 0, zIndex: 30 }}>
         <Header title={<HeaderTitle showInstall={showInstallButton} onInstallClick={handleInstallClick} installing={installingApp} />} />
