@@ -125,12 +125,27 @@ function Header({ title }) {
       // padding-top dipadukan env(safe-area-inset-top) - gradient (wrapper
       // pembungkus di pemanggil) jadi ikut menutup sampai belakang notch/
       // status bar iOS, bukan berhenti kelihatan putih di atasnya lagi.
-      padding: "calc(24px + env(safe-area-inset-top)) 18px 10px",
-      display: "flex", alignItems: "center", gap: 14,
+      //
+      // fontSize di SINI jadi satu-satunya "dial" skala header (logo +
+      // judul dikunci proporsional ke dial yg SAMA via unit `em`, lihat
+      // HeaderTitle & <img> di bawah) - SEBELUMNYA logo & judul masing2
+      // pakai clamp() terpisah dgn koefisien vw beda, jadi di lebar layar
+      // tertentu salah satu udah mentok max duluan sementara yg lain
+      // belum, kelihatan gak proporsional/gak seimbang (laporan user).
+      // Dgn 1em = fontSize di sini, logo (height dlm em) & judul
+      // (fontSize:"1em", inherit) PASTI menyusut/membesar bareng di rasio
+      // yg sama persis, berapa pun lebar layarnya.
+      fontSize: "clamp(13px, 4.6vw, 19px)",
+      padding: "calc(24px + env(safe-area-inset-top)) 16px 10px",
+      display: "flex", alignItems: "center", gap: "0.55em",
     }}>
       <div style={{ flex: 1, minWidth: 0 }}>{title}</div>
+      {/* height dlm `em` (bukan clamp px sendiri) - rasio ke judul
+          (58/19 ≈ 3.05) persis sama kayak desain awal, tapi sekarang ikut
+          skala fontSize Header di atas, jadi logo & judul SELALU
+          proporsional bareng pada lebar layar berapa pun. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/audit-outlet/indosat-logo-white.png" alt="Indosat Ooredoo Hutchison" style={{ height: 58, width: "auto", display: "block", flexShrink: 0 }} />
+      <img src="/audit-outlet/indosat-logo-white.png" alt="Indosat Ooredoo Hutchison" style={{ height: "3.05em", width: "auto", display: "block", flexShrink: 0 }} />
     </div>
   );
 }
@@ -143,12 +158,29 @@ function Header({ title }) {
  * sebelumnya kejauhan dari judul & kurang nyambung sebagai 1 kelompok. */
 function HeaderTitle({ showInstall, onInstallClick, installing }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+    // minWidth:0 di container LUAR juga wajib - tanpa ini flex item gak
+    // pernah bisa menyusut lebih kecil dari ukuran konten alaminya, jadi
+    // ellipsis di bawah gak pernah kepakai & malah ikut dorong layout
+    // (sumber "NSA Retail Competition" + tombol install kepepet/ketutup
+    // di layar sempit).
+    <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
       <span style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.85)", letterSpacing: 0.6, textTransform: "uppercase" }}>
         Form Pendaftaran
       </span>
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <span style={{ fontSize: 19, fontWeight: 800, color: "#fff", lineHeight: 1.2, letterSpacing: 0.1 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+        {/* fontSize clamp() - otomatis mengecil di layar sempit (bukan
+            ukuran tetap 19px yg gampang mepet/ke-wrap), dipadukan
+            overflow:hidden + ellipsis sbg jaring pengaman terakhir kalau
+            layar BENAR2 sempit (mis. split-screen) supaya tetap 1 baris,
+            gak pernah turun ke baris ke-2 atau dorong tombol install keluar. */}
+        {/* fontSize:"1em" - inherit dari fontSize Header (lihat
+            komentar di komponen Header), BUKAN clamp() sendiri lagi,
+            supaya skalanya PASTI lockstep sama logo, gak ada lagi titik
+            dimana salah satu mentok max duluan drpd yg lain. */}
+        <span style={{
+          fontSize: "1em", fontWeight: 800, color: "#fff", lineHeight: 1.2, letterSpacing: 0.1,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0,
+        }}>
           NSA Retail Competition
         </span>
         {showInstall && (
@@ -229,12 +261,24 @@ const inputStyle = {
 };
 
 function BottomBar({ children }) {
+  // position:"fixed" (bukan "sticky" di dalam container scroll custom) -
+  // biar kotak putih ini ANCHOR LANGSUNG ke bawah viewport asli, gak
+  // bergantung sama tinggi container pembungkusnya (yg di iOS PWA kadang
+  // kepotong dikit px dari viewport sebenarnya). Jarak amannya (notch/home
+  // indicator) ditaruh sbg padding internal di SINI saja - kotak putihnya
+  // sendiri tetap full lengket ke tepi paling bawah layar, cuma TOMBOL di
+  // dalamnya yg digeser naik dikit via padding-bottom.
   return (
     <div style={{
-      position: "sticky", bottom: 0, background: "#fff", borderTop: `1px solid ${BORDER}`, display: "flex", gap: 10,
-      padding: "16px 20px calc(16px + env(safe-area-inset-bottom))",
+      position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 40,
+      background: "#fff", borderTop: `1px solid ${BORDER}`,
     }}>
-      {children}
+      <div style={{
+        maxWidth: 480, margin: "0 auto", display: "flex", gap: 10,
+        padding: "16px 20px calc(16px + env(safe-area-inset-bottom))",
+      }}>
+        {children}
+      </div>
     </div>
   );
 }
@@ -1132,6 +1176,29 @@ export default function AuditOutletFormPage() {
     window.addEventListener("beforeinstallprompt", onBeforeInstall);
     return () => window.removeEventListener("beforeinstallprompt", onBeforeInstall);
   }, []);
+  // Tinggi viewport REAL (px) - khusus utk jaga BottomBar "lengket" pas di
+  // iOS PWA standalone. inset:0 / 100dvh kadang kepotong dikit sama area
+  // home-indicator/layout-vs-visual-viewport WebKit (Android gak kena ini
+  // sama sekali), jadi ninggalin gap tipis di bawah BottomBar. window.
+  // visualViewport.height adalah satu2nya angka yg akurat beneran di iOS -
+  // dipakai utk set height eksplisit (px) pada container root, gak cuma
+  // andalkan inset:0 yg "auto-stretch".
+  const [vh, setVh] = useState(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const vv = window.visualViewport;
+    const update = () => setVh(vv ? vv.height : window.innerHeight);
+    update();
+    vv?.addEventListener("resize", update);
+    window.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update);
+    return () => {
+      vv?.removeEventListener("resize", update);
+      window.removeEventListener("resize", update);
+      window.removeEventListener("orientationchange", update);
+    };
+  }, []);
+
   const handleInstallClick = async () => {
     if (isIOS) { setShowIOSGuide(true); return; }
     if (!installPrompt) return;
@@ -1236,19 +1303,35 @@ export default function AuditOutletFormPage() {
   const [gpsLng, setGpsLng] = useState(null);
   const [gpsLocating, setGpsLocating] = useState(false);
   const [gpsError, setGpsError] = useState("");
+  // Longlat ini WAJIB akurat (dipakai validasi radius vs outlet terpilih),
+  // jadi kalau gagal/ditolak TIDAK boleh cuma diam nunggu sender nge-tap
+  // "Coba lagi" manual - otomatis di-retry tiap beberapa detik sampai
+  // berhasil. Request browser permission yg BENAR2 di-block permanen
+  // ("Never allow") memang tidak akan memunculkan prompt baru dari JS
+  // (batasan keamanan browser, bukan sesuatu yg bisa dipaksa dari sini),
+  // tapi retry berkala ini tetap otomatis "nangkep" begitu sender ubah
+  // izinnya lewat Settings browser tanpa perlu reload halaman - dan utk
+  // error sementara (timeout/sinyal GPS lemah) langsung ke-retry sendiri
+  // tanpa butuh aksi apa pun dari sender.
+  const gpsRetryTimerRef = useRef(null);
 
   const captureGps = () => {
+    clearTimeout(gpsRetryTimerRef.current);
     if (!navigator.geolocation) { setGpsError("Browser ini tidak mendukung GPS."); return; }
     setGpsLocating(true); setGpsError("");
     navigator.geolocation.getCurrentPosition(
       (pos) => { setGpsLat(pos.coords.latitude); setGpsLng(pos.coords.longitude); setGpsLocating(false); },
-      () => { setGpsError("Gagal mengambil lokasi. Pastikan izin lokasi diaktifkan."); setGpsLocating(false); },
+      () => {
+        setGpsError("Gagal mengambil lokasi. Pastikan izin lokasi diaktifkan.");
+        setGpsLocating(false);
+        gpsRetryTimerRef.current = setTimeout(captureGps, 5000);
+      },
       { enableHighAccuracy: true, timeout: 12000 }
     );
   };
   // Dicoba sekali otomatis saat form dibuka - supaya sender tidak perlu tap
   // apa2, cukup izinkan permission browser saat diminta.
-  useEffect(() => { captureGps(); }, []);
+  useEffect(() => { captureGps(); return () => clearTimeout(gpsRetryTimerRef.current); }, []);
 
   // 4 jawaban availability (step "Cek Availability Produk" di mockup) -
   // null = belum dijawab (dibedakan dari false/"Tidak").
@@ -1590,13 +1673,14 @@ export default function AuditOutletFormPage() {
     // utk momentum scroll iOS), gak ada lagi body yg kesorot - app ini
     // kerasa penuh layar (fullscreen) & konsisten di semua ukuran device.
     <div style={{
-      // height:"100dvh" eksplisit DIHAPUS - sempat ditambahkan sbg "extra
-      // safety" tapi di sejumlah device malah bisa mismatch tipis dgn
-      // inset:0 (beda engine menghitung dvh vs inset), ninggalin gap
-      // kecil di bawah BottomBar yg nunjukin background di belakangnya.
-      // inset:0 SENDIRI sudah cukup & paling reliable (position:fixed
-      // selalu dihitung relatif viewport asli, gak perlu height manual).
-      position: "fixed", inset: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "none",
+      // height eksplisit dari window.visualViewport (px, via hook `vh` di
+      // atas) - khusus iOS PWA standalone, inset:0 doang/100dvh bisa
+      // mismatch tipis dgn tinggi layar yg BENERAN kelihatan (Android gak
+      // kena ini). Sebelum `vh` sempat terukur (first paint/SSR), fallback
+      // ke inset:0 dulu spy gak ada flash kosong.
+      position: "fixed", top: 0, left: 0, right: 0,
+      ...(vh ? { height: vh } : { bottom: 0 }),
+      overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "none",
       background: BG, fontFamily: FONT, display: "flex", flexDirection: "column",
     }}>
       {/* Jaring pengaman: <html>/<body> global (globals.css) punya
@@ -1609,7 +1693,7 @@ export default function AuditOutletFormPage() {
           html/body jadi warna BG form ini (cuma aktif selagi halaman ini
           ke-mount) supaya walau ada gap sekecil apapun, yg kelihatan tetap
           senada BG form, bukan hitam. */}
-      <style>{`html, body { background: ${BG} !important; }`}</style>
+      <style>{`html, body { background: linear-gradient(180deg, #2A0E1D 0%, #140810 100%) !important; }`}</style>
       <CameraCapture open={cameraOpen} onClose={handleCameraClose} onCapture={handleCameraCapture} />
       <div style={{ background: BRAND_GRADIENT, position: "sticky", top: 0, zIndex: 30 }}>
         <Header title={<HeaderTitle showInstall={showInstallButton} onInstallClick={handleInstallClick} installing={installingApp} />} />
@@ -1618,7 +1702,7 @@ export default function AuditOutletFormPage() {
         </div>
       </div>
 
-      <div style={{ flex: 1, maxWidth: 480, width: "100%", margin: "0 auto", padding: "18px 18px 10px", boxSizing: "border-box" }}>
+      <div style={{ flex: 1, maxWidth: 480, width: "100%", margin: "0 auto", padding: "18px 18px calc(92px + env(safe-area-inset-bottom))", boxSizing: "border-box" }}>
         {step === 0 && (
           <SectionCard icon={<ClipboardList size={16} color={PINK} />} title="Data Outlet">
             <Field label="Nama Sender" required>
