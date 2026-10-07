@@ -42,18 +42,25 @@ const STEPS = [
 // dipakai jadi nama state DAN dikirim ke ao_create_submission (spIm3/sp3id/
 // voucherIm3/voucher3id).
 const AVAILABILITY_ITEMS = [
-  { key: "spIm3", brand: "im3", no: 1, label: "Varian SP IM3 ≥ 2?", desc: "Tersedia minimal 2 varian Starter Pack IM3 (contoh: Freedom, IM3, Yellow)." },
-  { key: "sp3id", brand: "3id", no: 2, label: "Varian SP 3ID ≥ 2?", desc: "Tersedia minimal 2 varian Starter Pack 3ID (contoh: AlwaysOn, Happy, AON)." },
-  { key: "voucherIm3", brand: "im3", no: 3, label: "Varian Voucher IM3 ≥ 3?", desc: "Tersedia minimal 3 varian voucher / isi ulang IM3 (contoh: 5K, 10K, 25K, 50K)." },
-  { key: "voucher3id", brand: "3id", no: 4, label: "Varian Voucher 3ID ≥ 3?", desc: "Tersedia minimal 3 varian voucher / isi ulang 3ID (contoh: 5K, 10K, 20K, 50K)." },
+  { key: "spIm3", brand: "im3", no: 1, group: "sp", label: "Varian SP IM3 ≥ 2?", desc: "Contoh: Freedom, IM3, Yellow." },
+  { key: "sp3id", brand: "3id", no: 2, group: "sp", label: "Varian SP 3ID ≥ 2?", desc: "Contoh: AlwaysOn, Happy, AON." },
+  { key: "voucherIm3", brand: "im3", no: 3, group: "voucher", label: "Varian Voucher IM3 ≥ 3?", desc: "Contoh: 5K, 10K, 25K, 50K." },
+  { key: "voucher3id", brand: "3id", no: 4, group: "voucher", label: "Varian Voucher 3ID ≥ 3?", desc: "Contoh: 5K, 10K, 20K, 50K." },
 ];
+const AVAILABILITY_GROUP_LABEL = { sp: "Starter Pack (SP)", voucher: "Voucher / Isi Ulang" };
 
-function Stepper({ step }) {
+function Stepper({ step, onStepClick }) {
   return (
     <div style={{ display: "flex", alignItems: "flex-start", padding: "26px 18px 22px" }}>
       {STEPS.map((s, i) => (
         <div key={s.key} style={{ display: "flex", alignItems: "flex-start", flex: i < STEPS.length - 1 ? 1 : "0 0 auto" }}>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7 }}>
+          {/* Seluruh step bisa diklik (bukan cuma dekoratif) - mundur ke
+              step yg udah dilewati selalu boleh; maju cuma kepanggil kalau
+              step2 mandatory sebelumnya sudah lengkap (lihat goToStep). */}
+          <button onClick={() => onStepClick?.(i)} style={{
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 7,
+            border: "none", background: "transparent", padding: 0, cursor: onStepClick ? "pointer" : "default", fontFamily: FONT,
+          }}>
             <div style={{
               width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 12, fontWeight: 800, fontFamily: FONT, flexShrink: 0,
@@ -68,7 +75,7 @@ function Stepper({ step }) {
               fontSize: 10.5, fontWeight: i === step ? 800 : 700, color: i <= step ? INK : "#AFADBD",
               whiteSpace: "nowrap", textAlign: "center", transition: "color .35s ease",
             }}>{s.label}</div>
-          </div>
+          </button>
           {i < STEPS.length - 1 && (
             // Track abu2 statis + bar isi (PINK) yg width-nya dianimasikan
             // 0%<->100% - "terisi perlahan" waktu Selanjutnya, "ngurang"
@@ -91,27 +98,64 @@ function Stepper({ step }) {
 
 function Header({ title }) {
   return (
-    <div style={{ padding: "16px 18px 26px", display: "flex", alignItems: "center", gap: 10 }}>
-      <div style={{ fontSize: 22, fontWeight: 800, color: "#fff", flex: 1, marginTop: 10, marginLeft: 6 }}>{title}</div>
+    <div style={{
+      // padding-top dipadukan env(safe-area-inset-top) - gradient (wrapper
+      // pembungkus di pemanggil) jadi ikut menutup sampai belakang notch/
+      // status bar iOS, bukan berhenti kelihatan putih di atasnya lagi.
+      padding: "calc(24px + env(safe-area-inset-top)) 18px 10px",
+      display: "flex", alignItems: "center", gap: 14,
+    }}>
+      <div style={{ flex: 1 }}>{title}</div>
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/audit-outlet/indosat-logo-white.png" alt="Indosat Ooredoo Hutchison" style={{ height: 68, width: "auto", display: "block", flexShrink: 0 }} />
+      <img src="/audit-outlet/indosat-logo-white.png" alt="Indosat Ooredoo Hutchison" style={{ height: 58, width: "auto", display: "block", flexShrink: 0 }} />
+    </div>
+  );
+}
+
+/** Judul header dua baris: label kecil regular + nama kompetisi bold,
+ * dipakai di halaman isi form Pendataan Outlet (brief "Form Pendaftaran
+ * North Sumatra Retail Competition" - bold + regular, rapi). */
+function HeaderTitle() {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <span style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.85)", letterSpacing: 0.6, textTransform: "uppercase" }}>
+        Form Pendaftaran
+      </span>
+      <span style={{ fontSize: 19, fontWeight: 800, color: "#fff", lineHeight: 1.2, letterSpacing: 0.1 }}>
+        NSA Retail Competition
+      </span>
     </div>
   );
 }
 
 function SectionCard({ icon, title, badge, children }) {
   return (
-    <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 16, padding: 18, marginBottom: 16 }}>
+    <div style={{
+      background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 18, padding: 18, marginBottom: 16,
+      boxShadow: "0 2px 4px rgba(20,18,28,0.02), 0 10px 28px rgba(20,18,28,0.05)",
+    }}>
       {title && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, paddingBottom: 16, marginBottom: 16, borderBottom: `1px solid ${BORDER}` }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 11, paddingBottom: 16, marginBottom: 16, borderBottom: `1px solid ${BORDER}` }}>
           {icon && (
-            <div style={{ width: 32, height: 32, borderRadius: 9, background: "rgba(236,11,111,0.1)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <div style={{
+              width: 36, height: 36, borderRadius: 11, flexShrink: 0,
+              background: `linear-gradient(135deg, rgba(236,11,111,0.14), rgba(247,148,29,0.12))`,
+              border: "1px solid rgba(236,11,111,0.12)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
               {icon}
             </div>
           )}
-          <div style={{ flex: 1, fontSize: 16.5, fontWeight: 800, color: INK }}>{title}</div>
+          <div style={{ flex: 1, fontSize: 16.5, fontWeight: 800, color: INK, letterSpacing: -0.1 }}>{title}</div>
           {badge && (
-            <span style={{ fontSize: 10.5, fontWeight: 800, color: PINK_DK, background: "rgba(236,11,111,0.1)", padding: "3px 9px", borderRadius: 7 }}>{badge}</span>
+            <span style={{
+              fontSize: 10, fontWeight: 800, color: "#fff", letterSpacing: 0.3, textTransform: "uppercase",
+              background: `linear-gradient(135deg, ${PINK}, ${PINK_DK})`, padding: "4.5px 10px", borderRadius: 999,
+              boxShadow: "0 2px 6px rgba(236,11,111,0.3)", display: "flex", alignItems: "center", gap: 4,
+            }}>
+              <span style={{ width: 4, height: 4, borderRadius: "50%", background: "#fff", opacity: 0.9 }} />
+              {badge}
+            </span>
           )}
         </div>
       )}
@@ -135,7 +179,7 @@ function Field({ label, required, optional, children }) {
 
 const inputStyle = {
   width: "100%", boxSizing: "border-box", padding: "12px 14px", borderRadius: 11,
-  border: `1.5px solid ${BORDER}`, fontSize: 14.5, fontFamily: FONT, outline: "none", background: "#FAFAFC",
+  border: `1.5px solid ${BORDER}`, fontSize: 16, fontFamily: FONT, outline: "none", background: "#FAFAFC",
 };
 
 function BottomBar({ children }) {
@@ -216,16 +260,23 @@ function GpsChip({ lat, lng, locating, error, onRetry }) {
 // utk jenis ybs, fallback ke checklist teks dos/donts - dibungkus kartu +
 // banner hijau/merah yg sama persis gaya-nya dgn versi berfoto, supaya
 // tampilannya tetap konsisten dgn template walau foto belum diupload admin.
-function PhotoGuide({ title, desc, dos, donts, refs }) {
+function PhotoGuide({ title, desc, dos, donts, refs, onCapture }) {
   const [open, setOpen] = useState(false); // tetap mounted selama animasi tutup jalan
   const [show, setShow] = useState(false); // true = sheet digeser ke posisi terbuka (translateY 0)
   const [dragY, setDragY] = useState(0);
   const [dragging, setDragging] = useState(false);
+  // Lightbox - foto referensi (benar/salah) bisa diklik utk lihat ukuran
+  // penuh, bukan cuma thumbnail kecil di dalam sheet panduan.
+  const [lightbox, setLightbox] = useState(null); // url string | null
   const dragRef = useRef({ startY: 0, lastY: 0 });
   const closeTimerRef = useRef(null);
   const hasBenarPhoto = !!refs?.benar;
   const hasSalahPhotos = (refs?.salah?.length || 0) > 0;
   const subject = title.replace(/^Panduan\s*/, "");
+  // Teks tombol aksi bawah - drop kata "Outlet" di ujung biar singkat &
+  // actionable (mis. "Ambil Foto Etalase", bukan "Tutup Panduan Foto
+  // Etalase Outlet") - tombol tetap menutup sheet yg sama (closeSheet).
+  const actionSubject = subject.replace(/\s*Outlet$/, "");
 
   const openSheet = () => {
     clearTimeout(closeTimerRef.current);
@@ -261,16 +312,32 @@ function PhotoGuide({ title, desc, dos, donts, refs }) {
 
   return (
     <div style={{ marginTop: 12 }}>
+      {/* 1 baris gabungan "Lihat {title}" - sebelumnya kata "Panduan"
+          kebaca 2x ("Panduan Foto Etalase Outlet" + "Lihat Panduan").
+          Animasi glow pink pelan (bukan jreng/distraktif) biar tombol
+          kebaca jelas sbg aksi, bukan cuma teks info biasa. */}
       <button onClick={openSheet} style={{
-        display: "flex", alignItems: "center", gap: 8, width: "100%", border: `1.5px solid ${PINK}`, background: "#fff",
-        borderRadius: 11, padding: "10px 12px", cursor: "pointer", fontFamily: FONT,
+        display: "flex", alignItems: "center", gap: 10, width: "100%", border: "1px solid rgba(236,11,111,0.22)",
+        background: "linear-gradient(135deg, rgba(236,11,111,0.07), rgba(247,148,29,0.06))",
+        borderRadius: 13, padding: "11px 12px", cursor: "pointer", fontFamily: FONT,
+        animation: "guideGlow 2.2s ease-in-out infinite",
       }}>
-        <Store size={14} color={PINK} style={{ flexShrink: 0 }} />
-        <span style={{ fontSize: 12, fontWeight: 800, color: PINK, flex: 1, textAlign: "left" }}>{title}</span>
-        <span style={{ fontSize: 11, fontWeight: 700, color: PINK, display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-          Lihat Panduan <ChevronRight size={13} />
-        </span>
+        <div style={{
+          width: 28, height: 28, borderRadius: 9, flexShrink: 0, background: "#fff",
+          border: "1px solid rgba(236,11,111,0.18)", boxShadow: "0 2px 6px rgba(20,18,28,0.05)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <Store size={13} color={PINK} />
+        </div>
+        <span style={{ fontSize: 12.5, fontWeight: 800, color: PINK_DK, flex: 1, textAlign: "left" }}>Lihat {title}</span>
+        <ChevronRight size={15} color={PINK} style={{ flexShrink: 0 }} />
       </button>
+      <style>{`
+        @keyframes guideGlow {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(236,11,111,0.22); }
+          50% { box-shadow: 0 0 0 5px rgba(236,11,111,0); }
+        }
+      `}</style>
       {open && (
         <div style={{ position: "fixed", inset: 0, zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center" }}>
           <div onClick={closeSheet} style={{
@@ -307,7 +374,7 @@ function PhotoGuide({ title, desc, dos, donts, refs }) {
               {desc && <div style={{ fontSize: 14, color: INK, lineHeight: 1.5, marginBottom: 8 }}>{desc}</div>}
 
               {hasBenarPhoto ? (
-                <img src={refs.benar} alt="" style={{ width: "100%", aspectRatio: "15/8", objectFit: "cover", borderRadius: "14px 14px 0 0", border: `1px solid ${BORDER}`, borderBottom: "none", display: "block" }} />
+                <img src={refs.benar} alt="" onClick={() => setLightbox(refs.benar)} style={{ width: "100%", aspectRatio: "15/8", objectFit: "cover", borderRadius: "14px 14px 0 0", border: `1px solid ${BORDER}`, borderBottom: "none", display: "block", cursor: "zoom-in" }} />
               ) : (
                 <div style={{
                   width: "100%", aspectRatio: "15/8", borderRadius: "14px 14px 0 0", border: `1.5px dashed ${BORDER}`, borderBottom: "none",
@@ -320,22 +387,30 @@ function PhotoGuide({ title, desc, dos, donts, refs }) {
                 </div>
               )}
               <div style={{
-                display: "flex", alignItems: "center", gap: 7, background: "rgba(22,163,74,0.12)", padding: "9px 13px", marginBottom: 11,
-                borderRadius: "0 0 10px 10px",
+                display: "flex", alignItems: "center", gap: 8, background: "rgba(22,163,74,0.1)", padding: "10px 14px", marginBottom: 14,
+                borderRadius: "0 0 12px 12px", border: `1px solid rgba(22,163,74,0.18)`, borderTop: "none",
               }}>
-                <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#16A34A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <Check size={11} color="#fff" strokeWidth={3} />
+                <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#16A34A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <Check size={12} color="#fff" strokeWidth={3} />
                 </div>
-                <span style={{ fontSize: 14.5, fontWeight: 800, color: "#16A34A" }}>
-                  Contoh Foto {subject} yang Benar
+                {/* `subject` sudah mengandung kata "Foto" (mis. "Foto Etalase
+                    Outlet"), jadi templatenya TIDAK diawali "Contoh Foto" lagi
+                    - sebelumnya jadi dobel: "Contoh Foto Foto Etalase Outlet
+                    yang Benar". */}
+                <span style={{ fontSize: 14.5, fontWeight: 800, color: "#16A34A", lineHeight: 1.3 }}>
+                  Contoh {subject} yang Benar
                 </span>
               </div>
 
-              <div style={{ marginBottom: 4 }}>
+              <div style={{ marginBottom: 4, paddingLeft: 15 }}>
                 {dos.map((d, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 7 }}>
-                    <div style={{ width: 18, height: 18, borderRadius: "50%", background: "#16A34A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>
-                      <Check size={11} color="#fff" strokeWidth={3} />
+                  <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 8 }}>
+                    {/* Filled hijau, ukuran+gap+padding-left disamakan
+                        persis dgn ikon di banner "Contoh ... yang Benar" di
+                        atasnya (20px, gap 8, +1px kompensasi border banner)
+                        biar sejajar rapi. */}
+                    <div style={{ width: 20, height: 20, borderRadius: "50%", background: "#16A34A", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 0.5 }}>
+                      <Check size={12} color="#fff" strokeWidth={3} />
                     </div>
                     <span style={{ fontSize: 14, color: INK, fontWeight: 500, lineHeight: 1.35 }}>{d}</span>
                   </div>
@@ -355,7 +430,7 @@ function PhotoGuide({ title, desc, dos, donts, refs }) {
                   {refs.salah.map((r) => (
                     <div key={r.urutan}>
                       <div style={{ position: "relative" }}>
-                        <img src={r.url} alt="" style={{ width: "100%", aspectRatio: "0.85", objectFit: "cover", borderRadius: 10, border: `1px solid ${BORDER}` }} />
+                        <img src={r.url} alt="" onClick={() => setLightbox(r.url)} style={{ width: "100%", aspectRatio: "0.85", objectFit: "cover", borderRadius: 10, border: `1px solid ${BORDER}`, cursor: "zoom-in" }} />
                         <div style={{ position: "absolute", bottom: 4, right: 4, background: "rgba(220,38,38,0.92)", borderRadius: 999, width: 18, height: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>
                           <X size={11} color="#fff" />
                         </div>
@@ -384,76 +459,117 @@ function PhotoGuide({ title, desc, dos, donts, refs }) {
               )}
             </div>
             <div style={{ padding: "16px 20px calc(16px + env(safe-area-inset-bottom))", borderTop: `1px solid ${BORDER}`, flexShrink: 0 }}>
-              <button onClick={closeSheet} style={{
+              <button onClick={() => { closeSheet(); onCapture?.(); }} style={{
                 width: "100%", border: "none", borderRadius: 12, padding: "13px 18px", cursor: "pointer", fontFamily: FONT,
                 background: PINK, color: "#fff", fontSize: 14.5, fontWeight: 800,
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
               }}>
-                Tutup Panduan {subject}
+                <Camera size={16} /> Ambil {actionSubject}
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {lightbox && (
+        <div onClick={() => setLightbox(null)} style={{
+          // zIndex 150 - di atas sheet Panduan Foto (zIndex 100), supaya
+          // lightbox SELALU tampil paling depan & nutup penuh layar -
+          // sebelumnya 80 (di bawah sheet), jadi overlay gelapnya ketutup
+          // sheet dan cuma tombol X-nya yg nongol aneh ngambang di atas.
+          position: "fixed", inset: 0, zIndex: 150, background: "rgba(0,0,0,0.92)",
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 16, cursor: "zoom-out",
+        }}>
+          <button onClick={() => setLightbox(null)} aria-label="Tutup"
+            style={{
+              position: "absolute", top: "calc(14px + env(safe-area-inset-top))", right: 16, width: 38, height: 38, borderRadius: "50%",
+              border: "none", background: "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+            }}>
+            <X size={20} color="#fff" />
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={lightbox} alt="" onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 10 }} />
         </div>
       )}
     </div>
   );
 }
 
-// ── 1 baris checklist Ya/Tidak di step "Cek Availability Produk" - badge
-// nomor jadi lingkaran (konsisten dgn Stepper), seluruh kartu dikasih tint
-// hijau/merah halus begitu dijawab biar progres kelihatan sekilas tanpa
-// perlu baca teks, tombol Ya/Tidak full-fill + ikon begitu dipilih. ───────
+// ── 1 baris checklist Ya/Tidak di step "Cek Availability Produk" - logo
+// brand jadi badge besar kiri (bukan nomor urut lagi), checkbox Ya/Tidak
+// ditumpuk vertikal di kanan (bukan 2 tombol lebar di bawah), seluruh
+// kartu dikasih tint hijau/merah halus begitu dijawab biar progres
+// kelihatan sekilas tanpa perlu baca teks. ────────────────────────────────
+function AvailabilityCheck({ label, checked, onClick, tone = "pink" }) {
+  // "Ya" dikasih tone hijau (produk tersedia = positif), "Tidak" tetap
+  // merah (senada sama tint kartu & progress bar yg udah pakai hijau/merah
+  // yg sama utk makna ini) - bukan pink generik lagi.
+  const toneColor = tone === "green" ? "#16A34A" : tone === "red" ? "#DC2626" : PINK;
+  const toneColorDk = tone === "green" ? "#128037" : tone === "red" ? "#B91C1C" : PINK_DK;
+  return (
+    <button onClick={onClick} style={{
+      display: "flex", alignItems: "center", gap: 7, border: "none", background: "transparent",
+      cursor: "pointer", padding: "3px 2px", fontFamily: FONT,
+      // outline:none - browser nampilin outline fokus biru default begitu
+      // tombol di-tap (nempel keliatan terus di mobile, bukan cuma pas
+      // navigasi keyboard) - dimatikan total sesuai permintaan, tanpa
+      // pengganti ring apapun.
+      outline: "none",
+    }}>
+      <span style={{
+        flexShrink: 0, width: 19, height: 19, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center",
+        border: `1.5px solid ${checked ? toneColor : "#D9D6E0"}`,
+        background: checked ? `linear-gradient(135deg, ${toneColor}, ${toneColorDk})` : "#fff",
+        boxShadow: checked ? `0 2px 5px ${tone === "green" ? "rgba(22,163,74,0.3)" : tone === "red" ? "rgba(220,38,38,0.3)" : "rgba(236,11,111,0.3)"}` : "none",
+        transition: "background .15s ease, border-color .15s ease, box-shadow .15s ease",
+      }}>
+        {checked && <Check size={12} color="#fff" strokeWidth={3.2} />}
+      </span>
+      <span style={{ fontSize: 12.5, fontWeight: 700, color: checked ? INK : "#9A98A8" }}>{label}</span>
+    </button>
+  );
+}
+
 function AvailabilityRow({ item, value, onChange, error }) {
-  const answered = value !== null;
   const cardBg = value === true ? "rgba(22,163,74,0.045)" : value === false ? "rgba(220,38,38,0.035)" : "#fff";
   const cardBorder = error ? "#DC2626" : value === true ? "rgba(22,163,74,0.3)" : value === false ? "rgba(220,38,38,0.25)" : BORDER;
   return (
     <div style={{
-      borderRadius: 14, border: `1.5px solid ${cardBorder}`, background: cardBg, padding: 14, marginBottom: 12,
-      transition: "background .25s ease, border-color .25s ease",
+      borderRadius: 16, border: `1.5px solid ${cardBorder}`, background: cardBg, padding: 15, marginBottom: 12,
+      boxShadow: value !== null ? "0 2px 8px rgba(20,18,28,0.04)" : "0 1px 3px rgba(20,18,28,0.03)",
+      transition: "background .25s ease, border-color .25s ease, box-shadow .25s ease",
     }}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <div style={{
-          flexShrink: 0, width: 24, height: 24, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-          fontSize: 11, fontWeight: 800, fontFamily: FONT, marginTop: 1,
-          background: answered ? PINK : "#EFEDF4", color: answered ? "#fff" : "#9A98A8",
-          transition: "background .25s ease",
+          flexShrink: 0, width: 52, height: 52, borderRadius: 13, display: "flex", alignItems: "center", justifyContent: "center",
+          background: item.brand === "im3" ? YELLOW : `linear-gradient(135deg, ${PINK}, ${PINK_DK})`,
+          boxShadow: "0 3px 8px rgba(20,18,28,0.1)",
         }}>
-          {answered ? <Check size={12} strokeWidth={3} /> : item.no}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={item.brand === "im3" ? "/brand/logo-im3.png" : "/brand/logo-3id.png"}
+            alt={item.brand === "im3" ? "IM3" : "3ID"}
+            style={{
+              width: 34, height: 34, objectFit: "contain", display: "block",
+              // Aset logo-3id.png warnanya hitam solid (bukan putih) - di-invert
+              // jadi putih biar kontras di atas background magenta, sesuai
+              // tampilan resmi logo Tri/3ID (putih di atas magenta).
+              ...(item.brand !== "im3" ? { filter: "brightness(0) invert(1)" } : {}),
+            }}
+          />
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
-            <span style={{
-              flexShrink: 0, padding: "2.5px 7px", borderRadius: 999, fontSize: 9.5, fontWeight: 800,
-              background: item.brand === "im3" ? YELLOW : PINK_DK, color: item.brand === "im3" ? "#5C4300" : "#fff",
-            }}>
-              {item.brand === "im3" ? "IM3" : "3ID"}
-            </span>
-            <span style={{ fontSize: 13.5, fontWeight: 800, color: INK }}>{item.label}</span>
-          </div>
-          <div style={{ fontSize: 11.5, color: MID, marginTop: 3, lineHeight: 1.45 }}>{item.desc}</div>
+          <div style={{ fontSize: 13.5, fontWeight: 800, color: INK, lineHeight: 1.3 }}>{item.label}</div>
+          <div style={{ fontSize: 11.5, color: MID, marginTop: 3, lineHeight: 1.4 }}>{item.desc}</div>
+        </div>
+        <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", gap: 7 }}>
+          <AvailabilityCheck label="Ya" tone="green" checked={value === true} onClick={() => onChange(true)} />
+          <AvailabilityCheck label="Tidak" tone="red" checked={value === false} onClick={() => onChange(false)} />
         </div>
       </div>
-      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-        <button onClick={() => onChange(true)} style={{
-          flex: 1, padding: "10px 10px", borderRadius: 10, border: `1.5px solid ${value === true ? "#16A34A" : BORDER}`,
-          background: value === true ? "#16A34A" : "#fff", color: value === true ? "#fff" : MID,
-          fontWeight: 800, fontSize: 13, fontFamily: FONT, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-          transition: "background .2s ease, border-color .2s ease, color .2s ease",
-        }}>
-          <Check size={14} /> Ya
-        </button>
-        <button onClick={() => onChange(false)} style={{
-          flex: 1, padding: "10px 10px", borderRadius: 10, border: `1.5px solid ${value === false ? "#DC2626" : BORDER}`,
-          background: value === false ? "#DC2626" : "#fff", color: value === false ? "#fff" : MID,
-          fontWeight: 800, fontSize: 13, fontFamily: FONT, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-          transition: "background .2s ease, border-color .2s ease, color .2s ease",
-        }}>
-          <X size={14} /> Tidak
-        </button>
-      </div>
       {error && (
-        <div style={{ fontSize: 11, color: "#DC2626", fontWeight: 700, marginTop: 8 }}>Wajib dijawab sebelum lanjut</div>
+        <div style={{ fontSize: 11, color: "#DC2626", fontWeight: 700, marginTop: 10 }}>Wajib dijawab sebelum lanjut</div>
       )}
     </div>
   );
@@ -512,17 +628,34 @@ function OutletPicker({ outlets, loading, loaded, value, onChange, error }) {
       </button>
       {open && (
         <>
-          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+          {/* Full-screen sheet (bukan dropdown kecil yg nempel di bawah
+              tombol) - dropdown lama gampang ketutup keyboard/konten lain
+              & susah di-scroll pas lagi cari (lihat keluhan user). Sheet ini
+              nutup seluruh layar, search box sticky di atas, hasil full-
+              height di bawahnya - selalu kebaca penuh apapun posisi field. */}
           <div style={{
-            position: "absolute", top: "calc(100% + 6px)", left: 0, right: 0, zIndex: 41,
-            background: "#fff", border: `1.5px solid ${BORDER}`, borderRadius: 13, boxShadow: "0 12px 32px rgba(0,0,0,0.12)",
-            maxHeight: 280, display: "flex", flexDirection: "column", overflow: "hidden",
+            position: "fixed", inset: 0, zIndex: 50, background: "#fff",
+            display: "flex", flexDirection: "column",
           }}>
-            <div style={{ padding: 10, borderBottom: `1px solid ${BORDER}` }}>
-              <div style={{ position: "relative" }}>
-                <Search size={14} color={MID} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }} />
-                <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari ID Outlet..."
-                  style={{ width: "100%", boxSizing: "border-box", padding: "9px 10px 9px 30px", borderRadius: 9, border: `1px solid ${BORDER}`, fontSize: 13.5, fontFamily: FONT, outline: "none" }} />
+            <div style={{
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "calc(12px + env(safe-area-inset-top)) 14px 12px",
+              borderBottom: `1px solid ${BORDER}`, flexShrink: 0,
+            }}>
+              <button onClick={() => { setOpen(false); setQ(""); }} aria-label="Tutup"
+                style={{ width: 34, height: 34, borderRadius: 9, border: "none", background: "#F4F3F7", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer" }}>
+                <ChevronLeft size={19} color={INK} />
+              </button>
+              <div style={{ position: "relative", flex: 1 }}>
+                <Search size={15} color={MID} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+                <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari ID Outlet, nama, cabang..."
+                  style={{ width: "100%", boxSizing: "border-box", padding: "11px 12px 11px 34px", borderRadius: 11, border: `1.5px solid ${BORDER}`, fontSize: 16, fontFamily: FONT, outline: "none", background: "#FAFAFC" }} />
+                {q && (
+                  <button onClick={() => setQ("")} aria-label="Hapus pencarian"
+                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", width: 22, height: 22, borderRadius: "50%", border: "none", background: BORDER, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                    <X size={12} color={MID} />
+                  </button>
+                )}
               </div>
             </div>
             {loading && outlets.length > 0 && (
@@ -533,7 +666,7 @@ function OutletPicker({ outlets, loading, loaded, value, onChange, error }) {
                 </span>
               </div>
             )}
-            <div style={{ overflowY: "auto" }}>
+            <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
               {loading && outlets.length === 0 ? (
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: "34px 16px" }}>
                   <div style={{
@@ -551,7 +684,7 @@ function OutletPicker({ outlets, loading, loaded, value, onChange, error }) {
                 const isSelected = o.id_outlet === value;
                 return (
                   <button key={`${o.id || o.id_outlet || "row"}-${i}`} onClick={() => { onChange(o.id_outlet); setOpen(false); setQ(""); }} style={{
-                    width: "100%", textAlign: "left", padding: "10px 12px", border: "none",
+                    width: "100%", textAlign: "left", padding: "14px 16px", border: "none",
                     background: isSelected ? "rgba(236,11,111,0.06)" : "#fff",
                     cursor: "pointer", borderBottom: `1px solid ${BORDER}`,
                     display: "flex", alignItems: "flex-start", gap: 10,
@@ -606,26 +739,43 @@ function OutletPicker({ outlets, loading, loaded, value, onChange, error }) {
 function PhotoSlot({ file, label, onPick, onRemove, disabled, error }) {
   if (file) {
     return (
-      <div style={{ position: "relative", borderRadius: 13, overflow: "hidden", border: `1.5px solid ${BORDER}`, aspectRatio: "1" }}>
+      <div style={{
+        position: "relative", borderRadius: 15, overflow: "hidden", border: `1.5px solid ${BORDER}`, aspectRatio: "1",
+        boxShadow: "0 6px 16px rgba(20,18,28,0.1)",
+      }}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={URL.createObjectURL(file)} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+        {/* Tombol hapus solid putih + ikon merah - sebelumnya kaca/blur
+            gelap transparan gampang nyaru sama foto gelap. Badge centang
+            hijau di pojok kiri dihapus (foto sudah jelas keisi, gak perlu
+            penanda "correct" tambahan). */}
         <button onClick={onRemove} disabled={disabled} style={{
-          position: "absolute", top: 6, right: 6, width: 22, height: 22, borderRadius: "50%", border: "none",
-          background: "rgba(0,0,0,0.6)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+          position: "absolute", top: 7, right: 7, width: 25, height: 25, borderRadius: "50%", border: "none",
+          background: "#fff", boxShadow: "0 2px 6px rgba(0,0,0,0.3)",
+          color: "#DC2626", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
         }}>
-          <X size={13} />
+          <X size={14} strokeWidth={2.5} />
         </button>
       </div>
     );
   }
   return (
     <label style={{
-      aspectRatio: "1", borderRadius: 13, border: `1.5px dashed ${error ? "#DC2626" : BORDER}`, display: "flex", flexDirection: "column",
-      alignItems: "center", justifyContent: "center", gap: 6, cursor: disabled ? "not-allowed" : "pointer", background: error ? "rgba(220,38,38,0.04)" : "#FAFAFC",
+      aspectRatio: "1", borderRadius: 15, border: `1.5px dashed ${error ? "#DC2626" : "#D8B9C9"}`, display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center", gap: 8, cursor: disabled ? "not-allowed" : "pointer",
+      background: error ? "rgba(220,38,38,0.04)" : "linear-gradient(145deg, #FFF9FB 0%, #FEF6FA 55%, #FDF3F8 100%)",
+      transition: "border-color .15s ease, background .15s ease",
     }}>
       <input type="file" accept="image/*" capture="environment" onChange={onPick} disabled={disabled} style={{ display: "none" }} />
-      <Camera size={20} color={error ? "#DC2626" : MID} />
-      <span style={{ fontSize: 10.5, color: error ? "#DC2626" : MID, fontWeight: 700, textAlign: "center", padding: "0 6px" }}>{label}</span>
+      <div style={{
+        width: 34, height: 34, borderRadius: "50%", background: "#fff",
+        border: `1px solid ${error ? "rgba(220,38,38,0.25)" : "rgba(236,11,111,0.18)"}`,
+        boxShadow: "0 3px 8px rgba(20,18,28,0.06)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <Camera size={16} color={error ? "#DC2626" : PINK} />
+      </div>
+      <span style={{ fontSize: 10.5, color: error ? "#DC2626" : "#8A7E8F", fontWeight: 700, textAlign: "center", padding: "0 6px" }}>{label}</span>
     </label>
   );
 }
@@ -691,6 +841,20 @@ export default function AuditOutletFormPage() {
   const [socialMedia, setSocialMedia] = useState("");
   const [etalaseFiles, setEtalaseFiles] = useState([null, null, null]);
   const [tapakFile, setTapakFile] = useState(null);
+  // Capture berurutan dari tombol "Ambil Foto ..." di sheet Panduan - ambil
+  // foto 1 -> otomatis lanjut ke foto 2 -> foto 3, begitu 3-3 nya kepenuhi
+  // tombol itu cuma nutup sheet balik ke tampilan Foto Outlet (gak buka
+  // kamera lagi). 2 input file TERSEMBUNYI terpisah dari yg ada di tiap
+  // PhotoSlot (yg masih bisa dipakai manual per-slot spt biasa).
+  const etalaseCaptureRef = useRef(null);
+  const tapakCaptureRef = useRef(null);
+  // Lightbox foto di step Review - klik thumbnail Foto Etalase/Tampak Depan
+  // buat lihat ukuran penuh, sama pola kayak lightbox foto referensi di
+  // PhotoGuide. Simpan SELURUH daftar foto + index aktif (bukan 1 url
+  // doang) - utk Foto Etalase (s.d. 3 foto) bisa geser kiri/kanan dari
+  // lightbox yg lagi kebuka, gak perlu nutup+klik thumbnail lain lagi.
+  const [reviewLightbox, setReviewLightbox] = useState(null); // { urls: string[], index: number } | null
+  const reviewLightboxDrag = useRef({ startX: 0 });
 
   // GPS - auto-capture (mockup: "ada longlat capture juga"), BUKAN field yg
   // diisi manual sender, cuma dicatat diam2 sbg bukti lokasi submit (dipakai
@@ -754,7 +918,55 @@ export default function AuditOutletFormPage() {
     if (availabilityValid) { setAttempted2(false); setStep(3); } else { setAttempted2(true); }
   };
 
+  // Klik langsung di Stepper (lihat <Stepper onStepClick>) - mundur ke step
+  // manapun yg udah dilewati selalu boleh (datanya kan udah ada). Maju
+  // cuma boleh kalau SEMUA step mandatory di antaranya sudah lengkap -
+  // kalau mentok di step tertentu, tandai "attempted" step itu (field
+  // kosongnya jadi merah) persis spt nekan "Selanjutnya", trus berhenti
+  // di situ (gak ikut lompat ke step tujuan).
+  const goToStep = (target) => {
+    if (target <= step) { setStep(target); return; }
+    if (!dataValid) { setAttempted0(true); setStep(0); return; }
+    if (target >= 2 && !fotoValid) { setAttempted1(true); setStep(1); return; }
+    if (target >= 3 && !availabilityValid) { setAttempted2(true); setStep(2); return; }
+    setStep(target);
+  };
+
   const setEtalaseAt = (i, file) => setEtalaseFiles((prev) => { const n = [...prev]; n[i] = file; return n; });
+
+  const startEtalaseCapture = () => {
+    if (etalaseFiles.every(Boolean)) return; // 3/3 - jangan buka kamera lagi
+    etalaseCaptureRef.current?.click();
+  };
+  const onEtalaseCaptureChange = (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    setEtalaseFiles((prev) => {
+      const idx = prev.findIndex((x) => !x);
+      if (idx === -1) return prev;
+      const next = [...prev];
+      next[idx] = f;
+      // Masih ada slot kosong sisanya -> buka kamera lagi otomatis utk foto
+      // berikutnya. Delay kecil supaya UI sempat update & kamera sebelumnya
+      // benar2 tertutup dulu (langsung click() lagi di tick yg sama kurang
+      // reliable di beberapa mobile browser).
+      if (next.some((x) => !x)) {
+        setTimeout(() => etalaseCaptureRef.current?.click(), 400);
+      }
+      return next;
+    });
+  };
+
+  const startTapakCapture = () => {
+    if (tapakFile) return; // sudah ada - jangan buka kamera lagi
+    tapakCaptureRef.current?.click();
+  };
+  const onTapakCaptureChange = (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (f) setTapakFile(f);
+  };
 
   const submit = async () => {
     setSubmitting(true); setErr("");
@@ -828,9 +1040,9 @@ export default function AuditOutletFormPage() {
   return (
     <div style={{ minHeight: "100vh", background: BG, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
       <div style={{ background: BRAND_GRADIENT, position: "sticky", top: 0, zIndex: 30 }}>
-        <Header title="Pendataan Outlet" />
-        <div style={{ background: "#fff", borderRadius: "22px 22px 0 0", marginTop: -14, boxShadow: "0 -8px 20px rgba(0,0,0,0.06)" }}>
-          <Stepper step={step} />
+        <Header title={<HeaderTitle />} />
+        <div style={{ background: "#fff", borderRadius: "22px 22px 0 0", marginTop: 0, boxShadow: "0 -8px 20px rgba(0,0,0,0.06)" }}>
+          <Stepper step={step} onStepClick={goToStep} />
         </div>
       </div>
 
@@ -912,7 +1124,7 @@ export default function AuditOutletFormPage() {
             <GpsChip lat={gpsLat} lng={gpsLng} locating={gpsLocating} error={gpsError} onRetry={captureGps} />
             <SectionCard icon={<ImageIcon size={16} color={PINK} />} title="Foto Etalase Outlet" badge="Wajib">
               <div style={{ fontSize: 12, color: MID, marginBottom: 14, marginTop: -8 }}>
-                Upload maksimal 3 foto etalase (outdoor / indoor / produk). <strong>{etalaseCount}/3</strong>
+                Upload maksimal 3 foto etalase produk yang dijual. <strong>{etalaseCount}/3</strong>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
                 {[0, 1, 2].map((i) => (
@@ -922,9 +1134,11 @@ export default function AuditOutletFormPage() {
                 ))}
               </div>
               <PhotoGuide title="Panduan Foto Etalase Outlet" refs={refsFor("etalase")}
-                desc="Ambil foto etalase dengan jelas, menampilkan seluruh area etalase / interior outlet."
+                desc="Foto etalase harus jelas dan fokus, mencakup seluruh produk dan materi promosi yang dipajang."
                 dos={["Seluruh etalase terlihat jelas", "Produk & materi promosi terlihat", "Foto fokus dan tidak blur", "Pencahayaan cukup"]}
-                donts={["Terlalu dekat (hanya sebagian)", "Gelap / blur", "Terhalang orang atau objek lain"]} />
+                donts={["Terlalu dekat (hanya sebagian)", "Gelap / blur", "Terhalang orang atau objek lain"]}
+                onCapture={startEtalaseCapture} />
+              <input ref={etalaseCaptureRef} type="file" accept="image/*" capture="environment" onChange={onEtalaseCaptureChange} style={{ display: "none" }} />
             </SectionCard>
             <SectionCard icon={<Store size={16} color={PINK} />} title="Foto Tampak Depan Outlet" badge="Wajib">
               <div style={{ fontSize: 12, color: MID, marginBottom: 14, marginTop: -8 }}>
@@ -936,43 +1150,78 @@ export default function AuditOutletFormPage() {
                   onRemove={() => setTapakFile(null)} error={attempted1 && !tapakFile} />
               </div>
               <PhotoGuide title="Panduan Foto Tampak Depan Outlet" refs={refsFor("tapak_depan")}
-                desc="Ambil foto tampak depan outlet dari jarak yang cukup hingga seluruh fasad toko dan lingkungan sekitar terlihat."
+                desc="Foto tampak depan harus diambil dari jarak yang cukup, sehingga seluruh fasad toko beserta lingkungan sekitarnya terlihat jelas."
                 dos={["Seluruh tampak depan outlet terlihat", "Nama outlet / signage terlihat jelas", "Lingkungan sekitar terlihat", "Foto fokus dan tidak blur", "Pencahayaan cukup"]}
-                donts={["Terlalu dekat (hanya sebagian)", "Sudut tidak lengkap (fasad tidak terlihat)", "Gelap / blur"]} />
+                donts={["Terlalu dekat (hanya sebagian)", "Sudut tidak lengkap (fasad tidak terlihat)", "Gelap / blur"]}
+                onCapture={startTapakCapture} />
+              <input ref={tapakCaptureRef} type="file" accept="image/*" capture="environment" onChange={onTapakCaptureChange} style={{ display: "none" }} />
             </SectionCard>
           </>
         )}
 
         {step === 2 && (
           <SectionCard icon={<CheckCircle2 size={16} color={PINK} />} title="Cek Availability Produk">
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, marginTop: -8 }}>
-              <div style={{ fontSize: 12, color: MID, flex: 1 }}>
-                Pastikan ketersediaan varian produk berikut di outlet.
+            <div style={{
+              display: "flex", alignItems: "center", gap: 12, marginBottom: 20, marginTop: -8,
+              padding: "12px 14px", borderRadius: 12,
+              background: availabilityAnsweredCount === AVAILABILITY_ITEMS.length ? "rgba(22,163,74,0.06)" : "#FAFAFC",
+              border: `1px solid ${availabilityAnsweredCount === AVAILABILITY_ITEMS.length ? "rgba(22,163,74,0.18)" : BORDER}`,
+              transition: "background .25s ease, border-color .25s ease",
+            }}>
+              <div style={{ fontSize: 12.5, color: INK, fontWeight: 500, flex: 1, lineHeight: 1.4 }}>
+                Pastikan ketersediaan tiap varian produk berikut di outlet ini.
               </div>
-              <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 7 }}>
-                <div style={{ width: 44, height: 5, borderRadius: 999, background: "#EFEDF4", overflow: "hidden" }}>
+              <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5 }}>
+                <span style={{
+                  fontSize: 12, fontWeight: 800, whiteSpace: "nowrap",
+                  color: availabilityAnsweredCount === AVAILABILITY_ITEMS.length ? "#16A34A" : PINK_DK,
+                }}>
+                  {availabilityAnsweredCount}/{AVAILABILITY_ITEMS.length} {availabilityAnsweredCount === AVAILABILITY_ITEMS.length ? "Lengkap" : "Terjawab"}
+                </span>
+                <div style={{ width: 64, height: 6, borderRadius: 999, background: "#E7E5ED", overflow: "hidden" }}>
                   <div style={{
                     width: `${(availabilityAnsweredCount / AVAILABILITY_ITEMS.length) * 100}%`, height: "100%", borderRadius: 999,
-                    background: availabilityAnsweredCount === AVAILABILITY_ITEMS.length ? "#16A34A" : PINK,
-                    transition: "width .3s ease, background .3s ease",
+                    background: availabilityAnsweredCount === AVAILABILITY_ITEMS.length ? "#16A34A" : `linear-gradient(90deg, ${PINK}, ${ORANGE})`,
+                    transition: "width .35s cubic-bezier(.4,0,.2,1), background .3s ease",
                   }} />
                 </div>
-                <span style={{ fontSize: 11, fontWeight: 800, color: availabilityAnsweredCount === AVAILABILITY_ITEMS.length ? "#16A34A" : MID, whiteSpace: "nowrap" }}>
-                  {availabilityAnsweredCount}/{AVAILABILITY_ITEMS.length}
-                </span>
               </div>
             </div>
-            {AVAILABILITY_ITEMS.map((item) => {
+            {AVAILABILITY_ITEMS.map((item, i) => {
               const [val, setVal] = availabilityState[item.key];
+              const showGroupHeader = i === 0 || AVAILABILITY_ITEMS[i - 1].group !== item.group;
               return (
-                <AvailabilityRow key={item.key} item={item} value={val} onChange={setVal}
-                  error={attempted2 && val === null} />
+                <div key={item.key}>
+                  {showGroupHeader && (
+                    <div style={{
+                      display: "flex", alignItems: "center", gap: 8,
+                      marginBottom: 10, marginTop: i === 0 ? 0 : 20,
+                    }}>
+                      <span style={{ width: 3, height: 13, borderRadius: 999, background: `linear-gradient(180deg, ${PINK}, ${ORANGE})`, flexShrink: 0 }} />
+                      <span style={{ fontSize: 11.5, fontWeight: 800, color: "#6B6878", textTransform: "uppercase", letterSpacing: 0.6 }}>
+                        {AVAILABILITY_GROUP_LABEL[item.group]}
+                      </span>
+                      <span style={{ flex: 1, height: 1, background: BORDER }} />
+                    </div>
+                  )}
+                  <AvailabilityRow item={item} value={val} onChange={setVal}
+                    error={attempted2 && val === null} />
+                </div>
               );
             })}
-            <div style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "11px 13px", borderRadius: 11, background: "rgba(247,148,29,0.08)", border: "1px solid rgba(247,148,29,0.2)" }}>
-              <AlertTriangle size={15} color={ORANGE} style={{ flexShrink: 0, marginTop: 1 }} />
-              <div style={{ fontSize: 12, color: "#8A5A0F" }}>
-                <strong>Catatan:</strong> Jika salah satu produk tidak tersedia, pastikan outlet mendapatkan arahan restock sesuai area coverage.
+            <div style={{
+              display: "flex", gap: 10, alignItems: "flex-start", padding: "13px 14px", borderRadius: 13, marginTop: 6,
+              background: "linear-gradient(135deg, rgba(247,148,29,0.08), rgba(247,148,29,0.04))",
+              border: "1px solid rgba(247,148,29,0.22)",
+            }}>
+              <div style={{
+                flexShrink: 0, width: 26, height: 26, borderRadius: 8, background: "rgba(247,148,29,0.16)",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <AlertTriangle size={14} color={ORANGE} />
+              </div>
+              <div style={{ fontSize: 12, color: "#7A5110", lineHeight: 1.5, paddingTop: 2 }}>
+                <strong style={{ color: "#5C3D0C" }}>Catatan:</strong> jika salah satu produk tidak tersedia, pastikan outlet mendapat arahan restock sesuai area coverage.
               </div>
             </div>
           </SectionCard>
@@ -980,24 +1229,38 @@ export default function AuditOutletFormPage() {
 
         {step === 3 && (
           <>
-            <SectionCard>
-              <div style={{ fontSize: 15.5, fontWeight: 800, color: INK, marginBottom: 3 }}>Review Data</div>
-              <div style={{ fontSize: 12, color: MID, marginBottom: 16 }}>Pastikan semua data sudah benar sebelum dikirim.</div>
+            <SectionCard icon={<CheckCircle2 size={16} color={PINK} />} title="Review Data">
+              <div style={{ fontSize: 12, color: MID, marginBottom: 16, marginTop: -8 }}>Pastikan semua data sudah benar sebelum dikirim.</div>
 
+              <ReviewSection icon={<User size={14} color={PINK} />} title="Data Sender" onUbah={() => setStep(0)}>
+                <SummaryRow label="Nama Sender" value={namaSender} last />
+              </ReviewSection>
+            </SectionCard>
+
+            <SectionCard>
               <ReviewSection icon={<Store size={14} color={PINK} />} title="Informasi Outlet" onUbah={() => setStep(0)}>
-                <SummaryRow label="Nama Sender" value={namaSender} />
                 <SummaryRow label="Nama Outlet" value={namaOutlet} />
                 <SummaryRow label="ID Outlet" value={idOutlet} />
+                {selectedOutlet?.outlet_id_im3 && <SummaryRow label="ID Outlet IM3" value={selectedOutlet.outlet_id_im3} />}
+                {selectedOutlet?.outlet_id_3id && <SummaryRow label="ID Outlet 3ID" value={selectedOutlet.outlet_id_3id} />}
+                {selectedOutlet?.area && <SummaryRow label="Area" value={selectedOutlet.area} />}
+                {selectedOutlet?.branch && <SummaryRow label="Branch" value={selectedOutlet.branch} />}
+                {selectedOutlet?.mc && <SummaryRow label="MC" value={selectedOutlet.mc} />}
+                {selectedOutlet?.city && <SummaryRow label="Kota/Kabupaten" value={selectedOutlet.city} />}
+                {selectedOutlet?.district && <SummaryRow label="Kecamatan" value={selectedOutlet.district} />}
+                {selectedOutlet?.village && <SummaryRow label="Desa" value={selectedOutlet.village} />}
                 <SummaryRow label="Social Media" value={socialMedia || "-"} last />
               </ReviewSection>
             </SectionCard>
 
             <SectionCard>
               <ReviewSection icon={<ImageIcon size={14} color={PINK} />} title={`Foto Etalase Outlet (${etalaseCount}/3)`} onUbah={() => setStep(1)}>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 10 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
                   {etalaseFiles.filter(Boolean).map((f, i) => (
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img key={i} src={URL.createObjectURL(f)} alt="" style={{ width: "100%", aspectRatio: "1", objectFit: "cover", borderRadius: 10, border: `1px solid ${BORDER}` }} />
+                    <img key={i} src={URL.createObjectURL(f)} alt=""
+                      onClick={() => setReviewLightbox({ urls: etalaseFiles.filter(Boolean).map((x) => URL.createObjectURL(x)), index: i })}
+                      style={{ width: 92, height: 92, objectFit: "cover", borderRadius: 11, border: `1px solid ${BORDER}`, boxShadow: "0 2px 6px rgba(20,18,28,0.06)", cursor: "zoom-in" }} />
                   ))}
                 </div>
               </ReviewSection>
@@ -1007,7 +1270,8 @@ export default function AuditOutletFormPage() {
               <ReviewSection icon={<Store size={14} color={PINK} />} title={`Foto Tampak Depan Outlet (${tapakFile ? 1 : 0}/1)`} onUbah={() => setStep(1)}>
                 {tapakFile && (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={URL.createObjectURL(tapakFile)} alt="" style={{ width: 120, aspectRatio: "1", objectFit: "cover", borderRadius: 10, border: `1px solid ${BORDER}`, marginTop: 10 }} />
+                  <img src={URL.createObjectURL(tapakFile)} alt="" onClick={() => setReviewLightbox({ urls: [URL.createObjectURL(tapakFile)], index: 0 })}
+                    style={{ width: 92, height: 92, objectFit: "cover", borderRadius: 11, border: `1px solid ${BORDER}`, boxShadow: "0 2px 6px rgba(20,18,28,0.06)", marginTop: 10, display: "block", cursor: "zoom-in" }} />
                 )}
               </ReviewSection>
             </SectionCard>
@@ -1016,11 +1280,37 @@ export default function AuditOutletFormPage() {
               <ReviewSection icon={<CheckCircle2 size={14} color={PINK} />} title="Availability Produk" onUbah={() => setStep(2)}>
                 {AVAILABILITY_ITEMS.map((item, i) => {
                   const [val] = availabilityState[item.key];
+                  const showGroupHeader = i === 0 || AVAILABILITY_ITEMS[i - 1].group !== item.group;
                   return (
-                    <div key={item.key} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 0", borderBottom: i < AVAILABILITY_ITEMS.length - 1 ? `1px solid ${BORDER}` : "none", fontSize: 12.5 }}>
-                      {val ? <Check size={14} color="#16A34A" style={{ flexShrink: 0 }} /> : <X size={14} color="#DC2626" style={{ flexShrink: 0 }} />}
-                      <span style={{ color: INK, flex: 1 }}>{item.label.replace(" ?", "").replace("?", "")}</span>
-                      <span style={{ fontWeight: 800, color: val ? "#16A34A" : "#DC2626" }}>{val ? "Ya" : "Tidak"}</span>
+                    <div key={item.key}>
+                      {showGroupHeader && (
+                        <div style={{
+                          fontSize: 10.5, fontWeight: 800, color: "#9A98A8", textTransform: "uppercase", letterSpacing: 0.5,
+                          marginTop: i === 0 ? 0 : 12, marginBottom: 2,
+                        }}>
+                          {AVAILABILITY_GROUP_LABEL[item.group]}
+                        </div>
+                      )}
+                      <div style={{
+                        display: "flex", alignItems: "center", gap: 10, padding: "9px 0",
+                        borderBottom: i < AVAILABILITY_ITEMS.length - 1 && AVAILABILITY_ITEMS[i + 1]?.group === item.group ? `1px solid ${BORDER}` : "none",
+                        fontSize: 12.5,
+                      }}>
+                        <span style={{
+                          flexShrink: 0, fontSize: 9.5, fontWeight: 800, padding: "2.5px 7px", borderRadius: 999,
+                          background: item.brand === "im3" ? YELLOW : PINK_DK, color: item.brand === "im3" ? "#5C4300" : "#fff",
+                        }}>
+                          {item.brand === "im3" ? "IM3" : "3ID"}
+                        </span>
+                        <span style={{ color: INK, flex: 1, fontWeight: 500 }}>{item.label.replace(" ?", "").replace("?", "")}</span>
+                        <span style={{
+                          fontSize: 11, fontWeight: 800, padding: "3px 9px", borderRadius: 999, flexShrink: 0,
+                          background: val ? "rgba(22,163,74,0.12)" : "rgba(220,38,38,0.1)",
+                          color: val ? "#16A34A" : "#DC2626",
+                        }}>
+                          {val ? "Ya" : "Tidak"}
+                        </span>
+                      </div>
                     </div>
                   );
                 })}
@@ -1055,6 +1345,76 @@ export default function AuditOutletFormPage() {
         )}
       </BottomBar>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+
+      {reviewLightbox && (
+        <div onClick={() => setReviewLightbox(null)} style={{
+          position: "fixed", inset: 0, zIndex: 150, background: "rgba(0,0,0,0.92)",
+          display: "flex", alignItems: "center", justifyContent: "center", padding: 16, cursor: "zoom-out",
+        }}>
+          <button onClick={() => setReviewLightbox(null)} aria-label="Tutup"
+            style={{
+              position: "absolute", top: "calc(14px + env(safe-area-inset-top))", right: 16, width: 38, height: 38, borderRadius: "50%",
+              border: "none", background: "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", zIndex: 1,
+            }}>
+            <X size={20} color="#fff" />
+          </button>
+
+          {reviewLightbox.urls.length > 1 && (
+            <>
+              {/* Tombol panah - disabled (bukan disembunyikan) di ujung
+                  biar user tetap paham ini foto pertama/terakhir. */}
+              <button
+                onClick={(e) => { e.stopPropagation(); setReviewLightbox((v) => ({ ...v, index: Math.max(0, v.index - 1) })); }}
+                disabled={reviewLightbox.index === 0}
+                aria-label="Foto sebelumnya"
+                style={{
+                  position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", width: 40, height: 40, borderRadius: "50%",
+                  border: "none", background: "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center",
+                  cursor: reviewLightbox.index === 0 ? "default" : "pointer", opacity: reviewLightbox.index === 0 ? 0.3 : 1, zIndex: 1,
+                }}>
+                <ChevronLeft size={22} color="#fff" />
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setReviewLightbox((v) => ({ ...v, index: Math.min(v.urls.length - 1, v.index + 1) })); }}
+                disabled={reviewLightbox.index === reviewLightbox.urls.length - 1}
+                aria-label="Foto berikutnya"
+                style={{
+                  position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", width: 40, height: 40, borderRadius: "50%",
+                  border: "none", background: "rgba(255,255,255,0.14)", display: "flex", alignItems: "center", justifyContent: "center",
+                  cursor: reviewLightbox.index === reviewLightbox.urls.length - 1 ? "default" : "pointer",
+                  opacity: reviewLightbox.index === reviewLightbox.urls.length - 1 ? 0.3 : 1, zIndex: 1,
+                }}>
+                <ChevronRight size={22} color="#fff" />
+              </button>
+              <div style={{
+                position: "absolute", bottom: "calc(18px + env(safe-area-inset-bottom))", left: "50%", transform: "translateX(-50%)",
+                display: "flex", gap: 6, zIndex: 1,
+              }}>
+                {reviewLightbox.urls.map((_, i) => (
+                  <span key={i} style={{
+                    width: i === reviewLightbox.index ? 16 : 6, height: 6, borderRadius: 999,
+                    background: i === reviewLightbox.index ? "#fff" : "rgba(255,255,255,0.4)", transition: "width .2s ease, background .2s ease",
+                  }} />
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={reviewLightbox.urls[reviewLightbox.index]} alt=""
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => { reviewLightboxDrag.current.startX = e.clientX; }}
+            onPointerUp={(e) => {
+              const dx = e.clientX - reviewLightboxDrag.current.startX;
+              if (Math.abs(dx) < 40) return; // tap biasa, bukan swipe
+              if (dx < 0) setReviewLightbox((v) => (v.index < v.urls.length - 1 ? { ...v, index: v.index + 1 } : v));
+              else setReviewLightbox((v) => (v.index > 0 ? { ...v, index: v.index - 1 } : v));
+            }}
+            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 10, touchAction: "pan-y" }}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -1062,10 +1422,21 @@ export default function AuditOutletFormPage() {
 function ReviewSection({ icon, title, onUbah, children }) {
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-        {icon}
-        <div style={{ flex: 1, fontSize: 13.5, fontWeight: 800, color: INK }}>{title}</div>
-        <button onClick={onUbah} style={{ border: "none", background: "transparent", color: PINK, fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+        <div style={{
+          width: 28, height: 28, borderRadius: 9, flexShrink: 0,
+          background: `linear-gradient(135deg, rgba(236,11,111,0.12), rgba(247,148,29,0.1))`,
+          border: "1px solid rgba(236,11,111,0.12)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          {icon}
+        </div>
+        <div style={{ flex: 1, fontSize: 14, fontWeight: 800, color: INK, letterSpacing: -0.1 }}>{title}</div>
+        <button onClick={onUbah} style={{
+          border: "1px solid rgba(236,11,111,0.22)", background: "rgba(236,11,111,0.06)", borderRadius: 999,
+          color: PINK_DK, fontSize: 11.5, fontWeight: 800, padding: "5px 10px",
+          display: "flex", alignItems: "center", gap: 4, cursor: "pointer", flexShrink: 0,
+        }}>
           <Pencil size={11} /> Ubah
         </button>
       </div>
@@ -1076,9 +1447,12 @@ function ReviewSection({ icon, title, onUbah, children }) {
 
 function SummaryRow({ label, value, last }) {
   return (
-    <div style={{ display: "flex", padding: "7px 0", borderBottom: last ? "none" : `1px solid ${BORDER}`, fontSize: 12.5 }}>
-      <div style={{ width: 110, color: MID, flexShrink: 0 }}>{label}</div>
-      <div style={{ color: INK, fontWeight: 600 }}>: {value || "-"}</div>
+    <div style={{
+      display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline",
+      padding: "9px 0", borderBottom: last ? "none" : `1px solid ${BORDER}`, fontSize: 12.5,
+    }}>
+      <div style={{ color: "#8A8795", flexShrink: 0 }}>{label}</div>
+      <div style={{ color: INK, fontWeight: 700, textAlign: "right" }}>{value || "-"}</div>
     </div>
   );
 }

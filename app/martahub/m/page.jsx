@@ -473,6 +473,10 @@ export default function MartaMobileHome() {
   const effectiveRegionFilter = canBrowseRegions && regionFilter && regionFilter !== "ALL" ? regionFilter : "";
   const branchOptions = canBrowseBranches
     ? Array.from(branchMap.entries())
+        // Branch lama yg sudah dipecah/nonaktif (mis. "ACEH" setelah jadi
+        // BANDA ACEH + MEULABOH) jangan ikut muncul sbg opsi filter -
+        // lihat catatan `active` di loadBranchMap (lib/martaScope.js).
+        .filter(([, b]) => b.active !== false)
         .filter(([, b]) => scope?.unscoped || !scope?.region || b.region === scope?.region)
         // Region Circle (dipilih lewat chip REG di atas) mempersempit lagi
         // daftar branch yg muncul - berlapis dgn penyaringan scope di atas,

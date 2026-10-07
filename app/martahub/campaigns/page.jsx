@@ -178,6 +178,7 @@ function CampaignForm({ form, role, region, saving, onCancel, onSave }) {
     const effRegion = role === "head" ? region : rowRegion;
     const names = new Set();
     for (const b of branchMap.values()) {
+      if (b.active === false) continue;
       if (effRegion && b.region !== effRegion) continue;
       if (b.name) names.add(b.name);
     }

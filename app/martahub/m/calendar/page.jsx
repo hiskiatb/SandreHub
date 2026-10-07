@@ -220,6 +220,7 @@ export default function CalendarPage() {
     if (!canBrowseBranches) return {};
     const groups = {};
     for (const [id, b] of branchMap.entries()) {
+      if (b.active === false) continue;
       if (!scope?.unscoped && scope?.region && b.region !== scope.region) continue;
       (groups[b.region || "Lainnya"] ||= []).push({ value: id, label: b.name });
     }
