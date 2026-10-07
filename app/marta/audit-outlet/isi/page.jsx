@@ -16,7 +16,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle, ArrowLeft, AtSign, Calendar, Camera, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
-  ClipboardList, Image as ImageIcon, Loader2, MapPin, Pencil, ScanBarcode, Search, Send, Store, User, X,
+  ClipboardList, Download, Image as ImageIcon, Loader2, MapPin, Pencil, PlusSquare, ScanBarcode, Search, Send,
+  Share, Store, User, X,
 } from "lucide-react";
 import lottie from "lottie-web";
 import successAnimData from "../../../../public/promotor/success-animation.json";
@@ -127,7 +128,7 @@ function Header({ title }) {
       padding: "calc(24px + env(safe-area-inset-top)) 18px 10px",
       display: "flex", alignItems: "center", gap: 14,
     }}>
-      <div style={{ flex: 1 }}>{title}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>{title}</div>
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src="/audit-outlet/indosat-logo-white.png" alt="Indosat Ooredoo Hutchison" style={{ height: 58, width: "auto", display: "block", flexShrink: 0 }} />
     </div>
@@ -136,16 +137,30 @@ function Header({ title }) {
 
 /** Judul header dua baris: label kecil regular + nama kompetisi bold,
  * dipakai di halaman isi form Pendataan Outlet (brief "Form Pendaftaran
- * North Sumatra Retail Competition" - bold + regular, rapi). */
-function HeaderTitle() {
+ * North Sumatra Retail Competition" - bold + regular, rapi). Tombol
+ * "Pasang Aplikasi" ditaruh SEBARIS dgn baris "NSA Retail Competition"
+ * (bukan di ujung kanan header dekat logo lagi) - diminta user krn posisi
+ * sebelumnya kejauhan dari judul & kurang nyambung sebagai 1 kelompok. */
+function HeaderTitle({ showInstall, onInstallClick, installing }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
       <span style={{ fontSize: 12, fontWeight: 500, color: "rgba(255,255,255,0.85)", letterSpacing: 0.6, textTransform: "uppercase" }}>
         Form Pendaftaran
       </span>
-      <span style={{ fontSize: 19, fontWeight: 800, color: "#fff", lineHeight: 1.2, letterSpacing: 0.1 }}>
-        NSA Retail Competition
-      </span>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ fontSize: 19, fontWeight: 800, color: "#fff", lineHeight: 1.2, letterSpacing: 0.1 }}>
+          NSA Retail Competition
+        </span>
+        {showInstall && (
+          <button onClick={onInstallClick} disabled={installing} aria-label="Pasang Aplikasi" style={{
+            width: 28, height: 28, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.22)",
+            display: "flex", alignItems: "center", justifyContent: "center", cursor: installing ? "default" : "pointer",
+            flexShrink: 0, color: "#fff",
+          }}>
+            {installing ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={13} />}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -765,7 +780,7 @@ function OutletPicker({ outlets, loading, loaded, value, onChange, error }) {
   );
 }
 
-function PhotoSlot({ file, label, onPick, onRemove, disabled, error }) {
+function PhotoSlot({ file, label, onRequestCamera, onRemove, disabled, error }) {
   if (file) {
     return (
       <div style={{
@@ -788,14 +803,18 @@ function PhotoSlot({ file, label, onPick, onRemove, disabled, error }) {
       </div>
     );
   }
+  // Catatan: SEBELUMNYA ini <label><input type="file" capture="environment">,
+  // tapi atribut `capture` cuma hint yg di-ignore browser desktop (laptop
+  // tetap bisa pilih file dari galeri/Finder, capture tidak wajib). Sekarang
+  // wajib pakai kamera in-browser (getUserMedia) via onRequestCamera - tidak
+  // ada fallback ke file picker sama sekali.
   return (
-    <label style={{
+    <button type="button" onClick={onRequestCamera} disabled={disabled} style={{
       aspectRatio: "1", borderRadius: 15, border: `1.5px dashed ${error ? "#DC2626" : "#D8B9C9"}`, display: "flex", flexDirection: "column",
       alignItems: "center", justifyContent: "center", gap: 8, cursor: disabled ? "not-allowed" : "pointer",
       background: error ? "rgba(220,38,38,0.04)" : "linear-gradient(145deg, #FFF9FB 0%, #FEF6FA 55%, #FDF3F8 100%)",
-      transition: "border-color .15s ease, background .15s ease",
+      transition: "border-color .15s ease, background .15s ease", padding: 0,
     }}>
-      <input type="file" accept="image/*" capture="environment" onChange={onPick} disabled={disabled} style={{ display: "none" }} />
       <div style={{
         width: 34, height: 34, borderRadius: "50%", background: "#fff",
         border: `1px solid ${error ? "rgba(220,38,38,0.25)" : "rgba(236,11,111,0.18)"}`,
@@ -805,11 +824,216 @@ function PhotoSlot({ file, label, onPick, onRemove, disabled, error }) {
         <Camera size={16} color={error ? "#DC2626" : PINK} />
       </div>
       <span style={{ fontSize: 10.5, color: error ? "#DC2626" : "#8A7E8F", fontWeight: 700, textAlign: "center", padding: "0 6px" }}>{label}</span>
-    </label>
+    </button>
+  );
+}
+
+/**
+ * Overlay kamera in-browser (getUserMedia + canvas), full-screen. Dibuat
+ * utk gantikan <input type="file" capture="environment"> krn atribut
+ * `capture` cuma hint non-enforced - browser desktop (laptop) tetap bisa
+ * buka file picker biasa & pilih foto dari galeri/Finder, bukan wajib
+ * buka kamera. Komponen ini TIDAK ada fallback ke file picker sama sekali:
+ * kalau getUserMedia gagal/ditolak/gak ada kamera, user cuma dikasih pesan
+ * error + tombol tutup & coba lagi (sesuai permintaan "wajib camera").
+ */
+// Sudut rotasi layar saat ini (0/90/180/270), dipakai utk auto-rotate
+// preview kamera & hasil jepretan supaya selalu tegak mengikuti orientasi
+// device - beberapa browser mobile (terutama WebView di dalam app chat
+// spt WhatsApp/Messenger, dan sebagian Android WebView) TIDAK auto-rotate
+// video getUserMedia sendiri walau device diputar, jadi perlu di-handle manual.
+function getScreenAngle() {
+  if (typeof window === "undefined") return 0;
+  const angle = window.screen?.orientation?.angle;
+  if (typeof angle === "number") return ((angle % 360) + 360) % 360;
+  if (typeof window.orientation === "number") return ((window.orientation % 360) + 360) % 360;
+  return 0;
+}
+
+function CameraCapture({ open, onClose, onCapture }) {
+  const videoRef = useRef(null);
+  const streamRef = useRef(null);
+  const [cameraErr, setCameraErr] = useState("");
+  const [ready, setReady] = useState(false);
+  const [angle, setAngle] = useState(0); // 0/90/180/270 - rotasi utk kompensasi preview & capture
+
+  useEffect(() => {
+    if (!open) return;
+    const updateAngle = () => setAngle(getScreenAngle());
+    updateAngle();
+    window.screen?.orientation?.addEventListener?.("change", updateAngle);
+    window.addEventListener("orientationchange", updateAngle);
+    window.addEventListener("resize", updateAngle);
+    return () => {
+      window.screen?.orientation?.removeEventListener?.("change", updateAngle);
+      window.removeEventListener("orientationchange", updateAngle);
+      window.removeEventListener("resize", updateAngle);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setCameraErr(""); setReady(false);
+    const start = async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error("unsupported");
+        }
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: false,
+        });
+        if (cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => {});
+        }
+        if (!cancelled) setReady(true);
+      } catch (e) {
+        if (cancelled) return;
+        if (e?.name === "NotAllowedError" || e?.name === "PermissionDeniedError") {
+          setCameraErr("Akses kamera ditolak. Mohon izinkan akses kamera di browser untuk melanjutkan.");
+        } else if (e?.name === "NotFoundError" || e?.name === "OverconstrainedError") {
+          setCameraErr("Kamera tidak ditemukan di perangkat ini. Form ini wajib menggunakan kamera langsung.");
+        } else {
+          setCameraErr("Tidak bisa mengakses kamera. Pastikan browser mendukung & izin kamera sudah diberikan.");
+        }
+      }
+    };
+    start();
+    return () => {
+      cancelled = true;
+      if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
+    };
+  }, [open]);
+
+  const handleClose = () => {
+    if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
+    onClose();
+  };
+
+  const handleShutter = () => {
+    const video = videoRef.current;
+    if (!video || !video.videoWidth) return;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    // Kompensasi rotasi: kalau layar lagi landscape (angle 90/270), lebar &
+    // tinggi canvas ditukar supaya hasil foto digambar tegak (bukan
+    // kesamping), sesuai apa yg user lihat di preview yg sudah di-rotate.
+    if (angle === 90 || angle === 270) {
+      canvas.width = vh; canvas.height = vw;
+    } else {
+      canvas.width = vw; canvas.height = vh;
+    }
+    ctx.save();
+    ctx.translate(canvas.width / 2, canvas.height / 2);
+    ctx.rotate((angle * Math.PI) / 180);
+    ctx.drawImage(video, -vw / 2, -vh / 2, vw, vh);
+    ctx.restore();
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const file = new File([blob], `foto-${Date.now()}.jpg`, { type: "image/jpeg" });
+      if (streamRef.current) { streamRef.current.getTracks().forEach((t) => t.stop()); streamRef.current = null; }
+      onCapture(file);
+    }, "image/jpeg", 0.92);
+  };
+
+  if (!open) return null;
+  return (
+    <div style={{
+      position: "fixed", inset: 0, background: "#000", zIndex: 999,
+      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+      overflow: "hidden",
+    }}>
+      {!cameraErr && (
+        <video ref={videoRef} playsInline muted style={{
+          width: "100%", height: "100%", objectFit: "cover", position: "absolute", inset: 0,
+          transform: `rotate(${-angle}deg)`,
+          transition: "transform .25s ease",
+        }} />
+      )}
+      <div style={{ position: "absolute", top: 0, left: 0, right: 0, padding: "18px 16px", display: "flex", justifyContent: "flex-end", zIndex: 2 }}>
+        <button onClick={handleClose} style={{
+          width: 38, height: 38, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.18)",
+          color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer",
+        }}>
+          <X size={20} />
+        </button>
+      </div>
+      {cameraErr ? (
+        <div style={{ position: "relative", zIndex: 2, textAlign: "center", padding: "0 28px", color: "#fff" }}>
+          <div style={{
+            width: 56, height: 56, borderRadius: "50%", background: "rgba(220,38,38,0.2)", margin: "0 auto 16px",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <Camera size={26} color="#FCA5A5" />
+          </div>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>Kamera tidak tersedia</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.75)", lineHeight: 1.5, marginBottom: 22 }}>{cameraErr}</div>
+          <button onClick={handleClose} style={{
+            padding: "10px 22px", borderRadius: 999, border: "none", background: "#fff", color: "#14121C",
+            fontSize: 13, fontWeight: 700, cursor: "pointer",
+          }}>Tutup</button>
+        </div>
+      ) : (
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, padding: "0 0 36px", display: "flex", justifyContent: "center", zIndex: 2 }}>
+          <button onClick={handleShutter} disabled={!ready} style={{
+            width: 72, height: 72, borderRadius: "50%", border: "4px solid #fff",
+            background: ready ? "rgba(255,255,255,0.25)" : "rgba(255,255,255,0.08)",
+            cursor: ready ? "pointer" : "not-allowed",
+          }} />
+        </div>
+      )}
+    </div>
   );
 }
 
 export default function AuditOutletFormPage() {
+  // PWA: daftarkan service worker (installable) - online-only, sama pola
+  // persis dgn app/martahub/m/_shared/MobileShell.jsx & app/promotor/page.jsx.
+  useEffect(() => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.register("/marta/audit-outlet/sw.js", { scope: "/marta/audit-outlet/" }).catch(() => {});
+  }, []);
+
+  // "Pasang Aplikasi" - tombol add-to-home-screen, sama pola persis dgn
+  // app/martahub/m/login/page.jsx (lihat komentar lengkap di sana): Android/
+  // Chrome bisa trigger otomatis lewat event `beforeinstallprompt`, iOS
+  // Safari TIDAK bisa sama sekali (batasan platform) jadi cuma ditampilkan
+  // panduan manual (Share > Add to Home Screen). Disembunyikan total kalau
+  // app sudah ke-install (`display-mode: standalone`).
+  const [installPrompt, setInstallPrompt] = useState(null);
+  const [isIOS, setIsIOS] = useState(false);
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [showIOSGuide, setShowIOSGuide] = useState(false);
+  const [installingApp, setInstallingApp] = useState(false);
+  useEffect(() => {
+    const ua = window.navigator.userAgent || "";
+    setIsIOS(/iphone|ipad|ipod/i.test(ua) && !window.MSStream);
+    setIsStandalone(
+      window.matchMedia?.("(display-mode: standalone)").matches || window.navigator.standalone === true
+    );
+    const onBeforeInstall = (e) => { e.preventDefault(); setInstallPrompt(e); };
+    window.addEventListener("beforeinstallprompt", onBeforeInstall);
+    return () => window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+  }, []);
+  const handleInstallClick = async () => {
+    if (isIOS) { setShowIOSGuide(true); return; }
+    if (!installPrompt) return;
+    setInstallingApp(true);
+    try {
+      installPrompt.prompt();
+      await installPrompt.userChoice;
+    } finally {
+      setInstallPrompt(null);
+      setInstallingApp(false);
+    }
+  };
+  const showInstallButton = !isStandalone && (isIOS || !!installPrompt);
+
   const [step, setStep] = useState(0); // 0=Data Outlet, 1=Foto Outlet, 2=Review, 3=Konfirmasi(terpisah)
   const [done, setDone] = useState(false);
   const [doneAt, setDoneAt] = useState(null);
@@ -883,8 +1107,8 @@ export default function AuditOutletFormPage() {
   // tombol itu cuma nutup sheet balik ke tampilan Foto Outlet (gak buka
   // kamera lagi). 2 input file TERSEMBUNYI terpisah dari yg ada di tiap
   // PhotoSlot (yg masih bisa dipakai manual per-slot spt biasa).
-  const etalaseCaptureRef = useRef(null);
-  const tapakCaptureRef = useRef(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const cameraTargetRef = useRef(null); // callback(file) dipanggil saat shutter ditekan
   // Lightbox foto di step Review - klik thumbnail Foto Etalase/Tampak Depan
   // buat lihat ukuran penuh, sama pola kayak lightbox foto referensi di
   // PhotoGuide. Simpan SELURUH daftar foto + index aktif (bukan 1 url
@@ -972,38 +1196,50 @@ export default function AuditOutletFormPage() {
 
   const setEtalaseAt = (i, file) => setEtalaseFiles((prev) => { const n = [...prev]; n[i] = file; return n; });
 
+  // Buka overlay CameraCapture (getUserMedia, wajib kamera - lihat komponen
+  // CameraCapture di atas utk alasan kenapa tidak lagi pakai
+  // <input type="file" capture="environment">). cameraTargetRef menampung
+  // callback yg dipanggil dgn File hasil jepretan.
+  const openCameraFor = (onCaptured) => {
+    cameraTargetRef.current = onCaptured;
+    setCameraOpen(true);
+  };
+  const handleCameraCapture = (file) => {
+    setCameraOpen(false);
+    const cb = cameraTargetRef.current;
+    cameraTargetRef.current = null;
+    cb?.(file);
+  };
+  const handleCameraClose = () => {
+    setCameraOpen(false);
+    cameraTargetRef.current = null;
+  };
+
+  const captureEtalaseSlot = (slotIdx) => {
+    openCameraFor((f) => setEtalaseAt(slotIdx, f));
+  };
+
   const startEtalaseCapture = () => {
     if (etalaseFiles.every(Boolean)) return; // 3/3 - jangan buka kamera lagi
-    etalaseCaptureRef.current?.click();
-  };
-  const onEtalaseCaptureChange = (e) => {
-    const f = e.target.files?.[0];
-    e.target.value = "";
-    if (!f) return;
-    setEtalaseFiles((prev) => {
-      const idx = prev.findIndex((x) => !x);
-      if (idx === -1) return prev;
-      const next = [...prev];
-      next[idx] = f;
-      // Masih ada slot kosong sisanya -> buka kamera lagi otomatis utk foto
-      // berikutnya. Delay kecil supaya UI sempat update & kamera sebelumnya
-      // benar2 tertutup dulu (langsung click() lagi di tick yg sama kurang
-      // reliable di beberapa mobile browser).
-      if (next.some((x) => !x)) {
-        setTimeout(() => etalaseCaptureRef.current?.click(), 400);
-      }
-      return next;
+    openCameraFor((f) => {
+      setEtalaseFiles((prev) => {
+        const idx = prev.findIndex((x) => !x);
+        if (idx === -1) return prev;
+        const next = [...prev];
+        next[idx] = f;
+        // Masih ada slot kosong sisanya -> buka kamera lagi otomatis utk
+        // foto berikutnya.
+        if (next.some((x) => !x)) {
+          setTimeout(() => startEtalaseCapture(), 350);
+        }
+        return next;
+      });
     });
   };
 
   const startTapakCapture = () => {
     if (tapakFile) return; // sudah ada - jangan buka kamera lagi
-    tapakCaptureRef.current?.click();
-  };
-  const onTapakCaptureChange = (e) => {
-    const f = e.target.files?.[0];
-    e.target.value = "";
-    if (f) setTapakFile(f);
+    openCameraFor((f) => setTapakFile(f));
   };
 
   const submit = async () => {
@@ -1053,50 +1289,66 @@ export default function AuditOutletFormPage() {
     const pct = Math.min(100, Math.round((progressStep.current / progressStep.total) * 100));
     const phase = progressMsg.includes("tampak depan") ? 2 : progressMsg.includes("etalase") ? 1 : 0;
     const PHASES = ["Data Outlet", "Foto Etalase", "Foto Tampak Depan"];
+    // Dulu overlay ini "position: static" biasa (ikut document flow) dgn
+    // cuma minHeight:100svh - kalau user nge-tap "Kirim" sambil scroll
+    // masih di bawah (form cukup panjang), overlay ketarik sejajar sama
+    // posisi scroll lama & jadi ketutup sebagian / keliatan nge-gap putih
+    // di bawahnya pas address-bar browser collapse/expand (ini laporan
+    // user: "sering kali tidak muncul dengan baik"). Sekarang full-screen
+    // overlay betulan (position:fixed, inset:0) - selalu nutup PERSIS
+    // seluruh viewport apapun posisi scroll/ukuran address-bar, dan konten
+    // di-center pakai flex vertikal+horizontal supaya selalu pas di tengah
+    // layar di semua ukuran device (responsive).
     return (
       <div style={{
-        minHeight: "100svh", background: BG, fontFamily: FONT, display: "flex",
-        flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 28, textAlign: "center",
+        position: "fixed", inset: 0, zIndex: 500, background: BG, fontFamily: FONT,
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        padding: "28px 24px", textAlign: "center", boxSizing: "border-box",
+        animation: "submitOverlayFade .25s ease",
       }}>
-        <div style={{ position: "relative", width: 112, height: 112, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <svg width={112} height={112} style={{ position: "absolute", transform: "rotate(-90deg)" }}>
-            <circle cx={56} cy={56} r={50} stroke={BORDER} strokeWidth={6} fill="none" />
+        <div style={{ position: "relative", width: 104, height: 104, display: "flex", alignItems: "center", justifyContent: "center", animation: "submitRingPop .4s cubic-bezier(.34,1.3,.64,1)" }}>
+          <svg width={104} height={104} style={{ position: "absolute", transform: "rotate(-90deg)" }}>
+            <circle cx={52} cy={52} r={46} stroke={BORDER} strokeWidth={6} fill="none" />
             <circle
-              cx={56} cy={56} r={50} stroke={PINK} strokeWidth={6} fill="none" strokeLinecap="round"
-              strokeDasharray={2 * Math.PI * 50}
-              strokeDashoffset={2 * Math.PI * 50 * (1 - pct / 100)}
+              cx={52} cy={52} r={46} stroke={PINK} strokeWidth={6} fill="none" strokeLinecap="round"
+              strokeDasharray={2 * Math.PI * 46}
+              strokeDashoffset={2 * Math.PI * 46 * (1 - pct / 100)}
               style={{ transition: "stroke-dashoffset .45s ease" }}
             />
           </svg>
-          <span style={{ fontSize: 20, fontWeight: 800, color: INK }}>{pct}%</span>
+          <span style={{ fontSize: 19, fontWeight: 800, color: INK }}>{pct}%</span>
         </div>
 
-        <div style={{ fontSize: 17, fontWeight: 800, color: INK, marginTop: 20, letterSpacing: "-0.02em" }}>
+        <div style={{ fontSize: 17, fontWeight: 800, color: INK, marginTop: 18, letterSpacing: "-0.02em" }}>
           Mengirim Data Outlet
         </div>
         <div style={{ fontSize: 13, color: MID, marginTop: 5, minHeight: 18 }}>{progressMsg}</div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 24 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 22 }}>
           {PHASES.map((label, i) => (
-            <div key={label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div key={label} style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <div style={{
-                width: 22, height: 22, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 10, fontWeight: 800, flexShrink: 0, transition: "all .3s ease",
+                width: 18, height: 18, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: 9, fontWeight: 800, flexShrink: 0, transition: "all .3s ease",
                 background: i < phase ? "#16A34A" : i === phase ? PINK : "#fff",
                 color: i <= phase ? "#fff" : "#B7B4C0",
                 border: i === phase ? `2px solid ${PINK}` : i < phase ? "none" : `1.5px solid ${BORDER}`,
-                boxShadow: i === phase ? "0 0 0 4px rgba(236,11,111,0.14)" : "none",
+                boxShadow: i === phase ? "0 0 0 3.5px rgba(236,11,111,0.14)" : "none",
               }}>
-                {i < phase ? <Check size={11} /> : i + 1}
+                {i < phase ? <Check size={9.5} /> : i + 1}
               </div>
               {i < PHASES.length - 1 && (
-                <div style={{ width: 20, height: 2, borderRadius: 999, background: i < phase ? "#16A34A" : BORDER, transition: "background .3s ease" }} />
+                <div style={{ width: 16, height: 2, borderRadius: 999, background: i < phase ? "#16A34A" : BORDER, transition: "background .3s ease" }} />
               )}
             </div>
           ))}
         </div>
 
-        <div style={{ fontSize: 10.5, color: "#B7B4C0", marginTop: 20 }}>Mohon tunggu, jangan tutup halaman ini.</div>
+        <div style={{ fontSize: 10.5, color: "#B7B4C0", marginTop: 18 }}>Mohon tunggu, jangan tutup halaman ini.</div>
+        <style>{`
+          @keyframes submitOverlayFade{0%{opacity:0}100%{opacity:1}}
+          @keyframes submitRingPop{0%{opacity:0;transform:scale(.85)}100%{opacity:1;transform:scale(1)}}
+        `}</style>
       </div>
     );
   }
@@ -1216,8 +1468,9 @@ export default function AuditOutletFormPage() {
 
   return (
     <div style={{ minHeight: "100vh", background: BG, fontFamily: FONT, display: "flex", flexDirection: "column" }}>
+      <CameraCapture open={cameraOpen} onClose={handleCameraClose} onCapture={handleCameraCapture} />
       <div style={{ background: BRAND_GRADIENT, position: "sticky", top: 0, zIndex: 30 }}>
-        <Header title={<HeaderTitle />} />
+        <Header title={<HeaderTitle showInstall={showInstallButton} onInstallClick={handleInstallClick} installing={installingApp} />} />
         <div style={{ background: "#fff", borderRadius: "22px 22px 0 0", marginTop: 0, boxShadow: "0 -8px 20px rgba(0,0,0,0.06)" }}>
           <Stepper step={step} onStepClick={goToStep} />
         </div>
@@ -1306,7 +1559,7 @@ export default function AuditOutletFormPage() {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
                 {[0, 1, 2].map((i) => (
                   <PhotoSlot key={i} file={etalaseFiles[i]} label={`Tambah Foto ${i + 1}`}
-                    onPick={(e) => { const f = e.target.files?.[0]; if (f) setEtalaseAt(i, f); e.target.value = ""; }}
+                    onRequestCamera={() => captureEtalaseSlot(i)}
                     onRemove={() => setEtalaseAt(i, null)} error={attempted1 && etalaseCount < 1 && !etalaseFiles[i]} />
                 ))}
               </div>
@@ -1315,7 +1568,6 @@ export default function AuditOutletFormPage() {
                 dos={["Seluruh etalase terlihat jelas", "Produk & materi promosi terlihat", "Foto fokus dan tidak blur", "Pencahayaan cukup"]}
                 donts={["Terlalu dekat (hanya sebagian)", "Gelap / blur", "Terhalang orang atau objek lain"]}
                 onCapture={startEtalaseCapture} />
-              <input ref={etalaseCaptureRef} type="file" accept="image/*" capture="environment" onChange={onEtalaseCaptureChange} style={{ display: "none" }} />
             </SectionCard>
             <SectionCard icon={<Store size={16} color={PINK} />} title="Foto Tampak Depan Outlet" badge="Wajib">
               <div style={{ fontSize: 12, color: MID, marginBottom: 14, marginTop: -8 }}>
@@ -1323,7 +1575,7 @@ export default function AuditOutletFormPage() {
               </div>
               <div style={{ maxWidth: 150 }}>
                 <PhotoSlot file={tapakFile} label="Tambah Foto Tampak Depan Outlet"
-                  onPick={(e) => { const f = e.target.files?.[0]; if (f) setTapakFile(f); e.target.value = ""; }}
+                  onRequestCamera={() => openCameraFor((f) => setTapakFile(f))}
                   onRemove={() => setTapakFile(null)} error={attempted1 && !tapakFile} />
               </div>
               <PhotoGuide title="Panduan Foto Tampak Depan Outlet" refs={refsFor("tapak_depan")} onOpen={refetchRefPhotos}
@@ -1331,7 +1583,6 @@ export default function AuditOutletFormPage() {
                 dos={["Seluruh tampak depan outlet terlihat", "Nama outlet / signage terlihat jelas", "Lingkungan sekitar terlihat", "Foto fokus dan tidak blur", "Pencahayaan cukup"]}
                 donts={["Terlalu dekat (hanya sebagian)", "Sudut tidak lengkap (fasad tidak terlihat)", "Gelap / blur"]}
                 onCapture={startTapakCapture} />
-              <input ref={tapakCaptureRef} type="file" accept="image/*" capture="environment" onChange={onTapakCaptureChange} style={{ display: "none" }} />
             </SectionCard>
           </>
         )}
@@ -1455,42 +1706,60 @@ export default function AuditOutletFormPage() {
 
             <SectionCard>
               <ReviewSection icon={<CheckCircle2 size={14} color={PINK} />} title="Availability Produk" onUbah={() => setStep(2)}>
-                {AVAILABILITY_ITEMS.map((item, i) => {
-                  const [val] = availabilityState[item.key];
-                  const showGroupHeader = i === 0 || AVAILABILITY_ITEMS[i - 1].group !== item.group;
-                  return (
-                    <div key={item.key}>
-                      {showGroupHeader && (
-                        <div style={{
-                          fontSize: 10.5, fontWeight: 800, color: "#9A98A8", textTransform: "uppercase", letterSpacing: 0.5,
-                          marginTop: i === 0 ? 0 : 12, marginBottom: 2,
-                        }}>
-                          {AVAILABILITY_GROUP_LABEL[item.group]}
-                        </div>
-                      )}
-                      <div style={{
-                        display: "flex", alignItems: "center", gap: 10, padding: "9px 0",
-                        borderBottom: i < AVAILABILITY_ITEMS.length - 1 && AVAILABILITY_ITEMS[i + 1]?.group === item.group ? `1px solid ${BORDER}` : "none",
-                        fontSize: 12.5,
-                      }}>
-                        <span style={{
-                          flexShrink: 0, fontSize: 9.5, fontWeight: 800, padding: "2.5px 7px", borderRadius: 999,
-                          background: item.brand === "im3" ? YELLOW : PINK_DK, color: item.brand === "im3" ? "#5C4300" : "#fff",
-                        }}>
-                          {item.brand === "im3" ? "IM3" : "3ID"}
-                        </span>
-                        <span style={{ color: INK, flex: 1, fontWeight: 500 }}>{item.label.replace(" ?", "").replace("?", "")}</span>
-                        <span style={{
-                          fontSize: 11, fontWeight: 800, padding: "3px 9px", borderRadius: 999, flexShrink: 0,
-                          background: val ? "rgba(22,163,74,0.12)" : "rgba(220,38,38,0.1)",
-                          color: val ? "#16A34A" : "#DC2626",
-                        }}>
-                          {val ? "Ya" : "Tidak"}
-                        </span>
-                      </div>
+                {Object.entries(
+                  AVAILABILITY_ITEMS.reduce((acc, item) => {
+                    (acc[item.group] = acc[item.group] || []).push(item);
+                    return acc;
+                  }, {})
+                ).map(([group, items], gi) => (
+                  <div key={group} style={{
+                    borderRadius: 13, background: "#FBFAFC", border: `1px solid ${BORDER}`,
+                    padding: "10px 12px", marginTop: gi === 0 ? 0 : 10,
+                  }}>
+                    <div style={{
+                      fontSize: 10.5, fontWeight: 800, color: "#9A98A8", textTransform: "uppercase", letterSpacing: 0.6,
+                      marginBottom: 6,
+                    }}>
+                      {AVAILABILITY_GROUP_LABEL[group]}
                     </div>
-                  );
-                })}
+                    {items.map((item, i) => {
+                      const [val] = availabilityState[item.key];
+                      return (
+                        <div key={item.key} style={{
+                          display: "flex", alignItems: "center", gap: 10, padding: "8px 0",
+                          borderTop: i > 0 ? `1px solid ${BORDER}` : "none",
+                          fontSize: 12.5,
+                        }}>
+                          <span style={{
+                            flexShrink: 0, width: 30, height: 30, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center",
+                            background: item.brand === "im3" ? YELLOW : `linear-gradient(135deg, ${PINK}, ${PINK_DK})`,
+                            boxShadow: "0 2px 5px rgba(20,18,28,0.08)",
+                          }}>
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={item.brand === "im3" ? "/brand/logo-im3.png" : "/brand/logo-3id.png"}
+                              alt={item.brand === "im3" ? "IM3" : "3ID"}
+                              style={{
+                                width: 18, height: 18, objectFit: "contain", display: "block",
+                                filter: item.brand === "3id" ? "brightness(0) invert(1)" : "none",
+                              }}
+                            />
+                          </span>
+                          <span style={{ color: INK, flex: 1, fontWeight: 500 }}>{item.label.replace(" ?", "").replace("?", "")}</span>
+                          <span style={{
+                            display: "inline-flex", alignItems: "center", gap: 4,
+                            fontSize: 11, fontWeight: 800, padding: "3.5px 10px 3.5px 8px", borderRadius: 999, flexShrink: 0,
+                            background: val ? "rgba(22,163,74,0.12)" : "rgba(220,38,38,0.1)",
+                            color: val ? "#16A34A" : "#DC2626",
+                          }}>
+                            {val ? <Check size={12} strokeWidth={3} /> : <X size={12} strokeWidth={3} />}
+                            {val ? "Ya" : "Tidak"}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
               </ReviewSection>
             </SectionCard>
 
@@ -1590,6 +1859,45 @@ export default function AuditOutletFormPage() {
             }}
             style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain", borderRadius: 10, touchAction: "pan-y" }}
           />
+        </div>
+      )}
+
+      {/* Panduan manual "Add to Home Screen" utk iOS Safari - lihat
+          komentar lengkap di showInstallButton. Sama pola persis dgn
+          app/martahub/m/login/page.jsx. */}
+      {showIOSGuide && (
+        <div onClick={() => setShowIOSGuide(false)} style={{ position: "fixed", inset: 0, zIndex: 200, display: "flex", alignItems: "flex-end", justifyContent: "center", fontFamily: FONT }}>
+          <div style={{ position: "absolute", inset: 0, background: "rgba(20,18,28,0.55)" }} />
+          <div onClick={(e) => e.stopPropagation()} style={{
+            position: "relative", width: "100%", maxWidth: 480, boxSizing: "border-box",
+            background: "#fff", borderRadius: "22px 22px 0 0",
+            padding: "22px 20px calc(env(safe-area-inset-bottom,0px) + 20px)",
+            boxShadow: "0 -10px 32px rgba(17,17,20,0.16)",
+          }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: INK }}>Pasang Pendataan Outlet di Layar Utama</div>
+              <button onClick={() => setShowIOSGuide(false)} style={{ background: "none", border: "none", cursor: "pointer", color: MID, padding: 4 }}><X size={18} /></button>
+            </div>
+            <div style={{ marginTop: 4, fontSize: 12, color: MID, lineHeight: 1.5 }}>
+              Safari di iPhone/iPad tidak mengizinkan instal otomatis - ikuti 2 langkah ini:
+            </div>
+            <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 10, background: "#F6F7F9", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 13, color: INK }}>1</div>
+              <div style={{ fontSize: 13, color: INK, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                Tap ikon <Share size={15} style={{ display: "inline" }} /> <b>Share/Bagikan</b> di bar Safari
+              </div>
+            </div>
+            <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 10, background: "#F6F7F9", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800, fontSize: 13, color: INK }}>2</div>
+              <div style={{ fontSize: 13, color: INK, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                Pilih <PlusSquare size={15} style={{ display: "inline" }} /> <b>Add to Home Screen</b>
+              </div>
+            </div>
+            <button onClick={() => setShowIOSGuide(false)}
+              style={{ marginTop: 22, width: "100%", height: 48, borderRadius: 14, border: "none", background: INK, color: "#fff", fontSize: 13.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
+              Mengerti
+            </button>
+          </div>
         </div>
       )}
     </div>

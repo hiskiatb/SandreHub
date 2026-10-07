@@ -1,3 +1,21 @@
+export const metadata = {
+  title: "Pendataan Outlet",
+  description: "Pendataan outlet & foto etalase/tampak depan - North Sumatra Retail Competition (MartaHub).",
+  manifest: "/marta/audit-outlet/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    // "black-translucent" - sama pola dgn app/martahub/m/layout.jsx, biar
+    // status bar iOS transparan & gradient Header nutup sampai belakang
+    // notch (dipadukan padding env(safe-area-inset-top) di Header).
+    statusBarStyle: "black-translucent",
+    title: "Pendataan Outlet",
+  },
+  icons: {
+    icon: [{ url: "/marta/audit-outlet/icon-192.png", sizes: "192x192", type: "image/png" }],
+    apple: [{ url: "/marta/audit-outlet/icon-192.png", sizes: "192x192", type: "image/png" }],
+  },
+};
+
 export const viewport = {
   width: "device-width",
   initialScale: 1,
