@@ -1046,10 +1046,16 @@ function CreatePlanWizardInner() {
       // Brand konkret yang akan disimpan ke mh_activities.brand (kolom
       // WAJIB satu nilai, lihat catatan needsBrandPick di atas) - 1 nilai
       // utk kasus normal (brand akun sudah pasti), 1 nilai (hasil pilihan
-      // StepInfo) utk slot merged, atau 2 nilai (["IM3","TRI"]) kalau DSF
-      // pilih "Semua Brand" - akan membuat DUA baris plan identik.
+      // StepInfo) utk slot merged, atau "BOTH" kalau DSF pilih "Semua
+      // Brand" - SATU baris plan (brand='BOTH'), BUKAN lagi 2 baris
+      // identik spt sebelumnya. Kolom `brand` sekarang boleh 'BOTH' (lihat
+      // migrasi mh_activities_allow_both_brand) krn data im3/tri-nya tetap
+      // kebagi otomatis lewat kolom breakdown actual_sp_im3/tri dkk di
+      // layar Isi Actual - tidak butuh baris terpisah per brand lagi utk
+      // itu. (revisi 2026-10: dulu ["IM3","TRI"] bikin 2 baris + 2 badge
+      // brand yg membingungkan utk event yg sama persis.)
       const resolvedBrands = needsBrandPick
-        ? (selectedPlanBrand === "both" ? ["IM3", "TRI"] : selectedPlanBrand ? [selectedPlanBrand.toUpperCase()] : [])
+        ? (selectedPlanBrand === "both" ? ["BOTH"] : selectedPlanBrand ? [selectedPlanBrand.toUpperCase()] : [])
         : [(effectiveScope.brand || "").toUpperCase()].filter(Boolean);
 
       // ── Mode bulk-region (superadmin, "Pilih semua BME di region ini") ──

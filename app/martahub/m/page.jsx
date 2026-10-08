@@ -1469,7 +1469,7 @@ function CarouselCard({ badge, accent, title, subtitle, action, cta }) {
 
 // Warna brand - SAMA PERSIS dgn skema di wizard Buat Plan & kartu daftar
 // Aktivitas (BRAND_COLOR di activities/page.jsx): IM3 kuning, 3ID magenta.
-const HOME_BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
+const HOME_BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86", both: "#0D9488" };
 
 // Kartu ini SEKARANG SAMA PERSIS bahasa visualnya dgn kartu di daftar
 // Aktivitas (activities/page.jsx ActivityCard) - title, subtitle MC ·
@@ -1541,9 +1541,9 @@ function ActivityRow({ r, branchLabel }) {
               <span style={{
                 flexShrink: 0, fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 999, whiteSpace: "nowrap",
                 background: HOME_BRAND_COLOR[r.brand.toLowerCase()] || "#8A8A96",
-                color: r.brand.toLowerCase() === "tri" ? "#FFFFFF" : "#17181C",
+                color: r.brand.toLowerCase() === "im3" ? "#17181C" : "#FFFFFF",
               }}>
-                {r.brand.toLowerCase() === "tri" ? "3ID" : "IM3"}
+                {r.brand.toLowerCase() === "tri" ? "3ID" : r.brand.toLowerCase() === "both" ? "BOTH BRAND" : "IM3"}
               </span>
             )}
             {r.campaign_id && (

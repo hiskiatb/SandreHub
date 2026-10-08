@@ -44,7 +44,7 @@ import { AUTO_NAME_CATEGORIES, snake } from "../_shared/planData";
 // Warna pill brand - SAMA PERSIS dgn skema di ActivityCard (tab Aktivitas)
 // spy kartu event di report ini terasa satu bahasa visual, bukan versi
 // sendiri lagi.
-const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
+const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86", both: "#0D9488" };
 // Versi lookup case-insensitive + fallback abu-abu utk brand kosong/tak
 // dikenal - dipakai breakdown "Kontribusi Brand" per branch di report
 // Kecamatan Fokus (BRAND_COLOR sendiri dipakai apa adanya di ActivityCard
@@ -1585,9 +1585,9 @@ function EventActivityCard({ ev }) {
                 <span style={{
                   flexShrink: 0, fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 999, whiteSpace: "nowrap",
                   background: BRAND_COLOR[ev.brand.toLowerCase()] || "#8A8A96",
-                  color: ev.brand.toLowerCase() === "tri" ? "#FFFFFF" : "#17181C",
+                  color: ev.brand.toLowerCase() === "im3" ? "#17181C" : "#FFFFFF",
                 }}>
-                  {ev.brand.toLowerCase() === "tri" ? "3ID" : "IM3"}
+                  {ev.brand.toLowerCase() === "tri" ? "3ID" : ev.brand.toLowerCase() === "both" ? "BOTH BRAND" : "IM3"}
                 </span>
               </div>
             )}
@@ -2315,9 +2315,9 @@ function DtuTrackerReport({ monthKey, monthLabel }) {
                                 {r.brand && (
                                   <span style={{
                                     flexShrink: 0, fontSize: 9, fontWeight: 800, padding: "1.5px 6px", borderRadius: 999,
-                                    background: r.brand.toLowerCase() === "tri" ? "#E23B86" : "#F5CD46",
-                                    color: r.brand.toLowerCase() === "tri" ? "#FFFFFF" : "#17181C",
-                                  }}>{r.brand.toLowerCase() === "tri" ? "3ID" : "IM3"}</span>
+                                    background: r.brand.toLowerCase() === "tri" ? "#E23B86" : r.brand.toLowerCase() === "both" ? "#0D9488" : "#F5CD46",
+                                    color: r.brand.toLowerCase() === "im3" ? "#17181C" : "#FFFFFF",
+                                  }}>{r.brand.toLowerCase() === "tri" ? "3ID" : r.brand.toLowerCase() === "both" ? "BOTH BRAND" : "IM3"}</span>
                                 )}
                                 <span style={{ fontSize: 10, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                   {[r.full_name, r.branch_name].filter(Boolean).join(" · ")}
@@ -2641,9 +2641,9 @@ function CampaignComplianceReport({ monthKey, monthLabel }) {
                                     {a.brand && (
                                       <span style={{
                                         flexShrink: 0, fontSize: 9, fontWeight: 800, padding: "1.5px 6px", borderRadius: 999,
-                                        background: a.brand.toLowerCase() === "tri" ? "#E23B86" : "#F5CD46",
-                                        color: a.brand.toLowerCase() === "tri" ? "#FFFFFF" : "#17181C",
-                                      }}>{a.brand.toLowerCase() === "tri" ? "3ID" : "IM3"}</span>
+                                        background: a.brand.toLowerCase() === "tri" ? "#E23B86" : a.brand.toLowerCase() === "both" ? "#0D9488" : "#F5CD46",
+                                        color: a.brand.toLowerCase() === "im3" ? "#17181C" : "#FFFFFF",
+                                      }}>{a.brand.toLowerCase() === "tri" ? "3ID" : a.brand.toLowerCase() === "both" ? "BOTH BRAND" : "IM3"}</span>
                                     )}
                                     <span style={{ fontSize: 10, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                       {[a.mc || a.site_id].filter(Boolean).join(" · ")}

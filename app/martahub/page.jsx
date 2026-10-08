@@ -534,11 +534,20 @@ function achievementPct(rows, ctx) {
     const bs = branchSlugMap.get(r.branch_id);
     if (!bs || !r.brand || !r.plan_date) continue;
     const mk = monthKeyYYYYMM(r.plan_date);
-    const key = `${bs}|${r.brand}|${mk}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const eff = nearestPriorTarget(activityTargets, bs, r.brand, mk);
-    if (eff?.target_sp) t += eff.target_sp;
+    // Plan brand='BOTH' ("Semua Brand") TIDAK punya baris target sendiri
+    // di mh_activity_target (target resmi cuma pernah di-set per IM3/TRI,
+    // lihat master/page.jsx) - supaya achievement % branch/bulan itu tidak
+    // pincang (actual-nya kehitung tapi target-nya 0), target IM3 DAN TRI
+    // branch/bulan itu DIJUMLAHKAN berdua, konsisten dgn aturan "baris BOTH
+    // dihitung ke keduanya" yg sama dipakai di laporan split-brand lain.
+    const brandsForTarget = r.brand.toUpperCase() === "BOTH" ? ["IM3", "TRI"] : [r.brand];
+    for (const br of brandsForTarget) {
+      const key = `${bs}|${br}|${mk}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const eff = nearestPriorTarget(activityTargets, bs, br, mk);
+      if (eff?.target_sp) t += eff.target_sp;
+    }
   }
   return t > 0 ? (a / t) * 100 : 0;
 }

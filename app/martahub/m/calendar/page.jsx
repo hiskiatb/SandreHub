@@ -27,7 +27,7 @@ import { BRANDS, BRAND_DISPLAY } from "../_shared/planData";
 
 const MONTH_NAMES_FULL = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 const DOW = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
-const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
+const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86", both: "#0D9488" };
 
 function dotColorForStatuses(statuses) {
   if (statuses.some((s) => s === "rejected" || s === "revision_needed")) return "#DC2626";
@@ -609,9 +609,9 @@ export default function CalendarPage() {
                           <span style={{
                             flexShrink: 0, fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 999, whiteSpace: "nowrap",
                             background: BRAND_COLOR[a.brand.toLowerCase()] || "#8A8A96",
-                            color: a.brand.toLowerCase() === "tri" ? "#FFFFFF" : "#17181C",
+                            color: a.brand.toLowerCase() === "im3" ? "#17181C" : "#FFFFFF",
                           }}>
-                            {a.brand.toLowerCase() === "tri" ? "3ID" : "IM3"}
+                            {a.brand.toLowerCase() === "tri" ? "3ID" : a.brand.toLowerCase() === "both" ? "BOTH BRAND" : "IM3"}
                           </span>
                         )}
                         <span style={{ fontSize: 11.5, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>

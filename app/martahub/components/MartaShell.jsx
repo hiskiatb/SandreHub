@@ -19,7 +19,7 @@ export const T = {
   primary: "#ED1C24", primaryD: "#C6168D", primaryBg: "#FCEAEE", primaryBd: "#F3C6D6",
   blue: "#1565C0", blueBg: "#E7F0FB", success: "#2E7D32", successBg: "#E8F5E9",
   warning: "#F57F17", warningBg: "#FFFDE7", error: "#C62828", errorBg: "#FFEBEE",
-  im3: "#E53935", tri: "#E23B86",
+  im3: "#E53935", tri: "#E23B86", both: "#0D9488",
 };
 
 // Satu sumber kebenaran label brand utk SEMUA halaman desktop MartaHub -
@@ -29,7 +29,7 @@ export const T = {
 // `(brand||"-").toUpperCase()` yang salah mengubah "tri" jadi "TRI" alih-
 // alih "3ID" - itulah bug yang diperbaiki dengan mengganti SEMUA pemakaian
 // pola itu ke brandLabel() ini.
-export const BRAND_LABEL = { im3: "IM3", tri: "3ID" };
+export const BRAND_LABEL = { im3: "IM3", tri: "3ID", both: "BOTH BRAND" };
 export function brandLabel(brand) {
   if (!brand) return "-";
   return BRAND_LABEL[String(brand).toLowerCase()] || String(brand).toUpperCase();

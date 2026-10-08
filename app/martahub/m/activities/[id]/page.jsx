@@ -34,7 +34,7 @@ import MarkRevisionSheet from "../../_shared/MarkRevisionSheet";
 // asli tetap di server).
 const REVISION_ROLES = ["admin", "head", "tmv", "spm_sumatera"];
 
-const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
+const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86", both: "#0D9488" };
 const A_COLS = "id,event_name,event_category,event_categories,brand,mc,site_id,plan_date,plan_date_start,plan_date_end,plan_dates_multi,is_all_day,start_time,end_time,poi_type,network_category,area_potential,address,latitude,longitude,status,revision_target,target_sp,target_fwa,target_rebuy_sp,target_rebuy_fwa,target_rev_3m,cost_estimate,expected_outcome,actual_sp,actual_fwa,actual_rebuy_sp,actual_rebuy_fwa,actual_rev_3m,cost_actual,insight,checkin_valid,checkin_distance,checkin_at,approved_by_name,approved_at,approval_notes,validation_status,validation_note,validated_at,override_status,override_by_name,override_at,override_note,created_at,created_by";
 
 // Sama seperti syarat "siap diajukan" step Info + Lokasi di wizard Create
@@ -391,9 +391,9 @@ export default function ActivityDetailPage() {
                   <span style={{
                     flexShrink: 0, fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 999, whiteSpace: "nowrap",
                     background: BRAND_COLOR[a.brand.toLowerCase()] || "#8A8A96",
-                    color: a.brand.toLowerCase() === "tri" ? "#FFFFFF" : "#17181C",
+                    color: a.brand.toLowerCase() === "im3" ? "#17181C" : "#FFFFFF",
                   }}>
-                    {a.brand.toLowerCase() === "tri" ? "3ID" : "IM3"}
+                    {a.brand.toLowerCase() === "tri" ? "3ID" : a.brand.toLowerCase() === "both" ? "BOTH BRAND" : "IM3"}
                   </span>
                 )}
                 <span style={{ fontSize: 11.5, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
