@@ -1,7 +1,7 @@
 // app/api/report-merge/settings/route.js
 import { NextResponse } from "next/server";
 import { requireReportMergeAccess } from "../../../../lib/reportMerge/auth";
-import { getEffectiveApproverEmail, getSetting, getAllMemoFieldMemory } from "../../../../lib/reportMerge/settings";
+import { getEffectiveApproverEmail, getSetting, getAllMemoFieldMemory, getNarrativeTemplates, getApproverList } from "../../../../lib/reportMerge/settings";
 
 const SIGNATURE_STORAGE_BUCKET = "rm-signatures";
 
@@ -24,7 +24,9 @@ export async function GET(req) {
       if (raw) letterSigners = JSON.parse(raw);
     } catch (e) { /* biarin default kosong kalau isinya rusak */ }
     const memoFields = await getAllMemoFieldMemory(auth.supabaseAdmin);
-    return NextResponse.json({ ok: true, approverEmail, hasSignature: Boolean(signaturePath), signatureUrl, letterSigners, memoFields });
+    const narrativeTemplates = await getNarrativeTemplates(auth.supabaseAdmin);
+    const approverList = await getApproverList(auth.supabaseAdmin);
+    return NextResponse.json({ ok: true, approverEmail, hasSignature: Boolean(signaturePath), signatureUrl, letterSigners, memoFields, narrativeTemplates, approverList });
   } catch (e) {
     return NextResponse.json({ ok: false, error: String(e?.message || e) }, { status: 500 });
   }

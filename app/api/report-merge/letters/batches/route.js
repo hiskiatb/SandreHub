@@ -5,7 +5,7 @@ import crypto from "crypto";
 import { requireReportMergeAccess } from "../../../../../lib/reportMerge/auth";
 import { getEffectiveApproverEmail, withLetterSignerDefaults } from "../../../../../lib/reportMerge/settings";
 import {
-  STYLE_PRESETS, isAggregateLetter, generateMemoPdf, generateLetterPdf,
+  STYLE_PRESETS, isAggregateLetter, generateMemoPdf, generateLetterPdf, generateFormatPdf, PER_ROW_FORMATS,
   computeDetailTotal, formatRupiah,
 } from "../../../../../lib/reportMerge/letterEngine";
 import { LETTER_STORAGE_BUCKET } from "../../../../../lib/reportMerge/letters";
@@ -26,15 +26,18 @@ export async function POST(req) {
   const auth = await requireReportMergeAccess(req);
   if (!auth.ok) return NextResponse.json({ ok: false, error: auth.message }, { status: auth.status });
 
-  const approverEmail = await getEffectiveApproverEmail(auth.supabaseAdmin);
-  if (!approverEmail) {
-    return NextResponse.json({ ok: false, error: 'Approver email belum diatur — isi di panel "Pengaturan Approver & TTD" dulu.' }, { status: 400 });
-  }
   if (!SETUP_OK) {
     return NextResponse.json({ ok: false, error: "Setup Resend belum lengkap (RESEND_API_KEY / SENDER_EMAIL)." }, { status: 400 });
   }
 
   const body = await req.json().catch(() => ({}));
+  // Approver boleh dipilih khusus untuk surat ini (body.approverEmail);
+  // kalau tidak, jatuh ke approver default di panel Pengaturan.
+  const approverOverride = String(body.approverEmail || "").trim();
+  const approverEmail = approverOverride || await getEffectiveApproverEmail(auth.supabaseAdmin);
+  if (!approverEmail) {
+    return NextResponse.json({ ok: false, error: 'Approver email belum diatur — isi di panel "Pengaturan Approver & TTD", atau pilih approver di Langkah 2.' }, { status: 400 });
+  }
   let templateConfig = body.templateConfig || {};
   const rows = Array.isArray(body.rows) ? body.rows : [];
   const batchMeta = body.batchMeta || {};
@@ -51,10 +54,24 @@ export async function POST(req) {
 
   templateConfig = await withLetterSignerDefaults(auth.supabaseAdmin, templateConfig);
 
+  // Alur surat dibekukan di batch sejak awal. Nilai tak dikenal -> approval_saja.
+  const alur = String(templateConfig.ALUR || "").trim().toLowerCase() === "approval_lalu_blast"
+    ? "approval_lalu_blast"
+    : "approval_saja";
+  // Kolom Excel berisi alamat email tiap baris (dipilih user di Langkah 2).
+  const emailColumn = String(templateConfig.EMAIL_COLUMN || "").trim();
+  // Surat fleksibel + blast = 1 dokumen personal per baris.
+  const perRowBlast = isAggregateLetter(templateCode) && alur === "approval_lalu_blast";
+  // Format Surat ke mitra / Pemberitahuan / BAST: selalu 1 surat per baris/ID.
+  const isMitra = isAggregateLetter(templateCode) && PER_ROW_FORMATS.includes(String(templateConfig.FORMAT_SURAT || ""));
+  if (perRowBlast && !emailColumn) {
+    return NextResponse.json({ ok: false, error: 'Kolom email penerima belum dipilih — buka Langkah 2 → "Kirim ke penerima" dulu.' }, { status: 400 });
+  }
+
   try {
     // 1) generate semua PDF dulu (di memory) sebelum nyimpen apa pun.
     const generated = [];
-    if (isAggregateLetter(templateCode)) {
+    if (isAggregateLetter(templateCode) && !perRowBlast && !isMitra) {
       const { buffer, signatureAnchor } = await generateMemoPdf(templateConfig, rows, batchMeta);
       const periodePart = String(batchMeta.periode || "").replace(/[^a-z0-9_-]+/gi, "_");
       const filename = `${templateCode}${periodePart ? "_" + periodePart : ""}.pdf`;
@@ -62,6 +79,17 @@ export async function POST(req) {
         row: { __memo: true, jumlah_baris: rows.length, rows },
         buffer, filename, seq: 1, signatureAnchor,
       });
+    } else if (perRowBlast || isMitra) {
+      for (let i = 0; i < rows.length; i++) {
+        const { buffer, signatureAnchor } = isMitra
+          ? await generateFormatPdf(templateConfig, rows[i], batchMeta, i + 1)
+          : await generateMemoPdf(templateConfig, [rows[i]], batchMeta);
+        const safeName = String(rows[i].ID || `surat-${i + 1}`).replace(/[^a-z0-9_-]+/gi, "_");
+        const partnerPart = String(rows[i].PARTNER_NAME || rows[i].PT_NAME || rows[i].NAMA || "").replace(/[^a-z0-9_-]+/gi, "_");
+        const fmtLabel = { surat_mitra: "Surat", pemberitahuan: "Pemberitahuan", bast: "BAST" }[String(templateConfig.FORMAT_SURAT || "")] || templateCode;
+        const filename = `${fmtLabel}_${safeName}${partnerPart ? "_" + partnerPart : ""}.pdf`;
+        generated.push({ row: rows[i], buffer, filename, seq: i + 1, signatureAnchor });
+      }
     } else {
       for (let i = 0; i < rows.length; i++) {
         const { buffer, signatureAnchor } = await generateLetterPdf(templateConfig, rows[i], batchMeta, i + 1);
@@ -72,7 +100,7 @@ export async function POST(req) {
       }
     }
 
-    const detailTotals = isAggregateLetter(templateCode)
+    const detailTotals = (isAggregateLetter(templateCode) && !perRowBlast && !isMitra)
       ? rows.map((r) => computeDetailTotal(templateConfig, r))
       : generated.map((item) => computeDetailTotal(templateConfig, item.row));
     const hasNominal = detailTotals.some((t) => typeof t === "number" && !isNaN(t));
@@ -80,15 +108,13 @@ export async function POST(req) {
 
     // 2) catat batch (status pending_approval) + upload tiap PDF ke Storage
     const approvalToken = crypto.randomBytes(24).toString("hex");
-    const alur = String(templateConfig.ALUR || "").trim().toLowerCase() === "approval_lalu_blast"
-      ? "approval_lalu_blast"
-      : "approval_saja";
     const { data: batchRow, error: batchErr } = await auth.supabaseAdmin
       .from("rm_letter_batches")
       .insert({
         template_code: templateCode,
         letter_name: templateConfig.LETTER_NAME || null,
         alur,
+        email_column: perRowBlast ? emailColumn : null,
         periode: batchMeta.periode || "",
         source_sheet: templateConfig.SOURCE_SHEET || null,
         total_items: generated.length,
