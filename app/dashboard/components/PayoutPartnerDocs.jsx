@@ -15,6 +15,10 @@ import {
   validateFile, partnerKey,
   APPROVAL_DOC_TYPES, approvalKey, approvalStatus, fetchApprovals, approvalApi,
 } from "../../../lib/payoutPartnerDocs";
+import {
+  parseTemplateWorkbook, readTemplateCarryOver, buildTemplateWorkbook, buildBastPdf, buildLetterPdf, loadLetterhead,
+  DEFAULT_SIGNATORIES, bastFileName, letterFileName, rupiah, parsePeriod, titleMatchesPeriod, dayInNextMonth,
+} from "../../../lib/payoutDocGenerator";
 
 const TEAL = "#32BCAD", TEAL_D = "#27a093", MAGENTA = "#C6168D";
 const MONO = "'SF Mono','Fira Code','DM Mono',monospace";
@@ -768,6 +772,7 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
   const [openSlot, setOpenSlot] = useState(null);  // slot yang difokuskan saat drawer dibuka
   const [bulkOpen, setBulkOpen] = useState(false); // modal Bulk Upload (SPM)
   const [reqOpen, setReqOpen] = useState(false);   // modal Request approval untuk PO terpilih (SPM)
+  const [genOpen, setGenOpen] = useState(false);   // modal Generate BAST & Letters dari Excel MPX (SPM)
   const [bulk, setBulk] = useState(null);       // { i, total, ref }
   const [rowBusy, setRowBusy] = useState(null); // key PO yang sedang di-merge
   const isSPM = !!docs?.canMerge;
@@ -944,6 +949,12 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
             ⬆ Bulk Upload
           </button>
         )}
+        {isSPM && segment === "partner" && (
+          <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", !docs?.loaded, true)} disabled={!docs?.loaded} onClick={() => setGenOpen(true)}
+            title="Generate BAST and Notification Letters from the MPX data Excel">
+            ✎ Generate BAST &amp; Letters
+          </button>
+        )}
       </div>
 
       {/* table */}
@@ -1080,6 +1091,7 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
       {openRow && <RefDocsDrawer key={openRow.key} refId={openRow.ref} partnerName={openRow.partner} segment={segment} title={openRow.title} amountText={openRow.amountText}
         docs={docs} focusSlot={openSlot} onClose={() => setOpenKey(null)} t={t} />}
       {bulkOpen && <BulkUploadModal rows={rows} segment={segment} docs={docs} onClose={() => setBulkOpen(false)} t={t} />}
+      {genOpen && <GenerateDocsModal rows={rows} segment={segment} docs={docs} onClose={() => setGenOpen(false)} t={t} />}
       {reqOpen && <BulkApprovalModal rows={selected} segment={segment} docs={docs} onClose={() => setReqOpen(false)} t={t} />}
     </div>
   );
@@ -1484,6 +1496,391 @@ function BulkApprovalModal({ rows, segment, docs, onClose, t }) {
           <span style={{ marginRight: "auto", fontFamily: MONO, fontSize: 11, color: t.muted }}>{items.length} document request(s)</span>
           <button className="ppd-f" style={btnStyle(t, "ghost", busy)} disabled={busy} onClick={onClose}>{result ? "Close" : "Cancel"}</button>
           {!result && <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || !items.length)} disabled={busy || !items.length} onClick={send}>{busy ? "Sending…" : `Send ${items.length} request(s)`}</button>}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ── Generate BAST & Notification Letter dari template Excel (SPM) ──────────
+const GEN_CFG_KEY = "ppd_gen_signatories";
+const LAST_TPL_KEY = "payoutDocGen:lastTemplate";
+const readGenCfg = () => { try { return { ...DEFAULT_SIGNATORIES, ...JSON.parse(localStorage.getItem(GEN_CFG_KEY) || "{}") }; } catch { return { ...DEFAULT_SIGNATORIES }; } };
+const readLastTpl = () => { try { return JSON.parse(localStorage.getItem(LAST_TPL_KEY) || "null"); } catch { return null; } };
+
+function saveBlobAs(bytes, name, type) {
+  const url = URL.createObjectURL(new Blob([bytes], { type }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+// PO untuk 1 baris template: PO Number di template (harus milik partner itu) → amount == DPP (±1) → periode → pilih manual
+function matchPo(pair, rows) {
+  const cands = rows.filter((r) => partnerKey(r.partner) === partnerKey(pair.partner));
+  if (pair.poRef) {
+    const hit = cands.find((r) => String(r.ref).trim() === String(pair.poRef).trim());
+    return hit ? { po: hit.key, how: "template", cands } : { po: "", how: "badref", cands };
+  }
+  const inPer = (r) => !!pair.per && (r.ym === pair.per.ym || titleMatchesPeriod(r.title, pair.per));
+  const byAmt = cands.filter((r) => Math.abs(Math.round(r.amount || 0) - Math.round(pair.dpp)) <= 1);
+  if (byAmt.length === 1) return { po: byAmt[0].key, how: "amount", cands };
+  const byPer = (byAmt.length > 1 ? byAmt : cands).filter(inPer);
+  if (byPer.length === 1) return { po: byPer[0].key, how: "period", cands };
+  return { po: "", how: cands.length ? "select" : "none", cands };
+}
+
+function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
+  useDocsCss();
+  const latestYm = useMemo(() => rows.map((r) => r.ym).filter(Boolean).sort().pop() || "", [rows]);
+  const [cfg, setCfg] = useState(readGenCfg);
+  const [showCfg, setShowCfg] = useState(false);
+  const [period, setPeriod] = useState(() => latestYm || new Date().toISOString().slice(0, 7));
+  const [prevFile, setPrevFile] = useState(null);   // template bulan lalu (opsional)
+  const [tplBusy, setTplBusy] = useState(false);
+  const [fileName, setFileName] = useState("");
+  const [items, setItems] = useState([]);           // pasangan + { id, po, how, cands, include, res }
+  const [parsing, setParsing] = useState(false);
+  const [phase, setPhase] = useState("pick");       // pick | review | saving | done
+  const [prog, setProg] = useState({ i: 0, total: 0 });
+  const [zipping, setZipping] = useState(false);
+  const fileRef = useRef(null);
+  const prevRef = useRef(null);
+  const busy = phase === "saving" || zipping || tplBusy;
+  const byKey = useMemo(() => new Map(rows.map((r) => [r.key, r])), [rows]);
+
+  const setCfgField = (k, v) => setCfg((c) => { const n = { ...c, [k]: v }; try { localStorage.setItem(GEN_CFG_KEY, JSON.stringify(n)); } catch { /* ignore */ } return n; });
+  const tryClose = () => { if (busy) { toast(t, "Please wait until the current process finishes.", "info"); return; } onClose(); };
+
+  const slotState = (poKey, docType) => {
+    const r = byKey.get(poKey);
+    if (!r) return { exists: false, locked: false };
+    return {
+      exists: r.stat?.types?.[docType]?.n > 0,
+      locked: approvalStatus(docs?.approvals?.[approvalKey(segment, r.partner, r.ref, docType)]) === "approved",
+    };
+  };
+
+  // ── Template download ──
+  const downloadBlank = async () => {
+    setTplBusy(true);
+    try { saveBlobAs(await buildTemplateWorkbook({}), "MPX Document Template (blank).xlsx", XLSX_MIME); }
+    catch (e) { toast(t, `Template failed: ${errMsg(e)}`, "err"); }
+    setTplBusy(false);
+  };
+
+  const downloadPrefilled = async () => {
+    const per = parsePeriod(period);
+    if (!per) { toast(t, "Please choose a valid period.", "err"); return; }
+    setTplBusy(true);
+    try {
+      const carry = prevFile ? await readTemplateCarryOver(new Uint8Array(await prevFile.arrayBuffer())) : (readLastTpl() || { partners: [], branches: [] });
+      const posInPeriod = rows.filter((r) => r.ym === per.ym || titleMatchesPeriod(r.title, per));
+      const list = carry.partners.map((p) => ({ ...p }));
+      const known = new Set(list.map((p) => partnerKey(p.partner)));
+      [...new Map(posInPeriod.map((r) => [partnerKey(r.partner), r.partner])).entries()]
+        .filter(([k]) => !known.has(k))
+        .forEach(([, name]) => list.push({ type: "", partner: name }));
+      const out = list.map((p) => {
+        const mine = posInPeriod.filter((r) => partnerKey(r.partner) === partnerKey(p.partner));
+        const po = mine.length === 1 ? mine[0] : null;
+        const notes = [];
+        if (!p.type) notes.push("Choose Type (MPC/MP3).");
+        if (mine.length > 1) notes.push(`${mine.length} POs found for this period — enter PO Number.`);
+        if (!mine.length) notes.push("No PO found for this period — enter PO Number if available.");
+        if (!p.docDay) notes.push("Enter Document Date.");
+        if (!p.deadlineDay) notes.push("Enter Claim Deadline.");
+        return {
+          type: p.type || "", partner: p.partner, period: per.ym,
+          docDate: dayInNextMonth(per, p.docDay), deadline: dayInNextMonth(per, p.deadlineDay),
+          letterNo: p.letterNo || "", recipientTitle: p.recipientTitle || "", signerName: p.signerName || "", signerTitle: p.signerTitle || "",
+          poNumber: po ? po.ref : "", dppTotal: po ? Math.round(po.amount || 0) : null, notes: notes.join(" "),
+        };
+      });
+      const keep = new Set(out.map((r) => `${r.type}|${partnerKey(r.partner)}`));
+      const branches = carry.branches.filter((b) => keep.has(`${b.type}|${partnerKey(b.partner)}`));
+      if (!out.length) toast(t, "No partners found for this period — the template is empty apart from the headers.", "info");
+      saveBlobAs(await buildTemplateWorkbook({ rows: out, branches }), `MPX Document Template ${per.ym}.xlsx`, XLSX_MIME);
+      toast(t, `Template for ${per.label} downloaded (${out.length} row(s)). Fill the yellow cells.`);
+    } catch (e) { toast(t, `Template failed: ${errMsg(e)}`, "err"); }
+    setTplBusy(false);
+  };
+
+  // ── Upload template terisi ──
+  const onPick = async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    if (!/\.xlsx?$/i.test(f.name)) { toast(t, "Please select an Excel file (.xlsx).", "err"); return; }
+    setParsing(true);
+    try {
+      const pairs = await parseTemplateWorkbook(new Uint8Array(await f.arrayBuffer()));
+      if (!pairs.length) throw new Error('No rows found in the "Partners" sheet.');
+      setItems(pairs.map((p, i) => {
+        const m = p.partner ? matchPo(p, rows) : { po: "", how: "none", cands: [] };
+        const errors = [...p.errors];
+        if (p.partner && !m.cands.length) errors.push(`Partner not found in the Payout data (${ownerLabel(segment)} Prepaid, current filters).`);
+        if (m.how === "badref") errors.push(`${DOC_REF_LABEL} ${p.poRef} was not found for this partner.`);
+        return { ...p, errors, id: i, ...m, include: !errors.length && !!m.po, res: null };
+      }));
+      setFileName(f.name);
+      setPhase("review");
+    } catch (err) { toast(t, errMsg(err), "err"); }
+    setParsing(false);
+  };
+
+  const setItem = (id, patch) => setItems((cur) => cur.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+
+  const preview = async (it, kind) => {
+    const w = window.open("", "_blank");
+    try {
+      const lh = await loadLetterhead();
+      const bytes = kind === "bast" ? await buildBastPdf(it.bast, cfg, lh) : await buildLetterPdf(it.letter, cfg, lh);
+      const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+      if (w) w.location.href = url; else window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 120000);
+    } catch (e) { if (w) w.close(); toast(t, `Preview failed: ${errMsg(e)}`, "err"); }
+  };
+
+  const valid = items.filter((x) => !x.errors.length);
+  const ready = valid.filter((x) => x.include && x.po && byKey.has(x.po));
+  const docCount = ready.reduce((n, x) => n + (slotState(x.po, "bast").locked ? 0 : 1) + (slotState(x.po, "surat_pemberitahuan").locked ? 0 : 1), 0);
+
+  const saveAll = async () => {
+    if (!ready.length) return;
+    setPhase("saving");
+    setProg({ i: 0, total: docCount });
+    let i = 0, ok = 0, skip = 0, fail = 0;
+    let lh;
+    try { lh = await loadLetterhead(); } catch (e) { toast(t, errMsg(e), "err"); setPhase("review"); return; }
+    for (const it of ready) {
+      const row = byKey.get(it.po);
+      const res = {};
+      for (const [kind, docType, build, name] of [
+        ["bast", "bast", () => buildBastPdf(it.bast, cfg, lh), bastFileName(it)],
+        ["letter", "surat_pemberitahuan", () => buildLetterPdf(it.letter, cfg, lh), letterFileName(it)],
+      ]) {
+        if (slotState(it.po, docType).locked) { res[kind] = "locked"; skip++; continue; }
+        try {
+          const file = new File([await build()], name, { type: "application/pdf" });
+          const r = await uploadSlot({ files: [file], partnerName: row.partner, refId: row.ref, docType, segment });
+          if (r.ok.length) { res[kind] = "ok"; ok++; }
+          else if (r.skipped.length) { res[kind] = "same"; skip++; }
+          else { res[kind] = `error: ${r.errors[0]?.message || "failed"}`; fail++; }
+        } catch (e) { res[kind] = `error: ${errMsg(e)}`; fail++; }
+        setProg({ i: ++i, total: docCount });
+      }
+      setItem(it.id, { res });
+    }
+    // simpan struktur template terakhir (tanpa nominal) untuk pre-fill bulan berikutnya
+    if (ok) {
+      try {
+        const carry = valid.map((x) => x.carry);
+        localStorage.setItem(LAST_TPL_KEY, JSON.stringify({
+          savedAt: new Date().toISOString(),
+          partners: carry.map(({ branchNames: _b, ...c }) => c),
+          branches: carry.flatMap((c) => c.branchNames.map((b) => ({ type: c.type, partner: c.partner, branch: b }))),
+        }));
+      } catch { /* ignore */ }
+    }
+    setPhase("done");
+    docs?.refresh?.();
+    toast(t, `${ok} document(s) saved${skip ? `, ${skip} skipped` : ""}${fail ? `, ${fail} failed` : ""}.`, fail ? "err" : "ok");
+  };
+
+  const downloadZip = async () => {
+    setZipping(true);
+    try {
+      const [{ default: JSZip }, lh] = await Promise.all([import("jszip"), loadLetterhead()]);
+      const zip = new JSZip();
+      for (const it of valid) {
+        zip.file(`${it.type}/${bastFileName(it)}`, await buildBastPdf(it.bast, cfg, lh));
+        zip.file(`${it.type}/${letterFileName(it)}`, await buildLetterPdf(it.letter, cfg, lh));
+      }
+      saveBlobAs(await zip.generateAsync({ type: "uint8array" }), `BAST_and_Letters_${(valid[0]?.per?.ym || "MPX")}.zip`, "application/zip");
+      toast(t, `ZIP with ${valid.length * 2} document(s) downloaded.`);
+    } catch (e) { toast(t, `ZIP failed: ${errMsg(e)}`, "err"); }
+    setZipping(false);
+  };
+
+  const th = { position: "sticky", top: 0, zIndex: 1, background: t.surf2, fontFamily: MONO, fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: t.muted, fontWeight: 500, padding: "8px 8px", borderBottom: `1.5px solid ${t.line2}`, textAlign: "left", whiteSpace: "nowrap" };
+  const td = { padding: "7px 8px", borderBottom: `1px solid ${t.line}`, verticalAlign: "top", fontSize: 12, color: t.ink2 };
+  const num = { ...td, textAlign: "right", fontFamily: MONO, whiteSpace: "nowrap" };
+  const inp = { fontFamily: "inherit", fontSize: 12.5, padding: "6px 9px", borderRadius: 8, border: `1px solid ${t.line2}`, background: t.surf, color: t.ink, width: "100%", boxSizing: "border-box" };
+  const lbl = { fontFamily: MONO, fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase", color: t.muted, marginBottom: 5 };
+  const resLabel = (v) => v === "ok" ? "✓ saved" : v === "same" ? "already saved" : v === "locked" ? "🔒 approved — skipped" : v ? `✕ ${v.replace(/^error: /, "")}` : "";
+  const cfgFields = [
+    ["p1Name", "First party (Pihak Pertama) — name"], ["p1Title", "First party — title"], ["p1Company", "First party — company"],
+    ["letterSignerName", "Letter signatory — name"], ["letterSignerTitle", "Letter signatory — title"], ["letterSignerUnit", "Letter signatory — unit"], ["city", "City (letter date line)"],
+  ];
+  const errCount = items.filter((x) => x.errors.length).length;
+  const lastTpl = readLastTpl();
+
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div onMouseDown={(e) => { if (e.target === e.currentTarget) tryClose(); }} onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); tryClose(); } }}
+      className="ppd-anim" style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 12, animation: "ppd_fade .15s ease-out" }}>
+      <div role="dialog" aria-modal="true" aria-labelledby="ppd-gen-title"
+        style={{ width: "min(1200px, 100%)", maxHeight: "94vh", display: "flex", flexDirection: "column", background: t.surf, color: t.ink, borderRadius: 18, border: `1px solid ${t.line}`, boxShadow: t.shadow2, overflow: "hidden", textAlign: "left" }}>
+        <div style={{ padding: "14px 18px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "flex-start", gap: 12, background: t.surf2 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: MAGENTA, fontWeight: 700 }}>SPM · Document generator</div>
+            <div id="ppd-gen-title" style={{ fontSize: 17, fontWeight: 800, marginTop: 2 }}>Generate BAST &amp; Notification Letters</div>
+            <div style={{ fontSize: 12, color: t.muted, marginTop: 3, lineHeight: 1.45 }}>
+              1) Download the template — pre-filled for the period, so you only fill the yellow cells. 2) Upload the completed file. 3) Review, preview and save.
+              Documents are generated in Indonesian on the IOH letterhead, without signatures; taxes are calculated by the app.
+            </div>
+          </div>
+          <button className="ppd-f" onClick={tryClose} aria-label="Close (Esc)" style={{ ...btnStyle(t, "ghost", false, true), fontSize: 20, lineHeight: 1, padding: "2px 8px", color: t.muted }}>×</button>
+        </div>
+
+        {/* Step 1 — template */}
+        <div style={{ padding: "12px 18px", borderBottom: `1px solid ${t.line}`, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div>
+            <div style={lbl}>1 · Period</div>
+            <input className="ppd-f" type="month" value={period} onChange={(e) => setPeriod(e.target.value)} disabled={busy} aria-label="Period" style={{ ...inp, width: 160 }} />
+          </div>
+          <div style={{ minWidth: 220 }}>
+            <div style={lbl}>Start from previous file (optional)</div>
+            <input ref={prevRef} type="file" accept=".xlsx" hidden onChange={(e) => { setPrevFile(e.target.files?.[0] || null); e.target.value = ""; }} />
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy, true)} disabled={busy} onClick={() => prevRef.current?.click()}>{prevFile ? "Change file" : "Choose last month’s template"}</button>
+              {prevFile && <button className="ppd-f" style={btnStyle(t, "ghost", busy, true)} onClick={() => setPrevFile(null)} aria-label="Remove previous file">✕</button>}
+            </div>
+            <div style={{ fontFamily: MONO, fontSize: 10, color: t.muted, marginTop: 3, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {prevFile ? prevFile.name : lastTpl ? `Using last generation (${new Date(lastTpl.savedAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })})` : "No previous data — partners come from the Payout data"}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy)} disabled={busy} onClick={downloadPrefilled}><IcoDownload /> {tplBusy ? "Preparing…" : "Download pre-filled template"}</button>
+            <button className="ppd-f" style={{ all: "unset", cursor: busy ? "default" : "pointer", color: t.goodDark || TEAL_D, fontWeight: 600, fontSize: 12 }} disabled={busy} onClick={downloadBlank}>Blank template</button>
+          </div>
+        </div>
+
+        {/* Step 2 — upload */}
+        <div style={{ padding: "12px 18px", borderBottom: `1px solid ${t.line}`, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+          <input ref={fileRef} type="file" accept=".xlsx,.xls" hidden onChange={onPick} />
+          <span style={{ ...lbl, marginBottom: 0 }}>2 · Completed template</span>
+          <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || parsing)} disabled={busy || parsing} onClick={() => fileRef.current?.click()}>
+            ⬆ {parsing ? "Reading…" : fileName ? "Upload another file" : "Upload completed template"}
+          </button>
+          {fileName && <span style={{ fontFamily: MONO, fontSize: 11.5, color: t.muted }}>{fileName} · {items.length} row(s){errCount ? ` · ${errCount} with errors` : ""}</span>}
+          <button className="ppd-f" style={{ ...btnStyle(t, "ghost", false, true), marginLeft: "auto" }} onClick={() => setShowCfg((v) => !v)} aria-expanded={showCfg}>
+            {showCfg ? "▾" : "▸"} Signatories &amp; city
+          </button>
+        </div>
+        {showCfg && (
+          <div style={{ padding: "10px 18px 14px", borderBottom: `1px solid ${t.line}`, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 10, background: t.surf2 }}>
+            {cfgFields.map(([k, lab]) => (
+              <label key={k} style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11.5, color: t.muted }}>
+                {lab}
+                <input className="ppd-f" value={cfg[k] || ""} onChange={(e) => setCfgField(k, e.target.value)} disabled={busy} style={inp} />
+              </label>
+            ))}
+            <div style={{ fontSize: 11, color: t.muted, alignSelf: "end" }}>Saved on this browser. <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.goodDark || TEAL_D, fontWeight: 600 }} onClick={() => { setCfg({ ...DEFAULT_SIGNATORIES }); try { localStorage.removeItem(GEN_CFG_KEY); } catch { /* ignore */ } }}>Reset to defaults</button></div>
+          </div>
+        )}
+
+        {/* Step 3 — review */}
+        <div style={{ flex: 1, overflow: "auto", minHeight: 180 }}>
+          {!items.length ? (
+            <div style={{ margin: 18, border: `2px dashed ${t.line2}`, borderRadius: 16, padding: "36px 16px", textAlign: "center", background: t.surf2, color: t.muted, fontSize: 12.5, lineHeight: 1.6 }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: t.ink }}>Download the template, fill the yellow cells, then upload it here</div>
+              Sheets: <b>Partners</b> (one row per partner and type) and <b>Branches</b> (one row per branch). The app calculates PPN, PPh 23 and totals.
+            </div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: 1100 }}>
+              <thead><tr>
+                <th style={{ ...th, width: 30 }}><span className="ppd-sr">Include</span></th>
+                <th style={th}>Row</th><th style={th}>Partner</th><th style={th}>Type</th><th style={th}>Period</th>
+                <th style={{ ...th, textAlign: "right" }}>DPP</th><th style={{ ...th, textAlign: "right" }}>PPN</th><th style={{ ...th, textAlign: "right" }}>PPh 23</th><th style={{ ...th, textAlign: "right" }}>Total transfer</th>
+                <th style={th}>{DOC_REF_LABEL}</th><th style={th}>Status</th><th style={th}>Preview</th>
+              </tr></thead>
+              <tbody>
+                {items.map((x) => {
+                  const bad = x.errors.length > 0;
+                  const sb = slotState(x.po, "bast"), sl = slotState(x.po, "surat_pemberitahuan");
+                  return (
+                    <tr key={x.id} style={{ background: bad ? t.badBg : x.warnings.length ? t.warnBg : "transparent", opacity: bad || x.include ? 1 : 0.6 }}>
+                      <td style={{ ...td, textAlign: "center" }}>
+                        <input type="checkbox" className="ppd-f" aria-label={`Include ${x.partner} ${x.type}`} checked={x.include && !bad} disabled={bad || busy || phase === "done" || !x.po}
+                          onChange={(e) => setItem(x.id, { include: e.target.checked })} />
+                      </td>
+                      <td style={{ ...td, fontFamily: MONO, color: t.muted }}>{x.row}</td>
+                      <td style={{ ...td, fontWeight: 600, color: t.ink, maxWidth: 220 }}>{x.partner || "—"}</td>
+                      <td style={td}>{x.type && <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 700, padding: "1px 6px", borderRadius: 6, background: t.surf3 }}>{x.type}</span>}</td>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>{x.period || "—"}</td>
+                      <td style={num}>{x.letter ? rupiah(x.dpp) : "—"}</td>
+                      <td style={num}>{x.letter ? rupiah(x.letter.ppn) : "—"}</td>
+                      <td style={num}>{x.letter ? rupiah(-x.letter.pph) : "—"}</td>
+                      <td style={{ ...num, fontWeight: 700, color: t.ink }}>{x.letter ? rupiah(x.letter.total) : "—"}</td>
+                      <td style={{ ...td, minWidth: 190 }}>
+                        {x.cands.length ? (
+                          <select className="ppd-f" aria-label={`${DOC_REF_LABEL} for ${x.partner} ${x.type}`} value={x.po} disabled={bad || busy || phase === "done"}
+                            onChange={(e) => setItem(x.id, { po: e.target.value, how: e.target.value ? "manual" : "select", include: !!e.target.value })}
+                            style={{ ...inp, fontFamily: MONO, fontSize: 11.5, padding: "5px 6px", borderColor: x.po ? t.line2 : t.warn }}>
+                            <option value="">— select {DOC_REF_LABEL} —</option>
+                            {x.cands.map((r) => <option key={r.key} value={r.key}>{r.ref} · {r.amountText}{r.title ? ` · ${String(r.title).slice(0, 40)}` : ""}</option>)}
+                          </select>
+                        ) : <span style={{ color: t.muted, fontSize: 11.5 }}>—</span>}
+                        {x.po && <div style={{ fontFamily: MONO, fontSize: 10, color: t.muted, marginTop: 2 }}>{{ template: "from template", amount: "matched by amount", period: "matched by period", manual: "selected manually" }[x.how] || ""}</div>}
+                      </td>
+                      <td style={{ ...td, fontSize: 11, minWidth: 220 }}>
+                        {x.errors.map((m, i) => <div key={`e${i}`} style={{ color: t.bad, fontWeight: 600 }}>✕ {m}</div>)}
+                        {x.warnings.map((m, i) => <div key={`w${i}`} style={{ color: t.warnDark || t.warn, fontWeight: 600 }}>⚠ {m}</div>)}
+                        {!bad && (x.res ? (
+                          <><div>BAST: {resLabel(x.res.bast)}</div><div>Letter: {resLabel(x.res.letter)}</div></>
+                        ) : x.po ? (
+                          <>
+                            <div style={{ color: sb.locked ? t.muted : t.ink2 }}>BAST: {sb.locked ? "🔒 approved — will skip" : sb.exists ? "has files — will add" : "ready"}</div>
+                            <div style={{ color: sl.locked ? t.muted : t.ink2 }}>Letter: {sl.locked ? "🔒 approved — will skip" : sl.exists ? "has files — will add" : "ready"}</div>
+                          </>
+                        ) : <span style={{ color: t.muted }}>Select a {DOC_REF_LABEL} to save</span>)}
+                      </td>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>
+                        {!bad && <>
+                          <button className="ppd-f ppd-act-o" style={{ ...btnStyle(t, "outline", false, true), marginRight: 4 }} onClick={() => preview(x, "bast")}>BAST</button>
+                          <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", false, true)} onClick={() => preview(x, "letter")}>Letter</button>
+                        </>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div style={{ borderTop: `1px solid ${t.line}`, background: t.surf2, padding: "12px 18px", display: "flex", flexDirection: "column", gap: 8 }}>
+          {(phase === "saving" || phase === "done") && (
+            <div>
+              <div style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted, marginBottom: 5 }}>{phase === "done" ? "Completed" : "Generating & saving"} {prog.i}/{prog.total} document(s)…</div>
+              <IndeterminateBar t={t} pct={prog.total ? Math.round((prog.i / prog.total) * 100) : 0} />
+            </div>
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            {items.length > 0 && (
+              <span style={{ fontFamily: MONO, fontSize: 11, color: t.muted }}>
+                {ready.length} of {items.length} row(s) ready · {docCount} document(s) to save{errCount ? ` · ${errCount} row(s) with errors (blocked)` : ""}
+              </span>
+            )}
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {valid.length > 0 && (
+                <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy)} disabled={busy} onClick={downloadZip} title="Generate the documents for every valid row and download them as one ZIP, without saving to Payout Tracker">
+                  <IcoDownload /> {zipping ? "Preparing ZIP…" : "Download all as ZIP"}
+                </button>
+              )}
+              {phase === "done"
+                ? <button className="ppd-f ppd-act" style={btnStyle(t, "primary")} onClick={onClose}>Done</button>
+                : <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || !docCount)} disabled={busy || !docCount} onClick={saveAll}
+                    title="Generate the documents and save them into the BAST and Notification Letter slots of the selected POs (existing files are kept)">
+                    ⬆ {phase === "saving" ? `Saving ${prog.i}/${prog.total}…` : `Generate & save ${docCount} document(s)`}
+                  </button>}
+            </div>
+          </div>
         </div>
       </div>
     </div>,

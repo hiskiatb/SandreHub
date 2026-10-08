@@ -1500,7 +1500,11 @@ function DashScreen(props) {
       const k = statKey(src, owner, ref);
       const e = m.get(k);
       if (e) { e.records++; e.amount += gnum(r,["amount"]); if (!e.title) e.title = gstr(r,["project title"]); return; }
-      m.set(k,{ref,partner:owner,title:gstr(r,["project title"]),amount:gnum(r,["amount"]),records:1});
+      // periode PO (YYYY-MM) dari program date — dipakai generator BAST/Letter untuk pre-fill per bulan
+      const pd = gcell(r,["program date","month","periode"]);
+      let mk = monthKey(pd); if (!mk) { const d = toRealDate(pd); if (d) mk = d.getFullYear()*100 + d.getMonth() + 1; }
+      const ym = mk ? `${Math.floor(mk/100)}-${String(mk%100).padStart(2,"0")}` : "";
+      m.set(k,{ref,partner:owner,title:gstr(r,["project title"]),amount:gnum(r,["amount"]),records:1,ym});
     });
     return { docPOs: [...m.values()].map(p => ({...p, amountText: fmtMoney(p.amount,false)})), docNoRef: noRef };
   }, [filtRaw, src]);
