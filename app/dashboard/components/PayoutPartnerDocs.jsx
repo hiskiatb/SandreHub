@@ -21,8 +21,8 @@ const N = DOC_TYPES.length;
 const PAGE_SIZES = [25, 50, 100];
 
 // ── util ───────────────────────────────────────────────────────────────────
-const fmtDT = (iso) => iso ? new Date(iso).toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
-const fmtD  = (iso) => iso ? new Date(iso).toLocaleDateString("id-ID", { day: "2-digit", month: "short" }) : "";
+const fmtDT = (iso) => iso ? new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+const fmtD  = (iso) => iso ? new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short" }) : "";
 const nColor = (n, t) => (n === N ? TEAL : n > 0 ? t.warn : t.bad);
 const nInk   = (n, t) => (n === N ? (t.goodDark || TEAL_D) : n > 0 ? (t.warnDark || "#8a6a00") : t.bad);
 const statusOf = (n) => (n === N ? "complete" : n > 0 ? "partial" : "none");
@@ -102,7 +102,7 @@ export function usePartnerDocStats(profile) {
 function Ring({ n, t, size = 26, label = true }) {
   const r = size / 2 - 3, c = 2 * Math.PI * r, col = nColor(n, t);
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }} aria-label={`${n} dari ${N} dokumen`}>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }} aria-label={`${n} of ${N} documents`}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ flexShrink: 0 }} aria-hidden="true">
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={t.surf3} strokeWidth="3.5" />
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={col} strokeWidth="3.5" strokeLinecap="round"
@@ -117,8 +117,8 @@ function Ring({ n, t, size = 26, label = true }) {
 function DocChip({ dt, ty, t, onClick, canWrite }) {
   const ok = ty?.n > 0;
   const tip = ok
-    ? `${dt.label} · ${ty.n} file · terakhir ${fmtDT(ty.lastAt)} — klik untuk lihat`
-    : `${dt.label} · belum diupload${canWrite ? " — klik untuk upload" : ""}`;
+    ? `${dt.label} · ${ty.n} file(s) · last updated ${fmtDT(ty.lastAt)} — click to view`
+    : `${dt.label} · not uploaded${canWrite ? " — click to upload" : ""}`;
   const style = {
     display: "inline-flex", alignItems: "center", gap: 3, fontFamily: MONO, fontSize: 10, fontWeight: 700, letterSpacing: "0.02em",
     padding: "3px 8px", borderRadius: 99, whiteSpace: "nowrap", transition: "transform .1s, box-shadow .15s, background .15s",
@@ -166,7 +166,7 @@ function UploaderBadge({ role, t }) {
   if (!l) return null;
   const spm = l === "SPM";
   return (
-    <span title={`Diupload oleh ${l}`} style={{ fontFamily: MONO, fontSize: 9, fontWeight: 800, letterSpacing: "0.06em", padding: "1px 6px", borderRadius: 5, textTransform: "uppercase",
+    <span title={`Uploaded by ${l}`} style={{ fontFamily: MONO, fontSize: 9, fontWeight: 800, letterSpacing: "0.06em", padding: "1px 6px", borderRadius: 5, textTransform: "uppercase",
       background: spm ? `${MAGENTA}18` : t.infoBg, color: spm ? MAGENTA : t.info, border: `1px solid ${spm ? `${MAGENTA}35` : t.infoBd}` }}>{l}</span>
   );
 }
@@ -185,7 +185,7 @@ function FileIcon({ name, mime, t }) {
 export function DocsCell({ refId, partnerName, segment, title, amountText, docs, t }) {
   const [open, setOpen] = useState(false);
   useDocsCss();
-  const dash = <span style={{ color: t.muted2, fontFamily: MONO, fontSize: 10.5 }} title={!refId ? `Tanpa ${DOC_REF_LABEL}` : undefined}>—</span>;
+  const dash = <span style={{ color: t.muted2, fontFamily: MONO, fontSize: 10.5 }} title={!refId ? `No ${DOC_REF_LABEL}` : undefined}>—</span>;
   if (!docs?.enabled || !refId || !partnerName || !canViewPartner(docs.profile, partnerName, segment)) return dash;
   const stat = docs.byRef[statKey(segment, partnerName, refId)];
   const n = doneCount(stat);
@@ -193,7 +193,7 @@ export function DocsCell({ refId, partnerName, segment, title, amountText, docs,
   return (
     <>
       <button className="ppd-f" onClick={(e) => { e.stopPropagation(); setOpen(true); }} title={`${DOC_REF_LABEL} ${refId}\n${tip}`}
-        aria-label={`Dokumen ${DOC_REF_LABEL} ${refId}: ${n} dari ${N}`}
+        aria-label={`Documents for ${DOC_REF_LABEL} ${refId}: ${n} of ${N}`}
         style={{ border: `1px solid ${t.line}`, background: t.surf, cursor: "pointer", padding: "2px 8px 2px 3px", borderRadius: 99, display: "inline-flex" }}>
         {docs.loaded ? <Ring n={n} t={t} size={18} /> : <Skel w={42} h={14} t={t} />}
       </button>
@@ -240,7 +240,7 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
   }, []);
 
   const tryClose = useCallback(() => {
-    if (busy) { toast(t, "Tunggu proses upload/merge selesai dulu.", "info"); return; }
+    if (busy) { toast(t, "Please wait for the upload/merge to finish.", "info"); return; }
     onClose();
   }, [busy, onClose, t]);
 
@@ -266,27 +266,27 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
         refId, partnerName, segment, title, amountText, docs: list,
         onProgress: ({ index, total }) => setMerge({ i: index + 1, total }),
       });
-      if (r.skipped.length) toast(t, `PDF terunduh, tapi ${r.skipped.length} file dilewati (lihat halaman cover).`, "info");
-      else toast(t, `PDF ${refId} terunduh (${present}/${N} dokumen).`);
-    } catch (e) { toast(t, `Merge gagal: ${errMsg(e)}`, "err"); }
+      if (r.skipped.length) toast(t, `PDF downloaded; ${r.skipped.length} file(s) were skipped (see cover page).`, "info");
+      else toast(t, `PDF for ${refId} downloaded (${present}/${N} documents).`);
+    } catch (e) { toast(t, `Merge failed: ${errMsg(e)}`, "err"); }
     setMerge(null);
   };
 
   const onZipAll = async () => {
     setZipping({ i: 0, total: list.length });
     try {
-      const { failed } = await downloadDocsZip(list, refZipName(refId, partnerName, "dokumen"), {
+      const { failed } = await downloadDocsZip(list, refZipName(refId, partnerName, "documents"), {
         byType: true, onProgress: ({ index, total }) => setZipping({ i: index + 1, total }),
       });
-      if (failed.length) toast(t, `ZIP terunduh, ${failed.length} file gagal: ${failed[0]}`, "err");
-      else toast(t, `ZIP ${list.length} file terunduh.`);
-    } catch (e) { toast(t, `Gagal membuat ZIP: ${errMsg(e)}`, "err"); }
+      if (failed.length) toast(t, `ZIP downloaded; ${failed.length} file(s) failed: ${failed[0]}`, "err");
+      else toast(t, `ZIP with ${list.length} file(s) downloaded.`);
+    } catch (e) { toast(t, `Unable to create ZIP: ${errMsg(e)}`, "err"); }
     setZipping(null);
   };
 
   const roHint = docs?.profile?.role === "finance_mpx" || docs?.profile?.role === "agency"
-    ? `${DOC_REF_LABEL} ini bukan milik ${ownerLabel(segment).toLowerCase()} kamu, jadi hanya bisa dilihat.`
-    : `Mode lihat saja: kamu bisa membuka & download file. Upload & hapus dilakukan oleh ${ownerLabel(segment).toLowerCase()} pemilik ${DOC_REF_LABEL} atau SPM.`;
+    ? `This ${DOC_REF_LABEL} does not belong to your ${ownerLabel(segment).toLowerCase()}, so it is view-only.`
+    : `View-only access: you can open and download files. Uploads and deletions are handled by the ${ownerLabel(segment).toLowerCase()} that owns this ${DOC_REF_LABEL}, or by SPM.`;
 
   if (typeof document === "undefined") return null;
   return createPortal(
@@ -299,7 +299,7 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
         <div style={{ padding: "16px 18px 14px", borderBottom: `1px solid ${t.line}`, background: t.surf, display: "flex", gap: 12, alignItems: "flex-start" }}>
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: MAGENTA, fontWeight: 700 }}>
-              Dokumen {ownerLabel(segment)} · {DOC_REF_LABEL}
+              {ownerLabel(segment)} Documents · {DOC_REF_LABEL}
             </div>
             <div id="ppd-title" style={{ fontSize: 19, fontWeight: 800, marginTop: 3, fontFamily: MONO, letterSpacing: "-0.01em", wordBreak: "break-all" }}>{refId}</div>
             <div style={{ fontSize: 12.5, color: t.ink2, marginTop: 4, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={partnerName}>{partnerName}</div>
@@ -307,7 +307,7 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
             {amountText && <div style={{ fontFamily: MONO, fontSize: 12, color: t.ink, marginTop: 3, fontWeight: 700 }}>{amountText}</div>}
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
-            <button ref={closeRef} className="ppd-f" onClick={tryClose} aria-label="Tutup panel (Esc)" title="Tutup (Esc)"
+            <button ref={closeRef} className="ppd-f" onClick={tryClose} aria-label="Close panel (Esc)" title="Close (Esc)"
               style={{ ...btnStyle(t, "ghost", false, true), fontSize: 20, lineHeight: 1, padding: "2px 8px", color: t.muted }}>×</button>
             {loading ? <Skel w={56} h={22} t={t} /> : <Ring n={present} t={t} />}
           </div>
@@ -319,7 +319,7 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
             {DOC_TYPES.map((d) => {
               const ok = list.some((x) => x.doc_type === d.key);
               return (
-                <button key={d.key} className="ppd-f" onClick={() => setFocus((f) => ({ key: d.key, n: f.n + 1 }))} title={`${d.label}: ${ok ? "sudah ada" : "belum"}`}
+                <button key={d.key} className="ppd-f" onClick={() => setFocus((f) => ({ key: d.key, n: f.n + 1 }))} title={`${d.label}: ${ok ? "uploaded" : "missing"}`}
                   style={{ all: "unset", cursor: "pointer", display: "flex", flexDirection: "column", gap: 4 }}>
                   <span style={{ height: 5, borderRadius: 99, background: loading ? t.surf3 : ok ? TEAL : t.surf3 }} />
                   <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 700, color: ok ? (t.goodDark || TEAL_D) : t.muted2, textAlign: "center" }}>{ok ? "✓ " : ""}{d.short}</span>
@@ -330,10 +330,10 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
           {!loading && canWrite && nextMissing && (
             <button className="ppd-f" onClick={() => setFocus((f) => ({ key: nextMissing.key, n: f.n + 1 }))}
               style={{ ...btnStyle(t, "primary", false, true), marginTop: 10, width: "100%" }}>
-              ⬆ Upload berikutnya: {nextMissing.label}
+              ⬆ Upload next: {nextMissing.label}
             </button>
           )}
-          {!loading && present === N && <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 600, color: t.goodDark || TEAL_D, textAlign: "center" }}>✓ Semua {N} dokumen sudah lengkap</div>}
+          {!loading && present === N && <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 600, color: t.goodDark || TEAL_D, textAlign: "center" }}>✓ All {N} documents are complete</div>}
         </div>
 
         {!canWrite && (
@@ -341,7 +341,7 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
             <span aria-hidden="true" style={{ fontWeight: 800 }}>ℹ</span>{roHint}
           </div>
         )}
-        {loadErr && <div role="alert" style={{ margin: "12px 18px 0", padding: "9px 12px", borderRadius: 10, fontSize: 12, color: t.bad, background: t.badBg, border: `1px solid ${t.badBd}` }}>Gagal memuat dokumen: {loadErr}</div>}
+        {loadErr && <div role="alert" style={{ margin: "12px 18px 0", padding: "9px 12px", borderRadius: 10, fontSize: 12, color: t.bad, background: t.badBg, border: `1px solid ${t.badBd}` }}>Unable to load documents: {loadErr}</div>}
 
         {/* slots */}
         <div style={{ flex: 1, overflowY: "auto", padding: "12px 18px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
@@ -362,13 +362,13 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
         <div style={{ borderTop: `1px solid ${t.line}`, background: t.surf, padding: "12px 18px", display: "flex", flexDirection: "column", gap: 8 }}>
           {zipping && (
             <div>
-              <div style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted, marginBottom: 5 }}>Menyiapkan ZIP {zipping.i}/{zipping.total} file…</div>
+              <div style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted, marginBottom: 5 }}>Preparing ZIP {zipping.i}/{zipping.total} files…</div>
               <IndeterminateBar t={t} pct={zipping.total ? Math.round((zipping.i / zipping.total) * 100) : null} />
             </div>
           )}
           {merge && (
             <div>
-              <div style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted, marginBottom: 5 }}>Menggabungkan {merge.i}/{merge.total} file…</div>
+              <div style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted, marginBottom: 5 }}>Merging {merge.i}/{merge.total} files…</div>
               <IndeterminateBar t={t} pct={merge.total ? Math.round((merge.i / merge.total) * 100) : null} />
             </div>
           )}
@@ -380,16 +380,16 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
               {(canWrite || isSPM) && (
                 <button className="ppd-f" style={btnStyle(t, "outline", busy || !list.length)} disabled={busy || !list.length} onClick={onZipAll}
-                  title={!list.length ? "Belum ada file" : `Download semua file ${DOC_REF_LABEL} ini (ZIP, dikelompokkan per jenis dokumen)`}>
-                  <IcoDownload /> Download semua dokumen {DOC_REF_LABEL} ini
+                  title={!list.length ? "No files yet" : `Download all files for this ${DOC_REF_LABEL} (ZIP, grouped by document type)`}>
+                  <IcoDownload /> Download all documents
                 </button>
               )}
               {isSPM
                 ? <button className="ppd-f" style={btnStyle(t, "primary", busy || !list.length)} disabled={busy || !list.length} onClick={onMerge}
-                    title={!list.length ? "Belum ada file untuk digabung" : `Gabung ${present}/${N} dokumen jadi 1 PDF`}>
-                    <IcoDownload /> Download merge
+                    title={!list.length ? "No files to merge yet" : `Merge ${present}/${N} documents into one PDF`}>
+                    <IcoDownload /> Download merged PDF
                   </button>
-                : <span style={{ fontSize: 11, color: t.muted, alignSelf: "center" }}>PDF gabungan (merge) dibuat oleh SPM</span>}
+                : <span style={{ fontSize: 11, color: t.muted, alignSelf: "center" }}>Merged PDFs are generated by SPM</span>}
             </div>
           </div>
         </div>
@@ -428,10 +428,10 @@ function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy
     // validasi di browser dulu: tipe & ukuran
     const bad = all.map((f) => [f, validateFile(f)]).filter(([, m]) => m);
     bad.slice(0, 3).forEach(([f, m]) => toast(t, `${f.name}: ${m}`, "err"));
-    if (bad.length > 3) toast(t, `… dan ${bad.length - 3} file lain ditolak.`, "err");
+    if (bad.length > 3) toast(t, `…and ${bad.length - 3} more file(s) rejected.`, "err");
     const arr = all.filter((f) => !validateFile(f));
     if (!arr.length) return;
-    if (replace && !window.confirm(`Ganti ${files.length} file ${dt.label} dengan ${arr.length} file baru?`)) return;
+    if (replace && !window.confirm(`Replace ${files.length} existing ${dt.label} file(s) with ${arr.length} new file(s)?`)) return;
     setQueue(arr.map((f) => ({ name: f.name, size: f.size, status: "wait" })));
     onBusy(1);
     const setQ = (i, patch) => setQueue((q) => q.map((x, j) => (j === i ? { ...x, ...patch } : x)));
@@ -440,14 +440,14 @@ function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy
         files: arr, partnerName, refId, docType: dt.key, segment, replace,
         onProgress: ({ index, phase, error }) => setQ(index, { status: phase === "start" ? "up" : phase === "done" ? "ok" : phase === "skip" ? "skip" : "err", error }),
       });
-      if (ok.length) toast(t, `${dt.label}: ${ok.length} file terupload${replace ? " (menggantikan file lama)" : ""}.`);
-      if (skipped.length) toast(t, `${skipped.length} file sudah ada di ${dt.label}, dilewati.`, "info");
-      if (errors.length) toast(t, `${dt.label}: ${errors.length} file gagal — ${errors[0].file}: ${errors[0].message}`, "err");
+      if (ok.length) toast(t, `${dt.label}: ${ok.length} file(s) uploaded${replace ? " (previous files replaced)" : ""}.`);
+      if (skipped.length) toast(t, `${skipped.length} file(s) already exist in ${dt.label} and were skipped.`, "info");
+      if (errors.length) toast(t, `${dt.label}: ${errors.length} file(s) failed — ${errors[0].file}: ${errors[0].message}`, "err");
       if (ok.length) onChanged();
       // sisakan yang gagal di antrean supaya terlihat; yang sukses hilang
       setTimeout(() => setQueue((q) => q.filter((x) => x.status === "err")), ok.length ? 1200 : 0);
     } catch (e) {
-      toast(t, `Upload gagal: ${errMsg(e)}`, "err");
+      toast(t, `Upload failed: ${errMsg(e)}`, "err");
       setQueue([]);
     }
     onBusy(-1);
@@ -461,13 +461,13 @@ function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy
     // buka tab dulu (hindari popup blocker), lalu isi URL
     const w = window.open("", "_blank");
     try { const url = await signedUrl(d.storage_path); if (w) { w.opener = null; w.location.href = url; } else window.location.assign(url); }
-    catch (e) { if (w) w.close(); toast(t, `Gagal membuka file: ${errMsg(e)}`, "err"); }
+    catch (e) { if (w) w.close(); toast(t, `Unable to open file: ${errMsg(e)}`, "err"); }
   };
 
   const onDownload = async (d) => {
     setDl(d.id);
     try { await downloadDoc(d); }
-    catch (e) { toast(t, `Gagal download: ${errMsg(e)}`, "err"); }
+    catch (e) { toast(t, `Download failed: ${errMsg(e)}`, "err"); }
     setDl(null);
   };
 
@@ -476,17 +476,17 @@ function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy
     setDl("all");
     try {
       const { failed } = await downloadDocsZip(files, refZipName(refId, partnerName, dt.label));
-      if (failed.length) toast(t, `ZIP terunduh, ${failed.length} file gagal.`, "err");
-      else toast(t, `${files.length} file ${dt.label} terunduh (ZIP).`);
-    } catch (e) { toast(t, `Gagal download: ${errMsg(e)}`, "err"); }
+      if (failed.length) toast(t, `ZIP downloaded; ${failed.length} file(s) failed.`, "err");
+      else toast(t, `${files.length} ${dt.label} file(s) downloaded (ZIP).`);
+    } catch (e) { toast(t, `Download failed: ${errMsg(e)}`, "err"); }
     setDl(null);
   };
 
   const onDelete = async (d) => {
     if (confirmId !== d.id) { setConfirmId(d.id); setTimeout(() => setConfirmId((c) => (c === d.id ? null : c)), 3500); return; }
     setConfirmId(null); setDeleting(d.id);
-    try { await deleteDocs([d]); toast(t, `${d.file_name} dihapus.`); onChanged(); }
-    catch (e) { toast(t, `Gagal menghapus: ${errMsg(e)}`, "err"); }
+    try { await deleteDocs([d]); toast(t, `${d.file_name} deleted.`); onChanged(); }
+    catch (e) { toast(t, `Unable to delete: ${errMsg(e)}`, "err"); }
     setDeleting(null);
   };
 
@@ -501,22 +501,22 @@ function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 13.5, fontWeight: 700 }}>{dt.label}</div>
           <div style={{ fontFamily: MONO, fontSize: 10.5, color: has ? (t.goodDark || TEAL_D) : t.muted2 }}>
-            {has ? `${files.length} file · terakhir ${fmtDT(lastAt)}` : "Belum ada file"}
+            {has ? `${files.length} file(s) · last updated ${fmtDT(lastAt)}` : "No files yet"}
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
           {canWrite && (
             <button ref={pickBtnRef} className="ppd-f" style={btnStyle(t, "primary", locked, true)} disabled={locked} onClick={() => addRef.current?.click()}
-              title={`Pilih file ${dt.label} (PDF/JPG/PNG, maks ${MAX_FILE_BYTES / 1048576} MB)`}>
-              ⬆ {has ? "Tambah file" : "Pilih file"}
+              title={`Select ${dt.label} files (PDF/JPG/PNG, max ${MAX_FILE_BYTES / 1048576} MB)`}>
+              ⬆ {has ? "Add files" : "Select files"}
             </button>
           )}
           {has && <>
             <button className="ppd-f" style={btnStyle(t, "outline", !!dl, true)} disabled={!!dl} onClick={onDownloadAll}
-              title={files.length > 1 ? `Download ${files.length} file ${dt.label} sebagai ZIP` : `Download ${files[0].file_name}`}>
-              <IcoDownload />{dl === "all" ? "…" : files.length > 1 ? `Download semua (${files.length})` : "Download"}
+              title={files.length > 1 ? `Download ${files.length} ${dt.label} files as ZIP` : `Download ${files[0].file_name}`}>
+              <IcoDownload />{dl === "all" ? "…" : files.length > 1 ? `Download all (${files.length})` : "Download"}
             </button>
-            {canWrite && <button className="ppd-f" style={btnStyle(t, "outline", locked, true)} disabled={locked} onClick={() => repRef.current?.click()} title={`Hapus semua file ${dt.label} dan ganti dengan yang baru (mis. BAST yang sudah di-esign)`}>Ganti semua</button>}
+            {canWrite && <button className="ppd-f" style={btnStyle(t, "outline", locked, true)} disabled={locked} onClick={() => repRef.current?.click()} title={`Remove all ${dt.label} files and replace them with new ones (e.g. the e-signed BAST)`}>Replace all</button>}
           </>}
         </div>
       </div>
@@ -534,12 +534,12 @@ function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy
                   <span>{fmtDT(d.uploaded_at)} · {fmtSize(Number(d.size_bytes) || 0)}</span>
                 </div>
               </div>
-              <button className="ppd-f" style={btnStyle(t, "outline", false, true)} onClick={() => onOpen(d)} aria-label={`Buka ${d.file_name}`} title="Buka di tab baru"><IcoOpen /><span className="ppd-hide-xs">Buka</span></button>
-              <button className="ppd-f" style={btnStyle(t, "outline", dl === d.id, true)} disabled={dl === d.id} onClick={() => onDownload(d)} aria-label={`Download ${d.file_name}`} title="Download dengan nama file asli"><IcoDownload /><span className="ppd-hide-xs">{dl === d.id ? "…" : "Download"}</span></button>
+              <button className="ppd-f" style={btnStyle(t, "outline", false, true)} onClick={() => onOpen(d)} aria-label={`Open ${d.file_name}`} title="Open in a new tab"><IcoOpen /><span className="ppd-hide-xs">Open</span></button>
+              <button className="ppd-f" style={btnStyle(t, "outline", dl === d.id, true)} disabled={dl === d.id} onClick={() => onDownload(d)} aria-label={`Download ${d.file_name}`} title="Download with the original file name"><IcoDownload /><span className="ppd-hide-xs">{dl === d.id ? "…" : "Download"}</span></button>
               {canWrite && (
                 <button className="ppd-f" style={btnStyle(t, confirmId === d.id ? "danger" : "ghost", locked, true)} disabled={locked}
-                  onClick={() => onDelete(d)} aria-label={confirmId === d.id ? `Konfirmasi hapus ${d.file_name}` : `Hapus ${d.file_name}`} title="Hapus file">
-                  <IcoTrash />{confirmId === d.id && <span>Yakin?</span>}
+                  onClick={() => onDelete(d)} aria-label={confirmId === d.id ? `Confirm deletion of ${d.file_name}` : `Delete ${d.file_name}`} title="Delete file">
+                  <IcoTrash />{confirmId === d.id && <span>Confirm?</span>}
                 </button>
               )}
             </li>
@@ -555,7 +555,7 @@ function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy
               <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 4 }}>
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: t.ink2 }} title={q.name}>{q.name}</span>
                 <span style={{ fontFamily: MONO, fontSize: 10.5, whiteSpace: "nowrap", color: q.status === "err" ? t.bad : q.status === "ok" ? (t.goodDark || TEAL_D) : t.muted }}>
-                  {q.status === "wait" ? "menunggu" : q.status === "up" ? "mengupload…" : q.status === "ok" ? "✓ selesai" : q.status === "skip" ? "sudah ada" : q.error || "gagal"}
+                  {q.status === "wait" ? "queued" : q.status === "up" ? "uploading…" : q.status === "ok" ? "✓ done" : q.status === "skip" ? "already exists" : q.error || "failed"}
                 </span>
               </div>
               {q.status === "up" ? <IndeterminateBar t={t} /> : <IndeterminateBar t={t} pct={q.status === "wait" ? 0 : 100} />}
@@ -570,16 +570,16 @@ function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy
           <input ref={addRef} type="file" accept={ACCEPT_ATTR} multiple hidden onChange={onPick(false)} />
           <input ref={repRef} type="file" accept={ACCEPT_ATTR} multiple hidden onChange={onPick(true)} />
           <div role="button" tabIndex={locked ? -1 : 0} className="ppd-f" aria-disabled={locked}
-            aria-label={`Upload ${dt.label}: seret file ke sini atau tekan Enter untuk memilih`}
+            aria-label={`Upload ${dt.label}: drag files here or press Enter to browse`}
             onClick={() => { if (!locked) addRef.current?.click(); }} onKeyDown={zoneKey}
             style={{ border: `1.5px dashed ${drag ? TEAL : t.line2}`, borderRadius: 12, padding: has ? "9px 12px" : "18px 12px", textAlign: "center", cursor: locked ? "not-allowed" : "pointer", color: drag ? (t.goodDark || TEAL_D) : t.muted, background: drag ? "transparent" : t.surf2, display: "flex", flexDirection: has ? "row" : "column", alignItems: "center", justifyContent: "center", gap: has ? 8 : 6, opacity: locked ? 0.6 : 1, transition: "all .15s" }}>
             <span style={{ color: TEAL, display: "inline-flex" }}><IcoUp /></span>
-            <span style={{ fontSize: 12.5, fontWeight: 600, color: t.ink2 }}>{drag ? "Lepaskan untuk upload" : has ? "Tambah file — seret ke sini atau klik" : "Seret file ke sini atau klik untuk pilih"}</span>
-            <span style={{ fontFamily: MONO, fontSize: 10.5 }}>PDF · JPG · PNG — maks {MAX_FILE_BYTES / 1048576} MB per file</span>
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: t.ink2 }}>{drag ? "Release to upload" : has ? "Add files — drag here or click" : "Drag files here or click to browse"}</span>
+            <span style={{ fontFamily: MONO, fontSize: 10.5 }}>PDF · JPG · PNG — max {MAX_FILE_BYTES / 1048576} MB per file</span>
           </div>
         </div>
       )}
-      {!canWrite && !has && <div style={{ padding: "0 14px 12px 50px", fontSize: 11.5, color: t.muted2 }}>Belum diupload oleh pemilik {DOC_REF_LABEL}.</div>}
+      {!canWrite && !has && <div style={{ padding: "0 14px 12px 50px", fontSize: 11.5, color: t.muted2 }}>Not yet uploaded by the {DOC_REF_LABEL} owner.</div>}
     </section>
   );
 }
@@ -642,7 +642,7 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
   const pageSomeSel = pageSelectable.some((r) => sel.has(r.key));
   const openRow = rows.find((r) => r.key === openKey);
   const pct = kpi.all ? Math.round((kpi.complete / kpi.all) * 100) : 0;
-  const fmtAmt = fmtAmount || ((n) => (n || 0).toLocaleString("id-ID"));
+  const fmtAmt = fmtAmount || ((n) => (n || 0).toLocaleString("en-US"));
 
   const setFilter = (s) => { setStatus((cur) => (cur === s && s !== "all" ? "all" : s)); setPage(1); };
   const onSort = (col) => { setSort((s) => ({ col, dir: s.col === col && s.dir === "asc" ? "desc" : "asc" })); setPage(1); };
@@ -657,9 +657,9 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
     setRowBusy(r.key);
     try {
       const res = await downloadMergedPdf({ refId: r.ref, partnerName: r.partner, segment, title: r.title, amountText: r.amountText });
-      if (res.skipped.length) toast(t, `${r.ref}: PDF terunduh, ${res.skipped.length} file dilewati (lihat cover).`, "info");
-      else toast(t, `${r.ref}: PDF terunduh (${res.present}/${N}).`);
-    } catch (e) { toast(t, `Merge ${r.ref} gagal: ${errMsg(e)}`, "err"); }
+      if (res.skipped.length) toast(t, `${r.ref}: PDF downloaded; ${res.skipped.length} file(s) skipped (see cover page).`, "info");
+      else toast(t, `${r.ref}: PDF downloaded (${res.present}/${N}).`);
+    } catch (e) { toast(t, `Merge failed for ${r.ref}: ${errMsg(e)}`, "err"); }
     setRowBusy(null);
   };
 
@@ -671,9 +671,9 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
         selected.map((r) => ({ refId: r.ref, partnerName: r.partner, segment, title: r.title, amountText: r.amountText })),
         ({ index, total, ref }) => setBulk({ i: index, total, ref }),
       );
-      if (failed.length) toast(t, `ZIP terunduh, ${failed.length} ${DOC_REF_LABEL} gagal: ${failed[0]}`, "err");
-      else { toast(t, `ZIP berisi ${selected.length} PDF terunduh.`); setSel(new Set()); }
-    } catch (e) { toast(t, `Gagal membuat ZIP: ${errMsg(e)}`, "err"); }
+      if (failed.length) toast(t, `ZIP downloaded; ${failed.length} ${DOC_REF_LABEL}(s) failed: ${failed[0]}`, "err");
+      else { toast(t, `ZIP with ${selected.length} PDF(s) downloaded.`); setSel(new Set()); }
+    } catch (e) { toast(t, `Unable to create ZIP: ${errMsg(e)}`, "err"); }
     setBulk(null);
   };
 
@@ -698,16 +698,16 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
         <span style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase", color: t.muted, display: "flex", alignItems: "center", gap: 6 }}>
           <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: 99, background: color }} />{label}
         </span>
-        <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em", color: t.ink, fontVariantNumeric: "tabular-nums" }}>{docs?.loaded ? value.toLocaleString("id-ID") : "…"}</span>
+        <span style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.02em", color: t.ink, fontVariantNumeric: "tabular-nums" }}>{docs?.loaded ? value.toLocaleString("en-US") : "…"}</span>
         {sub && <span style={{ fontFamily: MONO, fontSize: 10, color: t.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sub}</span>}
       </button>
     );
   };
 
   const hint = role === "finance_mpx" || role === "agency"
-    ? `Upload ${N} dokumen untuk setiap ${DOC_REF_LABEL}. Klik baris untuk download file (mis. draft BAST dari SPM untuk di-esign), lalu upload ulang versi yang sudah ditandatangani. PDF gabungan dibuat oleh SPM.`
-    : !isSPM ? "Mode lihat saja: kamu bisa membuka & download file. Upload oleh partner/agency, merge oleh SPM."
-    : segment === "agency" ? "Agency belum punya akses upload sendiri — SPM bisa upload atas nama agency." : null;
+    ? `Upload all ${N} documents for each ${DOC_REF_LABEL}. Click a row to download files (e.g. the draft BAST from SPM for e-signature), then re-upload the signed version. Merged PDFs are generated by SPM.`
+    : !isSPM ? "View-only access: you can open and download files. Uploads are handled by partners/agencies; merging is handled by SPM."
+    : segment === "agency" ? "Agencies do not have upload access yet — SPM can upload on their behalf." : null;
 
   const cols = (isSPM ? 1 : 0) + 8;
 
@@ -718,38 +718,38 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
         <div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ width: 4, height: 18, borderRadius: 2, background: MAGENTA, display: "block" }} />
-            <span style={{ fontWeight: 700, fontSize: 14, letterSpacing: "-0.02em", color: t.ink }}>Upload &amp; Merge Dokumen</span>
+            <span style={{ fontWeight: 700, fontSize: 14, letterSpacing: "-0.02em", color: t.ink }}>Document Upload &amp; Merge</span>
             <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", padding: "2px 8px", borderRadius: 99, background: `${MAGENTA}18`, color: MAGENTA, border: `1px solid ${MAGENTA}30` }}>{own} Prepaid</span>
           </div>
           <div style={{ marginTop: 4, marginLeft: 14, fontFamily: MONO, fontSize: 10.5, color: t.muted }}>
-            Per {DOC_REF_LABEL} · {DOC_TYPES.map((d, i) => `${i + 1}. ${d.label}`).join("  →  ")}
+            By {DOC_REF_LABEL} · {DOC_TYPES.map((d, i) => `${i + 1}. ${d.label}`).join("  →  ")}
           </div>
         </div>
       </div>
 
       {/* KPI strip */}
       <div style={{ padding: "14px 20px 10px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
-        {kpiCard({ id: "all", label: `Total ${DOC_REF_LABEL}`, value: kpi.all, sub: `${own.toLowerCase()} · filter aktif`, color: t.muted })}
-        {kpiCard({ id: "complete", label: `Lengkap ${N}/${N}`, value: kpi.complete, sub: fmtAmt(kpi.amtComplete), color: TEAL })}
-        {kpiCard({ id: "partial", label: "Sebagian", value: kpi.partial, sub: `1–${N - 1} dari ${N} dokumen`, color: t.warn })}
-        {kpiCard({ id: "none", label: "Belum upload", value: kpi.none, sub: "0 dokumen", color: t.bad })}
+        {kpiCard({ id: "all", label: `Total ${DOC_REF_LABEL}`, value: kpi.all, sub: `${own.toLowerCase()} · current filters`, color: t.muted })}
+        {kpiCard({ id: "complete", label: `Complete ${N}/${N}`, value: kpi.complete, sub: fmtAmt(kpi.amtComplete), color: TEAL })}
+        {kpiCard({ id: "partial", label: "Partial", value: kpi.partial, sub: `1–${N - 1} of ${N} documents`, color: t.warn })}
+        {kpiCard({ id: "none", label: "Not uploaded", value: kpi.none, sub: "0 documents", color: t.bad })}
       </div>
       <div style={{ padding: "0 20px 14px", display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{ flex: 1, height: 8, borderRadius: 99, background: t.surf3, overflow: "hidden", display: "flex" }} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`${DOC_REF_LABEL} lengkap`}>
+        <div style={{ flex: 1, height: 8, borderRadius: 99, background: t.surf3, overflow: "hidden", display: "flex" }} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`Complete ${DOC_REF_LABEL}s`}>
           <div style={{ width: `${pct}%`, background: TEAL, transition: "width .4s" }} />
           <div style={{ width: `${kpi.all ? (kpi.partial / kpi.all) * 100 : 0}%`, background: t.warn, opacity: 0.75, transition: "width .4s" }} />
         </div>
         <span style={{ fontFamily: MONO, fontSize: 11, color: t.muted, whiteSpace: "nowrap" }}>
-          <strong style={{ color: t.ink }}>{kpi.complete}</strong> dari {kpi.all} lengkap · {pct}%
+          <strong style={{ color: t.ink }}>{kpi.complete}</strong> of {kpi.all} complete · {pct}%
         </span>
       </div>
 
       {/* hints */}
       {(hint || noRefCount > 0 || docs?.error) && (
         <div style={{ padding: "0 20px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
-          {docs?.error && <div role="alert" style={{ fontSize: 12, padding: "8px 12px", borderRadius: 10, color: t.bad, background: t.badBg, border: `1px solid ${t.badBd}` }}>Gagal memuat status dokumen: {docs.error}</div>}
+          {docs?.error && <div role="alert" style={{ fontSize: 12, padding: "8px 12px", borderRadius: 10, color: t.bad, background: t.badBg, border: `1px solid ${t.badBd}` }}>Unable to load document status: {docs.error}</div>}
           {hint && <div style={{ fontSize: 12, padding: "8px 12px", borderRadius: 10, color: t.info, background: t.infoBg, border: `1px solid ${t.infoBd}` }}>ℹ {hint}</div>}
-          {noRefCount > 0 && <div style={{ fontSize: 11.5, color: t.muted, fontFamily: MONO }}>{noRefCount.toLocaleString("id-ID")} baris tanpa {DOC_REF_LABEL} tidak ditampilkan.</div>}
+          {noRefCount > 0 && <div style={{ fontSize: 11.5, color: t.muted, fontFamily: MONO }}>{noRefCount.toLocaleString("en-US")} row(s) without a {DOC_REF_LABEL} are not shown.</div>}
         </div>
       )}
 
@@ -757,20 +757,20 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
       <div style={{ padding: "10px 20px", borderTop: `1px solid ${t.line}`, borderBottom: `1px solid ${t.line}`, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", background: t.surf2 }}>
         <div style={{ position: "relative", flex: "1 1 220px", maxWidth: 380 }}>
           <span aria-hidden="true" style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: t.muted, fontSize: 13 }}>⌕</span>
-          <input className="ppd-f" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder={`Cari ${DOC_REF_LABEL}, ${own.toLowerCase()}, project…`} aria-label="Cari"
+          <input className="ppd-f" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder={`Search ${DOC_REF_LABEL}, ${own.toLowerCase()}, project…`} aria-label="Search"
             style={{ width: "100%", boxSizing: "border-box", fontFamily: "inherit", fontSize: 12.5, padding: "8px 30px 8px 28px", borderRadius: 10, border: `1px solid ${t.line2}`, background: t.surf, color: t.ink, outline: "none" }} />
-          {q && <button className="ppd-f" onClick={() => { setQ(""); setPage(1); }} aria-label="Hapus pencarian" style={{ all: "unset", cursor: "pointer", position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", color: t.muted, fontSize: 15 }}>×</button>}
+          {q && <button className="ppd-f" onClick={() => { setQ(""); setPage(1); }} aria-label="Clear search" style={{ all: "unset", cursor: "pointer", position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", color: t.muted, fontSize: 15 }}>×</button>}
         </div>
         <div role="group" aria-label="Filter status" style={{ display: "inline-flex", background: t.surf3, borderRadius: 10, padding: 3, gap: 2, border: `1px solid ${t.line}`, flexWrap: "wrap" }}>
-          {[["all", "Semua"], ["complete", "Lengkap"], ["partial", "Belum lengkap"], ["none", "Belum upload"]].map(([id, l]) => (
+          {[["all", "All"], ["complete", "Complete"], ["partial", "Partial"], ["none", "Not uploaded"]].map(([id, l]) => (
             <button key={id} className="ppd-f" aria-pressed={status === id} onClick={() => { setStatus(id); setPage(1); }}
               style={{ fontFamily: "inherit", fontSize: 11.5, fontWeight: 600, padding: "5px 10px", borderRadius: 8, border: 0, cursor: "pointer", background: status === id ? TEAL : "transparent", color: status === id ? "#fff" : t.muted, whiteSpace: "nowrap" }}>{l}</button>
           ))}
         </div>
-        <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 11, color: t.muted, whiteSpace: "nowrap" }}>{filtered.length.toLocaleString("id-ID")} {DOC_REF_LABEL}</span>
+        <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 11, color: t.muted, whiteSpace: "nowrap" }}>{filtered.length.toLocaleString("en-US")} {DOC_REF_LABEL}s</span>
         {isSPM && (
           <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !docs?.loaded || !rows.length, true)} disabled={!docs?.loaded || !rows.length} onClick={() => setBulkOpen(true)}
-            title={`Upload banyak file sekaligus — dicocokkan otomatis ke ${DOC_REF_LABEL} dari nama file`}>
+            title={`Upload many files at once — automatically matched to a ${DOC_REF_LABEL} by file name`}>
             ⬆ Bulk Upload
           </button>
         )}
@@ -782,7 +782,7 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
           <thead><tr>
             {isSPM && (
               <th style={th({ width: 34, textAlign: "center" })}>
-                <input type="checkbox" className="ppd-f" aria-label={`Pilih semua ${DOC_REF_LABEL} lengkap di halaman ini`} checked={pageAllSel} disabled={!pageSelectable.length || !!bulk}
+                <input type="checkbox" className="ppd-f" aria-label={`Select all complete ${DOC_REF_LABEL}s on this page`} checked={pageAllSel} disabled={!pageSelectable.length || !!bulk}
                   ref={(el) => { if (el) el.indeterminate = !pageAllSel && pageSomeSel; }} onChange={togglePage} />
               </th>
             )}
@@ -790,10 +790,10 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
             {sortTh("partner", own)}
             {sortTh("title", "Project")}
             {sortTh("amount", "Amount", "right")}
-            <th style={th()}>Dokumen</th>
+            <th style={th()}>Documents</th>
             {sortTh("n", "Status")}
-            {sortTh("lastAt", "Update terakhir")}
-            <th style={th({ textAlign: "right", position: "sticky", right: 0, zIndex: 3, boxShadow: `-8px 0 10px -8px rgba(0,0,0,0.18)` })}>Aksi</th>
+            {sortTh("lastAt", "Last updated")}
+            <th style={th({ textAlign: "right", position: "sticky", right: 0, zIndex: 3, boxShadow: `-8px 0 10px -8px rgba(0,0,0,0.18)` })}>Actions</th>
           </tr></thead>
           <tbody>
             {!docs?.loaded
@@ -803,9 +803,9 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
               : pageRows.length === 0
                 ? <tr><td colSpan={cols} style={{ padding: "40px 16px", textAlign: "center", color: t.muted }}>
                     <div style={{ fontSize: 26, marginBottom: 6 }} aria-hidden="true">🗂</div>
-                    <div style={{ fontWeight: 700, color: t.ink, fontSize: 13.5 }}>{rows.length ? `Tidak ada ${DOC_REF_LABEL} yang cocok` : `Belum ada ${DOC_REF_LABEL} di data ini`}</div>
-                    <div style={{ fontSize: 12, marginTop: 4 }}>{rows.length ? "Ubah pencarian atau filter status." : "Cek filter Payout di atas."}</div>
-                    {(q || status !== "all") && <button className="ppd-f" style={{ ...btnStyle(t, "outline", false, true), marginTop: 10 }} onClick={() => { setQ(""); setStatus("all"); setPage(1); }}>Reset pencarian &amp; filter</button>}
+                    <div style={{ fontWeight: 700, color: t.ink, fontSize: 13.5 }}>{rows.length ? `No ${DOC_REF_LABEL}s match your search` : `No ${DOC_REF_LABEL}s in the current data`}</div>
+                    <div style={{ fontSize: 12, marginTop: 4 }}>{rows.length ? "Adjust the search or status filter." : "Check the Payout filters above."}</div>
+                    {(q || status !== "all") && <button className="ppd-f" style={{ ...btnStyle(t, "outline", false, true), marginTop: 10 }} onClick={() => { setQ(""); setStatus("all"); setPage(1); }}>Reset search &amp; filters</button>}
                   </td></tr>
                 : pageRows.map((r, i) => {
                   const zebra = i % 2 === 1 ? t.rowStripe : "transparent";
@@ -813,18 +813,18 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
                   return (
                     <tr key={r.key} className="ppd-row" tabIndex={0} onClick={() => openDrawer(r.key)}
                       onKeyDown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDrawer(r.key); } }}
-                      aria-label={`${DOC_REF_LABEL} ${r.ref}, ${r.partner}, ${r.n} dari ${N} dokumen. Enter untuk buka.`}
+                      aria-label={`${DOC_REF_LABEL} ${r.ref}, ${r.partner}, ${r.n} of ${N} documents. Press Enter to open.`}
                       style={{ cursor: "pointer", background: isSel ? t.goodBg : zebra, transition: "background .1s" }}
                       onMouseEnter={(e) => { if (!isSel) e.currentTarget.style.background = t.rowHover; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = isSel ? t.goodBg : zebra; }}>
                       {isSPM && (
                         <td style={td({ textAlign: "center" })} onClick={(e) => e.stopPropagation()}>
-                          <input type="checkbox" className="ppd-f" aria-label={`Pilih ${r.ref}`} checked={isSel} disabled={r.st !== "complete" || !!bulk}
-                            title={r.st !== "complete" ? `Hanya ${DOC_REF_LABEL} lengkap ${N}/${N} yang bisa dipilih` : undefined} onChange={() => toggle(r.key)} />
+                          <input type="checkbox" className="ppd-f" aria-label={`Select ${r.ref}`} checked={isSel} disabled={r.st !== "complete" || !!bulk}
+                            title={r.st !== "complete" ? `Only complete (${N}/${N}) ${DOC_REF_LABEL}s can be selected` : undefined} onChange={() => toggle(r.key)} />
                         </td>
                       )}
                       <td style={td({ fontFamily: MONO, fontWeight: 700, color: t.ink, whiteSpace: "nowrap" })}>
-                        {r.ref}{r.records > 1 && <span title={`${r.records} baris data dengan ${DOC_REF_LABEL} ini (amount dijumlah)`} style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 600, color: t.muted, padding: "1px 5px", borderRadius: 6, background: t.surf3 }}>×{r.records}</span>}
+                        {r.ref}{r.records > 1 && <span title={`${r.records} data rows share this ${DOC_REF_LABEL} (amounts combined)`} style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 600, color: t.muted, padding: "1px 5px", borderRadius: 6, background: t.surf3 }}>×{r.records}</span>}
                       </td>
                       <td style={td({ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 })} title={r.partner}>{r.partner}</td>
                       <td style={td({ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: t.muted })} title={r.title}>{r.title || "—"}</td>
@@ -835,23 +835,23 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
                         </div>
                       </td>
                       <td style={td()}><Ring n={r.n} t={t} /></td>
-                      <td style={td({ fontFamily: MONO, fontSize: 11, color: r.lastAt ? t.ink2 : t.muted2, whiteSpace: "nowrap" })}>{r.lastAt ? fmtDT(r.lastAt) : <span style={{ fontFamily: "inherit", fontStyle: "italic" }}>{r.canWrite ? "Belum ada dokumen — klik Upload" : "Belum ada dokumen"}</span>}</td>
+                      <td style={td({ fontFamily: MONO, fontSize: 11, color: r.lastAt ? t.ink2 : t.muted2, whiteSpace: "nowrap" })}>{r.lastAt ? fmtDT(r.lastAt) : <span style={{ fontFamily: "inherit", fontStyle: "italic" }}>{r.canWrite ? "No documents yet — click Upload" : "No documents yet"}</span>}</td>
                       <td style={td({ textAlign: "right", position: "sticky", right: 0, zIndex: 1, background: t.surf, boxShadow: `-8px 0 10px -8px rgba(0,0,0,0.18)` })} onClick={(e) => e.stopPropagation()}>
                         <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
                           {r.canWrite && (
                             <button className="ppd-f ppd-act" style={btnStyle(t, "primary", false, true)} onClick={() => openDrawer(r.key, r.firstMissing || DOC_TYPES[0].key)}
-                              aria-label={`Upload dokumen ${r.ref}`} title={r.firstMissing ? `Upload ${DOC_TYPES.find((d) => d.key === r.firstMissing)?.label}` : "Tambah / ganti dokumen"}>
+                              aria-label={`Upload documents for ${r.ref}`} title={r.firstMissing ? `Upload ${DOC_TYPES.find((d) => d.key === r.firstMissing)?.label}` : "Add or replace documents"}>
                               ⬆ Upload
                             </button>
                           )}
                           {(r.n > 0 || !r.canWrite) && (
-                            <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", false, true)} onClick={() => openDrawer(r.key)} aria-label={`Lihat dokumen ${r.ref}`}>
-                              Lihat ({r.n}/{N})
+                            <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", false, true)} onClick={() => openDrawer(r.key)} aria-label={`View documents for ${r.ref}`}>
+                              View ({r.n}/{N})
                             </button>
                           )}
                           {isSPM && (
                             <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", !!rowBusy || !!bulk || !r.n, true)} disabled={!!rowBusy || !!bulk || !r.n}
-                              onClick={() => mergeOne(r)} aria-label={`Download merge ${r.ref}`} title={!r.n ? "Belum ada dokumen untuk di-merge" : `Gabung ${r.n}/${N} dokumen jadi 1 PDF`}>
+                              onClick={() => mergeOne(r)} aria-label={`Download merge ${r.ref}`} title={!r.n ? "No documents to merge yet" : `Merge ${r.n}/${N} documents into one PDF`}>
                               <IcoDownload />{rowBusy === r.key ? "…" : "Merge"}
                             </button>
                           )}
@@ -868,14 +868,14 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
       {docs?.loaded && filtered.length > 0 && (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "12px 20px", borderTop: `1px solid ${t.line}`, background: t.surf2, flexWrap: "wrap", borderRadius: selected.length && isSPM ? 0 : "0 0 18px 18px" }}>
           <span style={{ fontFamily: MONO, fontSize: 11, color: t.muted, display: "inline-flex", alignItems: "center", gap: 8 }}>
-            {(curPage - 1) * pageSize + 1}–{Math.min(curPage * pageSize, filtered.length)} dari {filtered.length.toLocaleString("id-ID")}
-            <select className="ppd-f" aria-label="Baris per halaman" value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+            {(curPage - 1) * pageSize + 1}–{Math.min(curPage * pageSize, filtered.length)} of {filtered.length.toLocaleString("en-US")}
+            <select className="ppd-f" aria-label="Rows per page" value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
               style={{ fontFamily: MONO, fontSize: 11, padding: "3px 6px", borderRadius: 7, border: `1px solid ${t.line2}`, background: t.surf, color: t.ink }}>
-              {PAGE_SIZES.map((s) => <option key={s} value={s}>{s} / hal</option>)}
+              {PAGE_SIZES.map((s) => <option key={s} value={s}>{s} / page</option>)}
             </select>
           </span>
           {totalPages > 1 && (
-            <nav aria-label="Halaman" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <nav aria-label="Pagination" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               <PageBtn label="‹ Prev" disabled={curPage <= 1} onClick={() => setPage(curPage - 1)} t={t} />
               {(() => {
                 let s = Math.max(1, curPage - 2); const e = Math.min(totalPages, s + 4); s = Math.max(1, e - 4);
@@ -889,15 +889,15 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
 
       {/* SPM bulk bar */}
       {isSPM && (selected.length > 0 || bulk) && (
-        <div role="region" aria-label={`Aksi ${DOC_REF_LABEL} terpilih`} style={{ position: "sticky", bottom: 0, zIndex: 3, borderTop: `1px solid ${t.line2}`, background: t.surf, borderRadius: "0 0 18px 18px", padding: "11px 20px", boxShadow: "0 -6px 18px rgba(0,0,0,0.08)", display: "flex", flexDirection: "column", gap: 8 }}>
+        <div role="region" aria-label={`Actions for selected ${DOC_REF_LABEL}s`} style={{ position: "sticky", bottom: 0, zIndex: 3, borderTop: `1px solid ${t.line2}`, background: t.surf, borderRadius: "0 0 18px 18px", padding: "11px 20px", boxShadow: "0 -6px 18px rgba(0,0,0,0.08)", display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: t.ink }}>
-              <span style={{ fontFamily: MONO, color: TEAL_D }}>{bulk ? bulk.total : selected.length}</span> {DOC_REF_LABEL} dipilih
+              <span style={{ fontFamily: MONO, color: TEAL_D }}>{bulk ? bulk.total : selected.length}</span> {DOC_REF_LABEL}(s) selected
             </span>
-            {bulk && <span style={{ fontFamily: MONO, fontSize: 11, color: t.muted }}>{bulk.i < bulk.total ? `Menggabungkan ${bulk.i + 1}/${bulk.total} · ${bulk.ref}` : "Membuat ZIP…"}</span>}
+            {bulk && <span style={{ fontFamily: MONO, fontSize: 11, color: t.muted }}>{bulk.i < bulk.total ? `Merging ${bulk.i + 1}/${bulk.total} · ${bulk.ref}` : "Creating ZIP…"}</span>}
             <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-              <button className="ppd-f" style={btnStyle(t, "ghost", !!bulk, true)} disabled={!!bulk} onClick={() => setSel(new Set())}>Batal pilih</button>
-              <button className="ppd-f" style={btnStyle(t, "primary", !!bulk)} disabled={!!bulk} onClick={mergeSelected}><IcoDownload /> Download merge terpilih</button>
+              <button className="ppd-f" style={btnStyle(t, "ghost", !!bulk, true)} disabled={!!bulk} onClick={() => setSel(new Set())}>Clear selection</button>
+              <button className="ppd-f" style={btnStyle(t, "primary", !!bulk)} disabled={!!bulk} onClick={mergeSelected}><IcoDownload /> Download selected (merged)</button>
             </div>
           </div>
           {bulk && <IndeterminateBar t={t} pct={Math.round((bulk.i / Math.max(1, bulk.total)) * 100)} />}
@@ -1009,7 +1009,7 @@ function BulkUploadModal({ rows, segment, docs, onClose, t }) {
     return () => { document.body.style.overflow = prev; };
   }, []);
 
-  const tryClose = () => { if (busy) { toast(t, "Tunggu upload selesai dulu.", "info"); return; } onClose(); };
+  const tryClose = () => { if (busy) { toast(t, "Please wait for the upload to finish.", "info"); return; } onClose(); };
 
   const addFiles = (list) => {
     const clean = list.filter(({ path }) => !/(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini|\._[^/]*)$/i.test(path));
@@ -1051,30 +1051,30 @@ function BulkUploadModal({ rows, segment, docs, onClose, t }) {
       mark(it.id, { status: "up" });
       try {
         const { ok, errors, skipped } = await uploadSlot({ files: [it.file], partnerName: row.partner, refId: row.ref, docType, segment });
-        if (ok.length) { okN++; mark(it.id, { status: "ok", msg: "berhasil" }); }
-        else if (skipped.length) { skipN++; mark(it.id, { status: "skip", msg: "sudah ada file yang sama — dilewati" }); }
-        else { errN++; mark(it.id, { status: "err", msg: errors[0]?.message || "gagal" }); }
+        if (ok.length) { okN++; mark(it.id, { status: "ok", msg: "uploaded" }); }
+        else if (skipped.length) { skipN++; mark(it.id, { status: "skip", msg: "identical file already exists — skipped" }); }
+        else { errN++; mark(it.id, { status: "err", msg: errors[0]?.message || "failed" }); }
       } catch (e) { errN++; mark(it.id, { status: "err", msg: errMsg(e) }); }
       setProg({ i: i + 1, total: todo.length });
     }
     setPhase("done");
     docs?.refresh?.();
-    toast(t, `Bulk upload ${dtLabel}: ${okN} berhasil${skipN ? `, ${skipN} dilewati` : ""}${errN ? `, ${errN} gagal` : ""}.`, errN ? "err" : "ok");
+    toast(t, `Bulk upload ${dtLabel}: ${okN} uploaded${skipN ? `, ${skipN} skipped` : ""}${errN ? `, ${errN} failed` : ""}.`, errN ? "err" : "ok");
   };
 
   const statusCell = (x) => {
     if (x.err) return <span style={{ color: t.bad }}>✕ {x.err}</span>;
-    if (x.status === "up") return <span style={{ color: t.muted }}>mengupload…</span>;
-    if (x.status === "ok") return <span style={{ color: t.goodDark || TEAL_D, fontWeight: 700 }}>✓ berhasil</span>;
+    if (x.status === "up") return <span style={{ color: t.muted }}>uploading…</span>;
+    if (x.status === "ok") return <span style={{ color: t.goodDark || TEAL_D, fontWeight: 700 }}>✓ uploaded</span>;
     if (x.status === "skip") return <span style={{ color: t.muted }}>↷ {x.msg}</span>;
     if (x.status === "err") return <span style={{ color: t.bad }}>✕ {x.msg}</span>;
     const row = byKey.get(x.key);
     const exists = row?.stat?.types?.[docType]?.n > 0;
-    if (!x.key) return <span style={{ color: t.warnDark || t.warn, fontWeight: 600 }}>{x.how === "partner" ? `Pilih ${DOC_REF_LABEL}` : `Tidak cocok — pilih ${DOC_REF_LABEL}`}</span>;
+    if (!x.key) return <span style={{ color: t.warnDark || t.warn, fontWeight: 600 }}>{x.how === "partner" ? `Select ${DOC_REF_LABEL}` : `No match — select ${DOC_REF_LABEL}`}</span>;
     return (
       <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-        <span style={{ color: t.goodDark || TEAL_D, fontWeight: 600 }}>{x.how === "po" ? "✓ Cocok" : "✓ Dipilih"}</span>
-        {exists && <span title={`${DOC_REF_LABEL} ini sudah punya ${dtLabel}. File baru akan DITAMBAHKAN (tidak menghapus yang lama).`} style={{ fontFamily: MONO, fontSize: 9.5, padding: "1px 6px", borderRadius: 6, background: t.warnBg, color: t.warnDark || t.warn, border: `1px solid ${t.warnBd}` }}>sudah ada file</span>}
+        <span style={{ color: t.goodDark || TEAL_D, fontWeight: 600 }}>{x.how === "po" ? "✓ Matched" : "✓ Selected"}</span>
+        {exists && <span title={`This ${DOC_REF_LABEL} already has ${dtLabel}. New files will be ADDED (existing files are kept).`} style={{ fontFamily: MONO, fontSize: 9.5, padding: "1px 6px", borderRadius: 6, background: t.warnBg, color: t.warnDark || t.warn, border: `1px solid ${t.warnBd}` }}>has existing files</span>}
       </span>
     );
   };
@@ -1094,19 +1094,19 @@ function BulkUploadModal({ rows, segment, docs, onClose, t }) {
         <div style={{ padding: "14px 18px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "flex-start", gap: 12, background: t.surf2 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: MAGENTA, fontWeight: 700 }}>SPM · Bulk Upload</div>
-            <div id="ppd-bulk-title" style={{ fontSize: 17, fontWeight: 800, marginTop: 2 }}>Upload banyak dokumen sekaligus</div>
+            <div id="ppd-bulk-title" style={{ fontSize: 17, fontWeight: 800, marginTop: 2 }}>Upload multiple documents at once</div>
             <div style={{ fontSize: 12, color: t.muted, marginTop: 3, lineHeight: 1.45 }}>
-              File dicocokkan otomatis ke {DOC_REF_LABEL} dari <b>nama file atau nama folder</b> (mis. <span style={{ fontFamily: MONO }}>BAST_{REF_EXAMPLE}.pdf</span> atau folder <span style={{ fontFamily: MONO }}>{REF_EXAMPLE}/BAST.pdf</span>). Kalau hanya nama {ownerLabel(segment).toLowerCase()} yang terbaca, kamu tinggal pilih PO-nya.
+              Files are matched to a {DOC_REF_LABEL} automatically using the <b>file or folder name</b> (e.g. <span style={{ fontFamily: MONO }}>BAST_{REF_EXAMPLE}.pdf</span> or folder <span style={{ fontFamily: MONO }}>{REF_EXAMPLE}/BAST.pdf</span>). If only the {ownerLabel(segment).toLowerCase()} name is recognised, simply select the {DOC_REF_LABEL}.
             </div>
           </div>
-          <button ref={closeRef} className="ppd-f" onClick={tryClose} aria-label="Tutup (Esc)" style={{ ...btnStyle(t, "ghost", false, true), fontSize: 20, lineHeight: 1, padding: "2px 8px", color: t.muted }}>×</button>
+          <button ref={closeRef} className="ppd-f" onClick={tryClose} aria-label="Close (Esc)" style={{ ...btnStyle(t, "ghost", false, true), fontSize: 20, lineHeight: 1, padding: "2px 8px", color: t.muted }}>×</button>
         </div>
 
         {/* step 1: jenis dokumen + sumber file */}
         <div style={{ padding: "12px 18px", borderBottom: `1px solid ${t.line}`, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
           <div>
-            <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase", color: t.muted, marginBottom: 5 }}>1 · Jenis dokumen</div>
-            <div role="radiogroup" aria-label="Jenis dokumen" style={{ display: "inline-flex", background: t.surf3, borderRadius: 10, padding: 3, gap: 2, border: `1px solid ${t.line}`, flexWrap: "wrap" }}>
+            <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase", color: t.muted, marginBottom: 5 }}>1 · Document type</div>
+            <div role="radiogroup" aria-label="Document type" style={{ display: "inline-flex", background: t.surf3, borderRadius: 10, padding: 3, gap: 2, border: `1px solid ${t.line}`, flexWrap: "wrap" }}>
               {DOC_TYPES.map((d, i) => (
                 <button key={d.key} role="radio" aria-checked={docType === d.key} className="ppd-f" disabled={busy || phase === "done"} onClick={() => setDocType(d.key)}
                   style={{ fontFamily: "inherit", fontSize: 12, fontWeight: 600, padding: "6px 11px", borderRadius: 8, border: 0, cursor: busy ? "default" : "pointer", background: docType === d.key ? TEAL : "transparent", color: docType === d.key ? "#fff" : t.muted, whiteSpace: "nowrap" }}>
@@ -1117,7 +1117,7 @@ function BulkUploadModal({ rows, segment, docs, onClose, t }) {
           </div>
           <div>
             <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase", color: t.muted, marginBottom: 5 }}>Segment</div>
-            <span title="Ikuti toggle Partner/Agency Prepaid di atas. Ganti toggle untuk upload ke segment lain." style={{ display: "inline-flex", padding: "7px 11px", borderRadius: 10, fontSize: 12, fontWeight: 700, background: `${MAGENTA}14`, color: MAGENTA, border: `1px solid ${MAGENTA}30` }}>
+            <span title="Follows the Partner/Agency Prepaid toggle above. Switch the toggle to upload to the other segment." style={{ display: "inline-flex", padding: "7px 11px", borderRadius: 10, fontSize: 12, fontWeight: 700, background: `${MAGENTA}14`, color: MAGENTA, border: `1px solid ${MAGENTA}30` }}>
               {ownerLabel(segment)} Prepaid · {rows.length} {DOC_REF_LABEL}
             </span>
           </div>
@@ -1125,8 +1125,8 @@ function BulkUploadModal({ rows, segment, docs, onClose, t }) {
             <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
               <input ref={fileRef} type="file" accept={ACCEPT_ATTR} multiple hidden onChange={onPick} />
               <input ref={(el) => { dirRef.current = el; if (el) { el.setAttribute("webkitdirectory", ""); el.setAttribute("directory", ""); } }} type="file" multiple hidden onChange={onPick} />
-              <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy)} disabled={busy} onClick={() => fileRef.current?.click()}>⬆ Pilih file</button>
-              <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy)} disabled={busy} onClick={() => dirRef.current?.click()}>📁 Pilih folder</button>
+              <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy)} disabled={busy} onClick={() => fileRef.current?.click()}>⬆ Select files</button>
+              <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy)} disabled={busy} onClick={() => dirRef.current?.click()}>📁 Select folder</button>
             </div>
           )}
         </div>
@@ -1137,13 +1137,13 @@ function BulkUploadModal({ rows, segment, docs, onClose, t }) {
             <div role="button" tabIndex={0} className="ppd-f" onClick={() => fileRef.current?.click()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileRef.current?.click(); } }}
               style={{ margin: 18, border: `2px dashed ${drag ? TEAL : t.line2}`, borderRadius: 16, padding: "42px 16px", textAlign: "center", cursor: "pointer", background: drag ? t.goodBg : t.surf2, color: t.muted }}>
               <div style={{ color: TEAL, display: "inline-flex" }}><IcoUp /></div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: t.ink, marginTop: 6 }}>{drag ? "Lepaskan untuk menambahkan" : `Seret banyak file ${dtLabel} atau 1 folder ke sini`}</div>
-              <div style={{ fontSize: 12, marginTop: 4 }}>atau klik untuk pilih · PDF · JPG · PNG — maks {MAX_FILE_BYTES / 1048576} MB per file</div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: t.ink, marginTop: 6 }}>{drag ? "Release to add" : `Drag ${dtLabel} files or a folder here`}</div>
+              <div style={{ fontSize: 12, marginTop: 4 }}>or click to browse · PDF · JPG · PNG — max {MAX_FILE_BYTES / 1048576} MB per file</div>
             </div>
           ) : (
             <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: 760 }}>
               <thead><tr>
-                <th style={th}>File</th><th style={{ ...th, textAlign: "right" }}>Ukuran</th><th style={th}>{DOC_REF_LABEL}</th><th style={th}>{ownerLabel(segment)}</th><th style={th}>Status</th><th style={th}><span className="ppd-sr">Hapus</span></th>
+                <th style={th}>File</th><th style={{ ...th, textAlign: "right" }}>Size</th><th style={th}>{DOC_REF_LABEL}</th><th style={th}>{ownerLabel(segment)}</th><th style={th}>Status</th><th style={th}><span className="ppd-sr">Remove</span></th>
               </tr></thead>
               <tbody>
                 {items.map((x) => {
@@ -1166,14 +1166,14 @@ function BulkUploadModal({ rows, segment, docs, onClose, t }) {
                       <td style={{ ...td, minWidth: 200 }}>
                         {editable ? (
                           x.cands.length && x.cands.length <= 60 ? (
-                            <select className="ppd-f" aria-label={`${DOC_REF_LABEL} untuk ${x.file.name}`} value={x.key} onChange={(e) => setKey(x.id, e.target.value)}
+                            <select className="ppd-f" aria-label={`${DOC_REF_LABEL} for ${x.file.name}`} value={x.key} onChange={(e) => setKey(x.id, e.target.value)}
                               style={{ width: "100%", fontFamily: MONO, fontSize: 11.5, padding: "5px 6px", borderRadius: 8, border: `1px solid ${x.key ? t.line2 : t.warn}`, background: t.surf, color: t.ink }}>
-                              <option value="">— pilih {DOC_REF_LABEL} —</option>
+                              <option value="">— select {DOC_REF_LABEL} —</option>
                               {candRows.map((r) => <option key={r.key} value={r.key}>{optLabel(r)}</option>)}
                             </select>
                           ) : (
                             <>
-                              <input className="ppd-f" list={listId} aria-label={`Cari ${DOC_REF_LABEL} untuk ${x.file.name}`} placeholder={`Cari ${DOC_REF_LABEL}…`}
+                              <input className="ppd-f" list={listId} aria-label={`Search ${DOC_REF_LABEL} for ${x.file.name}`} placeholder={`Search ${DOC_REF_LABEL}…`}
                                 defaultValue={row ? optLabel(row) : ""}
                                 onChange={(e) => { const m = candRows.find((r) => optLabel(r) === e.target.value || r.ref === e.target.value.trim()); setKey(x.id, m ? m.key : ""); }}
                                 style={{ width: "100%", boxSizing: "border-box", fontFamily: MONO, fontSize: 11.5, padding: "5px 7px", borderRadius: 8, border: `1px solid ${x.key ? t.line2 : t.warn}`, background: t.surf, color: t.ink }} />
@@ -1185,7 +1185,7 @@ function BulkUploadModal({ rows, segment, docs, onClose, t }) {
                       <td style={{ ...td, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row?.partner}>{row?.partner || "—"}</td>
                       <td style={{ ...td, minWidth: 160 }}>{statusCell(x)}</td>
                       <td style={{ ...td, textAlign: "right" }}>
-                        {phase === "review" && <button className="ppd-f" onClick={() => remove(x.id)} aria-label={`Hapus ${x.file.name} dari daftar`} title="Keluarkan dari daftar" style={{ ...btnStyle(t, "ghost", false, true), color: t.muted }}>✕</button>}
+                        {phase === "review" && <button className="ppd-f" onClick={() => remove(x.id)} aria-label={`Remove ${x.file.name} from the list`} title="Remove from list" style={{ ...btnStyle(t, "ghost", false, true), color: t.muted }}>✕</button>}
                       </td>
                     </tr>
                   );
@@ -1199,34 +1199,34 @@ function BulkUploadModal({ rows, segment, docs, onClose, t }) {
         <div style={{ borderTop: `1px solid ${t.line}`, background: t.surf2, padding: "12px 18px", display: "flex", flexDirection: "column", gap: 8 }}>
           {(phase === "uploading" || phase === "done") && (
             <div>
-              <div style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted, marginBottom: 5 }}>{phase === "done" ? "Selesai" : "Mengupload"} {prog.i}/{prog.total} file…</div>
+              <div style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted, marginBottom: 5 }}>{phase === "done" ? "Completed" : "Uploading"} {prog.i}/{prog.total} files…</div>
               <IndeterminateBar t={t} pct={prog.total ? Math.round((prog.i / prog.total) * 100) : 0} />
             </div>
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             {items.length > 0 && phase !== "done" && (
               <span style={{ fontFamily: MONO, fontSize: 11, color: t.muted, display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
-                <span style={{ color: t.goodDark || TEAL_D }}>✓ {counts.ok} cocok</span>
-                {counts.manual > 0 && <span style={{ color: t.goodDark || TEAL_D }}>✓ {counts.manual} dipilih</span>}
-                <span style={{ color: counts.need ? (t.warnDark || t.warn) : t.muted }}>● {counts.need} perlu dipilih</span>
-                <span style={{ color: counts.bad ? t.bad : t.muted }}>✕ {counts.bad} dilewati</span>
+                <span style={{ color: t.goodDark || TEAL_D }}>✓ {counts.ok} matched</span>
+                {counts.manual > 0 && <span style={{ color: t.goodDark || TEAL_D }}>✓ {counts.manual} selected</span>}
+                <span style={{ color: counts.need ? (t.warnDark || t.warn) : t.muted }}>● {counts.need} need a selection</span>
+                <span style={{ color: counts.bad ? t.bad : t.muted }}>✕ {counts.bad} skipped</span>
               </span>
             )}
             {phase === "done" && (
               <span style={{ fontSize: 12.5, color: t.ink }}>
-                <b style={{ color: t.goodDark || TEAL_D }}>{items.filter((x) => x.status === "ok").length} berhasil</b>
-                {" · "}{items.filter((x) => x.status === "skip").length} dilewati (sudah ada)
-                {" · "}<b style={{ color: items.some((x) => x.status === "err") ? t.bad : t.muted }}>{items.filter((x) => x.status === "err").length} gagal</b>
-                {" · "}{items.filter((x) => x.status === "pending" || x.err).length} tidak diupload
+                <b style={{ color: t.goodDark || TEAL_D }}>{items.filter((x) => x.status === "ok").length} uploaded</b>
+                {" · "}{items.filter((x) => x.status === "skip").length} skipped (already exist)
+                {" · "}<b style={{ color: items.some((x) => x.status === "err") ? t.bad : t.muted }}>{items.filter((x) => x.status === "err").length} failed</b>
+                {" · "}{items.filter((x) => x.status === "pending" || x.err).length} not uploaded
               </span>
             )}
             <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-              {phase === "review" && items.length > 0 && <button className="ppd-f" style={btnStyle(t, "ghost", false, true)} onClick={() => { setItems([]); setPhase("pick"); }}>Kosongkan</button>}
+              {phase === "review" && items.length > 0 && <button className="ppd-f" style={btnStyle(t, "ghost", false, true)} onClick={() => { setItems([]); setPhase("pick"); }}>Clear list</button>}
               {phase === "done"
-                ? <button className="ppd-f ppd-act" style={btnStyle(t, "primary")} onClick={onClose}>Selesai</button>
+                ? <button className="ppd-f ppd-act" style={btnStyle(t, "primary")} onClick={onClose}>Done</button>
                 : <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || !ready.length)} disabled={busy || !ready.length} onClick={start}
-                    title={!ready.length ? `Belum ada file yang punya ${DOC_REF_LABEL}` : `Upload ke slot ${dtLabel} — file lama tidak dihapus`}>
-                    ⬆ {busy ? `Mengupload ${prog.i}/${prog.total}…` : `Upload ${ready.length} file sebagai ${dtLabel}`}
+                    title={!ready.length ? `No files have a ${DOC_REF_LABEL} assigned yet` : `Upload to ${dtLabel} — existing files are kept`}>
+                    ⬆ {busy ? `Uploading ${prog.i}/${prog.total}…` : `Upload ${ready.length} file(s) as ${dtLabel}`}
                   </button>}
             </div>
           </div>
