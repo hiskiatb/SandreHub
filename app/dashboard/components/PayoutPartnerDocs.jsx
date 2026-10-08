@@ -17,7 +17,7 @@ import {
 } from "../../../lib/payoutPartnerDocs";
 import {
   parseTemplateWorkbook, parseSmsWorkbook, finalizeSms, detectWorkbookFormat, readTemplateCarryOver,
-  buildTemplateWorkbook, buildSmsTemplateWorkbook, buildBastPdf, buildLetterPdf, loadLetterhead,
+  buildTemplateWorkbook, buildSmsTemplateWorkbook, buildBastPdf, buildLetterPdf, loadLetterhead, mergePdfBytes,
   DEFAULT_SIGNATORIES, DEFAULT_RECIPIENT, bastFileName, letterFileName, rupiah, parsePeriod, titleMatchesPeriod, toDateValue,
 } from "../../../lib/payoutDocGenerator";
 
@@ -52,6 +52,9 @@ function useDocsCss() {
       "@media (prefers-reduced-motion:reduce){.ppd-anim{animation:none!important}}",
       "@media (max-width:420px){.ppd-hide-xs{display:none}}",
       ".ppd-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}",
+      ".ppd-gen-body{display:flex;flex:1;min-height:0}.ppd-gen-table{flex:1;min-width:0;overflow:auto}.ppd-gen-prev{width:46%;min-width:420px;max-width:640px;border-left:1px solid var(--ppd-line);display:flex;flex-direction:column;min-height:0;overflow:hidden}",
+      "@media (max-width:1100px){.ppd-gen-body{flex-direction:column;overflow:auto}.ppd-gen-table{flex:none;max-height:42vh}.ppd-gen-prev{width:auto;min-width:0;max-width:none;border-left:0;border-top:1px solid var(--ppd-line);min-height:70vh}}",
+      ".ppd-gen-row{cursor:pointer}.ppd-gen-row:hover td{filter:brightness(0.98)}",
       ".ppd-chip:hover{transform:translateY(-1px);box-shadow:0 2px 6px rgba(50,188,173,.35);border-style:solid!important;border-color:#32BCAD!important}",
       ".ppd-act:not(:disabled):hover{filter:brightness(1.06);box-shadow:0 2px 8px rgba(50,188,173,.35)}",
       ".ppd-act-o:not(:disabled):hover{border-color:#32BCAD!important;color:#27a093!important}",
@@ -1527,6 +1530,66 @@ function saveBlobAs(bytes, name, type) {
 }
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
+// Viewer PDF ringan: render semua halaman ke canvas (pdfjs-dist) selebar panel.
+// Lebih konsisten dari <iframe> (Safari/iPad sering hanya menampilkan halaman 1); fallback ke iframe kalau gagal.
+let _pdfjs = null;
+async function loadPdfjs() {
+  if (_pdfjs) return _pdfjs;
+  const m = await import("pdfjs-dist");
+  const pdfjs = m.GlobalWorkerOptions ? m : m.default;
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+  _pdfjs = pdfjs;
+  return pdfjs;
+}
+
+function PdfPages({ bytes, url }) {
+  const boxRef = useRef(null);
+  const [width, setWidth] = useState(0);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el) return undefined;
+    const ro = new ResizeObserver(([e]) => setWidth(Math.floor(e.contentRect.width)));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el || !bytes || !width) return undefined;
+    let cancelled = false;
+    let task = null;
+    (async () => {
+      const pdfjs = await loadPdfjs();
+      task = pdfjs.getDocument({ data: bytes.slice() }); // salinan: buffer dipindah ke worker
+      const doc = await task.promise;
+      const frag = document.createDocumentFragment();
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const cssW = Math.max(200, width - 28);
+      for (let i = 1; i <= doc.numPages; i++) {
+        const page = await doc.getPage(i);
+        if (cancelled) return;
+        const base = page.getViewport({ scale: 1 });
+        const vp = page.getViewport({ scale: (cssW / base.width) * dpr });
+        const c = document.createElement("canvas");
+        c.width = Math.floor(vp.width); c.height = Math.floor(vp.height);
+        Object.assign(c.style, { width: `${cssW}px`, height: `${Math.floor(vp.height / dpr)}px`, display: "block", margin: "14px auto", background: "#fff", boxShadow: "0 2px 12px rgba(0,0,0,0.22)", borderRadius: "2px" });
+        c.setAttribute("role", "img");
+        c.setAttribute("aria-label", `Page ${i} of ${doc.numPages}`);
+        await page.render({ canvasContext: c.getContext("2d"), viewport: vp }).promise;
+        frag.appendChild(c);
+      }
+      if (!cancelled) el.replaceChildren(frag);
+      doc.destroy();
+    })().catch(() => { if (!cancelled) setFailed(true); });
+    return () => { cancelled = true; task?.destroy?.(); };
+  }, [bytes, width]);
+
+  if (failed && url) return <iframe title="Document preview" src={`${url}#view=FitH`} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }} />;
+  return <div ref={boxRef} style={{ position: "absolute", inset: 0, overflow: "auto" }} />;
+}
+
 // PO untuk 1 pasangan: PO Number dari template (harus milik partner itu) → amount == total DPP (±1) → periode → pilih manual
 function matchPo(pair, rows) {
   const cands = rows.filter((r) => partnerKey(r.partner) === partnerKey(pair.partner));
@@ -1679,29 +1742,72 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
     setParsing(false);
   };
 
-  const preview = async (it, kind) => {
-    const w = window.open("", "_blank");
-    try {
-      const lh = await loadLetterhead();
-      const bytes = kind === "bast" ? await buildBastPdf(it.bast, cfg, lh) : await buildLetterPdf(it.letter, cfg, lh);
-      const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
-      if (w) w.location.href = url; else window.open(url, "_blank");
-      setTimeout(() => URL.revokeObjectURL(url), 120000);
-    } catch (e) { if (w) w.close(); toast(t, `Preview failed: ${errMsg(e)}`, "err"); }
-  };
+
+
+  // ── Preview inline ──
+  const [pv, setPv] = useState({ id: null, tab: "bast", all: false }); // baris yang dipreview / mode "Preview all"
+  const [pvState, setPvState] = useState({ url: "", bytes: null, busy: false, err: "" });
+  const urlRef = useRef("");
+  const previewable = items.filter((x) => x.letter && x.bast);
+  const pvIdx = previewable.findIndex((x) => x.id === pv.id);
+  const cur = pvIdx >= 0 ? previewable[pvIdx] : null;
+  const open = pv.all || !!cur;
+  // tanda tangan konten → render ulang hanya kalau isi dokumen berubah
+  const pvSig = useMemo(() => {
+    if (pv.all) return JSON.stringify({ all: previewable.filter((x) => !x.errors.length).map((x) => [x.letter, x.bast]), cfg });
+    if (!cur) return "";
+    return JSON.stringify({ tab: pv.tab, doc: pv.tab === "bast" ? cur.bast : cur.letter, cfg });
+  }, [pv.all, pv.tab, cur, previewable, cfg]);
+
+  useEffect(() => {
+    if (!pvSig) return undefined;
+    let alive = true;
+    const timer = setTimeout(async () => {
+      if (!alive) return;
+      setPvState((s) => ({ ...s, busy: true, err: "" }));
+      try {
+        const lh = await loadLetterhead();
+        let bytes;
+        if (pv.all) {
+          const parts = [];
+          for (const x of previewable.filter((y) => !y.errors.length)) { parts.push(await buildBastPdf(x.bast, cfg, lh)); parts.push(await buildLetterPdf(x.letter, cfg, lh)); }
+          if (!parts.length) throw new Error("No valid rows to preview.");
+          bytes = await mergePdfBytes(parts);
+        } else {
+          bytes = pv.tab === "bast" ? await buildBastPdf(cur.bast, cfg, lh) : await buildLetterPdf(cur.letter, cfg, lh);
+        }
+        if (!alive) return;
+        const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+        if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+        urlRef.current = url;
+        setPvState({ url, bytes, busy: false, err: "" });
+      } catch (e) { if (alive) setPvState((s) => ({ ...s, busy: false, err: errMsg(e) })); }
+    }, 350); // debounce: tunggu user selesai mengetik
+    return () => { alive = false; clearTimeout(timer); };
+  }, [pvSig]); // eslint-disable-line react-hooks/exhaustive-deps -- pvSig mewakili semua input render
+
+  // bersihkan object URL saat modal ditutup
+  useEffect(() => () => { if (urlRef.current) URL.revokeObjectURL(urlRef.current); }, []);
+
+  const openPreview = (id, tab) => setPv((p) => ({ id, tab: tab || p.tab, all: false }));
+  const closePreview = () => setPv((p) => ({ ...p, id: null, all: false }));
+  const step = (d) => { if (!previewable.length) return; const n = (pvIdx + d + previewable.length) % previewable.length; setPv((p) => ({ ...p, id: previewable[n].id, all: false })); };
+  const pvFileName = pv.all ? `BAST_and_Letters_preview_${meta.period}.pdf` : cur ? (pv.tab === "bast" ? bastFileName(cur) : letterFileName(cur)) : "preview.pdf";
 
   const valid = items.filter((x) => !x.errors.length);
   const ready = valid.filter((x) => x.include && x.po && byKey.has(x.po));
   const docCount = ready.reduce((n, x) => n + (slotState(x.po, "bast").locked ? 0 : 1) + (slotState(x.po, "surat_pemberitahuan").locked ? 0 : 1), 0);
 
-  const saveAll = async () => {
-    if (!ready.length) return;
+  // Simpan ke slot PO. single=true → 1 partner dari panel preview (modal tetap di tahap review)
+  const saveItems = async (list, { single = false } = {}) => {
+    if (!list.length) return;
+    const total = list.reduce((n, x) => n + (slotState(x.po, "bast").locked ? 0 : 1) + (slotState(x.po, "surat_pemberitahuan").locked ? 0 : 1), 0);
     setPhase("saving");
-    setProg({ i: 0, total: docCount });
+    setProg({ i: 0, total });
     let i = 0, ok = 0, skip = 0, fail = 0;
     let lh;
     try { lh = await loadLetterhead(); } catch (e) { toast(t, errMsg(e), "err"); setPhase("review"); return; }
-    for (const it of ready) {
+    for (const it of list) {
       const row = byKey.get(it.po);
       const res = {};
       for (const [kind, docType, build, name] of [
@@ -1716,12 +1822,12 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
           else if (r.skipped.length) { res[kind] = "same"; skip++; }
           else { res[kind] = `error: ${r.errors[0]?.message || "failed"}`; fail++; }
         } catch (e) { res[kind] = `error: ${errMsg(e)}`; fail++; }
-        setProg({ i: ++i, total: docCount });
+        setProg({ i: ++i, total });
       }
       setEdit(it.id, { res });
     }
     // simpan struktur terakhir (tanpa nominal) untuk pre-fill & penanda tangan cadangan bulan berikutnya
-    if (ok) {
+    if (ok && !single) {
       writeJson(LAST_TPL_KEY, {
         savedAt: new Date().toISOString(),
         partners: valid.map((x) => ({
@@ -1733,10 +1839,11 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
       });
       setLastTpl(readLastTpl());
     }
-    setPhase("done");
+    setPhase(single ? "review" : "done");
     docs?.refresh?.();
-    toast(t, `${ok} document(s) saved${skip ? `, ${skip} skipped` : ""}${fail ? `, ${fail} failed` : ""}.`, fail ? "err" : "ok");
+    toast(t, `${single ? `${list[0].partner} ${list[0].type}: ` : ""}${ok} document(s) saved${skip ? `, ${skip} skipped` : ""}${fail ? `, ${fail} failed` : ""}.`, fail ? "err" : "ok");
   };
+  const saveAll = () => saveItems(ready);
 
   const downloadZip = async () => {
     setZipping(true);
@@ -1770,10 +1877,10 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
 
   if (typeof document === "undefined") return null;
   return createPortal(
-    <div onMouseDown={(e) => { if (e.target === e.currentTarget) tryClose(); }} onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); tryClose(); } }}
+    <div onMouseDown={(e) => { if (e.target === e.currentTarget) tryClose(); }} onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); if (open) closePreview(); else tryClose(); } }}
       className="ppd-anim" style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 12, animation: "ppd_fade .15s ease-out" }}>
       <div role="dialog" aria-modal="true" aria-labelledby="ppd-gen-title"
-        style={{ width: "min(1240px, 100%)", maxHeight: "94vh", display: "flex", flexDirection: "column", background: t.surf, color: t.ink, borderRadius: 18, border: `1px solid ${t.line}`, boxShadow: t.shadow2, overflow: "hidden", textAlign: "left" }}>
+        style={{ "--ppd-line": t.line, width: open ? "min(1560px, 100%)" : "min(1240px, 100%)", height: open ? "94vh" : undefined, maxHeight: "94vh", display: "flex", flexDirection: "column", background: t.surf, color: t.ink, borderRadius: 18, border: `1px solid ${t.line}`, boxShadow: t.shadow2, overflow: "hidden", textAlign: "left" }}>
         <div style={{ padding: "14px 18px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "flex-start", gap: 12, background: t.surf2 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: MAGENTA, fontWeight: 700 }}>SPM · Document generator</div>
@@ -1829,8 +1936,9 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
           </div>
         )}
 
-        {/* Review */}
-        <div style={{ flex: 1, overflow: "auto", minHeight: 180 }}>
+        {/* Review + preview */}
+        <div className="ppd-gen-body">
+        <div className="ppd-gen-table" style={{ minHeight: 180 }}>
           {!items.length ? (
             <div role="button" tabIndex={0} className="ppd-f" onClick={() => fileRef.current?.click()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileRef.current?.click(); } }}
               style={{ margin: 18, border: `2px dashed ${t.line2}`, borderRadius: 16, padding: "36px 16px", textAlign: "center", background: t.surf2, color: t.muted, fontSize: 12.5, lineHeight: 1.6, cursor: "pointer" }}>
@@ -1852,8 +1960,9 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
                   const bad = x.errors.length > 0;
                   const sb = slotState(x.po, "bast"), sl = slotState(x.po, "surat_pemberitahuan");
                   return (
-                    <tr key={x.id} style={{ background: bad ? t.badBg : x.warnings.length ? t.warnBg : "transparent", opacity: bad || x.include ? 1 : 0.6 }}>
-                      <td style={{ ...td, textAlign: "center" }}>
+                    <tr key={x.id} className="ppd-gen-row" onClick={() => { if (x.letter && x.bast) openPreview(x.id); }}
+                      style={{ background: pv.id === x.id && !pv.all ? t.rowHover : bad ? t.badBg : x.warnings.length ? t.warnBg : "transparent", opacity: bad || x.include ? 1 : 0.6, boxShadow: pv.id === x.id && !pv.all ? `inset 3px 0 0 ${TEAL}` : "none" }}>
+                      <td style={{ ...td, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
                         <input type="checkbox" className="ppd-f" aria-label={`Include ${x.partner} ${x.type}`} checked={x.include} disabled={bad || busy || phase === "done" || !x.po}
                           onChange={(e) => setEdit(x.id, { include: e.target.checked })} />
                       </td>
@@ -1865,7 +1974,7 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
                       <td style={num}>{x.letter ? rupiah(-x.letter.pph) : "—"}</td>
                       <td style={{ ...num, fontWeight: 700, color: t.ink }}>{x.letter ? rupiah(x.letter.total) : "—"}</td>
                       {isSms && (
-                        <td style={{ ...td, minWidth: 220, fontSize: 11 }}>
+                        <td style={{ ...td, minWidth: 220, fontSize: 11 }} onClick={(e) => e.stopPropagation()}>
                           <input className="ppd-f" value={x.letterNoEdit} onChange={(e) => setEdit(x.id, { letterNo: e.target.value })} disabled={busy || phase === "done"} aria-label={`Letter No for ${x.partner} ${x.type}`}
                             style={{ ...inp, fontFamily: MONO, fontSize: 11, padding: "4px 6px" }} />
                           <div style={{ marginTop: 3 }}>{x.bast?.signerName || <span style={{ color: t.bad }}>no OWNER</span>}{x.bast?.signerTitle ? ` · ${x.bast.signerTitle}` : ""}</div>
@@ -1873,7 +1982,7 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
                           {x.emailsCc?.length > 0 && <div title={x.emailsCc.join("; ")} style={{ color: t.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 230 }}>Cc: {x.emailsCc.join("; ")}</div>}
                         </td>
                       )}
-                      <td style={{ ...td, minWidth: 190 }}>
+                      <td style={{ ...td, minWidth: 190 }} onClick={(e) => e.stopPropagation()}>
                         {x.cands.length ? (
                           <select className="ppd-f" aria-label={`${DOC_REF_LABEL} for ${x.partner} ${x.type}`} value={x.po} disabled={bad || busy || phase === "done"}
                             onChange={(e) => setEdit(x.id, { poManual: e.target.value, include: true })}
@@ -1898,8 +2007,8 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
                       </td>
                       <td style={{ ...td, whiteSpace: "nowrap" }}>
                         {!bad && <>
-                          <button className="ppd-f ppd-act-o" style={{ ...btnStyle(t, "outline", false, true), marginRight: 4 }} onClick={() => preview(x, "bast")}>BAST</button>
-                          <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", false, true)} onClick={() => preview(x, "letter")}>Letter</button>
+                          <button className="ppd-f ppd-act-o" style={{ ...btnStyle(t, "outline", false, true), marginRight: 4 }} onClick={(e) => { e.stopPropagation(); openPreview(x.id, "bast"); }}>BAST</button>
+                          <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", false, true)} onClick={(e) => { e.stopPropagation(); openPreview(x.id, "letter"); }}>Letter</button>
                         </>}
                       </td>
                     </tr>
@@ -1908,6 +2017,65 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
               </tbody>
             </table>
           )}
+        </div>
+        {open && (
+          <aside className="ppd-gen-prev" aria-label="Document preview" style={{ background: t.surf }}>
+            <div style={{ padding: "10px 14px", borderBottom: `1px solid ${t.line}`, display: "flex", flexDirection: "column", gap: 8, background: t.surf2 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase", color: MAGENTA, fontWeight: 700 }}>Preview</span>
+                {!pv.all && (
+                  <div role="tablist" aria-label="Document" style={{ display: "inline-flex", background: t.surf3, borderRadius: 9, padding: 2, gap: 2, border: `1px solid ${t.line}` }}>
+                    {[["bast", "BAST"], ["letter", "Notification Letter"]].map(([k, l]) => (
+                      <button key={k} role="tab" aria-selected={pv.tab === k} className="ppd-f" onClick={() => setPv((p) => ({ ...p, tab: k }))}
+                        style={{ fontFamily: "inherit", fontSize: 11.5, fontWeight: 600, padding: "4px 10px", borderRadius: 7, border: 0, cursor: "pointer", background: pv.tab === k ? TEAL : "transparent", color: pv.tab === k ? "#fff" : t.muted }}>{l}</button>
+                    ))}
+                  </div>
+                )}
+                <button className="ppd-f" onClick={closePreview} aria-label="Close preview" title="Close preview" style={{ ...btnStyle(t, "ghost", false, true), marginLeft: "auto", fontSize: 18, lineHeight: 1, padding: "1px 7px", color: t.muted }}>×</button>
+              </div>
+              {pv.all ? (
+                <div style={{ fontSize: 12.5, fontWeight: 700 }}>All documents · {previewable.filter((x) => !x.errors.length).length} partner/type row(s) <span style={{ fontWeight: 400, color: t.muted }}>— check only, nothing is saved</span></div>
+              ) : cur && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <button className="ppd-f" style={btnStyle(t, "outline", previewable.length < 2, true)} disabled={previewable.length < 2} onClick={() => step(-1)} aria-label="Previous partner">‹ Prev</button>
+                  <div style={{ flex: 1, minWidth: 0, textAlign: "center" }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={cur.partner}>{cur.partner} · {cur.type}</div>
+                    <div style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted }}>{pvIdx + 1} of {previewable.length} · Total {rupiah(cur.letter.total)}</div>
+                  </div>
+                  <button className="ppd-f" style={btnStyle(t, "outline", previewable.length < 2, true)} disabled={previewable.length < 2} onClick={() => step(1)} aria-label="Next partner">Next ›</button>
+                </div>
+              )}
+              {!pv.all && cur && (cur.errors.length > 0 || cur.warnings.length > 0) && (
+                <div style={{ fontSize: 11, display: "flex", flexDirection: "column", gap: 2, maxHeight: 90, overflow: "auto" }}>
+                  {cur.errors.map((m, i) => <div key={`e${i}`} style={{ color: t.bad, fontWeight: 600 }}>✕ {m}</div>)}
+                  {cur.warnings.map((m, i) => <div key={`w${i}`} style={{ color: t.warnDark || t.warn, fontWeight: 600 }}>⚠ {m}</div>)}
+                </div>
+              )}
+            </div>
+            <div style={{ flex: 1, position: "relative", background: t.surf3, minHeight: 240 }}>
+              {pvState.bytes && <PdfPages bytes={pvState.bytes} url={pvState.url} />}
+              {(pvState.busy || (!pvState.url && !pvState.err)) && (
+                <div aria-live="polite" style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: pvState.url ? "rgba(0,0,0,0.12)" : "transparent" }}>
+                  <span style={{ fontFamily: MONO, fontSize: 11.5, padding: "6px 12px", borderRadius: 99, background: t.surf, color: t.muted, boxShadow: t.shadow1 }}>Rendering preview…</span>
+                </div>
+              )}
+              {pvState.err && <div role="alert" style={{ position: "absolute", inset: 16, color: t.bad, fontSize: 12.5 }}>Preview failed: {pvState.err}</div>}
+            </div>
+            <div style={{ padding: "10px 14px", borderTop: `1px solid ${t.line}`, display: "flex", gap: 8, flexWrap: "wrap", background: t.surf2 }}>
+              <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", !pvState.bytes || pvState.busy, true)} disabled={!pvState.bytes || pvState.busy}
+                onClick={() => saveBlobAs(pvState.bytes, pvFileName, "application/pdf")}><IcoDownload /> Download this PDF</button>
+              <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", !pvState.url || pvState.busy, true)} disabled={!pvState.url || pvState.busy}
+                onClick={() => window.open(pvState.url, "_blank", "noopener")}><IcoOpen /> Open in new tab</button>
+              {!pv.all && cur && (() => {
+                const why = cur.errors.length ? "Fix the errors first" : !cur.po ? `Select a ${DOC_REF_LABEL} first` : busy ? "Busy" : "";
+                return (
+                  <button className="ppd-f ppd-act" style={{ ...btnStyle(t, "primary", !!why, true), marginLeft: "auto" }} disabled={!!why} title={why || "Generate both documents for this partner and save them into the PO (approved slots and identical files are skipped)"}
+                    onClick={() => saveItems([cur], { single: true })}>⬆ Generate &amp; save this partner</button>
+                );
+              })()}
+            </div>
+          </aside>
+        )}
         </div>
 
         <div style={{ borderTop: `1px solid ${t.line}`, background: t.surf2, padding: "12px 18px", display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1924,6 +2092,12 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
               </span>
             )}
             <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {valid.length > 0 && (
+                <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy)} disabled={busy} onClick={() => setPv((p) => ({ ...p, all: true }))}
+                  title="Combine every BAST and Notification Letter into one PDF to check before saving (nothing is saved)">
+                  👁 Preview all
+                </button>
+              )}
               {valid.length > 0 && (
                 <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy)} disabled={busy} onClick={downloadZip} title="Generate the documents for every valid row and download them as one ZIP, without saving to Payout Tracker">
                   <IcoDownload /> {zipping ? "Preparing ZIP…" : "Download all as ZIP"}
