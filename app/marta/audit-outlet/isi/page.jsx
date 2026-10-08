@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import lottie from "lottie-web";
 import successAnimData from "../../../../public/promotor/success-animation.json";
-import { aoCreateSubmission, aoListOutlets, aoListReferencePhotos, aoUploadPhoto } from "../../../../lib/ao";
+import { aoCountOutlets, aoCreateSubmission, aoListOutlets, aoListReferencePhotos, aoUploadPhoto } from "../../../../lib/ao";
 
 // Ikon animasi sukses (dipakai sesaat sebelum layar konfirmasi tampil) -
 // Lottie yg sama persis dgn yg dipakai utk "tagging sukses" di Promotor App
@@ -821,49 +821,74 @@ const OUTLET_RESULTS_CAP = 60; // batasi baris yg DI-RENDER - dgn ~16rb
 // kerasa lemot. Query tetap jalan ke semua data, cuma tampilannya dibatasi.
 
 // ── Dropdown "Pilih ID Outlet" (cari + pilih dari whitelist) ───────────────
-function OutletPicker({ outlets, loading, loaded, value, onChange, error }) {
+// Ditulis ULANG supaya search-nya SERVER-SIDE (RPC ao_list_outlets/
+// ao_count_outlets dgn p_search), BUKAN lagi download SEMUA ~16rb outlet
+// ke browser dulu baru difilter di client. Alasan optimasi:
+//   1. Buka form jadi INSTAN - gak nunggu ~17 kali panggilan RPC beruntun
+//      (download ~16rb baris) kelar dulu sebelum bisa dipakai cari.
+//   2. Data yg ditarik cuma yg relevan dgn kata kunci - jauh lebih hemat
+//      kuota, penting banget utk sales lapangan di sinyal lemah.
+//   3. Filternya PERSIS sama logic SQL `ilike` yg sudah ada di RPC (sudah
+//      diperluas jg cakupannya ke nama_outlet/area/mc, bukan cuma 4 field
+//      spt sebelumnya) - akurasi tetap sama/lebih baik, bukan trade-off.
+// `p_active_only: true` dikirim ke RPC supaya outlet nonaktif difilter DI
+// SERVER (konsisten antara daftar & total count), bukan didownload dulu
+// baru dibuang di client spt sebelumnya.
+function OutletPicker({ value, onChange, error }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  // Debounce 120ms - tanpa ini, tiap keystroke langsung filter ulang ~16rb
-  // baris x 4 field SAAT user masih ngetik, numpuk kerjaan render per huruf
-  // & bikin input kerasa "lag". Field input tetap pakai `q` (responsif),
-  // cuma filtering yg nunggu jeda ketikan.
+  // Debounce 350ms (lebih panjang drpd versi client-filter sebelumnya yg
+  // 120ms) - sekarang tiap pencarian itu ROUND-TRIP JARINGAN beneran ke
+  // Supabase, bukan cuma filter array di memori, jadi debounce-nya perlu
+  // lebih longgar biar gak nembak request baru tiap huruf sementara user
+  // masih ngetik cepat.
   const [qDebounced, setQDebounced] = useState("");
   useEffect(() => {
-    const id = setTimeout(() => setQDebounced(q), 120);
+    const id = setTimeout(() => setQDebounced(q.trim()), 350);
     return () => clearTimeout(id);
   }, [q]);
 
-  // Peta id_outlet -> outlet (O(1)) + field pencarian sudah di-lowercase
-  // SEKALI per outlet (bukan per keystroke) - index ini cuma dihitung ulang
-  // kalau `outlets` referensinya berubah (selesai loading / reload), bukan
-  // tiap kali user ngetik.
-  const index = useMemo(() => {
-    const byId = new Map();
-    const searchable = outlets.map((o) => {
-      byId.set(o.id_outlet, o);
-      return { o, s: [o.id_outlet, o.outlet_id_im3, o.outlet_id_3id, o.nama_outlet].filter(Boolean).join(" • ").toLowerCase() };
-    });
-    return { byId, searchable };
-  }, [outlets]);
+  const [results, setResults] = useState([]);
+  const [totalMatches, setTotalMatches] = useState(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
 
-  const selected = index.byId.get(value);
-  const matches = useMemo(() => {
-    const s = qDebounced.trim().toLowerCase();
-    return s ? index.searchable.filter((x) => x.s.includes(s)) : index.searchable;
-  }, [index, qDebounced]);
-  const filtered = useMemo(() => matches.slice(0, OUTLET_RESULTS_CAP).map((x) => x.o), [matches]);
-  const totalMatches = matches.length;
+  // Fetch ulang tiap qDebounced berubah, TAPI cuma selagi sheet-nya
+  // kebuka (`open`) - sheet ketutup gak perlu nembak request ke server.
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    setSearching(true); setSearchError("");
+    (async () => {
+      try {
+        const [list, total] = await Promise.all([
+          aoListOutlets({ search: qDebounced || undefined, limit: OUTLET_RESULTS_CAP, activeOnly: true }),
+          aoCountOutlets(qDebounced || undefined, true),
+        ]);
+        if (!alive) return;
+        setResults(list);
+        setTotalMatches(total);
+      } catch (e) {
+        if (!alive) return;
+        setSearchError("Gagal memuat daftar outlet. Periksa koneksi internet, lalu coba lagi.");
+        setResults([]);
+        setTotalMatches(null);
+      } finally {
+        if (alive) setSearching(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [open, qDebounced]);
 
   return (
     <div style={{ position: "relative" }}>
       <button onClick={() => setOpen((v) => !v)} style={{
         ...inputStyle, paddingLeft: 36, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer",
-        color: selected ? INK : "#9A98A8", borderColor: error ? "#DC2626" : BORDER, position: "relative",
+        color: value ? INK : "#9A98A8", borderColor: error ? "#DC2626" : BORDER, position: "relative",
       }}>
         <ScanBarcode size={15} color={MID} style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }} />
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 6 }}>
-          {selected ? selected.id_outlet : "Pilih ID Outlet"}
+          {value || "Pilih ID Outlet"}
         </span>
         <ChevronDown size={16} color={MID} style={{ flexShrink: 0, transform: open ? "rotate(180deg)" : "none" }} />
       </button>
@@ -910,32 +935,26 @@ function OutletPicker({ outlets, loading, loaded, value, onChange, error }) {
                 )}
               </div>
             </div>
-            {loading && outlets.length > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", background: "#FCEAEE", borderBottom: `1px solid ${BORDER}` }}>
-                <Loader2 size={12} color={PINK} style={{ animation: "spin .8s linear infinite", flexShrink: 0 }} />
-                <span style={{ fontSize: 11, color: PINK_DK, fontWeight: 700, flex: 1 }}>
-                  Masih memuat ({loaded.toLocaleString("id-ID")} outlet) - hasil bisa belum lengkap
-                </span>
-              </div>
-            )}
             <div style={{ flex: 1, overflowY: "auto", WebkitOverflowScrolling: "touch" }}>
-              {loading && outlets.length === 0 ? (
+              {searchError ? (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, padding: "34px 16px", textAlign: "center" }}>
+                  <AlertTriangle size={22} color="#DC2626" />
+                  <div style={{ fontSize: 12.5, color: "#991B1B", fontWeight: 600 }}>{searchError}</div>
+                </div>
+              ) : searching && results.length === 0 ? (
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: "34px 16px" }}>
                   <div style={{
                     width: 36, height: 36, borderRadius: "50%", border: `3px solid ${BORDER}`, borderTopColor: PINK,
                     animation: "spin .8s linear infinite",
                   }} />
-                  <div style={{ fontSize: 12.5, color: MID, fontWeight: 600 }}>Menyiapkan daftar outlet...</div>
-                  <div style={{ fontSize: 11, color: "#B2AFC2" }}>{loaded.toLocaleString("id-ID")} outlet dimuat</div>
+                  <div style={{ fontSize: 12.5, color: MID, fontWeight: 600 }}>Mencari outlet...</div>
                 </div>
-              ) : filtered.length === 0 ? (
-                <div style={{ padding: 16, textAlign: "center", fontSize: 12.5, color: MID }}>
-                  {loading ? "Mencari di outlet yang sudah dimuat..." : "Tidak ditemukan"}
-                </div>
-              ) : filtered.map((o, i) => {
+              ) : results.length === 0 ? (
+                <div style={{ padding: 16, textAlign: "center", fontSize: 12.5, color: MID }}>Tidak ditemukan</div>
+              ) : results.map((o, i) => {
                 const isSelected = o.id_outlet === value;
                 return (
-                  <button key={`${o.id || o.id_outlet || "row"}-${i}`} onClick={() => { onChange(o.id_outlet); setOpen(false); setQ(""); }} style={{
+                  <button key={`${o.id || o.id_outlet || "row"}-${i}`} onClick={() => { onChange(o.id_outlet, o); setOpen(false); setQ(""); }} style={{
                     width: "100%", textAlign: "left", padding: "14px 16px", border: "none",
                     background: isSelected ? "rgba(236,11,111,0.06)" : "#fff",
                     cursor: "pointer", borderBottom: `1px solid ${BORDER}`,
@@ -975,7 +994,7 @@ function OutletPicker({ outlets, loading, loaded, value, onChange, error }) {
                   </button>
                 );
               })}
-              {totalMatches > OUTLET_RESULTS_CAP && (
+              {totalMatches != null && totalMatches > OUTLET_RESULTS_CAP && (
                 <div style={{ padding: "9px 14px", textAlign: "center", fontSize: 11, color: MID, background: "#FAFAFC" }}>
                   Menampilkan {OUTLET_RESULTS_CAP} dari {totalMatches.toLocaleString("id-ID")} hasil - ketik lebih spesifik untuk mempersempit
                 </div>
@@ -1374,38 +1393,12 @@ export default function AuditOutletFormPage() {
     return () => clearTimeout(id);
   }, [done]);
 
-  const [outlets, setOutlets] = useState([]);
-  const [outletsLoading, setOutletsLoading] = useState(true);
-  const [outletsLoaded, setOutletsLoaded] = useState(0);
-  // Whitelist outlet bisa belasan ribu baris (~16rb) - RPC ao_list_outlets
-  // DIBATASI p_limit (default cuma 100/panggilan), jadi WAJIB di-paging
-  // habis di sini (sama pola dgn OutletMasterBody CMS di
-  // app/martahub/pendataan-outlet/page.jsx) sebelum dipakai utk pencarian,
-  // kalau tidak search cuma akan "melihat" 100 outlet pertama & sender yg
-  // outlet-nya bukan di 100 itu tidak akan pernah ketemu.
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const PAGE = 1000;
-        const seen = new Set();
-        let all = [];
-        for (let off = 0; off < 200000; off += PAGE) {
-          const list = await aoListOutlets({ limit: PAGE, offset: off });
-          // Dedupe by id - lapis pertahanan kedua kalau ordering RPC-nya
-          // suatu saat tidak stabil lagi (lihat catatan di ao_list_outlets):
-          // tanpa ini baris yg ke-load dobel di 2 halaman bikin React
-          // "duplicate key" & list rusak.
-          for (const o of list) { if (!seen.has(o.id)) { seen.add(o.id); all.push(o); } }
-          if (!alive) return;
-          setOutletsLoaded(all.length);
-          if (list.length < PAGE) break;
-        }
-        if (alive) setOutlets(all.filter((o) => o.active));
-      } finally { if (alive) setOutletsLoading(false); }
-    })();
-    return () => { alive = false; };
-  }, []);
+  // Outlet terpilih DISIMPAN LANGSUNG sbg object (dikirim OutletPicker
+  // saat user tap 1 baris hasil pencarian) - bukan lagi di-lookup dari
+  // daftar lengkap yg didownload upfront (lihat OutletPicker: sekarang
+  // dia search server-side on-demand, gak ada lagi daftar penuh di sini
+  // utk di-lookup).
+  const [selectedOutlet, setSelectedOutlet] = useState(null);
 
   // Foto referensi (contoh benar/salah) yg diupload admin CMS - dipakai
   // PhotoGuide dibawah supaya Panduan Foto menampilkan foto asli, bukan
@@ -1521,9 +1514,11 @@ export default function AuditOutletFormPage() {
   // Nama Outlet SEKARANG murni freetext dari sender - TIDAK lagi auto-isi
   // dari nama_outlet (nama desa) hasil pilih ID Outlet, krn nama_outlet di
   // whitelist cuma nama desa, bukan nama outlet sebenarnya.
-  const onPickOutlet = (id) => setIdOutlet(id);
+  // `outletObj` dikirim langsung oleh OutletPicker (baris hasil search yg
+  // di-tap) - disimpan apa adanya ke `selectedOutlet`, gak perlu lookup
+  // dari daftar lengkap lagi (lihat komentar di state `selectedOutlet`).
+  const onPickOutlet = (id, outletObj) => { setIdOutlet(id); setSelectedOutlet(outletObj || null); };
 
-  const selectedOutlet = outlets.find((o) => o.id_outlet === idOutlet);
   const dataValid = namaSender.trim() && namaOutlet.trim() && idOutlet.trim();
   const etalaseCount = etalaseFiles.filter(Boolean).length;
   const fotoValid = etalaseCount >= 1 && !!tapakFile;
@@ -1662,7 +1657,7 @@ export default function AuditOutletFormPage() {
   };
 
   const resetAll = () => {
-    setNamaSender(""); setNamaOutlet(""); setIdOutlet(""); setSocialMedia("");
+    setNamaSender(""); setNamaOutlet(""); setIdOutlet(""); setSocialMedia(""); setSelectedOutlet(null);
     setEtalaseFiles([null, null, null]); setTapakFile(null);
     setSpIm3(null); setSp3id(null); setVoucherIm3(null); setVoucher3id(null);
     setGpsLat(null); setGpsLng(null); setGpsError("");
@@ -1936,7 +1931,7 @@ export default function AuditOutletFormPage() {
               </div>
             </Field>
             <Field label="ID Outlet" required>
-              <OutletPicker outlets={outlets} loading={outletsLoading} loaded={outletsLoaded} value={idOutlet} onChange={onPickOutlet} error={attempted0 && !idOutlet.trim()} />
+              <OutletPicker value={idOutlet} onChange={onPickOutlet} error={attempted0 && !idOutlet.trim()} />
             </Field>
             {idOutlet && (
               <div style={{ borderRadius: 14, background: "#fff", border: `1px solid ${BORDER}`, marginBottom: 16, overflow: "hidden", boxShadow: "0 2px 10px rgba(0,0,0,0.04)" }}>
