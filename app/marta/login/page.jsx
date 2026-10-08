@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../../lib/supabase";
 import { canViewMarta } from "../../../lib/martaAccess";
@@ -50,6 +50,12 @@ function MartaLoginInner() {
   // email yg diketik (dipanggil server-side krn butuh service-role - RLS
   // tabel "profiles" tidak bisa dibaca anon/belum login).
   const otpCooldown = useOtpResendCooldown(form.email.trim().toLowerCase());
+  // Kotak kode OTP 6-digit - sama persis konsep /martahub/m/verify (MartaHub
+  // Mobile): tiap digit kotak terpisah, auto-focus/auto-advance, dukung
+  // paste & iOS QuickType "Insert Code" (satu onChange membawa >1 digit
+  // sekaligus), auto-submit begitu genap 6 digit (tidak perlu klik tombol).
+  const [otpDigits, setOtpDigits] = useState(["", "", "", "", "", ""]);
+  const otpInputs = useRef([]);
   const [rpvMenuOpen, setRpvMenuOpen] = useState(false); // dropdown "Realtime Photo Viewer" - pilih Mode Kamera (tamu/HP) atau Panel Operator
   const t = mk(d);
 
@@ -102,6 +108,7 @@ function MartaLoginInner() {
         const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
         if (error) throw error;
         otpCooldown.markSent();
+        setOtpDigits(["", "", "", "", "", ""]);
         setStage("otp");
       } catch (e) {
         setErrMsg(otpCooldown.reconcileError(e));
@@ -122,6 +129,8 @@ function MartaLoginInner() {
       const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
       if (error) throw error;
       otpCooldown.markSent();
+      setOtpDigits(["", "", "", "", "", ""]);
+      otpInputs.current[0]?.focus();
     } catch (e) {
       setErrMsg(otpCooldown.reconcileError(e));
     } finally {
@@ -129,12 +138,43 @@ function MartaLoginInner() {
     }
   };
 
+  // Handler kotak kode - sama persis /martahub/m/verify: input tiap kotak,
+  // backspace lompat ke kotak sebelumnya, paste & "Insert Code" QuickType
+  // iOS (>1 digit masuk sekaligus ke satu onChange) disebar ke kotak
+  // berikutnya, lalu auto-submit begitu genap 6 digit.
+  const onOtpDigitChange = (i, v) => {
+    const clean = v.replace(/\D/g, "");
+    if (clean.length > 1) {
+      const arr = clean.slice(0, 6).split("");
+      setOtpDigits((d) => { const next = [...d]; arr.forEach((c, k) => { if (i + k < 6) next[i + k] = c; }); return next; });
+      setErrMsg(""); setErrors([]);
+      otpInputs.current[Math.min(i + arr.length, 5)]?.focus();
+      return;
+    }
+    setOtpDigits((d) => { const next = [...d]; next[i] = clean; return next; });
+    setErrMsg(""); setErrors([]);
+    if (clean && i < 5) otpInputs.current[i + 1]?.focus();
+  };
+
+  const onOtpKeyDown = (i, e) => {
+    if (e.key === "Backspace" && !otpDigits[i] && i > 0) otpInputs.current[i - 1]?.focus();
+    if (e.key === "Enter") handleVerifyOtp();
+  };
+
+  const onOtpPaste = (e) => {
+    const text = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+    if (!text) return;
+    e.preventDefault();
+    setOtpDigits(text.padEnd(6, "").split("").slice(0, 6));
+    otpInputs.current[Math.min(text.length, 5)]?.focus();
+  };
+
   // Verifikasi kode OTP - sesi MartaHub CMS terbentuk begitu kode benar,
   // lalu cek akses sama persis seperti handleLogin (password) di bawah.
   const handleVerifyOtp = async () => {
+    const code = otpDigits.join("");
+    if (code.length !== 6 || loading) return;
     setErrMsg(""); setErrors([]);
-    const code = form.otp.trim();
-    if (code.length !== 6) { setErrors(["otp"]); setErrMsg("Masukkan kode 6 digit."); return; }
     setLoading(true);
     try {
       const { data, error } = await supabase.auth.verifyOtp({
@@ -143,6 +183,8 @@ function MartaLoginInner() {
       if (error) {
         setErrors(["otp"]);
         setErrMsg("Kode salah atau sudah kedaluwarsa. Coba lagi.");
+        setOtpDigits(["", "", "", "", "", ""]);
+        otpInputs.current[0]?.focus();
         return;
       }
       const { data: profile } = await supabase
@@ -152,11 +194,21 @@ function MartaLoginInner() {
         setErrMsg("Akun ini tidak memiliki akses ke MartaHub.");
         return;
       }
+      // SENGAJA tidak setLoading(false) di sini - biarkan overlay loading
+      // tetap tampil sampai router benar2 pindah halaman (sama pola dgn
+      // /martahub/m/verify), supaya tidak ada jeda "kosong" yg bikin ragu.
       router.refresh();
       router.push(redirect);
+      return;
     } catch { setErrMsg("Terjadi gangguan pada sistem."); }
-    finally { setLoading(false); }
+    setLoading(false);
   };
+
+  // Auto-submit begitu genap 6 digit - persis /martahub/m/verify.
+  useEffect(() => {
+    if (stage === "otp" && otpDigits.join("").length === 6) handleVerifyOtp();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [otpDigits, stage]);
 
   // Langkah 2 - login sesungguhnya (password, sesi SandraHub).
   const handleLogin = async () => {
@@ -300,27 +352,60 @@ function MartaLoginInner() {
                       <Mail size={14} color={t.lo} style={{ flexShrink: 0 }} />
                       <span style={{ fontSize: 13.5, fontWeight: 600, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{form.email}</span>
                     </span>
-                    <button onClick={() => { setStage("email"); setForm(f => ({ ...f, otp: "" })); setErrMsg(""); setErrors([]); }} style={{ background: "none", border: "none", cursor: "pointer", color: RED, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, flexShrink: 0 }}>Ganti</button>
+                    <button onClick={() => { setStage("email"); setOtpDigits(["", "", "", "", "", ""]); setErrMsg(""); setErrors([]); }} style={{ background: "none", border: "none", cursor: "pointer", color: RED, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, flexShrink: 0 }}>Ganti</button>
                   </div>
 
                   <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: t.mid }}>Kode OTP</label>
-                  <div style={{ ...fieldStyle, marginTop: 5, borderColor: errors.includes("otp") ? "rgba(220,38,38,0.5)" : t.line }}
-                    onFocusCapture={e => e.currentTarget.style.borderColor = MAGA}
-                    onBlurCapture={e => e.currentTarget.style.borderColor = errors.includes("otp") ? "rgba(220,38,38,0.5)" : t.line}>
-                    <input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="123456" value={form.otp}
-                      onChange={e => up("otp", e.target.value.replace(/\D/g, "").slice(0, 6))}
-                      onKeyDown={e => e.key === "Enter" && handleVerifyOtp()}
-                      style={{ ...inputStyle, letterSpacing: "0.3em", fontWeight: 700 }} autoFocus />
+                  {/* Kotak 6-digit terpisah - konsep sama persis dgn
+                      /martahub/m/verify (MartaHub Mobile): auto-focus,
+                      auto-advance, dukung paste & iOS "Insert Code"
+                      QuickType, auto-submit begitu genap 6 digit. */}
+                  <div style={{ position: "relative", marginTop: 5 }}>
+                    <div style={{ display: "flex", gap: 8, opacity: loading ? 0.35 : 1, transition: "opacity .15s" }} onPaste={onOtpPaste}>
+                      {otpDigits.map((digit, i) => (
+                        <input
+                          key={i}
+                          ref={(el) => (otpInputs.current[i] = el)}
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete={i === 0 ? "one-time-code" : "off"}
+                          maxLength={i === 0 ? 6 : 1}
+                          value={digit}
+                          disabled={loading}
+                          onChange={(e) => onOtpDigitChange(i, e.target.value)}
+                          onKeyDown={(e) => onOtpKeyDown(i, e)}
+                          autoFocus={i === 0}
+                          style={{
+                            width: 42, height: 48, flex: "1 1 0", textAlign: "center",
+                            fontSize: 19, fontWeight: 800, letterSpacing: 0,
+                            borderRadius: 10, background: t.fieldBg,
+                            border: `1.5px solid ${errors.includes("otp") ? "rgba(220,38,38,0.5)" : t.line}`,
+                            color: t.hi, fontFamily: FONT, outline: "none",
+                            transition: "border-color .15s",
+                          }}
+                          onFocus={e => e.currentTarget.style.borderColor = MAGA}
+                          onBlur={e => e.currentTarget.style.borderColor = errors.includes("otp") ? "rgba(220,38,38,0.5)" : t.line}
+                        />
+                      ))}
+                    </div>
+                    {/* Overlay loading tepat di atas kotak kode - sama pola
+                        dgn /martahub/m/verify, supaya begitu genap 6 digit
+                        user langsung tahu kodenya SEDANG dicek. */}
+                    {loading && (
+                      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <Loader2 size={20} style={{ animation: "spin .8s linear infinite", color: RED }} />
+                      </div>
+                    )}
                   </div>
 
-                  <button onClick={handleVerifyOtp} disabled={loading}
-                    style={{ marginTop: 20, width: "100%", height: 46, borderRadius: 10, border: "none", background: loading ? `${RED}55` : `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: loading ? "none" : `0 4px 18px rgba(237,28,36,0.25)`, cursor: loading ? "not-allowed" : "pointer", fontFamily: FONT }}>
-                    {loading ? <Loader2 size={16} style={{ animation: "spin .85s linear infinite" }} /> : <><span>Masuk ke MartaHub</span><ArrowRight size={14} strokeWidth={2.5} /></>}
+                  <button onClick={handleVerifyOtp} disabled={loading || otpDigits.join("").length !== 6}
+                    style={{ marginTop: 20, width: "100%", height: 46, borderRadius: 10, border: "none", background: (loading || otpDigits.join("").length !== 6) ? `${RED}55` : `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: loading ? "none" : `0 4px 18px rgba(237,28,36,0.25)`, cursor: (loading || otpDigits.join("").length !== 6) ? "not-allowed" : "pointer", fontFamily: FONT }}>
+                    {loading ? <><Loader2 size={16} style={{ animation: "spin .85s linear infinite" }} /><span>Memverifikasi kode…</span></> : <><span>Masuk ke MartaHub</span><ArrowRight size={14} strokeWidth={2.5} /></>}
                   </button>
 
-                  <button onClick={handleResendOtp} disabled={sendingOtp || otpCooldown.remainingSeconds > 0}
-                    style={{ marginTop: 12, width: "100%", background: "none", border: "none", cursor: sendingOtp || otpCooldown.remainingSeconds > 0 ? "default" : "pointer", color: otpCooldown.remainingSeconds > 0 ? t.lo : RED, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, textAlign: "center" }}>
-                    {otpCooldown.remainingSeconds > 0 ? `Kirim Ulang Kode (${otpCooldown.remainingSeconds}s)` : "Kirim Ulang Kode"}
+                  <button onClick={handleResendOtp} disabled={sendingOtp || otpCooldown.remainingSeconds > 0 || loading}
+                    style={{ marginTop: 12, width: "100%", background: "none", border: "none", cursor: sendingOtp || otpCooldown.remainingSeconds > 0 || loading ? "default" : "pointer", color: otpCooldown.remainingSeconds > 0 || loading ? t.lo : RED, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, textAlign: "center" }}>
+                    {otpCooldown.remainingSeconds > 0 ? `Kirim ulang dalam ${otpCooldown.remainingSeconds}s` : sendingOtp ? "Mengirim…" : "Kirim ulang kode"}
                   </button>
                 </motion.div>
               ) : (
