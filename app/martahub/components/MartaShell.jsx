@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { guardMarta } from "../../../lib/martaAccess";
+import { guardMarta, restrictedPathFor, martaRoleLabel } from "../../../lib/martaAccess";
 import { HubLogo } from "../../../components/HubLogo";
 import { HubLogoLoader } from "../../../components/HubLogoLoader";
 import { supabase } from "../../../lib/supabase";
@@ -49,6 +49,7 @@ const NAV = [
   { label: "Geo Compliance", icon: "pin", path: "geo-compliance", route: "/martahub/geo-compliance" },
   { section: "POSM" },
   { label: "POSM", icon: "posm", path: "posmat", route: "/martahub/posmat" },
+  { section: "PROGRAM" },
   { label: "Pendataan Outlet", icon: "building", path: "pendataan-outlet", route: "/martahub/pendataan-outlet" },
   { section: "MANAGEMENT" },
   // Approval Center (Activity Plan) DIHAPUS dari menu - approval manusia utk
@@ -193,6 +194,13 @@ export default function MartaShell({ active, title, subtitle, actions, children 
       _martaCtxCache = next;
       setCtx(next);
       setLoading(false);
+      // Role terbatas (lihat MARTA_RESTRICTED_PATH di lib/martaAccess.js) -
+      // cuma boleh buka SATU halaman; kalau sedang membuka halaman lain
+      // (termasu "active" undefined/Dashboard), paksa pindah ke situ.
+      const restrictedPath = restrictedPathFor(res.profile?.role);
+      if (restrictedPath && active !== restrictedPath) {
+        router.replace(`/martahub/${restrictedPath}`);
+      }
     });
     return () => { cancelled = true; };
   }, [router]);
@@ -251,7 +259,7 @@ export default function MartaShell({ active, title, subtitle, actions, children 
 
   const displayName = ctx?.profile?.full_name || ctx?.session?.user?.email?.split("@")[0] || "Pengguna";
   const initial = (ctx?.profile?.full_name || ctx?.session?.user?.email || "M").trim()[0]?.toUpperCase() || "M";
-  const roleLabel = ctx?.profile?.role === "spm_sumatera" ? "SPM Sumatera" : (ctx?.profile?.role || "");
+  const roleLabel = martaRoleLabel(ctx?.profile?.role);
   // Lebar & tampilan sidebar ikut visuallyCollapsed (bukan collapsed mentah),
   // supaya hover-peek di atas benar-benar melebarkan sidebar & memunculkan
   // label menu, persis seperti mode "dibuka" biasa.
@@ -329,7 +337,12 @@ export default function MartaShell({ active, title, subtitle, actions, children 
         {/* Nav - sama prinsipnya: posisi ikon fixed, label & badge fade-in
             dgn delay supaya "nongol"-nya setelah sidebar selesai melebar. */}
         <div style={{ flex: 1, overflowY: "auto", padding: "10px 8px" }}>
-          {NAV.map((item, i) => {
+          {(() => {
+            const restrictedPath = restrictedPathFor(ctx?.profile?.role);
+            // Role terbatas: menu cuma 1 item (halaman yg diizinkan), tanpa
+            // header section apa pun - tidak boleh lihat/klik menu lain.
+            return restrictedPath ? NAV.filter((item) => !item.section && item.path === restrictedPath) : NAV;
+          })().map((item, i) => {
             if (item.section) return (
               <div key={i} style={{ height: 26, display: "flex", alignItems: "center", padding: "0 8px", overflow: "hidden", position: "relative" }}>
                 <span style={{

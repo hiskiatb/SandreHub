@@ -3,6 +3,7 @@ import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../../lib/supabase";
 import { canViewMarta } from "../../../lib/martaAccess";
+import { useOtpResendCooldown } from "../../../lib/otpCooldown";
 import { HubLogo } from "../../../components/HubLogo";
 import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, UserRound, ChevronRight, ChevronDown, Camera, LayoutDashboard, QrCode, Store } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -34,13 +35,21 @@ function MartaLoginInner() {
   // spt sebelumnya. Halaman ini tetap KHUSUS SPM Sumatera (tidak digabung
   // dgn jalur OTP DMO di /martahub/m/login - itu sengaja dipisah biar
   // bisa dibuatkan shortcut PWA sendiri).
-  const [stage, setStage] = useState("email"); // email | password
-  const [form,     setForm]     = useState({ email: "", password: "" });
+  const [stage, setStage] = useState("email"); // email | password | otp
+  const [form,     setForm]     = useState({ email: "", password: "", otp: "" });
   const [errors,   setErrors]   = useState([]);
   const [errMsg,   setErrMsg]   = useState("");
   const [loading,  setLoading]  = useState(false);
+  const [sendingOtp, setSendingOtp] = useState(false);
   const [showPw,   setShowPw]   = useState(false);
   const [checking, setChecking] = useState(true);
+  // Role "Marketing Sumatera (Program)" (lihat MARTA_OTP_LOGIN_ROLES di
+  // lib/martaAccess.js) login PASSWORDLESS - kode OTP email, PERSIS pola
+  // /martahub/m/login (MartaHub Mobile), BUKAN password seperti SPM
+  // Sumatera. /api/marta/login-mode menentukan mode mana yg dipakai utk
+  // email yg diketik (dipanggil server-side krn butuh service-role - RLS
+  // tabel "profiles" tidak bisa dibaca anon/belum login).
+  const otpCooldown = useOtpResendCooldown(form.email.trim().toLowerCase());
   const [rpvMenuOpen, setRpvMenuOpen] = useState(false); // dropdown "Realtime Photo Viewer" - pilih Mode Kamera (tamu/HP) atau Panel Operator
   const t = mk(d);
 
@@ -67,15 +76,86 @@ function MartaLoginInner() {
     setErrMsg("");
   };
 
-  // Langkah 1 - validasi format email saja lalu lanjut ke password. Tidak
-  // ada lookup role di sini (halaman ini memang cuma utk SPM Sumatera).
-  const handleEmailNext = () => {
+  // Langkah 1 - validasi format email, lalu cek /api/marta/login-mode utk
+  // tahu lanjut ke stage "password" (SPM Sumatera, seperti biasa) atau
+  // stage "otp" (Marketing Sumatera (Program), passwordless). Gagal cek
+  // mode (network error dll) - fallback ke password spt sebelumnya, supaya
+  // SPM Sumatera tidak pernah terblokir cuma krn endpoint ini bermasalah.
+  const handleEmailNext = async () => {
     setErrMsg(""); setErrors([]);
     const email = form.email.trim().toLowerCase();
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       setErrors(["email"]); setErrMsg("Masukkan email yang valid."); return;
     }
+    let mode = "password";
+    try {
+      // RPC public (SECURITY DEFINER, lihat migrasi marta_program_account_rpcs) -
+      // TIDAK butuh service-role key, cuma menjawab "otp"/"password".
+      const { data } = await supabase.rpc("marta_login_mode", { p_email: email });
+      if (data === "otp") mode = "otp";
+    } catch { /* fallback ke password - lihat komentar di atas */ }
+
+    if (mode === "otp") {
+      if (!otpCooldown.isReady()) { setStage("otp"); setErrMsg(`Tunggu ${otpCooldown.remainingSeconds} detik lagi sebelum kirim kode baru.`); return; }
+      setSendingOtp(true);
+      try {
+        const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
+        if (error) throw error;
+        otpCooldown.markSent();
+        setStage("otp");
+      } catch (e) {
+        setErrMsg(otpCooldown.reconcileError(e));
+      } finally {
+        setSendingOtp(false);
+      }
+      return;
+    }
     setStage("password");
+  };
+
+  // Kirim ulang kode OTP (tombol di stage "otp").
+  const handleResendOtp = async () => {
+    const email = form.email.trim().toLowerCase();
+    if (!otpCooldown.isReady()) { setErrMsg(`Tunggu ${otpCooldown.remainingSeconds} detik lagi sebelum kirim kode baru.`); return; }
+    setSendingOtp(true); setErrMsg("");
+    try {
+      const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
+      if (error) throw error;
+      otpCooldown.markSent();
+    } catch (e) {
+      setErrMsg(otpCooldown.reconcileError(e));
+    } finally {
+      setSendingOtp(false);
+    }
+  };
+
+  // Verifikasi kode OTP - sesi MartaHub CMS terbentuk begitu kode benar,
+  // lalu cek akses sama persis seperti handleLogin (password) di bawah.
+  const handleVerifyOtp = async () => {
+    setErrMsg(""); setErrors([]);
+    const code = form.otp.trim();
+    if (code.length !== 6) { setErrors(["otp"]); setErrMsg("Masukkan kode 6 digit."); return; }
+    setLoading(true);
+    try {
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: form.email.trim().toLowerCase(), token: code, type: "email",
+      });
+      if (error) {
+        setErrors(["otp"]);
+        setErrMsg("Kode salah atau sudah kedaluwarsa. Coba lagi.");
+        return;
+      }
+      const { data: profile } = await supabase
+        .from("profiles").select("role").eq("id", data.user.id).single();
+      if (!profile || !canViewMarta(profile.role)) {
+        await supabase.auth.signOut();
+        setErrMsg("Akun ini tidak memiliki akses ke MartaHub.");
+        return;
+      }
+      router.refresh();
+      router.push(redirect);
+    } catch { setErrMsg("Terjadi gangguan pada sistem."); }
+    finally { setLoading(false); }
   };
 
   // Langkah 2 - login sesungguhnya (password, sesi SandraHub).
@@ -202,16 +282,52 @@ function MartaLoginInner() {
                     <Mail size={14} color={t.lo} style={{ flexShrink: 0 }} />
                     <input type="email" placeholder="nama@ioh.co.id" value={form.email} onChange={e => up("email", e.target.value)} onKeyDown={e => e.key === "Enter" && handleEmailNext()} style={inputStyle} autoComplete="email" autoFocus />
                   </div>
-                  <button onClick={handleEmailNext}
-                    style={{ marginTop: 20, width: "100%", height: 46, borderRadius: 10, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: `0 4px 18px rgba(237,28,36,0.25)`, cursor: "pointer", fontFamily: FONT }}>
-                    <span>Lanjutkan</span><ArrowRight size={14} strokeWidth={2.5} />
+                  <button onClick={handleEmailNext} disabled={sendingOtp}
+                    style={{ marginTop: 20, width: "100%", height: 46, borderRadius: 10, border: "none", background: sendingOtp ? `${RED}55` : `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: sendingOtp ? "none" : `0 4px 18px rgba(237,28,36,0.25)`, cursor: sendingOtp ? "not-allowed" : "pointer", fontFamily: FONT }}>
+                    {sendingOtp ? <Loader2 size={16} style={{ animation: "spin .85s linear infinite" }} /> : <><span>Lanjutkan</span><ArrowRight size={14} strokeWidth={2.5} /></>}
+                  </button>
+                </motion.div>
+              ) : stage === "otp" ? (
+                <motion.div key="stage-otp" initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 14 }} transition={{ duration: 0.22 }}>
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 17, fontWeight: 700, color: t.hi, letterSpacing: "-0.02em" }}>Masukkan Kode OTP</div>
+                    <div style={{ marginTop: 3, fontSize: 13, color: t.mid }}>Kode 6 digit dikirim ke email Anda</div>
+                  </div>
+
+                  {/* Email + ganti */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderRadius: 10, background: t.fieldBg, border: `1px solid ${t.line}`, marginBottom: 16 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                      <Mail size={14} color={t.lo} style={{ flexShrink: 0 }} />
+                      <span style={{ fontSize: 13.5, fontWeight: 600, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{form.email}</span>
+                    </span>
+                    <button onClick={() => { setStage("email"); setForm(f => ({ ...f, otp: "" })); setErrMsg(""); setErrors([]); }} style={{ background: "none", border: "none", cursor: "pointer", color: RED, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, flexShrink: 0 }}>Ganti</button>
+                  </div>
+
+                  <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: t.mid }}>Kode OTP</label>
+                  <div style={{ ...fieldStyle, marginTop: 5, borderColor: errors.includes("otp") ? "rgba(220,38,38,0.5)" : t.line }}
+                    onFocusCapture={e => e.currentTarget.style.borderColor = MAGA}
+                    onBlurCapture={e => e.currentTarget.style.borderColor = errors.includes("otp") ? "rgba(220,38,38,0.5)" : t.line}>
+                    <input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="123456" value={form.otp}
+                      onChange={e => up("otp", e.target.value.replace(/\D/g, "").slice(0, 6))}
+                      onKeyDown={e => e.key === "Enter" && handleVerifyOtp()}
+                      style={{ ...inputStyle, letterSpacing: "0.3em", fontWeight: 700 }} autoFocus />
+                  </div>
+
+                  <button onClick={handleVerifyOtp} disabled={loading}
+                    style={{ marginTop: 20, width: "100%", height: 46, borderRadius: 10, border: "none", background: loading ? `${RED}55` : `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: loading ? "none" : `0 4px 18px rgba(237,28,36,0.25)`, cursor: loading ? "not-allowed" : "pointer", fontFamily: FONT }}>
+                    {loading ? <Loader2 size={16} style={{ animation: "spin .85s linear infinite" }} /> : <><span>Masuk ke MartaHub</span><ArrowRight size={14} strokeWidth={2.5} /></>}
+                  </button>
+
+                  <button onClick={handleResendOtp} disabled={sendingOtp || otpCooldown.remainingSeconds > 0}
+                    style={{ marginTop: 12, width: "100%", background: "none", border: "none", cursor: sendingOtp || otpCooldown.remainingSeconds > 0 ? "default" : "pointer", color: otpCooldown.remainingSeconds > 0 ? t.lo : RED, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, textAlign: "center" }}>
+                    {otpCooldown.remainingSeconds > 0 ? `Kirim Ulang Kode (${otpCooldown.remainingSeconds}s)` : "Kirim Ulang Kode"}
                   </button>
                 </motion.div>
               ) : (
                 <motion.div key="stage-password" initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 14 }} transition={{ duration: 0.22 }}>
                   <div style={{ marginBottom: 16 }}>
                     <div style={{ fontSize: 17, fontWeight: 700, color: t.hi, letterSpacing: "-0.02em" }}>Masukkan Kata Sandi</div>
-                    <div style={{ marginTop: 3, fontSize: 13, color: t.mid }}>Akun SandraHub Anda (khusus SPM Sumatera)</div>
+                    <div style={{ marginTop: 3, fontSize: 13, color: t.mid }}>Akun CMS MartaHub Anda</div>
                   </div>
 
                   {/* Email + ganti */}

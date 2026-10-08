@@ -163,7 +163,8 @@ const SUB_COLUMNS = [
   { key: "jam", label: "Waktu" },
   { key: "nama_sender", label: "Nama Sender" },
   { key: "nama_outlet", label: "Nama Outlet" },
-  { key: "id_outlet", label: "ID Outlet" },
+  { key: "outlet_id_im3", label: "ID Outlet IM3" },
+  { key: "outlet_id_3id", label: "ID Outlet 3ID" },
   { key: "branch", label: "Branch" },
   { key: "district", label: "Kecamatan" },
   { key: "dse_name", label: "Nama DSE" },
@@ -373,7 +374,8 @@ function SubmissionBody() {
     ["Waktu", (r) => r.jam],
     ["Nama Sender", (r) => r.nama_sender || ""],
     ["Nama Outlet", (r) => r.nama_outlet || ""],
-    ["ID Outlet", (r) => r.id_outlet || ""],
+    ["ID Outlet IM3", (r) => r.outlet_id_im3 || ""],
+    ["ID Outlet 3ID", (r) => r.outlet_id_3id || ""],
     ["Branch", (r) => r.branch || ""],
     ["Kecamatan", (r) => r.district || ""],
     ["Nama DSE", (r) => r.dse_name || ""],
@@ -583,7 +585,7 @@ function SubmissionBody() {
                 </td>
                 {SUB_COLUMNS.map((c) => {
                   const v = s[c.key];
-                  const mono = c.key === "id_outlet";
+                  const mono = c.key === "outlet_id_im3" || c.key === "outlet_id_3id";
                   // Sebelumnya boolean Ya/Tidak - sekarang slab jumlah varian (text:
                   // "0-1"/"2-4"/"5++" utk SP, "0-2"/"3-5"/"6++" utk Voucher).
                   // Skor per slab dihitung server-side (lihat kolom

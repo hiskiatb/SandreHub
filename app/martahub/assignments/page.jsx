@@ -6,6 +6,8 @@ import supabaseMarta, { MARTA_CONFIGURED } from "../../../lib/supabaseMarta";
 import { getMartaScope } from "../../../lib/martaScope";
 import { useLivePresenceRows } from "../../../lib/martaPresence";
 import { BranchesBody } from "../branches/BranchesBody";
+import { supabase } from "../../../lib/supabase";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
 // Label field Cluster/MC berbeda per brand - konvensi yg sudah ada di spec
 // (IM3 disebut "MC", 3ID disebut "Cluster"), keduanya sama-sama kolom
@@ -44,6 +46,16 @@ const ROLES = [
 const REGIONS = [["NORTH SUMATERA", "NORTH SUMATERA"], ["CENTRAL SUMATERA", "CENTRAL SUMATERA"], ["SOUTH SUMATERA", "SOUTH SUMATERA"]];
 const BRANDS = [["im3", "IM3"], ["tri", "3ID (TRI)"]];
 const ROLE_LABEL = Object.fromEntries(ROLES);
+// Label role tabel "profiles" (akun LOGIN CMS DESKTOP project TraceHub -
+// SandraHub/spm_sumatera bridge, BEDA sistem dari ROLE_LABEL di atas yg
+// utk mh_profiles/mh_assignments) - dipakai utk pesan error "email sudah
+// terdaftar sbg role apa" di ProgramAccountSlotRow.
+const PROFILE_ROLE_LABEL = {
+  spm_sumatera: "SPM Sumatera",
+  marketing_sumatera_program: "Marketing Sumatera (Program)",
+  cse_rse: "CSE/RSE",
+  bsm: "BSM",
+};
 const REGION_LABEL = Object.fromEntries(REGIONS);
 // spm_sumatera TIDAK BOLEH dikelola (tambah/edit/hapus) dari User Management
 // - identitasnya berasal dari pendaftaran SandraHub (tabel profiles di
@@ -213,7 +225,7 @@ export default function AssignmentsPage() {
             </div>
           </div>
           {tab === "users" ? (
-            <Body canManage={ctx?.canManage} callerEmail={ctx?.session?.user?.email} period={period} />
+            <Body canManage={ctx?.canManage} callerEmail={ctx?.session?.user?.email} session={ctx?.session} period={period} />
           ) : (
             <BranchesBody canManage={ctx?.canManage} period={period} />
           )}
@@ -223,7 +235,9 @@ export default function AssignmentsPage() {
   );
 }
 
-function Body({ canManage, callerEmail, period }) {
+
+
+function Body({ canManage, callerEmail, session, period }) {
   const [viewMode, setViewMode] = useState("cards"); // "cards" | "table" | "tree"
   const periodParam = isSameMonth(period, new Date()) ? null : periodToISO(period);
   const [rows, setRows] = useState([]);
@@ -587,7 +601,7 @@ function Body({ canManage, callerEmail, period }) {
         </div>
 
         {viewMode === "cards" ? (
-          <CardsView orgTree={orgTree} canManage={canManage} callerEmail={callerEmail} onAdd={quickAssign} onAddBoth={quickAssignBoth} onRemove={requestRemove} onEdit={setCardEditRow} loading={loading} />
+          <CardsView orgTree={orgTree} canManage={canManage} callerEmail={callerEmail} session={session} onAdd={quickAssign} onAddBoth={quickAssignBoth} onRemove={requestRemove} onEdit={setCardEditRow} loading={loading} />
         ) : viewMode === "log" ? (
           <ActivityLogView callerEmail={callerEmail} />
         ) : viewMode === "tree" ? (
@@ -1669,7 +1683,7 @@ const selectStyle = { ...inp, appearance: "none", WebkitAppearance: "none", MozA
 // ditampilkan bertingkat langsung di bawahnya - SATU SUMBER visual dgn
 // app/martahub/m/user-management/page.jsx (mobile), cuma disusun ulang jadi
 // grid responsif (auto-fit) utk layar lebar alih-alih ditumpuk vertikal.
-function CardsView({ orgTree, canManage, callerEmail, onAdd, onAddBoth, onRemove, onEdit, loading }) {
+function CardsView({ orgTree, canManage, callerEmail, session, onAdd, onAddBoth, onRemove, onEdit, loading }) {
   // Pilih SATU region dulu sebelum kartunya ditampilkan - menampilkan
   // ketiga region sekaligus (spt semula) bikin halaman terlalu penuh/
   // berantakan krn tiap region sudah berisi banyak cabang×brand. null =
@@ -1679,7 +1693,7 @@ function CardsView({ orgTree, canManage, callerEmail, onAdd, onAddBoth, onRemove
   const selected = activeRegion ? orgTree.regions.find((r) => r.key === activeRegion) : null;
   return (
     <div style={{ padding: 16 }}>
-      <CircleCard circle={orgTree.circle} canManage={canManage} callerEmail={callerEmail} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} />
+      <CircleCard circle={orgTree.circle} canManage={canManage} callerEmail={callerEmail} session={session} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} />
 
       <div style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <span style={{ fontSize: 11.5, fontWeight: 800, color: T.mid, textTransform: "uppercase", letterSpacing: "0.04em", marginRight: 2 }}>Region</span>
@@ -1709,7 +1723,7 @@ function CardsView({ orgTree, canManage, callerEmail, onAdd, onAddBoth, onRemove
   );
 }
 
-function CircleCard({ circle, canManage, callerEmail, onAdd, onRemove, onEdit }) {
+function CircleCard({ circle, canManage, callerEmail, session, onAdd, onRemove, onEdit }) {
   return (
     <div style={{ background: "#FFFFFF", border: "1.5px solid #E7D9F7", borderRadius: 16, overflow: "hidden", boxShadow: "0 4px 14px rgba(124,58,237,0.08)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "14px 18px", background: "linear-gradient(135deg,#F5F0FE,#FBF8FF)" }}>
@@ -1726,7 +1740,171 @@ function CircleCard({ circle, canManage, callerEmail, onAdd, onRemove, onEdit })
           context={{ region: null, brand: null, branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} />
         <SlotRow title="Trade Marketing & Visibility Sumatera" role="tmv" people={circle.tmv} canAdd={canManage}
           context={{ region: null, brand: null, branchSlug: null, branchName: null }} onAdd={onAdd} onRemove={onRemove} onEdit={onEdit} callerEmail={callerEmail} />
+        {/* Marketing Sumatera (Program) - SATU konsep visual dgn 2 slot di
+            atas (judul uppercase + daftar orang + QuickAddRow email/nama),
+            TAPI backend-nya BEDA TOTAL: bukan mh_profiles/mh_assignments
+            (role=head/tmv di atas), melainkan tabel "profiles" project
+            TraceHub (akun LOGIN CMS DESKTOP, role marketing_sumatera_program
+            - lihat lib/martaAccess.js) lewat /api/marta/program-account.
+            Makanya dikasih komponen sendiri (ProgramAccountSlotRow), bukan
+            reuse onAdd/onRemove generik SlotRow yg terikat mh_assignments. */}
+        <ProgramAccountSlotRow session={session} canManage={canManage} callerEmail={callerEmail} />
       </div>
+    </div>
+  );
+}
+
+// Lihat komentar di pemanggilnya (CircleCard) soal kenapa slot ini TIDAK
+// memakai onAdd/onRemove generik SlotRow - akun di sini akun LOGIN CMS
+// DESKTOP (tabel "profiles" project TraceHub), bukan mh_assignments. Login
+// akun ini PASSWORDLESS (kode OTP email di /marta/login, lihat
+// MARTA_OTP_LOGIN_ROLES) jadi tidak ada presence/last_login_at yg
+// bisa ditampilkan LoginStatusBadge - sengaja dilewati drpd menampilkan
+// "Belum pernah login" yg menyesatkan utk akun yg sebenarnya aktif.
+function ProgramAccountSlotRow({ session, canManage, callerEmail }) {
+  const [accounts, setAccounts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+
+  // Tanpa service-role key sama sekali - admin (spm_sumatera) BOLEH baca
+  // SEMUA baris "profiles" langsung (lihat policy RLS "profiles_select_admin"),
+  // jadi query biasa pakai sesi login admin yg sedang aktif.
+  const load = useCallback(async () => {
+    setLoading(true); setErr("");
+    try {
+      // RPC (SECURITY DEFINER, verifikasi via auth.uid() LANGSUNG ke tabel
+      // profiles) - bukan select+RLS biasa, krn RLS "profiles_select_admin"
+      // bergantung klaim JWT custom (auth.jwt()->>'role') yg BISA kosong
+      // kalau Auth Hook-nya belum ter-wire di project atau token admin
+      // belum refresh sejak role di-set - akibatnya select diam2 kosong
+      // tanpa error. Lihat migrasi marta_program_account_rpcs_v2.
+      const { data, error } = await supabase.rpc("marta_admin_list_program_accounts");
+      if (error) throw error;
+      setAccounts(data || []);
+    } catch (e) {
+      setErr(e.message || "Gagal memuat akun.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  // Buat akun baru TANPA service-role key - 2 langkah:
+  // 1) auth.users dibuat lewat signUp() client-side biasa (anon key), via
+  //    client SEMENTARA/terisolasi (persistSession:false) supaya TIDAK
+  //    menimpa sesi admin yang sedang login di tab ini. Password acak
+  //    sekali-pakai (tidak pernah dipakai - login akun ini selalu lewat kode
+  //    OTP, lihat /marta/login).
+  // 2) baris "profiles"-nya (role=marketing_sumatera_program) diisi lewat
+  //    RPC marta_admin_create_program_profile (SECURITY DEFINER, verifikasi
+  //    caller sendiri hrs spm_sumatera) - RLS "profiles" cuma izinkan INSERT
+  //    utk baris milik sendiri, jadi admin tidak bisa insert langsung utk
+  //    user lain tanpa RPC ini.
+  const handleAdd = async ({ targetEmail, fullName }) => {
+    const email = targetEmail.trim().toLowerCase();
+
+    // Cek dulu apakah email ini SUDAH punya akun "profiles" (login CMS)
+    // dgn role APAPUN - admin boleh baca semua baris (lihat komentar load()
+    // di atas), jadi bisa kasih pesan spesifik ("sudah terdaftar sbg role
+    // X") drpd pesan generik "Email sudah terdaftar" yg tidak menjelaskan
+    // kenapa/sbg apa - itu yg bikin user bingung waktu emailnya sendiri
+    // (akun admin spm_sumatera dia sendiri) ditolak tanpa penjelasan.
+    // RPC, bukan select+RLS biasa - lihat komentar load() di atas soal
+    // kenapa select langsung tidak bisa diandalkan utk cek ini.
+    const { data: existingRole, error: lookupError } = await supabase.rpc("marta_admin_profile_role_by_email", { p_email: email });
+    if (lookupError) throw new Error(lookupError.message || "Gagal memeriksa email.");
+    if (existingRole) {
+      const label = PROFILE_ROLE_LABEL[existingRole] || existingRole || "role lain";
+      throw new Error(
+        existingRole === "marketing_sumatera_program"
+          ? "Email ini sudah terdaftar sebagai akun Marketing Sumatera (Program)."
+          : `Email ini sudah terdaftar sebagai akun ${label} - tidak bisa dipakai lagi untuk Marketing Sumatera (Program). Gunakan email lain.`
+      );
+    }
+
+    const throwawayPassword = `Mkt${Math.random().toString(36).slice(2)}${Date.now().toString(36)}!`;
+    const tempClient = createSupabaseClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+      { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }
+    );
+    const { data: signUpData, error: signUpError } = await tempClient.auth.signUp({
+      email, password: throwawayPassword, options: { data: { full_name: fullName, role: "marketing_sumatera_program" } },
+    });
+    if (signUpError) {
+      // Auth user bisa saja sudah ada TANPA baris "profiles" (mis. akun lama
+      // yg belum pernah dikasih role) - query di atas tidak menangkap kasus
+      // ini, jadi pesan generiknya tetap disiapkan sbg fallback terakhir.
+      throw new Error((signUpError.message || "").toLowerCase().includes("already") || (signUpError.message || "").toLowerCase().includes("registered")
+        ? "Email ini sudah terdaftar di sistem (akun login sudah ada), tapi belum ada role CMS - hubungi developer untuk cek manual."
+        : (signUpError.message || "Gagal membuat akun."));
+    }
+    const { error: rpcError } = await supabase.rpc("marta_admin_create_program_profile", {
+      p_user_id: signUpData.user.id, p_email: email, p_full_name: fullName,
+    });
+    if (rpcError) throw new Error(rpcError.message || "Gagal menyimpan profil akun.");
+    await load();
+  };
+
+  // "Hapus" BENERAN - baris "profiles" DAN auth.users dihapus sekaligus
+  // (RPC marta_admin_delete_program_account, SECURITY DEFINER bisa langsung
+  // DELETE ke auth.users TANPA Admin API/service-role) - supaya emailnya
+  // benar2 bebas dipakai daftar ulang dari nol, bukan cuma "role dikosongkan"
+  // yg bikin signUp() berikutnya gagal "already registered".
+  const handleRemove = async (acc) => {
+    if (!confirm(`Hapus akun "${acc.full_name || acc.email}"? Akun ini akan dihapus SEPENUHNYA (bukan cuma dicabut aksesnya) - email ini bisa langsung didaftarkan ulang kalau perlu.`)) return;
+    try {
+      // RPC marta_admin_delete_program_account - hapus BENERAN (baris
+      // "profiles" DAN auth.users-nya, bukan cuma mengosongkan role) supaya
+      // email yg sama bisa didaftarkan ulang dari nol tanpa bentrok
+      // "already registered" - lihat migrasi marta_program_account_true_delete.
+      const { error } = await supabase.rpc("marta_admin_delete_program_account", { p_user_id: acc.id });
+      if (error) throw error;
+      await load();
+    } catch (e) {
+      alert(e.message || "Gagal menghapus akun.");
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div style={{ fontSize: 10.5, fontWeight: 700, color: T.mid, textTransform: "uppercase", letterSpacing: "0.03em", marginBottom: 2 }}>
+        Marketing Sumatera (Program)
+      </div>
+      {loading ? (
+        <div style={{ fontSize: 11.5, color: T.lo, padding: "2px 2px" }}>Memuat…</div>
+      ) : err ? (
+        <div style={{ fontSize: 11, color: T.error, background: T.errorBg, border: `1px solid ${T.error}33`, borderRadius: 9, padding: "6px 9px", marginBottom: 5, lineHeight: 1.4 }}>{err}</div>
+      ) : accounts.length === 0 && !canManage ? (
+        <div style={{ fontSize: 11.5, color: T.lo, fontStyle: "italic", padding: "2px 2px" }}>Belum ada</div>
+      ) : (
+        accounts.map((acc) => {
+          const isSelf = !!(callerEmail && acc.email && acc.email.toLowerCase() === callerEmail.toLowerCase());
+          return (
+            <div key={acc.id} style={{ display: "flex", alignItems: "center", gap: 8, background: T.hover || "#F6F7F9", borderRadius: 10, padding: "5px 9px", marginBottom: 3 }}>
+              <div style={{ width: 24, height: 24, borderRadius: "50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9.5, fontWeight: 800, color: T.primary, background: `${T.primary}17` }}>
+                {(acc.full_name || acc.email || "?").trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?"}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: T.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
+                  {acc.full_name || "-"}
+                  {isSelf && <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 999, color: T.success, background: T.successBg }}>Anda</span>}
+                </div>
+                <div style={{ fontSize: 10.5, color: T.mid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{acc.email}</div>
+              </div>
+              {canManage && !isSelf && (
+                <button onClick={() => handleRemove(acc)} title="Hapus" style={{ flexShrink: 0, width: 25, height: 25, borderRadius: 8, border: `1px solid ${T.error}44`, background: T.errorBg, color: T.error, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+                  <UserX size={12} />
+                </button>
+              )}
+            </div>
+          );
+        })
+      )}
+      {canManage && !err && (
+        <QuickAddRow onSave={(targetEmail, fullName) => handleAdd({ targetEmail, fullName })} />
+      )}
     </div>
   );
 }

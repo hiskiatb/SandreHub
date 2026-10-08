@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import { supabase } from "../../lib/supabase";
-import { guardMarta, isMartaAdmin } from "../../lib/martaAccess";
+import { guardMarta, isMartaAdmin, restrictedPathFor } from "../../lib/martaAccess";
 import { supabaseMarta } from "../../lib/supabaseMarta";
 import { getMartaScope, applyMartaScope, applyMartaScopeSlug } from "../../lib/martaScope";
 import { HubLogo } from "../../components/HubLogo";
@@ -173,6 +173,7 @@ const NAV = [
   { label: "Geo Compliance", icon: "pin", path: "geo-compliance" },
   { section: "POSM" },
   { label: "POSM", icon: "posm", path: "posmat" },
+  { section: "PROGRAM" },
   { label: "Pendataan Outlet", icon: "building", path: "pendataan-outlet", route: "/martahub/pendataan-outlet" },
   { section: "MANAGEMENT" },
   // Approval Center (Activity) DIHAPUS dari menu - lihat catatan sama di
@@ -836,6 +837,11 @@ export default function MartaHubDashboard() {
     else setDark(window.matchMedia("(prefers-color-scheme: dark)").matches);
     guardMarta(router, "/martahub").then((res) => {
       if (!res.ok) return; // guard sudah redirect
+      // Role terbatas (lihat MARTA_RESTRICTED_PATH di lib/martaAccess.js)
+      // tidak boleh lihat Dashboard sama sekali - langsung lempar ke satu
+      // halaman yg diizinkan (konsisten dgn MartaShell.jsx).
+      const restrictedPath = restrictedPathFor(res.profile?.role);
+      if (restrictedPath) { router.replace(`/martahub/${restrictedPath}`); return; }
       _marlaDashCache = { user: res.session.user, profile: res.profile };
       setUser(res.session.user);
       setProfile(res.profile);
