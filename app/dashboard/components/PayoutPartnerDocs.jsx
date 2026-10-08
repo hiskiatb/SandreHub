@@ -12,6 +12,7 @@ import {
   canViewAll, canViewPartner, canWritePartner, canMerge,
   fetchDocStats, listRefDocs, uploadSlot, deleteDocs, signedUrl,
   downloadMergedPdf, downloadMergedZip, downloadDoc, downloadDocsZip, refZipName, friendlyError, uploaderLabel,
+  validateFile, partnerKey,
 } from "../../../lib/payoutPartnerDocs";
 
 const TEAL = "#32BCAD", TEAL_D = "#27a093", MAGENTA = "#C6168D";
@@ -44,6 +45,10 @@ function useDocsCss() {
       ".ppd-row:focus-visible{outline:2px solid #32BCAD;outline-offset:-2px}",
       "@media (prefers-reduced-motion:reduce){.ppd-anim{animation:none!important}}",
       "@media (max-width:420px){.ppd-hide-xs{display:none}}",
+      ".ppd-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}",
+      ".ppd-chip:hover{transform:translateY(-1px);box-shadow:0 2px 6px rgba(50,188,173,.35);border-style:solid!important;border-color:#32BCAD!important}",
+      ".ppd-act:not(:disabled):hover{filter:brightness(1.06);box-shadow:0 2px 8px rgba(50,188,173,.35)}",
+      ".ppd-act-o:not(:disabled):hover{border-color:#32BCAD!important;color:#27a093!important}",
     ].join("");
     document.head.appendChild(el);
     _cssDone = true;
@@ -108,16 +113,23 @@ function Ring({ n, t, size = 26, label = true }) {
   );
 }
 
-function DocChip({ dt, ty, t }) {
+// Chip status per jenis dokumen. Dengan onClick → tombol yang membuka drawer di slot itu.
+function DocChip({ dt, ty, t, onClick, canWrite }) {
   const ok = ty?.n > 0;
-  const tip = ok ? `${dt.label} · ${ty.n} file · terakhir ${fmtDT(ty.lastAt)}` : `${dt.label} · belum diupload`;
+  const tip = ok
+    ? `${dt.label} · ${ty.n} file · terakhir ${fmtDT(ty.lastAt)} — klik untuk lihat`
+    : `${dt.label} · belum diupload${canWrite ? " — klik untuk upload" : ""}`;
+  const style = {
+    display: "inline-flex", alignItems: "center", gap: 3, fontFamily: MONO, fontSize: 10, fontWeight: 700, letterSpacing: "0.02em",
+    padding: "3px 8px", borderRadius: 99, whiteSpace: "nowrap", transition: "transform .1s, box-shadow .15s, background .15s",
+    background: ok ? TEAL : "transparent", color: ok ? "#fff" : t.muted,
+    border: ok ? `1px solid ${TEAL}` : `1px dashed ${t.line2}`,
+  };
+  const content = <><span aria-hidden="true">{ok ? "✓" : "+"}</span>{dt.short}</>;
+  if (!onClick) return <span title={tip} aria-label={tip} style={style}>{content}</span>;
   return (
-    <span title={tip} aria-label={tip} style={{
-      display: "inline-flex", alignItems: "center", gap: 3, fontFamily: MONO, fontSize: 10, fontWeight: 700, letterSpacing: "0.02em",
-      padding: "2px 7px", borderRadius: 99, whiteSpace: "nowrap",
-      background: ok ? t.goodBg : "transparent", color: ok ? (t.goodDark || TEAL_D) : t.muted2,
-      border: ok ? `1px solid ${t.goodBd}` : `1px dashed ${t.line2}`,
-    }}>{ok && <span aria-hidden="true">✓</span>}{dt.short}</span>
+    <button type="button" className="ppd-f ppd-chip" title={tip} aria-label={tip} onClick={onClick}
+      style={{ ...style, cursor: "pointer", font: "inherit", fontFamily: MONO, fontSize: 10, fontWeight: 700 }}>{content}</button>
   );
 }
 
@@ -192,8 +204,10 @@ export function DocsCell({ refId, partnerName, segment, title, amountText, docs,
 }
 
 // ── Drawer 4 slot per PO ───────────────────────────────────────────────────
-export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, docs, onClose, t }) {
+export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, docs, onClose, focusSlot = null, t }) {
   useDocsCss();
+  // slot yang di-scroll/fokus (dari chip / tombol Upload / "Upload berikutnya"); n memicu ulang
+  const [focus, setFocus] = useState({ key: focusSlot, n: 1 });
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState("");
@@ -242,6 +256,7 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
 
   const changed = useCallback(() => { setReload((x) => x + 1); docsRefresh?.(); }, [docsRefresh]);
   const present = DOC_TYPES.filter((d) => list.some((x) => x.doc_type === d.key)).length;
+  const nextMissing = DOC_TYPES.find((d) => !list.some((x) => x.doc_type === d.key));
   const totalSize = list.reduce((s, d) => s + (Number(d.size_bytes) || 0), 0);
 
   const onMerge = async () => {
@@ -288,7 +303,8 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
             </div>
             <div id="ppd-title" style={{ fontSize: 19, fontWeight: 800, marginTop: 3, fontFamily: MONO, letterSpacing: "-0.01em", wordBreak: "break-all" }}>{refId}</div>
             <div style={{ fontSize: 12.5, color: t.ink2, marginTop: 4, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={partnerName}>{partnerName}</div>
-            {title && <div style={{ fontSize: 11.5, color: t.muted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={title}>{title}</div>}
+            {title && <div style={{ fontSize: 11.5, color: t.muted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={title}>Project: {title}</div>}
+            {amountText && <div style={{ fontFamily: MONO, fontSize: 12, color: t.ink, marginTop: 3, fontWeight: 700 }}>{amountText}</div>}
           </div>
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
             <button ref={closeRef} className="ppd-f" onClick={tryClose} aria-label="Tutup panel (Esc)" title="Tutup (Esc)"
@@ -297,12 +313,27 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
           </div>
         </div>
 
-        {/* progress per slot */}
-        <div style={{ display: "grid", gridTemplateColumns: `repeat(${N},1fr)`, gap: 4, padding: "0 18px", background: t.surf, paddingBottom: 12, borderBottom: `1px solid ${t.line}` }}>
-          {DOC_TYPES.map((d) => {
-            const ok = list.some((x) => x.doc_type === d.key);
-            return <div key={d.key} title={d.label} style={{ height: 4, borderRadius: 99, background: loading ? t.surf3 : ok ? TEAL : t.surf3 }} />;
-          })}
+        {/* progress per slot (klik = lompat ke slot) */}
+        <div style={{ padding: "0 18px 12px", background: t.surf, borderBottom: `1px solid ${t.line}` }}>
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${N},1fr)`, gap: 4 }}>
+            {DOC_TYPES.map((d) => {
+              const ok = list.some((x) => x.doc_type === d.key);
+              return (
+                <button key={d.key} className="ppd-f" onClick={() => setFocus((f) => ({ key: d.key, n: f.n + 1 }))} title={`${d.label}: ${ok ? "sudah ada" : "belum"}`}
+                  style={{ all: "unset", cursor: "pointer", display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ height: 5, borderRadius: 99, background: loading ? t.surf3 : ok ? TEAL : t.surf3 }} />
+                  <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 700, color: ok ? (t.goodDark || TEAL_D) : t.muted2, textAlign: "center" }}>{ok ? "✓ " : ""}{d.short}</span>
+                </button>
+              );
+            })}
+          </div>
+          {!loading && canWrite && nextMissing && (
+            <button className="ppd-f" onClick={() => setFocus((f) => ({ key: nextMissing.key, n: f.n + 1 }))}
+              style={{ ...btnStyle(t, "primary", false, true), marginTop: 10, width: "100%" }}>
+              ⬆ Upload berikutnya: {nextMissing.label}
+            </button>
+          )}
+          {!loading && present === N && <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 600, color: t.goodDark || TEAL_D, textAlign: "center" }}>✓ Semua {N} dokumen sudah lengkap</div>}
         </div>
 
         {!canWrite && (
@@ -322,7 +353,8 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
             : DOC_TYPES.map((dt, i) => (
               <SlotCard key={dt.key} no={i + 1} dt={dt} files={list.filter((d) => d.doc_type === dt.key)}
                 canWrite={canWrite} refId={refId} partnerName={partnerName} segment={segment}
-                onBusy={(d) => setUploading((x) => Math.max(0, x + d))} onChanged={changed} lockAll={!!merge} t={t} />
+                onBusy={(d) => setUploading((x) => Math.max(0, x + d))} onChanged={changed} lockAll={!!merge}
+                focusTick={focus.key === dt.key ? focus.n : 0} t={t} />
             ))}
         </div>
 
@@ -367,7 +399,7 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
   );
 }
 
-function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy, onChanged, lockAll, t }) {
+function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy, onChanged, lockAll, focusTick = 0, t }) {
   const [queue, setQueue] = useState([]);        // [{ name, size, status: wait|up|ok|err|skip, error }]
   const [drag, setDrag] = useState(false);
   const [confirmId, setConfirmId] = useState(null);
@@ -375,14 +407,30 @@ function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy
   const [dl, setDl] = useState(null);             // id file / "all" yang sedang di-download
   const addRef = useRef(null);
   const repRef = useRef(null);
+  const secRef = useRef(null);
+  const pickBtnRef = useRef(null);
   const has = files.length > 0;
+
+  // dibuka dari chip / "Upload berikutnya": scroll ke slot ini & fokus tombol Pilih file
+  useEffect(() => {
+    if (!focusTick || !secRef.current) return;
+    secRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    (pickBtnRef.current || secRef.current).focus({ preventScroll: true });
+    secRef.current.animate?.([{ boxShadow: `0 0 0 3px ${TEAL}` }, { boxShadow: "0 0 0 0 transparent" }], { duration: 1200 });
+  }, [focusTick]);
   const uploading = queue.some((q) => q.status === "wait" || q.status === "up");
   const locked = uploading || lockAll || !!deleting;
   const lastAt = files.reduce((m, f) => (f.uploaded_at > m ? f.uploaded_at : m), "");
 
   const runUpload = async (fileList, replace) => {
-    const arr = Array.from(fileList || []);
-    if (!arr.length || locked) return;
+    const all = Array.from(fileList || []);
+    if (!all.length || locked) return;
+    // validasi di browser dulu: tipe & ukuran
+    const bad = all.map((f) => [f, validateFile(f)]).filter(([, m]) => m);
+    bad.slice(0, 3).forEach(([f, m]) => toast(t, `${f.name}: ${m}`, "err"));
+    if (bad.length > 3) toast(t, `… dan ${bad.length - 3} file lain ditolak.`, "err");
+    const arr = all.filter((f) => !validateFile(f));
+    if (!arr.length) return;
     if (replace && !window.confirm(`Ganti ${files.length} file ${dt.label} dengan ${arr.length} file baru?`)) return;
     setQueue(arr.map((f) => ({ name: f.name, size: f.size, status: "wait" })));
     onBusy(1);
@@ -445,7 +493,7 @@ function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy
   const zoneKey = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); addRef.current?.click(); } };
 
   return (
-    <section aria-label={`${no}. ${dt.label}`} onDragOver={onDragOver} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDrag(false); }} onDrop={onDrop}
+    <section ref={secRef} tabIndex={-1} aria-label={`${no}. ${dt.label}`} onDragOver={onDragOver} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDrag(false); }} onDrop={onDrop}
       style={{ border: `1.5px solid ${drag ? TEAL : has ? t.goodBd : t.line}`, borderRadius: 14, background: drag ? t.goodBg : t.surf, overflow: "hidden", transition: "border-color .15s, background .15s", boxShadow: t.shadow1 }}>
       {/* judul */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px" }}>
@@ -456,15 +504,21 @@ function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy
             {has ? `${files.length} file · terakhir ${fmtDT(lastAt)}` : "Belum ada file"}
           </div>
         </div>
-        {has && (
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          {canWrite && (
+            <button ref={pickBtnRef} className="ppd-f" style={btnStyle(t, "primary", locked, true)} disabled={locked} onClick={() => addRef.current?.click()}
+              title={`Pilih file ${dt.label} (PDF/JPG/PNG, maks ${MAX_FILE_BYTES / 1048576} MB)`}>
+              ⬆ {has ? "Tambah file" : "Pilih file"}
+            </button>
+          )}
+          {has && <>
             <button className="ppd-f" style={btnStyle(t, "outline", !!dl, true)} disabled={!!dl} onClick={onDownloadAll}
               title={files.length > 1 ? `Download ${files.length} file ${dt.label} sebagai ZIP` : `Download ${files[0].file_name}`}>
               <IcoDownload />{dl === "all" ? "…" : files.length > 1 ? `Download semua (${files.length})` : "Download"}
             </button>
             {canWrite && <button className="ppd-f" style={btnStyle(t, "outline", locked, true)} disabled={locked} onClick={() => repRef.current?.click()} title={`Hapus semua file ${dt.label} dan ganti dengan yang baru (mis. BAST yang sudah di-esign)`}>Ganti semua</button>}
-          </div>
-        )}
+          </>}
+        </div>
       </div>
 
       {/* file list */}
@@ -520,8 +574,8 @@ function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy
             onClick={() => { if (!locked) addRef.current?.click(); }} onKeyDown={zoneKey}
             style={{ border: `1.5px dashed ${drag ? TEAL : t.line2}`, borderRadius: 12, padding: has ? "9px 12px" : "18px 12px", textAlign: "center", cursor: locked ? "not-allowed" : "pointer", color: drag ? (t.goodDark || TEAL_D) : t.muted, background: drag ? "transparent" : t.surf2, display: "flex", flexDirection: has ? "row" : "column", alignItems: "center", justifyContent: "center", gap: has ? 8 : 6, opacity: locked ? 0.6 : 1, transition: "all .15s" }}>
             <span style={{ color: TEAL, display: "inline-flex" }}><IcoUp /></span>
-            <span style={{ fontSize: 12.5, fontWeight: 600, color: t.ink2 }}>{has ? "Tambah file — seret ke sini atau klik" : "Seret file ke sini atau klik untuk pilih"}</span>
-            {!has && <span style={{ fontFamily: MONO, fontSize: 10.5 }}>PDF · JPG · PNG — maks {MAX_FILE_BYTES / 1048576} MB per file</span>}
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: t.ink2 }}>{drag ? "Lepaskan untuk upload" : has ? "Tambah file — seret ke sini atau klik" : "Seret file ke sini atau klik untuk pilih"}</span>
+            <span style={{ fontFamily: MONO, fontSize: 10.5 }}>PDF · JPG · PNG — maks {MAX_FILE_BYTES / 1048576} MB per file</span>
           </div>
         </div>
       )}
@@ -542,11 +596,14 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
   const [pageSize, setPageSize] = useState(25);
   const [sel, setSel] = useState(() => new Set());
   const [openKey, setOpenKey] = useState(null);
+  const [openSlot, setOpenSlot] = useState(null);  // slot yang difokuskan saat drawer dibuka
+  const [bulkOpen, setBulkOpen] = useState(false); // modal Bulk Upload (SPM)
   const [bulk, setBulk] = useState(null);       // { i, total, ref }
   const [rowBusy, setRowBusy] = useState(null); // key PO yang sedang di-merge
   const isSPM = !!docs?.canMerge;
   const role = docs?.profile?.role;
   const own = ownerLabel(segment);
+  const openDrawer = (key, slot = null) => { setOpenSlot(slot); setOpenKey(key); };
 
   const rows = useMemo(() => (pos || [])
     .filter((p) => canViewPartner(docs?.profile, p.partner, segment))
@@ -554,7 +611,8 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
       const key = statKey(segment, p.partner, p.ref);
       const stat = docs?.byRef?.[key];
       const n = doneCount(stat);
-      return { ...p, key, stat, n, st: statusOf(n), lastAt: stat?.lastAt || "" };
+      const firstMissing = DOC_TYPES.find((d) => !(stat?.types?.[d.key]?.n > 0))?.key || null;
+      return { ...p, key, stat, n, st: statusOf(n), lastAt: stat?.lastAt || "", firstMissing, canWrite: canWritePartner(docs?.profile, p.partner, segment) };
     }), [pos, docs, segment]);
 
   const kpi = useMemo(() => {
@@ -651,7 +709,7 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
     : !isSPM ? "Mode lihat saja: kamu bisa membuka & download file. Upload oleh partner/agency, merge oleh SPM."
     : segment === "agency" ? "Agency belum punya akses upload sendiri — SPM bisa upload atas nama agency." : null;
 
-  const cols = (isSPM ? 1 : 0) + 7 + (isSPM ? 1 : 0);
+  const cols = (isSPM ? 1 : 0) + 8;
 
   return (
     <div style={{ background: t.surf, border: `1px solid ${t.line}`, borderRadius: 18, boxShadow: t.shadow1, marginBottom: 14, position: "relative" }}>
@@ -710,11 +768,17 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
           ))}
         </div>
         <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 11, color: t.muted, whiteSpace: "nowrap" }}>{filtered.length.toLocaleString("id-ID")} {DOC_REF_LABEL}</span>
+        {isSPM && (
+          <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !docs?.loaded || !rows.length, true)} disabled={!docs?.loaded || !rows.length} onClick={() => setBulkOpen(true)}
+            title="Upload banyak file sekaligus — dicocokkan otomatis ke PO dari nama file">
+            ⬆ Bulk Upload
+          </button>
+        )}
       </div>
 
       {/* table */}
       <div style={{ overflow: "auto", maxHeight: "68vh" }}>
-        <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12, minWidth: 900 }}>
+        <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12, minWidth: 1040 }}>
           <thead><tr>
             {isSPM && (
               <th style={th({ width: 34, textAlign: "center" })}>
@@ -729,7 +793,7 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
             <th style={th()}>Dokumen</th>
             {sortTh("n", "Status")}
             {sortTh("lastAt", "Update terakhir")}
-            {isSPM && <th style={th({ textAlign: "right" })}>Aksi</th>}
+            <th style={th({ textAlign: "right", position: "sticky", right: 0, zIndex: 3, boxShadow: `-8px 0 10px -8px rgba(0,0,0,0.18)` })}>Aksi</th>
           </tr></thead>
           <tbody>
             {!docs?.loaded
@@ -747,8 +811,8 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
                   const zebra = i % 2 === 1 ? t.rowStripe : "transparent";
                   const isSel = sel.has(r.key);
                   return (
-                    <tr key={r.key} className="ppd-row" tabIndex={0} onClick={() => setOpenKey(r.key)}
-                      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpenKey(r.key); } }}
+                    <tr key={r.key} className="ppd-row" tabIndex={0} onClick={() => openDrawer(r.key)}
+                      onKeyDown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDrawer(r.key); } }}
                       aria-label={`${DOC_REF_LABEL} ${r.ref}, ${r.partner}, ${r.n} dari ${N} dokumen. Enter untuk buka.`}
                       style={{ cursor: "pointer", background: isSel ? t.goodBg : zebra, transition: "background .1s" }}
                       onMouseEnter={(e) => { if (!isSel) e.currentTarget.style.background = t.rowHover; }}
@@ -765,17 +829,34 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
                       <td style={td({ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 })} title={r.partner}>{r.partner}</td>
                       <td style={td({ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: t.muted })} title={r.title}>{r.title || "—"}</td>
                       <td style={td({ textAlign: "right", fontFamily: MONO, whiteSpace: "nowrap", color: t.ink })}>{r.amountText}</td>
-                      <td style={td()}><div style={{ display: "flex", gap: 4, flexWrap: "nowrap" }}>{DOC_TYPES.map((d) => <DocChip key={d.key} dt={d} ty={r.stat?.types?.[d.key]} t={t} />)}</div></td>
+                      <td style={td()} onClick={(e) => e.stopPropagation()}>
+                        <div style={{ display: "flex", gap: 4, flexWrap: "nowrap" }}>
+                          {DOC_TYPES.map((d) => <DocChip key={d.key} dt={d} ty={r.stat?.types?.[d.key]} canWrite={r.canWrite} onClick={() => openDrawer(r.key, d.key)} t={t} />)}
+                        </div>
+                      </td>
                       <td style={td()}><Ring n={r.n} t={t} /></td>
-                      <td style={td({ fontFamily: MONO, fontSize: 11, color: r.lastAt ? t.ink2 : t.muted2, whiteSpace: "nowrap" })}>{r.lastAt ? fmtDT(r.lastAt) : "—"}</td>
-                      {isSPM && (
-                        <td style={td({ textAlign: "right" })} onClick={(e) => e.stopPropagation()}>
-                          <button className="ppd-f" style={btnStyle(t, "outline", !!rowBusy || !!bulk || !r.n, true)} disabled={!!rowBusy || !!bulk || !r.n}
-                            onClick={() => mergeOne(r)} aria-label={`Download merge ${r.ref}`} title={!r.n ? "Belum ada dokumen" : `Gabung ${r.n}/${N} dokumen jadi 1 PDF`}>
-                            <IcoDownload />{rowBusy === r.key ? "…" : "Merge"}
-                          </button>
-                        </td>
-                      )}
+                      <td style={td({ fontFamily: MONO, fontSize: 11, color: r.lastAt ? t.ink2 : t.muted2, whiteSpace: "nowrap" })}>{r.lastAt ? fmtDT(r.lastAt) : <span style={{ fontFamily: "inherit", fontStyle: "italic" }}>{r.canWrite ? "Belum ada dokumen — klik Upload" : "Belum ada dokumen"}</span>}</td>
+                      <td style={td({ textAlign: "right", position: "sticky", right: 0, zIndex: 1, background: t.surf, boxShadow: `-8px 0 10px -8px rgba(0,0,0,0.18)` })} onClick={(e) => e.stopPropagation()}>
+                        <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+                          {r.canWrite && (
+                            <button className="ppd-f ppd-act" style={btnStyle(t, "primary", false, true)} onClick={() => openDrawer(r.key, r.firstMissing || DOC_TYPES[0].key)}
+                              aria-label={`Upload dokumen ${r.ref}`} title={r.firstMissing ? `Upload ${DOC_TYPES.find((d) => d.key === r.firstMissing)?.label}` : "Tambah / ganti dokumen"}>
+                              ⬆ Upload
+                            </button>
+                          )}
+                          {(r.n > 0 || !r.canWrite) && (
+                            <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", false, true)} onClick={() => openDrawer(r.key)} aria-label={`Lihat dokumen ${r.ref}`}>
+                              Lihat ({r.n}/{N})
+                            </button>
+                          )}
+                          {isSPM && (
+                            <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", !!rowBusy || !!bulk || !r.n, true)} disabled={!!rowBusy || !!bulk || !r.n}
+                              onClick={() => mergeOne(r)} aria-label={`Download merge ${r.ref}`} title={!r.n ? "Belum ada dokumen untuk di-merge" : `Gabung ${r.n}/${N} dokumen jadi 1 PDF`}>
+                              <IcoDownload />{rowBusy === r.key ? "…" : "Merge"}
+                            </button>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}
@@ -823,8 +904,9 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
         </div>
       )}
 
-      {openRow && <RefDocsDrawer refId={openRow.ref} partnerName={openRow.partner} segment={segment} title={openRow.title} amountText={openRow.amountText}
-        docs={docs} onClose={() => setOpenKey(null)} t={t} />}
+      {openRow && <RefDocsDrawer key={openRow.key} refId={openRow.ref} partnerName={openRow.partner} segment={segment} title={openRow.title} amountText={openRow.amountText}
+        docs={docs} focusSlot={openSlot} onClose={() => setOpenKey(null)} t={t} />}
+      {bulkOpen && <BulkUploadModal rows={rows} segment={segment} docs={docs} onClose={() => setBulkOpen(false)} t={t} />}
     </div>
   );
 }
@@ -835,5 +917,327 @@ function PageBtn({ label, active, disabled, onClick, t }) {
       style={{ fontFamily: MONO, fontSize: 11, fontWeight: active ? 700 : 500, padding: "5px 11px", borderRadius: 8, minWidth: 32, border: `1px solid ${active ? TEAL : t.line2}`, background: active ? TEAL : t.surf, color: active ? "#fff" : disabled ? t.muted2 : t.ink, cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.45 : 1 }}>
       {label}
     </button>
+  );
+}
+
+// ── Bulk Upload (khusus SPM) ───────────────────────────────────────────────
+// Banyak file sekaligus untuk 1 jenis dokumen; tiap file dicocokkan ke PO dari nama file / path folder.
+
+const alnum = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+// Cari ref di dalam teks dengan batas kata (tidak menempel ke huruf/angka lain)
+function containsRef(hayUpper, refUpper) {
+  if (!refUpper) return false;
+  let i = hayUpper.indexOf(refUpper);
+  while (i >= 0) {
+    const b = hayUpper[i - 1], a = hayUpper[i + refUpper.length];
+    if (!(b && /[A-Z0-9]/.test(b)) && !(a && /[A-Z0-9]/.test(a))) return true;
+    i = hayUpper.indexOf(refUpper, i + 1);
+  }
+  return false;
+}
+
+function matchFile(path, index) {
+  const hay = String(path).toUpperCase();
+  const hayAl = alnum(path);
+  // 1) nomor PO di nama file / folder — yang terpanjang menang
+  let best = null;
+  for (const r of index.byRefLen) {
+    if (best && r.refU.length < best.refU.length) break;
+    if (containsRef(hay, r.refU) || (r.refAl.length >= 6 && hayAl.includes(r.refAl))) {
+      if (!best) best = { refU: r.refU, rows: [r.row] };
+      else if (r.refU === best.refU) best.rows.push(r.row);
+    }
+  }
+  if (best) return best.rows.length === 1 ? { how: "po", key: best.rows[0].key, cands: [] } : { how: "partner", key: "", cands: best.rows.map((x) => x.key) };
+  // 2) nama partner/agency di nama file → pilih PO milik partner itu
+  const hayKey = alnum(path);
+  const p = index.partners.find((x) => x.al.length >= 4 && hayKey.includes(x.al));
+  if (p) return { how: "partner", key: p.rows.length === 1 ? p.rows[0].key : "", cands: p.rows.map((x) => x.key) };
+  return { how: "none", key: "", cands: [] };
+}
+
+// Folder yang di-drop: telusuri isinya (Chrome/Edge/Safari)
+async function filesFromDrop(dt) {
+  const items = Array.from(dt?.items || []);
+  const entries = items.map((it) => it.webkitGetAsEntry?.()).filter(Boolean);
+  if (!entries.length) return Array.from(dt?.files || []).map((f) => ({ file: f, path: f.name }));
+  const out = [];
+  const walk = async (entry, prefix) => {
+    if (entry.isFile) {
+      const file = await new Promise((res, rej) => entry.file(res, rej));
+      out.push({ file, path: prefix + file.name });
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      let batch;
+      do {
+        batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+        for (const e of batch) await walk(e, `${prefix}${entry.name}/`);
+      } while (batch.length);
+    }
+  };
+  for (const e of entries) await walk(e, "");
+  return out;
+}
+
+function BulkUploadModal({ rows, segment, docs, onClose, t }) {
+  useDocsCss();
+  const [docType, setDocType] = useState(DOC_TYPES[1].key); // default BAST (paling sering banyak file)
+  const [items, setItems] = useState([]);                  // { id, file, path, err, key, how, cands, status, msg }
+  const [phase, setPhase] = useState("pick");              // pick | review | uploading | done
+  const [prog, setProg] = useState({ i: 0, total: 0 });
+  const [drag, setDrag] = useState(false);
+  const fileRef = useRef(null);
+  const dirRef = useRef(null);
+  const closeRef = useRef(null);
+  const busy = phase === "uploading";
+  const dtLabel = DOC_TYPES.find((d) => d.key === docType)?.label;
+
+  const byKey = useMemo(() => new Map(rows.map((r) => [r.key, r])), [rows]);
+  const index = useMemo(() => {
+    const byRefLen = rows.map((row) => ({ row, refU: String(row.ref).toUpperCase(), refAl: alnum(row.ref) }))
+      .sort((a, b) => b.refU.length - a.refU.length);
+    const pm = new Map();
+    rows.forEach((row) => {
+      const k = partnerKey(row.partner);
+      if (!pm.has(k)) pm.set(k, { al: alnum(k), rows: [] });
+      pm.get(k).rows.push(row);
+    });
+    const partners = [...pm.values()].sort((a, b) => b.al.length - a.al.length);
+    return { byRefLen, partners };
+  }, [rows]);
+
+  useEffect(() => {
+    closeRef.current?.focus();
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
+  const tryClose = () => { if (busy) { toast(t, "Tunggu upload selesai dulu.", "info"); return; } onClose(); };
+
+  const addFiles = (list) => {
+    const clean = list.filter(({ path }) => !/(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini|\._[^/]*)$/i.test(path));
+    if (!clean.length) return;
+    setItems((cur) => {
+      const seen = new Set(cur.map((x) => `${x.path}|${x.file.size}`));
+      const add = clean.filter(({ file, path }) => !seen.has(`${path}|${file.size}`)).map(({ file, path }, i) => ({
+        id: `${Date.now()}_${cur.length + i}`, file, path, err: validateFile(file), status: "pending", msg: "", ...matchFile(path, index),
+      }));
+      return [...cur, ...add];
+    });
+    setPhase("review");
+  };
+
+  const onPick = (e) => { addFiles(Array.from(e.target.files || []).map((f) => ({ file: f, path: f.webkitRelativePath || f.name }))); e.target.value = ""; };
+  const onDrop = async (e) => { e.preventDefault(); setDrag(false); if (busy) return; addFiles(await filesFromDrop(e.dataTransfer)); };
+
+  const setKey = (id, key) => setItems((cur) => cur.map((x) => (x.id === id ? { ...x, key } : x)));
+  const remove = (id) => setItems((cur) => cur.filter((x) => x.id !== id));
+
+  const ready = items.filter((x) => !x.err && x.key && byKey.has(x.key));
+  const counts = {
+    ok: items.filter((x) => !x.err && x.key && x.how === "po").length,
+    manual: items.filter((x) => !x.err && x.key && x.how !== "po").length,
+    need: items.filter((x) => !x.err && !x.key).length,
+    bad: items.filter((x) => x.err).length,
+  };
+
+  const start = async () => {
+    const todo = ready;
+    if (!todo.length) return;
+    setPhase("uploading");
+    setProg({ i: 0, total: todo.length });
+    const mark = (id, patch) => setItems((cur) => cur.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+    let okN = 0, errN = 0, skipN = 0;
+    for (let i = 0; i < todo.length; i++) {
+      const it = todo[i];
+      const row = byKey.get(it.key);
+      mark(it.id, { status: "up" });
+      try {
+        const { ok, errors, skipped } = await uploadSlot({ files: [it.file], partnerName: row.partner, refId: row.ref, docType, segment });
+        if (ok.length) { okN++; mark(it.id, { status: "ok", msg: "berhasil" }); }
+        else if (skipped.length) { skipN++; mark(it.id, { status: "skip", msg: "sudah ada file yang sama — dilewati" }); }
+        else { errN++; mark(it.id, { status: "err", msg: errors[0]?.message || "gagal" }); }
+      } catch (e) { errN++; mark(it.id, { status: "err", msg: errMsg(e) }); }
+      setProg({ i: i + 1, total: todo.length });
+    }
+    setPhase("done");
+    docs?.refresh?.();
+    toast(t, `Bulk upload ${dtLabel}: ${okN} berhasil${skipN ? `, ${skipN} dilewati` : ""}${errN ? `, ${errN} gagal` : ""}.`, errN ? "err" : "ok");
+  };
+
+  const statusCell = (x) => {
+    if (x.err) return <span style={{ color: t.bad }}>✕ {x.err}</span>;
+    if (x.status === "up") return <span style={{ color: t.muted }}>mengupload…</span>;
+    if (x.status === "ok") return <span style={{ color: t.goodDark || TEAL_D, fontWeight: 700 }}>✓ berhasil</span>;
+    if (x.status === "skip") return <span style={{ color: t.muted }}>↷ {x.msg}</span>;
+    if (x.status === "err") return <span style={{ color: t.bad }}>✕ {x.msg}</span>;
+    const row = byKey.get(x.key);
+    const exists = row?.stat?.types?.[docType]?.n > 0;
+    if (!x.key) return <span style={{ color: t.warnDark || t.warn, fontWeight: 600 }}>{x.how === "partner" ? "Pilih PO" : "Tidak cocok — pilih PO"}</span>;
+    return (
+      <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ color: t.goodDark || TEAL_D, fontWeight: 600 }}>{x.how === "po" ? "✓ Cocok" : "✓ Dipilih"}</span>
+        {exists && <span title={`PO ini sudah punya ${dtLabel}. File baru akan DITAMBAHKAN (tidak menghapus yang lama).`} style={{ fontFamily: MONO, fontSize: 9.5, padding: "1px 6px", borderRadius: 6, background: t.warnBg, color: t.warnDark || t.warn, border: `1px solid ${t.warnBd}` }}>sudah ada file</span>}
+      </span>
+    );
+  };
+
+  const th = { position: "sticky", top: 0, zIndex: 1, background: t.surf2, fontFamily: MONO, fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: t.muted, fontWeight: 500, padding: "8px 9px", borderBottom: `1.5px solid ${t.line2}`, textAlign: "left", whiteSpace: "nowrap" };
+  const td = { padding: "7px 9px", borderBottom: `1px solid ${t.line}`, verticalAlign: "middle", fontSize: 12, color: t.ink2 };
+  const optLabel = (r) => `${r.ref} — ${r.partner}`;
+
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div onMouseDown={(e) => { if (e.target === e.currentTarget) tryClose(); }} onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); tryClose(); } }}
+      className="ppd-anim" style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 12, animation: "ppd_fade .15s ease-out" }}>
+      <div role="dialog" aria-modal="true" aria-labelledby="ppd-bulk-title"
+        onDragOver={(e) => { if (busy) return; e.preventDefault(); if (!drag) setDrag(true); }} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDrag(false); }} onDrop={onDrop}
+        style={{ width: "min(1000px, 100%)", maxHeight: "92vh", display: "flex", flexDirection: "column", background: t.surf, color: t.ink, borderRadius: 18, border: `1.5px solid ${drag ? TEAL : t.line}`, boxShadow: t.shadow2, overflow: "hidden", textAlign: "left" }}>
+        {/* header */}
+        <div style={{ padding: "14px 18px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "flex-start", gap: 12, background: t.surf2 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: MAGENTA, fontWeight: 700 }}>SPM · Bulk Upload</div>
+            <div id="ppd-bulk-title" style={{ fontSize: 17, fontWeight: 800, marginTop: 2 }}>Upload banyak dokumen sekaligus</div>
+            <div style={{ fontSize: 12, color: t.muted, marginTop: 3, lineHeight: 1.45 }}>
+              File dicocokkan otomatis ke {DOC_REF_LABEL} dari <b>nama file atau nama folder</b> (mis. <span style={{ fontFamily: MONO }}>BAST_4810118133.pdf</span>). Kalau hanya nama {ownerLabel(segment).toLowerCase()} yang terbaca, kamu tinggal pilih PO-nya.
+            </div>
+          </div>
+          <button ref={closeRef} className="ppd-f" onClick={tryClose} aria-label="Tutup (Esc)" style={{ ...btnStyle(t, "ghost", false, true), fontSize: 20, lineHeight: 1, padding: "2px 8px", color: t.muted }}>×</button>
+        </div>
+
+        {/* step 1: jenis dokumen + sumber file */}
+        <div style={{ padding: "12px 18px", borderBottom: `1px solid ${t.line}`, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div>
+            <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase", color: t.muted, marginBottom: 5 }}>1 · Jenis dokumen</div>
+            <div role="radiogroup" aria-label="Jenis dokumen" style={{ display: "inline-flex", background: t.surf3, borderRadius: 10, padding: 3, gap: 2, border: `1px solid ${t.line}`, flexWrap: "wrap" }}>
+              {DOC_TYPES.map((d, i) => (
+                <button key={d.key} role="radio" aria-checked={docType === d.key} className="ppd-f" disabled={busy || phase === "done"} onClick={() => setDocType(d.key)}
+                  style={{ fontFamily: "inherit", fontSize: 12, fontWeight: 600, padding: "6px 11px", borderRadius: 8, border: 0, cursor: busy ? "default" : "pointer", background: docType === d.key ? TEAL : "transparent", color: docType === d.key ? "#fff" : t.muted, whiteSpace: "nowrap" }}>
+                  {i + 1}. {d.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase", color: t.muted, marginBottom: 5 }}>Segment</div>
+            <span title="Ikuti toggle Partner/Agency Prepaid di atas. Ganti toggle untuk upload ke segment lain." style={{ display: "inline-flex", padding: "7px 11px", borderRadius: 10, fontSize: 12, fontWeight: 700, background: `${MAGENTA}14`, color: MAGENTA, border: `1px solid ${MAGENTA}30` }}>
+              {ownerLabel(segment)} Prepaid · {rows.length} PO
+            </span>
+          </div>
+          {phase !== "done" && (
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+              <input ref={fileRef} type="file" accept={ACCEPT_ATTR} multiple hidden onChange={onPick} />
+              <input ref={(el) => { dirRef.current = el; if (el) { el.setAttribute("webkitdirectory", ""); el.setAttribute("directory", ""); } }} type="file" multiple hidden onChange={onPick} />
+              <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy)} disabled={busy} onClick={() => fileRef.current?.click()}>⬆ Pilih file</button>
+              <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy)} disabled={busy} onClick={() => dirRef.current?.click()}>📁 Pilih folder</button>
+            </div>
+          )}
+        </div>
+
+        {/* step 2: preview */}
+        <div style={{ flex: 1, overflow: "auto", minHeight: 180 }}>
+          {!items.length ? (
+            <div role="button" tabIndex={0} className="ppd-f" onClick={() => fileRef.current?.click()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileRef.current?.click(); } }}
+              style={{ margin: 18, border: `2px dashed ${drag ? TEAL : t.line2}`, borderRadius: 16, padding: "42px 16px", textAlign: "center", cursor: "pointer", background: drag ? t.goodBg : t.surf2, color: t.muted }}>
+              <div style={{ color: TEAL, display: "inline-flex" }}><IcoUp /></div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: t.ink, marginTop: 6 }}>{drag ? "Lepaskan untuk menambahkan" : `Seret banyak file ${dtLabel} atau 1 folder ke sini`}</div>
+              <div style={{ fontSize: 12, marginTop: 4 }}>atau klik untuk pilih · PDF · JPG · PNG — maks {MAX_FILE_BYTES / 1048576} MB per file</div>
+            </div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: 760 }}>
+              <thead><tr>
+                <th style={th}>File</th><th style={{ ...th, textAlign: "right" }}>Ukuran</th><th style={th}>{DOC_REF_LABEL}</th><th style={th}>{ownerLabel(segment)}</th><th style={th}>Status</th><th style={th}><span className="ppd-sr">Hapus</span></th>
+              </tr></thead>
+              <tbody>
+                {items.map((x) => {
+                  const row = byKey.get(x.key);
+                  const candRows = x.cands.length ? x.cands.map((k) => byKey.get(k)).filter(Boolean) : rows;
+                  const listId = `ppd-po-${x.id}`;
+                  const editable = !x.err && (phase === "review");
+                  return (
+                    <tr key={x.id} style={{ background: x.status === "ok" ? t.goodBg : x.status === "err" || x.err ? t.badBg : "transparent" }}>
+                      <td style={{ ...td, maxWidth: 260 }}>
+                        <div title={x.path} style={{ display: "flex", gap: 8, alignItems: "center", minWidth: 0 }}>
+                          <FileIcon name={x.file.name} mime={x.file.type} t={t} />
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 600, color: t.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.file.name}</div>
+                            {x.path !== x.file.name && <div style={{ fontFamily: MONO, fontSize: 10, color: t.muted2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.path}</div>}
+                          </div>
+                        </div>
+                      </td>
+                      <td style={{ ...td, textAlign: "right", fontFamily: MONO, whiteSpace: "nowrap" }}>{fmtSize(x.file.size)}</td>
+                      <td style={{ ...td, minWidth: 200 }}>
+                        {editable ? (
+                          x.cands.length && x.cands.length <= 60 ? (
+                            <select className="ppd-f" aria-label={`PO untuk ${x.file.name}`} value={x.key} onChange={(e) => setKey(x.id, e.target.value)}
+                              style={{ width: "100%", fontFamily: MONO, fontSize: 11.5, padding: "5px 6px", borderRadius: 8, border: `1px solid ${x.key ? t.line2 : t.warn}`, background: t.surf, color: t.ink }}>
+                              <option value="">— pilih {DOC_REF_LABEL} —</option>
+                              {candRows.map((r) => <option key={r.key} value={r.key}>{optLabel(r)}</option>)}
+                            </select>
+                          ) : (
+                            <>
+                              <input className="ppd-f" list={listId} aria-label={`Cari PO untuk ${x.file.name}`} placeholder={`Cari ${DOC_REF_LABEL}…`}
+                                defaultValue={row ? optLabel(row) : ""}
+                                onChange={(e) => { const m = candRows.find((r) => optLabel(r) === e.target.value || r.ref === e.target.value.trim()); setKey(x.id, m ? m.key : ""); }}
+                                style={{ width: "100%", boxSizing: "border-box", fontFamily: MONO, fontSize: 11.5, padding: "5px 7px", borderRadius: 8, border: `1px solid ${x.key ? t.line2 : t.warn}`, background: t.surf, color: t.ink }} />
+                              <datalist id={listId}>{candRows.slice(0, 3000).map((r) => <option key={r.key} value={optLabel(r)} />)}</datalist>
+                            </>
+                          )
+                        ) : <span style={{ fontFamily: MONO, fontWeight: 700, color: t.ink }}>{row?.ref || "—"}</span>}
+                      </td>
+                      <td style={{ ...td, maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={row?.partner}>{row?.partner || "—"}</td>
+                      <td style={{ ...td, minWidth: 160 }}>{statusCell(x)}</td>
+                      <td style={{ ...td, textAlign: "right" }}>
+                        {phase === "review" && <button className="ppd-f" onClick={() => remove(x.id)} aria-label={`Hapus ${x.file.name} dari daftar`} title="Keluarkan dari daftar" style={{ ...btnStyle(t, "ghost", false, true), color: t.muted }}>✕</button>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* step 3: footer */}
+        <div style={{ borderTop: `1px solid ${t.line}`, background: t.surf2, padding: "12px 18px", display: "flex", flexDirection: "column", gap: 8 }}>
+          {(phase === "uploading" || phase === "done") && (
+            <div>
+              <div style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted, marginBottom: 5 }}>{phase === "done" ? "Selesai" : "Mengupload"} {prog.i}/{prog.total} file…</div>
+              <IndeterminateBar t={t} pct={prog.total ? Math.round((prog.i / prog.total) * 100) : 0} />
+            </div>
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            {items.length > 0 && phase !== "done" && (
+              <span style={{ fontFamily: MONO, fontSize: 11, color: t.muted, display: "inline-flex", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ color: t.goodDark || TEAL_D }}>✓ {counts.ok} cocok</span>
+                {counts.manual > 0 && <span style={{ color: t.goodDark || TEAL_D }}>✓ {counts.manual} dipilih</span>}
+                <span style={{ color: counts.need ? (t.warnDark || t.warn) : t.muted }}>● {counts.need} perlu dipilih</span>
+                <span style={{ color: counts.bad ? t.bad : t.muted }}>✕ {counts.bad} dilewati</span>
+              </span>
+            )}
+            {phase === "done" && (
+              <span style={{ fontSize: 12.5, color: t.ink }}>
+                <b style={{ color: t.goodDark || TEAL_D }}>{items.filter((x) => x.status === "ok").length} berhasil</b>
+                {" · "}{items.filter((x) => x.status === "skip").length} dilewati (sudah ada)
+                {" · "}<b style={{ color: items.some((x) => x.status === "err") ? t.bad : t.muted }}>{items.filter((x) => x.status === "err").length} gagal</b>
+                {" · "}{items.filter((x) => x.status === "pending" || x.err).length} tidak diupload
+              </span>
+            )}
+            <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+              {phase === "review" && items.length > 0 && <button className="ppd-f" style={btnStyle(t, "ghost", false, true)} onClick={() => { setItems([]); setPhase("pick"); }}>Kosongkan</button>}
+              {phase === "done"
+                ? <button className="ppd-f ppd-act" style={btnStyle(t, "primary")} onClick={onClose}>Selesai</button>
+                : <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || !ready.length)} disabled={busy || !ready.length} onClick={start}
+                    title={!ready.length ? "Belum ada file yang punya PO" : `Upload ke slot ${dtLabel} — file lama tidak dihapus`}>
+                    ⬆ {busy ? `Mengupload ${prog.i}/${prog.total}…` : `Upload ${ready.length} file sebagai ${dtLabel}`}
+                  </button>}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
