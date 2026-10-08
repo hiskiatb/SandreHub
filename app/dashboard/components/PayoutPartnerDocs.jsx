@@ -13,6 +13,7 @@ import {
   fetchDocStats, listRefDocs, uploadSlot, deleteDocs, signedUrl,
   downloadMergedPdf, downloadMergedZip, downloadDoc, downloadDocsZip, refZipName, friendlyError, uploaderLabel,
   validateFile, partnerKey,
+  APPROVAL_DOC_TYPES, approvalKey, approvalStatus, fetchApprovals, approvalApi,
 } from "../../../lib/payoutPartnerDocs";
 
 const TEAL = "#32BCAD", TEAL_D = "#27a093", MAGENTA = "#C6168D";
@@ -85,6 +86,7 @@ function toast(t, msg, type = "ok") {
 export function usePartnerDocStats(profile) {
   const enabled = canViewAll(profile) || profile?.role === "finance_mpx" || profile?.role === "agency";
   const [state, setState] = useState({ byRef: {}, loaded: false, error: "" });
+  const [appr, setAppr] = useState({ available: true, byKey: {} });
   const [tick, setTick] = useState(0);
   useEffect(() => {
     if (!enabled) return;
@@ -92,10 +94,17 @@ export function usePartnerDocStats(profile) {
     fetchDocStats()
       .then((byRef) => { if (alive) setState({ byRef, loaded: true, error: "" }); })
       .catch((e) => { if (alive) setState((s) => ({ ...s, loaded: true, error: errMsg(e) })); });
+    // approval (BAST & Notification Letter); available=false kalau migration 20261008 belum jalan
+    fetchApprovals()
+      .then((a) => { if (alive) setAppr(a); })
+      .catch(() => { if (alive) setAppr({ available: false, byKey: {} }); });
     return () => { alive = false; };
   }, [enabled, tick]);
   const refresh = useCallback(() => setTick((x) => x + 1), []);
-  return { enabled, ...state, refresh, profile, canMerge: canMerge(profile) };
+  return {
+    enabled, ...state, refresh, profile, canMerge: canMerge(profile),
+    approvalsAvailable: appr.available, approvals: appr.byKey,
+  };
 }
 
 // ── atom UI ────────────────────────────────────────────────────────────────
@@ -113,19 +122,48 @@ function Ring({ n, t, size = 26, label = true }) {
   );
 }
 
+// ── Approval UI helpers ────────────────────────────────────────────────────
+const APPR = {
+  pending:   { label: "Pending",  long: "Pending approval",  tone: "warn" },
+  approved:  { label: "Approved", long: "Approved — locked", tone: "good" },
+  rejected:  { label: "Rejected", long: "Rejected",          tone: "bad"  },
+  cancelled: { label: "Cancelled", long: "Request cancelled", tone: "muted" },
+  revoked:   { label: "Revoked",  long: "Approval revoked",  tone: "bad"  },
+  expired:   { label: "Expired",  long: "Request expired",   tone: "muted" },
+};
+const apprColors = (tone, t) => tone === "good" ? [t.goodDark || TEAL_D, t.goodBg, t.goodBd]
+  : tone === "warn" ? [t.warnDark || t.warn, t.warnBg, t.warnBd]
+  : tone === "bad" ? [t.bad, t.badBg, t.badBd] : [t.muted, t.surf2, t.line2];
+
+function ApprovalBadge({ status, t, long = false }) {
+  const m = APPR[status];
+  if (!m) return null;
+  const [ink, bg, bd] = apprColors(m.tone, t);
+  return <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontFamily: MONO, fontSize: 9.5, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", padding: "2px 7px", borderRadius: 6, color: ink, background: bg, border: `1px solid ${bd}`, whiteSpace: "nowrap" }}>
+    {status === "approved" ? "🔒 " : ""}{long ? m.long : m.label}
+  </span>;
+}
+
+const APPROVER_KEY = "ppd_approver_email";
+const readApprover = () => { try { return localStorage.getItem(APPROVER_KEY) || ""; } catch { return ""; } };
+const saveApprover = (v) => { try { localStorage.setItem(APPROVER_KEY, v); } catch { /* ignore */ } };
+
 // Chip status per jenis dokumen. Dengan onClick → tombol yang membuka drawer di slot itu.
-function DocChip({ dt, ty, t, onClick, canWrite }) {
+function DocChip({ dt, ty, t, onClick, canWrite, appr }) {
   const ok = ty?.n > 0;
-  const tip = ok
+  const am = APPR[appr];
+  const tip0 = ok
     ? `${dt.label} · ${ty.n} file(s) · last updated ${fmtDT(ty.lastAt)} — click to view`
     : `${dt.label} · not uploaded${canWrite ? " — click to upload" : ""}`;
+  const tip = am ? `${tip0} · Approval: ${am.long}` : tip0;
   const style = {
     display: "inline-flex", alignItems: "center", gap: 3, fontFamily: MONO, fontSize: 10, fontWeight: 700, letterSpacing: "0.02em",
     padding: "3px 8px", borderRadius: 99, whiteSpace: "nowrap", transition: "transform .1s, box-shadow .15s, background .15s",
     background: ok ? TEAL : "transparent", color: ok ? "#fff" : t.muted,
     border: ok ? `1px solid ${TEAL}` : `1px dashed ${t.line2}`,
   };
-  const content = <><span aria-hidden="true">{ok ? "✓" : "+"}</span>{dt.short}</>;
+  const dot = am ? apprColors(am.tone, t)[0] : null;
+  const content = <><span aria-hidden="true">{ok ? "✓" : "+"}</span>{dt.short}{dot && <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: 99, background: appr === "approved" ? "#fff" : dot, border: `1.5px solid ${dot}`, marginLeft: 2 }} />}</>;
   if (!onClick) return <span title={tip} aria-label={tip} style={style}>{content}</span>;
   return (
     <button type="button" className="ppd-f ppd-chip" title={tip} aria-label={tip} onClick={onClick}
@@ -352,7 +390,9 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
               </div>))
             : DOC_TYPES.map((dt, i) => (
               <SlotCard key={dt.key} no={i + 1} dt={dt} files={list.filter((d) => d.doc_type === dt.key)}
-                canWrite={canWrite} refId={refId} partnerName={partnerName} segment={segment}
+                canWrite={canWrite} refId={refId} partnerName={partnerName} segment={segment} title={title} amountText={amountText}
+                approval={docs?.approvals?.[approvalKey(segment, partnerName, refId, dt.key)]} approvalsAvailable={docs?.approvalsAvailable !== false}
+                isSPM={isSPM} onApprovalChanged={docsRefresh}
                 onBusy={(d) => setUploading((x) => Math.max(0, x + d))} onChanged={changed} lockAll={!!merge}
                 focusTick={focus.key === dt.key ? focus.n : 0} t={t} />
             ))}
@@ -399,7 +439,11 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
   );
 }
 
-function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy, onChanged, lockAll, focusTick = 0, t }) {
+function SlotCard({ no, dt, files, canWrite: canWriteOwner, refId, partnerName, segment, title, amountText, approval, approvalsAvailable, isSPM, onApprovalChanged, onBusy, onChanged, lockAll, focusTick = 0, t }) {
+  const apprSt = approvalStatus(approval);
+  const approvedLock = apprSt === "approved";
+  // Dokumen yang sudah approved terkunci: tidak bisa upload/ganti/hapus sampai SPM mencabut approval
+  const canWrite = canWriteOwner && !approvedLock;
   const [queue, setQueue] = useState([]);        // [{ name, size, status: wait|up|ok|err|skip, error }]
   const [drag, setDrag] = useState(false);
   const [confirmId, setConfirmId] = useState(null);
@@ -503,6 +547,7 @@ function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy
           <div style={{ fontFamily: MONO, fontSize: 10.5, color: has ? (t.goodDark || TEAL_D) : t.muted2 }}>
             {has ? `${files.length} file(s) · last updated ${fmtDT(lastAt)}` : "No files yet"}
           </div>
+          {apprSt && <div style={{ marginTop: 4 }}><ApprovalBadge status={apprSt} long t={t} /></div>}
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
           {canWrite && (
@@ -520,6 +565,15 @@ function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy
           </>}
         </div>
       </div>
+
+      {APPROVAL_DOC_TYPES.includes(dt.key) && (
+        <ApprovalPanel approval={approval} status={apprSt} available={approvalsAvailable} isSPM={isSPM} hasFiles={has}
+          slot={{ segment, owner_name: partnerName, ref_id: refId, doc_type: dt.key, ref_title: title, amount_text: amountText }}
+          docLabel={dt.label} onChanged={onApprovalChanged} t={t} />
+      )}
+      {approvedLock && canWriteOwner && (
+        <div style={{ margin: "0 14px 10px", fontSize: 11.5, color: t.muted, fontFamily: MONO }}>🔒 Approved — locked. {isSPM ? "Revoke the approval to make changes." : "Contact SPM if a change is required."}</div>
+      )}
 
       {/* file list */}
       {has && (
@@ -584,6 +638,121 @@ function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy
   );
 }
 
+// ── Approval per slot (BAST & Notification Letter) ─────────────────────────
+function ApprovalPanel({ approval, status, available, isSPM, hasFiles, slot, docLabel, onChanged, t }) {
+  const [form, setForm] = useState(false);
+  const [email, setEmail] = useState(readApprover);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState("");
+  const [audit, setAudit] = useState(false);
+
+  if (!available) {
+    return isSPM
+      ? <div style={{ margin: "0 14px 10px", fontSize: 11.5, color: t.muted, padding: "7px 10px", borderRadius: 9, background: t.surf2, border: `1px dashed ${t.line2}` }}>Approval tracking is not set up yet (run <span style={{ fontFamily: MONO }}>20261008_payout_doc_approvals.sql</span>).</div>
+      : null;
+  }
+  if (!approval && !isSPM) return null;
+
+  const call = async (label, action, body, okMsg) => {
+    setBusy(label);
+    try {
+      const res = await approvalApi(action, body);
+      const r0 = res.results?.[0];
+      if (r0 && !r0.ok) throw new Error(r0.error);
+      const emailErr = res.emailError || r0?.emailError;
+      if (emailErr) toast(t, `Saved, but the email could not be sent: ${emailErr}. Use Remind to retry.`, "err");
+      else toast(t, okMsg);
+      onChanged?.();
+      return true;
+    } catch (e) { toast(t, errMsg(e), "err"); return false; }
+    finally { setBusy(""); }
+  };
+
+  const send = async () => {
+    const v = email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)) { toast(t, "Please enter a valid approver email address.", "err"); return; }
+    saveApprover(v);
+    if (await call("send", "request", { approver_email: v, note, items: [slot] }, `Approval request for ${docLabel} sent to ${v}.`)) { setForm(false); setNote(""); }
+  };
+  const remind = () => call("remind", "remind", { id: approval.id }, `Reminder sent to ${approval.approver_email}.`);
+  const cancel = () => { if (window.confirm("Cancel this approval request?")) call("cancel", "cancel", { id: approval.id }, "Approval request cancelled."); };
+  const revoke = () => {
+    const why = window.prompt("Reason for revoking this approval (required). The documents will be unlocked.");
+    if (why && why.trim().length >= 3) call("revoke", "revoke", { id: approval.id, reason: why.trim() }, "Approval revoked — documents unlocked.");
+    else if (why !== null) toast(t, "A reason of at least 3 characters is required.", "err");
+  };
+
+  const a = approval;
+  const files = Array.isArray(a?.files) ? a.files : [];
+  const canRequest = isSPM && status !== "pending" && status !== "approved";
+  const line = (k, v) => v ? <div style={{ display: "flex", gap: 8 }}><span style={{ color: t.muted, minWidth: 92 }}>{k}</span><span style={{ color: t.ink2, fontWeight: 600, wordBreak: "break-word" }}>{v}</span></div> : null;
+
+  return (
+    <div style={{ margin: "0 14px 10px", padding: "9px 11px", borderRadius: 11, background: t.surf2, border: `1px solid ${t.line}`, fontSize: 11.5, display: "flex", flexDirection: "column", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase", color: t.muted, fontWeight: 700 }}>Approval</span>
+        {status ? <ApprovalBadge status={status} t={t} /> : <span style={{ color: t.muted }}>Not requested</span>}
+        <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6, flexWrap: "wrap" }}>
+          {isSPM && status === "pending" && <>
+            <button className="ppd-f" style={btnStyle(t, "outline", !!busy, true)} disabled={!!busy} onClick={remind}>{busy === "remind" ? "…" : "Remind"}</button>
+            <button className="ppd-f" style={btnStyle(t, "ghost", !!busy, true)} disabled={!!busy} onClick={cancel}>{busy === "cancel" ? "…" : "Cancel"}</button>
+          </>}
+          {isSPM && status === "approved" && <button className="ppd-f" style={btnStyle(t, "danger", !!busy, true)} disabled={!!busy} onClick={revoke}>{busy === "revoke" ? "…" : "Revoke approval"}</button>}
+          {canRequest && !form && (
+            <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !hasFiles || !!busy, true)} disabled={!hasFiles || !!busy} onClick={() => setForm(true)}
+              title={hasFiles ? `Send ${docLabel} for approval by email` : "Upload at least one file first"}>
+              ✉ {status ? "Request again" : "Request approval"}
+            </button>
+          )}
+        </span>
+      </div>
+
+      {a && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          {line("Approver", a.approver_email)}
+          {line("Requested", `${a.requested_email || "SPM"} · ${fmtDT(a.requested_at)}${a.reminder_count ? ` · ${a.reminder_count} reminder(s)` : ""}`)}
+          {status === "pending" && line("Respond by", fmtDT(a.expires_at))}
+          {a.decided_at && line(a.status === "rejected" ? "Rejected" : "Approved", `${a.decided_email} · ${fmtDT(a.decided_at)}`)}
+          {a.decision_note && line("Comment", a.decision_note)}
+          {a.closed_at && line(a.status === "revoked" ? "Revoked" : "Cancelled", `${a.closed_email || "SPM"} · ${fmtDT(a.closed_at)}${a.close_reason ? ` — ${a.close_reason}` : ""}`)}
+          {a.note && line("SPM note", a.note)}
+          {files.length > 0 && (
+            <div>
+              <button className="ppd-f" onClick={() => setAudit((v) => !v)} style={{ all: "unset", cursor: "pointer", color: t.goodDark || TEAL_D, fontWeight: 600 }}>
+                {audit ? "▾" : "▸"} Audit trail · {files.length} file(s) fingerprinted (SHA-256)
+              </button>
+              {audit && (
+                <ul style={{ listStyle: "none", margin: "4px 0 0", padding: 0, fontFamily: MONO, fontSize: 10, color: t.muted }}>
+                  {files.map((f) => <li key={f.doc_id} title={f.sha256} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.file_name} · {fmtSize(f.size || 0)} · {String(f.sha256 || "").slice(0, 16)}…</li>)}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {form && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingTop: 4, borderTop: `1px solid ${t.line}` }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <span style={{ color: t.muted }}>Approver email (must have a SandraHub account)</span>
+            <input className="ppd-f" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com" autoFocus
+              style={{ fontFamily: "inherit", fontSize: 12.5, padding: "7px 9px", borderRadius: 8, border: `1px solid ${t.line2}`, background: t.surf, color: t.ink }} />
+          </label>
+          <label style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <span style={{ color: t.muted }}>Note to approver (optional)</span>
+            <textarea className="ppd-f" value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={1000}
+              style={{ fontFamily: "inherit", fontSize: 12.5, padding: "7px 9px", borderRadius: 8, border: `1px solid ${t.line2}`, background: t.surf, color: t.ink, resize: "vertical" }} />
+          </label>
+          <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+            <button className="ppd-f" style={btnStyle(t, "ghost", !!busy, true)} disabled={!!busy} onClick={() => setForm(false)}>Cancel</button>
+            <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !!busy, true)} disabled={!!busy} onClick={send}>{busy === "send" ? "Sending…" : "Send request"}</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Tab "Upload & Merge Dokumen" ───────────────────────────────────────────
 // pos: [{ ref, partner, title, amount, amountText, records }] dari data Payout yang sedang difilter.
 // segment: 'partner' | 'agency' (ikut toggle Partner/Agency Prepaid). noRefCount: baris tanpa PO.
@@ -598,6 +767,7 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
   const [openKey, setOpenKey] = useState(null);
   const [openSlot, setOpenSlot] = useState(null);  // slot yang difokuskan saat drawer dibuka
   const [bulkOpen, setBulkOpen] = useState(false); // modal Bulk Upload (SPM)
+  const [reqOpen, setReqOpen] = useState(false);   // modal Request approval untuk PO terpilih (SPM)
   const [bulk, setBulk] = useState(null);       // { i, total, ref }
   const [rowBusy, setRowBusy] = useState(null); // key PO yang sedang di-merge
   const isSPM = !!docs?.canMerge;
@@ -831,7 +1001,7 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
                       <td style={td({ textAlign: "right", fontFamily: MONO, whiteSpace: "nowrap", color: t.ink })}>{r.amountText}</td>
                       <td style={td()} onClick={(e) => e.stopPropagation()}>
                         <div style={{ display: "flex", gap: 4, flexWrap: "nowrap" }}>
-                          {DOC_TYPES.map((d) => <DocChip key={d.key} dt={d} ty={r.stat?.types?.[d.key]} canWrite={r.canWrite} onClick={() => openDrawer(r.key, d.key)} t={t} />)}
+                          {DOC_TYPES.map((d) => <DocChip key={d.key} dt={d} ty={r.stat?.types?.[d.key]} canWrite={r.canWrite} appr={approvalStatus(docs?.approvals?.[approvalKey(segment, r.partner, r.ref, d.key)])} onClick={() => openDrawer(r.key, d.key)} t={t} />)}
                         </div>
                       </td>
                       <td style={td()}><Ring n={r.n} t={t} /></td>
@@ -897,6 +1067,9 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
             {bulk && <span style={{ fontFamily: MONO, fontSize: 11, color: t.muted }}>{bulk.i < bulk.total ? `Merging ${bulk.i + 1}/${bulk.total} · ${bulk.ref}` : "Creating ZIP…"}</span>}
             <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
               <button className="ppd-f" style={btnStyle(t, "ghost", !!bulk, true)} disabled={!!bulk} onClick={() => setSel(new Set())}>Clear selection</button>
+              {docs?.approvalsAvailable !== false && (
+                <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", !!bulk)} disabled={!!bulk} onClick={() => setReqOpen(true)}>✉ Request approval</button>
+              )}
               <button className="ppd-f" style={btnStyle(t, "primary", !!bulk)} disabled={!!bulk} onClick={mergeSelected}><IcoDownload /> Download selected (merged)</button>
             </div>
           </div>
@@ -907,6 +1080,7 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
       {openRow && <RefDocsDrawer key={openRow.key} refId={openRow.ref} partnerName={openRow.partner} segment={segment} title={openRow.title} amountText={openRow.amountText}
         docs={docs} focusSlot={openSlot} onClose={() => setOpenKey(null)} t={t} />}
       {bulkOpen && <BulkUploadModal rows={rows} segment={segment} docs={docs} onClose={() => setBulkOpen(false)} t={t} />}
+      {reqOpen && <BulkApprovalModal rows={selected} segment={segment} docs={docs} onClose={() => setReqOpen(false)} t={t} />}
     </div>
   );
 }
@@ -1030,7 +1204,8 @@ function BulkUploadModal({ rows, segment, docs, onClose, t }) {
   const setKey = (id, key) => setItems((cur) => cur.map((x) => (x.id === id ? { ...x, key } : x)));
   const remove = (id) => setItems((cur) => cur.filter((x) => x.id !== id));
 
-  const ready = items.filter((x) => !x.err && x.key && byKey.has(x.key));
+  const isLocked = (key) => { const r = byKey.get(key); return !!r && approvalStatus(docs?.approvals?.[approvalKey(segment, r.partner, r.ref, docType)]) === "approved"; };
+  const ready = items.filter((x) => !x.err && x.key && byKey.has(x.key) && !isLocked(x.key));
   const counts = {
     ok: items.filter((x) => !x.err && x.key && x.how === "po").length,
     manual: items.filter((x) => !x.err && x.key && x.how !== "po").length,
@@ -1070,6 +1245,7 @@ function BulkUploadModal({ rows, segment, docs, onClose, t }) {
     if (x.status === "err") return <span style={{ color: t.bad }}>✕ {x.msg}</span>;
     const row = byKey.get(x.key);
     const exists = row?.stat?.types?.[docType]?.n > 0;
+    if (x.key && isLocked(x.key)) return <span style={{ color: t.muted, fontWeight: 600 }}>🔒 Approved — locked (skipped)</span>;
     if (!x.key) return <span style={{ color: t.warnDark || t.warn, fontWeight: 600 }}>{x.how === "partner" ? `Select ${DOC_REF_LABEL}` : `No match — select ${DOC_REF_LABEL}`}</span>;
     return (
       <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
@@ -1230,6 +1406,84 @@ function BulkUploadModal({ rows, segment, docs, onClose, t }) {
                   </button>}
             </div>
           </div>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// ── Request approval untuk banyak PO sekaligus (SPM) ───────────────────────
+function BulkApprovalModal({ rows, segment, docs, onClose, t }) {
+  useDocsCss();
+  const [types, setTypes] = useState({ bast: true, surat_pemberitahuan: true });
+  const [email, setEmail] = useState(readApprover);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+
+  // Hanya slot yang punya file dan belum pending/approved
+  const items = [];
+  rows.forEach((r) => APPROVAL_DOC_TYPES.forEach((dt) => {
+    if (!types[dt] || !(r.stat?.types?.[dt]?.n > 0)) return;
+    const st = approvalStatus(docs?.approvals?.[approvalKey(segment, r.partner, r.ref, dt)]);
+    if (st === "pending" || st === "approved") return;
+    items.push({ segment, owner_name: r.partner, ref_id: r.ref, doc_type: dt, ref_title: r.title, amount_text: r.amountText });
+  }));
+
+  const send = async () => {
+    const v = email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v)) { toast(t, "Please enter a valid approver email address.", "err"); return; }
+    saveApprover(v);
+    setBusy(true);
+    try {
+      const { results } = await approvalApi("request", { approver_email: v, note, items });
+      const ok = results.filter((x) => x.ok).length;
+      const mailErr = results.filter((x) => x.emailError).length;
+      setResult(results);
+      toast(t, `${ok} approval request(s) sent to ${v}${mailErr ? ` (${mailErr} email(s) failed — use Remind)` : ""}.`, ok === results.length && !mailErr ? "ok" : "err");
+      docs?.refresh?.();
+    } catch (e) { toast(t, errMsg(e), "err"); }
+    setBusy(false);
+  };
+
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div onMouseDown={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }} onKeyDown={(e) => { if (e.key === "Escape" && !busy) onClose(); }}
+      className="ppd-anim" style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 12, animation: "ppd_fade .15s ease-out" }}>
+      <div role="dialog" aria-modal="true" aria-labelledby="ppd-req-title" style={{ width: "min(520px, 100%)", maxHeight: "90vh", overflow: "auto", background: t.surf, color: t.ink, borderRadius: 18, border: `1px solid ${t.line}`, boxShadow: t.shadow2, padding: "18px 20px", textAlign: "left", display: "flex", flexDirection: "column", gap: 12 }}>
+        <div>
+          <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: MAGENTA, fontWeight: 700 }}>SPM · Approval</div>
+          <div id="ppd-req-title" style={{ fontSize: 17, fontWeight: 800, marginTop: 2 }}>Request approval for {rows.length} {DOC_REF_LABEL}(s)</div>
+          <div style={{ fontSize: 12, color: t.muted, marginTop: 3 }}>The approver signs in to SandraHub to review and decide. Slots without files, or already pending/approved, are skipped.</div>
+        </div>
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+          {APPROVAL_DOC_TYPES.map((dt) => (
+            <label key={dt} style={{ display: "inline-flex", gap: 6, alignItems: "center", fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+              <input type="checkbox" className="ppd-f" checked={!!types[dt]} disabled={busy} onChange={(e) => setTypes((x) => ({ ...x, [dt]: e.target.checked }))} />
+              {DOC_TYPES.find((d) => d.key === dt)?.label}
+            </label>
+          ))}
+        </div>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+          <span style={{ color: t.muted }}>Approver email (must have a SandraHub account)</span>
+          <input className="ppd-f" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com" disabled={busy}
+            style={{ fontFamily: "inherit", fontSize: 13, padding: "8px 10px", borderRadius: 9, border: `1px solid ${t.line2}`, background: t.surf2, color: t.ink }} />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12 }}>
+          <span style={{ color: t.muted }}>Note to approver (optional)</span>
+          <textarea className="ppd-f" value={note} onChange={(e) => setNote(e.target.value)} rows={2} maxLength={1000} disabled={busy}
+            style={{ fontFamily: "inherit", fontSize: 13, padding: "8px 10px", borderRadius: 9, border: `1px solid ${t.line2}`, background: t.surf2, color: t.ink, resize: "vertical" }} />
+        </label>
+        {result && (
+          <ul style={{ margin: 0, padding: "8px 10px", listStyle: "none", fontSize: 11.5, fontFamily: MONO, background: t.surf2, borderRadius: 9, maxHeight: 160, overflow: "auto" }}>
+            {result.map((r, i) => <li key={i} style={{ color: r.ok ? (t.goodDark || TEAL_D) : t.bad }}>{r.ok ? "✓" : "✕"} {r.ref_id} · {DOC_TYPES.find((d) => d.key === r.doc_type)?.short} {r.ok ? (r.emailError ? "— saved, email failed" : "— sent") : `— ${r.error}`}</li>)}
+          </ul>
+        )}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
+          <span style={{ marginRight: "auto", fontFamily: MONO, fontSize: 11, color: t.muted }}>{items.length} document request(s)</span>
+          <button className="ppd-f" style={btnStyle(t, "ghost", busy)} disabled={busy} onClick={onClose}>{result ? "Close" : "Cancel"}</button>
+          {!result && <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || !items.length)} disabled={busy || !items.length} onClick={send}>{busy ? "Sending…" : `Send ${items.length} request(s)`}</button>}
         </div>
       </div>
     </div>,
