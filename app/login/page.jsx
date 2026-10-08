@@ -47,18 +47,6 @@ const HUBS = [
     glow:     "rgba(194,24,124,0.12)",
     accent:   "#C2187C",
   },
-  {
-    id:       "fitra",
-    variant:  "fitra",
-    name:     "FitraHub",
-    desc:     "Finance Sumatera",
-    sub:      "Finance Sumatera Hub",
-    path:     "/fitra/login",
-    gradient: "linear-gradient(135deg,#ED1C24 0%,#C2187C 100%)",
-    border:   "rgba(194,24,124,0.35)",
-    glow:     "rgba(194,24,124,0.12)",
-    accent:   "#C2187C",
-  },
 ];
 
 export default function HubPickerPage() {
