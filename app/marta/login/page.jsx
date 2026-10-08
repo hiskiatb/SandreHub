@@ -105,8 +105,17 @@ function MartaLoginInner() {
       if (!otpCooldown.isReady()) { setStage("otp"); setErrMsg(`Tunggu ${otpCooldown.remainingSeconds} detik lagi sebelum kirim kode baru.`); return; }
       setSendingOtp(true);
       try {
-        const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
-        if (error) throw error;
+        // Supabase Auth bawaan tidak dipakai lagi utk kirim OTP (pengiriman
+        // email-nya tidak reliable/sering diblokir) - pakai mekanisme custom
+        // OTP yang sudah TERBUKTI jalan di alur registrasi (/api/send-otp,
+        // generate kode + insert email_otps + kirim via Resend).
+        const res = await fetch("/api/send-otp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        const json = await res.json();
+        if (!res.ok || !json.success) throw new Error(json.error || "Gagal mengirim kode OTP.");
         otpCooldown.markSent();
         setOtpDigits(["", "", "", "", "", ""]);
         setStage("otp");
@@ -126,8 +135,13 @@ function MartaLoginInner() {
     if (!otpCooldown.isReady()) { setErrMsg(`Tunggu ${otpCooldown.remainingSeconds} detik lagi sebelum kirim kode baru.`); return; }
     setSendingOtp(true); setErrMsg("");
     try {
-      const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
-      if (error) throw error;
+      const res = await fetch("/api/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Gagal mengirim kode OTP.");
       otpCooldown.markSent();
       setOtpDigits(["", "", "", "", "", ""]);
       otpInputs.current[0]?.focus();
@@ -177,12 +191,32 @@ function MartaLoginInner() {
     setErrMsg(""); setErrors([]);
     setLoading(true);
     try {
-      const { data, error } = await supabase.auth.verifyOtp({
-        email: form.email.trim().toLowerCase(), token: code, type: "email",
+      const cleanEmail = form.email.trim().toLowerCase();
+      // Verifikasi OTP custom (email_otps table) lewat endpoint server-side
+      // khusus login (/api/marta/verify-login-otp) - BUKAN /api/verify-otp
+      // (itu endpoint registrasi, membuat auth user + profile baru, tidak
+      // boleh dipakai di sini). Endpoint ini hanya mengecek OTP lalu
+      // mengembalikan token_hash dari Admin API generateLink (magiclink),
+      // yang ditukar jadi sesi asli lewat verifyOtp client-side di bawah.
+      const res = await fetch("/api/marta/verify-login-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: cleanEmail, otp: code }),
       });
-      if (error) {
+      const json = await res.json();
+      if (!res.ok || !json.success) {
         setErrors(["otp"]);
-        setErrMsg("Kode salah atau sudah kedaluwarsa. Coba lagi.");
+        setErrMsg(json.error || "Kode salah atau sudah kedaluwarsa. Coba lagi.");
+        setOtpDigits(["", "", "", "", "", ""]);
+        otpInputs.current[0]?.focus();
+        return;
+      }
+
+      const { data, error } = await supabase.auth.verifyOtp({
+        email: cleanEmail, token_hash: json.token_hash, type: "magiclink",
+      });
+      if (error || !data?.user) {
+        setErrMsg("Gagal membuat sesi login. Coba lagi.");
         setOtpDigits(["", "", "", "", "", ""]);
         otpInputs.current[0]?.focus();
         return;
