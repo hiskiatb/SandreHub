@@ -76,27 +76,27 @@ export async function POST(req) {
     }
 
     // ── 2. Pastikan akun ada & role-nya memang marketing_sumatera_program ──
-    const { data: authUser, error: findErr } = await supabaseAdmin
-      .schema("auth")
-      .from("users")
-      .select("id, email")
+    // CATATAN: sebelumnya di sini query `supabaseAdmin.schema("auth").from("users")`
+    // utk cek akun ada di auth.users dulu sblm cek profiles. Itu BUG — PostgREST
+    // (yg dipakai supabase-js utk .from()) tidak meng-expose schema "auth" lewat
+    // REST API secara default, jadi query itu SELALU gagal/null walau akunnya
+    // valid, bikin endpoint ini selalu balas "Akun tidak ditemukan." Query
+    // langsung ke "profiles" by email (tabel public, service-role bypass RLS)
+    // sudah cukup -- tidak perlu lookup ke auth.users sama sekali.
+    const { data: profile, error: profileErr } = await supabaseAdmin
+      .from("profiles")
+      .select("id, role")
       .eq("email", cleanEmail)
       .maybeSingle();
 
-    if (findErr || !authUser) {
+    if (profileErr || !profile) {
       return NextResponse.json(
         { success: false, error: "Akun tidak ditemukan." },
         { status: 400 }
       );
     }
 
-    const { data: profile } = await supabaseAdmin
-      .from("profiles")
-      .select("role")
-      .eq("id", authUser.id)
-      .maybeSingle();
-
-    if (!profile || profile.role !== "marketing_sumatera_program") {
+    if (profile.role !== "marketing_sumatera_program") {
       return NextResponse.json(
         { success: false, error: "Akun ini tidak memiliki akses ke MartaHub." },
         { status: 403 }

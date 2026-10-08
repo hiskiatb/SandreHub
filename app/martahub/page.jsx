@@ -857,7 +857,20 @@ export default function MartaHubDashboard() {
       try {
         const sc = await getMartaScope(user.email);
         if (cancelled) return;
-        setScope(sc);
+        // spm_sumatera (dan role admin MartaHub lain, lihat MARTA_ADMIN_ROLES
+        // di lib/martaAccess.js) sudah terverifikasi penuh lewat TraceHub
+        // profiles.role SAAT LOGIN (guardMarta di atas) - role itu TIDAK
+        // boleh bergantung pada lookup cross-project mh_profiles yang rapuh
+        // (anon key, tanpa sesi asli ke project MartaHub). Kalau lookup gagal
+        // /tidak ketemu baris, user tsb TETAP unscoped (full-access) - lookup
+        // hanya dipakai utk enrich display (full_name, dst.) bila berhasil.
+        // Role LAIN (non-admin TraceHub) tidak disentuh - scope mh_profiles
+        // asli mereka tetap jadi satu-satunya sumber scoping (unchanged).
+        const privileged = isMartaAdmin(profile?.role);
+        const finalScope = privileged
+          ? { ...(sc.found ? sc : { role: null, region: null, brand: null, branchId: null, branchName: null, fullName: null, status: null, authState: "active" }), role: sc.found ? sc.role : profile.role, unscoped: true, found: true }
+          : sc;
+        setScope(finalScope);
 
         // Sejak fase approval Actual dihapus (validasi otomatis via trigger
         // server), satu-satunya antrean approval manusia yang tersisa adalah
