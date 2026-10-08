@@ -285,8 +285,8 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
   };
 
   const roHint = docs?.profile?.role === "finance_mpx" || docs?.profile?.role === "agency"
-    ? `PO ini bukan milik ${ownerLabel(segment).toLowerCase()} kamu, jadi hanya bisa dilihat.`
-    : `Mode lihat saja: kamu bisa membuka & download file. Upload & hapus dilakukan oleh ${ownerLabel(segment).toLowerCase()} pemilik PO atau SPM.`;
+    ? `${DOC_REF_LABEL} ini bukan milik ${ownerLabel(segment).toLowerCase()} kamu, jadi hanya bisa dilihat.`
+    : `Mode lihat saja: kamu bisa membuka & download file. Upload & hapus dilakukan oleh ${ownerLabel(segment).toLowerCase()} pemilik ${DOC_REF_LABEL} atau SPM.`;
 
   if (typeof document === "undefined") return null;
   return createPortal(
@@ -380,8 +380,8 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
               {(canWrite || isSPM) && (
                 <button className="ppd-f" style={btnStyle(t, "outline", busy || !list.length)} disabled={busy || !list.length} onClick={onZipAll}
-                  title={!list.length ? "Belum ada file" : "Download semua file PO ini (ZIP, dikelompokkan per jenis dokumen)"}>
-                  <IcoDownload /> Download semua dokumen PO ini
+                  title={!list.length ? "Belum ada file" : `Download semua file ${DOC_REF_LABEL} ini (ZIP, dikelompokkan per jenis dokumen)`}>
+                  <IcoDownload /> Download semua dokumen {DOC_REF_LABEL} ini
                 </button>
               )}
               {isSPM
@@ -579,7 +579,7 @@ function SlotCard({ no, dt, files, canWrite, refId, partnerName, segment, onBusy
           </div>
         </div>
       )}
-      {!canWrite && !has && <div style={{ padding: "0 14px 12px 50px", fontSize: 11.5, color: t.muted2 }}>Belum diupload oleh pemilik PO.</div>}
+      {!canWrite && !has && <div style={{ padding: "0 14px 12px 50px", fontSize: 11.5, color: t.muted2 }}>Belum diupload oleh pemilik {DOC_REF_LABEL}.</div>}
     </section>
   );
 }
@@ -671,7 +671,7 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
         selected.map((r) => ({ refId: r.ref, partnerName: r.partner, segment, title: r.title, amountText: r.amountText })),
         ({ index, total, ref }) => setBulk({ i: index, total, ref }),
       );
-      if (failed.length) toast(t, `ZIP terunduh, ${failed.length} PO gagal: ${failed[0]}`, "err");
+      if (failed.length) toast(t, `ZIP terunduh, ${failed.length} ${DOC_REF_LABEL} gagal: ${failed[0]}`, "err");
       else { toast(t, `ZIP berisi ${selected.length} PDF terunduh.`); setSel(new Set()); }
     } catch (e) { toast(t, `Gagal membuat ZIP: ${errMsg(e)}`, "err"); }
     setBulk(null);
@@ -735,7 +735,7 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
         {kpiCard({ id: "none", label: "Belum upload", value: kpi.none, sub: "0 dokumen", color: t.bad })}
       </div>
       <div style={{ padding: "0 20px 14px", display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{ flex: 1, height: 8, borderRadius: 99, background: t.surf3, overflow: "hidden", display: "flex" }} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label="PO lengkap">
+        <div style={{ flex: 1, height: 8, borderRadius: 99, background: t.surf3, overflow: "hidden", display: "flex" }} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`${DOC_REF_LABEL} lengkap`}>
           <div style={{ width: `${pct}%`, background: TEAL, transition: "width .4s" }} />
           <div style={{ width: `${kpi.all ? (kpi.partial / kpi.all) * 100 : 0}%`, background: t.warn, opacity: 0.75, transition: "width .4s" }} />
         </div>
@@ -770,7 +770,7 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
         <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 11, color: t.muted, whiteSpace: "nowrap" }}>{filtered.length.toLocaleString("id-ID")} {DOC_REF_LABEL}</span>
         {isSPM && (
           <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !docs?.loaded || !rows.length, true)} disabled={!docs?.loaded || !rows.length} onClick={() => setBulkOpen(true)}
-            title="Upload banyak file sekaligus — dicocokkan otomatis ke PO dari nama file">
+            title={`Upload banyak file sekaligus — dicocokkan otomatis ke ${DOC_REF_LABEL} dari nama file`}>
             ⬆ Bulk Upload
           </button>
         )}
@@ -782,7 +782,7 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
           <thead><tr>
             {isSPM && (
               <th style={th({ width: 34, textAlign: "center" })}>
-                <input type="checkbox" className="ppd-f" aria-label="Pilih semua PO lengkap di halaman ini" checked={pageAllSel} disabled={!pageSelectable.length || !!bulk}
+                <input type="checkbox" className="ppd-f" aria-label={`Pilih semua ${DOC_REF_LABEL} lengkap di halaman ini`} checked={pageAllSel} disabled={!pageSelectable.length || !!bulk}
                   ref={(el) => { if (el) el.indeterminate = !pageAllSel && pageSomeSel; }} onChange={togglePage} />
               </th>
             )}
@@ -820,7 +820,7 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
                       {isSPM && (
                         <td style={td({ textAlign: "center" })} onClick={(e) => e.stopPropagation()}>
                           <input type="checkbox" className="ppd-f" aria-label={`Pilih ${r.ref}`} checked={isSel} disabled={r.st !== "complete" || !!bulk}
-                            title={r.st !== "complete" ? `Hanya PO lengkap ${N}/${N} yang bisa dipilih` : undefined} onChange={() => toggle(r.key)} />
+                            title={r.st !== "complete" ? `Hanya ${DOC_REF_LABEL} lengkap ${N}/${N} yang bisa dipilih` : undefined} onChange={() => toggle(r.key)} />
                         </td>
                       )}
                       <td style={td({ fontFamily: MONO, fontWeight: 700, color: t.ink, whiteSpace: "nowrap" })}>
@@ -889,10 +889,10 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
 
       {/* SPM bulk bar */}
       {isSPM && (selected.length > 0 || bulk) && (
-        <div role="region" aria-label="Aksi PO terpilih" style={{ position: "sticky", bottom: 0, zIndex: 3, borderTop: `1px solid ${t.line2}`, background: t.surf, borderRadius: "0 0 18px 18px", padding: "11px 20px", boxShadow: "0 -6px 18px rgba(0,0,0,0.08)", display: "flex", flexDirection: "column", gap: 8 }}>
+        <div role="region" aria-label={`Aksi ${DOC_REF_LABEL} terpilih`} style={{ position: "sticky", bottom: 0, zIndex: 3, borderTop: `1px solid ${t.line2}`, background: t.surf, borderRadius: "0 0 18px 18px", padding: "11px 20px", boxShadow: "0 -6px 18px rgba(0,0,0,0.08)", display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: t.ink }}>
-              <span style={{ fontFamily: MONO, color: TEAL_D }}>{bulk ? bulk.total : selected.length}</span> PO dipilih
+              <span style={{ fontFamily: MONO, color: TEAL_D }}>{bulk ? bulk.total : selected.length}</span> {DOC_REF_LABEL} dipilih
             </span>
             {bulk && <span style={{ fontFamily: MONO, fontSize: 11, color: t.muted }}>{bulk.i < bulk.total ? `Menggabungkan ${bulk.i + 1}/${bulk.total} · ${bulk.ref}` : "Membuat ZIP…"}</span>}
             <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
@@ -923,36 +923,29 @@ function PageBtn({ label, active, disabled, onClick, t }) {
 // ── Bulk Upload (khusus SPM) ───────────────────────────────────────────────
 // Banyak file sekaligus untuk 1 jenis dokumen; tiap file dicocokkan ke PO dari nama file / path folder.
 
+// Pencocokan nama file → referensi dokumen (DOC_REF_COLUMN: sekarang PO Number, nanti Invoice ID).
+// Nilai referensi diambil dari baris data yang sedang dimuat, jadi ganti DOC_REF_COLUMN = ganti matcher.
+// Aturan: tidak peka huruf besar/kecil; pemisah (- _ / . spasi) diabaikan; minimal REF_MIN_LEN karakter
+// alfanumerik supaya tidak salah tangkap; kalau ada beberapa yang cocok, referensi terpanjang menang.
+const REF_MIN_LEN = 5;
 const alnum = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-
-// Cari ref di dalam teks dengan batas kata (tidak menempel ke huruf/angka lain)
-function containsRef(hayUpper, refUpper) {
-  if (!refUpper) return false;
-  let i = hayUpper.indexOf(refUpper);
-  while (i >= 0) {
-    const b = hayUpper[i - 1], a = hayUpper[i + refUpper.length];
-    if (!(b && /[A-Z0-9]/.test(b)) && !(a && /[A-Z0-9]/.test(a))) return true;
-    i = hayUpper.indexOf(refUpper, i + 1);
-  }
-  return false;
-}
+const tokens = (s) => ` ${String(s || "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim()} `;
 
 function matchFile(path, index) {
-  const hay = String(path).toUpperCase();
-  const hayAl = alnum(path);
-  // 1) nomor PO di nama file / folder — yang terpanjang menang
+  const hayTok = tokens(path);   // "BAST_INV-2026/001.pdf" → " BAST INV 2026 001 PDF "
+  const hayAl = alnum(path);     // → "BASTINV2026001PDF"
+  // 1) referensi di nama file / folder — utuh per kata dulu, lalu tanpa pemisah; terpanjang menang
   let best = null;
   for (const r of index.byRefLen) {
-    if (best && r.refU.length < best.refU.length) break;
-    if (containsRef(hay, r.refU) || (r.refAl.length >= 6 && hayAl.includes(r.refAl))) {
-      if (!best) best = { refU: r.refU, rows: [r.row] };
-      else if (r.refU === best.refU) best.rows.push(r.row);
-    }
+    if (best && r.refAl.length < best.len) break;
+    const hit = hayTok.includes(r.refTok) || hayAl.includes(r.refAl);
+    if (!hit) continue;
+    if (!best) best = { len: r.refAl.length, al: r.refAl, rows: [r.row] };
+    else if (r.refAl === best.al) best.rows.push(r.row);
   }
   if (best) return best.rows.length === 1 ? { how: "po", key: best.rows[0].key, cands: [] } : { how: "partner", key: "", cands: best.rows.map((x) => x.key) };
-  // 2) nama partner/agency di nama file → pilih PO milik partner itu
-  const hayKey = alnum(path);
-  const p = index.partners.find((x) => x.al.length >= 4 && hayKey.includes(x.al));
+  // 2) nama partner/agency di nama file → pilih referensi milik partner itu
+  const p = index.partners.find((x) => x.al.length >= 4 && hayAl.includes(x.al));
   if (p) return { how: "partner", key: p.rows.length === 1 ? p.rows[0].key : "", cands: p.rows.map((x) => x.key) };
   return { how: "none", key: "", cands: [] };
 }
@@ -991,12 +984,14 @@ function BulkUploadModal({ rows, segment, docs, onClose, t }) {
   const dirRef = useRef(null);
   const closeRef = useRef(null);
   const busy = phase === "uploading";
+  const REF_EXAMPLE = rows[0]?.ref || "1234567890";
   const dtLabel = DOC_TYPES.find((d) => d.key === docType)?.label;
 
   const byKey = useMemo(() => new Map(rows.map((r) => [r.key, r])), [rows]);
   const index = useMemo(() => {
-    const byRefLen = rows.map((row) => ({ row, refU: String(row.ref).toUpperCase(), refAl: alnum(row.ref) }))
-      .sort((a, b) => b.refU.length - a.refU.length);
+    const byRefLen = rows.map((row) => ({ row, refTok: tokens(row.ref), refAl: alnum(row.ref) }))
+      .filter((x) => x.refAl.length >= REF_MIN_LEN)
+      .sort((a, b) => b.refAl.length - a.refAl.length);
     const pm = new Map();
     rows.forEach((row) => {
       const k = partnerKey(row.partner);
@@ -1075,11 +1070,11 @@ function BulkUploadModal({ rows, segment, docs, onClose, t }) {
     if (x.status === "err") return <span style={{ color: t.bad }}>✕ {x.msg}</span>;
     const row = byKey.get(x.key);
     const exists = row?.stat?.types?.[docType]?.n > 0;
-    if (!x.key) return <span style={{ color: t.warnDark || t.warn, fontWeight: 600 }}>{x.how === "partner" ? "Pilih PO" : "Tidak cocok — pilih PO"}</span>;
+    if (!x.key) return <span style={{ color: t.warnDark || t.warn, fontWeight: 600 }}>{x.how === "partner" ? `Pilih ${DOC_REF_LABEL}` : `Tidak cocok — pilih ${DOC_REF_LABEL}`}</span>;
     return (
       <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
         <span style={{ color: t.goodDark || TEAL_D, fontWeight: 600 }}>{x.how === "po" ? "✓ Cocok" : "✓ Dipilih"}</span>
-        {exists && <span title={`PO ini sudah punya ${dtLabel}. File baru akan DITAMBAHKAN (tidak menghapus yang lama).`} style={{ fontFamily: MONO, fontSize: 9.5, padding: "1px 6px", borderRadius: 6, background: t.warnBg, color: t.warnDark || t.warn, border: `1px solid ${t.warnBd}` }}>sudah ada file</span>}
+        {exists && <span title={`${DOC_REF_LABEL} ini sudah punya ${dtLabel}. File baru akan DITAMBAHKAN (tidak menghapus yang lama).`} style={{ fontFamily: MONO, fontSize: 9.5, padding: "1px 6px", borderRadius: 6, background: t.warnBg, color: t.warnDark || t.warn, border: `1px solid ${t.warnBd}` }}>sudah ada file</span>}
       </span>
     );
   };
@@ -1101,7 +1096,7 @@ function BulkUploadModal({ rows, segment, docs, onClose, t }) {
             <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: MAGENTA, fontWeight: 700 }}>SPM · Bulk Upload</div>
             <div id="ppd-bulk-title" style={{ fontSize: 17, fontWeight: 800, marginTop: 2 }}>Upload banyak dokumen sekaligus</div>
             <div style={{ fontSize: 12, color: t.muted, marginTop: 3, lineHeight: 1.45 }}>
-              File dicocokkan otomatis ke {DOC_REF_LABEL} dari <b>nama file atau nama folder</b> (mis. <span style={{ fontFamily: MONO }}>BAST_4810118133.pdf</span>). Kalau hanya nama {ownerLabel(segment).toLowerCase()} yang terbaca, kamu tinggal pilih PO-nya.
+              File dicocokkan otomatis ke {DOC_REF_LABEL} dari <b>nama file atau nama folder</b> (mis. <span style={{ fontFamily: MONO }}>BAST_{REF_EXAMPLE}.pdf</span> atau folder <span style={{ fontFamily: MONO }}>{REF_EXAMPLE}/BAST.pdf</span>). Kalau hanya nama {ownerLabel(segment).toLowerCase()} yang terbaca, kamu tinggal pilih PO-nya.
             </div>
           </div>
           <button ref={closeRef} className="ppd-f" onClick={tryClose} aria-label="Tutup (Esc)" style={{ ...btnStyle(t, "ghost", false, true), fontSize: 20, lineHeight: 1, padding: "2px 8px", color: t.muted }}>×</button>
@@ -1123,7 +1118,7 @@ function BulkUploadModal({ rows, segment, docs, onClose, t }) {
           <div>
             <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase", color: t.muted, marginBottom: 5 }}>Segment</div>
             <span title="Ikuti toggle Partner/Agency Prepaid di atas. Ganti toggle untuk upload ke segment lain." style={{ display: "inline-flex", padding: "7px 11px", borderRadius: 10, fontSize: 12, fontWeight: 700, background: `${MAGENTA}14`, color: MAGENTA, border: `1px solid ${MAGENTA}30` }}>
-              {ownerLabel(segment)} Prepaid · {rows.length} PO
+              {ownerLabel(segment)} Prepaid · {rows.length} {DOC_REF_LABEL}
             </span>
           </div>
           {phase !== "done" && (
@@ -1171,14 +1166,14 @@ function BulkUploadModal({ rows, segment, docs, onClose, t }) {
                       <td style={{ ...td, minWidth: 200 }}>
                         {editable ? (
                           x.cands.length && x.cands.length <= 60 ? (
-                            <select className="ppd-f" aria-label={`PO untuk ${x.file.name}`} value={x.key} onChange={(e) => setKey(x.id, e.target.value)}
+                            <select className="ppd-f" aria-label={`${DOC_REF_LABEL} untuk ${x.file.name}`} value={x.key} onChange={(e) => setKey(x.id, e.target.value)}
                               style={{ width: "100%", fontFamily: MONO, fontSize: 11.5, padding: "5px 6px", borderRadius: 8, border: `1px solid ${x.key ? t.line2 : t.warn}`, background: t.surf, color: t.ink }}>
                               <option value="">— pilih {DOC_REF_LABEL} —</option>
                               {candRows.map((r) => <option key={r.key} value={r.key}>{optLabel(r)}</option>)}
                             </select>
                           ) : (
                             <>
-                              <input className="ppd-f" list={listId} aria-label={`Cari PO untuk ${x.file.name}`} placeholder={`Cari ${DOC_REF_LABEL}…`}
+                              <input className="ppd-f" list={listId} aria-label={`Cari ${DOC_REF_LABEL} untuk ${x.file.name}`} placeholder={`Cari ${DOC_REF_LABEL}…`}
                                 defaultValue={row ? optLabel(row) : ""}
                                 onChange={(e) => { const m = candRows.find((r) => optLabel(r) === e.target.value || r.ref === e.target.value.trim()); setKey(x.id, m ? m.key : ""); }}
                                 style={{ width: "100%", boxSizing: "border-box", fontFamily: MONO, fontSize: 11.5, padding: "5px 7px", borderRadius: 8, border: `1px solid ${x.key ? t.line2 : t.warn}`, background: t.surf, color: t.ink }} />
@@ -1230,7 +1225,7 @@ function BulkUploadModal({ rows, segment, docs, onClose, t }) {
               {phase === "done"
                 ? <button className="ppd-f ppd-act" style={btnStyle(t, "primary")} onClick={onClose}>Selesai</button>
                 : <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || !ready.length)} disabled={busy || !ready.length} onClick={start}
-                    title={!ready.length ? "Belum ada file yang punya PO" : `Upload ke slot ${dtLabel} — file lama tidak dihapus`}>
+                    title={!ready.length ? `Belum ada file yang punya ${DOC_REF_LABEL}` : `Upload ke slot ${dtLabel} — file lama tidak dihapus`}>
                     ⬆ {busy ? `Mengupload ${prog.i}/${prog.total}…` : `Upload ${ready.length} file sebagai ${dtLabel}`}
                   </button>}
             </div>
