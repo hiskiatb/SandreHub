@@ -16,8 +16,9 @@ import {
   APPROVAL_DOC_TYPES, approvalKey, approvalStatus, fetchApprovals, approvalApi,
 } from "../../../lib/payoutPartnerDocs";
 import {
-  parseTemplateWorkbook, readTemplateCarryOver, buildTemplateWorkbook, buildBastPdf, buildLetterPdf, loadLetterhead,
-  DEFAULT_SIGNATORIES, bastFileName, letterFileName, rupiah, parsePeriod, titleMatchesPeriod, dayInNextMonth,
+  parseTemplateWorkbook, parseSmsWorkbook, finalizeSms, detectWorkbookFormat, readTemplateCarryOver,
+  buildTemplateWorkbook, buildSmsTemplateWorkbook, buildBastPdf, buildLetterPdf, loadLetterhead,
+  DEFAULT_SIGNATORIES, DEFAULT_RECIPIENT, bastFileName, letterFileName, rupiah, parsePeriod, titleMatchesPeriod, toDateValue,
 } from "../../../lib/payoutDocGenerator";
 
 const TEAL = "#32BCAD", TEAL_D = "#27a093", MAGENTA = "#C6168D";
@@ -1503,11 +1504,19 @@ function BulkApprovalModal({ rows, segment, docs, onClose, t }) {
   );
 }
 
-// ── Generate BAST & Notification Letter dari template Excel (SPM) ──────────
+// ── Generate BAST & Notification Letter dari Excel (SPM) ───────────────────
+// Format input: "Source Data SMS" (sheet BAST & LETTER per branch) atau "MPX Document Template" lama.
 const GEN_CFG_KEY = "ppd_gen_signatories";
+const GEN_META_KEY = "payoutDocGen:meta";
 const LAST_TPL_KEY = "payoutDocGen:lastTemplate";
-const readGenCfg = () => { try { return { ...DEFAULT_SIGNATORIES, ...JSON.parse(localStorage.getItem(GEN_CFG_KEY) || "{}") }; } catch { return { ...DEFAULT_SIGNATORIES }; } };
-const readLastTpl = () => { try { return JSON.parse(localStorage.getItem(LAST_TPL_KEY) || "null"); } catch { return null; } };
+const readJson = (k, fb) => { try { return JSON.parse(localStorage.getItem(k) || "null") ?? fb; } catch { return fb; } };
+const writeJson = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } };
+const readGenCfg = () => ({ ...DEFAULT_SIGNATORIES, recipientMPC: DEFAULT_RECIPIENT.MPC, recipientMP3: DEFAULT_RECIPIENT.MP3, ...readJson(GEN_CFG_KEY, {}) });
+const readLastTpl = () => readJson(LAST_TPL_KEY, null);
+const isoDay = (d) => d.toISOString().slice(0, 10);
+const addDays = (iso, n) => { const d = toDateValue(iso); if (!d) return ""; d.setUTCDate(d.getUTCDate() + n); return isoDay(d); };
+// Letter No: ganti tahun di akhir pola (…/2026) dengan tahun tanggal dokumen
+const letterNoForYear = (no, iso) => { const y = (iso || "").slice(0, 4); return y && /\/\d{4}$/.test(no) ? no.replace(/\/\d{4}$/, `/${y}`) : no; };
 
 function saveBlobAs(bytes, name, type) {
   const url = URL.createObjectURL(new Blob([bytes], { type }));
@@ -1518,7 +1527,7 @@ function saveBlobAs(bytes, name, type) {
 }
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-// PO untuk 1 baris template: PO Number di template (harus milik partner itu) → amount == DPP (±1) → periode → pilih manual
+// PO untuk 1 pasangan: PO Number dari template (harus milik partner itu) → amount == total DPP (±1) → periode → pilih manual
 function matchPo(pair, rows) {
   const cands = rows.filter((r) => partnerKey(r.partner) === partnerKey(pair.partner));
   if (pair.poRef) {
@@ -1538,11 +1547,20 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
   const latestYm = useMemo(() => rows.map((r) => r.ym).filter(Boolean).sort().pop() || "", [rows]);
   const [cfg, setCfg] = useState(readGenCfg);
   const [showCfg, setShowCfg] = useState(false);
-  const [period, setPeriod] = useState(() => latestYm || new Date().toISOString().slice(0, 7));
-  const [prevFile, setPrevFile] = useState(null);   // template bulan lalu (opsional)
+  // Data dokumen (dipakai format SMS): periode, tanggal dokumen, batas klaim, no surat — diingat di browser
+  const [meta, setMeta] = useState(() => {
+    const saved = readJson(GEN_META_KEY, {});
+    const today = isoDay(new Date());
+    return {
+      period: latestYm || new Date().toISOString().slice(0, 7),
+      docDate: today, deadline: addDays(today, 6),
+      letterNo: letterNoForYear(saved.letterNo || `7340/P00-PHC0/EOM/${today.slice(0, 4)}`, today),
+    };
+  });
+  const [prevFile, setPrevFile] = useState(null);
   const [tplBusy, setTplBusy] = useState(false);
-  const [fileName, setFileName] = useState("");
-  const [items, setItems] = useState([]);           // pasangan + { id, po, how, cands, include, res }
+  const [upload, setUpload] = useState(null);       // { name, format, base: [pairs], notices }
+  const [edits, setEdits] = useState({});           // id → { poManual, include, letterNo, res }
   const [parsing, setParsing] = useState(false);
   const [phase, setPhase] = useState("pick");       // pick | review | saving | done
   const [prog, setProg] = useState({ i: 0, total: 0 });
@@ -1551,8 +1569,16 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
   const prevRef = useRef(null);
   const busy = phase === "saving" || zipping || tplBusy;
   const byKey = useMemo(() => new Map(rows.map((r) => [r.key, r])), [rows]);
+  const [lastTpl, setLastTpl] = useState(readLastTpl); // diperbarui setelah generate berhasil
 
-  const setCfgField = (k, v) => setCfg((c) => { const n = { ...c, [k]: v }; try { localStorage.setItem(GEN_CFG_KEY, JSON.stringify(n)); } catch { /* ignore */ } return n; });
+  const setCfgField = (k, v) => setCfg((c) => { const n = { ...c, [k]: v }; writeJson(GEN_CFG_KEY, n); return n; });
+  const setMetaField = (k, v) => setMeta((m) => {
+    const n = { ...m, [k]: v };
+    if (k === "docDate") { n.deadline = addDays(v, 6) || m.deadline; n.letterNo = letterNoForYear(m.letterNo, v); }
+    if (k === "letterNo") writeJson(GEN_META_KEY, { letterNo: v });
+    return n;
+  });
+  const setEdit = (id, patch) => setEdits((e) => ({ ...e, [id]: { ...e[id], ...patch } }));
   const tryClose = () => { if (busy) { toast(t, "Please wait until the current process finishes.", "info"); return; } onClose(); };
 
   const slotState = (poKey, docType) => {
@@ -1564,52 +1590,73 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
     };
   };
 
-  // ── Template download ──
+  // Baris review = data upload + input modal + pilihan user (dihitung ulang tiap render)
+  const items = useMemo(() => {
+    if (!upload) return [];
+    const per = parsePeriod(meta.period);
+    const fallbackSigner = {};
+    (lastTpl?.partners || []).forEach((p) => { fallbackSigner[`${p.type}|${String(p.partner).toUpperCase()}`] = { name: p.signerName, title: p.signerTitle }; });
+    return upload.base.map((b, id) => {
+      const e = edits[id] || {};
+      const fin = upload.format === "sms"
+        ? finalizeSms(b, {
+            per, docDate: toDateValue(meta.docDate), deadline: toDateValue(meta.deadline),
+            letterNo: e.letterNo ?? meta.letterNo, recipientTitle: { MPC: cfg.recipientMPC, MP3: cfg.recipientMP3 }, fallbackSigner,
+          })
+        : b;
+      const m = fin.partner ? matchPo(fin, rows) : { po: "", how: "none", cands: [] };
+      const errors = [...fin.errors];
+      if (fin.partner && !m.cands.length) errors.push(`Partner not found in the Payout data (${ownerLabel(segment)} Prepaid, current filters).`);
+      if (m.how === "badref") errors.push(`${DOC_REF_LABEL} ${fin.poRef} was not found for this partner.`);
+      const po = e.poManual !== undefined ? e.poManual : m.po;
+      return {
+        ...fin, id, errors, cands: m.cands, po, how: e.poManual !== undefined ? (e.poManual ? "manual" : "select") : m.how,
+        include: !errors.length && !!po && (e.include ?? true), res: e.res || null,
+        letterNoEdit: e.letterNo ?? meta.letterNo,
+      };
+    });
+  }, [upload, edits, meta, cfg.recipientMPC, cfg.recipientMP3, rows, segment, lastTpl]);
+
+  // ── Template download (format SMS) ──
   const downloadBlank = async () => {
     setTplBusy(true);
-    try { saveBlobAs(await buildTemplateWorkbook({}), "MPX Document Template (blank).xlsx", XLSX_MIME); }
+    try { saveBlobAs(await buildSmsTemplateWorkbook({}), "Source Data SMS template (blank).xlsx", XLSX_MIME); }
+    catch (e) { toast(t, `Template failed: ${errMsg(e)}`, "err"); }
+    setTplBusy(false);
+  };
+  const downloadLegacy = async () => {
+    setTplBusy(true);
+    try { saveBlobAs(await buildTemplateWorkbook({}), "MPX Document Template (legacy, blank).xlsx", XLSX_MIME); }
     catch (e) { toast(t, `Template failed: ${errMsg(e)}`, "err"); }
     setTplBusy(false);
   };
 
   const downloadPrefilled = async () => {
-    const per = parsePeriod(period);
+    const per = parsePeriod(meta.period);
     if (!per) { toast(t, "Please choose a valid period.", "err"); return; }
     setTplBusy(true);
     try {
-      const carry = prevFile ? await readTemplateCarryOver(new Uint8Array(await prevFile.arrayBuffer())) : (readLastTpl() || { partners: [], branches: [] });
+      const carry = prevFile ? await readTemplateCarryOver(new Uint8Array(await prevFile.arrayBuffer())) : (lastTpl || { partners: [], branches: [] });
       const posInPeriod = rows.filter((r) => r.ym === per.ym || titleMatchesPeriod(r.title, per));
-      const list = carry.partners.map((p) => ({ ...p }));
-      const known = new Set(list.map((p) => partnerKey(p.partner)));
-      [...new Map(posInPeriod.map((r) => [partnerKey(r.partner), r.partner])).entries()]
-        .filter(([k]) => !known.has(k))
-        .forEach(([, name]) => list.push({ type: "", partner: name }));
-      const out = list.map((p) => {
-        const mine = posInPeriod.filter((r) => partnerKey(r.partner) === partnerKey(p.partner));
-        const po = mine.length === 1 ? mine[0] : null;
-        const notes = [];
-        if (!p.type) notes.push("Choose Type (MPC/MP3).");
-        if (mine.length > 1) notes.push(`${mine.length} POs found for this period — enter PO Number.`);
-        if (!mine.length) notes.push("No PO found for this period — enter PO Number if available.");
-        if (!p.docDay) notes.push("Enter Document Date.");
-        if (!p.deadlineDay) notes.push("Enter Claim Deadline.");
-        return {
-          type: p.type || "", partner: p.partner, period: per.ym,
-          docDate: dayInNextMonth(per, p.docDay), deadline: dayInNextMonth(per, p.deadlineDay),
-          letterNo: p.letterNo || "", recipientTitle: p.recipientTitle || "", signerName: p.signerName || "", signerTitle: p.signerTitle || "",
-          poNumber: po ? po.ref : "", dppTotal: po ? Math.round(po.amount || 0) : null, notes: notes.join(" "),
-        };
+      const out = [];
+      const known = new Set();
+      carry.partners.forEach((p) => {
+        known.add(partnerKey(p.partner));
+        const brs = carry.branches.filter((b) => b.type === p.type && partnerKey(b.partner) === partnerKey(p.partner));
+        (brs.length ? brs : [{ branch: "" }]).forEach((b) => out.push({
+          brand: p.brand, type: p.type, partner: p.partner, branch: b.branch,
+          emailTo: p.emailTo || "", emailCc: p.emailCc || "", owner: p.signerName || "", jabatan: p.signerTitle || "",
+        }));
       });
-      const keep = new Set(out.map((r) => `${r.type}|${partnerKey(r.partner)}`));
-      const branches = carry.branches.filter((b) => keep.has(`${b.type}|${partnerKey(b.partner)}`));
-      if (!out.length) toast(t, "No partners found for this period — the template is empty apart from the headers.", "info");
-      saveBlobAs(await buildTemplateWorkbook({ rows: out, branches }), `MPX Document Template ${per.ym}.xlsx`, XLSX_MIME);
-      toast(t, `Template for ${per.label} downloaded (${out.length} row(s)). Fill the yellow cells.`);
+      const fresh = [...new Map(posInPeriod.map((r) => [partnerKey(r.partner), r.partner])).entries()].filter(([k]) => !known.has(k));
+      fresh.forEach(([, name]) => out.push({ type: "", partner: name, branch: "" }));
+      saveBlobAs(await buildSmsTemplateWorkbook({ rows: out, periodLabel: per.label }), `Source Data SMS ${per.ym}.xlsx`, XLSX_MIME);
+      toast(t, `Template for ${per.label} downloaded: ${out.length} row(s)${fresh.length ? `, ${fresh.length} new partner(s) from Payout data (choose TYPE and BRANCH)` : ""}. Fill the yellow cells.`);
     } catch (e) { toast(t, `Template failed: ${errMsg(e)}`, "err"); }
     setTplBusy(false);
   };
 
-  // ── Upload template terisi ──
+  // ── Upload ──
   const onPick = async (e) => {
     const f = e.target.files?.[0];
     e.target.value = "";
@@ -1617,22 +1664,20 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
     if (!/\.xlsx?$/i.test(f.name)) { toast(t, "Please select an Excel file (.xlsx).", "err"); return; }
     setParsing(true);
     try {
-      const pairs = await parseTemplateWorkbook(new Uint8Array(await f.arrayBuffer()));
-      if (!pairs.length) throw new Error('No rows found in the "Partners" sheet.');
-      setItems(pairs.map((p, i) => {
-        const m = p.partner ? matchPo(p, rows) : { po: "", how: "none", cands: [] };
-        const errors = [...p.errors];
-        if (p.partner && !m.cands.length) errors.push(`Partner not found in the Payout data (${ownerLabel(segment)} Prepaid, current filters).`);
-        if (m.how === "badref") errors.push(`${DOC_REF_LABEL} ${p.poRef} was not found for this partner.`);
-        return { ...p, errors, id: i, ...m, include: !errors.length && !!m.po, res: null };
-      }));
-      setFileName(f.name);
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      const format = await detectWorkbookFormat(bytes);
+      if (format === "unknown") throw new Error("Unrecognised workbook. Use the Source Data SMS format (sheets BAST and LETTER) or the MPX Document Template.");
+      let base, notices = [];
+      if (format === "sms") ({ pairs: base, notices } = await parseSmsWorkbook(bytes));
+      else base = await parseTemplateWorkbook(bytes);
+      if (!base.length) throw new Error("No partner rows were found in this workbook.");
+      setUpload({ name: f.name, format, base, notices });
+      setEdits({});
       setPhase("review");
+      notices.slice(0, 3).forEach((n) => toast(t, n, "info"));
     } catch (err) { toast(t, errMsg(err), "err"); }
     setParsing(false);
   };
-
-  const setItem = (id, patch) => setItems((cur) => cur.map((x) => (x.id === id ? { ...x, ...patch } : x)));
 
   const preview = async (it, kind) => {
     const w = window.open("", "_blank");
@@ -1673,18 +1718,20 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
         } catch (e) { res[kind] = `error: ${errMsg(e)}`; fail++; }
         setProg({ i: ++i, total: docCount });
       }
-      setItem(it.id, { res });
+      setEdit(it.id, { res });
     }
-    // simpan struktur template terakhir (tanpa nominal) untuk pre-fill bulan berikutnya
+    // simpan struktur terakhir (tanpa nominal) untuk pre-fill & penanda tangan cadangan bulan berikutnya
     if (ok) {
-      try {
-        const carry = valid.map((x) => x.carry);
-        localStorage.setItem(LAST_TPL_KEY, JSON.stringify({
-          savedAt: new Date().toISOString(),
-          partners: carry.map(({ branchNames: _b, ...c }) => c),
-          branches: carry.flatMap((c) => c.branchNames.map((b) => ({ type: c.type, partner: c.partner, branch: b }))),
-        }));
-      } catch { /* ignore */ }
+      writeJson(LAST_TPL_KEY, {
+        savedAt: new Date().toISOString(),
+        partners: valid.map((x) => ({
+          type: x.type, partner: x.partner, brand: x.brand || "", signerName: x.bast.signerName, signerTitle: x.bast.signerTitle,
+          emailTo: (x.emailsTo || []).join("; "), emailCc: (x.emailsCc || []).join("; "),
+          letterNo: x.letter.letterNo, recipientTitle: x.letter.recipientTitle,
+        })),
+        branches: valid.flatMap((x) => x.bast.branches.map((b) => ({ type: x.type, partner: x.partner, branch: b.name }))),
+      });
+      setLastTpl(readLastTpl());
     }
     setPhase("done");
     docs?.refresh?.();
@@ -1700,7 +1747,7 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
         zip.file(`${it.type}/${bastFileName(it)}`, await buildBastPdf(it.bast, cfg, lh));
         zip.file(`${it.type}/${letterFileName(it)}`, await buildLetterPdf(it.letter, cfg, lh));
       }
-      saveBlobAs(await zip.generateAsync({ type: "uint8array" }), `BAST_and_Letters_${(valid[0]?.per?.ym || "MPX")}.zip`, "application/zip");
+      saveBlobAs(await zip.generateAsync({ type: "uint8array" }), `BAST_and_Letters_${valid[0]?.per?.ym || "MPX"}.zip`, "application/zip");
       toast(t, `ZIP with ${valid.length * 2} document(s) downloaded.`);
     } catch (e) { toast(t, `ZIP failed: ${errMsg(e)}`, "err"); }
     setZipping(false);
@@ -1714,89 +1761,90 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
   const resLabel = (v) => v === "ok" ? "✓ saved" : v === "same" ? "already saved" : v === "locked" ? "🔒 approved — skipped" : v ? `✕ ${v.replace(/^error: /, "")}` : "";
   const cfgFields = [
     ["p1Name", "First party (Pihak Pertama) — name"], ["p1Title", "First party — title"], ["p1Company", "First party — company"],
-    ["letterSignerName", "Letter signatory — name"], ["letterSignerTitle", "Letter signatory — title"], ["letterSignerUnit", "Letter signatory — unit"], ["city", "City (letter date line)"],
+    ["letterSignerName", "Letter signatory — name"], ["letterSignerTitle", "Letter signatory — title"], ["letterSignerUnit", "Letter signatory — unit"],
+    ["city", "City (letter date line)"], ["recipientMPC", "Recipient title — MPC"], ["recipientMP3", "Recipient title — MP3"],
   ];
   const errCount = items.filter((x) => x.errors.length).length;
-  const lastTpl = readLastTpl();
+  const isSms = upload?.format === "sms";
+  const disabledMeta = busy || phase === "done";
 
   if (typeof document === "undefined") return null;
   return createPortal(
     <div onMouseDown={(e) => { if (e.target === e.currentTarget) tryClose(); }} onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); tryClose(); } }}
       className="ppd-anim" style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 12, animation: "ppd_fade .15s ease-out" }}>
       <div role="dialog" aria-modal="true" aria-labelledby="ppd-gen-title"
-        style={{ width: "min(1200px, 100%)", maxHeight: "94vh", display: "flex", flexDirection: "column", background: t.surf, color: t.ink, borderRadius: 18, border: `1px solid ${t.line}`, boxShadow: t.shadow2, overflow: "hidden", textAlign: "left" }}>
+        style={{ width: "min(1240px, 100%)", maxHeight: "94vh", display: "flex", flexDirection: "column", background: t.surf, color: t.ink, borderRadius: 18, border: `1px solid ${t.line}`, boxShadow: t.shadow2, overflow: "hidden", textAlign: "left" }}>
         <div style={{ padding: "14px 18px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "flex-start", gap: 12, background: t.surf2 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: MAGENTA, fontWeight: 700 }}>SPM · Document generator</div>
             <div id="ppd-gen-title" style={{ fontSize: 17, fontWeight: 800, marginTop: 2 }}>Generate BAST &amp; Notification Letters</div>
             <div style={{ fontSize: 12, color: t.muted, marginTop: 3, lineHeight: 1.45 }}>
-              1) Download the template — pre-filled for the period, so you only fill the yellow cells. 2) Upload the completed file. 3) Review, preview and save.
-              Documents are generated in Indonesian on the IOH letterhead, without signatures; taxes are calculated by the app.
+              Upload the Source Data SMS workbook (sheets BAST and LETTER, one row per branch) — or download a pre-filled one for the period first.
+              Documents are generated in Indonesian on the IOH letterhead, without signatures; PPN 11% and PPh 23 2% are recalculated by the app. No emails are sent.
             </div>
           </div>
           <button className="ppd-f" onClick={tryClose} aria-label="Close (Esc)" style={{ ...btnStyle(t, "ghost", false, true), fontSize: 20, lineHeight: 1, padding: "2px 8px", color: t.muted }}>×</button>
         </div>
 
-        {/* Step 1 — template */}
-        <div style={{ padding: "12px 18px", borderBottom: `1px solid ${t.line}`, display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
-          <div>
-            <div style={lbl}>1 · Period</div>
-            <input className="ppd-f" type="month" value={period} onChange={(e) => setPeriod(e.target.value)} disabled={busy} aria-label="Period" style={{ ...inp, width: 160 }} />
-          </div>
-          <div style={{ minWidth: 220 }}>
-            <div style={lbl}>Start from previous file (optional)</div>
-            <input ref={prevRef} type="file" accept=".xlsx" hidden onChange={(e) => { setPrevFile(e.target.files?.[0] || null); e.target.value = ""; }} />
-            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-              <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy, true)} disabled={busy} onClick={() => prevRef.current?.click()}>{prevFile ? "Change file" : "Choose last month’s template"}</button>
-              {prevFile && <button className="ppd-f" style={btnStyle(t, "ghost", busy, true)} onClick={() => setPrevFile(null)} aria-label="Remove previous file">✕</button>}
-            </div>
-            <div style={{ fontFamily: MONO, fontSize: 10, color: t.muted, marginTop: 3, maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {prevFile ? prevFile.name : lastTpl ? `Using last generation (${new Date(lastTpl.savedAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" })})` : "No previous data — partners come from the Payout data"}
-            </div>
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy)} disabled={busy} onClick={downloadPrefilled}><IcoDownload /> {tplBusy ? "Preparing…" : "Download pre-filled template"}</button>
-            <button className="ppd-f" style={{ all: "unset", cursor: busy ? "default" : "pointer", color: t.goodDark || TEAL_D, fontWeight: 600, fontSize: 12 }} disabled={busy} onClick={downloadBlank}>Blank template</button>
-          </div>
+        {/* Document details */}
+        <div style={{ padding: "12px 18px", borderBottom: `1px solid ${t.line}`, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, alignItems: "end" }}>
+          <label><div style={lbl}>Period</div><input className="ppd-f" type="month" value={meta.period} onChange={(e) => setMetaField("period", e.target.value)} disabled={disabledMeta} style={inp} /></label>
+          <label><div style={lbl}>Document date</div><input className="ppd-f" type="date" value={meta.docDate} onChange={(e) => setMetaField("docDate", e.target.value)} disabled={disabledMeta} style={inp} /></label>
+          <label><div style={lbl}>Claim deadline</div><input className="ppd-f" type="date" value={meta.deadline} onChange={(e) => setMetaField("deadline", e.target.value)} disabled={disabledMeta} style={inp} /></label>
+          <label style={{ gridColumn: "span 2" }}><div style={lbl}>Letter No (default for all partners)</div><input className="ppd-f" value={meta.letterNo} onChange={(e) => setMetaField("letterNo", e.target.value)} disabled={disabledMeta} style={{ ...inp, fontFamily: MONO }} /></label>
         </div>
 
-        {/* Step 2 — upload */}
-        <div style={{ padding: "12px 18px", borderBottom: `1px solid ${t.line}`, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        {/* Template + upload */}
+        <div style={{ padding: "12px 18px", borderBottom: `1px solid ${t.line}`, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+          <input ref={prevRef} type="file" accept=".xlsx" hidden onChange={(e) => { setPrevFile(e.target.files?.[0] || null); e.target.value = ""; }} />
+          <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy)} disabled={busy} onClick={downloadPrefilled}
+            title="Partners and branches from last month (previous file or last generation) plus partners with a PO in this period. SLA, TDS and Sales Margin are left for you to fill.">
+            <IcoDownload /> {tplBusy ? "Preparing…" : "Download pre-filled template"}
+          </button>
+          <span style={{ fontSize: 11.5, color: t.muted, display: "inline-flex", gap: 6, alignItems: "center" }}>
+            based on
+            <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.goodDark || TEAL_D, fontWeight: 600 }} onClick={() => prevRef.current?.click()}>
+              {prevFile ? prevFile.name : lastTpl ? `last generation (${new Date(lastTpl.savedAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })})` : "Payout data — or choose last month’s file"}
+            </button>
+            {prevFile && <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.muted }} onClick={() => setPrevFile(null)} aria-label="Remove previous file">✕</button>}
+            · <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.goodDark || TEAL_D }} onClick={downloadBlank}>blank</button>
+            · <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.muted }} onClick={downloadLegacy}>legacy template</button>
+          </span>
           <input ref={fileRef} type="file" accept=".xlsx,.xls" hidden onChange={onPick} />
-          <span style={{ ...lbl, marginBottom: 0 }}>2 · Completed template</span>
-          <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || parsing)} disabled={busy || parsing} onClick={() => fileRef.current?.click()}>
-            ⬆ {parsing ? "Reading…" : fileName ? "Upload another file" : "Upload completed template"}
+          <button className="ppd-f ppd-act" style={{ ...btnStyle(t, "primary", busy || parsing), marginLeft: "auto" }} disabled={busy || parsing} onClick={() => fileRef.current?.click()}>
+            ⬆ {parsing ? "Reading…" : upload ? "Upload another file" : "Upload Excel"}
           </button>
-          {fileName && <span style={{ fontFamily: MONO, fontSize: 11.5, color: t.muted }}>{fileName} · {items.length} row(s){errCount ? ` · ${errCount} with errors` : ""}</span>}
-          <button className="ppd-f" style={{ ...btnStyle(t, "ghost", false, true), marginLeft: "auto" }} onClick={() => setShowCfg((v) => !v)} aria-expanded={showCfg}>
-            {showCfg ? "▾" : "▸"} Signatories &amp; city
-          </button>
+          <button className="ppd-f" style={btnStyle(t, "ghost", false, true)} onClick={() => setShowCfg((v) => !v)} aria-expanded={showCfg}>{showCfg ? "▾" : "▸"} Signatories</button>
         </div>
+        {upload && <div style={{ padding: "6px 18px", fontFamily: MONO, fontSize: 11, color: t.muted, borderBottom: `1px solid ${t.line}` }}>{upload.name} · {isSms ? "Source Data SMS format" : "MPX Document Template"} · {items.length} partner/type row(s){errCount ? ` · ${errCount} with errors` : ""}{upload.notices?.length ? ` · ${upload.notices.length} skipped row(s)` : ""}</div>}
         {showCfg && (
-          <div style={{ padding: "10px 18px 14px", borderBottom: `1px solid ${t.line}`, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))", gap: 10, background: t.surf2 }}>
+          <div style={{ padding: "10px 18px 14px", borderBottom: `1px solid ${t.line}`, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, background: t.surf2 }}>
             {cfgFields.map(([k, lab]) => (
               <label key={k} style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11.5, color: t.muted }}>
                 {lab}
                 <input className="ppd-f" value={cfg[k] || ""} onChange={(e) => setCfgField(k, e.target.value)} disabled={busy} style={inp} />
               </label>
             ))}
-            <div style={{ fontSize: 11, color: t.muted, alignSelf: "end" }}>Saved on this browser. <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.goodDark || TEAL_D, fontWeight: 600 }} onClick={() => { setCfg({ ...DEFAULT_SIGNATORIES }); try { localStorage.removeItem(GEN_CFG_KEY); } catch { /* ignore */ } }}>Reset to defaults</button></div>
+            <div style={{ fontSize: 11, color: t.muted, alignSelf: "end" }}>Saved on this browser. <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.goodDark || TEAL_D, fontWeight: 600 }} onClick={() => { const d = { ...DEFAULT_SIGNATORIES, recipientMPC: DEFAULT_RECIPIENT.MPC, recipientMP3: DEFAULT_RECIPIENT.MP3 }; setCfg(d); try { localStorage.removeItem(GEN_CFG_KEY); } catch { /* ignore */ } }}>Reset to defaults</button></div>
           </div>
         )}
 
-        {/* Step 3 — review */}
+        {/* Review */}
         <div style={{ flex: 1, overflow: "auto", minHeight: 180 }}>
           {!items.length ? (
-            <div style={{ margin: 18, border: `2px dashed ${t.line2}`, borderRadius: 16, padding: "36px 16px", textAlign: "center", background: t.surf2, color: t.muted, fontSize: 12.5, lineHeight: 1.6 }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: t.ink }}>Download the template, fill the yellow cells, then upload it here</div>
-              Sheets: <b>Partners</b> (one row per partner and type) and <b>Branches</b> (one row per branch). The app calculates PPN, PPh 23 and totals.
+            <div role="button" tabIndex={0} className="ppd-f" onClick={() => fileRef.current?.click()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileRef.current?.click(); } }}
+              style={{ margin: 18, border: `2px dashed ${t.line2}`, borderRadius: 16, padding: "36px 16px", textAlign: "center", background: t.surf2, color: t.muted, fontSize: 12.5, lineHeight: 1.6, cursor: "pointer" }}>
+              <div style={{ color: TEAL, display: "inline-flex" }}><IcoUp /></div>
+              <div style={{ fontSize: 14, fontWeight: 700, color: t.ink }}>Upload the Source Data SMS Excel to start</div>
+              One BAST and one Notification Letter per partner and type (MPC / MP3); branches are combined automatically.
             </div>
           ) : (
-            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: 1100 }}>
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: 1240 }}>
               <thead><tr>
                 <th style={{ ...th, width: 30 }}><span className="ppd-sr">Include</span></th>
-                <th style={th}>Row</th><th style={th}>Partner</th><th style={th}>Type</th><th style={th}>Period</th>
+                <th style={th}>Partner</th><th style={th}>Type</th><th style={th}>Branches</th>
                 <th style={{ ...th, textAlign: "right" }}>DPP</th><th style={{ ...th, textAlign: "right" }}>PPN</th><th style={{ ...th, textAlign: "right" }}>PPh 23</th><th style={{ ...th, textAlign: "right" }}>Total transfer</th>
+                {isSms && <th style={th}>Letter No · signatory · email</th>}
                 <th style={th}>{DOC_REF_LABEL}</th><th style={th}>Status</th><th style={th}>Preview</th>
               </tr></thead>
               <tbody>
@@ -1806,21 +1854,29 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
                   return (
                     <tr key={x.id} style={{ background: bad ? t.badBg : x.warnings.length ? t.warnBg : "transparent", opacity: bad || x.include ? 1 : 0.6 }}>
                       <td style={{ ...td, textAlign: "center" }}>
-                        <input type="checkbox" className="ppd-f" aria-label={`Include ${x.partner} ${x.type}`} checked={x.include && !bad} disabled={bad || busy || phase === "done" || !x.po}
-                          onChange={(e) => setItem(x.id, { include: e.target.checked })} />
+                        <input type="checkbox" className="ppd-f" aria-label={`Include ${x.partner} ${x.type}`} checked={x.include} disabled={bad || busy || phase === "done" || !x.po}
+                          onChange={(e) => setEdit(x.id, { include: e.target.checked })} />
                       </td>
-                      <td style={{ ...td, fontFamily: MONO, color: t.muted }}>{x.row}</td>
-                      <td style={{ ...td, fontWeight: 600, color: t.ink, maxWidth: 220 }}>{x.partner || "—"}</td>
+                      <td style={{ ...td, fontWeight: 600, color: t.ink, maxWidth: 210 }}>{x.partner || "—"}{!isSms && x.row ? <div style={{ fontFamily: MONO, fontSize: 10, color: t.muted, fontWeight: 400 }}>row {x.row}</div> : null}</td>
                       <td style={td}>{x.type && <span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 700, padding: "1px 6px", borderRadius: 6, background: t.surf3 }}>{x.type}</span>}</td>
-                      <td style={{ ...td, whiteSpace: "nowrap" }}>{x.period || "—"}</td>
-                      <td style={num}>{x.letter ? rupiah(x.dpp) : "—"}</td>
+                      <td style={{ ...td, fontSize: 11, maxWidth: 180 }}>{x.bast?.branches?.map((b) => b.name).join(", ") || "—"}</td>
+                      <td style={num}>{x.letter ? rupiah(x.letter.dpp) : "—"}</td>
                       <td style={num}>{x.letter ? rupiah(x.letter.ppn) : "—"}</td>
                       <td style={num}>{x.letter ? rupiah(-x.letter.pph) : "—"}</td>
                       <td style={{ ...num, fontWeight: 700, color: t.ink }}>{x.letter ? rupiah(x.letter.total) : "—"}</td>
+                      {isSms && (
+                        <td style={{ ...td, minWidth: 220, fontSize: 11 }}>
+                          <input className="ppd-f" value={x.letterNoEdit} onChange={(e) => setEdit(x.id, { letterNo: e.target.value })} disabled={busy || phase === "done"} aria-label={`Letter No for ${x.partner} ${x.type}`}
+                            style={{ ...inp, fontFamily: MONO, fontSize: 11, padding: "4px 6px" }} />
+                          <div style={{ marginTop: 3 }}>{x.bast?.signerName || <span style={{ color: t.bad }}>no OWNER</span>}{x.bast?.signerTitle ? ` · ${x.bast.signerTitle}` : ""}</div>
+                          {x.emailsTo?.length > 0 && <div title={x.emailsTo.join("; ")} style={{ color: t.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 230 }}>To: {x.emailsTo.join("; ")}</div>}
+                          {x.emailsCc?.length > 0 && <div title={x.emailsCc.join("; ")} style={{ color: t.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 230 }}>Cc: {x.emailsCc.join("; ")}</div>}
+                        </td>
+                      )}
                       <td style={{ ...td, minWidth: 190 }}>
                         {x.cands.length ? (
                           <select className="ppd-f" aria-label={`${DOC_REF_LABEL} for ${x.partner} ${x.type}`} value={x.po} disabled={bad || busy || phase === "done"}
-                            onChange={(e) => setItem(x.id, { po: e.target.value, how: e.target.value ? "manual" : "select", include: !!e.target.value })}
+                            onChange={(e) => setEdit(x.id, { poManual: e.target.value, include: true })}
                             style={{ ...inp, fontFamily: MONO, fontSize: 11.5, padding: "5px 6px", borderColor: x.po ? t.line2 : t.warn }}>
                             <option value="">— select {DOC_REF_LABEL} —</option>
                             {x.cands.map((r) => <option key={r.key} value={r.key}>{r.ref} · {r.amountText}{r.title ? ` · ${String(r.title).slice(0, 40)}` : ""}</option>)}
