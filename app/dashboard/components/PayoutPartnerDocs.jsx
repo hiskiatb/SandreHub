@@ -1516,6 +1516,9 @@ const readJson = (k, fb) => { try { return JSON.parse(localStorage.getItem(k) ||
 const writeJson = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } };
 const readGenCfg = () => ({ ...DEFAULT_SIGNATORIES, recipientMPC: DEFAULT_RECIPIENT.MPC, recipientMP3: DEFAULT_RECIPIENT.MP3, ...readJson(GEN_CFG_KEY, {}) });
 const readLastTpl = () => readJson(LAST_TPL_KEY, null);
+const EMAIL_OK = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(v || "").trim());
+// Approver per jenis dokumen = penanda tangan IOH dokumen itu (bukan email partner dari Excel)
+const approverFor = (cfg, docType) => String((docType === "bast" ? cfg.p1Email : cfg.letterSignerEmail) || "").trim();
 const isoDay = (d) => d.toISOString().slice(0, 10);
 const addDays = (iso, n) => { const d = toDateValue(iso); if (!d) return ""; d.setUTCDate(d.getUTCDate() + n); return isoDay(d); };
 // Letter No: ganti tahun di akhir pola (…/2026) dengan tahun tanggal dokumen
@@ -1628,6 +1631,7 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
   const [phase, setPhase] = useState("pick");       // pick | review | saving | done
   const [prog, setProg] = useState({ i: 0, total: 0 });
   const [zipping, setZipping] = useState(false);
+  const [autoAppr, setAutoAppr] = useState(true);  // minta approval otomatis setelah simpan
   const fileRef = useRef(null);
   const prevRef = useRef(null);
   const busy = phase === "saving" || zipping || tplBusy;
@@ -1646,11 +1650,9 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
 
   const slotState = (poKey, docType) => {
     const r = byKey.get(poKey);
-    if (!r) return { exists: false, locked: false };
-    return {
-      exists: r.stat?.types?.[docType]?.n > 0,
-      locked: approvalStatus(docs?.approvals?.[approvalKey(segment, r.partner, r.ref, docType)]) === "approved",
-    };
+    if (!r) return { exists: false, locked: false, appr: null };
+    const appr = approvalStatus(docs?.approvals?.[approvalKey(segment, r.partner, r.ref, docType)]);
+    return { exists: r.stat?.types?.[docType]?.n > 0, locked: appr === "approved", appr };
   };
 
   // Baris review = data upload + input modal + pilihan user (dihitung ulang tiap render)
@@ -1674,7 +1676,7 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
       const po = e.poManual !== undefined ? e.poManual : m.po;
       return {
         ...fin, id, errors, cands: m.cands, po, how: e.poManual !== undefined ? (e.poManual ? "manual" : "select") : m.how,
-        include: !errors.length && !!po && (e.include ?? true), res: e.res || null,
+        include: !errors.length && !!po && (e.include ?? true), res: e.res || null, appr: e.appr || null,
         letterNoEdit: e.letterNo ?? meta.letterNo,
       };
     });
@@ -1798,10 +1800,20 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
   const ready = valid.filter((x) => x.include && x.po && byKey.has(x.po));
   const docCount = ready.reduce((n, x) => n + (slotState(x.po, "bast").locked ? 0 : 1) + (slotState(x.po, "surat_pemberitahuan").locked ? 0 : 1), 0);
 
+  const anyApprover = EMAIL_OK(approverFor(cfg, "bast")) || EMAIL_OK(approverFor(cfg, "surat_pemberitahuan"));
+  const apprAvailable = docs?.approvalsAvailable !== false;
+  const autoApprOn = autoAppr && anyApprover && apprAvailable;
+
   // Simpan ke slot PO. single=true → 1 partner dari panel preview (modal tetap di tahap review)
   const saveItems = async (list, { single = false } = {}) => {
     if (!list.length) return;
     const total = list.reduce((n, x) => n + (slotState(x.po, "bast").locked ? 0 : 1) + (slotState(x.po, "surat_pemberitahuan").locked ? 0 : 1), 0);
+    const auto = autoApprOn;
+    const confirmMsg = `Save ${total} document(s) for ${list.length} partner(s) into Payout Tracker?` + (auto
+      ? `\n\nApproval will be requested automatically:\n• BAST → ${EMAIL_OK(approverFor(cfg, "bast")) ? approverFor(cfg, "bast") : "no approver email (skipped)"}\n• Notification Letter → ${EMAIL_OK(approverFor(cfg, "surat_pemberitahuan")) ? approverFor(cfg, "surat_pemberitahuan") : "no approver email (skipped)"}\n\nSlots that are already pending or approved are skipped.`
+      : "\n\nNo approval request will be sent.");
+    if (!window.confirm(confirmMsg)) return;
+    const savedSlots = [];   // slot yang benar-benar baru tersimpan → kandidat approval otomatis
     setPhase("saving");
     setProg({ i: 0, total });
     let i = 0, ok = 0, skip = 0, fail = 0;
@@ -1818,7 +1830,7 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
         try {
           const file = new File([await build()], name, { type: "application/pdf" });
           const r = await uploadSlot({ files: [file], partnerName: row.partner, refId: row.ref, docType, segment });
-          if (r.ok.length) { res[kind] = "ok"; ok++; }
+          if (r.ok.length) { res[kind] = "ok"; ok++; savedSlots.push({ id: it.id, kind, docType, row }); }
           else if (r.skipped.length) { res[kind] = "same"; skip++; }
           else { res[kind] = `error: ${r.errors[0]?.message || "failed"}`; fail++; }
         } catch (e) { res[kind] = `error: ${errMsg(e)}`; fail++; }
@@ -1839,9 +1851,42 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
       });
       setLastTpl(readLastTpl());
     }
+    // Approval otomatis untuk slot yang baru tersimpan (dokumen tetap tersimpan walau request gagal)
+    let apprOk = 0, apprFail = 0, apprSkip = 0;
+    const apprReasons = [];
+    if (auto && savedSlots.length) {
+      const groups = new Map();   // approver email → [{ slot, item }]
+      const mark = (id, kind, v) => setEdits((e) => ({ ...e, [id]: { ...e[id], appr: { ...(e[id]?.appr || {}), [kind]: v } } }));
+      for (const sl of savedSlots) {
+        const email = approverFor(cfg, sl.docType);
+        const st = approvalStatus(docs?.approvals?.[approvalKey(segment, sl.row.partner, sl.row.ref, sl.docType)]);
+        if (!EMAIL_OK(email)) { apprSkip++; mark(sl.id, sl.kind, "skip: no approver email"); continue; }
+        if (st === "pending" || st === "approved") { apprSkip++; mark(sl.id, sl.kind, `skip: already ${st}`); continue; }
+        if (!groups.has(email)) groups.set(email, []);
+        groups.get(email).push({ sl, item: { segment, owner_name: sl.row.partner, ref_id: sl.row.ref, doc_type: sl.docType, ref_title: sl.row.title || null, amount_text: sl.row.amountText || null } });
+      }
+      for (const [email, entries] of groups) {
+        setProg((p) => ({ ...p, label: `Requesting approval from ${email}…` }));
+        try {
+          const { results = [] } = await approvalApi("request", { approver_email: email, note: "Generated in Payout Tracker — please review.", items: entries.map((x) => x.item) });
+          entries.forEach(({ sl }, k) => {
+            const r = results[k];
+            if (r?.ok) { apprOk++; mark(sl.id, sl.kind, r.emailError ? `requested (email failed: ${r.emailError})` : `requested → ${email}`); if (r.emailError) apprReasons.push(r.emailError); }
+            else { apprFail++; const m = r?.error || "no response"; apprReasons.push(m); mark(sl.id, sl.kind, `failed: ${m}`); }
+          });
+        } catch (e) {
+          const m = errMsg(e);
+          apprFail += entries.length; apprReasons.push(m);
+          entries.forEach(({ sl }) => mark(sl.id, sl.kind, `failed: ${m}`));
+        }
+      }
+    }
+
     setPhase(single ? "review" : "done");
     docs?.refresh?.();
-    toast(t, `${single ? `${list[0].partner} ${list[0].type}: ` : ""}${ok} document(s) saved${skip ? `, ${skip} skipped` : ""}${fail ? `, ${fail} failed` : ""}.`, fail ? "err" : "ok");
+    const head = `${single ? `${list[0].partner} ${list[0].type}: ` : ""}Saved ${ok}${skip ? `, skipped ${skip}` : ""}${fail ? `, failed ${fail}` : ""}`;
+    const apprText = auto ? ` · approval requested ${apprOk}${apprSkip ? `, skipped ${apprSkip}` : ""}${apprFail ? `, failed ${apprFail} (${[...new Set(apprReasons)][0]}) — you can use Request approval later` : ""}` : "";
+    toast(t, `${head}${apprText}.`, fail || apprFail ? "err" : "ok");
   };
   const saveAll = () => saveItems(ready);
 
@@ -1868,7 +1913,9 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
   const resLabel = (v) => v === "ok" ? "✓ saved" : v === "same" ? "already saved" : v === "locked" ? "🔒 approved — skipped" : v ? `✕ ${v.replace(/^error: /, "")}` : "";
   const cfgFields = [
     ["p1Name", "First party (Pihak Pertama) — name"], ["p1Title", "First party — title"], ["p1Company", "First party — company"],
+    ["p1Email", "First party — approver email (BAST)", "email"],
     ["letterSignerName", "Letter signatory — name"], ["letterSignerTitle", "Letter signatory — title"], ["letterSignerUnit", "Letter signatory — unit"],
+    ["letterSignerEmail", "Letter signatory — approver email (Notification Letter)", "email"],
     ["city", "City (letter date line)"], ["recipientMPC", "Recipient title — MPC"], ["recipientMP3", "Recipient title — MP3"],
   ];
   const errCount = items.filter((x) => x.errors.length).length;
@@ -1926,12 +1973,18 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
         {upload && <div style={{ padding: "6px 18px", fontFamily: MONO, fontSize: 11, color: t.muted, borderBottom: `1px solid ${t.line}` }}>{upload.name} · {isSms ? "Source Data SMS format" : "MPX Document Template"} · {items.length} partner/type row(s){errCount ? ` · ${errCount} with errors` : ""}{upload.notices?.length ? ` · ${upload.notices.length} skipped row(s)` : ""}</div>}
         {showCfg && (
           <div style={{ padding: "10px 18px 14px", borderBottom: `1px solid ${t.line}`, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, background: t.surf2 }}>
-            {cfgFields.map(([k, lab]) => (
-              <label key={k} style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11.5, color: t.muted }}>
-                {lab}
-                <input className="ppd-f" value={cfg[k] || ""} onChange={(e) => setCfgField(k, e.target.value)} disabled={busy} style={inp} />
-              </label>
-            ))}
+            {cfgFields.map(([k, lab, kind]) => {
+              const bad = kind === "email" && cfg[k] && !EMAIL_OK(cfg[k]);
+              return (
+                <label key={k} style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11.5, color: t.muted }}>
+                  {lab}
+                  <input className="ppd-f" type={kind === "email" ? "email" : "text"} value={cfg[k] || ""} onChange={(e) => setCfgField(k, e.target.value)} disabled={busy}
+                    placeholder={kind === "email" ? "name@ioh.co.id (must have a SandraHub account)" : undefined} aria-invalid={bad || undefined}
+                    style={{ ...inp, borderColor: bad ? t.bad : t.line2 }} />
+                  {bad && <span style={{ color: t.bad, fontSize: 10.5 }}>Please enter a valid email address.</span>}
+                </label>
+              );
+            })}
             <div style={{ fontSize: 11, color: t.muted, alignSelf: "end" }}>Saved on this browser. <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.goodDark || TEAL_D, fontWeight: 600 }} onClick={() => { const d = { ...DEFAULT_SIGNATORIES, recipientMPC: DEFAULT_RECIPIENT.MPC, recipientMP3: DEFAULT_RECIPIENT.MP3 }; setCfg(d); try { localStorage.removeItem(GEN_CFG_KEY); } catch { /* ignore */ } }}>Reset to defaults</button></div>
           </div>
         )}
@@ -1997,11 +2050,14 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
                         {x.errors.map((m, i) => <div key={`e${i}`} style={{ color: t.bad, fontWeight: 600 }}>✕ {m}</div>)}
                         {x.warnings.map((m, i) => <div key={`w${i}`} style={{ color: t.warnDark || t.warn, fontWeight: 600 }}>⚠ {m}</div>)}
                         {!bad && (x.res ? (
-                          <><div>BAST: {resLabel(x.res.bast)}</div><div>Letter: {resLabel(x.res.letter)}</div></>
+                          <>
+                            <div>BAST: {resLabel(x.res.bast)}{x.appr?.bast && <span style={{ color: /^failed/.test(x.appr.bast) ? t.bad : t.muted }}> · approval {x.appr.bast}</span>}</div>
+                            <div>Letter: {resLabel(x.res.letter)}{x.appr?.letter && <span style={{ color: /^failed/.test(x.appr.letter) ? t.bad : t.muted }}> · approval {x.appr.letter}</span>}</div>
+                          </>
                         ) : x.po ? (
                           <>
-                            <div style={{ color: sb.locked ? t.muted : t.ink2 }}>BAST: {sb.locked ? "🔒 approved — will skip" : sb.exists ? "has files — will add" : "ready"}</div>
-                            <div style={{ color: sl.locked ? t.muted : t.ink2 }}>Letter: {sl.locked ? "🔒 approved — will skip" : sl.exists ? "has files — will add" : "ready"}</div>
+                            <div style={{ color: sb.locked ? t.muted : t.ink2 }}>BAST: {sb.locked ? "🔒 approved — will skip" : sb.exists ? "has files — will add" : "ready"}{sb.appr && !sb.locked && <> · <ApprovalBadge status={sb.appr} t={t} /></>}</div>
+                            <div style={{ color: sl.locked ? t.muted : t.ink2 }}>Letter: {sl.locked ? "🔒 approved — will skip" : sl.exists ? "has files — will add" : "ready"}{sl.appr && !sl.locked && <> · <ApprovalBadge status={sl.appr} t={t} /></>}</div>
                           </>
                         ) : <span style={{ color: t.muted }}>Select a {DOC_REF_LABEL} to save</span>)}
                       </td>
@@ -2081,7 +2137,7 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
         <div style={{ borderTop: `1px solid ${t.line}`, background: t.surf2, padding: "12px 18px", display: "flex", flexDirection: "column", gap: 8 }}>
           {(phase === "saving" || phase === "done") && (
             <div>
-              <div style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted, marginBottom: 5 }}>{phase === "done" ? "Completed" : "Generating & saving"} {prog.i}/{prog.total} document(s)…</div>
+              <div style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted, marginBottom: 5 }}>{prog.label && phase === "saving" ? prog.label : `${phase === "done" ? "Completed" : "Generating & saving"} ${prog.i}/${prog.total} document(s)…`}</div>
               <IndeterminateBar t={t} pct={prog.total ? Math.round((prog.i / prog.total) * 100) : 0} />
             </div>
           )}
@@ -2102,6 +2158,15 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
                 <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy)} disabled={busy} onClick={downloadZip} title="Generate the documents for every valid row and download them as one ZIP, without saving to Payout Tracker">
                   <IcoDownload /> {zipping ? "Preparing ZIP…" : "Download all as ZIP"}
                 </button>
+              )}
+              {phase !== "done" && items.length > 0 && (
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: anyApprover && apprAvailable ? t.ink2 : t.muted, alignSelf: "center" }}
+                  title={!apprAvailable ? "Approval tracking is not set up yet (run 20261008_payout_doc_approvals.sql)." : !anyApprover ? "Add an approver email in Signatories" : `BAST → ${approverFor(cfg, "bast") || "—"} · Notification Letter → ${approverFor(cfg, "surat_pemberitahuan") || "—"}`}>
+                  <input type="checkbox" className="ppd-f" checked={autoApprOn} disabled={busy || !anyApprover || !apprAvailable} onChange={(e) => setAutoAppr(e.target.checked)} />
+                  Request approval automatically after saving
+                  {!apprAvailable ? <span style={{ fontSize: 11, color: t.muted }}>(approval tracking not set up)</span>
+                    : !anyApprover && <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.goodDark || TEAL_D, fontWeight: 600, fontSize: 11.5 }} onClick={(e) => { e.preventDefault(); setShowCfg(true); }}>Add an approver email in Signatories</button>}
+                </label>
               )}
               {phase === "done"
                 ? <button className="ppd-f ppd-act" style={btnStyle(t, "primary")} onClick={onClose}>Done</button>
