@@ -125,7 +125,7 @@ const AVAILABILITY_GROUP_META = {
 
 function Stepper({ step, onStepClick }) {
   return (
-    <div style={{ display: "flex", alignItems: "flex-start", padding: "26px 18px 22px" }}>
+    <div className="ao-stepper" style={{ display: "flex", alignItems: "flex-start", padding: "26px 18px 22px" }}>
       {STEPS.map((s, i) => (
         <div key={s.key} style={{ display: "flex", alignItems: "flex-start", flex: i < STEPS.length - 1 ? 1 : "0 0 auto" }}>
           {/* Seluruh step bisa diklik (bukan cuma dekoratif) - mundur ke
@@ -135,7 +135,7 @@ function Stepper({ step, onStepClick }) {
             display: "flex", flexDirection: "column", alignItems: "center", gap: 7,
             border: "none", background: "transparent", padding: 0, cursor: onStepClick ? "pointer" : "default", fontFamily: FONT,
           }}>
-            <div style={{
+            <div className="ao-step-dot" style={{
               width: 28, height: 28, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 12, fontWeight: 800, fontFamily: FONT, flexShrink: 0,
               background: i <= step ? PINK : "#EFEDF4",
@@ -145,7 +145,7 @@ function Stepper({ step, onStepClick }) {
             }}>
               {i < step ? <Check size={13} /> : i + 1}
             </div>
-            <div style={{
+            <div className="ao-step-label" style={{
               fontSize: 10.5, fontWeight: i === step ? 800 : 700, color: i <= step ? INK : "#AFADBD",
               whiteSpace: "nowrap", textAlign: "center", transition: "color .35s ease",
             }}>{s.label}</div>
@@ -155,7 +155,7 @@ function Stepper({ step, onStepClick }) {
             // 0%<->100% - "terisi perlahan" waktu Selanjutnya, "ngurang"
             // waktu Kembali, krn DOM node-nya sama (key stabil per step)
             // jadi transition CSS-nya jalan dua arah, bukan cuma pas isi.
-            <div style={{ flex: 1, height: 3, marginTop: 12.5, borderRadius: 2, background: "#EFEDF4", position: "relative", overflow: "hidden" }}>
+            <div className="ao-step-line" style={{ flex: 1, height: 3, marginTop: 12.5, borderRadius: 2, background: "#EFEDF4", position: "relative", overflow: "hidden" }}>
               <div style={{
                 position: "absolute", top: 0, left: 0, height: "100%", borderRadius: 2,
                 width: i < step ? "100%" : "0%",
@@ -172,7 +172,7 @@ function Stepper({ step, onStepClick }) {
 
 function Header({ title }) {
   return (
-    <div style={{
+    <div className="ao-hdr" style={{
       // padding-top dipadukan env(safe-area-inset-top) - gradient (wrapper
       // pembungkus di pemanggil) jadi ikut menutup sampai belakang notch/
       // status bar iOS, bukan berhenti kelihatan putih di atasnya lagi.
@@ -250,12 +250,12 @@ function HeaderTitle({ showInstall, onInstallClick, installing }) {
 
 function SectionCard({ icon, title, subtitle, badge, children }) {
   return (
-    <div style={{
+    <div className="ao-card" style={{
       background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 18, padding: 18, marginBottom: 16,
       boxShadow: "0 2px 4px rgba(20,18,28,0.02), 0 10px 28px rgba(20,18,28,0.05)",
     }}>
       {title && (
-        <div style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 16, marginBottom: 16, borderBottom: `1px solid ${BORDER}` }}>
+        <div className="ao-card-hd" style={{ display: "flex", alignItems: "center", gap: 12, paddingBottom: 16, marginBottom: 16, borderBottom: `1px solid ${BORDER}` }}>
           {icon && (
             // Badge ikon solid (bukan kotak tint pucat lagi) - kesannya
             // lebih "premium" drpd flat polos, TANPA glow di luar (cuma
@@ -293,17 +293,27 @@ function SectionCard({ icon, title, subtitle, badge, children }) {
   );
 }
 
-function Field({ label, required, optional, children }) {
+function Field({ id, label, required, optional, error, children }) {
   return (
-    <div style={{ marginBottom: 16 }}>
-      <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: INK, marginBottom: 7 }}>
+    <div id={id} className="ao-field" style={{ marginBottom: 16, scrollMarginTop: 12 }}>
+      <label className="ao-label" style={{ display: "block", fontSize: 13, fontWeight: 700, color: INK, marginBottom: 7 }}>
         {label}
         {required && <span style={{ color: PINK }}> *</span>}
         {optional && <span style={{ fontWeight: 400, color: MID }}> (Opsional)</span>}
       </label>
       {children}
+      {error && <div style={{ fontSize: 11.5, color: "#DC2626", fontWeight: 700, marginTop: 6 }}>Wajib diisi</div>}
     </div>
   );
+}
+
+// Ubah ke HURUF BESAR tanpa bikin kursor loncat ke akhir teks (masalah di
+// iOS Safari kalau value input terkontrol diganti saat user ngedit di tengah).
+function upperKeepCaret(e, setter) {
+  const el = e.target;
+  const a = el.selectionStart, b = el.selectionEnd;
+  setter(el.value.toUpperCase());
+  requestAnimationFrame(() => { try { el.setSelectionRange(a, b); } catch {} });
 }
 
 // `color` & `colorScheme` di-set eksplisit - SEBELUMNYA field ini gak
@@ -320,7 +330,10 @@ const inputStyle = {
   color: INK, colorScheme: "light",
 };
 
-function BottomBar({ children }) {
+function BottomBar({ children, hidden }) {
+  // hidden=true saat keyboard terbuka: bar disembunyikan supaya area isi form
+  // selebar mungkin (bar tetap menempel di dasar layar begitu keyboard ditutup).
+  if (hidden) return null;
   // Dibuat PERSIS spt action bar MartaHub Mobile (app/martahub/m/activities/
   // [id]/submit/page.jsx) yg sudah terbukti selalu lengket rapi ke bawah
   // tanpa gap - position:"fixed" + bottom:0 POLOS (gak perlu hitungan
@@ -334,7 +347,7 @@ function BottomBar({ children }) {
       position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 40,
       background: "#fff", borderTop: `1px solid ${BORDER}`,
     }}>
-      <div className="ao-wrap" style={{
+      <div className="ao-wrap ao-bar" style={{
         margin: "0 auto", display: "flex", gap: 10,
         padding: "16px 20px calc(16px + env(safe-area-inset-bottom))",
       }}>
@@ -346,7 +359,7 @@ function BottomBar({ children }) {
 
 function PrimaryBtn({ children, onClick, disabled, full }) {
   return (
-    <button onClick={onClick} disabled={disabled} style={{
+    <button className="ao-btn" onClick={onClick} disabled={disabled} style={{
       flex: full ? 1 : "1 1 auto", padding: "13px 18px", borderRadius: 12, border: "none",
       background: disabled ? "#D8D6DF" : PINK,
       color: "#fff", fontWeight: 800, fontSize: 14.5, fontFamily: FONT,
@@ -358,7 +371,7 @@ function PrimaryBtn({ children, onClick, disabled, full }) {
 }
 function GhostBtn({ children, onClick }) {
   return (
-    <button onClick={onClick} style={{
+    <button className="ao-btn" onClick={onClick} style={{
       flex: 1, padding: "13px 18px", borderRadius: 12, border: `1.5px solid ${BORDER}`, background: "#fff",
       color: INK, fontWeight: 800, fontSize: 14.5, fontFamily: FONT, cursor: "pointer",
       display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
@@ -838,14 +851,13 @@ function VisibilityToggle({ value, onChange }) {
   const idx = value === 1 ? 0 : value === 0 ? 1 : -1;
   const tone = value === 1 ? VIS_YES : VIS_NO;
   return (
-    <div role="radiogroup" className="vis-tg" style={{ position: "relative", display: "grid", gridTemplateColumns: "minmax(0,2fr) minmax(0,3fr)", flexShrink: 0, background: "#F1EFF6", borderRadius: 11, padding: 3 }}>
+    <div role="radiogroup" className="vis-tg" style={{ position: "relative", display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr)", width: "100%", boxSizing: "border-box", background: "#F1EFF6", borderRadius: 11, padding: 3 }}>
       {idx >= 0 && (
         <div style={{
           position: "absolute", top: 3, bottom: 3,
-          // Kolom 2fr (Ada) : 3fr (Tidak Ada) - highlight ngikut lebar kolom
-          // aktif, jadi pas dgn panjang teks masing2.
-          left: idx === 0 ? 3 : "calc(3px + (100% - 6px) * 0.4)",
-          width: idx === 0 ? "calc((100% - 6px) * 0.4)" : "calc((100% - 6px) * 0.6)",
+          // Toggle selebar kartu (di bawah judul) -> 2 kolom sama lebar.
+          left: idx === 0 ? 3 : "50%",
+          width: "calc((100% - 6px) / 2)",
           background: tone.grad, borderRadius: 8, boxShadow: tone.shadow,
           transition: "left .28s cubic-bezier(.34,1.3,.64,1), width .28s cubic-bezier(.34,1.3,.64,1)",
         }} />
@@ -855,8 +867,8 @@ function VisibilityToggle({ value, onChange }) {
         return (
           <button key={v} type="button" role="radio" aria-checked={active} onClick={() => onChange(v)} style={{
             position: "relative", zIndex: 1, minWidth: 0, border: "none", background: "transparent",
-            padding: "9px 2px", borderRadius: 8, cursor: "pointer", fontFamily: FONT, outline: "none",
-            fontSize: 12, fontWeight: 800, color: active ? "#fff" : "#8784A0",
+            padding: "10px 4px", borderRadius: 8, cursor: "pointer", fontFamily: FONT, outline: "none",
+            fontSize: 13, fontWeight: 800, color: active ? "#fff" : "#8784A0",
             display: "flex", alignItems: "center", justifyContent: "center", gap: 4, whiteSpace: "nowrap",
             transition: "color .2s ease .05s",
           }}>
@@ -876,10 +888,10 @@ function VisibilityRow({ item, value, onChange, error }) {
   return (
     <div style={{
       borderRadius: 14, border: `1.5px solid ${cardBorder}`,
-      background: answered ? tone.tint : "#fff", padding: "12px 12px 12px 14px",
+      background: answered ? tone.tint : "#fff", padding: "14px",
       transition: "background .25s ease, border-color .25s ease",
     }}>
-      <div className="vis-row">
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
         <div style={{
           flexShrink: 0, width: 36, height: 36, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center",
           background: answered ? tone.grad : `linear-gradient(135deg, ${PINK}, ${PINK_DK})`,
@@ -887,21 +899,12 @@ function VisibilityRow({ item, value, onChange, error }) {
         }}>
           <Icon size={18} color="#fff" strokeWidth={2.1} />
         </div>
-        <div style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 800, color: INK, lineHeight: 1.3 }}>{item.label}</div>
-        <VisibilityToggle value={value} onChange={onChange} />
+        <div style={{ flex: 1, minWidth: 0, fontSize: 14, fontWeight: 800, color: INK, lineHeight: 1.3, overflowWrap: "anywhere" }}>{item.label}</div>
       </div>
+      <VisibilityToggle value={value} onChange={onChange} />
       {error && (
         <div style={{ fontSize: 11, color: "#DC2626", fontWeight: 700, marginTop: 8 }}>Wajib dijawab sebelum lanjut</div>
       )}
-      <style>{`
-        .vis-row { display: flex; align-items: center; gap: 12px; }
-        .vis-tg { width: 188px; }
-        @media (max-width: 359px) {
-          .vis-row { flex-wrap: wrap; row-gap: 10px; }
-          .vis-row > div:nth-child(2) { flex: 1 1 0; }
-          .vis-tg { width: 100%; }
-        }
-      `}</style>
     </div>
   );
 }
@@ -924,7 +927,39 @@ const OUTLET_RESULTS_CAP = 60; // batasi baris yg DI-RENDER - dgn ~16rb
 // `p_active_only: true` dikirim ke RPC supaya outlet nonaktif difilter DI
 // SERVER (konsisten antara daftar & total count), bukan didownload dulu
 // baru dibuang di client spt sebelumnya.
+// Posisi + tinggi visual viewport (di atas keyboard) utk overlay full-screen.
+// Di iOS `inset: 0` mengikuti layout viewport yg TIDAK menyusut saat keyboard
+// muncul, jadi bagian bawah overlay (hasil pencarian terakhir) ketutup
+// keyboard. Ukur ulang saat keyboard bergerak (resize/scroll + polling
+// singkat setelah fokus berubah) supaya overlay pas persis di atas keyboard.
+function useVisualViewportBox() {
+  const [box, setBox] = useState(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => setBox({ top: Math.max(0, Math.round(vv.offsetTop)), height: Math.round(vv.height * (vv.scale || 1)) });
+    let raf = 0, until = 0;
+    const poll = () => { update(); if (performance.now() < until) raf = requestAnimationFrame(poll); };
+    const burst = () => { until = performance.now() + 1000; cancelAnimationFrame(raf); raf = requestAnimationFrame(poll); };
+    burst();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    window.addEventListener("focusin", burst);
+    window.addEventListener("focusout", burst);
+    return () => {
+      cancelAnimationFrame(raf);
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+      window.removeEventListener("focusin", burst);
+      window.removeEventListener("focusout", burst);
+    };
+  }, []);
+  return box;
+}
+
 function OutletPicker({ value, onChange, error }) {
+  const vvBox = useVisualViewportBox();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   // Debounce 350ms (lebih panjang drpd versi client-filter sebelumnya yg
@@ -972,7 +1007,7 @@ function OutletPicker({ value, onChange, error }) {
 
   return (
     <div style={{ position: "relative" }}>
-      <button onClick={() => setOpen((v) => !v)} style={{
+      <button className="ao-in" onClick={() => setOpen((v) => !v)} style={{
         ...inputStyle, paddingLeft: 36, display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer",
         color: value ? INK : "#9A98A8", borderColor: error ? "#DC2626" : BORDER, position: "relative",
       }}>
@@ -990,8 +1025,9 @@ function OutletPicker({ value, onChange, error }) {
               nutup seluruh layar, search box sticky di atas, hasil full-
               height di bawahnya - selalu kebaca penuh apapun posisi field. */}
           <div style={{
-            position: "fixed", inset: 0, zIndex: 50, background: "#fff",
+            position: "fixed", left: 0, right: 0, zIndex: 50, background: "#fff",
             display: "flex", flexDirection: "column",
+            ...(vvBox ? { top: vvBox.top, height: vvBox.height } : { top: 0, bottom: 0 }),
           }}>
             <div style={{
               display: "flex", alignItems: "center", gap: 10,
@@ -1013,7 +1049,7 @@ function OutletPicker({ value, onChange, error }) {
                 <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari ID Outlet, nama, cabang..."
                   style={{
                     width: "100%", boxSizing: "border-box", padding: "12px 14px 12px 36px", borderRadius: 12,
-                    border: `1.5px solid ${BORDER}`, fontSize: 15.5, fontFamily: FONT, outline: "none",
+                    border: `1.5px solid ${BORDER}`, fontSize: 16, fontFamily: FONT, outline: "none",
                     background: "#FAFAFC", color: INK, colorScheme: "light",
                     boxShadow: "0 2px 6px rgba(20,18,28,0.04)",
                   }} />
@@ -1448,11 +1484,52 @@ export default function AuditOutletFormPage() {
   // nilai akhir setelah animasi keyboard selesai yg dipakai.
   const [vh, setVh] = useState(null);
   const [vTop, setVTop] = useState(0);
+  const [kbOpen, setKbOpen] = useState(false);
+  const rootRef = useRef(null);
+  useEffect(() => {
+    const isTyping = (el) => !!el && (el.tagName === "TEXTAREA" || (el.tagName === "INPUT" && !["checkbox", "radio", "button", "submit", "file", "range", "color"].includes(el.type)));
+    // Keyboard dianggap TERBUKA hanya kalau (1) ada kolom teks yg difokus DAN
+    // (2) tinggi area kelihatan benar2 menyusut dibanding tinggi normalnya.
+    // Sebelumnya cukup "ada kolom difokus" -> tombol bawah ikut hilang di
+    // desktop/emulator (tanpa keyboard layar) dan NYANGKUT hilang kalau kolom
+    // yg difokus dilepas tanpa event blur (mis. sheet "Cari ID Outlet" ditutup).
+    // Dicek ulang tiap 400ms + tiap event, jadi selalu self-healing.
+    const base = { h: 0 };
+    const measure = () => {
+      const vv = window.visualViewport;
+      const h = Math.round(vv ? vv.height * (vv.scale || 1) : window.innerHeight);
+      const typing = isTyping(document.activeElement);
+      if (!typing || base.h === 0) base.h = Math.max(h, typing ? base.h : 0) || h;
+      setKbOpen(typing && h < base.h - 120);
+    };
+    const onIn = (e) => {
+      if (!isTyping(e.target)) return;
+      measure();
+      // Setelah animasi keyboard selesai, gulirkan kolom yg difokus ke
+      // tengah area yg kelihatan supaya tidak tertutup keyboard.
+      const el = e.target;
+      setTimeout(() => { try { if (document.activeElement === el) el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch {} }, 380);
+    };
+    const onOut = () => { setTimeout(measure, 60); };
+    const vv = window.visualViewport;
+    const timer = setInterval(measure, 400);
+    window.addEventListener("focusin", onIn);
+    window.addEventListener("focusout", onOut);
+    window.addEventListener("orientationchange", () => { base.h = 0; });
+    vv?.addEventListener("resize", measure);
+    measure();
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focusin", onIn);
+      window.removeEventListener("focusout", onOut);
+      vv?.removeEventListener("resize", measure);
+    };
+  }, []);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const vv = window.visualViewport;
     const update = () => {
-      setVh(vv ? Math.round(vv.height) : window.innerHeight);
+      setVh(vv ? Math.round(vv.height * (vv.scale || 1)) : window.innerHeight);
       setVTop(vv ? Math.max(0, Math.round(vv.offsetTop)) : 0);
     };
     let raf = 0;
@@ -1614,6 +1691,8 @@ export default function AuditOutletFormPage() {
   // berikutnya dia dicoba ulang lagi secara diam2 (gak perlu sender tap
   // apa2). Kalau akhirnya sukses, chip errornya otomatis hilang.
   useEffect(() => { captureGps(); }, [step]);
+  // Pindah step -> selalu mulai dari atas (container ini yg scroll, bukan window).
+  useEffect(() => { rootRef.current?.scrollTo?.({ top: 0 }); }, [step]);
 
   // 4 jawaban availability (step "Cek Availability Produk" di mockup) -
   // null = belum dijawab (dibedakan dari false/"Tidak").
@@ -1659,7 +1738,10 @@ export default function AuditOutletFormPage() {
   // field yg kosong itu yg ditandai outline merah supaya user tahu persis
   // apa yg kurang, baru lanjut ke step berikutnya kalau semua sudah lengkap.
   const goNextFromData = () => {
-    if (dataValid) { setAttempted0(false); setStep(1); } else { setAttempted0(true); }
+    if (dataValid) { setAttempted0(false); setStep(1); return; }
+    setAttempted0(true);
+    const firstId = !namaSender.trim() ? "ao-field-sender" : !namaOutlet.trim() ? "ao-field-outlet" : "ao-field-id";
+    setTimeout(() => { try { document.getElementById(firstId)?.scrollIntoView({ block: "center", behavior: "smooth" }); } catch {} }, 60);
   };
   const goNextFromFoto = () => {
     if (fotoValid) { setAttempted1(false); setStep(2); } else { setAttempted1(true); }
@@ -1993,7 +2075,13 @@ export default function AuditOutletFormPage() {
     // yg jadi scroll container (overflowY:auto + -webkit-overflow-scrolling
     // utk momentum scroll iOS), gak ada lagi body yg kesorot - app ini
     // kerasa penuh layar (fullscreen) & konsisten di semua ukuran device.
-    <div style={{
+    <div ref={rootRef}
+      // Ketuk area kosong (bukan kolom/tombol/link) -> tutup keyboard.
+      onPointerDown={(e) => {
+        const a = document.activeElement;
+        if (a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA") && !e.target.closest("input,textarea,select,button,a,label")) a.blur();
+      }}
+      style={{
       // height eksplisit dari window.visualViewport (px, via hook `vh` di
       // atas) - khusus iOS PWA standalone, inset:0 doang/100dvh bisa
       // mismatch tipis dgn tinggi layar yg BENERAN kelihatan (Android gak
@@ -2002,6 +2090,9 @@ export default function AuditOutletFormPage() {
       position: "fixed", top: vTop, left: 0, right: 0,
       ...(vh ? { height: vh } : { bottom: 0 }),
       overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "none",
+      // Cegah zoom (pinch / double-tap) - iOS mengabaikan maximum-scale, jadi
+      // zoom nyangkut (layout "membesar", tombol bawah keluar layar).
+      touchAction: "pan-x pan-y",
       background: BG, fontFamily: FONT, display: "flex", flexDirection: "column",
     }}>
       {/* Jaring pengaman: <html>/<body> global (globals.css) punya
@@ -2022,6 +2113,29 @@ export default function AuditOutletFormPage() {
         .ao-wrap { max-width: 480px; }
         @media (min-width: 640px) { .ao-wrap { max-width: 560px; } }
         @media (min-width: 900px) { .ao-wrap { max-width: 640px; } }
+        /* Layar HP: padat & proporsional (bukan ukuran desktop yg terasa
+           "zoom"). Font input TETAP 16px (di bawah itu iOS auto-zoom). */
+        @media (max-width: 420px) {
+          .ao-page { padding-left: 14px !important; padding-right: 14px !important; padding-top: 14px !important; }
+          .ao-card { padding: 15px !important; border-radius: 16px !important; margin-bottom: 14px !important; }
+          .ao-card-hd { padding-bottom: 13px !important; margin-bottom: 13px !important; }
+          .ao-field { margin-bottom: 13px !important; }
+          .ao-label { font-size: 12.5px !important; margin-bottom: 6px !important; }
+          .ao-in { padding-top: 10px !important; padding-bottom: 10px !important; }
+          .ao-hdr { padding-top: calc(16px + env(safe-area-inset-top)) !important; }
+          .ao-stepper { padding: 18px 10px 16px !important; }
+          .ao-step-label { font-size: 10px !important; }
+          .ao-bar { padding-top: 12px !important; padding-bottom: calc(12px + env(safe-area-inset-bottom)) !important; }
+          .ao-btn { padding-top: 12px !important; padding-bottom: 12px !important; }
+        }
+        @media (max-width: 360px) {
+          .ao-page { padding-left: 12px !important; padding-right: 12px !important; }
+          .ao-card { padding: 13px !important; }
+          .ao-stepper { padding-left: 6px !important; padding-right: 6px !important; }
+          .ao-step-dot { width: 24px !important; height: 24px !important; font-size: 11px !important; }
+          .ao-step-line { margin-top: 10.5px !important; }
+          .ao-step-label { font-size: 9px !important; }
+        }
       `}</style>
       <CameraCapture open={cameraOpen} onClose={handleCameraClose} onCapture={handleCameraCapture} />
       {/* Input tersembunyi khusus HP - capture="environment" memaksa buka
@@ -2035,14 +2149,14 @@ export default function AuditOutletFormPage() {
         onChange={handleNativeCameraChange}
         style={{ display: "none" }}
       />
-      <div style={{ background: BRAND_GRADIENT, position: "sticky", top: 0, zIndex: 30 }}>
+      <div style={{ background: BRAND_GRADIENT, position: kbOpen ? "static" : "sticky", top: 0, zIndex: 30 }}>
         <Header title={<HeaderTitle showInstall={showInstallButton} onInstallClick={handleInstallClick} installing={installingApp} />} />
         <div style={{ background: "#fff", borderRadius: "22px 22px 0 0", marginTop: 0, boxShadow: "0 -8px 20px rgba(0,0,0,0.06)" }}>
           <Stepper step={step} onStepClick={goToStep} />
         </div>
       </div>
 
-      <div className="ao-wrap" style={{ flex: 1, width: "100%", margin: "0 auto", padding: "18px 18px calc(92px + env(safe-area-inset-bottom))", boxSizing: "border-box" }}>
+      <div className="ao-wrap ao-page" style={{ flex: 1, width: "100%", margin: "0 auto", padding: kbOpen ? "18px 18px 24px" : "18px 18px calc(92px + env(safe-area-inset-bottom))", boxSizing: "border-box" }}>
         {/* GPS dicek ulang tiap pindah step (lihat useEffect([step])) dan
             chip-nya dipasang di SINI (di luar blok per-step) - jadi dia
             selalu nongol pas di bawah Stepper, masih di dalam kontainer
@@ -2052,21 +2166,25 @@ export default function AuditOutletFormPage() {
         <GpsChip lat={gpsLat} lng={gpsLng} locating={gpsLocating} error={gpsError} onRetry={captureGps} />
         {step === 0 && (
           <SectionCard icon={<ClipboardList size={17} color="#fff" />} title="Data Outlet" subtitle="Informasi dasar outlet">
-            <Field label="Nama Sender" required>
+            <Field id="ao-field-sender" label="Nama Sender" required error={attempted0 && !namaSender.trim()}>
               <div style={{ position: "relative" }}>
                 <User size={15} color={MID} style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }} />
-                <input style={{ ...inputStyle, paddingLeft: 36, borderColor: attempted0 && !namaSender.trim() ? "#DC2626" : BORDER }}
-                  value={namaSender} onChange={(e) => setNamaSender(e.target.value.toUpperCase())} placeholder="Masukkan nama Anda" />
+                <input className="ao-in" style={{ ...inputStyle, paddingLeft: 36, borderColor: attempted0 && !namaSender.trim() ? "#DC2626" : BORDER }}
+                  value={namaSender} onChange={(e) => upperKeepCaret(e, setNamaSender)} placeholder="Masukkan nama Anda"
+                  autoComplete="off" autoCapitalize="characters" autoCorrect="off" spellCheck={false} enterKeyHint="next"
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); document.getElementById("ao-in-outlet")?.focus(); } }} />
               </div>
             </Field>
-            <Field label="Nama Outlet" required>
+            <Field id="ao-field-outlet" label="Nama Outlet" required error={attempted0 && !namaOutlet.trim()}>
               <div style={{ position: "relative" }}>
                 <Store size={15} color={MID} style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }} />
-                <input style={{ ...inputStyle, paddingLeft: 36, borderColor: attempted0 && !namaOutlet.trim() ? "#DC2626" : BORDER }}
-                  value={namaOutlet} onChange={(e) => setNamaOutlet(e.target.value.toUpperCase())} placeholder="Masukkan nama outlet" />
+                <input className="ao-in" style={{ ...inputStyle, paddingLeft: 36, borderColor: attempted0 && !namaOutlet.trim() ? "#DC2626" : BORDER }}
+                  id="ao-in-outlet" value={namaOutlet} onChange={(e) => upperKeepCaret(e, setNamaOutlet)} placeholder="Masukkan nama outlet"
+                  autoComplete="off" autoCapitalize="characters" autoCorrect="off" spellCheck={false} enterKeyHint="done"
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } }} />
               </div>
             </Field>
-            <Field label="ID Outlet" required>
+            <Field id="ao-field-id" label="ID Outlet" required error={attempted0 && !idOutlet.trim()}>
               <OutletPicker value={idOutlet} onChange={onPickOutlet} error={attempted0 && !idOutlet.trim()} />
             </Field>
             {idOutlet && (
@@ -2116,7 +2234,9 @@ export default function AuditOutletFormPage() {
             <Field label="Social Media" optional>
               <div style={{ position: "relative" }}>
                 <AtSign size={15} color={MID} style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)" }} />
-                <input style={{ ...inputStyle, paddingLeft: 36 }} value={socialMedia} onChange={(e) => setSocialMedia(e.target.value)} placeholder="Contoh: @namaoutlet, link IG/FB" />
+                <input className="ao-in" style={{ ...inputStyle, paddingLeft: 36 }} value={socialMedia} onChange={(e) => setSocialMedia(e.target.value)} placeholder="Contoh: @namaoutlet, link IG/FB"
+                  autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} enterKeyHint="done" inputMode="text"
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } }} />
               </div>
             </Field>
           </SectionCard>
@@ -2434,7 +2554,7 @@ export default function AuditOutletFormPage() {
         )}
       </div>
 
-      <BottomBar>
+      <BottomBar hidden={kbOpen}>
         {step > 0 && <GhostBtn onClick={() => setStep((s) => s - 1)}><ChevronLeft size={16} /> Kembali</GhostBtn>}
         {step === 0 && (
           <PrimaryBtn onClick={goNextFromData}>Selanjutnya <ChevronRight size={16} /></PrimaryBtn>
