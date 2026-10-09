@@ -13,7 +13,7 @@ import {
   fetchDocStats, listRefDocs, uploadSlot, deleteDocs, signedUrl,
   downloadMergedPdf, downloadMergedZip, downloadDoc, downloadDocsZip, refZipName, friendlyError, uploaderLabel,
   validateFile, partnerKey,
-  APPROVAL_DOC_TYPES, approvalKey, approvalStatus, fetchApprovals, approvalApi,
+  APPROVAL_DOC_TYPES, APPROVAL_ENABLED, approvalKey, approvalStatus, fetchApprovals, approvalApi,
   draftRef, isDraftRef, parseDraftRef, refDisplay, fetchDraftDocs,
 } from "../../../lib/payoutPartnerDocs";
 import {
@@ -95,7 +95,7 @@ function toast(t, msg, type = "ok") {
 export function usePartnerDocStats(profile) {
   const enabled = canViewAll(profile) || profile?.role === "finance_mpx" || profile?.role === "agency";
   const [state, setState] = useState({ byRef: {}, loaded: false, error: "" });
-  const [appr, setAppr] = useState({ available: true, byKey: {} });
+  const [appr, setAppr] = useState({ available: APPROVAL_ENABLED, byKey: {} });
   const [tick, setTick] = useState(0);
   useEffect(() => {
     if (!enabled) return;
@@ -103,10 +103,12 @@ export function usePartnerDocStats(profile) {
     fetchDocStats()
       .then((byRef) => { if (alive) setState({ byRef, loaded: true, error: "" }); })
       .catch((e) => { if (alive) setState((s) => ({ ...s, loaded: true, error: errMsg(e) })); });
-    // approval (BAST & Notification Letter); available=false kalau migration 20261008 belum jalan
-    fetchApprovals()
-      .then((a) => { if (alive) setAppr(a); })
-      .catch(() => { if (alive) setAppr({ available: false, byKey: {} }); });
+    // approval (BAST & Notification Letter); available=false kalau migration 20261008 belum jalan / fitur dimatikan
+    if (APPROVAL_ENABLED) {
+      fetchApprovals()
+        .then((a) => { if (alive) setAppr(a); })
+        .catch(() => { if (alive) setAppr({ available: false, byKey: {} }); });
+    }
     return () => { alive = false; };
   }, [enabled, tick]);
   const refresh = useCallback(() => setTick((x) => x + 1), []);
@@ -578,7 +580,7 @@ function SlotCard({ no, dt, files, canWrite: canWriteOwner, refId, partnerName, 
         </div>
       </div>
 
-      {APPROVAL_DOC_TYPES.includes(dt.key) && (
+      {APPROVAL_ENABLED && APPROVAL_DOC_TYPES.includes(dt.key) && (
         <ApprovalPanel approval={approval} status={apprSt} available={approvalsAvailable} isSPM={isSPM} hasFiles={has}
           slot={{ segment, owner_name: partnerName, ref_id: refId, doc_type: dt.key, ref_title: title, amount_text: amountText }}
           docLabel={dt.label} onChanged={onApprovalChanged} t={t} />
@@ -951,7 +953,9 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
   const selectable = isSPM && curStep === "merge";
   const cols = (selectable ? 1 : 0) + 8;
   const STEPS = [
-    ["gen", "1", "Generate & Approval", draftCount, "Create BAST & Notification Letters from the MPX Excel, then send them for approval. Approved PDFs are downloaded here for step 2."],
+    ["gen", "1", APPROVAL_ENABLED ? "Generate & Approval" : "Generate & Sign", draftCount, APPROVAL_ENABLED
+      ? "Create BAST & Notification Letters from the MPX Excel, then send them for approval. Approved PDFs are downloaded here for step 2."
+      : "Create e-signed BAST & Notification Letters from the MPX Excel. Each payment gets a unique Payment ID; download the PDFs here for step 2."],
     ["upload", "2", `Upload to ${DOC_REF_LABEL} / Invoice`, kpi.all, `Attach documents to each ${DOC_REF_LABEL}: drag files into a row, or use Bulk Upload to match many files by name.`],
     ["merge", "3", "Merge & Download", kpi.complete, `Combine the 4 documents of complete ${DOC_REF_LABEL}s into one PDF, individually or as a ZIP.`],
   ];
@@ -2016,9 +2020,9 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
   const resLabel = (v) => v === "ok" ? "✓ saved" : v === "same" ? "already saved" : v === "locked" ? "🔒 approved — skipped" : v ? `✕ ${v.replace(/^error: /, "")}` : "";
   const cfgFields = [
     ["p1Name", "First party (Pihak Pertama) — name"], ["p1Title", "First party — title"], ["p1Company", "First party — company"],
-    ["p1Email", "First party — approver email (BAST)", "email"],
+    APPROVAL_ENABLED && ["p1Email", "First party — approver email (BAST)", "email"],
     ["letterSignerName", "Letter signatory — name"], ["letterSignerTitle", "Letter signatory — title"], ["letterSignerUnit", "Letter signatory — unit"],
-    ["letterSignerEmail", "Letter signatory — approver email (Notification Letter)", "email"],
+    APPROVAL_ENABLED && ["letterSignerEmail", "Letter signatory — approver email (Notification Letter)", "email"],
     ["city", "City (letter date line)"], ["recipientMPC", "Recipient title — MPC"], ["recipientMP3", "Recipient title — MP3"],
   ];
   const errCount = items.filter((x) => x.errors.length).length;
@@ -2037,8 +2041,9 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
             <div id="ppd-gen-title" style={{ fontSize: 17, fontWeight: 800, marginTop: 2 }}>Generate BAST &amp; Notification Letters</div>
             <div style={{ fontSize: 12, color: t.muted, marginTop: 3, lineHeight: 1.45 }}>
               {wizStep === 1 ? "Upload the Source Data SMS workbook (sheets BAST and LETTER, one row per branch), or download a pre-filled template for the period first."
-                : wizStep === 2 ? "Check the amounts and preview each document. No PO is needed — documents are saved as drafts for approval."
-                : "Save the drafts and send them for approval. Approved PDFs are downloaded later from step 1 of the tab and bulk-uploaded to the PO / Invoice."}
+                : wizStep === 2 ? `Check the amounts and preview each document. No PO is needed — each payment gets a unique Payment ID.`
+                : APPROVAL_ENABLED ? "Save the drafts and send them for approval. Approved PDFs are downloaded later from step 1 of the tab and bulk-uploaded to the PO / Invoice."
+                : "Save the documents. Download them later from step 1 of the tab and bulk-uploaded with the Invoice & Faktur Pajak per Payment ID."}
             </div>
           </div>
           <button className="ppd-f" onClick={tryClose} aria-label="Close (Esc)" style={{ ...btnStyle(t, "ghost", false, true), fontSize: 20, lineHeight: 1, padding: "2px 8px", color: t.muted }}>×</button>
@@ -2047,7 +2052,7 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
         {/* Stepper + Settings */}
         <div style={{ padding: "10px 18px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <ol aria-label="Steps" style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-            {[[1, "Upload Excel"], [2, "Review & Preview"], [3, "Save & Request approval"]].map(([n, l], k) => {
+            {[[1, "Upload Excel"], [2, "Review & Preview"], [3, APPROVAL_ENABLED ? "Save & Request approval" : "Save"]].map(([n, l], k) => {
               const done = wizStep > n, active = wizStep === n;
               return (
                 <li key={n} aria-current={active ? "step" : undefined} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -2078,7 +2083,7 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
             <div>
               <div style={{ ...lbl, marginBottom: 8 }}>Signatories &amp; approvers</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-                {cfgFields.map(([k, lab, kind]) => {
+                {cfgFields.filter(Boolean).map(([k, lab, kind]) => {
                   const bad = kind === "email" && cfg[k] && !EMAIL_OK(cfg[k]);
                   return (
                     <label key={k} style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11.5, color: t.muted }}>
@@ -2298,7 +2303,7 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
                 </div>
               ))}
             </div>
-            <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+            {APPROVAL_ENABLED && <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
               <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: anyApprover && apprAvailable ? t.ink : t.muted }}>
                 <input type="checkbox" className="ppd-f" checked={autoApprOn} disabled={busy || phase === "done" || !anyApprover || !apprAvailable} onChange={(e) => setAutoAppr(e.target.checked)} />
                 Request approval automatically after saving
@@ -2308,7 +2313,7 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
                   : !anyApprover ? <>No approver email yet. <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.goodDark || TEAL_D, fontWeight: 600 }} onClick={() => setShowCfg(true)}>Add an approver email in ⚙ Settings</button>.</>
                   : <>BAST → <b>{EMAIL_OK(approverFor(cfg, "bast")) ? approverFor(cfg, "bast") : "no email (skipped)"}</b> · Notification Letter → <b>{EMAIL_OK(approverFor(cfg, "surat_pemberitahuan")) ? approverFor(cfg, "surat_pemberitahuan") : "no email (skipped)"}</b>. Slots already pending or approved are skipped.</>}
               </div>
-            </div>
+            </div>}
             {(phase === "saving" || phase === "done") && (
               <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: "12px 14px" }}>
                 <div style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted, marginBottom: 6 }}>{prog.label && phase === "saving" ? prog.label : `${phase === "done" ? "Completed" : "Generating & saving"} ${prog.i}/${prog.total} document(s)…`}</div>
@@ -2346,18 +2351,18 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
               <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy || !valid.length)} disabled={busy || !valid.length} onClick={() => setPv((p) => ({ ...p, all: true }))}
                 title="Combine every BAST and Notification Letter into one PDF to check before saving (nothing is saved)">👁 Preview all</button>
               <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || !docCount)} disabled={busy || !docCount} onClick={() => { closePreview(); setWiz("save"); }}>
-                Continue → Save &amp; approval ({docCount})
+                Continue → {APPROVAL_ENABLED ? "Save & approval" : "Save"} ({docCount})
               </button>
             </>}
             {wizStep === 3 && phase !== "done" && <>
               <button className="ppd-f" style={btnStyle(t, "ghost", busy)} disabled={busy} onClick={() => setWiz("review")}>← Back to review</button>
               <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || !docCount)} disabled={busy || !docCount} onClick={saveAll}
                 title={`Save the documents as drafts (no ${DOC_REF_LABEL} needed)${autoApprOn ? ", then request approval" : ""}.`}>
-                ⬆ {phase === "saving" ? `Saving ${prog.i}/${prog.total}…` : autoApprOn ? `Save drafts & request approval (${docCount})` : `Save ${docCount} draft document(s)`}
+                ⬆ {phase === "saving" ? `Saving ${prog.i}/${prog.total}…` : autoApprOn ? `Save drafts & request approval (${docCount})` : `Save ${docCount} document(s)`}
               </button>
             </>}
             {wizStep === 3 && phase === "done" && (
-              <button className="ppd-f ppd-act" style={btnStyle(t, "primary")} onClick={onClose}>Done — view generated drafts</button>
+              <button className="ppd-f ppd-act" style={btnStyle(t, "primary")} onClick={onClose}>Done — view generated documents</button>
             )}
           </div>
         </div>
@@ -2402,18 +2407,21 @@ function GeneratedDraftsPanel({ segment, docs, onGenerate, t }) {
     return [...m.values()].map((g) => {
       const st = {};
       DRAFT_SLOTS.forEach((dt) => {
-        const a = approvalStatus(docs?.approvals?.[approvalKey(segment, g.partner, g.ref, dt.key)]);
-        st[dt.key] = g.files[dt.key].length ? (a || "draft") : "missing";
+        const a = APPROVAL_ENABLED ? approvalStatus(docs?.approvals?.[approvalKey(segment, g.partner, g.ref, dt.key)]) : null;
+        st[dt.key] = g.files[dt.key].length ? (APPROVAL_ENABLED ? (a || "draft") : "generated") : "missing";
       });
       const vals = Object.values(st);
-      const overall = vals.every((v) => v === "approved") ? "approved" : vals.some((v) => v === "rejected") ? "rejected" : vals.some((v) => v === "pending") ? "pending" : "draft";
+      const overall = !APPROVAL_ENABLED
+        ? (vals.every((v) => v === "generated") ? "complete" : "incomplete")
+        : vals.every((v) => v === "approved") ? "approved" : vals.some((v) => v === "rejected") ? "rejected" : vals.some((v) => v === "pending") ? "pending" : "draft";
       return { ...g, st, overall, stat: byRef?.[statKey(segment, g.partner, g.ref)], amountText: "" };
     }).sort((a, b) => (b.info?.ym || "").localeCompare(a.info?.ym || "") || a.partner.localeCompare(b.partner) || (a.info?.type || "").localeCompare(b.info?.type || ""));
   }, [rowsRaw, docs?.approvals, byRef, segment]);
 
   const periods = useMemo(() => [...new Set(groups.map((g) => g.info?.ym).filter(Boolean))].sort().reverse(), [groups]);
   const shown = groups.filter((g) => (period === "all" || g.info?.ym === period) && (status === "all" || g.overall === status));
-  const approvedDocs = shown.flatMap((g) => DRAFT_SLOTS.filter((dt) => g.st[dt.key] === "approved")
+  const READY = APPROVAL_ENABLED ? "approved" : "generated";   // status yang boleh diunduh
+  const approvedDocs = shown.flatMap((g) => DRAFT_SLOTS.filter((dt) => g.st[dt.key] === READY)
     .flatMap((dt) => g.files[dt.key].map((f, i) => ({ ...f, file_name: draftFileName(g, dt.key).replace(/\.pdf$/, i ? `_${i + 1}.pdf` : ".pdf") }))));
   const selected = shown.filter((g) => sel.has(g.key));
   const toggle = (k) => setSel((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
@@ -2422,7 +2430,7 @@ function GeneratedDraftsPanel({ segment, docs, onGenerate, t }) {
     if (!approvedDocs.length) return;
     setZipping(true);
     try {
-      const { failed } = await downloadDocsZip(approvedDocs, `Approved_BAST_Letters_${period === "all" ? "all" : period}.zip`);
+      const { failed } = await downloadDocsZip(approvedDocs, `${APPROVAL_ENABLED ? "Approved_" : ""}BAST_Letters_${period === "all" ? "all" : period}.zip`);
       toast(t, failed.length ? `ZIP downloaded; ${failed.length} file(s) failed.` : `ZIP with ${approvedDocs.length} approved document(s) downloaded.`, failed.length ? "err" : "ok");
     } catch (e) { toast(t, `ZIP failed: ${errMsg(e)}`, "err"); }
     setZipping(false);
@@ -2432,6 +2440,7 @@ function GeneratedDraftsPanel({ segment, docs, onGenerate, t }) {
   const td = { padding: "9px 9px", color: t.ink2, borderBottom: `1px solid ${t.line}`, verticalAlign: "middle", fontSize: 12 };
   const seg = (on) => ({ fontFamily: "inherit", fontSize: 11.5, fontWeight: 600, padding: "5px 10px", borderRadius: 8, border: 0, cursor: "pointer", background: on ? TEAL : "transparent", color: on ? "#fff" : t.muted, whiteSpace: "nowrap" });
   const stCell = (v) => v === "missing" ? <span style={{ color: t.muted2, fontFamily: MONO, fontSize: 10.5 }}>—</span>
+    : v === "generated" ? <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", padding: "2px 7px", borderRadius: 6, color: t.goodDark || TEAL_D, background: t.goodBg, border: `1px solid ${t.goodBd}` }}>✓ Generated</span>
     : v === "draft" ? <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", padding: "2px 7px", borderRadius: 6, color: t.muted, background: t.surf2, border: `1px solid ${t.line2}` }}>Draft</span>
     : <ApprovalBadge status={v} t={t} />;
 
@@ -2444,18 +2453,18 @@ function GeneratedDraftsPanel({ segment, docs, onGenerate, t }) {
           {periods.map((p) => <option key={p} value={p}>{parseDraftRef(`GEN-${p}-X`)?.label || p}</option>)}
         </select>
         <div role="group" aria-label="Status filter" style={{ display: "inline-flex", background: t.surf3, borderRadius: 10, padding: 3, gap: 2, border: `1px solid ${t.line}`, flexWrap: "wrap" }}>
-          {[["all", "All"], ["draft", "Draft"], ["pending", "Pending"], ["approved", "Approved"], ["rejected", "Rejected"]].map(([k, l]) => (
+          {(APPROVAL_ENABLED ? [["all", "All"], ["draft", "Draft"], ["pending", "Pending"], ["approved", "Approved"], ["rejected", "Rejected"]] : [["all", "All"], ["complete", "Complete"], ["incomplete", "Incomplete"]]).map(([k, l]) => (
             <button key={k} className="ppd-f" aria-pressed={status === k} onClick={() => setStatus(k)} style={seg(status === k)}>{l}</button>
           ))}
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {docs?.approvalsAvailable !== false && (
+          {APPROVAL_ENABLED && docs?.approvalsAvailable !== false && (
             <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", !selected.length, true)} disabled={!selected.length} onClick={() => setReqOpen(true)}
               title="Request approval for the selected drafts (slots already pending or approved are skipped)">✉ Request approval ({selected.length})</button>
           )}
           <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", !approvedDocs.length || zipping, true)} disabled={!approvedDocs.length || zipping} onClick={downloadApproved}
             title="Download the approved BAST and Notification Letters shown below, ready to be bulk-uploaded to their PO / Invoice in step 2">
-            <IcoDownload /> {zipping ? "Preparing ZIP…" : `Download approved (${approvedDocs.length})`}
+            <IcoDownload /> {zipping ? "Preparing ZIP…" : `${APPROVAL_ENABLED ? "Download approved" : "Download"} (${approvedDocs.length})`}
           </button>
           <button className="ppd-f ppd-act" style={btnStyle(t, "primary", false, true)} onClick={onGenerate}>✎ Generate BAST &amp; Letters</button>
         </div>
@@ -2494,18 +2503,19 @@ function GeneratedDraftsPanel({ segment, docs, onGenerate, t }) {
                     <td style={{ ...td, fontFamily: MONO, fontSize: 11, whiteSpace: "nowrap" }}>{fmtDT(g.lastAt)}</td>
                     <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
                       {(() => {
-                        const mine = DRAFT_SLOTS.filter((dt) => g.st[dt.key] === "approved").flatMap((dt) => g.files[dt.key].map((f, k) => ({ ...f, file_name: draftFileName(g, dt.key).replace(/\.pdf$/, k ? `_${k + 1}.pdf` : ".pdf") })));
+                        const mine = DRAFT_SLOTS.filter((dt) => g.st[dt.key] === READY).flatMap((dt) => g.files[dt.key].map((f, k) => ({ ...f, file_name: draftFileName(g, dt.key).replace(/\.pdf$/, k ? `_${k + 1}.pdf` : ".pdf") })));
                         const openIt = () => setOpen({ partner: g.partner, ref: g.ref });
                         const dlMine = async () => { try { await downloadDocsZip(mine, `${g.partner}_${g.info?.type}_${g.info?.ym}_approved.zip`); } catch (e) { toast(t, `Download failed: ${errMsg(e)}`, "err"); } };
-                        const primary = g.overall === "approved" ? ["⬇ Download", dlMine, "primary"]
+                        const primary = !APPROVAL_ENABLED ? ["⬇ Download", dlMine, "primary"]
+                          : g.overall === "approved" ? ["⬇ Download", dlMine, "primary"]
                           : g.overall === "pending" ? ["View status", openIt, "outline"]
                           : ["Review & request", openIt, "primary"];
                         return (
                           <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
                             <button className={`ppd-f ${primary[2] === "primary" ? "ppd-act" : "ppd-act-o"}`} style={btnStyle(t, primary[2], false, true)} onClick={primary[1]}>{primary[0]}</button>
                             <RowMenu t={t} label={`More actions for ${g.partner} ${g.info?.type}`} items={[
-                              { label: "Preview & approval details", onClick: openIt },
-                              { label: `Download approved PDFs (${mine.length})`, onClick: dlMine, disabled: !mine.length },
+                              { label: APPROVAL_ENABLED ? "Preview & approval details" : "Preview documents", onClick: openIt },
+                              { label: `${APPROVAL_ENABLED ? "Download approved PDFs" : "Download PDFs"} (${mine.length})`, onClick: dlMine, disabled: !mine.length },
                             ]} />
                           </span>
                         );
@@ -2517,7 +2527,9 @@ function GeneratedDraftsPanel({ segment, docs, onGenerate, t }) {
         </table>
       </div>
       <div style={{ padding: "10px 20px", borderTop: `1px solid ${t.line}`, fontFamily: MONO, fontSize: 11, color: t.muted, background: t.surf2, borderRadius: "0 0 18px 18px" }}>
-        {shown.length} draft(s) · {shown.filter((g) => g.overall === "approved").length} fully approved · {shown.filter((g) => g.overall === "pending").length} pending · approved PDFs are named BAST_/LETTER_&lt;PARTNER&gt;_&lt;TYPE&gt;_&lt;YYYY-MM&gt;.pdf for Bulk Upload
+        {APPROVAL_ENABLED
+          ? <>{shown.length} draft(s) · {shown.filter((g) => g.overall === "approved").length} fully approved · {shown.filter((g) => g.overall === "pending").length} pending</>
+          : <>{shown.length} payment(s) · {shown.filter((g) => g.overall === "complete").length} with both documents</>}
       </div>
 
       {open && <RefDocsDrawer key={`${open.partner}|${open.ref}`} refId={open.ref} partnerName={open.partner} segment={segment}
