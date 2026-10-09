@@ -4,8 +4,8 @@ import { Resend } from "resend";
 import { requireReportMergeAccess } from "../../../../lib/reportMerge/auth";
 
 const RESEND_API_KEY = (process.env.RESEND_API_KEY || "").trim();
-const SENDER_EMAIL = (process.env.SENDER_EMAIL || "").trim();
-const SENDER_NAME = (process.env.SENDER_NAME || "Report Merge").trim();
+const SENDER_EMAIL = (process.env.SENDER_EMAIL || "snd@spmsumatera.site").trim();
+const SENDER_NAME = (process.env.SENDER_NAME || "Sales & Distribution Sumatera").trim();
 const TEST_RECIPIENT_EMAIL = (process.env.TEST_RECIPIENT_EMAIL || "").trim();
 const SETUP_OK = Boolean(RESEND_API_KEY && SENDER_EMAIL);
 const resend = SETUP_OK ? new Resend(RESEND_API_KEY) : null;
