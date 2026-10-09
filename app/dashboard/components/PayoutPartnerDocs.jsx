@@ -15,6 +15,7 @@ import {
   validateFile, partnerKey,
   APPROVAL_DOC_TYPES, APPROVAL_ENABLED, approvalKey, approvalStatus, fetchApprovals, approvalApi,
   draftRef, isDraftRef, parseDraftRef, refDisplay, fetchDraftDocs,
+  isPaymentRef, isGeneratedRef, parseGeneratedRef, paymentIdFor, assignPartnerCodes,
 } from "../../../lib/payoutPartnerDocs";
 import {
   parseTemplateWorkbook, parseSmsWorkbook, finalizeSms, detectWorkbookFormat, readTemplateCarryOver,
@@ -306,6 +307,7 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
 
   const changed = useCallback(() => { setReload((x) => x + 1); docsRefresh?.(); }, [docsRefresh]);
   // Draft hasil generate hanya punya slot BAST & Notification Letter
+  // Draft GEN-* lama: hanya BAST/Surat. Payment ID (PAY-*) menggantikan PO → semua slot (invoice & faktur ikut)
   const SLOTS = isDraftRef(refId) ? DOC_TYPES.filter((d) => APPROVAL_DOC_TYPES.includes(d.key)) : DOC_TYPES;
   const present = SLOTS.filter((d) => list.some((x) => x.doc_type === d.key)).length;
   const nextMissing = SLOTS.find((d) => !list.some((x) => x.doc_type === d.key));
@@ -351,7 +353,7 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
         <div style={{ padding: "16px 18px 14px", borderBottom: `1px solid ${t.line}`, background: t.surf, display: "flex", gap: 12, alignItems: "flex-start" }}>
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: MAGENTA, fontWeight: 700 }}>
-              {ownerLabel(segment)} Documents · {isDraftRef(refId) ? "Generated draft" : DOC_REF_LABEL}
+              {ownerLabel(segment)} Documents · {isPaymentRef(refId) ? "Payment ID" : isDraftRef(refId) ? "Generated draft" : DOC_REF_LABEL}
             </div>
             <div id="ppd-title" style={{ fontSize: 19, fontWeight: 800, marginTop: 3, fontFamily: MONO, letterSpacing: "-0.01em", wordBreak: "break-all" }}>{isDraftRef(refId) ? refDisplay(refId) : refId}</div>
             <div style={{ fontSize: 12.5, color: t.ink2, marginTop: 4, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={partnerName}>{partnerName}</div>
@@ -842,7 +844,7 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
     .map((p) => ({ ...p, key: statKey(segment, p.partner, p.ref) })), [allPos, pos, docs?.profile, segment]);
   const draftCount = useMemo(() => {
     const keys = new Set();
-    Object.keys(docs?.byRef || {}).forEach((k) => { const [sg, ow, ref] = k.split(":"); if (sg === segment && isDraftRef(ref)) keys.add(`${ow}:${ref}`); });
+    Object.keys(docs?.byRef || {}).forEach((k) => { const [sg, ow, ref] = k.split(":"); if (sg === segment && isGeneratedRef(ref)) keys.add(`${ow}:${ref}`); });
     return keys.size;
   }, [docs?.byRef, segment]);
 
@@ -1754,13 +1756,16 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
     return { exists: stat?.types?.[docType]?.n > 0, locked: appr === "approved", appr };
   };
 
+  // Kode partner unik per batch (untuk Payment ID)
+  const partnerCodes = useMemo(() => assignPartnerCodes((upload?.base || []).map((b) => b.partner)), [upload]);
+
   // Baris review = data upload + input modal + pilihan user (dihitung ulang tiap render)
   const items = useMemo(() => {
     if (!upload) return [];
     const per = parsePeriod(meta.period);
     const fallbackSigner = {};
     (lastTpl?.partners || []).forEach((p) => { fallbackSigner[`${p.type}|${String(p.partner).toUpperCase()}`] = { name: p.signerName, title: p.signerTitle }; });
-    return upload.base.map((b, id) => {
+    const list = upload.base.map((b, id) => {
       const e = edits[id] || {};
       const fin = upload.format === "sms"
         ? finalizeSms(b, {
@@ -1774,15 +1779,46 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
       if (m.how === "badref") warnings.push(`${DOC_REF_LABEL} ${fin.poRef} from the file was not found for this partner — saved as a draft instead.`);
       const po = e.poManual !== undefined ? e.poManual : m.po;
       const row = po ? byKey.get(po) : null;
-      const dref = fin.per ? draftRef(fin.per.ym, fin.type) : "";
-      const target = row ? { partner: row.partner, ref: row.ref, draft: false } : { partner: fin.partner, ref: dref, draft: true };
+      // Payment ID: dari Excel (PAYMENT_ID) atau otomatis PAY-<YYYYMM>-<TYPE>-<KODE>-<NN>
+      const code = partnerCodes.codes.get(partnerKey(fin.partner)) || "X";
+      const clash = partnerCodes.clashes.find((c) => c.partner === partnerKey(fin.partner));
+      if (clash) warnings.push(`Partner code ${clash.base} is already used by ${clash.with?.replace(/_/g, " ")} in this file — this partner uses ${clash.code}.`);
+      const exists = (ref) => (docs?.byRef?.[statKey(segment, fin.partner, ref)]?.files || 0) > 0;
+      let pid = "", pidExists = false, pidNext = "";
+      if (fin.paymentId) {
+        pid = fin.paymentId;
+        if (!isPaymentRef(pid)) warnings.push(`PAYMENT_ID "${pid}" does not follow the PAY-YYYYMM-TYPE-CODE-NN format (used as given).`);
+      } else if (fin.per) {
+        pid = paymentIdFor(fin.per.ym, fin.type, code, 1);
+        if (exists(pid)) {
+          pidExists = true;
+          let nn = 2; while (exists(paymentIdFor(fin.per.ym, fin.type, code, nn)) && nn < 99) nn++;
+          pidNext = paymentIdFor(fin.per.ym, fin.type, code, nn);
+          if ((e.pidMode || "new") === "new") pid = pidNext;
+        }
+      }
+      if (fin.paymentId && exists(fin.paymentId)) warnings.push(`${fin.paymentId} already has documents — new files will be added to it.`);
+      const target = row ? { partner: row.partner, ref: row.ref, draft: false } : { partner: fin.partner, ref: pid, draft: true, replace: pidExists && e.pidMode === "replace" };
+      const paymentId = row ? "" : pid;
       return {
         ...fin, id, errors, warnings, cands: m.cands, po: row ? po : "", target, how: e.poManual !== undefined ? (e.poManual ? "manual" : "draft") : m.how,
+        paymentId, pidExists, pidNext, pidMode: e.pidMode || "new", pidFirst: fin.per && !fin.paymentId ? paymentIdFor(fin.per.ym, fin.type, code, 1) : "",
+        letter: fin.letter && { ...fin.letter, paymentId }, bast: fin.bast && { ...fin.bast, paymentId },
         include: !errors.length && !!target.ref && (e.include ?? true), res: e.res || null, appr: e.appr || null,
         letterNoEdit: e.letterNo ?? meta.letterNo,
       };
     });
-  }, [upload, edits, meta, cfg.recipientMPC, cfg.recipientMP3, rows, byKey, lastTpl]);
+    // Payment ID harus unik dalam 1 batch
+    const count = new Map();
+    list.forEach((x) => { if (x.target?.draft && x.target.ref) count.set(x.target.ref, (count.get(x.target.ref) || 0) + 1); });
+    list.forEach((x) => {
+      if (x.target?.draft && count.get(x.target.ref) > 1) {
+        x.errors = [...x.errors, `Payment ID ${x.target.ref} is used by more than one row — fix PAYMENT_ID in the Excel.`];
+        x.include = false;
+      }
+    });
+    return list;
+  }, [upload, edits, meta, cfg.recipientMPC, cfg.recipientMP3, rows, byKey, lastTpl, partnerCodes, docs?.byRef, segment]);
 
   // ── Template download (format SMS) ──
   const downloadBlank = async () => {
@@ -1905,7 +1941,7 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
 
   const anyApprover = EMAIL_OK(approverFor(cfg, "bast")) || EMAIL_OK(approverFor(cfg, "surat_pemberitahuan"));
   const apprAvailable = docs?.approvalsAvailable !== false;
-  const autoApprOn = autoAppr && anyApprover && apprAvailable;
+  const autoApprOn = APPROVAL_ENABLED && autoAppr && anyApprover && apprAvailable;
 
   // Simpan sebagai draft (GEN-<periode>-<type>) atau ke PO yang ditautkan. single=true → 1 partner dari panel preview
   const saveItems = async (list, { single = false } = {}) => {
@@ -1936,7 +1972,7 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
         if (slotState(it, docType).locked) { res[kind] = "locked"; skip++; continue; }
         try {
           const file = new File([await build()], name, { type: "application/pdf" });
-          const r = await uploadSlot({ files: [file], partnerName: tg.partner, refId: tg.ref, docType, segment });
+          const r = await uploadSlot({ files: [file], partnerName: tg.partner, refId: tg.ref, docType, segment, replace: !!tg.replace });
           if (r.ok.length) { res[kind] = "ok"; ok++; savedSlots.push({ id: it.id, kind, docType, row: info }); }
           else if (r.skipped.length) { res[kind] = "same"; skip++; }
           else { res[kind] = `error: ${r.errors[0]?.message || "failed"}`; fail++; }
@@ -2188,14 +2224,22 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
                         <select className="ppd-f" aria-label={`Save ${x.partner} ${x.type} to`} value={x.po} disabled={bad || busy || phase === "done"}
                           onChange={(e) => setEdit(x.id, { poManual: e.target.value })}
                           style={{ ...inp, fontFamily: MONO, fontSize: 11, padding: "5px 6px" }}>
-                          <option value="">Draft · {x.target?.draft && x.target.ref ? x.target.ref : "no period"}</option>
+                          <option value="">{x.paymentId || "Choose a period"}</option>
                           {x.cands.length > 0 && <optgroup label={`Link to ${DOC_REF_LABEL} (optional)`}>
                             {x.cands.map((r) => <option key={r.key} value={r.key}>{r.ref} · {r.amountText}{r.ym ? ` · ${r.ym}` : ""}</option>)}
                           </optgroup>}
                         </select>
                         <div style={{ fontFamily: MONO, fontSize: 10, color: t.muted, marginTop: 2 }}>
-                          {x.po ? (x.how === "template" ? `linked from file` : "linked manually") : x.cands.length ? `${x.cands.length} ${DOC_REF_LABEL}(s) available to link` : `no ${DOC_REF_LABEL} needed`}
+                          {x.po ? (x.how === "template" ? `linked from file` : "linked manually") : `Payment ID${x.cands.length ? ` · or link one of ${x.cands.length} ${DOC_REF_LABEL}(s)` : ""}`}
                         </div>
+                        {!x.po && x.pidExists && (
+                          <select className="ppd-f" aria-label={`Existing payment for ${x.partner} ${x.type}`} value={x.pidMode} disabled={bad || busy || phase === "done"}
+                            onChange={(e) => setEdit(x.id, { pidMode: e.target.value })}
+                            style={{ ...inp, marginTop: 4, fontFamily: MONO, fontSize: 10.5, padding: "3px 5px", borderColor: t.warn }}>
+                            <option value="new">{`Already exists — create as ${x.pidNext}`}</option>
+                            <option value="replace">{`Replace existing ${x.pidFirst}`}</option>
+                          </select>
+                        )}
                       </td>
                       <td style={{ ...td, fontSize: 11, minWidth: 220 }}>
                         {x.errors.map((m, i) => <div key={`e${i}`} style={{ color: t.bad, fontWeight: 600 }}>✕ {m}</div>)}
@@ -2374,13 +2418,16 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
 
 // ── Generated drafts (SPM): BAST & Letter hasil generate yang belum ditautkan ke PO ──
 const DRAFT_SLOTS = DOC_TYPES.filter((d) => APPROVAL_DOC_TYPES.includes(d.key));
-const draftFileName = (g, docType) => `${docType === "bast" ? "BAST" : "LETTER"}_${g.partner}_${g.info?.type || ""}_${g.info?.ym || ""}.pdf`;
+const draftFileName = (g, docType) => (isPaymentRef(g.ref)
+  ? `${docType === "bast" ? "BAST" : "LETTER"}_${g.ref}_${g.partner}.pdf`
+  : `${docType === "bast" ? "BAST" : "LETTER"}_${g.partner}_${g.info?.type || ""}_${g.info?.ym || ""}.pdf`);
 
 function GeneratedDraftsPanel({ segment, docs, onGenerate, t }) {
   const [rowsRaw, setRowsRaw] = useState(null);   // null = memuat
   const [err, setErr] = useState("");
   const [period, setPeriod] = useState("all");
-  const [status, setStatus] = useState("all");    // all | draft | pending | approved | rejected
+  const [q, setQ] = useState("");                  // cari Payment ID / partner
+  const [status, setStatus] = useState("all");    // all | complete | incomplete (atau status approval bila aktif)
   const [open, setOpen] = useState(null);          // { partner, ref }
   const [sel, setSel] = useState(() => new Set());
   const [reqOpen, setReqOpen] = useState(false);
@@ -2399,7 +2446,7 @@ function GeneratedDraftsPanel({ segment, docs, onGenerate, t }) {
     const m = new Map();
     (rowsRaw || []).forEach((d) => {
       const k = `${d.partner_key}|${d.ref_id}`;
-      if (!m.has(k)) m.set(k, { key: k, partner: d.partner_name, ref: d.ref_id, info: parseDraftRef(d.ref_id), files: { bast: [], surat_pemberitahuan: [] }, lastAt: "" });
+      if (!m.has(k)) m.set(k, { key: k, partner: d.partner_name, ref: d.ref_id, info: parseGeneratedRef(d.ref_id), files: { bast: [], surat_pemberitahuan: [] }, lastAt: "" });
       const g = m.get(k);
       if (g.files[d.doc_type]) g.files[d.doc_type].push(d);
       if (d.uploaded_at > g.lastAt) g.lastAt = d.uploaded_at;
@@ -2419,7 +2466,9 @@ function GeneratedDraftsPanel({ segment, docs, onGenerate, t }) {
   }, [rowsRaw, docs?.approvals, byRef, segment]);
 
   const periods = useMemo(() => [...new Set(groups.map((g) => g.info?.ym).filter(Boolean))].sort().reverse(), [groups]);
-  const shown = groups.filter((g) => (period === "all" || g.info?.ym === period) && (status === "all" || g.overall === status));
+  const qq = q.trim().toLowerCase();
+  const shown = groups.filter((g) => (period === "all" || g.info?.ym === period) && (status === "all" || g.overall === status)
+    && (!qq || `${g.ref} ${g.partner}`.toLowerCase().includes(qq)));
   const READY = APPROVAL_ENABLED ? "approved" : "generated";   // status yang boleh diunduh
   const approvedDocs = shown.flatMap((g) => DRAFT_SLOTS.filter((dt) => g.st[dt.key] === READY)
     .flatMap((dt) => g.files[dt.key].map((f, i) => ({ ...f, file_name: draftFileName(g, dt.key).replace(/\.pdf$/, i ? `_${i + 1}.pdf` : ".pdf") }))));
@@ -2447,6 +2496,11 @@ function GeneratedDraftsPanel({ segment, docs, onGenerate, t }) {
   return (
     <div>
       <div style={{ padding: "12px 20px", borderBottom: `1px solid ${t.line}`, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", background: t.surf2 }}>
+        <div style={{ position: "relative", flex: "1 1 200px", maxWidth: 320 }}>
+          <span aria-hidden="true" style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: t.muted, fontSize: 13 }}>⌕</span>
+          <input className="ppd-f" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search Payment ID or partner…" aria-label="Search Payment ID or partner"
+            style={{ width: "100%", boxSizing: "border-box", fontFamily: "inherit", fontSize: 12.5, padding: "7px 10px 7px 28px", borderRadius: 10, border: `1px solid ${t.line2}`, background: t.surf, color: t.ink }} />
+        </div>
         <select className="ppd-f" aria-label="Period" value={period} onChange={(e) => setPeriod(e.target.value)}
           style={{ fontFamily: "inherit", fontSize: 12, padding: "6px 9px", borderRadius: 9, border: `1px solid ${t.line2}`, background: t.surf, color: t.ink }}>
           <option value="all">All periods</option>
@@ -2477,16 +2531,16 @@ function GeneratedDraftsPanel({ segment, docs, onGenerate, t }) {
               <input type="checkbox" className="ppd-f" aria-label="Select all drafts shown" checked={shown.length > 0 && shown.every((g) => sel.has(g.key))}
                 onChange={(e) => setSel(e.target.checked ? new Set(shown.map((g) => g.key)) : new Set())} />
             </th>
-            <th style={th}>Partner</th><th style={th}>Type</th><th style={th}>Period</th>
+            <th style={th}>Payment ID</th><th style={th}>Partner</th><th style={th}>Type</th><th style={th}>Period</th>
             <th style={th}>BAST</th><th style={th}>Notification Letter</th><th style={th}>Last updated</th><th style={{ ...th, textAlign: "right" }}>Actions</th>
           </tr></thead>
           <tbody>
             {rowsRaw == null
-              ? Array.from({ length: 4 }).map((_, i) => <tr key={i}>{Array.from({ length: 8 }).map((__, j) => <td key={j} style={td}><Skel t={t} /></td>)}</tr>)
+              ? Array.from({ length: 4 }).map((_, i) => <tr key={i}>{Array.from({ length: 9 }).map((__, j) => <td key={j} style={td}><Skel t={t} /></td>)}</tr>)
               : !shown.length
-                ? <tr><td colSpan={8} style={{ padding: "36px 16px", textAlign: "center", color: t.muted }}>
-                    <div style={{ fontWeight: 700, color: t.ink, fontSize: 13.5 }}>{groups.length ? "No drafts match the filters" : "No generated drafts yet"}</div>
-                    <div style={{ fontSize: 12, marginTop: 4 }}>{groups.length ? "Change the period or status filter." : "Use “Generate BAST & Letters” to create drafts from the MPX Excel."}</div>
+                ? <tr><td colSpan={9} style={{ padding: "36px 16px", textAlign: "center", color: t.muted }}>
+                    <div style={{ fontWeight: 700, color: t.ink, fontSize: 13.5 }}>{groups.length ? "No documents match the search or filters" : "No generated documents yet"}</div>
+                    <div style={{ fontSize: 12, marginTop: 4 }}>{groups.length ? "Change the search, period or status filter." : "Use “Generate BAST & Letters” to create documents from the MPX Excel."}</div>
                   </td></tr>
                 : shown.map((g, i) => (
                   <tr key={g.key} className="ppd-row" tabIndex={0} onClick={() => setOpen({ partner: g.partner, ref: g.ref })}
@@ -2495,6 +2549,7 @@ function GeneratedDraftsPanel({ segment, docs, onGenerate, t }) {
                     <td style={{ ...td, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" className="ppd-f" aria-label={`Select ${g.partner} ${g.info?.type}`} checked={sel.has(g.key)} onChange={() => toggle(g.key)} />
                     </td>
+                    <td style={{ ...td, fontFamily: MONO, fontWeight: 700, color: t.ink, whiteSpace: "nowrap" }}>{isPaymentRef(g.ref) ? g.ref : <span style={{ color: t.muted, fontWeight: 500 }} title={g.ref}>— (legacy draft)</span>}</td>
                     <td style={{ ...td, fontWeight: 600, color: t.ink }}>{g.partner}</td>
                     <td style={td}><span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 700, padding: "1px 6px", borderRadius: 6, background: t.surf3 }}>{g.info?.type}</span></td>
                     <td style={{ ...td, whiteSpace: "nowrap" }}>{g.info?.label}</td>
