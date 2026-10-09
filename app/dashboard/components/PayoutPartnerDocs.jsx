@@ -765,6 +765,41 @@ function ApprovalPanel({ approval, status, available, isSPM, hasFiles, slot, doc
   );
 }
 
+// Menu ⋯ untuk aksi sekunder (portal: tidak terpotong oleh kontainer tabel yang scroll)
+function RowMenu({ items, t, label = "More actions" }) {
+  const [pos, setPos] = useState(null);
+  const btnRef = useRef(null);
+  useEffect(() => {
+    if (!pos) return undefined;
+    const close = (e) => { if (e.type === "keydown" ? e.key === "Escape" : !e.target.closest?.("[data-ppd-menu]")) setPos(null); };
+    const closeNow = () => setPos(null);
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    window.addEventListener("scroll", closeNow, true);
+    window.addEventListener("resize", closeNow);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", close); window.removeEventListener("scroll", closeNow, true); window.removeEventListener("resize", closeNow); };
+  }, [pos]);
+  const open = () => { const r = btnRef.current.getBoundingClientRect(); setPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) }); };
+  const list = items.filter(Boolean);
+  return (
+    <>
+      <button ref={btnRef} className="ppd-f" aria-haspopup="menu" aria-expanded={!!pos} aria-label={label} title={label} onClick={(e) => { e.stopPropagation(); if (pos) setPos(null); else open(); }}
+        style={{ ...btnStyle(t, "ghost", false, true), padding: "4px 8px", fontSize: 15, lineHeight: 1, color: t.muted }}>⋯</button>
+      {pos && typeof document !== "undefined" && createPortal(
+        <div data-ppd-menu role="menu" style={{ position: "fixed", top: pos.top, right: pos.right, zIndex: 10020, minWidth: 210, background: t.surf, border: `1px solid ${t.line2}`, borderRadius: 12, boxShadow: t.shadow2 || "0 8px 24px rgba(0,0,0,.18)", padding: 5, animation: "ppd_fade .12s ease-out" }}>
+          {list.map((it, i) => (
+            <button key={i} role="menuitem" className="ppd-f" disabled={it.disabled} onClick={(e) => { e.stopPropagation(); setPos(null); it.onClick(); }}
+              title={it.hint || undefined}
+              style={{ all: "unset", boxSizing: "border-box", width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 8, fontSize: 12.5, cursor: it.disabled ? "not-allowed" : "pointer", color: it.disabled ? t.muted2 : it.danger ? t.bad : t.ink }}
+              onMouseEnter={(e) => { if (!it.disabled) e.currentTarget.style.background = t.surf2; }} onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+              {it.label}
+            </button>
+          ))}
+        </div>, document.body)}
+    </>
+  );
+}
+
 // ── Tab "Upload & Merge Dokumen" ───────────────────────────────────────────
 // pos: [{ ref, partner, title, amount, amountText, records }] dari data Payout yang sedang difilter.
 // segment: 'partner' | 'agency' (ikut toggle Partner/Agency Prepaid). noRefCount: baris tanpa PO.
@@ -781,13 +816,24 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
   const [bulkOpen, setBulkOpen] = useState(false); // modal Bulk Upload (SPM)
   const [reqOpen, setReqOpen] = useState(false);   // modal Request approval untuk PO terpilih (SPM)
   const [genOpen, setGenOpen] = useState(false);   // modal Generate BAST & Letters dari Excel MPX (SPM)
-  const [view, setView] = useState("po");          // "po" | "drafts" (Generated drafts, SPM)
+  // SPM: 3 langkah — "gen" (1 · Generate & Approval), "upload" (2 · Upload to PO), "merge" (3 · Merge & Download)
+  const [step, setStep] = useState("gen");
   const [bulk, setBulk] = useState(null);       // { i, total, ref }
   const [rowBusy, setRowBusy] = useState(null); // key PO yang sedang di-merge
   const isSPM = !!docs?.canMerge;
   const role = docs?.profile?.role;
   const own = ownerLabel(segment);
   const openDrawer = (key, slot = null) => { setOpenSlot(slot); setOpenKey(key); };
+  const curStep = isSPM ? step : "upload";
+  const goStep = (k) => { setStep(k); setStatus(k === "merge" ? "complete" : "all"); setSel(new Set()); setPage(1); };
+  const downloadAllFiles = async (r) => {
+    try {
+      const list = await listRefDocs(r.ref, segment, r.partner);
+      if (!list.length) { toast(t, "No files yet.", "info"); return; }
+      const { failed } = await downloadDocsZip(list, refZipName(r.ref, r.partner, "documents"), { byType: true });
+      toast(t, failed.length ? `ZIP downloaded; ${failed.length} file(s) failed.` : `ZIP with ${list.length} file(s) downloaded.`, failed.length ? "err" : "ok");
+    } catch (e) { toast(t, `Download failed: ${errMsg(e)}`, "err"); }
+  };
   // Generator: semua PO segment ini (tanpa filter dashboard) untuk tautan PO opsional
   const genRows = useMemo(() => (allPos || pos || [])
     .filter((p) => canViewPartner(docs?.profile, p.partner, segment))
@@ -902,7 +948,14 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
     : !isSPM ? "View-only access: you can open and download files. Uploads are handled by partners/agencies; merging is handled by SPM."
     : segment === "agency" ? "Agencies do not have upload access yet — SPM can upload on their behalf." : null;
 
-  const cols = (isSPM ? 1 : 0) + 8;
+  const selectable = isSPM && curStep === "merge";
+  const cols = (selectable ? 1 : 0) + 8;
+  const STEPS = [
+    ["gen", "1", "Generate & Approval", draftCount, "Create BAST & Notification Letters from the MPX Excel, then send them for approval. Approved PDFs are downloaded here for step 2."],
+    ["upload", "2", `Upload to ${DOC_REF_LABEL} / Invoice`, kpi.all, `Attach documents to each ${DOC_REF_LABEL}: drag files into a row, or use Bulk Upload to match many files by name.`],
+    ["merge", "3", "Merge & Download", kpi.complete, `Combine the 4 documents of complete ${DOC_REF_LABEL}s into one PDF, individually or as a ZIP.`],
+  ];
+  const stepHelp = STEPS.find((x) => x[0] === curStep)?.[4];
 
   return (
     <div style={{ background: t.surf, border: `1px solid ${t.line}`, borderRadius: 18, boxShadow: t.shadow1, marginBottom: 14, position: "relative" }}>
@@ -914,21 +967,28 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
             <span style={{ fontWeight: 700, fontSize: 14, letterSpacing: "-0.02em", color: t.ink }}>Document Upload &amp; Merge</span>
             <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", padding: "2px 8px", borderRadius: 99, background: `${MAGENTA}18`, color: MAGENTA, border: `1px solid ${MAGENTA}30` }}>{own} Prepaid</span>
           </div>
-          <div style={{ marginTop: 4, marginLeft: 14, fontFamily: MONO, fontSize: 10.5, color: t.muted }}>
-            {view === "drafts" ? "Generated BAST & Notification Letters awaiting approval — not linked to a " + DOC_REF_LABEL + " yet" : `By ${DOC_REF_LABEL} · ${DOC_TYPES.map((d, i) => `${i + 1}. ${d.label}`).join("  →  ")}`}
+          <div style={{ marginTop: 4, marginLeft: 14, fontSize: 12, color: t.muted, maxWidth: 760, lineHeight: 1.45 }}>
+            {isSPM ? stepHelp : `Documents per ${DOC_REF_LABEL}: ${DOC_TYPES.map((d) => d.label).join(" · ")}`}
           </div>
         </div>
-        {isSPM && (
-          <div role="tablist" aria-label="View" style={{ display: "inline-flex", background: t.surf3, borderRadius: 10, padding: 3, gap: 2, border: `1px solid ${t.line}` }}>
-            {[["po", `${DOC_REF_LABEL} documents`], ["drafts", `Generated drafts${draftCount ? ` (${draftCount})` : ""}`]].map(([k, l]) => (
-              <button key={k} role="tab" aria-selected={view === k} className="ppd-f" onClick={() => setView(k)}
-                style={{ fontFamily: "inherit", fontSize: 11.5, fontWeight: 600, padding: "5px 11px", borderRadius: 8, border: 0, cursor: "pointer", background: view === k ? TEAL : "transparent", color: view === k ? "#fff" : t.muted, whiteSpace: "nowrap" }}>{l}</button>
-            ))}
-          </div>
-        )}
       </div>
+      {isSPM && (
+        <div role="tablist" aria-label="Workflow steps" style={{ display: "flex", gap: 0, padding: "0 20px", borderBottom: `1px solid ${t.line}`, background: t.surf2, overflowX: "auto" }}>
+          {STEPS.map(([k, no, label, count]) => {
+            const active = curStep === k;
+            return (
+              <button key={k} role="tab" aria-selected={active} className="ppd-f" onClick={() => goStep(k)}
+                style={{ all: "unset", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 14px 10px", borderBottom: `2.5px solid ${active ? MAGENTA : "transparent"}`, color: active ? t.ink : t.muted, fontSize: 13, fontWeight: active ? 700 : 600, whiteSpace: "nowrap" }}>
+                <span aria-hidden="true" style={{ width: 20, height: 20, borderRadius: 99, display: "inline-flex", alignItems: "center", justifyContent: "center", fontFamily: MONO, fontSize: 11, fontWeight: 800, background: active ? MAGENTA : t.surf3, color: active ? "#fff" : t.muted }}>{no}</span>
+                {label}
+                <span style={{ fontFamily: MONO, fontSize: 10, padding: "1px 7px", borderRadius: 99, background: active ? `${MAGENTA}18` : t.surf3, color: active ? MAGENTA : t.muted, border: `1px solid ${active ? `${MAGENTA}30` : t.line}` }}>{docs?.loaded ? count.toLocaleString("en-US") : "…"}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
-      {view === "drafts" && isSPM ? (
+      {curStep === "gen" ? (
         <GeneratedDraftsPanel segment={segment} docs={docs} onGenerate={() => setGenOpen(true)} t={t} />
       ) : (<>
       {/* KPI strip */}
@@ -972,16 +1032,16 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
           ))}
         </div>
         <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 11, color: t.muted, whiteSpace: "nowrap" }}>{filtered.length.toLocaleString("en-US")} {DOC_REF_LABEL}s</span>
-        {isSPM && (
+        {isSPM && curStep === "upload" && (
           <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !docs?.loaded || !rows.length, true)} disabled={!docs?.loaded || !rows.length} onClick={() => setBulkOpen(true)}
             title={`Upload many files at once — automatically matched to a ${DOC_REF_LABEL} by file name`}>
             ⬆ Bulk Upload
           </button>
         )}
-        {isSPM && segment === "partner" && (
-          <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", !docs?.loaded, true)} disabled={!docs?.loaded} onClick={() => setGenOpen(true)}
-            title="Generate BAST and Notification Letters from the MPX data Excel">
-            ✎ Generate BAST &amp; Letters
+        {selectable && (
+          <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !selected.length || !!bulk, true)} disabled={!selected.length || !!bulk} onClick={mergeSelected}
+            title={selected.length ? `Download ${selected.length} merged PDF(s) as one ZIP` : `Select complete ${DOC_REF_LABEL}s first`}>
+            <IcoDownload /> Download merged ({selected.length})
           </button>
         )}
       </div>
@@ -990,7 +1050,7 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
       <div style={{ overflow: "auto", maxHeight: "68vh" }}>
         <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, fontSize: 12, minWidth: 1040 }}>
           <thead><tr>
-            {isSPM && (
+            {selectable && (
               <th style={th({ width: 34, textAlign: "center" })}>
                 <input type="checkbox" className="ppd-f" aria-label={`Select all complete ${DOC_REF_LABEL}s on this page`} checked={pageAllSel} disabled={!pageSelectable.length || !!bulk}
                   ref={(el) => { if (el) el.indeterminate = !pageAllSel && pageSomeSel; }} onChange={togglePage} />
@@ -1027,7 +1087,7 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
                       style={{ cursor: "pointer", background: isSel ? t.goodBg : zebra, transition: "background .1s" }}
                       onMouseEnter={(e) => { if (!isSel) e.currentTarget.style.background = t.rowHover; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = isSel ? t.goodBg : zebra; }}>
-                      {isSPM && (
+                      {selectable && (
                         <td style={td({ textAlign: "center" })} onClick={(e) => e.stopPropagation()}>
                           <input type="checkbox" className="ppd-f" aria-label={`Select ${r.ref}`} checked={isSel} disabled={r.st !== "complete" || !!bulk}
                             title={r.st !== "complete" ? `Only complete (${N}/${N}) ${DOC_REF_LABEL}s can be selected` : undefined} onChange={() => toggle(r.key)} />
@@ -1047,24 +1107,28 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
                       <td style={td()}><Ring n={r.n} t={t} /></td>
                       <td style={td({ fontFamily: MONO, fontSize: 11, color: r.lastAt ? t.ink2 : t.muted2, whiteSpace: "nowrap" })}>{r.lastAt ? fmtDT(r.lastAt) : <span style={{ fontFamily: "inherit", fontStyle: "italic" }}>{r.canWrite ? "No documents yet — click Upload" : "No documents yet"}</span>}</td>
                       <td style={td({ textAlign: "right", position: "sticky", right: 0, zIndex: 1, background: t.surf, boxShadow: `-8px 0 10px -8px rgba(0,0,0,0.18)` })} onClick={(e) => e.stopPropagation()}>
-                        <div style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
-                          {r.canWrite && (
+                        <div style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                          {curStep === "merge" ? (
+                            <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !!rowBusy || !!bulk || !r.n, true)} disabled={!!rowBusy || !!bulk || !r.n}
+                              onClick={() => mergeOne(r)} aria-label={`Download merged PDF for ${r.ref}`} title={!r.n ? "No documents to merge yet" : `Merge ${r.n}/${N} documents into one PDF`}>
+                              <IcoDownload />{rowBusy === r.key ? "…" : "Merge"}
+                            </button>
+                          ) : r.canWrite && r.n < N ? (
                             <button className="ppd-f ppd-act" style={btnStyle(t, "primary", false, true)} onClick={() => openDrawer(r.key, r.firstMissing || DOC_TYPES[0].key)}
                               aria-label={`Upload documents for ${r.ref}`} title={r.firstMissing ? `Upload ${DOC_TYPES.find((d) => d.key === r.firstMissing)?.label}` : "Add or replace documents"}>
                               ⬆ Upload
                             </button>
-                          )}
-                          {(r.n > 0 || !r.canWrite) && (
+                          ) : (
                             <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", false, true)} onClick={() => openDrawer(r.key)} aria-label={`View documents for ${r.ref}`}>
                               View ({r.n}/{N})
                             </button>
                           )}
-                          {isSPM && (
-                            <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", !!rowBusy || !!bulk || !r.n, true)} disabled={!!rowBusy || !!bulk || !r.n}
-                              onClick={() => mergeOne(r)} aria-label={`Download merge ${r.ref}`} title={!r.n ? "No documents to merge yet" : `Merge ${r.n}/${N} documents into one PDF`}>
-                              <IcoDownload />{rowBusy === r.key ? "…" : "Merge"}
-                            </button>
-                          )}
+                          <RowMenu t={t} label={`More actions for ${r.ref}`} items={[
+                            { label: `View documents (${r.n}/${N})`, onClick: () => openDrawer(r.key) },
+                            r.canWrite && { label: "⬆ Upload / replace documents", onClick: () => openDrawer(r.key, r.firstMissing || DOC_TYPES[0].key) },
+                            isSPM && { label: "Merge into one PDF", onClick: () => mergeOne(r), disabled: !r.n || !!rowBusy, hint: !r.n ? "No documents yet" : undefined },
+                            { label: "Download all files (ZIP)", onClick: () => downloadAllFiles(r), disabled: !r.n },
+                          ]} />
                         </div>
                       </td>
                     </tr>
@@ -1098,7 +1162,7 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
       )}
 
       {/* SPM bulk bar */}
-      {isSPM && (selected.length > 0 || bulk) && (
+      {selectable && (selected.length > 0 || bulk) && (
         <div role="region" aria-label={`Actions for selected ${DOC_REF_LABEL}s`} style={{ position: "sticky", bottom: 0, zIndex: 3, borderTop: `1px solid ${t.line2}`, background: t.surf, borderRadius: "0 0 18px 18px", padding: "11px 20px", boxShadow: "0 -6px 18px rgba(0,0,0,0.08)", display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: t.ink }}>
@@ -1122,7 +1186,7 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
       {openRow && <RefDocsDrawer key={openRow.key} refId={openRow.ref} partnerName={openRow.partner} segment={segment} title={openRow.title} amountText={openRow.amountText}
         docs={docs} focusSlot={openSlot} onClose={() => setOpenKey(null)} t={t} />}
       {bulkOpen && <BulkUploadModal rows={rows} segment={segment} docs={docs} onClose={() => setBulkOpen(false)} t={t} />}
-      {genOpen && <GenerateDocsModal rows={genRows} segment={segment} docs={docs} onClose={() => { setGenOpen(false); setView("drafts"); }} t={t} />}
+      {genOpen && <GenerateDocsModal rows={genRows} segment={segment} docs={docs} onClose={() => { setGenOpen(false); goStep("gen"); }} t={t} />}
       {reqOpen && <BulkApprovalModal rows={selected} segment={segment} docs={docs} onClose={() => setReqOpen(false)} t={t} />}
     </div>
   );
@@ -1659,10 +1723,12 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
   const [prog, setProg] = useState({ i: 0, total: 0 });
   const [zipping, setZipping] = useState(false);
   const [autoAppr, setAutoAppr] = useState(true);  // minta approval otomatis setelah simpan
+  const [wiz, setWiz] = useState("review");         // langkah wizard setelah upload: "review" | "save"
   const fileRef = useRef(null);
   const prevRef = useRef(null);
   const busy = phase === "saving" || zipping || tplBusy;
   const byKey = useMemo(() => new Map(rows.map((r) => [r.key, r])), [rows]);
+  const wizStep = !upload ? 1 : (phase === "saving" || phase === "done" || wiz === "save") ? 3 : 2;
   const [lastTpl, setLastTpl] = useState(readLastTpl); // diperbarui setelah generate berhasil
 
   const setCfgField = (k, v) => setCfg((c) => { const n = { ...c, [k]: v }; writeJson(GEN_CFG_KEY, n); return n; });
@@ -1771,6 +1837,7 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
       setUpload({ name: f.name, format, base, notices });
       setEdits({});
       setPhase("review");
+      setWiz("review");
       notices.slice(0, 3).forEach((n) => toast(t, n, "info"));
     } catch (err) { toast(t, errMsg(err), "err"); }
     setParsing(false);
@@ -1845,7 +1912,7 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
     const confirmMsg = `Save ${total} document(s) for ${list.length} partner(s)${nDraft ? ` (${nDraft} as generated drafts without a ${DOC_REF_LABEL})` : ""}?` + (auto
       ? `\n\nApproval will be requested automatically:\n• BAST → ${EMAIL_OK(approverFor(cfg, "bast")) ? approverFor(cfg, "bast") : "no approver email (skipped)"}\n• Notification Letter → ${EMAIL_OK(approverFor(cfg, "surat_pemberitahuan")) ? approverFor(cfg, "surat_pemberitahuan") : "no approver email (skipped)"}\n\nSlots that are already pending or approved are skipped.`
       : "\n\nNo approval request will be sent.");
-    if (!window.confirm(confirmMsg)) return;
+    if (single && !window.confirm(confirmMsg)) return;   // simpan semua: ringkasan langkah 3 sudah jadi konfirmasi
     const savedSlots = [];   // slot yang benar-benar baru tersimpan → kandidat approval otomatis
     setPhase("saving");
     setProg({ i: 0, total });
@@ -1969,63 +2036,103 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
             <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: MAGENTA, fontWeight: 700 }}>SPM · Document generator</div>
             <div id="ppd-gen-title" style={{ fontSize: 17, fontWeight: 800, marginTop: 2 }}>Generate BAST &amp; Notification Letters</div>
             <div style={{ fontSize: 12, color: t.muted, marginTop: 3, lineHeight: 1.45 }}>
-              Upload the Source Data SMS workbook (sheets BAST and LETTER, one row per branch) — or download a pre-filled one for the period first.
-              Documents are generated in Indonesian on the IOH letterhead, without signatures; PPN 11% and PPh 23 2% are recalculated by the app. No emails are sent.
+              {wizStep === 1 ? "Upload the Source Data SMS workbook (sheets BAST and LETTER, one row per branch), or download a pre-filled template for the period first."
+                : wizStep === 2 ? "Check the amounts and preview each document. No PO is needed — documents are saved as drafts for approval."
+                : "Save the drafts and send them for approval. Approved PDFs are downloaded later from step 1 of the tab and bulk-uploaded to the PO / Invoice."}
             </div>
           </div>
           <button className="ppd-f" onClick={tryClose} aria-label="Close (Esc)" style={{ ...btnStyle(t, "ghost", false, true), fontSize: 20, lineHeight: 1, padding: "2px 8px", color: t.muted }}>×</button>
         </div>
 
-        {/* Document details */}
-        <div style={{ padding: "12px 18px", borderBottom: `1px solid ${t.line}`, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, alignItems: "end" }}>
-          <label><div style={lbl}>Period</div><input className="ppd-f" type="month" value={meta.period} onChange={(e) => setMetaField("period", e.target.value)} disabled={disabledMeta} style={inp} /></label>
-          <label><div style={lbl}>Document date</div><input className="ppd-f" type="date" value={meta.docDate} onChange={(e) => setMetaField("docDate", e.target.value)} disabled={disabledMeta} style={inp} /></label>
-          <label><div style={lbl}>Claim deadline</div><input className="ppd-f" type="date" value={meta.deadline} onChange={(e) => setMetaField("deadline", e.target.value)} disabled={disabledMeta} style={inp} /></label>
-          <label style={{ gridColumn: "span 2" }}><div style={lbl}>Letter No (default for all partners)</div><input className="ppd-f" value={meta.letterNo} onChange={(e) => setMetaField("letterNo", e.target.value)} disabled={disabledMeta} style={{ ...inp, fontFamily: MONO }} /></label>
-        </div>
-
-        {/* Template + upload */}
-        <div style={{ padding: "12px 18px", borderBottom: `1px solid ${t.line}`, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
-          <input ref={prevRef} type="file" accept=".xlsx" hidden onChange={(e) => { setPrevFile(e.target.files?.[0] || null); e.target.value = ""; }} />
-          <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy)} disabled={busy} onClick={downloadPrefilled}
-            title="Partners and branches from last month (previous file or last generation) plus partners with a PO in this period. SLA, TDS and Sales Margin are left for you to fill.">
-            <IcoDownload /> {tplBusy ? "Preparing…" : "Download pre-filled template"}
-          </button>
-          <span style={{ fontSize: 11.5, color: t.muted, display: "inline-flex", gap: 6, alignItems: "center" }}>
-            based on
-            <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.goodDark || TEAL_D, fontWeight: 600 }} onClick={() => prevRef.current?.click()}>
-              {prevFile ? prevFile.name : lastTpl ? `last generation (${new Date(lastTpl.savedAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })})` : "Payout data — or choose last month’s file"}
-            </button>
-            {prevFile && <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.muted }} onClick={() => setPrevFile(null)} aria-label="Remove previous file">✕</button>}
-            · <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.goodDark || TEAL_D }} onClick={downloadBlank}>blank</button>
-            · <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.muted }} onClick={downloadLegacy}>legacy template</button>
-          </span>
-          <input ref={fileRef} type="file" accept=".xlsx,.xls" hidden onChange={onPick} />
-          <button className="ppd-f ppd-act" style={{ ...btnStyle(t, "primary", busy || parsing), marginLeft: "auto" }} disabled={busy || parsing} onClick={() => fileRef.current?.click()}>
-            ⬆ {parsing ? "Reading…" : upload ? "Upload another file" : "Upload Excel"}
-          </button>
-          <button className="ppd-f" style={btnStyle(t, "ghost", false, true)} onClick={() => setShowCfg((v) => !v)} aria-expanded={showCfg}>{showCfg ? "▾" : "▸"} Signatories</button>
-        </div>
-        {upload && <div style={{ padding: "6px 18px", fontFamily: MONO, fontSize: 11, color: t.muted, borderBottom: `1px solid ${t.line}` }}>{upload.name} · {isSms ? "Source Data SMS format" : "MPX Document Template"} · {items.length} partner/type row(s){errCount ? ` · ${errCount} with errors` : ""}{upload.notices?.length ? ` · ${upload.notices.length} skipped row(s)` : ""}</div>}
-        {showCfg && (
-          <div style={{ padding: "10px 18px 14px", borderBottom: `1px solid ${t.line}`, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, background: t.surf2 }}>
-            {cfgFields.map(([k, lab, kind]) => {
-              const bad = kind === "email" && cfg[k] && !EMAIL_OK(cfg[k]);
+        {/* Stepper + Settings */}
+        <div style={{ padding: "10px 18px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <ol aria-label="Steps" style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            {[[1, "Upload Excel"], [2, "Review & Preview"], [3, "Save & Request approval"]].map(([n, l], k) => {
+              const done = wizStep > n, active = wizStep === n;
               return (
-                <label key={k} style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11.5, color: t.muted }}>
-                  {lab}
-                  <input className="ppd-f" type={kind === "email" ? "email" : "text"} value={cfg[k] || ""} onChange={(e) => setCfgField(k, e.target.value)} disabled={busy}
-                    placeholder={kind === "email" ? "name@ioh.co.id (must have a SandraHub account)" : undefined} aria-invalid={bad || undefined}
-                    style={{ ...inp, borderColor: bad ? t.bad : t.line2 }} />
-                  {bad && <span style={{ color: t.bad, fontSize: 10.5 }}>Please enter a valid email address.</span>}
-                </label>
+                <li key={n} aria-current={active ? "step" : undefined} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  {k > 0 && <span aria-hidden="true" style={{ width: 22, height: 1.5, background: done || active ? TEAL : t.line2 }} />}
+                  <span aria-hidden="true" style={{ width: 22, height: 22, borderRadius: 99, display: "inline-flex", alignItems: "center", justifyContent: "center", fontFamily: MONO, fontSize: 11, fontWeight: 800, background: active ? TEAL : done ? t.goodBg : t.surf3, color: active ? "#fff" : done ? (t.goodDark || TEAL_D) : t.muted, border: done ? `1px solid ${t.goodBd}` : "none" }}>{done ? "✓" : n}</span>
+                  <span style={{ fontSize: 12.5, fontWeight: active ? 700 : 600, color: active ? t.ink : t.muted, whiteSpace: "nowrap" }}>{l}</span>
+                </li>
               );
             })}
-            <div style={{ fontSize: 11, color: t.muted, alignSelf: "end" }}>Saved on this browser. <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.goodDark || TEAL_D, fontWeight: 600 }} onClick={() => { const d = { ...DEFAULT_SIGNATORIES, recipientMPC: DEFAULT_RECIPIENT.MPC, recipientMP3: DEFAULT_RECIPIENT.MP3 }; setCfg(d); try { localStorage.removeItem(GEN_CFG_KEY); } catch { /* ignore */ } }}>Reset to defaults</button></div>
+          </ol>
+          <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 10.5, color: t.muted, maxWidth: 420, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            title={`Period ${meta.period} · Document date ${meta.docDate} · Claim deadline ${meta.deadline} · Letter No ${meta.letterNo}`}>
+            {parsePeriod(meta.period)?.label || "No period"} · {meta.docDate} · {meta.letterNo}
+          </span>
+          <button className="ppd-f ppd-act-o" style={btnStyle(t, showCfg ? "primary" : "outline", false, true)} onClick={() => setShowCfg((v) => !v)} aria-expanded={showCfg}>⚙ Settings</button>
+        </div>
+        {showCfg && (
+          <div style={{ padding: "12px 18px 14px", borderBottom: `1px solid ${t.line}`, background: t.surf2, display: "flex", flexDirection: "column", gap: 12, maxHeight: "40vh", overflow: "auto" }}>
+            <div>
+              <div style={{ ...lbl, marginBottom: 8 }}>Document details</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10, alignItems: "end" }}>
+                <label><div style={{ fontSize: 11.5, color: t.muted, marginBottom: 3 }}>Period</div><input className="ppd-f" type="month" value={meta.period} onChange={(e) => setMetaField("period", e.target.value)} disabled={disabledMeta} style={inp} /></label>
+                <label><div style={{ fontSize: 11.5, color: t.muted, marginBottom: 3 }}>Document date</div><input className="ppd-f" type="date" value={meta.docDate} onChange={(e) => setMetaField("docDate", e.target.value)} disabled={disabledMeta} style={inp} /></label>
+                <label><div style={{ fontSize: 11.5, color: t.muted, marginBottom: 3 }}>Claim deadline</div><input className="ppd-f" type="date" value={meta.deadline} onChange={(e) => setMetaField("deadline", e.target.value)} disabled={disabledMeta} style={inp} /></label>
+                <label style={{ gridColumn: "span 2" }}><div style={{ fontSize: 11.5, color: t.muted, marginBottom: 3 }}>Letter No (default for all partners)</div><input className="ppd-f" value={meta.letterNo} onChange={(e) => setMetaField("letterNo", e.target.value)} disabled={disabledMeta} style={{ ...inp, fontFamily: MONO }} /></label>
+              </div>
+            </div>
+            <div>
+              <div style={{ ...lbl, marginBottom: 8 }}>Signatories &amp; approvers</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
+                {cfgFields.map(([k, lab, kind]) => {
+                  const bad = kind === "email" && cfg[k] && !EMAIL_OK(cfg[k]);
+                  return (
+                    <label key={k} style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11.5, color: t.muted }}>
+                      {lab}
+                      <input className="ppd-f" type={kind === "email" ? "email" : "text"} value={cfg[k] || ""} onChange={(e) => setCfgField(k, e.target.value)} disabled={busy}
+                        placeholder={kind === "email" ? "name@ioh.co.id (must have a SandraHub account)" : undefined} aria-invalid={bad || undefined}
+                        style={{ ...inp, borderColor: bad ? t.bad : t.line2 }} />
+                      {bad && <span style={{ color: t.bad, fontSize: 10.5 }}>Please enter a valid email address.</span>}
+                    </label>
+                  );
+                })}
+              </div>
+              <div style={{ fontSize: 11, color: t.muted, marginTop: 8 }}>Saved on this browser. <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.goodDark || TEAL_D, fontWeight: 600 }} onClick={() => { const d = { ...DEFAULT_SIGNATORIES, recipientMPC: DEFAULT_RECIPIENT.MPC, recipientMP3: DEFAULT_RECIPIENT.MP3 }; setCfg(d); try { localStorage.removeItem(GEN_CFG_KEY); } catch { /* ignore */ } }}>Reset to defaults</button></div>
+            </div>
+          </div>
+        )}
+        <input ref={prevRef} type="file" accept=".xlsx" hidden onChange={(e) => { setPrevFile(e.target.files?.[0] || null); e.target.value = ""; }} />
+        <input ref={fileRef} type="file" accept=".xlsx,.xls" hidden onChange={onPick} />
+
+        {/* Langkah 1 — upload */}
+        {wizStep === 1 && (
+          <div style={{ flex: 1, overflow: "auto", padding: 18, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 16, alignContent: "start" }}>
+            <div role="button" tabIndex={0} className="ppd-f" onClick={() => !parsing && fileRef.current?.click()} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileRef.current?.click(); } }}
+              style={{ border: `2px dashed ${t.line2}`, borderRadius: 16, padding: "40px 18px", textAlign: "center", background: t.surf2, color: t.muted, fontSize: 12.5, lineHeight: 1.6, cursor: parsing ? "progress" : "pointer" }}>
+              <div style={{ color: TEAL, display: "inline-flex" }}><IcoUp /></div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: t.ink, marginTop: 4 }}>{parsing ? "Reading workbook…" : "Upload the Excel file"}</div>
+              Click to choose the Source Data SMS workbook (or the MPX Document Template).<br />One BAST and one Notification Letter per partner and type; branches are combined automatically.
+              <div style={{ marginTop: 12 }}><span className="ppd-act" style={{ ...btnStyle(t, "primary", parsing), display: "inline-flex" }}>⬆ {parsing ? "Reading…" : "Choose Excel file"}</span></div>
+            </div>
+            <div style={{ border: `1px solid ${t.line}`, borderRadius: 16, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700 }}>Need a template?</div>
+              <div style={{ fontSize: 12, color: t.muted, lineHeight: 1.5 }}>
+                The pre-filled template lists partners, branches, emails and signatories for <b>{parsePeriod(meta.period)?.label || "the selected period"}</b> — you only fill SLA, TDS and Sales Margin (yellow cells).
+              </div>
+              <div style={{ fontSize: 12, color: t.muted }}>
+                Based on: <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.goodDark || TEAL_D, fontWeight: 600 }} onClick={() => prevRef.current?.click()}>
+                  {prevFile ? prevFile.name : lastTpl ? `last generation (${new Date(lastTpl.savedAt).toLocaleDateString("en-GB", { day: "2-digit", month: "short" })})` : "Payout data — choose last month’s file instead"}
+                </button>
+                {prevFile && <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.muted, marginLeft: 6 }} onClick={() => setPrevFile(null)} aria-label="Remove previous file">✕</button>}
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy, true)} disabled={busy} onClick={downloadPrefilled}><IcoDownload /> {tplBusy ? "Preparing…" : "Download pre-filled template"}</button>
+                <RowMenu t={t} label="Other templates" items={[
+                  { label: "Blank template (Source Data SMS)", onClick: downloadBlank },
+                  { label: "Legacy template (MPX Document Template)", onClick: downloadLegacy },
+                ]} />
+              </div>
+              <div style={{ fontSize: 11, color: t.muted }}>Change the period in ⚙ Settings.</div>
+            </div>
           </div>
         )}
 
-        {/* Review + preview */}
+        {/* Langkah 2 — review + preview */}
+        {wizStep === 2 && (
         <div className="ppd-gen-body">
         <div className="ppd-gen-table" style={{ minHeight: 180 }}>
           {!items.length ? (
@@ -2172,48 +2279,86 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
           </aside>
         )}
         </div>
+        )}
 
-        <div style={{ borderTop: `1px solid ${t.line}`, background: t.surf2, padding: "12px 18px", display: "flex", flexDirection: "column", gap: 8 }}>
-          {(phase === "saving" || phase === "done") && (
-            <div>
-              <div style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted, marginBottom: 5 }}>{prog.label && phase === "saving" ? prog.label : `${phase === "done" ? "Completed" : "Generating & saving"} ${prog.i}/${prog.total} document(s)…`}</div>
-              <IndeterminateBar t={t} pct={prog.total ? Math.round((prog.i / prog.total) * 100) : 0} />
+        {/* Langkah 3 — simpan & approval */}
+        {wizStep === 3 && (
+          <div style={{ flex: 1, overflow: "auto", padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10 }}>
+              {[
+                ["Partner / type rows", ready.length, `${items.length - ready.length} excluded`],
+                ["Documents to save", docCount, "BAST + Notification Letter"],
+                ["Saved as drafts", ready.filter((x) => x.target.draft).length, `${ready.filter((x) => !x.target.draft).length} linked to a ${DOC_REF_LABEL}`],
+                ["Total transfer", null, rupiah(ready.reduce((a, x) => a + (x.letter?.total || 0), 0))],
+              ].map(([l, v, sub]) => (
+                <div key={l} style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: "12px 14px", background: t.surf2 }}>
+                  <div style={{ fontFamily: MONO, fontSize: 9.5, letterSpacing: "0.12em", textTransform: "uppercase", color: t.muted }}>{l}</div>
+                  <div style={{ fontSize: v == null ? 15 : 22, fontWeight: 800, marginTop: 3, fontFamily: v == null ? MONO : "inherit" }}>{v == null ? sub : v}</div>
+                  {v != null && <div style={{ fontFamily: MONO, fontSize: 10, color: t.muted }}>{sub}</div>}
+                </div>
+              ))}
             </div>
-          )}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            {items.length > 0 && (
-              <span style={{ fontFamily: MONO, fontSize: 11, color: t.muted }}>
-                {ready.length} of {items.length} row(s) ready · {docCount} document(s) to save · {ready.filter((x) => x.target.draft).length} as draft{items.some((x) => x.warnings.length) ? ` · ${items.filter((x) => x.warnings.length).length} with warnings` : ""}{errCount ? ` · ${errCount} row(s) with invalid data (blocked)` : ""}
-              </span>
+            <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: "12px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 600, color: anyApprover && apprAvailable ? t.ink : t.muted }}>
+                <input type="checkbox" className="ppd-f" checked={autoApprOn} disabled={busy || phase === "done" || !anyApprover || !apprAvailable} onChange={(e) => setAutoAppr(e.target.checked)} />
+                Request approval automatically after saving
+              </label>
+              <div style={{ fontSize: 12, color: t.muted, lineHeight: 1.6, paddingLeft: 24 }}>
+                {!apprAvailable ? "Approval tracking is not set up yet (run 20261008_payout_doc_approvals.sql) — drafts are saved without approval requests."
+                  : !anyApprover ? <>No approver email yet. <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.goodDark || TEAL_D, fontWeight: 600 }} onClick={() => setShowCfg(true)}>Add an approver email in ⚙ Settings</button>.</>
+                  : <>BAST → <b>{EMAIL_OK(approverFor(cfg, "bast")) ? approverFor(cfg, "bast") : "no email (skipped)"}</b> · Notification Letter → <b>{EMAIL_OK(approverFor(cfg, "surat_pemberitahuan")) ? approverFor(cfg, "surat_pemberitahuan") : "no email (skipped)"}</b>. Slots already pending or approved are skipped.</>}
+              </div>
+            </div>
+            {(phase === "saving" || phase === "done") && (
+              <div style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: "12px 14px" }}>
+                <div style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted, marginBottom: 6 }}>{prog.label && phase === "saving" ? prog.label : `${phase === "done" ? "Completed" : "Generating & saving"} ${prog.i}/${prog.total} document(s)…`}</div>
+                <IndeterminateBar t={t} pct={prog.total ? Math.round((prog.i / prog.total) * 100) : 0} />
+                {phase === "done" && (
+                  <ul style={{ listStyle: "none", margin: "10px 0 0", padding: 0, maxHeight: 220, overflow: "auto", fontSize: 11.5 }}>
+                    {ready.map((x) => (
+                      <li key={x.id} style={{ display: "flex", gap: 8, padding: "5px 0", borderTop: `1px solid ${t.line}` }}>
+                        <span style={{ flex: 1, minWidth: 0, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.partner} · {x.type}</span>
+                        <span style={{ color: t.muted }}>BAST {resLabel(x.res?.bast) || "—"}{x.appr?.bast ? ` · ${x.appr.bast}` : ""}</span>
+                        <span style={{ color: t.muted }}>Letter {resLabel(x.res?.letter) || "—"}{x.appr?.letter ? ` · ${x.appr.letter}` : ""}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             )}
-            <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {valid.length > 0 && (
-                <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy)} disabled={busy} onClick={() => setPv((p) => ({ ...p, all: true }))}
-                  title="Combine every BAST and Notification Letter into one PDF to check before saving (nothing is saved)">
-                  👁 Preview all
-                </button>
-              )}
-              {valid.length > 0 && (
-                <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy)} disabled={busy} onClick={downloadZip} title="Generate the documents for every valid row and download them as one ZIP, without saving to Payout Tracker">
-                  <IcoDownload /> {zipping ? "Preparing ZIP…" : "Download all as ZIP"}
-                </button>
-              )}
-              {phase !== "done" && items.length > 0 && (
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: anyApprover && apprAvailable ? t.ink2 : t.muted, alignSelf: "center" }}
-                  title={!apprAvailable ? "Approval tracking is not set up yet (run 20261008_payout_doc_approvals.sql)." : !anyApprover ? "Add an approver email in Signatories" : `BAST → ${approverFor(cfg, "bast") || "—"} · Notification Letter → ${approverFor(cfg, "surat_pemberitahuan") || "—"}`}>
-                  <input type="checkbox" className="ppd-f" checked={autoApprOn} disabled={busy || !anyApprover || !apprAvailable} onChange={(e) => setAutoAppr(e.target.checked)} />
-                  Request approval automatically after saving
-                  {!apprAvailable ? <span style={{ fontSize: 11, color: t.muted }}>(approval tracking not set up)</span>
-                    : !anyApprover && <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.goodDark || TEAL_D, fontWeight: 600, fontSize: 11.5 }} onClick={(e) => { e.preventDefault(); setShowCfg(true); }}>Add an approver email in Signatories</button>}
-                </label>
-              )}
-              {phase === "done"
-                ? <button className="ppd-f ppd-act" style={btnStyle(t, "primary")} onClick={onClose}>Done</button>
-                : <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || !docCount)} disabled={busy || !docCount} onClick={saveAll}
-                    title={`Generate the documents and save them as drafts (no ${DOC_REF_LABEL} needed)${autoApprOn ? ", then request approval" : ""}. Approved documents can be downloaded later and bulk-uploaded to the ${DOC_REF_LABEL}s.`}>
-                    ⬆ {phase === "saving" ? `Saving ${prog.i}/${prog.total}…` : autoApprOn ? `Save drafts & request approval (${docCount})` : `Save ${docCount} draft document(s)`}
-                  </button>}
-            </div>
+          </div>
+        )}
+
+        {/* Footer: satu tombol utama per langkah */}
+        <div style={{ borderTop: `1px solid ${t.line}`, background: t.surf2, padding: "12px 18px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          {wizStep === 2 && (
+            <span style={{ fontFamily: MONO, fontSize: 11, color: t.muted }}>
+              {upload?.name} · {ready.length} of {items.length} ready · {ready.filter((x) => x.target.draft).length} as draft{items.some((x) => x.warnings.length) ? ` · ${items.filter((x) => x.warnings.length).length} with warnings` : ""}{errCount ? ` · ${errCount} invalid (blocked)` : ""}
+            </span>
+          )}
+          <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            {wizStep === 1 && <button className="ppd-f" style={btnStyle(t, "ghost")} onClick={tryClose}>Cancel</button>}
+            {wizStep === 2 && <>
+              <RowMenu t={t} label="More" items={[
+                { label: "Download all as ZIP (no saving)", onClick: downloadZip, disabled: !valid.length || busy },
+                { label: "Upload another file", onClick: () => fileRef.current?.click(), disabled: busy },
+              ]} />
+              <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy || !valid.length)} disabled={busy || !valid.length} onClick={() => setPv((p) => ({ ...p, all: true }))}
+                title="Combine every BAST and Notification Letter into one PDF to check before saving (nothing is saved)">👁 Preview all</button>
+              <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || !docCount)} disabled={busy || !docCount} onClick={() => { closePreview(); setWiz("save"); }}>
+                Continue → Save &amp; approval ({docCount})
+              </button>
+            </>}
+            {wizStep === 3 && phase !== "done" && <>
+              <button className="ppd-f" style={btnStyle(t, "ghost", busy)} disabled={busy} onClick={() => setWiz("review")}>← Back to review</button>
+              <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || !docCount)} disabled={busy || !docCount} onClick={saveAll}
+                title={`Save the documents as drafts (no ${DOC_REF_LABEL} needed)${autoApprOn ? ", then request approval" : ""}.`}>
+                ⬆ {phase === "saving" ? `Saving ${prog.i}/${prog.total}…` : autoApprOn ? `Save drafts & request approval (${docCount})` : `Save ${docCount} draft document(s)`}
+              </button>
+            </>}
+            {wizStep === 3 && phase === "done" && (
+              <button className="ppd-f ppd-act" style={btnStyle(t, "primary")} onClick={onClose}>Done — view generated drafts</button>
+            )}
           </div>
         </div>
       </div>
@@ -2304,15 +2449,15 @@ function GeneratedDraftsPanel({ segment, docs, onGenerate, t }) {
           ))}
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", false, true)} onClick={onGenerate}>✎ Generate BAST &amp; Letters</button>
           {docs?.approvalsAvailable !== false && (
             <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", !selected.length, true)} disabled={!selected.length} onClick={() => setReqOpen(true)}
               title="Request approval for the selected drafts (slots already pending or approved are skipped)">✉ Request approval ({selected.length})</button>
           )}
-          <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !approvedDocs.length || zipping, true)} disabled={!approvedDocs.length || zipping} onClick={downloadApproved}
-            title="Download the approved BAST and Notification Letters shown below, ready to be bulk-uploaded to their PO / Invoice">
+          <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", !approvedDocs.length || zipping, true)} disabled={!approvedDocs.length || zipping} onClick={downloadApproved}
+            title="Download the approved BAST and Notification Letters shown below, ready to be bulk-uploaded to their PO / Invoice in step 2">
             <IcoDownload /> {zipping ? "Preparing ZIP…" : `Download approved (${approvedDocs.length})`}
           </button>
+          <button className="ppd-f ppd-act" style={btnStyle(t, "primary", false, true)} onClick={onGenerate}>✎ Generate BAST &amp; Letters</button>
         </div>
       </div>
       {err && <div role="alert" style={{ margin: "10px 20px", fontSize: 12, padding: "8px 12px", borderRadius: 10, color: t.bad, background: t.badBg, border: `1px solid ${t.badBd}` }}>Unable to load drafts: {err}</div>}
@@ -2347,8 +2492,24 @@ function GeneratedDraftsPanel({ segment, docs, onGenerate, t }) {
                     <td style={td}>{stCell(g.st.bast)}</td>
                     <td style={td}>{stCell(g.st.surat_pemberitahuan)}</td>
                     <td style={{ ...td, fontFamily: MONO, fontSize: 11, whiteSpace: "nowrap" }}>{fmtDT(g.lastAt)}</td>
-                    <td style={{ ...td, textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
-                      <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", false, true)} onClick={() => setOpen({ partner: g.partner, ref: g.ref })}>Preview &amp; approval</button>
+                    <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
+                      {(() => {
+                        const mine = DRAFT_SLOTS.filter((dt) => g.st[dt.key] === "approved").flatMap((dt) => g.files[dt.key].map((f, k) => ({ ...f, file_name: draftFileName(g, dt.key).replace(/\.pdf$/, k ? `_${k + 1}.pdf` : ".pdf") })));
+                        const openIt = () => setOpen({ partner: g.partner, ref: g.ref });
+                        const dlMine = async () => { try { await downloadDocsZip(mine, `${g.partner}_${g.info?.type}_${g.info?.ym}_approved.zip`); } catch (e) { toast(t, `Download failed: ${errMsg(e)}`, "err"); } };
+                        const primary = g.overall === "approved" ? ["⬇ Download", dlMine, "primary"]
+                          : g.overall === "pending" ? ["View status", openIt, "outline"]
+                          : ["Review & request", openIt, "primary"];
+                        return (
+                          <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+                            <button className={`ppd-f ${primary[2] === "primary" ? "ppd-act" : "ppd-act-o"}`} style={btnStyle(t, primary[2], false, true)} onClick={primary[1]}>{primary[0]}</button>
+                            <RowMenu t={t} label={`More actions for ${g.partner} ${g.info?.type}`} items={[
+                              { label: "Preview & approval details", onClick: openIt },
+                              { label: `Download approved PDFs (${mine.length})`, onClick: dlMine, disabled: !mine.length },
+                            ]} />
+                          </span>
+                        );
+                      })()}
                     </td>
                   </tr>
                 ))}
