@@ -187,6 +187,11 @@ const SUB_COLUMNS = [
   { key: "social_media", label: "Social Media" },
   { key: "foto_etalase_count", label: "Foto Etalase" },
   { key: "foto_tapak_count", label: "Foto Tampak" },
+  { key: "vis_poster", label: "Poster" },
+  { key: "vis_shopblind", label: "Shopblind" },
+  { key: "vis_flagchain", label: "Flagchain" },
+  { key: "vis_tablemate", label: "Table Mate / Tent Card" },
+  { key: "vis_sticker_etalase", label: "Sticker Etalase" },
   // Availability (step baru di mobile - 4 checklist Ya/Tidak) + GPS - lihat
   // ao_list_submissions: availability_score/completeness/status dihitung
   // server-side persis definisi Download_Guide template.
@@ -440,6 +445,11 @@ function SubmissionBody() {
   ];
   const TEXT_COLS_AFTER_PHOTO = [
     ["Social Media", (r) => r.social_media || ""],
+    ["Visibility Poster", (r) => r.vis_poster ?? ""],
+    ["Visibility Shopblind", (r) => r.vis_shopblind ?? ""],
+    ["Visibility Flagchain", (r) => r.vis_flagchain ?? ""],
+    ["Visibility Table Mate / Tent Card", (r) => r.vis_tablemate ?? ""],
+    ["Visibility Sticker Etalase", (r) => r.vis_sticker_etalase ?? ""],
     ["Varian SP IM3", (r) => r.sp_im3 || ""],
     ["Varian SP 3ID", (r) => r.sp_3id || ""],
     ["Varian Voucher IM3", (r) => r.voucher_im3 || ""],
@@ -735,11 +745,15 @@ function SubmissionBody() {
                     display = `${Math.round(v).toLocaleString("id-ID")} m`;
                     color = v > 200 ? "#DC2626" : v <= 50 ? "#16A34A" : T.mid;
                   }
+                  if (c.key.startsWith("vis_") && v != null) {
+                    display = String(v);
+                    color = v === 1 ? "#16A34A" : "#DC2626";
+                  }
                   if (c.key === "radius_score" && v != null) {
                     display = v === 1 ? "Dalam Radius" : "Di Luar Radius";
                     color = v === 1 ? "#16A34A" : "#DC2626";
                   }
-                  return <td key={c.key} style={{ padding: "8px 12px", color, fontFamily: mono ? "monospace" : undefined, fontWeight: isSlab || c.key === "status" || c.key === "completeness" || c.key === "radius_score" ? 700 : undefined }}>{display}</td>;
+                  return <td key={c.key} style={{ padding: "8px 12px", color, fontFamily: mono ? "monospace" : undefined, fontWeight: isSlab || c.key === "status" || c.key === "completeness" || c.key === "radius_score" || c.key.startsWith("vis_") ? 700 : undefined }}>{display}</td>;
                 })}
                 <td style={{ padding: "8px 12px" }}>
                   <Btn variant="ghost" onClick={() => openPreview(s)}>Lihat</Btn>

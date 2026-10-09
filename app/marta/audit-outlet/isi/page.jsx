@@ -15,9 +15,9 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  AlertTriangle, ArrowLeft, AtSign, Calendar, Camera, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
-  ClipboardList, Download, Image as ImageIcon, Loader2, MapPin, Pencil, PlusSquare, ScanBarcode, Search, Send,
-  Share, Store, Ticket, User, X,
+  AlertTriangle, ArrowLeft, AtSign, Blinds, Calendar, Camera, Check, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight,
+  ClipboardList, Download, Eye, Flag, Frame, Image as ImageIcon, Loader2, MapPin, Pencil, PlusSquare, ScanBarcode, Search, Send,
+  Share, Sticker, Store, Tent, Ticket, User, X,
 } from "lucide-react";
 import lottie from "lottie-web";
 import successAnimData from "../../../../public/promotor/success-animation.json";
@@ -57,9 +57,24 @@ const BG = "#F7F6FA";
 const STEPS = [
   { key: "data", label: "Data Outlet" },
   { key: "foto", label: "Foto Outlet" },
+  { key: "visibility", label: "Visibility" },
   { key: "availability", label: "Availability" },
-  { key: "review", label: "Review & Kirim" },
+  { key: "review", label: "Review" },
 ];
+
+// Step "Visibility" (sebelum Availability) - 5 materi visibilitas, tiap item
+// dijawab Ada (1) atau Tidak Ada (0). Key dipakai jadi nama state `vis` DAN
+// dikirim ke ao_create_submission (visPoster/visShopblind/visFlagchain/
+// visTablemate/visStickerEtalase) -> kolom vis_* di ao_submissions.
+const VISIBILITY_ITEMS = [
+  { key: "poster", label: "Poster", desc: "Poster promo terpasang di outlet.", icon: Frame },
+  { key: "shopblind", label: "Shopblind", desc: "Shopblind / tirai promo di depan toko.", icon: Blinds },
+  { key: "flagchain", label: "Flagchain", desc: "Rangkaian bendera promo (flag chain).", icon: Flag },
+  { key: "tablemate", label: "Table Mate / Tent Card", desc: "Table mate atau tent card di meja / etalase.", icon: Tent },
+  { key: "stickerEtalase", label: "Sticker Etalase", desc: "Stiker promo menempel di etalase.", icon: Sticker },
+];
+const VIS_YES = { grad: "linear-gradient(135deg, #22C55E, #16A34A)", shadow: "0 3px 10px rgba(22,163,74,0.35)", solid: "#16A34A", tint: "rgba(22,163,74,0.05)", border: "rgba(22,163,74,0.28)" };
+const VIS_NO = { grad: "linear-gradient(135deg, #F87171, #DC2626)", shadow: "0 3px 10px rgba(220,38,38,0.3)", solid: "#DC2626", tint: "rgba(220,38,38,0.04)", border: "rgba(220,38,38,0.25)" };
 
 // 4 parameter availability (sesuai mockup "Cek Availability Produk") - key
 // dipakai jadi nama state DAN dikirim ke ao_create_submission (spIm3/sp3id/
@@ -816,6 +831,86 @@ function AvailabilityRow({ item, value, onChange, error }) {
   );
 }
 
+// ── Step "Visibility": toggle Ada / Tidak Ada dgn highlight yg "geser"
+// (transform, bukan ganti warna tombol) - hijau utk Ada, merah utk Tidak Ada.
+function VisibilityToggle({ value, onChange }) {
+  const opts = [{ v: 1, label: "Ada", Icon: Check }, { v: 0, label: "Tidak Ada", Icon: X }];
+  const idx = value === 1 ? 0 : value === 0 ? 1 : -1;
+  const tone = value === 1 ? VIS_YES : VIS_NO;
+  return (
+    <div role="radiogroup" style={{ position: "relative", display: "flex", background: "#F1EFF6", borderRadius: 12, padding: 4 }}>
+      {idx >= 0 && (
+        <div style={{
+          position: "absolute", top: 4, bottom: 4, left: 4, width: "calc(50% - 4px)",
+          transform: `translateX(${idx * 100}%)`, background: tone.grad, borderRadius: 9, boxShadow: tone.shadow,
+          transition: "transform .28s cubic-bezier(.34,1.3,.64,1)",
+        }} />
+      )}
+      {opts.map(({ v, label, Icon }) => {
+        const active = value === v;
+        return (
+          <button key={v} type="button" role="radio" aria-checked={active} onClick={() => onChange(v)} style={{
+            position: "relative", zIndex: 1, flex: 1, border: "none", background: "transparent",
+            padding: "10px 6px", borderRadius: 9, cursor: "pointer", fontFamily: FONT, outline: "none",
+            fontSize: 13.5, fontWeight: 800, color: active ? "#fff" : "#8784A0",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            transition: "color .2s ease .05s",
+          }}>
+            <Icon size={14} strokeWidth={3} />{label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function VisibilityRow({ item, value, onChange, error }) {
+  const answered = value === 0 || value === 1;
+  const tone = value === 1 ? VIS_YES : VIS_NO;
+  const Icon = item.icon;
+  const cardBorder = error ? "#DC2626" : answered ? tone.border : BORDER;
+  return (
+    <div style={{
+      // Non-shorthand penuh (lihat komentar di AvailabilityRow) - hindari
+      // warning React utk border + borderLeft yg dicampur.
+      borderRadius: 16,
+      borderTop: `1.5px solid ${cardBorder}`, borderRight: `1.5px solid ${cardBorder}`, borderBottom: `1.5px solid ${cardBorder}`,
+      borderLeft: `4px solid ${error ? "#DC2626" : answered ? tone.solid : "rgba(236,11,111,0.3)"}`,
+      background: answered ? tone.tint : "#fff", padding: 15,
+      boxShadow: answered ? "0 2px 8px rgba(20,18,28,0.04)" : "0 1px 3px rgba(20,18,28,0.03)",
+      transition: "background .25s ease, border-color .25s ease, box-shadow .25s ease",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+        <div style={{
+          flexShrink: 0, width: 44, height: 44, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center",
+          background: answered ? tone.grad : `linear-gradient(135deg, ${PINK}, ${PINK_DK})`,
+          boxShadow: "0 3px 8px rgba(20,18,28,0.1)", transition: "background .25s ease",
+        }}>
+          <Icon size={21} color="#fff" strokeWidth={2.1} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 800, color: INK, lineHeight: 1.3 }}>{item.label}</div>
+          <div style={{ fontSize: 11.5, color: MID, marginTop: 3, lineHeight: 1.4 }}>{item.desc}</div>
+        </div>
+        {answered && (
+          <div key={value} style={{
+            flexShrink: 0, width: 24, height: 24, borderRadius: "50%", background: tone.solid,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            animation: "visPop .25s cubic-bezier(.34,1.56,.64,1) both",
+          }}>
+            {value === 1 ? <Check size={13} color="#fff" strokeWidth={3.2} /> : <X size={13} color="#fff" strokeWidth={3.2} />}
+          </div>
+        )}
+      </div>
+      <VisibilityToggle value={value} onChange={onChange} />
+      {error && (
+        <div style={{ fontSize: 11, color: "#DC2626", fontWeight: 700, marginTop: 10 }}>Wajib dijawab sebelum lanjut</div>
+      )}
+      <style>{`@keyframes visPop { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }`}</style>
+    </div>
+  );
+}
+
 const OUTLET_RESULTS_CAP = 60; // batasi baris yg DI-RENDER - dgn ~16rb
 // outlet, nge-render SEMUA hasil kosong/query pendek bikin DOM berat &
 // kerasa lemot. Query tetap jalan ke semua data, cuma tampilannya dibatasi.
@@ -1378,7 +1473,7 @@ export default function AuditOutletFormPage() {
   };
   const showInstallButton = !isStandalone && (isIOS || !!installPrompt);
 
-  const [step, setStep] = useState(0); // 0=Data Outlet, 1=Foto Outlet, 2=Review, 3=Konfirmasi(terpisah)
+  const [step, setStep] = useState(0); // 0=Data Outlet, 1=Foto Outlet, 2=Visibility, 3=Availability, 4=Review (Konfirmasi = layar `done` terpisah)
   const [done, setDone] = useState(false);
   const [doneAt, setDoneAt] = useState(null);
   const [showSuccessAnim, setShowSuccessAnim] = useState(false);
@@ -1503,6 +1598,13 @@ export default function AuditOutletFormPage() {
   const [voucher3id, setVoucher3id] = useState(null);
   const availabilityState = { spIm3: [spIm3, setSpIm3], sp3id: [sp3id, setSp3id], voucherIm3: [voucherIm3, setVoucherIm3], voucher3id: [voucher3id, setVoucher3id] };
 
+  // 5 jawaban visibility (step "Cek Visibility Outlet") - null = belum
+  // dijawab, 1 = Ada, 0 = Tidak Ada (dikirim apa adanya ke kolom vis_*).
+  const VIS_EMPTY = { poster: null, shopblind: null, flagchain: null, tablemate: null, stickerEtalase: null };
+  const [vis, setVis] = useState(VIS_EMPTY);
+  const setVisItem = (key, val) => setVis((prev) => ({ ...prev, [key]: val }));
+  const [attemptedV, setAttemptedV] = useState(false); // sama utk step Visibility
+
   const [submitting, setSubmitting] = useState(false);
   const [progressMsg, setProgressMsg] = useState("");
   const [progressStep, setProgressStep] = useState({ current: 0, total: 1 });
@@ -1524,6 +1626,8 @@ export default function AuditOutletFormPage() {
   const fotoValid = etalaseCount >= 1 && !!tapakFile;
   const availabilityValid = spIm3 !== null && sp3id !== null && voucherIm3 !== null && voucher3id !== null;
   const availabilityAnsweredCount = [spIm3, sp3id, voucherIm3, voucher3id].filter((v) => v !== null).length;
+  const visibilityAnsweredCount = VISIBILITY_ITEMS.filter((it) => vis[it.key] !== null).length;
+  const visibilityValid = visibilityAnsweredCount === VISIBILITY_ITEMS.length;
 
   // Tombol "Selanjutnya" SELALU bisa diklik ("tombol dibuat bisa diklik") -
   // kalau ada field wajib yg masih kosong, bukan diblok (disabled), tapi
@@ -1535,8 +1639,11 @@ export default function AuditOutletFormPage() {
   const goNextFromFoto = () => {
     if (fotoValid) { setAttempted1(false); setStep(2); } else { setAttempted1(true); }
   };
+  const goNextFromVisibility = () => {
+    if (visibilityValid) { setAttemptedV(false); setStep(3); } else { setAttemptedV(true); }
+  };
   const goNextFromAvailability = () => {
-    if (availabilityValid) { setAttempted2(false); setStep(3); } else { setAttempted2(true); }
+    if (availabilityValid) { setAttempted2(false); setStep(4); } else { setAttempted2(true); }
   };
 
   // Klik langsung di Stepper (lihat <Stepper onStepClick>) - mundur ke step
@@ -1549,7 +1656,8 @@ export default function AuditOutletFormPage() {
     if (target <= step) { setStep(target); return; }
     if (!dataValid) { setAttempted0(true); setStep(0); return; }
     if (target >= 2 && !fotoValid) { setAttempted1(true); setStep(1); return; }
-    if (target >= 3 && !availabilityValid) { setAttempted2(true); setStep(2); return; }
+    if (target >= 3 && !visibilityValid) { setAttemptedV(true); setStep(2); return; }
+    if (target >= 4 && !availabilityValid) { setAttempted2(true); setStep(3); return; }
     setStep(target);
   };
 
@@ -1636,6 +1744,8 @@ export default function AuditOutletFormPage() {
         socialMedia: socialMedia.trim(),
         latitude: gpsLat, longitude: gpsLng,
         spIm3, sp3id, voucherIm3, voucher3id,
+        visPoster: vis.poster, visShopblind: vis.shopblind, visFlagchain: vis.flagchain,
+        visTablemate: vis.tablemate, visStickerEtalase: vis.stickerEtalase,
       });
       advance();
       for (let i = 0; i < etalase.length; i++) {
@@ -1650,7 +1760,7 @@ export default function AuditOutletFormPage() {
       setDone(true);
     } catch (e) {
       setErr(e?.message || "Gagal mengirim data, coba lagi.");
-      setStep(3);
+      setStep(4);
     } finally {
       setSubmitting(false); setProgressMsg(""); setProgressStep({ current: 0, total: 1 });
     }
@@ -1660,6 +1770,7 @@ export default function AuditOutletFormPage() {
     setNamaSender(""); setNamaOutlet(""); setIdOutlet(""); setSocialMedia(""); setSelectedOutlet(null);
     setEtalaseFiles([null, null, null]); setTapakFile(null);
     setSpIm3(null); setSp3id(null); setVoucherIm3(null); setVoucher3id(null);
+    setVis(VIS_EMPTY); setAttemptedV(false);
     setGpsLat(null); setGpsLng(null); setGpsError("");
     setStep(0); setDone(false); setErr("");
     captureGps();
@@ -2019,6 +2130,30 @@ export default function AuditOutletFormPage() {
         )}
 
         {step === 2 && (
+          <SectionCard icon={<Eye size={17} color="#fff" />} title="Cek Visibility Outlet" subtitle="Ada atau tidak ada di outlet">
+            {/* Progres jawaban - bar + hitungan, berubah hijau begitu 5/5. */}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+              <div style={{ flex: 1, height: 6, borderRadius: 99, background: "#EFEDF4", overflow: "hidden" }}>
+                <div style={{
+                  width: `${(visibilityAnsweredCount / VISIBILITY_ITEMS.length) * 100}%`, height: "100%", borderRadius: 99,
+                  background: visibilityValid ? "linear-gradient(90deg, #22C55E, #16A34A)" : `linear-gradient(90deg, ${PINK}, ${ORANGE})`,
+                  transition: "width .35s ease, background .3s ease",
+                }} />
+              </div>
+              <span style={{ fontSize: 11.5, fontWeight: 800, color: visibilityValid ? "#16A34A" : MID, whiteSpace: "nowrap" }}>
+                {visibilityAnsweredCount}/{VISIBILITY_ITEMS.length} dijawab
+              </span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {VISIBILITY_ITEMS.map((item) => (
+                <VisibilityRow key={item.key} item={item} value={vis[item.key]} onChange={(v) => setVisItem(item.key, v)}
+                  error={attemptedV && vis[item.key] === null} />
+              ))}
+            </div>
+          </SectionCard>
+        )}
+
+        {step === 3 && (
           <SectionCard icon={<Search size={17} color="#fff" />} title="Cek Availability Produk" subtitle="Jumlah varian tiap produk">
             {Object.entries(
               AVAILABILITY_ITEMS.reduce((acc, item) => {
@@ -2067,7 +2202,7 @@ export default function AuditOutletFormPage() {
           </SectionCard>
         )}
 
-        {step === 3 && (
+        {step === 4 && (
           <>
             {/* Header halaman polos (BUKAN kartu lagi) - 3 section di
                 bawahnya (Data Outlet/Foto Outlet/Availability Produk)
@@ -2170,7 +2305,40 @@ export default function AuditOutletFormPage() {
                 </div>
             </ReviewSection>
 
-            <ReviewSection icon={<Search size={17} color="#fff" />} title="Availability Produk" subtitle="Jumlah varian tiap produk" onUbah={() => setStep(2)}>
+            <ReviewSection icon={<Eye size={17} color="#fff" />} title="Visibility Outlet" subtitle="Ada / tidak ada di outlet" onUbah={() => setStep(2)}>
+              <div style={{ borderRadius: 12, background: "#FBFAFC", border: `1px solid ${BORDER}`, padding: "8px 10px" }}>
+                {VISIBILITY_ITEMS.map((item, i) => {
+                  const val = vis[item.key];
+                  const ada = val === 1;
+                  const Icon = item.icon;
+                  return (
+                    <div key={item.key} style={{
+                      display: "flex", alignItems: "center", gap: 8, padding: "5px 0",
+                      borderTop: i > 0 ? `1px solid ${BORDER}` : "none", fontSize: 12,
+                    }}>
+                      <span style={{
+                        flexShrink: 0, width: 24, height: 24, borderRadius: 7, display: "flex", alignItems: "center", justifyContent: "center",
+                        background: val === null ? "#C8C5D0" : ada ? VIS_YES.solid : VIS_NO.solid,
+                      }}>
+                        <Icon size={13} color="#fff" strokeWidth={2.2} />
+                      </span>
+                      <span style={{ color: INK, flex: 1, fontWeight: 500 }}>{item.label}</span>
+                      <span style={{
+                        display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0,
+                        fontSize: 10.5, fontWeight: 800, padding: "3px 9px 3px 7px", borderRadius: 999,
+                        background: val === null ? "rgba(120,116,133,0.12)" : ada ? "rgba(22,163,74,0.12)" : "rgba(220,38,38,0.1)",
+                        color: val === null ? MID : ada ? "#15803D" : "#B91C1C",
+                      }}>
+                        {val === null ? "-" : ada ? <Check size={11} strokeWidth={3.2} /> : <X size={11} strokeWidth={3.2} />}
+                        {val === null ? "" : ada ? "Ada" : "Tidak Ada"}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </ReviewSection>
+
+            <ReviewSection icon={<Search size={17} color="#fff" />} title="Availability Produk" subtitle="Jumlah varian tiap produk" onUbah={() => setStep(3)}>
               {/* Dibungkus 1 kartu luar (konsisten sama 2 section di atas) -
                   grup SP/Voucher di dalamnya tetap kebedain lewat box+warna
                   masing2 spt sebelumnya. */}
@@ -2250,9 +2418,12 @@ export default function AuditOutletFormPage() {
           <PrimaryBtn onClick={goNextFromFoto}>Selanjutnya <ChevronRight size={16} /></PrimaryBtn>
         )}
         {step === 2 && (
-          <PrimaryBtn onClick={goNextFromAvailability}>Selanjutnya <ChevronRight size={16} /></PrimaryBtn>
+          <PrimaryBtn onClick={goNextFromVisibility}>Selanjutnya <ChevronRight size={16} /></PrimaryBtn>
         )}
         {step === 3 && (
+          <PrimaryBtn onClick={goNextFromAvailability}>Selanjutnya <ChevronRight size={16} /></PrimaryBtn>
+        )}
+        {step === 4 && (
           <PrimaryBtn onClick={submit} disabled={submitting}>
             {submitting ? (<><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> {progressMsg || "Mengirim..."}</>) : (<><Send size={15} /> Kirim Data</>)}
           </PrimaryBtn>
