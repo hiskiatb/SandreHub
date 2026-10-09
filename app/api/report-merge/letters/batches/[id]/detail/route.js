@@ -36,7 +36,10 @@ export async function GET(req, { params }) {
         filename: item.filename,
         previewUrl: signed ? signed.signedUrl : null,
         rowData: row,
-        emailTo: parseEmailCell(pickRowField(row, ["EMAIL_TO", "EMAIL", "EMAIL_PARTNER"])),
+        // Kolom email yang dipilih user waktu batch dibuat didahulukan.
+        emailTo: parseEmailCell(pickRowField(row, batch.email_column
+          ? [batch.email_column, "EMAIL_TO", "EMAIL", "EMAIL_PARTNER"]
+          : ["EMAIL_TO", "EMAIL", "EMAIL_PARTNER"])),
         emailCc: parseEmailCell(pickRowField(row, ["EMAIL_CC", "CC"])),
         partnerName: pickRowField(row, ["PARTNER_NAME", "PT_NAME", "NAME", "NAMA"]),
         blastStatus: item.blast_status || "pending",

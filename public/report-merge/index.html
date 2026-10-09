@@ -55,7 +55,7 @@
 </script>
 
 <meta charset="UTF-8">
-<title>Blast Email — Sales Performance Sumatera</title>
+<title>Blast Email — Sales &amp; Distribution Sumatera</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20viewBox%3D%220%200%2036%2036%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22g%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%2236%22%20y2%3D%2236%22%20gradientUnits%3D%22userSpaceOnUse%22%3E%3Cstop%20offset%3D%220%25%22%20stop-color%3D%22%2332BCAD%22/%3E%3Cstop%20offset%3D%22100%25%22%20stop-color%3D%22%2327A093%22/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width%3D%2236%22%20height%3D%2236%22%20rx%3D%2210%22%20fill%3D%22url%28%23g%29%22/%3E%3Cg%20stroke%3D%22%23fff%22%20stroke-width%3D%223%22%20stroke-linecap%3D%22round%22%3E%3Cline%20x1%3D%2210%22%20y1%3D%2226%22%20x2%3D%2210%22%20y2%3D%2220%22/%3E%3Cline%20x1%3D%2218%22%20y1%3D%2226%22%20x2%3D%2218%22%20y2%3D%2215%22/%3E%3Cline%20x1%3D%2226%22%20y1%3D%2226%22%20x2%3D%2226%22%20y2%3D%2210%22/%3E%3C/g%3E%3C/svg%3E">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -73,14 +73,14 @@
 <style>
   @font-face{
     font-family:'Indosat';
-    src:url('/fonts/IndosatMedium.ttf') format('truetype');
+    src:url('/report-merge/fonts/IndosatMedium.ttf') format('truetype');
     font-weight:500;
     font-style:normal;
     font-display:swap;
   }
   @font-face{
     font-family:'Indosat';
-    src:url('/fonts/IndosatBold.ttf') format('truetype');
+    src:url('/report-merge/fonts/IndosatBold.ttf') format('truetype');
     font-weight:700;
     font-style:normal;
     font-display:swap;
@@ -411,6 +411,14 @@
     display:flex; align-items:center; gap:8px;
   }
   .field-group-label:first-child{ margin-top:0; }
+  details.adv > summary{ list-style:none; cursor:pointer; user-select:none; }
+  details.adv > summary::-webkit-details-marker{ display:none; }
+  details.adv > summary::before{ content:'▸'; font-size:11px; transition:transform .15s; }
+  details.adv[open] > summary::before{ transform:rotate(90deg); }
+  .adv-sum{ text-transform:none; letter-spacing:0; font-weight:500; color:var(--muted); font-size:12px; }
+  .surat-guide{ display:flex; gap:8px; flex-wrap:wrap; margin:0 0 16px; }
+  .surat-guide span{ background:transparent; color:var(--ink2); border:1px solid var(--line); border-radius:999px; padding:4px 12px; font-size:12px; }
+  .surat-auto-note{ font-size:12px; color:var(--muted); margin-top:6px; }
   .field-group-label::after{ content:''; flex:1; height:1px; background:var(--line); }
 
   /* Strip ringkas buat informasi terkunci (bukan input bebas) — dulu
@@ -451,6 +459,42 @@
   }
   .token-pill:hover{ background:rgba(50,188,173,.12); border-color:var(--teal); }
   .token-pill:active{ transform:scale(.94); }
+
+  /* Toolbar Bold/Italic di atas textarea narasi — blok teks di textarea,
+     klik tombol, jadi tidak perlu tahu/ketik manual tanda ** atau *. */
+  .rt-toolbar{ display:flex; gap:6px; margin-bottom:8px; }
+  .rt-btn{
+    font-family:var(--font-data); font-size:12.5px; padding:5px 13px; border-radius:8px;
+    background:var(--surf2); border:1px solid var(--line2); color:var(--ink); cursor:pointer;
+    transition:all .12s; line-height:1.4;
+  }
+  .rt-btn:hover{ background:rgba(50,188,173,.12); border-color:var(--teal); color:var(--teal-d); }
+  .rt-btn:active{ transform:scale(.94); }
+  .rt-color-group{ display:flex; align-items:center; gap:4px; padding:3px 8px 3px 6px; border:1px solid var(--line2); border-radius:8px; background:var(--surf2); }
+  .rt-color-icon{ font-size:12.5px; line-height:1; user-select:none; }
+  .rt-color-icon.rt-color-icon-text{ font-weight:700; color:#E53935; font-family:var(--font-data); }
+  .rt-color{ width:20px; height:20px; padding:0; border:1px solid var(--line2); border-radius:5px; cursor:pointer; background:none; }
+
+  /* Layout 2 kolom di Langkah 2 "Atur Surat": form di kiri, preview PDF
+     live di kanan. Kolom kanan sticky (nempel) supaya tetap kelihatan
+     waktu form kiri di-scroll panjang. Di layar sempit (mobile/tablet)
+     ditumpuk jadi 1 kolom (lihat @media di bawah) — preview tetap ada,
+     cuma di bawah form, bukan di samping. */
+  .surat-editor-layout{ display:flex; gap:20px; align-items:flex-start; }
+  .surat-editor-form{ flex:1 1 0; min-width:0; }
+  .surat-editor-preview{ flex:0 0 420px; width:420px; }
+  .surat-preview-sticky{ position:sticky; top:16px; background:var(--surf); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow1); overflow:hidden; }
+  .surat-preview-head{ display:flex; align-items:center; justify-content:space-between; padding:10px 14px; border-bottom:1px solid var(--line2); font-size:13px; font-weight:700; color:var(--ink); background:var(--surf2); }
+  .surat-preview-status{ font-size:11.5px; font-weight:400; color:var(--muted); }
+  .surat-preview-frame-wrap{ position:relative; height:min(78vh, 780px); background:#F1F5F4; }
+  .surat-preview-frame{ width:100%; height:100%; border:0; display:block; }
+  .surat-preview-empty{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center; padding:24px; font-size:12.5px; color:var(--muted); line-height:1.6; }
+  @media (max-width: 980px){
+    .surat-editor-layout{ flex-direction:column; }
+    .surat-editor-preview{ flex:1 1 auto; width:100%; }
+    .surat-preview-sticky{ position:static; }
+    .surat-preview-frame-wrap{ height:70vh; }
+  }
 
   /* Pill toggle buat kolom tabel — gantikan checklist vertikal: lebih
      ringkas, dan status aktif/nonaktif langsung kelihatan dari warnanya. */
@@ -779,7 +823,7 @@
 
 <div class="topbar">
   <div class="brand">
-    <div class="mark"><svg viewBox="0 0 36 36" width="36" height="36" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sales Performance Sumatera">
+    <div class="mark"><svg viewBox="0 0 36 36" width="36" height="36" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sales &amp; Distribution Sumatera">
         <defs>
           <linearGradient id="rmLogoGrad" x1="0" y1="0" x2="36" y2="36" gradientUnits="userSpaceOnUse">
             <stop offset="0%" stop-color="#32BCAD"/>
@@ -794,8 +838,8 @@
         </g>
       </svg></div>
     <div>
-      <div class="title">Sales Performance Sumatera</div>
-      <!-- Subjudul dulu isinya "Blast Email — Sales Performance Sumatera",
+      <div class="title">Sales &amp; Distribution Sumatera</div>
+      <!-- Subjudul dulu isinya "Blast Email — Sales &amp; Distribution Sumatera",
            cuma mengulang judul di atasnya. Sekarang dipakai buat menjelaskan
            alur yang lagi aktif ngapain, dan ikut berubah pas ganti mode. -->
       <div class="subtitle" id="appSubtitle">Blast Email — laporan Excel jadi email terpisah per penerima</div>
@@ -932,19 +976,46 @@
       <div class="field">
         <label class="field-label">Paragraf pembuka</label>
         <div class="token-pills" data-target="narIntro"></div>
+        <div class="rt-toolbar">
+          <button type="button" class="rt-btn" onclick="wrapNarrativeSelection('narIntro','**')" title="Tebalkan teks yang diblok"><b>B</b> Bold</button>
+          <button type="button" class="rt-btn" onclick="wrapNarrativeSelection('narIntro','*')" title="Miringkan teks yang diblok"><i>I</i> Italic</button>
+          <button type="button" class="rt-btn" onclick="wrapNarrativeSelection('narIntro','++')" title="Garis bawahi teks yang diblok"><u>U</u> Underline</button>
+          <div class="rt-color-group" title="Warna teks untuk bagian yang diblok">
+            <span class="rt-color-icon rt-color-icon-text">A</span>
+            <input type="color" class="rt-color" id="narIntroColor" value="#E53935" onmousedown="cacheNarrativeSelection('narIntro')" onchange="applyColorFromPicker('narIntro','narIntroColor','color')">
+          </div>
+          <div class="rt-color-group" title="Highlight/warna latar untuk bagian yang diblok">
+            <span class="rt-color-icon">🖍️</span>
+            <input type="color" class="rt-color" id="narIntroBg" value="#FFF176" onmousedown="cacheNarrativeSelection('narIntro')" onchange="applyColorFromPicker('narIntro','narIntroBg','bg')">
+          </div>
+        </div>
         <textarea id="narIntro">Yth. Bapak/Ibu {nama},
 
 Dengan ini kami sampaikan {judul}, dengan rincian sebagai berikut:</textarea>
-        <div class="token-hint">Klik, atau seret (drag) salah satu token di atas ke posisi yang diinginkan dalam teks.</div>
+        <div class="token-hint">Klik, atau seret (drag) salah satu token di atas ke posisi yang diinginkan dalam teks. Untuk tulisan tebal/miring, blok teksnya lalu klik tombol Bold/Italic di atas.<br>💡 Cara bikin paragraf rapi: tekan <b>Enter 1x</b> untuk pindah baris tapi masih nempel di paragraf yang sama (cocok buat daftar seperti "- poin 1"). Tekan <b>Enter 2x</b> (sampai ada baris kosong) untuk mulai paragraf baru dengan jarak — hasilnya langsung kelihatan di Preview Langkah 3.</div>
       </div>
       <div class="field">
         <label class="field-label">Paragraf penutup</label>
+        <div class="rt-toolbar">
+          <button type="button" class="rt-btn" onclick="wrapNarrativeSelection('narClosing','**')" title="Tebalkan teks yang diblok"><b>B</b> Bold</button>
+          <button type="button" class="rt-btn" onclick="wrapNarrativeSelection('narClosing','*')" title="Miringkan teks yang diblok"><i>I</i> Italic</button>
+          <button type="button" class="rt-btn" onclick="wrapNarrativeSelection('narClosing','++')" title="Garis bawahi teks yang diblok"><u>U</u> Underline</button>
+          <div class="rt-color-group" title="Warna teks untuk bagian yang diblok">
+            <span class="rt-color-icon rt-color-icon-text">A</span>
+            <input type="color" class="rt-color" id="narClosingColor" value="#E53935" onmousedown="cacheNarrativeSelection('narClosing')" onchange="applyColorFromPicker('narClosing','narClosingColor','color')">
+          </div>
+          <div class="rt-color-group" title="Highlight/warna latar untuk bagian yang diblok">
+            <span class="rt-color-icon">🖍️</span>
+            <input type="color" class="rt-color" id="narClosingBg" value="#FFF176" onmousedown="cacheNarrativeSelection('narClosing')" onchange="applyColorFromPicker('narClosing','narClosingBg','bg')">
+          </div>
+        </div>
         <textarea id="narClosing">Apabila terdapat kendala atau hal yang perlu ditindaklanjuti, mohon untuk dapat diinformasikan kepada kami.
 
 Demikian informasi ini kami sampaikan, atas perhatian dan kerja samanya kami ucapkan terima kasih.
 
 Warm regards,
-Sales Performance Management — Indosat Circle Sumatera</textarea>
+Sales &amp; Distribution — Indosat Circle Sumatera</textarea>
+        <div class="token-hint">Untuk tulisan tebal/miring, blok teksnya lalu klik tombol Bold/Italic di atas.<br>💡 Enter 1x = pindah baris (masih nempel, cocok buat baris tanda tangan). Enter 2x (kasih baris kosong) = mulai paragraf baru dengan jarak.</div>
       </div>
     </div>
 
@@ -1139,18 +1210,11 @@ Sales Performance Management — Indosat Circle Sumatera</textarea>
         </div>
       </div>
     </div>
-    <p class="hint">Upload Excel berisi data suratnya — jenis suratnya otomatis dikenali dari nama sheet, tidak perlu didaftarkan dulu.</p>
-    <details class="format-help">
-      <summary>📋 Lihat nama sheet yang dikenali</summary>
-      <div class="format-help-body">
-        <p>Beri nama sheet data persis salah satu dari 5 jenis surat berikut (boleh besar/kecil huruf &amp; spasi bebas): <code>IOM Payout MPx</code>, <code>IOM Payout SDP</code>, <code>IOM Permohonan Reva</code>, <code>Surat Pemberitahuan</code>, <code>BAST</code>. Satu file boleh berisi beberapa sheet sekaligus (satu per jenis surat).</p>
-        <p>Kolom minimum tiap sheet: <code>PARTNER_NAME</code> atau <code>PT_NAME</code> (nama mitra), <code>EMAIL_TO</code> (khusus Surat Pemberitahuan &amp; BAST, karena keduanya lanjut dikirim ke penerima), lalu kolom nilai apa pun sesuai kebutuhan surat itu — kolom tambahan otomatis bisa dipakai tanpa perlu diatur di mana pun.</p>
-      </div>
-    </details>
+    <p class="hint">Upload Excel berisi data ringkasannya — sheet mana pun boleh, tidak perlu diberi nama khusus. Kepada/Dari/Hal/isi surat semuanya diatur bebas di langkah berikutnya, kolom tabelnya tinggal dipilih dari kolom yang ada di file ini.</p>
     <div class="dropzone" id="suratDropzone">
       <div class="icon">📄</div>
       <div><span class="cta">Klik untuk pilih file</span> atau drag &amp; drop di sini</div>
-      <div class="hint" style="margin-top:6px; margin-left:0;">Format .xlsx — nama sheet menentukan jenis suratnya.</div>
+      <div class="hint" style="margin-top:6px; margin-left:0;">Format .xlsx — sheet pertama dipakai duluan, bisa diganti di Langkah 2.</div>
       <input type="file" id="suratFileInput" accept=".xlsx,.xls">
     </div>
     <div id="suratFileInfo"></div>
@@ -1167,76 +1231,239 @@ Sales Performance Management — Indosat Circle Sumatera</textarea>
         </div>
       </div>
     </div>
-    <p class="hint">Pilih template surat, konfirmasi sumber data &amp; periode, lalu pilih baris mana saja yang mau digenerate.</p>
+    <div class="surat-guide"><span>① Pilih jenis dokumen</span><span>② Isi nomor &amp; hal</span><span>③ Cek narasi (sudah terisi contoh)</span><span>④ Pilih baris &amp; lanjut</span></div>
+    <p class="hint">Cukup pilih jenis dokumennya — isi contoh, kolom email, dan kolom tabel diisi otomatis dari Excel kamu, tinggal dicek &amp; diubah seperlunya. Header &amp; footer Indosat otomatis di semua halaman. Preview di kanan ikut berubah tiap kamu edit.</p>
 
-    <div class="field-group-label">Template</div>
+    <!-- Dulu di sini ada dropdown "Template surat" (pilih 1 dari 5 jenis
+         surat baku). Sekarang cuma ada 1 alur (Fleksibel) jadi dropdownnya
+         dihapus — langsung ke isian kop & narasi di bawah. Layout dibagi
+         2 kolom: form di kiri, preview PDF live di kanan (sticky, ikut
+         scroll) — supaya sambil ngedit langsung kelihatan hasilnya tanpa
+         bolak-balik klik "Preview". -->
+    <div class="surat-editor-layout">
+    <div class="surat-editor-form">
+    <div class="field-group-label">Format dokumen</div>
     <div class="group-box">
-      <div class="field">
-        <label class="field-label">Template surat</label>
-        <select id="suratTemplateSelect"></select>
+      <div class="field" style="margin-bottom:0;">
+        <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; margin-bottom:10px;">
+          <input type="radio" name="suratFormat" value="memo" checked style="margin-top:3px;" onchange="onSuratFormatChange()">
+          <span><b>IOM / Memo</b> — 1 dokumen yang merangkum semua baris terpilih dalam satu tabel.</span>
+        </label>
+        <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer;">
+          <input type="radio" name="suratFormat" value="surat_mitra" style="margin-top:3px;" onchange="onSuratFormatChange()">
+          <span><b>Surat ke mitra (1 surat per ID)</b> — tiap baris data jadi 1 surat sendiri, isi &amp; nama penerimanya beda-beda sesuai datanya (mis. Surat Nilai Rate Benefit OTF).</span>
+        </label>
+        <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; margin-top:10px;">
+          <input type="radio" name="suratFormat" value="pemberitahuan" style="margin-top:3px;" onchange="onSuratFormatChange()">
+          <span><b>Surat Pemberitahuan (1 surat per ID)</b> — surat ke mitra dengan tabel rincian &amp; lampiran ketentuan di halaman 2.</span>
+        </label>
+        <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer; margin-top:10px;">
+          <input type="radio" name="suratFormat" value="bast" style="margin-top:3px;" onchange="onSuratFormatChange()">
+          <span><b>BAST — Berita Acara Serah Terima (1 dokumen per ID)</b> — dokumen dua pihak (Pihak Pertama &amp; Pihak Kedua), daftar pernyataan, tabel rincian, dan dua kolom tanda tangan.</span>
+        </label>
       </div>
-      <div id="suratTemplateNote" class="hint" style="margin:0 0 12px;"></div>
     </div>
 
-    <!-- Cuma muncul untuk jenis surat "memo" (IOM) — surat ke mitra
-         (Pemberitahuan/BAST) tidak butuh ini karena Kepada-nya sudah
-         otomatis nama mitra per baris. Nilai yang diketik di sini diingat
-         per jenis surat di server, jadi lain kali buka jenis surat yang
-         sama, kolomnya sudah terisi otomatis (tinggal ubah kalau perlu). -->
-    <div id="suratMemoFieldsSection" style="display:none;">
-      <div class="field-group-label">Detail Memo</div>
+    <div id="suratTokenChipsWrap" style="display:none; margin-bottom:12px;">
+      <div class="field-group-label">Token kolom data</div>
       <div class="group-box">
-        <p class="hint" style="margin-top:0;">Diingat otomatis per jenis surat — lain kali buka jenis surat yang sama, kolom ini sudah terisi dari yang terakhir kamu ketik. Tetap bisa diubah kapan saja.</p>
+        <p class="hint" style="margin-top:0;">Klik untuk menyisipkan <code>{{NAMA_KOLOM}}</code> ke kolom teks yang terakhir kamu klik — di tiap surat otomatis diganti isi barisnya.</p>
+        <div class="colpills" id="suratMitraTokenChips"></div>
+      </div>
+    </div>
+
+    <div id="suratMitraGroup" style="display:none;">
+      <div class="field-group-label">Surat ke mitra</div>
+      <div class="group-box">
+        <p class="hint" style="margin-top:0;">Tiap surat otomatis terisi dari barisnya masing-masing. Di semua kolom teks (Kepada, Hal, narasi, dll) kamu bisa pakai kolom Excel sebagai token, misalnya <code>{{PARTNER_NAME}}</code>.</p>
         <div class="grid2">
           <div class="field">
-            <label class="field-label">Nomor surat</label>
-            <input type="text" id="suratMemoNoSurat" placeholder="mis. 123/ND/SPM-SUM/IX/2026" oninput="renderSuratSummary()">
+            <label class="field-label">Kepada Yth</label>
+            <input type="text" id="suratMitraKepada" value="{{PARTNER_NAME}}" oninput="onSuratMitraChange()">
           </div>
           <div class="field">
-            <label class="field-label">Hal</label>
-            <input type="text" id="suratMemoHal" placeholder="dikosongkan = pakai bawaan jenis surat ini" oninput="renderSuratSummary()">
-          </div>
-        </div>
-        <div class="grid2">
-          <div class="field">
-            <label class="field-label">Kepada</label>
-            <div style="display:flex; gap:8px;">
-              <select id="suratMemoKepadaSelect" style="flex:1;" onchange="renderSuratSummary()"></select>
-              <button type="button" class="btn btn-secondary" onclick="toggleTambahKepada()">+ Tambah</button>
-            </div>
-            <div id="suratMemoKepadaAddWrap" style="display:none; gap:8px; margin-top:8px;">
-              <input type="text" id="suratMemoKepadaNew" placeholder="Ketik Kepada baru, lalu Simpan" style="flex:1;">
-              <button type="button" class="btn btn-primary" onclick="tambahKepadaBaru()">Simpan</button>
-              <button type="button" class="btn btn-secondary" onclick="toggleTambahKepada(false)">Batal</button>
-            </div>
-          </div>
-          <div class="field">
-            <label class="field-label">Dari</label>
-            <div style="display:flex; gap:8px;">
-              <select id="suratMemoDariSelect" style="flex:1;" onchange="renderSuratSummary()"></select>
-              <button type="button" class="btn btn-secondary" onclick="toggleTambahDari()">+ Tambah</button>
-            </div>
-            <div id="suratMemoDariAddWrap" style="display:none; gap:8px; margin-top:8px;">
-              <input type="text" id="suratMemoDariNew" placeholder="Ketik Dari baru, lalu Simpan" style="flex:1;">
-              <button type="button" class="btn btn-primary" onclick="tambahDariBaru()">Simpan</button>
-              <button type="button" class="btn btn-secondary" onclick="toggleTambahDari(false)">Batal</button>
-            </div>
+            <label class="field-label">Sapaan</label>
+            <input type="text" id="suratMitraSalutation" value="Yth. Rekan **{{PARTNER_NAME}}**," oninput="onSuratMitraChange()">
           </div>
         </div>
         <div class="field">
-          <label class="field-label">Refers to <span style="font-weight:400;color:#94a3b8;">(opsional — satu baris = satu poin acuan)</span></label>
-          <textarea id="suratMemoReferensi" rows="2" placeholder="mis. No. 0067/PEF0/SLS/26 Petunjuk Pelaksanaan ...&#10;IOM 938 - Result of No. .... Permohonan Pengecekan Fee ..." oninput="renderSuratSummary()"></textarea>
+          <label class="field-label">Info di bawah "Kepada Yth" (1 baris = <code>Label = nilai</code>)</label>
+          <textarea id="suratMitraInfo" rows="2" oninput="onSuratMitraChange()" placeholder="Region = {{REGION}}">Region = {{REGION}}</textarea>
+          <div class="token-hint">"No Ref" dan "Perihal" diambil dari kolom Nomor surat &amp; Hal / Subject di bawah, jadi cukup isi Region dkk di sini.</div>
         </div>
         <div class="grid2">
           <div class="field">
-            <label class="field-label">Type Expenses (referensi anggaran) <span style="font-weight:400;color:#94a3b8;">(opsional)</span></label>
-            <input type="text" id="suratMemoBudgetType" placeholder="mis. Distribution Fee MPx Hybrid 2026" oninput="renderSuratSummary()">
+            <label class="field-label">Kata penutup</label>
+            <input type="text" id="suratMitraClosingWord" value="Hormat kami," oninput="onSuratMitraChange()">
           </div>
           <div class="field">
-            <label class="field-label">MTA|CC <span style="font-weight:400;color:#94a3b8;">(opsional)</span></label>
-            <input type="text" id="suratMemoBudgetMtaCc" placeholder="mis. (IM3) 6030803000, (3ID) 6030808000 | 13SR000000" oninput="renderSuratSummary()">
+            <label class="field-label">Perusahaan (di bawah kata penutup)</label>
+            <input type="text" id="suratMitraCompany" value="PT Indosat Tbk" oninput="onSuratMitraChange()">
           </div>
         </div>
+      </div>
+    </div>
+
+    <div id="suratPbGroup" style="display:none;">
+      <div class="field-group-label">Surat Pemberitahuan</div>
+      <div class="group-box">
+        <p class="hint" style="margin-top:0;">Pakai token kolom Excel (klik chip di atas) agar isi tiap surat beda per ID. Nomor surat &amp; Perihal diambil dari kolom Nomor surat &amp; Hal / Subject di bawah. Kolom yang kamu aktifkan di "Kolom tabel yang ditampilkan" otomatis jadi <b>tabel ringkasan</b> (label = nilai kolom itu untuk ID tersebut).</p>
+        <div class="grid2">
+          <div class="field"><label class="field-label">Sebutan penerima (setelah "Kepada Yth")</label>
+            <input type="text" id="smPbSebutan" value="Mitra" oninput="onSuratMitraChange()"></div>
+          <div class="field"><label class="field-label">Nama penerima</label>
+            <input type="text" id="smPbPenerima" value="{{PARTNER_NAME}}" oninput="onSuratMitraChange()"></div>
+        </div>
+        <div class="field"><label class="field-label">Judul tabel ringkasan</label>
+          <input type="text" id="smPbTitle" value="Rincian" oninput="onSuratMitraChange()"></div>
+        <div class="field"><label class="field-label">Tabel rincian tambahan (opsional, 1 baris = <code>Deskripsi = nilai</code>)</label>
+          <textarea id="smPbDetailRows" rows="3" oninput="onSuratMitraChange()" placeholder="Rate Benefit OTF = {{RATE_BENEFIT_OTF}}"></textarea></div>
+        <div class="field"><label class="field-label">Lampiran halaman 2 — judul (opsional)</label>
+          <input type="text" id="smPbAttTitle" value="" placeholder="mis. Lampiran: Ketentuan Klaim Pembayaran" oninput="onSuratMitraChange()"></div>
+        <div class="field"><label class="field-label">Lampiran — kalimat pengantar (opsional)</label>
+          <input type="text" id="smPbAttIntro" value="" oninput="onSuratMitraChange()"></div>
+        <div class="field"><label class="field-label">Lampiran — daftar ketentuan (1 baris = 1 butir bernomor)</label>
+          <textarea id="smPbAttItems" rows="4" oninput="onSuratMitraChange()" placeholder="Klaim diajukan paling lambat 30 hari kalender sejak tanggal surat ini."></textarea></div>
+        <div class="token-hint">Paragraf pembuka &amp; penutup di bagian "Isi surat" dipakai sebagai pembuka &amp; penutup surat ini. Tanda tangan ada di halaman 2.</div>
+      </div>
+    </div>
+
+    <div id="suratBastGroup" style="display:none;">
+      <div class="field-group-label">BAST</div>
+      <div class="group-box">
+        <p class="hint" style="margin-top:0;">Pihak Pertama = penandatangan dari Pengaturan Approver &amp; TTD. Pihak Kedua diisi dari data tiap ID. Sub-judul BAST diambil dari kolom Hal / Subject. Tabel rincian memakai kolom yang kamu aktifkan di "Kolom tabel yang ditampilkan"; paragraf penutup dari "Isi surat".</p>
+        <div class="grid2">
+          <div class="field"><label class="field-label">Pihak Kedua — nama</label>
+            <input type="text" id="smBastP2Nama" value="{{PARTNER_NAME}}" oninput="onSuratMitraChange()"></div>
+          <div class="field"><label class="field-label">Pihak Kedua — jabatan</label>
+            <input type="text" id="smBastP2Jabatan" value="Mitra" oninput="onSuratMitraChange()"></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><label class="field-label">Pihak Kedua — perusahaan</label>
+            <input type="text" id="smBastP2Perusahaan" value="{{PARTNER_NAME}}" oninput="onSuratMitraChange()"></div>
+          <div class="field"><label class="field-label">Pihak Pertama — perusahaan</label>
+            <input type="text" id="smBastP1Perusahaan" value="PT Indosat Tbk" oninput="onSuratMitraChange()"></div>
+        </div>
+        <div class="field"><label class="field-label">Pernyataan ("Dengan ini menyatakan bahwa:", 1 baris = 1 butir bernomor)</label>
+          <textarea id="smBastStatements" rows="4" oninput="onSuratMitraChange()">PIHAK PERTAMA telah menyerahkan, dan PIHAK KEDUA telah menerima, hasil sebagaimana rincian pada tabel di bawah ini.
+Serah terima ini menjadi bukti bahwa hak dan kewajiban terkait telah dipenuhi oleh kedua belah pihak.</textarea></div>
+      </div>
+    </div>
+
+    <div class="field-group-label">Kop surat</div>
+    <div class="group-box">
+      <p class="hint" style="margin-top:0;">Diingat otomatis — lain kali buka Buat Surat, kolom ini sudah terisi dari yang terakhir kamu pakai. Tetap bisa diubah kapan saja.</p>
+      <div class="grid2">
+        <div class="field">
+          <label class="field-label">Nomor surat</label>
+          <input type="text" id="suratMemoNoSurat" placeholder="mis. 123/ND/SPM-SUM/IX/2026" oninput="onSuratFieldChange()">
+        </div>
+        <div class="field">
+          <label class="field-label">Hal / Subject</label>
+          <input type="text" id="suratMemoHal" placeholder="mis. Adj Check Point 2 Tactical Sell {{PERIODE}}" oninput="onSuratFieldChange()">
+        </div>
+      </div>
+      <div class="grid2" id="suratIomToFromGrid">
+        <div class="field">
+          <label class="field-label">Kepada (To)</label>
+          <div style="display:flex; gap:8px;">
+            <select id="suratMemoKepadaSelect" style="flex:1;" onchange="onSuratFieldChange()"></select>
+            <button type="button" class="btn btn-secondary" onclick="toggleTambahKepada()">+ Tambah</button>
+          </div>
+          <div id="suratMemoKepadaAddWrap" style="display:none; gap:8px; margin-top:8px;">
+            <input type="text" id="suratMemoKepadaNew" placeholder="Ketik Kepada baru, lalu Simpan" style="flex:1;">
+            <button type="button" class="btn btn-primary" onclick="tambahKepadaBaru()">Simpan</button>
+            <button type="button" class="btn btn-secondary" onclick="toggleTambahKepada(false)">Batal</button>
+          </div>
+        </div>
+        <div class="field">
+          <label class="field-label">Dari (From)</label>
+          <div style="display:flex; gap:8px;">
+            <select id="suratMemoDariSelect" style="flex:1;" onchange="onSuratFieldChange()"></select>
+            <button type="button" class="btn btn-secondary" onclick="toggleTambahDari()">+ Tambah</button>
+          </div>
+          <div id="suratMemoDariAddWrap" style="display:none; gap:8px; margin-top:8px;">
+            <input type="text" id="suratMemoDariNew" placeholder="Ketik Dari baru, lalu Simpan" style="flex:1;">
+            <button type="button" class="btn btn-primary" onclick="tambahDariBaru()">Simpan</button>
+            <button type="button" class="btn btn-secondary" onclick="toggleTambahDari(false)">Batal</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <details class="adv" id="suratApprovalDetails"><summary class="field-group-label">Approval <span class="adv-sum" id="suratApprovalSummary"></span></summary>
+    <div class="group-box">
+      <div class="field">
+        <label class="field-label">Approver surat ini</label>
+        <div style="display:flex; gap:8px;">
+          <select id="suratApproverSelect" style="flex:1;" onchange="onSuratApproverSelectChange()"></select>
+          <button type="button" class="btn btn-secondary" onclick="toggleTambahApprover()">+ Tambah</button>
+        </div>
+        <div id="suratApproverAddWrap" style="display:none; gap:8px; margin-top:8px; flex-wrap:wrap;">
+          <input type="text" id="suratApproverNewName" placeholder="Nama approver" style="flex:1; min-width:140px;">
+          <input type="email" id="suratApproverNewEmail" placeholder="Email approver" style="flex:1; min-width:180px;">
+          <button type="button" class="btn btn-primary" onclick="tambahApproverBaru()">Simpan</button>
+          <button type="button" class="btn btn-secondary" onclick="toggleTambahApprover(false)">Batal</button>
+        </div>
+        <div class="hint" style="margin-top:6px;">Kalau tidak dipilih, email approval dikirim ke approver default (diatur lewat ⚙️ Pengaturan Approver &amp; TTD). Approver boleh beda-beda tiap surat — cocok kalau tiap IOM disetujui orang yang berbeda.</div>
+      </div>
+      <div class="field" style="margin-top:16px;">
+        <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer;">
+          <input type="checkbox" id="suratNeedsSignatureToggle" checked style="margin-top:3px;" onchange="onSuratNeedsSignatureChange()">
+          <span>
+            <b>Sertakan blok tanda tangan (TTD) di surat ini</b>
+            <div class="hint" style="margin:4px 0 0;">Matikan kalau surat ini cukup butuh BUKTI approval — tercatat siapa &amp; kapan menyetujui di sistem — tanpa perlu blok Nama/Jabatan/NIK/tempat TTD tercetak di PDF-nya.</div>
+          </span>
+        </label>
+      </div>
+    </div>
+
+    </details>
+
+    <div class="field-group-label">Isi surat</div>
+    <div class="group-box">
+      <p class="hint" style="margin-top:0;">Narasinya bebas — persis seperti Blast Email Report. Tabel data (dari sheet yang dipilih di bawah) otomatis disisipkan di ANTARA paragraf pembuka &amp; penutup.</p>
+
+      <details class="adv" style="margin-bottom:16px;"><summary class="field-label" style="cursor:pointer;">Template narasi tersimpan (opsional)</summary>
+      <div class="field" style="margin:10px 0 0;">
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <select id="suratNarrativeTplSelect" style="flex:1; min-width:180px;" onchange="loadNarrativeTemplate(this.value)"></select>
+          <button type="button" class="btn btn-secondary" onclick="toggleSaveNarrativeTpl()">💾 Simpan sebagai template</button>
+          <button type="button" class="btn btn-secondary" id="suratNarrativeTplDeleteBtn" style="display:none;" onclick="deleteCurrentNarrativeTemplate()">🗑 Hapus template ini</button>
+        </div>
+        <div id="suratNarrativeTplSaveWrap" style="display:none; gap:8px; margin-top:8px;">
+          <input type="text" id="suratNarrativeTplName" placeholder="Nama template, mis. Narasi Payout Bulanan" style="flex:1;">
+          <button type="button" class="btn btn-primary" onclick="saveNarrativeTemplate()">Simpan</button>
+          <button type="button" class="btn btn-secondary" onclick="toggleSaveNarrativeTpl(false)">Batal</button>
+        </div>
+        <div class="hint" style="margin-top:6px;">Simpan paragraf pembuka &amp; penutup di bawah sebagai template bernama, lalu pakai lagi di surat lain kapan saja — tidak perlu ketik ulang tiap kali beda jenis surat.</div>
+      </div></details>
+
+      <div class="field">
+        <label class="field-label">Paragraf pembuka</label>
+        <div class="rt-toolbar">
+          <button type="button" class="rt-btn" onclick="wrapNarrativeSelection('suratNarIntro','**')" title="Tebalkan teks yang diblok"><b>B</b> Bold</button>
+          <button type="button" class="rt-btn" onclick="wrapNarrativeSelection('suratNarIntro','*')" title="Miringkan teks yang diblok"><i>I</i> Italic</button>
+        </div>
+        <textarea id="suratNarIntro" oninput="onSuratFieldChange()" placeholder="mis. Sehubungan dengan periode {{PERIODE}}, bersama ini kami sampaikan rincian sebagai berikut:"></textarea>
+        <div class="token-hint">Format tebal/miring sama seperti di surat PDF lainnya (**tebal**, *miring*).<br>💡 Enter 1x = pindah baris tapi tetap satu paragraf (dipakai buat daftar seperti "- poin 1"). Enter 2x (baris kosong) = mulai paragraf/pasal BARU dengan nomor baru. Token seperti <code>{{PERIODE}}</code> otomatis keisi dari kolom Periode di bawah.<br>⚠️ Jangan ketik nomor pasal sendiri (mis. "1. Refers to") — nomornya sudah otomatis ditambahkan tiap kali ada paragraf baru (Enter 2x). Tabel data juga otomatis dapat nomor pasalnya sendiri, di antara pembuka &amp; penutup.</div>
+      </div>
+      <div class="field">
+        <label class="field-label">Paragraf penutup</label>
+        <div class="rt-toolbar">
+          <button type="button" class="rt-btn" onclick="wrapNarrativeSelection('suratNarClosing','**')" title="Tebalkan teks yang diblok"><b>B</b> Bold</button>
+          <button type="button" class="rt-btn" onclick="wrapNarrativeSelection('suratNarClosing','*')" title="Miringkan teks yang diblok"><i>I</i> Italic</button>
+        </div>
+        <textarea id="suratNarClosing" oninput="onSuratFieldChange()" placeholder="mis. Demikian kami sampaikan, atas perhatian dan kerja samanya kami ucapkan terima kasih."></textarea>
+        <div class="token-hint">Tanda tangan otomatis ditambahkan di bawah paragraf penutup ini — tidak perlu diketik manual.</div>
+      </div>
+    </div>
+
+    <div class="field-group-label">Kolom tabel yang ditampilkan</div>
+    <div class="group-box">
+      <div class="field" style="margin-bottom:10px;">
+        <label class="field-label" style="margin-bottom:10px;">Klik pill untuk aktif/nonaktifkan, ketik untuk ganti nama tampilan, klik tombol "123" untuk format sebagai angka berpemisah ribuan &amp; otomatis dijumlah di baris Total.</label>
+        <div class="colpills" id="suratColcheckList"></div>
       </div>
     </div>
 
@@ -1246,7 +1473,7 @@ Sales Performance Management — Indosat Circle Sumatera</textarea>
         <div class="grid2">
           <div class="field">
             <label class="field-label">Periode (buat token {{PERIODE}})</label>
-            <input type="text" id="suratPeriode" placeholder="mis. Agustus 2026" oninput="renderSuratSummary()">
+            <input type="text" id="suratPeriode" placeholder="mis. Agustus 2026" oninput="onSuratFieldChange()">
           </div>
           <div class="field">
             <label class="field-label">Sheet data</label>
@@ -1254,6 +1481,24 @@ Sales Performance Management — Indosat Circle Sumatera</textarea>
           </div>
         </div>
         <div id="suratDataInfo" class="hint" style="margin:0 0 12px;"></div>
+      </div>
+
+      <div class="field-group-label">Kirim ke penerima (opsional)</div>
+      <div class="group-box">
+        <label style="display:flex; align-items:flex-start; gap:10px; cursor:pointer;">
+          <input type="checkbox" id="suratBlastToggle" style="margin-top:3px;" onchange="onSuratBlastToggleChange()">
+          <span>
+            <b>Setelah disetujui approver, kirim tiap surat ke email penerimanya masing-masing</b>
+            <div class="hint" style="margin:4px 0 0;">1 baris data = 1 surat PDF personal = 1 email. Kalau dimatikan, surat berhenti di tahap approval seperti biasa (tidak dikirim ke siapa-siapa).</div>
+          </span>
+        </label>
+        <div id="suratEmailColumnWrap" style="display:none; margin-top:14px;">
+          <div class="field">
+            <label class="field-label">Kolom email penerima</label>
+            <select id="suratEmailColumnSelect"></select>
+            <div class="hint" style="margin-top:6px;">Pilih kolom di sheet data ini yang berisi alamat email tiap baris. Kalau satu sel berisi beberapa alamat, pisahkan dengan ";" atau ",".</div>
+          </div>
+        </div>
       </div>
 
       <div class="field-group-label">Pilih baris yang mau digenerate</div>
@@ -1268,6 +1513,21 @@ Sales Performance Management — Indosat Circle Sumatera</textarea>
         </div>
         <div id="suratDataPreviewWrap"></div>
       </div>
+    </div>
+    </div>
+
+    <div class="surat-editor-preview">
+      <div class="surat-preview-sticky">
+        <div class="surat-preview-head">
+          <span>👁 Preview live</span>
+          <span class="surat-preview-status" id="suratLivePreviewStatus"></span>
+        </div>
+        <div class="surat-preview-frame-wrap">
+          <div class="surat-preview-empty" id="suratLivePreviewEmpty">Isi narasi &amp; pilih minimal 1 baris data di bawah untuk melihat preview surat di sini.</div>
+          <iframe id="suratLivePreviewFrame" class="surat-preview-frame" style="display:none;"></iframe>
+        </div>
+      </div>
+    </div>
     </div>
   </div>
 
@@ -1362,7 +1622,7 @@ Bersama email ini kami sampaikan {judul} periode {periode} sebagaimana terlampir
 Demikian informasi ini kami sampaikan, atas perhatian dan kerja samanya kami ucapkan terima kasih.
 
 Warm regards,
-Sales Performance Management — Indosat Circle Sumatera</textarea>
+Sales &amp; Distribution — Indosat Circle Sumatera</textarea>
       </div>
     </div>
 
@@ -1766,6 +2026,131 @@ function renderRawPreview(){
 function escapeHtml(str){
   return String(str).replace(/[&<>"']/g, s=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
 }
+
+// Sintaks format teks buat narasi email:
+//   **tebal**              -> <strong>
+//   *miring*  atau _miring_ -> <em>
+//   ++garis bawah++         -> <u>
+//   {color:#RRGGBB}...{/color} -> warna teks (disisipkan otomatis oleh color picker)
+//   {bg:#RRGGBB}...{/bg}       -> highlight/warna latar teks (disisipkan otomatis oleh color picker)
+// Bold/italic sengaja sama persis dengan sintaks di surat PDF, supaya user
+// cuma perlu ingat satu aturan buat dua tempat. Semua fungsi ini dijalankan
+// SETELAH escapeHtml, jadi tag HTML yang disisipkan di sini aman, tidak ikut
+// ter-escape.
+const RICH_TEXT_RE = /\*\*(.+?)\*\*|\*(.+?)\*|_(.+?)_/g;
+const COLOR_RE = /\{color:(#[0-9a-fA-F]{6})\}(.+?)\{\/color\}/g;
+const BG_RE = /\{bg:(#[0-9a-fA-F]{6})\}(.+?)\{\/bg\}/g;
+const UNDERLINE_RE = /\+\+(.+?)\+\+/g;
+function applyInlineFormatting(escapedText){
+  let out = escapedText;
+  out = out.replace(COLOR_RE, (m, hex, body)=>`<span style="color:${hex};">${body}</span>`);
+  out = out.replace(BG_RE, (m, hex, body)=>`<span style="background-color:${hex};">${body}</span>`);
+  out = out.replace(UNDERLINE_RE, (m, body)=>`<u>${body}</u>`);
+  out = out.replace(RICH_TEXT_RE, (m, bold, italicStar, italicUnderscore)=>{
+    if (bold !== undefined) return `<strong>${bold}</strong>`;
+    const content = italicStar !== undefined ? italicStar : italicUnderscore;
+    return `<em>${content}</em>`;
+  });
+  return out;
+}
+
+// Dipanggil oleh tombol toolbar Bold/Italic/Underline di atas textarea narasi
+// — bungkus teks yang sedang diblok user dengan tanda yang sesuai, tanpa user
+// perlu tahu/ketik tandanya sendiri. Kalau tidak ada teks yang diblok,
+// sisipkan teks contoh supaya user tinggal ganti.
+const NARRATIVE_PLACEHOLDER_BY_MARKER = { '**':'teks tebal', '*':'teks miring', '++':'teks garis bawah' };
+function wrapNarrativeSelection(textareaId, marker){
+  const ta = document.getElementById(textareaId);
+  if(!ta) return;
+  const start = ta.selectionStart, end = ta.selectionEnd;
+  const val = ta.value;
+  const hasSelection = end > start;
+  const selected = hasSelection ? val.slice(start, end) : (NARRATIVE_PLACEHOLDER_BY_MARKER[marker] || 'teks');
+  const before = val.slice(0, start);
+  const after = val.slice(end);
+  ta.value = before + marker + selected + marker + after;
+  const newStart = start + marker.length;
+  const newEnd = newStart + selected.length;
+  ta.focus();
+  ta.setSelectionRange(newStart, newEnd);
+  ta.dispatchEvent(new Event('input', { bubbles:true }));
+}
+
+// Dipanggil oleh tombol Warna Teks / Highlight — dua langkah karena warnanya
+// dipilih lewat color picker native <input type="color">, yang baru selesai
+// (onchange) SETELAH textarea kehilangan fokus. Makanya posisi seleksi teks
+// disimpan dulu (cacheNarrativeSelection, saat tombol/swatch ditekan),
+// baru dipakai belakangan saat warnanya sudah dipilih (applyColorFromPicker).
+const narrativeSelectionCache = {};
+function cacheNarrativeSelection(textareaId){
+  const ta = document.getElementById(textareaId);
+  if(!ta) return;
+  narrativeSelectionCache[textareaId] = { start: ta.selectionStart, end: ta.selectionEnd };
+}
+const NARRATIVE_COLOR_PLACEHOLDER = { color:'teks warna', bg:'teks highlight' };
+function applyColorFromPicker(textareaId, colorInputId, kind){
+  const ta = document.getElementById(textareaId);
+  const colorInput = document.getElementById(colorInputId);
+  if(!ta || !colorInput) return;
+  const cache = narrativeSelectionCache[textareaId] || { start: ta.selectionStart, end: ta.selectionEnd };
+  const hex = colorInput.value;
+  const val = ta.value;
+  const start = Math.min(cache.start, val.length);
+  const end = Math.min(cache.end, val.length);
+  const hasSelection = end > start;
+  const selected = hasSelection ? val.slice(start, end) : NARRATIVE_COLOR_PLACEHOLDER[kind];
+  const openTag = `{${kind}:${hex}}`;
+  const closeTag = `{/${kind}}`;
+  ta.value = val.slice(0, start) + openTag + selected + closeTag + val.slice(end);
+  const newStart = start + openTag.length;
+  const newEnd = newStart + selected.length;
+  ta.focus();
+  ta.setSelectionRange(newStart, newEnd);
+  ta.dispatchEvent(new Event('input', { bubbles:true }));
+}
+
+// Auto-lanjut list: waktu user ketik "- sesuatu" lalu tekan Enter di
+// textarea narasi, baris berikutnya otomatis dikasih "- " lagi supaya
+// tinggal lanjut ketik poin berikutnya (gak perlu ketik "-" manual tiap
+// baris). Kalau Enter ditekan lagi di baris "- " yang masih kosong (artinya
+// user sudah selesai bikin list), tanda "- " itu dilepas otomatis dan
+// langsung jadi pemisah paragraf baru (baris kosong), bukan bullet kosong.
+function setupAutoListContinuation(textareaId){
+  const ta = document.getElementById(textareaId);
+  if(!ta) return;
+  ta.addEventListener('keydown', (e)=>{
+    if(e.key !== 'Enter' || e.shiftKey) return;
+    const val = ta.value;
+    const cursor = ta.selectionStart;
+    if(cursor !== ta.selectionEnd) return; // ada seleksi teks, biarkan default
+    const lineStart = val.lastIndexOf('\n', cursor - 1) + 1;
+    const currentLine = val.slice(lineStart, cursor);
+    const bulletMatch = currentLine.match(/^(\s*)-\s+(.*)$/);
+    if(!bulletMatch) return; // bukan baris list, biarkan Enter jalan normal
+    e.preventDefault();
+    const indent = bulletMatch[1];
+    const restOfLine = bulletMatch[2];
+    const before = val.slice(0, cursor);
+    const after = val.slice(cursor);
+    let insertion, newCursor;
+    if(restOfLine.trim() === ''){
+      // Baris "- " kosong -> lepas tandanya, mulai paragraf baru
+      const beforeWithoutMarker = val.slice(0, lineStart);
+      ta.value = beforeWithoutMarker + '\n' + after;
+      newCursor = beforeWithoutMarker.length + 1;
+    } else {
+      insertion = '\n' + indent + '- ';
+      ta.value = before + insertion + after;
+      newCursor = before.length + insertion.length;
+    }
+    ta.selectionStart = ta.selectionEnd = newCursor;
+    ta.dispatchEvent(new Event('input', { bubbles:true }));
+  });
+}
+setupAutoListContinuation('narIntro');
+setupAutoListContinuation('narClosing');
+setupAutoListContinuation('suratNarIntro');
+setupAutoListContinuation('suratNarClosing');
 
 /* ---------- STEP 2: Mapping ---------- */
 function setupMappingOptions(){
@@ -2254,6 +2639,12 @@ function buildGroupsAndGoStep3(){
     return { key, name, emails, ccs, rows };
   });
 
+  // Urutkan penerima berdasarkan abjad (nama) — supaya waktu "Proses semua
+  // penerima" dijalankan berurutan, urutannya A-Z, bukan sekadar urutan
+  // baris di Excel. localeCompare dengan opsi numeric supaya angka di nama
+  // (mis. "Mitra 2" vs "Mitra 10") juga terurut wajar.
+  state.groups.sort((a, b) => a.name.localeCompare(b.name, 'id', { numeric: true, sensitivity: 'base' }));
+
   if(!state.groups.length){
     toast('Tidak ada data untuk diproses.');
     return;
@@ -2388,10 +2779,45 @@ function buildTableHtml(group){
   return html;
 }
 
+// Ubah teks narasi mentah jadi HTML email yang rapi:
+//  - baris kosong (Enter 2x)  -> paragraf baru
+//  - baris biasa yang nempel  -> tetap satu paragraf, dipisah <br>
+//  - baris diawali "- "       -> dikumpulkan jadi bullet list <ul><li> yang
+//    menjorok rapi (bukan cuma tanda "-" mentah sejajar teks biasa), dan
+//    otomatis lanjut ke bullet list berikutnya kalau baris "- " nya nyambung
+//    tanpa baris kosong di antaranya.
+function narrativeToHtml(raw){
+  const textStyle = 'font-family:Arial,Helvetica,sans-serif;font-size:13.5px;color:#4D4D4F;line-height:1.65;';
+  const pStyle = textStyle + 'margin:0 0 14px 0;';
+  const liStyle = textStyle + 'margin:0 0 4px 0;';
+  const ulStyle = 'margin:0 0 14px 0;padding-left:22px;';
+
+  return raw.split('\n\n').map(block=>{
+    if(block.trim() === '') return '';
+    const lines = escapeHtml(block).split('\n').map(l=>applyInlineFormatting(l));
+    let html = '';
+    let normalBuf = [];
+    let bulletBuf = [];
+    const flushNormal = ()=>{
+      if(normalBuf.length){ html += `<p style="${pStyle}">${normalBuf.join('<br>')}</p>`; normalBuf = []; }
+    };
+    const flushBullets = ()=>{
+      if(bulletBuf.length){ html += `<ul style="${ulStyle}">${bulletBuf.map(b=>`<li style="${liStyle}">${b}</li>`).join('')}</ul>`; bulletBuf = []; }
+    };
+    lines.forEach(line=>{
+      const m = line.match(/^\s*-\s+(.*)$/);
+      if(m){ flushNormal(); bulletBuf.push(m[1]); }
+      else { flushBullets(); normalBuf.push(line); }
+    });
+    flushNormal();
+    flushBullets();
+    return html;
+  }).join('');
+}
+
 function buildEmailBodyHtml(group){
-  const pStyle = 'font-family:Arial,Helvetica,sans-serif;font-size:13.5px;color:#4D4D4F;line-height:1.65;margin:0 0 14px 0;';
-  const intro = fillTemplate(state.narrative.intro, group).split('\n\n').map(p=>`<p style="${pStyle}">${escapeHtml(p).replace(/\n/g,'<br>')}</p>`).join('');
-  const closing = fillTemplate(state.narrative.closing, group).split('\n\n').map(p=>`<p style="${pStyle}">${escapeHtml(p).replace(/\n/g,'<br>')}</p>`).join('');
+  const intro = narrativeToHtml(fillTemplate(state.narrative.intro, group));
+  const closing = narrativeToHtml(fillTemplate(state.narrative.closing, group));
   return `<div style="font-family:Arial,Helvetica,sans-serif;">${intro}${buildTableHtml(group)}<div style="height:14px;line-height:14px;">&nbsp;</div>${closing}</div>`;
 }
 
@@ -2437,12 +2863,12 @@ async function checkSenderStatus(){
     const data = await res.json();
     // Field "Pengirim (Terkunci)" diisi dari data.sender KAPAN PUN itu ada
     // di respons — bukan cuma waktu data.ok true — supaya nama & alamat
-    // pengirim (dari environment di server) tetap tampil walau cek
-    // verifikasi domain ke Resend gagal (mis. API key salah/belum diisi,
-    // atau server tidak bisa akses internet ke Resend). Sebelum ini,
-    // field-nya cuma keisi di jalur data.ok, jadi kalau langkah cek Resend
-    // gagal, field ini nyangkut selamanya di placeholder "Memuat dari
-    // server…" walau environment-nya sendiri sudah benar.
+    // pengirim (dari .env di server) tetap tampil walau cek verifikasi
+    // domain ke Resend gagal (mis. API key salah/belum diisi, atau server
+    // tidak bisa akses internet ke Resend). Sebelum ini, field-nya cuma
+    // keisi di jalur data.ok, jadi kalau langkah cek Resend gagal, field
+    // ini nyangkut selamanya di placeholder "Memuat dari server…" walau
+    // .env-nya sendiri sudah benar.
     if (data.sender) {
       const m = /^(.*)<(.+)>$/.exec(data.sender || '');
       const realName = m ? m[1].trim() : '';
@@ -2486,15 +2912,51 @@ function logRow(name, status, message){
   return row;
 }
 
+// Bikin lampiran .xlsx berisi CUMA baris-baris milik penerima ini (group.rows)
+// — supaya tabelnya tidak cuma keliatan di badan email, tapi juga bisa
+// dibuka/diolah sendiri sama penerimanya sebagai file Excel terpisah.
+// Dipakai SheetJS (XLSX) yang sama seperti buat baca file upload.
+function buildGroupExcelAttachment(group){
+  try{
+    // Kolom lampiran HARUS sama persis dengan kolom yang tampil di tabel
+    // badan email (state.tableCols yang included, urutan & labelnya sesuai
+    // pengaturan tabel di UI) — bukan semua kolom mentah dari Excel asli.
+    // Ini supaya penerima yang buka lampirannya melihat data yang sama
+    // dengan yang mereka baca di email, tidak ada kolom tersembunyi yang
+    // tiba-tiba muncul (atau sebaliknya, kolom yang ditampilkan malah hilang).
+    const visibleCols = (state.tableCols || []).filter(c=>c.included);
+    const cols = visibleCols.length
+      ? visibleCols
+      : (state.columns || Object.keys(group.rows[0] || {})).map(c=>({ key:c, label:c }));
+    const sheetRows = group.rows.map(r=>{
+      const o = {};
+      cols.forEach(c=>{ o[c.label] = r[c.key] ?? ''; });
+      return o;
+    });
+    const header = cols.map(c=>c.label);
+    const ws = XLSX.utils.json_to_sheet(sheetRows, { header });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Data');
+    const base64 = XLSX.write(wb, { type: 'base64', bookType: 'xlsx' });
+    const safeName = String(group.name || 'Laporan').replace(/[\\/:*?"<>|]/g, '-').trim().slice(0, 80) || 'Laporan';
+    return { filename: `${safeName}.xlsx`, content: base64 };
+  }catch(err){
+    console.error('Gagal bikin lampiran Excel:', err);
+    return null;
+  }
+}
+
 async function sendGroupViaResend(group){
   const subject = fillTemplate(state.narrative.subjectTpl, group);
   const html = buildEmailBodyHtml(group);
   const account = ''; // pemilihan akun pengirim tidak didukung di versi Mac
   const mode = 'send'; // mode terkunci permanen: selalu kirim langsung ke penerima asli
+  const attachment = (group.rows && group.rows.length) ? buildGroupExcelAttachment(group) : null;
   const payload = {
     to: group.emails.join('; '),
     cc: group.ccs.join('; '),
-    subject, html, account, mode
+    subject, html, account, mode,
+    attachment: attachment || undefined,
   };
   const res = await fetch('/api/send', {
     method:'POST',
@@ -2687,8 +3149,21 @@ let suratState = {
   templates: [], selectedTemplate: null,
   dataSheetName: '', dataRows: [], dataColumns: [],
   selectedRows: new Set(),
+  tableCols: [], savedTableCols: null,
   step: 1,
+  // Fitur "kirim ke banyak email" (blast per-baris) — dimatikan by
+  // default, jadi surat FLEX tetap berhenti di approval seperti biasa
+  // kecuali user sengaja menyalakan toggle-nya di Langkah 2.
+  blastEnabled: false,
+  emailColumn: '',
+  // Approval per-surat: approver bisa dipilih khusus (kosong = pakai
+  // default di Pengaturan), dan blok TTD di PDF bisa dimatikan kalau
+  // surat ini cukup butuh bukti approval tanpa tanda tangan tercetak.
+  approverEmail: '',
+  approverName: '',
+  needsSignature: true,
 };
+let suratApproverList = []; // [{id,name,email}] — lintas jenis surat, dipilih ulang tiap surat
 let SURAT_SUPPORTED_CODES = [];
 let SURAT_TYPE_NAMES = {};
 let SURAT_TYPE_META = {};
@@ -2714,7 +3189,7 @@ function switchAppMode(mode){
   document.getElementById('appSubtitle').textContent = isSurat
     ? 'Buat Surat — template Excel jadi PDF surat resmi & kirim approval'
     : 'Blast Email — laporan Excel jadi email terpisah per penerima';
-  document.title = (isSurat ? 'Buat Surat' : 'Blast Email') + ' — Sales Performance Sumatera';
+  document.title = (isSurat ? 'Buat Surat' : 'Blast Email') + ' — Sales & Distribution Sumatera';
   renderStepsNav();
 }
 
@@ -2767,6 +3242,8 @@ let suratSettingsCache = { approverEmail: '', hasSignature: false, signatureUrl:
 let suratSignaturePendingBase64 = null;
 
 let suratMemoFieldsCache = {}; // { [TEMPLATE_CODE]: {noSurat,hal,kepada,dari} }
+let suratNarrativeTemplates = []; // [{id,name,introText,closingText,updatedAt}] — preset bernama, lintas jenis surat
+let suratActiveNarrativeTplId = '';
 
 async function loadSuratSettingsCache(){
   try{
@@ -2778,8 +3255,152 @@ async function loadSuratSettingsCache(){
         letterSigners: j.letterSigners || { kota: '', signers: [] },
       };
       suratMemoFieldsCache = j.memoFields || {};
+      suratNarrativeTemplates = j.narrativeTemplates || [];
+      renderNarrativeTplOptions();
+      suratApproverList = j.approverList || [];
+      renderSuratApproverOptions();
     }
   }catch(e){ /* diam-diam gagal — panel pengaturan tetap bisa dibuka manual */ }
+}
+
+/* ---------- Approver per-surat (dropdown "Approver surat ini") ---------- */
+function renderSuratApproverOptions(){
+  const sel = document.getElementById('suratApproverSelect');
+  if(!sel) return;
+  const defaultLabel = suratSettingsCache.approverEmail
+    ? `— pakai approver default (${suratSettingsCache.approverEmail}) —`
+    : '— pilih approver —';
+  sel.innerHTML = `<option value="">${escapeHtml(defaultLabel)}</option>` +
+    suratApproverList.map(a=>`<option value="${escapeHtml(a.email)}">${escapeHtml(a.name ? a.name + ' — ' + a.email : a.email)}</option>`).join('');
+  sel.value = suratState.approverEmail || '';
+}
+
+function onSuratApproverSelectChange(){
+  const sel = document.getElementById('suratApproverSelect');
+  const email = sel.value;
+  suratState.approverEmail = email;
+  const found = suratApproverList.find(a=>a.email === email);
+  suratState.approverName = found ? found.name : '';
+  onSuratFieldChange();
+}
+
+function toggleTambahApprover(show){
+  const wrap = document.getElementById('suratApproverAddWrap');
+  const showIt = show === undefined ? wrap.style.display === 'none' : Boolean(show);
+  wrap.style.display = showIt ? 'flex' : 'none';
+  if(showIt){
+    document.getElementById('suratApproverNewName').value = '';
+    document.getElementById('suratApproverNewEmail').value = '';
+  }
+}
+
+async function tambahApproverBaru(){
+  const name = document.getElementById('suratApproverNewName').value.trim();
+  const email = document.getElementById('suratApproverNewEmail').value.trim();
+  if(!email){ toast('Isi dulu email approver-nya.'); return; }
+  try{
+    const r = await fetch('/api/settings/approvers', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ name, email }),
+    });
+    const j = await r.json();
+    if(!j.ok){ toast('Gagal menyimpan approver: ' + (j.error||'')); return; }
+    suratApproverList = j.approverList || suratApproverList;
+    suratState.approverEmail = j.approver.email;
+    suratState.approverName = j.approver.name;
+    toggleTambahApprover(false);
+    renderSuratApproverOptions();
+    onSuratFieldChange();
+    toast(`Approver "${j.approver.name || j.approver.email}" ditambahkan.`);
+  }catch(e){
+    toast('Gagal terhubung ke server: ' + e.message);
+  }
+}
+
+function onSuratNeedsSignatureChange(){
+  suratState.needsSignature = document.getElementById('suratNeedsSignatureToggle').checked;
+  onSuratFieldChange();
+}
+
+/* ---------- Template narasi bernama (dipakai ulang lintas surat) ----------
+ * Beda dari "ingatan" otomatis narasi terakhir (applySuratMemoFieldsFromMemory)
+ * — ini daftar preset yang SENGAJA disimpan user dengan nama sendiri, dan
+ * bisa dipanggil kapan saja walau lagi bikin surat yang isinya beda-beda.
+ */
+function renderNarrativeTplOptions(){
+  const sel = document.getElementById('suratNarrativeTplSelect');
+  if(!sel) return;
+  sel.innerHTML = '<option value="">— pakai narasi di bawah langsung —</option>' +
+    suratNarrativeTemplates.map(t=>`<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)}</option>`).join('');
+  sel.value = suratActiveNarrativeTplId || '';
+  const delBtn = document.getElementById('suratNarrativeTplDeleteBtn');
+  if(delBtn) delBtn.style.display = suratActiveNarrativeTplId ? 'inline-flex' : 'none';
+}
+
+function loadNarrativeTemplate(id){
+  suratActiveNarrativeTplId = id || '';
+  const tpl = suratNarrativeTemplates.find(t=>t.id === id);
+  if(tpl){
+    document.getElementById('suratNarIntro').value = tpl.introText || '';
+    document.getElementById('suratNarClosing').value = tpl.closingText || '';
+    onSuratFieldChange();
+  }
+  renderNarrativeTplOptions();
+}
+
+function toggleSaveNarrativeTpl(show){
+  const wrap = document.getElementById('suratNarrativeTplSaveWrap');
+  const showIt = show === undefined ? wrap.style.display === 'none' : Boolean(show);
+  wrap.style.display = showIt ? 'flex' : 'none';
+  if(showIt){
+    // Kalau lagi ada template aktif terpilih, isi nama-nya duluan — jadi
+    // klik "Simpan" langsung nimpa template yang sama (bukan bikin baru).
+    // Nama-nya masih bisa diubah kalau memang mau disimpan sebagai baru.
+    const active = suratNarrativeTemplates.find(t=>t.id === suratActiveNarrativeTplId);
+    document.getElementById('suratNarrativeTplName').value = active ? active.name : '';
+  }
+}
+
+async function saveNarrativeTemplate(){
+  const nameInput = document.getElementById('suratNarrativeTplName');
+  const name = nameInput.value.trim();
+  if(!name){ toast('Isi dulu nama templatenya.'); return; }
+  const introText = document.getElementById('suratNarIntro').value;
+  const closingText = document.getElementById('suratNarClosing').value;
+  // Timpa (update) template yang sama kalau namanya persis cocok dengan
+  // template yang lagi aktif dipilih — selain itu selalu bikin baru, jadi
+  // aman dipakai buat "simpan sebagai" versi lain juga.
+  const active = suratNarrativeTemplates.find(t=>t.id === suratActiveNarrativeTplId);
+  const idToSave = (active && active.name === name) ? active.id : undefined;
+  try{
+    const r = await fetch('/api/settings/narrative-templates', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ id: idToSave, name, introText, closingText }),
+    });
+    const j = await r.json();
+    if(!j.ok){ toast('Gagal menyimpan template: ' + (j.error||'')); return; }
+    suratActiveNarrativeTplId = j.template.id;
+    toggleSaveNarrativeTpl(false);
+    await loadSuratSettingsCache();
+    toast(`Template narasi "${name}" disimpan.`);
+  }catch(e){
+    toast('Gagal terhubung ke server: ' + e.message);
+  }
+}
+
+async function deleteCurrentNarrativeTemplate(){
+  const id = suratActiveNarrativeTplId;
+  if(!id) return;
+  try{
+    const r = await fetch('/api/settings/narrative-templates/' + encodeURIComponent(id), { method:'DELETE' });
+    const j = await r.json();
+    if(!j.ok){ toast('Gagal menghapus template: ' + (j.error||'')); return; }
+    suratActiveNarrativeTplId = '';
+    await loadSuratSettingsCache();
+    toast('Template narasi dihapus.');
+  }catch(e){
+    toast('Gagal terhubung ke server: ' + e.message);
+  }
 }
 
 // Isi 4 kolom "Detail Memo" dari yang terakhir kali diketik untuk jenis
@@ -2789,11 +3410,11 @@ function applySuratMemoFieldsFromMemory(templateCode){
   const f = suratMemoFieldsCache[templateCode] || {};
   document.getElementById('suratMemoNoSurat').value = f.noSurat || '';
   document.getElementById('suratMemoHal').value = f.hal || '';
-  document.getElementById('suratMemoReferensi').value = f.referensi || '';
-  // Budget belum diingat per jenis surat (biasanya beda tiap payout) —
-  // sengaja tidak diprefill, kosong tiap buka jenis surat yang sama.
-  document.getElementById('suratMemoBudgetType').value = '';
-  document.getElementById('suratMemoBudgetMtaCc').value = '';
+  // Narasi bebas (alur FLEX) — diingat apa adanya dari terakhir dipakai.
+  document.getElementById('suratNarIntro').value = f.introText || '';
+  document.getElementById('suratNarClosing').value = f.closingText || '';
+  suratState.savedTableCols = Array.isArray(f.tableCols) ? f.tableCols : null;
+  applySavedSuratTableCols();
   renderMemoFieldOptions(templateCode, 'kepada');
   renderMemoFieldOptions(templateCode, 'dari');
   document.getElementById('suratMemoKepadaAddWrap').style.display = 'none';
@@ -2867,39 +3488,246 @@ async function tambahMemoFieldBaru(field){
 async function tambahKepadaBaru(){ await tambahMemoFieldBaru('kepada'); }
 async function tambahDariBaru(){ await tambahMemoFieldBaru('dari'); }
 
-// Baca 4 kolom itu sebagai object siap dikirim ke server.
+/* ---------- Penyederhanaan input: isi contoh per jenis dokumen + auto-deteksi ---------- */
+const SURAT_PRESETS = {
+  memo: { hal:'', intro:'', closing:'' },
+  surat_mitra: {
+    hal:'Pemberitahuan {{PERIODE}}',
+    intro:'Dengan ini disampaikan informasi untuk periode **{{PERIODE}}** dengan rincian sebagai berikut:',
+    closing:'Demikian surat pemberitahuan ini kami sampaikan, atas kerjasamanya kami ucapkan terima kasih.',
+  },
+  pemberitahuan: {
+    hal:'Pemberitahuan {{PERIODE}}',
+    intro:'Sehubungan dengan periode {{PERIODE}}, bersama ini kami sampaikan pemberitahuan dengan rincian sebagaimana tabel di bawah ini.',
+    closing:'Demikian pemberitahuan ini kami sampaikan. Atas perhatian dan kerja samanya kami ucapkan terima kasih.',
+  },
+  bast: {
+    hal:'Periode {{PERIODE}}',
+    intro:'',
+    closing:'Demikian Berita Acara Serah Terima ini dibuat dengan sebenarnya untuk dipergunakan sebagaimana mestinya.',
+  },
+};
+let suratPresetApplied = { fmt:'memo', hal:'', intro:'', closing:'' };
+
+// Isi contoh HANYA kalau kolomnya masih kosong atau masih berisi contoh
+// preset sebelumnya — apa pun yang sudah diketik/diubah user tidak ditimpa.
+function applySuratPreset(fmt){
+  const pre = SURAT_PRESETS[fmt] || SURAT_PRESETS.memo;
+  const set = (id, key)=>{
+    const el = document.getElementById(id);
+    if(!el) return;
+    const cur = el.value.trim();
+    if(cur === '' || cur === suratPresetApplied[key]) el.value = pre[key];
+  };
+  set('suratMemoHal','hal'); set('suratNarIntro','intro'); set('suratNarClosing','closing');
+  suratPresetApplied = { fmt, hal: pre.hal, intro: pre.intro, closing: pre.closing };
+}
+
+// Kolom nama mitra yang dipakai sebagai token default — PARTNER_NAME kalau
+// ada, kalau tidak tebak dari kolom yang namanya mengandung "name/nama".
+function suratGuessNameCol(){
+  const cols = suratState.dataColumns || [];
+  return cols.find(c=>/^partner[_ ]?name$/i.test(c)) || cols.find(c=>/(partner|mitra|nama|name)/i.test(c)) || '';
+}
+// Isian bawaan yang menyebut kolom yang TIDAK ada di Excel ini ({{PARTNER_NAME}},
+// {{REGION}}) diganti ke kolom yang cocok, atau dikosongkan — jadi tidak ada
+// token "mati" yang tercetak kosong di surat.
+function suratFixDefaultTokens(){
+  const cols = suratState.dataColumns || [];
+  if(!cols.length) return;
+  const nameCol = suratGuessNameCol();
+  const nameTok = nameCol ? '{{' + suratTokenName(nameCol) + '}}' : '';
+  const regionCol = cols.find(c=>/^region/i.test(c)) || '';
+  ['suratMitraKepada','suratMitraSalutation','smPbPenerima','smBastP2Nama','smBastP2Perusahaan'].forEach(id=>{
+    const el = document.getElementById(id);
+    if(el && /\{\{PARTNER_NAME\}\}/.test(el.value) && !cols.includes('PARTNER_NAME')) el.value = el.value.replace(/\{\{PARTNER_NAME\}\}/g, nameTok);
+  });
+  const info = document.getElementById('suratMitraInfo');
+  if(info && /\{\{REGION\}\}/.test(info.value) && !cols.includes('REGION')){
+    info.value = regionCol ? info.value.replace(/\{\{REGION\}\}/g, '{{' + suratTokenName(regionCol) + '}}') : '';
+  }
+}
+function suratIsContactCol(c){ return /e-?mail|^cc$|^to$|_cc$|_to$/i.test(String(c)); }
+
+// Ringkasan 1 baris di judul "Approval" (yang sekarang bisa dilipat).
+function renderSuratApprovalSummary(){
+  const el = document.getElementById('suratApprovalSummary');
+  if(!el) return;
+  const who = suratState.approverName || suratState.approverEmail || 'approver default';
+  el.textContent = '· ' + who + (suratState.needsSignature ? ' · dengan blok TTD' : ' · tanpa blok TTD');
+}
+
+/* ---------- Format dokumen: IOM/Memo vs Surat ke mitra (1 surat per ID) ---------- */
+const SURAT_MITRA_LS_KEY = 'suratMitraCfg.v1';
+const SURAT_MITRA_FIELDS = ['suratMitraKepada','suratMitraSalutation','suratMitraInfo','suratMitraClosingWord','suratMitraCompany','smPbSebutan','smPbPenerima','smPbTitle','smPbDetailRows','smPbAttTitle','smPbAttIntro','smPbAttItems','smBastP2Nama','smBastP2Jabatan','smBastP2Perusahaan','smBastP1Perusahaan','smBastStatements'];
+let suratMitraLastFocusId = 'suratNarIntro';
+function suratMitraSave(){
+  try{
+    const o = { format: suratState.formatSurat || 'memo' };
+    SURAT_MITRA_FIELDS.forEach(id=>{ const el = document.getElementById(id); if(el) o[id] = el.value; });
+    localStorage.setItem(SURAT_MITRA_LS_KEY, JSON.stringify(o));
+  }catch(e){}
+}
+function suratMitraRestore(){
+  try{
+    const o = JSON.parse(localStorage.getItem(SURAT_MITRA_LS_KEY) || 'null');
+    if(!o) return;
+    SURAT_MITRA_FIELDS.forEach(id=>{ const el = document.getElementById(id); if(el && typeof o[id] === 'string') el.value = o[id]; });
+    if(['surat_mitra','pemberitahuan','bast'].includes(o.format)){
+      const r = document.querySelector('input[name="suratFormat"][value="' + o.format + '"]');
+      if(r) r.checked = true;
+      suratState.formatSurat = o.format;
+    }
+  }catch(e){}
+}
+function onSuratFormatChange(){
+  const v = (document.querySelector('input[name="suratFormat"]:checked') || {}).value || 'memo';
+  suratState.formatSurat = v;
+  const mitra = v !== 'memo';
+  const show = (id, on)=>{ const el = document.getElementById(id); if(el) el.style.display = on ? 'block' : 'none'; };
+  show('suratMitraGroup', v === 'surat_mitra');
+  show('suratPbGroup', v === 'pemberitahuan');
+  show('suratBastGroup', v === 'bast');
+  show('suratTokenChipsWrap', mitra);
+  const tf = document.getElementById('suratIomToFromGrid');
+  if(tf) tf.style.display = mitra ? 'none' : '';
+  // "Kirim ke penerima" wajib untuk surat ke mitra? Tidak — tetap opsional,
+  // tapi disarankan; biarkan toggle apa adanya.
+  renderSuratMitraChips();
+  suratFixDefaultTokens();
+  applySuratPreset(v);
+  // Surat per ID biasanya memang dikirim ke tiap mitra: kalau ada kolom
+  // email yang terdeteksi, toggle "Kirim ke penerima" dinyalakan otomatis
+  // (bisa dimatikan lagi) — tidak perlu cari-cari pengaturannya.
+  if(mitra && suratState.emailColumn && !suratState.blastEnabled){
+    const t = document.getElementById('suratBlastToggle');
+    if(t){ t.checked = true; onSuratBlastToggleChange(); }
+  }
+  suratMitraSave();
+  onSuratFieldChange();
+}
+function onSuratMitraChange(){
+  suratMitraSave();
+  onSuratFieldChange();
+}
+// Nama kolom Excel -> nama token di server (karakter non-huruf/angka jadi "_").
+function suratTokenName(col){ return String(col).trim().replace(/\W+/g, '_'); }
+function renderSuratMitraChips(){
+  const box = document.getElementById('suratMitraTokenChips');
+  if(!box) return;
+  const cols = suratState.dataColumns || [];
+  box.innerHTML = '';
+  cols.forEach(c=>{
+    const tok = suratTokenName(c);
+    if(!tok) return;
+    const pill = document.createElement('div');
+    pill.className = 'colpill active';
+    pill.style.cursor = 'pointer';
+    pill.title = 'Sisipkan {{' + tok + '}}';
+    pill.textContent = '{{' + tok + '}}';
+    pill.addEventListener('mousedown', e=> e.preventDefault()); // jangan lepas fokus dari kolom teks
+    pill.addEventListener('click', ()=> insertSuratMitraToken('{{' + tok + '}}'));
+    box.appendChild(pill);
+  });
+}
+function insertSuratMitraToken(tok){
+  const ids = SURAT_MITRA_FIELDS.concat(['suratMemoNoSurat','suratMemoHal','suratNarIntro','suratNarClosing']);
+  const id = ids.includes(suratMitraLastFocusId) ? suratMitraLastFocusId : 'suratNarIntro';
+  const el = document.getElementById(id);
+  if(!el) return;
+  const a = el.selectionStart == null ? el.value.length : el.selectionStart;
+  const b = el.selectionEnd == null ? a : el.selectionEnd;
+  el.value = el.value.slice(0, a) + tok + el.value.slice(b);
+  el.focus();
+  el.setSelectionRange(a + tok.length, a + tok.length);
+  el.dispatchEvent(new Event('input', {bubbles:true}));
+}
+document.addEventListener('focusin', e=>{
+  if(e.target && e.target.id) suratMitraLastFocusId = e.target.id;
+});
+
+// Baca kolom kop + narasi + kolom tabel jadi object siap dikirim ke server.
 function readSuratMemoFields(){
   return {
     noSurat: document.getElementById('suratMemoNoSurat').value.trim(),
     hal: document.getElementById('suratMemoHal').value.trim(),
     kepada: (document.getElementById('suratMemoKepadaSelect').value || '').trim(),
     dari: (document.getElementById('suratMemoDariSelect').value || '').trim(),
-    referensi: document.getElementById('suratMemoReferensi').value.trim(),
-    budgetType: document.getElementById('suratMemoBudgetType').value.trim(),
-    budgetMtaCc: document.getElementById('suratMemoBudgetMtaCc').value.trim(),
+    // Narasi bebas + kolom tabel yang mau ditampilkan — ini yang
+    // menggantikan Referensi/Budget Type/Budget MTA|CC lama. Isi tabel
+    // (suratState.tableCols) cuma yang "included", disederhanakan jadi
+    // {key,label,numeric} biar cocok sama format yang dibaca server.
+    introText: document.getElementById('suratNarIntro').value,
+    closingText: document.getElementById('suratNarClosing').value,
+    tableCols: (suratState.tableCols || []).filter(c=>c.included).map(c=>({ key:c.key, label:c.label, numeric:c.numeric })),
   };
 }
 
 // Terapkan ke templateConfig yang mau dikirim ke server — cuma menimpa
 // field yang memang diisi, biar yang kosong tetap jatuh ke bawaan jenis
-// surat itu (LETTER_DEFAULTS di server).
+// surat itu (LETTER_DEFAULTS di server). MEMO_BLOCKS (badan surat) buat
+// alur FLEX dibangun sepenuhnya di sini dari narasi + kolom tabel — lihat
+// buildFlexMemoBlocks().
 function applySuratMemoFieldsToConfig(tpl, fields){
   const out = { ...tpl };
   if(fields.noSurat) out.NO_SURAT = fields.noSurat;
   if(fields.hal) out.HEADER_VALUE_3 = fields.hal;
   if(fields.kepada) out.MEMO_TO = fields.kepada;
   if(fields.dari) out.MEMO_FROM = fields.dari;
-  if(fields.referensi) out.REFERENSI = fields.referensi;
-  if(fields.budgetType) out.BUDGET_TYPE = fields.budgetType;
-  if(fields.budgetMtaCc) out.BUDGET_MTA_CC = fields.budgetMtaCc;
+  const blocks = buildFlexMemoBlocks(fields.introText, fields.closingText, fields.tableCols);
+  if(blocks.length) out.MEMO_BLOCKS = blocks;
+  // Format "Surat ke mitra": 1 surat personal per baris — server memakai
+  // generateSuratMitraPdf dengan field SM_* ini (token {{KOLOM}} diisi per baris).
+  const fmt = suratState.formatSurat;
+  if(fmt === 'surat_mitra' || fmt === 'pemberitahuan' || fmt === 'bast'){
+    const g = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+    const lines = id => g(id).split('\n').map(x=>x.trim()).filter(Boolean);
+    out.FORMAT_SURAT = fmt;
+    out.SM_INTRO = fields.introText || '';
+    out.SM_CLOSING = fields.closingText || '';
+    out.SM_TABLE_COLS = fields.tableCols || [];
+    if(fmt === 'surat_mitra'){
+      out.SM_KEPADA = g('suratMitraKepada');
+      out.SM_SALUTATION = g('suratMitraSalutation');
+      out.SM_INFO = g('suratMitraInfo');
+      out.SM_CLOSING_WORD = g('suratMitraClosingWord');
+      out.SM_COMPANY = g('suratMitraCompany');
+    } else if(fmt === 'pemberitahuan'){
+      // Field kosong DIKIRIM sebagai '' (bukan dihilangkan) supaya teks
+      // contoh bawaan mesin tidak ikut tercetak.
+      const cols = (fields.tableCols || []);
+      out.RECIPIENT_TITLE = g('smPbSebutan');
+      out.RECIPIENT_BLOCK = g('smPbPenerima') || '{{PARTNER_NAME}}';
+      out.NO_REF_FORMAT = fields.noSurat || '';
+      out.PERIHAL_TEMPLATE = fields.hal || '';
+      out.BODY_OPENING = fields.introText || '';
+      out.CLOSING = fields.closingText || '';
+      out.SUMMARY_TABLE_TITLE = g('smPbTitle');
+      out.SUMMARY_TABLE_ROWS = cols.map(c => String(c.label||c.key).replace(/[=|]/g,' ') + '={{' + suratTokenName(c.key) + '}}').join('|');
+      out.DETAIL_ROWS = lines('smPbDetailRows').map(x=>x.replace(/\|/g,' ')).join('|');
+      out.ATTACHMENT_TITLE = g('smPbAttTitle');
+      out.ATTACHMENT_INTRO = g('smPbAttIntro');
+      out.ATTACHMENT_ITEMS = lines('smPbAttItems').map(x=>x.replace(/\|/g,' ')).join('|');
+    } else {
+      const cols = (fields.tableCols || []);
+      out.PERIHAL_TEMPLATE = fields.hal || '';
+      out.PIHAK2_NAMA = g('smBastP2Nama');
+      out.PIHAK2_JABATAN = g('smBastP2Jabatan');
+      out.PIHAK2_PERUSAHAAN = g('smBastP2Perusahaan');
+      out.SIGNER_1_COMPANY = g('smBastP1Perusahaan');
+      out.BAST_STATEMENTS = lines('smBastStatements').map(x=>x.replace(/\|/g,' ')).join('|');
+      out.DETAIL_TABLE_COLUMNS = cols.map(c => String(c.key).replace(/\|/g,' ')).join('|');
+      out.CLOSING = fields.closingText || '';
+    }
+  }
   return out;
 }
 
 // Simpan diam-diam ke server tiap kali preview/generate — jadi lain kali
-// buka jenis surat yang sama, "Detail Memo" sudah keisi otomatis. Gagal
+// buka Buat Surat lagi, kop & narasinya sudah keisi otomatis. Gagal
 // simpan tidak menghentikan preview/generate-nya.
 async function rememberSuratMemoFields(templateCode, fields){
-  if(!fields.noSurat && !fields.hal && !fields.kepada && !fields.dari && !fields.referensi) return;
+  if(!fields.noSurat && !fields.hal && !fields.kepada && !fields.dari && !fields.introText && !fields.closingText) return;
   try{
     const r = await fetch('/api/settings/memo-fields', {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -2911,6 +3739,161 @@ async function rememberSuratMemoFields(templateCode, fields){
     // lain yang sudah pernah tersimpan.
     if(j.ok) suratMemoFieldsCache[templateCode] = j.fields;
   }catch(e){ /* diam-diam gagal — tidak krusial */ }
+}
+
+/* ---------- Alur Surat FLEKSIBEL: narasi bebas -> MEMO_BLOCKS ----------
+ * Sama persis konsepnya dengan narrativeToHtml() punya Blast Email Report
+ * (baris kosong = paragraf baru, baris "- " berurutan = list), bedanya di
+ * sini hasilnya array block {section,type,text} buat mesin PDF surat
+ * (generateMemoPdf di services/letterEngine.js), bukan HTML email.
+ * ------------------------------------------------------------------- */
+// Satu "chunk" = satu blok yang dipisah Enter 2x (baris kosong) oleh
+// user di textarea narasi — ini yang nanti dapat SATU nomor pasal.
+// Isinya bisa lebih dari satu blok render (mis. kalimat pembuka +
+// daftar bullet di bawahnya) tapi itu semua tetap 1 pasal yang sama,
+// karena user tidak kasih baris kosong di antaranya.
+function narrativeTextToMemoBlockChunks(rawText){
+  const chunks = [];
+  String(rawText || '').split('\n\n').forEach(block=>{
+    if(!block.trim()) return;
+    // Nomor pasal (1., 2., 3., ...) sudah otomatis ditambahkan di kiri
+    // tiap poin surat saat dicetak. Kalau user ikut ngetik nomor sendiri
+    // di awal paragraf (mis. "1. Refers to:"), itu dipangkas di sini
+    // supaya tidak dobel jadi "1.  1. Refers to:". Cuma baris PALING AWAL
+    // blok yang dicek, dan cuma kalau itu bukan baris bullet ("- ...").
+    block = block.replace(/^[ \t]*\d+[.)]\s+/, '');
+    // Kalau user kasih lebih dari 1 baris kosong (Enter 3x+) di antara dua
+    // poin, split('\n\n') di atas bisa nyisain 1 baris kosong nempel di
+    // awal blok berikutnya — dibuang di sini supaya tidak jadi baris
+    // kosong aneh di awal paragraf.
+    block = block.replace(/^\n+|\n+$/g, '');
+    if(!block.trim()) return;
+    const lines = block.split('\n');
+    const chunkBlocks = [];
+    let normalBuf = [];
+    let bulletBuf = [];
+    const flushNormal = ()=>{
+      if(normalBuf.length){ chunkBlocks.push({ type:'paragraph', text: normalBuf.join('\n') }); normalBuf = []; }
+    };
+    const flushBullets = ()=>{
+      if(bulletBuf.length){ chunkBlocks.push({ type:'bulletlist', text: bulletBuf.join('\n') }); bulletBuf = []; }
+    };
+    lines.forEach(line=>{
+      const m = line.match(/^\s*-\s+(.*)$/);
+      if(m){
+        flushNormal();
+        bulletBuf.push(m[1]);
+      } else if(bulletBuf.length && line.trim() !== ''){
+        // Baris ini BUKAN bullet baru (tidak diawali "- "), tapi masih di
+        // tengah daftar bullet — biasanya ini kalimat panjang yang aslinya
+        // satu bullet tapi ke-paste/ke-ketik dengan baris baru di tengah
+        // (mis. hasil copy dari PDF yang teksnya wrap). Gabungkan ke
+        // bullet TERAKHIR (nyambung sebagai kalimat yang sama), bukan
+        // dianggap baris/paragraf lepas yang keluar dari daftarnya.
+        bulletBuf[bulletBuf.length - 1] = (bulletBuf[bulletBuf.length - 1] + ' ' + line.trim()).trim();
+      } else {
+        flushBullets();
+        normalBuf.push(line);
+      }
+    });
+    flushNormal();
+    flushBullets();
+    if(chunkBlocks.length) chunks.push(chunkBlocks);
+  });
+  return chunks;
+}
+
+// Kompatibilitas: daftar blok rata (flat), tanpa nomor pasal — dipakai
+// di tempat yang cuma butuh isi bloknya, bukan pengelompokan pasal.
+function narrativeTextToMemoBlocksRaw(rawText){
+  const flat = [];
+  narrativeTextToMemoBlockChunks(rawText).forEach(chunk=>{ flat.push(...chunk); });
+  return flat;
+}
+
+// Gabungkan narasi pembuka + 1 blok tabel (kolom sesuai pilihan user) +
+// narasi penutup jadi satu MEMO_BLOCKS, dengan nomor pasal (section) yang
+// jalan otomatis 1,2,3,... cuma buat bagian yang benar-benar ada isinya
+// (kalau narasi pembuka kosong, tabel langsung jadi pasal "1.", bukan
+// "2." menggantung).
+function buildFlexMemoBlocks(introText, closingText, tableCols){
+  const blocks = [];
+  let sec = 0;
+  // Tiap chunk (dipisah Enter 2x oleh user) dapat nomor pasalnya
+  // sendiri-sendiri dan berurutan — jadi "Refers to:" dan "MPx Fee
+  // Program..." di textarea yang sama TETAP jadi pasal 1 dan pasal 2
+  // terpisah, asal user kasih baris kosong di antaranya. Tabel data
+  // menyisip di antara narasi pembuka & penutup, dapat nomornya sendiri.
+  narrativeTextToMemoBlockChunks(introText).forEach(chunk=>{
+    sec++;
+    chunk.forEach(b=>{ b.section = sec; });
+    blocks.push(...chunk);
+  });
+  if(Array.isArray(tableCols) && tableCols.length){
+    sec++;
+    blocks.push({ section: sec, type:'table', mode:'auto', tableCols });
+  }
+  narrativeTextToMemoBlockChunks(closingText).forEach(chunk=>{
+    sec++;
+    chunk.forEach(b=>{ b.section = sec; });
+    blocks.push(...chunk);
+  });
+  return blocks;
+}
+
+// Pilihan kolom tabel buat alur Buat Surat — paralel dengan
+// state.tableCols/renderColChecklistDOM punya Blast Email Report, tapi
+// sengaja dipisah (suratState.tableCols/#suratColcheckList) supaya dua
+// alur ini tidak saling pengaruh.
+function renderSuratColChecklistDOM(){
+  const list = document.getElementById('suratColcheckList');
+  if(!list) return;
+  list.innerHTML = '';
+  (suratState.tableCols || []).forEach((c, idx)=>{
+    const pill = document.createElement('div');
+    pill.className = 'colpill' + (c.included ? ' active' : '');
+    pill.title = 'Kolom asli: ' + c.key;
+    pill.innerHTML = `<span class="cp-toggle"></span><input type="text" value="${escapeHtml(c.label)}" data-idx="${idx}" class="cp-label" style="width:${Math.max(3, c.label.length)}ch">` +
+      `<button type="button" class="cp-fmt${c.numeric ? ' on' : ''}" title="Format sebagai angka berpemisah ribuan & otomatis dijumlah di baris Total">123</button>`;
+    const input = pill.querySelector('.cp-label');
+    const fmtBtn = pill.querySelector('.cp-fmt');
+    pill.addEventListener('click', (e)=>{
+      if(e.target === input || e.target === fmtBtn) return;
+      c.included = !c.included;
+      pill.classList.toggle('active', c.included);
+      scheduleSuratLivePreview();
+    });
+    input.addEventListener('click', e=> e.stopPropagation());
+    input.addEventListener('input', e=>{
+      c.label = e.target.value;
+      e.target.style.width = Math.max(3, e.target.value.length) + 'ch';
+      scheduleSuratLivePreview();
+    });
+    fmtBtn.addEventListener('click', e=>{
+      e.stopPropagation();
+      c.numeric = !c.numeric;
+      fmtBtn.classList.toggle('on', c.numeric);
+      scheduleSuratLivePreview();
+    });
+    list.appendChild(pill);
+  });
+}
+
+// Dipanggil tiap ganti sheet data (applySuratDataSheet) — bangun ulang
+// daftar kolom tabel dari kolom sheet yang baru, tapi kalau ada
+// pengaturan tersimpan (suratState.savedTableCols, dari memori server)
+// yang key-nya masih cocok, pakai label/numeric/included dari situ dulu
+// supaya tidak perlu diatur ulang tiap buka Buat Surat.
+function applySavedSuratTableCols(){
+  const saved = suratState.savedTableCols;
+  if(!saved || !saved.length || !suratState.tableCols) return;
+  const byKey = {};
+  saved.forEach(c=>{ byKey[c.key] = c; });
+  suratState.tableCols.forEach(c=>{
+    const s = byKey[c.key];
+    if(s){ c.label = s.label || c.label; c.numeric = Boolean(s.numeric); }
+  });
+  renderSuratColChecklistDOM();
 }
 
 // 4 baris nama+jabatan penandatangan — cukup untuk semua varian tanda
@@ -2928,7 +3911,7 @@ function renderSettingsSigners(){
       </div>
       <div class="field">
         <label class="field-label">Jabatan penandatangan ${i+1}</label>
-        <input type="text" class="settingsSignerTitle" data-idx="${i}" value="${escapeHtml(sg.title||'')}" placeholder="mis. Head of Sales Performance">
+        <input type="text" class="settingsSignerTitle" data-idx="${i}" value="${escapeHtml(sg.title||'')}" placeholder="mis. Head of Sales &amp; Distribution">
       </div>
       <div class="field">
         <label class="field-label">NIK penandatangan ${i+1} <span style="font-weight:400;color:#94a3b8;">(opsional)</span></label>
@@ -3108,6 +4091,12 @@ function showSuratError(msg){
   el.classList.toggle('show', Boolean(msg));
 }
 
+// Alur surat sekarang cuma SATU (Fleksibel/FLEX, lihat services/letterEngine.js)
+// — tidak ada lagi keharusan nama sheet cocok dengan salah satu dari 5
+// jenis surat lama. Tinggal upload Excel apa saja, sheet mana pun boleh
+// jadi sumber data (dipilih/diganti belakangan lewat dropdown "Sheet
+// data" di Langkah 2) — cara kerjanya sekarang sama seperti upload di
+// Blast Email Report.
 function handleSuratFile(file){
   showSuratError('');
   const reader = new FileReader();
@@ -3115,53 +4104,47 @@ function handleSuratFile(file){
     try{
       const data = new Uint8Array(e.target.result);
       const wb = XLSX.read(data, {type:'array'});
-
-      // Jenis surat dikenali langsung dari nama sheet-nya — cocokkan tiap
-      // sheet di file terhadap 5 jenis surat yang didukung mesin (nama
-      // dari /api/letters/templates-supported). Tidak ada pendaftaran
-      // manual, tidak ada sheet TEMPLATE_SURAT: nama sheet ITU adalah
-      // jenis suratnya.
-      const namaKeKode = {};
-      SURAT_SUPPORTED_CODES.forEach(code=>{
-        namaKeKode[normalizeSuratName(SURAT_TYPE_NAMES[code] || code)] = code;
-        namaKeKode[normalizeSuratName(code)] = code;
-      });
-      const templates = [];
-      wb.SheetNames.forEach(sheetName=>{
-        const code = namaKeKode[normalizeSuratName(sheetName)];
-        if(!code) return;
-        const aggregate = Boolean((SURAT_TYPE_META[code]||{}).aggregate);
-        templates.push({
-          TEMPLATE_CODE: code,
-          LETTER_NAME: SURAT_TYPE_NAMES[code] || code,
-          SOURCE_SHEET: sheetName,
-          // IOM (aggregate) berhenti setelah approval — surat ke mitra
-          // (Pemberitahuan/BAST) lanjut dikirim ke tiap penerima.
-          ALUR: aggregate ? 'approval_saja' : 'approval_lalu_blast',
-        });
-      });
-
-      if(!templates.length){
-        showSuratError(
-          `Tidak ada sheet di file ini yang namanya cocok dengan salah satu dari ${SURAT_SUPPORTED_CODES.length} jenis surat yang didukung: ` +
-          SURAT_SUPPORTED_CODES.map(c=>SURAT_TYPE_NAMES[c]||c).join(', ') +
-          '. Ganti nama sheet-nya persis salah satu dari daftar itu, lalu upload ulang.'
-        );
+      if(!wb.SheetNames.length){
+        showSuratError('File Excel ini tidak punya sheet yang bisa dibaca.');
         return;
       }
 
+      const template = {
+        TEMPLATE_CODE: 'FLEX',
+        LETTER_NAME: SURAT_TYPE_NAMES.FLEX || 'Surat / Memo (Fleksibel)',
+        SOURCE_SHEET: wb.SheetNames[0],
+        ALUR: 'approval_saja',
+      };
+
       suratState.workbook = wb;
       suratState.fileName = file.name;
-      suratState.templates = templates;
+      suratState.templates = [template];
+      // File baru = mulai bersih lagi buat toggle "kirim ke penerima" —
+      // jangan sampai kolom email dari file sebelumnya kebawa ke file ini.
+      suratState.blastEnabled = false;
+      suratState.emailColumn = '';
+      const blastToggleEl = document.getElementById('suratBlastToggle');
+      if(blastToggleEl) blastToggleEl.checked = false;
+      const emailColWrapEl = document.getElementById('suratEmailColumnWrap');
+      if(emailColWrapEl) emailColWrapEl.style.display = 'none';
+      // Approval juga direset ke default (approver default + blok TTD
+      // disertakan) tiap kali ganti file — bukan kebawa dari surat
+      // sebelumnya yang mungkin approver/kebutuhan TTD-nya beda.
+      suratState.approverEmail = '';
+      suratState.approverName = '';
+      suratState.needsSignature = true;
+      renderSuratApproverOptions();
+      const needsSigToggleEl = document.getElementById('suratNeedsSignatureToggle');
+      if(needsSigToggleEl) needsSigToggleEl.checked = true;
 
-      document.getElementById('suratFileInfo').innerHTML =
-        `<div class="filebar"><div><b>${escapeHtml(file.name)}</b></div>` +
-        `<div class="stat">${wb.SheetNames.length} sheet · ${templates.length} jenis surat terdeteksi</div></div>`;
+      renderSuratFileInfo();
       const sdz = document.getElementById('suratDropzone');
       sdz.classList.add('has-file');
       const sdzCta = sdz.querySelector('.cta');
       if(sdzCta) sdzCta.textContent = 'Klik untuk ganti file';
-      renderSuratTemplateSelect();
+      selectSuratTemplate(0);
+      suratMitraRestore();
+      onSuratFormatChange();
       document.getElementById('suratStep1Actions').style.display = 'flex';
     }catch(err){
       showSuratError('Gagal membaca file: ' + err.message);
@@ -3170,33 +4153,63 @@ function handleSuratFile(file){
   reader.readAsArrayBuffer(file);
 }
 
-// Dropdown ini sekarang cuma berisi jenis surat yang sheet datanya BENAR-
-// BENAR ada di file yang lagi diupload (lihat handleSuratFile) — jadi tidak
-// ada lagi opsi "belum didukung" atau "sheet belum ada di file ini".
-function renderSuratTemplateSelect(){
-  const sel = document.getElementById('suratTemplateSelect');
-  sel.innerHTML = suratState.templates.map((t,i)=>
-    `<option value="${i}">${escapeHtml(t.LETTER_NAME)} (sheet: ${escapeHtml(t.SOURCE_SHEET)})</option>`
-  ).join('');
-  sel.onchange = onSuratTemplateChange;
-  sel.value = 0;
-  onSuratTemplateChange();
+// Kartu info file di Langkah 1 — sama seperti di Blast Email Report: nama
+// file + (kalau sheet > 1) dropdown "pilih sheet yang mau dipakai". Ganti
+// sheet di sini = ganti sheet data surat (dropdown "Sheet data" di Langkah 2
+// ikut tersinkron), jumlah baris/kolom ikut diperbarui.
+function renderSuratFileInfo(){
+  const wb = suratState.workbook;
+  if(!wb) return;
+  const tpl = (suratState.templates || [])[0] || {};
+  const cur = tpl.SOURCE_SHEET || wb.SheetNames[0];
+  const multi = wb.SheetNames.length > 1;
+  const hasData = Array.isArray(suratState.dataRows) && suratState.dataSheetName === cur;
+  const stat = hasData
+    ? `${suratState.dataRows.length} baris · ${suratState.dataColumns.length} kolom terdeteksi`
+    : `${wb.SheetNames.length} sheet terdeteksi`;
+  document.getElementById('suratFileInfo').innerHTML = `
+    <div class="filebar-group">
+      <div class="filebar">
+        <div><b>${escapeHtml(suratState.fileName||'')}</b>${multi ? ' · sheet: <b>'+escapeHtml(cur)+'</b>' : ''}</div>
+        <div class="stat">${stat}</div>
+      </div>
+      ${multi ? `<div class="filebar filebar-sheet">
+        <label class="field-label" style="margin:0;">File ini punya ${wb.SheetNames.length} sheet — pilih yang mau dipakai</label>
+        <select id="suratSheetSelect">${wb.SheetNames.map(n=>`<option value="${escapeHtml(n)}"${n===cur?' selected':''}>${escapeHtml(n)}</option>`).join('')}</select>
+      </div>` : ''}
+    </div>`;
+  const sel = document.getElementById('suratSheetSelect');
+  if(sel) sel.addEventListener('change', e=>onSuratSheetPicked(e.target.value));
 }
 
-function onSuratTemplateChange(){
-  const sel = document.getElementById('suratTemplateSelect');
-  const idx = Number(sel.value);
-  const tpl = suratState.templates[idx];
+function onSuratSheetPicked(sheetName){
+  const tpl = suratState.templates[0];
+  if(!tpl) return;
+  tpl.SOURCE_SHEET = sheetName;
+  const dd = document.getElementById('suratDataSheetSelect');
+  if(dd) dd.value = sheetName;
+  applySuratDataSheet(sheetName);
+  renderSuratFileInfo();
+}
+
+// Dulu ini dropdown pilihan jenis surat (5 opsi, dicocokkan dari nama
+// sheet). Sekarang cuma ada 1 alur (FLEX), jadi tidak perlu dropdown lagi
+// — langsung dipilih di sini, panel "Template" di Langkah 2 disembunyikan
+// (lihat goSuratStep1Actions/markup #suratStep2 "Template").
+function selectSuratTemplate(idx){
+  onSuratTemplateChange(idx);
+}
+
+function onSuratTemplateChange(idx){
+  const tpl = suratState.templates[idx || 0];
   suratState.selectedTemplate = tpl;
-  // Jumlah tahap ikut jenis surat yang dipilih — memo internal berhenti di
-  // tahap 3, surat ke mitra lanjut ke tahap 4.
   renderStepsNav();
-  document.getElementById('suratTemplateNote').textContent = '';
   showSuratError('');
   document.getElementById('suratStep2NextBtn').disabled = false;
-  const aggregate = Boolean((SURAT_TYPE_META[String(tpl.TEMPLATE_CODE||'').trim()]||{}).aggregate);
-  document.getElementById('suratMemoFieldsSection').style.display = aggregate ? 'block' : 'none';
-  if(aggregate) applySuratMemoFieldsFromMemory(String(tpl.TEMPLATE_CODE||'').trim());
+  // Alur FLEX selalu "aggregate" (1 memo merangkum banyak baris) — panel
+  // Detail Memo & narasi selalu tampil, tidak ada lagi cabang per jenis
+  // surat di sini.
+  applySuratMemoFieldsFromMemory(String(tpl.TEMPLATE_CODE||'').trim());
   loadSuratDataSheet();
 }
 
@@ -3206,9 +4219,45 @@ function loadSuratDataSheet(){
   const dataSheetSelect = document.getElementById('suratDataSheetSelect');
   dataSheetSelect.innerHTML = wb.SheetNames.map(n=>`<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
   dataSheetSelect.value = tpl.SOURCE_SHEET;
-  dataSheetSelect.onchange = ()=>applySuratDataSheet(dataSheetSelect.value);
+  dataSheetSelect.onchange = ()=>{ tpl.SOURCE_SHEET = dataSheetSelect.value; applySuratDataSheet(dataSheetSelect.value); renderSuratFileInfo(); };
   applySuratDataSheet(tpl.SOURCE_SHEET);
   document.getElementById('suratDataSection').style.display = 'block';
+  renderSuratFileInfo();
+}
+
+// Deteksi kolom angka sederhana (dipakai buat centang default "123" di
+// pilihan kolom tabel) — cek 20 baris pertama, kalau kebanyakan isinya
+// angka, dianggap kolom angka. isNumericValue() sudah ada (dipakai juga
+// di Blast Email Report).
+function suratLooksNumeric(col, rows){
+  const vals = rows.slice(0, 20).map(r=>r[col]).filter(v=>String(v).trim() !== '');
+  if(!vals.length) return false;
+  return vals.filter(isNumericValue).length / vals.length > 0.7;
+}
+
+// Kolom "flag" (mis. kolom "Tampilkan di Surat?" isinya Ya/Tidak) dipakai
+// untuk 2 hal otomatis: (1) baris yang nilainya "tidak aktif" (Tidak/No/
+// False/kosong) tidak ikut kecentang default, jadi baris yang angkanya
+// nol/kosong tidak nyelip ke surat; (2) kolom flag itu sendiri tidak usah
+// ikut dicetak di tabel surat (itu cuma penanda kerja, bukan isi surat).
+// Kolom dianggap "flag" kalau isinya cuma 2 nilai dari daftar ya/tidak di
+// bawah ini (case-insensitive) — supaya ini jalan juga untuk sheet lain
+// yang bukan bikinan kita, bukan cuma nama kolom yang persis sama.
+const SURAT_FLAG_TRUE_VALUES = ['ya', 'yes', 'y', 'true', 'aktif', 'include', 'ikut'];
+const SURAT_FLAG_FALSE_VALUES = ['tidak', 'no', 'n', 'false', 'nonaktif', 'exclude', 'skip', ''];
+function suratDetectFlagColumn(cols, rows){
+  for(const col of cols){
+    const vals = rows.map(r => String(r[col] ?? '').trim().toLowerCase());
+    if(!vals.length) continue;
+    const allRecognized = vals.every(v => SURAT_FLAG_TRUE_VALUES.includes(v) || SURAT_FLAG_FALSE_VALUES.includes(v));
+    const hasTrue = vals.some(v => SURAT_FLAG_TRUE_VALUES.includes(v));
+    const hasFalse = vals.some(v => SURAT_FLAG_FALSE_VALUES.includes(v) && v !== '');
+    if(allRecognized && hasTrue && hasFalse) return col;
+  }
+  return null;
+}
+function suratFlagIsTrue(val){
+  return SURAT_FLAG_TRUE_VALUES.includes(String(val ?? '').trim().toLowerCase());
 }
 
 function applySuratDataSheet(sheetName){
@@ -3217,7 +4266,33 @@ function applySuratDataSheet(sheetName){
   suratState.dataSheetName = sheetName;
   suratState.dataRows = rows;
   suratState.dataColumns = rows.length ? Object.keys(rows[0]) : [];
-  suratState.selectedRows = new Set(rows.map((_,i)=>i));
+  const flagCol = suratDetectFlagColumn(suratState.dataColumns, rows);
+  if(flagCol){
+    // Ada kolom flag (mis. "Tampilkan di Surat?") — default-nya cuma baris
+    // yang "Ya" yang dicentang, sisanya tetap ada di daftar (bisa dicentang
+    // manual) tapi tidak otomatis ikut ke surat.
+    suratState.selectedRows = new Set(rows.map((r,i)=>i).filter(i => suratFlagIsTrue(rows[i][flagCol])));
+  } else {
+    suratState.selectedRows = new Set(rows.map((_,i)=>i));
+  }
+  // Kolom tabel dibangun ulang tiap ganti sheet data — defaultnya semua
+  // kolom aktif, ditandai angka kalau isinya kebanyakan angka, KECUALI
+  // kolom flag (kalau ada) yang default-nya dimatikan karena itu cuma
+  // penanda kerja, bukan isi yang perlu dicetak di surat. Kalau ada
+  // pengaturan tersimpan dari sesi sebelumnya (suratState.savedTableCols),
+  // label/format kolom yang key-nya cocok dipakai lagi (lihat
+  // applySavedSuratTableCols, dipanggil dari applySuratMemoFieldsFromMemory).
+  suratState.tableCols = suratState.dataColumns.map(c=>({
+    key: c,
+    label: c,
+    included: c !== flagCol && !suratIsContactCol(c),
+    numeric: suratLooksNumeric(c, rows),
+  }));
+  applySavedSuratTableCols();
+  renderSuratColChecklistDOM();
+  renderSuratEmailColumnOptions();
+  renderSuratMitraChips();
+  suratFixDefaultTokens();
   const periodeInput = document.getElementById('suratPeriode');
   if(!periodeInput.value && rows.length){
     const periodCol = suratState.dataColumns.find(c => /period/i.test(c));
@@ -3225,6 +4300,33 @@ function applySuratDataSheet(sheetName){
   }
   document.getElementById('suratDataInfo').textContent = `${rows.length} baris data ditemukan di sheet "${sheetName}".`;
   renderSuratDataPreview();
+  scheduleSuratLivePreview();
+}
+
+/* Toggle "kirim ke banyak email setelah disetujui" — nyala/matiinnya cuma
+ * ngubah suratState.blastEnabled + tampilkan/sembunyikan dropdown kolom
+ * email; ALUR yang beneran dikirim ke server baru ditentukan belakangan
+ * pas generateAllSurat() (lihat applySuratMemoFieldsToConfig / situ). */
+function onSuratBlastToggleChange(){
+  suratState.blastEnabled = document.getElementById('suratBlastToggle').checked;
+  document.getElementById('suratEmailColumnWrap').style.display = suratState.blastEnabled ? 'block' : 'none';
+  onSuratFieldChange();
+}
+
+/* Isi dropdown kolom email dari kolom sheet data yang lagi aktif — dinamis,
+ * bukan daftar nama baku, sesuai request: "inputannya ini bisa dynamic".
+ * Coba tebak kolom yang namanya mengandung "email" biar user tidak selalu
+ * harus pilih manual tiap ganti sheet, tapi tetap bisa diganti sendiri. */
+function renderSuratEmailColumnOptions(){
+  const sel = document.getElementById('suratEmailColumnSelect');
+  if(!sel) return;
+  const cols = suratState.dataColumns || [];
+  const guess = cols.find(c => /email/i.test(c)) || '';
+  const keep = suratState.emailColumn && cols.includes(suratState.emailColumn) ? suratState.emailColumn : guess;
+  sel.innerHTML = '<option value="">— pilih kolom —</option>' + cols.map(c=>`<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+  sel.value = keep;
+  suratState.emailColumn = keep;
+  sel.onchange = ()=>{ suratState.emailColumn = sel.value; onSuratFieldChange(); };
 }
 
 function renderSuratDataPreview(){
@@ -3255,11 +4357,13 @@ function toggleSuratRow(idx, checked){
   updateSuratRowSelCount();
   const allCheck = document.getElementById('suratSelectAllCheck');
   if(allCheck) allCheck.checked = suratState.selectedRows.size === suratState.dataRows.length;
+  scheduleSuratLivePreview();
 }
 
 function setAllSuratRows(checked){
   suratState.selectedRows = checked ? new Set(suratState.dataRows.map((_,i)=>i)) : new Set();
   renderSuratDataPreview();
+  scheduleSuratLivePreview();
 }
 
 function suratLetterFilename(tpl, row, seq){
@@ -3309,6 +4413,64 @@ async function fetchSuratMemoPdf(tpl, rows){
   return r.arrayBuffer();
 }
 
+/* ---------- Preview live di Langkah 2 (Atur Surat) ----------
+ * Debounce 700ms sesudah edit terakhir, lalu generate PDF beneran lewat
+ * /api/letters/generate (endpoint yang sama dipakai tombol "Preview
+ * Memo") dan ditampilkan di iframe sebelah kanan form — bukan cuma
+ * placeholder, jadi hasilnya 100% sama dengan PDF yang bakal dikirim ke
+ * approver nanti. suratPreviewToken dipakai buang hasil fetch yang sudah
+ * basi (misal user masih ngetik pas fetch sebelumnya belum selesai). */
+let suratPreviewDebounceTimer = null;
+let suratPreviewToken = 0;
+let suratLivePreviewUrl = null;
+function onSuratFieldChange(){
+  renderSuratApprovalSummary();
+  renderSuratSummary();
+  scheduleSuratLivePreview();
+}
+function scheduleSuratLivePreview(){
+  if(suratPreviewDebounceTimer) clearTimeout(suratPreviewDebounceTimer);
+  suratPreviewDebounceTimer = setTimeout(runSuratLivePreview, 700);
+}
+async function runSuratLivePreview(){
+  const tpl = suratState.selectedTemplate;
+  const frame = document.getElementById('suratLivePreviewFrame');
+  const empty = document.getElementById('suratLivePreviewEmpty');
+  const status = document.getElementById('suratLivePreviewStatus');
+  if(!tpl || !frame || !empty || !status) return;
+  const idxList = Array.from(suratState.selectedRows);
+  if(!idxList.length){
+    frame.style.display = 'none';
+    empty.style.display = 'flex';
+    empty.textContent = 'Isi narasi & pilih minimal 1 baris data di bawah untuk melihat preview surat di sini.';
+    status.textContent = '';
+    return;
+  }
+  const myToken = ++suratPreviewToken;
+  status.textContent = 'Memperbarui…';
+  try{
+    const fields = readSuratMemoFields();
+    const tplToSend = applySuratMemoFieldsToConfig(tpl, fields);
+    const rows = idxList.map(i=>suratState.dataRows[i]);
+    const buf = await fetchSuratMemoPdf(tplToSend, rows);
+    if(myToken !== suratPreviewToken) return; // sudah ada edit baru — buang hasil basi ini
+    const blob = new Blob([buf], {type:'application/pdf'});
+    const url = URL.createObjectURL(blob);
+    if(suratLivePreviewUrl) URL.revokeObjectURL(suratLivePreviewUrl);
+    suratLivePreviewUrl = url;
+    frame.src = url;
+    frame.style.display = 'block';
+    empty.style.display = 'none';
+    status.textContent = '';
+  }catch(e){
+    if(myToken !== suratPreviewToken) return;
+    frame.style.display = 'none';
+    empty.style.display = 'flex';
+    empty.textContent = 'Gagal memuat preview: ' + e.message;
+    status.textContent = '';
+  }
+}
+
 function renderSuratSummary(){
   const tpl = suratState.selectedTemplate;
   const box = document.getElementById('suratSummary');
@@ -3323,11 +4485,20 @@ function renderSuratSummary(){
     ['Sheet data', escapeHtml(suratState.dataSheetName || '-')],
     ['Periode', escapeHtml(periode)],
     ['Baris dipilih', `${suratState.selectedRows.size} dari ${suratState.dataRows.length}`],
-    ['Dikirim ke approver', suratSettingsCache.approverEmail ? escapeHtml(suratSettingsCache.approverEmail) : '<span style="color:var(--bad-ink);">belum diatur — klik ⚙️ di pojok atas</span>'],
-    // Baris ini menjawab pertanyaan "habis ini apa?" — beda jenis surat,
-    // beda ujung prosesnya.
-    ['Setelah disetujui', String(tpl.ALUR || '').trim().toLowerCase() === 'approval_lalu_blast'
-      ? 'Lanjut Tahap 4 — dikirim ke tiap penerima beserta PDF ber-TTD'
+    ['Dikirim ke approver', suratState.approverEmail
+      ? `${escapeHtml(suratState.approverName ? suratState.approverName + ' — ' : '')}${escapeHtml(suratState.approverEmail)} <span style="color:#94a3b8;">(dipilih khusus surat ini)</span>`
+      : (suratSettingsCache.approverEmail ? escapeHtml(suratSettingsCache.approverEmail) + ' <span style="color:#94a3b8;">(default)</span>' : '<span style="color:var(--bad-ink);">belum diatur — klik ⚙️ di pojok atas atau pilih Approver di atas</span>')],
+    ['Blok tanda tangan', suratState.needsSignature
+      ? 'Disertakan (Nama/Jabatan/NIK penandatangan tercetak di PDF)'
+      : 'Tidak disertakan — cukup bukti approval tercatat di sistem'],
+    // Baris ini menjawab pertanyaan "habis ini apa?" — sekarang ditentukan
+    // dari toggle "Kirim ke penerima" di Langkah 2 (suratState.blastEnabled),
+    // bukan lagi statis dari tpl.ALUR — supaya langsung ikut berubah pas
+    // user klak-klik togglenya tanpa perlu upload ulang.
+    ['Setelah disetujui', suratState.blastEnabled
+      ? (suratState.emailColumn
+          ? `Lanjut Tahap 4 — tiap baris jadi 1 surat, dikirim ke email dari kolom "${escapeHtml(suratState.emailColumn)}"`
+          : '<span style="color:var(--bad-ink);">⚠️ "Kirim ke penerima" aktif tapi kolom email belum dipilih — buka bagian itu di Langkah 2</span>')
       : 'Selesai — surat ini tidak dikirim ke penerima (alur: approval saja)'],
   ];
   box.innerHTML = rows.map(([k,v]) => `<div class="surat-summary-row"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
@@ -3389,6 +4560,14 @@ async function generateAllSurat(){
   const progress = document.getElementById('suratProgress');
   progress.textContent = `Membuat ${idxList.length} surat & mengirim email approval...`;
 
+  // "Kirim ke penerima" aktif tapi kolom emailnya belum dipilih — jangan
+  // sampai kekirim ke server tanpa kolom, nanti error-nya baru kelihatan
+  // di server. Dicek di sini biar pesannya jelas & langsung di layar ini.
+  if(suratState.blastEnabled && !suratState.emailColumn){
+    showSuratError('Pilih dulu kolom email penerima di bagian "Kirim ke penerima" sebelum generate.');
+    return;
+  }
+
   try{
     const selectedRows = idxList.map(idx => rows[idx]);
     // Sama seperti preview: Detail Memo (Kepada/Dari/Hal/Nomor) ikut
@@ -3400,6 +4579,20 @@ async function generateAllSurat(){
       templateConfigToSend = applySuratMemoFieldsToConfig(tpl, fields);
       rememberSuratMemoFields(templateCode, fields);
     }
+    // ALUR & kolom email ditentukan di sini, dari toggle "Kirim ke
+    // penerima" di Langkah 2 — bukan hardcoded lagi seperti sebelumnya,
+    // supaya jenis surat lain yang belum minta blast tetap default
+    // "approval_saja" (tidak dikirim ke siapa-siapa).
+    templateConfigToSend = {
+      ...templateConfigToSend,
+      ALUR: suratState.blastEnabled ? 'approval_lalu_blast' : 'approval_saja',
+      EMAIL_COLUMN: suratState.blastEnabled ? suratState.emailColumn : '',
+      // "Sertakan blok TTD" dimatikan -> SIGNER_LAYOUT 'tanpa_ttd' (cukup
+      // bukti approval tercatat di sistem, tanpa blok Nama/Jabatan/NIK
+      // tercetak). Dinyalakan -> tetap layout bawaan (tunggal), tidak
+      // ada perubahan perilaku dari sebelumnya.
+      SIGNER_LAYOUT: suratState.needsSignature ? (tpl.SIGNER_LAYOUT || 'tunggal') : 'tanpa_ttd',
+    };
     const r = await fetch('/api/letters/batches', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
@@ -3407,6 +4600,9 @@ async function generateAllSurat(){
         templateConfig: templateConfigToSend,
         rows: selectedRows,
         batchMeta: { periode: document.getElementById('suratPeriode').value || '' },
+        // Approver khusus buat surat ini — kosong berarti pakai approver
+        // default di Pengaturan (perilaku lama, tidak berubah).
+        approverEmail: suratState.approverEmail || '',
       }),
     });
     const j = await r.json();
@@ -3479,6 +4675,7 @@ function buildBlastGroups(){
       emails: it.emailTo, ccs: it.emailCc,
       items: [it],
     }));
+    sortBlastGroupsByName();
     return;
   }
   const map = new Map();
@@ -3490,6 +4687,14 @@ function buildBlastGroups(){
     map.get(key).items.push(it);
   });
   blastState.groups = Array.from(map.values());
+  sortBlastGroupsByName();
+}
+
+// Urutkan penerima blast surat berdasarkan abjad (nama partner/mitra) —
+// supaya "Kirim Semua" jalan berurutan A-Z, bukan sekadar urutan surat
+// yang di-approve. numeric:true biar "Mitra 2" tetap di depan "Mitra 10".
+function sortBlastGroupsByName(){
+  blastState.groups.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'id', { numeric: true, sensitivity: 'base' }));
 }
 
 function blastGroupStatus(group){
