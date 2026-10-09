@@ -14,6 +14,7 @@ import {
   downloadMergedPdf, downloadMergedZip, downloadDoc, downloadDocsZip, refZipName, friendlyError, uploaderLabel,
   validateFile, partnerKey,
   APPROVAL_DOC_TYPES, approvalKey, approvalStatus, fetchApprovals, approvalApi,
+  draftRef, isDraftRef, parseDraftRef, refDisplay, fetchDraftDocs,
 } from "../../../lib/payoutPartnerDocs";
 import {
   parseTemplateWorkbook, parseSmsWorkbook, finalizeSms, detectWorkbookFormat, readTemplateCarryOver,
@@ -116,16 +117,17 @@ export function usePartnerDocStats(profile) {
 }
 
 // ── atom UI ────────────────────────────────────────────────────────────────
-function Ring({ n, t, size = 26, label = true }) {
-  const r = size / 2 - 3, c = 2 * Math.PI * r, col = nColor(n, t);
+function Ring({ n, t, size = 26, label = true, total = N }) {
+  const r = size / 2 - 3, c = 2 * Math.PI * r;
+  const col = n >= total ? TEAL : n > 0 ? t.warn : t.bad;
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }} aria-label={`${n} of ${N} documents`}>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }} aria-label={`${n} of ${total} documents`}>
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ flexShrink: 0 }} aria-hidden="true">
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={t.surf3} strokeWidth="3.5" />
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={col} strokeWidth="3.5" strokeLinecap="round"
-          strokeDasharray={`${(n / N) * c} ${c}`} transform={`rotate(-90 ${size / 2} ${size / 2})`} />
+          strokeDasharray={`${(n / total) * c} ${c}`} transform={`rotate(-90 ${size / 2} ${size / 2})`} />
       </svg>
-      {label && <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: nInk(n, t) }}>{n}/{N}</span>}
+      {label && <span style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: n >= total ? (t.goodDark || TEAL_D) : n > 0 ? (t.warnDark || "#8a6a00") : t.bad }}>{n}/{total}</span>}
     </span>
   );
 }
@@ -301,8 +303,10 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
   };
 
   const changed = useCallback(() => { setReload((x) => x + 1); docsRefresh?.(); }, [docsRefresh]);
-  const present = DOC_TYPES.filter((d) => list.some((x) => x.doc_type === d.key)).length;
-  const nextMissing = DOC_TYPES.find((d) => !list.some((x) => x.doc_type === d.key));
+  // Draft hasil generate hanya punya slot BAST & Notification Letter
+  const SLOTS = isDraftRef(refId) ? DOC_TYPES.filter((d) => APPROVAL_DOC_TYPES.includes(d.key)) : DOC_TYPES;
+  const present = SLOTS.filter((d) => list.some((x) => x.doc_type === d.key)).length;
+  const nextMissing = SLOTS.find((d) => !list.some((x) => x.doc_type === d.key));
   const totalSize = list.reduce((s, d) => s + (Number(d.size_bytes) || 0), 0);
 
   const onMerge = async () => {
@@ -345,9 +349,9 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
         <div style={{ padding: "16px 18px 14px", borderBottom: `1px solid ${t.line}`, background: t.surf, display: "flex", gap: 12, alignItems: "flex-start" }}>
           <div style={{ minWidth: 0, flex: 1 }}>
             <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: MAGENTA, fontWeight: 700 }}>
-              {ownerLabel(segment)} Documents · {DOC_REF_LABEL}
+              {ownerLabel(segment)} Documents · {isDraftRef(refId) ? "Generated draft" : DOC_REF_LABEL}
             </div>
-            <div id="ppd-title" style={{ fontSize: 19, fontWeight: 800, marginTop: 3, fontFamily: MONO, letterSpacing: "-0.01em", wordBreak: "break-all" }}>{refId}</div>
+            <div id="ppd-title" style={{ fontSize: 19, fontWeight: 800, marginTop: 3, fontFamily: MONO, letterSpacing: "-0.01em", wordBreak: "break-all" }}>{isDraftRef(refId) ? refDisplay(refId) : refId}</div>
             <div style={{ fontSize: 12.5, color: t.ink2, marginTop: 4, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={partnerName}>{partnerName}</div>
             {title && <div style={{ fontSize: 11.5, color: t.muted, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={title}>Project: {title}</div>}
             {amountText && <div style={{ fontFamily: MONO, fontSize: 12, color: t.ink, marginTop: 3, fontWeight: 700 }}>{amountText}</div>}
@@ -355,14 +359,14 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
           <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 }}>
             <button ref={closeRef} className="ppd-f" onClick={tryClose} aria-label="Close panel (Esc)" title="Close (Esc)"
               style={{ ...btnStyle(t, "ghost", false, true), fontSize: 20, lineHeight: 1, padding: "2px 8px", color: t.muted }}>×</button>
-            {loading ? <Skel w={56} h={22} t={t} /> : <Ring n={present} t={t} />}
+            {loading ? <Skel w={56} h={22} t={t} /> : <Ring n={present} total={SLOTS.length} t={t} />}
           </div>
         </div>
 
         {/* progress per slot (klik = lompat ke slot) */}
         <div style={{ padding: "0 18px 12px", background: t.surf, borderBottom: `1px solid ${t.line}` }}>
-          <div style={{ display: "grid", gridTemplateColumns: `repeat(${N},1fr)`, gap: 4 }}>
-            {DOC_TYPES.map((d) => {
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${SLOTS.length},1fr)`, gap: 4 }}>
+            {SLOTS.map((d) => {
               const ok = list.some((x) => x.doc_type === d.key);
               return (
                 <button key={d.key} className="ppd-f" onClick={() => setFocus((f) => ({ key: d.key, n: f.n + 1 }))} title={`${d.label}: ${ok ? "uploaded" : "missing"}`}
@@ -379,7 +383,7 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
               ⬆ Upload next: {nextMissing.label}
             </button>
           )}
-          {!loading && present === N && <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 600, color: t.goodDark || TEAL_D, textAlign: "center" }}>✓ All {N} documents are complete</div>}
+          {!loading && present === SLOTS.length && <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 600, color: t.goodDark || TEAL_D, textAlign: "center" }}>✓ All {SLOTS.length} documents are complete</div>}
         </div>
 
         {!canWrite && (
@@ -392,11 +396,11 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
         {/* slots */}
         <div style={{ flex: 1, overflowY: "auto", padding: "12px 18px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
           {loading
-            ? DOC_TYPES.map((d) => (
+            ? SLOTS.map((d) => (
               <div key={d.key} style={{ border: `1px solid ${t.line}`, borderRadius: 14, padding: 14, background: t.surf, display: "flex", flexDirection: "column", gap: 10 }}>
                 <Skel w="45%" h={14} t={t} /><Skel h={54} r={10} t={t} />
               </div>))
-            : DOC_TYPES.map((dt, i) => (
+            : SLOTS.map((dt, i) => (
               <SlotCard key={dt.key} no={i + 1} dt={dt} files={list.filter((d) => d.doc_type === dt.key)}
                 canWrite={canWrite} refId={refId} partnerName={partnerName} segment={segment} title={title} amountText={amountText}
                 approval={docs?.approvals?.[approvalKey(segment, partnerName, refId, dt.key)]} approvalsAvailable={docs?.approvalsAvailable !== false}
@@ -764,7 +768,7 @@ function ApprovalPanel({ approval, status, available, isSPM, hasFiles, slot, doc
 // ── Tab "Upload & Merge Dokumen" ───────────────────────────────────────────
 // pos: [{ ref, partner, title, amount, amountText, records }] dari data Payout yang sedang difilter.
 // segment: 'partner' | 'agency' (ikut toggle Partner/Agency Prepaid). noRefCount: baris tanpa PO.
-export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) {
+export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmount, t }) {
   useDocsCss();
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all"); // all | complete | partial | none
@@ -777,12 +781,22 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
   const [bulkOpen, setBulkOpen] = useState(false); // modal Bulk Upload (SPM)
   const [reqOpen, setReqOpen] = useState(false);   // modal Request approval untuk PO terpilih (SPM)
   const [genOpen, setGenOpen] = useState(false);   // modal Generate BAST & Letters dari Excel MPX (SPM)
+  const [view, setView] = useState("po");          // "po" | "drafts" (Generated drafts, SPM)
   const [bulk, setBulk] = useState(null);       // { i, total, ref }
   const [rowBusy, setRowBusy] = useState(null); // key PO yang sedang di-merge
   const isSPM = !!docs?.canMerge;
   const role = docs?.profile?.role;
   const own = ownerLabel(segment);
   const openDrawer = (key, slot = null) => { setOpenSlot(slot); setOpenKey(key); };
+  // Generator: semua PO segment ini (tanpa filter dashboard) untuk tautan PO opsional
+  const genRows = useMemo(() => (allPos || pos || [])
+    .filter((p) => canViewPartner(docs?.profile, p.partner, segment))
+    .map((p) => ({ ...p, key: statKey(segment, p.partner, p.ref) })), [allPos, pos, docs?.profile, segment]);
+  const draftCount = useMemo(() => {
+    const keys = new Set();
+    Object.keys(docs?.byRef || {}).forEach((k) => { const [sg, ow, ref] = k.split(":"); if (sg === segment && isDraftRef(ref)) keys.add(`${ow}:${ref}`); });
+    return keys.size;
+  }, [docs?.byRef, segment]);
 
   const rows = useMemo(() => (pos || [])
     .filter((p) => canViewPartner(docs?.profile, p.partner, segment))
@@ -901,11 +915,22 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
             <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", padding: "2px 8px", borderRadius: 99, background: `${MAGENTA}18`, color: MAGENTA, border: `1px solid ${MAGENTA}30` }}>{own} Prepaid</span>
           </div>
           <div style={{ marginTop: 4, marginLeft: 14, fontFamily: MONO, fontSize: 10.5, color: t.muted }}>
-            By {DOC_REF_LABEL} · {DOC_TYPES.map((d, i) => `${i + 1}. ${d.label}`).join("  →  ")}
+            {view === "drafts" ? "Generated BAST & Notification Letters awaiting approval — not linked to a " + DOC_REF_LABEL + " yet" : `By ${DOC_REF_LABEL} · ${DOC_TYPES.map((d, i) => `${i + 1}. ${d.label}`).join("  →  ")}`}
           </div>
         </div>
+        {isSPM && (
+          <div role="tablist" aria-label="View" style={{ display: "inline-flex", background: t.surf3, borderRadius: 10, padding: 3, gap: 2, border: `1px solid ${t.line}` }}>
+            {[["po", `${DOC_REF_LABEL} documents`], ["drafts", `Generated drafts${draftCount ? ` (${draftCount})` : ""}`]].map(([k, l]) => (
+              <button key={k} role="tab" aria-selected={view === k} className="ppd-f" onClick={() => setView(k)}
+                style={{ fontFamily: "inherit", fontSize: 11.5, fontWeight: 600, padding: "5px 11px", borderRadius: 8, border: 0, cursor: "pointer", background: view === k ? TEAL : "transparent", color: view === k ? "#fff" : t.muted, whiteSpace: "nowrap" }}>{l}</button>
+            ))}
+          </div>
+        )}
       </div>
 
+      {view === "drafts" && isSPM ? (
+        <GeneratedDraftsPanel segment={segment} docs={docs} onGenerate={() => setGenOpen(true)} t={t} />
+      ) : (<>
       {/* KPI strip */}
       <div style={{ padding: "14px 20px 10px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
         {kpiCard({ id: "all", label: `Total ${DOC_REF_LABEL}`, value: kpi.all, sub: `${own.toLowerCase()} · current filters`, color: t.muted })}
@@ -1092,10 +1117,12 @@ export function PoDocsTab({ pos, segment, docs, noRefCount = 0, fmtAmount, t }) 
         </div>
       )}
 
+      </>)}
+
       {openRow && <RefDocsDrawer key={openRow.key} refId={openRow.ref} partnerName={openRow.partner} segment={segment} title={openRow.title} amountText={openRow.amountText}
         docs={docs} focusSlot={openSlot} onClose={() => setOpenKey(null)} t={t} />}
       {bulkOpen && <BulkUploadModal rows={rows} segment={segment} docs={docs} onClose={() => setBulkOpen(false)} t={t} />}
-      {genOpen && <GenerateDocsModal rows={rows} segment={segment} docs={docs} onClose={() => setGenOpen(false)} t={t} />}
+      {genOpen && <GenerateDocsModal rows={genRows} segment={segment} docs={docs} onClose={() => { setGenOpen(false); setView("drafts"); }} t={t} />}
       {reqOpen && <BulkApprovalModal rows={selected} segment={segment} docs={docs} onClose={() => setReqOpen(false)} t={t} />}
     </div>
   );
@@ -1594,18 +1621,18 @@ function PdfPages({ bytes, url }) {
 }
 
 // PO untuk 1 pasangan: PO Number dari template (harus milik partner itu) → amount == total DPP (±1) → periode → pilih manual
-function matchPo(pair, rows) {
-  const cands = rows.filter((r) => partnerKey(r.partner) === partnerKey(pair.partner));
+// Link ke PO bersifat OPSIONAL: default dokumen disimpan sebagai draft (GEN-<periode>-<type>).
+// Hanya PO Number yang diisi di template yang otomatis ditautkan; kandidat lain untuk dropdown.
+function poCandidates(pair, rows) {
+  const k = partnerKey(pair.partner);
+  const cands = rows.filter((r) => partnerKey(r.partner) === k && (!r.ptype || !["MPC", "MP3"].includes(r.ptype) || r.ptype === pair.type));
+  const inPer = (r) => !!pair.per && (r.ym === pair.per.ym || titleMatchesPeriod(r.title, pair.per));
+  cands.sort((a, b) => (inPer(b) - inPer(a)) || Math.abs((a.amount || 0) - pair.dpp) - Math.abs((b.amount || 0) - pair.dpp));
   if (pair.poRef) {
     const hit = cands.find((r) => String(r.ref).trim() === String(pair.poRef).trim());
-    return hit ? { po: hit.key, how: "template", cands } : { po: "", how: "badref", cands };
+    return { po: hit ? hit.key : "", how: hit ? "template" : "badref", cands };
   }
-  const inPer = (r) => !!pair.per && (r.ym === pair.per.ym || titleMatchesPeriod(r.title, pair.per));
-  const byAmt = cands.filter((r) => Math.abs(Math.round(r.amount || 0) - Math.round(pair.dpp)) <= 1);
-  if (byAmt.length === 1) return { po: byAmt[0].key, how: "amount", cands };
-  const byPer = (byAmt.length > 1 ? byAmt : cands).filter(inPer);
-  if (byPer.length === 1) return { po: byPer[0].key, how: "period", cands };
-  return { po: "", how: cands.length ? "select" : "none", cands };
+  return { po: "", how: "draft", cands };
 }
 
 function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
@@ -1648,11 +1675,13 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
   const setEdit = (id, patch) => setEdits((e) => ({ ...e, [id]: { ...e[id], ...patch } }));
   const tryClose = () => { if (busy) { toast(t, "Please wait until the current process finishes.", "info"); return; } onClose(); };
 
-  const slotState = (poKey, docType) => {
-    const r = byKey.get(poKey);
-    if (!r) return { exists: false, locked: false, appr: null };
-    const appr = approvalStatus(docs?.approvals?.[approvalKey(segment, r.partner, r.ref, docType)]);
-    return { exists: r.stat?.types?.[docType]?.n > 0, locked: appr === "approved", appr };
+  // Status slot tujuan (draft GEN-* atau PO yang ditautkan)
+  const slotState = (x, docType) => {
+    const tg = x?.target;
+    if (!tg?.ref) return { exists: false, locked: false, appr: null };
+    const appr = approvalStatus(docs?.approvals?.[approvalKey(segment, tg.partner, tg.ref, docType)]);
+    const stat = docs?.byRef?.[statKey(segment, tg.partner, tg.ref)];
+    return { exists: stat?.types?.[docType]?.n > 0, locked: appr === "approved", appr };
   };
 
   // Baris review = data upload + input modal + pilihan user (dihitung ulang tiap render)
@@ -1669,18 +1698,21 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
             letterNo: e.letterNo ?? meta.letterNo, recipientTitle: { MPC: cfg.recipientMPC, MP3: cfg.recipientMP3 }, fallbackSigner,
           })
         : b;
-      const m = fin.partner ? matchPo(fin, rows) : { po: "", how: "none", cands: [] };
-      const errors = [...fin.errors];
-      if (fin.partner && !m.cands.length) errors.push(`Partner not found in the Payout data (${ownerLabel(segment)} Prepaid, current filters).`);
-      if (m.how === "badref") errors.push(`${DOC_REF_LABEL} ${fin.poRef} was not found for this partner.`);
+      const m = fin.partner ? poCandidates(fin, rows) : { po: "", how: "draft", cands: [] };
+      const errors = [...fin.errors];                    // merah = hanya data yang memblok PDF
+      const warnings = [...(fin.warnings || [])];
+      if (m.how === "badref") warnings.push(`${DOC_REF_LABEL} ${fin.poRef} from the file was not found for this partner — saved as a draft instead.`);
       const po = e.poManual !== undefined ? e.poManual : m.po;
+      const row = po ? byKey.get(po) : null;
+      const dref = fin.per ? draftRef(fin.per.ym, fin.type) : "";
+      const target = row ? { partner: row.partner, ref: row.ref, draft: false } : { partner: fin.partner, ref: dref, draft: true };
       return {
-        ...fin, id, errors, cands: m.cands, po, how: e.poManual !== undefined ? (e.poManual ? "manual" : "select") : m.how,
-        include: !errors.length && !!po && (e.include ?? true), res: e.res || null, appr: e.appr || null,
+        ...fin, id, errors, warnings, cands: m.cands, po: row ? po : "", target, how: e.poManual !== undefined ? (e.poManual ? "manual" : "draft") : m.how,
+        include: !errors.length && !!target.ref && (e.include ?? true), res: e.res || null, appr: e.appr || null,
         letterNoEdit: e.letterNo ?? meta.letterNo,
       };
     });
-  }, [upload, edits, meta, cfg.recipientMPC, cfg.recipientMP3, rows, segment, lastTpl]);
+  }, [upload, edits, meta, cfg.recipientMPC, cfg.recipientMP3, rows, byKey, lastTpl]);
 
   // ── Template download (format SMS) ──
   const downloadBlank = async () => {
@@ -1797,19 +1829,20 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
   const pvFileName = pv.all ? `BAST_and_Letters_preview_${meta.period}.pdf` : cur ? (pv.tab === "bast" ? bastFileName(cur) : letterFileName(cur)) : "preview.pdf";
 
   const valid = items.filter((x) => !x.errors.length);
-  const ready = valid.filter((x) => x.include && x.po && byKey.has(x.po));
-  const docCount = ready.reduce((n, x) => n + (slotState(x.po, "bast").locked ? 0 : 1) + (slotState(x.po, "surat_pemberitahuan").locked ? 0 : 1), 0);
+  const ready = valid.filter((x) => x.include && x.target?.ref);
+  const docCount = ready.reduce((n, x) => n + (slotState(x, "bast").locked ? 0 : 1) + (slotState(x, "surat_pemberitahuan").locked ? 0 : 1), 0);
 
   const anyApprover = EMAIL_OK(approverFor(cfg, "bast")) || EMAIL_OK(approverFor(cfg, "surat_pemberitahuan"));
   const apprAvailable = docs?.approvalsAvailable !== false;
   const autoApprOn = autoAppr && anyApprover && apprAvailable;
 
-  // Simpan ke slot PO. single=true → 1 partner dari panel preview (modal tetap di tahap review)
+  // Simpan sebagai draft (GEN-<periode>-<type>) atau ke PO yang ditautkan. single=true → 1 partner dari panel preview
   const saveItems = async (list, { single = false } = {}) => {
     if (!list.length) return;
-    const total = list.reduce((n, x) => n + (slotState(x.po, "bast").locked ? 0 : 1) + (slotState(x.po, "surat_pemberitahuan").locked ? 0 : 1), 0);
+    const total = list.reduce((n, x) => n + (slotState(x, "bast").locked ? 0 : 1) + (slotState(x, "surat_pemberitahuan").locked ? 0 : 1), 0);
     const auto = autoApprOn;
-    const confirmMsg = `Save ${total} document(s) for ${list.length} partner(s) into Payout Tracker?` + (auto
+    const nDraft = list.filter((x) => x.target.draft).length;
+    const confirmMsg = `Save ${total} document(s) for ${list.length} partner(s)${nDraft ? ` (${nDraft} as generated drafts without a ${DOC_REF_LABEL})` : ""}?` + (auto
       ? `\n\nApproval will be requested automatically:\n• BAST → ${EMAIL_OK(approverFor(cfg, "bast")) ? approverFor(cfg, "bast") : "no approver email (skipped)"}\n• Notification Letter → ${EMAIL_OK(approverFor(cfg, "surat_pemberitahuan")) ? approverFor(cfg, "surat_pemberitahuan") : "no approver email (skipped)"}\n\nSlots that are already pending or approved are skipped.`
       : "\n\nNo approval request will be sent.");
     if (!window.confirm(confirmMsg)) return;
@@ -1820,17 +1853,20 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
     let lh;
     try { lh = await loadLetterhead(); } catch (e) { toast(t, errMsg(e), "err"); setPhase("review"); return; }
     for (const it of list) {
-      const row = byKey.get(it.po);
+      const tg = it.target;
+      const row = it.po ? byKey.get(it.po) : null;
+      // info untuk approval: draft → "Draft — Agustus 2026 · MPC"; PO → judul project PO
+      const info = { partner: tg.partner, ref: tg.ref, title: tg.draft ? `${refDisplay(tg.ref)} · ${it.partner}` : (row?.title || null), amountText: rupiah(it.letter.total) };
       const res = {};
       for (const [kind, docType, build, name] of [
         ["bast", "bast", () => buildBastPdf(it.bast, cfg, lh), bastFileName(it)],
         ["letter", "surat_pemberitahuan", () => buildLetterPdf(it.letter, cfg, lh), letterFileName(it)],
       ]) {
-        if (slotState(it.po, docType).locked) { res[kind] = "locked"; skip++; continue; }
+        if (slotState(it, docType).locked) { res[kind] = "locked"; skip++; continue; }
         try {
           const file = new File([await build()], name, { type: "application/pdf" });
-          const r = await uploadSlot({ files: [file], partnerName: row.partner, refId: row.ref, docType, segment });
-          if (r.ok.length) { res[kind] = "ok"; ok++; savedSlots.push({ id: it.id, kind, docType, row }); }
+          const r = await uploadSlot({ files: [file], partnerName: tg.partner, refId: tg.ref, docType, segment });
+          if (r.ok.length) { res[kind] = "ok"; ok++; savedSlots.push({ id: it.id, kind, docType, row: info }); }
           else if (r.skipped.length) { res[kind] = "same"; skip++; }
           else { res[kind] = `error: ${r.errors[0]?.message || "failed"}`; fail++; }
         } catch (e) { res[kind] = `error: ${errMsg(e)}`; fail++; }
@@ -1859,7 +1895,7 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
       const mark = (id, kind, v) => setEdits((e) => ({ ...e, [id]: { ...e[id], appr: { ...(e[id]?.appr || {}), [kind]: v } } }));
       for (const sl of savedSlots) {
         const email = approverFor(cfg, sl.docType);
-        const st = approvalStatus(docs?.approvals?.[approvalKey(segment, sl.row.partner, sl.row.ref, sl.docType)]);
+        const st = approvalStatus(docs?.approvals?.[approvalKey(segment, sl.row.partner, sl.row.ref, sl.docType)]); // sl.row = info slot tujuan
         if (!EMAIL_OK(email)) { apprSkip++; mark(sl.id, sl.kind, "skip: no approver email"); continue; }
         if (st === "pending" || st === "approved") { apprSkip++; mark(sl.id, sl.kind, `skip: already ${st}`); continue; }
         if (!groups.has(email)) groups.set(email, []);
@@ -2006,17 +2042,17 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
                 <th style={th}>Partner</th><th style={th}>Type</th><th style={th}>Branches</th>
                 <th style={{ ...th, textAlign: "right" }}>DPP</th><th style={{ ...th, textAlign: "right" }}>PPN</th><th style={{ ...th, textAlign: "right" }}>PPh 23</th><th style={{ ...th, textAlign: "right" }}>Total transfer</th>
                 {isSms && <th style={th}>Letter No · signatory · email</th>}
-                <th style={th}>{DOC_REF_LABEL}</th><th style={th}>Status</th><th style={th}>Preview</th>
+                <th style={th}>Save to</th><th style={th}>Status</th><th style={th}>Preview</th>
               </tr></thead>
               <tbody>
                 {items.map((x) => {
                   const bad = x.errors.length > 0;
-                  const sb = slotState(x.po, "bast"), sl = slotState(x.po, "surat_pemberitahuan");
+                  const sb = slotState(x, "bast"), sl = slotState(x, "surat_pemberitahuan");
                   return (
                     <tr key={x.id} className="ppd-gen-row" onClick={() => { if (x.letter && x.bast) openPreview(x.id); }}
                       style={{ background: pv.id === x.id && !pv.all ? t.rowHover : bad ? t.badBg : x.warnings.length ? t.warnBg : "transparent", opacity: bad || x.include ? 1 : 0.6, boxShadow: pv.id === x.id && !pv.all ? `inset 3px 0 0 ${TEAL}` : "none" }}>
                       <td style={{ ...td, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
-                        <input type="checkbox" className="ppd-f" aria-label={`Include ${x.partner} ${x.type}`} checked={x.include} disabled={bad || busy || phase === "done" || !x.po}
+                        <input type="checkbox" className="ppd-f" aria-label={`Include ${x.partner} ${x.type}`} checked={x.include} disabled={bad || busy || phase === "done" || !x.target?.ref}
                           onChange={(e) => setEdit(x.id, { include: e.target.checked })} />
                       </td>
                       <td style={{ ...td, fontWeight: 600, color: t.ink, maxWidth: 210 }}>{x.partner || "—"}{!isSms && x.row ? <div style={{ fontFamily: MONO, fontSize: 10, color: t.muted, fontWeight: 400 }}>row {x.row}</div> : null}</td>
@@ -2035,16 +2071,19 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
                           {x.emailsCc?.length > 0 && <div title={x.emailsCc.join("; ")} style={{ color: t.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 230 }}>Cc: {x.emailsCc.join("; ")}</div>}
                         </td>
                       )}
-                      <td style={{ ...td, minWidth: 190 }} onClick={(e) => e.stopPropagation()}>
-                        {x.cands.length ? (
-                          <select className="ppd-f" aria-label={`${DOC_REF_LABEL} for ${x.partner} ${x.type}`} value={x.po} disabled={bad || busy || phase === "done"}
-                            onChange={(e) => setEdit(x.id, { poManual: e.target.value, include: true })}
-                            style={{ ...inp, fontFamily: MONO, fontSize: 11.5, padding: "5px 6px", borderColor: x.po ? t.line2 : t.warn }}>
-                            <option value="">— select {DOC_REF_LABEL} —</option>
-                            {x.cands.map((r) => <option key={r.key} value={r.key}>{r.ref} · {r.amountText}{r.title ? ` · ${String(r.title).slice(0, 40)}` : ""}</option>)}
-                          </select>
-                        ) : <span style={{ color: t.muted, fontSize: 11.5 }}>—</span>}
-                        {x.po && <div style={{ fontFamily: MONO, fontSize: 10, color: t.muted, marginTop: 2 }}>{{ template: "from template", amount: "matched by amount", period: "matched by period", manual: "selected manually" }[x.how] || ""}</div>}
+                      <td style={{ ...td, minWidth: 200 }} onClick={(e) => e.stopPropagation()}>
+                        {/* Default: draft tanpa PO. Tautan ke PO opsional (mis. kalau PO sudah terbit). */}
+                        <select className="ppd-f" aria-label={`Save ${x.partner} ${x.type} to`} value={x.po} disabled={bad || busy || phase === "done"}
+                          onChange={(e) => setEdit(x.id, { poManual: e.target.value })}
+                          style={{ ...inp, fontFamily: MONO, fontSize: 11, padding: "5px 6px" }}>
+                          <option value="">Draft · {x.target?.draft && x.target.ref ? x.target.ref : "no period"}</option>
+                          {x.cands.length > 0 && <optgroup label={`Link to ${DOC_REF_LABEL} (optional)`}>
+                            {x.cands.map((r) => <option key={r.key} value={r.key}>{r.ref} · {r.amountText}{r.ym ? ` · ${r.ym}` : ""}</option>)}
+                          </optgroup>}
+                        </select>
+                        <div style={{ fontFamily: MONO, fontSize: 10, color: t.muted, marginTop: 2 }}>
+                          {x.po ? (x.how === "template" ? `linked from file` : "linked manually") : x.cands.length ? `${x.cands.length} ${DOC_REF_LABEL}(s) available to link` : `no ${DOC_REF_LABEL} needed`}
+                        </div>
                       </td>
                       <td style={{ ...td, fontSize: 11, minWidth: 220 }}>
                         {x.errors.map((m, i) => <div key={`e${i}`} style={{ color: t.bad, fontWeight: 600 }}>✕ {m}</div>)}
@@ -2054,12 +2093,12 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
                             <div>BAST: {resLabel(x.res.bast)}{x.appr?.bast && <span style={{ color: /^failed/.test(x.appr.bast) ? t.bad : t.muted }}> · approval {x.appr.bast}</span>}</div>
                             <div>Letter: {resLabel(x.res.letter)}{x.appr?.letter && <span style={{ color: /^failed/.test(x.appr.letter) ? t.bad : t.muted }}> · approval {x.appr.letter}</span>}</div>
                           </>
-                        ) : x.po ? (
+                        ) : x.target?.ref ? (
                           <>
-                            <div style={{ color: sb.locked ? t.muted : t.ink2 }}>BAST: {sb.locked ? "🔒 approved — will skip" : sb.exists ? "has files — will add" : "ready"}{sb.appr && !sb.locked && <> · <ApprovalBadge status={sb.appr} t={t} /></>}</div>
-                            <div style={{ color: sl.locked ? t.muted : t.ink2 }}>Letter: {sl.locked ? "🔒 approved — will skip" : sl.exists ? "has files — will add" : "ready"}{sl.appr && !sl.locked && <> · <ApprovalBadge status={sl.appr} t={t} /></>}</div>
+                            <div style={{ color: sb.locked ? t.muted : t.ink2 }}>BAST: {sb.locked ? "🔒 approved — will skip" : sb.exists ? "saved before — will add" : "ready"}{sb.appr && !sb.locked && <> · <ApprovalBadge status={sb.appr} t={t} /></>}</div>
+                            <div style={{ color: sl.locked ? t.muted : t.ink2 }}>Letter: {sl.locked ? "🔒 approved — will skip" : sl.exists ? "saved before — will add" : "ready"}{sl.appr && !sl.locked && <> · <ApprovalBadge status={sl.appr} t={t} /></>}</div>
                           </>
-                        ) : <span style={{ color: t.muted }}>Select a {DOC_REF_LABEL} to save</span>)}
+                        ) : <span style={{ color: t.muted }}>Choose a period to save</span>)}
                       </td>
                       <td style={{ ...td, whiteSpace: "nowrap" }}>
                         {!bad && <>
@@ -2123,10 +2162,10 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
               <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", !pvState.url || pvState.busy, true)} disabled={!pvState.url || pvState.busy}
                 onClick={() => window.open(pvState.url, "_blank", "noopener")}><IcoOpen /> Open in new tab</button>
               {!pv.all && cur && (() => {
-                const why = cur.errors.length ? "Fix the errors first" : !cur.po ? `Select a ${DOC_REF_LABEL} first` : busy ? "Busy" : "";
+                const why = cur.errors.length ? "Fix the errors first" : !cur.target?.ref ? "Choose a period first" : busy ? "Busy" : "";
                 return (
                   <button className="ppd-f ppd-act" style={{ ...btnStyle(t, "primary", !!why, true), marginLeft: "auto" }} disabled={!!why} title={why || "Generate both documents for this partner and save them into the PO (approved slots and identical files are skipped)"}
-                    onClick={() => saveItems([cur], { single: true })}>⬆ Generate &amp; save this partner</button>
+                    onClick={() => saveItems([cur], { single: true })}>⬆ {autoApprOn ? "Save & request approval" : "Save this partner"}</button>
                 );
               })()}
             </div>
@@ -2144,7 +2183,7 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             {items.length > 0 && (
               <span style={{ fontFamily: MONO, fontSize: 11, color: t.muted }}>
-                {ready.length} of {items.length} row(s) ready · {docCount} document(s) to save{errCount ? ` · ${errCount} row(s) with errors (blocked)` : ""}
+                {ready.length} of {items.length} row(s) ready · {docCount} document(s) to save · {ready.filter((x) => x.target.draft).length} as draft{items.some((x) => x.warnings.length) ? ` · ${items.filter((x) => x.warnings.length).length} with warnings` : ""}{errCount ? ` · ${errCount} row(s) with invalid data (blocked)` : ""}
               </span>
             )}
             <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -2171,8 +2210,8 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
               {phase === "done"
                 ? <button className="ppd-f ppd-act" style={btnStyle(t, "primary")} onClick={onClose}>Done</button>
                 : <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || !docCount)} disabled={busy || !docCount} onClick={saveAll}
-                    title="Generate the documents and save them into the BAST and Notification Letter slots of the selected POs (existing files are kept)">
-                    ⬆ {phase === "saving" ? `Saving ${prog.i}/${prog.total}…` : `Generate & save ${docCount} document(s)`}
+                    title={`Generate the documents and save them as drafts (no ${DOC_REF_LABEL} needed)${autoApprOn ? ", then request approval" : ""}. Approved documents can be downloaded later and bulk-uploaded to the ${DOC_REF_LABEL}s.`}>
+                    ⬆ {phase === "saving" ? `Saving ${prog.i}/${prog.total}…` : autoApprOn ? `Save drafts & request approval (${docCount})` : `Save ${docCount} draft document(s)`}
                   </button>}
             </div>
           </div>
@@ -2180,5 +2219,150 @@ function GenerateDocsModal({ rows, segment, docs, onClose, t }) {
       </div>
     </div>,
     document.body,
+  );
+}
+
+// ── Generated drafts (SPM): BAST & Letter hasil generate yang belum ditautkan ke PO ──
+const DRAFT_SLOTS = DOC_TYPES.filter((d) => APPROVAL_DOC_TYPES.includes(d.key));
+const draftFileName = (g, docType) => `${docType === "bast" ? "BAST" : "LETTER"}_${g.partner}_${g.info?.type || ""}_${g.info?.ym || ""}.pdf`;
+
+function GeneratedDraftsPanel({ segment, docs, onGenerate, t }) {
+  const [rowsRaw, setRowsRaw] = useState(null);   // null = memuat
+  const [err, setErr] = useState("");
+  const [period, setPeriod] = useState("all");
+  const [status, setStatus] = useState("all");    // all | draft | pending | approved | rejected
+  const [open, setOpen] = useState(null);          // { partner, ref }
+  const [sel, setSel] = useState(() => new Set());
+  const [reqOpen, setReqOpen] = useState(false);
+  const [zipping, setZipping] = useState(false);
+  const byRef = docs?.byRef;
+
+  useEffect(() => {
+    let alive = true;
+    fetchDraftDocs(segment)
+      .then((d) => { if (alive) { setRowsRaw(d); setErr(""); } })
+      .catch((e) => { if (alive) { setRowsRaw([]); setErr(errMsg(e)); } });
+    return () => { alive = false; };
+  }, [segment, byRef]); // byRef berubah setiap docs.refresh() → muat ulang
+
+  const groups = useMemo(() => {
+    const m = new Map();
+    (rowsRaw || []).forEach((d) => {
+      const k = `${d.partner_key}|${d.ref_id}`;
+      if (!m.has(k)) m.set(k, { key: k, partner: d.partner_name, ref: d.ref_id, info: parseDraftRef(d.ref_id), files: { bast: [], surat_pemberitahuan: [] }, lastAt: "" });
+      const g = m.get(k);
+      if (g.files[d.doc_type]) g.files[d.doc_type].push(d);
+      if (d.uploaded_at > g.lastAt) g.lastAt = d.uploaded_at;
+    });
+    return [...m.values()].map((g) => {
+      const st = {};
+      DRAFT_SLOTS.forEach((dt) => {
+        const a = approvalStatus(docs?.approvals?.[approvalKey(segment, g.partner, g.ref, dt.key)]);
+        st[dt.key] = g.files[dt.key].length ? (a || "draft") : "missing";
+      });
+      const vals = Object.values(st);
+      const overall = vals.every((v) => v === "approved") ? "approved" : vals.some((v) => v === "rejected") ? "rejected" : vals.some((v) => v === "pending") ? "pending" : "draft";
+      return { ...g, st, overall, stat: byRef?.[statKey(segment, g.partner, g.ref)], amountText: "" };
+    }).sort((a, b) => (b.info?.ym || "").localeCompare(a.info?.ym || "") || a.partner.localeCompare(b.partner) || (a.info?.type || "").localeCompare(b.info?.type || ""));
+  }, [rowsRaw, docs?.approvals, byRef, segment]);
+
+  const periods = useMemo(() => [...new Set(groups.map((g) => g.info?.ym).filter(Boolean))].sort().reverse(), [groups]);
+  const shown = groups.filter((g) => (period === "all" || g.info?.ym === period) && (status === "all" || g.overall === status));
+  const approvedDocs = shown.flatMap((g) => DRAFT_SLOTS.filter((dt) => g.st[dt.key] === "approved")
+    .flatMap((dt) => g.files[dt.key].map((f, i) => ({ ...f, file_name: draftFileName(g, dt.key).replace(/\.pdf$/, i ? `_${i + 1}.pdf` : ".pdf") }))));
+  const selected = shown.filter((g) => sel.has(g.key));
+  const toggle = (k) => setSel((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+
+  const downloadApproved = async () => {
+    if (!approvedDocs.length) return;
+    setZipping(true);
+    try {
+      const { failed } = await downloadDocsZip(approvedDocs, `Approved_BAST_Letters_${period === "all" ? "all" : period}.zip`);
+      toast(t, failed.length ? `ZIP downloaded; ${failed.length} file(s) failed.` : `ZIP with ${approvedDocs.length} approved document(s) downloaded.`, failed.length ? "err" : "ok");
+    } catch (e) { toast(t, `ZIP failed: ${errMsg(e)}`, "err"); }
+    setZipping(false);
+  };
+
+  const th = { position: "sticky", top: 0, zIndex: 1, fontFamily: MONO, fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: t.muted, fontWeight: 500, background: t.surf2, padding: "10px 9px", borderBottom: `1.5px solid ${t.line2}`, whiteSpace: "nowrap", textAlign: "left" };
+  const td = { padding: "9px 9px", color: t.ink2, borderBottom: `1px solid ${t.line}`, verticalAlign: "middle", fontSize: 12 };
+  const seg = (on) => ({ fontFamily: "inherit", fontSize: 11.5, fontWeight: 600, padding: "5px 10px", borderRadius: 8, border: 0, cursor: "pointer", background: on ? TEAL : "transparent", color: on ? "#fff" : t.muted, whiteSpace: "nowrap" });
+  const stCell = (v) => v === "missing" ? <span style={{ color: t.muted2, fontFamily: MONO, fontSize: 10.5 }}>—</span>
+    : v === "draft" ? <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 800, letterSpacing: "0.04em", textTransform: "uppercase", padding: "2px 7px", borderRadius: 6, color: t.muted, background: t.surf2, border: `1px solid ${t.line2}` }}>Draft</span>
+    : <ApprovalBadge status={v} t={t} />;
+
+  return (
+    <div>
+      <div style={{ padding: "12px 20px", borderBottom: `1px solid ${t.line}`, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", background: t.surf2 }}>
+        <select className="ppd-f" aria-label="Period" value={period} onChange={(e) => setPeriod(e.target.value)}
+          style={{ fontFamily: "inherit", fontSize: 12, padding: "6px 9px", borderRadius: 9, border: `1px solid ${t.line2}`, background: t.surf, color: t.ink }}>
+          <option value="all">All periods</option>
+          {periods.map((p) => <option key={p} value={p}>{parseDraftRef(`GEN-${p}-X`)?.label || p}</option>)}
+        </select>
+        <div role="group" aria-label="Status filter" style={{ display: "inline-flex", background: t.surf3, borderRadius: 10, padding: 3, gap: 2, border: `1px solid ${t.line}`, flexWrap: "wrap" }}>
+          {[["all", "All"], ["draft", "Draft"], ["pending", "Pending"], ["approved", "Approved"], ["rejected", "Rejected"]].map(([k, l]) => (
+            <button key={k} className="ppd-f" aria-pressed={status === k} onClick={() => setStatus(k)} style={seg(status === k)}>{l}</button>
+          ))}
+        </div>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", false, true)} onClick={onGenerate}>✎ Generate BAST &amp; Letters</button>
+          {docs?.approvalsAvailable !== false && (
+            <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", !selected.length, true)} disabled={!selected.length} onClick={() => setReqOpen(true)}
+              title="Request approval for the selected drafts (slots already pending or approved are skipped)">✉ Request approval ({selected.length})</button>
+          )}
+          <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !approvedDocs.length || zipping, true)} disabled={!approvedDocs.length || zipping} onClick={downloadApproved}
+            title="Download the approved BAST and Notification Letters shown below, ready to be bulk-uploaded to their PO / Invoice">
+            <IcoDownload /> {zipping ? "Preparing ZIP…" : `Download approved (${approvedDocs.length})`}
+          </button>
+        </div>
+      </div>
+      {err && <div role="alert" style={{ margin: "10px 20px", fontSize: 12, padding: "8px 12px", borderRadius: 10, color: t.bad, background: t.badBg, border: `1px solid ${t.badBd}` }}>Unable to load drafts: {err}</div>}
+      <div style={{ overflow: "auto", maxHeight: "68vh" }}>
+        <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: 820 }}>
+          <thead><tr>
+            <th style={{ ...th, width: 34, textAlign: "center" }}>
+              <input type="checkbox" className="ppd-f" aria-label="Select all drafts shown" checked={shown.length > 0 && shown.every((g) => sel.has(g.key))}
+                onChange={(e) => setSel(e.target.checked ? new Set(shown.map((g) => g.key)) : new Set())} />
+            </th>
+            <th style={th}>Partner</th><th style={th}>Type</th><th style={th}>Period</th>
+            <th style={th}>BAST</th><th style={th}>Notification Letter</th><th style={th}>Last updated</th><th style={{ ...th, textAlign: "right" }}>Actions</th>
+          </tr></thead>
+          <tbody>
+            {rowsRaw == null
+              ? Array.from({ length: 4 }).map((_, i) => <tr key={i}>{Array.from({ length: 8 }).map((__, j) => <td key={j} style={td}><Skel t={t} /></td>)}</tr>)
+              : !shown.length
+                ? <tr><td colSpan={8} style={{ padding: "36px 16px", textAlign: "center", color: t.muted }}>
+                    <div style={{ fontWeight: 700, color: t.ink, fontSize: 13.5 }}>{groups.length ? "No drafts match the filters" : "No generated drafts yet"}</div>
+                    <div style={{ fontSize: 12, marginTop: 4 }}>{groups.length ? "Change the period or status filter." : "Use “Generate BAST & Letters” to create drafts from the MPX Excel."}</div>
+                  </td></tr>
+                : shown.map((g, i) => (
+                  <tr key={g.key} className="ppd-row" tabIndex={0} onClick={() => setOpen({ partner: g.partner, ref: g.ref })}
+                    onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setOpen({ partner: g.partner, ref: g.ref }); } }}
+                    style={{ cursor: "pointer", background: sel.has(g.key) ? t.goodBg : i % 2 ? t.rowStripe : "transparent" }}>
+                    <td style={{ ...td, textAlign: "center" }} onClick={(e) => e.stopPropagation()}>
+                      <input type="checkbox" className="ppd-f" aria-label={`Select ${g.partner} ${g.info?.type}`} checked={sel.has(g.key)} onChange={() => toggle(g.key)} />
+                    </td>
+                    <td style={{ ...td, fontWeight: 600, color: t.ink }}>{g.partner}</td>
+                    <td style={td}><span style={{ fontFamily: MONO, fontSize: 10.5, fontWeight: 700, padding: "1px 6px", borderRadius: 6, background: t.surf3 }}>{g.info?.type}</span></td>
+                    <td style={{ ...td, whiteSpace: "nowrap" }}>{g.info?.label}</td>
+                    <td style={td}>{stCell(g.st.bast)}</td>
+                    <td style={td}>{stCell(g.st.surat_pemberitahuan)}</td>
+                    <td style={{ ...td, fontFamily: MONO, fontSize: 11, whiteSpace: "nowrap" }}>{fmtDT(g.lastAt)}</td>
+                    <td style={{ ...td, textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
+                      <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", false, true)} onClick={() => setOpen({ partner: g.partner, ref: g.ref })}>Preview &amp; approval</button>
+                    </td>
+                  </tr>
+                ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ padding: "10px 20px", borderTop: `1px solid ${t.line}`, fontFamily: MONO, fontSize: 11, color: t.muted, background: t.surf2, borderRadius: "0 0 18px 18px" }}>
+        {shown.length} draft(s) · {shown.filter((g) => g.overall === "approved").length} fully approved · {shown.filter((g) => g.overall === "pending").length} pending · approved PDFs are named BAST_/LETTER_&lt;PARTNER&gt;_&lt;TYPE&gt;_&lt;YYYY-MM&gt;.pdf for Bulk Upload
+      </div>
+
+      {open && <RefDocsDrawer key={`${open.partner}|${open.ref}`} refId={open.ref} partnerName={open.partner} segment={segment}
+        docs={docs} onClose={() => setOpen(null)} t={t} />}
+      {reqOpen && <BulkApprovalModal rows={selected.map((g) => ({ partner: g.partner, ref: g.ref, title: refDisplay(g.ref), amountText: "", stat: g.stat }))}
+        segment={segment} docs={docs} onClose={() => setReqOpen(false)} t={t} />}
+    </div>
   );
 }

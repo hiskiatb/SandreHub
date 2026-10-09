@@ -1490,24 +1490,27 @@ function DashScreen(props) {
 
   // Dokumen per PO (Partner & Agency): dipakai kolom Dokumen di Raw Data & tab Upload & Merge Dokumen
   const docs = usePartnerDocStats(profile);
-  const { docPOs, docNoRef } = useMemo(() => {
-    // 1 entri per (pemilik, PO): baris dobel → amount dijumlah, records dihitung. Baris tanpa PO dihitung terpisah.
+  // 1 entri per (pemilik, PO): baris dobel → amount dijumlah, records dihitung. Baris tanpa PO dihitung terpisah.
+  // ym = periode PO (YYYY-MM) dari program date; ptype = MPC/MP3 dari kolom Partner Type/Entity (untuk generator BAST/Letter)
+  const buildDocPOs = useCallback((rowsIn) => {
     const m = new Map(); let noRef = 0;
-    filtRaw.forEach(r => {
+    rowsIn.forEach(r => {
       const ref = refKey(gstr(r,DOC_REF_COLUMN));
       const owner = gstr(r,["partner name","agency name"]);
       if (!ref || !owner) { noRef++; return; }
       const k = statKey(src, owner, ref);
       const e = m.get(k);
       if (e) { e.records++; e.amount += gnum(r,["amount"]); if (!e.title) e.title = gstr(r,["project title"]); return; }
-      // periode PO (YYYY-MM) dari program date — dipakai generator BAST/Letter untuk pre-fill per bulan
       const pd = gcell(r,["program date","month","periode"]);
       let mk = monthKey(pd); if (!mk) { const d = toRealDate(pd); if (d) mk = d.getFullYear()*100 + d.getMonth() + 1; }
       const ym = mk ? `${Math.floor(mk/100)}-${String(mk%100).padStart(2,"0")}` : "";
-      m.set(k,{ref,partner:owner,title:gstr(r,["project title"]),amount:gnum(r,["amount"]),records:1,ym});
+      m.set(k,{ref,partner:owner,title:gstr(r,["project title"]),amount:gnum(r,["amount"]),records:1,ym,ptype:getMpxTypeFromRow(r)});
     });
-    return { docPOs: [...m.values()].map(p => ({...p, amountText: fmtMoney(p.amount,false)})), docNoRef: noRef };
-  }, [filtRaw, src]);
+    return { list: [...m.values()].map(p => ({...p, amountText: fmtMoney(p.amount,false)})), noRef };
+  }, [src]);
+  const { docPOs, docNoRef } = useMemo(() => { const x = buildDocPOs(filtRaw); return { docPOs: x.list, docNoRef: x.noRef }; }, [filtRaw, buildDocPOs]);
+  // Semua PO segment ini (tanpa filter dashboard) — dipakai generator untuk mencocokkan PO
+  const docPOsAll = useMemo(() => buildDocPOs(curRaw).list, [curRaw, buildDocPOs]);
   const docPOsDone = docPOs.filter(p => doneCount(docs.byRef[statKey(src,p.partner,p.ref)]) === DOC_TYPES.length).length;
 
   const isMobile = w < 640;
@@ -1699,7 +1702,7 @@ function DashScreen(props) {
         <>
           {activeTab==="dash" && <DashTab {...props} t={t} w={w}/>}
           {activeTab==="raw"  && <RawTab  {...props} t={t} w={w} docs={docs}/>}
-          {activeTab==="docs" && docs.enabled && <PoDocsTab pos={docPOs} segment={src} docs={docs} noRefCount={docNoRef} fmtAmount={n=>fmtMoney(n)} t={t}/>}
+          {activeTab==="docs" && docs.enabled && <PoDocsTab pos={docPOs} allPos={docPOsAll} segment={src} docs={docs} noRefCount={docNoRef} fmtAmount={n=>fmtMoney(n)} t={t}/>}
         </>
       )}
 

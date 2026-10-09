@@ -2,7 +2,7 @@
 // Review & keputusan approval (BAST / Notification Letter). Tidak ada aksi otomatis saat halaman dibuka.
 import React, { useEffect, useState } from "react";
 import supabase from "../../../lib/supabase";
-import { DOC_TYPES, DOC_REF_LABEL, fmtSize, approvalApi } from "../../../lib/payoutPartnerDocs";
+import { DOC_TYPES, fmtSize, approvalApi, refDisplay } from "../../../lib/payoutPartnerDocs";
 
 const TEAL = "#32BCAD", MAGENTA = "#C6168D";
 const MONO = "'SF Mono','Fira Code','DM Mono',monospace";
@@ -95,7 +95,7 @@ export default function ApprovalReview({ id }) {
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
                   <div>
                     <div style={{ fontFamily: MONO, fontSize: 11, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".1em" }}>{label(r.doc_type)}</div>
-                    <div style={{ fontFamily: MONO, fontSize: 22, fontWeight: 800, marginTop: 4 }}>{DOC_REF_LABEL} {r.ref_id}</div>
+                    <div style={{ fontFamily: MONO, fontSize: 22, fontWeight: 800, marginTop: 4 }}>{refDisplay(r.ref_id)}</div>
                     <div style={{ fontSize: 14, fontWeight: 600, color: "var(--ink2)", marginTop: 4 }}>{r.owner_name || r.owner_key}</div>
                   </div>
                   <span style={{ fontSize: 12, fontWeight: 700, padding: "5px 12px", borderRadius: 99, color: sc, background: sb, border: `1px solid ${sc}` }}>{sl}</span>
