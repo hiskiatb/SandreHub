@@ -67,11 +67,11 @@ const STEPS = [
 // dikirim ke ao_create_submission (visPoster/visShopblind/visFlagchain/
 // visTablemate/visStickerEtalase) -> kolom vis_* di ao_submissions.
 const VISIBILITY_ITEMS = [
-  { key: "poster", label: "Poster", desc: "Poster promo terpasang di outlet.", icon: Frame },
-  { key: "shopblind", label: "Shopblind", desc: "Shopblind / tirai promo di depan toko.", icon: Blinds },
-  { key: "flagchain", label: "Flagchain", desc: "Rangkaian bendera promo (flag chain).", icon: Flag },
-  { key: "tablemate", label: "Table Mate / Tent Card", desc: "Table mate atau tent card di meja / etalase.", icon: Tent },
-  { key: "stickerEtalase", label: "Sticker Etalase", desc: "Stiker promo menempel di etalase.", icon: Sticker },
+  { key: "poster", label: "Poster", icon: Frame },
+  { key: "shopblind", label: "Shopblind", icon: Blinds },
+  { key: "flagchain", label: "Flagchain", icon: Flag },
+  { key: "tablemate", label: "Table Mate / Tent Card", icon: Tent },
+  { key: "stickerEtalase", label: "Sticker Etalase", icon: Sticker },
 ];
 const VIS_YES = { grad: "linear-gradient(135deg, #22C55E, #16A34A)", shadow: "0 3px 10px rgba(22,163,74,0.35)", solid: "#16A34A", tint: "rgba(22,163,74,0.05)", border: "rgba(22,163,74,0.28)" };
 const VIS_NO = { grad: "linear-gradient(135deg, #F87171, #DC2626)", shadow: "0 3px 10px rgba(220,38,38,0.3)", solid: "#DC2626", tint: "rgba(220,38,38,0.04)", border: "rgba(220,38,38,0.25)" };
@@ -838,25 +838,29 @@ function VisibilityToggle({ value, onChange }) {
   const idx = value === 1 ? 0 : value === 0 ? 1 : -1;
   const tone = value === 1 ? VIS_YES : VIS_NO;
   return (
-    <div role="radiogroup" style={{ position: "relative", display: "flex", background: "#F1EFF6", borderRadius: 12, padding: 4 }}>
+    <div role="radiogroup" className="vis-tg" style={{ position: "relative", display: "grid", gridTemplateColumns: "minmax(0,2fr) minmax(0,3fr)", flexShrink: 0, background: "#F1EFF6", borderRadius: 11, padding: 3 }}>
       {idx >= 0 && (
         <div style={{
-          position: "absolute", top: 4, bottom: 4, left: 4, width: "calc(50% - 4px)",
-          transform: `translateX(${idx * 100}%)`, background: tone.grad, borderRadius: 9, boxShadow: tone.shadow,
-          transition: "transform .28s cubic-bezier(.34,1.3,.64,1)",
+          position: "absolute", top: 3, bottom: 3,
+          // Kolom 2fr (Ada) : 3fr (Tidak Ada) - highlight ngikut lebar kolom
+          // aktif, jadi pas dgn panjang teks masing2.
+          left: idx === 0 ? 3 : "calc(3px + (100% - 6px) * 0.4)",
+          width: idx === 0 ? "calc((100% - 6px) * 0.4)" : "calc((100% - 6px) * 0.6)",
+          background: tone.grad, borderRadius: 8, boxShadow: tone.shadow,
+          transition: "left .28s cubic-bezier(.34,1.3,.64,1), width .28s cubic-bezier(.34,1.3,.64,1)",
         }} />
       )}
       {opts.map(({ v, label, Icon }) => {
         const active = value === v;
         return (
           <button key={v} type="button" role="radio" aria-checked={active} onClick={() => onChange(v)} style={{
-            position: "relative", zIndex: 1, flex: 1, border: "none", background: "transparent",
-            padding: "10px 6px", borderRadius: 9, cursor: "pointer", fontFamily: FONT, outline: "none",
-            fontSize: 13.5, fontWeight: 800, color: active ? "#fff" : "#8784A0",
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            position: "relative", zIndex: 1, minWidth: 0, border: "none", background: "transparent",
+            padding: "9px 2px", borderRadius: 8, cursor: "pointer", fontFamily: FONT, outline: "none",
+            fontSize: 12, fontWeight: 800, color: active ? "#fff" : "#8784A0",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 4, whiteSpace: "nowrap",
             transition: "color .2s ease .05s",
           }}>
-            <Icon size={14} strokeWidth={3} />{label}
+            <Icon size={12} strokeWidth={3} />{label}
           </button>
         );
       })}
@@ -871,42 +875,33 @@ function VisibilityRow({ item, value, onChange, error }) {
   const cardBorder = error ? "#DC2626" : answered ? tone.border : BORDER;
   return (
     <div style={{
-      // Non-shorthand penuh (lihat komentar di AvailabilityRow) - hindari
-      // warning React utk border + borderLeft yg dicampur.
-      borderRadius: 16,
-      borderTop: `1.5px solid ${cardBorder}`, borderRight: `1.5px solid ${cardBorder}`, borderBottom: `1.5px solid ${cardBorder}`,
-      borderLeft: `4px solid ${error ? "#DC2626" : answered ? tone.solid : "rgba(236,11,111,0.3)"}`,
-      background: answered ? tone.tint : "#fff", padding: 15,
-      boxShadow: answered ? "0 2px 8px rgba(20,18,28,0.04)" : "0 1px 3px rgba(20,18,28,0.03)",
-      transition: "background .25s ease, border-color .25s ease, box-shadow .25s ease",
+      borderRadius: 14, border: `1.5px solid ${cardBorder}`,
+      background: answered ? tone.tint : "#fff", padding: "12px 12px 12px 14px",
+      transition: "background .25s ease, border-color .25s ease",
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+      <div className="vis-row">
         <div style={{
-          flexShrink: 0, width: 44, height: 44, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center",
+          flexShrink: 0, width: 36, height: 36, borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center",
           background: answered ? tone.grad : `linear-gradient(135deg, ${PINK}, ${PINK_DK})`,
-          boxShadow: "0 3px 8px rgba(20,18,28,0.1)", transition: "background .25s ease",
+          transition: "background .25s ease",
         }}>
-          <Icon size={21} color="#fff" strokeWidth={2.1} />
+          <Icon size={18} color="#fff" strokeWidth={2.1} />
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 13.5, fontWeight: 800, color: INK, lineHeight: 1.3 }}>{item.label}</div>
-          <div style={{ fontSize: 11.5, color: MID, marginTop: 3, lineHeight: 1.4 }}>{item.desc}</div>
-        </div>
-        {answered && (
-          <div key={value} style={{
-            flexShrink: 0, width: 24, height: 24, borderRadius: "50%", background: tone.solid,
-            display: "flex", alignItems: "center", justifyContent: "center",
-            animation: "visPop .25s cubic-bezier(.34,1.56,.64,1) both",
-          }}>
-            {value === 1 ? <Check size={13} color="#fff" strokeWidth={3.2} /> : <X size={13} color="#fff" strokeWidth={3.2} />}
-          </div>
-        )}
+        <div style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 800, color: INK, lineHeight: 1.3 }}>{item.label}</div>
+        <VisibilityToggle value={value} onChange={onChange} />
       </div>
-      <VisibilityToggle value={value} onChange={onChange} />
       {error && (
-        <div style={{ fontSize: 11, color: "#DC2626", fontWeight: 700, marginTop: 10 }}>Wajib dijawab sebelum lanjut</div>
+        <div style={{ fontSize: 11, color: "#DC2626", fontWeight: 700, marginTop: 8 }}>Wajib dijawab sebelum lanjut</div>
       )}
-      <style>{`@keyframes visPop { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }`}</style>
+      <style>{`
+        .vis-row { display: flex; align-items: center; gap: 12px; }
+        .vis-tg { width: 188px; }
+        @media (max-width: 359px) {
+          .vis-row { flex-wrap: wrap; row-gap: 10px; }
+          .vis-row > div:nth-child(2) { flex: 1 1 0; }
+          .vis-tg { width: 100%; }
+        }
+      `}</style>
     </div>
   );
 }
@@ -1443,19 +1438,49 @@ export default function AuditOutletFormPage() {
   // visualViewport.height adalah satu2nya angka yg akurat beneran di iOS -
   // dipakai utk set height eksplisit (px) pada container root, gak cuma
   // andalkan inset:0 yg "auto-stretch".
+  // `vh` = tinggi visual viewport, `vTop` = offsetTop-nya. Dua-duanya perlu:
+  // di iOS Safari keyboard TIDAK menyusutkan layout viewport, cuma visual
+  // viewport yg menyusut + bergeser (offsetTop). Event resize iOS juga
+  // sering cuma kepanggil di AWAL animasi keyboard (nilai tengah2), jadi
+  // container berhenti di tinggi yg keliru -> gap kosong di atas keyboard.
+  // Solusi: ukur ulang di event scroll/resize visualViewport, focusin/
+  // focusout, dan polling singkat (~1 dtk) setelah fokus berubah supaya
+  // nilai akhir setelah animasi keyboard selesai yg dipakai.
   const [vh, setVh] = useState(null);
+  const [vTop, setVTop] = useState(0);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const vv = window.visualViewport;
-    const update = () => setVh(vv ? vv.height : window.innerHeight);
+    const update = () => {
+      setVh(vv ? Math.round(vv.height) : window.innerHeight);
+      setVTop(vv ? Math.max(0, Math.round(vv.offsetTop)) : 0);
+    };
+    let raf = 0;
+    let until = 0;
+    const poll = () => {
+      update();
+      if (performance.now() < until) raf = requestAnimationFrame(poll);
+    };
+    const burst = () => {
+      until = performance.now() + 1000;
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(poll);
+    };
     update();
     vv?.addEventListener("resize", update);
+    vv?.addEventListener("scroll", update);
     window.addEventListener("resize", update);
-    window.addEventListener("orientationchange", update);
+    window.addEventListener("orientationchange", burst);
+    window.addEventListener("focusin", burst);
+    window.addEventListener("focusout", burst);
     return () => {
+      cancelAnimationFrame(raf);
       vv?.removeEventListener("resize", update);
+      vv?.removeEventListener("scroll", update);
       window.removeEventListener("resize", update);
-      window.removeEventListener("orientationchange", update);
+      window.removeEventListener("orientationchange", burst);
+      window.removeEventListener("focusin", burst);
+      window.removeEventListener("focusout", burst);
     };
   }, []);
 
@@ -1974,7 +1999,7 @@ export default function AuditOutletFormPage() {
       // mismatch tipis dgn tinggi layar yg BENERAN kelihatan (Android gak
       // kena ini). Sebelum `vh` sempat terukur (first paint/SSR), fallback
       // ke inset:0 dulu spy gak ada flash kosong.
-      position: "fixed", top: 0, left: 0, right: 0,
+      position: "fixed", top: vTop, left: 0, right: 0,
       ...(vh ? { height: vh } : { bottom: 0 }),
       overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "none",
       background: BG, fontFamily: FONT, display: "flex", flexDirection: "column",
@@ -2132,7 +2157,7 @@ export default function AuditOutletFormPage() {
         {step === 2 && (
           <SectionCard icon={<Eye size={17} color="#fff" />} title="Cek Visibility Outlet" subtitle="Ada atau tidak ada di outlet">
             {/* Progres jawaban - bar + hitungan, berubah hijau begitu 5/5. */}
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
               <div style={{ flex: 1, height: 6, borderRadius: 99, background: "#EFEDF4", overflow: "hidden" }}>
                 <div style={{
                   width: `${(visibilityAnsweredCount / VISIBILITY_ITEMS.length) * 100}%`, height: "100%", borderRadius: 99,
@@ -2144,7 +2169,7 @@ export default function AuditOutletFormPage() {
                 {visibilityAnsweredCount}/{VISIBILITY_ITEMS.length} dijawab
               </span>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {VISIBILITY_ITEMS.map((item) => (
                 <VisibilityRow key={item.key} item={item} value={vis[item.key]} onChange={(v) => setVisItem(item.key, v)}
                   error={attemptedV && vis[item.key] === null} />
