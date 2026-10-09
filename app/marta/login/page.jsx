@@ -5,7 +5,7 @@ import { supabase } from "../../../lib/supabase";
 import { canViewMarta } from "../../../lib/martaAccess";
 import { useOtpResendCooldown } from "../../../lib/otpCooldown";
 import { HubLogo } from "../../../components/HubLogo";
-import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, UserRound, ChevronRight, ChevronDown, Camera, LayoutDashboard, QrCode, Store } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, UserRound, ChevronRight, ChevronDown, Camera, LayoutDashboard, QrCode, Store, CheckCircle2, KeyRound } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -35,13 +35,20 @@ function MartaLoginInner() {
   // spt sebelumnya. Halaman ini tetap KHUSUS SPM Sumatera (tidak digabung
   // dgn jalur OTP DMO di /martahub/m/login - itu sengaja dipisah biar
   // bisa dibuatkan shortcut PWA sendiri).
-  const [stage, setStage] = useState("email"); // email | password | otp
+  const [stage, setStage] = useState("email"); // email | password | otp | reset (lupa kata sandi, khusus spm_sumatera)
   const [form,     setForm]     = useState({ email: "", password: "", otp: "" });
   const [errors,   setErrors]   = useState([]);
   const [errMsg,   setErrMsg]   = useState("");
   const [loading,  setLoading]  = useState(false);
   const [sendingOtp, setSendingOtp] = useState(false);
   const [showPw,   setShowPw]   = useState(false);
+  // Lupa kata sandi (stage "reset") - hanya utk akun CMS (spm_sumatera). Kata
+  // sandi diganti di akun Supabase yg sama dgn SandraHub, jadi berlaku di keduanya.
+  const [resetCode, setResetCode] = useState("");
+  const [newPw,     setNewPw]     = useState("");
+  const [newPw2,    setNewPw2]    = useState("");
+  const [showNewPw, setShowNewPw] = useState(false);
+  const [infoMsg,   setInfoMsg]   = useState("");
   const [checking, setChecking] = useState(true);
   // Role "Marketing Sumatera (Program)" (lihat MARTA_OTP_LOGIN_ROLES di
   // lib/martaAccess.js) login PASSWORDLESS - kode OTP email, PERSIS pola
@@ -80,6 +87,7 @@ function MartaLoginInner() {
     setForm(f => ({ ...f, [k]: v }));
     setErrors(e => e.filter(x => x !== k));
     setErrMsg("");
+    setInfoMsg("");
   };
 
   // Langkah 1 - validasi format email, lalu cek /api/marta/login-mode utk
@@ -247,6 +255,64 @@ function MartaLoginInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [otpDigits, stage]);
 
+  // Lupa kata sandi - kirim kode 6 digit ke email lewat /api/marta/forgot-password
+  // (server cek role spm_sumatera; balasan selalu generik utk email apa pun).
+  const sendResetCode = async ({ goToReset }) => {
+    const email = form.email.trim().toLowerCase();
+    setErrMsg(""); setErrors([]); setInfoMsg("");
+    if (!otpCooldown.isReady()) {
+      if (goToReset) setStage("reset");
+      setErrMsg(`Tunggu ${otpCooldown.remainingSeconds} detik lagi sebelum kirim kode baru.`);
+      return;
+    }
+    setSendingOtp(true);
+    try {
+      const res = await fetch("/api/marta/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "send", email }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Gagal mengirim kode.");
+      otpCooldown.markSent();
+      setResetCode("");
+      if (goToReset) { setNewPw(""); setNewPw2(""); setStage("reset"); }
+      setInfoMsg("Jika email ini terdaftar sebagai akun CMS, kode 6 digit sudah dikirim.");
+    } catch (e) {
+      setErrMsg(e?.message || "Gagal mengirim kode.");
+    } finally {
+      setSendingOtp(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (loading) return;
+    setErrMsg(""); setErrors([]); setInfoMsg("");
+    const code = resetCode.replace(/\D/g, "");
+    if (code.length !== 6) { setErrors(["code"]); setErrMsg("Masukkan kode 6 digit dari email."); return; }
+    if (newPw.length < 8) { setErrors(["newPw"]); setErrMsg("Kata sandi minimal 8 karakter."); return; }
+    if (newPw !== newPw2) { setErrors(["newPw2"]); setErrMsg("Konfirmasi kata sandi tidak sama."); return; }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/marta/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reset", email: form.email.trim().toLowerCase(), otp: code, password: newPw }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        setErrors(/kata sandi/i.test(json.error || "") ? ["newPw"] : ["code"]);
+        setErrMsg(json.error || "Gagal mengubah kata sandi.");
+        return;
+      }
+      setResetCode(""); setNewPw(""); setNewPw2(""); setShowNewPw(false);
+      setForm(f => ({ ...f, password: "" }));
+      setStage("password");
+      setInfoMsg("Kata sandi berhasil diubah. Silakan masuk - berlaku juga untuk SandraHub.");
+    } catch { setErrMsg("Terjadi gangguan pada sistem."); }
+    finally { setLoading(false); }
+  };
+
   // Langkah 2 - login sesungguhnya (password, sesi SandraHub).
   const handleLogin = async () => {
     setErrMsg(""); setErrors([]);
@@ -352,6 +418,15 @@ function MartaLoginInner() {
               )}
             </AnimatePresence>
 
+            <AnimatePresence>
+              {infoMsg && !errMsg && (
+                <motion.div key="info" initial={{ opacity: 0, height: 0, marginBottom: 0 }} animate={{ opacity: 1, height: "auto", marginBottom: 14 }} exit={{ opacity: 0, height: 0, marginBottom: 0 }} transition={{ duration: 0.18 }}
+                  style={{ padding: "9px 13px", borderRadius: 10, background: d ? "rgba(52,211,153,0.10)" : "rgba(5,150,105,0.07)", border: `1px solid ${d ? "rgba(52,211,153,0.28)" : "rgba(5,150,105,0.22)"}`, display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, fontWeight: 600, color: d ? "#34D399" : "#047857", overflow: "hidden" }}>
+                  <CheckCircle2 size={13} strokeWidth={2.2} style={{ flexShrink: 0 }} />{infoMsg}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             {/* Stage - sama persis pola /sandra/login: email dulu (satu
                 langkah), password baru muncul di langkah berikutnya, bukan
                 dua field sekaligus di satu layar. */}
@@ -445,6 +520,75 @@ function MartaLoginInner() {
                     {otpCooldown.remainingSeconds > 0 ? `Kirim ulang dalam ${otpCooldown.remainingSeconds}s` : sendingOtp ? "Mengirim…" : "Kirim ulang kode"}
                   </button>
                 </motion.div>
+              ) : stage === "reset" ? (
+                <motion.div key="stage-reset" initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 14 }} transition={{ duration: 0.22 }}>
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 17, fontWeight: 700, color: t.hi, letterSpacing: "-0.02em" }}>Atur Ulang Kata Sandi</div>
+                    <div style={{ marginTop: 3, fontSize: 13, color: t.mid }}>Masukkan kode dari email dan kata sandi baru</div>
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderRadius: 10, background: t.fieldBg, border: `1px solid ${t.line}`, marginBottom: 16 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                      <Mail size={14} color={t.lo} style={{ flexShrink: 0 }} />
+                      <span style={{ fontSize: 13.5, fontWeight: 600, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{form.email}</span>
+                    </span>
+                    <button onClick={() => { setStage("email"); setResetCode(""); setNewPw(""); setNewPw2(""); setErrMsg(""); setErrors([]); setInfoMsg(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: RED, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, flexShrink: 0 }}>Ganti</button>
+                  </div>
+
+                  <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: t.mid }}>Kode dari Email</label>
+                  <div style={{ ...fieldStyle, marginTop: 5, borderColor: errors.includes("code") ? "rgba(220,38,38,0.5)" : t.line }}
+                    onFocusCapture={e => e.currentTarget.style.borderColor = MAGA}
+                    onBlurCapture={e => e.currentTarget.style.borderColor = errors.includes("code") ? "rgba(220,38,38,0.5)" : t.line}>
+                    <KeyRound size={14} color={t.lo} style={{ flexShrink: 0 }} />
+                    <input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="6 digit kode" value={resetCode}
+                      onChange={e => { setResetCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setErrors(er => er.filter(x => x !== "code")); setErrMsg(""); }}
+                      style={{ ...inputStyle, fontWeight: 800, letterSpacing: "0.3em", fontSize: 16 }} autoFocus />
+                  </div>
+
+                  <label style={{ display: "block", marginTop: 14, fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: t.mid }}>Kata Sandi Baru</label>
+                  <div style={{ ...fieldStyle, marginTop: 5, borderColor: errors.includes("newPw") ? "rgba(220,38,38,0.5)" : t.line }}
+                    onFocusCapture={e => e.currentTarget.style.borderColor = MAGA}
+                    onBlurCapture={e => e.currentTarget.style.borderColor = errors.includes("newPw") ? "rgba(220,38,38,0.5)" : t.line}>
+                    <Lock size={14} color={t.lo} style={{ flexShrink: 0 }} />
+                    <input type={showNewPw ? "text" : "password"} placeholder="Minimal 8 karakter" value={newPw}
+                      onChange={e => { setNewPw(e.target.value); setErrors(er => er.filter(x => x !== "newPw")); setErrMsg(""); }}
+                      style={{ ...inputStyle, fontFamily: showNewPw ? FONT : "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" }} autoComplete="new-password" />
+                    <button type="button" onClick={() => setShowNewPw(v => !v)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", flexShrink: 0, color: showNewPw ? RED : t.lo }}>
+                      {showNewPw ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+
+                  <label style={{ display: "block", marginTop: 14, fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: t.mid }}>Ulangi Kata Sandi Baru</label>
+                  <div style={{ ...fieldStyle, marginTop: 5, borderColor: errors.includes("newPw2") ? "rgba(220,38,38,0.5)" : t.line }}
+                    onFocusCapture={e => e.currentTarget.style.borderColor = MAGA}
+                    onBlurCapture={e => e.currentTarget.style.borderColor = errors.includes("newPw2") ? "rgba(220,38,38,0.5)" : t.line}>
+                    <Lock size={14} color={t.lo} style={{ flexShrink: 0 }} />
+                    <input type={showNewPw ? "text" : "password"} placeholder="Ketik ulang kata sandi" value={newPw2}
+                      onChange={e => { setNewPw2(e.target.value); setErrors(er => er.filter(x => x !== "newPw2")); setErrMsg(""); }}
+                      onKeyDown={e => e.key === "Enter" && handleResetPassword()}
+                      style={{ ...inputStyle, fontFamily: showNewPw ? FONT : "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" }} autoComplete="new-password" />
+                  </div>
+                  <div style={{ marginTop: 8, display: "flex", gap: 14, fontSize: 11.5, fontWeight: 600 }}>
+                    <span style={{ color: newPw.length >= 8 ? "#16A34A" : t.mid }}>{newPw.length >= 8 ? "✓" : "○"} Min. 8 karakter</span>
+                    <span style={{ color: newPw && newPw === newPw2 ? "#16A34A" : t.mid }}>{newPw && newPw === newPw2 ? "✓" : "○"} Sama dengan konfirmasi</span>
+                  </div>
+
+                  <button onClick={handleResetPassword} disabled={loading}
+                    style={{ marginTop: 18, width: "100%", height: 46, borderRadius: 10, border: "none", background: loading ? `${RED}55` : `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: loading ? "none" : `0 4px 18px rgba(237,28,36,0.25)`, cursor: loading ? "not-allowed" : "pointer", fontFamily: FONT }}>
+                    {loading ? <><Loader2 size={16} style={{ animation: "spin .85s linear infinite" }} /><span>Menyimpan…</span></> : <><span>Ubah Kata Sandi</span><ArrowRight size={14} strokeWidth={2.5} /></>}
+                  </button>
+
+                  <div style={{ marginTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <button onClick={() => { setStage("password"); setErrMsg(""); setErrors([]); setInfoMsg(""); }} disabled={loading}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: t.mid, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, display: "inline-flex", alignItems: "center", gap: 5, padding: 0 }}>
+                      <ArrowLeft size={13} /> Kembali ke login
+                    </button>
+                    <button onClick={() => sendResetCode({ goToReset: false })} disabled={sendingOtp || otpCooldown.remainingSeconds > 0 || loading}
+                      style={{ background: "none", border: "none", padding: 0, cursor: sendingOtp || otpCooldown.remainingSeconds > 0 || loading ? "default" : "pointer", color: otpCooldown.remainingSeconds > 0 || loading ? t.lo : RED, fontSize: 12.5, fontWeight: 700, fontFamily: FONT }}>
+                      {otpCooldown.remainingSeconds > 0 ? `Kirim ulang dalam ${otpCooldown.remainingSeconds}s` : sendingOtp ? "Mengirim…" : "Kirim ulang kode"}
+                    </button>
+                  </div>
+                </motion.div>
               ) : (
                 <motion.div key="stage-password" initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 14 }} transition={{ duration: 0.22 }}>
                   <div style={{ marginBottom: 16 }}>
@@ -477,6 +621,13 @@ function MartaLoginInner() {
                     <input type={showPw ? "text" : "password"} placeholder="Kata sandi" value={form.password} onChange={e => up("password", e.target.value)} onKeyDown={e => e.key === "Enter" && handleLogin()} style={{ ...inputStyle, fontFamily: showPw ? FONT : "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" }} autoComplete="current-password" autoFocus />
                     <button type="button" onClick={() => setShowPw(p => !p)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", flexShrink: 0, color: showPw ? RED : t.lo }}>
                       {showPw ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+
+                  <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end" }}>
+                    <button type="button" onClick={() => sendResetCode({ goToReset: true })} disabled={sendingOtp || loading}
+                      style={{ background: "none", border: "none", padding: 0, cursor: sendingOtp || loading ? "default" : "pointer", color: sendingOtp ? t.lo : RED, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      {sendingOtp ? <><Loader2 size={12} style={{ animation: "spin .85s linear infinite" }} />Mengirim kode…</> : "Lupa kata sandi?"}
                     </button>
                   </div>
 
