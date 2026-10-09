@@ -209,16 +209,18 @@ function MartaLoginInner() {
         setErrMsg(json.error || "Kode salah atau sudah kedaluwarsa. Coba lagi.");
         setOtpDigits(["", "", "", "", "", ""]);
         otpInputs.current[0]?.focus();
+        setLoading(false);
         return;
       }
 
       const { data, error } = await supabase.auth.verifyOtp({
-        email: cleanEmail, token_hash: json.token_hash, type: "magiclink",
+        token_hash: json.token_hash, type: "magiclink",
       });
       if (error || !data?.user) {
         setErrMsg("Gagal membuat sesi login. Coba lagi.");
         setOtpDigits(["", "", "", "", "", ""]);
         otpInputs.current[0]?.focus();
+        setLoading(false);
         return;
       }
       const { data: profile } = await supabase
@@ -226,6 +228,7 @@ function MartaLoginInner() {
       if (!profile || !canViewMarta(profile.role)) {
         await supabase.auth.signOut();
         setErrMsg("Akun ini tidak memiliki akses ke MartaHub.");
+        setLoading(false);
         return;
       }
       // SENGAJA tidak setLoading(false) di sini - biarkan overlay loading
