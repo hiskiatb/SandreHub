@@ -208,6 +208,8 @@ function SubmissionBody() {
   const [dateTo, setDateTo] = useState("");
   const [zipping, setZipping] = useState(false);
   const [exporting, setExporting] = useState(false);
+  // Progress nyata utk Export .xlsx & Download ZIP: {kind, label, pct}
+  const [job, setJob] = useState(null);
   const [preview, setPreview] = useState(null);
   const [previewPhotos, setPreviewPhotos] = useState([]);
   const [filters, setFilters] = useState({});
@@ -341,17 +343,28 @@ function SubmissionBody() {
 
   const downloadZip = async () => {
     setZipping(true);
+    setJob({ kind: "zip", label: "Menyiapkan daftar foto...", pct: 0 });
     try {
       const list = await aoExportList({ dateFrom: dateFrom || null, dateTo: dateTo || null });
       if (!list.length) { alert("Tidak ada foto pada rentang tanggal ini."); return; }
       const { default: JSZip } = await import("jszip");
       const zip = new JSZip();
+      // 0-80% = mengunduh foto (per file yg selesai), 80-100% = mengompres ZIP.
+      let done = 0;
+      setJob({ kind: "zip", label: `Mengunduh foto 0/${list.length}`, pct: 0 });
       await Promise.all(list.map(async (item) => {
         const res = await fetch(item.url);
         const blob = await res.blob();
         zip.file(item.filename, blob);
+        done++;
+        setJob({ kind: "zip", label: `Mengunduh foto ${done}/${list.length}`, pct: Math.round((done / list.length) * 80) });
       }));
-      const blob = await zip.generateAsync({ type: "blob" });
+      setJob({ kind: "zip", label: "Mengompres ZIP...", pct: 80 });
+      let lastPct = -1;
+      const blob = await zip.generateAsync({ type: "blob" }, (m) => {
+        const pct = 80 + Math.round(m.percent * 0.2);
+        if (pct !== lastPct) { lastPct = pct; setJob({ kind: "zip", label: "Mengompres ZIP...", pct }); }
+      });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       const tag = dateFrom || dateTo ? `_${dateFrom || "awal"}_${dateTo || "akhir"}` : "";
@@ -359,7 +372,7 @@ function SubmissionBody() {
       a.click();
     } catch {
       alert("Gagal membuat file ZIP.");
-    } finally { setZipping(false); }
+    } finally { setZipping(false); setJob(null); }
   };
 
   // Export .xlsx - kolomnya mengikuti "Result Download" di template CMS yg
@@ -410,6 +423,7 @@ function SubmissionBody() {
 
   const exportXlsx = useCallback(async () => {
     setExporting(true);
+    setJob({ kind: "xlsx", label: "Menyiapkan file...", pct: 0 });
     try {
       const ExcelJS = (await import("exceljs")).default;
       const wb = new ExcelJS.Workbook();
@@ -462,8 +476,11 @@ function SubmissionBody() {
             });
           } catch { /* 1 foto gagal di-fetch jangan sampai gagalkan export semua baris */ }
         }));
+        // 0-95% = memproses baris + foto, 95-100% = menyusun file .xlsx
+        setJob({ kind: "xlsx", label: `Memproses baris ${i + 1}/${filtered.length}`, pct: Math.round(((i + 1) / filtered.length) * 95) });
       }
 
+      setJob({ kind: "xlsx", label: "Menyusun file .xlsx...", pct: 95 });
       const buf = await wb.xlsx.writeBuffer();
       const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const url = URL.createObjectURL(blob);
@@ -473,7 +490,7 @@ function SubmissionBody() {
       a.download = `MartaHub_DataSubmission_${stamp}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
-    } finally { setExporting(false); }
+    } finally { setExporting(false); setJob(null); }
   }, [filtered]);
 
   return (
@@ -527,13 +544,26 @@ function SubmissionBody() {
           )}
           <Btn variant="ghost" onClick={load}><RefreshCw size={13} /></Btn>
           <Btn variant="ghost" onClick={exportXlsx} disabled={filtered.length === 0 || exporting}>
-            {exporting ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={14} />} Export .xlsx
+            {exporting ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={14} />} Export .xlsx{exporting && job?.kind === "xlsx" ? ` ${job.pct}%` : ""}
           </Btn>
           <Btn onClick={downloadZip} disabled={zipping}>
-            {zipping ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Package size={14} />} Download ZIP
+            {zipping ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Package size={14} />} Download ZIP{zipping && job?.kind === "zip" ? ` ${job.pct}%` : ""}
           </Btn>
         </div>
       </div>
+
+      {/* Bar progress nyata utk Export .xlsx / Download ZIP */}
+      {job && (
+        <div style={{ padding: "10px 16px", borderBottom: `1px solid ${BORDER}`, background: T.sub }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700, color: T.mid, marginBottom: 6 }}>
+            <span>{job.kind === "zip" ? "Download ZIP" : "Export .xlsx"} - {job.label}</span>
+            <span>{job.pct}%</span>
+          </div>
+          <div style={{ height: 6, borderRadius: 99, background: BORDER, overflow: "hidden" }}>
+            <div style={{ width: `${job.pct}%`, height: "100%", background: T.primary, transition: "width .2s" }} />
+          </div>
+        </div>
+      )}
 
       {/* Ringkasan unique value per kolom (mengikuti filter + search aktif) */}
       <div style={{ display: "grid", gridTemplateColumns: `repeat(${stats.length}, 1fr)`, gap: 1, background: BORDER, borderBottom: `1px solid ${BORDER}` }}>
