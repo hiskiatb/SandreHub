@@ -11,7 +11,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   DOC_REF_LABEL, statKey, uploadSlot, downloadDocsZip, partnerKey, signedUrl, fetchDraftDocs,
-  isPaymentRef, parsePaymentRef, paymentIdFor, assignPartnerCodes,
+  isPaymentRef, parsePaymentRef, paymentIdFor, assignPartnerCodes, partnerCode,
   approvalApi, fetchApprovals, approvalStatus, approvalKey,
 } from "../../../lib/payoutPartnerDocs";
 import {
@@ -334,14 +334,30 @@ function LettersWizard({ cfg: cfgRaw, meta, docs, index, known, approvals, onSav
         : b;
       const errors = [...fin.errors];
       const warnings = [...(fin.warnings || [])];
-      const code = partnerCodes.codes.get(partnerKey(fin.partner)) || "X";
-      const clash = partnerCodes.clashes.find((c) => c.partner === partnerKey(fin.partner));
+      const pk = partnerKey(fin.partner);
+      let code = partnerCodes.codes.get(pk) || "X";
+      const clash = partnerCodes.clashes.find((c) => c.partner === pk);
       if (clash) warnings.push(`Partner code ${clash.base} is already used by ${clash.with?.replace(/_/g, " ")} in this file — this partner uses ${clash.code}.`);
-      const exists = (ref) => (docs?.byRef?.[statKey(SEGMENT, fin.partner, ref)]?.files || 0) > 0 || !!index?.has(ref) || !!known?.has(ref);
-      let pid = "", pidExists = false, pidNext = "";
+      // Payment ID yang sudah dipakai partner LAIN (batch sebelumnya) → kode partner ini dibedakan
+      const ownerOf = (ref) => known?.get(ref) || "";
+      const takenByOther = (ref) => !!ownerOf(ref) && ownerOf(ref) !== pk;
+      if (fin.per && !fin.paymentId && takenByOther(paymentIdFor(fin.per.ym, fin.type, code, 1))) {
+        const batchCodes = new Set(partnerCodes.codes.values());
+        const base = code;
+        for (let extra = 1; extra < 20; extra++) {
+          const c = partnerCode(fin.partner, extra);
+          if (c !== base && !batchCodes.has(c) && !takenByOther(paymentIdFor(fin.per.ym, fin.type, c, 1))) { code = c; break; }
+        }
+        warnings.push(`Code ${base} is already used by ${ownerOf(paymentIdFor(fin.per.ym, fin.type, base, 1)).replace(/_/g, " ")} for this period — this partner uses ${code}.`);
+      }
+      const exists = (ref) => (docs?.byRef?.[statKey(SEGMENT, fin.partner, ref)]?.files || 0) > 0 || ownerOf(ref) === pk || (!known && !!index?.has(ref));
+      const approvedRef = (ref) => ["bast", "surat_pemberitahuan"].some((dt) => approvalStatus(approvals?.byKey?.[approvalKey(SEGMENT, fin.partner, ref, dt)]) === "approved");
+      let pid = "", pidExists = false, pidNext = "", pidLocked = false;
       if (fin.paymentId) {
         pid = fin.paymentId;
         if (!isPaymentRef(pid)) errors.push(`PAYMENT_ID "${pid}" must follow PAY-YYYYMM-TYPE-CODE-NN.`);
+        else if (takenByOther(pid)) errors.push(`PAYMENT_ID ${pid} already belongs to ${ownerOf(pid).replace(/_/g, " ")}.`);
+        else if (approvedRef(pid)) errors.push(`${pid} is already approved and locked — use a new PAYMENT_ID (e.g. the next number).`);
         else if (exists(pid)) warnings.push(`${pid} already exists — its documents will be replaced.`);
       } else if (fin.per) {
         const first = paymentIdFor(fin.per.ym, fin.type, code, 1);
@@ -350,12 +366,13 @@ function LettersWizard({ cfg: cfgRaw, meta, docs, index, known, approvals, onSav
           pidExists = true;
           let nn = 2; while (exists(paymentIdFor(fin.per.ym, fin.type, code, nn)) && nn < 99) nn++;
           pidNext = paymentIdFor(fin.per.ym, fin.type, code, nn);
-          if ((e.pidMode || "new") === "new") pid = pidNext;
+          pidLocked = approvedRef(first);
+          if ((e.pidMode || "new") === "new" || pidLocked) pid = pidNext;
         }
       }
-      const replace = (!!fin.paymentId && isPaymentRef(fin.paymentId) && exists(fin.paymentId)) || (pidExists && e.pidMode === "replace");
+      const replace = (!!fin.paymentId && isPaymentRef(fin.paymentId) && exists(fin.paymentId)) || (pidExists && !pidLocked && e.pidMode === "replace");
       return {
-        ...fin, id, errors, warnings, paymentId: pid, pidExists, pidNext, pidMode: e.pidMode || "new",
+        ...fin, id, errors, warnings, paymentId: pid, pidExists, pidNext, pidLocked, pidMode: pidLocked ? "new" : e.pidMode || "new",
         pidFirst: fin.per && !fin.paymentId ? paymentIdFor(fin.per.ym, fin.type, code, 1) : "", replace,
         letter: fin.letter && { ...fin.letter, paymentId: pid }, bast: fin.bast && { ...fin.bast, paymentId: pid },
         include: !errors.length && !!pid && (e.include ?? true), res: e.res || null, letterNoEdit: e.letterNo ?? meta.letterNo,
@@ -365,7 +382,7 @@ function LettersWizard({ cfg: cfgRaw, meta, docs, index, known, approvals, onSav
     list.forEach((x) => { if (x.paymentId) count.set(x.paymentId, (count.get(x.paymentId) || 0) + 1); });
     list.forEach((x) => { if (count.get(x.paymentId) > 1) { x.errors = [...x.errors, `Payment ID ${x.paymentId} is used by more than one row — fix PAYMENT_ID in the Excel.`]; x.include = false; } });
     return list;
-  }, [upload, edits, meta, cfg.recipientMPC, cfg.recipientMP3, lastTpl, partnerCodes, docs?.byRef, index, known]);
+  }, [upload, edits, meta, cfg.recipientMPC, cfg.recipientMP3, lastTpl, partnerCodes, docs?.byRef, index, known, approvals]);
 
   // ── Template ──
   const downloadBlank = async () => { setTplBusy(true); try { saveBlobAs(await buildSmsTemplateWorkbook({}), "Source Data SMS template (blank).xlsx", XLSX_MIME); } catch (e) { toast(t, `Template failed: ${errMsg(e)}`, "err"); } setTplBusy(false); };
@@ -637,7 +654,7 @@ function LettersWizard({ cfg: cfgRaw, meta, docs, index, known, approvals, onSav
                           <select className="ppd-f" aria-label={`Existing payment for ${x.partner} ${x.type}`} value={x.pidMode} disabled={bad || busy} onChange={(e) => setEdit(x.id, { pidMode: e.target.value })}
                             style={{ ...S.inp, marginTop: 4, fontFamily: MONO, fontSize: 10.5, padding: "3px 5px", borderColor: t.warn }}>
                             <option value="new">{`Exists — create as ${x.pidNext}`}</option>
-                            <option value="replace">{`Replace existing ${x.pidFirst}`}</option>
+                            <option value="replace" disabled={x.pidLocked}>{x.pidLocked ? `${x.pidFirst} is approved — locked` : `Replace existing ${x.pidFirst}`}</option>
                           </select>
                         )}
                       </td>
@@ -1019,11 +1036,11 @@ export function PartnerLettersTab({ docs, t }) {
   const [index, setIndex] = useState(null);
   const [indexErr, setIndexErr] = useState("");
 
-  const [known, setKnown] = useState(null);      // Payment ID yang sudah punya dokumen (untuk NN berikutnya)
+  const [known, setKnown] = useState(null);      // Map(Payment ID → partner_key) yang sudah punya dokumen (untuk NN & kode unik)
   const [approvals, setApprovals] = useState(null); // { available, byKey } — tabel approval mungkin belum dibuat
   const load = () => Promise.all([
     fetchLettersIndex(SEGMENT).then((m) => ({ m }), (e) => ({ m: new Map(), e })),
-    fetchDraftDocs(SEGMENT).then((d) => new Set(d.map((x) => x.ref_id).filter(isPaymentRef)), () => new Set()),
+    fetchDraftDocs(SEGMENT).then((d) => new Map(d.filter((x) => isPaymentRef(x.ref_id)).map((x) => [x.ref_id, x.partner_key])), () => null),
     fetchApprovals().catch(() => ({ available: false, byKey: {} })),
   ]);
   const apply = ([{ m, e }, k, a]) => { setIndex(m); setIndexErr(e ? errMsg(e) : ""); setKnown(k); setApprovals(a); };
