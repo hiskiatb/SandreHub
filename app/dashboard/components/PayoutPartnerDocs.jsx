@@ -1581,4 +1581,4 @@ function BulkApprovalModal({ rows, segment, docs, onClose, t }) {
 }
 
 // Dipakai tab Partner Letters (PayoutPartnerLetters.jsx) supaya tampilan konsisten
-export { TEAL, TEAL_D, MAGENTA, MONO, fmtDT, errMsg, useDocsCss, toast, btnStyle, Skel, IndeterminateBar, RowMenu, IcoDownload, IcoOpen, IcoUp };
+export { TEAL, TEAL_D, MAGENTA, MONO, fmtDT, errMsg, useDocsCss, toast, btnStyle, Skel, IndeterminateBar, RowMenu, IcoDownload, IcoOpen, IcoUp, ApprovalBadge };

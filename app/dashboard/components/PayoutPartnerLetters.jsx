@@ -1,6 +1,9 @@
 "use client";
 // Partner Letters (khusus SPM) — terpisah dari alur PO (Document Upload & Merge).
 //   1 Upload Excel (Source Data SMS) → 2 Review & Preview (e-sign + Payment ID) → 3 Save
+//   Cara tanda tangan per batch: "Apply e-signature" (gambar dari Settings) atau "Request approval"
+//   (approval berbasis login yang sudah ada — payout_doc_approvals; khusus Payment ID, tab PO tetap tanpa approval).
+//   Approver = email penanda tangan di Settings (BAST → pihak pertama, Surat → penanda tangan surat), bukan email partner.
 //   History: semua pembayaran (Payment ID) yang pernah di-generate — cari, buka PDF, unduh ZIP.
 //   ⚙ Settings: periode, tanggal, claim deadline, Letter No, penanda tangan + gambar tanda tangan/stempel.
 // PDF disimpan di tabel/bucket dokumen dengan ref_id = Payment ID (PAY-*), tidak muncul di tab PO / Raw Data.
@@ -9,6 +12,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   DOC_REF_LABEL, statKey, uploadSlot, downloadDocsZip, partnerKey, signedUrl, fetchDraftDocs,
   isPaymentRef, parsePaymentRef, paymentIdFor, assignPartnerCodes,
+  approvalApi, fetchApprovals, approvalStatus, approvalKey,
 } from "../../../lib/payoutPartnerDocs";
 import {
   parseTemplateWorkbook, parseSmsWorkbook, finalizeSms, detectWorkbookFormat, readTemplateCarryOver,
@@ -17,7 +21,7 @@ import {
 } from "../../../lib/payoutDocGenerator";
 import { fetchLettersIndex, readJsonFile, savePaymentMeta } from "../../../lib/payoutPartnerLetters";
 import {
-  TEAL, TEAL_D, MAGENTA, MONO, fmtDT, errMsg, useDocsCss, toast, btnStyle, Skel, IndeterminateBar, RowMenu, IcoDownload, IcoOpen, IcoUp,
+  TEAL, TEAL_D, MAGENTA, MONO, fmtDT, errMsg, useDocsCss, toast, btnStyle, Skel, IndeterminateBar, RowMenu, IcoDownload, IcoOpen, IcoUp, ApprovalBadge,
 } from "./PayoutPartnerDocs";
 
 const SEGMENT = "partner";
@@ -36,6 +40,42 @@ const letterNoForYear = (no, iso) => { const y = (iso || "").slice(0, 4); return
 const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 const IMG_KEYS = [["p1Sig", "p1Stamp", "BAST — First party (Pihak Pertama)", "p1Name"], ["letterSig", "letterStamp", "Notification Letter signatory", "letterSignerName"]];
 const IMG_DATA_RE = /^data:image\/(png|jpe?g);base64,[A-Za-z0-9+/=]+$/;
+const EMAIL_OK = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(v || "").trim());
+const APPR_TYPES = [["bast", "p1Email", "BAST"], ["surat_pemberitahuan", "letterSignerEmail", "Notification Letter"]];
+const approverOf = (cfg, docType) => String((docType === "bast" ? cfg.p1Email : cfg.letterSignerEmail) || "").trim();
+const APPR_MISSING = "Approval tracking is not set up yet. Run supabase/migrations/20261008_payout_doc_approvals.sql in the Supabase SQL Editor, then reload.";
+// Status gabungan BAST + Surat untuk 1 Payment ID
+function apprSummary(approvals, partner, pid) {
+  const st = {};
+  APPR_TYPES.forEach(([dt]) => { const a = approvals?.byKey?.[approvalKey(SEGMENT, partner, pid, dt)]; st[dt] = { a, s: approvalStatus(a) }; });
+  const vals = APPR_TYPES.map(([dt]) => st[dt].s);
+  const overall = vals.every((v) => v === "approved") ? "approved" : vals.some((v) => v === "rejected") ? "rejected"
+    : vals.some((v) => v === "pending") ? "pending" : vals.some(Boolean) ? (vals.find((v) => v && v !== "approved") || "approved") : null;
+  return { st, overall };
+}
+// Minta approval untuk beberapa Payment ID sekaligus (dikelompokkan per email approver)
+async function requestApprovals(cfg, list, approvals) {
+  const groups = new Map();
+  let skipped = 0;
+  for (const r of list) {
+    for (const [dt] of APPR_TYPES) {
+      const email = approverOf(cfg, dt);
+      const s = approvalStatus(approvals?.byKey?.[approvalKey(SEGMENT, r.partner, r.pid, dt)]);
+      if (!EMAIL_OK(email) || s === "pending" || s === "approved") { skipped++; continue; }
+      if (!groups.has(email)) groups.set(email, []);
+      groups.get(email).push({ segment: SEGMENT, owner_name: r.partner, ref_id: r.pid, doc_type: dt, ref_title: `Payment ID ${r.pid} · ${r.partner} · ${r.type || ""} ${r.period || ""}`.trim(), amount_text: r.total != null ? rupiah(r.total) : null });
+    }
+  }
+  let ok = 0, fail = 0;
+  const reasons = [];
+  for (const [email, items] of groups) {
+    try {
+      const { results = [] } = await approvalApi("request", { approver_email: email, note: "Partner Letters — please review the BAST / Notification Letter.", items });
+      results.forEach((x) => { if (x?.ok) { ok++; if (x.emailError) reasons.push(`email: ${x.emailError}`); } else { fail++; reasons.push(x?.error || "no response"); } });
+    } catch (e) { fail += items.length; reasons.push(errMsg(e)); }
+  }
+  return { ok, fail, skipped, reasons: [...new Set(reasons)] };
+}
 
 function saveBlobAs(bytes, name, type) {
   const url = URL.createObjectURL(bytes instanceof Blob ? bytes : new Blob([bytes], { type }));
@@ -176,7 +216,7 @@ function SettingsPanel({ cfg, setCfgField, setCfg, meta, setMetaField, busy, t }
       const j = JSON.parse(await f.text());
       if (j?.app !== "sandrahub-partner-letters" || typeof j.settings !== "object" || !j.settings) throw new Error("This is not a Partner Letters settings file.");
       const next = { ...CFG_DEFAULTS };
-      [...Object.keys(CFG_DEFAULTS), ...IMG_FIELDS, "applyEsign"].forEach((k) => {
+      [...Object.keys(CFG_DEFAULTS), "p1Email", "letterSignerEmail", ...IMG_FIELDS, "applyEsign"].forEach((k) => {
         const v = j.settings[k];
         if (k === "applyEsign") { if (typeof v === "boolean") next[k] = v; return; }
         if (IMG_FIELDS.includes(k)) { if (typeof v === "string" && (v === "" || (IMG_DATA_RE.test(v) && v.length < 1.5e6))) next[k] = v; return; }
@@ -191,6 +231,7 @@ function SettingsPanel({ cfg, setCfgField, setCfg, meta, setMetaField, busy, t }
     ["p1Name", "First party — name"], ["p1Title", "First party — title"], ["p1Company", "First party — company"],
     ["letterSignerName", "Letter signatory — name"], ["letterSignerTitle", "Letter signatory — title"], ["letterSignerUnit", "Letter signatory — unit"],
     ["city", "City (letter date line)"], ["recipientMPC", "Recipient title — MPC"], ["recipientMP3", "Recipient title — MP3"],
+    ["p1Email", "Approver email — BAST (first party)", "email"], ["letterSignerEmail", "Approver email — Notification Letter", "email"],
   ];
   return (
     <div style={{ padding: "14px 20px 16px", borderBottom: `1px solid ${t.line}`, background: t.surf2, display: "flex", flexDirection: "column", gap: 16 }}>
@@ -207,12 +248,16 @@ function SettingsPanel({ cfg, setCfgField, setCfg, meta, setMetaField, busy, t }
       <section>
         <div style={S.lbl}>Signatories</div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
-          {textFields.map(([k, lab]) => (
-            <label key={k} style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11.5, color: t.muted }}>
-              {lab}
-              <input className="ppd-f" value={cfg[k] || ""} onChange={(e) => setCfgField(k, e.target.value)} disabled={busy} style={S.inp} />
-            </label>
-          ))}
+          {textFields.map(([k, lab, kind]) => {
+            const bad = kind === "email" && cfg[k] && !EMAIL_OK(cfg[k]);
+            return (
+              <label key={k} style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11.5, color: t.muted }}>
+                {lab}
+                <input className="ppd-f" type={kind === "email" ? "email" : "text"} value={cfg[k] || ""} onChange={(e) => setCfgField(k, e.target.value)} disabled={busy}
+                  placeholder={kind === "email" ? "name@ioh.co.id (SandraHub account)" : undefined} aria-invalid={bad || undefined} style={{ ...S.inp, borderColor: bad ? t.bad : t.line2 }} />
+              </label>
+            );
+          })}
         </div>
       </section>
 
@@ -251,7 +296,7 @@ function SettingsPanel({ cfg, setCfgField, setCfg, meta, setMetaField, busy, t }
 }
 
 // ── Wizard: Upload → Review & Preview → Save ─────────────────────────────────
-function LettersWizard({ cfg, meta, docs, index, known, onSaved, onOpenSettings, onFinish, t }) {
+function LettersWizard({ cfg: cfgRaw, meta, docs, index, known, approvals, onSaved, onOpenSettings, onFinish, t }) {
   const S = styles(t);
   const [prevFile, setPrevFile] = useState(null);
   const [tplBusy, setTplBusy] = useState(false);
@@ -263,9 +308,15 @@ function LettersWizard({ cfg, meta, docs, index, known, onSaved, onOpenSettings,
   const [zipping, setZipping] = useState(false);
   const [saved, setSaved] = useState([]);
   const [lastTpl, setLastTpl] = useState(readLastTpl);
+  const [signMode, setSignMode] = useState("esign");  // esign | approval (per batch)
+  const [apprRes, setApprRes] = useState(null);
   const fileRef = useRef(null);
   const prevRef = useRef(null);
   const busy = phase === "saving" || zipping || tplBusy;
+  // Mode approval: PDF disimpan tanpa gambar tanda tangan; e-sign bisa dibubuhkan dari History setelah approved
+  const cfg = useMemo(() => (signMode === "approval" ? { ...cfgRaw, applyEsign: false } : cfgRaw), [cfgRaw, signMode]);
+  const apprAvailable = approvals?.available !== false;
+  const apprEmailsOk = APPR_TYPES.every(([dt]) => EMAIL_OK(approverOf(cfgRaw, dt)));
   const step = !upload ? 1 : phase === "saved" ? 3 : 2;
   const setEdit = (id, patch) => setEdits((e) => ({ ...e, [id]: { ...e[id], ...patch } }));
   const esignActive = hasEsign(cfg, "bast") || hasEsign(cfg, "letter");
@@ -407,7 +458,10 @@ function LettersWizard({ cfg, meta, docs, index, known, onSaved, onOpenSettings,
   // ── Simpan PDF bertanda tangan + metadata pembayaran ──
   const saveAll = async () => {
     if (!ready.length) return;
-    if (!esignActive && !window.confirm("No e-signature is applied (upload signature images in ⚙ Settings, or turn on “Apply e-signature”). Save the documents without a signature?")) return;
+    if (signMode === "approval") {
+      if (!apprAvailable) { toast(t, APPR_MISSING, "err"); return; }
+      if (!apprEmailsOk) { toast(t, "Add both approver emails in ⚙ Settings first (BAST and Notification Letter).", "err"); onOpenSettings(); return; }
+    } else if (!esignActive && !window.confirm("No e-signature is applied (upload signature images in ⚙ Settings, or turn on “Apply e-signature”). Save the documents without a signature?")) return;
     setPhase("saving");
     const total = ready.length * 2;
     setProg({ i: 0, total });
@@ -435,10 +489,12 @@ function LettersWizard({ cfg, meta, docs, index, known, onSaved, onOpenSettings,
             payment_id: it.paymentId, partner: it.partner, type: it.type, period: it.per?.label || "", period_ym: it.per?.ym || "",
             total: it.letter.total, dpp: it.letter.dpp, ppn: it.letter.ppn, pph: it.letter.pph, claim_deadline: it.letter.deadline || "",
             letter_no: it.letter.letterNo, email_to: it.emailsTo || [], email_cc: it.emailsCc || [], branches: it.bast.branches.map((b) => b.name),
-            esign: { bast: hasEsign(cfg, "bast"), letter: hasEsign(cfg, "letter") }, saved_at: new Date().toISOString(), source_file: upload?.name || "",
+            esign: { bast: hasEsign(cfg, "bast"), letter: hasEsign(cfg, "letter") }, sign_mode: signMode,
+            saved_at: new Date().toISOString(), source_file: upload?.name || "",
+            doc: { bast: it.bast, letter: it.letter },   // untuk membubuhkan e-sign setelah approved
           });
         } catch (e) { res.meta = `error: ${errMsg(e)}`; }
-        done.push({ pid: it.paymentId, partner: it.partner, type: it.type, total: it.letter.total, res });
+        done.push({ pid: it.paymentId, partner: it.partner, type: it.type, period: it.per?.label || "", total: it.letter.total, res });
       }
       setEdit(it.id, { res });
     }
@@ -450,11 +506,17 @@ function LettersWizard({ cfg, meta, docs, index, known, onSaved, onOpenSettings,
       });
       setLastTpl(readLastTpl());
     }
+    let ar = null;
+    if (signMode === "approval" && done.length) {
+      setProg((p) => ({ ...p, label: "Requesting approval…" }));
+      ar = await requestApprovals(cfgRaw, done, approvals);
+      setApprRes(ar);
+    } else setApprRes(null);
     docs?.refresh?.();
     await onSaved?.();
     setSaved(done);
     if (done.length) { closePreview(); setPhase("saved"); } else setPhase("review");
-    toast(t, `Saved ${done.length} payment(s) · ${ok} document(s)${fail ? `, ${fail} failed` : ""}.`, fail ? "err" : "ok");
+    toast(t, `Saved ${done.length} payment(s) · ${ok} document(s)${fail ? `, ${fail} failed` : ""}${ar ? ` · approval requested ${ar.ok}${ar.fail ? `, failed ${ar.fail} (${ar.reasons[0]})` : ""}` : ""}.`, fail || ar?.fail ? "err" : "ok");
   };
 
   const downloadZip = async () => {
@@ -476,7 +538,7 @@ function LettersWizard({ cfg, meta, docs, index, known, onSaved, onOpenSettings,
   const resLabel = (v) => v === "ok" ? "✓ saved" : v === "same" ? "already saved" : v ? `✕ ${v.replace(/^error: /, "")}` : "";
   const errCount = items.filter((x) => x.errors.length).length;
   const isSms = upload?.format === "sms";
-  const reset = () => { setUpload(null); setPhase("review"); setSaved([]); closePreview(); };
+  const reset = () => { setUpload(null); setPhase("review"); setSaved([]); setApprRes(null); closePreview(); };
 
   return (
     <div style={{ "--ppd-line": t.line }}>
@@ -494,12 +556,30 @@ function LettersWizard({ cfg, meta, docs, index, known, onSaved, onOpenSettings,
           })}
         </ol>
         <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          {esignActive
-            ? <Chip color={t.goodDark || TEAL_D} bg={t.goodBg} bd={t.goodBd} title="Signature images from ⚙ Settings are applied">✍ E-signature on</Chip>
-            : <button className="ppd-f" onClick={onOpenSettings} style={{ all: "unset", cursor: "pointer" }} title="Upload signature images in ⚙ Settings"><Chip color={t.warnDark || "#8a6a00"} bg={t.warnBg} bd={t.warnBd}>✍ No e-signature — set up</Chip></button>}
+          <span style={{ fontSize: 11.5, color: t.muted }}>Signing</span>
+          <span role="radiogroup" aria-label="Signing method" style={{ display: "inline-flex", background: t.surf3, borderRadius: 9, padding: 2, gap: 2, border: `1px solid ${t.line}` }}>
+            {[["esign", "✍ Apply e-signature"], ["approval", "✉ Request approval"]].map(([k, l]) => (
+              <button key={k} role="radio" aria-checked={signMode === k} className="ppd-f" disabled={busy || phase === "saved"} onClick={() => setSignMode(k)}
+                style={{ fontFamily: "inherit", fontSize: 11.5, fontWeight: 600, padding: "4px 10px", borderRadius: 7, border: 0, cursor: "pointer", background: signMode === k ? TEAL : "transparent", color: signMode === k ? "#fff" : t.muted, whiteSpace: "nowrap" }}>{l}</button>
+            ))}
+          </span>
+          {signMode === "esign" ? (esignActive
+            ? <Chip color={t.goodDark || TEAL_D} bg={t.goodBg} bd={t.goodBd} title="Signature images from ⚙ Settings are applied">E-signature on</Chip>
+            : <button className="ppd-f" onClick={onOpenSettings} style={{ all: "unset", cursor: "pointer" }} title="Upload signature images in ⚙ Settings"><Chip color={t.warnDark || "#8a6a00"} bg={t.warnBg} bd={t.warnBd}>No signature image — set up</Chip></button>)
+            : !apprAvailable ? <Chip color={t.bad} bg={t.badBg} bd={t.badBd} title={APPR_MISSING}>Approval not set up</Chip>
+            : apprEmailsOk ? <Chip color={t.goodDark || TEAL_D} bg={t.goodBg} bd={t.goodBd} title={`BAST → ${approverOf(cfgRaw, "bast")} · Letter → ${approverOf(cfgRaw, "surat_pemberitahuan")}`}>Approvers set</Chip>
+            : <button className="ppd-f" onClick={onOpenSettings} style={{ all: "unset", cursor: "pointer" }}><Chip color={t.warnDark || "#8a6a00"} bg={t.warnBg} bd={t.warnBd}>Add approver emails</Chip></button>}
           <span style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted }}>{parsePeriod(meta.period)?.label || "No period"} · {meta.docDate} · {meta.letterNo}</span>
         </span>
       </div>
+      {signMode === "approval" && step === 2 && (
+        <div role="note" style={{ margin: "10px 20px 0", fontSize: 12, padding: "8px 12px", borderRadius: 10, lineHeight: 1.5,
+          color: apprAvailable ? t.ink2 : t.bad, background: apprAvailable ? t.infoBg : t.badBg, border: `1px solid ${apprAvailable ? t.infoBd : t.badBd}` }}>
+          {apprAvailable
+            ? <>Documents are saved <b>without</b> a signature image, then sent for approval: BAST → <b>{approverOf(cfgRaw, "bast") || "—"}</b>, Notification Letter → <b>{approverOf(cfgRaw, "surat_pemberitahuan") || "—"}</b>. Approvers sign in to SandraHub to approve. Once approved, you can stamp the e-signature from History.</>
+            : APPR_MISSING}
+        </div>
+      )}
       <input ref={prevRef} type="file" accept=".xlsx" hidden onChange={(e) => { setPrevFile(e.target.files?.[0] || null); e.target.value = ""; }} />
       <input ref={fileRef} type="file" accept=".xlsx,.xls" hidden onChange={onPick} />
 
@@ -650,6 +730,11 @@ function LettersWizard({ cfg, meta, docs, index, known, onSaved, onOpenSettings,
               </div>
             ))}
           </div>
+          {apprRes && (
+            <div role="status" style={{ fontSize: 12.5, padding: "9px 12px", borderRadius: 10, color: apprRes.fail ? t.bad : t.ink2, background: apprRes.fail ? t.badBg : t.infoBg, border: `1px solid ${apprRes.fail ? t.badBd : t.infoBd}` }}>
+              Approval requested for {apprRes.ok} document(s){apprRes.skipped ? `, skipped ${apprRes.skipped}` : ""}{apprRes.fail ? `, failed ${apprRes.fail}: ${apprRes.reasons[0]} — retry from History` : ""}. Track the status in History.
+            </div>
+          )}
           <div style={{ ...S.card, padding: 0, overflow: "auto", maxHeight: "48vh" }}>
             <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
               <thead><tr><th style={S.th}>Payment ID</th><th style={S.th}>Partner</th><th style={S.th}>Type</th><th style={{ ...S.th, textAlign: "right" }}>Total transfer</th><th style={S.th}>Result</th></tr></thead>
@@ -671,7 +756,7 @@ function LettersWizard({ cfg, meta, docs, index, known, onSaved, onOpenSettings,
 
       {phase === "saving" && (
         <div style={{ padding: "10px 20px", borderTop: `1px solid ${t.line}` }}>
-          <div style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted, marginBottom: 6 }}>Generating &amp; saving {prog.i}/{prog.total} document(s)…</div>
+          <div style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted, marginBottom: 6 }}>{prog.label || `Generating & saving ${prog.i}/${prog.total} document(s)…`}</div>
           <IndeterminateBar t={t} pct={prog.total ? Math.round((prog.i / prog.total) * 100) : 0} />
         </div>
       )}
@@ -689,7 +774,7 @@ function LettersWizard({ cfg, meta, docs, index, known, onSaved, onOpenSettings,
               <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy || !valid.length)} disabled={busy || !valid.length} onClick={() => setPv((p) => ({ ...p, all: true }))}>👁 Preview all</button>
               <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || !ready.length)} disabled={busy || !ready.length} onClick={saveAll}
                 title="Generate the e-signed PDFs and save them under their Payment IDs">
-                {phase === "saving" ? `Saving ${prog.i}/${prog.total}…` : `⬆ Save ${ready.length} payment(s)`}
+                {phase === "saving" ? (prog.label || `Saving ${prog.i}/${prog.total}…`) : signMode === "approval" ? `⬆ Save ${ready.length} & request approval` : `⬆ Save ${ready.length} payment(s)`}
               </button>
             </>}
             {step === 3 && <>
@@ -704,7 +789,7 @@ function LettersWizard({ cfg, meta, docs, index, known, onSaved, onOpenSettings,
 }
 
 // ── History ──────────────────────────────────────────────────────────────────
-function LettersHistory({ index, indexErr, t }) {
+function LettersHistory({ cfg, index, indexErr, approvals, reload, t }) {
   const S = styles(t);
   const [rowsRaw, setRowsRaw] = useState(null);
   const [err, setErr] = useState("");
@@ -713,6 +798,9 @@ function LettersHistory({ index, indexErr, t }) {
   const [period, setPeriod] = useState("all");
   const [sel, setSel] = useState(() => new Set());
   const [zipping, setZipping] = useState(false);
+  const [working, setWorking] = useState("");      // label proses (request / stamp)
+  const [apprFilter, setApprFilter] = useState("all");
+  const apprAvailable = approvals?.available !== false;
 
   useEffect(() => {
     let alive = true;
@@ -750,13 +838,15 @@ function LettersHistory({ index, indexErr, t }) {
     return [...m.values()].map((g) => {
       const meta = metas[g.pid] || {};
       ["bast", "surat_pemberitahuan"].forEach((k) => g.files[k].sort((a, b) => b.uploaded_at.localeCompare(a.uploaded_at)));
-      return { ...g, meta, total: meta.total, period: meta.period || g.info?.label || "", type: meta.type || g.info?.type || "" };
+      const ap = apprSummary(approvals, g.partner, g.pid);
+      return { ...g, meta, total: meta.total, period: meta.period || g.info?.label || "", type: meta.type || g.info?.type || "", ap };
     }).sort((a, b) => (b.info?.ym || "").localeCompare(a.info?.ym || "") || a.partner.localeCompare(b.partner) || a.type.localeCompare(b.type));
-  }, [rowsRaw, metas]);
+  }, [rowsRaw, metas, approvals]);
 
   const periods = useMemo(() => [...new Set(groups.map((g) => g.info?.ym).filter(Boolean))].sort().reverse(), [groups]);
   const qq = q.trim().toLowerCase();
-  const shown = groups.filter((g) => (period === "all" || g.info?.ym === period) && (!qq || `${g.pid} ${g.partner}`.toLowerCase().includes(qq)));
+  const shown = groups.filter((g) => (period === "all" || g.info?.ym === period) && (!qq || `${g.pid} ${g.partner}`.toLowerCase().includes(qq))
+    && (apprFilter === "all" || (apprFilter === "none" ? !g.ap.overall : g.ap.overall === apprFilter)));
   const selected = shown.filter((g) => sel.has(g.pid));
   const toggle = (k) => setSel((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const openDoc = async (d) => { try { window.open(await signedUrl(d.storage_path), "_blank", "noopener"); } catch (e) { toast(t, `Unable to open: ${errMsg(e)}`, "err"); } };
@@ -772,6 +862,70 @@ function LettersHistory({ index, indexErr, t }) {
     setZipping(false);
   };
   const sumTotal = shown.reduce((a, g) => a + (g.total || 0), 0);
+  const asRow = (g) => ({ pid: g.pid, partner: g.partner, type: g.type, period: g.period, total: g.total });
+  const canRequest = (g) => !["pending", "approved"].includes(g.ap.overall);
+  const canStamp = (g) => g.ap.overall === "approved" && !!g.meta.doc && !(g.meta.esign?.bast && g.meta.esign?.letter);
+  const doRequest = async (list) => {
+    if (!apprAvailable) { toast(t, APPR_MISSING, "err"); return; }
+    if (!APPR_TYPES.every(([dt]) => EMAIL_OK(approverOf(cfg, dt)))) { toast(t, "Add both approver emails in ⚙ Settings first (BAST and Notification Letter).", "err"); return; }
+    const todo = list.filter(canRequest);
+    if (!todo.length) { toast(t, "The selected payments are already pending or approved.", "info"); return; }
+    if (!window.confirm(`Request approval for ${todo.length} payment(s)?\n\nBAST → ${approverOf(cfg, "bast")}\nNotification Letter → ${approverOf(cfg, "surat_pemberitahuan")}`)) return;
+    setWorking("Requesting approval…");
+    const r = await requestApprovals(cfg, todo.map(asRow), approvals);
+    setWorking("");
+    await reload();
+    toast(t, `Approval requested for ${r.ok} document(s)${r.skipped ? `, skipped ${r.skipped}` : ""}${r.fail ? `, failed ${r.fail}: ${r.reasons[0]}` : ""}.`, r.fail ? "err" : "ok");
+  };
+  const apprAction = async (action, g) => {
+    const ids = APPR_TYPES.map(([dt]) => g.ap.st[dt]).filter((x) => x.s === "pending" && x.a?.id).map((x) => x.a.id);
+    if (!ids.length) return;
+    if (action === "cancel" && !window.confirm(`Cancel the pending approval request(s) for ${g.pid}?`)) return;
+    setWorking(action === "remind" ? "Sending reminder…" : "Cancelling…");
+    let fail = "";
+    for (const id of ids) { try { await approvalApi(action, action === "cancel" ? { id, reason: "Cancelled from Partner Letters" } : { id }); } catch (e) { fail = errMsg(e); } }
+    setWorking("");
+    await reload();
+    toast(t, fail ? `Failed: ${fail}` : action === "remind" ? "Reminder sent to the approver(s)." : "Approval request cancelled.", fail ? "err" : "ok");
+  };
+  // Setelah approved: bubuhkan gambar tanda tangan (dokumen yang di-approve tetap tersimpan sebagai arsip; versi bertanda tangan ditambahkan)
+  const doStamp = async (list) => {
+    const todo = list.filter(canStamp);
+    if (!todo.length) { toast(t, "Nothing to sign: choose fully approved payments that are not signed yet.", "info"); return; }
+    if (!hasEsign(cfg, "bast") && !hasEsign(cfg, "letter")) { toast(t, "Upload the signature images in ⚙ Settings first.", "err"); return; }
+    if (!window.confirm(`Stamp the e-signature on ${todo.length} approved payment(s)? A signed copy is added; the approved original is kept.`)) return;
+    setWorking("Stamping e-signature…");
+    let ok = 0, fail = 0;
+    try {
+      const lh = await loadLetterhead();
+      for (const g of todo) {
+        try {
+          const { bast, letter } = g.meta.doc;
+          for (const [docType, build, name] of [["bast", () => buildBastPdf(bast, cfg, lh), bastFileName(bast)], ["surat_pemberitahuan", () => buildLetterPdf(letter, cfg, lh), letterFileName(letter)]]) {
+            const r = await uploadSlot({ files: [new File([await build()], name, { type: "application/pdf" })], partnerName: g.partner, refId: g.pid, docType, segment: SEGMENT, replace: false });
+            if (r.errors.length) throw new Error(r.errors[0]?.message || "upload failed");
+          }
+          const { _path, _err, ...rest } = g.meta;
+          await savePaymentMeta(SEGMENT, { ...rest, esign: { bast: hasEsign(cfg, "bast"), letter: hasEsign(cfg, "letter") }, signed_after_approval_at: new Date().toISOString() });
+          ok++;
+        } catch { fail++; }
+      }
+    } catch (e) { toast(t, errMsg(e), "err"); }
+    setWorking("");
+    await reload();
+    toast(t, `E-signature stamped on ${ok} payment(s)${fail ? `, failed ${fail}` : ""}.`, fail ? "err" : "ok");
+  };
+  const apprCell = (g) => {
+    if (!g.ap.overall) return <span style={{ color: t.muted2 || t.muted, fontSize: 11 }}>{g.meta.sign_mode === "approval" ? "Not requested" : "—"}</span>;
+    const title = APPR_TYPES.map(([dt, , l]) => `${l}: ${g.ap.st[dt].s || "not requested"}${g.ap.st[dt].a?.approver_email ? ` (${g.ap.st[dt].a.approver_email})` : ""}`).join("\n");
+    const mixed = APPR_TYPES.some(([dt]) => g.ap.st[dt].s !== g.ap.overall);
+    return (
+      <span title={title} style={{ display: "inline-flex", flexDirection: "column", gap: 2 }}>
+        <ApprovalBadge status={g.ap.overall} t={t} />
+        {mixed && <span style={{ fontSize: 10, color: t.muted }}>{APPR_TYPES.map(([dt, , l]) => `${l === "BAST" ? "BAST" : "Letter"} ${g.ap.st[dt].s || "—"}`).join(" · ")}</span>}
+      </span>
+    );
+  };
 
   return (
     <div>
@@ -785,25 +939,34 @@ function LettersHistory({ index, indexErr, t }) {
           <option value="all">All periods</option>
           {periods.map((p) => <option key={p} value={p}>{parsePeriod(p)?.label || p}</option>)}
         </select>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <select className="ppd-f" aria-label="Approval status" value={apprFilter} onChange={(e) => setApprFilter(e.target.value)} style={{ ...S.inp, width: "auto", borderRadius: 9 }}>
+          <option value="all">All approval states</option><option value="none">Not requested</option>
+          <option value="pending">Pending</option><option value="approved">Approved</option><option value="rejected">Rejected</option>
+        </select>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {working && <span style={{ fontFamily: MONO, fontSize: 11, color: t.muted }}>{working}</span>}
+          <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", !selected.length || !!working || !apprAvailable, true)} disabled={!selected.length || !!working || !apprAvailable} onClick={() => doRequest(selected)}
+            title={apprAvailable ? "Send the selected BAST & Letters to the approvers in ⚙ Settings" : APPR_MISSING}>✉ Request approval ({selected.filter(canRequest).length})</button>
+          {selected.some(canStamp) && <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", !!working, true)} disabled={!!working} onClick={() => doStamp(selected)}>✍ Stamp e-signature ({selected.filter(canStamp).length})</button>}
           <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !selected.length || zipping, true)} disabled={!selected.length || zipping} onClick={() => zipSelected(selected)}><IcoDownload /> {zipping ? "Preparing…" : `Download selected (${selected.length})`}</button>
         </div>
       </div>
+      {!apprAvailable && <div role="note" style={{ margin: "10px 20px 0", fontSize: 12, padding: "8px 12px", borderRadius: 10, color: t.warnDark || "#8a6a00", background: t.warnBg, border: `1px solid ${t.warnBd}` }}>{APPR_MISSING}</div>}
       {(err || indexErr) && <div role="alert" style={{ margin: "10px 20px", fontSize: 12, padding: "8px 12px", borderRadius: 10, color: t.bad, background: t.badBg, border: `1px solid ${t.badBd}` }}>Unable to load history: {err || indexErr}</div>}
       <div style={{ overflow: "auto", maxHeight: "68vh" }}>
         <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: 980 }}>
           <thead><tr>
             <th style={{ ...S.th, width: 34, textAlign: "center" }}><input type="checkbox" className="ppd-f" aria-label="Select all shown" checked={shown.length > 0 && shown.every((g) => sel.has(g.pid))} onChange={(e) => setSel(e.target.checked ? new Set(shown.map((g) => g.pid)) : new Set())} /></th>
             <th style={S.th}>Payment ID</th><th style={S.th}>Partner</th><th style={S.th}>Type</th><th style={S.th}>Period</th>
-            <th style={{ ...S.th, textAlign: "right" }}>Total transfer</th><th style={S.th}>Documents</th><th style={S.th}>Saved</th><th style={{ ...S.th, textAlign: "right" }}><span className="ppd-sr">Actions</span></th>
+            <th style={{ ...S.th, textAlign: "right" }}>Total transfer</th><th style={S.th}>Documents</th><th style={S.th}>Approval</th><th style={S.th}>Saved</th><th style={{ ...S.th, textAlign: "right" }}><span className="ppd-sr">Actions</span></th>
           </tr></thead>
           <tbody>
             {rowsRaw == null
-              ? Array.from({ length: 4 }).map((_, i) => <tr key={i}>{Array.from({ length: 9 }).map((__, j) => <td key={j} style={S.td}><Skel t={t} /></td>)}</tr>)
+              ? Array.from({ length: 4 }).map((_, i) => <tr key={i}>{Array.from({ length: 10 }).map((__, j) => <td key={j} style={S.td}><Skel t={t} /></td>)}</tr>)
               : !shown.length
-                ? <tr><td colSpan={9} style={{ padding: "36px 16px", textAlign: "center", color: t.muted }}>
-                    <div style={{ fontWeight: 700, color: t.ink, fontSize: 13.5 }}>{groups.length ? "No payments match the search or period" : "No partner letters yet"}</div>
-                    <div style={{ fontSize: 12, marginTop: 4 }}>{groups.length ? "Change the search or period filter." : "Use “New batch” to generate e-signed BAST & Notification Letters from the Excel."}</div>
+                ? <tr><td colSpan={10} style={{ padding: "36px 16px", textAlign: "center", color: t.muted }}>
+                    <div style={{ fontWeight: 700, color: t.ink, fontSize: 13.5 }}>{groups.length ? "No payments match the search or filters" : "No partner letters yet"}</div>
+                    <div style={{ fontSize: 12, marginTop: 4 }}>{groups.length ? "Change the search, period or approval filter." : "Use “New batch” to generate e-signed BAST & Notification Letters from the Excel."}</div>
                   </td></tr>
                 : shown.map((g, i) => {
                   const signed = g.meta.esign && (g.meta.esign.bast || g.meta.esign.letter);
@@ -820,8 +983,14 @@ function LettersHistory({ index, indexErr, t }) {
                         {docsOf(g).map((d) => <button key={d.id} className="ppd-f ppd-act-o" style={{ ...btnStyle(t, "outline", false, true), marginRight: 4 }} onClick={() => openDoc(d)} title={`Open ${d.file_name}`}><IcoOpen /> {d._label}</button>)}
                         {signed ? <Chip color={t.goodDark || TEAL_D} bg={t.goodBg} bd={t.goodBd}>✍ Signed</Chip> : g.meta.esign ? <Chip color={t.muted} bg={t.surf2} bd={t.line2}>Unsigned</Chip> : null}
                       </td>
+                      <td style={mid}>{apprCell(g)}</td>
                       <td style={{ ...mid, fontFamily: MONO, fontSize: 11, whiteSpace: "nowrap" }}>{fmtDT(g.lastAt)}</td>
-                      <td style={{ ...mid, textAlign: "right" }}><RowMenu t={t} label={`More actions for ${g.pid}`} items={[{ label: "Download PDFs (ZIP)", onClick: () => zipSelected([g]) }]} /></td>
+                      <td style={{ ...mid, textAlign: "right" }}><RowMenu t={t} label={`More actions for ${g.pid}`} items={[
+                        { label: "Download PDFs (ZIP)", onClick: () => zipSelected([g]) },
+                        ...(apprAvailable && canRequest(g) ? [{ label: g.ap.overall ? "Request approval again" : "Request approval", onClick: () => doRequest([g]), disabled: !!working }] : []),
+                        ...(g.ap.overall === "pending" ? [{ label: "Remind approver", onClick: () => apprAction("remind", g), disabled: !!working }, { label: "Cancel request", onClick: () => apprAction("cancel", g), disabled: !!working }] : []),
+                        ...(canStamp(g) ? [{ label: "Stamp e-signature", onClick: () => doStamp([g]), disabled: !!working }] : []),
+                      ]} /></td>
                     </tr>
                   );
                 })}
@@ -851,11 +1020,13 @@ export function PartnerLettersTab({ docs, t }) {
   const [indexErr, setIndexErr] = useState("");
 
   const [known, setKnown] = useState(null);      // Payment ID yang sudah punya dokumen (untuk NN berikutnya)
+  const [approvals, setApprovals] = useState(null); // { available, byKey } — tabel approval mungkin belum dibuat
   const load = () => Promise.all([
     fetchLettersIndex(SEGMENT).then((m) => ({ m }), (e) => ({ m: new Map(), e })),
     fetchDraftDocs(SEGMENT).then((d) => new Set(d.map((x) => x.ref_id).filter(isPaymentRef)), () => new Set()),
+    fetchApprovals().catch(() => ({ available: false, byKey: {} })),
   ]);
-  const apply = ([{ m, e }, k]) => { setIndex(m); setIndexErr(e ? errMsg(e) : ""); setKnown(k); };
+  const apply = ([{ m, e }, k, a]) => { setIndex(m); setIndexErr(e ? errMsg(e) : ""); setKnown(k); setApprovals(a); };
   const reload = async () => apply(await load());
   useEffect(() => {
     let alive = true;
@@ -883,7 +1054,7 @@ export function PartnerLettersTab({ docs, t }) {
             <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", padding: "2px 8px", borderRadius: 99, background: `${MAGENTA}18`, color: MAGENTA, border: `1px solid ${MAGENTA}30` }}>SPM</span>
           </div>
           <div style={{ marginTop: 4, marginLeft: 14, fontSize: 12, color: t.muted, maxWidth: 780, lineHeight: 1.45 }}>
-            Generate e-signed BAST &amp; Notification Letters from the Excel. Each payment has a unique Payment ID and is kept separate from the {DOC_REF_LABEL} documents.
+            Generate BAST &amp; Notification Letters from the Excel, then e-sign them or request approval. Each payment has a unique Payment ID and is kept separate from the {DOC_REF_LABEL} documents.
           </div>
         </div>
         <button className="ppd-f ppd-act-o" style={btnStyle(t, showCfg ? "primary" : "outline", false, true)} onClick={() => setShowCfg((v) => !v)} aria-expanded={showCfg}>⚙ Settings</button>
@@ -893,7 +1064,7 @@ export function PartnerLettersTab({ docs, t }) {
         {[["new", "New batch", null], ["history", "History", index ? String(index.size) : "…"]].map(([k, label, count]) => {
           const active = view === k;
           return (
-            <button key={k} role="tab" aria-selected={active} className="ppd-f" onClick={() => setView(k)}
+            <button key={k} role="tab" aria-selected={active} className="ppd-f" onClick={() => { setView(k); if (k === "history") reload(); }}
               style={{ all: "unset", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 14px 10px", borderBottom: `2.5px solid ${active ? MAGENTA : "transparent"}`, color: active ? t.ink : t.muted, fontSize: 13, fontWeight: active ? 700 : 600, whiteSpace: "nowrap" }}>
               {label}
               {count && <span style={{ fontFamily: MONO, fontSize: 10, padding: "1px 7px", borderRadius: 99, background: active ? `${MAGENTA}18` : t.surf3, color: active ? MAGENTA : t.muted, border: `1px solid ${active ? `${MAGENTA}30` : t.line}` }}>{count}</span>}
@@ -902,10 +1073,10 @@ export function PartnerLettersTab({ docs, t }) {
         })}
       </div>
       <div style={{ display: view === "new" ? "block" : "none" }}>
-        <LettersWizard cfg={cfg} meta={meta} docs={docs} index={index} known={known} onSaved={reload}
+        <LettersWizard cfg={cfg} meta={meta} docs={docs} index={index} known={known} approvals={approvals} onSaved={reload}
           onOpenSettings={() => { setShowCfg(true); window.scrollTo({ top: 0, behavior: "smooth" }); }} onFinish={() => setView("history")} t={t} />
       </div>
-      {view === "history" && <LettersHistory index={index} indexErr={indexErr} t={t} />}
+      {view === "history" && <LettersHistory cfg={cfg} index={index} indexErr={indexErr} approvals={approvals} reload={reload} t={t} />}
     </div>
   );
 }
