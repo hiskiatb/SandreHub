@@ -32,18 +32,19 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft, ChevronDown, ChevronRight, ChevronLeft, MapPinned, RadioTower, Search, X, ArrowUpDown,
   AlertTriangle, Target, ListChecks, CheckCircle2, Megaphone, Users, Clock, ListFilter, Info, Check, CalendarRange,
-  CardSim, Router, Share2, Loader2, Trophy, RefreshCw,
+  CardSim, Router, Share2, Loader2, Trophy, RefreshCw, BarChart3,
 } from "lucide-react";
 import supabaseMarta from "../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF } from "../_shared/MobileShell";
 import { fmtInt, fmtDate, fmtTimeLabel, fmtRp, statusMeta, activityStage } from "../_shared/activityUi";
 import ActivityFlagBadges from "../_shared/ActivityFlagBadges";
 import BottomSheet from "../_shared/BottomSheet";
+import { AUTO_NAME_CATEGORIES, snake } from "../_shared/planData";
 
 // Warna pill brand - SAMA PERSIS dgn skema di ActivityCard (tab Aktivitas)
 // spy kartu event di report ini terasa satu bahasa visual, bukan versi
 // sendiri lagi.
-const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
+const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86", both: "#0D9488" };
 // Versi lookup case-insensitive + fallback abu-abu utk brand kosong/tak
 // dikenal - dipakai breakdown "Kontribusi Brand" per branch di report
 // Kecamatan Fokus (BRAND_COLOR sendiri dipakai apa adanya di ActivityCard
@@ -87,6 +88,7 @@ const REPORT_TABS = [
   { key: "kecamatan-fokus", label: "Kecamatan Fokus", icon: MapPinned, needsMonth: false },
   { key: "site-lrs", label: "Site LRS", icon: RadioTower, needsMonth: false },
   { key: "campaign", label: "Campaign", icon: Megaphone, needsMonth: true },
+  { key: "dtu-tracker", label: "DTU Tracker", icon: BarChart3, needsMonth: true },
 ];
 
 export default function ReportPage() {
@@ -251,6 +253,7 @@ export default function ReportPage() {
         {tab === "kecamatan-fokus" && <KecamatanFokusReport period={kecPeriod} periodLabel={kecPeriodLabel} />}
         {tab === "site-lrs" && <FocusSiteReport mode="site-lrs" period={kecPeriod} periodLabel={kecPeriodLabel} />}
         {tab === "campaign" && <CampaignComplianceReport monthKey={monthKey} monthLabel={months.find((o) => o.key === monthKey)?.label || ""} />}
+        {tab === "dtu-tracker" && <DtuTrackerReport monthKey={monthKey} monthLabel={months.find((o) => o.key === monthKey)?.label || ""} />}
       </div>
     </MobileShell>
   );
@@ -1582,9 +1585,9 @@ function EventActivityCard({ ev }) {
                 <span style={{
                   flexShrink: 0, fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 999, whiteSpace: "nowrap",
                   background: BRAND_COLOR[ev.brand.toLowerCase()] || "#8A8A96",
-                  color: ev.brand.toLowerCase() === "tri" ? "#FFFFFF" : "#17181C",
+                  color: ev.brand.toLowerCase() === "im3" ? "#17181C" : "#FFFFFF",
                 }}>
-                  {ev.brand.toLowerCase() === "tri" ? "3ID" : "IM3"}
+                  {ev.brand.toLowerCase() === "tri" ? "3ID" : ev.brand.toLowerCase() === "both" ? "BOTH BRAND" : "IM3"}
                 </span>
               </div>
             )}
@@ -2154,6 +2157,194 @@ function CardStat({ icon: Icon, dot, label, value, warn, info, infoId, openInfoI
 // ke-hitung di leaderboard.
 // ──────────────────────────────────────────────────────────────────────────
 
+// Report "DTU Tracker" - tracking HARIAN utk 7 kategori activity baru
+// (Event Besar / VA Kecamatan / AVA Branding / DTU DSO-DSP HOA /
+// DTU DMO-DME Kec / DSE Advokasi / Promotor), konsepnya mirip leaderboard
+// Campaign di atas tapi digrup PER HARI (bukan per-campaign tunggal),
+// krn ke-7 kategori ini jalan terus setiap hari - bukan event sesaat.
+// Scope kategori SENGAJA cuma ke-7 ini saja (bukan semua kategori
+// activity) sesuai permintaan user eksplisit.
+const DTU_TRACK_LABELS = AUTO_NAME_CATEGORIES;
+const DTU_TRACK_CODES = AUTO_NAME_CATEGORIES.map(snake);
+
+function DtuTrackerReport({ monthKey, monthLabel }) {
+  const { loading: sessionLoading, email } = useMartaSession();
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  // Hari dibuka/tutup satu-satu (Set, bukan accordion) - konsisten dgn
+  // pola expand/collapse baris leaderboard Campaign di atas.
+  const [openDays, setOpenDays] = useState(() => new Set());
+  const toggleDay = (day) => {
+    setOpenDays((prev) => {
+      const next = new Set(prev);
+      if (next.has(day)) next.delete(day); else next.add(day);
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    if (sessionLoading || !email || !monthKey) return;
+    let alive = true;
+    setRows(null); setErr("");
+    (async () => {
+      try {
+        const { start, end } = monthKeyToRange(monthKey);
+        const { data, error } = await supabaseMarta.rpc("mh_dtu_tracker_report", {
+          p_caller_email: email, p_start: start, p_end: end, p_categories: DTU_TRACK_CODES,
+        });
+        if (error) throw error;
+        if (alive) setRows(data || []);
+      } catch (e) {
+        if (alive) { setErr(e.message || "Gagal memuat tracking DTU"); setRows([]); }
+      }
+    })();
+    return () => { alive = false; };
+  }, [sessionLoading, email, monthKey]);
+
+  // Grup per tanggal (plan_date), urut terbaru dulu - tiap grup simpan
+  // list activity-nya + total SP/FWA/jumlah activity hari itu.
+  const byDay = useMemo(() => {
+    const map = new Map();
+    for (const r of rows || []) {
+      const day = r.plan_date;
+      if (!map.has(day)) map.set(day, []);
+      map.get(day).push(r);
+    }
+    return Array.from(map.entries())
+      .map(([day, list]) => ({
+        day, list,
+        totalSp: list.reduce((acc, r) => acc + Number(r.actual_sp || 0), 0),
+        totalFwa: list.reduce((acc, r) => acc + Number(r.actual_fwa || 0), 0),
+        count: list.length,
+      }))
+      .sort((a, b) => (a.day < b.day ? 1 : -1));
+  }, [rows]);
+
+  const grandSp = (rows || []).reduce((acc, r) => acc + Number(r.actual_sp || 0), 0);
+  const grandFwa = (rows || []).reduce((acc, r) => acc + Number(r.actual_fwa || 0), 0);
+  const grandCount = (rows || []).length;
+
+  if (rows === null) {
+    return <div style={{ padding: "60px 0" }}><ShellSpinner /></div>;
+  }
+
+  return (
+    <div style={{ maxWidth: 480, margin: "0 auto", padding: "16px 20px 32px" }}>
+      {err && (
+        <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 12, background: "#FFF1F1", color: "#D92D20", fontSize: 12, fontWeight: 700 }}>
+          {err}
+        </div>
+      )}
+
+      {/* Hero summary - bahasa visual sama dgn hero GA di Campaign (gradient
+          gelap + angka gradient-text), krn ini "angka utama" halaman ini. */}
+      <div style={{
+        borderRadius: 18, padding: "18px 18px 16px", marginBottom: 14,
+        background: "linear-gradient(150deg,#38383E 0%,#4A4A50 100%)",
+        boxShadow: "0 8px 20px rgba(23,24,28,0.18)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, color: "#D8D8DE", fontSize: 11, fontWeight: 700 }}>
+          <BarChart3 size={13} />
+          <span>Total GA (SP+FWA) · {monthLabel || "bulan ini"}</span>
+        </div>
+        <div style={{
+          marginTop: 4, fontSize: 34, fontWeight: 900, lineHeight: 1.1,
+          backgroundImage: "linear-gradient(120deg,#FFFFFF 0%,#F7D9E8 55%,#EC1E79 100%)",
+          WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent",
+        }}>
+          {fmtInt(grandSp + grandFwa)}
+        </div>
+        <div style={{ marginTop: 8, display: "flex", gap: 14, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 11.5, color: "#C7C8D1", fontWeight: 700 }}>SP <span style={{ color: "#fff" }}>{fmtInt(grandSp)}</span></div>
+          <div style={{ fontSize: 11.5, color: "#C7C8D1", fontWeight: 700 }}>FWA <span style={{ color: "#fff" }}>{fmtInt(grandFwa)}</span></div>
+          <div style={{ fontSize: 11.5, color: "#C7C8D1", fontWeight: 700 }}>Activity <span style={{ color: "#fff" }}>{fmtInt(grandCount)}</span></div>
+        </div>
+      </div>
+
+      {/* Chip keterangan scope 7 kategori - supaya jelas report ini CUMA
+          ke-7 kategori baru, bukan semua kategori activity. */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
+        {DTU_TRACK_LABELS.map((lbl) => (
+          <span key={lbl} style={{
+            fontSize: 10, fontWeight: 700, padding: "4px 9px", borderRadius: 999,
+            background: "#F3EFFD", color: "#6C4DE6",
+          }}>{lbl}</span>
+        ))}
+      </div>
+
+      {byDay.length === 0 ? (
+        <div style={{ padding: "40px 20px", textAlign: "center" }}>
+          <BarChart3 size={28} color="#C7C8D1" />
+          <div style={{ marginTop: 10, fontSize: 13, fontWeight: 700, color: "#8A8A96" }}>
+            Belum ada activity ke-7 kategori ini di {monthLabel || "bulan ini"}.
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {byDay.map(({ day, list, totalSp, totalFwa, count }) => {
+            const isOpen = openDays.has(day);
+            return (
+              <div key={day} style={{ borderRadius: 14, background: "#fff", border: "1px solid #ECEDF0", boxShadow: "0 1px 4px rgba(23,24,28,0.04)" }}>
+                <button onClick={() => toggleDay(day)} style={{
+                  width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+                  padding: "12px 14px", background: "transparent", border: "none", cursor: "pointer", fontFamily: FF, textAlign: "left",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                    <CalendarRange size={14} color="#6C4DE6" style={{ flexShrink: 0 }} />
+                    <span style={{ fontSize: 13, fontWeight: 800, color: "#17181C" }}>{fmtDate(day)}</span>
+                    <span style={{ fontSize: 10.5, fontWeight: 700, color: "#8A8A96" }}>· {count} activity</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 800, color: "#17181C" }}>GA {fmtInt(totalSp + totalFwa)}</span>
+                    {isOpen ? <ChevronDown size={15} color="#8A8A96" /> : <ChevronRight size={15} color="#8A8A96" />}
+                  </div>
+                </button>
+                {isOpen && (
+                  <div style={{ padding: "0 14px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
+                    {list.map((r) => {
+                      const meta = statusMeta(r.status);
+                      return (
+                        <div key={r.id} style={{ padding: "9px 10px", borderRadius: 10, background: "#F7F7F9", border: "1px solid #ECEDF0" }}>
+                          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{
+                                fontSize: 12.5, fontWeight: 800, color: "#17181C", lineHeight: 1.32,
+                                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                              }}>{(r.event_name || "-").replace(/_/g, " ")}</div>
+                              <div style={{ marginTop: 3, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                                {r.brand && (
+                                  <span style={{
+                                    flexShrink: 0, fontSize: 9, fontWeight: 800, padding: "1.5px 6px", borderRadius: 999,
+                                    background: r.brand.toLowerCase() === "tri" ? "#E23B86" : r.brand.toLowerCase() === "both" ? "#0D9488" : "#F5CD46",
+                                    color: r.brand.toLowerCase() === "im3" ? "#17181C" : "#FFFFFF",
+                                  }}>{r.brand.toLowerCase() === "tri" ? "3ID" : r.brand.toLowerCase() === "both" ? "BOTH BRAND" : "IM3"}</span>
+                                )}
+                                <span style={{ fontSize: 10, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {[r.full_name, r.branch_name].filter(Boolean).join(" · ")}
+                                </span>
+                              </div>
+                            </div>
+                            <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
+                              <span style={{ fontSize: 9, fontWeight: 800, padding: "2.5px 7px", borderRadius: 999, color: meta.color, background: meta.bg, whiteSpace: "nowrap" }}>
+                                {meta.label}
+                              </span>
+                              <span style={{ fontSize: 10, fontWeight: 700, color: "#17181C" }}>SP {fmtInt(r.actual_sp)} · FWA {fmtInt(r.actual_fwa)}</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CampaignComplianceReport({ monthKey, monthLabel }) {
   const { loading: sessionLoading, email } = useMartaSession();
   const [campaigns, setCampaigns] = useState(null);
@@ -2450,9 +2641,9 @@ function CampaignComplianceReport({ monthKey, monthLabel }) {
                                     {a.brand && (
                                       <span style={{
                                         flexShrink: 0, fontSize: 9, fontWeight: 800, padding: "1.5px 6px", borderRadius: 999,
-                                        background: a.brand.toLowerCase() === "tri" ? "#E23B86" : "#F5CD46",
-                                        color: a.brand.toLowerCase() === "tri" ? "#FFFFFF" : "#17181C",
-                                      }}>{a.brand.toLowerCase() === "tri" ? "3ID" : "IM3"}</span>
+                                        background: a.brand.toLowerCase() === "tri" ? "#E23B86" : a.brand.toLowerCase() === "both" ? "#0D9488" : "#F5CD46",
+                                        color: a.brand.toLowerCase() === "im3" ? "#17181C" : "#FFFFFF",
+                                      }}>{a.brand.toLowerCase() === "tri" ? "3ID" : a.brand.toLowerCase() === "both" ? "BOTH BRAND" : "IM3"}</span>
                                     )}
                                     <span style={{ fontSize: 10, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                                       {[a.mc || a.site_id].filter(Boolean).join(" · ")}

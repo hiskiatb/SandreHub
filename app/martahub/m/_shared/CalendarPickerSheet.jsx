@@ -593,9 +593,9 @@ function ActivityDetailPopup({ activity: a, onClose }) {
                 <span style={{
                   flexShrink: 0, fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 999, whiteSpace: "nowrap",
                   background: OTHER_ACT_BRAND_COLOR[brandKey] || "#8A8A96",
-                  color: brandKey === "tri" ? "#FFFFFF" : "#17181C",
+                  color: brandKey === "im3" ? "#17181C" : "#FFFFFF",
                 }}>
-                  {brandKey === "tri" ? "3ID" : "IM3"}
+                  {brandKey === "tri" ? "3ID" : brandKey === "both" ? "BOTH BRAND" : "IM3"}
                 </span>
               )}
               <span style={{ fontSize: 10, fontWeight: 800, padding: "3px 9px", borderRadius: 999, color: stage.color, background: stage.bg, whiteSpace: "nowrap" }}>
@@ -713,7 +713,7 @@ function otherActTimeLabel(a, dateKey) {
 // (activityStage - sama sumber label dgn di mana pun activity ditampilkan),
 // baris waktu ber-ikon jam, chevron di pojok - konsisten dgn "bahasa"
 // activity card di seluruh app.
-const OTHER_ACT_BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
+const OTHER_ACT_BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86", both: "#0D9488" };
 function OtherActRow({ act: a, dateKey, onOpenDetail }) {
   const stage = activityStage(a);
   const location = a.address || "Lokasi belum diisi";
@@ -736,9 +736,9 @@ function OtherActRow({ act: a, dateKey, onOpenDetail }) {
                 <span style={{
                   flexShrink: 0, fontSize: 8.5, fontWeight: 800, padding: "2px 6px", borderRadius: 999, whiteSpace: "nowrap",
                   background: OTHER_ACT_BRAND_COLOR[brandKey] || "#8A8A96",
-                  color: brandKey === "tri" ? "#FFFFFF" : "#17181C",
+                  color: brandKey === "im3" ? "#17181C" : "#FFFFFF",
                 }}>
-                  {brandKey === "tri" ? "3ID" : "IM3"}
+                  {brandKey === "tri" ? "3ID" : brandKey === "both" ? "BOTH BRAND" : "IM3"}
                 </span>
               )}
               {a.mc && <span style={{ fontSize: 10.5, color: "#8A8A96", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{a.mc}</span>}

@@ -1,10 +1,11 @@
 "use client";
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "../../../lib/supabase";
 import { canViewMarta } from "../../../lib/martaAccess";
+import { useOtpResendCooldown } from "../../../lib/otpCooldown";
 import { HubLogo } from "../../../components/HubLogo";
-import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, UserRound, ChevronRight, ChevronDown, Camera, LayoutDashboard, QrCode, Store } from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, UserRound, ChevronRight, ChevronDown, Camera, LayoutDashboard, QrCode, Store, CheckCircle2, KeyRound } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -34,13 +35,34 @@ function MartaLoginInner() {
   // spt sebelumnya. Halaman ini tetap KHUSUS SPM Sumatera (tidak digabung
   // dgn jalur OTP DMO di /martahub/m/login - itu sengaja dipisah biar
   // bisa dibuatkan shortcut PWA sendiri).
-  const [stage, setStage] = useState("email"); // email | password
-  const [form,     setForm]     = useState({ email: "", password: "" });
+  const [stage, setStage] = useState("email"); // email | password | otp | reset (lupa kata sandi, khusus spm_sumatera)
+  const [form,     setForm]     = useState({ email: "", password: "", otp: "" });
   const [errors,   setErrors]   = useState([]);
   const [errMsg,   setErrMsg]   = useState("");
   const [loading,  setLoading]  = useState(false);
+  const [sendingOtp, setSendingOtp] = useState(false);
   const [showPw,   setShowPw]   = useState(false);
+  // Lupa kata sandi (stage "reset") - hanya utk akun CMS (spm_sumatera). Kata
+  // sandi diganti di akun Supabase yg sama dgn SandraHub, jadi berlaku di keduanya.
+  const [resetCode, setResetCode] = useState("");
+  const [newPw,     setNewPw]     = useState("");
+  const [newPw2,    setNewPw2]    = useState("");
+  const [showNewPw, setShowNewPw] = useState(false);
+  const [infoMsg,   setInfoMsg]   = useState("");
   const [checking, setChecking] = useState(true);
+  // Role "Marketing Sumatera (Program)" (lihat MARTA_OTP_LOGIN_ROLES di
+  // lib/martaAccess.js) login PASSWORDLESS - kode OTP email, PERSIS pola
+  // /martahub/m/login (MartaHub Mobile), BUKAN password seperti SPM
+  // Sumatera. /api/marta/login-mode menentukan mode mana yg dipakai utk
+  // email yg diketik (dipanggil server-side krn butuh service-role - RLS
+  // tabel "profiles" tidak bisa dibaca anon/belum login).
+  const otpCooldown = useOtpResendCooldown(form.email.trim().toLowerCase());
+  // Kotak kode OTP 6-digit - sama persis konsep /martahub/m/verify (MartaHub
+  // Mobile): tiap digit kotak terpisah, auto-focus/auto-advance, dukung
+  // paste & iOS QuickType "Insert Code" (satu onChange membawa >1 digit
+  // sekaligus), auto-submit begitu genap 6 digit (tidak perlu klik tombol).
+  const [otpDigits, setOtpDigits] = useState(["", "", "", "", "", ""]);
+  const otpInputs = useRef([]);
   const [rpvMenuOpen, setRpvMenuOpen] = useState(false); // dropdown "Realtime Photo Viewer" - pilih Mode Kamera (tamu/HP) atau Panel Operator
   const t = mk(d);
 
@@ -65,17 +87,230 @@ function MartaLoginInner() {
     setForm(f => ({ ...f, [k]: v }));
     setErrors(e => e.filter(x => x !== k));
     setErrMsg("");
+    setInfoMsg("");
   };
 
-  // Langkah 1 - validasi format email saja lalu lanjut ke password. Tidak
-  // ada lookup role di sini (halaman ini memang cuma utk SPM Sumatera).
-  const handleEmailNext = () => {
+  // Langkah 1 - validasi format email, lalu cek /api/marta/login-mode utk
+  // tahu lanjut ke stage "password" (SPM Sumatera, seperti biasa) atau
+  // stage "otp" (Marketing Sumatera (Program), passwordless). Gagal cek
+  // mode (network error dll) - fallback ke password spt sebelumnya, supaya
+  // SPM Sumatera tidak pernah terblokir cuma krn endpoint ini bermasalah.
+  const handleEmailNext = async () => {
     setErrMsg(""); setErrors([]);
     const email = form.email.trim().toLowerCase();
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       setErrors(["email"]); setErrMsg("Masukkan email yang valid."); return;
     }
+    let mode = "password";
+    try {
+      // RPC public (SECURITY DEFINER, lihat migrasi marta_program_account_rpcs) -
+      // TIDAK butuh service-role key, cuma menjawab "otp"/"password".
+      const { data } = await supabase.rpc("marta_login_mode", { p_email: email });
+      if (data === "otp") mode = "otp";
+    } catch { /* fallback ke password - lihat komentar di atas */ }
+
+    if (mode === "otp") {
+      if (!otpCooldown.isReady()) { setStage("otp"); setErrMsg(`Tunggu ${otpCooldown.remainingSeconds} detik lagi sebelum kirim kode baru.`); return; }
+      setSendingOtp(true);
+      try {
+        // Supabase Auth bawaan tidak dipakai lagi utk kirim OTP (pengiriman
+        // email-nya tidak reliable/sering diblokir) - pakai mekanisme custom
+        // OTP yang sudah TERBUKTI jalan di alur registrasi (/api/send-otp,
+        // generate kode + insert email_otps + kirim via Resend).
+        const res = await fetch("/api/send-otp", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        const json = await res.json();
+        if (!res.ok || !json.success) throw new Error(json.error || "Gagal mengirim kode OTP.");
+        otpCooldown.markSent();
+        setOtpDigits(["", "", "", "", "", ""]);
+        setStage("otp");
+      } catch (e) {
+        setErrMsg(otpCooldown.reconcileError(e));
+      } finally {
+        setSendingOtp(false);
+      }
+      return;
+    }
     setStage("password");
+  };
+
+  // Kirim ulang kode OTP (tombol di stage "otp").
+  const handleResendOtp = async () => {
+    const email = form.email.trim().toLowerCase();
+    if (!otpCooldown.isReady()) { setErrMsg(`Tunggu ${otpCooldown.remainingSeconds} detik lagi sebelum kirim kode baru.`); return; }
+    setSendingOtp(true); setErrMsg("");
+    try {
+      const res = await fetch("/api/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Gagal mengirim kode OTP.");
+      otpCooldown.markSent();
+      setOtpDigits(["", "", "", "", "", ""]);
+      otpInputs.current[0]?.focus();
+    } catch (e) {
+      setErrMsg(otpCooldown.reconcileError(e));
+    } finally {
+      setSendingOtp(false);
+    }
+  };
+
+  // Handler kotak kode - sama persis /martahub/m/verify: input tiap kotak,
+  // backspace lompat ke kotak sebelumnya, paste & "Insert Code" QuickType
+  // iOS (>1 digit masuk sekaligus ke satu onChange) disebar ke kotak
+  // berikutnya, lalu auto-submit begitu genap 6 digit.
+  const onOtpDigitChange = (i, v) => {
+    const clean = v.replace(/\D/g, "");
+    if (clean.length > 1) {
+      const arr = clean.slice(0, 6).split("");
+      setOtpDigits((d) => { const next = [...d]; arr.forEach((c, k) => { if (i + k < 6) next[i + k] = c; }); return next; });
+      setErrMsg(""); setErrors([]);
+      otpInputs.current[Math.min(i + arr.length, 5)]?.focus();
+      return;
+    }
+    setOtpDigits((d) => { const next = [...d]; next[i] = clean; return next; });
+    setErrMsg(""); setErrors([]);
+    if (clean && i < 5) otpInputs.current[i + 1]?.focus();
+  };
+
+  const onOtpKeyDown = (i, e) => {
+    if (e.key === "Backspace" && !otpDigits[i] && i > 0) otpInputs.current[i - 1]?.focus();
+    if (e.key === "Enter") handleVerifyOtp();
+  };
+
+  const onOtpPaste = (e) => {
+    const text = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, 6);
+    if (!text) return;
+    e.preventDefault();
+    setOtpDigits(text.padEnd(6, "").split("").slice(0, 6));
+    otpInputs.current[Math.min(text.length, 5)]?.focus();
+  };
+
+  // Verifikasi kode OTP - sesi MartaHub CMS terbentuk begitu kode benar,
+  // lalu cek akses sama persis seperti handleLogin (password) di bawah.
+  const handleVerifyOtp = async () => {
+    const code = otpDigits.join("");
+    if (code.length !== 6 || loading) return;
+    setErrMsg(""); setErrors([]);
+    setLoading(true);
+    try {
+      const cleanEmail = form.email.trim().toLowerCase();
+      // Verifikasi OTP custom (email_otps table) lewat endpoint server-side
+      // khusus login (/api/marta/verify-login-otp) - BUKAN /api/verify-otp
+      // (itu endpoint registrasi, membuat auth user + profile baru, tidak
+      // boleh dipakai di sini). Endpoint ini hanya mengecek OTP lalu
+      // mengembalikan token_hash dari Admin API generateLink (magiclink),
+      // yang ditukar jadi sesi asli lewat verifyOtp client-side di bawah.
+      const res = await fetch("/api/marta/verify-login-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: cleanEmail, otp: code }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        setErrors(["otp"]);
+        setErrMsg(json.error || "Kode salah atau sudah kedaluwarsa. Coba lagi.");
+        setOtpDigits(["", "", "", "", "", ""]);
+        otpInputs.current[0]?.focus();
+        setLoading(false);
+        return;
+      }
+
+      const { data, error } = await supabase.auth.verifyOtp({
+        token_hash: json.token_hash, type: "magiclink",
+      });
+      if (error || !data?.user) {
+        setErrMsg("Gagal membuat sesi login. Coba lagi.");
+        setOtpDigits(["", "", "", "", "", ""]);
+        otpInputs.current[0]?.focus();
+        setLoading(false);
+        return;
+      }
+      const { data: profile } = await supabase
+        .from("profiles").select("role").eq("id", data.user.id).single();
+      if (!profile || !canViewMarta(profile.role)) {
+        await supabase.auth.signOut();
+        setErrMsg("Akun ini tidak memiliki akses ke MartaHub.");
+        setLoading(false);
+        return;
+      }
+      // SENGAJA tidak setLoading(false) di sini - biarkan overlay loading
+      // tetap tampil sampai router benar2 pindah halaman (sama pola dgn
+      // /martahub/m/verify), supaya tidak ada jeda "kosong" yg bikin ragu.
+      router.refresh();
+      router.push(redirect);
+      return;
+    } catch { setErrMsg("Terjadi gangguan pada sistem."); }
+    setLoading(false);
+  };
+
+  // Auto-submit begitu genap 6 digit - persis /martahub/m/verify.
+  useEffect(() => {
+    if (stage === "otp" && otpDigits.join("").length === 6) handleVerifyOtp();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [otpDigits, stage]);
+
+  // Lupa kata sandi - kirim kode 6 digit ke email lewat /api/marta/forgot-password
+  // (server cek role spm_sumatera; balasan selalu generik utk email apa pun).
+  const sendResetCode = async ({ goToReset }) => {
+    const email = form.email.trim().toLowerCase();
+    setErrMsg(""); setErrors([]); setInfoMsg("");
+    if (!otpCooldown.isReady()) {
+      if (goToReset) setStage("reset");
+      setErrMsg(`Tunggu ${otpCooldown.remainingSeconds} detik lagi sebelum kirim kode baru.`);
+      return;
+    }
+    setSendingOtp(true);
+    try {
+      const res = await fetch("/api/marta/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "send", email }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || "Gagal mengirim kode.");
+      otpCooldown.markSent();
+      setResetCode("");
+      if (goToReset) { setNewPw(""); setNewPw2(""); setStage("reset"); }
+      setInfoMsg("Jika email ini terdaftar sebagai akun CMS, kode 6 digit sudah dikirim.");
+    } catch (e) {
+      setErrMsg(e?.message || "Gagal mengirim kode.");
+    } finally {
+      setSendingOtp(false);
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (loading) return;
+    setErrMsg(""); setErrors([]); setInfoMsg("");
+    const code = resetCode.replace(/\D/g, "");
+    if (code.length !== 6) { setErrors(["code"]); setErrMsg("Masukkan kode 6 digit dari email."); return; }
+    if (newPw.length < 8) { setErrors(["newPw"]); setErrMsg("Kata sandi minimal 8 karakter."); return; }
+    if (newPw !== newPw2) { setErrors(["newPw2"]); setErrMsg("Konfirmasi kata sandi tidak sama."); return; }
+    setLoading(true);
+    try {
+      const res = await fetch("/api/marta/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reset", email: form.email.trim().toLowerCase(), otp: code, password: newPw }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        setErrors(/kata sandi/i.test(json.error || "") ? ["newPw"] : ["code"]);
+        setErrMsg(json.error || "Gagal mengubah kata sandi.");
+        return;
+      }
+      setResetCode(""); setNewPw(""); setNewPw2(""); setShowNewPw(false);
+      setForm(f => ({ ...f, password: "" }));
+      setStage("password");
+      setInfoMsg("Kata sandi berhasil diubah. Silakan masuk - berlaku juga untuk SandraHub.");
+    } catch { setErrMsg("Terjadi gangguan pada sistem."); }
+    finally { setLoading(false); }
   };
 
   // Langkah 2 - login sesungguhnya (password, sesi SandraHub).
@@ -183,6 +418,15 @@ function MartaLoginInner() {
               )}
             </AnimatePresence>
 
+            <AnimatePresence>
+              {infoMsg && !errMsg && (
+                <motion.div key="info" initial={{ opacity: 0, height: 0, marginBottom: 0 }} animate={{ opacity: 1, height: "auto", marginBottom: 14 }} exit={{ opacity: 0, height: 0, marginBottom: 0 }} transition={{ duration: 0.18 }}
+                  style={{ padding: "9px 13px", borderRadius: 10, background: d ? "rgba(52,211,153,0.10)" : "rgba(5,150,105,0.07)", border: `1px solid ${d ? "rgba(52,211,153,0.28)" : "rgba(5,150,105,0.22)"}`, display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, fontWeight: 600, color: d ? "#34D399" : "#047857", overflow: "hidden" }}>
+                  <CheckCircle2 size={13} strokeWidth={2.2} style={{ flexShrink: 0 }} />{infoMsg}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             {/* Stage - sama persis pola /sandra/login: email dulu (satu
                 langkah), password baru muncul di langkah berikutnya, bukan
                 dua field sekaligus di satu layar. */}
@@ -202,16 +446,154 @@ function MartaLoginInner() {
                     <Mail size={14} color={t.lo} style={{ flexShrink: 0 }} />
                     <input type="email" placeholder="nama@ioh.co.id" value={form.email} onChange={e => up("email", e.target.value)} onKeyDown={e => e.key === "Enter" && handleEmailNext()} style={inputStyle} autoComplete="email" autoFocus />
                   </div>
-                  <button onClick={handleEmailNext}
-                    style={{ marginTop: 20, width: "100%", height: 46, borderRadius: 10, border: "none", background: `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: `0 4px 18px rgba(237,28,36,0.25)`, cursor: "pointer", fontFamily: FONT }}>
-                    <span>Lanjutkan</span><ArrowRight size={14} strokeWidth={2.5} />
+                  <button onClick={handleEmailNext} disabled={sendingOtp}
+                    style={{ marginTop: 20, width: "100%", height: 46, borderRadius: 10, border: "none", background: sendingOtp ? `${RED}55` : `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: sendingOtp ? "none" : `0 4px 18px rgba(237,28,36,0.25)`, cursor: sendingOtp ? "not-allowed" : "pointer", fontFamily: FONT }}>
+                    {sendingOtp ? <Loader2 size={16} style={{ animation: "spin .85s linear infinite" }} /> : <><span>Lanjutkan</span><ArrowRight size={14} strokeWidth={2.5} /></>}
                   </button>
+                </motion.div>
+              ) : stage === "otp" ? (
+                <motion.div key="stage-otp" initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 14 }} transition={{ duration: 0.22 }}>
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 17, fontWeight: 700, color: t.hi, letterSpacing: "-0.02em" }}>Masukkan Kode OTP</div>
+                    <div style={{ marginTop: 3, fontSize: 13, color: t.mid }}>Kode 6 digit dikirim ke email Anda</div>
+                  </div>
+
+                  {/* Email + ganti */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderRadius: 10, background: t.fieldBg, border: `1px solid ${t.line}`, marginBottom: 16 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                      <Mail size={14} color={t.lo} style={{ flexShrink: 0 }} />
+                      <span style={{ fontSize: 13.5, fontWeight: 600, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{form.email}</span>
+                    </span>
+                    <button onClick={() => { setStage("email"); setOtpDigits(["", "", "", "", "", ""]); setErrMsg(""); setErrors([]); }} style={{ background: "none", border: "none", cursor: "pointer", color: RED, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, flexShrink: 0 }}>Ganti</button>
+                  </div>
+
+                  <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: t.mid }}>Kode OTP</label>
+                  {/* Kotak 6-digit terpisah - konsep sama persis dgn
+                      /martahub/m/verify (MartaHub Mobile): auto-focus,
+                      auto-advance, dukung paste & iOS "Insert Code"
+                      QuickType, auto-submit begitu genap 6 digit. */}
+                  <div style={{ position: "relative", marginTop: 5 }}>
+                    <div style={{ display: "flex", gap: 8, opacity: loading ? 0.35 : 1, transition: "opacity .15s" }} onPaste={onOtpPaste}>
+                      {otpDigits.map((digit, i) => (
+                        <input
+                          key={i}
+                          ref={(el) => (otpInputs.current[i] = el)}
+                          type="text"
+                          inputMode="numeric"
+                          autoComplete={i === 0 ? "one-time-code" : "off"}
+                          maxLength={i === 0 ? 6 : 1}
+                          value={digit}
+                          disabled={loading}
+                          onChange={(e) => onOtpDigitChange(i, e.target.value)}
+                          onKeyDown={(e) => onOtpKeyDown(i, e)}
+                          autoFocus={i === 0}
+                          style={{
+                            width: 42, height: 48, flex: "1 1 0", textAlign: "center",
+                            fontSize: 19, fontWeight: 800, letterSpacing: 0,
+                            borderRadius: 10, background: t.fieldBg,
+                            border: `1.5px solid ${errors.includes("otp") ? "rgba(220,38,38,0.5)" : t.line}`,
+                            color: t.hi, fontFamily: FONT, outline: "none",
+                            transition: "border-color .15s",
+                          }}
+                          onFocus={e => e.currentTarget.style.borderColor = MAGA}
+                          onBlur={e => e.currentTarget.style.borderColor = errors.includes("otp") ? "rgba(220,38,38,0.5)" : t.line}
+                        />
+                      ))}
+                    </div>
+                    {/* Overlay loading tepat di atas kotak kode - sama pola
+                        dgn /martahub/m/verify, supaya begitu genap 6 digit
+                        user langsung tahu kodenya SEDANG dicek. */}
+                    {loading && (
+                      <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <Loader2 size={20} style={{ animation: "spin .8s linear infinite", color: RED }} />
+                      </div>
+                    )}
+                  </div>
+
+                  <button onClick={handleVerifyOtp} disabled={loading || otpDigits.join("").length !== 6}
+                    style={{ marginTop: 20, width: "100%", height: 46, borderRadius: 10, border: "none", background: (loading || otpDigits.join("").length !== 6) ? `${RED}55` : `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: loading ? "none" : `0 4px 18px rgba(237,28,36,0.25)`, cursor: (loading || otpDigits.join("").length !== 6) ? "not-allowed" : "pointer", fontFamily: FONT }}>
+                    {loading ? <><Loader2 size={16} style={{ animation: "spin .85s linear infinite" }} /><span>Memverifikasi kode…</span></> : <><span>Masuk ke MartaHub</span><ArrowRight size={14} strokeWidth={2.5} /></>}
+                  </button>
+
+                  <button onClick={handleResendOtp} disabled={sendingOtp || otpCooldown.remainingSeconds > 0 || loading}
+                    style={{ marginTop: 12, width: "100%", background: "none", border: "none", cursor: sendingOtp || otpCooldown.remainingSeconds > 0 || loading ? "default" : "pointer", color: otpCooldown.remainingSeconds > 0 || loading ? t.lo : RED, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, textAlign: "center" }}>
+                    {otpCooldown.remainingSeconds > 0 ? `Kirim ulang dalam ${otpCooldown.remainingSeconds}s` : sendingOtp ? "Mengirim…" : "Kirim ulang kode"}
+                  </button>
+                </motion.div>
+              ) : stage === "reset" ? (
+                <motion.div key="stage-reset" initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 14 }} transition={{ duration: 0.22 }}>
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 17, fontWeight: 700, color: t.hi, letterSpacing: "-0.02em" }}>Atur Ulang Kata Sandi</div>
+                    <div style={{ marginTop: 3, fontSize: 13, color: t.mid }}>Masukkan kode dari email dan kata sandi baru</div>
+                  </div>
+
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 12px", borderRadius: 10, background: t.fieldBg, border: `1px solid ${t.line}`, marginBottom: 16 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                      <Mail size={14} color={t.lo} style={{ flexShrink: 0 }} />
+                      <span style={{ fontSize: 13.5, fontWeight: 600, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{form.email}</span>
+                    </span>
+                    <button onClick={() => { setStage("email"); setResetCode(""); setNewPw(""); setNewPw2(""); setErrMsg(""); setErrors([]); setInfoMsg(""); }} style={{ background: "none", border: "none", cursor: "pointer", color: RED, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, flexShrink: 0 }}>Ganti</button>
+                  </div>
+
+                  <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: t.mid }}>Kode dari Email</label>
+                  <div style={{ ...fieldStyle, marginTop: 5, borderColor: errors.includes("code") ? "rgba(220,38,38,0.5)" : t.line }}
+                    onFocusCapture={e => e.currentTarget.style.borderColor = MAGA}
+                    onBlurCapture={e => e.currentTarget.style.borderColor = errors.includes("code") ? "rgba(220,38,38,0.5)" : t.line}>
+                    <KeyRound size={14} color={t.lo} style={{ flexShrink: 0 }} />
+                    <input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} placeholder="6 digit kode" value={resetCode}
+                      onChange={e => { setResetCode(e.target.value.replace(/\D/g, "").slice(0, 6)); setErrors(er => er.filter(x => x !== "code")); setErrMsg(""); }}
+                      style={{ ...inputStyle, fontWeight: 800, letterSpacing: "0.3em", fontSize: 16 }} autoFocus />
+                  </div>
+
+                  <label style={{ display: "block", marginTop: 14, fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: t.mid }}>Kata Sandi Baru</label>
+                  <div style={{ ...fieldStyle, marginTop: 5, borderColor: errors.includes("newPw") ? "rgba(220,38,38,0.5)" : t.line }}
+                    onFocusCapture={e => e.currentTarget.style.borderColor = MAGA}
+                    onBlurCapture={e => e.currentTarget.style.borderColor = errors.includes("newPw") ? "rgba(220,38,38,0.5)" : t.line}>
+                    <Lock size={14} color={t.lo} style={{ flexShrink: 0 }} />
+                    <input type={showNewPw ? "text" : "password"} placeholder="Minimal 8 karakter" value={newPw}
+                      onChange={e => { setNewPw(e.target.value); setErrors(er => er.filter(x => x !== "newPw")); setErrMsg(""); }}
+                      style={{ ...inputStyle, fontFamily: showNewPw ? FONT : "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" }} autoComplete="new-password" />
+                    <button type="button" onClick={() => setShowNewPw(v => !v)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", flexShrink: 0, color: showNewPw ? RED : t.lo }}>
+                      {showNewPw ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+
+                  <label style={{ display: "block", marginTop: 14, fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: t.mid }}>Ulangi Kata Sandi Baru</label>
+                  <div style={{ ...fieldStyle, marginTop: 5, borderColor: errors.includes("newPw2") ? "rgba(220,38,38,0.5)" : t.line }}
+                    onFocusCapture={e => e.currentTarget.style.borderColor = MAGA}
+                    onBlurCapture={e => e.currentTarget.style.borderColor = errors.includes("newPw2") ? "rgba(220,38,38,0.5)" : t.line}>
+                    <Lock size={14} color={t.lo} style={{ flexShrink: 0 }} />
+                    <input type={showNewPw ? "text" : "password"} placeholder="Ketik ulang kata sandi" value={newPw2}
+                      onChange={e => { setNewPw2(e.target.value); setErrors(er => er.filter(x => x !== "newPw2")); setErrMsg(""); }}
+                      onKeyDown={e => e.key === "Enter" && handleResetPassword()}
+                      style={{ ...inputStyle, fontFamily: showNewPw ? FONT : "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" }} autoComplete="new-password" />
+                  </div>
+                  <div style={{ marginTop: 8, display: "flex", gap: 14, fontSize: 11.5, fontWeight: 600 }}>
+                    <span style={{ color: newPw.length >= 8 ? "#16A34A" : t.mid }}>{newPw.length >= 8 ? "✓" : "○"} Min. 8 karakter</span>
+                    <span style={{ color: newPw && newPw === newPw2 ? "#16A34A" : t.mid }}>{newPw && newPw === newPw2 ? "✓" : "○"} Sama dengan konfirmasi</span>
+                  </div>
+
+                  <button onClick={handleResetPassword} disabled={loading}
+                    style={{ marginTop: 18, width: "100%", height: 46, borderRadius: 10, border: "none", background: loading ? `${RED}55` : `linear-gradient(135deg,${RED},${MAGA})`, color: "#fff", fontSize: 14, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: 7, boxShadow: loading ? "none" : `0 4px 18px rgba(237,28,36,0.25)`, cursor: loading ? "not-allowed" : "pointer", fontFamily: FONT }}>
+                    {loading ? <><Loader2 size={16} style={{ animation: "spin .85s linear infinite" }} /><span>Menyimpan…</span></> : <><span>Ubah Kata Sandi</span><ArrowRight size={14} strokeWidth={2.5} /></>}
+                  </button>
+
+                  <div style={{ marginTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <button onClick={() => { setStage("password"); setErrMsg(""); setErrors([]); setInfoMsg(""); }} disabled={loading}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: t.mid, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, display: "inline-flex", alignItems: "center", gap: 5, padding: 0 }}>
+                      <ArrowLeft size={13} /> Kembali ke login
+                    </button>
+                    <button onClick={() => sendResetCode({ goToReset: false })} disabled={sendingOtp || otpCooldown.remainingSeconds > 0 || loading}
+                      style={{ background: "none", border: "none", padding: 0, cursor: sendingOtp || otpCooldown.remainingSeconds > 0 || loading ? "default" : "pointer", color: otpCooldown.remainingSeconds > 0 || loading ? t.lo : RED, fontSize: 12.5, fontWeight: 700, fontFamily: FONT }}>
+                      {otpCooldown.remainingSeconds > 0 ? `Kirim ulang dalam ${otpCooldown.remainingSeconds}s` : sendingOtp ? "Mengirim…" : "Kirim ulang kode"}
+                    </button>
+                  </div>
                 </motion.div>
               ) : (
                 <motion.div key="stage-password" initial={{ opacity: 0, x: 14 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 14 }} transition={{ duration: 0.22 }}>
                   <div style={{ marginBottom: 16 }}>
                     <div style={{ fontSize: 17, fontWeight: 700, color: t.hi, letterSpacing: "-0.02em" }}>Masukkan Kata Sandi</div>
-                    <div style={{ marginTop: 3, fontSize: 13, color: t.mid }}>Akun SandraHub Anda (khusus SPM Sumatera)</div>
+                    <div style={{ marginTop: 3, fontSize: 13, color: t.mid }}>Akun CMS MartaHub Anda</div>
                   </div>
 
                   {/* Email + ganti */}
@@ -239,6 +621,13 @@ function MartaLoginInner() {
                     <input type={showPw ? "text" : "password"} placeholder="Kata sandi" value={form.password} onChange={e => up("password", e.target.value)} onKeyDown={e => e.key === "Enter" && handleLogin()} style={{ ...inputStyle, fontFamily: showPw ? FONT : "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" }} autoComplete="current-password" autoFocus />
                     <button type="button" onClick={() => setShowPw(p => !p)} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, display: "flex", flexShrink: 0, color: showPw ? RED : t.lo }}>
                       {showPw ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+
+                  <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end" }}>
+                    <button type="button" onClick={() => sendResetCode({ goToReset: true })} disabled={sendingOtp || loading}
+                      style={{ background: "none", border: "none", padding: 0, cursor: sendingOtp || loading ? "default" : "pointer", color: sendingOtp ? t.lo : RED, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      {sendingOtp ? <><Loader2 size={12} style={{ animation: "spin .85s linear infinite" }} />Mengirim kode…</> : "Lupa kata sandi?"}
                     </button>
                   </div>
 

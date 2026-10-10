@@ -26,7 +26,7 @@ export async function POST(req) {
 
   const systemPrompt =
     "Anda menulis paragraf pembuka & penutup email laporan bisnis berbahasa Indonesia, formal namun ramah, " +
-    "untuk tim Sales Performance Management — Indosat Ooredoo Hutchison Circle Sumatera, dikirim ke mitra/kiosk. " +
+    "untuk tim Sales & Distribution — Indosat Ooredoo Hutchison Circle Sumatera, dikirim ke mitra/kiosk. " +
     "ATURAN WAJIB — token placeholder berikut, jika relevan, HARUS ditulis PERSIS apa adanya (jangan diterjemahkan, " +
     "diubah, atau dihapus): {nama} {judul} {periode} {jumlah}. Jangan sertakan salam tanda tangan di luar yang " +
     'diminta. Jangan sertakan penjelasan apa pun di luar isi paragraf. Balas HANYA dengan JSON valid persis dalam ' +

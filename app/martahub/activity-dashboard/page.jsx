@@ -46,7 +46,7 @@ function regionColor(region) { return REGION_COLOR[region] || "#F57C00"; }
 // Warna brand resmi dipakai KONSISTEN di semua elemen brand-specific di
 // poster (donut distribusi brand, bar chart per-branch, financial summary
 // per-brand) - IM3 = kuning/gold, 3ID (Tri) = magenta.
-const BRAND_COLOR = { im3: "#F2B705", tri: "#D6249F" };
+const BRAND_COLOR = { im3: "#F2B705", tri: "#D6249F", both: "#0D9488" };
 function regionShort(region) {
   if (region === "NORTH SUMATERA") return "North Sumatra";
   if (region === "CENTRAL SUMATERA") return "Central Sumatra";
@@ -175,13 +175,13 @@ function Body({ email }) {
     const out = { im3: new Map(), tri: new Map() };
     for (const r of rows) {
       const b = (r.brand || "").toLowerCase();
-      if (b !== "im3" && b !== "tri") continue;
-      out[b].set(r.branch_id, (out[b].get(r.branch_id) || 0) + 1);
+      if (b === "im3" || b === "both") out.im3.set(r.branch_id, (out.im3.get(r.branch_id) || 0) + 1);
+      if (b === "tri" || b === "both") out.tri.set(r.branch_id, (out.tri.get(r.branch_id) || 0) + 1);
     }
     return out;
   }, [rows]);
-  const im3Plan = rows.filter((r) => (r.brand || "").toLowerCase() === "im3").length;
-  const triPlan = rows.filter((r) => (r.brand || "").toLowerCase() === "tri").length;
+  const im3Plan = rows.filter((r) => ["im3", "both"].includes((r.brand || "").toLowerCase())).length;
+  const triPlan = rows.filter((r) => ["tri", "both"].includes((r.brand || "").toLowerCase())).length;
   const totalPlan = rows.length;
 
   // ── Achievement (status='completed') + finansial ──
@@ -328,8 +328,9 @@ function Body({ email }) {
     const map = new Map();
     for (const r of distDataset) {
       const b = (r.brand || "").toLowerCase();
-      const k = b === "im3" ? "im3" : b === "tri" ? "tri" : "__lainnya";
-      map.set(k, (map.get(k) || 0) + 1);
+      if (b === "im3" || b === "both") map.set("im3", (map.get("im3") || 0) + 1);
+      if (b === "tri" || b === "both") map.set("tri", (map.get("tri") || 0) + 1);
+      if (b !== "im3" && b !== "tri" && b !== "both") map.set("__lainnya", (map.get("__lainnya") || 0) + 1);
     }
     const total = distDataset.length || 1;
     const COLOR = { im3: BRAND_COLOR.im3, tri: BRAND_COLOR.tri, __lainnya: "#8A93A8" };

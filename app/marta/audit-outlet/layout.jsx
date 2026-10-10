@@ -1,3 +1,27 @@
+export const metadata = {
+  title: "Pendataan Outlet",
+  description: "Pendataan outlet & foto etalase/tampak depan - North Sumatra Retail Competition (MartaHub).",
+  manifest: "/marta/audit-outlet/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    // "black-translucent" - status bar TRANSPARAN, gradient Header (lihat
+    // BRAND_GRADIENT di isi/page.jsx) ikut nembus sampai ke belakang
+    // notch/status bar -> ini yg bikin app kerasa truly fullscreen/edge-
+    // to-edge (dipilih user walau iOS tetap nambahin scrim legibility
+    // tipis-SELALU buatan Apple sendiri di area jam/baterai, di luar
+    // kendali kita - lihat diskusi). Sebelumnya sempat diganti ke "black"
+    // (solid opaque) krn scrim itu dulu ikut2an dark/light mode DEVICE,
+    // tapi form ini sekarang sudah dikunci light mode total (color-scheme:
+    // light, lihat isi/page.jsx) jadi dampaknya sudah minim.
+    statusBarStyle: "black-translucent",
+    title: "Pendataan Outlet",
+  },
+  icons: {
+    icon: [{ url: "/marta/audit-outlet/icon-192.png", sizes: "192x192", type: "image/png" }],
+    apple: [{ url: "/marta/audit-outlet/icon-192.png", sizes: "192x192", type: "image/png" }],
+  },
+};
+
 export const viewport = {
   width: "device-width",
   initialScale: 1,
@@ -13,6 +37,25 @@ export const viewport = {
   // pernah dideklarasikan utk route /marta/audit-outlet/**.
   viewportFit: "cover",
   themeColor: "#EC0B6F",
+  // Form ini light mode saja, jangan ikut dark mode device sama sekali -
+  // kalau tidak, native UI browser (keyboard, dropdown/select bawaan, dll)
+  // ikut gelap pas device di-set dark mode, padahal konten form-nya sendiri
+  // tetap terang -> muncul bagian hitam yg nabrak (lihat laporan user
+  // "bagian hitam saat pemilihan outlet").
+  colorScheme: "light",
+  // Default Android Chrome (& sejumlah browser lain) itu "resizes-visual" -
+  // begitu keyboard muncul, HANYA visualViewport yg menyusut, layout
+  // viewport (jadi tinggi halaman kita) TETAP PENUH. Akibatnya browser
+  // cuma men-scroll input yg difokus biar kelihatan di atas keyboard, TAPI
+  // sisa halaman di bawahnya (yg sebenarnya ketutup keyboard) masih
+  // "ada" secara layout - kalau timing resize `visualViewport` kita
+  // (hook `vh` di isi/page.jsx) kepotong/telat, nongol spasi kosong warna
+  // BG nganggur persis di atas keyboard (laporan user utk SEMUA field teks:
+  // Nama Sender, Nama Outlet, Site ID, Social Media, dst). "resizes-content"
+  // bikin browser BENERAN menyusutkan layout viewport (bukan cuma visual)
+  // pas keyboard muncul, jadi container fixed kita otomatis pas tanpa
+  // nunggu JS - lebih konsisten di semua field, bukan cuma 1-2 field.
+  interactiveWidget: "resizes-content",
 };
 
 export default function AuditOutletLayout({ children }) {

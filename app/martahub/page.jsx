@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import { supabase } from "../../lib/supabase";
-import { guardMarta, isMartaAdmin } from "../../lib/martaAccess";
+import { guardMarta, isMartaAdmin, restrictedPathFor } from "../../lib/martaAccess";
 import { supabaseMarta } from "../../lib/supabaseMarta";
 import { getMartaScope, applyMartaScope, applyMartaScopeSlug } from "../../lib/martaScope";
 import { HubLogo } from "../../components/HubLogo";
@@ -173,6 +173,7 @@ const NAV = [
   { label: "Geo Compliance", icon: "pin", path: "geo-compliance" },
   { section: "POSM" },
   { label: "POSM", icon: "posm", path: "posmat" },
+  { section: "PROGRAM" },
   { label: "Pendataan Outlet", icon: "building", path: "pendataan-outlet", route: "/martahub/pendataan-outlet" },
   { section: "MANAGEMENT" },
   // Approval Center (Activity) DIHAPUS dari menu - lihat catatan sama di
@@ -534,11 +535,20 @@ function achievementPct(rows, ctx) {
     const bs = branchSlugMap.get(r.branch_id);
     if (!bs || !r.brand || !r.plan_date) continue;
     const mk = monthKeyYYYYMM(r.plan_date);
-    const key = `${bs}|${r.brand}|${mk}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const eff = nearestPriorTarget(activityTargets, bs, r.brand, mk);
-    if (eff?.target_sp) t += eff.target_sp;
+    // Plan brand='BOTH' ("Semua Brand") TIDAK punya baris target sendiri
+    // di mh_activity_target (target resmi cuma pernah di-set per IM3/TRI,
+    // lihat master/page.jsx) - supaya achievement % branch/bulan itu tidak
+    // pincang (actual-nya kehitung tapi target-nya 0), target IM3 DAN TRI
+    // branch/bulan itu DIJUMLAHKAN berdua, konsisten dgn aturan "baris BOTH
+    // dihitung ke keduanya" yg sama dipakai di laporan split-brand lain.
+    const brandsForTarget = r.brand.toUpperCase() === "BOTH" ? ["IM3", "TRI"] : [r.brand];
+    for (const br of brandsForTarget) {
+      const key = `${bs}|${br}|${mk}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const eff = nearestPriorTarget(activityTargets, bs, br, mk);
+      if (eff?.target_sp) t += eff.target_sp;
+    }
   }
   return t > 0 ? (a / t) * 100 : 0;
 }
@@ -827,6 +837,11 @@ export default function MartaHubDashboard() {
     else setDark(window.matchMedia("(prefers-color-scheme: dark)").matches);
     guardMarta(router, "/martahub").then((res) => {
       if (!res.ok) return; // guard sudah redirect
+      // Role terbatas (lihat MARTA_RESTRICTED_PATH di lib/martaAccess.js)
+      // tidak boleh lihat Dashboard sama sekali - langsung lempar ke satu
+      // halaman yg diizinkan (konsisten dgn MartaShell.jsx).
+      const restrictedPath = restrictedPathFor(res.profile?.role);
+      if (restrictedPath) { router.replace(`/martahub/${restrictedPath}`); return; }
       _marlaDashCache = { user: res.session.user, profile: res.profile };
       setUser(res.session.user);
       setProfile(res.profile);
@@ -842,7 +857,20 @@ export default function MartaHubDashboard() {
       try {
         const sc = await getMartaScope(user.email);
         if (cancelled) return;
-        setScope(sc);
+        // spm_sumatera (dan role admin MartaHub lain, lihat MARTA_ADMIN_ROLES
+        // di lib/martaAccess.js) sudah terverifikasi penuh lewat TraceHub
+        // profiles.role SAAT LOGIN (guardMarta di atas) - role itu TIDAK
+        // boleh bergantung pada lookup cross-project mh_profiles yang rapuh
+        // (anon key, tanpa sesi asli ke project MartaHub). Kalau lookup gagal
+        // /tidak ketemu baris, user tsb TETAP unscoped (full-access) - lookup
+        // hanya dipakai utk enrich display (full_name, dst.) bila berhasil.
+        // Role LAIN (non-admin TraceHub) tidak disentuh - scope mh_profiles
+        // asli mereka tetap jadi satu-satunya sumber scoping (unchanged).
+        const privileged = isMartaAdmin(profile?.role);
+        const finalScope = privileged
+          ? { ...(sc.found ? sc : { role: null, region: null, brand: null, branchId: null, branchName: null, fullName: null, status: null, authState: "active" }), role: sc.found ? sc.role : profile.role, unscoped: true, found: true }
+          : sc;
+        setScope(finalScope);
 
         // Sejak fase approval Actual dihapus (validasi otomatis via trigger
         // server), satu-satunya antrean approval manusia yang tersisa adalah

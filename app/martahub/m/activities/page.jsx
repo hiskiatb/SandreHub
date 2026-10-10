@@ -29,7 +29,7 @@ const ACTIVITY_COLS = "id,event_name,brand,mc,site_id,event_category,event_categ
 
 // Warna brand - SAMA PERSIS dgn skema di wizard Buat Plan (ACT_BRAND_COLOR
 // di activities/new/page.jsx): IM3 kuning, 3ID (tri) magenta.
-const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86" };
+const BRAND_COLOR = { im3: "#F5CD46", tri: "#E23B86", both: "#0D9488" };
 
 // Margin kanan & bawah FAB "Buat Plan" - SATU angka dipakai utk keduanya
 // (bukan dua nilai beda) spy jaraknya ke tepi kolom & ke navbar keliatan
@@ -601,7 +601,7 @@ function ActivitiesInner() {
     }
 
     const brand = new Map(), branch = new Map(), kabupaten = new Map(), kecamatan = new Map(), poi = new Map(), site = new Map();
-    for (const r of baseRowsExcept("brand")) { if (r.brand) bump(brand, r.brand.toLowerCase(), r.brand.toLowerCase() === "tri" ? "3ID" : "IM3"); }
+    for (const r of baseRowsExcept("brand")) { if (r.brand) { const bk = r.brand.toLowerCase(); bump(brand, bk, bk === "tri" ? "3ID" : bk === "both" ? "BOTH BRAND" : "IM3"); } }
     for (const r of baseRowsExcept("branch")) { const b = siteMeta[r.site_id]?.branch; if (b) bump(branch, b, b); }
     for (const r of baseRowsExcept("kabupaten")) { const k = siteMeta[r.site_id]?.kabupaten; if (k) bump(kabupaten, k, k); }
     for (const r of baseRowsExcept("kecamatan")) { const k = siteMeta[r.site_id]?.kecamatan; if (k) bump(kecamatan, k, k); }
@@ -1482,9 +1482,9 @@ function ActivityCard({ r, userId, branchLabel, onOpen, siteMeta }) {
                 <span style={{
                   flexShrink: 0, fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 999, whiteSpace: "nowrap",
                   background: BRAND_COLOR[r.brand.toLowerCase()] || "#8A8A96",
-                  color: r.brand.toLowerCase() === "tri" ? "#FFFFFF" : "#17181C",
+                  color: r.brand.toLowerCase() === "im3" ? "#17181C" : "#FFFFFF",
                 }}>
-                  {r.brand.toLowerCase() === "tri" ? "3ID" : "IM3"}
+                  {r.brand.toLowerCase() === "tri" ? "3ID" : r.brand.toLowerCase() === "both" ? "BOTH BRAND" : "IM3"}
                 </span>
               )}
               {isCampaign && (

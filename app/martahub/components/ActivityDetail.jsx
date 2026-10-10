@@ -96,9 +96,11 @@ const unsnake = (s) => (s ? String(s).split("_").map((w) => w.charAt(0).toUpperC
 
 export function BrandBadge({ brand, big }) {
   if (!brand) return <span style={{ color: T.lo }}>-</span>;
-  const isTri = String(brand).toLowerCase() === "tri";
-  const bg = isTri ? "#E6007E" : "#FFC700";
-  const fg = isTri ? "#fff" : "#1A1300";
+  const bk = String(brand).toLowerCase();
+  const isTri = bk === "tri";
+  const isBoth = bk === "both";
+  const bg = isBoth ? "#0D9488" : isTri ? "#E6007E" : "#FFC700";
+  const fg = isBoth || isTri ? "#fff" : "#1A1300";
   return (
     <span style={{
       display: "inline-flex", alignItems: "center", fontSize: big ? 11.5 : 10.5, fontWeight: 800,

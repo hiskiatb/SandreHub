@@ -2,7 +2,7 @@
 import { NextResponse } from "next/server";
 import { requireReportMergeAccess } from "../../../../../lib/reportMerge/auth";
 import { withLetterSignerDefaults } from "../../../../../lib/reportMerge/settings";
-import { STYLE_PRESETS, isAggregateLetter, generateMemoPdf, generateLetterPdf } from "../../../../../lib/reportMerge/letterEngine";
+import { STYLE_PRESETS, isAggregateLetter, generateMemoPdf, generateLetterPdf, generateFormatPdf, PER_ROW_FORMATS } from "../../../../../lib/reportMerge/letterEngine";
 
 export async function POST(req) {
   const auth = await requireReportMergeAccess(req);
@@ -31,9 +31,14 @@ export async function POST(req) {
 
   try {
     templateConfig = await withLetterSignerDefaults(auth.supabaseAdmin, templateConfig);
-    const { buffer } = isAggregateLetter(templateCode)
-      ? await generateMemoPdf(templateConfig, rows, batchMeta)
-      : await generateLetterPdf(templateConfig, row, batchMeta, seq);
+    // Format per-ID (Surat ke mitra / Pemberitahuan / BAST): preview = 1 surat
+    // personal dari baris pertama yang dipilih.
+    const isMitra = isAggregateLetter(templateCode) && PER_ROW_FORMATS.includes(String(templateConfig.FORMAT_SURAT || ""));
+    const { buffer } = isMitra
+      ? await generateFormatPdf(templateConfig, rows[0], batchMeta, seq)
+      : isAggregateLetter(templateCode)
+        ? await generateMemoPdf(templateConfig, rows, batchMeta)
+        : await generateLetterPdf(templateConfig, row, batchMeta, seq);
     const safeName = String(row.ID || `surat-${seq}`).replace(/[^a-z0-9_-]+/gi, "_");
     return new NextResponse(buffer, {
       status: 200,

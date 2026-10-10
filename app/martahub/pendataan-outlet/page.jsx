@@ -18,13 +18,13 @@
  *      aoImportOutletMaster. Lookup ID Outlet di Mobile (ao_check_outlet)
  *      cocok ke ID IM3 ATAU ID 3ID.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, CheckCircle2, ClipboardList, Download, Image as ImageIcon, Loader2, Package, RefreshCw, Search, Store, Upload, UploadCloud, X, XCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Check, CheckCircle2, ChevronDown, ClipboardList, Download, Image as ImageIcon, Images, Link2, Loader2, Package, RefreshCw, Search, Store, Trash2, Upload, UploadCloud, X, XCircle } from "lucide-react";
 import MartaShell, { T } from "../components/MartaShell";
 import { readWorkbook, deriveTable } from "../../../lib/martaSiteImport";
 import { passesRow, optionsFor, FilterTh, FilterMenu } from "../../dashboard/components/MFTS_TableFilter";
 import {
-  aoExportList, aoGetRadiusSetting, aoImportOutletMaster, aoListOutlets, aoListPhotos,
+  aoDeleteSubmissions, aoExportList, aoGetRadiusSetting, aoImportOutletMaster, aoListOutlets, aoListPhotos,
   aoListReferencePhotos, aoListSubmissions, aoPublicUrl, aoSetRadiusSetting,
   aoUpdateReferencePhotoLabel, aoUploadReferencePhoto,
 } from "../../../lib/ao";
@@ -101,13 +101,30 @@ function buildAoRows(tableRows, mapping) {
 function Card({ children, style }) {
   return <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 14, padding: 18, ...style }}>{children}</div>;
 }
-function Btn({ children, onClick, disabled, variant = "primary", ...rest }) {
-  const base = { padding: "9px 16px", borderRadius: 10, border: "none", fontWeight: 700, fontSize: 13, fontFamily: FONT, cursor: disabled ? "not-allowed" : "pointer", display: "inline-flex", alignItems: "center", gap: 7 };
+function Btn({ children, onClick, disabled, variant = "primary", compact = false, ...rest }) {
+  const base = { padding: compact ? "8px 12px" : "9px 16px", whiteSpace: "nowrap", borderRadius: 10, border: "none", fontWeight: 700, fontSize: 13, fontFamily: FONT, cursor: disabled ? "not-allowed" : "pointer", display: "inline-flex", alignItems: "center", gap: 7 };
   const styles = {
     primary: { background: disabled ? "#D8D6DF" : `linear-gradient(135deg, ${T.primary}, ${T.primaryD})`, color: "#fff" },
     ghost: { background: "#fff", color: T.hi, border: `1px solid ${BORDER}` },
+    danger: { background: disabled ? "#D8D6DF" : "#DC2626", color: "#fff" },
   };
   return <button onClick={onClick} disabled={disabled} style={{ ...base, ...styles[variant] }} {...rest}>{children}</button>;
+}
+
+// Satu pilihan di menu "Export Data" (kartu dengan ikon, judul, penjelasan, badge).
+function ExportOption({ icon, title, desc, badge, onClick }) {
+  return (
+    <button type="button" className="ao-exp-opt" onClick={onClick}>
+      <span className="ao-exp-ico">{icon}</span>
+      <span style={{ flex: 1, minWidth: 0, textAlign: "left", whiteSpace: "normal" }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 13.5, fontWeight: 800, color: T.hi }}>{title}</span>
+          <span className="ao-exp-badge">{badge}</span>
+        </span>
+        <span style={{ display: "block", fontSize: 12, color: T.lo, marginTop: 3, lineHeight: 1.45, fontWeight: 500, whiteSpace: "normal", overflowWrap: "anywhere" }}>{desc}</span>
+      </span>
+    </button>
+  );
 }
 
 function TabBar({ tab, setTab }) {
@@ -162,20 +179,27 @@ const SUB_COLUMNS = [
   { key: "jam", label: "Waktu" },
   { key: "nama_sender", label: "Nama Sender" },
   { key: "nama_outlet", label: "Nama Outlet" },
-  { key: "id_outlet", label: "ID Outlet" },
+  { key: "outlet_id_im3", label: "ID Outlet IM3" },
+  { key: "outlet_id_3id", label: "ID Outlet 3ID" },
   { key: "branch", label: "Branch" },
   { key: "district", label: "Kecamatan" },
   { key: "dse_name", label: "Nama DSE" },
   { key: "social_media", label: "Social Media" },
   { key: "foto_etalase_count", label: "Foto Etalase" },
   { key: "foto_tapak_count", label: "Foto Tampak" },
+  { key: "vis_poster", label: "Poster" },
+  { key: "vis_shopblind", label: "Shopblind" },
+  { key: "vis_flagchain", label: "Flagchain" },
+  { key: "vis_tablemate", label: "Table Mate / Tent Card" },
+  { key: "vis_sticker_etalase", label: "Sticker Etalase" },
+  { key: "visibility_score", label: "Visibility Score" },
   // Availability (step baru di mobile - 4 checklist Ya/Tidak) + GPS - lihat
   // ao_list_submissions: availability_score/completeness/status dihitung
   // server-side persis definisi Download_Guide template.
-  { key: "sp_im3", label: "SP IM3 ≥2" },
-  { key: "sp_3id", label: "SP 3ID ≥2" },
-  { key: "voucher_im3", label: "Voucher IM3 ≥3" },
-  { key: "voucher_3id", label: "Voucher 3ID ≥3" },
+  { key: "sp_im3", label: "Varian SP IM3" },
+  { key: "sp_3id", label: "Varian SP 3ID" },
+  { key: "voucher_im3", label: "Varian Voucher IM3" },
+  { key: "voucher_3id", label: "Varian Voucher 3ID" },
   { key: "availability_score", label: "Availability Score" },
   { key: "completeness", label: "Completeness" },
   { key: "status", label: "Status" },
@@ -195,7 +219,7 @@ const SUB_COLUMNS = [
 // Kolom yang bisa di-filter ala-Excel - yg kontinu/hampir unik per baris
 // (tanggal/jam/jumlah foto/GPS/score) dikecualikan, dropdown filter jadi
 // tidak berguna utk itu (sama alasan Lat/Long di Data Outlet).
-const SUB_FCOLS = SUB_COLUMNS.filter((c) => !["tanggal", "jam", "foto_etalase_count", "foto_tapak_count", "availability_score", "latitude", "longitude", "distance_to_outlet_m", "radius_score"].includes(c.key)).map((c) => [c.key, c.label]);
+const SUB_FCOLS = SUB_COLUMNS.filter((c) => !["foto_etalase_count", "foto_tapak_count", "availability_score", "latitude", "longitude", "distance_to_outlet_m", "radius_score"].includes(c.key)).map((c) => [c.key, c.label]);
 const SUB_FT_T = { line: "#E4E2EA", hi: "#1A1A20", mid: "#4A5568", lo: "#767485", teal: "#ED1C24", tealBg: "#FFF0F0", card: "#FFFFFF", sub: "#F7F7FA" };
 
 function SubmissionBody() {
@@ -206,11 +230,31 @@ function SubmissionBody() {
   const [dateTo, setDateTo] = useState("");
   const [zipping, setZipping] = useState(false);
   const [exporting, setExporting] = useState(false);
+  // Progress nyata utk Export .xlsx & Download ZIP: {kind, label, pct}
+  const [job, setJob] = useState(null);
+  // Menu pilihan Export Data (foto di dalam Excel / link foto saja)
+  const [exportMenu, setExportMenu] = useState(false);
+  const exportMenuRef = useRef(null);
+  useEffect(() => {
+    if (!exportMenu) return undefined;
+    const onDown = (e) => { if (exportMenuRef.current && !exportMenuRef.current.contains(e.target)) setExportMenu(false); };
+    const onKey = (e) => { if (e.key === "Escape") setExportMenu(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [exportMenu]);
   const [preview, setPreview] = useState(null);
   const [previewPhotos, setPreviewPhotos] = useState([]);
   const [filters, setFilters] = useState({});
   const [openCol, setOpenCol] = useState("");
   const [rect, setRect] = useState(null);
+
+  // Select-all + delete massal - Set berisi id submission yg dicentang.
+  // Direset tiap kali hasil filter/search berubah (lihat useEffect bawah)
+  // supaya gak ada centang "nyangkut" ke baris yg sudah gak kelihatan lagi
+  // krn filter berubah.
+  const [selected, setSelected] = useState(() => new Set());
+  const [deleting, setDeleting] = useState(false);
 
   // Radius toleransi (meter) utk "Radius Score" - setting bersama (bukan
   // per-browser) krn disimpan di DB (ao_settings), supaya semua admin CMS
@@ -272,6 +316,58 @@ function SubmissionBody() {
   const filtered = useMemo(() => searched.filter((r) => passesRow(r, filters, SUB_FCOLS, null)), [searched, filters]);
   const anyFilter = SUB_FCOLS.some(([k]) => (filters[k] || []).length);
 
+  // Reset centang begitu daftar yg tampil berubah (search/filter baru,
+  // atau reload) - centang yg "nyangkut" ke baris yg sudah gak kelihatan
+  // (tersaring keluar) bikin delete massal ngehapus baris yg gak keliatan
+  // user, bahaya.
+  useEffect(() => { setSelected(new Set()); }, [filtered.length === 0 ? "empty" : filtered.map((r) => r.id).join(",")]);
+
+  const allSelected = filtered.length > 0 && filtered.every((r) => selected.has(r.id));
+  const toggleSelectAll = () => {
+    setSelected(allSelected ? new Set() : new Set(filtered.map((r) => r.id)));
+  };
+  const toggleSelectOne = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  // Konfirmasi hapus: tombol "Hapus" di toolbar HANYA membuka dialog konfirmasi
+  // (tidak langsung menghapus). Kalau yg dihapus banyak / semua baris yg tampil,
+  // user wajib mengetik "HAPUS" dulu supaya tidak terhapus tanpa sengaja.
+  const [delConfirm, setDelConfirm] = useState(null); // null | { ids, requireType }
+  const [delText, setDelText] = useState("");
+  const deleteSelected = () => {
+    const ids = Array.from(selected);
+    if (!ids.length) return;
+    setDelText("");
+    setDelConfirm({ ids, requireType: allSelected || ids.length >= 10 });
+  };
+  const closeDelConfirm = () => { if (!deleting) setDelConfirm(null); };
+  const confirmDelete = async () => {
+    if (!delConfirm || deleting) return;
+    if (delConfirm.requireType && delText.trim().toUpperCase() !== "HAPUS") return;
+    setDeleting(true);
+    try {
+      await aoDeleteSubmissions(delConfirm.ids);
+      setSelected(new Set());
+      setDelConfirm(null);
+      await load();
+    } catch (e) {
+      alert("Gagal menghapus submission: " + (e.message || e));
+    } finally {
+      setDeleting(false);
+    }
+  };
+  useEffect(() => {
+    if (!delConfirm) return undefined;
+    const onKey = (e) => { if (e.key === "Escape" && !deleting) setDelConfirm(null); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [delConfirm, deleting]);
+
   const uniq = (rows, k) => new Set(rows.map((r) => String(r[k] ?? "").trim()).filter(Boolean)).size;
   const sumCount = (rows, k) => rows.reduce((n, r) => n + Number(r[k] || 0), 0);
   const stats = useMemo(() => {
@@ -298,17 +394,28 @@ function SubmissionBody() {
 
   const downloadZip = async () => {
     setZipping(true);
+    setJob({ kind: "zip", label: "Menyiapkan daftar foto...", pct: 0 });
     try {
       const list = await aoExportList({ dateFrom: dateFrom || null, dateTo: dateTo || null });
       if (!list.length) { alert("Tidak ada foto pada rentang tanggal ini."); return; }
       const { default: JSZip } = await import("jszip");
       const zip = new JSZip();
+      // 0-80% = mengunduh foto (per file yg selesai), 80-100% = mengompres ZIP.
+      let done = 0;
+      setJob({ kind: "zip", label: `Mengunduh foto 0/${list.length}`, pct: 0 });
       await Promise.all(list.map(async (item) => {
         const res = await fetch(item.url);
         const blob = await res.blob();
         zip.file(item.filename, blob);
+        done++;
+        setJob({ kind: "zip", label: `Mengunduh foto ${done}/${list.length}`, pct: Math.round((done / list.length) * 80) });
       }));
-      const blob = await zip.generateAsync({ type: "blob" });
+      setJob({ kind: "zip", label: "Mengompres ZIP...", pct: 80 });
+      let lastPct = -1;
+      const blob = await zip.generateAsync({ type: "blob" }, (m) => {
+        const pct = 80 + Math.round(m.percent * 0.2);
+        if (pct !== lastPct) { lastPct = pct; setJob({ kind: "zip", label: "Mengompres ZIP...", pct }); }
+      });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
       const tag = dateFrom || dateTo ? `_${dateFrom || "awal"}_${dateTo || "akhir"}` : "";
@@ -316,7 +423,7 @@ function SubmissionBody() {
       a.click();
     } catch {
       alert("Gagal membuat file ZIP.");
-    } finally { setZipping(false); }
+    } finally { setZipping(false); setJob(null); }
   };
 
   // Export .xlsx - kolomnya mengikuti "Result Download" di template CMS yg
@@ -331,17 +438,24 @@ function SubmissionBody() {
     ["Waktu", (r) => r.jam],
     ["Nama Sender", (r) => r.nama_sender || ""],
     ["Nama Outlet", (r) => r.nama_outlet || ""],
-    ["ID Outlet", (r) => r.id_outlet || ""],
+    ["ID Outlet IM3", (r) => r.outlet_id_im3 || ""],
+    ["ID Outlet 3ID", (r) => r.outlet_id_3id || ""],
     ["Branch", (r) => r.branch || ""],
     ["Kecamatan", (r) => r.district || ""],
     ["Nama DSE", (r) => r.dse_name || ""],
   ];
   const TEXT_COLS_AFTER_PHOTO = [
     ["Social Media", (r) => r.social_media || ""],
-    ["SP IM3 >= 2 Varian", (r) => (r.sp_im3 == null ? "" : (r.sp_im3 ? "Yes" : "No"))],
-    ["SP 3ID >= 2 Varian", (r) => (r.sp_3id == null ? "" : (r.sp_3id ? "Yes" : "No"))],
-    ["Voucher IM3 >= 3 Varian", (r) => (r.voucher_im3 == null ? "" : (r.voucher_im3 ? "Yes" : "No"))],
-    ["Voucher 3ID >= 3 Varian", (r) => (r.voucher_3id == null ? "" : (r.voucher_3id ? "Yes" : "No"))],
+    ["Visibility Poster", (r) => r.vis_poster ?? ""],
+    ["Visibility Shopblind", (r) => r.vis_shopblind ?? ""],
+    ["Visibility Flagchain", (r) => r.vis_flagchain ?? ""],
+    ["Visibility Table Mate / Tent Card", (r) => r.vis_tablemate ?? ""],
+    ["Visibility Sticker Etalase", (r) => r.vis_sticker_etalase ?? ""],
+    ["Visibility Score", (r) => r.visibility_score ?? ""],
+    ["Varian SP IM3", (r) => r.sp_im3 || ""],
+    ["Varian SP 3ID", (r) => r.sp_3id || ""],
+    ["Varian Voucher IM3", (r) => r.voucher_im3 || ""],
+    ["Varian Voucher 3ID", (r) => r.voucher_3id || ""],
     ["Availability Score", (r) => r.availability_score ?? ""],
     ["Completeness", (r) => r.completeness || ""],
     ["Status", (r) => r.status || ""],
@@ -364,8 +478,12 @@ function SubmissionBody() {
   const PHOTO_CELL_PX = 110; // sisi kotak thumbnail (persegi) di dalam cell
   const PHOTO_ROW_PT = 86;   // tinggi baris (point) - kira2 pas utk thumbnail 110px
 
-  const exportXlsx = useCallback(async () => {
+  // withPhotos=true  -> foto disematkan sbg gambar di dalam cell (lengkap, lebih lambat & file besar)
+  // withPhotos=false -> kolom foto berisi hyperlink "Lihat foto" saja (cepat & file ringan)
+  const exportXlsx = useCallback(async (withPhotos = true) => {
+    setExportMenu(false);
     setExporting(true);
+    setJob({ kind: "xlsx", label: "Menyiapkan file...", pct: 0 });
     try {
       const ExcelJS = (await import("exceljs")).default;
       const wb = new ExcelJS.Workbook();
@@ -379,7 +497,7 @@ function SubmissionBody() {
       ws.addRow(headers).font = { bold: true };
       ws.views = [{ state: "frozen", ySplit: 1 }];
       ws.columns = headers.map((h) => ({
-        width: PHOTO_COLS.some(([label]) => label === h) ? 18 : Math.max(12, Math.min(28, h.length + 4)),
+        width: PHOTO_COLS.some(([label]) => label === h) ? (withPhotos ? 18 : 16) : Math.max(12, Math.min(28, h.length + 4)),
       }));
 
       // Isi baris teks dulu (foto disisipkan belakangan per baris, setelah
@@ -395,9 +513,22 @@ function SubmissionBody() {
           ...TEXT_COLS_AFTER_PHOTO.map(([, get]) => get(r)),
         ];
         const row = ws.addRow(rowVals);
-        row.height = PHOTO_ROW_PT;
+        if (withPhotos) row.height = PHOTO_ROW_PT;
         const rowNumber = row.number; // 1-based (header = baris 1)
 
+        if (!withPhotos) {
+          // Mode link: tidak ada fetch foto sama sekali - cukup hyperlink ke URL publik.
+          PHOTO_COLS.forEach(([, getPhoto], colOffset) => {
+            const p = getPhoto(r);
+            if (!p) return;
+            const url = aoPublicUrl(p.storage_path);
+            if (!url) return;
+            const cell = row.getCell(photoColStart + colOffset + 1);
+            cell.value = { text: "Lihat foto", hyperlink: url };
+            cell.font = { color: { argb: "FF1D4ED8" }, underline: true };
+            cell.alignment = { vertical: "middle" };
+          });
+        } else
         // Download + tempel tiap foto yg ada di baris ini secara paralel.
         await Promise.all(PHOTO_COLS.map(async ([, getPhoto], colOffset) => {
           const p = getPhoto(r);
@@ -418,51 +549,68 @@ function SubmissionBody() {
             });
           } catch { /* 1 foto gagal di-fetch jangan sampai gagalkan export semua baris */ }
         }));
+        // 0-95% = memproses baris + foto, 95-100% = menyusun file .xlsx
+        setJob({ kind: "xlsx", label: `Memproses baris ${i + 1}/${filtered.length}`, pct: Math.round(((i + 1) / filtered.length) * 95) });
       }
 
+      setJob({ kind: "xlsx", label: "Menyusun file .xlsx...", pct: 95 });
       const buf = await wb.xlsx.writeBuffer();
       const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       const stamp = new Date().toISOString().slice(0, 10);
-      a.download = `MartaHub_DataSubmission_${stamp}.xlsx`;
+      a.download = `MartaHub_DataSubmission${withPhotos ? "" : "_LinkFoto"}_${stamp}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
-    } finally { setExporting(false); }
+    } finally { setExporting(false); setJob(null); }
   }, [filtered]);
 
   return (
     <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 14, overflow: "hidden" }}>
-      <div style={{ padding: "13px 16px", borderBottom: `1px solid ${BORDER}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <div style={{ fontWeight: 800, fontSize: 14 }}>Data Submission</div>
-        <div style={{ position: "relative", flex: "1 1 200px", maxWidth: 260 }}>
-          <Search size={14} color={T.lo} style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)" }} />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari ID/Nama Outlet/Sender..."
-            style={{ width: "100%", boxSizing: "border-box", padding: "8px 11px 8px 32px", borderRadius: 9, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: FONT }} />
+      <style>{`
+        .ao-tb-wrap { container-type: inline-size; }
+        .ao-toolbar { padding: 12px 16px; border-bottom: 1px solid ${BORDER}; display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+        @container (max-width: 960px) { .ao-toolbar { flex-wrap: wrap; } }
+        .ao-pill { display: flex; align-items: center; gap: 6px; padding: 0 10px; height: 38px; border-radius: 10px; border: 1px solid ${BORDER}; background: #fff; box-sizing: border-box; }
+        .ao-pill:focus-within { border-color: ${T.primary}; box-shadow: 0 0 0 3px ${T.primaryBg}; }
+        .ao-pill input { border: none; outline: none; background: transparent; font-size: 12.5px; font-family: ${FONT}; color: ${T.hi}; min-width: 0; }
+        .ao-exp-menu { position: absolute; right: 0; top: calc(100% + 8px); width: 340px; z-index: 60; background: #fff; border: 1px solid ${BORDER}; border-radius: 14px; box-shadow: 0 18px 44px rgba(20,16,40,.16), 0 2px 8px rgba(20,16,40,.06); padding: 8px; animation: aoPop .14s ease-out; }
+        @keyframes aoPop { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }
+        .ao-exp-opt { width: 100%; display: flex; gap: 12px; align-items: flex-start; padding: 11px 12px; border: 1px solid transparent; background: transparent; border-radius: 11px; cursor: pointer; font-family: ${FONT}; transition: background .12s, border-color .12s; white-space: normal; text-align: left; box-sizing: border-box; overflow: hidden; }
+        .ao-exp-opt:hover { background: #F7F7FA; border-color: ${BORDER}; }
+        .ao-exp-ico { width: 36px; height: 36px; flex: none; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; background: ${T.primaryBg}; color: ${T.primary}; }
+        .ao-exp-badge { font-size: 10px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; padding: 2px 7px; border-radius: 99px; background: #F7F7FA; color: ${T.mid}; border: 1px solid ${BORDER}; }
+      `}</style>
+      <div className="ao-tb-wrap">
+      <div className="ao-toolbar">
+        <div style={{ fontWeight: 800, fontSize: 14, whiteSpace: "nowrap", marginRight: 2 }}>Data Submission</div>
+        <div className="ao-pill" style={{ flex: "1 1 110px", minWidth: 96, maxWidth: 220 }}>
+          <Search size={14} color={T.lo} style={{ flex: "none" }} />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari outlet / sender..." style={{ width: "100%" }} />
         </div>
-        <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={{ padding: "8px 10px", borderRadius: 9, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: FONT }} />
-        <span style={{ color: T.lo, fontSize: 12 }}>s/d</span>
-        <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={{ padding: "8px 10px", borderRadius: 9, border: `1px solid ${BORDER}`, fontSize: 13, fontFamily: FONT }} />
-        {anyFilter && <button onClick={() => setFilters({})} style={{ border: "none", background: "transparent", cursor: "pointer", color: T.primary, fontSize: 12, fontWeight: 700 }}>Hapus filter</button>}
+        <div className="ao-pill" style={{ flex: "none", padding: "0 6px" }}>
+          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} style={{ width: 114 }} aria-label="Dari tanggal" />
+          <span style={{ color: T.lo, fontSize: 11.5 }}>s/d</span>
+          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} style={{ width: 114 }} aria-label="Sampai tanggal" />
+        </div>
+        {anyFilter && <button onClick={() => setFilters({})} style={{ border: "none", background: "transparent", cursor: "pointer", color: T.primary, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap" }}>Hapus filter</button>}
 
         {/* Setting radius toleransi "Radius Score" - disimpan di DB
             (ao_settings) jadi berlaku global utk semua admin, bukan cuma
             browser ini. radiusInput cuma draft; radius_score di tabel baru
             ikut berubah setelah tombol Simpan diklik (load() dipanggil
             ulang supaya ao_list_submissions re-hitung pakai radius baru). */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 9, background: T.sub, border: `1px solid ${BORDER}` }}>
-          <span style={{ fontSize: 11.5, color: T.lo, fontWeight: 700, whiteSpace: "nowrap" }}>Radius Toleransi</span>
-          <input
-            type="number" min={1} value={radiusInput} onChange={(e) => setRadiusInput(e.target.value)}
-            style={{ width: 62, padding: "5px 7px", borderRadius: 7, border: `1px solid ${BORDER}`, fontSize: 12.5, fontFamily: FONT }}
-          />
+        <div className="ao-pill" style={{ flex: "none", background: "#F7F7FA", paddingRight: 5 }} title="Radius Toleransi (meter) utk Radius Score">
+          <span style={{ fontSize: 11.5, color: T.lo, fontWeight: 700, whiteSpace: "nowrap" }}>Radius</span>
+          <input type="number" min={1} value={radiusInput} onChange={(e) => setRadiusInput(e.target.value)} style={{ width: 44, fontWeight: 700 }} />
           <span style={{ fontSize: 11.5, color: T.lo }}>m</span>
           <button
             onClick={saveRadius}
             disabled={savingRadius || Number(radiusInput) === radiusM}
             style={{
-              border: "none", borderRadius: 7, padding: "5px 10px", fontSize: 11.5, fontWeight: 800, fontFamily: FONT, cursor: "pointer",
+              border: "none", borderRadius: 7, padding: "5px 9px", fontSize: 11.5, fontWeight: 800, fontFamily: FONT,
+              cursor: savingRadius || Number(radiusInput) === radiusM ? "default" : "pointer",
               background: Number(radiusInput) === radiusM ? BORDER : T.primary, color: Number(radiusInput) === radiusM ? T.lo : "#fff",
             }}
           >
@@ -471,20 +619,64 @@ function SubmissionBody() {
         </div>
 
         {loading && (
-          <span style={{ fontSize: 11.5, color: T.primary, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 11.5, color: T.primary, fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap" }}>
             <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> Memuat...
           </span>
         )}
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          <Btn variant="ghost" onClick={load}><RefreshCw size={13} /></Btn>
-          <Btn variant="ghost" onClick={exportXlsx} disabled={filtered.length === 0 || exporting}>
-            {exporting ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={14} />} Export .xlsx
-          </Btn>
-          <Btn onClick={downloadZip} disabled={zipping}>
-            {zipping ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Package size={14} />} Download ZIP
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flex: "none" }}>
+          {selected.size > 0 && (
+            <Btn compact variant="danger" onClick={deleteSelected} disabled={deleting}>
+              {deleting ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={14} />} Hapus ({selected.size})
+            </Btn>
+          )}
+          <Btn compact variant="ghost" onClick={load} title="Muat ulang" aria-label="Muat ulang"><RefreshCw size={13} /></Btn>
+
+          {/* Export Data - pilih: foto di dalam Excel atau cukup link foto */}
+          <div ref={exportMenuRef} style={{ position: "relative" }}>
+            <Btn compact variant="ghost" onClick={() => setExportMenu((v) => !v)} disabled={filtered.length === 0 || exporting} aria-haspopup="menu" aria-expanded={exportMenu}>
+              {exporting ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={14} />}
+              Export Data{exporting && job?.kind === "xlsx" ? ` ${job.pct}%` : ""}
+              {!exporting && <ChevronDown size={13} style={{ transition: "transform .15s", transform: exportMenu ? "rotate(180deg)" : "none" }} />}
+            </Btn>
+            {exportMenu && (
+              <div className="ao-exp-menu" role="menu">
+                <div style={{ padding: "6px 10px 8px", fontSize: 11, fontWeight: 800, color: T.lo, textTransform: "uppercase", letterSpacing: ".04em" }}>
+                  Export {filtered.length.toLocaleString("id-ID")} baris ke .xlsx
+                </div>
+                <ExportOption
+                  icon={<Images size={18} />} badge="Lengkap" title="Dengan foto di Excel"
+                  desc="Foto ditampilkan langsung di dalam cell. Proses lebih lama dan ukuran file lebih besar."
+                  onClick={() => exportXlsx(true)}
+                />
+                <ExportOption
+                  icon={<Link2 size={18} />} badge="Cepat" title="Link foto saja"
+                  desc="Kolom foto berisi link yang bisa diklik. Proses cepat dan file ringan."
+                  onClick={() => exportXlsx(false)}
+                />
+              </div>
+            )}
+          </div>
+
+          <Btn compact onClick={downloadZip} disabled={zipping}>
+            {zipping ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Package size={14} />}
+            Download Foto (ZIP){zipping && job?.kind === "zip" ? ` ${job.pct}%` : ""}
           </Btn>
         </div>
       </div>
+      </div>
+
+      {/* Bar progress nyata utk Export .xlsx / Download ZIP */}
+      {job && (
+        <div style={{ padding: "10px 16px", borderBottom: `1px solid ${BORDER}`, background: T.sub }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700, color: T.mid, marginBottom: 6 }}>
+            <span>{job.kind === "zip" ? "Download Foto (ZIP)" : "Export Data"} - {job.label}</span>
+            <span>{job.pct}%</span>
+          </div>
+          <div style={{ height: 6, borderRadius: 99, background: BORDER, overflow: "hidden" }}>
+            <div style={{ width: `${job.pct}%`, height: "100%", background: T.primary, transition: "width .2s" }} />
+          </div>
+        </div>
+      )}
 
       {/* Ringkasan unique value per kolom (mengikuti filter + search aktif) */}
       <div style={{ display: "grid", gridTemplateColumns: `repeat(${stats.length}, 1fr)`, gap: 1, background: BORDER, borderBottom: `1px solid ${BORDER}` }}>
@@ -502,6 +694,10 @@ function SubmissionBody() {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5, whiteSpace: "nowrap" }}>
           <thead>
             <tr style={{ background: "#F7F9FC", color: T.lo }}>
+              <th style={{ padding: "9px 10px", width: 1, textAlign: "center", verticalAlign: "middle" }}>
+                <input type="checkbox" checked={allSelected} onChange={toggleSelectAll}
+                  style={{ display: "block", margin: "0 auto", width: 15, height: 15, cursor: "pointer" }} aria-label="Pilih semua" />
+              </th>
               {SUB_COLUMNS.map((c) => (
                 SUB_FCOLS.some(([k]) => k === c.key) ? (
                   <FilterTh key={c.key} t={SUB_FT_T} label={c.label} colKey={c.key} filters={filters}
@@ -515,24 +711,33 @@ function SubmissionBody() {
           </thead>
           <tbody>
             {loading && (
-              <tr><td colSpan={SUB_COLUMNS.length + 1} style={{ padding: 34, textAlign: "center", color: T.lo }}>
+              <tr><td colSpan={SUB_COLUMNS.length + 2} style={{ padding: 34, textAlign: "center", color: T.lo }}>
                 <Loader2 size={20} style={{ animation: "spin 1s linear infinite" }} />
               </td></tr>
             )}
             {!loading && filtered.length === 0 && (
-              <tr><td colSpan={SUB_COLUMNS.length + 1} style={{ padding: 34, textAlign: "center", color: T.lo, fontSize: 13 }}>
+              <tr><td colSpan={SUB_COLUMNS.length + 2} style={{ padding: 34, textAlign: "center", color: T.lo, fontSize: 13 }}>
                 {rawRows.length === 0 ? "Belum ada submission." : "Tidak ada data yang cocok filter/pencarian."}
               </td></tr>
             )}
             {!loading && filtered.map((s) => (
-              <tr key={s.id} style={{ borderTop: `1px solid ${BORDER}` }}>
+              <tr key={s.id} style={{ borderTop: `1px solid ${BORDER}`, background: selected.has(s.id) ? "#FEF2F2" : undefined }}>
+                <td style={{ padding: "8px 10px", textAlign: "center", verticalAlign: "middle" }}>
+                  <input type="checkbox" checked={selected.has(s.id)} onChange={() => toggleSelectOne(s.id)}
+                    style={{ display: "block", margin: "0 auto", width: 15, height: 15, cursor: "pointer" }} aria-label={`Pilih ${s.nama_outlet || s.id_outlet || ""}`} />
+                </td>
                 {SUB_COLUMNS.map((c) => {
                   const v = s[c.key];
-                  const mono = c.key === "id_outlet";
-                  const isBool = ["sp_im3", "sp_3id", "voucher_im3", "voucher_3id"].includes(c.key);
+                  const mono = c.key === "outlet_id_im3" || c.key === "outlet_id_3id";
+                  // Sebelumnya boolean Ya/Tidak - sekarang slab jumlah varian (text:
+                  // "0-1"/"2-4"/"5++" utk SP, "0-2"/"3-5"/"6++" utk Voucher).
+                  // Skor per slab dihitung server-side (lihat kolom
+                  // availability_score), di sini cuma tampilkan slab apa
+                  // adanya sbg badge netral.
+                  const isSlab = ["sp_im3", "sp_3id", "voucher_im3", "voucher_3id"].includes(c.key);
                   let display = v == null || v === "" ? "-" : String(v);
                   let color = T.mid;
-                  if (isBool && v != null) { display = v ? "Ya" : "Tidak"; color = v ? "#16A34A" : "#DC2626"; }
+                  if (isSlab && v != null) { color = T.primary; }
                   if (c.key === "status") color = v === "Submitted" ? "#16A34A" : "#C2760C";
                   if (c.key === "completeness") color = v === "Complete" ? "#16A34A" : "#C2760C";
                   // Jarak ke outlet - tandai merah+bold kalau jauh (>200m,
@@ -542,11 +747,18 @@ function SubmissionBody() {
                     display = `${Math.round(v).toLocaleString("id-ID")} m`;
                     color = v > 200 ? "#DC2626" : v <= 50 ? "#16A34A" : T.mid;
                   }
+                  if (c.key === "visibility_score" && v != null) {
+                    color = v >= 5 ? "#16A34A" : v === 0 ? "#DC2626" : T.primary;
+                  }
+                  if (c.key.startsWith("vis_") && v != null) {
+                    display = String(v);
+                    color = v === 1 ? "#16A34A" : "#DC2626";
+                  }
                   if (c.key === "radius_score" && v != null) {
                     display = v === 1 ? "Dalam Radius" : "Di Luar Radius";
                     color = v === 1 ? "#16A34A" : "#DC2626";
                   }
-                  return <td key={c.key} style={{ padding: "8px 12px", color, fontFamily: mono ? "monospace" : undefined, fontWeight: isBool || c.key === "status" || c.key === "completeness" || c.key === "radius_score" ? 700 : undefined }}>{display}</td>;
+                  return <td key={c.key} style={{ padding: "8px 12px", color, fontFamily: mono ? "monospace" : undefined, fontWeight: isSlab || c.key === "status" || c.key === "completeness" || c.key === "radius_score" || c.key === "visibility_score" || c.key.startsWith("vis_") ? 700 : undefined }}>{display}</td>;
                 })}
                 <td style={{ padding: "8px 12px" }}>
                   <Btn variant="ghost" onClick={() => openPreview(s)}>Lihat</Btn>
@@ -556,6 +768,61 @@ function SubmissionBody() {
           </tbody>
         </table>
       </div>
+
+      {delConfirm && (() => {
+        const n = delConfirm.ids.length;
+        const idSet = new Set(delConfirm.ids);
+        const sample = rawRows.filter((r) => idSet.has(r.id)).slice(0, 5);
+        const canDelete = !delConfirm.requireType || delText.trim().toUpperCase() === "HAPUS";
+        return (
+          <div onClick={closeDelConfirm} style={{ position: "fixed", inset: 0, background: "rgba(13,17,23,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1100, padding: 20 }}>
+            <div onClick={(e) => e.stopPropagation()} role="alertdialog" aria-modal="true" aria-labelledby="ao-del-title"
+              style={{ background: "#fff", borderRadius: 16, width: "100%", maxWidth: 460, boxShadow: "0 24px 60px rgba(20,16,40,.28)", overflow: "hidden", fontFamily: FONT }}>
+              <div style={{ padding: "20px 22px 4px", display: "flex", gap: 14, alignItems: "flex-start" }}>
+                <div style={{ width: 40, height: 40, flex: "none", borderRadius: 12, background: "#FEE2E2", color: "#DC2626", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Trash2 size={20} />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div id="ao-del-title" style={{ fontWeight: 800, fontSize: 16, color: T.hi }}>
+                    Hapus {n.toLocaleString("id-ID")} submission{allSelected ? " (semua yang tampil)" : ""}?
+                  </div>
+                  <div style={{ fontSize: 13, color: T.mid, marginTop: 4, lineHeight: 1.5 }}>
+                    Data submission beserta <b>semua fotonya</b> akan terhapus permanen dari database dan storage. Tindakan ini <b>tidak bisa dibatalkan</b>.
+                  </div>
+                </div>
+              </div>
+              {sample.length > 0 && (
+                <div style={{ margin: "14px 22px 0", border: `1px solid ${BORDER}`, borderRadius: 10, background: "#F7F7FA", padding: "8px 12px" }}>
+                  {sample.map((r) => (
+                    <div key={r.id} style={{ fontSize: 12.5, color: T.mid, padding: "3px 0", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      <b style={{ color: T.hi }}>{r.nama_outlet || "-"}</b> · {r.id_outlet || "-"} · {r.tanggal}
+                    </div>
+                  ))}
+                  {n > sample.length && <div style={{ fontSize: 12, color: T.lo, padding: "3px 0", fontWeight: 700 }}>+ {(n - sample.length).toLocaleString("id-ID")} lainnya</div>}
+                </div>
+              )}
+              {delConfirm.requireType && (
+                <div style={{ padding: "14px 22px 0" }}>
+                  <label style={{ display: "block", fontSize: 12.5, color: T.mid, marginBottom: 6 }}>
+                    Ketik <b style={{ color: "#DC2626", letterSpacing: ".04em" }}>HAPUS</b> untuk melanjutkan
+                  </label>
+                  <input autoFocus value={delText} onChange={(e) => setDelText(e.target.value)} disabled={deleting}
+                    onKeyDown={(e) => { if (e.key === "Enter") confirmDelete(); }}
+                    placeholder="HAPUS" autoComplete="off" spellCheck={false}
+                    style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", borderRadius: 10, border: `1px solid ${canDelete ? "#DC2626" : BORDER}`, fontSize: 14, fontWeight: 700, letterSpacing: ".06em", fontFamily: FONT, outline: "none" }} />
+                </div>
+              )}
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, padding: "18px 22px 20px" }}>
+                <Btn variant="ghost" onClick={closeDelConfirm} disabled={deleting}>Batal</Btn>
+                <Btn variant="danger" onClick={confirmDelete} disabled={!canDelete || deleting}>
+                  {deleting ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={14} />}
+                  {deleting ? "Menghapus..." : `Hapus ${n.toLocaleString("id-ID")} Submission`}
+                </Btn>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {preview && (
         <div onClick={() => setPreview(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
