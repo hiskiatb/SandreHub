@@ -883,13 +883,15 @@ function RowMenu({ items, t, label = "More actions" }) {
 // RLS membatasi partner ke Payment ID miliknya. withMeta (SPM/IOH): total dari metadata Partner Letters.
 function usePaymentRows(segment, docs, { enabled = true, withMeta = false } = {}) {
   const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
   const byRef = docs?.byRef;
   useEffect(() => {
     if (!enabled) return undefined;
     let alive = true;
     (async () => {
       let list = [];
-      try { list = await fetchDraftDocs(segment); } catch { list = []; }
+      try { list = await fetchDraftDocs(segment); if (alive) setErr(""); }
+      catch (e) { list = []; if (alive) setErr(errMsg(e)); }
       const m = new Map();
       list.filter((d) => isPaymentRef(d.ref_id)).forEach((d) => {
         const k = `${d.partner_key}|${d.ref_id}`;
@@ -914,7 +916,7 @@ function usePaymentRows(segment, docs, { enabled = true, withMeta = false } = {}
     })();
     return () => { alive = false; };
   }, [segment, byRef, enabled, withMeta]);
-  return rows;
+  return { rows, err };
 }
 
 export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmount, onGoLetters, t }) {
@@ -943,7 +945,7 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
   const own = ownerLabel(segment);
   const isOwnerRole = role === "finance_mpx" || role === "agency";
   const payMode = isSPM && refMode === "pay";
-  const payRows = usePaymentRows(segment, docs, { enabled: payMode || isOwnerRole, withMeta: payMode });
+  const { rows: payRows, err: payErr } = usePaymentRows(segment, docs, { enabled: payMode || isOwnerRole, withMeta: payMode });
   const REF = payMode ? "Payment ID" : DOC_REF_LABEL;
   const setMode = (m) => { setRefMode(m); setSel(new Set()); setPage(1); setQ(""); };
   const openDrawer = (key, slot = null) => { setOpenSlot(slot); setOpenKey(key); };
@@ -1142,9 +1144,10 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
           <span>Upload your owner’s signature once, then use “Sign as partner (owner)” on a BAST.</span>
         </div>
       )}
-      {isOwnerRole && <MyPayments rows={payRows} segment={segment} docs={docs} onOpen={(r, slot) => setOpenPay({ ...r, slot })} t={t} />}
+      {isOwnerRole && <MyPayments rows={payRows} err={payErr} segment={segment} docs={docs} onOpen={(r, slot) => setOpenPay({ ...r, slot })} t={t} />}
       {isOwnerRole && <div style={{ margin: "4px 20px 8px", fontSize: 12.5, fontWeight: 700, color: t.ink }}>Earlier payments by {DOC_REF_LABEL}</div>}
 
+      {payMode && payErr && <div role="alert" style={{ margin: "0 20px 12px", fontSize: 12, padding: "8px 12px", borderRadius: 10, color: t.bad, background: t.badBg, border: `1px solid ${t.badBd}` }}>Unable to load Payment IDs: {payErr}</div>}
       {/* hints */}
       {(hint || noRefCount > 0 || docs?.error) && (
         <div style={{ padding: "0 20px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
@@ -1837,7 +1840,8 @@ function OwnerSignatureModal({ onClose, t }) {
 }
 
 // Partner: "My payments" — 1 kartu per Payment ID milik sendiri (4 slot: BAST & Surat dari SPM, Invoice & Faktur Pajak dari partner)
-function MyPayments({ rows, segment, docs, onOpen, t }) {
+function MyPayments({ rows, err, segment, docs, onOpen, t }) {
+  if (err) return <div role="alert" style={{ margin: "0 20px 12px", fontSize: 12, padding: "8px 12px", borderRadius: 10, color: t.bad, background: t.badBg, border: `1px solid ${t.badBd}` }}>Unable to load your payments: {err}</div>;
   if (!rows) return <div style={{ margin: "0 20px 12px" }}><Skel t={t} h={70} r={12} /></div>;
   const cards = rows.filter((r) => canWritePartner(docs?.profile, r.partner, segment));
   return (

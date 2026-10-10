@@ -1347,13 +1347,15 @@ function BulkSignedUpload({ meta, known, index, onSaved, onDone, doneLabel = "Vi
         </button>
         <span style={{ fontSize: 11.5, color: t.muted }}>{existing == null ? "Loading payments…" : `${pool.length} payment(s) available for ${per?.label || "this period"}${proposals.size ? ` · ${proposals.size} new from file names` : ""}`}</span>
         <input ref={fileRef} type="file" accept=".pdf,.zip,application/pdf,application/zip" multiple hidden onChange={(e) => { const l = Array.from(e.target.files || []); e.target.value = ""; addFiles(l); }} />
-        <button className="ppd-f ppd-act" style={{ ...btnStyle(t, "primary", busy || !per), marginLeft: "auto" }} disabled={busy || !per} onClick={() => fileRef.current?.click()}>⬆ Add PDFs or ZIP</button>
+        <span title={!per ? "Choose the period first." : existing == null || known == null ? "Loading existing payments…" : undefined} style={{ marginLeft: "auto", display: "inline-flex" }}>
+          <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || !per || existing == null || known == null)} disabled={busy || !per || existing == null || known == null} onClick={() => fileRef.current?.click()}>⬆ Add PDFs or ZIP</button>
+        </span>
       </div>
       {reading && <div aria-live="polite" style={{ fontFamily: MONO, fontSize: 11, color: t.muted }}>{reading}</div>}
 
       {!items.length ? (
-        <div role="button" tabIndex={0} className="ppd-f" onClick={() => !busy && per && fileRef.current?.click()} onKeyDown={(e) => { if (e.key === "Enter") fileRef.current?.click(); }}
-          onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); if (!busy) addFiles(Array.from(e.dataTransfer?.files || [])); }}
+        <div role="button" tabIndex={0} className="ppd-f" onClick={() => !busy && per && existing != null && known != null && fileRef.current?.click()} onKeyDown={(e) => { if (e.key === "Enter" && existing != null && known != null) fileRef.current?.click(); }}
+          onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); if (!busy && per && existing != null && known != null) addFiles(Array.from(e.dataTransfer?.files || [])); }}
           style={{ border: `2px dashed ${t.line2}`, borderRadius: 16, padding: "36px 16px", textAlign: "center", background: t.surf2, color: t.muted, fontSize: 12.5, cursor: "pointer" }}>
           <div style={{ color: TEAL, display: "inline-flex" }}><IcoUp /></div>
           <div style={{ fontSize: 14, fontWeight: 700, color: t.ink, marginTop: 4 }}>Drop the signed BAST and Letter PDFs (or a ZIP) here</div>
@@ -1497,6 +1499,7 @@ function UploadOnlyPayment({ meta, partnerNames = [], known, onSaved, onDone, t 
   const pid = manual || autoPid;
   const owner = known?.get(pid) || "";
   const errs = [];
+  if (known == null) errs.push("Loading existing payments…");
   if (!f.partner.trim()) errs.push("Choose the partner.");
   if (!per) errs.push("Choose the period.");
   if (manual && !isPaymentRef(manual)) errs.push("PAYMENT_ID must follow PAY-YYYYMM-TYPE-CODE-NN.");
