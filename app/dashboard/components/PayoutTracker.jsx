@@ -1703,7 +1703,7 @@ function DashScreen(props) {
         <>
           {activeTab==="dash" && <DashTab {...props} t={t} w={w}/>}
           {activeTab==="raw"  && <RawTab  {...props} t={t} w={w} docs={docs}/>}
-          {activeTab==="letters" && docs.enabled && docs.canManageApprovals && <PartnerLettersTab docs={docs} t={t}/>}
+          {activeTab==="letters" && docs.enabled && docs.canManageApprovals && <PartnerLettersTab docs={docs} partnerNames={src==="partner"?[...new Set(docPOsAll.map(p=>p.partner).filter(Boolean))].sort():[]} t={t}/>}
           {activeTab==="docs" && docs.enabled && <PoDocsTab pos={docPOs} allPos={docPOsAll} segment={src} docs={docs} noRefCount={docNoRef} fmtAmount={n=>fmtMoney(n)} t={t}/>}
         </>
       )}

@@ -14,7 +14,7 @@ import {
   downloadMergedPdf, downloadMergedZip, downloadDoc, downloadDocsZip, refZipName, friendlyError, uploaderLabel,
   validateFile, partnerKey,
   APPROVAL_DOC_TYPES, APPROVAL_ENABLED, approvalKey, approvalStatus, fetchApprovals, approvalApi,
-  isDraftRef, refDisplay, isPaymentRef, parsePaymentRef, fetchDraftDocs,
+  isDraftRef, refDisplay, isPaymentRef, parsePaymentRef, fetchDraftDocs, isSpmSigned, spmSignedName,
 } from "../../../lib/payoutPartnerDocs";
 import { fetchLettersIndex, readJsonFile } from "../../../lib/payoutPartnerLetters";
 import { readOwnerSig, writeOwnerSig, isOwnerSigned, ownerSignedName, stampOwnerSignature, fetchDocBytes, imageToDataUrl } from "../../../lib/payoutPartnerSign";
@@ -414,6 +414,7 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
                 approval={docs?.approvals?.[approvalKey(segment, partnerName, refId, dt.key)]} approvalsAvailable={docs?.approvalsAvailable !== false}
                 isSPM={!!docs?.canManageApprovals} onApprovalChanged={docsRefresh}
                 ownerSign={dt.key === "bast" && canWrite && ["finance_mpx", "agency"].includes(docs?.profile?.role)}
+                spmSignedUpload={!!docs?.canMerge && isPaymentRef(refId) && APPROVAL_DOC_TYPES.includes(dt.key)}
                 onBusy={(d) => setUploading((x) => Math.max(0, x + d))} onChanged={changed} lockAll={!!merge}
                 focusTick={focus.key === dt.key ? focus.n : 0} t={t} />
             ))}
@@ -460,7 +461,7 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
   );
 }
 
-function SlotCard({ no, dt, files, canWrite: canWriteOwner, refId, partnerName, segment, title, amountText, approval, approvalsAvailable, isSPM, onApprovalChanged, onBusy, onChanged, lockAll, focusTick = 0, ownerSign = false, t }) {
+function SlotCard({ no, dt, files, canWrite: canWriteOwner, refId, partnerName, segment, title, amountText, approval, approvalsAvailable, isSPM, onApprovalChanged, onBusy, onChanged, lockAll, focusTick = 0, ownerSign = false, spmSignedUpload = false, t }) {
   const apprSt = approvalStatus(approval);
   const approvedLock = apprSt === "approved";
   // Dokumen yang sudah approved terkunci: tidak bisa upload/ganti/hapus sampai SPM mencabut approval
@@ -519,8 +520,8 @@ function SlotCard({ no, dt, files, canWrite: canWriteOwner, refId, partnerName, 
   };
 
   const onPick = (replace) => (e) => { const f = e.target.files; runUpload(f, replace); e.target.value = ""; };
-  const onDrop = (e) => { e.preventDefault(); setDrag(false); if (canWrite) runUpload(e.dataTransfer?.files, false); };
-  const onDragOver = (e) => { if (!canWrite || locked) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; if (!drag) setDrag(true); };
+  const onDrop = (e) => { e.preventDefault(); setDrag(false); if (canWrite && !spmSignedUpload) runUpload(e.dataTransfer?.files, false); };
+  const onDragOver = (e) => { if (!canWrite || spmSignedUpload || locked) return; e.preventDefault(); e.dataTransfer.dropEffect = "copy"; if (!drag) setDrag(true); };
 
   const onOpen = async (d) => {
     // buka tab dulu (hindari popup blocker), lalu isi URL
@@ -566,13 +567,40 @@ function SlotCard({ no, dt, files, canWrite: canWriteOwner, refId, partnerName, 
       && !window.confirm("A signed copy of this BAST already exists. Create another signed copy?")) return;
     setSigning(d.id); onBusy?.(1);
     try {
-      const out = await stampOwnerSignature(await fetchDocBytes(d.storage_path), own);
+      let out;
+      try { out = await stampOwnerSignature(await fetchDocBytes(d.storage_path), own); }
+      catch (e) {
+        if (/No partner signature area/.test(e.message || "")) { toast(t, "This BAST was uploaded already signed by SPM — no owner signature is needed here.", "info"); onBusy?.(-1); setSigning(null); return; }
+        throw e;
+      }
       const r = await uploadSlot({ files: [new File([out], ownerSignedName(d.file_name), { type: "application/pdf" })], partnerName, refId, docType: dt.key, segment, replace: false });
       if (r.errors.length) throw new Error(r.errors[0].message);
       toast(t, r.ok.length ? "Signed copy saved. The original BAST is kept." : "This signed copy already exists.", r.ok.length ? "ok" : "info");
       onChanged();
     } catch (e) { toast(t, `Unable to sign: ${errMsg(e)}`, "err"); }
     onBusy?.(-1); setSigning(null);
+  };
+
+  // SPM: upload BAST / Surat yang sudah ditandatangani (mis. setelah approval manual) → versi terbaru slot.
+  // Selalu MENAMBAH file (file lama, termasuk yang approved & terkunci, tetap tersimpan sebagai arsip).
+  const signedRef = useRef(null);
+  const [spmUp, setSpmUp] = useState(false);
+  const onSignedPick = async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    if (fileKind(f.name, f.type) !== "pdf") { toast(t, "Please upload the signed document as a PDF.", "err"); return; }
+    const bad = validateFile(f);
+    if (bad) { toast(t, bad, "err"); return; }
+    setSpmUp(true); onBusy?.(1);
+    try {
+      const name = spmSignedName(dt.key, refId, partnerName);
+      const r = await uploadSlot({ files: [new File([f], name, { type: "application/pdf" })], partnerName, refId, docType: dt.key, segment, replace: false });
+      if (r.errors.length) throw new Error(r.errors[0].message);
+      toast(t, `Signed ${dt.key === "bast" ? "BAST" : "Notification Letter"} uploaded — it is now the version used for merging and shown to the partner.`);
+      onChanged();
+    } catch (err) { toast(t, `Upload failed: ${errMsg(err)}`, "err"); }
+    onBusy?.(-1); setSpmUp(false);
   };
 
   return (
@@ -593,7 +621,14 @@ function SlotCard({ no, dt, files, canWrite: canWriteOwner, refId, partnerName, 
           {apprSt && <div style={{ marginTop: 4 }}><ApprovalBadge status={apprSt} long t={t} /></div>}
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
-          {canWrite && (
+          {spmSignedUpload && <>
+            <input ref={signedRef} type="file" accept=".pdf,application/pdf" hidden onChange={onSignedPick} />
+            <button className="ppd-f ppd-act" style={btnStyle(t, "primary", spmUp || !!lockAll, true)} disabled={spmUp || !!lockAll} onClick={() => signedRef.current?.click()}
+              title="Upload the signed PDF (e.g. after manual approval). It becomes the latest version; older files are kept as an archive.">
+              ⬆ {spmUp ? "Uploading…" : `Upload signed ${dt.key === "bast" ? "BAST" : "Letter"}`}
+            </button>
+          </>}
+          {canWrite && !spmSignedUpload && (
             <button ref={pickBtnRef} className="ppd-f" style={btnStyle(t, "primary", locked, true)} disabled={locked} onClick={() => addRef.current?.click()}
               title={`Select ${dt.label} files (PDF/JPG/PNG, max ${MAX_FILE_BYTES / 1048576} MB)`}>
               ⬆ {has ? "Add files" : "Select files"}
@@ -604,7 +639,7 @@ function SlotCard({ no, dt, files, canWrite: canWriteOwner, refId, partnerName, 
               title={files.length > 1 ? `Download ${files.length} ${dt.label} files as ZIP` : `Download ${files[0].file_name}`}>
               <IcoDownload />{dl === "all" ? "…" : files.length > 1 ? `Download all (${files.length})` : "Download"}
             </button>
-            {canWrite && <button className="ppd-f" style={btnStyle(t, "outline", locked, true)} disabled={locked} onClick={() => repRef.current?.click()} title={`Remove all ${dt.label} files and replace them with new ones (e.g. the e-signed BAST)`}>Replace all</button>}
+            {canWrite && !spmSignedUpload && <button className="ppd-f" style={btnStyle(t, "outline", locked, true)} disabled={locked} onClick={() => repRef.current?.click()} title={`Remove all ${dt.label} files and replace them with new ones (e.g. the e-signed BAST)`}>Replace all</button>}
           </>}
         </div>
       </div>
@@ -637,6 +672,7 @@ function SlotCard({ no, dt, files, canWrite: canWriteOwner, refId, partnerName, 
                 <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !!signing || locked, true)} disabled={!!signing || locked} onClick={() => onOwnerSign(d)}
                   title="Add your owner signature in the PIHAK KEDUA column. A signed copy is saved; the original is kept.">✍ {signing === d.id ? "Signing…" : "Sign as partner (owner)"}</button>
               )}
+              {isSpmSigned(d.file_name) && <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", padding: "2px 6px", borderRadius: 6, color: MAGENTA, background: `${MAGENTA}12`, border: `1px solid ${MAGENTA}30`, whiteSpace: "nowrap" }}>Uploaded by SPM (signed)</span>}
               {isOwnerSigned(d.file_name) && <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", padding: "2px 6px", borderRadius: 6, color: t.goodDark || TEAL_D, background: t.goodBg, border: `1px solid ${t.goodBd}` }}>Owner-signed</span>}
               {canWrite && (
                 <button className="ppd-f" style={btnStyle(t, confirmId === d.id ? "danger" : "ghost", locked, true)} disabled={locked}
@@ -667,7 +703,7 @@ function SlotCard({ no, dt, files, canWrite: canWriteOwner, refId, partnerName, 
       )}
 
       {/* drop zone */}
-      {canWrite && (
+      {canWrite && !spmSignedUpload && (
         <div style={{ padding: has ? "0 14px 12px" : "0 14px 14px" }}>
           <input ref={addRef} type="file" accept={ACCEPT_ATTR} multiple hidden onChange={onPick(false)} />
           <input ref={repRef} type="file" accept={ACCEPT_ATTR} multiple hidden onChange={onPick(true)} />
