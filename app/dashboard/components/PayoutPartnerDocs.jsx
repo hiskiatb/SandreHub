@@ -14,8 +14,9 @@ import {
   downloadMergedPdf, downloadMergedZip, downloadDoc, downloadDocsZip, refZipName, friendlyError, uploaderLabel,
   validateFile, partnerKey,
   APPROVAL_DOC_TYPES, APPROVAL_ENABLED, approvalKey, approvalStatus, fetchApprovals, approvalApi,
-  isDraftRef, refDisplay, isPaymentRef,
+  isDraftRef, refDisplay, isPaymentRef, fetchDraftDocs,
 } from "../../../lib/payoutPartnerDocs";
+import { readOwnerSig, writeOwnerSig, isOwnerSigned, ownerSignedName, stampOwnerSignature, fetchDocBytes, imageToDataUrl } from "../../../lib/payoutPartnerSign";
 
 const TEAL = "#32BCAD", TEAL_D = "#27a093", MAGENTA = "#C6168D";
 const MONO = "'SF Mono','Fira Code','DM Mono',monospace";
@@ -304,7 +305,11 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
   const changed = useCallback(() => { setReload((x) => x + 1); docsRefresh?.(); }, [docsRefresh]);
   // Draft hasil generate hanya punya slot BAST & Notification Letter
   // Draft GEN-* lama: hanya BAST/Surat. Payment ID (PAY-*) menggantikan PO → semua slot (invoice & faktur ikut)
-  const SLOTS = isDraftRef(refId) ? DOC_TYPES.filter((d) => APPROVAL_DOC_TYPES.includes(d.key)) : DOC_TYPES;
+  // Dokumen hasil generate SPM (Payment ID / draft lama): hanya slot BAST & Surat. Partner tidak bisa upload/hapus
+  // di sana — satu-satunya aksi partner adalah "Sign as partner (owner)" (menambah salinan bertanda tangan).
+  const genRef = isDraftRef(refId) || isPaymentRef(refId);
+  const SLOTS = genRef ? DOC_TYPES.filter((d) => APPROVAL_DOC_TYPES.includes(d.key)) : DOC_TYPES;
+  const slotWrite = canWrite && !(genRef && !docs?.canMerge);
   const present = SLOTS.filter((d) => list.some((x) => x.doc_type === d.key)).length;
   const nextMissing = SLOTS.find((d) => !list.some((x) => x.doc_type === d.key));
   const totalSize = list.reduce((s, d) => s + (Number(d.size_bytes) || 0), 0);
@@ -377,7 +382,7 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
               );
             })}
           </div>
-          {!loading && canWrite && nextMissing && (
+          {!loading && slotWrite && nextMissing && (
             <button className="ppd-f" onClick={() => setFocus((f) => ({ key: nextMissing.key, n: f.n + 1 }))}
               style={{ ...btnStyle(t, "primary", false, true), marginTop: 10, width: "100%" }}>
               ⬆ Upload next: {nextMissing.label}
@@ -402,9 +407,10 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
               </div>))
             : SLOTS.map((dt, i) => (
               <SlotCard key={dt.key} no={i + 1} dt={dt} files={list.filter((d) => d.doc_type === dt.key)}
-                canWrite={canWrite} refId={refId} partnerName={partnerName} segment={segment} title={title} amountText={amountText}
+                canWrite={slotWrite} refId={refId} partnerName={partnerName} segment={segment} title={title} amountText={amountText}
                 approval={docs?.approvals?.[approvalKey(segment, partnerName, refId, dt.key)]} approvalsAvailable={docs?.approvalsAvailable !== false}
                 isSPM={!!docs?.canManageApprovals} onApprovalChanged={docsRefresh}
+                ownerSign={dt.key === "bast" && canWrite && ["finance_mpx", "agency"].includes(docs?.profile?.role)}
                 onBusy={(d) => setUploading((x) => Math.max(0, x + d))} onChanged={changed} lockAll={!!merge}
                 focusTick={focus.key === dt.key ? focus.n : 0} t={t} />
             ))}
@@ -451,7 +457,7 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
   );
 }
 
-function SlotCard({ no, dt, files, canWrite: canWriteOwner, refId, partnerName, segment, title, amountText, approval, approvalsAvailable, isSPM, onApprovalChanged, onBusy, onChanged, lockAll, focusTick = 0, t }) {
+function SlotCard({ no, dt, files, canWrite: canWriteOwner, refId, partnerName, segment, title, amountText, approval, approvalsAvailable, isSPM, onApprovalChanged, onBusy, onChanged, lockAll, focusTick = 0, ownerSign = false, t }) {
   const apprSt = approvalStatus(approval);
   const approvedLock = apprSt === "approved";
   // Dokumen yang sudah approved terkunci: tidak bisa upload/ganti/hapus sampai SPM mencabut approval
@@ -548,6 +554,24 @@ function SlotCard({ no, dt, files, canWrite: canWriteOwner, refId, partnerName, 
 
   const zoneKey = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); addRef.current?.click(); } };
 
+  // Partner: tanda tangan OWNER pada BAST → salinan baru "_signed-owner" (file asli tidak diubah)
+  const [signing, setSigning] = useState(null);
+  const onOwnerSign = async (d) => {
+    const own = readOwnerSig();
+    if (!own.sig) { toast(t, "Set up your owner signature first: “✍ Owner signature” at the top of this page.", "info"); return; }
+    if (files.some((f) => f.file_name === ownerSignedName(d.file_name))
+      && !window.confirm("A signed copy of this BAST already exists. Create another signed copy?")) return;
+    setSigning(d.id); onBusy?.(1);
+    try {
+      const out = await stampOwnerSignature(await fetchDocBytes(d.storage_path), own);
+      const r = await uploadSlot({ files: [new File([out], ownerSignedName(d.file_name), { type: "application/pdf" })], partnerName, refId, docType: dt.key, segment, replace: false });
+      if (r.errors.length) throw new Error(r.errors[0].message);
+      toast(t, r.ok.length ? "Signed copy saved. The original BAST is kept." : "This signed copy already exists.", r.ok.length ? "ok" : "info");
+      onChanged();
+    } catch (e) { toast(t, `Unable to sign: ${errMsg(e)}`, "err"); }
+    onBusy?.(-1); setSigning(null);
+  };
+
   return (
     <section ref={secRef} tabIndex={-1} aria-label={`${no}. ${dt.label}`} onDragOver={onDragOver} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDrag(false); }} onDrop={onDrop}
       style={{ flexShrink: 0, border: `1.5px solid ${drag ? TEAL : has ? t.goodBd : t.line}`, borderRadius: 14, background: drag ? t.goodBg : t.surf, overflow: "hidden", transition: "border-color .15s, background .15s", boxShadow: t.shadow1 }}>
@@ -606,6 +630,11 @@ function SlotCard({ no, dt, files, canWrite: canWriteOwner, refId, partnerName, 
               </div>
               <button className="ppd-f" style={btnStyle(t, "outline", false, true)} onClick={() => onOpen(d)} aria-label={`Open ${d.file_name}`} title="Open in a new tab"><IcoOpen /><span className="ppd-hide-xs">Open</span></button>
               <button className="ppd-f" style={btnStyle(t, "outline", dl === d.id, true)} disabled={dl === d.id} onClick={() => onDownload(d)} aria-label={`Download ${d.file_name}`} title="Download with the original file name"><IcoDownload /><span className="ppd-hide-xs">{dl === d.id ? "…" : "Download"}</span></button>
+              {ownerSign && fileKind(d.file_name, d.mime_type) === "pdf" && !isOwnerSigned(d.file_name) && (
+                <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !!signing || locked, true)} disabled={!!signing || locked} onClick={() => onOwnerSign(d)}
+                  title="Add your owner signature in the PIHAK KEDUA column. A signed copy is saved; the original is kept.">✍ {signing === d.id ? "Signing…" : "Sign as partner (owner)"}</button>
+              )}
+              {isOwnerSigned(d.file_name) && <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", padding: "2px 6px", borderRadius: 6, color: t.goodDark || TEAL_D, background: t.goodBg, border: `1px solid ${t.goodBd}` }}>Owner-signed</span>}
               {canWrite && (
                 <button className="ppd-f" style={btnStyle(t, confirmId === d.id ? "danger" : "ghost", locked, true)} disabled={locked}
                   onClick={() => onDelete(d)} aria-label={confirmId === d.id ? `Confirm deletion of ${d.file_name}` : `Delete ${d.file_name}`} title="Delete file">
@@ -818,6 +847,8 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
   const [openKey, setOpenKey] = useState(null);
   const [openSlot, setOpenSlot] = useState(null);  // slot yang difokuskan saat drawer dibuka
   const [bulkOpen, setBulkOpen] = useState(false); // modal Bulk Upload (SPM)
+  const [sigOpen, setSigOpen] = useState(false);   // partner: modal tanda tangan owner
+  const [openPay, setOpenPay] = useState(null);    // partner: Payment ID dari SPM yang dibuka
   const [reqOpen, setReqOpen] = useState(false);   // modal Request approval untuk PO terpilih (SPM)
   // SPM: 2 langkah — "upload" (1 · Upload to PO / Invoice), "merge" (2 · Merge & Download).
   // Generate BAST & Surat ada di tab terpisah "Partner Letters" (PayoutPartnerLetters.jsx).
@@ -1018,6 +1049,14 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
         </ol>
       )}
 
+      {isOwnerRole && (
+        <div style={{ margin: "0 20px 12px", display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 12, color: t.muted }}>
+          <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", false, true)} onClick={() => setSigOpen(true)}>✍ Owner signature</button>
+          <span>Upload your owner’s signature once, then use “Sign as partner (owner)” on a BAST.</span>
+        </div>
+      )}
+      {isOwnerRole && <PartnerLettersInbox segment={segment} docs={docs} onOpen={setOpenPay} t={t} />}
+
       {/* hints */}
       {(hint || noRefCount > 0 || docs?.error) && (
         <div style={{ padding: "0 20px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
@@ -1204,6 +1243,9 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
 
       {openRow && <RefDocsDrawer key={openRow.key} refId={openRow.ref} partnerName={openRow.partner} segment={segment} title={openRow.title} amountText={openRow.amountText}
         docs={docs} focusSlot={openSlot} onClose={() => setOpenKey(null)} t={t} />}
+      {sigOpen && <OwnerSignatureModal onClose={() => setSigOpen(false)} t={t} />}
+      {openPay && <RefDocsDrawer key={openPay.pid} refId={openPay.pid} partnerName={openPay.partner} segment={segment} title="BAST & Notification Letter from SPM"
+        docs={docs} focusSlot="bast" onClose={() => setOpenPay(null)} t={t} />}
       {bulkOpen && <BulkUploadModal rows={rows} segment={segment} docs={docs} onClose={() => setBulkOpen(false)} t={t} />}
       {reqOpen && <BulkApprovalModal rows={selected} segment={segment} docs={docs} onClose={() => setReqOpen(false)} t={t} />}
     </div>
@@ -1613,6 +1655,113 @@ function BulkApprovalModal({ rows, segment, docs, onClose, t }) {
       </div>
     </div>,
     document.body,
+  );
+}
+
+// ── Partner: tanda tangan owner (disimpan di browser partner saja) ─────────
+function OwnerSigPicker({ label, hint, value, onChange, maxW, maxH, t }) {
+  const ref = useRef(null);
+  const pick = async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    try { onChange(await imageToDataUrl(f, maxW, maxH)); } catch (err) { toast(t, err.message || String(err), "err"); }
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: t.ink2 }}>{label}</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ width: 150, height: 60, borderRadius: 8, border: `1px dashed ${t.line2}`, display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", background: "repeating-conic-gradient(#f3f3f6 0% 25%, #ffffff 0% 50%) 50% / 12px 12px" }}>
+          {/* eslint-disable-next-line @next/next/no-img-element -- data URL lokal, bukan aset */}
+          {value ? <img src={value} alt={`${label} preview`} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} /> : <span style={{ fontSize: 10.5, color: "#8A8A96" }}>No image</span>}
+        </div>
+        <input ref={ref} type="file" accept="image/png,image/jpeg" hidden onChange={pick} aria-label={`${label} file`} />
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", false, true)} onClick={() => ref.current?.click()}>{value ? "Replace" : "Upload"}</button>
+          {value && <button className="ppd-f" style={{ ...btnStyle(t, "ghost", false, true), color: t.bad }} onClick={() => onChange("")}>Remove</button>}
+        </div>
+      </div>
+      {hint && <div style={{ fontSize: 10.5, color: t.muted }}>{hint}</div>}
+    </div>
+  );
+}
+
+function OwnerSignatureModal({ onClose, t }) {
+  const [v, setV] = useState(readOwnerSig);
+  const set = (k, x) => setV((o) => { const n = { ...o, [k]: x }; if (!writeOwnerSig(n)) toast(t, "Could not save on this browser (storage full?).", "err"); return n; });
+  useEffect(() => { const prev = document.body.style.overflow; document.body.style.overflow = "hidden"; return () => { document.body.style.overflow = prev; }; }, []);
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }} onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}
+      style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 12 }}>
+      <div role="dialog" aria-modal="true" aria-labelledby="ppd-owner-sig-title" style={{ width: "min(560px, 100%)", background: t.surf, color: t.ink, borderRadius: 18, border: `1px solid ${t.line}`, boxShadow: t.shadow2, overflow: "hidden" }}>
+        <div style={{ padding: "14px 18px", borderBottom: `1px solid ${t.line}`, background: t.surf2, display: "flex", alignItems: "flex-start", gap: 12 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: MAGENTA, fontWeight: 700 }}>Partner · e-signature</div>
+            <div id="ppd-owner-sig-title" style={{ fontSize: 16.5, fontWeight: 800, marginTop: 2 }}>Owner signature</div>
+          </div>
+          <button className="ppd-f" onClick={onClose} aria-label="Close" style={{ ...btnStyle(t, "ghost", false, true), fontSize: 20, lineHeight: 1, padding: "2px 8px", color: t.muted }}>×</button>
+        </div>
+        <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ fontSize: 12.5, color: t.muted, lineHeight: 1.5 }}>
+            Upload your company owner’s signature. It is placed only in the <b>PIHAK KEDUA</b> (partner) column of the BAST, above the owner’s name — never in the Indosat signature area. Each signing saves a new signed copy; the original document is kept.
+          </div>
+          <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+            <OwnerSigPicker t={t} label="Owner signature" hint="PNG/JPG ≤ 1 MB · transparent PNG recommended" value={v.sig || ""} onChange={(x) => set("sig", x)} maxW={600} maxH={240} />
+            <OwnerSigPicker t={t} label="Company stamp (optional)" value={v.stamp || ""} onChange={(x) => set("stamp", x)} maxW={360} maxH={360} />
+          </div>
+          <div style={{ fontSize: 11, color: t.muted }}>🔒 Signature images stay on this browser.</div>
+        </div>
+        <div style={{ borderTop: `1px solid ${t.line}`, background: t.surf2, padding: "12px 18px", display: "flex", justifyContent: "flex-end" }}>
+          <button className="ppd-f ppd-act" style={btnStyle(t, "primary")} onClick={onClose}>Done</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// Partner: BAST & Surat Pemberitahuan dari SPM (Payment ID) milik partner sendiri — RLS hanya mengembalikan milik sendiri
+function PartnerLettersInbox({ segment, docs, onOpen, t }) {
+  const [list, setList] = useState(null);
+  const byRef = docs?.byRef;
+  useEffect(() => {
+    let alive = true;
+    fetchDraftDocs(segment)
+      .then((d) => { if (alive) setList(d.filter((x) => isPaymentRef(x.ref_id) && canWritePartner(docs?.profile, x.partner_name, segment))); })
+      .catch(() => { if (alive) setList([]); });
+    return () => { alive = false; };
+  }, [segment, byRef, docs?.profile]);
+  const groups = useMemo(() => {
+    const m = new Map();
+    (list || []).forEach((d) => {
+      if (!m.has(d.ref_id)) m.set(d.ref_id, { pid: d.ref_id, partner: d.partner_name, bast: [], letter: [], lastAt: "" });
+      const g = m.get(d.ref_id);
+      if (d.doc_type === "bast") g.bast.push(d); else if (d.doc_type === "surat_pemberitahuan") g.letter.push(d);
+      if (d.uploaded_at > g.lastAt) g.lastAt = d.uploaded_at;
+    });
+    return [...m.values()].sort((a, b) => b.pid.localeCompare(a.pid));
+  }, [list]);
+  if (!groups.length) return null;
+  return (
+    <div style={{ margin: "0 20px 12px", border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden" }}>
+      <div style={{ padding: "8px 12px", background: t.surf2, borderBottom: `1px solid ${t.line}`, fontSize: 12.5, fontWeight: 700, display: "flex", gap: 8, alignItems: "center" }}>
+        BAST &amp; Notification Letters from SPM <span style={{ fontFamily: MONO, fontSize: 10, color: t.muted, fontWeight: 500 }}>{groups.length} payment(s)</span>
+        <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 500, color: t.muted }}>Open a payment to download or sign the BAST as owner</span>
+      </div>
+      {groups.slice(0, 12).map((g) => {
+        const signed = g.bast.some((d) => isOwnerSigned(d.file_name));
+        return (
+          <div key={g.pid} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderTop: `1px solid ${t.line}`, fontSize: 12, flexWrap: "wrap" }}>
+            <span style={{ fontFamily: MONO, fontWeight: 700, color: t.ink }}>{g.pid}</span>
+            <span style={{ color: t.muted }}>BAST {g.bast.length ? "✓" : "—"} · Letter {g.letter.length ? "✓" : "—"}</span>
+            {signed && <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", padding: "1px 6px", borderRadius: 6, color: t.goodDark || TEAL_D, background: t.goodBg, border: `1px solid ${t.goodBd}` }}>Owner-signed</span>}
+            <span style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted2 }}>{fmtDT(g.lastAt)}</span>
+            <button className="ppd-f ppd-act-o" style={{ ...btnStyle(t, "outline", false, true), marginLeft: "auto" }} onClick={() => onOpen(g)}>Open</button>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
