@@ -1,13 +1,13 @@
 // POST /api/payout-docs/approvals/request — SPM meminta approval (1 atau banyak slot) ke 1 email approver.
 import {
-  APPROVALS_TABLE, TTL_DAYS, ROW_COLS, getAdmin, requireSpm, jsonError, normEmail, isEmail, normalizeItem,
+  APPROVALS_TABLE, TTL_DAYS, ROW_COLS, getAdmin, requireApprovalAdmin, jsonError, normEmail, isEmail, normalizeItem,
   slotDocs, snapshotFiles, approvalEmail, approvalLink, sendEmail, docLabel, publicRow,
 } from "../../../../../lib/payoutDocApprovalsServer";
 
 export async function POST(req) {
   const admin = getAdmin();
   if (!admin) return jsonError("Server configuration is incomplete (Supabase service role).", 500);
-  const auth = await requireSpm(req, admin);
+  const auth = await requireApprovalAdmin(req, admin);
   if (auth.error) return jsonError(auth.error, auth.status);
 
   let body;

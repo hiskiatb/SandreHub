@@ -1617,7 +1617,7 @@ function DashScreen(props) {
       )}
 
       <div style={{display:"flex",gap:24,borderBottom:`1px solid ${t.line}`,marginBottom:18,overflowX:"auto"}}>
-        {[{id:"dash",label:"Dashboard"},{id:"raw",label:"Raw Data",count:filtRaw.length},...(docs.enabled?[{id:"docs",label:"Document Upload & Merge",count:docPOsDone}]:[]),...(docs.enabled&&docs.canMerge?[{id:"letters",label:"Partner Letters"}]:[])].map(tab=>(
+        {[{id:"dash",label:"Dashboard"},{id:"raw",label:"Raw Data",count:filtRaw.length},...(docs.enabled?[{id:"docs",label:"Document Upload & Merge",count:docPOsDone}]:[]),...(docs.enabled&&docs.canManageApprovals?[{id:"letters",label:"Partner Letters"}]:[])].map(tab=>(
           <TabBtn key={tab.id} label={tab.label} count={tab.count} active={activeTab===tab.id} onClick={()=>setActiveTab(tab.id)} t={t}/>
         ))}
       </div>
@@ -1703,7 +1703,7 @@ function DashScreen(props) {
         <>
           {activeTab==="dash" && <DashTab {...props} t={t} w={w}/>}
           {activeTab==="raw"  && <RawTab  {...props} t={t} w={w} docs={docs}/>}
-          {activeTab==="letters" && docs.enabled && docs.canMerge && <PartnerLettersTab docs={docs} t={t}/>}
+          {activeTab==="letters" && docs.enabled && docs.canManageApprovals && <PartnerLettersTab docs={docs} t={t}/>}
           {activeTab==="docs" && docs.enabled && <PoDocsTab pos={docPOs} allPos={docPOsAll} segment={src} docs={docs} noRefCount={docNoRef} fmtAmount={n=>fmtMoney(n)} t={t}/>}
         </>
       )}

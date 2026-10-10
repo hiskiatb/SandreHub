@@ -6,6 +6,7 @@
 //   Approver = email penanda tangan di Settings (BAST → pihak pertama, Surat → penanda tangan surat), bukan email partner.
 //   History: semua pembayaran (Payment ID) yang pernah di-generate — cari, buka PDF, unduh ZIP.
 //   ⚙ Settings: periode, tanggal, claim deadline, Letter No, penanda tangan + gambar tanda tangan/stempel.
+//   Akses: SPM (semua) dan admin internal Indosat / internal_ioh (History + approval saja, tanpa generate).
 // PDF disimpan di tabel/bucket dokumen dengan ref_id = Payment ID (PAY-*), tidak muncul di tab PO / Raw Data.
 // Gambar tanda tangan HANYA disimpan di browser (localStorage) — tidak pernah di-upload terpisah.
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -806,7 +807,7 @@ function LettersWizard({ cfg: cfgRaw, meta, docs, index, known, approvals, onSav
 }
 
 // ── History ──────────────────────────────────────────────────────────────────
-function LettersHistory({ cfg, index, indexErr, approvals, reload, t }) {
+function LettersHistory({ cfg, index, indexErr, approvals, reload, canWrite = true, t }) {
   const S = styles(t);
   const [rowsRaw, setRowsRaw] = useState(null);
   const [err, setErr] = useState("");
@@ -881,7 +882,7 @@ function LettersHistory({ cfg, index, indexErr, approvals, reload, t }) {
   const sumTotal = shown.reduce((a, g) => a + (g.total || 0), 0);
   const asRow = (g) => ({ pid: g.pid, partner: g.partner, type: g.type, period: g.period, total: g.total });
   const canRequest = (g) => !["pending", "approved"].includes(g.ap.overall);
-  const canStamp = (g) => g.ap.overall === "approved" && !!g.meta.doc && !(g.meta.esign?.bast && g.meta.esign?.letter);
+  const canStamp = (g) => canWrite && g.ap.overall === "approved" && !!g.meta.doc && !(g.meta.esign?.bast && g.meta.esign?.letter);
   const doRequest = async (list) => {
     if (!apprAvailable) { toast(t, APPR_MISSING, "err"); return; }
     if (!APPR_TYPES.every(([dt]) => EMAIL_OK(approverOf(cfg, dt)))) { toast(t, "Add both approver emails in ⚙ Settings first (BAST and Notification Letter).", "err"); return; }
@@ -1024,7 +1025,8 @@ function LettersHistory({ cfg, index, indexErr, approvals, reload, t }) {
 // ── Tab utama ────────────────────────────────────────────────────────────────
 export function PartnerLettersTab({ docs, t }) {
   useDocsCss();
-  const [view, setView] = useState("new");          // new | history
+  const canGenerate = !!docs?.canMerge;            // SPM; admin internal Indosat hanya History + approval
+  const [view, setView] = useState(canGenerate ? "new" : "history");          // new | history
   const [showCfg, setShowCfg] = useState(false);
   const [cfg, setCfgState] = useState(readGenCfg);
   const [meta, setMeta] = useState(() => {
@@ -1068,7 +1070,7 @@ export function PartnerLettersTab({ docs, t }) {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ width: 4, height: 18, borderRadius: 2, background: MAGENTA, display: "block" }} />
             <span style={{ fontWeight: 700, fontSize: 14, letterSpacing: "-0.02em", color: t.ink }}>Partner Letters</span>
-            <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", padding: "2px 8px", borderRadius: 99, background: `${MAGENTA}18`, color: MAGENTA, border: `1px solid ${MAGENTA}30` }}>SPM</span>
+            <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", padding: "2px 8px", borderRadius: 99, background: `${MAGENTA}18`, color: MAGENTA, border: `1px solid ${MAGENTA}30` }}>{canGenerate ? "SPM" : "IOH admin"}</span>
           </div>
           <div style={{ marginTop: 4, marginLeft: 14, fontSize: 12, color: t.muted, maxWidth: 780, lineHeight: 1.45 }}>
             Generate BAST &amp; Notification Letters from the Excel, then e-sign them or request approval. Each payment has a unique Payment ID and is kept separate from the {DOC_REF_LABEL} documents.
@@ -1078,7 +1080,7 @@ export function PartnerLettersTab({ docs, t }) {
       </div>
       {showCfg && <SettingsPanel cfg={cfg} setCfg={setCfg} setCfgField={setCfgField} meta={meta} setMetaField={setMetaField} busy={false} t={t} />}
       <div role="tablist" aria-label="Partner Letters" style={{ display: "flex", padding: "0 20px", borderBottom: `1px solid ${t.line}`, background: t.surf2, overflowX: "auto" }}>
-        {[["new", "New batch", null], ["history", "History", index ? String(index.size) : "…"]].map(([k, label, count]) => {
+        {[...(canGenerate ? [["new", "New batch", null]] : []), ["history", "History", index ? String(index.size) : "…"]].map(([k, label, count]) => {
           const active = view === k;
           return (
             <button key={k} role="tab" aria-selected={active} className="ppd-f" onClick={() => { setView(k); if (k === "history") reload(); }}
@@ -1089,11 +1091,11 @@ export function PartnerLettersTab({ docs, t }) {
           );
         })}
       </div>
-      <div style={{ display: view === "new" ? "block" : "none" }}>
+      {canGenerate && <div style={{ display: view === "new" ? "block" : "none" }}>
         <LettersWizard cfg={cfg} meta={meta} docs={docs} index={index} known={known} approvals={approvals} onSaved={reload}
           onOpenSettings={() => { setShowCfg(true); window.scrollTo({ top: 0, behavior: "smooth" }); }} onFinish={() => setView("history")} t={t} />
-      </div>
-      {view === "history" && <LettersHistory cfg={cfg} index={index} indexErr={indexErr} approvals={approvals} reload={reload} t={t} />}
+      </div>}
+      {view === "history" && <LettersHistory cfg={cfg} index={index} indexErr={indexErr} approvals={approvals} reload={reload} canWrite={canGenerate} t={t} />}
     </div>
   );
 }

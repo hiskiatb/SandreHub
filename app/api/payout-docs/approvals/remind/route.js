@@ -1,13 +1,13 @@
 // POST /api/payout-docs/approvals/remind — SPM kirim ulang email & perpanjang batas waktu 7 hari.
 import {
-  APPROVALS_TABLE, TTL_DAYS, ROW_COLS, getAdmin, requireSpm, jsonError, expireIfNeeded,
+  APPROVALS_TABLE, TTL_DAYS, ROW_COLS, getAdmin, requireApprovalAdmin, jsonError, expireIfNeeded,
   approvalEmail, approvalLink, sendEmail, publicRow,
 } from "../../../../../lib/payoutDocApprovalsServer";
 
 export async function POST(req) {
   const admin = getAdmin();
   if (!admin) return jsonError("Server configuration is incomplete (Supabase service role).", 500);
-  const auth = await requireSpm(req, admin);
+  const auth = await requireApprovalAdmin(req, admin);
   if (auth.error) return jsonError(auth.error, auth.status);
   const { id } = await req.json().catch(() => ({}));
   const { data: found, error } = await admin.from(APPROVALS_TABLE).select(ROW_COLS).eq("id", Number(id)).maybeSingle();

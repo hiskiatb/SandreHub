@@ -9,7 +9,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import {
   DOC_TYPES, DOC_REF_LABEL, ACCEPT_ATTR, MAX_FILE_BYTES, statKey, ownerLabel, doneCount, fmtSize, fileKind,
-  canViewAll, canViewPartner, canWritePartner, canMerge,
+  canViewAll, canViewPartner, canWritePartner, canMerge, canManageApprovals,
   fetchDocStats, listRefDocs, uploadSlot, deleteDocs, signedUrl,
   downloadMergedPdf, downloadMergedZip, downloadDoc, downloadDocsZip, refZipName, friendlyError, uploaderLabel,
   validateFile, partnerKey,
@@ -90,7 +90,9 @@ function toast(t, msg, type = "ok") {
 export function usePartnerDocStats(profile) {
   const enabled = canViewAll(profile) || profile?.role === "finance_mpx" || profile?.role === "agency";
   const [state, setState] = useState({ byRef: {}, loaded: false, error: "" });
-  const [appr, setAppr] = useState({ available: APPROVAL_ENABLED, byKey: {} });
+  // Approval hanya untuk admin SPM / admin internal Indosat — partner tidak pernah memuat data approval
+  const apprAdmin = APPROVAL_ENABLED && canManageApprovals(profile);
+  const [appr, setAppr] = useState({ available: apprAdmin, byKey: {} });
   const [tick, setTick] = useState(0);
   useEffect(() => {
     if (!enabled) return;
@@ -99,16 +101,16 @@ export function usePartnerDocStats(profile) {
       .then((byRef) => { if (alive) setState({ byRef, loaded: true, error: "" }); })
       .catch((e) => { if (alive) setState((s) => ({ ...s, loaded: true, error: errMsg(e) })); });
     // approval (BAST & Notification Letter); available=false kalau migration 20261008 belum jalan / fitur dimatikan
-    if (APPROVAL_ENABLED) {
+    if (apprAdmin) {
       fetchApprovals()
         .then((a) => { if (alive) setAppr(a); })
         .catch(() => { if (alive) setAppr({ available: false, byKey: {} }); });
     }
     return () => { alive = false; };
-  }, [enabled, tick]);
+  }, [enabled, tick, apprAdmin]);
   const refresh = useCallback(() => setTick((x) => x + 1), []);
   return {
-    enabled, ...state, refresh, profile, canMerge: canMerge(profile),
+    enabled, ...state, refresh, profile, canMerge: canMerge(profile), canManageApprovals: canManageApprovals(profile),
     approvalsAvailable: appr.available, approvals: appr.byKey,
   };
 }
@@ -402,7 +404,7 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
               <SlotCard key={dt.key} no={i + 1} dt={dt} files={list.filter((d) => d.doc_type === dt.key)}
                 canWrite={canWrite} refId={refId} partnerName={partnerName} segment={segment} title={title} amountText={amountText}
                 approval={docs?.approvals?.[approvalKey(segment, partnerName, refId, dt.key)]} approvalsAvailable={docs?.approvalsAvailable !== false}
-                isSPM={isSPM} onApprovalChanged={docsRefresh}
+                isSPM={!!docs?.canManageApprovals} onApprovalChanged={docsRefresh}
                 onBusy={(d) => setUploading((x) => Math.max(0, x + d))} onChanged={changed} lockAll={!!merge}
                 focusTick={focus.key === dt.key ? focus.n : 0} t={t} />
             ))}
@@ -580,7 +582,7 @@ function SlotCard({ no, dt, files, canWrite: canWriteOwner, refId, partnerName, 
         </div>
       </div>
 
-      {APPROVAL_ENABLED && APPROVAL_DOC_TYPES.includes(dt.key) && (
+      {APPROVAL_ENABLED && isSPM && APPROVAL_DOC_TYPES.includes(dt.key) && (
         <ApprovalPanel approval={approval} status={apprSt} available={approvalsAvailable} isSPM={isSPM} hasFiles={has}
           slot={{ segment, owner_name: partnerName, ref_id: refId, doc_type: dt.key, ref_title: title, amount_text: amountText }}
           docLabel={dt.label} onChanged={onApprovalChanged} t={t} />
@@ -1190,7 +1192,7 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
             {bulk && <span style={{ fontFamily: MONO, fontSize: 11, color: t.muted }}>{bulk.i < bulk.total ? `Merging ${bulk.i + 1}/${bulk.total} · ${bulk.ref}` : "Creating ZIP…"}</span>}
             <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
               <button className="ppd-f" style={btnStyle(t, "ghost", !!bulk, true)} disabled={!!bulk} onClick={() => setSel(new Set())}>Clear selection</button>
-              {docs?.approvalsAvailable !== false && (
+              {APPROVAL_ENABLED && docs?.canManageApprovals && docs?.approvalsAvailable !== false && (
                 <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", !!bulk)} disabled={!!bulk} onClick={() => setReqOpen(true)}>✉ Request approval</button>
               )}
               <button className="ppd-f" style={btnStyle(t, "primary", !!bulk)} disabled={!!bulk} onClick={mergeSelected}><IcoDownload /> Download selected (merged)</button>
