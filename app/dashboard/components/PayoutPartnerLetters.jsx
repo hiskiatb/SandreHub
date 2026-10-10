@@ -1091,11 +1091,13 @@ const similarity = (a, b) => {
 };
 const slug = (x) => String(x || "").toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
-function BulkSignedUpload({ meta, known, index, onSaved, onDone, doneLabel = "View History →", t }) {
+function BulkSignedUpload({ meta, known, index, onSaved, onDone, doneLabel = "View History →", partnerNames = [], t }) {
   const S = styles(t);
   const [period, setPeriod] = useState(meta.period);
   const [existing, setExisting] = useState(null);   // [{ pid, partner, type, ym, total }]
   const [excel, setExcel] = useState(null);         // { name, rows: [{ pid, partner, type, ym, total, isNew }] }
+  // Payment ID baru dari nama file (partner + MPC/MP3) — belum tersimpan sampai "Upload N files"
+  const [proposals, setProposals] = useState(() => new Map());   // `${partnerKey}|${type}` → { pid, partner, type, ym, total: null, isNew, fromName }
   const [items, setItems] = useState([]);           // { id, file, kind, pid, how, cands, include, res, msg }
   const [reading, setReading] = useState("");
   const [phase, setPhase] = useState("pick");       // pick | review | uploading | done
@@ -1125,7 +1127,26 @@ function BulkSignedUpload({ meta, known, index, onSaved, onDone, doneLabel = "Vi
     (excel?.rows || []).filter((r) => r.isNew).forEach((r) => out.push(r));
     return out;
   }, [existing, excel, per]);
-  const poolById = useMemo(() => new Map([...(existing || []), ...(excel?.rows || [])].map((x) => [x.pid, x])), [existing, excel]);
+  const poolById = useMemo(() => new Map([...(existing || []), ...(excel?.rows || []), ...proposals.values()].map((x) => [x.pid, x])), [existing, excel, proposals]);
+  // Daftar partner aplikasi (Payout data + pembayaran yang ada + Excel): partnerKey → nama resmi
+  const directory = useMemo(() => {
+    const m = new Map();
+    [...partnerNames, ...(existing || []).map((x) => x.partner), ...(excel?.rows || []).map((x) => x.partner)].forEach((n) => { const k = partnerKey(n); if (k && !m.has(k)) m.set(k, n); });
+    return m;
+  }, [partnerNames, existing, excel]);
+  const dirNames = useMemo(() => [...directory.values()].sort(), [directory]);
+  // Payment ID usulan untuk partner + type (dipakai bersama BAST & Surat); props = Map kerja (bisa lokal saat membaca banyak file)
+  const propose = (props, partnerName, type) => {
+    const pk = partnerKey(partnerName);
+    const key = `${pk}|${type}`;
+    if (props.has(key)) return props.get(key);
+    const own = new Map(known || []);
+    [...(excel?.rows || []), ...props.values()].forEach((x) => own.set(x.pid, partnerKey(x.partner)));
+    const pid = nextPaymentId({ partner: partnerName, ym: per.ym, type, known: own });
+    const row = { pid, partner: partnerName, type, ym: per.ym, total: null, isNew: true, fromName: true };
+    props.set(key, row);
+    return row;
+  };
 
   const loadExcel = async (e) => {
     const f = e.target.files?.[0];
@@ -1155,6 +1176,14 @@ function BulkSignedUpload({ meta, known, index, onSaved, onDone, doneLabel = "Vi
         return { pid, partner: p.partner, type: p.type, ym: per.ym, total: fin.letter.total, isNew: true, emailsTo: p.emailsTo, emailsCc: p.emailsCc };
       });
       setExcel({ name: f.name, rows });
+      // Excel menang: baris yang tadinya memakai Payment ID usulan dari nama file dipindah ke Payment ID Excel
+      const byKey = new Map(rows.map((r) => [`${partnerKey(r.partner)}|${r.type}`, r]));
+      const remap = new Map();
+      proposals.forEach((pr, k) => { if (byKey.has(k)) remap.set(pr.pid, byKey.get(k).pid); });
+      if (remap.size) {
+        setItems((cur) => cur.map((x) => (remap.has(x.pid) ? { ...x, pid: remap.get(x.pid), how: "Excel (partner + type)" } : x)));
+        setProposals((cur) => { const n = new Map(cur); [...n.keys()].forEach((k) => { if (byKey.has(k)) n.delete(k); }); return n; });
+      }
       toast(t, `${rows.length} payment(s) from ${f.name}: ${rows.filter((r) => r.isNew).length} new, ${rows.filter((r) => !r.isNew).length} already exist.`);
     } catch (err) { toast(t, errMsg(err), "err"); }
     setReading("");
@@ -1203,15 +1232,25 @@ function BulkSignedUpload({ meta, known, index, onSaved, onDone, doneLabel = "Vi
     }
     if (!pdfs.length) { toast(t, "No PDF files found.", "err"); return; }
     const out = [];
+    const props = new Map(proposals);
     for (let i = 0; i < pdfs.length; i++) {
       const f = pdfs[i];
       setReading(`Reading ${i + 1}/${pdfs.length}: ${f.name}`);
       const bad = validateFile(f);
       let text = "";
       if (!bad) { try { text = await pdfText(new Uint8Array(await f.arrayBuffer())); } catch { text = ""; } }
-      const m = bad ? { pid: "", how: "invalid", cands: [] } : match(f.name, text);
-      out.push({ id: `${Date.now()}_${i}_${Math.random().toString(36).slice(2, 5)}`, file: f, kind: m.kind || kindFrom(f.name, text), pid: m.pid, how: m.how, cands: m.cands || [], fuzzy: !!m.fuzzy, note: m.note || bad || "", include: !bad && !!m.pid && !m.fuzzy, res: null });
+      let m = bad ? { pid: "", how: "invalid", cands: [] } : match(f.name, text);
+      const parsed = !bad && parseSignedFileName(f.name);
+      let unknown = "";
+      // Belum ada Payment ID untuk partner + type ini → usulkan Payment ID baru dari nama file (tanpa Excel)
+      if (parsed && per && (!m.pid || m.fuzzy) && m.how !== "ambiguous") {
+        const canon = directory.get(partnerKey(parsed.partner));
+        if (canon) { const row = propose(props, canon, parsed.type); m = { pid: row.pid, how: "new from file name", kind: parsed.kind }; }
+        else { unknown = parsed.partner; m = { ...m, pid: m.fuzzy ? m.pid : "", how: m.fuzzy ? m.how : "unknown partner" }; }
+      }
+      out.push({ id: `${Date.now()}_${i}_${Math.random().toString(36).slice(2, 5)}`, file: f, kind: m.kind || (parsed && parsed.kind) || kindFrom(f.name, text), pid: m.pid, how: m.how, cands: m.cands || [], fuzzy: !!m.fuzzy, note: m.note || bad || "", include: !bad && !!m.pid && !m.fuzzy, res: null, unknown, ptype: parsed ? parsed.type : "" });
     }
+    setProposals(props);
     setReading("");
     setItems((cur) => [...cur, ...out]);
     setPhase("review");
@@ -1222,13 +1261,24 @@ function BulkSignedUpload({ meta, known, index, onSaved, onDone, doneLabel = "Vi
     items.forEach((x) => { if (x.include && x.pid && x.kind) cnt.set(`${x.pid}|${x.kind}`, (cnt.get(`${x.pid}|${x.kind}`) || 0) + 1); });
     return items.map((x) => {
       const dup = x.include && x.pid && x.kind && cnt.get(`${x.pid}|${x.kind}`) > 1;
-      const st = x.res === "ok" ? "Uploaded" : x.res ? "Failed" : !x.pid ? (x.how === "ambiguous" ? "Ambiguous" : "Unmatched") : x.fuzzy && !x.include ? "Ambiguous" : !x.kind ? "Choose kind" : dup ? "Duplicate" : "Matched";
+      const isNewPid = !!poolById.get(x.pid)?.fromName;
+      const st = x.res === "ok" ? "Uploaded" : x.res ? "Failed" : !x.pid ? (x.unknown ? "Unknown partner" : x.how === "ambiguous" ? "Ambiguous" : "Unmatched") : x.fuzzy && !x.include ? "Ambiguous" : !x.kind ? "Choose kind" : dup ? "Duplicate" : isNewPid ? "New Payment ID" : "Matched";
       return { ...x, dup, st };
     });
-  }, [items]);
+  }, [items, poolById]);
   const ready = rows.filter((x) => x.include && x.pid && x.kind && !x.dup && x.res !== "ok");
   const setItem = (id, patch) => setItems((cur) => cur.map((x) => (x.id === id ? { ...x, ...patch } : x)));
-  const matchRate = items.length ? Math.round((items.filter((x) => x.pid && !x.fuzzy && x.how !== "manual").length / items.length) * 100) : 0;
+  const matchRate = items.length ? Math.round((items.filter((x) => x.pid && !x.fuzzy && x.how !== "manual" && x.how !== "partner chosen").length / items.length) * 100) : 0;
+  // Partner tidak dikenal: SPM memilih partner resmi → Payment ID baru diusulkan untuk partner + type itu
+  const pickPartner = (x, name) => {
+    if (!name) return;
+    const type = x.ptype || typeFrom(x.file.name);
+    if (!type) { toast(t, "The type (MPC / MP3) is missing in the file name — choose a Payment ID instead.", "err"); return; }
+    const props = new Map(proposals);
+    const row = propose(props, name, type);
+    setProposals(props);
+    setItem(x.id, { pid: row.pid, how: "partner chosen", unknown: "", include: true });
+  };
   // Salinan rapi untuk SPM: 1 folder per Payment ID, nama file sesuai Payment ID (file asli tidak diubah)
   const organizedZip = async () => {
     const list = rows.filter((x) => x.pid && x.kind && !x.dup && (x.include || x.res === "ok"));
@@ -1249,12 +1299,12 @@ function BulkSignedUpload({ meta, known, index, onSaved, onDone, doneLabel = "Vi
     setPhase("uploading");
     setProg({ i: 0, total: list.length });
     // Payment ID baru dari Excel: simpan metadata dulu (sekali per Payment ID)
-    const newPids = [...new Set(list.map((x) => x.pid))].map((pid) => poolById.get(pid)).filter((r) => r?.isNew && !known?.has(r.pid));
+    const newPids = [...new Set(list.map((x) => x.pid))].map((pid) => poolById.get(pid)).filter((r) => r?.isNew && !known?.has(r.pid) && !index?.has(r.pid));
     for (const r of newPids) {
       try {
         await savePaymentMeta(SEGMENT, {
           payment_id: r.pid, partner: r.partner, type: r.type, period: parsePeriod(r.ym)?.label || "", period_ym: r.ym, total: r.total,
-          email_to: r.emailsTo || [], email_cc: r.emailsCc || [], sign_mode: "upload", source: "bulk-upload", esign: { bast: true, letter: true },
+          email_to: r.emailsTo || [], email_cc: r.emailsCc || [], sign_mode: "upload", source: r.fromName ? "bulk-upload (file names)" : "bulk-upload (Excel)", esign: { bast: true, letter: true },
           saved_at: new Date().toISOString(), source_file: excel?.name || "",
         });
       } catch { /* metadata opsional — file tetap di-upload */ }
@@ -1276,14 +1326,14 @@ function BulkSignedUpload({ meta, known, index, onSaved, onDone, doneLabel = "Vi
   };
 
   const allPids = useMemo(() => [...poolById.values()].filter((x) => !per || x.ym === per.ym).sort((a, b) => a.partner.localeCompare(b.partner) || a.type.localeCompare(b.type)), [poolById, per]);
-  const stColor = (st) => st === "Matched" || st === "Uploaded" ? (t.goodDark || TEAL_D) : st === "Failed" || st === "Unmatched" ? t.bad : t.warnDark || "#8a6a00";
+  const stColor = (st) => st === "Matched" || st === "Uploaded" || st === "New Payment ID" ? (t.goodDark || TEAL_D) : st === "Failed" || st === "Unmatched" || st === "Unknown partner" ? t.bad : t.warnDark || "#8a6a00";
   const busy = phase === "uploading" || !!reading;
   const failed = rows.filter((x) => x.res === "err");
 
   return (
     <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ fontSize: 12.5, color: t.muted, lineHeight: 1.5, maxWidth: 900 }}>
-        Upload the approved / signed BAST and Notification Letters for many partners at once (PDFs or a ZIP). Each file is matched to its Payment ID by file name, by the “Ref: PAY-…” footer, or by partner name + MPC/MP3. Nothing is saved until you press <b>Upload</b>. Partners then only add their Invoice and Faktur Pajak.
+        Upload the approved / signed BAST and Notification Letters for many partners at once (PDFs or a ZIP). Each file is matched to its Payment ID by file name, by the “Ref: PAY-…” footer, or by partner name + MPC/MP3. If a partner + type has no Payment ID yet, a new one is proposed from the file name (no Excel needed). Nothing is saved until you press <b>Upload</b>. Partners then only add their Invoice and Faktur Pajak.
       </div>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
         <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11.5, color: t.muted }}>
@@ -1295,7 +1345,7 @@ function BulkSignedUpload({ meta, known, index, onSaved, onDone, doneLabel = "Vi
           title="Optional: create the Payment IDs (and totals) for this period from the Source Data SMS Excel, without generating PDFs">
           {excel ? `✓ ${excel.rows.length} payments from Excel` : "Create Payment IDs from Excel (optional)"}
         </button>
-        <span style={{ fontSize: 11.5, color: t.muted }}>{existing == null ? "Loading payments…" : `${pool.length} payment(s) available for ${per?.label || "this period"}`}</span>
+        <span style={{ fontSize: 11.5, color: t.muted }}>{existing == null ? "Loading payments…" : `${pool.length} payment(s) available for ${per?.label || "this period"}${proposals.size ? ` · ${proposals.size} new from file names` : ""}`}</span>
         <input ref={fileRef} type="file" accept=".pdf,.zip,application/pdf,application/zip" multiple hidden onChange={(e) => { const l = Array.from(e.target.files || []); e.target.value = ""; addFiles(l); }} />
         <button className="ppd-f ppd-act" style={{ ...btnStyle(t, "primary", busy || !per), marginLeft: "auto" }} disabled={busy || !per} onClick={() => fileRef.current?.click()}>⬆ Add PDFs or ZIP</button>
       </div>
@@ -1313,7 +1363,7 @@ function BulkSignedUpload({ meta, known, index, onSaved, onDone, doneLabel = "Vi
         <>
           <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: t.muted }}>
             <span><b style={{ color: t.ink }}>{rows.length}</b> file(s)</span>
-            {["Matched", "Ambiguous", "Unmatched", "Duplicate", "Choose kind", "Uploaded", "Failed"].map((k) => { const n = rows.filter((x) => x.st === k).length; return n ? <span key={k} style={{ color: stColor(k), fontWeight: 600 }}>{k}: {n}</span> : null; })}
+            {["Matched", "New Payment ID", "Ambiguous", "Unknown partner", "Unmatched", "Duplicate", "Choose kind", "Uploaded", "Failed"].map((k) => { const n = rows.filter((x) => x.st === k).length; return n ? <span key={k} style={{ color: stColor(k), fontWeight: 600 }}>{k}: {n}</span> : null; })}
             <span>Auto-match rate: <b style={{ color: t.ink }}>{matchRate}%</b></span>
           </div>
           <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "auto", maxHeight: "56vh" }}>
@@ -1327,7 +1377,7 @@ function BulkSignedUpload({ meta, known, index, onSaved, onDone, doneLabel = "Vi
                   const pay = poolById.get(x.pid);
                   const opts = x.cands.length ? allPids.filter((p) => x.cands.includes(p.pid)).concat(allPids.filter((p) => !x.cands.includes(p.pid))) : allPids;
                   return (
-                    <tr key={x.id} style={{ background: x.res === "ok" ? t.goodBg : x.res === "err" || x.st === "Unmatched" ? t.badBg : x.st !== "Matched" ? t.warnBg : "transparent" }}>
+                    <tr key={x.id} style={{ background: x.res === "ok" ? t.goodBg : x.res === "err" || x.st === "Unmatched" || x.st === "Unknown partner" ? t.badBg : x.st !== "Matched" && x.st !== "New Payment ID" ? t.warnBg : "transparent" }}>
                       <td style={{ ...S.td, textAlign: "center" }}><input type="checkbox" className="ppd-f" aria-label={`Include ${x.file.name}`} checked={x.include} disabled={busy || x.res === "ok" || !x.pid} onChange={(e) => setItem(x.id, { include: e.target.checked })} /></td>
                       <td style={{ ...S.td, maxWidth: 260 }}><div title={x.file.name} style={{ fontWeight: 600, color: t.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.file.name}</div><div style={{ fontFamily: MONO, fontSize: 10, color: t.muted }}>{fmtSizeLocal(x.file.size)}</div></td>
                       <td style={S.td}>
@@ -1341,7 +1391,16 @@ function BulkSignedUpload({ meta, known, index, onSaved, onDone, doneLabel = "Vi
                           <option value="">— choose Payment ID —</option>
                           {opts.map((p) => <option key={p.pid} value={p.pid}>{p.pid} · {p.partner}{p.isNew ? " (new)" : ""}</option>)}
                         </select>
-                        {pay && <div style={{ fontSize: 10.5, color: t.muted, marginTop: 2 }}>{pay.partner}{pay.total != null ? ` · ${rupiah(pay.total)}` : ""}{pay.isNew && !known?.has(pay.pid) ? " · new from Excel" : ""}</div>}
+                        {pay && <div style={{ fontSize: 10.5, color: t.muted, marginTop: 2 }}>{pay.partner} · {pay.type} · {pay.total != null ? rupiah(pay.total) : "total —"}{pay.isNew && !known?.has(pay.pid) ? (pay.fromName ? " · new Payment ID (from file name)" : " · new from Excel") : ""}</div>}
+                        {x.unknown && !x.pid && (
+                          <div style={{ marginTop: 4 }}>
+                            <div style={{ fontSize: 10.5, color: t.bad, marginBottom: 2 }}>“{x.unknown}” is not in the partner list — choose the partner:</div>
+                            <select className="ppd-f" value="" disabled={busy} onChange={(e) => pickPartner(x, e.target.value)} style={{ ...S.inp, fontSize: 11, padding: "4px 6px", borderColor: t.warn }}>
+                              <option value="">— choose partner —</option>
+                              {dirNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                            </select>
+                          </div>
+                        )}
                       </td>
                       <td style={{ ...S.td, fontSize: 11, color: t.muted }}>{x.how}{x.note ? <div style={{ color: t.bad }}>{x.note}</div> : null}</td>
                       <td style={{ ...S.td, fontSize: 11.5, fontWeight: 700, color: stColor(x.st) }}>{x.st}{x.msg ? <div style={{ fontWeight: 400 }}>{x.msg}</div> : null}</td>
@@ -1356,7 +1415,7 @@ function BulkSignedUpload({ meta, known, index, onSaved, onDone, doneLabel = "Vi
             {phase === "uploading" && <span style={{ fontFamily: MONO, fontSize: 11, color: t.muted }}>Uploading {prog.i}/{prog.total}…</span>}
             {phase === "done" && <span style={{ fontSize: 12.5, color: t.ink2 }}>Done: {rows.filter((x) => x.res === "ok").length} uploaded{failed.length ? `, ${failed.length} failed` : ""}.</span>}
             <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8 }}>
-              <button className="ppd-f" style={btnStyle(t, "ghost", busy)} disabled={busy} onClick={() => { setItems([]); setPhase("pick"); }}>Clear</button>
+              <button className="ppd-f" style={btnStyle(t, "ghost", busy)} disabled={busy} onClick={() => { setItems([]); setProposals(new Map()); setPhase("pick"); }}>Clear</button>
               <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy)} disabled={busy} onClick={organizedZip}
                 title="Download a renamed copy: one folder per Payment ID (nothing is uploaded)"><IcoDownload /> Download organized ZIP</button>
               {failed.length > 0 && phase !== "uploading" && <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline")} onClick={() => upload(failed.map((x) => ({ ...x, res: null })))}>↻ Retry failed ({failed.length})</button>}
@@ -1398,7 +1457,7 @@ function Modal({ title, kicker, onClose, children, width = 760, t, labelId }) {
 }
 
 // Dipakai juga dari Document Upload & Merge (By Payment ID → Bulk Upload): komponen yang sama dalam modal
-export function BulkSignedModal({ docs, onClose, t }) {
+export function BulkSignedModal({ docs, partnerNames = [], onClose, t }) {
   useDocsCss();
   const [known, setKnown] = useState(null);
   const [index, setIndex] = useState(null);
@@ -1416,7 +1475,7 @@ export function BulkSignedModal({ docs, onClose, t }) {
   return (
     <Modal t={t} labelId="ppl-bulk-title" kicker="SPM · Bulk upload" title="Bulk upload signed BAST & Notification Letters" onClose={onClose} width={1240}>
       <div style={{ margin: -18 }}>
-        <BulkSignedUpload meta={meta} known={known} index={index} onSaved={reload} onDone={onClose} doneLabel="Done — view Payment IDs" t={t} />
+        <BulkSignedUpload meta={meta} known={known} index={index} onSaved={reload} onDone={onClose} doneLabel="Done — view Payment IDs" partnerNames={partnerNames} t={t} />
       </div>
     </Modal>
   );
@@ -1614,7 +1673,7 @@ export function PartnerLettersTab({ docs, partnerNames = [], t }) {
         <LettersWizard cfg={cfg} meta={meta} docs={docs} index={index} known={known} approvals={approvals} onSaved={reload}
           onOpenSettings={() => { setShowCfg(true); window.scrollTo({ top: 0, behavior: "smooth" }); }} onFinish={() => setView("history")} t={t} />
       </div>}
-      {canGenerate && view === "bulk" && <BulkSignedUpload meta={meta} known={known} index={index} onSaved={reload} onDone={() => { setView("history"); reload(); }} t={t} />}
+      {canGenerate && view === "bulk" && <BulkSignedUpload meta={meta} known={known} index={index} partnerNames={partnerNames} onSaved={reload} onDone={() => { setView("history"); reload(); }} t={t} />}
       {canGenerate && view === "upload" && <UploadOnlyPayment meta={meta} partnerNames={partnerNames} known={known} onSaved={reload} onDone={() => { setView("history"); reload(); }} t={t} />}
       {view === "history" && <LettersHistory cfg={cfg} index={index} indexErr={indexErr} approvals={approvals} reload={reload} canWrite={canGenerate} docs={docs} t={t} />}
     </div>

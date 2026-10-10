@@ -1360,7 +1360,7 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
       {sigOpen && <OwnerSignatureModal onClose={() => setSigOpen(false)} t={t} />}
       {openPay && <RefDocsDrawer key={openPay.ref} refId={openPay.ref} partnerName={openPay.partner} segment={segment} title={openPay.title}
         docs={docs} focusSlot={openPay.slot || null} onClose={() => setOpenPay(null)} t={t} />}
-      {signedOpen && <BulkSignedModal docs={docs} onClose={() => setSignedOpen(false)} t={t} />}
+      {signedOpen && <BulkSignedModal docs={docs} partnerNames={[...new Set((allPos || pos || []).map((p) => p.partner).filter(Boolean))]} onClose={() => setSignedOpen(false)} t={t} />}
       {bulkOpen && <BulkUploadModal rows={rows} segment={segment} docs={docs} onClose={() => setBulkOpen(false)} t={t} />}
       {reqOpen && <BulkApprovalModal rows={selected} segment={segment} docs={docs} onClose={() => setReqOpen(false)} t={t} />}
     </div>
