@@ -9,6 +9,9 @@
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import supabase from "../../../lib/supabase";
+import { DocsCell, PoDocsTab, usePartnerDocStats } from "./PayoutPartnerDocs";
+import { PartnerLettersTab } from "./PayoutPartnerLetters";
+import { DOC_REF_COLUMN, refKey, statKey, doneCount, DOC_TYPES } from "../../../lib/payoutPartnerDocs";
 
 let _xlsx = null;
 async function getXLSX() {
@@ -686,7 +689,8 @@ export default function PayoutTracker({
   const [rawSort, setRawSort]         = useState({ col:null, dir:"asc" });
   const [rawPage, setRawPage]         = useState(1);
   const [rawPageSize]                 = useState(100);
-  const [collapsed, setCollapsed]     = useState({});
+  // Status collapse Monthly Summary: { sig, map } — map hanya berlaku untuk set bulan (sig) saat itu.
+  const [collapseState, setCollapseState] = useState({ sig:null, map:{} });
   const [dragOver, setDragOver]       = useState({ partner:false, agency:false });
   const [searchFocus, setSearchFocus] = useState(false);
   const [searchIdx, setSearchIdx]     = useState(-1);
@@ -780,7 +784,7 @@ export default function PayoutTracker({
     const res = await dbSave({ fileName:fnames, rowCount:merged.length, publishedAt:ts, rows:merged });
     stopLoad();
     if (res.ok) { const meta={fileName:fnames,rowCount:merged.length,publishedAt:ts}; setPubMeta(meta); setCache({...meta,rows:merged}); setAllRaw(merged); showToast("✓ Published — all viewers auto-updated","success"); }
-    else showToast("Gagal simpan ke cloud: "+(res.error||"unknown error"),"error");
+    else showToast("Unable to save to cloud: "+(res.error||"unknown error"),"error");
   }
 
   async function viewDash() {
@@ -883,6 +887,20 @@ export default function PayoutTracker({
   },[filtAgg]);
 
   const sortedMonths = useMemo(()=>unique(filtAgg.map(r=>r.month)).sort((a,b)=>{ const d=monthKey(a)-monthKey(b); return tblSort.dir==="asc"?d:-d; }),[filtAgg,tblSort]);
+  // Default Monthly Summary (semua user): hanya bulan terakhir terbuka, lainnya collapse.
+  // Default dipakai ulang setiap set bulan berubah (load data, ganti Partner/Agency, filter);
+  // toggle manual user tetap dipertahankan selama set bulannya sama. Arah sort tidak berpengaruh.
+  const monthsSig = useMemo(()=>src+"|"+unique(filtAgg.map(r=>r.month)).sort((a,b)=>monthKey(a)-monthKey(b)).join("¦"),[filtAgg,src]);
+  const defaultCollapsed = useMemo(()=>{
+    const ms=unique(filtAgg.map(r=>r.month)); if(!ms.length) return {};
+    const latest=ms.reduce((a,b)=>monthKey(b)>monthKey(a)?b:a);
+    const map={}; ms.forEach(m=>{ if(m!==latest) map[m]=true; }); return map;
+  },[filtAgg]);
+  const collapsed = collapseState.sig===monthsSig ? collapseState.map : defaultCollapsed;
+  const setCollapsed = useCallback(upd=>setCollapseState(st=>{
+    const base = st.sig===monthsSig ? st.map : defaultCollapsed;
+    return { sig:monthsSig, map: typeof upd==="function" ? upd(base) : upd };
+  }),[monthsSig,defaultCollapsed]);
 
   async function exportSummary(fmt) {
     if (!filtAgg.length) { showToast("No data available","error"); return; }
@@ -1315,9 +1333,9 @@ function RawThCell({k,rawSort,setRawSort,setRawPage,isLeftCol,label,t}) {
   return <th {...hE} onClick={()=>{setRawSort(s=>({col:k,dir:s.col===k&&s.dir==="asc"?"desc":"asc"}));setRawPage(1);}} style={{position:"sticky",top:0,zIndex:2,fontFamily:MONO,fontSize:10,letterSpacing:"0.08em",textTransform:"uppercase",color:active?C.teal:hov?t.ink:t.muted,fontWeight:active?700:500,background:hov?t.surf3:t.surf2,padding:"9px",textAlign:isLeftCol(k)?"left":"center",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap",cursor:"pointer",transition:"all .15s"}}>{label||k}{active?(rawSort.dir==="asc"?" ▲":" ▼"):""}</th>;
 }
 
-function RawDataRow({r,i,rawKeys,isLeftCol,fmtCellT,t}) {
+function RawDataRow({r,i,rawKeys,isLeftCol,fmtCellT,t,docs,segment}) {
   const [hov,hE]=useHover();
-  return <tr {...hE} style={{borderBottom:`1px solid ${t.line}`,background:hov?t.rowHover:i%2===1?t.rowStripe:"transparent",transition:"background .1s"}}>{rawKeys.map(k=><td key={k} title={String(r[k]||"")} style={{padding:"8px 9px",textAlign:isLeftCol(k)?"left":"center",maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{fmtCellT(r[k],k,t)}</td>)}</tr>;
+  return <tr {...hE} style={{borderBottom:`1px solid ${t.line}`,background:hov?t.rowHover:i%2===1?t.rowStripe:"transparent",transition:"background .1s"}}>{rawKeys.map(k=><td key={k} title={String(r[k]||"")} style={{padding:"8px 9px",textAlign:isLeftCol(k)?"left":"center",maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",color:t.ink2}}>{fmtCellT(r[k],k,t)}</td>)}<td style={{padding:"6px 9px",textAlign:"center",whiteSpace:"nowrap"}}><DocsCell refId={refKey(gstr(r,DOC_REF_COLUMN))} partnerName={gstr(r,["partner name","agency name"])} segment={segment} title={gstr(r,["project title"])} amountText={fmtMoney(gnum(r,["amount"]),false)} docs={docs} t={t}/></td></tr>;
 }
 
 function FunnelRowItem({s,prevKey,drop,isExp,filtRaw,grand,onToggle,t}) {
@@ -1468,8 +1486,33 @@ function DashScreen(props) {
     filters, setFilters, opts, curAgg, curRaw, filtAgg, filtRaw,
     setCollapsed, searchFocus, setSearchFocus, searchIdx, setSearchIdx,
     searchRef, searchSuggestions, allSuggestions, searchInput, setSearchInput,
-    setRawPage, showToast, exportSummary } = props;
+    setRawPage, showToast, exportSummary, profile } = props;
   const isAg = src === "agency";
+
+  // Dokumen per PO (Partner & Agency): dipakai kolom Dokumen di Raw Data & tab Upload & Merge Dokumen
+  const docs = usePartnerDocStats(profile);
+  // 1 entri per (pemilik, PO): baris dobel → amount dijumlah, records dihitung. Baris tanpa PO dihitung terpisah.
+  // ym = periode PO (YYYY-MM) dari program date; ptype = MPC/MP3 dari kolom Partner Type/Entity (untuk generator BAST/Letter)
+  const buildDocPOs = useCallback((rowsIn) => {
+    const m = new Map(); let noRef = 0;
+    rowsIn.forEach(r => {
+      const ref = refKey(gstr(r,DOC_REF_COLUMN));
+      const owner = gstr(r,["partner name","agency name"]);
+      if (!ref || !owner) { noRef++; return; }
+      const k = statKey(src, owner, ref);
+      const e = m.get(k);
+      if (e) { e.records++; e.amount += gnum(r,["amount"]); if (!e.title) e.title = gstr(r,["project title"]); return; }
+      const pd = gcell(r,["program date","month","periode"]);
+      let mk = monthKey(pd); if (!mk) { const d = toRealDate(pd); if (d) mk = d.getFullYear()*100 + d.getMonth() + 1; }
+      const ym = mk ? `${Math.floor(mk/100)}-${String(mk%100).padStart(2,"0")}` : "";
+      m.set(k,{ref,partner:owner,title:gstr(r,["project title"]),amount:gnum(r,["amount"]),records:1,ym,ptype:getMpxTypeFromRow(r)});
+    });
+    return { list: [...m.values()].map(p => ({...p, amountText: fmtMoney(p.amount,false)})), noRef };
+  }, [src]);
+  const { docPOs, docNoRef } = useMemo(() => { const x = buildDocPOs(filtRaw); return { docPOs: x.list, docNoRef: x.noRef }; }, [filtRaw, buildDocPOs]);
+  // Semua PO segment ini (tanpa filter dashboard) — dipakai generator untuk mencocokkan PO
+  const docPOsAll = useMemo(() => buildDocPOs(curRaw).list, [curRaw, buildDocPOs]);
+  const docPOsDone = docPOs.filter(p => doneCount(docs.byRef[statKey(src,p.partner,p.ref)]) === DOC_TYPES.length).length;
 
   const isMobile = w < 640;
   const [showFilters, setShowFilters] = useState(false);
@@ -1543,7 +1586,7 @@ function DashScreen(props) {
               padding:"8px 34px 8px 13px",cursor:"pointer",outline:"none",minWidth:190,
               WebkitAppearance:"none",MozAppearance:"none",appearance:"none",lineHeight:1.2
             }}>
-            <option value="">Seluruh Sumatera</option>
+            <option value="">All Sumatera</option>
             {(regionOptions||[]).map(r=><option key={r} value={r}>{r}</option>)}
           </select>
           {regionView&&(
@@ -1574,7 +1617,7 @@ function DashScreen(props) {
       )}
 
       <div style={{display:"flex",gap:24,borderBottom:`1px solid ${t.line}`,marginBottom:18,overflowX:"auto"}}>
-        {[{id:"dash",label:"Dashboard"},{id:"raw",label:"Raw Data",count:filtRaw.length}].map(tab=>(
+        {[{id:"dash",label:"Dashboard"},{id:"raw",label:"Raw Data",count:filtRaw.length},...(docs.enabled?[{id:"docs",label:"Document Upload & Merge",count:docPOsDone}]:[]),...(docs.enabled&&docs.canManageApprovals?[{id:"letters",label:"Partner Letters"}]:[])].map(tab=>(
           <TabBtn key={tab.id} label={tab.label} count={tab.count} active={activeTab===tab.id} onClick={()=>setActiveTab(tab.id)} t={t}/>
         ))}
       </div>
@@ -1659,7 +1702,9 @@ function DashScreen(props) {
       ) : (
         <>
           {activeTab==="dash" && <DashTab {...props} t={t} w={w}/>}
-          {activeTab==="raw"  && <RawTab  {...props} t={t} w={w}/>}
+          {activeTab==="raw"  && <RawTab  {...props} t={t} w={w} docs={docs}/>}
+          {activeTab==="letters" && docs.enabled && docs.canManageApprovals && <PartnerLettersTab docs={docs} t={t}/>}
+          {activeTab==="docs" && docs.enabled && <PoDocsTab pos={docPOs} allPos={docPOsAll} segment={src} docs={docs} noRefCount={docNoRef} fmtAmount={n=>fmtMoney(n)} t={t}/>}
         </>
       )}
 
@@ -1783,8 +1828,9 @@ function SummaryTable({ t, w, filtAgg, grand, grandPartnerCount, sortedMonths, c
     {k:"pClr",l:"% Clr"},
   ];
   const colCount = COLS.length;
-  const allCollapsed = sortedMonths.length>0 && sortedMonths.every(m=>collapsed[m]);
-  const toggleAll = () => { const next={}; if(!allCollapsed) sortedMonths.forEach(m=>{next[m]=true;}); setCollapsed(next); };
+  // Label mengikuti keadaan nyata: semua terbuka → "Collapse all", selain itu → "Expand all"
+  const allExpanded = sortedMonths.length>0 && sortedMonths.every(m=>!collapsed[m]);
+  const toggleAll = () => { const next={}; if(allExpanded) sortedMonths.forEach(m=>{next[m]=true;}); setCollapsed(next); };
   const invPct = pct(grand.inv,grand.n), clvPct = pct(grand.clv,grand.n), clrPct = pct(grand.clr,grand.n);
   const narrow = w<700;
 
@@ -1795,7 +1841,7 @@ function SummaryTable({ t, w, filtAgg, grand, grandPartnerCount, sortedMonths, c
         t={t}
         right={
           <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-            <Btn t={t} variant="ghost" sm onClick={toggleAll}>{allCollapsed?"Expand all":"Collapse all"}</Btn>
+            <Btn t={t} variant="ghost" sm onClick={toggleAll}>{allExpanded?"Collapse all":"Expand all"}</Btn>
             <Btn t={t} variant="outline" sm onClick={()=>exportSummary("csv")}>CSV</Btn>
           </div>
         }/>
@@ -1882,7 +1928,7 @@ function SummaryTable({ t, w, filtAgg, grand, grandPartnerCount, sortedMonths, c
 
 function RawTab(props) {
   const { t, w, filtRaw, curRaw, rawKeys, rawKeysAll, rawKeysMain, showAllCols, setShowAllCols,
-    pageRaw, curRawPage, totalRawPages, rawSort, setRawSort, setRawPage, isLeftCol, fmtCellT, exportRaw, src } = props;
+    pageRaw, curRawPage, totalRawPages, rawSort, setRawSort, setRawPage, isLeftCol, fmtCellT, exportRaw, src, docs } = props;
   const isAg = src==="agency";
   const narrow = w<700;
   const hiddenCount = Math.max(0, rawKeysAll.length - rawKeysMain.length);
@@ -1927,11 +1973,11 @@ function RawTab(props) {
 
       <div style={{overflowX:"auto"}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:11.5,minWidth:narrow?Math.max(720,rawKeys.length*110):undefined}}>
-          <thead><tr>{rawKeys.map(k=><RawThCell key={k} k={k} rawSort={rawSort} setRawSort={setRawSort} setRawPage={setRawPage} isLeftCol={isLeftCol} t={t}/>)}</tr></thead>
+          <thead><tr>{rawKeys.map(k=><RawThCell key={k} k={k} rawSort={rawSort} setRawSort={setRawSort} setRawPage={setRawPage} isLeftCol={isLeftCol} t={t}/>)}<th style={{position:"sticky",top:0,zIndex:2,fontFamily:MONO,fontSize:10,letterSpacing:"0.08em",textTransform:"uppercase",color:t.muted,fontWeight:500,background:t.surf2,padding:"9px",textAlign:"center",borderBottom:`1.5px solid ${t.line2}`,whiteSpace:"nowrap"}}>Documents</th></tr></thead>
           <tbody>
             {pageRaw.length===0
-              ? <tr><td colSpan={rawKeys.length||1} style={{padding:"28px",textAlign:"center",color:t.muted,fontFamily:MONO,fontSize:12}}>No records match the current filters</td></tr>
-              : pageRaw.map((r,i)=><RawDataRow key={i} r={r} i={i} rawKeys={rawKeys} isLeftCol={isLeftCol} fmtCellT={fmtCellT} t={t}/>)}
+              ? <tr><td colSpan={rawKeys.length+1} style={{padding:"28px",textAlign:"center",color:t.muted,fontFamily:MONO,fontSize:12}}>No records match the current filters</td></tr>
+              : pageRaw.map((r,i)=><RawDataRow key={i} r={r} i={i} rawKeys={rawKeys} isLeftCol={isLeftCol} fmtCellT={fmtCellT} t={t} docs={docs} segment={src}/>)}
           </tbody>
         </table>
       </div>
