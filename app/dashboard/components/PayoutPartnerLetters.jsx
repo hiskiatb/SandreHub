@@ -10,9 +10,10 @@
 // PDF disimpan di tabel/bucket dokumen dengan ref_id = Payment ID (PAY-*), tidak muncul di tab PO / Raw Data.
 // Gambar tanda tangan HANYA disimpan di browser (localStorage) — tidak pernah di-upload terpisah.
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
-  DOC_REF_LABEL, statKey, uploadSlot, downloadDocsZip, partnerKey, signedUrl, fetchDraftDocs,
-  isPaymentRef, parsePaymentRef, paymentIdFor, assignPartnerCodes, partnerCode,
+  DOC_REF_LABEL, DOC_TYPES, statKey, uploadSlot, downloadDocsZip, partnerKey, signedUrl, fetchDraftDocs,
+  isPaymentRef, parsePaymentRef, paymentIdFor, assignPartnerCodes, partnerCode, nextPaymentId, spmSignedName, validateFile, fileKind, MAX_FILE_BYTES,
   approvalApi, fetchApprovals, approvalStatus, approvalKey,
 } from "../../../lib/payoutPartnerDocs";
 import {
@@ -792,7 +793,7 @@ function LettersWizard({ cfg: cfgRaw, meta, docs, index, known, approvals, onSav
 }
 
 // ── History ──────────────────────────────────────────────────────────────────
-function LettersHistory({ cfg, index, indexErr, approvals, reload, canWrite = true, t }) {
+function LettersHistory({ cfg, index, indexErr, approvals, reload, canWrite = true, docs, t }) {
   const S = styles(t);
   const [rowsRaw, setRowsRaw] = useState(null);
   const [err, setErr] = useState("");
@@ -804,6 +805,27 @@ function LettersHistory({ cfg, index, indexErr, approvals, reload, canWrite = tr
   const [working, setWorking] = useState("");      // label proses (request / stamp)
   const [apprFilter, setApprFilter] = useState("all");
   const apprAvailable = approvals?.available !== false;
+  // SPM: upload BAST / Surat bertanda tangan untuk Payment ID yang sudah ada (file lama tetap sebagai arsip)
+  const signedInRef = useRef(null);
+  const [upTarget, setUpTarget] = useState(null);   // { g, docType }
+  const askSigned = (g, docType) => { setUpTarget({ g, docType }); setTimeout(() => signedInRef.current?.click(), 0); };
+  const onSignedFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    const tg = upTarget;
+    if (!file || !tg) return;
+    if (fileKind(file.name, file.type) !== "pdf") { toast(t, "Please upload the signed document as a PDF.", "err"); return; }
+    const bad = validateFile(file);
+    if (bad) { toast(t, bad, "err"); return; }
+    setWorking(`Uploading signed ${tg.docType === "bast" ? "BAST" : "Letter"}…`);
+    try {
+      const r = await uploadSlot({ files: [new File([file], spmSignedName(tg.docType, tg.g.pid, tg.g.partner), { type: "application/pdf" })], partnerName: tg.g.partner, refId: tg.g.pid, docType: tg.docType, segment: SEGMENT, replace: false });
+      if (r.errors.length) throw new Error(r.errors[0].message);
+      toast(t, `Signed ${tg.docType === "bast" ? "BAST" : "Notification Letter"} uploaded for ${tg.g.pid}. It is now the latest version.`);
+      await reload();
+    } catch (err) { toast(t, `Upload failed: ${errMsg(err)}`, "err"); }
+    setWorking(""); setUpTarget(null);
+  };
 
   useEffect(() => {
     let alive = true;
@@ -853,7 +875,9 @@ function LettersHistory({ cfg, index, indexErr, approvals, reload, canWrite = tr
   const selected = shown.filter((g) => sel.has(g.pid));
   const toggle = (k) => setSel((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const openDoc = async (d) => { try { window.open(await signedUrl(d.storage_path), "_blank", "noopener"); } catch (e) { toast(t, `Unable to open: ${errMsg(e)}`, "err"); } };
-  const docsOf = (g) => [["bast", "BAST"], ["surat_pemberitahuan", "LETTER"]].flatMap(([k, s]) => g.files[k][0] ? [{ ...g.files[k][0], file_name: `${s}_${g.pid}_${g.partner}.pdf`, _label: s === "BAST" ? "BAST" : "Letter" }] : []);
+  // file terbaru per jenis; versi bertanda tangan (upload SPM / owner partner) didahulukan
+  const latestOf = (list) => list.find((d) => /_signed-(owner|spm)/.test(d.file_name || "")) || list[0];
+  const docsOf = (g) => [["bast", "BAST"], ["surat_pemberitahuan", "LETTER"]].flatMap(([k, s]) => g.files[k][0] ? [{ ...latestOf(g.files[k]), file_name: `${s}_${g.pid}_${g.partner}.pdf`, _label: s === "BAST" ? "BAST" : "Letter" }] : []);
   const zipSelected = async (list) => {
     const files = list.flatMap(docsOf);
     if (!files.length) return;
@@ -954,6 +978,7 @@ function LettersHistory({ cfg, index, indexErr, approvals, reload, canWrite = tr
           <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !selected.length || zipping, true)} disabled={!selected.length || zipping} onClick={() => zipSelected(selected)}><IcoDownload /> {zipping ? "Preparing…" : `Download selected (${selected.length})`}</button>
         </div>
       </div>
+      <input ref={signedInRef} type="file" accept=".pdf,application/pdf" hidden onChange={onSignedFile} />
       {!apprAvailable && <div role="note" style={{ margin: "10px 20px 0", fontSize: 12, padding: "8px 12px", borderRadius: 10, color: t.warnDark || "#8a6a00", background: t.warnBg, border: `1px solid ${t.warnBd}` }}>{APPR_MISSING}</div>}
       {(err || indexErr) && <div role="alert" style={{ margin: "10px 20px", fontSize: 12, padding: "8px 12px", borderRadius: 10, color: t.bad, background: t.badBg, border: `1px solid ${t.badBd}` }}>Unable to load history: {err || indexErr}</div>}
       <div style={{ overflow: "auto", maxHeight: "68vh" }}>
@@ -961,18 +986,18 @@ function LettersHistory({ cfg, index, indexErr, approvals, reload, canWrite = tr
           <thead><tr>
             <th style={{ ...S.th, width: 34, textAlign: "center" }}><input type="checkbox" className="ppd-f" aria-label="Select all shown" checked={shown.length > 0 && shown.every((g) => sel.has(g.pid))} onChange={(e) => setSel(e.target.checked ? new Set(shown.map((g) => g.pid)) : new Set())} /></th>
             <th style={S.th}>Payment ID</th><th style={S.th}>Partner</th><th style={S.th}>Type</th><th style={S.th}>Period</th>
-            <th style={{ ...S.th, textAlign: "right" }}>Total transfer</th><th style={S.th}>Documents</th><th style={S.th}>Approval</th><th style={S.th}>Saved</th><th style={{ ...S.th, textAlign: "right" }}><span className="ppd-sr">Actions</span></th>
+            <th style={{ ...S.th, textAlign: "right" }}>Total transfer</th><th style={S.th}>Documents</th><th style={S.th} title="Invoice, BAST, Notification Letter and Faktur Pajak uploaded for this Payment ID">Partner docs</th><th style={S.th}>Approval</th><th style={S.th}>Saved</th><th style={{ ...S.th, textAlign: "right" }}><span className="ppd-sr">Actions</span></th>
           </tr></thead>
           <tbody>
             {rowsRaw == null
-              ? Array.from({ length: 4 }).map((_, i) => <tr key={i}>{Array.from({ length: 10 }).map((__, j) => <td key={j} style={S.td}><Skel t={t} /></td>)}</tr>)
+              ? Array.from({ length: 4 }).map((_, i) => <tr key={i}>{Array.from({ length: 11 }).map((__, j) => <td key={j} style={S.td}><Skel t={t} /></td>)}</tr>)
               : !shown.length
-                ? <tr><td colSpan={10} style={{ padding: "36px 16px", textAlign: "center", color: t.muted }}>
+                ? <tr><td colSpan={11} style={{ padding: "36px 16px", textAlign: "center", color: t.muted }}>
                     <div style={{ fontWeight: 700, color: t.ink, fontSize: 13.5 }}>{groups.length ? "No payments match the search or filters" : "No partner letters yet"}</div>
                     <div style={{ fontSize: 12, marginTop: 4 }}>{groups.length ? "Change the search, period or approval filter." : "Use “New batch” to generate e-signed BAST & Notification Letters from the Excel."}</div>
                   </td></tr>
                 : shown.map((g, i) => {
-                  const signed = g.meta.esign && (g.meta.esign.bast || g.meta.esign.letter);
+                  const signed = (g.meta.esign && (g.meta.esign.bast || g.meta.esign.letter)) || [...g.files.bast, ...g.files.surat_pemberitahuan].some((d) => /_signed-spm/.test(d.file_name || ""));
                   const mid = { ...S.td, verticalAlign: "middle" };
                   return (
                     <tr key={g.pid} style={{ background: sel.has(g.pid) ? t.goodBg : i % 2 ? t.rowStripe : "transparent" }}>
@@ -986,6 +1011,14 @@ function LettersHistory({ cfg, index, indexErr, approvals, reload, canWrite = tr
                         {docsOf(g).map((d) => <button key={d.id} className="ppd-f ppd-act-o" style={{ ...btnStyle(t, "outline", false, true), marginRight: 4 }} onClick={() => openDoc(d)} title={`Open ${d.file_name}`}><IcoOpen /> {d._label}</button>)}
                         {signed ? <Chip color={t.goodDark || TEAL_D} bg={t.goodBg} bd={t.goodBd}>✍ Signed</Chip> : g.meta.esign ? <Chip color={t.muted} bg={t.surf2} bd={t.line2}>Unsigned</Chip> : null}
                       </td>
+                      <td style={{ ...mid, whiteSpace: "nowrap" }}>{(() => {
+                        const stat = docs?.byRef?.[statKey(SEGMENT, g.partner, g.pid)];
+                        const n = DOC_TYPES.filter((d) => stat?.types?.[d.key]?.n > 0).length;
+                        const miss = DOC_TYPES.filter((d) => !(stat?.types?.[d.key]?.n > 0)).map((d) => d.short);
+                        return <span title={miss.length ? `Missing: ${miss.join(", ")}` : "All 4 documents uploaded"} style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: n === DOC_TYPES.length ? (t.goodDark || TEAL_D) : n ? (t.warnDark || "#8a6a00") : t.muted }}>
+                          {n}/{DOC_TYPES.length}{miss.length ? <span style={{ fontWeight: 400, color: t.muted }}> · {miss.join(" ")}</span> : " ✓"}
+                        </span>;
+                      })()}</td>
                       <td style={mid}>{apprCell(g)}</td>
                       <td style={{ ...mid, fontFamily: MONO, fontSize: 11, whiteSpace: "nowrap" }}>{fmtDT(g.lastAt)}</td>
                       <td style={{ ...mid, textAlign: "right" }}><RowMenu t={t} label={`More actions for ${g.pid}`} items={[
@@ -993,6 +1026,7 @@ function LettersHistory({ cfg, index, indexErr, approvals, reload, canWrite = tr
                         ...(apprAvailable && canRequest(g) ? [{ label: g.ap.overall ? "Request approval again" : "Request approval", onClick: () => doRequest([g]), disabled: !!working }] : []),
                         ...(g.ap.overall === "pending" ? [{ label: "Remind approver", onClick: () => apprAction("remind", g), disabled: !!working }, { label: "Cancel request", onClick: () => apprAction("cancel", g), disabled: !!working }] : []),
                         ...(canStamp(g) ? [{ label: "Stamp e-signature", onClick: () => doStamp([g]), disabled: !!working }] : []),
+                        ...(canWrite ? [{ label: "⬆ Upload signed BAST (PDF)", onClick: () => askSigned(g, "bast"), disabled: !!working }, { label: "⬆ Upload signed Letter (PDF)", onClick: () => askSigned(g, "surat_pemberitahuan"), disabled: !!working }] : []),
                       ]} /></td>
                     </tr>
                   );
@@ -1007,8 +1041,568 @@ function LettersHistory({ cfg, index, indexErr, approvals, reload, canWrite = tr
   );
 }
 
+// ── Bulk upload BAST & Surat yang sudah approved / ditandatangani (SPM) ──────
+// Cocokkan tiap PDF ke Payment ID: (a) Payment ID di nama file → (b) "Ref: PAY-…" di teks PDF →
+// (c) nama partner + MPC/MP3 (nama file / teks PDF) di antara pembayaran periode terpilih.
+// Jenis dokumen dari nama file (BAST / SURAT / LETTER / SP) atau teks ("BERITA ACARA SERAH TERIMA" vs "Surat Pemberitahuan").
+// Payment ID yang belum ada bisa dibuat dari Excel Source Data SMS (tanpa generate PDF).
+const PAY_IN_TEXT = /PAY-\d{6}-[A-Z0-9]+-[A-Z0-9]+-\d{2}/;
+const alnumUp = (x) => String(x || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+async function pdfText(bytes, maxPages = 3) {
+  const pdfjs = await loadPdfjs();
+  const doc = await pdfjs.getDocument({ data: bytes.slice() }).promise;
+  try {
+    let out = "";
+    for (let i = 1; i <= Math.min(doc.numPages, maxPages); i++) {
+      const tc = await (await doc.getPage(i)).getTextContent();
+      out += tc.items.map((it) => it.str).join(" ") + "\n";
+    }
+    return out;
+  } finally { doc.destroy(); }
+}
+const kindFrom = (name, text) => {
+  const n = String(name).toUpperCase();
+  if (/BAST|BERITA[ _-]?ACARA/.test(n)) return "bast";
+  if (/SURAT|LETTER|PEMBERITAHUAN|(^|[^A-Z])SP([^A-Z]|$)/.test(n)) return "surat_pemberitahuan";
+  const tx = String(text || "").toUpperCase();
+  if (tx.includes("BERITA ACARA SERAH TERIMA")) return "bast";
+  if (/SURAT PEMBERITAHUAN|KETENTUAN KLAIM|KEPADA YTH/.test(tx)) return "surat_pemberitahuan";
+  return "";
+};
+const typeFrom = (s) => { const m = String(s || "").toUpperCase().match(/(^|[^A-Z0-9])(MPC|MP3)([^A-Z0-9]|$)/); return m ? m[2] : ""; };
+// Nama file manual, mis. "BAST ULTIMA MULTIMEDIA JAYA, PT MPC.pdf", "Surat Pemberitahuan GLOBAL BIMA UTAMA PT_MPC.pdf"
+// → { kind, partner, type }. Toleran: huruf besar/kecil, koma opsional, "PT" + spasi/"_", spasi berlebih.
+export function parseSignedFileName(name) {
+  const base = String(name || "").replace(/^.*[\\/]/, "").replace(/\.pdf$/i, "").replace(/\s+/g, " ").trim();
+  const m = base.match(/^(BAST|BERITA ACARA(?: SERAH TERIMA)?|SURAT PEMBERITAHUAN(?: DF)?|SURAT|LETTER|SP)[\s_-]+(.+?)[\s_-]*(MPC|MP3)\s*$/i);
+  if (!m) return null;
+  const kind = /^(BAST|BERITA)/i.test(m[1]) ? "bast" : "surat_pemberitahuan";
+  const partner = m[2].replace(/[\s,._-]+$/g, "").replace(/[\s,_]+(PT|CV|TBK)\.?$/i, "").trim();
+  return { kind, partner, type: m[3].toUpperCase() };
+}
+// Kemiripan nama (fallback fuzzy): Dice coefficient atas bigram huruf
+const similarity = (a, b) => {
+  const bg = (x) => { const s2 = alnumUp(x); const out = new Map(); for (let i = 0; i < s2.length - 1; i++) { const k = s2.slice(i, i + 2); out.set(k, (out.get(k) || 0) + 1); } return out; };
+  const A = bg(a), B = bg(b);
+  let inter = 0, na = 0, nb = 0;
+  A.forEach((v, k) => { na += v; inter += Math.min(v, B.get(k) || 0); });
+  B.forEach((v) => { nb += v; });
+  return na + nb ? (2 * inter) / (na + nb) : 0;
+};
+const slug = (x) => String(x || "").toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
+function BulkSignedUpload({ meta, known, index, onSaved, onDone, doneLabel = "View History →", partnerNames = [], t }) {
+  const S = styles(t);
+  const [period, setPeriod] = useState(meta.period);
+  const [existing, setExisting] = useState(null);   // [{ pid, partner, type, ym, total }]
+  const [excel, setExcel] = useState(null);         // { name, rows: [{ pid, partner, type, ym, total, isNew }] }
+  // Payment ID baru dari nama file (partner + MPC/MP3) — belum tersimpan sampai "Upload N files"
+  const [proposals, setProposals] = useState(() => new Map());   // `${partnerKey}|${type}` → { pid, partner, type, ym, total: null, isNew, fromName }
+  const [items, setItems] = useState([]);           // { id, file, kind, pid, how, cands, include, res, msg }
+  const [reading, setReading] = useState("");
+  const [phase, setPhase] = useState("pick");       // pick | review | uploading | done
+  const [prog, setProg] = useState({ i: 0, total: 0 });
+  const fileRef = useRef(null);
+  const xlsRef = useRef(null);
+  const per = parsePeriod(period);
+
+  // Pembayaran yang sudah ada (semua periode) — partner & type dari Payment ID
+  useEffect(() => {
+    let alive = true;
+    fetchDraftDocs(SEGMENT).then((d) => {
+      const m = new Map();
+      d.filter((x) => isPaymentRef(x.ref_id)).forEach((x) => {
+        if (m.has(x.ref_id)) return;
+        const info = parsePaymentRef(x.ref_id);
+        m.set(x.ref_id, { pid: x.ref_id, partner: x.partner_name, type: info.type, ym: info.ym, total: null });
+      });
+      if (alive) setExisting([...m.values()]);
+    }).catch(() => { if (alive) setExisting([]); });
+    return () => { alive = false; };
+  }, [index]);
+
+  // Kandidat periode terpilih = pembayaran yang ada + dari Excel (yang baru)
+  const pool = useMemo(() => {
+    const out = (existing || []).filter((x) => !per || x.ym === per.ym);
+    (excel?.rows || []).filter((r) => r.isNew).forEach((r) => out.push(r));
+    return out;
+  }, [existing, excel, per]);
+  const poolById = useMemo(() => new Map([...(existing || []), ...(excel?.rows || []), ...proposals.values()].map((x) => [x.pid, x])), [existing, excel, proposals]);
+  // Daftar partner aplikasi (Payout data + pembayaran yang ada + Excel): partnerKey → nama resmi
+  const directory = useMemo(() => {
+    const m = new Map();
+    [...partnerNames, ...(existing || []).map((x) => x.partner), ...(excel?.rows || []).map((x) => x.partner)].forEach((n) => { const k = partnerKey(n); if (k && !m.has(k)) m.set(k, n); });
+    return m;
+  }, [partnerNames, existing, excel]);
+  const dirNames = useMemo(() => [...directory.values()].sort(), [directory]);
+  // Payment ID usulan untuk partner + type (dipakai bersama BAST & Surat); props = Map kerja (bisa lokal saat membaca banyak file)
+  const propose = (props, partnerName, type) => {
+    const pk = partnerKey(partnerName);
+    const key = `${pk}|${type}`;
+    if (props.has(key)) return props.get(key);
+    const own = new Map(known || []);
+    [...(excel?.rows || []), ...props.values()].forEach((x) => own.set(x.pid, partnerKey(x.partner)));
+    const pid = nextPaymentId({ partner: partnerName, ym: per.ym, type, known: own });
+    const row = { pid, partner: partnerName, type, ym: per.ym, total: null, isNew: true, fromName: true };
+    props.set(key, row);
+    return row;
+  };
+
+  const loadExcel = async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    if (!per) { toast(t, "Choose the period first.", "err"); return; }
+    setReading("Reading Excel…");
+    try {
+      const bytes = new Uint8Array(await f.arrayBuffer());
+      if ((await detectWorkbookFormat(bytes)) !== "sms") throw new Error("Use the Source Data SMS workbook (sheets BAST and LETTER).");
+      const { pairs } = await parseSmsWorkbook(bytes);
+      const codes = assignPartnerCodes(pairs.map((p) => p.partner));
+      const own = new Map(known || []);
+      const rows = pairs.map((p) => {
+        const fin = finalizeSms(p, { per, docDate: null, deadline: null, letterNo: "-", recipientTitle: {}, fallbackSigner: {} });
+        const pk = partnerKey(p.partner);
+        // sudah ada pembayaran partner+type+periode ini → pakai Payment ID terbaru (versi approved dari surat yang di-generate)
+        const ex = (existing || []).filter((x) => x.ym === per.ym && x.type === p.type && partnerKey(x.partner) === pk).sort((a, b) => b.pid.localeCompare(a.pid))[0];
+        if (ex) return { ...ex, total: fin.letter.total, isNew: false };
+        let pid = p.paymentId && isPaymentRef(p.paymentId) ? p.paymentId : "";
+        if (!pid) {
+          const code = codes.codes.get(pk) || partnerCode(p.partner);
+          pid = paymentIdFor(per.ym, p.type, code, 1);
+          if (own.get(pid) && own.get(pid) !== pk) pid = nextPaymentId({ partner: p.partner, ym: per.ym, type: p.type, known: own });
+        }
+        own.set(pid, pk);
+        return { pid, partner: p.partner, type: p.type, ym: per.ym, total: fin.letter.total, isNew: true, emailsTo: p.emailsTo, emailsCc: p.emailsCc };
+      });
+      setExcel({ name: f.name, rows });
+      // Excel menang: baris yang tadinya memakai Payment ID usulan dari nama file dipindah ke Payment ID Excel
+      const byKey = new Map(rows.map((r) => [`${partnerKey(r.partner)}|${r.type}`, r]));
+      const remap = new Map();
+      proposals.forEach((pr, k) => { if (byKey.has(k)) remap.set(pr.pid, byKey.get(k).pid); });
+      if (remap.size) {
+        setItems((cur) => cur.map((x) => (remap.has(x.pid) ? { ...x, pid: remap.get(x.pid), how: "Excel (partner + type)" } : x)));
+        setProposals((cur) => { const n = new Map(cur); [...n.keys()].forEach((k) => { if (byKey.has(k)) n.delete(k); }); return n; });
+      }
+      toast(t, `${rows.length} payment(s) from ${f.name}: ${rows.filter((r) => r.isNew).length} new, ${rows.filter((r) => !r.isNew).length} already exist.`);
+    } catch (err) { toast(t, errMsg(err), "err"); }
+    setReading("");
+  };
+
+  const match = (name, text) => {
+    const nameUp = String(name).toUpperCase();
+    const byName = nameUp.match(PAY_IN_TEXT)?.[0];
+    if (byName) return poolById.has(byName) ? { pid: byName, how: "file name" } : { pid: "", how: "unknown Payment ID", cands: [], note: byName };
+    const byText = String(text || "").toUpperCase().match(PAY_IN_TEXT)?.[0];
+    if (byText && poolById.has(byText)) return { pid: byText, how: "Ref in PDF" };
+    // (c) pola nama file manual: partner + type harus sama persis (setelah normalisasi) dengan data pembayaran
+    const parsed = parseSignedFileName(name);
+    if (parsed) {
+      const pk = partnerKey(parsed.partner);
+      const exact = pool.filter((x) => partnerKey(x.partner) === pk && x.type === parsed.type);
+      if (exact.length === 1) return { pid: exact[0].pid, how: "file name (partner + type)", kind: parsed.kind };
+      if (exact.length > 1) return { pid: "", how: "ambiguous", cands: exact.map((x) => x.pid), kind: parsed.kind };
+    }
+    const hay = alnumUp(name) + " " + alnumUp(text);
+    const type = parsed?.type || typeFrom(name) || typeFrom(text);
+    const hits = pool.filter((x) => { const k = alnumUp(partnerKey(x.partner)); return k.length >= 4 && hay.includes(k); });
+    const best = hits.length ? Math.max(...hits.map((x) => alnumUp(partnerKey(x.partner)).length)) : 0;
+    const top = hits.filter((x) => alnumUp(partnerKey(x.partner)).length === best && (!type || x.type === type));
+    if (top.length === 1) return { pid: top[0].pid, how: type ? "partner + type" : "partner" };
+    if (top.length > 1) return { pid: "", how: "ambiguous", cands: top.map((x) => x.pid) };
+    // (e) fuzzy: nama partner paling mirip (type sama) — perlu konfirmasi manual
+    if (parsed) {
+      const scored = pool.filter((x) => x.type === parsed.type).map((x) => ({ x, sc: similarity(partnerKey(parsed.partner), partnerKey(x.partner)) })).sort((a, b) => b.sc - a.sc);
+      if (scored[0] && scored[0].sc >= 0.75) return { pid: scored[0].x.pid, how: `fuzzy ${Math.round(scored[0].sc * 100)}% — please check`, cands: scored.slice(0, 3).map((y) => y.x.pid), fuzzy: true, kind: parsed.kind };
+    }
+    return { pid: "", how: "unmatched", cands: [] };
+  };
+
+  const addFiles = async (list) => {
+    const pdfs = [];
+    for (const f of list) {
+      if (/\.zip$/i.test(f.name)) {
+        const { default: JSZip } = await import("jszip");
+        const zip = await JSZip.loadAsync(await f.arrayBuffer());
+        for (const entry of Object.values(zip.files)) {
+          if (entry.dir || !/\.pdf$/i.test(entry.name) || /(^|\/)(__MACOSX|\._)/.test(entry.name)) continue;
+          pdfs.push(new File([await entry.async("uint8array")], entry.name.split("/").pop(), { type: "application/pdf" }));
+        }
+      } else if (fileKind(f.name, f.type) === "pdf") pdfs.push(f);
+    }
+    if (!pdfs.length) { toast(t, "No PDF files found.", "err"); return; }
+    const out = [];
+    const props = new Map(proposals);
+    for (let i = 0; i < pdfs.length; i++) {
+      const f = pdfs[i];
+      setReading(`Reading ${i + 1}/${pdfs.length}: ${f.name}`);
+      const bad = validateFile(f);
+      let text = "";
+      if (!bad) { try { text = await pdfText(new Uint8Array(await f.arrayBuffer())); } catch { text = ""; } }
+      let m = bad ? { pid: "", how: "invalid", cands: [] } : match(f.name, text);
+      const parsed = !bad && parseSignedFileName(f.name);
+      let unknown = "";
+      // Belum ada Payment ID untuk partner + type ini → usulkan Payment ID baru dari nama file (tanpa Excel)
+      if (parsed && per && (!m.pid || m.fuzzy) && m.how !== "ambiguous") {
+        const canon = directory.get(partnerKey(parsed.partner));
+        if (canon) { const row = propose(props, canon, parsed.type); m = { pid: row.pid, how: "new from file name", kind: parsed.kind }; }
+        else { unknown = parsed.partner; m = { ...m, pid: m.fuzzy ? m.pid : "", how: m.fuzzy ? m.how : "unknown partner" }; }
+      }
+      out.push({ id: `${Date.now()}_${i}_${Math.random().toString(36).slice(2, 5)}`, file: f, kind: m.kind || (parsed && parsed.kind) || kindFrom(f.name, text), pid: m.pid, how: m.how, cands: m.cands || [], fuzzy: !!m.fuzzy, note: m.note || bad || "", include: !bad && !!m.pid && !m.fuzzy, res: null, unknown, ptype: parsed ? parsed.type : "" });
+    }
+    setProposals(props);
+    setReading("");
+    setItems((cur) => [...cur, ...out]);
+    setPhase("review");
+  };
+
+  const rows = useMemo(() => {
+    const cnt = new Map();
+    items.forEach((x) => { if (x.include && x.pid && x.kind) cnt.set(`${x.pid}|${x.kind}`, (cnt.get(`${x.pid}|${x.kind}`) || 0) + 1); });
+    return items.map((x) => {
+      const dup = x.include && x.pid && x.kind && cnt.get(`${x.pid}|${x.kind}`) > 1;
+      const isNewPid = !!poolById.get(x.pid)?.fromName;
+      const st = x.res === "ok" ? "Uploaded" : x.res ? "Failed" : !x.pid ? (x.unknown ? "Unknown partner" : x.how === "ambiguous" ? "Ambiguous" : "Unmatched") : x.fuzzy && !x.include ? "Ambiguous" : !x.kind ? "Choose kind" : dup ? "Duplicate" : isNewPid ? "New Payment ID" : "Matched";
+      return { ...x, dup, st };
+    });
+  }, [items, poolById]);
+  const ready = rows.filter((x) => x.include && x.pid && x.kind && !x.dup && x.res !== "ok");
+  const setItem = (id, patch) => setItems((cur) => cur.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  const matchRate = items.length ? Math.round((items.filter((x) => x.pid && !x.fuzzy && x.how !== "manual" && x.how !== "partner chosen").length / items.length) * 100) : 0;
+  // Partner tidak dikenal: SPM memilih partner resmi → Payment ID baru diusulkan untuk partner + type itu
+  const pickPartner = (x, name) => {
+    if (!name) return;
+    const type = x.ptype || typeFrom(x.file.name);
+    if (!type) { toast(t, "The type (MPC / MP3) is missing in the file name — choose a Payment ID instead.", "err"); return; }
+    const props = new Map(proposals);
+    const row = propose(props, name, type);
+    setProposals(props);
+    setItem(x.id, { pid: row.pid, how: "partner chosen", unknown: "", include: true });
+  };
+  // Salinan rapi untuk SPM: 1 folder per Payment ID, nama file sesuai Payment ID (file asli tidak diubah)
+  const organizedZip = async () => {
+    const list = rows.filter((x) => x.pid && x.kind && !x.dup && (x.include || x.res === "ok"));
+    if (!list.length) { toast(t, "No matched files yet.", "info"); return; }
+    const { default: JSZip } = await import("jszip");
+    const zip = new JSZip();
+    list.forEach((x) => {
+      const pay = poolById.get(x.pid);
+      zip.file(`${x.pid}/${x.kind === "bast" ? "BAST" : "SURAT"}_${x.pid}_${slug(partnerKey(pay?.partner || ""))}_${pay?.type || ""}.pdf`, x.file);
+    });
+    saveBlobAs(await zip.generateAsync({ type: "blob" }), `Signed_BAST_Letters_${per?.ym || "period"}_by_Payment_ID.zip`, "application/zip");
+    toast(t, `ZIP with ${list.length} file(s) in ${new Set(list.map((x) => x.pid)).size} Payment ID folder(s) downloaded.`);
+  };
+
+  const upload = async (list) => {
+    if (!list.length) return;
+    if (!window.confirm(`Upload ${list.length} signed file(s)? Each becomes the current BAST / Notification Letter of its Payment ID; existing files are kept as an archive.`)) return;
+    setPhase("uploading");
+    setProg({ i: 0, total: list.length });
+    // Payment ID baru dari Excel: simpan metadata dulu (sekali per Payment ID)
+    const newPids = [...new Set(list.map((x) => x.pid))].map((pid) => poolById.get(pid)).filter((r) => r?.isNew && !known?.has(r.pid) && !index?.has(r.pid));
+    for (const r of newPids) {
+      try {
+        await savePaymentMeta(SEGMENT, {
+          payment_id: r.pid, partner: r.partner, type: r.type, period: parsePeriod(r.ym)?.label || "", period_ym: r.ym, total: r.total,
+          email_to: r.emailsTo || [], email_cc: r.emailsCc || [], sign_mode: "upload", source: r.fromName ? "bulk-upload (file names)" : "bulk-upload (Excel)", esign: { bast: true, letter: true },
+          saved_at: new Date().toISOString(), source_file: excel?.name || "",
+        });
+      } catch { /* metadata opsional — file tetap di-upload */ }
+    }
+    let ok = 0, fail = 0;
+    for (let i = 0; i < list.length; i++) {
+      const x = list[i];
+      const pay = poolById.get(x.pid);
+      try {
+        const r = await uploadSlot({ files: [new File([x.file], spmSignedName(x.kind, x.pid, pay.partner), { type: "application/pdf" })], partnerName: pay.partner, refId: x.pid, docType: x.kind, segment: SEGMENT, replace: false });
+        if (r.errors.length) throw new Error(r.errors[0].message);
+        setItem(x.id, { res: "ok", msg: "" }); ok++;
+      } catch (e) { setItem(x.id, { res: "err", msg: errMsg(e) }); fail++; }
+      setProg({ i: i + 1, total: list.length });
+    }
+    setPhase("done");
+    await onSaved?.();
+    toast(t, `Uploaded ${ok} file(s)${fail ? `, failed ${fail}` : ""}.`, fail ? "err" : "ok");
+  };
+
+  const allPids = useMemo(() => [...poolById.values()].filter((x) => !per || x.ym === per.ym).sort((a, b) => a.partner.localeCompare(b.partner) || a.type.localeCompare(b.type)), [poolById, per]);
+  const stColor = (st) => st === "Matched" || st === "Uploaded" || st === "New Payment ID" ? (t.goodDark || TEAL_D) : st === "Failed" || st === "Unmatched" || st === "Unknown partner" ? t.bad : t.warnDark || "#8a6a00";
+  const busy = phase === "uploading" || !!reading;
+  const failed = rows.filter((x) => x.res === "err");
+
+  return (
+    <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ fontSize: 12.5, color: t.muted, lineHeight: 1.5, maxWidth: 900 }}>
+        Upload the approved / signed BAST and Notification Letters for many partners at once (PDFs or a ZIP). Each file is matched to its Payment ID by file name, by the “Ref: PAY-…” footer, or by partner name + MPC/MP3. If a partner + type has no Payment ID yet, a new one is proposed from the file name (no Excel needed). Nothing is saved until you press <b>Upload</b>. Partners then only add their Invoice and Faktur Pajak.
+      </div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11.5, color: t.muted }}>
+          Period
+          <input className="ppd-f" type="month" value={period} onChange={(e) => setPeriod(e.target.value)} disabled={busy || items.length > 0} style={{ ...S.inp, width: 180 }} />
+        </label>
+        <input ref={xlsRef} type="file" accept=".xlsx" hidden onChange={loadExcel} />
+        <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy)} disabled={busy} onClick={() => xlsRef.current?.click()}
+          title="Optional: create the Payment IDs (and totals) for this period from the Source Data SMS Excel, without generating PDFs">
+          {excel ? `✓ ${excel.rows.length} payments from Excel` : "Create Payment IDs from Excel (optional)"}
+        </button>
+        <span style={{ fontSize: 11.5, color: t.muted }}>{existing == null ? "Loading payments…" : `${pool.length} payment(s) available for ${per?.label || "this period"}${proposals.size ? ` · ${proposals.size} new from file names` : ""}`}</span>
+        <input ref={fileRef} type="file" accept=".pdf,.zip,application/pdf,application/zip" multiple hidden onChange={(e) => { const l = Array.from(e.target.files || []); e.target.value = ""; addFiles(l); }} />
+        <span title={!per ? "Choose the period first." : existing == null || known == null ? "Loading existing payments…" : undefined} style={{ marginLeft: "auto", display: "inline-flex" }}>
+          <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || !per || existing == null || known == null)} disabled={busy || !per || existing == null || known == null} onClick={() => fileRef.current?.click()}>⬆ Add PDFs or ZIP</button>
+        </span>
+      </div>
+      {reading && <div aria-live="polite" style={{ fontFamily: MONO, fontSize: 11, color: t.muted }}>{reading}</div>}
+
+      {!items.length ? (
+        <div role="button" tabIndex={0} className="ppd-f" onClick={() => !busy && per && existing != null && known != null && fileRef.current?.click()} onKeyDown={(e) => { if (e.key === "Enter" && existing != null && known != null) fileRef.current?.click(); }}
+          onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); if (!busy && per && existing != null && known != null) addFiles(Array.from(e.dataTransfer?.files || [])); }}
+          style={{ border: `2px dashed ${t.line2}`, borderRadius: 16, padding: "36px 16px", textAlign: "center", background: t.surf2, color: t.muted, fontSize: 12.5, cursor: "pointer" }}>
+          <div style={{ color: TEAL, display: "inline-flex" }}><IcoUp /></div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: t.ink, marginTop: 4 }}>Drop the signed BAST and Letter PDFs (or a ZIP) here</div>
+          PDF only, max {MAX_FILE_BYTES / 1048576} MB per file.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12, color: t.muted }}>
+            <span><b style={{ color: t.ink }}>{rows.length}</b> file(s)</span>
+            {["Matched", "New Payment ID", "Ambiguous", "Unknown partner", "Unmatched", "Duplicate", "Choose kind", "Uploaded", "Failed"].map((k) => { const n = rows.filter((x) => x.st === k).length; return n ? <span key={k} style={{ color: stColor(k), fontWeight: 600 }}>{k}: {n}</span> : null; })}
+            <span>Auto-match rate: <b style={{ color: t.ink }}>{matchRate}%</b></span>
+          </div>
+          <div style={{ border: `1px solid ${t.line}`, borderRadius: 12, overflow: "auto", maxHeight: "56vh" }}>
+            <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0, minWidth: 980 }}>
+              <thead><tr>
+                <th style={{ ...S.th, width: 30 }}><span className="ppd-sr">Include</span></th>
+                <th style={S.th}>File</th><th style={S.th}>Kind</th><th style={S.th}>Payment ID · partner</th><th style={S.th}>Matched by</th><th style={S.th}>Status</th>
+              </tr></thead>
+              <tbody>
+                {rows.map((x) => {
+                  const pay = poolById.get(x.pid);
+                  const opts = x.cands.length ? allPids.filter((p) => x.cands.includes(p.pid)).concat(allPids.filter((p) => !x.cands.includes(p.pid))) : allPids;
+                  return (
+                    <tr key={x.id} style={{ background: x.res === "ok" ? t.goodBg : x.res === "err" || x.st === "Unmatched" || x.st === "Unknown partner" ? t.badBg : x.st !== "Matched" && x.st !== "New Payment ID" ? t.warnBg : "transparent" }}>
+                      <td style={{ ...S.td, textAlign: "center" }}><input type="checkbox" className="ppd-f" aria-label={`Include ${x.file.name}`} checked={x.include} disabled={busy || x.res === "ok" || !x.pid} onChange={(e) => setItem(x.id, { include: e.target.checked })} /></td>
+                      <td style={{ ...S.td, maxWidth: 260 }}><div title={x.file.name} style={{ fontWeight: 600, color: t.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.file.name}</div><div style={{ fontFamily: MONO, fontSize: 10, color: t.muted }}>{fmtSizeLocal(x.file.size)}</div></td>
+                      <td style={S.td}>
+                        <select className="ppd-f" value={x.kind} disabled={busy || x.res === "ok"} onChange={(e) => setItem(x.id, { kind: e.target.value })} style={{ ...S.inp, width: 130, fontSize: 11.5, padding: "4px 6px", borderColor: x.kind ? t.line2 : t.warn }}>
+                          <option value="">— kind —</option><option value="bast">BAST</option><option value="surat_pemberitahuan">Notification Letter</option>
+                        </select>
+                      </td>
+                      <td style={{ ...S.td, minWidth: 300 }}>
+                        <select className="ppd-f" value={x.pid} disabled={busy || x.res === "ok"} onChange={(e) => setItem(x.id, { pid: e.target.value, how: e.target.value ? "manual" : "unmatched", include: !!e.target.value })}
+                          style={{ ...S.inp, fontFamily: MONO, fontSize: 11, padding: "4px 6px", borderColor: x.pid ? t.line2 : t.warn }}>
+                          <option value="">— choose Payment ID —</option>
+                          {opts.map((p) => <option key={p.pid} value={p.pid}>{p.pid} · {p.partner}{p.isNew ? " (new)" : ""}</option>)}
+                        </select>
+                        {pay && <div style={{ fontSize: 10.5, color: t.muted, marginTop: 2 }}>{pay.partner} · {pay.type} · {pay.total != null ? rupiah(pay.total) : "total —"}{pay.isNew && !known?.has(pay.pid) ? (pay.fromName ? " · new Payment ID (from file name)" : " · new from Excel") : ""}</div>}
+                        {x.unknown && !x.pid && (
+                          <div style={{ marginTop: 4 }}>
+                            <div style={{ fontSize: 10.5, color: t.bad, marginBottom: 2 }}>“{x.unknown}” is not in the partner list — choose the partner:</div>
+                            <select className="ppd-f" value="" disabled={busy} onChange={(e) => pickPartner(x, e.target.value)} style={{ ...S.inp, fontSize: 11, padding: "4px 6px", borderColor: t.warn }}>
+                              <option value="">— choose partner —</option>
+                              {dirNames.map((n) => <option key={n} value={n}>{n}</option>)}
+                            </select>
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ ...S.td, fontSize: 11, color: t.muted }}>{x.how}{x.note ? <div style={{ color: t.bad }}>{x.note}</div> : null}</td>
+                      <td style={{ ...S.td, fontSize: 11.5, fontWeight: 700, color: stColor(x.st) }}>{x.st}{x.msg ? <div style={{ fontWeight: 400 }}>{x.msg}</div> : null}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {phase === "uploading" && <IndeterminateBar t={t} pct={Math.round((prog.i / Math.max(1, prog.total)) * 100)} />}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            {phase === "uploading" && <span style={{ fontFamily: MONO, fontSize: 11, color: t.muted }}>Uploading {prog.i}/{prog.total}…</span>}
+            {phase === "done" && <span style={{ fontSize: 12.5, color: t.ink2 }}>Done: {rows.filter((x) => x.res === "ok").length} uploaded{failed.length ? `, ${failed.length} failed` : ""}.</span>}
+            <span style={{ marginLeft: "auto", display: "inline-flex", gap: 8 }}>
+              <button className="ppd-f" style={btnStyle(t, "ghost", busy)} disabled={busy} onClick={() => { setItems([]); setProposals(new Map()); setPhase("pick"); }}>Clear</button>
+              <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy)} disabled={busy} onClick={organizedZip}
+                title="Download a renamed copy: one folder per Payment ID (nothing is uploaded)"><IcoDownload /> Download organized ZIP</button>
+              {failed.length > 0 && phase !== "uploading" && <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline")} onClick={() => upload(failed.map((x) => ({ ...x, res: null })))}>↻ Retry failed ({failed.length})</button>}
+              {phase === "done" && <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline")} onClick={onDone}>{doneLabel}</button>}
+              <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || !ready.length)} disabled={busy || !ready.length} onClick={() => upload(ready)}>⬆ Upload {ready.length} file(s)</button>
+            </span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+const fmtSizeLocal = (b) => (b < 1048576 ? `${Math.max(1, Math.round(b / 1024))} KB` : `${(b / 1048576).toFixed(1)} MB`);
+
+function Modal({ title, kicker, onClose, children, width = 760, t, labelId }) {
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.(); }} onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); onClose?.(); } }}
+      className="ppd-anim" style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 12, animation: "ppd_fade .15s ease-out" }}>
+      <div role="dialog" aria-modal="true" aria-labelledby={labelId}
+        style={{ width: `min(${width}px, 100%)`, maxHeight: "92vh", display: "flex", flexDirection: "column", background: t.surf, color: t.ink, borderRadius: 18, border: `1px solid ${t.line}`, boxShadow: t.shadow2, overflow: "hidden", textAlign: "left" }}>
+        <div style={{ padding: "14px 18px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "flex-start", gap: 12, background: t.surf2 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {kicker && <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: MAGENTA, fontWeight: 700 }}>{kicker}</div>}
+            <div id={labelId} style={{ fontSize: 16.5, fontWeight: 800, marginTop: 2 }}>{title}</div>
+          </div>
+          {onClose && <button className="ppd-f" onClick={onClose} aria-label="Close (Esc)" style={{ ...btnStyle(t, "ghost", false, true), fontSize: 20, lineHeight: 1, padding: "2px 8px", color: t.muted }}>×</button>}
+        </div>
+        <div style={{ flex: 1, overflow: "auto", padding: 18 }}>{children}</div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// Dipakai juga dari Document Upload & Merge (By Payment ID → Bulk Upload): komponen yang sama dalam modal
+export function BulkSignedModal({ docs, partnerNames = [], onClose, t }) {
+  useDocsCss();
+  const [known, setKnown] = useState(null);
+  const [index, setIndex] = useState(null);
+  const meta = useMemo(() => { const d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 1); return { period: d.toISOString().slice(0, 7) }; }, []);
+  const load = () => Promise.all([
+    fetchLettersIndex(SEGMENT).catch(() => new Map()),
+    fetchDraftDocs(SEGMENT).then((d) => new Map(d.filter((x) => isPaymentRef(x.ref_id)).map((x) => [x.ref_id, x.partner_key])), () => new Map()),
+  ]);
+  useEffect(() => {
+    let alive = true;
+    load().then(([i, k]) => { if (alive) { setIndex(i); setKnown(k); } });
+    return () => { alive = false; };
+  }, []); // muat sekali saat modal dibuka
+  const reload = async () => { const [i, k] = await load(); setIndex(i); setKnown(k); docs?.refresh?.(); };
+  return (
+    <Modal t={t} labelId="ppl-bulk-title" kicker="SPM · Bulk upload" title="Bulk upload signed BAST & Notification Letters" onClose={onClose} width={1240}>
+      <div style={{ margin: -18 }}>
+        <BulkSignedUpload meta={meta} known={known} index={index} onSaved={reload} onDone={onClose} doneLabel="Done — view Payment IDs" partnerNames={partnerNames} t={t} />
+      </div>
+    </Modal>
+  );
+}
+
+// ── Pembayaran "upload only": SPM meng-upload BAST & Surat yang sudah ditandatangani (tanpa generate) ──
+function UploadOnlyPayment({ meta, partnerNames = [], known, onSaved, onDone, t }) {
+  const S = styles(t);
+  const [f, setF] = useState(() => ({ partner: "", type: "MPC", period: meta.period, total: "", pid: "" }));
+  const [bast, setBast] = useState(null);
+  const [letter, setLetter] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(null);   // { pid, partner }
+  const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
+  const per = parsePeriod(f.period);
+  const pk = partnerKey(f.partner);
+  const manual = f.pid.trim().toUpperCase();
+  const autoPid = f.partner.trim() && per ? nextPaymentId({ partner: f.partner, ym: per.ym, type: f.type, known: known || new Map() }) : "";
+  const pid = manual || autoPid;
+  const owner = known?.get(pid) || "";
+  const errs = [];
+  if (known == null) errs.push("Loading existing payments…");
+  if (!f.partner.trim()) errs.push("Choose the partner.");
+  if (!per) errs.push("Choose the period.");
+  if (manual && !isPaymentRef(manual)) errs.push("PAYMENT_ID must follow PAY-YYYYMM-TYPE-CODE-NN.");
+  if (pid && owner && owner !== pk) errs.push(`${pid} already belongs to ${owner.replace(/_/g, " ")}.`);
+  if (f.total && !(Number(String(f.total).replace(/[^0-9.]/g, "")) > 0)) errs.push("Total must be a number.");
+  if (!bast || !letter) errs.push("Attach both the signed BAST and the signed Notification Letter (PDF).");
+  const pickPdf = (setter) => (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (fileKind(file.name, file.type) !== "pdf") { toast(t, "Please choose a PDF file.", "err"); return; }
+    const bad = validateFile(file);
+    if (bad) { toast(t, bad, "err"); return; }
+    setter(file);
+  };
+  const save = async () => {
+    if (errs.length) { toast(t, errs[0], "err"); return; }
+    if (owner === pk && !window.confirm(`${pid} already exists for this partner. Add the signed BAST and Letter as the latest versions?`)) return;
+    setBusy(true);
+    try {
+      for (const [docType, file] of [["bast", bast], ["surat_pemberitahuan", letter]]) {
+        const r = await uploadSlot({ files: [new File([file], spmSignedName(docType, pid, f.partner.trim()), { type: "application/pdf" })], partnerName: f.partner.trim(), refId: pid, docType, segment: SEGMENT, replace: false });
+        if (r.errors.length) throw new Error(r.errors[0].message);
+      }
+      const total = f.total ? Number(String(f.total).replace(/[^0-9.]/g, "")) : null;
+      await savePaymentMeta(SEGMENT, {
+        payment_id: pid, partner: f.partner.trim(), type: f.type, period: per.label, period_ym: per.ym, total,
+        sign_mode: "upload", source: "upload-only", esign: { bast: true, letter: true }, saved_at: new Date().toISOString(),
+        source_file: `${bast.name} + ${letter.name}`,
+      });
+      await onSaved?.();
+      setDone({ pid, partner: f.partner.trim() });
+      toast(t, `${pid} saved — the partner can now see it under “My payments”.`);
+    } catch (e) { toast(t, `Save failed: ${errMsg(e)}`, "err"); }
+    setBusy(false);
+  };
+  const reset = () => { setF((x) => ({ ...x, partner: "", total: "", pid: "" })); setBast(null); setLetter(null); setDone(null); };
+  const fileBox = (label, file, setter, id) => (
+    <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 11.5, color: t.muted }}>
+      {label}
+      <span style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", borderRadius: 10, border: `1.5px dashed ${file ? t.goodBd : t.line2}`, background: file ? t.goodBg : t.surf2 }}>
+        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: file ? t.ink : t.muted, fontWeight: file ? 600 : 400 }}>{file ? file.name : `PDF, max ${MAX_FILE_BYTES / 1048576} MB`}</span>
+        <input id={id} type="file" accept=".pdf,application/pdf" hidden onChange={pickPdf(setter)} disabled={busy} />
+        <button type="button" className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy, true)} disabled={busy} onClick={() => document.getElementById(id)?.click()}>{file ? "Replace" : "Choose PDF"}</button>
+      </span>
+    </label>
+  );
+  if (done) return (
+    <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 12, alignItems: "flex-start" }}>
+      <div role="status" style={{ fontSize: 13, padding: "10px 14px", borderRadius: 12, color: t.ink2, background: t.goodBg, border: `1px solid ${t.goodBd}` }}>
+        ✓ <b style={{ fontFamily: MONO }}>{done.pid}</b> saved for <b>{done.partner}</b>. The partner sees it under “My payments” and uploads the Invoice and Faktur Pajak.
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="ppd-f" style={btnStyle(t, "ghost")} onClick={reset}>Add another</button>
+        <button className="ppd-f ppd-act" style={btnStyle(t, "primary")} onClick={onDone}>View History →</button>
+      </div>
+    </div>
+  );
+  return (
+    <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ fontSize: 12.5, color: t.muted, lineHeight: 1.5, maxWidth: 820 }}>
+        Use this when the BAST and Notification Letter were already signed or approved outside SandraHub. Upload the signed PDFs; a Payment ID is created with the same rules as generated letters.
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, alignItems: "end" }}>
+        <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11.5, color: t.muted, gridColumn: "span 2" }}>
+          Partner
+          <input className="ppd-f" list="ppl-partners" value={f.partner} onChange={(e) => set("partner", e.target.value)} disabled={busy} placeholder="e.g. ULTIMA MULTIMEDIA JAYA, PT" style={S.inp} />
+          <datalist id="ppl-partners">{partnerNames.map((n) => <option key={n} value={n} />)}</datalist>
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11.5, color: t.muted }}>
+          Type
+          <select className="ppd-f" value={f.type} onChange={(e) => set("type", e.target.value)} disabled={busy} style={S.inp}><option>MPC</option><option>MP3</option></select>
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11.5, color: t.muted }}>
+          Period
+          <input className="ppd-f" type="month" value={f.period} onChange={(e) => set("period", e.target.value)} disabled={busy} style={S.inp} />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11.5, color: t.muted }}>
+          Total transfer (optional)
+          <input className="ppd-f" inputMode="numeric" value={f.total} onChange={(e) => set("total", e.target.value)} disabled={busy} placeholder="645944472" style={{ ...S.inp, fontFamily: MONO }} />
+        </label>
+        <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 11.5, color: t.muted }}>
+          PAYMENT_ID (optional)
+          <input className="ppd-f" value={f.pid} onChange={(e) => set("pid", e.target.value)} disabled={busy} placeholder={autoPid || "automatic"} style={{ ...S.inp, fontFamily: MONO }} />
+        </label>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 10 }}>
+        {fileBox("Signed BAST", bast, setBast, "ppl-up-bast")}
+        {fileBox("Signed Notification Letter", letter, setLetter, "ppl-up-letter")}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", borderTop: `1px solid ${t.line}`, paddingTop: 12 }}>
+        <span style={{ fontSize: 12, color: t.muted }}>Payment ID: <b style={{ fontFamily: MONO, color: t.ink }}>{pid || "—"}</b>{owner === pk && pid ? " (exists — files are added as latest versions)" : ""}</span>
+        {errs.length > 0 && <span style={{ fontSize: 11.5, color: t.warnDark || "#8a6a00" }}>{errs[0]}</span>}
+        <button className="ppd-f ppd-act" style={{ ...btnStyle(t, "primary", busy || errs.length > 0), marginLeft: "auto" }} disabled={busy || errs.length > 0} onClick={save}>
+          ⬆ {busy ? "Saving…" : "Save payment"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Tab utama ────────────────────────────────────────────────────────────────
-export function PartnerLettersTab({ docs, t }) {
+export function PartnerLettersTab({ docs, partnerNames = [], t }) {
   useDocsCss();
   const canGenerate = !!docs?.canMerge;            // SPM; admin internal Indosat hanya History + approval
   const [view, setView] = useState(canGenerate ? "new" : "history");          // new | history
@@ -1067,7 +1661,7 @@ export function PartnerLettersTab({ docs, t }) {
       </div>
       {showCfg && <SettingsPanel cfg={cfg} setCfg={setCfg} setCfgField={setCfgField} meta={meta} setMetaField={setMetaField} busy={false} t={t} />}
       <div role="tablist" aria-label="Partner Letters" style={{ display: "flex", padding: "0 20px", borderBottom: `1px solid ${t.line}`, background: t.surf2, overflowX: "auto" }}>
-        {[...(canGenerate ? [["new", "New batch", null]] : []), ["history", "History", index ? String(index.size) : "…"]].map(([k, label, count]) => {
+        {[...(canGenerate ? [["new", "New batch", null], ["bulk", "Bulk upload signed", null], ["upload", "Single payment (upload only)", null]] : []), ["history", "History", index ? String(index.size) : "…"]].map(([k, label, count]) => {
           const active = view === k;
           return (
             <button key={k} role="tab" aria-selected={active} className="ppd-f" onClick={() => { setView(k); if (k === "history") reload(); }}
@@ -1082,7 +1676,9 @@ export function PartnerLettersTab({ docs, t }) {
         <LettersWizard cfg={cfg} meta={meta} docs={docs} index={index} known={known} approvals={approvals} onSaved={reload}
           onOpenSettings={() => { setShowCfg(true); window.scrollTo({ top: 0, behavior: "smooth" }); }} onFinish={() => setView("history")} t={t} />
       </div>}
-      {view === "history" && <LettersHistory cfg={cfg} index={index} indexErr={indexErr} approvals={approvals} reload={reload} canWrite={canGenerate} t={t} />}
+      {canGenerate && view === "bulk" && <BulkSignedUpload meta={meta} known={known} index={index} partnerNames={partnerNames} onSaved={reload} onDone={() => { setView("history"); reload(); }} t={t} />}
+      {canGenerate && view === "upload" && <UploadOnlyPayment meta={meta} partnerNames={partnerNames} known={known} onSaved={reload} onDone={() => { setView("history"); reload(); }} t={t} />}
+      {view === "history" && <LettersHistory cfg={cfg} index={index} indexErr={indexErr} approvals={approvals} reload={reload} canWrite={canGenerate} docs={docs} t={t} />}
     </div>
   );
 }
