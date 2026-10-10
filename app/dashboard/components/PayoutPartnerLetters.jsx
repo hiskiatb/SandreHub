@@ -10,6 +10,7 @@
 // PDF disimpan di tabel/bucket dokumen dengan ref_id = Payment ID (PAY-*), tidak muncul di tab PO / Raw Data.
 // Gambar tanda tangan HANYA disimpan di browser (localStorage) — tidak pernah di-upload terpisah.
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   DOC_REF_LABEL, DOC_TYPES, statKey, uploadSlot, downloadDocsZip, partnerKey, signedUrl, fetchDraftDocs,
   isPaymentRef, parsePaymentRef, paymentIdFor, assignPartnerCodes, partnerCode, nextPaymentId, spmSignedName, validateFile, fileKind, MAX_FILE_BYTES,
@@ -1090,7 +1091,7 @@ const similarity = (a, b) => {
 };
 const slug = (x) => String(x || "").toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
-function BulkSignedUpload({ meta, known, index, onSaved, onDone, t }) {
+function BulkSignedUpload({ meta, known, index, onSaved, onDone, doneLabel = "View History →", t }) {
   const S = styles(t);
   const [period, setPeriod] = useState(meta.period);
   const [existing, setExisting] = useState(null);   // [{ pid, partner, type, ym, total }]
@@ -1359,7 +1360,7 @@ function BulkSignedUpload({ meta, known, index, onSaved, onDone, t }) {
               <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline", busy)} disabled={busy} onClick={organizedZip}
                 title="Download a renamed copy: one folder per Payment ID (nothing is uploaded)"><IcoDownload /> Download organized ZIP</button>
               {failed.length > 0 && phase !== "uploading" && <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline")} onClick={() => upload(failed.map((x) => ({ ...x, res: null })))}>↻ Retry failed ({failed.length})</button>}
-              {phase === "done" && <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline")} onClick={onDone}>View History →</button>}
+              {phase === "done" && <button className="ppd-f ppd-act-o" style={btnStyle(t, "outline")} onClick={onDone}>{doneLabel}</button>}
               <button className="ppd-f ppd-act" style={btnStyle(t, "primary", busy || !ready.length)} disabled={busy || !ready.length} onClick={() => upload(ready)}>⬆ Upload {ready.length} file(s)</button>
             </span>
           </div>
@@ -1369,6 +1370,57 @@ function BulkSignedUpload({ meta, known, index, onSaved, onDone, t }) {
   );
 }
 const fmtSizeLocal = (b) => (b < 1048576 ? `${Math.max(1, Math.round(b / 1024))} KB` : `${(b / 1048576).toFixed(1)} MB`);
+
+function Modal({ title, kicker, onClose, children, width = 760, t, labelId }) {
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <div onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.(); }} onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); onClose?.(); } }}
+      className="ppd-anim" style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 12, animation: "ppd_fade .15s ease-out" }}>
+      <div role="dialog" aria-modal="true" aria-labelledby={labelId}
+        style={{ width: `min(${width}px, 100%)`, maxHeight: "92vh", display: "flex", flexDirection: "column", background: t.surf, color: t.ink, borderRadius: 18, border: `1px solid ${t.line}`, boxShadow: t.shadow2, overflow: "hidden", textAlign: "left" }}>
+        <div style={{ padding: "14px 18px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "flex-start", gap: 12, background: t.surf2 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {kicker && <div style={{ fontFamily: MONO, fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: MAGENTA, fontWeight: 700 }}>{kicker}</div>}
+            <div id={labelId} style={{ fontSize: 16.5, fontWeight: 800, marginTop: 2 }}>{title}</div>
+          </div>
+          {onClose && <button className="ppd-f" onClick={onClose} aria-label="Close (Esc)" style={{ ...btnStyle(t, "ghost", false, true), fontSize: 20, lineHeight: 1, padding: "2px 8px", color: t.muted }}>×</button>}
+        </div>
+        <div style={{ flex: 1, overflow: "auto", padding: 18 }}>{children}</div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// Dipakai juga dari Document Upload & Merge (By Payment ID → Bulk Upload): komponen yang sama dalam modal
+export function BulkSignedModal({ docs, onClose, t }) {
+  useDocsCss();
+  const [known, setKnown] = useState(null);
+  const [index, setIndex] = useState(null);
+  const meta = useMemo(() => { const d = new Date(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() - 1); return { period: d.toISOString().slice(0, 7) }; }, []);
+  const load = () => Promise.all([
+    fetchLettersIndex(SEGMENT).catch(() => new Map()),
+    fetchDraftDocs(SEGMENT).then((d) => new Map(d.filter((x) => isPaymentRef(x.ref_id)).map((x) => [x.ref_id, x.partner_key])), () => new Map()),
+  ]);
+  useEffect(() => {
+    let alive = true;
+    load().then(([i, k]) => { if (alive) { setIndex(i); setKnown(k); } });
+    return () => { alive = false; };
+  }, []); // muat sekali saat modal dibuka
+  const reload = async () => { const [i, k] = await load(); setIndex(i); setKnown(k); docs?.refresh?.(); };
+  return (
+    <Modal t={t} labelId="ppl-bulk-title" kicker="SPM · Bulk upload" title="Bulk upload signed BAST & Notification Letters" onClose={onClose} width={1240}>
+      <div style={{ margin: -18 }}>
+        <BulkSignedUpload meta={meta} known={known} index={index} onSaved={reload} onDone={onClose} doneLabel="Done — view Payment IDs" t={t} />
+      </div>
+    </Modal>
+  );
+}
 
 // ── Pembayaran "upload only": SPM meng-upload BAST & Surat yang sudah ditandatangani (tanpa generate) ──
 function UploadOnlyPayment({ meta, partnerNames = [], known, onSaved, onDone, t }) {

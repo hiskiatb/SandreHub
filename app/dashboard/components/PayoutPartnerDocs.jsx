@@ -7,6 +7,7 @@
 //  • IOH          : lihat & buka file saja
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import dynamic from "next/dynamic";
 import {
   DOC_TYPES, DOC_REF_LABEL, ACCEPT_ATTR, MAX_FILE_BYTES, statKey, ownerLabel, doneCount, fmtSize, fileKind,
   canViewAll, canViewPartner, canWritePartner, canMerge, canManageApprovals,
@@ -17,6 +18,8 @@ import {
   isDraftRef, refDisplay, isPaymentRef, parsePaymentRef, fetchDraftDocs, isSpmSigned, spmSignedName,
 } from "../../../lib/payoutPartnerDocs";
 import { fetchLettersIndex, readJsonFile } from "../../../lib/payoutPartnerLetters";
+// Bulk upload BAST & Surat bertanda tangan (komponen Partner Letters) — dimuat saat dibuka (hindari import melingkar)
+const BulkSignedModal = dynamic(() => import("./PayoutPartnerLetters").then((m) => m.BulkSignedModal), { ssr: false });
 import { readOwnerSig, writeOwnerSig, isOwnerSigned, ownerSignedName, stampOwnerSignature, fetchDocBytes, imageToDataUrl } from "../../../lib/payoutPartnerSign";
 
 const TEAL = "#32BCAD", TEAL_D = "#27a093", MAGENTA = "#C6168D";
@@ -914,7 +917,7 @@ function usePaymentRows(segment, docs, { enabled = true, withMeta = false } = {}
   return rows;
 }
 
-export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmount, t }) {
+export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmount, onGoLetters, t }) {
   useDocsCss();
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("all"); // all | complete | partial | none
@@ -925,6 +928,7 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
   const [openKey, setOpenKey] = useState(null);
   const [openSlot, setOpenSlot] = useState(null);  // slot yang difokuskan saat drawer dibuka
   const [bulkOpen, setBulkOpen] = useState(false); // modal Bulk Upload (SPM)
+  const [signedOpen, setSignedOpen] = useState(false); // modal Bulk upload signed BAST & Surat (By Payment ID)
   const [sigOpen, setSigOpen] = useState(false);   // partner: modal tanda tangan owner
   const [openPay, setOpenPay] = useState(null);    // partner: Payment ID dari SPM yang dibuka
   const [reqOpen, setReqOpen] = useState(false);   // modal Request approval untuk PO terpilih (SPM)
@@ -1098,7 +1102,7 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
 
       {/* KPI strip */}
       <div style={{ padding: "14px 20px 10px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
-        {kpiCard({ id: "all", label: `Total ${REF}`, value: kpi.all, sub: `${own.toLowerCase()} · current filters`, color: t.muted })}
+        {kpiCard({ id: "all", label: `Total ${REF}`, value: kpi.all, sub: payMode ? `${own.toLowerCase()} · all periods` : `${own.toLowerCase()} · current filters`, color: t.muted })}
         {kpiCard({ id: "complete", label: `Complete ${N}/${N}`, value: kpi.complete, sub: fmtAmt(kpi.amtComplete), color: TEAL })}
         {kpiCard({ id: "partial", label: "Partial", value: kpi.partial, sub: `1–${N - 1} of ${N} documents`, color: t.warn })}
         {kpiCard({ id: "none", label: "Not uploaded", value: kpi.none, sub: "0 documents", color: t.bad })}
@@ -1173,17 +1177,26 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
           ))}
         </div>
         <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 11, color: t.muted, whiteSpace: "nowrap" }}>{filtered.length.toLocaleString("en-US")} {REF}s</span>
-        {isSPM && curStep === "upload" && (
-          <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !docs?.loaded || !rows.length, true)} disabled={!docs?.loaded || !rows.length} onClick={() => setBulkOpen(true)}
-            title={`Upload many files at once — automatically matched to a ${REF} by file name`}>
+        {isSPM && curStep === "upload" && (payMode ? (
+          <button className="ppd-f ppd-act" style={btnStyle(t, "primary", false, true)} onClick={() => setSignedOpen(true)}
+            title="Upload approved / signed BAST & Notification Letters for many partners at once (PDFs or ZIP). Payment IDs can be created from the Excel.">
             ⬆ Bulk Upload
           </button>
-        )}
+        ) : (
+          <span title={!docs?.loaded ? "Loading documents…" : !rows.length ? `No ${REF}s in the current Payout filters — change the filters above, or switch to “By Payment ID”.` : undefined} style={{ display: "inline-flex" }}>
+            <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !docs?.loaded || !rows.length, true)} disabled={!docs?.loaded || !rows.length} onClick={() => setBulkOpen(true)}
+              title={`Upload many files at once — automatically matched to a ${REF} by file name`}>
+              ⬆ Bulk Upload
+            </button>
+          </span>
+        ))}
         {selectable && (
-          <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !selected.length || !!bulk, true)} disabled={!selected.length || !!bulk} onClick={mergeSelected}
-            title={selected.length ? `Download ${selected.length} merged PDF(s) as one ZIP` : `Select complete ${REF}s first`}>
-            <IcoDownload /> Download merged ({selected.length})
-          </button>
+          <span title={selected.length ? undefined : bulk ? "Please wait — a download is in progress." : `Tick complete (${N}/${N}) ${REF}s in the table first.`} style={{ display: "inline-flex" }}>
+            <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !selected.length || !!bulk, true)} disabled={!selected.length || !!bulk} onClick={mergeSelected}
+              title={selected.length ? `Download ${selected.length} merged PDF(s) as one ZIP` : `Select complete ${REF}s first`}>
+              <IcoDownload /> Download merged ({selected.length})
+            </button>
+          </span>
         )}
       </div>
 
@@ -1220,8 +1233,17 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
               : pageRows.length === 0
                 ? <tr><td colSpan={cols} style={{ padding: "40px 16px", textAlign: "center", color: t.muted }}>
                     <div style={{ fontSize: 26, marginBottom: 6 }} aria-hidden="true">🗂</div>
-                    <div style={{ fontWeight: 700, color: t.ink, fontSize: 13.5 }}>{rows.length ? `No ${REF}s match your search` : isOwnerRole ? `No ${REF}s for your company in the selected period` : `No ${REF}s in the current data`}</div>
-                    <div style={{ fontSize: 12, marginTop: 4 }}>{rows.length ? "Adjust the search or status filter." : isOwnerRole ? `Check the period and filters above. If a ${REF} is missing, please contact SPM.` : "Check the Payout filters above."}</div>
+                    {payMode && !rows.length ? <>
+                      <div style={{ fontWeight: 700, color: t.ink, fontSize: 13.5 }}>No Payment IDs yet. Create them from your Excel and upload the approved BAST &amp; Letters in one go.</div>
+                      <div style={{ fontSize: 12, marginTop: 4 }}>Payment IDs come from Partner Letters (all periods) — the Payout filters above do not hide them.</div>
+                      <div style={{ display: "flex", gap: 10, justifyContent: "center", alignItems: "center", marginTop: 12, flexWrap: "wrap" }}>
+                        <button className="ppd-f ppd-act" style={btnStyle(t, "primary")} onClick={() => setSignedOpen(true)}>⬆ Bulk upload signed BAST &amp; Letters</button>
+                        {onGoLetters && <button className="ppd-f" style={{ all: "unset", cursor: "pointer", color: t.goodDark || TEAL_D, fontWeight: 600, fontSize: 12.5 }} onClick={onGoLetters}>or generate letters in Partner Letters</button>}
+                      </div>
+                    </> : <>
+                      <div style={{ fontWeight: 700, color: t.ink, fontSize: 13.5 }}>{rows.length ? `No ${REF}s match your search` : isOwnerRole ? `No ${REF}s for your company in the selected period` : `No ${REF}s in the current data`}</div>
+                      <div style={{ fontSize: 12, marginTop: 4 }}>{rows.length ? `Adjust the search or status filter${status !== "all" ? ` (showing “${status === "none" ? "Not uploaded" : status[0].toUpperCase() + status.slice(1)}” only)` : ""}.` : isOwnerRole ? `Check the period and filters above. If a ${REF} is missing, please contact SPM.` : "Check the Payout filters above."}</div>
+                    </>}
                     {(q || status !== "all") && <button className="ppd-f" style={{ ...btnStyle(t, "outline", false, true), marginTop: 10 }} onClick={() => { setQ(""); setStatus("all"); setPage(1); }}>Reset search &amp; filters</button>}
                   </td></tr>
                 : pageRows.map((r, i) => {
@@ -1338,6 +1360,7 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
       {sigOpen && <OwnerSignatureModal onClose={() => setSigOpen(false)} t={t} />}
       {openPay && <RefDocsDrawer key={openPay.ref} refId={openPay.ref} partnerName={openPay.partner} segment={segment} title={openPay.title}
         docs={docs} focusSlot={openPay.slot || null} onClose={() => setOpenPay(null)} t={t} />}
+      {signedOpen && <BulkSignedModal docs={docs} onClose={() => setSignedOpen(false)} t={t} />}
       {bulkOpen && <BulkUploadModal rows={rows} segment={segment} docs={docs} onClose={() => setBulkOpen(false)} t={t} />}
       {reqOpen && <BulkApprovalModal rows={selected} segment={segment} docs={docs} onClose={() => setReqOpen(false)} t={t} />}
     </div>
