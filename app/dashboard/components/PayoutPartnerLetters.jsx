@@ -11,7 +11,7 @@
 // Gambar tanda tangan HANYA disimpan di browser (localStorage) — tidak pernah di-upload terpisah.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  DOC_REF_LABEL, statKey, uploadSlot, downloadDocsZip, partnerKey, signedUrl, fetchDraftDocs,
+  DOC_REF_LABEL, DOC_TYPES, statKey, uploadSlot, downloadDocsZip, partnerKey, signedUrl, fetchDraftDocs,
   isPaymentRef, parsePaymentRef, paymentIdFor, assignPartnerCodes, partnerCode,
   approvalApi, fetchApprovals, approvalStatus, approvalKey,
 } from "../../../lib/payoutPartnerDocs";
@@ -792,7 +792,7 @@ function LettersWizard({ cfg: cfgRaw, meta, docs, index, known, approvals, onSav
 }
 
 // ── History ──────────────────────────────────────────────────────────────────
-function LettersHistory({ cfg, index, indexErr, approvals, reload, canWrite = true, t }) {
+function LettersHistory({ cfg, index, indexErr, approvals, reload, canWrite = true, docs, t }) {
   const S = styles(t);
   const [rowsRaw, setRowsRaw] = useState(null);
   const [err, setErr] = useState("");
@@ -961,13 +961,13 @@ function LettersHistory({ cfg, index, indexErr, approvals, reload, canWrite = tr
           <thead><tr>
             <th style={{ ...S.th, width: 34, textAlign: "center" }}><input type="checkbox" className="ppd-f" aria-label="Select all shown" checked={shown.length > 0 && shown.every((g) => sel.has(g.pid))} onChange={(e) => setSel(e.target.checked ? new Set(shown.map((g) => g.pid)) : new Set())} /></th>
             <th style={S.th}>Payment ID</th><th style={S.th}>Partner</th><th style={S.th}>Type</th><th style={S.th}>Period</th>
-            <th style={{ ...S.th, textAlign: "right" }}>Total transfer</th><th style={S.th}>Documents</th><th style={S.th}>Approval</th><th style={S.th}>Saved</th><th style={{ ...S.th, textAlign: "right" }}><span className="ppd-sr">Actions</span></th>
+            <th style={{ ...S.th, textAlign: "right" }}>Total transfer</th><th style={S.th}>Documents</th><th style={S.th} title="Invoice, BAST, Notification Letter and Faktur Pajak uploaded for this Payment ID">Partner docs</th><th style={S.th}>Approval</th><th style={S.th}>Saved</th><th style={{ ...S.th, textAlign: "right" }}><span className="ppd-sr">Actions</span></th>
           </tr></thead>
           <tbody>
             {rowsRaw == null
-              ? Array.from({ length: 4 }).map((_, i) => <tr key={i}>{Array.from({ length: 10 }).map((__, j) => <td key={j} style={S.td}><Skel t={t} /></td>)}</tr>)
+              ? Array.from({ length: 4 }).map((_, i) => <tr key={i}>{Array.from({ length: 11 }).map((__, j) => <td key={j} style={S.td}><Skel t={t} /></td>)}</tr>)
               : !shown.length
-                ? <tr><td colSpan={10} style={{ padding: "36px 16px", textAlign: "center", color: t.muted }}>
+                ? <tr><td colSpan={11} style={{ padding: "36px 16px", textAlign: "center", color: t.muted }}>
                     <div style={{ fontWeight: 700, color: t.ink, fontSize: 13.5 }}>{groups.length ? "No payments match the search or filters" : "No partner letters yet"}</div>
                     <div style={{ fontSize: 12, marginTop: 4 }}>{groups.length ? "Change the search, period or approval filter." : "Use “New batch” to generate e-signed BAST & Notification Letters from the Excel."}</div>
                   </td></tr>
@@ -986,6 +986,14 @@ function LettersHistory({ cfg, index, indexErr, approvals, reload, canWrite = tr
                         {docsOf(g).map((d) => <button key={d.id} className="ppd-f ppd-act-o" style={{ ...btnStyle(t, "outline", false, true), marginRight: 4 }} onClick={() => openDoc(d)} title={`Open ${d.file_name}`}><IcoOpen /> {d._label}</button>)}
                         {signed ? <Chip color={t.goodDark || TEAL_D} bg={t.goodBg} bd={t.goodBd}>✍ Signed</Chip> : g.meta.esign ? <Chip color={t.muted} bg={t.surf2} bd={t.line2}>Unsigned</Chip> : null}
                       </td>
+                      <td style={{ ...mid, whiteSpace: "nowrap" }}>{(() => {
+                        const stat = docs?.byRef?.[statKey(SEGMENT, g.partner, g.pid)];
+                        const n = DOC_TYPES.filter((d) => stat?.types?.[d.key]?.n > 0).length;
+                        const miss = DOC_TYPES.filter((d) => !(stat?.types?.[d.key]?.n > 0)).map((d) => d.short);
+                        return <span title={miss.length ? `Missing: ${miss.join(", ")}` : "All 4 documents uploaded"} style={{ fontFamily: MONO, fontSize: 11, fontWeight: 700, color: n === DOC_TYPES.length ? (t.goodDark || TEAL_D) : n ? (t.warnDark || "#8a6a00") : t.muted }}>
+                          {n}/{DOC_TYPES.length}{miss.length ? <span style={{ fontWeight: 400, color: t.muted }}> · {miss.join(" ")}</span> : " ✓"}
+                        </span>;
+                      })()}</td>
                       <td style={mid}>{apprCell(g)}</td>
                       <td style={{ ...mid, fontFamily: MONO, fontSize: 11, whiteSpace: "nowrap" }}>{fmtDT(g.lastAt)}</td>
                       <td style={{ ...mid, textAlign: "right" }}><RowMenu t={t} label={`More actions for ${g.pid}`} items={[
@@ -1082,7 +1090,7 @@ export function PartnerLettersTab({ docs, t }) {
         <LettersWizard cfg={cfg} meta={meta} docs={docs} index={index} known={known} approvals={approvals} onSaved={reload}
           onOpenSettings={() => { setShowCfg(true); window.scrollTo({ top: 0, behavior: "smooth" }); }} onFinish={() => setView("history")} t={t} />
       </div>}
-      {view === "history" && <LettersHistory cfg={cfg} index={index} indexErr={indexErr} approvals={approvals} reload={reload} canWrite={canGenerate} t={t} />}
+      {view === "history" && <LettersHistory cfg={cfg} index={index} indexErr={indexErr} approvals={approvals} reload={reload} canWrite={canGenerate} docs={docs} t={t} />}
     </div>
   );
 }

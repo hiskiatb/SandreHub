@@ -14,8 +14,9 @@ import {
   downloadMergedPdf, downloadMergedZip, downloadDoc, downloadDocsZip, refZipName, friendlyError, uploaderLabel,
   validateFile, partnerKey,
   APPROVAL_DOC_TYPES, APPROVAL_ENABLED, approvalKey, approvalStatus, fetchApprovals, approvalApi,
-  isDraftRef, refDisplay, isPaymentRef, fetchDraftDocs,
+  isDraftRef, refDisplay, isPaymentRef, parsePaymentRef, fetchDraftDocs,
 } from "../../../lib/payoutPartnerDocs";
+import { fetchLettersIndex, readJsonFile } from "../../../lib/payoutPartnerLetters";
 import { readOwnerSig, writeOwnerSig, isOwnerSigned, ownerSignedName, stampOwnerSignature, fetchDocBytes, imageToDataUrl } from "../../../lib/payoutPartnerSign";
 
 const TEAL = "#32BCAD", TEAL_D = "#27a093", MAGENTA = "#C6168D";
@@ -305,13 +306,15 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
   const changed = useCallback(() => { setReload((x) => x + 1); docsRefresh?.(); }, [docsRefresh]);
   // Draft hasil generate hanya punya slot BAST & Notification Letter
   // Draft GEN-* lama: hanya BAST/Surat. Payment ID (PAY-*) menggantikan PO → semua slot (invoice & faktur ikut)
-  // Dokumen hasil generate SPM (Payment ID / draft lama): hanya slot BAST & Surat. Partner tidak bisa upload/hapus
-  // di sana — satu-satunya aksi partner adalah "Sign as partner (owner)" (menambah salinan bertanda tangan).
-  const genRef = isDraftRef(refId) || isPaymentRef(refId);
-  const SLOTS = genRef ? DOC_TYPES.filter((d) => APPROVAL_DOC_TYPES.includes(d.key)) : DOC_TYPES;
-  const slotWrite = canWrite && !(genRef && !docs?.canMerge);
+  // Payment ID (PAY-*): 4 slot seperti PO. BAST & Surat dibuat SPM → partner hanya lihat/unduh
+  // (+ "Sign as partner (owner)" pada BAST); Invoice & Faktur Pajak diunggah partner.
+  // Draft lama (GEN-*): hanya BAST & Surat, read-only untuk partner.
+  const SLOTS = isDraftRef(refId) ? DOC_TYPES.filter((d) => APPROVAL_DOC_TYPES.includes(d.key)) : DOC_TYPES;
+  const spmOnly = (k) => !docs?.canMerge && (isDraftRef(refId) || (isPaymentRef(refId) && APPROVAL_DOC_TYPES.includes(k)));
+  const slotWriteFor = (k) => canWrite && !spmOnly(k);
+  const slotWrite = SLOTS.some((d) => slotWriteFor(d.key));
   const present = SLOTS.filter((d) => list.some((x) => x.doc_type === d.key)).length;
-  const nextMissing = SLOTS.find((d) => !list.some((x) => x.doc_type === d.key));
+  const nextMissing = SLOTS.find((d) => !list.some((x) => x.doc_type === d.key) && (slotWriteFor(d.key) || !canWrite));
   const totalSize = list.reduce((s, d) => s + (Number(d.size_bytes) || 0), 0);
 
   const onMerge = async () => {
@@ -407,7 +410,7 @@ export function RefDocsDrawer({ refId, partnerName, segment, title, amountText, 
               </div>))
             : SLOTS.map((dt, i) => (
               <SlotCard key={dt.key} no={i + 1} dt={dt} files={list.filter((d) => d.doc_type === dt.key)}
-                canWrite={slotWrite} refId={refId} partnerName={partnerName} segment={segment} title={title} amountText={amountText}
+                canWrite={slotWriteFor(dt.key)} refId={refId} partnerName={partnerName} segment={segment} title={title} amountText={amountText}
                 approval={docs?.approvals?.[approvalKey(segment, partnerName, refId, dt.key)]} approvalsAvailable={docs?.approvalsAvailable !== false}
                 isSPM={!!docs?.canManageApprovals} onApprovalChanged={docsRefresh}
                 ownerSign={dt.key === "bast" && canWrite && ["finance_mpx", "agency"].includes(docs?.profile?.role)}
@@ -836,6 +839,45 @@ function RowMenu({ items, t, label = "More actions" }) {
 // ── Tab "Upload & Merge Dokumen" ───────────────────────────────────────────
 // pos: [{ ref, partner, title, amount, amountText, records }] dari data Payout yang sedang difilter.
 // segment: 'partner' | 'agency' (ikut toggle Partner/Agency Prepaid). noRefCount: baris tanpa PO.
+
+// Payment ID (PAY-*) sebagai "baris" dokumen: dari file BAST/Surat yang disimpan Partner Letters.
+// RLS membatasi partner ke Payment ID miliknya. withMeta (SPM/IOH): total dari metadata Partner Letters.
+function usePaymentRows(segment, docs, { enabled = true, withMeta = false } = {}) {
+  const [rows, setRows] = useState(null);
+  const byRef = docs?.byRef;
+  useEffect(() => {
+    if (!enabled) return undefined;
+    let alive = true;
+    (async () => {
+      let list = [];
+      try { list = await fetchDraftDocs(segment); } catch { list = []; }
+      const m = new Map();
+      list.filter((d) => isPaymentRef(d.ref_id)).forEach((d) => {
+        const k = `${d.partner_key}|${d.ref_id}`;
+        if (!m.has(k)) {
+          const info = parsePaymentRef(d.ref_id);
+          m.set(k, { ref: d.ref_id, partner: d.partner_name, title: `${info?.label || ""} · ${info?.type || ""}`, ym: info?.ym || "", ptype: info?.type || "", amount: 0, amountText: "—", records: 1, payment: true });
+        }
+      });
+      const out = [...m.values()];
+      if (withMeta && out.length) {
+        try {
+          const idx = await fetchLettersIndex(segment);
+          const need = out.filter((r) => idx.get(r.ref)?.metaPath);
+          for (let i = 0; i < need.length; i += 8) {
+            await Promise.all(need.slice(i, i + 8).map(async (r) => {
+              try { const meta = await readJsonFile(idx.get(r.ref).metaPath); if (meta?.total != null) { r.amount = meta.total; r.amountText = `Rp${Math.round(meta.total).toLocaleString("id-ID")}`; } } catch { /* tanpa total */ }
+            }));
+          }
+        } catch { /* metadata opsional */ }
+      }
+      if (alive) setRows(out.sort((a, b) => b.ref.localeCompare(a.ref)));
+    })();
+    return () => { alive = false; };
+  }, [segment, byRef, enabled, withMeta]);
+  return rows;
+}
+
 export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmount, t }) {
   useDocsCss();
   const [q, setQ] = useState("");
@@ -850,6 +892,7 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
   const [sigOpen, setSigOpen] = useState(false);   // partner: modal tanda tangan owner
   const [openPay, setOpenPay] = useState(null);    // partner: Payment ID dari SPM yang dibuka
   const [reqOpen, setReqOpen] = useState(false);   // modal Request approval untuk PO terpilih (SPM)
+  const [refMode, setRefMode] = useState("po");     // SPM: "po" (By PO) | "pay" (By Payment ID)
   // SPM: 2 langkah — "upload" (1 · Upload to PO / Invoice), "merge" (2 · Merge & Download).
   // Generate BAST & Surat ada di tab terpisah "Partner Letters" (PayoutPartnerLetters.jsx).
   const [step, setStep] = useState("upload");
@@ -858,6 +901,11 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
   const isSPM = !!docs?.canMerge;
   const role = docs?.profile?.role;
   const own = ownerLabel(segment);
+  const isOwnerRole = role === "finance_mpx" || role === "agency";
+  const payMode = isSPM && refMode === "pay";
+  const payRows = usePaymentRows(segment, docs, { enabled: payMode || isOwnerRole, withMeta: payMode });
+  const REF = payMode ? "Payment ID" : DOC_REF_LABEL;
+  const setMode = (m) => { setRefMode(m); setSel(new Set()); setPage(1); setQ(""); };
   const openDrawer = (key, slot = null) => { setOpenSlot(slot); setOpenKey(key); };
   const curStep = isSPM ? step : "upload";
   const goStep = (k) => { setStep(k); setStatus(k === "merge" ? "complete" : "all"); setSel(new Set()); setPage(1); };
@@ -870,7 +918,7 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
     } catch (e) { toast(t, `Download failed: ${errMsg(e)}`, "err"); }
   };
 
-  const rows = useMemo(() => (pos || [])
+  const rows = useMemo(() => ((payMode ? payRows : pos) || [])
     .filter((p) => canViewPartner(docs?.profile, p.partner, segment))
     .map((p) => {
       const key = statKey(segment, p.partner, p.ref);
@@ -878,7 +926,7 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
       const n = doneCount(stat);
       const firstMissing = DOC_TYPES.find((d) => !(stat?.types?.[d.key]?.n > 0))?.key || null;
       return { ...p, key, stat, n, st: statusOf(n), lastAt: stat?.lastAt || "", firstMissing, canWrite: canWritePartner(docs?.profile, p.partner, segment) };
-    }), [pos, docs, segment]);
+    }), [pos, payRows, payMode, docs, segment]);
 
   const kpi = useMemo(() => {
     const k = { all: rows.length, complete: 0, partial: 0, none: 0, amtComplete: 0, amtAll: 0 };
@@ -936,7 +984,7 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
         selected.map((r) => ({ refId: r.ref, partnerName: r.partner, segment, title: r.title, amountText: r.amountText })),
         ({ index, total, ref }) => setBulk({ i: index, total, ref }),
       );
-      if (failed.length) toast(t, `ZIP downloaded; ${failed.length} ${DOC_REF_LABEL}(s) failed: ${failed[0]}`, "err");
+      if (failed.length) toast(t, `ZIP downloaded; ${failed.length} ${REF}(s) failed: ${failed[0]}`, "err");
       else { toast(t, `ZIP with ${selected.length} PDF(s) downloaded.`); setSel(new Set()); }
     } catch (e) { toast(t, `Unable to create ZIP: ${errMsg(e)}`, "err"); }
     setBulk(null);
@@ -969,7 +1017,6 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
     );
   };
 
-  const isOwnerRole = role === "finance_mpx" || role === "agency";
   const hint = isOwnerRole ? null
     : !isSPM ? "View-only access: you can open and download files. Uploads are handled by partners/agencies; merging is handled by SPM."
     : segment === "agency" ? "Agencies do not have upload access yet — SPM can upload on their behalf." : null;
@@ -977,8 +1024,8 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
   const selectable = isSPM && curStep === "merge";
   const cols = (selectable ? 1 : 0) + 8;
   const STEPS = [
-    ["upload", "1", `Upload to ${DOC_REF_LABEL} / Invoice`, kpi.all, `Attach documents to each ${DOC_REF_LABEL}: drag files into a row, or use Bulk Upload to match many files by name.`],
-    ["merge", "2", "Merge & Download", kpi.complete, `Combine the 4 documents of complete ${DOC_REF_LABEL}s into one PDF, individually or as a ZIP.`],
+    ["upload", "1", `Upload to ${REF} / Invoice`, kpi.all, `Attach documents to each ${REF}: drag files into a row, or use Bulk Upload to match many files by name.`],
+    ["merge", "2", "Merge & Download", kpi.complete, `Combine the 4 documents of complete ${REF}s into one PDF, individually or as a ZIP.`],
   ];
   const stepHelp = STEPS.find((x) => x[0] === curStep)?.[4];
 
@@ -993,7 +1040,7 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
             <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", padding: "2px 8px", borderRadius: 99, background: `${MAGENTA}18`, color: MAGENTA, border: `1px solid ${MAGENTA}30` }}>{own} Prepaid</span>
           </div>
           <div style={{ marginTop: 4, marginLeft: 14, fontSize: 12, color: t.muted, maxWidth: 760, lineHeight: 1.45 }}>
-            {isSPM ? stepHelp : isOwnerRole ? `Upload the ${N} supporting documents for each ${DOC_REF_LABEL} so SPM can process your payout.` : `Documents per ${DOC_REF_LABEL}: ${DOC_TYPES.map((d) => d.label).join(" · ")}`}
+            {isSPM ? stepHelp : isOwnerRole ? `Complete the ${N} supporting documents for each payment (Payment ID, or PO Number for earlier periods) so SPM can process your payout.` : `Documents per ${REF}: ${DOC_TYPES.map((d) => d.label).join(" · ")}`}
           </div>
         </div>
       </div>
@@ -1015,13 +1062,13 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
 
       {/* KPI strip */}
       <div style={{ padding: "14px 20px 10px", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10 }}>
-        {kpiCard({ id: "all", label: `Total ${DOC_REF_LABEL}`, value: kpi.all, sub: `${own.toLowerCase()} · current filters`, color: t.muted })}
+        {kpiCard({ id: "all", label: `Total ${REF}`, value: kpi.all, sub: `${own.toLowerCase()} · current filters`, color: t.muted })}
         {kpiCard({ id: "complete", label: `Complete ${N}/${N}`, value: kpi.complete, sub: fmtAmt(kpi.amtComplete), color: TEAL })}
         {kpiCard({ id: "partial", label: "Partial", value: kpi.partial, sub: `1–${N - 1} of ${N} documents`, color: t.warn })}
         {kpiCard({ id: "none", label: "Not uploaded", value: kpi.none, sub: "0 documents", color: t.bad })}
       </div>
       <div style={{ padding: "0 20px 14px", display: "flex", alignItems: "center", gap: 12 }}>
-        <div style={{ flex: 1, height: 8, borderRadius: 99, background: t.surf3, overflow: "hidden", display: "flex" }} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`Complete ${DOC_REF_LABEL}s`}>
+        <div style={{ flex: 1, height: 8, borderRadius: 99, background: t.surf3, overflow: "hidden", display: "flex" }} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100} aria-label={`Complete ${REF}s`}>
           <div style={{ width: `${pct}%`, background: TEAL, transition: "width .4s" }} />
           <div style={{ width: `${kpi.all ? (kpi.partial / kpi.all) * 100 : 0}%`, background: t.warn, opacity: 0.75, transition: "width .4s" }} />
         </div>
@@ -1034,9 +1081,9 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
       {isOwnerRole && (
         <ol aria-label="How it works" style={{ listStyle: "none", margin: "0 20px 12px", padding: 0, display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10 }}>
           {[
-            ["1", `Find your ${DOC_REF_LABEL}`, `Search by ${DOC_REF_LABEL} or project, or click a status card above (e.g. “Not uploaded”).`],
-            ["2", `Upload the ${N} documents`, `${DOC_TYPES.map((d) => d.label).join(", ")}. PDF, JPG or PNG — max ${MAX_FILE_BYTES / 1048576} MB per file. Click a row or “Upload”.`],
-            ["3", "Check the status", `A ${DOC_REF_LABEL} is complete at ${N}/${N}; SPM then processes it. You can download your files at any time.`],
+            ["1", "Find your Payment ID", "Each payment from SPM has a Payment ID (e.g. PAY-202608-MPC-UMJ-01) under “My payments”. Earlier payments are listed by PO Number below."],
+            ["2", `Complete the ${N} documents`, `Sign the BAST as owner, then upload your Invoice and Tax Invoice (Faktur Pajak). The Notification Letter comes from SPM. PDF, JPG or PNG — max ${MAX_FILE_BYTES / 1048576} MB per file.`],
+            ["3", "Check the status", `A payment is complete at ${N}/${N}; SPM then processes it. You can download your files at any time.`],
           ].map(([no, head, body]) => (
             <li key={no} style={{ display: "flex", gap: 10, padding: "10px 12px", borderRadius: 12, border: `1px solid ${t.line}`, background: t.surf2 }}>
               <span aria-hidden="true" style={{ width: 22, height: 22, borderRadius: 99, flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center", fontFamily: MONO, fontSize: 11, fontWeight: 800, background: MAGENTA, color: "#fff" }}>{no}</span>
@@ -1055,14 +1102,15 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
           <span>Upload your owner’s signature once, then use “Sign as partner (owner)” on a BAST.</span>
         </div>
       )}
-      {isOwnerRole && <PartnerLettersInbox segment={segment} docs={docs} onOpen={setOpenPay} t={t} />}
+      {isOwnerRole && <MyPayments rows={payRows} segment={segment} docs={docs} onOpen={(r, slot) => setOpenPay({ ...r, slot })} t={t} />}
+      {isOwnerRole && <div style={{ margin: "4px 20px 8px", fontSize: 12.5, fontWeight: 700, color: t.ink }}>Earlier payments by {DOC_REF_LABEL}</div>}
 
       {/* hints */}
       {(hint || noRefCount > 0 || docs?.error) && (
         <div style={{ padding: "0 20px 12px", display: "flex", flexDirection: "column", gap: 6 }}>
           {docs?.error && <div role="alert" style={{ fontSize: 12, padding: "8px 12px", borderRadius: 10, color: t.bad, background: t.badBg, border: `1px solid ${t.badBd}` }}>Unable to load document status: {docs.error}</div>}
           {hint && <div style={{ fontSize: 12, padding: "8px 12px", borderRadius: 10, color: t.info, background: t.infoBg, border: `1px solid ${t.infoBd}` }}>ℹ {hint}</div>}
-          {noRefCount > 0 && <div style={{ fontSize: 11.5, color: t.muted, fontFamily: MONO }}>{noRefCount.toLocaleString("en-US")} row(s) without a {DOC_REF_LABEL} are not shown.</div>}
+          {noRefCount > 0 && <div style={{ fontSize: 11.5, color: t.muted, fontFamily: MONO }}>{noRefCount.toLocaleString("en-US")} row(s) without a {REF} are not shown.</div>}
         </div>
       )}
 
@@ -1070,26 +1118,34 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
       <div style={{ padding: "10px 20px", borderTop: `1px solid ${t.line}`, borderBottom: `1px solid ${t.line}`, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", background: t.surf2 }}>
         <div style={{ position: "relative", flex: "1 1 220px", maxWidth: 380 }}>
           <span aria-hidden="true" style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: t.muted, fontSize: 13 }}>⌕</span>
-          <input className="ppd-f" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder={`Search ${DOC_REF_LABEL}, ${own.toLowerCase()}, project…`} aria-label="Search"
+          <input className="ppd-f" value={q} onChange={(e) => { setQ(e.target.value); setPage(1); }} placeholder={`Search ${REF}, ${own.toLowerCase()}, project…`} aria-label="Search"
             style={{ width: "100%", boxSizing: "border-box", fontFamily: "inherit", fontSize: 12.5, padding: "8px 30px 8px 28px", borderRadius: 10, border: `1px solid ${t.line2}`, background: t.surf, color: t.ink, outline: "none" }} />
           {q && <button className="ppd-f" onClick={() => { setQ(""); setPage(1); }} aria-label="Clear search" style={{ all: "unset", cursor: "pointer", position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", color: t.muted, fontSize: 15 }}>×</button>}
         </div>
+        {isSPM && (
+          <div role="group" aria-label="Documents by" style={{ display: "inline-flex", background: t.surf3, borderRadius: 10, padding: 3, gap: 2, border: `1px solid ${t.line}` }}>
+            {[["po", `By ${DOC_REF_LABEL.replace(" Number", "")}`], ["pay", "By Payment ID"]].map(([k, l]) => (
+              <button key={k} className="ppd-f" aria-pressed={refMode === k} onClick={() => setMode(k)}
+                style={{ fontFamily: "inherit", fontSize: 11.5, fontWeight: 700, padding: "5px 10px", borderRadius: 8, border: 0, cursor: "pointer", background: refMode === k ? MAGENTA : "transparent", color: refMode === k ? "#fff" : t.muted, whiteSpace: "nowrap" }}>{l}</button>
+            ))}
+          </div>
+        )}
         <div role="group" aria-label="Filter status" style={{ display: "inline-flex", background: t.surf3, borderRadius: 10, padding: 3, gap: 2, border: `1px solid ${t.line}`, flexWrap: "wrap" }}>
           {[["all", "All"], ["complete", "Complete"], ["partial", "Partial"], ["none", "Not uploaded"]].map(([id, l]) => (
             <button key={id} className="ppd-f" aria-pressed={status === id} onClick={() => { setStatus(id); setPage(1); }}
               style={{ fontFamily: "inherit", fontSize: 11.5, fontWeight: 600, padding: "5px 10px", borderRadius: 8, border: 0, cursor: "pointer", background: status === id ? TEAL : "transparent", color: status === id ? "#fff" : t.muted, whiteSpace: "nowrap" }}>{l}</button>
           ))}
         </div>
-        <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 11, color: t.muted, whiteSpace: "nowrap" }}>{filtered.length.toLocaleString("en-US")} {DOC_REF_LABEL}s</span>
+        <span style={{ marginLeft: "auto", fontFamily: MONO, fontSize: 11, color: t.muted, whiteSpace: "nowrap" }}>{filtered.length.toLocaleString("en-US")} {REF}s</span>
         {isSPM && curStep === "upload" && (
           <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !docs?.loaded || !rows.length, true)} disabled={!docs?.loaded || !rows.length} onClick={() => setBulkOpen(true)}
-            title={`Upload many files at once — automatically matched to a ${DOC_REF_LABEL} by file name`}>
+            title={`Upload many files at once — automatically matched to a ${REF} by file name`}>
             ⬆ Bulk Upload
           </button>
         )}
         {selectable && (
           <button className="ppd-f ppd-act" style={btnStyle(t, "primary", !selected.length || !!bulk, true)} disabled={!selected.length || !!bulk} onClick={mergeSelected}
-            title={selected.length ? `Download ${selected.length} merged PDF(s) as one ZIP` : `Select complete ${DOC_REF_LABEL}s first`}>
+            title={selected.length ? `Download ${selected.length} merged PDF(s) as one ZIP` : `Select complete ${REF}s first`}>
             <IcoDownload /> Download merged ({selected.length})
           </button>
         )}
@@ -1107,11 +1163,11 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
           <thead><tr>
             {selectable && (
               <th style={th({ width: 34, textAlign: "center" })}>
-                <input type="checkbox" className="ppd-f" aria-label={`Select all complete ${DOC_REF_LABEL}s on this page`} checked={pageAllSel} disabled={!pageSelectable.length || !!bulk}
+                <input type="checkbox" className="ppd-f" aria-label={`Select all complete ${REF}s on this page`} checked={pageAllSel} disabled={!pageSelectable.length || !!bulk}
                   ref={(el) => { if (el) el.indeterminate = !pageAllSel && pageSomeSel; }} onChange={togglePage} />
               </th>
             )}
-            {sortTh("ref", DOC_REF_LABEL)}
+            {sortTh("ref", REF)}
             {sortTh("partner", own)}
             {sortTh("title", "Project")}
             {sortTh("amount", "Amount", "right")}
@@ -1121,15 +1177,15 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
             <th style={th({ textAlign: "right", position: "sticky", right: 0, zIndex: 3, boxShadow: `-8px 0 10px -8px rgba(0,0,0,0.18)` })}>Actions</th>
           </tr></thead>
           <tbody>
-            {!docs?.loaded
+            {!docs?.loaded || (payMode && payRows == null)
               ? Array.from({ length: 6 }).map((_, i) => (
                 <tr key={i}>{Array.from({ length: cols }).map((__, j) => <td key={j} style={td()}><Skel t={t} w={j === 4 ? 150 : "80%"} /></td>)}</tr>
               ))
               : pageRows.length === 0
                 ? <tr><td colSpan={cols} style={{ padding: "40px 16px", textAlign: "center", color: t.muted }}>
                     <div style={{ fontSize: 26, marginBottom: 6 }} aria-hidden="true">🗂</div>
-                    <div style={{ fontWeight: 700, color: t.ink, fontSize: 13.5 }}>{rows.length ? `No ${DOC_REF_LABEL}s match your search` : isOwnerRole ? `No ${DOC_REF_LABEL}s for your company in the selected period` : `No ${DOC_REF_LABEL}s in the current data`}</div>
-                    <div style={{ fontSize: 12, marginTop: 4 }}>{rows.length ? "Adjust the search or status filter." : isOwnerRole ? `Check the period and filters above. If a ${DOC_REF_LABEL} is missing, please contact SPM.` : "Check the Payout filters above."}</div>
+                    <div style={{ fontWeight: 700, color: t.ink, fontSize: 13.5 }}>{rows.length ? `No ${REF}s match your search` : isOwnerRole ? `No ${REF}s for your company in the selected period` : `No ${REF}s in the current data`}</div>
+                    <div style={{ fontSize: 12, marginTop: 4 }}>{rows.length ? "Adjust the search or status filter." : isOwnerRole ? `Check the period and filters above. If a ${REF} is missing, please contact SPM.` : "Check the Payout filters above."}</div>
                     {(q || status !== "all") && <button className="ppd-f" style={{ ...btnStyle(t, "outline", false, true), marginTop: 10 }} onClick={() => { setQ(""); setStatus("all"); setPage(1); }}>Reset search &amp; filters</button>}
                   </td></tr>
                 : pageRows.map((r, i) => {
@@ -1138,18 +1194,18 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
                   return (
                     <tr key={r.key} className="ppd-row" tabIndex={0} onClick={() => openDrawer(r.key)}
                       onKeyDown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDrawer(r.key); } }}
-                      aria-label={`${DOC_REF_LABEL} ${r.ref}, ${r.partner}, ${r.n} of ${N} documents. Press Enter to open.`}
+                      aria-label={`${REF} ${r.ref}, ${r.partner}, ${r.n} of ${N} documents. Press Enter to open.`}
                       style={{ cursor: "pointer", background: isSel ? t.goodBg : zebra, transition: "background .1s" }}
                       onMouseEnter={(e) => { if (!isSel) e.currentTarget.style.background = t.rowHover; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = isSel ? t.goodBg : zebra; }}>
                       {selectable && (
                         <td style={td({ textAlign: "center" })} onClick={(e) => e.stopPropagation()}>
                           <input type="checkbox" className="ppd-f" aria-label={`Select ${r.ref}`} checked={isSel} disabled={r.st !== "complete" || !!bulk}
-                            title={r.st !== "complete" ? `Only complete (${N}/${N}) ${DOC_REF_LABEL}s can be selected` : undefined} onChange={() => toggle(r.key)} />
+                            title={r.st !== "complete" ? `Only complete (${N}/${N}) ${REF}s can be selected` : undefined} onChange={() => toggle(r.key)} />
                         </td>
                       )}
                       <td style={td({ fontFamily: MONO, fontWeight: 700, color: t.ink, whiteSpace: "nowrap" })}>
-                        {r.ref}{r.records > 1 && <span title={`${r.records} data rows share this ${DOC_REF_LABEL} (amounts combined)`} style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 600, color: t.muted, padding: "1px 5px", borderRadius: 6, background: t.surf3 }}>×{r.records}</span>}
+                        {r.ref}{r.records > 1 && <span title={`${r.records} data rows share this ${REF} (amounts combined)`} style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 600, color: t.muted, padding: "1px 5px", borderRadius: 6, background: t.surf3 }}>×{r.records}</span>}
                       </td>
                       <td style={td({ maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 600 })} title={r.partner}>{r.partner}</td>
                       <td style={td({ maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: t.muted })} title={r.title}>{r.title || "—"}</td>
@@ -1223,10 +1279,10 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
 
       {/* SPM bulk bar */}
       {selectable && (selected.length > 0 || bulk) && (
-        <div role="region" aria-label={`Actions for selected ${DOC_REF_LABEL}s`} style={{ position: "sticky", bottom: 0, zIndex: 3, borderTop: `1px solid ${t.line2}`, background: t.surf, borderRadius: "0 0 18px 18px", padding: "11px 20px", boxShadow: "0 -6px 18px rgba(0,0,0,0.08)", display: "flex", flexDirection: "column", gap: 8 }}>
+        <div role="region" aria-label={`Actions for selected ${REF}s`} style={{ position: "sticky", bottom: 0, zIndex: 3, borderTop: `1px solid ${t.line2}`, background: t.surf, borderRadius: "0 0 18px 18px", padding: "11px 20px", boxShadow: "0 -6px 18px rgba(0,0,0,0.08)", display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: t.ink }}>
-              <span style={{ fontFamily: MONO, color: TEAL_D }}>{bulk ? bulk.total : selected.length}</span> {DOC_REF_LABEL}(s) selected
+              <span style={{ fontFamily: MONO, color: TEAL_D }}>{bulk ? bulk.total : selected.length}</span> {REF}(s) selected
             </span>
             {bulk && <span style={{ fontFamily: MONO, fontSize: 11, color: t.muted }}>{bulk.i < bulk.total ? `Merging ${bulk.i + 1}/${bulk.total} · ${bulk.ref}` : "Creating ZIP…"}</span>}
             <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
@@ -1244,8 +1300,8 @@ export function PoDocsTab({ pos, allPos, segment, docs, noRefCount = 0, fmtAmoun
       {openRow && <RefDocsDrawer key={openRow.key} refId={openRow.ref} partnerName={openRow.partner} segment={segment} title={openRow.title} amountText={openRow.amountText}
         docs={docs} focusSlot={openSlot} onClose={() => setOpenKey(null)} t={t} />}
       {sigOpen && <OwnerSignatureModal onClose={() => setSigOpen(false)} t={t} />}
-      {openPay && <RefDocsDrawer key={openPay.pid} refId={openPay.pid} partnerName={openPay.partner} segment={segment} title="BAST & Notification Letter from SPM"
-        docs={docs} focusSlot="bast" onClose={() => setOpenPay(null)} t={t} />}
+      {openPay && <RefDocsDrawer key={openPay.ref} refId={openPay.ref} partnerName={openPay.partner} segment={segment} title={openPay.title}
+        docs={docs} focusSlot={openPay.slot || null} onClose={() => setOpenPay(null)} t={t} />}
       {bulkOpen && <BulkUploadModal rows={rows} segment={segment} docs={docs} onClose={() => setBulkOpen(false)} t={t} />}
       {reqOpen && <BulkApprovalModal rows={selected} segment={segment} docs={docs} onClose={() => setReqOpen(false)} t={t} />}
     </div>
@@ -1721,47 +1777,53 @@ function OwnerSignatureModal({ onClose, t }) {
   );
 }
 
-// Partner: BAST & Surat Pemberitahuan dari SPM (Payment ID) milik partner sendiri — RLS hanya mengembalikan milik sendiri
-function PartnerLettersInbox({ segment, docs, onOpen, t }) {
-  const [list, setList] = useState(null);
-  const byRef = docs?.byRef;
-  useEffect(() => {
-    let alive = true;
-    fetchDraftDocs(segment)
-      .then((d) => { if (alive) setList(d.filter((x) => isPaymentRef(x.ref_id) && canWritePartner(docs?.profile, x.partner_name, segment))); })
-      .catch(() => { if (alive) setList([]); });
-    return () => { alive = false; };
-  }, [segment, byRef, docs?.profile]);
-  const groups = useMemo(() => {
-    const m = new Map();
-    (list || []).forEach((d) => {
-      if (!m.has(d.ref_id)) m.set(d.ref_id, { pid: d.ref_id, partner: d.partner_name, bast: [], letter: [], lastAt: "" });
-      const g = m.get(d.ref_id);
-      if (d.doc_type === "bast") g.bast.push(d); else if (d.doc_type === "surat_pemberitahuan") g.letter.push(d);
-      if (d.uploaded_at > g.lastAt) g.lastAt = d.uploaded_at;
-    });
-    return [...m.values()].sort((a, b) => b.pid.localeCompare(a.pid));
-  }, [list]);
-  if (!groups.length) return null;
+// Partner: "My payments" — 1 kartu per Payment ID milik sendiri (4 slot: BAST & Surat dari SPM, Invoice & Faktur Pajak dari partner)
+function MyPayments({ rows, segment, docs, onOpen, t }) {
+  if (!rows) return <div style={{ margin: "0 20px 12px" }}><Skel t={t} h={70} r={12} /></div>;
+  const cards = rows.filter((r) => canWritePartner(docs?.profile, r.partner, segment));
   return (
-    <div style={{ margin: "0 20px 12px", border: `1px solid ${t.line}`, borderRadius: 12, overflow: "hidden" }}>
-      <div style={{ padding: "8px 12px", background: t.surf2, borderBottom: `1px solid ${t.line}`, fontSize: 12.5, fontWeight: 700, display: "flex", gap: 8, alignItems: "center" }}>
-        BAST &amp; Notification Letters from SPM <span style={{ fontFamily: MONO, fontSize: 10, color: t.muted, fontWeight: 500 }}>{groups.length} payment(s)</span>
-        <span style={{ marginLeft: "auto", fontSize: 11, fontWeight: 500, color: t.muted }}>Open a payment to download or sign the BAST as owner</span>
+    <section aria-label="My payments" style={{ margin: "0 20px 12px" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: 13.5, fontWeight: 800, color: t.ink }}>My payments (Payment ID)</span>
+        <span style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted }}>{cards.length} payment(s)</span>
       </div>
-      {groups.slice(0, 12).map((g) => {
-        const signed = g.bast.some((d) => isOwnerSigned(d.file_name));
-        return (
-          <div key={g.pid} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderTop: `1px solid ${t.line}`, fontSize: 12, flexWrap: "wrap" }}>
-            <span style={{ fontFamily: MONO, fontWeight: 700, color: t.ink }}>{g.pid}</span>
-            <span style={{ color: t.muted }}>BAST {g.bast.length ? "✓" : "—"} · Letter {g.letter.length ? "✓" : "—"}</span>
-            {signed && <span style={{ fontFamily: MONO, fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", padding: "1px 6px", borderRadius: 6, color: t.goodDark || TEAL_D, background: t.goodBg, border: `1px solid ${t.goodBd}` }}>Owner-signed</span>}
-            <span style={{ fontFamily: MONO, fontSize: 10.5, color: t.muted2 }}>{fmtDT(g.lastAt)}</span>
-            <button className="ppd-f ppd-act-o" style={{ ...btnStyle(t, "outline", false, true), marginLeft: "auto" }} onClick={() => onOpen(g)}>Open</button>
-          </div>
-        );
-      })}
-    </div>
+      {!cards.length ? (
+        <div style={{ fontSize: 12, color: t.muted, padding: "12px 14px", borderRadius: 12, border: `1px dashed ${t.line2}`, background: t.surf2 }}>
+          No payments from SPM yet. When SPM issues your BAST and Notification Letter, the payment appears here.
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(330px, 1fr))", gap: 10 }}>
+          {cards.map((r) => {
+            const stat = docs?.byRef?.[statKey(segment, r.partner, r.ref)];
+            const n = doneCount(stat);
+            const st = statusOf(n);
+            const firstMissing = DOC_TYPES.find((d) => !(stat?.types?.[d.key]?.n > 0) && !APPROVAL_DOC_TYPES.includes(d.key))?.key
+              || DOC_TYPES.find((d) => !(stat?.types?.[d.key]?.n > 0))?.key || "bast";
+            return (
+              <div key={r.ref} style={{ border: `1.5px solid ${st === "complete" ? t.goodBd : t.line}`, borderRadius: 14, padding: "12px 14px", background: st === "complete" ? t.goodBg : t.surf, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontFamily: MONO, fontWeight: 800, fontSize: 12.5, color: t.ink }}>{r.ref}</div>
+                    <div style={{ fontSize: 11.5, color: t.muted }}>{r.title}</div>
+                  </div>
+                  <Ring n={n} t={t} />
+                </div>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap", fontSize: 10, lineHeight: 1.2 }}>
+                  {DOC_TYPES.map((d) => <DocChip key={d.key} dt={d} ty={stat?.types?.[d.key]} canWrite={!APPROVAL_DOC_TYPES.includes(d.key)} onClick={() => onOpen(r, d.key)} t={t} />)}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontSize: 11.5, fontWeight: 600, color: st === "complete" ? (t.goodDark || TEAL_D) : st === "partial" ? (t.warnDark || "#8a6a00") : t.muted }}>
+                    {st === "complete" ? "Complete — with SPM" : st === "partial" ? `${N - n} missing` : "Not started"}
+                  </span>
+                  <button className={`ppd-f ${st === "complete" ? "ppd-act-o" : "ppd-act"}`} style={{ ...btnStyle(t, st === "complete" ? "outline" : "primary", false, true), marginLeft: "auto" }}
+                    onClick={() => onOpen(r, st === "complete" ? null : firstMissing)}>{st === "complete" ? `View (${n}/${N})` : "⬆ Complete documents"}</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 
