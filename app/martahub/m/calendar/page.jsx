@@ -60,7 +60,18 @@ function dayTimeInfo(a, dateKey) {
 }
 function toKey(y, m, d) { return `${y}-${pad2(m + 1)}-${pad2(d)}`; }
 
+// FIX (laporan user: "Direct Selling Pasar Kartini Kisaran" status Selesai
+// kelihatan di kartu tanggal 3 Okt - Plan Date-nya - padahal laporan
+// actual-nya baru benar2 diisi tanggal 7 Okt (Actual Date), bikin ambigu
+// pas dibandingkan dgn kolom "Actual Date" di Export CMS yg correctly
+// nunjukin 7 Okt, bukan 3 Okt) - PERMINTAAN USER: kalau actual sudah
+// diisi & actual_date-nya BEDA dari plan_date, kartu activity itu
+// dipindah tampil di kotak tanggal ACTUAL DATE, bukan lagi plan_date,
+// biar kalender & Export CMS selalu merujuk hari yg sama (tidak ambigu).
+// Activity yg BELUM completed (actual_date masih null) tetap di plan_date
+// seperti biasa - cuma yg SUDAH ada actual_date yg "pindah rumah".
 function activityDateKeys(a) {
+  if (a.status === "completed" && a.actual_date) return [a.actual_date];
   if (a.plan_dates_multi) return a.plan_dates_multi.split(",").filter(Boolean).map((s) => s.trim());
   if (a.plan_date_start && a.plan_date_end && a.plan_date_start !== a.plan_date_end) {
     const keys = [];
