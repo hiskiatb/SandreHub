@@ -1,7 +1,7 @@
 "use client";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { X, Search, Download, Upload, RotateCcw, Wallet, FileCheck2, CardSim, Router as RouterIcon, TrendingUp, Banknote, Percent, RefreshCw, Loader2, Settings2, Image as ImageIcon, Undo2, AlertTriangle } from "lucide-react";
+import { X, Search, Download, Upload, RotateCcw, Wallet, FileCheck2, CardSim, Router as RouterIcon, TrendingUp, Banknote, Percent, RefreshCw, Loader2, Settings2, Image as ImageIcon, Undo2, AlertTriangle, ChevronDown, Images, Link2 } from "lucide-react";
 import ExcelJS from "exceljs";
 import MartaShell, { T, FONT, brandLabel } from "../components/MartaShell";
 import ExcelFilter from "../components/ExcelFilter";
@@ -168,16 +168,28 @@ const fmtDate = (s) => {
   return `${d} ${mo} ${y}`;
 };
 // Ubah string "date" dari Postgres (YYYY-MM-DD, tanpa jam/zona) jadi JS Date
-// LOKAL murni (bukan lewat `new Date("YYYY-MM-DD")` yg oleh browser diparse
-// sbg UTC tengah malam - kalau lokal timezone-nya di depan UTC (WIB=UTC+7)
-// itu bisa bikin tanggal mundur 1 hari pas ditulis ke sel Excel). Dipakai
-// khusus utk export xlsx supaya kolom Plan Date/Actual Date jadi sel Excel
-// bertipe DATE asli (bisa di-sort/filter as date), bukan teks.
+// utk ditulis sbg sel Excel bertipe DATE asli (bisa di-sort/filter as date,
+// bukan teks) via ExcelJS.
+// FIX (laporan user: "Actual Date tanggal 12 tidak muncul, kegroup ke
+// tanggal 11" - dicek langsung isi .xlsx-nya, selnya kebaca "11 17:00:00"
+// utk baris yg actual_date-nya 12 di DB): SEBELUMNYA fungsi ini pakai
+// `new Date(y, m-1, d)` (constructor LOKAL, jam 00:00 WAKTU LOKAL device) -
+// kelihatannya aman utk ditampilkan, TAPI ExcelJS serialize Date -> serial
+// Excel pakai method getUTC*() (bukan getLocal*()), bukan treat Date itu
+// sbg "nilai tanggal polos". Jadi kalau device yg generate export-nya
+// berzona WIB (UTC+7, spt browser user DI SINI), tanggal lokal 12/10/2026
+// 00:00 WIB itu detik-UTC-nya = 11/10/2026 17:00 UTC - ExcelJS baca
+// getUTCDate() dari situ & nulis "11/10/2026 17:00" ke sel, PERSIS gejala
+// yg dilaporkan (mundur sejumlah jam = offset zona lokal, cukup utk
+// kegeser ke hari sebelumnya di pengelompokan tanggal Excel). FIX: bikin
+// Date-nya pakai UTC (Date.UTC) supaya getUTC*() ExcelJS balikin PERSIS
+// y/m/d yg dimaksud, independen dari zona waktu device yg export - benar
+// di WIB, WITA, WIT, ataupun kalau nanti dijalankan dari server UTC.
 function dateOnlyToJsDate(s) {
   if (!s || String(s).length < 10) return null;
   const [y, m, d] = String(s).slice(0, 10).split("-").map(Number);
   if (!y || !m || !d) return null;
-  return new Date(y, m - 1, d);
+  return new Date(Date.UTC(y, m - 1, d));
 }
 const fmtInt = (n) => (n == null ? "-" : Number(n).toLocaleString("id-ID"));
 // Label seragam utk kolom bertipe "tag" (POI, Event Category, Network Category):
@@ -274,6 +286,8 @@ function Body({ email }) {
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0); // 0-100, dipakai bar progress export .xlsx
+  const [exportMenu, setExportMenu] = useState(false); // dropdown "Export Data" - pilih withPhotos true/false, sama pola dgn Pendataan Outlet
+  const exportMenuRef = useRef(null);
   const [exportStage, setExportStage] = useState(""); // label singkat tahap export yg sedang berjalan
   const [err, setErr] = useState("");
   const [q, setQ] = useState("");
@@ -399,15 +413,33 @@ function Body({ email }) {
         setDocCountMap(counts);
         setDocPhotoMap(firstPhoto);
         setDocDriveMap(firstDrive);
+        // Dikembalikan (bukan cuma lewat setState) supaya pemanggil yg
+        // butuh data BENAR2 segar dalam eksekusi yg SAMA (lihat exportXlsx -
+        // "FIX: export cuma sampai tanggal tertentu") tidak kena stale
+        // closure React (setState efeknya baru kelihatan di RENDER
+        // berikutnya, bukan di baris kode sesudahnya).
+        return { list, branchMap: Object.fromEntries((branches || []).map((b) => [b.id, b.name])), docPhotoMap: firstPhoto, docDriveMap: firstDrive, docCountMap: counts };
       } else {
         setDocCountMap({});
         setDocPhotoMap({});
         setDocDriveMap({});
+        return { list, branchMap: Object.fromEntries((branches || []).map((b) => [b.id, b.name])), docPhotoMap: {}, docDriveMap: {}, docCountMap: {} };
       }
-    } catch (e) { setErr(e.message || "Gagal memuat"); }
+    } catch (e) { setErr(e.message || "Gagal memuat"); return null; }
     finally { setLoading(false); }
   }, [email]);
   useEffect(() => { load(); }, [load]);
+
+  // Tutup dropdown "Export Data" kalau klik di luar / tekan Escape - sama
+  // pola persis dgn menu Export di Pendataan Outlet.
+  useEffect(() => {
+    if (!exportMenu) return undefined;
+    const onDown = (e) => { if (exportMenuRef.current && !exportMenuRef.current.contains(e.target)) setExportMenu(false); };
+    const onKey = (e) => { if (e.key === "Escape") setExportMenu(false); };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+  }, [exportMenu]);
   // Refetch begitu tab CMS ini kembali kelihatan (user pindah tab lalu
   // balik, atau baru saja aksi di halaman lain yg mengubah status activity)
   // - sama alasannya spt versi mobile (app/martahub/m/activities/page.jsx &
@@ -772,13 +804,47 @@ function Body({ email }) {
   //      tiap activity di-embed langsung sbg thumbnail di sel-nya (pakai
   //      ExcelJS, bukan lib `xlsx` yg tidak bisa taruh gambar di cell) -
   //      supaya kelihatan langsung tanpa buka link satu-satu.
-  const exportXlsx = useCallback(async () => {
+  // withPhotos=true  -> foto dokumentasi ditempel sbg gambar di cell Documentation (lengkap, lebih lambat)
+  // withPhotos=false -> kolom Documentation cukup link "Lihat foto" (TIDAK fetch+tempel gambar sama sekali - jauh lebih cepat & file ringan), persis pola "Link foto saja" di Pendataan Outlet
+  const exportXlsx = useCallback(async (withPhotos = true) => {
     setExporting(true);
     setExportProgress(0);
-    setExportStage("Menyiapkan data…");
+    setExportStage("Memuat data terbaru…");
     try {
+      // FIX (laporan user: export cuma sampai tanggal tertentu padahal
+      // sudah ada laporan actual yg lebih baru) - SEBELUMNYA export langsung
+      // pakai `rows` yg ada di state React, yaitu snapshot dari load() TERAKHIR
+      // kali (saat halaman dibuka/di-refresh manual). Kalau CMS dibiarkan
+      // terbuka lama (tab menganggur) lalu ada laporan actual baru masuk dari
+      // Mobile sesudahnya, snapshot itu jadi BASI - export tidak pernah tau ada
+      // data baru krn halaman ini tidak auto-refresh/realtime. FIX: export
+      // SELALU tarik ulang data langsung dari server dulu (await load()) SAAT
+      // tombol ditekan, baru exportRows dihitung dari hasil fetch terbaru itu -
+      // jadi file yg didownload dijamin seakurat mungkin, bukan snapshot lama.
+      const fresh = await load(); // {list, branchMap, docPhotoMap, docDriveMap, docCountMap} - lihat catatan di load()
+      const freshList = fresh?.list || rows; // fallback ke state lama kalau load() gagal (mis. error jaringan saat export) - export tetap jalan drpd gagal total
+      const freshBranchMap = fresh?.branchMap || branchMap;
+      const freshDocPhotoMap = fresh?.docPhotoMap || docPhotoMap;
+      const freshDocDriveMap = fresh?.docDriveMap || docDriveMap;
+      const freshDocCountMap = fresh?.docCountMap || docCountMap;
       const wb = new ExcelJS.Workbook();
 
+      // Terapkan ULANG search + filter kolom LAIN (brand/branch/dst, di luar
+      // status) scr manual ke freshList - TIDAK bisa pakai scopedRows (state
+      // useMemo) langsung krn baru ter-update di RENDER BERIKUTNYA, sedang
+      // fungsi export ini butuh hasil freshList SAAT INI JUGA (stale closure
+      // React kalau nunggu re-render). search/filter kolom sendiri (q,
+      // colFilters) TIDAK berubah krn refresh, jadi aman dipakai apa adanya
+      // dari closure.
+      const freshTerm = q.trim().toLowerCase();
+      let freshFiltered = !freshTerm ? freshList : freshList.filter((r) =>
+        (r.event_name || "").toLowerCase().includes(freshTerm) ||
+        (r.mc || "").toLowerCase().includes(freshTerm) ||
+        (r.site_id || "").toLowerCase().includes(freshTerm) ||
+        (r.address || "").toLowerCase().includes(freshTerm) ||
+        (freshBranchMap[r.branch_id] || "").toLowerCase().includes(freshTerm) ||
+        (resolveCreatorName(r, { profileMap, bmeAssignMap, branchMap: freshBranchMap }) || "").toLowerCase().includes(freshTerm)
+      );
       // FIX: export SEBELUMNYA pakai filteredRows (ikut tab STATUS yg lagi
       // aktif di tabel saat tombol Export ditekan) - jadi kalau user lagi
       // buka tab "Selesai", file yg didownload cuma berisi baris Selesai
@@ -789,9 +855,14 @@ function Body({ email }) {
       // status), supaya file yg didownload konsisten & lengkap apa pun tab
       // yg sedang dibuka di layar. Diurutkan dgn status "Selesai" TAMPIL
       // DULUAN (baru status lain menyusul, urutan aslinya dipertahankan).
-      const exportRows = [...scopedRows].sort((a, b) => {
-        const aDone = deriveStatusInfo(a, { profileMap, siteMetaMap, bmeAssignMap, branchMap })[0] === "Selesai" ? 0 : 1;
-        const bDone = deriveStatusInfo(b, { profileMap, siteMetaMap, bmeAssignMap, branchMap })[0] === "Selesai" ? 0 : 1;
+      for (const col of FILTER_COLS) {
+        if (col.key === "status") continue; // status difilter manual -> selalu "completed" (lihat kpiBaseRows), export tetap semua status
+        const sel = colFilters[col.key];
+        if (sel && sel.length) freshFiltered = freshFiltered.filter((r) => sel.includes(col.get(r)));
+      }
+      const exportRows = [...freshFiltered].sort((a, b) => {
+        const aDone = deriveStatusInfo(a, { profileMap, siteMetaMap, bmeAssignMap, branchMap: freshBranchMap })[0] === "Selesai" ? 0 : 1;
+        const bDone = deriveStatusInfo(b, { profileMap, siteMetaMap, bmeAssignMap, branchMap: freshBranchMap })[0] === "Selesai" ? 0 : 1;
         return aDone - bDone;
       });
 
@@ -1289,8 +1360,8 @@ function Body({ email }) {
         // (mh_documents.external_ref, diisi Edge Function media-relay).
         // Kalau belum sempat ke-mirror (mis. kredensial Drive lagi
         // bermasalah), sel dibiarkan kosong, bukan link mati.
-        if (driveCol > 0 && docDriveMap[r.id]) {
-          row.getCell(driveCol).value = { text: "Buka di Drive", hyperlink: `https://drive.google.com/file/d/${docDriveMap[r.id]}/view` };
+        if (driveCol > 0 && freshDocDriveMap[r.id]) {
+          row.getCell(driveCol).value = { text: "Buka di Drive", hyperlink: `https://drive.google.com/file/d/${freshDocDriveMap[r.id]}/view` };
           row.getCell(driveCol).font = { color: { argb: "FF2563EB" }, underline: true };
         }
       });
@@ -1299,26 +1370,46 @@ function Body({ email }) {
 
       setExportProgress(55);
 
-      // Ambil & tempel thumbnail foto pertama tiap activity yg punya dokumentasi.
-      // Jalan paralel (Promise.allSettled) supaya 1 foto gagal load tidak
-      // menggagalkan seluruh export. Progress 55% -> 92% mengikuti jumlah
-      // foto yg SUDAH selesai diproses (bukan cuma baris - foto2 ini yg
-      // paling lama krn network fetch per foto).
-      const photoEligible = exportRows.filter((r) => docCol > 0 && docPhotoMap[r.id]);
+      // withPhotos=false ("Link foto saja", sama pola dgn Pendataan Outlet) -
+      // SAMA SEKALI TIDAK fetch byte foto (itu yg paling lama/berat di export
+      // ini) - kolom Documentation cukup diisi hyperlink "Lihat foto" kalau
+      // activity-nya punya dokumentasi, jadi export jauh lebih cepat & file
+      // jauh lebih ringan drpd mode withPhotos=true di bawah.
+      if (docCol > 0 && !withPhotos) {
+        setExportStage("Menulis link foto…");
+        exportRows.forEach((r, i) => {
+          const rowIdx = i + 1;
+          const path = freshDocPhotoMap[r.id];
+          const cell = ws.getRow(rowIdx + 1).getCell(docCol);
+          if (path) {
+            cell.value = { text: "Lihat foto", hyperlink: photoUrl(path) };
+            cell.font = { color: { argb: "FF1D4ED8" }, underline: true };
+          } else {
+            cell.value = freshDocCountMap[r.id] ? `${freshDocCountMap[r.id]} foto` : "-";
+          }
+        });
+      }
+
+      // withPhotos=true - ambil & tempel thumbnail foto pertama tiap activity
+      // yg punya dokumentasi. Jalan paralel (Promise.allSettled) supaya 1
+      // foto gagal load tidak menggagalkan seluruh export. Progress 55% ->
+      // 92% mengikuti jumlah foto yg SUDAH selesai diproses (bukan cuma baris
+      // - foto2 ini yg paling lama krn network fetch per foto).
+      const photoEligible = withPhotos ? exportRows.filter((r) => docCol > 0 && freshDocPhotoMap[r.id]) : [];
       if (photoEligible.length) setExportStage(`Mengambil foto dokumentasi (0/${photoEligible.length})…`);
       let photosDone = 0;
       let photosFailed = 0; // foto yg gagal ditempel & jatuh ke fallback teks "N foto"
-      if (docCol > 0) {
+      if (docCol > 0 && withPhotos) {
         const docTextFallback = (rowIdx) => {
           // Foto gagal ditempel (atau memang tidak ada path) - tulis teks
           // "N foto" spy sel Documentation tidak kosong padahal aktivitas
           // ini sebenarnya PUNYA dokumentasi (docCountMap[r.id] > 0).
           const row = ws.getRow(rowIdx + 1);
-          row.getCell(docCol).value = docCountMap[r.id] ? `${docCountMap[r.id]} foto` : "-";
+          row.getCell(docCol).value = freshDocCountMap[r.id] ? `${freshDocCountMap[r.id]} foto` : "-";
           photosFailed += 1;
         };
         await Promise.allSettled(exportRows.map(async (r, i) => {
-          const path = docPhotoMap[r.id];
+          const path = freshDocPhotoMap[r.id];
           const rowIdx = i + 1; // 0-based row index di bawah header (baris data ke-1 = index 1 di sheet)
           if (!path) {
             docTextFallback(rowIdx);
@@ -1374,7 +1465,7 @@ function Body({ email }) {
       setExportProgress(0);
       setExportStage("");
     }
-  }, [COLUMNS, scopedRows, profileMap, siteMetaMap, bmeAssignMap, docPhotoMap, docDriveMap, docCountMap, branchMap, cats]);
+  }, [COLUMNS, FILTER_COLS, colFilters, q, load, rows, profileMap, siteMetaMap, bmeAssignMap, docPhotoMap, docDriveMap, docCountMap, branchMap, cats]);
 
   const T_FILTER = { hi: T.hi, mid: T.mid, lo: T.lo, blue: T.primary, blueBg: T.primaryBg };
 
@@ -1511,31 +1602,67 @@ function Body({ email }) {
               statis "Menyiapkan file…" - biar user tau prosesnya masih
               berjalan & sejauh mana (export dgn banyak foto dokumentasi
               bisa makan waktu lumayan lama). */}
-          <button onClick={exportXlsx} disabled={scopedRows.length === 0 || exporting} title="Export SEMUA status (branch/brand/search tetap ikut filter aktif)"
-            style={{ ...btn, minWidth: exporting ? 198 : undefined, opacity: scopedRows.length === 0 ? 0.5 : 1, cursor: (scopedRows.length === 0 || exporting) ? "default" : "pointer", background: "linear-gradient(135deg,#1E8E3E,#0F6B2C)", borderColor: "transparent", color: "#fff" }}>
-            {exporting ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4, width: "100%" }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                  <span style={{ fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "rgba(255,255,255,0.92)" }}>
-                    {exportStage || "Menyiapkan…"}
+          <div ref={exportMenuRef} style={{ position: "relative" }}>
+            <button onClick={() => (exporting ? null : setExportMenu((v) => !v))} disabled={scopedRows.length === 0 || exporting}
+              title="Export SEMUA status (branch/brand/search tetap ikut filter aktif) - data ditarik ulang dari server tiap export, bukan snapshot lama"
+              aria-haspopup="menu" aria-expanded={exportMenu}
+              style={{ ...btn, minWidth: exporting ? 198 : undefined, opacity: scopedRows.length === 0 ? 0.5 : 1, cursor: (scopedRows.length === 0 || exporting) ? "default" : "pointer", background: "linear-gradient(135deg,#1E8E3E,#0F6B2C)", borderColor: "transparent", color: "#fff" }}>
+              {exporting ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, width: "100%" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                    <span style={{ fontSize: 10.5, fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", color: "rgba(255,255,255,0.92)" }}>
+                      {exportStage || "Menyiapkan…"}
+                    </span>
+                    <span style={{ fontSize: 12, fontWeight: 800, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{exportProgress}%</span>
+                  </div>
+                  <div style={{ width: "100%", height: 6, borderRadius: 99, background: "rgba(255,255,255,0.28)", overflow: "hidden" }}>
+                    <div style={{
+                      height: "100%", borderRadius: 99, width: `${exportProgress}%`,
+                      background: "linear-gradient(90deg,#B9F6C7,#FFFFFF)",
+                      transition: "width .25s ease",
+                      boxShadow: exportProgress > 0 && exportProgress < 100 ? "0 0 8px rgba(255,255,255,0.55)" : "none",
+                    }} />
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <Download size={13} /> Export .xlsx <ChevronDown size={13} style={{ transition: "transform .15s", transform: exportMenu ? "rotate(180deg)" : "none" }} />
+                </>
+              )}
+            </button>
+            {exportMenu && !exporting && (
+              <div role="menu" style={{
+                position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 40, minWidth: 260,
+                background: "#fff", border: `1px solid ${T.border || "#E5E7EB"}`, borderRadius: 12,
+                boxShadow: "0 12px 28px rgba(0,0,0,0.14)", padding: 6,
+              }}>
+                <button onClick={() => { setExportMenu(false); exportXlsx(true); }} role="menuitem" style={{
+                  width: "100%", display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 10px", borderRadius: 8,
+                  background: "transparent", border: "none", cursor: "pointer", textAlign: "left",
+                }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "#F3F4F6"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                  <Images size={17} style={{ marginTop: 1, flexShrink: 0, color: T.mid }} />
+                  <span>
+                    <div style={{ fontSize: 13, fontWeight: 800 }}>Dengan foto di Excel</div>
+                    <div style={{ fontSize: 11.5, color: T.mid }}>Foto dokumentasi ditampilkan langsung di dalam cell. Proses lebih lama, file lebih besar.</div>
                   </span>
-                  <span style={{ fontSize: 12, fontWeight: 800, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{exportProgress}%</span>
-                </div>
-                <div style={{ width: "100%", height: 6, borderRadius: 99, background: "rgba(255,255,255,0.28)", overflow: "hidden" }}>
-                  <div style={{
-                    height: "100%", borderRadius: 99, width: `${exportProgress}%`,
-                    background: "linear-gradient(90deg,#B9F6C7,#FFFFFF)",
-                    transition: "width .25s ease",
-                    boxShadow: exportProgress > 0 && exportProgress < 100 ? "0 0 8px rgba(255,255,255,0.55)" : "none",
-                  }} />
-                </div>
+                </button>
+                <button onClick={() => { setExportMenu(false); exportXlsx(false); }} role="menuitem" style={{
+                  width: "100%", display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 10px", borderRadius: 8,
+                  background: "transparent", border: "none", cursor: "pointer", textAlign: "left",
+                }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "#F3F4F6"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                  <Link2 size={17} style={{ marginTop: 1, flexShrink: 0, color: T.mid }} />
+                  <span>
+                    <div style={{ fontSize: 13, fontWeight: 800 }}>Link foto saja</div>
+                    <div style={{ fontSize: 11.5, color: T.mid }}>Kolom Documentation cukup link yang bisa diklik. Proses cepat, file ringan.</div>
+                  </span>
+                </button>
               </div>
-            ) : (
-              <>
-                <Download size={13} /> Export .xlsx
-              </>
             )}
-          </button>
+          </div>
 
           <button onClick={() => router.push("/martahub/activities/import")} title="Import banyak activity plan sekaligus dari file Excel"
             style={{ ...btn, background: "linear-gradient(90deg, #ED1C24 0%, #C6168D 100%)", borderColor: "transparent", color: "#fff" }}>

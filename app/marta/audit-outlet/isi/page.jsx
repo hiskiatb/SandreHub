@@ -1578,6 +1578,15 @@ export default function AuditOutletFormPage() {
   const [step, setStep] = useState(0); // 0=Data Outlet, 1=Foto Outlet, 2=Visibility, 3=Availability, 4=Review (Konfirmasi = layar `done` terpisah)
   const [done, setDone] = useState(false);
   const [doneAt, setDoneAt] = useState(null);
+  // Submission yg LAGI DIPROSES (dibuat oleh aoCreateSubmission) - disimpan
+  // di ref (bukan state biasa) supaya kalau submit() gagal di tengah upload
+  // foto (sinyal lemah dll) dan user tekan "Kirim" lagi, retry-nya LANJUTIN
+  // submission yg SAMA (reuse id) + skip foto yg sudah sukses terupload,
+  // bukan bikin baris baru lagi tiap retry (ini akar masalah kasus
+  // submission "Incomplete" nyangkut 0 foto: row sempat tercipta tapi foto
+  // gagal/belum keupload krn koneksi putus, lalu kalau user retry dari nol
+  // malah numpuk jadi row baru lagi - lihat catatan di submit() di bawah).
+  const pendingSubmissionRef = useRef(null); // { id, uploadedEtalase: Set<urutan>, uploadedTapak: boolean }
   const [showSuccessAnim, setShowSuccessAnim] = useState(false);
 
   // Begitu submit sukses: tampilkan animasi Lottie full-screen dulu
@@ -1837,6 +1846,26 @@ export default function AuditOutletFormPage() {
     openCameraFor((f) => setTapakFile(f));
   };
 
+  // Upload 1 foto dgn retry - sinyal lemah di lapangan adalah penyebab
+  // paling umum upload foto gagal di tengah submit (lihat investigasi
+  // submission "Incomplete": semuanya gagal persis di tahap foto, bukan di
+  // data). 3x coba dgn jeda naik (1s/2s/4s) sebelum benar2 dianggap gagal -
+  // tidak mengubah apa pun di server, cuma bikin kegagalan SEMENTARA (yg
+  // paling sering terjadi) auto-sembuh sendiri tanpa perlu user sadar/retry
+  // manual.
+  const _uploadPhotoWithRetry = async (submissionId, jenis, urutan, file, attempts = 3) => {
+    let lastErr;
+    for (let a = 1; a <= attempts; a++) {
+      try {
+        return await aoUploadPhoto(submissionId, jenis, urutan, file);
+      } catch (e) {
+        lastErr = e;
+        if (a < attempts) await new Promise((r) => setTimeout(r, 1000 * 2 ** (a - 1)));
+      }
+    }
+    throw lastErr;
+  };
+
   const submit = async () => {
     setSubmitting(true); setErr("");
     const etalase = etalaseFiles.filter(Boolean);
@@ -1845,27 +1874,53 @@ export default function AuditOutletFormPage() {
     setProgressStep({ current: 0, total: totalSteps });
     const advance = () => { stepsDone += 1; setProgressStep({ current: stepsDone, total: totalSteps }); };
     try {
-      setProgressMsg("Menyimpan data outlet ke sistem...");
-      const submissionId = await aoCreateSubmission({
-        namaSender: namaSender.trim(), namaOutlet: namaOutlet.trim(), idOutlet: idOutlet.trim(),
-        socialMedia: socialMedia.trim(),
-        latitude: gpsLat, longitude: gpsLng,
-        spIm3, sp3id, voucherIm3, voucher3id,
-        visPoster: vis.poster, visShopblind: vis.shopblind, visFlagchain: vis.flagchain,
-        visTablemate: vis.tablemate, visStickerEtalase: vis.stickerEtalase,
-      });
+      // Reuse submission yg sama kalau ini RETRY dari submit sebelumnya yg
+      // gagal di tengah upload foto (bukan bikin baris baru lagi) - lihat
+      // komentar di pendingSubmissionRef. Data outlet (nama/ID/availability/
+      // visibility) di form ini juga dikirim ulang ke row yg sama lewat
+      // ao_create_submission (idempotent utk id ini - row-nya SUDAH ada),
+      // jadi kalau user mengubah isian sebelum retry, data terbaru tetap
+      // ikut tersimpan.
+      let pending = pendingSubmissionRef.current;
+      if (!pending) {
+        setProgressMsg("Menyimpan data outlet ke sistem...");
+        const submissionId = await aoCreateSubmission({
+          namaSender: namaSender.trim(), namaOutlet: namaOutlet.trim(), idOutlet: idOutlet.trim(),
+          socialMedia: socialMedia.trim(),
+          latitude: gpsLat, longitude: gpsLng,
+          spIm3, sp3id, voucherIm3, voucher3id,
+          visPoster: vis.poster, visShopblind: vis.shopblind, visFlagchain: vis.flagchain,
+          visTablemate: vis.tablemate, visStickerEtalase: vis.stickerEtalase,
+        });
+        pending = { id: submissionId, uploadedEtalase: new Set(), uploadedTapak: false };
+        pendingSubmissionRef.current = pending;
+      } else {
+        setProgressMsg("Menyimpan data outlet ke sistem...");
+      }
       advance();
       for (let i = 0; i < etalase.length; i++) {
-        setProgressMsg(`Mengunggah foto etalase ${i + 1} dari ${etalase.length}...`);
-        await aoUploadPhoto(submissionId, "etalase", i + 1, etalase[i]);
+        const urutan = i + 1;
+        if (pending.uploadedEtalase.has(urutan)) { advance(); continue; } // sukses di attempt sebelumnya - skip
+        setProgressMsg(`Mengunggah foto etalase ${urutan} dari ${etalase.length}...`);
+        await _uploadPhotoWithRetry(pending.id, "etalase", urutan, etalase[i]);
+        pending.uploadedEtalase.add(urutan);
         advance();
       }
-      setProgressMsg("Mengunggah foto tampak depan outlet...");
-      await aoUploadPhoto(submissionId, "tapak_depan", 1, tapakFile);
+      if (!pending.uploadedTapak) {
+        setProgressMsg("Mengunggah foto tampak depan outlet...");
+        await _uploadPhotoWithRetry(pending.id, "tapak_depan", 1, tapakFile);
+        pending.uploadedTapak = true;
+      } else {
+        advance();
+      }
       advance();
+      pendingSubmissionRef.current = null; // submission ini sudah lengkap & selesai - retry berikutnya (form baru) wajib bikin submission baru
       setDoneAt(new Date());
       setDone(true);
     } catch (e) {
+      // SENGAJA tidak reset pendingSubmissionRef di sini - supaya kalau
+      // user tekan "Kirim" lagi, submit() di atas lanjutin submission &
+      // foto yg sudah sukses, bukan mengulang dari nol / bikin row baru.
       setErr(e?.message || "Gagal mengirim data, coba lagi.");
       setStep(4);
     } finally {
@@ -1874,6 +1929,7 @@ export default function AuditOutletFormPage() {
   };
 
   const resetAll = () => {
+    pendingSubmissionRef.current = null; // form baru = submission baru, jangan nyangkut ke submission form sebelumnya
     setNamaSender(""); setNamaOutlet(""); setIdOutlet(""); setSocialMedia(""); setSelectedOutlet(null);
     setEtalaseFiles([null, null, null]); setTapakFile(null);
     setSpIm3(null); setSp3id(null); setVoucherIm3(null); setVoucher3id(null);
