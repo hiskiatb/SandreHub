@@ -16,30 +16,46 @@ import { ImageOff, Images, Loader2, RefreshCw, Search, X } from "lucide-react";
 import MartaShell, { T } from "../components/MartaShell";
 import { openPhotoLightbox } from "../m/_shared/photoLightbox";
 
-const FUNCTIONS_BASE = (process.env.NEXT_PUBLIC_MARTA_SUPABASE_URL || "").replace(/\/$/, "") + "/functions/v1/gdrive-gallery";
+import supabaseMarta from "../../../lib/supabaseMarta";
+
+// Sumber foto: Supabase Storage (bucket mh-photos) - daftar dari RPC
+// mh_gallery_storage_photos (foto POSM + foto aktivitas, otorisasi via email
+// caller), URL gambar = public URL bucket (tanpa Google Drive).
+const PHOTO_BUCKET = "mh-photos";
 
 async function fetchGalleryList(email) {
   if (!email) throw new Error("Belum login");
-  const res = await fetch(`${FUNCTIONS_BASE}?action=list&caller_email=${encodeURIComponent(email)}`);
-  if (!res.ok) throw new Error(`Gagal memuat gallery (${res.status})`);
-  const data = await res.json();
-  if (!data.ok) throw new Error(data.reason === "not_configured" ? "Integrasi Google Drive belum dikonfigurasi." : "Gagal memuat gallery.");
-  return data.items || [];
-}
-
-async function fetchImageBlobUrl(email, id) {
-  if (!email) throw new Error("Belum login");
-  const res = await fetch(`${FUNCTIONS_BASE}?action=image&id=${encodeURIComponent(id)}&caller_email=${encodeURIComponent(email)}`);
-  if (!res.ok) throw new Error(`Gagal memuat foto (${res.status})`);
-  const blob = await res.blob();
-  return URL.createObjectURL(blob);
+  const { data, error } = await supabaseMarta.rpc("mh_gallery_storage_photos", { p_caller_email: email });
+  if (error) throw new Error(error.message || "Gagal memuat gallery.");
+  const bucket = supabaseMarta.storage.from(PHOTO_BUCKET);
+  return (data || []).map((r) => ({
+    id: `${r.source}:${r.id}`,
+    name: r.caption || (r.storage_path || "").split("/").pop() || "foto",
+    url: bucket.getPublicUrl(r.storage_path).data.publicUrl,
+    modified_time: r.created_at,
+    plan_id: r.plan_id,
+    plan_name: r.plan_name,
+    branch_name: r.branch_name,
+    region: r.region,
+    brand: r.brand,
+    source: r.source,
+  }));
 }
 
 const UNLINKED_KEY = "__unlinked__";
+const selStyle = {
+  padding: "8px 11px", borderRadius: 10, border: `1px solid ${T.line}`, background: "#fff",
+  color: T.hi, fontSize: 12.5, fontFamily: "inherit",
+};
+const fmtDateTime = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+};
 
 export default function GalleryPage() {
   return (
-    <MartaShell active="gallery" title="Gallery" subtitle="Preview foto dokumentasi POSM langsung dari Google Drive.">
+    <MartaShell active="gallery" title="Gallery" subtitle="Semua foto dokumentasi (POSM & aktivitas) dari penyimpanan MartaHub.">
       {(ctx) => <Body email={ctx?.session?.user?.email} />}
     </MartaShell>
   );
@@ -51,6 +67,11 @@ function Body({ email }) {
   const [loading, setLoading] = useState(false);
   const [regionFilter, setRegionFilter] = useState("Semua Region");
   const [query, setQuery] = useState("");
+  const [dateFrom, setDateFrom] = useState("");   // yyyy-mm-dd (zona waktu lokal)
+  const [dateTo, setDateTo] = useState("");
+  const [branchFilter, setBranchFilter] = useState("Semua Branch");
+  const [brandFilter, setBrandFilter] = useState("Semua Brand");
+  const [sortDir, setSortDir] = useState("desc"); // desc = terbaru dulu
   const urlCacheRef = useRef(new Map()); // item.id -> blob url, dipakai bareng oleh Thumb & lightbox biar ga fetch dobel
 
   const load = useCallback(async () => {
@@ -68,20 +89,63 @@ function Body({ email }) {
     return ["Semua Region", ...Array.from(set).sort()];
   }, [items]);
 
+  const branches = useMemo(() => {
+    const set = new Set((items || []).map((i) => i.branch_name || "Belum diketahui"));
+    return ["Semua Branch", ...Array.from(set).sort()];
+  }, [items]);
+  const brands = useMemo(() => {
+    const set = new Set((items || []).map((i) => (i.brand || "").toUpperCase()).filter(Boolean));
+    return ["Semua Brand", ...Array.from(set).sort()];
+  }, [items]);
+
+  // yyyy-mm-dd menurut zona waktu perangkat (bukan UTC) supaya foto malam hari
+  // tidak "pindah" ke tanggal sebelumnya/berikutnya.
+  const localYmd = (iso) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const setPreset = (days) => {
+    const to = new Date(); const from = new Date();
+    from.setDate(from.getDate() - (days - 1));
+    setDateFrom(localYmd(from.toISOString())); setDateTo(localYmd(to.toISOString()));
+  };
+  const clearDates = () => { setDateFrom(""); setDateTo(""); };
+
   const filteredItems = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return (items || []).filter((i) => {
+    const list = (items || []).filter((i) => {
       if (regionFilter !== "Semua Region" && (i.region || "Lainnya") !== regionFilter) return false;
+      if (branchFilter !== "Semua Branch" && (i.branch_name || "Belum diketahui") !== branchFilter) return false;
+      if (brandFilter !== "Semua Brand" && (i.brand || "").toUpperCase() !== brandFilter) return false;
+      if (dateFrom || dateTo) {
+        const d = localYmd(i.modified_time);
+        if (!d) return false;
+        if (dateFrom && d < dateFrom) return false;
+        if (dateTo && d > dateTo) return false;
+      }
       if (!q) return true;
       return [i.plan_name, i.branch_name, i.name].some((v) => (v || "").toLowerCase().includes(q));
     });
-  }, [items, regionFilter, query]);
+    list.sort((a, b) => {
+      const c = (a.modified_time || "").localeCompare(b.modified_time || "");
+      return sortDir === "asc" ? c : -c;
+    });
+    return list;
+  }, [items, regionFilter, branchFilter, brandFilter, dateFrom, dateTo, query, sortDir]);
+
+  const filterActive = regionFilter !== "Semua Region" || branchFilter !== "Semua Branch" || brandFilter !== "Semua Brand" || !!dateFrom || !!dateTo || !!query;
+  const resetAll = () => {
+    setRegionFilter("Semua Region"); setBranchFilter("Semua Branch"); setBrandFilter("Semua Brand");
+    clearDates(); setQuery("");
+  };
 
   const groups = useMemo(() => {
     const map = new Map();
     for (const it of filteredItems) {
-      const key = it.plan_name ? `${it.plan_name}` : UNLINKED_KEY;
-      if (!map.has(key)) map.set(key, { plan_name: it.plan_name, items: [] });
+      const key = it.plan_id || (it.plan_name ? `${it.plan_name}` : UNLINKED_KEY);
+      if (!map.has(key)) map.set(key, { key, plan_name: it.plan_name, items: [] });
       map.get(key).items.push(it);
     }
     const arr = Array.from(map.values());
@@ -95,23 +159,11 @@ function Body({ email }) {
   }, [filteredItems]);
 
   const openGroupLightbox = useCallback(async (groupItems, clickedItem) => {
-    if (!email) return;
     const startIndex = Math.max(0, groupItems.findIndex((it) => it.id === clickedItem.id));
-    const resolved = await Promise.all(
-      groupItems.map(async (it) => {
-        let url = urlCacheRef.current.get(it.id);
-        if (!url) {
-          try { url = await fetchImageBlobUrl(email, it.id); urlCacheRef.current.set(it.id, url); }
-          catch { return null; }
-        }
-        return { url, name: it.name };
-      })
-    );
-    const ok = resolved.filter(Boolean);
+    const ok = groupItems.map((it) => ({ url: it.url, name: it.name }));
     if (!ok.length) return;
-    const okStart = Math.min(startIndex < 0 ? 0 : startIndex, ok.length - 1);
-    openPhotoLightbox(ok, okStart, { filenamePrefix: "gallery" });
-  }, [email]);
+    openPhotoLightbox(ok, startIndex, { filenamePrefix: "gallery" });
+  }, []);
 
   const totalPhotos = items?.length ?? null;
 
@@ -134,8 +186,8 @@ function Body({ email }) {
           <div>
             <div style={{ fontSize: 15, fontWeight: 800, color: T.hi, lineHeight: 1.2 }}>Gallery Dokumentasi</div>
             <div style={{ fontSize: 12, color: T.lo, marginTop: 2 }}>
-              {totalPhotos === null ? "Memuat…" : `${totalPhotos} foto tersinkron dari Google Drive`}
-              {regionFilter !== "Semua Region" || query ? ` · menampilkan ${filteredItems.length}` : ""}
+              {totalPhotos === null ? "Memuat…" : `${totalPhotos} foto`}
+              {filterActive ? ` · menampilkan ${filteredItems.length}` : ""}
             </div>
           </div>
         </div>
@@ -165,6 +217,37 @@ function Body({ email }) {
           )}
         </div>
 
+        <select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)} style={selStyle}>
+          {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+        </select>
+        {brands.length > 2 && (
+          <select value={brandFilter} onChange={(e) => setBrandFilter(e.target.value)} style={selStyle}>
+            {brands.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+        )}
+        <select value={sortDir} onChange={(e) => setSortDir(e.target.value)} style={selStyle}>
+          <option value="desc">Terbaru dulu</option>
+          <option value="asc">Terlama dulu</option>
+        </select>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: T.mid }}>Tanggal</span>
+        <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} style={selStyle} />
+        <span style={{ fontSize: 12, color: T.lo }}>s/d</span>
+        <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} style={selStyle} />
+        {[["Hari ini", 1], ["7 hari", 7], ["30 hari", 30]].map(([l, d]) => (
+          <button key={l} onClick={() => setPreset(d)} style={{ ...selStyle, cursor: "pointer", fontWeight: 700 }}>{l}</button>
+        ))}
+        {(dateFrom || dateTo) && (
+          <button onClick={clearDates} style={{ ...selStyle, cursor: "pointer", color: T.error }}>Hapus tanggal</button>
+        )}
+        {filterActive && (
+          <button onClick={resetAll} style={{ ...selStyle, cursor: "pointer", marginLeft: "auto", fontWeight: 700 }}>Reset semua filter</button>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 18 }}>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {regions.map((r) => {
             const activeChip = regionFilter === r;
@@ -188,7 +271,7 @@ function Body({ email }) {
 
       {items === null && !err && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.lo, fontSize: 13, padding: "60px 0", justifyContent: "center" }}>
-          <Loader2 size={16} style={{ animation: "mh-spin .8s linear infinite" }} /> Memuat foto dari Google Drive…
+          <Loader2 size={16} style={{ animation: "mh-spin .8s linear infinite" }} /> Memuat foto…
         </div>
       )}
 
@@ -197,12 +280,12 @@ function Body({ email }) {
           <div style={{ width: 56, height: 56, borderRadius: 999, background: "#F1F2F5", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <ImageOff size={24} />
           </div>
-          {items.length === 0 ? "Belum ada foto di folder Google Drive." : "Tidak ada foto yang cocok dengan filter/pencarian."}
+          {items.length === 0 ? "Belum ada foto." : "Tidak ada foto yang cocok dengan filter/pencarian."}
         </div>
       )}
 
       {groups.map((g, gi) => (
-        <PlanGroup key={g.plan_name || UNLINKED_KEY} planName={g.plan_name} items={g.items}
+        <PlanGroup key={g.key} planName={g.plan_name} items={g.items}
           onPreview={openGroupLightbox} email={email} urlCacheRef={urlCacheRef} animDelay={Math.min(gi, 6) * 0.03} />
       ))}
     </div>
@@ -258,25 +341,27 @@ function Thumb({ item, email, urlCacheRef, onOpen }) {
   const [url, setUrl] = useState(null);
   const [failed, setFailed] = useState(false);
   const [hover, setHover] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const boxRef = useRef(null);
 
+  // Lazy-load: <img> baru dipasang saat thumbnail mendekati layar,
+  // supaya ratusan foto tidak diunduh sekaligus.
   useEffect(() => {
-    // Ref cuma dibaca di dalam effect (bukan saat render) - lihat
-    // https://react.dev/reference/react/useRef, akses ref.current saat
-    // render bisa bikin komponen ga update sesuai ekspektasi.
-    const cached = urlCacheRef.current.get(item.id);
-    if (cached) { setUrl(cached); return; }
-    if (!email) return;
-    let alive = true;
-    fetchImageBlobUrl(email, item.id).then((u) => {
-      if (!alive) return;
-      urlCacheRef.current.set(item.id, u); setUrl(u);
-    }).catch(() => { if (alive) setFailed(true); });
-    return () => { alive = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [item.id, email]);
+    const el = boxRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") { setVisible(true); return; }
+    const io = new IntersectionObserver((es) => {
+      if (es.some((e) => e.isIntersecting)) { setVisible(true); io.disconnect(); }
+    }, { rootMargin: "300px" });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
+  useEffect(() => { if (visible) setUrl(item.url); }, [visible, item.url]);
 
   return (
     <div
+      ref={boxRef}
+      title={`${item.name}${item.modified_time ? " · " + fmtDateTime(item.modified_time) : ""}`}
       onClick={() => url && onOpen()}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
@@ -288,7 +373,7 @@ function Thumb({ item, email, urlCacheRef, onOpen }) {
       }}>
       {url ? (
         <>
-          <img src={url} alt={item.name} style={{
+          <img src={url} alt={item.name} loading="lazy" decoding="async" onError={() => { setUrl(null); setFailed(true); }} style={{
             position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover",
             transition: "transform .2s ease", transform: hover ? "scale(1.06)" : "scale(1)",
           }} />
@@ -297,7 +382,7 @@ function Thumb({ item, email, urlCacheRef, onOpen }) {
             opacity: hover ? 1 : 0, transition: "opacity .15s ease", display: "flex", alignItems: "flex-end", padding: 8,
           }}>
             <span style={{ color: "#fff", fontSize: 10.5, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {item.name}
+              {fmtDateTime(item.modified_time) || item.name}
             </span>
           </div>
         </>

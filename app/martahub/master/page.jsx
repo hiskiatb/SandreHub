@@ -711,28 +711,34 @@ const COLUMNS = [
   { key: "kecamatan", label: "Kecamatan Unik" },
   { key: "kecamatan_fokus", label: "Kecamatan Fokus" },
   { key: "site_lrs", label: "Site LRS" },
+  { key: "coverage", label: "Coverage" },
+  { key: "rgs_category", label: "RGS Category" },
+  { key: "traffic_category", label: "Traffic Category" },
+  { key: "addressable", label: "Addressable" },
 ];
 
 const FCOLS = COLUMNS.map((c) => [c.key, c.label]);
 
 // Export .xlsx - SEMUA 17 kolom mh_sites_monthly (bukan cuma 12 kolom yg
 // ditampilkan di tabel UI) - sesuai permintaan "full data site".
+// Urutan & nama kolom mengikuti "FORMAT MASTERDATA.xlsx".
 const EXPORT_COLUMNS = [
-  { key: "site_id", label: "Site ID" },
-  { key: "site_name", label: "Site Name" },
-  { key: "brand", label: "Brand" },
+  { key: "site_id", label: "SITE ID" },
+  { key: "site_name", label: "SITE NAME" },
   { key: "mc", label: "MC" },
-  { key: "branch_id", label: "Branch ID" },
-  { key: "branch", label: "Branch" },
-  { key: "region", label: "Region" },
-  { key: "area", label: "Area" },
-  { key: "circle", label: "Circle" },
-  { key: "kabupaten", label: "Kabupaten" },
-  { key: "kecamatan_name", label: "Kecamatan" },
-  { key: "kecamatan", label: "Kecamatan Unik" },
-  { key: "kecamatan_fokus", label: "Kecamatan Fokus" },
-  { key: "site_lrs", label: "Site LRS" },
-  { key: "coverage", label: "Coverage" },
+  { key: "branch", label: "BRANCH" },
+  { key: "region", label: "REGION" },
+  { key: "area", label: "AREA" },
+  { key: "circle", label: "CIRCLE" },
+  { key: "kabupaten", label: "KABUPATEN" },
+  { key: "kecamatan_name", label: "KECAMATAN" },
+  { key: "kecamatan", label: "KECAMATAN UNIK" },
+  { key: "kecamatan_fokus", label: "KECAMATAN FOKUS" },
+  { key: "site_lrs", label: "LRS" },
+  { key: "coverage", label: "COVERAGE" },
+  { key: "rgs_category", label: "RGS CATEGORY" },
+  { key: "traffic_category", label: "TRAFFIC CATEGORY" },
+  { key: "addressable", label: "ADDRESSABLE" },
   { key: "month", label: "Month" },
   { key: "updated_at", label: "Updated At" },
 ];

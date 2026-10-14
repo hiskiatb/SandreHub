@@ -370,11 +370,12 @@ function Body({ email }) {
       for (const s of sites || []) {
         const kec = s.kecamatan_name || s.kecamatan || null;
         if (!siteMeta[s.site_id] || (!siteMeta[s.site_id].kecamatan && kec)) {
+          // rgs/traffic/addressable ikut dari baris yg sama (kolom site-level).
           // kecamatan_fokus ikut diambil dari baris yg sama yg "menang" -
           // site_id yg sama SEHARUSNYA konsisten YES/NO-nya lintas brand
           // (upload List Site per-kecamatan, bukan per-brand), jadi tidak
           // perlu logic pilih terpisah spt kabupaten/kecamatan.
-          siteMeta[s.site_id] = { kabupaten: s.kabupaten || null, kecamatan: kec, kecamatanFokus: s.kecamatan_fokus || "NO" };
+          siteMeta[s.site_id] = { kabupaten: s.kabupaten || null, kecamatan: kec, kecamatanFokus: s.kecamatan_fokus || "NO", rgs: s.rgs_category || null, traffic: s.traffic_category || null, addressable: s.addressable || null };
         }
       }
       setSiteMetaMap(siteMeta);
@@ -534,6 +535,9 @@ function Body({ email }) {
     { key: "insight", label: "Insight (Optional)", width: 220, filter: true, get: (r) => r.insight || "-" },
     { key: "documentation", label: "Documentation", width: 120, filter: true, get: (r) => (docCountMap[r.id] ? `${docCountMap[r.id]} foto` : "-") },
     { key: "kecamatanFokus", label: "Kecamatan Fokus", width: 130, filter: true, get: (r) => siteMetaMap[r.site_id]?.kecamatanFokus || "NO" },
+    { key: "rgsCategory", label: "RGS Category", width: 120, filter: true, get: (r) => siteMetaMap[r.site_id]?.rgs || "-" },
+    { key: "trafficCategory", label: "Traffic Category", width: 130, filter: true, get: (r) => siteMetaMap[r.site_id]?.traffic || "-" },
+    { key: "addressable", label: "Addressable", width: 110, filter: true, get: (r) => siteMetaMap[r.site_id]?.addressable || "-" },
     { key: "drive_link", label: "Link Google Drive", width: 140, get: (r) => (docDriveMap[r.id] ? "Buka di Drive" : "-") },
   ], [branchMap, profileMap, bmeAssignMap, docCountMap, cats, batchMap, canRollback, siteMetaMap]);
 
