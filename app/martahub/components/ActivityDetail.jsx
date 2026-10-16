@@ -18,9 +18,12 @@ import { useState, useEffect } from "react";
 import {
   X, MapPin, Image as ImageIcon, Phone, FileText, Layers, Info,
   Target as TargetIcon, CheckCircle2, Clock, XCircle, Tag, Trash2, Calendar, Pencil, ExternalLink, AlertTriangle,
+  Navigation, Wallet, TrendingUp, Camera, CardSim, Router, Receipt, RadioTower,
 } from "lucide-react";
 import { T, FONT, brandLabel } from "./MartaShell";
 import supabaseMarta from "../../../lib/supabaseMarta";
+import { openPhotoLightbox } from "../m/_shared/photoLightbox";
+import SiteTowerIcon from "../m/_shared/SiteTowerIcon";
 
 const CAT_LABEL = {
   directSelling: "Direct Selling", jointEvent: "Join Event", openBooth: "Open Booth",
@@ -88,6 +91,13 @@ const fmtDate = (s) => {
 };
 const fmtInt = (n) => (n == null ? "-" : Number(n).toLocaleString("id-ID"));
 const fmtRp = (n) => (n == null ? "-" : `Rp${Number(n).toLocaleString("id-ID")}`);
+const fmtRpShort = (n) => {
+  if (n == null) return "-";
+  const v = Number(n); const abs = Math.abs(v);
+  if (abs >= 1e9) return `Rp${(v / 1e9).toFixed(2).replace(/\.?0+$/, "")} M`;
+  if (abs >= 1e6) return `Rp${(v / 1e6).toFixed(1).replace(/\.0$/, "")} Jt`;
+  return `Rp${v.toLocaleString("id-ID")}`;
+};
 const fmtTag = (s) => (s ? String(s).replace(/_/g, " ").toUpperCase() : "-");
 // Title Case ("Public Area") dipakai khusus utk POI/Network/Area supaya
 // tidak sekaligus huruf kapital semua (fmtTag/ALL CAPS di atas tetap
@@ -163,6 +173,7 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, canMark
   const [planSites, setPlanSites] = useState([]);
   const [actualSites, setActualSites] = useState([]);
   const [siteNames, setSiteNames] = useState({});
+  const [siteMeta, setSiteMeta] = useState({});
   const [branchName, setBranchName] = useState(null);
   const [photos, setPhotos] = useState([]);
   const [entries, setEntries] = useState([]);
@@ -177,7 +188,7 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, canMark
 
   useEffect(() => {
     let alive = true;
-    setA(null); setErr(""); setPhotos([]); setEntries([]); setEditReqs([]); setPlanSites([]); setActualSites([]); setSiteNames({}); setBranchName(null);
+    setA(null); setErr(""); setPhotos([]); setEntries([]); setEditReqs([]); setPlanSites([]); setActualSites([]); setSiteNames({}); setSiteMeta({}); setBranchName(null);
     (async () => {
       try {
         const [{ data: act, error: e1 }, { data: sites }, { data: docs }, { data: sales }, { data: edits }] = await Promise.all([
@@ -217,10 +228,16 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, canMark
 
         const allSiteIds = Array.from(new Set([act?.site_id, act?.actual_site_id, ...(sites || []).map((s) => s.site_id)].filter(Boolean)));
         if (allSiteIds.length > 0) {
-          const { data: siteRows } = await supabaseMarta.from("mh_sites").select("site_id,site_name").in("site_id", allSiteIds);
-          const map = {};
-          (siteRows || []).forEach((s) => { map[s.site_id] = s.site_name; });
-          if (alive) setSiteNames(map);
+          // RPC SECURITY DEFINER (CMS tdk punya sesi auth Supabase asli, query
+          // langsung ke mh_sites kena RLS & balik kosong) - sekaligus bawa
+          // metadata site utk kartu Site yg lebih informatif.
+          const { data: siteRows } = await supabaseMarta.rpc("mh_sites_lookup", { p_site_ids: allSiteIds });
+          const map = {}; const meta = {};
+          (siteRows || []).forEach((s) => {
+            if (!map[s.site_id] && s.site_name) map[s.site_id] = s.site_name;
+            if (!meta[s.site_id]) meta[s.site_id] = s;
+          });
+          if (alive) { setSiteNames(map); setSiteMeta(meta); }
         }
         if (act?.branch_id) {
           const { data: b } = await supabaseMarta.from("mh_branches").select("name").eq("id", act.branch_id).maybeSingle();
@@ -272,6 +289,10 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, canMark
   const fwaEntries = entries.filter((e) => e.category === "fwa");
   const spValid = spEntries.filter((e) => e.validation_status === "valid").length;
   const fwaValid = fwaEntries.filter((e) => e.validation_status === "valid").length;
+  // Actual SP/FWA: kalau ada entri nomor (MSISDN) yg dicatat, pakai jumlah yg
+  // VALID; kalau tidak, pakai angka actual yg diinput di laporan.
+  const spAct = entries.length ? spValid : a?.actual_sp;
+  const fwaAct = entries.length ? fwaValid : a?.actual_fwa;
 
   return (
     <div onClick={onClose} style={{
@@ -282,18 +303,22 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, canMark
         @keyframes mh-ad-in { from { opacity:0; transform:translateY(10px) scale(.99); } to { opacity:1; transform:translateY(0) scale(1); } }
         .mh-ad-modal{ animation: mh-ad-in .22s cubic-bezier(.22,1,.36,1); }
         .mh-ad-grid2{ display:grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+        .mh-ad-kpis{ display:grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 18px; }
+        .mh-ad-layout{ display:grid; grid-template-columns: minmax(0,1.55fr) minmax(0,1fr); gap: 18px; align-items: start; }
         .mh-ad-kv{ display:grid; grid-template-columns: 1fr 1fr; gap: 4px 28px; }
         .mh-ad-metrics{ display:grid; grid-template-columns: repeat(4,1fr); gap: 10px; }
-        .mh-ad-photos{ display:grid; grid-template-columns: repeat(6,1fr); gap: 10px; }
+        .mh-ad-photos{ display:grid; grid-template-columns: repeat(auto-fill,minmax(120px,1fr)); gap: 10px; }
         @media (max-width: 860px) {
           .mh-ad-grid2{ grid-template-columns: 1fr; }
+          .mh-ad-layout{ grid-template-columns: 1fr; }
+          .mh-ad-kpis{ grid-template-columns: repeat(2,1fr); }
           .mh-ad-kv{ grid-template-columns: 1fr; }
           .mh-ad-metrics{ grid-template-columns: repeat(2,1fr); }
           .mh-ad-photos{ grid-template-columns: repeat(3,1fr); }
         }
       `}</style>
       <div className="mh-ad-modal" onClick={(e) => e.stopPropagation()} style={{
-        width: "100%", maxWidth: 1040, maxHeight: "92vh", background: "#F5F6FA",
+        width: "100%", maxWidth: 1240, maxHeight: "92vh", background: "#F5F6FA",
         borderRadius: 24, border: "1px solid #E4E5EA", boxShadow: "0 30px 80px rgba(13,17,23,0.28)",
         overflow: "hidden", display: "flex", flexDirection: "column",
       }}>
@@ -369,189 +394,223 @@ export function ActivityDetailModal({ id, onClose, canDelete, onDeleted, canMark
               </div>
             </div>
 
-            {/* Body - kolom lebar dgn max-width supaya konten tetap enak
-                dibaca di layar sangat lebar (bukan mepet tepi kiri-kanan). */}
+            {/* Body - dua kolom: kiri = kinerja & bukti (target vs actual,
+                foto, nomor), kanan = konteks (info plan, lokasi, site,
+                persetujuan). Di atasnya: timeline progres + ringkasan KPI
+                supaya status & capaian terbaca sekilas tanpa scroll. */}
             <div style={{ padding: "20px 28px 32px", overflowY: "auto" }}>
-              <div style={{ maxWidth: 940, margin: "0 auto" }}>
+              <div style={{ maxWidth: 1120, margin: "0 auto" }}>
                 {err && (
                   <div style={{ marginBottom: 16, padding: "11px 14px", borderRadius: 12, background: T.errorBg, color: T.error, fontSize: 12.5, fontWeight: 600 }}>{err}</div>
                 )}
 
                 {(a.validation_note || a.override_note || a.approval_notes) && (
-                  <div style={{ marginBottom: 16, padding: "13px 16px", borderRadius: 14, background: st[2], color: st[1], fontSize: 12.5, fontWeight: 600, lineHeight: 1.55 }}>
-                    {a.validation_note || a.override_note || a.approval_notes}
+                  <div style={{ marginBottom: 16, padding: "13px 16px", borderRadius: 14, background: st[2], color: st[1], fontSize: 12.5, fontWeight: 600, lineHeight: 1.55, display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <Info size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+                    <span>{a.validation_note || a.override_note || a.approval_notes}</span>
                   </div>
                 )}
 
-                {/* Info Plan + Site berdampingan di layar lebar - dua section
-                    pendek yg secara alami cocok side-by-side, memanfaatkan
-                    ruang desktop drpd ditumpuk vertikal spt di HP. */}
-                <div className="mh-ad-grid2">
-                  <SectionCard title="Informasi Plan" icon={<Info size={13} />} accent="#2563EB">
-                    {categories.length > 0 && (
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
-                        {categories.map((c, i) => (
-                          <span key={i} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "#2563EB", background: "rgba(37,99,235,0.08)", borderRadius: 999, padding: "4px 10px" }}>
-                            <Tag size={11} /> {fmtTag(CAT_LABEL[c] || c)}
-                          </span>
-                        ))}
+                <LifecycleStepper a={a} st={st} photoCount={photos.length} />
+
+                <div className="mh-ad-kpis">
+                  <KpiHero accent="#DB2777" icon={<CardSim size={14} />} label="Aktivasi SP" actual={spAct} target={a.target_sp} fmt={fmtInt} />
+                  <KpiHero accent="#2563EB" icon={<Router size={14} />} label="Aktivasi FWA" actual={fwaAct} target={a.target_fwa} fmt={fmtInt} />
+                  <KpiHero accent="#0D9488" icon={<TrendingUp size={14} />} label="Revenue 3 Bulan" actual={a.actual_rev_3m} target={a.target_rev_3m} fmt={fmtRpShort} />
+                  <KpiHero accent="#7C3AED" icon={<Receipt size={14} />} label="Biaya" actual={a.cost_actual} target={a.cost_estimate} fmt={fmtRpShort} invert />
+                </div>
+
+                <div className="mh-ad-layout">
+                  {/* ── Kolom kiri ── */}
+                  <div style={{ minWidth: 0 }}>
+                    <SectionCard title="Rincian Target vs Actual" icon={<TargetIcon size={13} />} accent="#15803D">
+                      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                        <ProgressRow icon={CardSim} accent="#DB2777" label="Aktivasi SP" target={a.target_sp} actual={spAct} fmt={fmtInt} />
+                        <ProgressRow icon={Router} accent="#2563EB" label="Aktivasi FWA" target={a.target_fwa} actual={fwaAct} fmt={fmtInt} />
+                        <ProgressRow icon={Wallet} accent="#B45309" label="Rebuy SP" target={a.target_rebuy_sp} actual={a.actual_rebuy_sp} fmt={fmtRp} />
+                        <ProgressRow icon={Wallet} accent="#B45309" label="Rebuy FWA" target={a.target_rebuy_fwa} actual={a.actual_rebuy_fwa} fmt={fmtRp} />
+                        <ProgressRow icon={TrendingUp} accent="#0D9488" label="Estimasi Revenue (3 bln)" target={a.target_rev_3m} actual={a.actual_rev_3m} fmt={fmtRp} />
+                        <ProgressRow icon={Receipt} accent="#7C3AED" label="Biaya (Cost)" target={a.cost_estimate} actual={a.cost_actual} fmt={fmtRp} invert />
                       </div>
+                      <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid #F0F0F3", display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                        <RatioChip label="Cost Ratio (Target)" value={a.target_rev_3m > 0 ? ((Number(a.cost_estimate) || 0) / a.target_rev_3m) * 100 : null} />
+                        <RatioChip label="Cost Ratio (Actual)" value={a.actual_rev_3m > 0 ? ((Number(a.cost_actual) || 0) / a.actual_rev_3m) * 100 : null} />
+                      </div>
+                      {a.expected_outcome && (
+                        <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #F0F0F3" }}>
+                          <div style={{ fontSize: 10.5, color: "#B0B0BA", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 5 }}>Expected Outcome</div>
+                          <div style={{ fontSize: 12.5, color: "#3A3A44", lineHeight: 1.6 }}>{a.expected_outcome}</div>
+                        </div>
+                      )}
+                      {a.insight && (
+                        <div style={{ marginTop: 14, padding: "12px 14px", borderRadius: 12, background: "#F8F8FA", border: "1px solid #EFEFF2" }}>
+                          <div style={{ fontSize: 10.5, color: "#8A8A96", fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 5 }}>Insight</div>
+                          <div style={{ fontSize: 12.5, color: "#3A3A44", lineHeight: 1.6 }}>{a.insight}</div>
+                        </div>
+                      )}
+                    </SectionCard>
+
+                    <SectionCard title={`Dokumentasi Foto (${photos.length})`} icon={<Camera size={13} />} accent="#DB2777">
+                      {photos.length === 0 ? (
+                        <div style={{ padding: "22px 0", textAlign: "center", color: "#B0B0BA", fontSize: 12.5, fontWeight: 600 }}>
+                          <ImageIcon size={26} color="#D6D6DE" style={{ display: "block", margin: "0 auto 8px" }} />
+                          Belum ada foto dokumentasi.
+                        </div>
+                      ) : (
+                        <div className="mh-ad-photos">
+                          {photos.map((p, pi) => (
+                            <div key={p.id} style={{ position: "relative", aspectRatio: "1", borderRadius: 12, overflow: "hidden", background: "#F0F0F3", display: p.url ? undefined : "flex", alignItems: p.url ? undefined : "center", justifyContent: p.url ? undefined : "center" }}>
+                              {!p.url ? (
+                                p.failed ? <ImageIcon size={20} color="#C7C7D1" /> : (
+                                  <div style={{ width: 20, height: 20, borderRadius: "50%", border: "2px solid #E3E4E8", borderTopColor: "#DB2777", animation: "mh-ad-photo-spin 0.8s linear infinite" }} />
+                                )
+                              ) : (
+                                <button onClick={() => {
+                                  const ready = photos.filter((x) => x.url);
+                                  openPhotoLightbox(ready.map((x) => ({ url: x.url, name: `${a.event_name || "foto"}` })), Math.max(0, ready.findIndex((x) => x.id === p.id)), { filenamePrefix: "activity" });
+                                }}
+                                  style={{ padding: 0, border: "none", cursor: "pointer", width: "100%", height: "100%", display: "block" }}>
+                                  <img src={p.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", transition: "transform .18s" }}
+                                    onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.06)")}
+                                    onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")} />
+                                </button>
+                              )}
+                              <span style={{ position: "absolute", left: 6, bottom: 6, fontSize: 9.5, fontWeight: 800, color: "#fff", background: "rgba(23,24,28,0.55)", borderRadius: 6, padding: "2px 6px" }}>{pi + 1}</span>
+                              {/* Link ke Drive hanya jika foto sudah di-mirror (external_ref terisi). */}
+                              {p.url && p.external_ref && (
+                                <a href={`https://drive.google.com/file/d/${p.external_ref}/view`} target="_blank" rel="noopener noreferrer"
+                                  onClick={(e) => e.stopPropagation()} title="Buka di Google Drive"
+                                  style={{ position: "absolute", top: 6, right: 6, width: 26, height: 26, borderRadius: 8, background: "rgba(23,24,28,0.55)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", textDecoration: "none" }}>
+                                  <ExternalLink size={12} />
+                                </a>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <style>{`@keyframes mh-ad-photo-spin { to { transform: rotate(360deg); } }`}</style>
+                    </SectionCard>
+
+                    {(spEntries.length > 0 || fwaEntries.length > 0) && (
+                      <SectionCard title="Nomor Terdaftar" icon={<Phone size={13} />} accent="#0D9488">
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+                          <span style={{ fontSize: 11, fontWeight: 800, color: "#15803D", background: "rgba(21,128,61,0.10)", borderRadius: 999, padding: "4px 10px" }}>
+                            {spValid + fwaValid} valid
+                          </span>
+                          <span style={{ fontSize: 11, fontWeight: 800, color: "#B45309", background: "rgba(180,83,9,0.10)", borderRadius: 999, padding: "4px 10px" }}>
+                            {entries.filter((e) => e.validation_status === "pending").length} menunggu
+                          </span>
+                          <span style={{ fontSize: 11, fontWeight: 800, color: "#DC2626", background: "rgba(220,38,38,0.10)", borderRadius: 999, padding: "4px 10px" }}>
+                            {entries.filter((e) => ["invalid", "duplicate"].includes(e.validation_status)).length} bermasalah
+                          </span>
+                        </div>
+                        <div className="mh-ad-grid2">
+                          {spEntries.length > 0 && <MsisdnGroup label={`SP (${spEntries.length})`} list={spEntries} />}
+                          {fwaEntries.length > 0 && <MsisdnGroup label={`FWA (${fwaEntries.length})`} list={fwaEntries} />}
+                        </div>
+                      </SectionCard>
                     )}
-                    <div className="mh-ad-kv">
+
+                    {editReqs.length > 0 && (
+                      <SectionCard title="Riwayat Pengajuan Revisi" icon={<FileText size={13} />} accent="#6B7280" last>
+                        {editReqs.map((r) => (
+                          <div key={r.id} style={{ padding: "10px 0", borderBottom: "1px solid #F0F0F3" }}>
+                            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                              <div style={{ fontSize: 12.5, fontWeight: 700, color: "#17181C" }}>{r.requested_by_name || "-"}</div>
+                              <EditReqBadge status={r.status} />
+                            </div>
+                            {r.reason && <div style={{ marginTop: 3, fontSize: 11.5, color: "#8A8A96" }}>{r.reason}</div>}
+                            <div style={{ marginTop: 3, fontSize: 10.5, color: "#B0B0BA" }}>{new Date(r.created_at).toLocaleString("id-ID")}</div>
+                            {r.decision_notes && (
+                              <div style={{ marginTop: 6, fontSize: 11.5, color: "#5A5A68", background: "#F7F7F9", borderRadius: 9, padding: "7px 10px" }}>
+                                {r.decided_by_name ? `${r.decided_by_name}: ` : ""}{r.decision_notes}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </SectionCard>
+                    )}
+                  </div>
+
+                  {/* ── Kolom kanan ── */}
+                  <div style={{ minWidth: 0 }}>
+                    <SectionCard title="Informasi Plan" icon={<Calendar size={13} />} accent="#2563EB">
+                      {categories.length > 0 && (
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                          {categories.map((c, i) => (
+                            <span key={i} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, fontWeight: 700, color: "#2563EB", background: "rgba(37,99,235,0.08)", borderRadius: 999, padding: "4px 10px" }}>
+                              <Tag size={11} /> {fmtTag(CAT_LABEL[c] || c)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       <KV label="Branch" value={branchName || "-"} />
-                      <KV label="Micro Cluster" value={a.mc || "-"} />
+                      {/* FIX (2026-10-16): sebelumnya raw a.mc (teks bebas saat plan
+                          dibuat, sering tidak sinkron dgn Master Data) - sekarang
+                          utamakan mc dari Master Data site aktual/plan (siteMeta,
+                          sama sumbernya dgn kartu Site di bawah), sama persis pola
+                          effectiveMc() di app/martahub/activities/page.jsx. */}
+                      <KV label="Micro Cluster" value={siteMeta[a.actual_site_id || a.site_id]?.mc || a.mc || "-"} />
                       <KV label="Tanggal" value={planDateLabel(a)} />
                       <KV label="Waktu" value={a.is_all_day === false && a.start_time && a.end_time ? `${a.start_time.slice(0, 5)} – ${a.end_time.slice(0, 5)}` : "Seharian"} />
                       <KV label="POI" value={unsnake(a.poi_type)} />
                       <KV label="Kekuatan Sinyal" value={unsnake(a.network_category)} />
                       <KV label="Potensi Area" value={unsnake(a.area_potential)} />
-                    </div>
-                    {a.address && (
-                      <div style={{ marginTop: 6, paddingTop: 10, borderTop: "1px solid #F0F0F3" }}>
-                        <div style={{ fontSize: 11.5, color: "#8A8A96", fontWeight: 600, marginBottom: 3 }}>Alamat</div>
-                        <div style={{ fontSize: 12.5, color: "#17181C", fontWeight: 700, lineHeight: 1.5 }}>{a.address}</div>
-                      </div>
-                    )}
-                  </SectionCard>
+                    </SectionCard>
 
-                  {a.site_id ? (
-                    <SectionCard title={`Site Plan (${planSites.length + 1})`} icon={<Layers size={13} />} accent="#7C3AED">
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        <SiteRow label="Site 1" siteId={a.site_id} siteName={siteNames[a.site_id]} />
-                        {planSites.map((s, i) => <SiteRow key={s} label={`Site ${i + 2}`} siteId={s} siteName={siteNames[s]} />)}
-                      </div>
-                      {a.checkin_at && (
-                        <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #F0F0F3" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 8 }}>
-                            <MapPin size={12} /> Check In
+                    <SectionCard title="Lokasi & Check-in" icon={<MapPin size={13} />} accent="#E11D48">
+                      {a.address && (
+                        <div style={{ fontSize: 12.5, color: "#17181C", fontWeight: 700, lineHeight: 1.5, marginBottom: 10 }}>{a.address}</div>
+                      )}
+                      {a.latitude != null && a.longitude != null && (
+                        <a href={`https://www.google.com/maps?q=${a.latitude},${a.longitude}`} target="_blank" rel="noopener noreferrer"
+                          style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: "#2563EB", textDecoration: "none", background: "rgba(37,99,235,0.08)", borderRadius: 10, padding: "7px 11px", marginBottom: 10 }}>
+                          <Navigation size={13} /> Buka di Google Maps
+                          <span style={{ color: "#8A8A96", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{Number(a.latitude).toFixed(5)}, {Number(a.longitude).toFixed(5)}</span>
+                        </a>
+                      )}
+                      {a.checkin_at ? (
+                        <div style={{ padding: "11px 13px", borderRadius: 13, background: a.checkin_valid ? "rgba(21,128,61,0.08)" : "rgba(220,38,38,0.08)" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 800, color: a.checkin_valid ? T.success : T.error }}>
+                            {a.checkin_valid ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
+                            {a.checkin_valid ? "Check-in valid (dalam radius)" : "Check-in di luar radius"}
                           </div>
-                          <div className="mh-ad-kv">
-                            <KV label="Status" value={a.checkin_valid ? "Valid (dalam radius)" : "Di luar radius"} valueColor={a.checkin_valid ? T.success : T.error} />
-                            {a.checkin_distance != null && <KV label="Jarak" value={`${Math.round(a.checkin_distance)} meter`} />}
+                          <div style={{ marginTop: 4, fontSize: 11.5, color: "#5A5A68", fontWeight: 600 }}>
+                            {a.checkin_distance != null ? `Jarak ${Math.round(a.checkin_distance)} m · ` : ""}{new Date(a.checkin_at).toLocaleString("id-ID")}
                           </div>
-                          <div style={{ marginTop: 4, fontSize: 11, color: "#8A8A96" }}>{new Date(a.checkin_at).toLocaleString("id-ID")}</div>
                         </div>
+                      ) : (
+                        <div style={{ padding: "10px 13px", borderRadius: 13, background: "#F8F8FA", fontSize: 12, color: "#8A8A96", fontWeight: 600 }}>Belum ada check-in.</div>
                       )}
                     </SectionCard>
-                  ) : <div />}
 
-                  {/* Site Actual - baru ada begitu Laporan Actual mulai
-                      diisi (di-seed dari Site Plan lewat
-                      mh_seed_activity_actual_sites saat halaman submit
-                      dibuka pertama kali) - dipisah dari Site Plan krn bisa
-                      berbeda (misal ganti lokasi saat eksekusi). */}
-                  {(a.actual_site_id || actualSites.length > 0) ? (
-                    <SectionCard title={`Site Actual (${a.actual_site_id ? actualSites.length + 1 : actualSites.length})`} icon={<Layers size={13} />} accent="#DB2777">
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                        {a.actual_site_id && <SiteRow label="Site 1" siteId={a.actual_site_id} siteName={siteNames[a.actual_site_id]} />}
-                        {actualSites.map((s, i) => <SiteRow key={s} label={`Site ${i + (a.actual_site_id ? 2 : 1)}`} siteId={s} siteName={siteNames[s]} />)}
-                      </div>
-                    </SectionCard>
-                  ) : <div />}
-                </div>
+                    {a.site_id && (
+                      <SectionCard title={`Site Plan (${planSites.length + 1})`} icon={<SiteTowerIcon size={13} color="#7C3AED" />} accent="#7C3AED">
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          <SiteRow label="Site 1" siteId={a.site_id} siteName={siteNames[a.site_id]} meta={siteMeta[a.site_id]} />
+                          {planSites.map((s, i) => <SiteRow key={s} label={`Site ${i + 2}`} siteId={s} siteName={siteNames[s]} meta={siteMeta[s]} />)}
+                        </div>
+                      </SectionCard>
+                    )}
 
-                {/* Target vs Actual - grid metric tile 4 kolom (2 di layar
-                    sempit), senada gaya MetricTile mobile. */}
-                <SectionCard title="Target vs Actual" icon={<TargetIcon size={13} />} accent="#15803D">
-                  <div className="mh-ad-metrics">
-                    <MetricTile accent="#DB2777" label="SP" target={fmtInt(a.target_sp)} actual={entries.length ? fmtInt(spValid) : fmtInt(a.actual_sp)} />
-                    <MetricTile accent="#2563EB" label="FWA" target={fmtInt(a.target_fwa)} actual={entries.length ? fmtInt(fwaValid) : fmtInt(a.actual_fwa)} />
-                    <MetricTile accent="#B45309" label="Rebuy SP" target={fmtRp(a.target_rebuy_sp)} actual={fmtRp(a.actual_rebuy_sp)} money />
-                    <MetricTile accent="#B45309" label="Rebuy FWA" target={fmtRp(a.target_rebuy_fwa)} actual={fmtRp(a.actual_rebuy_fwa)} money />
-                    <MetricTile accent="#7C3AED" label="Cost" target={fmtRp(a.cost_estimate)} actual={fmtRp(a.cost_actual)} money />
-                    <MetricTile accent="#0D9488" label="Est. Revenue" target={fmtRp(a.target_rev_3m)} actual={fmtRp(a.actual_rev_3m)} money />
-                    <MetricTile accent="#5A5A68" label="Cost Ratio (Target)" target={a.target_rev_3m > 0 ? `${((Number(a.cost_estimate) || 0) / a.target_rev_3m * 100).toFixed(1)}%` : "-"} actual={null} single />
-                    <MetricTile accent="#5A5A68" label="Cost Ratio (Actual)" target={a.actual_rev_3m > 0 ? `${((Number(a.cost_actual) || 0) / a.actual_rev_3m * 100).toFixed(1)}%` : "-"} actual={null} single />
+                    {(a.actual_site_id || actualSites.length > 0) && (
+                      <SectionCard title={`Site Actual (${a.actual_site_id ? actualSites.length + 1 : actualSites.length})`} icon={<SiteTowerIcon size={13} color="#DB2777" />} accent="#DB2777">
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          {a.actual_site_id && <SiteRow label="Site 1" siteId={a.actual_site_id} siteName={siteNames[a.actual_site_id]} meta={siteMeta[a.actual_site_id]} accent="#DB2777" />}
+                          {actualSites.map((s, i) => <SiteRow key={s} label={`Site ${i + (a.actual_site_id ? 2 : 1)}`} siteId={s} siteName={siteNames[s]} meta={siteMeta[s]} accent="#DB2777" />)}
+                        </div>
+                      </SectionCard>
+                    )}
+
+                    {(a.approved_by_name || a.override_by_name) && (
+                      <SectionCard title="Persetujuan" icon={<CheckCircle2 size={13} />} accent="#15803D" last>
+                        {a.approved_by_name && <KV label="Disetujui oleh" value={a.approved_by_name} />}
+                        {a.approved_at && <KV label="Tanggal" value={new Date(a.approved_at).toLocaleString("id-ID")} />}
+                        {a.override_by_name && <KV label="Override oleh" value={a.override_by_name} />}
+                      </SectionCard>
+                    )}
                   </div>
-                  {a.insight && (
-                    <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid #F0F0F3" }}>
-                      <div style={{ fontSize: 10.5, color: "#B0B0BA", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 5 }}>Insight</div>
-                      <div style={{ fontSize: 12.5, color: "#3A3A44", lineHeight: 1.6 }}>{a.insight}</div>
-                    </div>
-                  )}
-                </SectionCard>
-
-                {photos.length > 0 && (
-                  <SectionCard title={`Dokumentasi Foto (${photos.length})`} icon={<ImageIcon size={13} />} accent="#DB2777">
-                    <div className="mh-ad-photos">
-                      {photos.map((p) => (
-                        <div key={p.id} style={{ position: "relative", aspectRatio: "1", borderRadius: 12, overflow: "hidden", background: "#F0F0F3", display: p.url ? undefined : "flex", alignItems: p.url ? undefined : "center", justifyContent: p.url ? undefined : "center" }}>
-                          {!p.url ? (
-                            p.failed ? <ImageIcon size={20} color="#C7C7D1" /> : (
-                              <div style={{ width: 20, height: 20, borderRadius: "50%", border: "2px solid #E3E4E8", borderTopColor: "#DB2777", animation: "mh-ad-photo-spin 0.8s linear infinite" }} />
-                            )
-                          ) : (
-                          <button onClick={() => setLightbox(p.url)}
-                            style={{ padding: 0, border: "none", cursor: "pointer", width: "100%", height: "100%" }}>
-                            <img src={p.url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", transition: "transform .18s" }}
-                              onMouseEnter={(e) => (e.currentTarget.style.transform = "scale(1.06)")}
-                              onMouseLeave={(e) => (e.currentTarget.style.transform = "scale(1)")} />
-                          </button>
-                          )}
-                          {/* Link ke Google Drive - foto ini di-mirror ke Drive best-effort
-                              lewat edge function media-relay setelah DSF submit (lihat
-                              mh_documents.external_ref = Drive file id). Kalau relay-nya
-                              belum/gagal jalan, external_ref masih null - badge-nya
-                              sengaja TIDAK ditampilkan sama sekali drpd link mati, krn
-                              foto tetap ada & bisa dilihat dari Storage (klik thumbnail
-                              di atas) apa pun status mirror-nya. */}
-                          {p.url && p.external_ref && (
-                            <a href={`https://drive.google.com/file/d/${p.external_ref}/view`} target="_blank" rel="noopener noreferrer"
-                              onClick={(e) => e.stopPropagation()}
-                              title="Buka di Google Drive"
-                              style={{
-                                position: "absolute", top: 6, right: 6, width: 26, height: 26, borderRadius: 8,
-                                background: "rgba(23,24,28,0.55)", backdropFilter: "blur(4px)",
-                                display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", textDecoration: "none",
-                              }}>
-                              <ExternalLink size={12} />
-                            </a>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                    <style>{`@keyframes mh-ad-photo-spin { to { transform: rotate(360deg); } }`}</style>
-                  </SectionCard>
-                )}
-
-                {(spEntries.length > 0 || fwaEntries.length > 0) && (
-                  <SectionCard title="Nomor Terdaftar" icon={<Phone size={13} />} accent="#0D9488">
-                    <div className="mh-ad-grid2">
-                      {spEntries.length > 0 && <MsisdnGroup label={`SP (${spEntries.length})`} list={spEntries} />}
-                      {fwaEntries.length > 0 && <MsisdnGroup label={`FWA (${fwaEntries.length})`} list={fwaEntries} />}
-                    </div>
-                  </SectionCard>
-                )}
-
-                {editReqs.length > 0 && (
-                  <SectionCard title="Riwayat Pengajuan Revisi" icon={<FileText size={13} />} accent="#6B7280">
-                    {editReqs.map((r) => (
-                      <div key={r.id} style={{ padding: "10px 0", borderBottom: "1px solid #F0F0F3" }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                          <div style={{ fontSize: 12.5, fontWeight: 700, color: "#17181C" }}>{r.requested_by_name || "-"}</div>
-                          <EditReqBadge status={r.status} />
-                        </div>
-                        {r.reason && <div style={{ marginTop: 3, fontSize: 11.5, color: "#8A8A96" }}>{r.reason}</div>}
-                        <div style={{ marginTop: 3, fontSize: 10.5, color: "#B0B0BA" }}>{new Date(r.created_at).toLocaleString("id-ID")}</div>
-                        {r.decision_notes && (
-                          <div style={{ marginTop: 6, fontSize: 11.5, color: "#5A5A68", background: "#F7F7F9", borderRadius: 9, padding: "7px 10px" }}>
-                            {r.decided_by_name ? `${r.decided_by_name}: ` : ""}{r.decision_notes}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </SectionCard>
-                )}
-
-                {(a.approved_by_name || a.override_by_name) && (
-                  <SectionCard title="Persetujuan" icon={<CheckCircle2 size={13} />} accent="#15803D" last>
-                    <div className="mh-ad-kv">
-                      {a.approved_by_name && <KV label="Disetujui oleh" value={a.approved_by_name} />}
-                      {a.approved_at && <KV label="Tanggal" value={new Date(a.approved_at).toLocaleString("id-ID")} />}
-                      {a.override_by_name && <KV label="Override oleh" value={a.override_by_name} />}
-                    </div>
-                  </SectionCard>
-                )}
+                </div>
               </div>
             </div>
           </>
@@ -692,13 +751,154 @@ function KV({ label, value, valueColor }) {
   );
 }
 
-function SiteRow({ label, siteId, siteName }) {
+function SiteRow({ label, siteId, siteName, meta, accent = "#7C3AED" }) {
+  const chips = [];
+  if (meta?.rgs_category) chips.push(["RGS", meta.rgs_category]);
+  if (meta?.traffic_category) chips.push(["Traffic", meta.traffic_category]);
+  if (meta?.addressable) chips.push(["Addressable", meta.addressable]);
+  const isLrs = meta?.site_lrs && String(meta.site_lrs).toUpperCase() !== "NO";
+  const isFokus = String(meta?.kecamatan_fokus || "").toUpperCase() === "YES";
+  const area = [meta?.kecamatan_name || meta?.kecamatan, meta?.kabupaten].filter(Boolean).join(", ");
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#F8F8FA", border: "1px solid #EFEFF2", borderRadius: 13, padding: "9px 11px" }}>
-      <span style={{ flexShrink: 0, fontSize: 9.5, fontWeight: 800, borderRadius: 7, padding: "4px 9px", color: "#7C3AED", background: "rgba(124,58,237,0.12)" }}>{label}</span>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>{siteId}</div>
-        {siteName && <div style={{ marginTop: 1, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{siteName}</div>}
+    <div style={{ background: "#F8F8FA", border: "1px solid #EFEFF2", borderRadius: 13, padding: "10px 12px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ flexShrink: 0, fontSize: 9.5, fontWeight: 800, borderRadius: 7, padding: "4px 9px", color: accent, background: `${accent}1F` }}>{label}</span>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>{siteId}</div>
+          {siteName && <div style={{ marginTop: 1, fontSize: 11, color: "#5A5A68", fontWeight: 600 }}>{siteName}</div>}
+        </div>
+      </div>
+      {(area || chips.length > 0 || isLrs || isFokus) && (
+        <div style={{ marginTop: 8 }}>
+          {area && <div style={{ fontSize: 11, color: "#8A8A96", fontWeight: 600, marginBottom: chips.length ? 6 : 0 }}>{area}{meta?.coverage ? ` · ${meta.coverage}` : ""}</div>}
+          {(chips.length > 0 || isLrs || isFokus) && (
+            <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
+              {isFokus && (
+                <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 9, fontWeight: 800, color: "#7C3AED", background: "#F1E9FE", border: "1px solid #DDCBFA", borderRadius: 999, padding: "2.5px 7px", whiteSpace: "nowrap" }}>
+                  <TargetIcon size={9.5} strokeWidth={2.6} /> Kecamatan Fokus
+                </span>
+              )}
+              {isLrs && (
+                <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 9, fontWeight: 800, color: "#0E7490", background: "#E0F7FA", border: "1px solid #B7E9F2", borderRadius: 999, padding: "2.5px 7px", whiteSpace: "nowrap" }}>
+                  <RadioTower size={9.5} strokeWidth={2.6} /> Site LRS
+                </span>
+              )}
+              {chips.map(([k, v]) => (
+                <span key={k} style={{ fontSize: 10, fontWeight: 700, color: "#3A3A44", background: "#fff", border: "1px solid #E9E9EF", borderRadius: 999, padding: "2px 8px" }}>
+                  <span style={{ color: "#8A8A96" }}>{k}:</span> {v}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Komponen baru redesign ─────────────────────────────────────────────
+
+// Persen capaian (actual/target). null kalau target kosong/0 atau actual belum ada.
+const pctOf = (actual, target) => (Number(target) > 0 && actual != null ? (Number(actual) / Number(target)) * 100 : null);
+// Warna capaian: untuk metrik "makin tinggi makin baik" (default) atau biaya (invert: makin rendah makin baik).
+const pctColor = (p, invert) => {
+  if (p == null) return "#B0B0BA";
+  if (invert) return p <= 100 ? "#15803D" : "#DC2626";
+  return p >= 100 ? "#15803D" : p >= 70 ? "#B45309" : "#DC2626";
+};
+
+function KpiHero({ accent, icon, label, actual, target, fmt, invert }) {
+  const p = pctOf(actual, target);
+  const col = pctColor(p, invert);
+  return (
+    <div style={{ background: "#fff", border: "1px solid #EDEDF1", borderRadius: 18, padding: "14px 16px", boxShadow: "0 6px 18px rgba(17,17,20,0.05)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <span style={{ width: 26, height: 26, borderRadius: 9, background: `${accent}1A`, color: accent, display: "flex", alignItems: "center", justifyContent: "center" }}>{icon}</span>
+        <span style={{ fontSize: 10.5, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: 0.3 }}>{label}</span>
+      </div>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+        <span style={{ fontSize: 22, fontWeight: 800, color: "#17181C", fontVariantNumeric: "tabular-nums", letterSpacing: "-0.01em" }}>{actual == null ? "-" : fmt(actual)}</span>
+        <span style={{ fontSize: 12, fontWeight: 800, color: col }}>{p == null ? "" : `${Math.round(p)}%`}</span>
+      </div>
+      <div style={{ marginTop: 8, height: 6, borderRadius: 99, background: "#F0F0F3", overflow: "hidden" }}>
+        <div style={{ height: "100%", width: `${Math.min(100, p || 0)}%`, background: col, borderRadius: 99, transition: "width .5s ease" }} />
+      </div>
+      <div style={{ marginTop: 6, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>Target {target == null ? "-" : fmt(target)}</div>
+    </div>
+  );
+}
+
+function ProgressRow({ accent, label, target, actual, fmt, invert, icon: Icon }) {
+  const p = pctOf(actual, target);
+  const col = pctColor(p, invert);
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 6 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: "#3A3A44" }}>
+          {Icon ? <Icon size={14} color={accent} /> : <span style={{ width: 7, height: 7, borderRadius: 99, background: accent }} />} {label}
+        </span>
+        <span style={{ fontSize: 12, fontWeight: 800, color: col }}>{p == null ? "-" : `${p.toFixed(p >= 100 ? 0 : 1)}%`}</span>
+      </div>
+      <div style={{ height: 8, borderRadius: 99, background: "#F0F0F3", overflow: "hidden" }}>
+        <div style={{ height: "100%", width: `${Math.min(100, p || 0)}%`, background: col, borderRadius: 99, transition: "width .5s ease" }} />
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 5, fontSize: 11.5, fontVariantNumeric: "tabular-nums" }}>
+        <span style={{ color: "#8A8A96", fontWeight: 600 }}>Target <b style={{ color: "#5A5A68" }}>{target == null ? "-" : fmt(target)}</b></span>
+        <span style={{ color: "#8A8A96", fontWeight: 600 }}>Actual <b style={{ color: "#17181C" }}>{actual == null ? "-" : fmt(actual)}</b></span>
+      </div>
+    </div>
+  );
+}
+
+function RatioChip({ label, value }) {
+  return (
+    <div style={{ background: "#F8F8FA", border: "1px solid #EFEFF2", borderRadius: 12, padding: "10px 12px" }}>
+      <div style={{ fontSize: 10.5, fontWeight: 800, color: "#8A8A96", textTransform: "uppercase", letterSpacing: 0.2 }}>{label}</div>
+      <div style={{ marginTop: 3, fontSize: 17, fontWeight: 800, color: "#17181C", fontVariantNumeric: "tabular-nums" }}>{value == null ? "-" : `${value.toFixed(1)}%`}</div>
+    </div>
+  );
+}
+
+// Timeline siklus hidup activity: Plan dibuat -> diajukan -> Hari-H -> Laporan
+// actual -> Selesai (tervalidasi). Posisi dihitung dari status + tanggal.
+function LifecycleStepper({ a, st, photoCount }) {
+  const steps = ["Plan Dibuat", "Plan Diajukan", "Hari-H", "Laporan Actual", "Selesai"];
+  let cur = 0;
+  const planDateStr = a.plan_date_start || a.plan_date;
+  const eventStarted = planDateStr ? new Date(planDateStr.slice(0, 10)) <= new Date(new Date().toDateString()) : false;
+  if (a.status === "completed") cur = 4;
+  else if (a.status === "pending_validation" || (a.actual_sp != null && a.status !== "revision_needed")) cur = 3;
+  else if (a.status === "revision_needed") cur = a.revision_target === "actual" ? 3 : 0;
+  else if (a.status === "plan_submitted") cur = eventStarted ? 2 : 1;
+  else cur = 0;
+  const isRevision = a.status === "revision_needed";
+  const doneAll = a.status === "completed";
+  return (
+    <div style={{ marginBottom: 18, background: "#fff", border: "1px solid #EDEDF1", borderRadius: 18, padding: "16px 22px 14px", boxShadow: "0 6px 18px rgba(17,17,20,0.05)" }}>
+      <div style={{ display: "flex", alignItems: "flex-start" }}>
+        {steps.map((label, i) => {
+          const done = i < cur || doneAll;
+          const active = i === cur && !doneAll;
+          const col = active && isRevision ? "#B45309" : done ? "#15803D" : active ? "#2563EB" : "#C7C7D1";
+          return (
+            <div key={label} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", position: "relative", minWidth: 0 }}>
+              {i > 0 && <div style={{ position: "absolute", top: 13, right: "50%", width: "100%", height: 3, borderRadius: 99, background: i <= cur || doneAll ? "#15803D" : "#E9E9EF", zIndex: 0 }} />}
+              <div style={{
+                position: "relative", zIndex: 1, width: 28, height: 28, borderRadius: 99, display: "flex", alignItems: "center", justifyContent: "center",
+                background: done ? "#15803D" : active ? "#fff" : "#fff", border: `2.5px solid ${col}`, color: done ? "#fff" : col, fontSize: 11, fontWeight: 800,
+                boxShadow: active ? `0 0 0 4px ${col}22` : "none",
+              }}>
+                {done ? <CheckCircle2 size={15} /> : active && isRevision ? <AlertTriangle size={13} /> : i + 1}
+              </div>
+              <div style={{ marginTop: 7, fontSize: 11, fontWeight: active ? 800 : 700, color: active ? col : done ? "#3A3A44" : "#B0B0BA", textAlign: "center", lineHeight: 1.25 }}>{label}</div>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center", fontSize: 11.5, fontWeight: 700 }}>
+        <span style={{ color: st[1], background: st[2], borderRadius: 999, padding: "3px 11px" }}>{st[0]}</span>
+        <span style={{ color: "#5A5A68", background: "#F4F4F7", borderRadius: 999, padding: "3px 11px" }}>{photoCount} foto dokumentasi</span>
+        {a.validated_at && <span style={{ color: "#5A5A68", background: "#F4F4F7", borderRadius: 999, padding: "3px 11px" }}>Divalidasi {new Date(a.validated_at).toLocaleDateString("id-ID")}</span>}
       </div>
     </div>
   );

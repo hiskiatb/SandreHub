@@ -59,10 +59,33 @@ function resolveCreatorName(r, meta) {
   return meta?.bmeAssignMap?.[key] || null;
 }
 
+// FIX (2026-10-16): MC/Kabupaten/Kecamatan/dll di CMS sebelumnya SELALU
+// dihitung dari site_id PLAN (r.site_id) - begitu laporan actual disubmit
+// di site LAIN (r.actual_site_id, kolom "Site Actual" di tabel ini), kolom2
+// itu tetap nempel ke data site PLAN lama & jadi tidak sinkron dgn Master
+// Data (List Site/mh_sites) utk lokasi yg BENAR2 dikunjungi. Aturan baru:
+// pakai site_id PLAN selama actual belum ada, begitu actual_site_id terisi
+// (laporan actual sudah masuk) pindah acuan ke situ supaya metadata ikut
+// lokasi aktualnya, bukan rencana awal yg bisa saja berubah di lapangan.
+function effectiveSiteId(r) {
+  return r.actual_site_id || r.site_id;
+}
+// Micro Cluster: field `mc` di mh_activities sendiri cuma teks bebas yg
+// diisi SEKALI saat plan dibuat (manual/Import Excel) & sering tidak
+// sinkron sama sekali dgn Master Data (mis. "CS LHOKSEUMAWE" vs master
+// "MC-LHOKSEUMAWE", atau malah MC branch lain) - beda dgn Kabupaten/
+// Kecamatan yg SUDAH dihitung live dari mh_sites (siteMetaMap). Supaya MC
+// konsisten dgn Master Data juga (dan ikut pindah ke site actual spt kolom
+// lain di atas), ambil dari siteMetaMap dulu, cuma fallback ke r.mc kalau
+// site-nya kebetulan tidak ketemu di Master Data (biar tidak tiba2 kosong).
+function effectiveMc(r, siteMetaMap) {
+  return siteMetaMap?.[effectiveSiteId(r)]?.mc || r.mc || null;
+}
+
 function getIncompleteImportFields(r, meta) {
   const missing = [];
-  if (!r.mc) missing.push({ key: "mc", label: "Micro Cluster" });
-  const siteMeta = meta?.siteMetaMap?.[r.site_id];
+  if (!effectiveMc(r, meta?.siteMetaMap)) missing.push({ key: "mc", label: "Micro Cluster" });
+  const siteMeta = meta?.siteMetaMap?.[effectiveSiteId(r)];
   if (!siteMeta?.kabupaten) missing.push({ key: "kabupaten", label: "Kabupaten" });
   if (!siteMeta?.kecamatan) missing.push({ key: "kecamatan", label: "Kecamatan" });
   if (!resolveCreatorName(r, meta)) missing.push({ key: "creator", label: "DMO" });
@@ -307,11 +330,20 @@ function Body({ email }) {
   const [showRollbackConfirm, setShowRollbackConfirm] = useState(false);
   const [rollbackErr, setRollbackErr] = useState("");
 
+  // Progress nyata pemuatan tabel (bukan animasi palsu) - tiap tahap load()
+  // yang SUNGGUHAN selesai menaikkan persen & mengganti label tahap.
+  const [loadPct, setLoadPct] = useState(0);
+  const [loadStage, setLoadStage] = useState("");
+  const [loadDetail, setLoadDetail] = useState("");
+  const prog = (pct, stage, detail = "") => { setLoadPct(pct); setLoadStage(stage); setLoadDetail(detail); };
+
   const load = useCallback(async () => {
     setLoading(true); setErr("");
+    prog(3, "Memeriksa hak akses…");
     try {
       const sc = email ? await getMartaScope(email) : null;
       setScope(sc);
+      prog(10, "Mengambil daftar activity plan…");
       let query = supabaseMarta
         .from("mh_activities")
         .select(LIST_COLS)
@@ -322,11 +354,16 @@ function Body({ email }) {
       if (error) throw new Error(error.message);
       const list = data || [];
       setRows(list);
+      prog(40, "Mengambil data pendukung…", `${list.length.toLocaleString("id-ID")} activity plan diterima`);
 
       // site_id unik dari rows yg baru dimuat - dipakai batasi query mh_sites
       // (bisa 25rb+ baris, jangan tarik semuanya) ke site_id yg BENAR2
       // dipakai activity plan saat ini saja.
-      const siteIds = [...new Set(list.map((r) => r.site_id).filter(Boolean))];
+      // FIX: dulu cuma site_id (plan) - site actual (actual_site_id, beda
+      // lokasi kalau BME ganti site saat lapor actual) jadi tidak pernah
+      // ke-lookup & bikin siteMetaMap "bolong" utk baris yg sudah Selesai -
+      // lihat effectiveSiteId() di atas.
+      const siteIds = [...new Set(list.flatMap((r) => [r.site_id, r.actual_site_id]).filter(Boolean))];
 
       const [{ data: branches }, { data: profiles }, { data: bmeAssignRows }, { data: lbRows }, { data: batches }, { data: sites }] = await Promise.all([
         supabaseMarta.from("mh_branches").select("id, name"),
@@ -346,6 +383,7 @@ function Body({ email }) {
         // dgn RPC2 lain di CMS.
         siteIds.length ? supabaseMarta.rpc("mh_sites_lookup", { p_site_ids: siteIds }) : Promise.resolve({ data: [] }),
       ]);
+      prog(65, "Menyusun branch, PIC & data site…", `${siteIds.length.toLocaleString("id-ID")} site unik`);
       setBranchMap(Object.fromEntries((branches || []).map((b) => [b.id, b.name])));
       setProfileMap(Object.fromEntries((profiles || []).map((p) => [p.id, p.full_name])));
       // Kalau satu branch+brand kebetulan py >1 assignment aktif, ambil yg
@@ -375,7 +413,7 @@ function Body({ email }) {
           // site_id yg sama SEHARUSNYA konsisten YES/NO-nya lintas brand
           // (upload List Site per-kecamatan, bukan per-brand), jadi tidak
           // perlu logic pilih terpisah spt kabupaten/kecamatan.
-          siteMeta[s.site_id] = { kabupaten: s.kabupaten || null, kecamatan: kec, kecamatanFokus: s.kecamatan_fokus || "NO", rgs: s.rgs_category || null, traffic: s.traffic_category || null, addressable: s.addressable || null };
+          siteMeta[s.site_id] = { kabupaten: s.kabupaten || null, kecamatan: kec, kecamatanFokus: s.kecamatan_fokus || "NO", rgs: s.rgs_category || null, traffic: s.traffic_category || null, addressable: s.addressable || null, mc: s.mc || null };
         }
       }
       setSiteMetaMap(siteMeta);
@@ -391,11 +429,19 @@ function Body({ email }) {
         const DOC_CHUNK = 150;
         const idChunks = [];
         for (let i = 0; i < ids.length; i += DOC_CHUNK) idChunks.push(ids.slice(i, i + DOC_CHUNK));
+        prog(72, "Memuat dokumentasi foto…", `0/${idChunks.length} batch`);
+        let docDone = 0;
         const chunkResults = await Promise.all(
           idChunks.map((chunk) =>
             supabaseMarta.from("mh_documents").select("activity_id, file_type, storage_path, external_ref, created_at").in("activity_id", chunk).eq("file_type", "photo").order("created_at")
+              .then((res) => {
+                docDone += 1;
+                prog(72 + Math.round((docDone / idChunks.length) * 24), "Memuat dokumentasi foto…", `${docDone}/${idChunks.length} batch`);
+                return res;
+              })
           )
         );
+        prog(98, "Menyiapkan tampilan tabel…");
         const counts = {};
         const firstPhoto = {};
         const firstDrive = {};
@@ -419,12 +465,12 @@ function Body({ email }) {
         // "FIX: export cuma sampai tanggal tertentu") tidak kena stale
         // closure React (setState efeknya baru kelihatan di RENDER
         // berikutnya, bukan di baris kode sesudahnya).
-        return { list, branchMap: Object.fromEntries((branches || []).map((b) => [b.id, b.name])), docPhotoMap: firstPhoto, docDriveMap: firstDrive, docCountMap: counts };
+        return { list, branchMap: Object.fromEntries((branches || []).map((b) => [b.id, b.name])), docPhotoMap: firstPhoto, docDriveMap: firstDrive, docCountMap: counts, siteMetaMap: siteMeta };
       } else {
         setDocCountMap({});
         setDocPhotoMap({});
         setDocDriveMap({});
-        return { list, branchMap: Object.fromEntries((branches || []).map((b) => [b.id, b.name])), docPhotoMap: {}, docDriveMap: {}, docCountMap: {} };
+        return { list, branchMap: Object.fromEntries((branches || []).map((b) => [b.id, b.name])), docPhotoMap: {}, docDriveMap: {}, docCountMap: {}, siteMetaMap: siteMeta };
       }
     } catch (e) { setErr(e.message || "Gagal memuat"); return null; }
     finally { setLoading(false); }
@@ -480,15 +526,15 @@ function Body({ email }) {
     { key: "branch", label: "Branch", width: 140, filter: true, get: (r) => branchMap[r.branch_id] || "-" },
     { key: "brandBranch", label: "Brand Branch", width: 160, filter: true, get: (r) => `${brandLabel(r.brand)} - ${branchMap[r.branch_id] || "-"}` },
     { key: "address", label: "Address", width: 240, filter: true, get: (r) => r.address || "-" },
-    { key: "kabupaten", label: "Kabupaten", width: 150, filter: true, get: (r) => siteMetaMap[r.site_id]?.kabupaten || "-" },
+    { key: "kabupaten", label: "Kabupaten", width: 150, filter: true, get: (r) => siteMetaMap[effectiveSiteId(r)]?.kabupaten || "-" },
     { key: "brand", label: "Brand", width: 66, filter: true, get: (r) => brandLabel(r.brand), badgeBrand: true },
     { key: "eventCategory", label: "Event Category", width: 160, filter: true, get: (r) => cats(r) },
     { key: "network", label: "Network Category", width: 130, filter: true, get: (r) => unsnake(r.network_category) },
     { key: "areaPotential", label: "Area Potential", width: 120, filter: true, get: (r) => unsnake(r.area_potential) },
     { key: "actualDate", label: "Actual Date", width: 100, filter: true, get: (r) => fmtDate(r.actual_date), sortVal: (r) => r.actual_date || "", raw: (r) => dateOnlyToJsDate(r.actual_date), date: true },
     { key: "poi", label: "POI", width: 110, filter: true, get: (r) => unsnake(r.poi_type) },
-    { key: "mc", label: "Micro Cluster", width: 120, filter: true, get: (r) => r.mc || "-" },
-    { key: "kecamatan", label: "Kecamatan", width: 150, filter: true, get: (r) => siteMetaMap[r.site_id]?.kecamatan || "-" },
+    { key: "mc", label: "Micro Cluster", width: 120, filter: true, get: (r) => effectiveMc(r, siteMetaMap) || "-" },
+    { key: "kecamatan", label: "Kecamatan", width: 150, filter: true, get: (r) => siteMetaMap[effectiveSiteId(r)]?.kecamatan || "-" },
     { key: "creator", label: "DMO", width: 150, filter: true, get: (r) => resolveCreatorName(r, { profileMap, bmeAssignMap, branchMap }) || "-" },
     { key: "siteId", label: "Site Plan", width: 100, filter: true, get: (r) => r.site_id || "-" },
     { key: "actualSiteId", label: "Site Actual", width: 100, filter: true, get: (r) => r.actual_site_id || "-" },
@@ -534,11 +580,10 @@ function Body({ email }) {
     { key: "costRatio", label: "Cost Ratio", width: 92, filter: true, get: (r) => pctLabel(r.cost_actual, r.cost_estimate), raw: (r) => pctVal(r.cost_actual, r.cost_estimate), numeric: true, acv: true, invertGood: true },
     { key: "insight", label: "Insight (Optional)", width: 220, filter: true, get: (r) => r.insight || "-" },
     { key: "documentation", label: "Documentation", width: 120, filter: true, get: (r) => (docCountMap[r.id] ? `${docCountMap[r.id]} foto` : "-") },
-    { key: "kecamatanFokus", label: "Kecamatan Fokus", width: 130, filter: true, get: (r) => siteMetaMap[r.site_id]?.kecamatanFokus || "NO" },
-    { key: "rgsCategory", label: "RGS Category", width: 120, filter: true, get: (r) => siteMetaMap[r.site_id]?.rgs || "-" },
-    { key: "trafficCategory", label: "Traffic Category", width: 130, filter: true, get: (r) => siteMetaMap[r.site_id]?.traffic || "-" },
-    { key: "addressable", label: "Addressable", width: 110, filter: true, get: (r) => siteMetaMap[r.site_id]?.addressable || "-" },
-    { key: "drive_link", label: "Link Google Drive", width: 140, get: (r) => (docDriveMap[r.id] ? "Buka di Drive" : "-") },
+    { key: "kecamatanFokus", label: "Kecamatan Fokus", width: 130, filter: true, get: (r) => siteMetaMap[effectiveSiteId(r)]?.kecamatanFokus || "NO" },
+    { key: "rgsCategory", label: "RGS Category", width: 120, filter: true, get: (r) => siteMetaMap[effectiveSiteId(r)]?.rgs || "-" },
+    { key: "trafficCategory", label: "Traffic Category", width: 130, filter: true, get: (r) => siteMetaMap[effectiveSiteId(r)]?.traffic || "-" },
+    { key: "addressable", label: "Addressable", width: 110, filter: true, get: (r) => siteMetaMap[effectiveSiteId(r)]?.addressable || "-" },
   ], [branchMap, profileMap, bmeAssignMap, docCountMap, cats, batchMap, canRollback, siteMetaMap]);
 
   const FILTER_COLS = useMemo(() => COLUMNS.filter((c) => c.filter), [COLUMNS]);
@@ -548,7 +593,7 @@ function Body({ email }) {
     if (!term) return rows;
     return rows.filter((r) =>
       (r.event_name || "").toLowerCase().includes(term) ||
-      (r.mc || "").toLowerCase().includes(term) ||
+      (effectiveMc(r, siteMetaMap) || "").toLowerCase().includes(term) ||
       (r.site_id || "").toLowerCase().includes(term) ||
       (r.address || "").toLowerCase().includes(term) ||
       (branchMap[r.branch_id] || "").toLowerCase().includes(term) ||
@@ -776,7 +821,8 @@ function Body({ email }) {
       if (r.event_name) pool.push({ label: r.event_name, kind: "Event" });
       const branch = branchMap[r.branch_id];
       if (branch) pool.push({ label: branch, kind: "Branch" });
-      if (r.mc) pool.push({ label: r.mc, kind: "MC" });
+      const mcVal = effectiveMc(r, siteMetaMap);
+      if (mcVal) pool.push({ label: mcVal, kind: "MC" });
       const creator = resolveCreatorName(r, { profileMap, bmeAssignMap, branchMap });
       if (creator) pool.push({ label: creator, kind: "DMO" });
       if (r.site_id) pool.push({ label: r.site_id, kind: "Site" });
@@ -831,6 +877,7 @@ function Body({ email }) {
       const freshDocPhotoMap = fresh?.docPhotoMap || docPhotoMap;
       const freshDocDriveMap = fresh?.docDriveMap || docDriveMap;
       const freshDocCountMap = fresh?.docCountMap || docCountMap;
+      const freshSiteMetaMap = fresh?.siteMetaMap || siteMetaMap;
       const wb = new ExcelJS.Workbook();
 
       // Terapkan ULANG search + filter kolom LAIN (brand/branch/dst, di luar
@@ -843,7 +890,7 @@ function Body({ email }) {
       const freshTerm = q.trim().toLowerCase();
       let freshFiltered = !freshTerm ? freshList : freshList.filter((r) =>
         (r.event_name || "").toLowerCase().includes(freshTerm) ||
-        (r.mc || "").toLowerCase().includes(freshTerm) ||
+        (effectiveMc(r, freshSiteMetaMap || siteMetaMap) || "").toLowerCase().includes(freshTerm) ||
         (r.site_id || "").toLowerCase().includes(freshTerm) ||
         (r.address || "").toLowerCase().includes(freshTerm) ||
         (freshBranchMap[r.branch_id] || "").toLowerCase().includes(freshTerm) ||
@@ -1744,7 +1791,25 @@ function Body({ email }) {
               </tr>
             </thead>
             <tbody>
-              {loading && <tr><td colSpan={COLUMNS.length} style={{ padding: 26, textAlign: "center", color: T.lo }}>Memuat…</td></tr>}
+              {loading && (
+                <tr><td colSpan={COLUMNS.length} style={{ padding: "34px 20px" }}>
+                  <div style={{ position: "sticky", left: 24, width: "min(460px, calc(100vw - 420px))", minWidth: 300 }}>
+                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 8 }}>
+                      <span style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, fontWeight: 700, color: T.hi }}>
+                        <Loader2 size={15} color={T.primary} style={{ animation: "mh-spin .8s linear infinite" }} /> {loadStage || "Memuat…"}
+                      </span>
+                      <span style={{ fontSize: 18, fontWeight: 800, color: T.primary, fontVariantNumeric: "tabular-nums" }}>{loadPct}%</span>
+                    </div>
+                    <div style={{ height: 10, borderRadius: 999, background: "#F1F2F5", overflow: "hidden", border: `1px solid ${T.line}` }}>
+                      <div style={{ height: "100%", width: `${loadPct}%`, background: T.primary, borderRadius: 999, transition: "width .35s ease" }} />
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 7, fontSize: 11.5, color: T.lo, minHeight: 16 }}>
+                      <span>{loadDetail}</span>
+                      <span>Tahap {loadPct < 40 ? 1 : loadPct < 65 ? 2 : loadPct < 98 ? 3 : 4} dari 4</span>
+                    </div>
+                  </div>
+                </td></tr>
+              )}
               {!loading && filteredRows.length === 0 && <tr><td colSpan={COLUMNS.length} style={{ padding: 26, textAlign: "center", color: T.lo }}>Tidak ada activity plan untuk filter saat ini.</td></tr>}
               {!loading && filteredRows.map((r, i) => (
                 <tr key={r.id} onClick={() => setDetailId(r.id)} style={{ borderTop: `1px solid ${T.line}`, cursor: "pointer" }}
