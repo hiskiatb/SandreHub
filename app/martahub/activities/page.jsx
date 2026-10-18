@@ -365,7 +365,27 @@ function Body({ email }) {
       // lihat effectiveSiteId() di atas.
       const siteIds = [...new Set(list.flatMap((r) => [r.site_id, r.actual_site_id]).filter(Boolean))];
 
-      const [{ data: branches }, { data: profiles }, { data: bmeAssignRows }, { data: lbRows }, { data: batches }, { data: sites }] = await Promise.all([
+      // FIX (2026-10-18): satu site_id bisa py BEBERAPA baris di mh_sites
+      // (beda brand/kategori, lihat lib/martaPlanImport.js) - dgn ~700-900an
+      // site_id unik dr activity plan yg lagi tampil, total baris HASIL
+      // join-nya bisa >1000 (diverifikasi: 1420 baris utk ~700an site_id).
+      // mh_sites_lookup dipanggil via PostgREST yg defaultnya CUMA balikin
+      // maks 1000 baris per request ("max rows" project setting) - sisanya
+      // KEPOTONG DIAM2 (TIDAK error) begitu .in(p_site_ids) kebanyakan.
+      // Akibatnya site_id yg baris mh_sites-nya kebetulan ke-potong itu
+      // SAMA SEKALI tidak masuk siteMetaMap -> Kecamatan/Kabupaten/dll
+      // tampil kosong walau Master Data-nya sendiri lengkap (MC masih
+      // kelihatan "benar" krn kebetulan ada fallback ke teks lama r.mc,
+      // beda dgn Kecamatan/Kabupaten yg tidak py fallback sama sekali -
+      // makanya yg kosong CUMA kolom2 itu, bukan semua kolom master data).
+      // Fix: pecah siteIds jadi chunk kecil (sama pola SITE_CHUNK yg sudah
+      // dipakai di app/martahub/m/activities/page.jsx) spy tiap request RPC
+      // jumlah barisnya aman di bawah limit, lalu digabung di client.
+      const SITE_LOOKUP_CHUNK = 150;
+      const siteIdChunks = [];
+      for (let i = 0; i < siteIds.length; i += SITE_LOOKUP_CHUNK) siteIdChunks.push(siteIds.slice(i, i + SITE_LOOKUP_CHUNK));
+
+      const [{ data: branches }, { data: profiles }, { data: bmeAssignRows }, { data: lbRows }, { data: batches }, siteChunkResults] = await Promise.all([
         supabaseMarta.from("mh_branches").select("id, name"),
         supabaseMarta.from("mh_profiles").select("id, full_name"),
         // Assignment DMO aktif (User Management) - TERPISAH dari query
@@ -380,9 +400,13 @@ function Body({ email }) {
         // auth.uid() selalu null di sini - query LANGSUNG ke mh_sites diam2
         // balik 0 baris krn policy mh_sites_read butuh auth.uid(). Pakai RPC
         // SECURITY DEFINER (mh_sites_lookup) supaya bypass RLS itu, sama pola
-        // dgn RPC2 lain di CMS.
-        siteIds.length ? supabaseMarta.rpc("mh_sites_lookup", { p_site_ids: siteIds }) : Promise.resolve({ data: [] }),
+        // dgn RPC2 lain di CMS - DIPECAH per chunk (lihat catatan di atas).
+        Promise.all(siteIdChunks.map((chunk) => supabaseMarta.rpc("mh_sites_lookup", { p_site_ids: chunk }))),
       ]);
+      const sites = siteChunkResults.flatMap(({ data, error }) => {
+        if (error) { console.error("mh_sites_lookup chunk error:", error); return []; }
+        return data || [];
+      });
       prog(65, "Menyusun branch, PIC & data site…", `${siteIds.length.toLocaleString("id-ID")} site unik`);
       setBranchMap(Object.fromEntries((branches || []).map((b) => [b.id, b.name])));
       setProfileMap(Object.fromEntries((profiles || []).map((p) => [p.id, p.full_name])));
@@ -601,6 +625,21 @@ function Body({ email }) {
     );
   }, [rows, term, branchMap, profileMap, bmeAssignMap]);
 
+  // FIX: tambah opsi "(Kosong)" ala Excel di tiap filter kolom - sebelumnya
+  // baris yg nilainya kosong/"-" (mis. Kecamatan/Kabupaten yg Master
+  // Data-nya belum ke-lookup/belum lengkap) TIDAK BISA disaring sama
+  // sekali krn opsi filter cuma dibangun dari nilai yg TERISI
+  // (.filter(v => v && v !== "-")) - jadi tidak ada cara mengisolasi baris
+  // bermasalah itu lewat UI. BLANK_FILTER_VALUE jadi sentinel khusus yg
+  // dicocokkan balik ke nilai kosong/"-" di matchesColFilter().
+  const BLANK_FILTER_VALUE = "__BLANK__";
+  function matchesColFilter(val, sel) {
+    if (!sel || !sel.length) return true;
+    if (sel.includes(val)) return true;
+    if (sel.includes(BLANK_FILTER_VALUE) && (val === undefined || val === null || val === "" || val === "-")) return true;
+    return false;
+  }
+
   // ── Chained faceted filter options - utk tiap kolom filter, opsi dihitung
   //    dari data yg SUDAH terfilter oleh kolom filter LAIN (bukan dirinya
   //    sendiri) + pencarian teks. Persis prinsip yg dipakai ExcelFilter di
@@ -613,10 +652,12 @@ function Body({ email }) {
       for (const oc of FILTER_COLS) {
         if (oc.key === col.key) continue;
         const sel = colFilters[oc.key];
-        if (sel && sel.length) list = list.filter((r) => sel.includes(oc.get(r)));
+        if (sel && sel.length) list = list.filter((r) => matchesColFilter(oc.get(r), sel));
       }
       const uniq = [...new Set(list.map(col.get).filter((v) => v && v !== "-"))].sort((a, b) => String(a).localeCompare(String(b), "id"));
-      map[col.key] = uniq.map((v) => ({ value: v, label: String(v) }));
+      const opts = uniq.map((v) => ({ value: v, label: String(v) }));
+      const hasBlank = list.some((r) => { const v = col.get(r); return v === undefined || v === null || v === "" || v === "-"; });
+      map[col.key] = hasBlank ? [{ value: BLANK_FILTER_VALUE, label: "(Kosong)" }, ...opts] : opts;
     }
     return map;
   }, [FILTER_COLS, searchFiltered, colFilters]);
@@ -625,7 +666,7 @@ function Body({ email }) {
     let list = searchFiltered;
     for (const col of FILTER_COLS) {
       const sel = colFilters[col.key];
-      if (sel && sel.length) list = list.filter((r) => sel.includes(col.get(r)));
+      if (sel && sel.length) list = list.filter((r) => matchesColFilter(col.get(r), sel));
     }
     if (sortState.key) {
       const col = COLUMNS.find((c) => c.key === sortState.key);
@@ -667,7 +708,7 @@ function Body({ email }) {
     for (const col of FILTER_COLS) {
       if (col.key === "status") continue; // status difilter manual di bawah -> selalu "completed"
       const sel = colFilters[col.key];
-      if (sel && sel.length) list = list.filter((r) => sel.includes(col.get(r)));
+      if (sel && sel.length) list = list.filter((r) => matchesColFilter(col.get(r), sel));
     }
     return list;
   }, [searchFiltered, colFilters, FILTER_COLS]);
@@ -909,7 +950,7 @@ function Body({ email }) {
       for (const col of FILTER_COLS) {
         if (col.key === "status") continue; // status difilter manual -> selalu "completed" (lihat kpiBaseRows), export tetap semua status
         const sel = colFilters[col.key];
-        if (sel && sel.length) freshFiltered = freshFiltered.filter((r) => sel.includes(col.get(r)));
+        if (sel && sel.length) freshFiltered = freshFiltered.filter((r) => matchesColFilter(col.get(r), sel));
       }
       const exportRows = [...freshFiltered].sort((a, b) => {
         const aDone = deriveStatusInfo(a, { profileMap, siteMetaMap, bmeAssignMap, branchMap: freshBranchMap })[0] === "Selesai" ? 0 : 1;
@@ -1369,6 +1410,24 @@ function Body({ email }) {
             const v = c.raw(r);
             return v == null ? "" : Math.round(v * 100) / 100;
           }
+          // FIX (2026-10-18): 6 kolom ini (+ "mc", dicek di c.get sendiri lewat
+          // effectiveMc) nilainya dihitung dari siteMetaMap (Master Data) lewat
+          // effectiveSiteId(r) - tapi c.get(r) di sini masih closure LAMA dari
+          // COLUMNS (di-memo dgn siteMetaMap versi SEBELUM baris "await load()"
+          // di atas selesai; setSiteMetaMap() efeknya baru kepakai di RENDER
+          // BERIKUTNYA, bukan di eksekusi export yg SAMA ini - sama persis
+          // alasan freshDocPhotoMap/freshDocDriveMap/freshDocCountMap dipakai,
+          // bukan docPhotoMap/docDriveMap/docCountMap, lihat komentar di atas).
+          // Akibatnya kolom ini sering kosong di file export walau Master
+          // Data-nya lengkap. Pakai freshSiteMetaMap (hasil load() BARU saja)
+          // langsung di sini supaya selalu segar.
+          if (["kabupaten", "kecamatan", "kecamatanFokus", "rgsCategory", "trafficCategory", "addressable"].includes(c.key)) {
+            const sm = freshSiteMetaMap[effectiveSiteId(r)];
+            if (c.key === "kecamatanFokus") return sm?.kecamatanFokus || "NO";
+            const fieldMap = { kabupaten: "kabupaten", kecamatan: "kecamatan", rgsCategory: "rgs", trafficCategory: "traffic", addressable: "addressable" };
+            return sm?.[fieldMap[c.key]] || "";
+          }
+          if (c.key === "mc") return effectiveMc(r, freshSiteMetaMap) || "";
           const v = c.get(r);
           return v === "-" ? "" : v;
         });
