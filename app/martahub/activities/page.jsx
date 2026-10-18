@@ -430,14 +430,28 @@ function Body({ email }) {
       // duluan drpd baris kosong, bukan asal ambil baris pertama.
       const siteMeta = {};
       for (const s of sites || []) {
-        const kec = s.kecamatan_name || s.kecamatan || null;
+        // FIX (2026-10-18): ~80 site di Master Data (List Site) py kolom
+        // `kabupaten` KOSONG, TAPI kolom `kecamatan`-nya masih format lama
+        // gabungan "NAMA KECAMATAN|NAMA KABUPATEN" (peninggalan sebelum
+        // dipecah jadi kecamatan_name + kabupaten terpisah) - jadi data
+        // Kabupaten-nya SEBENARNYA ADA, cuma nyelip di kolom Kecamatan,
+        // bukan kolom Kabupaten sendiri (confirmed by query: site 01LSW0038/
+        // 01LNS0012 dkk - kabupaten null tapi kecamatan = "X|Y"). Kalau
+        // dibiarkan: Kabupaten tampil kosong & Kecamatan tampil mentah
+        // "X|Y" (bukan cuma "X"). Parse manual di sini drpd tampilkan
+        // kosong/mentah begitu saja.
+        const kecRaw = s.kecamatan_name || s.kecamatan || null;
+        const pipeIdx = !s.kecamatan_name && s.kecamatan ? s.kecamatan.indexOf("|") : -1;
+        const kec = pipeIdx >= 0 ? s.kecamatan.slice(0, pipeIdx).trim() : kecRaw;
+        const kabFromKec = pipeIdx >= 0 ? s.kecamatan.slice(pipeIdx + 1).trim() : null;
+        const kab = s.kabupaten || kabFromKec || null;
         if (!siteMeta[s.site_id] || (!siteMeta[s.site_id].kecamatan && kec)) {
           // rgs/traffic/addressable ikut dari baris yg sama (kolom site-level).
           // kecamatan_fokus ikut diambil dari baris yg sama yg "menang" -
           // site_id yg sama SEHARUSNYA konsisten YES/NO-nya lintas brand
           // (upload List Site per-kecamatan, bukan per-brand), jadi tidak
           // perlu logic pilih terpisah spt kabupaten/kecamatan.
-          siteMeta[s.site_id] = { kabupaten: s.kabupaten || null, kecamatan: kec, kecamatanFokus: s.kecamatan_fokus || "NO", rgs: s.rgs_category || null, traffic: s.traffic_category || null, addressable: s.addressable || null, mc: s.mc || null };
+          siteMeta[s.site_id] = { kabupaten: kab, kecamatan: kec, kecamatanFokus: s.kecamatan_fokus || "NO", rgs: s.rgs_category || null, traffic: s.traffic_category || null, addressable: s.addressable || null, mc: s.mc || null };
         }
       }
       setSiteMetaMap(siteMeta);
