@@ -58,7 +58,7 @@ function toMsisdn62(raw) {
   return digits;
 }
 
-const selStyle = { width: "100%", padding: "10px 12px", borderRadius: 12, border: "1px solid #ECEDF0", background: "#fff", fontSize: 13, fontWeight: 700, color: "#17181C", appearance: "none" };
+const selStyle = { width: "100%", padding: "10px 12px", borderRadius: 12, border: "1.5px solid #E7E8ED", background: "#FAFAFB", fontSize: 13, fontWeight: 700, color: "#17181C", appearance: "none" };
 
 export default function DtuPage() {
   const router = useRouter();
@@ -100,49 +100,55 @@ export default function DtuPage() {
   return (
     <MobileShell active="dtu">
       <div style={{ fontFamily: FF, padding: "calc(env(safe-area-inset-top,0px) + 22px) 20px 28px" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
           <button onClick={() => router.back()} style={{ width: 36, height: 36, borderRadius: 12, border: "1px solid #ECEDF0", background: "#fff", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <ArrowLeft size={17} color="#17181C" />
           </button>
-          <div style={{ fontSize: 17, fontWeight: 800, color: "#17181C" }}>Report DTU</div>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#17181C", letterSpacing: -0.2 }}>Report DTU</div>
         </div>
 
-        <label style={{ display: "flex", alignItems: "center", gap: 9, background: "#fff", border: "1px solid #ECEDF0", borderRadius: 14, padding: "11px 14px", marginBottom: 12 }}>
-          <CalendarDays size={16} color="#9A9AA6" />
-          <div style={{ flex: 1, fontSize: 13.5, fontWeight: 700, color: "#17181C" }}>{fmtDateLabel(date)}</div>
-          <input type="date" value={date} max={todayStr()} onChange={(e) => setDate(e.target.value)}
-            style={{ position: "absolute", opacity: 0, width: 1, height: 1 }} id="dtu-date-input" />
-          <span onClick={() => document.getElementById("dtu-date-input")?.showPicker?.()} style={{ fontSize: 11.5, fontWeight: 700, color: "#ED1C24" }}>Ganti</span>
-        </label>
+        {/* Kartu filter: tanggal + (kalau unscoped) region/branch, disatukan jadi satu blok */}
+        <div style={{ background: "#fff", border: "1px solid #ECEDF0", borderRadius: 16, padding: "4px 14px", marginBottom: 18 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 9, padding: "11px 0", borderBottom: isUnscoped ? "1px solid #F0F0F3" : "none" }}>
+            <div style={{ width: 30, height: 30, borderRadius: 9, background: "#F4F5F7", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <CalendarDays size={14} color="#5A5A68" />
+            </div>
+            <div style={{ flex: 1, fontSize: 13.5, fontWeight: 700, color: "#17181C" }}>{fmtDateLabel(date)}</div>
+            <input type="date" value={date} max={todayStr()} onChange={(e) => setDate(e.target.value)}
+              style={{ position: "absolute", opacity: 0, width: 1, height: 1 }} id="dtu-date-input" />
+            <span onClick={() => document.getElementById("dtu-date-input")?.showPicker?.()} style={{ fontSize: 11.5, fontWeight: 800, color: "#ED1C24", padding: "4px 2px" }}>Ganti</span>
+          </label>
 
-        {isUnscoped && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
-            <label style={{ display: "block" }}>
-              <div style={{ fontSize: 10.5, fontWeight: 700, color: "#9A9AA6", marginBottom: 5, display: "flex", alignItems: "center", gap: 4 }}><MapPin size={11} /> Region</div>
-              <select value={region} onChange={(e) => {
-                const v = e.target.value;
-                setRegion(v); setBranchId("");
-                try { localStorage.setItem("mh_dtu_region_filter", v); localStorage.removeItem("mh_dtu_branch_filter"); } catch {}
-              }} style={selStyle}>
-                <option value="">Semua Region</option>
-                {regions.map((r) => <option key={r} value={r}>{r}</option>)}
-              </select>
-            </label>
-            <label style={{ display: "block" }}>
-              <div style={{ fontSize: 10.5, fontWeight: 700, color: "#9A9AA6", marginBottom: 5, display: "flex", alignItems: "center", gap: 4 }}><Building2 size={11} /> Branch</div>
-              <select value={branchId} onChange={(e) => {
-                const v = e.target.value;
-                setBranchId(v);
-                try { localStorage.setItem("mh_dtu_branch_filter", v); } catch {}
-              }} style={selStyle}>
-                <option value="">Pilih branch…</option>
-                {branchesInRegion.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}
-              </select>
-            </label>
-          </div>
-        )}
+          {isUnscoped && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, padding: "12px 0" }}>
+              <label style={{ display: "block" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#9A9AA6", marginBottom: 6, display: "flex", alignItems: "center", gap: 4, textTransform: "uppercase", letterSpacing: 0.3 }}><MapPin size={10.5} /> Region</div>
+                <select value={region} onChange={(e) => {
+                  const v = e.target.value;
+                  setRegion(v); setBranchId("");
+                  try { localStorage.setItem("mh_dtu_region_filter", v); localStorage.removeItem("mh_dtu_branch_filter"); } catch {}
+                }} style={selStyle}>
+                  <option value="">Semua Region</option>
+                  {regions.map((r) => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </label>
+              <label style={{ display: "block" }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#9A9AA6", marginBottom: 6, display: "flex", alignItems: "center", gap: 4, textTransform: "uppercase", letterSpacing: 0.3 }}><Building2 size={10.5} /> Branch</div>
+                <select value={branchId} onChange={(e) => {
+                  const v = e.target.value;
+                  setBranchId(v);
+                  try { localStorage.setItem("mh_dtu_branch_filter", v); } catch {}
+                }} style={selStyle}>
+                  <option value="">Pilih branch…</option>
+                  {branchesInRegion.map((b) => <option key={b.branch_id} value={b.branch_id}>{b.branch_name}</option>)}
+                </select>
+              </label>
+            </div>
+          )}
+        </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 18 }}>
+        <div style={{ fontSize: 10.5, fontWeight: 700, color: "#9A9AA6", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 8 }}>Ringkasan Penjualan</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 22 }}>
           <SummaryCard label="Bulan Ini" target={summary?.target_month} sp={summary?.total_month_sp} fwa={summary?.total_month_fwa} loading={loading} />
           <SummaryCard label="Hari Ini" target={summary?.target_today} sp={summary?.total_today_sp} fwa={summary?.total_today_fwa} loading={loading} />
         </div>
@@ -201,34 +207,35 @@ function EmptyBox({ text }) {
 }
 
 function SummaryCard({ label, target, sp, fwa, loading }) {
+  const total = (Number(sp) || 0) + (Number(fwa) || 0);
   return (
-    <div style={{ background: "#fff", border: "1px solid #ECEDF0", borderRadius: 16, padding: "13px 14px" }}>
+    <div style={{ background: "#fff", border: "1px solid #ECEDF0", borderRadius: 16, padding: "13px 14px", display: "flex", flexDirection: "column" }}>
       <div style={{ fontSize: 11, color: "#9A9AA6", fontWeight: 700, marginBottom: 10 }}>{label}</div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, paddingBottom: 8, borderBottom: "1px dashed #ECEDF0" }}>
-          <div style={{ width: 24, height: 24, borderRadius: 8, background: "#F4F5F7", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <Target size={12} color="#9A9AA6" />
-          </div>
-          <div style={{ fontSize: 10.5, fontWeight: 700, color: "#9A9AA6", width: 30 }}>Target</div>
-          <div style={{ fontSize: 16, fontWeight: 800, color: "#17181C" }}>{loading ? "…" : fmtNum(target)}</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+        <StatRow icon={Target} iconBg="#F4F5F7" iconColor="#9A9AA6" label="Target" value={target} loading={loading} />
+        <StatRow icon={SP_FWA.sp.icon} iconBg={SP_FWA.sp.bg} iconColor={SP_FWA.sp.color} label="SP" value={sp} loading={loading} />
+        <StatRow icon={SP_FWA.fwa.icon} iconBg={SP_FWA.fwa.bg} iconColor={SP_FWA.fwa.color} label="FWA" value={fwa} loading={loading} />
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 11, padding: "9px 11px", borderRadius: 12, background: "rgba(21,101,192,0.08)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+          <Check size={13} color="#1565C0" />
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#1565C0" }}>Total Aktivasi</span>
         </div>
-        <StatLine kind="sp" value={sp} loading={loading} />
-        <StatLine kind="fwa" value={fwa} loading={loading} />
+        <span style={{ fontSize: 17, fontWeight: 800, color: "#1565C0" }}>{loading ? "…" : fmtNum(total)}</span>
       </div>
     </div>
   );
 }
 
-function StatLine({ kind, value, loading }) {
-  const meta = SP_FWA[kind];
-  const Icon = meta.icon;
+function StatRow({ icon: Icon, iconBg, iconColor, label, value, loading }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <div style={{ width: 24, height: 24, borderRadius: 8, background: meta.bg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-        <Icon size={12} color={meta.color} />
+      <div style={{ width: 22, height: 22, borderRadius: 7, background: iconBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <Icon size={11} color={iconColor} />
       </div>
-      <div style={{ fontSize: 10.5, fontWeight: 700, color: "#9A9AA6", width: 30 }}>{meta.label}</div>
-      <div style={{ fontSize: 16, fontWeight: 800, color: "#17181C" }}>{loading ? "…" : fmtNum(value)}</div>
+      <div style={{ flex: 1, fontSize: 11.5, fontWeight: 600, color: "#5A5A68" }}>{label}</div>
+      <div style={{ fontSize: 14.5, fontWeight: 800, color: "#17181C" }}>{loading ? "…" : fmtNum(value)}</div>
     </div>
   );
 }

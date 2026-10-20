@@ -1,34 +1,41 @@
 "use client";
 /**
- * /martahub/public/dtu/[token] - halaman PUBLIK (TANPA login) utk submit
- * MSISDN penjualan DTU lewat link yang dibagikan DMO dari Report DTU
- * (lihat tombol "Bagikan" di app/martahub/m/dtu/page.jsx).
+ * /martahub/public/dtu/[token] - halaman PUBLIK (TANPA login ke MartaHub)
+ * utk submit MSISDN penjualan DTU lewat link yang dibagikan DMO dari
+ * Report DTU (lihat tombol "Bagikan" di app/martahub/m/dtu/page.jsx).
  *
  * Satu token = satu kombinasi persis (tanggal, branch, MC, kategori) -
  * TIDAK bisa pilih-pilih, supaya tidak disalahgunakan ke konteks lain.
  * Kedaluwarsa 7 hari dari TANGGAL AKTIVITASNYA (bukan dari waktu link
  * dibuat) - diatur server-side di RPC mh_dtu_share_link_get_or_create.
  *
- * Pengisi WAJIB isi Nama + Role dulu (self-declared, tidak diverifikasi)
- * sebelum bisa submit MSISDN - disimpan sbg submitted_by_name/role beda
- * dari input DMO yang sudah login (source='public' vs 'app'), supaya CMS/
- * report bisa bedakan data resmi DMO vs isian pihak luar.
+ * IDENTITAS: WAJIB "Continue with Google" dulu (permintaan eksplisit user -
+ * supaya identitas pengisi unik & bisa dipakai utk pencatatan historical
+ * harian, bukan sekadar nama ketikan tangan yang gampang beda-beda tiap
+ * kali). Role tetap diketik manual (field bebas, krn Google tidak tahu
+ * peran lapangan orang itu). Alur OAuth PINJAM client Supabase yang sama
+ * (`supabaseMarta`) krn provider Google-nya sudah dikonfigurasi di situ
+ * (lihat app/martahub/m/login/page.jsx) - TAPI begitu email+nama berhasil
+ * ditangkap dari sesinya, kita LANGSUNG signOut() lagi supaya sesi auth
+ * penuh MartaHub (yang redirect ke /martahub/m, cek mh_profiles dsb) TIDAK
+ * ikut tertinggal di browser orang yang cuma mau isi MSISDN sekali ini -
+ * email+nama Google-nya sendiri disimpan di localStorage (bukan sesi auth)
+ * supaya kunjungan berikutnya tidak perlu login ulang.
  *
  * Submit PER MSISDN - tiap submit langsung dapat popup hasil: SUKSES
  * (nomor berhasil dicatat) atau DUPLIKAT (nomor sudah pernah disubmit -
- * popup menunjukkan siapa & kapan, dari mh_dtu_public_msisdn_add yang
- * mengembalikan existing_name/existing_role/existing_at saat konflik).
+ * popup menunjukkan siapa & kapan).
  *
- * "Pencatatan Anda Hari Ini" = jumlah SP/FWA yang submitter INI (by nama+
- * role, self-declared) kirim HARI INI (tanggal real-time, bukan tanggal
- * aktivitas) - dihitung server-side di mh_dtu_public_context(p_name,p_role).
+ * "Pencatatan Bulan Ini" / "Pencatatan Hari Ini" = jumlah SP/FWA yang
+ * submitter INI (dicocokkan via email Google, unik) kirim - dihitung
+ * server-side di mh_dtu_public_context(p_email).
  *
  * TIDAK pakai <MobileShell> (itu akan redirect ke login) - halaman ini
  * berdiri sendiri, cuma pinjam token desain (FF/BRAND) dari situ.
  */
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { CheckCircle2, AlertTriangle, QrCode, ArrowRight, Loader2, CardSim, Router, UserCircle2, X } from "lucide-react";
+import { CheckCircle2, AlertTriangle, QrCode, ArrowRight, Loader2, CardSim, Router, X } from "lucide-react";
 import supabaseMarta from "../../../../../lib/supabaseMarta";
 import { FF, BRAND } from "../../../m/_shared/MobileShell";
 import QrScanSheet from "../../../m/_shared/QrScanSheet";
@@ -39,7 +46,8 @@ const SP_FWA = {
   fwa: { icon: Router, color: "#C6168D", bg: "rgba(236,0,140,0.08)", label: "FWA" },
 };
 
-const NAME_KEY = "mh_dtu_public_name";
+const G_EMAIL_KEY = "mh_dtu_public_g_email";
+const G_NAME_KEY = "mh_dtu_public_g_name";
 const ROLE_KEY = "mh_dtu_public_role";
 
 function fmtDate(iso) {
@@ -56,9 +64,12 @@ function fmtTime(iso) {
 export default function DtuPublicPage() {
   const { token } = useParams();
   const [ctx, setCtx] = useState(null); // null = loading, {valid:false,...} | {valid:true,...}
-  const [name, setName] = useState("");
+  const [gEmail, setGEmail] = useState("");
+  const [gName, setGName] = useState("");
+  const [googleBusy, setGoogleBusy] = useState(false);
+  const [googleChecking, setGoogleChecking] = useState(true); // true selama cek sesi OAuth balik
   const [role, setRole] = useState("");
-  const [identified, setIdentified] = useState(false);
+  const [roleDraft, setRoleDraft] = useState("");
   const [kind, setKind] = useState("sp");
   const [input, setInput] = useState("");
   const [scanning, setScanning] = useState(false);
@@ -67,39 +78,73 @@ export default function DtuPublicPage() {
   const [sent, setSent] = useState([]); // {msisdn, kind, dup, name, role, at}
   const [popup, setPopup] = useState(null); // {ok:true,msisdn,kind} | {ok:false,msisdn,kind,name,role,at}
 
-  useEffect(() => {
-    try {
-      const n = localStorage.getItem(NAME_KEY) || "";
-      const r = localStorage.getItem(ROLE_KEY) || "";
-      setName(n); setRole(r);
-      if (n && r) setIdentified(true);
-    } catch { /* best-effort */ }
-  }, []);
-
-  async function loadCtx(n, r) {
-    const { data, error } = await supabaseMarta.rpc("mh_dtu_public_context", { p_token: token, p_name: n || null, p_role: r || null });
+  async function loadCtx(email) {
+    const { data, error } = await supabaseMarta.rpc("mh_dtu_public_context", { p_token: token, p_email: email || null });
     if (error) setCtx({ valid: false, reason: "error" });
     else setCtx(data || { valid: false, reason: "error" });
   }
 
+  // 1. Cek identitas Google yang sudah pernah disimpan (kunjungan ulang)
+  //    DAN cek apakah kita baru saja balik dari redirect OAuth Google (sesi
+  //    baru di supabaseMarta.auth) - kalau ada, tangkap email+nama lalu
+  //    SEGERA signOut() supaya tidak ninggalin sesi auth MartaHub di browser
+  //    publik ini.
   useEffect(() => {
     let cancelled = false;
-    let n = ""; let r = "";
-    try { n = localStorage.getItem(NAME_KEY) || ""; r = localStorage.getItem(ROLE_KEY) || ""; } catch { /* best-effort */ }
-    supabaseMarta.rpc("mh_dtu_public_context", { p_token: token, p_name: n || null, p_role: r || null }).then(({ data, error }) => {
+    (async () => {
+      let email = ""; let name = ""; let r = "";
+      try {
+        email = localStorage.getItem(G_EMAIL_KEY) || "";
+        name = localStorage.getItem(G_NAME_KEY) || "";
+        r = localStorage.getItem(ROLE_KEY) || "";
+      } catch { /* best-effort */ }
+
+      try {
+        const { data: { session } } = await supabaseMarta.auth.getSession();
+        if (session?.user?.email) {
+          const u = session.user;
+          email = (u.email || "").toLowerCase();
+          name = u.user_metadata?.full_name || u.user_metadata?.name || email;
+          try { localStorage.setItem(G_EMAIL_KEY, email); localStorage.setItem(G_NAME_KEY, name); } catch { /* best-effort */ }
+          await supabaseMarta.auth.signOut(); // jangan tinggalkan sesi auth penuh di halaman publik ini
+          // bersihkan hash/query OAuth dari URL biar rapi & gak ke-trigger lagi
+          try { window.history.replaceState({}, "", window.location.pathname); } catch { /* ignore */ }
+        }
+      } catch { /* best-effort, lanjut pakai yang dari localStorage saja */ }
+
       if (cancelled) return;
-      if (error) setCtx({ valid: false, reason: "error" });
-      else setCtx(data || { valid: false, reason: "error" });
-    });
+      setGEmail(email); setGName(name); setRole(r); setRoleDraft(r);
+      setGoogleChecking(false);
+      loadCtx(email);
+    })();
     return () => { cancelled = true; };
   }, [token]);
 
-  function confirmIdentity() {
-    if (!name.trim() || !role.trim()) { setErr("Nama dan Role wajib diisi."); return; }
-    try { localStorage.setItem(NAME_KEY, name.trim()); localStorage.setItem(ROLE_KEY, role.trim()); } catch { /* best-effort */ }
+  async function signInGoogle() {
+    setGoogleBusy(true); setErr("");
+    try {
+      const { error } = await supabaseMarta.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: window.location.href, queryParams: { prompt: "select_account" } },
+      });
+      if (error) throw error;
+      // browser akan redirect keluar - tidak perlu setGoogleBusy(false) di jalur sukses
+    } catch (e) {
+      setErr("Login Google gagal atau dibatalkan. Coba lagi.");
+      setGoogleBusy(false);
+    }
+  }
+
+  function switchGoogleAccount() {
+    try { localStorage.removeItem(G_EMAIL_KEY); localStorage.removeItem(G_NAME_KEY); } catch { /* best-effort */ }
+    setGEmail(""); setGName("");
+  }
+
+  function confirmRole() {
+    if (!roleDraft.trim()) { setErr("Role wajib diisi."); return; }
+    try { localStorage.setItem(ROLE_KEY, roleDraft.trim()); } catch { /* best-effort */ }
     setErr("");
-    setIdentified(true);
-    loadCtx(name.trim(), role.trim());
+    setRole(roleDraft.trim());
   }
 
   async function submitMsisdn(raw) {
@@ -108,7 +153,7 @@ export default function DtuPublicPage() {
     setErr(""); setSending(true);
     try {
       const { data, error } = await supabaseMarta.rpc("mh_dtu_public_msisdn_add", {
-        p_token: token, p_sp_fwa: kind, p_msisdn: norm, p_name: name.trim(), p_role: role.trim(),
+        p_token: token, p_sp_fwa: kind, p_msisdn: norm, p_name: gName.trim(), p_role: role.trim(), p_email: gEmail.trim(),
       });
       if (error) throw new Error(error.message);
       const added = !!data?.added;
@@ -124,7 +169,7 @@ export default function DtuPublicPage() {
     finally { setSending(false); }
   }
 
-  if (ctx === null) {
+  if (ctx === null || googleChecking) {
     return (
       <Shell>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh" }}>
@@ -152,6 +197,8 @@ export default function DtuPublicPage() {
     );
   }
 
+  const identified = !!gEmail && !!role;
+
   return (
     <Shell>
       <div style={{ marginBottom: 16 }}>
@@ -165,55 +212,53 @@ export default function DtuPublicPage() {
         <Row label="MC" value={ctx.mc} />
       </div>
 
-      {/* Pencatatan Anda Hari Ini */}
+      {/* Pencatatan Anda - Bulan Ini & Hari Ini */}
       <div style={{ background: "linear-gradient(135deg,#17181C,#2A2B33)", borderRadius: 18, padding: "16px 16px", marginBottom: 16, boxShadow: "0 6px 18px rgba(23,24,28,0.18)" }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 10 }}>
-          Pencatatan Anda Hari Ini
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-          {["sp", "fwa"].map((k) => {
-            const meta = SP_FWA[k]; const Icon = meta.icon;
-            const v = k === "sp" ? ctx.count_sp : ctx.count_fwa;
-            return (
-              <div key={k} style={{ background: "rgba(255,255,255,0.08)", borderRadius: 13, padding: "11px 12px", display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ width: 32, height: 32, borderRadius: 10, background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                  <Icon size={16} color="#fff" />
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 19, fontWeight: 800, color: "#fff", lineHeight: 1 }}>{v || 0}</div>
-                  <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.65)", fontWeight: 600, marginTop: 2 }}>{meta.label}</div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <PencatatanBlock label="Pencatatan Bulan Ini" sp={ctx.count_sp_month} fwa={ctx.count_fwa_month} />
+        <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "14px 0" }} />
+        <PencatatanBlock label="Pencatatan Hari Ini" sp={ctx.count_sp} fwa={ctx.count_fwa} />
       </div>
 
       {err && <div style={{ background: "#FFF1F0", border: "1px solid #FFCCC7", color: "#C62828", borderRadius: 10, padding: "9px 12px", fontSize: 12, marginBottom: 12 }}>{err}</div>}
 
-      {!identified ? (
+      {!gEmail ? (
+        <div style={{ background: "#fff", border: "1px solid #ECEDF0", borderRadius: 16, padding: "20px 16px", textAlign: "center" }}>
+          <div style={{ fontSize: 13.5, fontWeight: 800, color: "#17181C", marginBottom: 5 }}>Verifikasi identitas dulu</div>
+          <div style={{ fontSize: 12, color: "#9A9AA6", lineHeight: 1.6, marginBottom: 18 }}>
+            Wajib login dengan akun Google supaya pencatatan penjualanmu tersimpan rapi per hari & tidak tertukar dengan orang lain.
+          </div>
+          <button onClick={signInGoogle} disabled={googleBusy}
+            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, padding: "13px", borderRadius: 14, border: "1.5px solid #D5D6DC", background: "#fff", fontSize: 14, fontWeight: 700, color: "#17181C", opacity: googleBusy ? 0.6 : 1 }}>
+            {googleBusy ? <Loader2 size={17} className="mh-spin" color="#5A5A68" /> : <GoogleLogo size={17} />}
+            {googleBusy ? "Membuka Google…" : "Continue with Google"}
+          </button>
+        </div>
+      ) : !role ? (
         <div style={{ background: "#fff", border: "1px solid #ECEDF0", borderRadius: 16, padding: "16px 14px" }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C", marginBottom: 10 }}>Isi data diri dulu</div>
-          <label style={{ display: "block", marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#9A9AA6", marginBottom: 5 }}>Nama</div>
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nama lengkap"
-              style={{ width: "100%", padding: "11px 13px", borderRadius: 12, border: "1px solid #ECEDF0", fontSize: 13.5, boxSizing: "border-box" }} />
-          </label>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, padding: "9px 11px", background: "#F6F7F9", borderRadius: 12 }}>
+            <GoogleLogo size={16} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{gName}</div>
+              <div style={{ fontSize: 10.5, color: "#9A9AA6", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{gEmail}</div>
+            </div>
+            <button onClick={switchGoogleAccount} style={{ background: "none", border: "none", color: "#ED1C24", fontSize: 11, fontWeight: 700, flexShrink: 0 }}>Ganti</button>
+          </div>
           <label style={{ display: "block", marginBottom: 16 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: "#9A9AA6", marginBottom: 5 }}>Role</div>
-            <input value={role} onChange={(e) => setRole(e.target.value)} placeholder="mis. Promotor, DSE, DSF"
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#9A9AA6", marginBottom: 5 }}>Role kamu di lapangan</div>
+            <input value={roleDraft} onChange={(e) => setRoleDraft(e.target.value)} placeholder="mis. Promotor, DSE, DSF"
+              onKeyDown={(e) => e.key === "Enter" && confirmRole()}
               style={{ width: "100%", padding: "11px 13px", borderRadius: 12, border: "1px solid #ECEDF0", fontSize: 13.5, boxSizing: "border-box" }} />
           </label>
-          <button onClick={confirmIdentity} style={{ width: "100%", padding: "13px", borderRadius: 14, border: "none", background: BRAND, color: "#fff", fontSize: 14, fontWeight: 800 }}>
+          <button onClick={confirmRole} style={{ width: "100%", padding: "13px", borderRadius: 14, border: "none", background: BRAND, color: "#fff", fontSize: 14, fontWeight: 800 }}>
             Lanjut
           </button>
         </div>
       ) : (
         <>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", background: "#fff", border: "1px solid #ECEDF0", borderRadius: 14, padding: "9px 13px", marginBottom: 12 }}>
-            <UserCircle2 size={16} color="#9A9AA6" />
-            <div style={{ flex: 1, fontSize: 12.5, fontWeight: 700, color: "#17181C", marginLeft: 8 }}>{name} · {role}</div>
-            <button onClick={() => setIdentified(false)} style={{ background: "none", border: "none", color: "#ED1C24", fontSize: 11.5, fontWeight: 700 }}>Ganti</button>
+            <GoogleLogo size={15} />
+            <div style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 700, color: "#17181C", marginLeft: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{gName} · {role}</div>
+            <button onClick={() => { setRole(""); setRoleDraft(""); }} style={{ background: "none", border: "none", color: "#ED1C24", fontSize: 11.5, fontWeight: 700, flexShrink: 0 }}>Ganti role</button>
           </div>
 
           {/* Toggle SP/FWA - besar, mudah ditap */}
@@ -281,6 +326,17 @@ export default function DtuPublicPage() {
   );
 }
 
+function GoogleLogo({ size = 16 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 48" style={{ flexShrink: 0 }}>
+      <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.1 8 3l5.7-5.7C34.6 6.1 29.6 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.7-.4-3.5z"/>
+      <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.6 15.1 18.9 12 24 12c3.1 0 5.8 1.1 8 3l5.7-5.7C34.6 6.1 29.6 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/>
+      <path fill="#4CAF50" d="M24 44c5.5 0 10.5-2.1 14.3-5.6l-6.6-5.6C29.6 34.7 27 35.6 24 35.6c-5.2 0-9.6-3.3-11.3-7.9l-6.6 5.1C9.6 39.6 16.2 44 24 44z"/>
+      <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.3-2.2 4.2-4.1 5.6l6.6 5.6C40.6 36.6 44 31.1 44 24c0-1.3-.1-2.7-.4-3.5z"/>
+    </svg>
+  );
+}
+
 function ResultPopup({ data, onClose }) {
   const meta = SP_FWA[data.kind]; const Icon = meta.icon;
   return (
@@ -317,6 +373,33 @@ function ResultPopup({ data, onClose }) {
           background: data.ok ? BRAND : "#F4F5F7", color: data.ok ? "#fff" : "#17181C", fontSize: 13.5, fontWeight: 800 }}>
           Oke, mengerti
         </button>
+      </div>
+    </div>
+  );
+}
+
+function PencatatanBlock({ label, sp, fwa }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.6)", textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 10 }}>
+        {label}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        {["sp", "fwa"].map((k) => {
+          const meta = SP_FWA[k]; const Icon = meta.icon;
+          const v = k === "sp" ? sp : fwa;
+          return (
+            <div key={k} style={{ background: "rgba(255,255,255,0.08)", borderRadius: 13, padding: "11px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ width: 32, height: 32, borderRadius: 10, background: "rgba(255,255,255,0.12)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Icon size={16} color="#fff" />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 19, fontWeight: 800, color: "#fff", lineHeight: 1 }}>{v || 0}</div>
+                <div style={{ fontSize: 10.5, color: "rgba(255,255,255,0.65)", fontWeight: 600, marginTop: 2 }}>{meta.label}</div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
