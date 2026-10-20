@@ -31,6 +31,8 @@ export default function OutletInstallPage() {
   const outletName = search.get("name") || "";
   const branchName = search.get("branch") || scope?.branchName || "";
   const mc = search.get("mc") || "";
+  const outletIdIm3 = search.get("im3") || "";
+  const outletId3id = search.get("tid") || "";
 
   const draftKey = `mh_retailer_install_draft_${planId}_${outletCode}`;
 
@@ -44,6 +46,7 @@ export default function OutletInstallPage() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [done, setDone] = useState(false);
+  const [doneStatus, setDoneStatus] = useState(null); // location_status dari hasil submit (valid/out_of_radius/pending)
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const [showBackConfirm, setShowBackConfirm] = useState(false);
 
@@ -186,6 +189,7 @@ export default function OutletInstallPage() {
       }
       try { localStorage.removeItem(draftKey); } catch { /* best-effort */ }
       setShowSubmitConfirm(false);
+      setDoneStatus(ins?.location_status || null);
       setDone(true);
     } catch (e) {
       setShowSubmitConfirm(false);
@@ -204,6 +208,16 @@ export default function OutletInstallPage() {
           </div>
           <div style={{ marginTop: 16, fontSize: 16, fontWeight: 800 }}>POSM Berhasil Disubmit</div>
           <div style={{ marginTop: 6, fontSize: 12.5, color: "#8A8A96", lineHeight: 1.6 }}>Pemasangan di outlet {outletName.toUpperCase()} tersimpan &amp; menunggu validasi.</div>
+          {doneStatus === "out_of_radius" && (
+            <div style={{ marginTop: 14, padding: "11px 13px", borderRadius: 12, background: "rgba(180,83,9,0.08)", border: "1px solid rgba(180,83,9,0.25)", fontSize: 11.5, color: "#8a5b00", fontWeight: 600, lineHeight: 1.6, textAlign: "left" }}>
+            Lokasi Anda di luar radius outlet - laporan tetap tersimpan &amp; stok tetap berkurang, tapi ditandai utk ditinjau approver.
+            </div>
+          )}
+          {doneStatus === "pending" && (
+            <div style={{ marginTop: 14, padding: "11px 13px", borderRadius: 12, background: "#F0F0F3", border: "1px solid #E4E5EA", fontSize: 11.5, color: "#5A5A68", fontWeight: 600, lineHeight: 1.6, textAlign: "left" }}>
+              Outlet ini belum punya koordinat acuan di List Outlet POSM - laporan tersimpan &amp; akan ditinjau manual.
+            </div>
+          )}
           <button onClick={() => router.replace("/martahub/m/posm")}
             style={{ marginTop: 22, width: "100%", height: 48, borderRadius: 13, border: "none", background: BRAND, color: "#fff", fontSize: 13.5, fontWeight: 800, fontFamily: FF, cursor: "pointer" }}>
             Kembali ke POSM
@@ -256,7 +270,11 @@ export default function OutletInstallPage() {
             </div>
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 800, color: "#17181C" }}>{outletName.toUpperCase()}</div>
-              <div style={{ fontSize: 10.5, color: "#8A8A96", fontWeight: 600 }}>ID {outletCode} · {branchName}{mc ? ` · ${mc}` : ""}</div>
+              <div style={{ fontSize: 10.5, color: "#8A8A96", fontWeight: 600 }}>
+                {outletIdIm3 ? `IM3 ${outletIdIm3}` : ""}{outletIdIm3 && outletId3id ? " · " : ""}{outletId3id ? `3ID ${outletId3id}` : ""}
+                {!outletIdIm3 && !outletId3id ? `Kode ${outletCode}` : ""}
+                {" · "}{branchName}{mc ? ` · ${mc}` : ""}
+              </div>
             </div>
           </div>
         </Card>

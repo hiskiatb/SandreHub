@@ -361,4 +361,30 @@ export function addCustomerActivationSales(installationId, entries) {
 }
 export const listCustomerActivationSales = (installationId) => rpc("mh_customer_activation_list_sales", { p_installation_id: installationId });
 
+// ── List Outlet POSM (master data whitelist outlet, dgn koordinat) ───────
+// Dipakai CMS (upload/monitoring) & mobile (pencarian outlet + validasi
+// radius GPS) utk alur baru Retailer Installment (rebuild 2026-08).
+export const searchPosmOutlets = (query, branchId, limit) =>
+  rpc("mh_posm_outlets_search", { p_query: query || null, p_branch_id: branchId || null, p_limit: limit || 30 });
+export const getPosmOutlet = (outletId) => rpc("mh_posm_outlet_get", { p_outlet_id: outletId });
+export const getPosmRadius = () => rpc("mh_posm_get_radius");
+export function setPosmRadius(radiusM, callerEmail) {
+  return rpc("mh_posm_set_radius", { p_radius_m: radiusM, p_caller_email: callerEmail || null });
+}
+export function upsertPosmOutletsBatch(rows, period, callerEmail) {
+  return rpc("mh_posm_outlets_upsert_batch", { p_rows: rows, p_period: period, p_caller_email: callerEmail || null });
+}
+export const fetchPosmOutletsSummary = () => rpc("mh_posm_outlets_summary");
+
+// ── Reconcile Retailer Installment (alur baru - outlet whitelist) ────────
+export const fetchRetailerPending = () => rpc("mh_md_list_retailer_pending");
+export function decideRetailerInstallation(id, decision, notes, callerEmail) {
+  return rpc("mh_web_decide_retailer_installation", { p_id: id, p_decision: decision, p_notes: notes || null, p_caller_email: callerEmail || null });
+}
+
+// ── Monitoring Stok & Realisasi (CMS dashboard) ───────────────────────────
+export const fetchPosmMonitoringSummary = (category, brand, status) =>
+  rpc("mh_posm_monitoring_summary", { p_category: category || null, p_brand: brand || null, p_status: status || null });
+export const fetchPosmMonitoringDetail = (planId) => rpc("mh_posm_monitoring_detail", { p_plan_id: planId });
+
 

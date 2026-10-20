@@ -20,8 +20,22 @@ function reviewBadge(status) {
     approved: { label: "Tervalidasi", color: "#15803D", bg: "rgba(21,128,61,0.10)", icon: CheckCircle2 },
     mismatch: { label: "Tidak Cocok", color: "#DC2626", bg: "rgba(220,38,38,0.10)", icon: XCircle },
     rejected: { label: "Ditolak", color: "#DC2626", bg: "rgba(220,38,38,0.10)", icon: XCircle },
+    // Retailer Installment (alur baru) - di luar radius TETAP diterima &
+    // stok tetap berkurang (bukan ditolak), cuma ditandai utk ditinjau.
+    out_of_radius: { label: "Luar Radius", color: "#B45309", bg: "rgba(180,83,9,0.10)", icon: AlertTriangle },
   };
   return map[status] || { label: "Menunggu Validasi", color: "#B45309", bg: "rgba(180,83,9,0.10)", icon: Clock };
+}
+
+// Retailer Installment punya DUA status independen: location_status (hasil
+// otomatis saat submit - valid/out_of_radius/pending) & review_status
+// (keputusan approver - pending/approved/rejected, lihat tab "Retailer
+// Installment" di /martahub/m/posm/reconcile). Badge ikuti review_status
+// begitu approver sudah memutuskan (approved/rejected), sebelum itu ikuti
+// location_status apa adanya (termasuk "Luar Radius").
+function retailerBadgeStatus(ins) {
+  if (ins.review_status === "approved" || ins.review_status === "rejected") return ins.review_status;
+  return ins.location_status;
 }
 
 export default function PosmRiwayatPage() {
@@ -75,7 +89,7 @@ export default function PosmRiwayatPage() {
 
 function InstallCard({ ins, router }) {
   const Icon = MODE_ICON[ins.mode] || Milestone;
-  const badge = reviewBadge(ins.location_status);
+  const badge = reviewBadge(ins.retailer_outlet_code ? retailerBadgeStatus(ins) : ins.location_status);
   const BadgeIcon = badge.icon;
   const label = ins.mode === "activity" ? (ins.activity_name || "Terikat Activity") : ins.mode === "outlet" ? (ins.retailer_outlet_name ? ins.retailer_outlet_name.toUpperCase() : (ins.site_id || "Terikat Outlet")) : (ins.street_description || "Street Branding");
   const totalQty = (ins.items || []).reduce((s, it) => s + Number(it.qty || 0), 0);

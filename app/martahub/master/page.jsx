@@ -121,6 +121,11 @@ function Body({ canManage, email }) {
           desc="Upload mapping Outlet-to-DSE bulanan per brand (IM3/3ID) - dipakai fitur Retailer Installment (mobile) utk pencarian outlet per Branch."
           onClick={() => router.push("/martahub/posmat/mapping")}
         />
+        <MenuCard
+          icon={Store} label="List Outlet POSM"
+          desc="Master data outlet khusus POSM (IM3/3ID ID, koordinat lat-long) - dasar whitelist pencarian outlet & validasi radius GPS saat instalasi Retailer Installment POSM."
+          onClick={() => router.push("/martahub/posmat/outlets")}
+        />
       </div>
     </div>
   );

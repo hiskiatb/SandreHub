@@ -929,11 +929,19 @@ export default function SubmitActualPage() {
   // supaya nomor yg sudah diketik DSF tetap aman tersimpan di server walau
   // laporan belum final di-submit (bukan cuma localStorage per-perangkat).
   async function persistNewEntries() {
-    // Kirim entries per kelompok kategori+jenis+org_id - best-effort,
-    // laporan pokok TETAP tersubmit walau bagian ini gagal (sama spt
+    // Kirim entries per kelompok kategori+jenis+org_id - best-effort per
+    // KELOMPOK (satu kelompok gagal TIDAK menghentikan kelompok lain, dan
+    // laporan pokok TETAP tersubmit walau bagian ini gagal, sama spt
     // Flutter). Dikelompokkan per org_id juga (bukan cuma typeId) krn satu
     // event bisa dicatat oleh beberapa org_id sekaligus (lihat OrgIdBar) -
     // mh_dsf_submit_sales_entries cuma menerima SATU p_org_id per panggilan.
+    // PENTING: beda dgn versi sebelumnya, error di sini TIDAK lagi ditelan
+    // diam2 - dikumpulkan di `failures` lalu dikembalikan ke pemanggil
+    // (submit()/saveDraft()) supaya DSF benar2 tahu kalau ada nomor yg
+    // gagal tersimpan (dulu silently gagal krn Org ID kosong - lihat
+    // migrasi mh_dsf_submit_sales_entries yg bikin org_id opsional).
+    const successMsisdn = { sp: new Set(), fwa: new Set() };
+    const failures = [];
     for (const cat of ["sp", "fwa"]) {
       const byGroup = new Map();
       // `persisted` = sudah tercatat di DB sebelumnya (dimuat lewat
@@ -953,26 +961,42 @@ export default function SubmitActualPage() {
             p_product_type_id: typeId,
             p_entries: list.map((e) => ({ msisdn: e.msisdn, imei: null, tagged_at: e.taggedAt })),
           });
-        } catch { /* best-effort, lanjut kelompok berikutnya */ }
+          list.forEach((e) => successMsisdn[cat].add(e.msisdn));
+        } catch (err) {
+          failures.push({ cat, count: list.length, message: err?.message || "Gagal menyimpan ke server" });
+        }
       }
     }
 
     // Simpan tiap entri rebuy BARU (transactionId + nomor + nominal) -
-    // best-effort spt entries SP/FWA di atas, laporan pokok tetap tersubmit
-    // walau ada entri yg gagal tersimpan individual.
+    // best-effort per ENTRI spt di atas, laporan pokok tetap tersubmit
+    // walau ada entri yg gagal tersimpan individual - tapi entri yg gagal
+    // TIDAK ditandai persisted (lihat di bawah) supaya tidak hilang diam2.
+    const successRebuy = new Set();
+    const rebuyFailures = [];
     for (const e of rebuyEntries.filter((e) => !e.persisted)) {
       try {
         await addRebuyEntryDb({ activityId, type: e.type, transactionId: e.transactionId, msisdn: e.msisdn, amount: e.amount, brand: e.brand });
-      } catch { /* best-effort, lanjut entri berikutnya */ }
+        successRebuy.add(e.transactionId);
+      } catch (err) {
+        rebuyFailures.push({ msisdn: e.msisdn, message: err?.message || "Gagal menyimpan ke server" });
+      }
     }
 
-    // Tandai semua entry lokal sebagai persisted:true supaya tidak dikirim
-    // dobel kalau DSF simpan draft lagi atau lanjut submit final setelahnya.
+    // Cuma tandai persisted:true utk entry yg BENAR-BENAR berhasil
+    // tersimpan ke server (dicocokkan via msisdn/transactionId, bukan
+    // "tandai semua" spt sebelumnya) - entry yg gagal dibiarkan
+    // persisted:false supaya TETAP ada di draft & otomatis dicoba lagi di
+    // saveDraft()/submit() berikutnya (termasuk kalau DSF keluar & masuk
+    // lagi lewat draft localStorage), bukan hilang begitu saja.
     setEntries((prev) => ({
-      sp: prev.sp.map((e) => ({ ...e, persisted: true })),
-      fwa: prev.fwa.map((e) => ({ ...e, persisted: true })),
+      sp: prev.sp.map((e) => (successMsisdn.sp.has(e.msisdn) ? { ...e, persisted: true } : e)),
+      fwa: prev.fwa.map((e) => (successMsisdn.fwa.has(e.msisdn) ? { ...e, persisted: true } : e)),
     }));
-    setRebuyEntries((prev) => prev.map((e) => ({ ...e, persisted: true })));
+    setRebuyEntries((prev) => prev.map((e) => (successRebuy.has(e.transactionId) ? { ...e, persisted: true } : e)));
+
+    const failedCount = failures.reduce((s, f) => s + f.count, 0) + rebuyFailures.length;
+    return { ok: failedCount === 0, failedCount, failures, rebuyFailures };
   }
 
   // Simpan sbg draft - BUKAN laporan final: entry SP/FWA/rebuy yg sudah
@@ -984,7 +1008,7 @@ export default function SubmitActualPage() {
   async function saveDraft() {
     setSavingDraft(true); setErr("");
     try {
-      await persistNewEntries();
+      const persistReport = await persistNewEntries();
       // Sama spt submit() di bawah - plan "slot kosong" (belum ada
       // pemiliknya, hasil Import Excel/Backdoor) harus diklaim dulu supaya
       // update ini tidak DIAM-DIAM tersaring RLS (0 baris berubah, tanpa
@@ -1008,6 +1032,15 @@ export default function SubmitActualPage() {
       if (!updated || updated.length === 0) throw new Error("Draft tidak tersimpan - akun Anda kemungkinan belum berwenang mengedit plan ini.");
       setDraftSavedAt(nowIso);
       setDirty(false);
+      // Draft (cost/insight/dll) berhasil tersimpan - tapi kalau ADA nomor
+      // MSISDN/rebuy yg gagal tersimpan ke server (lihat persistReport),
+      // tetap kasih tahu DSF supaya tidak mengira semua nomornya sudah
+      // aman. Nomor yg gagal TETAP ada di draft & akan dicoba lagi otomatis
+      // lain kali Simpan Draft/Kirim ditekan (persisted:false - lihat
+      // persistNewEntries()).
+      if (!persistReport.ok) {
+        setErr(`Draft tersimpan, tapi ${persistReport.failedCount} nomor MSISDN/rebuy belum berhasil tersimpan ke server (akan dicoba lagi otomatis). Pastikan koneksi internet stabil.`);
+      }
       return true;
     } catch (e) {
       setErr(e.message || "Gagal menyimpan draft");
@@ -1167,10 +1200,19 @@ export default function SubmitActualPage() {
       }).eq("id", activityId).select("status,validation_status,validation_note").single();
       if (error) throw error;
 
-      await persistNewEntries();
+      const persistReport = await persistNewEntries();
 
-      try { localStorage.removeItem(draftKey(activityId)); } catch { /* best-effort */ }
-      setResult({ ...data, photoFailCount, photoTotal: newPhotos.length });
+      // Draft localStorage HANYA dihapus kalau semua nomor MSISDN/rebuy
+      // benar2 berhasil tersimpan ke server - dulu selalu dihapus di sini
+      // tanpa pengecekan, jadi kalau persistNewEntries() gagal diam2 (bug
+      // org_id kosong, sudah diperbaiki), nomor yg sudah diketik DSF ikut
+      // hilang dari HP-nya juga, padahal belum tersimpan di manapun.
+      // Sekarang kalau ada yg gagal, draft TETAP disimpan (berisi entry yg
+      // belum persisted) supaya tidak hilang & otomatis dicoba lagi.
+      if (persistReport.ok) {
+        try { localStorage.removeItem(draftKey(activityId)); } catch { /* best-effort */ }
+      }
+      setResult({ ...data, photoFailCount, photoTotal: newPhotos.length, msisdnFailCount: persistReport.failedCount });
     } catch (e) {
       setErr(e.message || "Gagal mengirim laporan");
     } finally {
@@ -2483,6 +2525,8 @@ function SubmitSuccessScreen({ result, onDone }) {
   const photoFailCount = result?.photoFailCount || 0;
   const photoTotal = result?.photoTotal || 0;
   const hasPhotoIssue = photoFailCount > 0;
+  const msisdnFailCount = result?.msisdnFailCount || 0;
+  const hasMsisdnIssue = msisdnFailCount > 0;
 
   // Confetti: 14 partikel, sudut sebar 360° dibagi rata + sedikit jitter,
   // jarak lontar & warna di-random SEKALI (useMemo, seed tidak berubah tiap
@@ -2572,6 +2616,14 @@ function SubmitSuccessScreen({ result, onDone }) {
                 {photoFailCount === photoTotal
                   ? `Laporan tersimpan, tapi ${photoFailCount} foto dokumentasi gagal diunggah - coba tambahkan lagi lewat halaman detail aktivitas.`
                   : `Laporan tersimpan, tapi ${photoFailCount} dari ${photoTotal} foto dokumentasi gagal diunggah - sisanya sudah tersimpan.`}
+              </span>
+            </div>
+          )}
+          {hasMsisdnIssue && (
+            <div style={{ marginTop: 10, display: "flex", alignItems: "flex-start", gap: 7, padding: "10px 12px", borderRadius: 11, background: "rgba(180,83,9,0.08)", textAlign: "left" }}>
+              <AlertTriangle size={14} color="#B45309" style={{ flexShrink: 0, marginTop: 1 }} />
+              <span style={{ fontSize: 11.5, fontWeight: 600, color: "#8A6D00", lineHeight: 1.45 }}>
+                {`Laporan tersimpan, tapi ${msisdnFailCount} nomor MSISDN/rebuy belum berhasil tersimpan ke server - buka kembali halaman ini (nomornya masih ada di draft) & kirim ulang saat koneksi internet stabil.`}
               </span>
             </div>
           )}

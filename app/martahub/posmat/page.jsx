@@ -4,7 +4,8 @@
 // atas permintaan user (2026-08-31) - RPC & tabel DB-nya tidak disentuh,
 // yang dihapus cuma UI-nya di halaman ini.
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { Package, ArrowLeft, Plus, Pencil, AlertTriangle, Loader2, Upload, Download, RefreshCw } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Package, ArrowLeft, Plus, Pencil, AlertTriangle, Loader2, Upload, Download, RefreshCw, BarChart3 } from "lucide-react";
 import * as XLSX from "xlsx";
 import MartaShell, { T } from "../components/MartaShell";
 import ExcelFilter from "../components/ExcelFilter";
@@ -64,6 +65,7 @@ function planVisualUrl(path) {
 }
 
 function PlanView({ email, canManage, scope }) {
+  const router = useRouter();
   const [plans, setPlans] = useState(null);
   const [selected, setSelected] = useState(null); // null=list, {...}=detail
   const [formOpen, setFormOpen] = useState(false);
@@ -104,7 +106,8 @@ function PlanView({ email, canManage, scope }) {
     <div style={{ width: "100%" }}>
       <div style={{ display: "flex", alignItems: "center", marginBottom: 14 }}>
         <div style={{ fontSize: 18, fontWeight: 800, color: T.hi }}>Plan POSM</div>
-        {canManage && <button onClick={() => setFormOpen(true)} style={{ ...pbtn, marginLeft: "auto" }}><Plus size={15} /> Plan Baru</button>}
+        <button onClick={() => router.push("/martahub/posmat/monitoring")} style={{ ...btn, marginLeft: "auto" }}><BarChart3 size={15} /> Monitoring Stok &amp; Realisasi</button>
+        {canManage && <button onClick={() => setFormOpen(true)} style={pbtn}><Plus size={15} /> Plan Baru</button>}
       </div>
       {err && <div style={{ ...note, marginBottom: 12, background: T.errorBg, borderColor: T.error, color: T.error }}>{err}</div>}
 
@@ -352,6 +355,7 @@ function PlanFormModal({ email, onClose, onSaved, plan }) {
   const [periodFrom, setPeriodFrom] = useState(plan?.period_from || "");
   const [periodTo, setPeriodTo] = useState(plan?.period_to || "");
   const [status, setStatus] = useState(plan?.status || "active");
+  const [targetOutlets, setTargetOutlets] = useState(plan?.target_outlets != null ? String(plan.target_outlets) : "");
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(plan?.visual_path ? planVisualUrl(plan.visual_path) : "");
   const [showPreview, setShowPreview] = useState(false);
@@ -381,6 +385,7 @@ function PlanFormModal({ email, onClose, onSaved, plan }) {
       const { data, error } = await supabaseMarta.rpc("mh_posm_upsert_plan", {
         p_id: plan?.id || null, p_name: name.trim(), p_category: category, p_brand: brand, p_visual_path: visualPath,
         p_period_from: periodFrom, p_period_to: periodTo, p_status: status, p_caller_email: email,
+        p_target_outlets: targetOutlets.trim() === "" ? null : Number(targetOutlets) || 0,
       });
       if (error) throw error;
       onSaved(data);
@@ -431,6 +436,9 @@ function PlanFormModal({ email, onClose, onSaved, plan }) {
         <div style={{ flex: 1 }}><Field label="Period From *"><input type="date" value={periodFrom} onChange={(e) => setPeriodFrom(e.target.value)} style={inp} /></Field></div>
         <div style={{ flex: 1 }}><Field label="Period To *"><input type="date" value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} style={inp} /></Field></div>
       </div>
+      <Field label="Target Program (opsional)">
+        <input type="number" min="0" value={targetOutlets} onChange={(e) => setTargetOutlets(e.target.value)} style={inp} placeholder="Contoh: 1000 outlet" />
+      </Field>
       {isEdit && (
         <Field label="Status">
           <select value={status} onChange={(e) => setStatus(e.target.value)} style={selectStyle}>
@@ -461,6 +469,7 @@ function PlanCreateWizard({ email, scope, onClose, onSaved }) {
   const [brand, setBrand] = useState("im3");
   const [periodFrom, setPeriodFrom] = useState("");
   const [periodTo, setPeriodTo] = useState("");
+  const [targetOutlets, setTargetOutlets] = useState("");
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState("");
   const [showPreview, setShowPreview] = useState(false);
@@ -542,6 +551,7 @@ function PlanCreateWizard({ email, scope, onClose, onSaved }) {
       const { data: plan, error: planErr } = await supabaseMarta.rpc("mh_posm_upsert_plan", {
         p_id: null, p_name: name.trim(), p_category: category, p_brand: brand, p_visual_path: visualPath,
         p_period_from: periodFrom, p_period_to: periodTo, p_status: "active", p_caller_email: email,
+        p_target_outlets: targetOutlets.trim() === "" ? null : Number(targetOutlets) || 0,
       });
       if (planErr) throw planErr;
       createdPlan = plan;
@@ -620,6 +630,9 @@ function PlanCreateWizard({ email, scope, onClose, onSaved }) {
             <div style={{ flex: 1 }}><Field label="Period From *"><input type="date" value={periodFrom} onChange={(e) => setPeriodFrom(e.target.value)} style={inp} /></Field></div>
             <div style={{ flex: 1 }}><Field label="Period To *"><input type="date" value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} style={inp} /></Field></div>
           </div>
+          <Field label="Target Program (opsional)">
+            <input type="number" min="0" value={targetOutlets} onChange={(e) => setTargetOutlets(e.target.value)} style={inp} placeholder="Contoh: 1000 outlet" />
+          </Field>
         </div>
         <div>
           <Field label="Material *">
@@ -820,6 +833,7 @@ function PlanDetail({ plan, email, canManage, scope, onBack, onChanged }) {
             <span style={{ ...pill, color: T.hi, background: "#F1F2F5" }}>{brandLabel(plan.brand)}</span>
             <span style={{ ...pill, color: st.color, background: st.bg }}>{st.label}</span>
             <span style={{ fontSize: 11, color: T.lo }}>{plan.period_from} – {plan.period_to}</span>
+            {plan.target_outlets != null && <span style={{ ...pill, color: T.primary, background: "rgba(59,91,219,0.10)" }}>Target: {plan.target_outlets} outlet</span>}
           </div>
         </div>
         {canManage && <button onClick={() => setEditOpen(true)} style={btn}><Pencil size={14} /> Edit</button>}

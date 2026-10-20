@@ -15,9 +15,16 @@ import { ArrowLeft, PackageCheck, CheckCircle2, XCircle, Loader2, MapPin, Naviga
 import supabaseMarta from "../../../../../lib/supabaseMarta";
 import MobileShell, { useMartaSession, ShellSpinner, FF, BRAND } from "../../_shared/MobileShell";
 import { fmtInt } from "../../_shared/activityUi";
-import { fetchPendingReconcile, fetchStreetPending, reconcileBatch, decideStreetInstallation, haversineMeters } from "../../_shared/posmData";
+import { fetchPendingReconcile, fetchStreetPending, reconcileBatch, decideStreetInstallation, haversineMeters, fetchRetailerPending, decideRetailerInstallation } from "../../_shared/posmData";
 
-const TABS = [{ key: "geo", label: "Activity/Outlet" }, { key: "street", label: "Street Branding" }];
+const TABS = [{ key: "geo", label: "Activity/Outlet" }, { key: "retailer", label: "Retailer Installment" }, { key: "street", label: "Street Branding" }];
+
+const RETAILER_STATUS_META = {
+  valid: { label: "Dalam Radius", color: "#15803D", bg: "rgba(21,128,61,0.08)" },
+  out_of_radius: { label: "Luar Radius", color: "#B45309", bg: "rgba(180,83,9,0.08)" },
+  pending: { label: "Tanpa Acuan", color: "#5A5A68", bg: "#F0F0F3" },
+  mismatch: { label: "Tidak Cocok", color: "#DC2626", bg: "rgba(220,38,38,0.08)" },
+};
 const PHOTO_BUCKET = "mh-photos";
 
 export default function PosmReconcilePage() {
@@ -48,7 +55,7 @@ export default function PosmReconcilePage() {
         </div>
       </div>
 
-      {sessionLoading ? <ShellSpinner /> : tab === "geo" ? <GeoReconcileTab email={email} /> : <StreetReviewTab email={email} />}
+      {sessionLoading ? <ShellSpinner /> : tab === "geo" ? <GeoReconcileTab email={email} /> : tab === "retailer" ? <RetailerReviewTab email={email} /> : <StreetReviewTab email={email} />}
     </MobileShell>
   );
 }
@@ -179,6 +186,121 @@ function GeoReconcileTab({ email }) {
             </button>
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════ Tab 2: Retailer Installment (baru) ═══════════════
+function RetailerReviewTab({ email }) {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  const [busyId, setBusyId] = useState(null);
+  const [urls, setUrls] = useState({});
+
+  async function load() {
+    setRows(null); setErr("");
+    try {
+      const data = await fetchRetailerPending();
+      setRows(data || []);
+      const allPaths = (data || []).flatMap((r) => (r.photos || []).map((p) => p.storage_path));
+      if (allPaths.length) {
+        const entries = await Promise.all(allPaths.map(async (path) => {
+          const { data: d } = await supabaseMarta.storage.from(PHOTO_BUCKET).createSignedUrl(path, 3600);
+          return [path, d?.signedUrl || null];
+        }));
+        setUrls(Object.fromEntries(entries));
+      }
+    } catch (e) {
+      setErr(e.message || "Gagal memuat Retailer Installment");
+      setRows([]);
+    }
+  }
+
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function decide(id, decision) {
+    setBusyId(id);
+    try {
+      await decideRetailerInstallation(id, decision, null, email);
+      await load();
+    } catch (e) {
+      setErr(e.message || "Gagal memproses keputusan");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (rows === null) return <div style={{ padding: 20 }}><ShellSpinner /></div>;
+
+  return (
+    <div style={{ padding: "16px 20px 40px", fontFamily: FF }}>
+      {err && <div style={{ marginBottom: 12, padding: "10px 12px", borderRadius: 10, background: "#FDECEC", color: "#C62828", fontSize: 12, fontWeight: 600 }}>{err}</div>}
+
+      {rows.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "40px 20px", background: "#FFFFFF", border: "1px dashed #D8D9E0", borderRadius: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#3A3A44" }}>Tidak ada Retailer Installment menunggu review</div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {rows.map((r) => {
+            const st = RETAILER_STATUS_META[r.location_status] || RETAILER_STATUS_META.pending;
+            return (
+              <div key={r.id} style={{ background: "#FFFFFF", border: "1px solid #E9EAEE", borderRadius: 16, padding: "13px 14px" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                  <div style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 10, background: "#F0F0F3", display: "flex", alignItems: "center", justifyContent: "center", color: "#5A5A68" }}>
+                    <MapPin size={15} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 800, color: "#17181C" }}>{r.retailer_outlet_name || r.retailer_outlet_code}</div>
+                    <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{r.retailer_outlet_code} · {r.retailer_branch_name || "-"} {r.retailer_mc ? `· ${r.retailer_mc}` : ""}</div>
+                    <div style={{ marginTop: 2, fontSize: 11, color: "#8A8A96", fontWeight: 600 }}>{r.md_full_name || "-"} · {r.plan_name || "-"}</div>
+                    <div style={{ marginTop: 4, fontSize: 10.5, color: "#B0B0BA", fontWeight: 600 }}>
+                      {r.location_distance_meters != null ? `Jarak ${fmtInt(r.location_distance_meters)} m` : "Tanpa koordinat acuan"} · {new Date(r.created_at).toLocaleString("id-ID")}
+                    </div>
+                  </div>
+                  <span style={{ flexShrink: 0, fontSize: 10.5, fontWeight: 800, padding: "4px 9px", borderRadius: 999, color: st.color, background: st.bg }}>{st.label}</span>
+                </div>
+
+                {r.location_note && <div style={{ marginTop: 8, fontSize: 11, color: "#B45309", fontWeight: 600 }}>{r.location_note}</div>}
+
+                {(r.items || []).length > 0 && (
+                  <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {r.items.map((it, i) => (
+                      <span key={i} style={{ fontSize: 10.5, fontWeight: 700, color: "#5A5A68", background: "#F0F0F3", borderRadius: 999, padding: "4px 9px" }}>{it.type_name} · {fmtInt(it.qty)} {it.unit}</span>
+                    ))}
+                  </div>
+                )}
+
+                {(r.photos || []).length > 0 ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6, marginTop: 10 }}>
+                    {r.photos.map((p, i) => (
+                      <div key={i} style={{ aspectRatio: "1", borderRadius: 9, overflow: "hidden", background: "#F0F0F3" }}>
+                        {urls[p.storage_path] ? <img src={urls[p.storage_path]} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}><ImageIcon size={14} color="#C4C4CE" /></div>}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 10, fontSize: 10.5, color: "#B45309", fontWeight: 700 }}>Tidak ada foto bukti</div>
+                )}
+
+                {r.note && <div style={{ marginTop: 8, fontSize: 11, color: "#8A8A96", fontStyle: "italic" }}>"{r.note}"</div>}
+
+                <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+                  <button onClick={() => decide(r.id, "rejected")} disabled={busyId === r.id}
+                    style={{ flex: 1, height: 40, borderRadius: 11, border: "1px solid #E4E5EA", background: "#FFFFFF", color: "#5A5A68", fontSize: 12, fontWeight: 700, fontFamily: FF, cursor: busyId === r.id ? "default" : "pointer" }}>
+                    Tolak
+                  </button>
+                  <button onClick={() => decide(r.id, "approved")} disabled={busyId === r.id}
+                    style={{ flex: 1.3, height: 40, borderRadius: 11, border: "none", background: BRAND, color: "#fff", fontSize: 12, fontWeight: 800, fontFamily: FF, cursor: busyId === r.id ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    {busyId === r.id ? <Loader2 size={13} style={{ animation: "mspin .85s linear infinite" }} /> : <CheckCircle2 size={13} />}
+                    Setujui
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );
