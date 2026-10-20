@@ -806,6 +806,7 @@ export default function MartaMobileHome() {
                 mau pasang di branch mana; akses Kelola Stok tetap ada lewat
                 quick-link di dalam hub POSM (lihat posm/page.jsx). */}
             <MenuItem icon={PackageCheck} label="POSM" color="#B32E85" onClick={() => router.push("/martahub/m/posm")} />
+            <MenuItem icon={Target} label="DTU" color="#1565C0" onClick={() => router.push("/martahub/m/dtu")} />
             {/* Menu Approval (Activity) DIHAPUS - approval manusia utk Plan sudah
                 tidak dipakai lagi. Route /martahub/m/approval SENGAJA TIDAK
                 dihapus (bukan cuma di-hide) utk jaga2 deep link lama. POSM

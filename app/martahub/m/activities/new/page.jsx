@@ -2655,7 +2655,6 @@ function LeaveConfirmSheet({ saving, onCancel, onDiscard, onSaveAndLeave }) {
 
 function ActingForSheet({ groups, loading, initialSelected, allowBulkRegion, onClose, onConfirm }) {
   const [branchQ, setBranchQ] = useState("");
-  const [expandedBranch, setExpandedBranch] = useState(null);
   // "Pilih semua BME di region ini" (superadmin saja) - region (string) yg
   // sedang dipilih utk bulk mode, atau null. Mutually exclusive dgn `combos`
   // (seleksi branch×brand manual) - siapa pun yg diinteraksi TERAKHIR yang
@@ -2711,24 +2710,29 @@ function ActingForSheet({ groups, loading, initialSelected, allowBulkRegion, onC
   const comboSet = useMemo(() => new Set(combos.map((c) => comboKey(c.branchName, c.brand))), [combos]);
   const brandsForBranch = (branchName) => Array.from(new Set((groups || []).filter((g) => g.branchName === branchName).map((g) => g.brand)));
 
-  // Ketuk brand di callout: TOGGLE - belum ada di daftar → ditambahkan,
-  // sudah ada → dilepas lagi (unselect). Callout LANGSUNG TERTUTUP setelah
-  // ketukan (baik nambah maupun lepas) - mau ubah lagi utk branch yang sama,
-  // ketuk lagi chip branch-nya (callout kebuka ulang, brand yg sudah masuk
-  // kelihatan tercentang di sana).
-  const toggleCombo = (branchName, brand) => {
-    setBulkRegion(null); // seleksi manual menang - batalkan mode bulk-region
-    setCombos((prev) => comboSet.has(comboKey(branchName, brand))
-      ? prev.filter((c) => !(c.branchName === branchName && c.brand === brand))
-      : [...prev, { branchName, brand }]);
-    setExpandedBranch(null);
+  // Ketuk branch LANGSUNG masukkan/lepas SEMUA brand yang ada di branch itu
+  // sekaligus (biasanya IM3+3ID, atau cuma satu kalau memang baru satu yg
+  // ke-assign) - approver TIDAK PERLU lagi pilih brand secara terpisah
+  // (permintaan user: brand sudah tidak relevan di langkah ini utk SEMUA
+  // role approver/di atas DMO, bukan cuma SPM Sumatera - cukup pilih
+  // branch). Kalau branch itu SUDAH sepenuhnya terpilih (semua brand-nya
+  // ada di combos), ketuk lagi = lepas semua; kalau belum/baru sebagian,
+  // ketuk = lengkapi jadi semua brand branch itu.
+  const toggleBranch = (branchName) => {
+    setBulkRegion(null);
+    const brands = brandsForBranch(branchName);
+    const allSelected = brands.length > 0 && brands.every((b) => comboSet.has(comboKey(branchName, b)));
+    setCombos((prev) => {
+      const withoutBranch = prev.filter((c) => c.branchName !== branchName);
+      return allSelected ? withoutBranch : [...withoutBranch, ...brands.map((b) => ({ branchName, brand: b }))];
+    });
   };
   const removeCombo = (branchName, brand) => setCombos((prev) => prev.filter((c) => !(c.branchName === branchName && c.brand === brand)));
   const clearCombos = () => setCombos([]);
 
   // "Pilih semua BME di region ini" - ambil ALIH dari seleksi manual
   // (combos dikosongkan, bulk menang - lihat catatan `bulkRegion` di atas).
-  const selectBulkRegion = (region) => { setBulkRegion(region); setCombos([]); setExpandedBranch(null); };
+  const selectBulkRegion = (region) => { setBulkRegion(region); setCombos([]); };
   const countForRegion = (region) => (groups || []).filter((g) => g.region === region)
     .reduce((n, g) => n + (g.people.length > 0 ? g.people.length : 1), 0);
   const bulkTargets = useMemo(() => {
@@ -2777,7 +2781,7 @@ function ActingForSheet({ groups, loading, initialSelected, allowBulkRegion, onC
         <div style={{ padding: "10px 20px 4px", flexShrink: 0 }}>
           <div style={{ fontSize: 15, fontWeight: 800 }}>Buat Untuk</div>
           <div style={{ fontSize: 11.5, color: "#8A8A96", marginTop: 2, lineHeight: 1.5 }}>
-            Ketuk branch, lalu brand-nya - langsung masuk daftar di bawah. Kombinasi pertama jadi branch×brand utama plan ini.
+            Ketuk branch - semua brand di branch itu (IM3/3ID) otomatis ikut masuk daftar di bawah. Kombinasi pertama jadi branch×brand utama plan ini.
           </div>
         </div>
 
@@ -2818,14 +2822,16 @@ function ActingForSheet({ groups, loading, initialSelected, allowBulkRegion, onC
                     <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                       {r.branches.map((name) => {
                         const branchCombos = combos.filter((c) => c.branchName === name);
-                        const isOpen = expandedBranch === name;
                         const hasCombos = branchCombos.length > 0;
+                        // Titik warna brand tetap ditampilkan (info, bukan lagi
+                        // kontrol) - cuma supaya approver bisa lihat sekilas brand
+                        // apa saja yg otomatis ikut ter-include di branch ini.
                         return (
-                          <button key={name} onClick={() => { setExpandedBranch(isOpen ? null : name); if (!isOpen) setBulkRegion(null); }}
+                          <button key={name} onClick={() => toggleBranch(name)}
                             style={{
                               display: "flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 999, fontSize: 11.5, fontWeight: 700, fontFamily: FF, cursor: "pointer",
                               background: hasCombos ? "#17181C" : "#F6F7F9",
-                              border: isOpen ? "1.5px solid #ED1C24" : `1px solid ${hasCombos ? "#17181C" : "#E9EAEE"}`,
+                              border: `1px solid ${hasCombos ? "#17181C" : "#E9EAEE"}`,
                               color: hasCombos ? "#FFFFFF" : "#5A5A68",
                             }}>
                             {name}
@@ -2840,40 +2846,6 @@ function ActingForSheet({ groups, loading, initialSelected, allowBulkRegion, onC
                         );
                       })}
                     </div>
-
-                    {/* Callout brand - inline, PERSIS di bawah cluster region yang
-                        sedang berisi branch terbuka, mengikuti alur dokumen biasa
-                        (bukan absolute/popover) supaya TIDAK PERNAH menutupi atau
-                        kepotong elemen lain di sheet. Hanya satu yang terbuka. */}
-                    {r.branches.includes(expandedBranch) && (
-                      <div style={{ marginTop: 8, padding: 12, borderRadius: 12, background: "#FFF6F6", border: "1.5px solid #ED1C24" }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 9 }}>
-                          <div style={{ fontSize: 11.5, fontWeight: 800, color: "#17181C" }}>Pilih brand · {expandedBranch}</div>
-                          <button onClick={() => setExpandedBranch(null)} aria-label="Tutup"
-                            style={{ background: "none", border: "none", cursor: "pointer", color: "#8A8A96", display: "flex", padding: 2 }}>
-                            <X size={14} />
-                          </button>
-                        </div>
-                        <div style={{ display: "flex", gap: 8 }}>
-                          {brandsForBranch(expandedBranch).map((b) => {
-                            const already = comboSet.has(comboKey(expandedBranch, b));
-                            const bg = ACT_BRAND_COLOR[b] || "#8A8A96";
-                            const fg = ACT_BRAND_TEXT[b] || "#FFFFFF";
-                            return (
-                              <button key={b} onClick={() => toggleCombo(expandedBranch, b)}
-                                style={{
-                                  flex: 1, padding: "10px 0", borderRadius: 10, fontSize: 12.5, fontWeight: 800, fontFamily: FF, cursor: "pointer",
-                                  display: "flex", alignItems: "center", justifyContent: "center", gap: 6, letterSpacing: 0.3,
-                                  background: already ? bg : "#FFFFFF", border: `1.5px solid ${bg}`, color: already ? fg : "#5A5A68",
-                                }}>
-                                {already && <Check size={12} color={fg} strokeWidth={3} />}
-                                {ACT_BRAND_LABEL[b] || b.toUpperCase()}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>

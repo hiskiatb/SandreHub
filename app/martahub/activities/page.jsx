@@ -306,6 +306,12 @@ function Body({ email }) {
   const [docCountMap, setDocCountMap] = useState({});
   const [docPhotoMap, setDocPhotoMap] = useState({}); // activity_id -> storage_path foto pertama (utk thumbnail export)
   const [docDriveMap, setDocDriveMap] = useState({}); // activity_id -> Google Drive file id foto pertama (mh_documents.external_ref, diisi Edge Function media-relay) - utk link "Buka di Drive" saat export .xlsx
+  // activity_id -> {sp: jumlah nomor MSISDN SP, fwa: jumlah nomor MSISDN FWA}
+  // tersubmit di mh_dsf_sales_entries - penanda cepat "activity plan mana
+  // yg sudah ada MSISDN-nya" biar gampang tracking (mis. bandingkan dgn
+  // Actual SP/FWA yg keisi tapi MSISDN-nya nol - artinya submit-nya gagal
+  // diam2 di tahap detail, baru keisi angka agregatnya saja).
+  const [msisdnMap, setMsisdnMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0); // 0-100, dipakai bar progress export .xlsx
@@ -498,17 +504,48 @@ function Body({ email }) {
         setDocCountMap(counts);
         setDocPhotoMap(firstPhoto);
         setDocDriveMap(firstDrive);
+
+        // Penanda MSISDN (SP/FWA) per activity plan - chunk .in() yg sama
+        // persis spt dokumentasi foto di atas (alasan chunking sama: URL
+        // kepanjangan kalau .in() langsung dgn ~1000 id). Dijalankan
+        // konkuren bareng chunk dokumentasi via Promise.all gabungan supaya
+        // tidak nambah round-trip berurutan.
+        prog(86, "Memuat data MSISDN…", `0/${idChunks.length} batch`);
+        let msisdnDone = 0;
+        const msisdnChunkResults = await Promise.all(
+          idChunks.map((chunk) =>
+            supabaseMarta.from("mh_dsf_sales_entries").select("activity_id, category").in("activity_id", chunk)
+              .then((res) => {
+                msisdnDone += 1;
+                prog(86 + Math.round((msisdnDone / idChunks.length) * 10), "Memuat data MSISDN…", `${msisdnDone}/${idChunks.length} batch`);
+                return res;
+              })
+          )
+        );
+        const msisdnCounts = {};
+        msisdnChunkResults.forEach(({ data: entries, error }, idx) => {
+          if (error) { console.error(`Gagal memuat data MSISDN (batch ${idx + 1}/${idChunks.length}):`, error); return; }
+          (entries || []).forEach((e) => {
+            if (!msisdnCounts[e.activity_id]) msisdnCounts[e.activity_id] = { sp: 0, fwa: 0 };
+            if (e.category === "sp") msisdnCounts[e.activity_id].sp += 1;
+            else if (e.category === "fwa") msisdnCounts[e.activity_id].fwa += 1;
+          });
+        });
+        setMsisdnMap(msisdnCounts);
+
+        prog(98, "Menyiapkan tampilan tabel…");
         // Dikembalikan (bukan cuma lewat setState) supaya pemanggil yg
         // butuh data BENAR2 segar dalam eksekusi yg SAMA (lihat exportXlsx -
         // "FIX: export cuma sampai tanggal tertentu") tidak kena stale
         // closure React (setState efeknya baru kelihatan di RENDER
         // berikutnya, bukan di baris kode sesudahnya).
-        return { list, branchMap: Object.fromEntries((branches || []).map((b) => [b.id, b.name])), docPhotoMap: firstPhoto, docDriveMap: firstDrive, docCountMap: counts, siteMetaMap: siteMeta };
+        return { list, branchMap: Object.fromEntries((branches || []).map((b) => [b.id, b.name])), docPhotoMap: firstPhoto, docDriveMap: firstDrive, docCountMap: counts, msisdnMap: msisdnCounts, siteMetaMap: siteMeta };
       } else {
         setDocCountMap({});
         setDocPhotoMap({});
         setDocDriveMap({});
-        return { list, branchMap: Object.fromEntries((branches || []).map((b) => [b.id, b.name])), docPhotoMap: {}, docDriveMap: {}, docCountMap: {}, siteMetaMap: siteMeta };
+        setMsisdnMap({});
+        return { list, branchMap: Object.fromEntries((branches || []).map((b) => [b.id, b.name])), docPhotoMap: {}, docDriveMap: {}, docCountMap: {}, msisdnMap: {}, siteMetaMap: siteMeta };
       }
     } catch (e) { setErr(e.message || "Gagal memuat"); return null; }
     finally { setLoading(false); }
@@ -618,11 +655,23 @@ function Body({ email }) {
     { key: "costRatio", label: "Cost Ratio", width: 92, filter: true, get: (r) => pctLabel(r.cost_actual, r.cost_estimate), raw: (r) => pctVal(r.cost_actual, r.cost_estimate), numeric: true, acv: true, invertGood: true },
     { key: "insight", label: "Insight (Optional)", width: 220, filter: true, get: (r) => r.insight || "-" },
     { key: "documentation", label: "Documentation", width: 120, filter: true, get: (r) => (docCountMap[r.id] ? `${docCountMap[r.id]} foto` : "-") },
+    // Penanda cepat activity plan mana yg SUDAH ada detail MSISDN-nya
+    // (SP/FWA, dari mh_dsf_sales_entries) - lihat msisdnMap di load(). Nilai
+    // get() dipakai jg sbg opsi filter ("SP & FWA"/"SP saja"/"FWA saja"/
+    // "Belum ada") - badge visualnya sendiri di-render custom (msisdnBadge).
+    { key: "msisdn", label: "MSISDN", width: 130, filter: true, get: (r) => {
+      const m = msisdnMap[r.id];
+      const sp = m?.sp || 0, fwa = m?.fwa || 0;
+      if (!sp && !fwa) return "Belum ada";
+      if (sp && fwa) return "SP & FWA";
+      if (sp) return "SP saja";
+      return "FWA saja";
+    }, msisdnBadge: true },
     { key: "kecamatanFokus", label: "Kecamatan Fokus", width: 130, filter: true, get: (r) => siteMetaMap[effectiveSiteId(r)]?.kecamatanFokus || "NO" },
     { key: "rgsCategory", label: "RGS Category", width: 120, filter: true, get: (r) => siteMetaMap[effectiveSiteId(r)]?.rgs || "-" },
     { key: "trafficCategory", label: "Traffic Category", width: 130, filter: true, get: (r) => siteMetaMap[effectiveSiteId(r)]?.traffic || "-" },
     { key: "addressable", label: "Addressable", width: 110, filter: true, get: (r) => siteMetaMap[effectiveSiteId(r)]?.addressable || "-" },
-  ], [branchMap, profileMap, bmeAssignMap, docCountMap, cats, batchMap, canRollback, siteMetaMap]);
+  ], [branchMap, profileMap, bmeAssignMap, docCountMap, msisdnMap, cats, batchMap, canRollback, siteMetaMap]);
 
   const FILTER_COLS = useMemo(() => COLUMNS.filter((c) => c.filter), [COLUMNS]);
 
@@ -1937,6 +1986,39 @@ function Body({ email }) {
                           ) : (
                             <span style={{ color: T.mid }}>-</span>
                           )}
+                        </td>
+                      );
+                    }
+                    if (col.msisdnBadge) {
+                      const m = msisdnMap[r.id];
+                      const sp = m?.sp || 0, fwa = m?.fwa || 0;
+                      // Dibandingkan jg dgn Actual SP/FWA (angka agregat manual
+                      // DMO) - kalau actual-nya keisi tapi MSISDN-nya nol, itu
+                      // sinyal submit detail-nya gagal diam2 (lihat catatan bug
+                      // persistNewEntries() di app/martahub/m/activities/[id]/
+                      // submit/page.jsx) - badge-nya dikasih warna beda (kuning)
+                      // spy gampang di-spot di tabel tanpa buka detail satu2.
+                      const actualSp = r.actual_sp, actualFwa = r.actual_fwa;
+                      const spMismatch = (actualSp || 0) > 0 && sp === 0;
+                      const fwaMismatch = (actualFwa || 0) > 0 && fwa === 0;
+                      const Pill = ({ label, count, mismatch }) => (
+                        <span title={mismatch ? `Actual ${label} terisi tapi belum ada nomor MSISDN ${label} - kemungkinan gagal tersimpan` : `${count} nomor ${label}`}
+                          style={{
+                            display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 7px", borderRadius: 999,
+                            fontSize: 10, fontWeight: 800, cursor: "help",
+                            color: count > 0 ? T.success : mismatch ? "#B45309" : T.mid,
+                            background: count > 0 ? T.successBg : mismatch ? "rgba(180,83,9,0.1)" : "#eef1f6",
+                          }}>
+                          {mismatch && <AlertTriangle size={10} />}
+                          {label} {count > 0 ? count : mismatch ? "!" : "0"}
+                        </span>
+                      );
+                      return (
+                        <td key={col.key} style={{ padding: "8px 10px", borderRight: `1px solid ${T.line}` }}>
+                          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                            <Pill label="SP" count={sp} mismatch={spMismatch} />
+                            <Pill label="FWA" count={fwa} mismatch={fwaMismatch} />
+                          </div>
                         </td>
                       );
                     }

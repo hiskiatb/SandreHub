@@ -814,23 +814,45 @@ export default function SubmitActualPage() {
     const typeId = selectedType[cat];
     const typeObj = types[cat].find((t) => t.id === typeId);
 
-    const rawLines = rawText.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean)
-      .flatMap((line) => {
+    // Baris TANPA "|" diproses PERSIS spt logic lama (termasuk
+    // splitGluedMsisdn utk blob digit panjang tanpa pemisah). Baris DENGAN
+    // "|" (format umum rekap aktivasi kartu: "msisdn|imei") ditangani
+    // terpisah SEBELUM digit-stripping supaya "|"-nya tidak ikut kebuang &
+    // gabung jadi satu blob angka raksasa dgn IMEI-nya - cuma token
+    // pertama (sebelum "|") yg dipakai sbg nomor, token kedua (kalau ada &
+    // kelihatan spt IMEI, >=14 digit) disimpan terpisah sbg IMEI.
+    const rawLines = rawText.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
+    const parsedLines = []; // { text, imei }
+    for (const line of rawLines) {
+      if (line.includes("|")) {
+        const parts = line.split("|").map((p) => p.trim());
+        const imeiDigits = parts[1] ? parts[1].replace(/\D/g, "") : "";
+        parsedLines.push({ text: parts[0], imei: imeiDigits.length >= 14 ? imeiDigits : null });
+      } else {
         const onlyDigits = line.replace(/\D/g, "");
-        return onlyDigits.length > 15 ? splitGluedMsisdn(onlyDigits) : [line];
-      });
+        if (onlyDigits.length > 15) {
+          splitGluedMsisdn(onlyDigits).forEach((part) => parsedLines.push({ text: part, imei: null }));
+        } else {
+          parsedLines.push({ text: line, imei: null });
+        }
+      }
+    }
+
     const seen = new Set(entries[cat].map((e) => e.msisdn).concat(pendingTransfers[cat].map((p) => p.msisdn)));
     const toAdd = [];
     let invalidCount = 0;
-    for (const line of rawLines) {
-      let digits = line.replace(/\D/g, "");
+    for (const { text, imei } of parsedLines) {
+      // Konversi ke format 62 PERSIS spt logic lama - cuma sumber "digits"
+      // sekarang dari `text` (nomor yg sudah terpisah dari IMEI), bukan
+      // lagi dari baris mentah.
+      let digits = text.replace(/\D/g, "");
       if (digits.startsWith("0")) digits = "62" + digits.slice(1);
       else if (digits.startsWith("8")) digits = "62" + digits;
       const norm = normalizeMsisdn(digits);
       if (!isValidMsisdn(norm)) { invalidCount++; continue; }
       if (seen.has(norm)) continue;
       seen.add(norm);
-      toAdd.push(norm);
+      toAdd.push({ msisdn: norm, imei });
     }
 
     if (toAdd.length === 0) {
@@ -841,13 +863,13 @@ export default function SubmitActualPage() {
     setMsisdnBulkBusy((b) => ({ ...b, [cat]: true }));
 
     let added = 0, conflicted = 0;
-    for (const msisdn of toAdd) {
+    for (const { msisdn, imei } of toAdd) {
       try {
         const { data: ownerRows } = await supabaseMarta.rpc("mh_dsf_check_msisdn_owner", { p_msisdn: msisdn });
         const owner = ownerRows && ownerRows.length > 0 ? ownerRows[0] : null;
         if (owner) { conflicted++; continue; }
       } catch { /* best-effort - kalau cek gagal, tetap lanjut tambahkan nomor ini */ }
-      setEntries((prev) => ({ ...prev, [cat]: [...prev[cat], { msisdn, typeId, typeName: typeObj?.name, taggedAt: new Date().toISOString(), orgId: entryOrgId }] }));
+      setEntries((prev) => ({ ...prev, [cat]: [...prev[cat], { msisdn, typeId, typeName: typeObj?.name, taggedAt: new Date().toISOString(), orgId: entryOrgId, imei }] }));
       added++;
     }
 
@@ -959,7 +981,12 @@ export default function SubmitActualPage() {
             p_org_id: groupOrgId,
             p_category: cat,
             p_product_type_id: typeId,
-            p_entries: list.map((e) => ({ msisdn: e.msisdn, imei: null, tagged_at: e.taggedAt })),
+            // imei dulu selalu null krn entri manual tidak pernah punya IMEI -
+            // sekarang ikut dikirim kalau ada (hasil paste bulk format
+            // "msisdn|imei", lihat addMsisdnBulk()) supaya benar2 tersimpan
+            // ke kolom mh_dsf_sales_entries.imei (sudah ada dari awal, cuma
+            // belum pernah dipakai).
+            p_entries: list.map((e) => ({ msisdn: e.msisdn, imei: e.imei || null, tagged_at: e.taggedAt })),
           });
           list.forEach((e) => successMsisdn[cat].add(e.msisdn));
         } catch (err) {

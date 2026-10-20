@@ -61,6 +61,7 @@ const NAV = [
   // TIDAK disentuh sama sekali.
   { label: "User Management", icon: "users", path: "assignments", route: "/martahub/assignments" },
   { label: "Kelola Campaign", icon: "send", path: "campaigns", route: "/martahub/campaigns" },
+  { label: "Target Harian", icon: "target", path: "daily-targets", route: "/martahub/daily-targets" },
   { label: "Master Data", icon: "db", path: "master", route: "/martahub/master" },
   { label: "Gallery", icon: "gallery", path: "gallery", route: "/martahub/gallery" },
   { label: "Validasi Lokasi", icon: "check", path: "validasi", route: "/martahub/validasi" },
@@ -96,6 +97,7 @@ function Icon({ name, size = 16, color = "currentColor" }) {
     clipboard: <svg style={s} viewBox="0 0 24 24" {...p}><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="16" y2="15"/><line x1="8" y1="19" x2="12" y2="19"/></svg>,
     sim:       <svg style={s} viewBox="0 0 24 24" {...p}><path d="M15 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z"/><path d="M15 2v5h5"/><path d="M9 13h6M9 17h4"/></svg>,
     building:  <svg style={s} viewBox="0 0 24 24" {...p}><rect x="4" y="2" width="16" height="20" rx="1"/><line x1="8" y1="6" x2="8" y2="6.01"/><line x1="12" y1="6" x2="12" y2="6.01"/><line x1="16" y1="6" x2="16" y2="6.01"/><line x1="8" y1="10" x2="8" y2="10.01"/><line x1="12" y1="10" x2="12" y2="10.01"/><line x1="16" y1="10" x2="16" y2="10.01"/><line x1="8" y1="14" x2="8" y2="14.01"/><line x1="12" y1="14" x2="12" y2="14.01"/><line x1="16" y1="14" x2="16" y2="14.01"/><path d="M9 22v-4h6v4"/></svg>,
+    target:    <svg style={s} viewBox="0 0 24 24" {...p}><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1" fill={color} stroke="none"/></svg>,
   };
   return icons[name] || null;
 }
@@ -175,7 +177,7 @@ export default function MartaShell({ active, title, subtitle, actions, children 
   const [isPending, startNavTransition] = useTransition();
   const navigate = (path) => startNavTransition(() => router.push(path));
   const [mobile, setMobile] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true); // default tertutup (ikon saja) - diminta user
   // Hover-to-peek: saat sidebar TERTUTUP (collapsed), hover mouse di atasnya
   // otomatis "membuka" tampilannya sementara (visuallyCollapsed=false) TANPA
   // mengubah state collapsed asli. Begitu salah satu menu diklik dalam mode
@@ -246,8 +248,15 @@ export default function MartaShell({ active, title, subtitle, actions, children 
       const w = window.innerWidth;
       const m = w < 768;
       setMobile(m);
-      if (m) setCollapsed(false);
-      else { setDrawerOpen(false); setCollapsed(w < 1200); }
+      // Sidebar SELALU default tertutup (ikon saja, hover-to-peek) di semua
+      // lebar layar desktop - sebelumnya resize ke layar lebar (>=1200px)
+      // otomatis memaksa collapsed=false tiap kali resize/navigasi, yang
+      // bikin sidebar kebuka lagi walau user sudah menutupnya. Sekarang
+      // resize cuma ngurus mode mobile (drawer), TIDAK pernah override
+      // collapsed di desktop lagi - toggleNav (tombol panel) jadi satu-
+      // satunya cara buka/tutup permanen.
+      if (m) setDrawerOpen(false);
+      else setDrawerOpen(false);
     };
     onResize();
     window.addEventListener("resize", onResize);
@@ -427,21 +436,6 @@ export default function MartaShell({ active, title, subtitle, actions, children 
             <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.03em", color: T.hi }}>{title}</div>
           </div>
           <div style={{ flex: 1 }} />
-          {ctx?.profile?.role === "spm_sumatera" && (
-            <a href="https://drive.google.com/drive/folders/1zhG0tWeTrFsI22piYeeEuUcOqWoJIPGo" target="_blank" rel="noopener noreferrer"
-              className="mh-btn" title="Buka folder Google Drive dokumentasi POSM"
-              style={{ display: "flex", alignItems: "center", gap: 7, padding: "7px 12px", borderRadius: 9, border: `1px solid ${T.line}`, color: T.mid, fontSize: 12.5, fontWeight: 700, textDecoration: "none" }}>
-              <svg width="15" height="15" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg">
-                <path d="m6.6 66.85 3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3l13.75-23.8h-27.5c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
-                <path d="m43.65 25-13.75-23.8c-1.35.8-2.5 1.9-3.3 3.3l-25.4 44a9.06 9.06 0 0 0 -1.2 4.5h27.5z" fill="#00ac47"/>
-                <path d="m73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5h-27.502l5.852 11.5z" fill="#ea4335"/>
-                <path d="m43.65 25 13.75-23.8c-1.35-.8-2.9-1.2-4.5-1.2h-18.5c-1.6 0-3.15.45-4.5 1.2z" fill="#00832d"/>
-                <path d="m59.8 53h-32.3l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h50.8c1.6 0 3.15-.45 4.5-1.2z" fill="#2684fc"/>
-                <path d="m73.4 26.5-12.7-22c-.8-1.4-1.95-2.5-3.3-3.3l-13.75 23.8 16.15 28h27.45c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
-              </svg>
-              Google Drive
-            </a>
-          )}
           <AssignmentSwitcher email={callerEmail} />
           {actions}
         </header>
