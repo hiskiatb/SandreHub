@@ -96,6 +96,13 @@ export const CATEGORIES = [
 // ini". (Sebelumnya cuma 5 kategori "DTU_*" yg auto-nama - diganti total
 // jadi 7 kategori baru ini per permintaan user.)
 export const AUTO_NAME_CATEGORIES = ["Event Besar", "VA Kecamatan", "AVA Branding", "DTU DSO/DSP HOA", "DTU DMO/DME Kec", "DSE Advokasi", "Promotor"];
+// Kategori yg masih BISA dipilih saat buat plan BARU. 7 kategori lama
+// (Event Besar, VA Kecamatan, AVA Branding, DTU DSO/DSP HOA, DTU DMO/DME
+// Kec, DSE Advokasi, Promotor) dipensiunkan dari picker per permintaan
+// user - plan LAMA yg sudah terlanjur pakai kategori2 itu TETAP tampil apa
+// adanya di mana-mana (CATEGORIES di atas sengaja tidak diubah, dipakai
+// utk label/filter/display), cuma tidak bisa dipilih lagi utk plan baru.
+export const SELECTABLE_CATEGORIES = CATEGORIES.filter((c) => !AUTO_NAME_CATEGORIES.includes(c));
 export const NETWORK_OPTIONS = ["Strong", "Medium", "Weak"];
 export const AREA_OPTIONS = ["High", "Medium", "Low"];
 

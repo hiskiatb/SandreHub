@@ -33,7 +33,7 @@ import SiteTowerIcon from "../../_shared/SiteTowerIcon";
 import SitePickerSheet from "../../_shared/SitePickerSheet";
 import {
   resolveBranchUuid, fetchScopeSites, fetchPoiTypes, fetchActivityForEdit,
-  CATEGORIES, AUTO_NAME_CATEGORIES, NETWORK_OPTIONS, AREA_OPTIONS, snake, syncActivitySites, planDateFields,
+  CATEGORIES, SELECTABLE_CATEGORIES, AUTO_NAME_CATEGORIES, NETWORK_OPTIONS, AREA_OPTIONS, snake, syncActivitySites, planDateFields,
   groupContiguousDates, syncTimesByDate, allDateTimesValid, planTimeFields, timesByDateFromActivity,
   APPROVER_ROLES, fetchAssignableGroups, resolveProfileIdByEmail,
   fetchSalesEntries, deleteSalesEntry,
@@ -1637,7 +1637,7 @@ function StepInfo({ categories, toggleCategory, eventName, setEventName, dates, 
 
       <FieldLabel id="field-categories" text="Activity Category" required top={isApprover || needsBrandPick} />
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, opacity: campaignLocked ? 0.55 : 1, pointerEvents: campaignLocked ? "none" : "auto" }}>
-        {CATEGORIES.map((c) => {
+        {SELECTABLE_CATEGORIES.map((c) => {
           const active = categories.includes(c);
           return (
             <Chip key={c} active={active} onClick={() => toggleCategory(c)} label={c} />

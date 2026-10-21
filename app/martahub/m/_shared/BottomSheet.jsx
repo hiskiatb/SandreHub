@@ -165,6 +165,7 @@ const BottomSheet = forwardRef(function BottomSheet(
     disableBackdropClose = false,
     disableSwipeClose = false,
     lockScroll = true, // kunci scroll halaman di belakang + pull-to-refresh selagi sheet ini terbuka (reference-counted, aman dipakai bertumpuk/nested)
+    footer = null, // ReactNode opsional - dirender DI LUAR area scroll (flex-shrink-0, selalu kelihatan) - utk tombol aksi utama (mis. "Simpan") spy tidak perlu discroll dulu di sheet yg isinya panjang
   },
   ref
 ) {
@@ -269,10 +270,18 @@ const BottomSheet = forwardRef(function BottomSheet(
         </div>
         <div style={{
           flex: 1, minHeight: 0, overflowY: "auto", WebkitOverflowScrolling: "touch", overscrollBehavior: "contain",
-          padding: "0 22px calc(env(safe-area-inset-bottom,0px) + 22px)",
+          padding: footer ? "0 22px 16px" : "0 22px calc(env(safe-area-inset-bottom,0px) + 22px)",
         }}>
           {children}
         </div>
+        {footer && (
+          <div style={{
+            flexShrink: 0, padding: "12px 22px calc(env(safe-area-inset-bottom,0px) + 14px)",
+            borderTop: "1px solid #F0F0F3", background: "#FFFFFF",
+          }}>
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   );

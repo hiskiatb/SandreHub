@@ -51,6 +51,7 @@ const NAV = [
   { label: "POSM", icon: "posm", path: "posmat", route: "/martahub/posmat" },
   { section: "PROGRAM" },
   { label: "Pendataan Outlet", icon: "building", path: "pendataan-outlet", route: "/martahub/pendataan-outlet" },
+  { label: "Report DTU", icon: "target", path: "daily-targets", route: "/martahub/daily-targets" },
   { section: "MANAGEMENT" },
   // Approval Center (Activity Plan) DIHAPUS dari menu - approval manusia utk
   // Plan sudah tidak dipakai lagi (proses activity sekarang langsung jalan
@@ -61,7 +62,6 @@ const NAV = [
   // TIDAK disentuh sama sekali.
   { label: "User Management", icon: "users", path: "assignments", route: "/martahub/assignments" },
   { label: "Kelola Campaign", icon: "send", path: "campaigns", route: "/martahub/campaigns" },
-  { label: "Target Harian", icon: "target", path: "daily-targets", route: "/martahub/daily-targets" },
   { label: "Master Data", icon: "db", path: "master", route: "/martahub/master" },
   { label: "Gallery", icon: "gallery", path: "gallery", route: "/martahub/gallery" },
   { label: "Validasi Lokasi", icon: "check", path: "validasi", route: "/martahub/validasi" },
@@ -296,6 +296,14 @@ export default function MartaShell({ active, title, subtitle, actions, children 
         .mh-btn{transition:opacity .14s,transform .1s;cursor:pointer;border:none;background:none;font-family:${FONT}}
         .mh-btn:hover{opacity:.8}
         .mh-btn:active{transform:scale(.97)}
+
+        /* Hilangkan tombol spinner naik/turun bawaan browser di SEMUA
+           <input type="number"> MartaHub - user mau ketik angka langsung,
+           bukan klik panah kecil (dan panahnya suka ke-trigger scroll-wheel
+           tidak sengaja pas hover, mengubah angka tanpa diketik). */
+        input[type="number"]{-moz-appearance:textfield}
+        input[type="number"]::-webkit-outer-spin-button,
+        input[type="number"]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 
         /* ── Standarisasi seluruh MartaHub - dropdown & tombol rapi ─────────── */
         /* Dropdown: panah kustom, jarak rapi dari tepi (tidak mepet) di semua browser */
