@@ -143,7 +143,7 @@ export default function ReportPage() {
             baris yg sama. */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 11, minWidth: 0 }}>
-            <button onClick={() => router.push("/martahub/m")} aria-label="Kembali ke Beranda"
+            <button onClick={() => router.back()} aria-label="Kembali"
               style={{
                 width: 34, height: 34, borderRadius: 11, background: "#FFFFFF", border: "1px solid #E9EAEE",
                 boxShadow: "0 1px 4px rgba(23,24,28,0.06)", display: "flex", alignItems: "center", justifyContent: "center",

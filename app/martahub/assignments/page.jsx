@@ -52,6 +52,7 @@ const ROLE_LABEL = Object.fromEntries(ROLES);
 // terdaftar sbg role apa" di ProgramAccountSlotRow.
 const PROFILE_ROLE_LABEL = {
   spm_sumatera: "SPM Sumatera",
+  martahub_super_user: "Super User MartaHub",
   marketing_sumatera_program: "Marketing Sumatera (Program)",
   cse_rse: "CSE/RSE",
   bsm: "BSM",
@@ -255,9 +256,20 @@ function Body({ canManage, callerEmail, session, period }) {
   const [scope, setScope] = useState(null);
   useEffect(() => {
     let on = true;
-    getMartaScope(callerEmail).then((s) => { if (on) setScope(s); });
+    getMartaScope(callerEmail).then((s) => {
+      if (!on) return;
+      // Sama pola dgn Dashboard (app/martahub/page.jsx) - admin TraceHub
+      // (spm_sumatera / martahub_super_user, `canManage` prop ini SUDAH
+      // terverifikasi lewat guardMarta/isMartaAdmin di MartaShell, TIDAK
+      // bergantung mh_super_admins/mh_profiles) SELALU diperlakukan
+      // unscoped penuh di sini, apa pun hasil lookup mh_profiles/
+      // mh_super_admins di atas (berhasil/gagal/tidak ketemu) - supaya
+      // admin baru TIDAK PERNAH perlu "didaftarkan manual" dulu ke daftar
+      // Super User sebelum bisa pakai fitur Tambah/Edit assignment penuh.
+      setScope(canManage ? { ...s, role: s.role || "spm_sumatera", unscoped: true, found: true } : s);
+    });
     return () => { on = false; };
-  }, [callerEmail]);
+  }, [callerEmail, canManage]);
 
   // spm_sumatera disaring dari SEMUA yang dirender/dikelola di halaman ini
   // (tabel, hierarki, dropdown Tambah/Edit) - lihat catatan isProtectedRole.
@@ -751,17 +763,36 @@ function HierarchyTree({ rows }) {
   );
 }
 
-/** Super User (SPM Sumatera) - akses penuh semua region & brand. Sumber
- * datanya TERPISAH dari mh_profiles/mh_assignments (tabel mh_super_admins),
- * sebelumnya cuma bisa diisi lewat migrasi manual satu-kali dari SandraHub
- * (mh_super_admins_from_sandrahub) - sekarang bisa ditambah/dihapus
- * langsung dari sini lewat RPC mh_list/add/remove_super_admin (otorisasi
- * SAMA POLA dgn mh_assign_user: hanya spm_sumatera/admin, minimal 1 akun
- * harus selalu ada, tidak bisa hapus akun sendiri - ditegakkan di RPC).
- * Versi desktop dari SuperAdminSection di app/martahub/m/user-management. */
+/** Super User - akses penuh semua region & brand MartaHub. DUA sumber
+ * BERBEDA, ditampilkan sbg 2 tab terpisah supaya jelas mana yg "asli" vs
+ * "dikelola di sini":
+ *
+ * 1) "Akun SPM Sumatera (SandraHub)" - daftar ini SEKARANG OTOMATIS, ambil
+ *    LANGSUNG dari sumber kebenaran role (profiles.role='spm_sumatera' di
+ *    project TraceHub, RPC marta_admin_list_spm_sumatera). READ-ONLY - tidak
+ *    ada tombol Tambah/Hapus di sini sama sekali, karena akses mereka ke
+ *    MartaHub SEKARANG OTOMATIS begitu role-nya ke-set di SandraHub (lihat
+ *    getMartaScope() di lib/martaScope.js - fallback terakhir langsung cek
+ *    role TraceHub) - TIDAK butuh "didaftarkan" ke mana pun lagi. Nambah
+ *    atau mencabut status spm_sumatera cuma lewat SandraHub, bukan di sini.
+ *    (mh_super_admins, tabel bridge manual yg dulu dipakai utk ini, sudah
+ *    tidak lagi jadi syarat akses - dibiarkan ada tapi tidak dipakai lagi
+ *    oleh tab ini, murni legacy.)
+ *
+ * 2) "Super User Baru (OTP)" - akun admin MartaHub yg DIBUAT DARI NOL
+ *    langsung di sini (role martahub_super_user, TIDAK dikenali SandraHub
+ *    sama sekali, login selalu pakai kode OTP tanpa password). Ini SATU-
+ *    SATUNYA bagian kartu ini yg masih punya aksi Tambah/Hapus beneran,
+ *    krn memang di sinilah akun itu lahir/mati (RPC
+ *    marta_admin_create/delete_martahub_super_user di project TraceHub).
+ *
+ * Versi desktop dari SuperAdminSection di app/martahub/m/user-management
+ * (mobile MASIH pakai mh_super_admins lama - belum disamakan). */
 function SuperAdminCard({ callerEmail }) {
-  const [admins, setAdmins] = useState(null);
+  const [spmList, setSpmList] = useState(null);   // tab 1 - read-only, dari profiles.role
+  const [otpList, setOtpList] = useState(null);   // tab 2 - dikelola di sini
   const [err, setErr] = useState("");
+  const [addMode, setAddMode] = useState("existing"); // "existing" = lihat SPM Sumatera (read-only) | "otp" = kelola Super User baru
   const [emailInput, setEmailInput] = useState("");
   const [nameInput, setNameInput] = useState("");
   const [saving, setSaving] = useState(false);
@@ -770,35 +801,84 @@ function SuperAdminCard({ callerEmail }) {
   const load = useCallback(async () => {
     setErr("");
     try {
-      const { data, error } = await supabaseMarta.rpc("mh_list_super_admins");
-      if (error) throw error;
-      setAdmins(data || []);
+      const [{ data: spm, error: spmErr }, { data: otp, error: otpErr }] = await Promise.all([
+        supabase.rpc("marta_admin_list_spm_sumatera"),
+        supabase.rpc("marta_admin_list_martahub_super_users"),
+      ]);
+      if (spmErr) throw spmErr;
+      if (otpErr) throw otpErr;
+      setSpmList(spm || []);
+      setOtpList(otp || []);
     } catch (e) { setErr(e.message || "Gagal memuat Super User"); }
   }, []);
   useEffect(() => { load(); }, [load]);
 
   // Presence realtime bersama - lihat catatan di Body/load() di atas.
   const presenceRows = useLivePresenceRows();
-  if (admins) mergePresence(admins, presenceRows);
+  if (spmList) mergePresence(spmList, presenceRows);
+  if (otpList) mergePresence(otpList, presenceRows);
 
-  async function handleAdd() {
+  const totalCount = (spmList?.length || 0) + (otpList?.length || 0);
+
+  // Bikin akun Super User MartaHub BARU dari nol, 3 langkah (sama pola dgn
+  // ProgramAccountSlotRow.handleAdd di bawah, cuma role-nya beda):
+  // 1) cek dulu email ini belum terdaftar sbg profil APAPUN di TraceHub
+  //    (RPC marta_admin_profile_role_by_email - lihat komentar panjang di
+  //    ProgramAccountSlotRow soal kenapa ini wajib RPC, bukan select+RLS).
+  // 2) auth.users dibuat via signUp() client SEMENTARA (password acak
+  //    sekali-pakai, tidak pernah dipakai - login akun ini selalu lewat OTP).
+  // 3) baris profiles diisi role=martahub_super_user (RPC
+  //    marta_admin_create_martahub_super_user) - SELESAI, akses MartaHub-nya
+  //    sudah otomatis dari situ (tidak perlu daftar ke mh_super_admins lagi).
+  async function handleAddOtp() {
     if (!emailInput.trim() || !nameInput.trim() || saving) return;
+    const email = emailInput.trim().toLowerCase();
+    const fullName = nameInput.trim();
     setSaving(true); setErr("");
     try {
-      const { error } = await supabaseMarta.rpc("mh_add_super_admin", {
-        p_email: emailInput.trim(), p_full_name: nameInput.trim(), p_caller_email: callerEmail || null,
+      const { data: existingRole, error: lookupError } = await supabase.rpc("marta_admin_profile_role_by_email", { p_email: email });
+      if (lookupError) throw new Error(lookupError.message || "Gagal memeriksa email.");
+      if (existingRole) {
+        const label = PROFILE_ROLE_LABEL[existingRole] || existingRole || "role lain";
+        throw new Error(
+          existingRole === "martahub_super_user"
+            ? "Email ini sudah terdaftar sebagai Super User MartaHub."
+            : `Email ini sudah terdaftar sebagai akun ${label} - tidak bisa dipakai lagi untuk Super User MartaHub (OTP). Gunakan email lain.`
+        );
+      }
+
+      const throwawayPassword = `Sup${Math.random().toString(36).slice(2)}${Date.now().toString(36)}!`;
+      const tempClient = createSupabaseClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+        { auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } }
+      );
+      const { data: signUpData, error: signUpError } = await tempClient.auth.signUp({
+        email, password: throwawayPassword, options: { data: { full_name: fullName, role: "martahub_super_user" } },
       });
-      if (error) throw error;
+      if (signUpError) {
+        throw new Error((signUpError.message || "").toLowerCase().includes("already") || (signUpError.message || "").toLowerCase().includes("registered")
+          ? "Email ini sudah terdaftar di sistem (akun login sudah ada), tapi belum ada role CMS - hubungi developer untuk cek manual."
+          : (signUpError.message || "Gagal membuat akun."));
+      }
+      const { error: rpcError } = await supabase.rpc("marta_admin_create_martahub_super_user", {
+        p_user_id: signUpData.user.id, p_email: email, p_full_name: fullName,
+      });
+      if (rpcError) throw new Error(rpcError.message || "Gagal menyimpan profil akun.");
+
       setEmailInput(""); setNameInput("");
       await load();
-    } catch (e) { setErr(e.message || "Gagal menambah Super User"); }
+    } catch (e) { setErr(e.message || "Gagal membuat Super User MartaHub."); }
     finally { setSaving(false); }
   }
 
-  async function handleRemove(email) {
+  // Hapus BENERAN (profiles + auth.users TraceHub sekaligus) - hanya utk
+  // akun tab "otp", tab "existing" read-only (lihat komentar panjang di
+  // atas, tidak ada tombol Hapus utk baris spm_sumatera).
+  async function handleRemoveOtp(target) {
     setErr("");
     try {
-      const { error } = await supabaseMarta.rpc("mh_remove_super_admin", { p_email: email, p_caller_email: callerEmail || null });
+      const { error } = await supabase.rpc("marta_admin_delete_martahub_super_user", { p_email: target.email });
       if (error) throw error;
       setConfirmTarget(null);
       await load();
@@ -812,47 +892,96 @@ function SuperAdminCard({ callerEmail }) {
           <Crown size={15} color="#fff" />
         </div>
         <div>
-          <div style={{ fontWeight: 800, fontSize: 14 }}>Super User (SPM Sumatera) <span style={{ color: T.mid, fontWeight: 500 }}>· {admins ? admins.length : "…"}</span></div>
-          <div style={{ fontSize: 11.5, color: T.mid }}>Akses penuh semua region & brand - minimal 1 akun harus selalu ada</div>
+          <div style={{ fontWeight: 800, fontSize: 14 }}>Super User <span style={{ color: T.mid, fontWeight: 500 }}>· {spmList && otpList ? totalCount : "…"}</span></div>
+          <div style={{ fontSize: 11.5, color: T.mid }}>Akses penuh semua region & brand</div>
         </div>
       </div>
       <div style={{ padding: "12px 16px" }}>
         {err && <div style={{ ...card, borderColor: T.error, background: T.errorBg, color: T.error, marginBottom: 10, padding: 10 }}>{err}</div>}
-        {(admins || []).map((a) => {
-          const isSelf = !!(callerEmail && a.email && a.email.toLowerCase() === callerEmail.toLowerCase());
-          return (
-            <div key={a.email} style={{ display: "flex", alignItems: "center", gap: 10, background: "#FBFBFC", border: `1px solid ${T.line}`, borderRadius: 10, padding: "8px 12px", marginBottom: 6 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 700, fontSize: 12.5, display: "flex", alignItems: "center", gap: 6 }}>
-                  {a.full_name || "-"}
-                  {isSelf && <span style={{ fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 999, color: T.success, background: T.successBg }}>Anda</span>}
-                </div>
-                <div style={{ fontSize: 11, color: T.mid }}>{a.email}</div>
-                <LoginStatusBadge person={a} />
-              </div>
-              {isSelf ? (
-                <div title="Anda tidak bisa menghapus akun sendiri" style={{ ...btn, color: T.lo, cursor: "default" }}><UserX size={13} /></div>
-              ) : (
-                <button onClick={() => setConfirmTarget(a)} style={{ ...btn, color: T.error, border: `1px solid ${T.error}44` }}><UserX size={13} /> Hapus</button>
-              )}
-            </div>
-          );
-        })}
-        {admins && admins.length === 0 && <div style={{ fontSize: 12.5, color: T.lo, padding: "6px 0" }}>Belum ada Super User.</div>}
 
-        <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-          <input value={emailInput} onChange={(e) => setEmailInput(e.target.value)} placeholder="Email" style={{ ...inp, flex: "1 1 200px" }} />
-          <input value={nameInput} onChange={(e) => setNameInput(e.target.value.toUpperCase())} placeholder="NAMA LENGKAP" style={{ ...inp, flex: "1 1 180px", textTransform: "uppercase" }} />
-          <button onClick={handleAdd} disabled={saving || !emailInput.trim() || !nameInput.trim()} style={{ ...pbtn, opacity: saving || !emailInput.trim() || !nameInput.trim() ? 0.5 : 1 }}>
-            {saving ? <Loader2 size={14} style={{ animation: "spin .8s linear infinite" }} /> : <UserPlus size={14} />} Tambah
+        <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+          <button onClick={() => setAddMode("existing")}
+            style={{ flex: 1, fontSize: 11.5, fontWeight: 700, padding: "7px 10px", borderRadius: 8, cursor: "pointer", border: `1px solid ${addMode === "existing" ? T.blue : T.line}`, background: addMode === "existing" ? T.blueBg : "#fff", color: addMode === "existing" ? T.blue : T.mid }}>
+            Akun SPM Sumatera (SandraHub) · {spmList ? spmList.length : "…"}
+          </button>
+          <button onClick={() => setAddMode("otp")}
+            style={{ flex: 1, fontSize: 11.5, fontWeight: 700, padding: "7px 10px", borderRadius: 8, cursor: "pointer", border: `1px solid ${addMode === "otp" ? "#7C3AED" : T.line}`, background: addMode === "otp" ? "#F3E8FF" : "#fff", color: addMode === "otp" ? "#7C3AED" : T.mid }}>
+            Super User Baru (OTP) · {otpList ? otpList.length : "…"}
           </button>
         </div>
+
+        {addMode === "existing" ? (
+          <>
+            <div style={{ fontSize: 11, color: T.mid, marginBottom: 10 }}>
+              Daftar ini OTOMATIS dari role <code>spm_sumatera</code> di SandraHub - akses penuh MartaHub mereka sudah aktif dengan sendirinya, tidak perlu/bisa ditambah atau dihapus dari sini. Kelola role-nya langsung di SandraHub.
+            </div>
+            {(spmList || []).map((a) => {
+              const isSelf = !!(callerEmail && a.email && a.email.toLowerCase() === callerEmail.toLowerCase());
+              return (
+                <div key={a.email} style={{ display: "flex", alignItems: "center", gap: 10, background: "#FBFBFC", border: `1px solid ${T.line}`, borderRadius: 10, padding: "8px 12px", marginBottom: 6 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 12.5, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      {a.full_name || "-"}
+                      {isSelf && <span style={{ fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 999, color: T.success, background: T.successBg }}>Anda</span>}
+                      <span title="Akun SPM Sumatera dari SandraHub - login pakai password seperti biasa"
+                        style={{ fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 999, color: T.blue, background: T.blueBg }}>
+                        Dari SandraHub
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 11, color: T.mid }}>{a.email}</div>
+                    <LoginStatusBadge person={a} />
+                  </div>
+                </div>
+              );
+            })}
+            {spmList && spmList.length === 0 && <div style={{ fontSize: 12.5, color: T.lo, padding: "6px 0" }}>Belum ada akun spm_sumatera.</div>}
+          </>
+        ) : (
+          <>
+            {(otpList || []).map((a) => {
+              const isSelf = !!(callerEmail && a.email && a.email.toLowerCase() === callerEmail.toLowerCase());
+              return (
+                <div key={a.email} style={{ display: "flex", alignItems: "center", gap: 10, background: "#FBFBFC", border: `1px solid ${T.line}`, borderRadius: 10, padding: "8px 12px", marginBottom: 6 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 12.5, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      {a.full_name || "-"}
+                      {isSelf && <span style={{ fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 999, color: T.success, background: T.successBg }}>Anda</span>}
+                      <span title="Dibuat langsung dari MartaHub - login pakai kode OTP, tidak ada password, tidak dikenali SandraHub"
+                        style={{ fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 999, color: "#7C3AED", background: "#F3E8FF" }}>
+                        OTP · MartaHub
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 11, color: T.mid }}>{a.email}</div>
+                    <LoginStatusBadge person={a} />
+                  </div>
+                  {isSelf ? (
+                    <div title="Anda tidak bisa menghapus akun sendiri" style={{ ...btn, color: T.lo, cursor: "default" }}><UserX size={13} /></div>
+                  ) : (
+                    <button onClick={() => setConfirmTarget(a)} style={{ ...btn, color: T.error, border: `1px solid ${T.error}44` }}><UserX size={13} /> Hapus</button>
+                  )}
+                </div>
+              );
+            })}
+            {otpList && otpList.length === 0 && <div style={{ fontSize: 12.5, color: T.lo, padding: "6px 0" }}>Belum ada Super User MartaHub (OTP).</div>}
+
+            <div style={{ fontSize: 11, color: T.mid, margin: "10px 0 8px" }}>
+              Bikin akun admin MartaHub baru dari NOL - login selalu pakai kode OTP email (tanpa password), dan TIDAK dikenali SandraHub sama sekali.
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input value={emailInput} onChange={(e) => setEmailInput(e.target.value)} placeholder="Email" style={{ ...inp, flex: "1 1 200px" }} />
+              <input value={nameInput} onChange={(e) => setNameInput(e.target.value.toUpperCase())} placeholder="NAMA LENGKAP" style={{ ...inp, flex: "1 1 180px", textTransform: "uppercase" }} />
+              <button onClick={handleAddOtp} disabled={saving || !emailInput.trim() || !nameInput.trim()} style={{ ...pbtn, opacity: saving || !emailInput.trim() || !nameInput.trim() ? 0.5 : 1 }}>
+                {saving ? <Loader2 size={14} style={{ animation: "spin .8s linear infinite" }} /> : <UserPlus size={14} />} Tambah
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       {confirmTarget && (
         <ConfirmModal title={`Hapus ${confirmTarget.full_name || confirmTarget.email}?`}
-          message="Akun ini akan dihapus dari daftar Super User (SPM Sumatera) - akses login lewat SandraHub tidak dicabut, tapi hak akses penuh MartaHub-nya berakhir. Tidak bisa dilakukan kalau ini Super User terakhir."
-          confirmLabel="Hapus" onConfirm={() => handleRemove(confirmTarget.email)} onClose={() => setConfirmTarget(null)} />
+          message="Akun ini akan DIHAPUS SEPENUHNYA (bukan cuma dicabut aksesnya) - akun ini memang cuma dibuat untuk MartaHub (OTP), jadi tidak ada akses lain yang perlu dipertahankan. Email ini bisa langsung didaftarkan ulang kalau perlu."
+          confirmLabel="Hapus" onConfirm={() => handleRemoveOtp(confirmTarget)} onClose={() => setConfirmTarget(null)} />
       )}
     </div>
   );

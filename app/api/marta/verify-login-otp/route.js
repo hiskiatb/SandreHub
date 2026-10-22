@@ -96,7 +96,10 @@ export async function POST(req) {
       );
     }
 
-    if (profile.role !== "marketing_sumatera_program") {
+    // martahub_super_user (Super User MartaHub baru, dibuat langsung dari
+    // MartaHub sendiri) JUGA login lewat OTP - sama jalurnya persis dgn
+    // marketing_sumatera_program (lihat lib/martaAccess.js MARTA_OTP_LOGIN_ROLES).
+    if (profile.role !== "marketing_sumatera_program" && profile.role !== "martahub_super_user") {
       return NextResponse.json(
         { success: false, error: "Akun ini tidak memiliki akses ke MartaHub." },
         { status: 403 }
