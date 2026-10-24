@@ -146,7 +146,20 @@ export default function RpvUploadPage() {
     setCameraState("starting");
     stopCamera();
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: mode }, audio: false });
+      // UPDATE (permintaan user - "mengapa hasilnya tercompress ya, saya
+      // ingin original quality"): SEBELUMNYA getUserMedia dipanggil TANPA
+      // batasan resolusi sama sekali - browser/device bebas kasih stream
+      // seadanya (banyak device DEFAULT ke resolusi rendah spt 640x480 kalau
+      // tidak diminta eksplisit), jadi hasil jepretan ikut kabur/kecil
+      // walau kamera fisiknya jauh lebih tinggi. Skrg diminta resolusi
+      // SETINGGI MUNGKIN (ideal 4K, minimal diusahakan >= Full HD) - pakai
+      // `ideal` (bukan `exact`) spy tetap AMAN fallback ke resolusi
+      // tertinggi yg didukung kamera itu kalau 4K tidak tersedia, tidak
+      // bikin getUserMedia gagal total di device yg kameranya lebih kecil.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: mode, width: { ideal: 3840 }, height: { ideal: 2160 } },
+        audio: false,
+      });
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -196,9 +209,29 @@ export default function RpvUploadPage() {
     setFacing((f) => (f === "environment" ? "user" : "environment"));
   };
 
-  const capturePhoto = () => {
+  const enqueueCapturedBlob = (blob) => {
+    if (!blob) return;
+    const file = new File([blob], `camera-${Date.now()}.jpg`, { type: blob.type || "image/jpeg" });
+    const item = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      file, previewUrl: URL.createObjectURL(blob), status: "pending", progress: 0, photoCode: null, error: "",
+      startedAt: null, uploadMs: null, fileSizeBytes: blob.size || null,
+      frameTemplateId: isDirectFrame ? (selectedFrame?.id || null) : null,
+      crop: DEFAULT_CROP, // UPDATE "Frame Langsung" - posisi foto bisa digeser/zoom spt di CMS (lihat DirectFrameReviewScreen)
+    };
+    setQueue((q) => [item, ...q]);
+    setCameraOpen(false);
+    setPhase("preview"); // langsung tampil sbg preview - belum diupload
+  };
+
+  // Ambil 1 FRAME dari video STREAM yg sedang tampil di layar (cara lama,
+  // selalu tersedia di semua browser) - dipakai sbg FALLBACK kalau
+  // ImageCapture.takePhoto() tidak didukung/gagal. Resolusinya dibatasi
+  // resolusi stream video (lihat constraint width/height di startCamera),
+  // BUKAN resolusi foto still asli sensor kamera device.
+  const captureFromVideoFrame = () => new Promise((resolve) => {
     const video = videoRef.current;
-    if (!video || !video.videoWidth) return;
+    if (!video || !video.videoWidth) { resolve(null); return; }
     const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
@@ -208,20 +241,56 @@ export default function RpvUploadPage() {
     // belakang ("environment") dibiarkan apa adanya.
     if (facing === "user") { ctx.translate(canvas.width, 0); ctx.scale(-1, 1); }
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    canvas.toBlob((blob) => {
-      if (!blob) return;
-      const file = new File([blob], `camera-${Date.now()}.jpg`, { type: "image/jpeg" });
-      const item = {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        file, previewUrl: URL.createObjectURL(blob), status: "pending", progress: 0, photoCode: null, error: "",
-        startedAt: null, uploadMs: null, fileSizeBytes: blob.size || null,
-        frameTemplateId: isDirectFrame ? (selectedFrame?.id || null) : null,
-        crop: DEFAULT_CROP, // UPDATE "Frame Langsung" - posisi foto bisa digeser/zoom spt di CMS (lihat DirectFrameReviewScreen)
-      };
-      setQueue((q) => [item, ...q]);
-      setCameraOpen(false);
-      setPhase("preview"); // langsung tampil sbg preview - belum diupload
-    }, "image/jpeg", 0.92);
+    canvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.98);
+  });
+
+  // Mirror horizontal 1 blob foto - dipakai khusus utk hasil
+  // ImageCapture.takePhoto() kamera DEPAN: takePhoto() ambil langsung dari
+  // sensor (jalur foto still, bukan video), jadi TIDAK otomatis ikut
+  // ter-mirror spt tampilan <video> di layar - perlu di-flip manual di
+  // sini spy hasilnya konsisten dgn apa yg tamu lihat saat menjepret.
+  const mirrorBlobHorizontally = (blob) => new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(img, 0, 0);
+      URL.revokeObjectURL(img.src);
+      canvas.toBlob((out) => resolve(out || blob), "image/jpeg", 0.98);
+    };
+    img.onerror = () => resolve(blob);
+    img.src = URL.createObjectURL(blob);
+  });
+
+  // UPDATE (permintaan user - "ohh ini konsepnya video ya berarti tidak
+  // bisa betul betul foto ya?"): SEBELUMNYA SELALU ambil foto lewat
+  // captureFromVideoFrame (1 frame dari stream video) - resolusinya
+  // dibatasi resolusi stream video, bukan resolusi foto still ASLI sensor
+  // kamera (yg di HP modern umumnya jauh lebih tinggi drpd resolusi video
+  // yg dikirim ke browser). Skrg DIUTAMAKAN pakai ImageCapture.takePhoto()
+  // - API browser yg benar2 memakai jalur FOTO STILL kamera (bukan video) -
+  // kalau device/browser-nya mendukung (umumnya Android/Chrome; iOS/
+  // Safari TIDAK mendukung ImageCapture sama sekali). Gagal apa pun
+  // sebabnya (tidak didukung, takePhoto() di-reject, dsb) -> otomatis
+  // fallback diam2 ke cara lama spy tetap jalan normal di semua device.
+  const capturePhoto = async () => {
+    let blob = null;
+    const track = streamRef.current?.getVideoTracks?.()[0];
+    if (track && typeof window !== "undefined" && "ImageCapture" in window) {
+      try {
+        const capture = new window.ImageCapture(track);
+        const photoBlob = await capture.takePhoto();
+        blob = facing === "user" ? await mirrorBlobHorizontally(photoBlob) : photoBlob;
+      } catch {
+        blob = null; // gagal -> lanjut fallback di bawah
+      }
+    }
+    if (!blob) blob = await captureFromVideoFrame();
+    enqueueCapturedBlob(blob);
   };
 
   useEffect(() => {
@@ -293,6 +362,19 @@ export default function RpvUploadPage() {
     // membuka file-picker OS saja (lihat onGallery di FramePickScreen) -
     // kalau tamu batal pilih file, tetap di FramePickScreen spt semula.
     if (isDirectFrame) setFramePicked(true);
+    // FIX (permintaan user - "saat upload galeri gagal jangan biarkan dia
+    // ke laman ini, dan... tambahkan tombol kembali... agar tidak stuck di
+    // laman ini"): kamera DITUTUP DI SINI (setelah file benar2 terpilih),
+    // BUKAN lagi lgsg saat tombol "Pilih dari Galeri" di CameraView ditekan
+    // (lihat onUseGallery di bawah). Sebelumnya cameraOpen di-set false
+    // SEBELUM tau hasil file-picker OS - kalau tamu batal pilih (atau
+    // picker-nya gagal), cameraOpen sudah kadung false & framePicked sudah
+    // true sejak sblmnya (dari alur "Ambil Foto"), jadi render JATUH ke
+    // DirectFrameReviewScreen dgn queue MASIH KOSONG (blm ada foto sama
+    // sekali) - layar itu TIDAK ADA tombol apa pun selain yg muncul kalau
+    // queue.length > 0, jadi tamu macet permanen di layar kosong itu. Skrg
+    // kamera cuma ditutup setelah kita BENAR2 punya file.
+    setCameraOpen(false);
   };
 
   const removeItem = (id) => setQueue((q) => q.filter((x) => x.id !== id));
@@ -466,7 +548,11 @@ export default function RpvUploadPage() {
         canFlip={hasMultipleCameras}
         onCapture={capturePhoto}
         onRetry={() => startCamera(facing)}
-        onUseGallery={() => { setCameraOpen(false); fileRef.current?.click(); }}
+        // FIX (lihat catatan di onPick): kamera TIDAK ditutup di sini lagi -
+        // cuma buka file-picker OS, kamera baru ditutup di onPick SETELAH
+        // tamu benar2 pilih file (kalau batal, kamera tetap kebuka spt
+        // semula, bukan loncat ke layar lain yg bisa kosong).
+        onUseGallery={() => fileRef.current?.click()}
         headerTitle={isDirectFrame ? "Ambil Foto" : undefined}
         onBack={() => { if (queue.length === 0) { setFramePicked(false); } setCameraOpen(false); }}
         sessionTitle={session?.title}
@@ -500,6 +586,18 @@ export default function RpvUploadPage() {
           onAddCamera={() => setCameraOpen(true)} onAddGallery={() => fileRef.current?.click()}
           onChangeFrame={() => setFramePicked(false)}
           onUpload={startUpload}
+          // FIX (permintaan user - "tambahkan tombol kembali di kiri atas
+          // agar tidak stuck di laman ini"): tombol X jaga-jaga di pojok
+          // kiri atas - SELALU ada apa pun isi queue-nya (beda dgn tombol
+          // "Batalkan" di bawah yg cuma muncul saat queue.length > 0),
+          // supaya kalaupun suatu saat layar ini kebuka dgn queue kosong
+          // (mis. sebab lain yg blm ketahuan), tamu tetap punya jalan keluar
+          // - balik ke FramePickScreen, bukan macet permanen.
+          onBack={() => {
+            if (queue.length > 0 && !window.confirm("Foto yg sudah diambil/dipilih akan dibatalkan. Kembali ke pilih frame?")) return;
+            queue.forEach((it) => removeItem(it.id));
+            setFramePicked(false);
+          }}
         />
         {historyOpen && <UploadHistoryPanel history={uploadHistory} onClose={() => setHistoryOpen(false)} />}
       </>
@@ -874,7 +972,7 @@ function DirectFrameCropCard({ item, ratio, template, customFonts, sessionTitle,
  * ditampilkan DENGAN bingkainya (WYSIWYG via DirectFrameCropCard di atas),
  * bukan cuma thumbnail mentah, & tema gelap+ambient konsisten dgn
  * FramePickScreen/CameraView sebelumnya di alur ini. */
-function DirectFrameReviewScreen({ queue, phase, tick, frameTemplates, customFonts, sessionTitle, selectedFrameName, onRemove, onCropChange, onAddCamera, onAddGallery, onChangeFrame, onUpload }) {
+function DirectFrameReviewScreen({ queue, phase, tick, frameTemplates, customFonts, sessionTitle, selectedFrameName, onRemove, onCropChange, onAddCamera, onAddGallery, onChangeFrame, onUpload, onBack }) {
   const ratio = { w: PRINT_SIZE.w, h: PRINT_SIZE.h };
   const uploading = phase === "uploading";
   const pendingOrDoneCount = queue.filter((x) => x.status === "done").length;
@@ -907,11 +1005,23 @@ function DirectFrameReviewScreen({ queue, phase, tick, frameTemplates, customFon
           ukuran & posisi senada (sama2 di kiri-atas blok konten) bikin
           transisi kerasa 1 alur, bukan loncat ke layar lain. */}
       <div style={{ padding: "22px 20px 16px", borderBottom: `1px solid ${FP_LINE}`, position: "sticky", top: 0, zIndex: 5, background: "rgba(10,10,11,0.78)", backdropFilter: "blur(14px)" }}>
-        <div style={{ maxWidth: 520, width: "100%", margin: "0 auto", display: "flex", alignItems: "center", gap: uploading ? 14 : 0 }}>
+        <div style={{ maxWidth: 520, width: "100%", margin: "0 auto", display: "flex", alignItems: "center", gap: uploading ? 14 : 10 }}>
           {uploading && (
             <div className="rpv-df-header-ring-in" style={{ flexShrink: 0 }}>
               <CircularProgress value={overallProgress} size={50} />
             </div>
+          )}
+          {/* UPDATE (permintaan user - "tambahkan tombol kembali di kiri
+              atas agar tidak stuck di laman ini"): tombol X jaga-jaga -
+              SELALU dirender (tidak digantung queue.length > 0 spt tombol
+              "Batalkan" di bawah), disembunyikan cuma selagi upload aktif
+              berjalan (tidak masuk akal membatalkan di tengah proses
+              unggah). */}
+          {!uploading && (
+            <button onClick={onBack} aria-label="Kembali"
+              style={{ flexShrink: 0, width: 36, height: 36, borderRadius: 999, border: "none", background: FP_CARD_HI, color: FP_MID, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+              <X size={16} />
+            </button>
           )}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: uploading ? 17.5 : 16.5, fontWeight: 800, color: FP_INK, letterSpacing: "-0.01em" }}>
@@ -2504,16 +2614,25 @@ function PhotoGallerySheet({ sessionCode, templates, customFonts, sessionTitle, 
         </div>
       </div>
 
-      <div style={{ position: "relative", zIndex: 1, display: "flex", gap: 8, overflowX: "auto", padding: "12px 16px", maxWidth: 560, width: "100%", margin: "0 auto", boxSizing: "border-box", WebkitOverflowScrolling: "touch" }}>
-        {[{ id: "all", label: "Semua" }, { id: "none", label: "Tanpa Frame" }, ...frameNameChips.map((name) => ({ id: name, label: name }))].map((chip) => {
-          const active = filterName === chip.id;
-          return (
-            <button key={chip.id} onClick={() => setFilterName(chip.id)}
-              style={{ flexShrink: 0, height: 32, padding: "0 13px", borderRadius: 999, border: active ? "none" : `1px solid ${FP_LINE}`, background: active ? `linear-gradient(135deg,${RED},${MAGA})` : FP_FIELD, color: active ? "#fff" : FP_MID, fontSize: 11.5, fontWeight: 800, fontFamily: FONT, cursor: "pointer", whiteSpace: "nowrap" }}>
-              {chip.label}
-            </button>
-          );
-        })}
+      {/* UPDATE (permintaan user - "untuk filter frame dropdown saja dan
+          urutkan dari template yang terakhir diupload"): baris chip yg
+          discroll horizontal DIGANTI 1 dropdown native - lebih ringkas &
+          tidak makan tempat kalau daftar framenya panjang. Urutan opsi
+          ikut `frameNameChips` yg sudah urut dari frame yg foto TERBARUNYA
+          plg baru diupload (lihat komentar di frameNameChips di atas -
+          `photos` sumbernya sendiri sudah urut uploaded_at DESC). */}
+      <div style={{ position: "relative", zIndex: 1, padding: "12px 16px", maxWidth: 560, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
+        <div style={{ position: "relative" }}>
+          <select value={filterName} onChange={(e) => setFilterName(e.target.value)}
+            style={{ width: "100%", height: 42, borderRadius: 12, border: `1px solid ${FP_LINE}`, background: FP_FIELD, color: FP_INK, fontSize: 12.5, fontWeight: 800, fontFamily: FONT, padding: "0 34px 0 14px", boxSizing: "border-box", appearance: "none", WebkitAppearance: "none", cursor: "pointer" }}>
+            <option value="all">Semua Frame</option>
+            <option value="none">Tanpa Frame</option>
+            {frameNameChips.map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+          <ChevronRight size={14} color={FP_SUB} style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%) rotate(90deg)", pointerEvents: "none" }} />
+        </div>
       </div>
 
       <div style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "8px 16px 40px", maxWidth: 560, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
