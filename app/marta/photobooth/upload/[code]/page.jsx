@@ -23,10 +23,10 @@
  */
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, Camera, Check, Clock, Download, Frame as FrameIcon, ImagePlus, Images, Link2, Loader2, Move, Pencil, QrCode, RefreshCcw, RotateCcw, Search, Sparkles, SwitchCamera, Ticket, Trash2, Upload, X, Zap, ZoomIn } from "lucide-react";
+import { AlertTriangle, Camera, Check, ChevronLeft, ChevronRight, Clock, Download, Frame as FrameIcon, ImagePlus, Images, Link2, Loader2, Move, Pencil, QrCode, RefreshCcw, RotateCcw, Search, Sparkles, SwitchCamera, Ticket, Trash2, Upload, X, Zap, ZoomIn } from "lucide-react";
 import Link from "next/link";
 import QRCode from "qrcode";
-import { getRpvSession, uploadRpvPhoto, rpvThroughputMbps, listRpvPhotos, listRpvFrameTemplates, listRpvCustomFonts, rpvPublicUrl, subscribeRpvPhotos, saveRpvFrameTemplate, deleteRpvFrameTemplate, uploadRpvTemplateImage, saveRpvPhotoCrop } from "../../../../../lib/rpv";
+import { getRpvSession, uploadRpvPhoto, rpvThroughputMbps, listRpvPhotos, listRpvPhotosGallery, listRpvFrameTemplates, listRpvCustomFonts, rpvPublicUrl, subscribeRpvPhotos, saveRpvFrameTemplate, deleteRpvFrameTemplate, uploadRpvTemplateImage, saveRpvPhotoCrop } from "../../../../../lib/rpv";
 import { PhotoboothPwaHead, usePhotoboothServiceWorker } from "../../_pwa";
 import { FrameOverlayElements, PhotoFrame, PRINT_SIZE, DEFAULT_CROP, renderPhotoFrameToBlob } from "../../_frame";
 
@@ -246,7 +246,9 @@ export default function RpvUploadPage() {
         } catch { /* diamkan */ }
         historyUnsubRef.current = subscribeRpvPhotos(s.id, (row) => {
           const photoCode = row.photo_code ?? row.code;
-          const queueLabel = row.queue_no != null ? String(row.queue_no).padStart(5, "0") : null;
+          // UPDATE (permintaan user - "4 digit unique"): padStart turun dr
+          // 5 ke 4 digit, sinkron dgn server (rpv_confirm_photo dkk).
+          const queueLabel = row.queue_no != null ? String(row.queue_no).padStart(4, "0") : null;
           setUploadHistory((prev) => (prev.some((p) => p.photo_code === photoCode)
             ? prev
             : [{ photo_code: photoCode, storage_path: row.storage_path, url: rpvPublicUrl(row.storage_path), uploaded_at: row.uploaded_at, queue_label: queueLabel, is_ai_result: row.is_ai_result }, ...prev]));
@@ -312,10 +314,16 @@ export default function RpvUploadPage() {
     const startedAt = performance.now();
     setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "uploading", progress: 0.02, startedAt } : x)));
     try {
-      const { photoCode, uploadMs, fileSizeBytes } = await uploadRpvPhoto(code, item.file, (p) => {
+      // UPDATE (permintaan user - "perbaiki untuk penomoran foto dari Pilih
+      // Frame ini... ubah nomor antrianya juga start dari 1, 4 digit unique
+      // untuk semua foto dari semua frame agar mudah dicari di cms"):
+      // uploadRpvPhoto skrg jg kasih balik queueNo/queueLabel (lihat
+      // lib/rpv.js) - disimpan ke item antrean spy "{Photo ID}" di bingkai &
+      // layar sukses nunjukin nomor BENERAN, bukan placeholder "0000" terus.
+      const { photoCode, uploadMs, fileSizeBytes, queueNo, queueLabel } = await uploadRpvPhoto(code, item.file, (p) => {
         setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, progress: p } : x)));
       }, { frameTemplateId: item.frameTemplateId || null });
-      setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "done", progress: 1, photoCode, uploadMs, fileSizeBytes: fileSizeBytes ?? x.fileSizeBytes } : x)));
+      setQueue((q) => q.map((x) => (x.id === item.id ? { ...x, status: "done", progress: 1, photoCode, uploadMs, fileSizeBytes: fileSizeBytes ?? x.fileSizeBytes, queueNo, queueLabel } : x)));
       // Riwayat sendiri sudah ke-update otomatis lewat subscribeRpvPhotos
       // (real-time, mencakup semua device) - tidak perlu disimpan manual lagi.
       // UPDATE "Frame Langsung" - simpan penyesuaian geser/zoom (kalau ada,
@@ -425,6 +433,7 @@ export default function RpvUploadPage() {
           templates={frameTemplates}
           loading={frameTemplatesState !== "ready"}
           customFonts={customFonts}
+          sessionCode={code}
           sessionTitle={session?.title}
           selected={selectedFrame}
           onSelect={setSelectedFrame}
@@ -942,7 +951,7 @@ function DirectFrameReviewScreen({ queue, phase, tick, frameTemplates, customFon
             return (
               <div key={it.id} className={uploading ? "rpv-df-upload-card" : undefined} style={{ position: "relative" }}>
                 <DirectFrameCropCard item={it} ratio={ratio} template={template} customFonts={customFonts} sessionTitle={sessionTitle}
-                  queueLabel="00000" onCropChange={onCropChange} onRemove={onRemove} interactive={!uploading} />
+                  queueLabel="0000" onCropChange={onCropChange} onRemove={onRemove} interactive={!uploading} />
                 {uploading && (
                   <div style={{ position: "absolute", inset: 0, borderRadius: 20, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
                     {it.status === "uploading" && (
@@ -1095,7 +1104,12 @@ function DirectFrameSuccessScreen({ doneItems, errorCount, frameTemplates, custo
     try {
       const blob = await renderPhotoFrameToBlob({
         photo: { url: it.previewUrl }, ratio, crop: it.crop || DEFAULT_CROP,
-        frame: template ? "custom" : "none", queueLabel: it.photoCode || "00000", sessionTitle,
+        // FIX ("4 digit unique untuk semua foto... agar mudah dicari di
+        // cms"): sblmnya dipakai it.photoCode (kode panjang internal, mis.
+        // "5GMDN-261024-0256") sbg isi "{Photo ID}" di bingkai - skrg pakai
+        // it.queueLabel (nomor antrian pendek 4 digit yg BENERAN dimaksud
+        // utk dicari di CMS), fallback "0000" kalau blm ada.
+        frame: template ? "custom" : "none", queueLabel: it.queueLabel || "0000", sessionTitle,
         customElements: template?.elements, customBaseStyle: template?.baseStyle, customFonts,
       });
       if (!blob) throw new Error("render-failed");
@@ -1211,7 +1225,7 @@ function DirectFrameSuccessScreen({ doneItems, errorCount, frameTemplates, custo
                   style={{ display: "block", width: "100%", maxWidth: 224, margin: "0 auto", padding: 0, border: "none", background: "transparent", cursor: "zoom-in", borderRadius: 18, overflow: "hidden", boxShadow: "0 18px 46px -16px rgba(0,0,0,0.6)", position: "relative" }}>
                   <div style={{ borderRadius: 18, overflow: "hidden", border: `1.5px solid ${FP_LINE}` }}>
                     <PhotoFrame photo={{ url: it.previewUrl }} ratio={ratio} crop={it.crop || DEFAULT_CROP} frame={template ? "custom" : "none"}
-                      mode="screen" queueLabel={it.photoCode || "00000"} sessionTitle={sessionTitle}
+                      mode="screen" queueLabel={it.queueLabel || "0000"} sessionTitle={sessionTitle}
                       customElements={template?.elements} customBaseStyle={template?.baseStyle} customFonts={customFonts} />
                   </div>
                   <div style={{ position: "absolute", left: "50%", bottom: 10, transform: "translateX(-50%)", display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 999, background: "rgba(10,10,12,0.72)", backdropFilter: "blur(4px)", border: "1px solid rgba(255,255,255,0.14)", whiteSpace: "nowrap" }}>
@@ -1314,7 +1328,7 @@ function DirectFrameSuccessScreen({ doneItems, errorCount, frameTemplates, custo
           <div onClick={(e) => e.stopPropagation()}
             style={{ position: "relative", width: "100%", maxWidth: 340, aspectRatio: `${ratio.w} / ${ratio.h}`, borderRadius: 18, overflow: "hidden", border: `1.5px solid ${FP_LINE}`, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.7)" }}>
             <PhotoFrame photo={{ url: zoomedItem.previewUrl }} ratio={ratio} crop={zoomedItem.crop || DEFAULT_CROP} frame={zoomedTemplate ? "custom" : "none"}
-              mode="screen" queueLabel={zoomedItem.photoCode || "00000"} sessionTitle={sessionTitle}
+              mode="screen" queueLabel={zoomedItem.queueLabel || "0000"} sessionTitle={sessionTitle}
               customElements={zoomedTemplate?.elements} customBaseStyle={zoomedTemplate?.baseStyle} customFonts={customFonts} />
           </div>
           <button onClick={() => setZoomedId(null)} aria-label="Tutup"
@@ -1681,6 +1695,29 @@ function FpAmbientBg() {
           0% { transform: translateY(100%); }
           100% { transform: translateY(0); }
         }
+        @keyframes rpv-fp-fab-glow-pulse {
+          0%, 100% { opacity: 0.55; transform: scale(0.94); }
+          50%       { opacity: 0.95; transform: scale(1.1); }
+        }
+        @keyframes rpv-fp-fab-in {
+          0% { opacity: 0; transform: translateY(14px) scale(0.86); }
+          100% { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        .rpv-fp-gallery-fab {
+          position: fixed; z-index: 15; display: flex; align-items: center; gap: 9px;
+          height: 50px; padding: 0 19px 0 15px; border-radius: 999px; border: none; cursor: pointer;
+          font-family: inherit; font-weight: 800; font-size: 13px; letter-spacing: -0.01em; color: #fff;
+          background: linear-gradient(135deg, #ED1C24, #C6168D);
+          box-shadow: 0 16px 36px -10px rgba(198,22,141,0.6), 0 2px 10px -2px rgba(0,0,0,0.5);
+          animation: rpv-fp-fab-in 0.3s cubic-bezier(.22,1,.36,1) both;
+          transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+        .rpv-fp-gallery-fab:active { transform: scale(0.93); box-shadow: 0 8px 20px -8px rgba(198,22,141,0.55); }
+        .rpv-fp-gallery-fab-glow {
+          position: absolute; inset: -7px; border-radius: 999px; pointer-events: none; z-index: -1;
+          background: radial-gradient(circle, rgba(237,28,36,0.55) 0%, rgba(198,22,141,0.0) 72%);
+          animation: rpv-fp-fab-glow-pulse 2.2s ease-in-out infinite;
+        }
         .rpv-fp-ambient {
           position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;
           -webkit-mask-image: linear-gradient(180deg, transparent 0%, transparent 42%, rgba(0,0,0,0.9) 68%, rgba(0,0,0,0.65) 100%);
@@ -1720,7 +1757,15 @@ function FpDarkScreen({ children }) {
   );
 }
 
-function FramePickScreen({ templates, loading, customFonts, sessionTitle, selected, onSelect, onTemplateCreated, onTemplateRenamed, onTemplateDeleted, onCapture, onGallery, onBack }) {
+function FramePickScreen({ templates, loading, customFonts, sessionCode, sessionTitle, selected, onSelect, onTemplateCreated, onTemplateRenamed, onTemplateDeleted, onCapture, onGallery, onBack }) {
+  // UPDATE (permintaan user - "tambahkan fitur galeri dan bisa filter per
+  // jenis frame, dan melakukan pencarian nomor... swipe kiri kanan... ada
+  // tombol download foto dan tombol tampilkan QR Share"): "Galeri" di sini
+  // BEDA dari prop `onGallery` yg sudah ada (itu buka file picker device
+  // tamu, utk UPLOAD foto baru) - ini buka overlay BARU yg nampilin SEMUA
+  // foto yg SUDAH diunggah di sesi ini (lintas frame), lihat
+  // PhotoGallerySheet di bawah.
+  const [galleryOpen, setGalleryOpen] = useState(false);
   const ratio = { w: PRINT_SIZE.w, h: PRINT_SIZE.h };
   // Pencarian - permintaan user ("tambahkan kolom pencarian juga jika
   // nanti templatenya sudah banyak") - cocokkan ke nama frame, case-
@@ -1822,7 +1867,7 @@ function FramePickScreen({ templates, loading, customFonts, sessionTitle, select
       // (yg di browser/touch device kadang TIDAK terpicu stlh
       // preventDefault() di pointerdown) - makanya dideteksi lewat jarak
       // gerak pointerup ini, bukan listener click terpisah.
-      if (dy > 90 || dy < 6) closeSheet();
+      if (dy > 48 || dy < 6) closeSheet();
       else setSheetDragY(0);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", end);
@@ -1963,10 +2008,14 @@ function FramePickScreen({ templates, loading, customFonts, sessionTitle, select
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 15.5, fontWeight: 800, color: FP_INK, letterSpacing: "-0.01em" }}>Pilih Frame Anda</div>
         </div>
+        <button onClick={() => setUploadOpen(true)}
+          style={{ height: 36, flexShrink: 0, display: "flex", alignItems: "center", gap: 6, padding: "0 13px", borderRadius: 11, border: `1px solid ${FP_LINE}`, background: FP_FIELD, color: FP_INK, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, cursor: "pointer" }}>
+          <Upload size={14} color={MAGA} /> Upload Frame
+        </button>
       </div>
 
-      <div style={{ position: "relative", zIndex: 1, padding: "14px 16px 0", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box", display: "flex", gap: 8 }}>
-        <div style={{ position: "relative", flex: 1 }}>
+      <div style={{ position: "relative", zIndex: 1, padding: "14px 16px 0", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
+        <div style={{ position: "relative" }}>
           <Search size={14} color={FP_SUB} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama frame…"
             style={{ width: "100%", height: 40, borderRadius: 11, border: `1px solid ${FP_LINE}`, background: FP_FIELD, color: FP_INK, fontSize: 13, fontFamily: FONT, padding: "0 12px 0 34px", boxSizing: "border-box", outline: "none" }} />
@@ -1976,10 +2025,6 @@ function FramePickScreen({ templates, loading, customFonts, sessionTitle, select
             </button>
           )}
         </div>
-        <button onClick={() => setUploadOpen(true)}
-          style={{ height: 40, flexShrink: 0, display: "flex", alignItems: "center", gap: 6, padding: "0 13px", borderRadius: 11, border: `1px solid ${FP_LINE}`, background: FP_FIELD, color: FP_INK, fontSize: 12.5, fontWeight: 700, fontFamily: FONT, cursor: "pointer" }}>
-          <Upload size={14} color={MAGA} /> Upload Frame
-        </button>
       </div>
 
       <div style={{ position: "relative", zIndex: 1, flex: 1, padding: "14px 16px 110px", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
@@ -2014,7 +2059,7 @@ function FramePickScreen({ templates, loading, customFonts, sessionTitle, select
                 <button key={tpl.id} onClick={() => onSelect(tpl)}
                   style={{ textAlign: "left", padding: 0, border: "none", background: "transparent", cursor: "pointer", fontFamily: FONT }}>
                   <div style={{ position: "relative", borderRadius: 14, overflow: "hidden", aspectRatio: `${ratio.w} / ${ratio.h}`, background: tpl.baseStyle === "polaroid" ? "#fff" : FP_CARD_HI, border: isSelected ? `2.5px solid ${MAGA}` : `1.5px solid ${FP_LINE}`, containerType: "size" }}>
-                    <FrameOverlayElements customElements={tpl.elements} customFonts={customFonts} mode="screen" ratio={ratio} sessionTitle={sessionTitle} queueLabel="00000" />
+                    <FrameOverlayElements customElements={tpl.elements} customFonts={customFonts} mode="screen" ratio={ratio} sessionTitle={sessionTitle} queueLabel="0000" />
                     {isSelected && (
                       <span style={{ position: "absolute", top: 6, right: 6, width: 22, height: 22, borderRadius: 999, background: MAGA, display: "flex", alignItems: "center", justifyContent: "center" }}>
                         <Check size={13} color="#fff" />
@@ -2050,7 +2095,7 @@ function FramePickScreen({ templates, loading, customFonts, sessionTitle, select
           <div onClick={(e) => e.stopPropagation()}
             style={{
               width: "100%", maxWidth: 520, position: "relative", background: FP_CARD, borderTop: `1px solid ${FP_LINE}`,
-              borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: "10px 18px calc(18px + env(safe-area-inset-bottom, 0px))", boxSizing: "border-box",
+              borderTopLeftRadius: 22, borderTopRightRadius: 22, padding: "10px 22px calc(32px + env(safe-area-inset-bottom, 0px))", boxSizing: "border-box",
               transform: sheetLeaving ? "translateY(120%)" : `translateY(${sheetDragY}px)`,
               transition: sheetDragging ? "none" : "transform .24s cubic-bezier(.22,1,.36,1)",
               animation: sheetLeaving ? "none" : "rpv-fp-sheet-up .28s cubic-bezier(.22,1,.36,1) both",
@@ -2066,9 +2111,12 @@ function FramePickScreen({ templates, loading, customFonts, sessionTitle, select
             </button>
             {/* Zona drag - diseret dr sini (handle pill + padding di
                 sekelilingnya) utk tutup popup perlahan spt bottom-sheet app
-                native; dilepas di tengah jalan (<90px) -> snap balik ke
-                atas, dilepas setelah ditarik jauh (>90px) -> lanjut
-                animasi meluncur turun & nutup beneran. */}
+                native; dilepas sblm 48px -> snap balik ke atas, dilepas
+                setelah ditarik lewat 48px -> lanjut animasi meluncur
+                turun & nutup beneran (threshold diturunkan dr 90px krn
+                tamu lapor "masih belum bisa di drag ke bawah" - drag
+                wajar terasa tidak merespons kalau jarak yg dibutuhkan
+                terlalu jauh). */}
             <div onPointerDown={onSheetDragStart}
               style={{ margin: "-10px -18px 4px", padding: "14px 18px 10px", cursor: sheetDragging ? "grabbing" : "grab", touchAction: "none" }}>
               <div style={{ width: 38, height: 4.5, borderRadius: 999, background: FP_LINE, margin: "0 auto" }} />
@@ -2085,7 +2133,7 @@ function FramePickScreen({ templates, loading, customFonts, sessionTitle, select
               {selected ? (
                 <FrameOverlayElements
                   customElements={adjustOpen && selEl && elTransform ? [{ ...selEl, fit: "cover", zoom: elTransform.zoom, panX: elTransform.panX, panY: elTransform.panY }] : selected.elements}
-                  customFonts={customFonts} mode="screen" ratio={ratio} sessionTitle={sessionTitle} queueLabel="00000" />
+                  customFonts={customFonts} mode="screen" ratio={ratio} sessionTitle={sessionTitle} queueLabel="0000" />
               ) : (
                 <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(255,255,255,0.35)" }}>
                   <X size={30} />
@@ -2207,7 +2255,7 @@ function FramePickScreen({ templates, loading, customFonts, sessionTitle, select
           style={{ position: "fixed", inset: 0, zIndex: 25, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, padding: 24, background: "rgba(0,0,0,0.88)", animation: "rpv-fp-sheet-backdrop .18s ease both" }}>
           <div onClick={(e) => e.stopPropagation()}
             style={{ position: "relative", width: "100%", maxWidth: 340, aspectRatio: `${ratio.w} / ${ratio.h}`, borderRadius: 18, overflow: "hidden", background: selected.baseStyle === "polaroid" ? "#fff" : FP_CARD_HI, border: `1.5px solid ${FP_LINE}`, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.7)", containerType: "size" }}>
-            <FrameOverlayElements customElements={selected.elements} customFonts={customFonts} mode="screen" ratio={ratio} sessionTitle={sessionTitle} queueLabel="00000" />
+            <FrameOverlayElements customElements={selected.elements} customFonts={customFonts} mode="screen" ratio={ratio} sessionTitle={sessionTitle} queueLabel="0000" />
           </div>
           <div style={{ fontSize: 13, fontWeight: 700, color: FP_INK, textAlign: "center" }}>{selected.name}</div>
           <button onClick={() => setZoomOpen(false)}
@@ -2254,6 +2302,323 @@ function FramePickScreen({ templates, loading, customFonts, sessionTitle, select
           </div>
         </div>
       )}
+
+      <button onClick={() => setGalleryOpen(true)} aria-label="Galeri Upload" className="rpv-fp-gallery-fab"
+        style={{ right: 24, bottom: "calc(34px + env(safe-area-inset-bottom, 0px))" }}>
+        <span className="rpv-fp-gallery-fab-glow" aria-hidden="true" />
+        <Images size={18} />
+        <span>Galeri Upload</span>
+      </button>
+
+      {galleryOpen && (
+        <PhotoGallerySheet sessionCode={sessionCode} templates={templates} customFonts={customFonts} sessionTitle={sessionTitle}
+          onClose={() => setGalleryOpen(false)} />
+      )}
+    </div>
+  );
+}
+
+/** Overlay "Galeri Foto" - permintaan user ("tambahkan fitur galeri dan
+ * bisa filter per jenis frame, dan melakukan pencarian nomor jika salah
+ * satu di klik bisa swipe kiri kanan, dan ada tombol download foto dan
+ * tombol tampilkan QR Share"). Nampilin SEMUA foto yg sudah diunggah di
+ * sesi ini (lintas frame, lewat listRpvPhotos - RPC yg sama dipakai panel
+ * Riwayat), dgn:
+ * - Kolom pencarian nomor antrian (cocokkan queue_label/queue_no/photo_code)
+ * - Chip filter per frame ("Semua" / "Tanpa Frame" / nama tiap frame)
+ * - Grid thumbnail, diketuk -> lightbox full-screen yg bisa digeser (swipe
+ *   pointer) ATAU tombol panah kiri/kanan utk pindah antar foto HASIL
+ *   FILTER yg lagi aktif (bukan semua foto)
+ * - Di lightbox: tombol Download (render ulang foto+bingkai resolusi
+ *   penuh, sama persis dgn tombol Download di layar sukses/halaman /p/),
+ *   & tombol "Tampilkan QR Share" (generate QR link /p/[photoCode] on-
+ *   demand, toggle tampil/sembunyi di atas foto).
+ */
+function PhotoGallerySheet({ sessionCode, templates, customFonts, sessionTitle, onClose }) {
+  const ratio = { w: PRINT_SIZE.w, h: PRINT_SIZE.h };
+  const [photos, setPhotos] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState("");
+  const [q, setQ] = useState("");
+  // UPDATE (permintaan user - "galeri upload harusnya, pastikan filternya
+  // itu tepat"): filter SEBELUMNYA dikelompokkan lewat frame_template_id
+  // (FK live ke rpv_frame_templates) - begitu operator hapus 1 template,
+  // SEMUA foto lama yg dulu pakai frame itu otomatis kena
+  // "frame_template_id = null" (FK ON DELETE SET NULL di DB), jadi salah
+  // masuk kelompok "Tanpa Frame" walau sebenarnya dulu diupload pakai
+  // frame tsb. Skrg dikelompokkan lewat `frame_name` - teks nama frame yg
+  // DISNAPSHOT ke rpv_photos SAAT foto dikonfirmasi (lihat
+  // rpv_confirm_photo & listRpvPhotosGallery di lib/rpv.js) - jadi tetap
+  // akurat biarpun frame-nya belakangan dihapus.
+  const [filterName, setFilterName] = useState("all"); // "all" | "none" | <frame_name>
+  const [openIndex, setOpenIndex] = useState(null);
+  const [qrOpenCode, setQrOpenCode] = useState(null);
+  const [qrDataUrl, setQrDataUrl] = useState(null);
+  const [qrLoading, setQrLoading] = useState(false);
+  const [downloadingCode, setDownloadingCode] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setLoadErr("");
+      try {
+        const rows = await listRpvPhotosGallery(sessionCode);
+        if (!cancelled) setPhotos(rows || []);
+      } catch (e) {
+        if (!cancelled) setLoadErr(e?.message || "Gagal memuat galeri.");
+      }
+      if (!cancelled) setLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [sessionCode]);
+
+  const templateById = useMemo(() => {
+    const m = new Map();
+    (templates || []).forEach((t) => m.set(t.id, t));
+    return m;
+  }, [templates]);
+
+  // Daftar chip filter dibangun dari `frame_name` yg BENAR-BENAR ada di
+  // data foto sesi ini (bukan dari daftar template yg masih hidup skrg) -
+  // jadi kalaupun 1 frame sudah dihapus, chip-nya tetap muncul selama
+  // masih ada foto lama yg memakainya, urut sesuai kemunculan pertama.
+  const frameNameChips = useMemo(() => {
+    const seen = new Map();
+    for (const p of photos) {
+      if (p.frame_name && !seen.has(p.frame_name)) seen.set(p.frame_name, true);
+    }
+    return Array.from(seen.keys());
+  }, [photos]);
+
+  const filtered = useMemo(() => {
+    let list = photos;
+    if (filterName === "none") list = list.filter((p) => !p.frame_name);
+    else if (filterName !== "all") list = list.filter((p) => p.frame_name === filterName);
+    const s = q.trim().toLowerCase();
+    if (s) {
+      list = list.filter((p) => {
+        const label = (p.queue_label || "").toLowerCase();
+        const no = p.queue_no != null ? String(p.queue_no) : "";
+        const code = (p.photo_code || "").toLowerCase();
+        return label.includes(s) || no.includes(s) || code.includes(s);
+      });
+    }
+    return list;
+  }, [photos, filterName, q]);
+
+  // Index di lightbox dijaga tetap VALID walau daftar `filtered` berubah
+  // (mis. tamu ganti filter/cari selagi lightbox terbuka) - kalau index
+  // lama sudah di luar jangkauan, anggap lightbox tertutup drpd nunjuk ke
+  // foto yg salah (dihitung langsung, bukan lewat effect+setState).
+  const openIndexValid = openIndex != null && openIndex < filtered.length ? openIndex : null;
+  const openItem = openIndexValid != null ? filtered[openIndexValid] : null;
+  const openTemplate = openItem ? templateById.get(openItem.frame_template_id) || null : null;
+
+  const closeLightbox = () => { setOpenIndex(null); setQrOpenCode(null); setQrDataUrl(null); };
+  const goDelta = (delta) => {
+    setOpenIndex((i) => {
+      if (i == null) return i;
+      const next = i + delta;
+      if (next < 0 || next >= filtered.length) return i;
+      return next;
+    });
+    setQrOpenCode(null);
+    setQrDataUrl(null);
+  };
+
+  // Swipe kiri/kanan - pola ringan pakai 1 pointer (bukan window listener
+  // spt drag sheet lain di file ini, krn di sini cukup baca titik awal &
+  // akhir SETELAH gesture selesai, tidak perlu update posisi live tiap
+  // pixel gerak).
+  const swipeStartRef = useRef(null);
+  const onSwipeDown = (e) => { swipeStartRef.current = { x: e.clientX, y: e.clientY }; };
+  const onSwipeUp = (e) => {
+    const start = swipeStartRef.current;
+    swipeStartRef.current = null;
+    if (!start) return;
+    const dx = e.clientX - start.x;
+    const dy = e.clientY - start.y;
+    if (Math.abs(dx) > 56 && Math.abs(dx) > Math.abs(dy)) {
+      if (dx < 0) goDelta(1); else goDelta(-1);
+    }
+  };
+
+  const toggleQr = async (it) => {
+    if (!it?.photo_code) return;
+    if (qrOpenCode === it.photo_code) { setQrOpenCode(null); return; }
+    setQrOpenCode(it.photo_code);
+    setQrDataUrl(null);
+    setQrLoading(true);
+    try {
+      const url = `${window.location.origin}/marta/photobooth/p/${it.photo_code}`;
+      const dataUrl = await QRCode.toDataURL(url, { margin: 1, width: 240, color: { dark: "#111116", light: "#FFFFFF" } });
+      setQrDataUrl(dataUrl);
+    } catch { setQrDataUrl(null); }
+    setQrLoading(false);
+  };
+
+  const handleDownload = async (it, tpl) => {
+    if (!it?.photo_code || downloadingCode) return;
+    setDownloadingCode(it.photo_code);
+    try {
+      const blob = await renderPhotoFrameToBlob({
+        photo: { url: it.url }, ratio, crop: it.crop || DEFAULT_CROP,
+        frame: tpl ? "custom" : "none", queueLabel: it.queue_label || "0000", sessionTitle,
+        customElements: tpl?.elements, customBaseStyle: tpl?.baseStyle, customFonts,
+      });
+      if (!blob) throw new Error("render-failed");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `foto-${it.photo_code}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch { /* biarkan tamu coba lagi */ }
+    setDownloadingCode(null);
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 40, background: FP_BG, display: "flex", flexDirection: "column", fontFamily: FONT, colorScheme: "dark", animation: "rpv-fp-sheet-backdrop .18s ease both" }}>
+      <FpAmbientBg />
+      <div style={{ position: "relative", zIndex: 1, padding: "18px 16px 12px", borderBottom: `1px solid ${FP_LINE}`, display: "flex", alignItems: "center", gap: 10 }}>
+        <button onClick={onClose} aria-label="Tutup galeri"
+          style={{ width: 36, height: 36, borderRadius: 999, border: "none", background: FP_FIELD, color: FP_MID, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+          <X size={16} />
+        </button>
+        <div style={{ flex: 1, fontSize: 15.5, fontWeight: 800, color: FP_INK, letterSpacing: "-0.01em" }}>Galeri Foto</div>
+      </div>
+
+      <div style={{ position: "relative", zIndex: 1, padding: "12px 16px 0", maxWidth: 560, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
+        <div style={{ position: "relative" }}>
+          <Search size={14} color={FP_SUB} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)" }} />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nomor antrian…" inputMode="numeric"
+            style={{ width: "100%", height: 40, borderRadius: 11, border: `1px solid ${FP_LINE}`, background: FP_FIELD, color: FP_INK, fontSize: 13, fontFamily: FONT, padding: "0 12px 0 34px", boxSizing: "border-box", outline: "none" }} />
+          {q && (
+            <button onClick={() => setQ("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", width: 22, height: 22, borderRadius: 999, border: "none", background: "rgba(255,255,255,0.08)", color: FP_MID, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+              <X size={12} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div style={{ position: "relative", zIndex: 1, display: "flex", gap: 8, overflowX: "auto", padding: "12px 16px", maxWidth: 560, width: "100%", margin: "0 auto", boxSizing: "border-box", WebkitOverflowScrolling: "touch" }}>
+        {[{ id: "all", label: "Semua" }, { id: "none", label: "Tanpa Frame" }, ...frameNameChips.map((name) => ({ id: name, label: name }))].map((chip) => {
+          const active = filterName === chip.id;
+          return (
+            <button key={chip.id} onClick={() => setFilterName(chip.id)}
+              style={{ flexShrink: 0, height: 32, padding: "0 13px", borderRadius: 999, border: active ? "none" : `1px solid ${FP_LINE}`, background: active ? `linear-gradient(135deg,${RED},${MAGA})` : FP_FIELD, color: active ? "#fff" : FP_MID, fontSize: 11.5, fontWeight: 800, fontFamily: FONT, cursor: "pointer", whiteSpace: "nowrap" }}>
+              {chip.label}
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ position: "relative", zIndex: 1, flex: 1, overflowY: "auto", padding: "8px 16px 40px", maxWidth: 560, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
+        {loading ? (
+          <div style={{ display: "flex", justifyContent: "center", padding: "40px 0" }}>
+            <Loader2 size={22} color={RED} style={{ animation: "spin 1s linear infinite" }} />
+          </div>
+        ) : loadErr ? (
+          <div style={{ textAlign: "center", padding: "30px 10px", fontSize: 12, color: "#FCA5A5" }}>{loadErr}</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "30px 10px", fontSize: 12, color: FP_SUB }}>
+            {q.trim() ? `Tidak ada foto dgn nomor "${q}".` : "Belum ada foto di sesi ini."}
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(118px, 1fr))", gap: 10 }}>
+            {filtered.map((it, idx) => {
+              const tpl = templateById.get(it.frame_template_id) || null;
+              // Frame-nya sudah dihapus operator tapi foto ini tetap
+              // tercatat pernah memakainya (frame_name snapshot ada,
+              // template live-nya tidak) - visual frame-nya memang tidak
+              // bisa direkonstruksi lagi, tapi labeli biar tetap jelas drpd
+              // kelihatan seakan "Tanpa Frame" dari awal.
+              const frameDeleted = !tpl && !!it.frame_name;
+              return (
+                <button key={it.photo_code} onClick={() => setOpenIndex(idx)}
+                  style={{ textAlign: "left", padding: 0, border: "none", background: "transparent", cursor: "pointer", fontFamily: FONT }}>
+                  <div style={{ position: "relative", borderRadius: 13, overflow: "hidden", aspectRatio: `${ratio.w} / ${ratio.h}`, background: tpl?.baseStyle === "polaroid" ? "#fff" : FP_CARD_HI, border: `1.5px solid ${FP_LINE}`, containerType: "size" }}>
+                    <PhotoFrame photo={{ url: it.url }} ratio={ratio} crop={it.crop || DEFAULT_CROP} frame={tpl ? "custom" : "none"}
+                      mode="screen" queueLabel={it.queue_label || "0000"} sessionTitle={sessionTitle}
+                      customElements={tpl?.elements} customBaseStyle={tpl?.baseStyle} customFonts={customFonts} />
+                    {frameDeleted && (
+                      <span style={{ position: "absolute", left: 6, top: 6, maxWidth: "calc(100% - 12px)", padding: "3px 7px", borderRadius: 999, background: "rgba(0,0,0,0.65)", color: "rgba(255,255,255,0.75)", fontSize: 9, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {it.frame_name}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ marginTop: 5, fontSize: 10.5, fontWeight: 800, color: FP_SUB, textAlign: "center", fontFamily: "monospace", letterSpacing: "0.02em" }}>
+                    #{it.queue_label || "----"}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {openItem && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 45, background: "rgba(0,0,0,0.94)", display: "flex", flexDirection: "column", animation: "rpv-fp-sheet-backdrop .18s ease both" }}>
+          <div style={{ padding: "16px 16px 8px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 800, color: "#fff", fontFamily: "monospace", letterSpacing: "0.03em" }}>#{openItem.queue_label || "----"}</span>
+            <button onClick={closeLightbox} aria-label="Tutup"
+              style={{ width: 36, height: 36, borderRadius: 999, border: "none", background: "rgba(255,255,255,0.12)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+              <X size={16} />
+            </button>
+          </div>
+
+          <div onPointerDown={onSwipeDown} onPointerUp={onSwipeUp}
+            style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "0 8px", position: "relative", touchAction: "pan-y" }}>
+            <button onClick={() => goDelta(-1)} disabled={openIndex === 0} aria-label="Foto sebelumnya"
+              style={{ flexShrink: 0, width: 38, height: 38, borderRadius: 999, border: "none", background: "rgba(255,255,255,0.12)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: openIndex === 0 ? "default" : "pointer", opacity: openIndex === 0 ? 0.3 : 1 }}>
+              <ChevronLeft size={19} />
+            </button>
+            <div style={{ position: "relative", width: "100%", maxWidth: 320, aspectRatio: `${ratio.w} / ${ratio.h}`, borderRadius: 18, overflow: "hidden", border: `1.5px solid ${FP_LINE}`, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.7)", flexShrink: 0 }}>
+              <PhotoFrame photo={{ url: openItem.url }} ratio={ratio} crop={openItem.crop || DEFAULT_CROP} frame={openTemplate ? "custom" : "none"}
+                mode="screen" queueLabel={openItem.queue_label || "0000"} sessionTitle={sessionTitle}
+                customElements={openTemplate?.elements} customBaseStyle={openTemplate?.baseStyle} customFonts={customFonts} />
+              {qrOpenCode === openItem.photo_code && (
+                <div onClick={() => setQrOpenCode(null)}
+                  style={{ position: "absolute", inset: 0, background: "rgba(10,10,12,0.92)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, cursor: "pointer" }}>
+                  {qrLoading ? (
+                    <Loader2 size={22} color={MAGA} style={{ animation: "spin 1s linear infinite" }} />
+                  ) : qrDataUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={qrDataUrl} alt={`QR ${openItem.photo_code}`} width={160} height={160} style={{ display: "block", borderRadius: 10, background: "#fff", padding: 8 }} />
+                  ) : (
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "#FCA5A5" }}>Gagal memuat QR.</span>
+                  )}
+                </div>
+              )}
+            </div>
+            <button onClick={() => goDelta(1)} disabled={openIndex === filtered.length - 1} aria-label="Foto berikutnya"
+              style={{ flexShrink: 0, width: 38, height: 38, borderRadius: 999, border: "none", background: "rgba(255,255,255,0.12)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: openIndex === filtered.length - 1 ? "default" : "pointer", opacity: openIndex === filtered.length - 1 ? 0.3 : 1 }}>
+              <ChevronRight size={19} />
+            </button>
+          </div>
+
+          {filtered.length > 1 && (
+            <div style={{ textAlign: "center", fontSize: 10.5, fontWeight: 700, color: "rgba(255,255,255,0.4)" }}>{openIndex + 1} / {filtered.length}</div>
+          )}
+
+          <div style={{ padding: "12px 16px calc(28px + env(safe-area-inset-bottom, 0px))", display: "flex", gap: 10, maxWidth: 400, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
+            <button onClick={() => toggleQr(openItem)}
+              style={{ flex: 1, height: 46, borderRadius: 13, border: `1.5px solid ${qrOpenCode === openItem.photo_code ? "#C6168D66" : "rgba(255,255,255,0.18)"}`, background: qrOpenCode === openItem.photo_code ? "rgba(198,22,141,0.14)" : "rgba(255,255,255,0.08)", color: "#fff", fontSize: 12.5, fontWeight: 800, fontFamily: FONT, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
+              <QrCode size={14} /> {qrOpenCode === openItem.photo_code ? "Sembunyikan QR" : "Tampilkan QR Share"}
+            </button>
+            <button onClick={() => handleDownload(openItem, openTemplate)} disabled={downloadingCode === openItem.photo_code}
+              style={{ flex: 1, height: 46, borderRadius: 13, border: "none", cursor: downloadingCode === openItem.photo_code ? "default" : "pointer", fontFamily: FONT, fontSize: 12.5, fontWeight: 800, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, background: `linear-gradient(135deg,${RED},${MAGA})`, opacity: downloadingCode && downloadingCode !== openItem.photo_code ? 0.5 : 1 }}>
+              {downloadingCode === openItem.photo_code ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={14} />}
+              {downloadingCode === openItem.photo_code ? "…" : "Download"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   );
 }
@@ -2440,7 +2805,7 @@ function CameraView({ videoRef, cameraState, facing, onFlip, canFlip = true, onC
               position: "absolute", inset: 0, pointerEvents: "none", containerType: "size",
               overflow: "hidden",
             }}>
-              <FrameOverlayElements customElements={overlayElements} customFonts={overlayCustomFonts} mode="screen" ratio={ratio} sessionTitle={sessionTitle} queueLabel="00000" />
+              <FrameOverlayElements customElements={overlayElements} customFonts={overlayCustomFonts} mode="screen" ratio={ratio} sessionTitle={sessionTitle} queueLabel="0000" />
             </div>
           )}
 

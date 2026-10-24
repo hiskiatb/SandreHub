@@ -162,7 +162,7 @@ export function PhotoFrame({ photo, ratio, crop, frame, mode, queueLabel, sessio
   // (spt di editor) supaya operator tetap lihat di mana token itu muncul.
   const resolveTemplateText = (text) => String(text || "")
     .replaceAll("{Nama Event}", sessionTitle || "Nama Event")
-    .replaceAll("{Photo ID}", queueLabel || "00000");
+    .replaceAll("{Photo ID}", queueLabel || "0000");
   return (
     <div ref={wrapperRef} style={{
       ...sizeStyle, position: "relative", overflow: "hidden", backgroundColor: isPolaroidShape ? "#fff" : "#000",
@@ -235,7 +235,7 @@ export function PhotoFrame({ photo, ratio, crop, frame, mode, queueLabel, sessio
 export function FrameOverlayElements({ customElements, customFonts, mode, ratio, sessionTitle, queueLabel, interactive, onElementPointerDown, selectedElId }) {
   const resolveTemplateText = (text) => String(text || "")
     .replaceAll("{Nama Event}", sessionTitle || "Nama Event")
-    .replaceAll("{Photo ID}", queueLabel || "00000");
+    .replaceAll("{Photo ID}", queueLabel || "0000");
   return (
     <>
       {(customElements || []).map((el) => {
@@ -493,7 +493,7 @@ export async function renderPhotoFrameToBlob({ photo, ratio, crop, frame, queueL
       } else {
         const text = String(el.text || "")
           .replaceAll("{Nama Event}", sessionTitle || "Nama Event")
-          .replaceAll("{Photo ID}", queueLabel || "00000");
+          .replaceAll("{Photo ID}", queueLabel || "0000");
         const fontFamily = resolveTemplateFontCss(el.fontKey, customFonts);
         const fontSizePx = Math.max(6, (el.fontSizePct / 100) * H);
         ctx.font = `${el.bold ? 800 : 400} ${fontSizePx}px ${fontFamily}`;
