@@ -31,7 +31,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { AlertTriangle, Check, Download, FlipHorizontal2, FlipVertical2, Minus, Move, RotateCw, Save, Share2, Loader2, X, ZoomIn } from "lucide-react";
 import { getRpvPhotoByCode, listRpvFrameTemplates, listRpvCustomFonts, saveRpvPhotoCrop } from "../../../../../lib/rpv";
-import { DEFAULT_CROP, PhotoFrame, PRINT_SIZE, TEMPLATE_GOOGLE_FONTS_HREF, customFontFaceCss, findDefaultFrameTemplate, renderPhotoFrameToBlob } from "../../_frame";
+import { DEFAULT_CROP, PhotoFrame, PRINT_SIZE, TEMPLATE_GOOGLE_FONTS_HREF, customFontFaceCss, resolveEffectiveFrameTemplate, renderPhotoFrameToBlob } from "../../_frame";
 
 // Versi standalone (di luar komponen) dari clampCrop di bawah - dipakai saat
 // memuat crop tersimpan dari DB, spy foto lama yg kebetulan sudah kesimpan
@@ -82,7 +82,7 @@ export default function RpvPhotoDetailPage() {
   const dragRefCleanupRef = useRef(null); // simpan cleanup drag terakhir, spy listener window tak pernah menumpuk kalau pointerup/pointercancel gagal ke-fire pas geser cepat
   const [frameTemplates, setFrameTemplates] = useState([]);
   const [customFonts, setCustomFonts] = useState([]);
-  const defaultTemplate = useMemo(() => findDefaultFrameTemplate(frameTemplates), [frameTemplates]);
+  const defaultTemplate = useMemo(() => resolveEffectiveFrameTemplate(photo, frameTemplates), [photo, frameTemplates]);
 
   // FIX (permintaan user - "kenapa Photo ID tidak langsung muncul, harus
   // refresh dulu, QR yg discan operator malah balik ID mentah 5GMDN...

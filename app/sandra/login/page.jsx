@@ -216,6 +216,21 @@ function SandraLoginInner() {
           </div>
         </div>
 
+        <button onClick={()=>router.push("/sandra/login-admin-mc")}
+          style={{ marginTop:14, width:"100%", display:"flex", alignItems:"center", gap:13, padding:"14px 16px", borderRadius:14, cursor:"pointer", textAlign:"left", fontFamily:FONT,
+            background:d?"rgba(50,188,173,0.08)":"rgba(50,188,173,0.05)", border:`1.5px solid ${d?"rgba(50,188,173,0.35)":"rgba(50,188,173,0.28)"}`, transition:"transform .12s, box-shadow .15s, border-color .15s" }}
+          onMouseEnter={(e)=>{ e.currentTarget.style.boxShadow="0 8px 26px rgba(50,188,173,0.18)"; e.currentTarget.style.transform="translateY(-1px)"; }}
+          onMouseLeave={(e)=>{ e.currentTarget.style.boxShadow="none"; e.currentTarget.style.transform="none"; }}>
+          <span style={{ width:42, height:42, borderRadius:12, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", background:`linear-gradient(135deg,${TEAL},${MAGA})`, color:"#fff", boxShadow:"0 4px 14px rgba(50,188,173,0.32)" }}>
+            <Mail size={19} strokeWidth={2.2} />
+          </span>
+          <span style={{ flex:1, minWidth:0 }}>
+            <span style={{ display:"block", fontSize:14.5, fontWeight:800, letterSpacing:"-0.02em", color:t.hi }}>Login sebagai Admin MC</span>
+            <span style={{ display:"block", fontSize:12, color:t.mid, marginTop:2 }}>Tanpa kata sandi — masuk dengan kode OTP ke email</span>
+          </span>
+          <ChevronRight size={18} style={{ color:TEAL, flexShrink:0 }} />
+        </button>
+
         <button onClick={()=>router.push("/promotor")}
           style={{ marginTop:16, width:"100%", display:"flex", alignItems:"center", gap:13, padding:"14px 16px", borderRadius:14, cursor:"pointer", textAlign:"left", fontFamily:FONT,
             background:d?"rgba(237,28,36,0.08)":"rgba(237,28,36,0.05)", border:`1.5px solid ${d?"rgba(237,28,36,0.35)":"rgba(237,28,36,0.28)"}`, transition:"transform .12s, box-shadow .15s, border-color .15s" }}

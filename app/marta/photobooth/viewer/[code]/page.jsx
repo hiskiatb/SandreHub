@@ -10,7 +10,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import QRCode from "qrcode";
 import { AlertTriangle, Camera, ChevronLeft, ChevronRight, Eye, EyeOff, Images, Link2, Loader2, Maximize2, Minimize2, Printer, QrCode as QrIcon, Search, Sparkles, Trash2, X, Zap } from "lucide-react";
 import { getRpvSession, listRpvPhotos, listRpvFrameTemplates, listRpvCustomFonts, subscribeRpvPhotos, rpvPublicUrl, getRpvPhotoByCode, deleteRpvPhoto, uploadRpvAiResult, rpvThroughputMbps } from "../../../../../lib/rpv";
-import { PhotoFrame, PRINT_SIZE, TEMPLATE_GOOGLE_FONTS_HREF, customFontFaceCss, findDefaultFrameTemplate } from "../../_frame";
+import { PhotoFrame, PRINT_SIZE, TEMPLATE_GOOGLE_FONTS_HREF, customFontFaceCss, resolveEffectiveFrameTemplate } from "../../_frame";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED = "#ED1C24";
@@ -41,7 +41,10 @@ export default function RpvViewerPage() {
   // tanpa bingkai (frame="none"), spt sebelumnya.
   const [frameTemplates, setFrameTemplates] = useState([]);
   const [customFonts, setCustomFonts] = useState([]);
-  const defaultTemplate = useMemo(() => findDefaultFrameTemplate(frameTemplates), [frameTemplates]);
+  // UPDATE (fitur "Frame Langsung"): TV ini merotasi BANYAK foto berbeda2,
+  // jadi templatenya tidak lagi 1 nilai global - dihitung PER FOTO di tiap
+  // titik render (lihat resolveEffectiveFrameTemplate: pakai frame_template_
+  // id milik foto itu kalau ada, fallback ke default global kalau kosong).
   const [photos, setPhotos] = useState([]);
   const [qrUrl, setQrUrl] = useState("");
   const [photoQr, setPhotoQr] = useState({}); // { [photo_code]: dataUrl } - QR unik per FOTO (download langsung foto itu)
@@ -427,10 +430,15 @@ export default function RpvViewerPage() {
                     bingkai/template custom-nya otomatis ikut tampil di sini
                     tanpa operator perlu atur apa2 lagi khusus utk TV. */}
                 <div key={tvPhoto.photo_code} style={{ height: "100%", maxWidth: "100%", aspectRatio: `${VIEWER_RATIO.w} / ${VIEWER_RATIO.h}`, borderRadius: 20, overflow: "hidden", boxShadow: "0 40px 100px -20px rgba(0,0,0,0.7)", animation: "rpv-tv-fade .5s ease" }}>
-                  <PhotoFrame photo={tvPhoto} ratio={VIEWER_RATIO} crop={tvPhoto.crop} mode="screen"
-                    frame={defaultTemplate ? "custom" : "none"} customBaseStyle={defaultTemplate?.baseStyle}
-                    customElements={defaultTemplate?.elements} customFonts={customFonts}
-                    queueLabel={tvPhoto.queue_label} sessionTitle={session?.title} />
+                  {(() => {
+                    const tpl = resolveEffectiveFrameTemplate(tvPhoto, frameTemplates);
+                    return (
+                      <PhotoFrame photo={tvPhoto} ratio={VIEWER_RATIO} crop={tvPhoto.crop} mode="screen"
+                        frame={tpl ? "custom" : "none"} customBaseStyle={tpl?.baseStyle}
+                        customElements={tpl?.elements} customFonts={customFonts}
+                        queueLabel={tvPhoto.queue_label} sessionTitle={session?.title} />
+                    );
+                  })()}
                 </div>
               </div>
             </>
@@ -783,10 +791,15 @@ export default function RpvViewerPage() {
               fullscreen ini (yg dibuka tamu/operator dari grid) juga
               konsisten menampilkan bingkai/penyesuaian yg sama. */}
           <div style={{ height: "76vh", maxWidth: "min(92vw, 900px)", aspectRatio: `${VIEWER_RATIO.w} / ${VIEWER_RATIO.h}`, borderRadius: 10, overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.55)" }}>
-            <PhotoFrame photo={photosAsc[viewIndex]} ratio={VIEWER_RATIO} crop={photosAsc[viewIndex].crop} mode="screen"
-              frame={defaultTemplate ? "custom" : "none"} customBaseStyle={defaultTemplate?.baseStyle}
-              customElements={defaultTemplate?.elements} customFonts={customFonts}
-              queueLabel={photosAsc[viewIndex].queue_label} sessionTitle={session?.title} />
+            {(() => {
+              const tpl = resolveEffectiveFrameTemplate(photosAsc[viewIndex], frameTemplates);
+              return (
+                <PhotoFrame photo={photosAsc[viewIndex]} ratio={VIEWER_RATIO} crop={photosAsc[viewIndex].crop} mode="screen"
+                  frame={tpl ? "custom" : "none"} customBaseStyle={tpl?.baseStyle}
+                  customElements={tpl?.elements} customFonts={customFonts}
+                  queueLabel={photosAsc[viewIndex].queue_label} sessionTitle={session?.title} />
+              );
+            })()}
           </div>
 
           {!chromeHidden && (

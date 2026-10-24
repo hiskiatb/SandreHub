@@ -34,7 +34,7 @@ import {
   newTemplateTextElement, newTemplateImageElement, newTemplateFrameOverlayElement, newTemplateShapeElement, clampPct,
   PhotoFrame, findDefaultFrameTemplate,
 } from "./_frame";
-import { addRpvPrompt, clearRpvDefaultFrameTemplate, createRpvSession, deleteRpvCustomFont, deleteRpvFrameTemplate, deleteRpvPhoto, deleteRpvPrompt, deleteRpvSession, findRpvPhotoByQueue, getRpvSession, listRpvCustomFonts, listRpvFrameTemplates, listRpvPhotos, listRpvPrompts, listRpvSessions, renameRpvSession, rpvPublicUrl, saveRpvFrameTemplate, saveRpvPhotoCrop, setRpvDefaultFrameTemplate, subscribeRpvOperatorPairing, subscribeRpvPhotos, updateRpvPrompt, uploadRpvCustomFont, uploadRpvPromptImage, uploadRpvTemplateImage } from "../../../lib/rpv";
+import { addRpvPrompt, clearRpvDefaultFrameTemplate, createRpvSession, deleteRpvCustomFont, deleteRpvFrameTemplate, deleteRpvPhoto, deleteRpvPrompt, deleteRpvSession, findRpvPhotoByQueue, getRpvSession, listRpvCustomFonts, listRpvFrameTemplates, listRpvPhotos, listRpvPrompts, listRpvSessions, renameRpvSession, rpvPublicUrl, saveRpvFrameTemplate, saveRpvPhotoCrop, setRpvDefaultFrameTemplate, setRpvSessionMode, subscribeRpvOperatorPairing, subscribeRpvPhotos, updateRpvPrompt, uploadRpvCustomFont, uploadRpvPromptImage, uploadRpvTemplateImage } from "../../../lib/rpv";
 
 const RED = "#ED1C24";
 const VIO = "#7C3AED";
@@ -281,15 +281,23 @@ export default function RpvControlRoom() {
   // ke queue_label (Photo ID 5 digit yg ditampilkan, mis. "00011") - baik
   // versi lengkap maupun versi tanpa leading zero - jadi hasil pencarian
   // selalu sesuai apa yg operator lihat di layar.
+  // Filter "per frame" (permintaan user - "akan ada filter per frame utk
+  // memudahkan pencarian") - nilai: "" = semua, "none" = foto TANPA frame
+  // (frame_template_id kosong), atau id template tertentu.
+  const [frameFilter, setFrameFilter] = useState("");
   const filteredPhotos = useMemo(() => {
     const q = searchQuery.trim().replace(/^0+(?=\d)/, "").toLowerCase();
-    if (!q) return allPhotos;
     return allPhotos.filter((p) => {
-      const label = (p.queue_label || "").toLowerCase();
-      const bare = label.replace(/^0+(?=\d)/, "");
-      return label.includes(q) || bare.includes(q);
+      if (q) {
+        const label = (p.queue_label || "").toLowerCase();
+        const bare = label.replace(/^0+(?=\d)/, "");
+        if (!label.includes(q) && !bare.includes(q)) return false;
+      }
+      if (frameFilter === "none" && p.frame_template_id) return false;
+      if (frameFilter && frameFilter !== "none" && p.frame_template_id !== frameFilter) return false;
+      return true;
     });
-  }, [allPhotos, searchQuery]);
+  }, [allPhotos, searchQuery, frameFilter]);
   const selectedPhoto = allPhotos.find((p) => p.photo_code === selectedCode) || null;
 
   // Cari foto by Photo ID (5 digit) persis - dipakai dr kolom pencarian
@@ -780,6 +788,26 @@ export default function RpvControlRoom() {
       setFrameKey("custom");
     });
   }, [templatesState, savedTemplates, activeTemplateId]);
+
+  // ── Fitur "Frame Langsung": kalau foto yg lagi dipilih punya
+  // frame_template_id SENDIRI (tamu pilih sendiri saat upload lewat alur
+  // kamera-langsung - lihat mf_dse... eh, lib/rpv.js & upload/[code]/
+  // page.jsx), itu yg otomatis dipasang di preview/cetak - BUKAN cuma
+  // "terakhir dipakai device ini"/default global. Operator TETAP bisa
+  // override manual (pilih template lain dari dropdown Bingkai Custom) -
+  // ini cuma auto-terapkan begitu PINDAH ke foto itu, bukan dikunci paksa.
+  const lastAutoFramedPhotoRef = useRef("");
+  useEffect(() => {
+    if (templatesState !== "ready" || !selectedPhoto?.frame_template_id) return;
+    if (lastAutoFramedPhotoRef.current === selectedPhoto.photo_code) return;
+    const tpl = savedTemplates.find((x) => x.id === selectedPhoto.frame_template_id);
+    if (!tpl) return;
+    lastAutoFramedPhotoRef.current = selectedPhoto.photo_code;
+    Promise.resolve().then(() => {
+      applyTemplate(tpl);
+      setFrameKey("custom");
+    });
+  }, [templatesState, savedTemplates, selectedPhoto?.photo_code, selectedPhoto?.frame_template_id]);
   const saveTemplate = async (asNew) => {
     const name = (window.prompt("Nama template:", asNew ? "" : activeTemplateName) || "").trim();
     if (!name) return;
@@ -942,6 +970,18 @@ export default function RpvControlRoom() {
                   onKeyDown={(e) => { if (e.key === "Enter") searchExact(); }}
                   placeholder="Cari Photo ID (5 digit)…" inputMode="numeric"
                   style={{ width: "100%", height: 38, borderRadius: 10, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontSize: 13, fontFamily: "monospace", letterSpacing: "0.04em", padding: "0 12px 0 32px", boxSizing: "border-box" }} />
+              </div>
+              {/* Filter per frame - permintaan user utk memudahkan cari
+                  semua foto yg pakai bingkai tertentu (dr alur direct_frame,
+                  mana2 tamu pilih frame sendiri per foto). */}
+              <div style={{ marginTop: 8, position: "relative" }}>
+                <select value={frameFilter} onChange={(e) => setFrameFilter(e.target.value)}
+                  style={{ width: "100%", height: 34, borderRadius: 9, border: `1px solid ${t.line}`, background: t.fieldBg, color: t.hi, fontSize: 11.5, fontFamily: FONT, padding: "0 10px", appearance: "none", cursor: "pointer", boxSizing: "border-box" }}>
+                  <option value="">Semua frame</option>
+                  <option value="none">Tanpa frame</option>
+                  {savedTemplates.map((tpl) => <option key={tpl.id} value={tpl.id}>{tpl.name}</option>)}
+                </select>
+                <ChevronDown size={13} color={t.lo} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
               </div>
               <div style={{ marginTop: 8, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
                 <span style={{ fontSize: 10.5, color: t.lo, fontWeight: 600 }}>{filteredPhotos.length} foto{searchQuery ? ` cocok dari ${allPhotos.length}` : ""}</span>
@@ -1763,12 +1803,30 @@ function SettingsPanel({ onClose, tab, setTab, sessions, sessionsState, activeCo
   const [title, setTitle] = useState("");
   const [creating, setCreating] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState(null);
+  // Mode sesi ("Frame Langsung" - fitur baru): 'ai_prompt' (default, alur
+  // lama prompt+Gemini) atau 'direct_frame' (tamu pilih frame & jepret/
+  // upload langsung, tanpa AI) - operator tentukan saat bikin sesi, bisa
+  // diganti lagi kapan pun lewat tombol toggle di kartu sesi.
+  const [newMode, setNewMode] = useState("ai_prompt");
+  const [switchingModeCode, setSwitchingModeCode] = useState("");
+
+  // Permintaan user ("cukup satu sesi saja utk semua direct frame ini,
+  // nanti semua frame akan dijadikan satu dalam sesi ini") - HANYA 1 sesi
+  // 'direct_frame' boleh ada sekaligus (dipaksakan jg di DB lewat
+  // idx_rpv_sessions_single_direct_frame, ini cuma UX-nya spy operator
+  // tidak kena error mentah pas coba bikin yg ke-2). Kalau sudah ada,
+  // operator diarahkan PAKAI sesi itu (Jadikan Aktif), bukan bikin baru.
+  const existingFrameSession = sessions.find((s) => s.mode === "direct_frame");
 
   const handleCreate = async () => {
     if (creating) return;
+    if (newMode === "direct_frame" && existingFrameSession) {
+      alert(`Sudah ada sesi "Frame Langsung" (${existingFrameSession.title}) - cukup 1 sesi saja utk semua frame. Pakai sesi itu, jangan bikin baru.`);
+      return;
+    }
     setCreating(true);
     try {
-      const s = await createRpvSession(title);
+      const s = await createRpvSession(title, newMode);
       if (!s?.code) throw new Error("Gagal membuat sesi.");
       setTitle("");
       await refreshSessions();
@@ -1776,6 +1834,22 @@ function SettingsPanel({ onClose, tab, setTab, sessions, sessionsState, activeCo
     } catch (e) {
       alert(e.message || "Gagal membuat sesi.");
     } finally { setCreating(false); }
+  };
+
+  const handleToggleMode = async (s) => {
+    if (switchingModeCode) return;
+    const nextMode = s.mode === "direct_frame" ? "ai_prompt" : "direct_frame";
+    if (nextMode === "direct_frame" && existingFrameSession && existingFrameSession.code !== s.code) {
+      alert(`Sudah ada sesi "Frame Langsung" (${existingFrameSession.title}) - cukup 1 sesi saja. Ganti mode sesi itu dulu kalau mau pindahkan.`);
+      return;
+    }
+    setSwitchingModeCode(s.code);
+    try {
+      await setRpvSessionMode(s.code, nextMode);
+      await refreshSessions();
+    } catch (e) {
+      alert(e.message || "Gagal mengubah mode sesi.");
+    } finally { setSwitchingModeCode(""); }
   };
 
   const handleDeleted = async (code) => {
@@ -1827,6 +1901,22 @@ function SettingsPanel({ onClose, tab, setTab, sessions, sessionsState, activeCo
               <div style={{ fontSize: 11.5, fontWeight: 800, color: t.lo, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>Buat Sesi Baru</div>
               <input value={title} onChange={(e) => setTitle(e.target.value)} onKeyDown={(e) => e.key === "Enter" && handleCreate()} placeholder="Nama sesi (mis. Grand Launching 5G Medan)"
                 style={{ width: "100%", height: 42, borderRadius: 10, border: `1px solid ${t.line}`, background: t.fieldBg, padding: "0 12px", fontSize: 13, fontFamily: FONT, color: t.hi, boxSizing: "border-box" }} />
+              {/* Mode sesi - "AI Prompt" (alur lama: pilih prompt -> Gemini)
+                  atau "Frame Langsung" (tamu pilih frame -> jepret/upload
+                  langsung, tanpa AI) - lihat go/[code]/page.jsx utk redirect. */}
+              <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                {[{ k: "ai_prompt", label: "AI Prompt" }, { k: "direct_frame", label: "Frame Langsung", disabled: !!existingFrameSession }].map(({ k, label, disabled }) => (
+                  <button key={k} onClick={() => setNewMode(k)} disabled={disabled} title={disabled ? "Sudah ada 1 sesi Frame Langsung - cukup 1 saja" : undefined}
+                    style={{ flex: 1, height: 34, borderRadius: 9, border: newMode === k ? `1.5px solid ${MAGA}` : `1px solid ${t.line}`, cursor: disabled ? "not-allowed" : "pointer", fontFamily: FONT, fontSize: 11.5, fontWeight: 800, background: newMode === k ? "rgba(198,22,141,0.12)" : t.fieldBg, color: newMode === k ? MAGA : t.mid, opacity: disabled ? 0.45 : 1 }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {existingFrameSession && (
+                <div style={{ marginTop: 6, fontSize: 10.5, color: t.lo, lineHeight: 1.5 }}>
+                  Sesi Frame Langsung sudah ada: <b style={{ color: t.mid }}>{existingFrameSession.title}</b> - semua frame digabung di sana, tidak perlu bikin sesi baru.
+                </div>
+              )}
               <button onClick={handleCreate} disabled={creating}
                 style={{ marginTop: 10, width: "100%", height: 42, borderRadius: 11, border: "none", cursor: creating ? "not-allowed" : "pointer", fontFamily: FONT, fontSize: 13, fontWeight: 800, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, background: `linear-gradient(135deg,${RED},${MAGA})`, opacity: creating ? 0.7 : 1 }}>
                 {creating ? <Loader2 size={14} style={{ animation: "spin .8s linear infinite" }} /> : <Plus size={14} />} Buat &amp; Jadikan Aktif
@@ -1859,6 +1949,13 @@ function SettingsPanel({ onClose, tab, setTab, sessions, sessionsState, activeCo
                       </div>
                       {!isRenaming && s.code === activeCode && <span style={{ fontSize: 9.5, fontWeight: 800, color: RED, flexShrink: 0 }}>AKTIF</span>}
                     </div>
+                    {!isRenaming && (
+                      <button onClick={() => handleToggleMode(s)} disabled={switchingModeCode === s.code} title="Klik utk ganti mode sesi"
+                        style={{ marginTop: 6, display: "inline-flex", alignItems: "center", gap: 5, height: 22, padding: "0 9px", borderRadius: 999, border: `1px solid ${t.lineSoft}`, background: s.mode === "direct_frame" ? "rgba(198,22,141,0.12)" : t.fieldBg, color: s.mode === "direct_frame" ? MAGA : t.mid, fontSize: 10, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>
+                        {switchingModeCode === s.code ? <Loader2 size={10} style={{ animation: "spin .8s linear infinite" }} /> : null}
+                        {s.mode === "direct_frame" ? "Frame Langsung" : "AI Prompt"}
+                      </button>
+                    )}
                     {isRenaming ? (
                       <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
                         <button onClick={() => handleRename(s)} disabled={renaming || !renameValue.trim()}

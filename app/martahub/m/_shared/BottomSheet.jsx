@@ -166,6 +166,7 @@ const BottomSheet = forwardRef(function BottomSheet(
     disableSwipeClose = false,
     lockScroll = true, // kunci scroll halaman di belakang + pull-to-refresh selagi sheet ini terbuka (reference-counted, aman dipakai bertumpuk/nested)
     footer = null, // ReactNode opsional - dirender DI LUAR area scroll (flex-shrink-0, selalu kelihatan) - utk tombol aksi utama (mis. "Simpan") spy tidak perlu discroll dulu di sheet yg isinya panjang
+    maxHeightPct = 85, // batasi tinggi maksimum SEMUA sheet ke persentase viewport ini - default 85% (dulu nyaris penuh layar/tidak dibatasi sama sekali) spy sheet berkonten panjang tidak mepet ke sangat atas layar. Set null di pemanggil kalau sheet tsb memang sengaja perlu bisa penuh layar.
   },
   ref
 ) {
@@ -256,7 +257,9 @@ const BottomSheet = forwardRef(function BottomSheet(
           // scrollable di bawah supaya SELALU bisa digeser sampai konten
           // terakhir kelihatan, seberapa pun banyaknya.
           display: "flex", flexDirection: "column",
-          maxHeight: `calc(${vv.height}px - 24px)`,
+          maxHeight: maxHeightPct
+            ? `min(calc(${vv.height}px - 24px), ${maxHeightPct}%)`
+            : `calc(${vv.height}px - 24px)`,
           overflow: "hidden",
         }}
       >

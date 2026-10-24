@@ -7,9 +7,17 @@
  * DSE "KODE - HP - X desa - Y outlet"). Hasil parse digabung jadi satu tabel
  * (sheet "mf_dse_database" di Supabase) dan bisa di-export ke Excel.
  *
- * Dedup: upload ulang file utk HOA yang sama MENGGANTI (replace) seluruh
- * baris HOA itu di Region tsb, bukan menumpuk duplikat — lihat RPC
- * mf_dse_upload_hoa (delete-then-insert atomic, 1 panggilan per HOA).
+ * Dedup: upload ulang file utk HOA yang sama tidak lagi menghapus data lama —
+ * kode DSE yg sudah ada di-UPDATE, kode baru di-INSERT, dan kode lama yg tidak
+ * lagi muncul di upload hanya ditandai REVOKED (is_revoked/revoked_at), tidak
+ * pernah dihapus — lihat RPC mf_dse_upload_hoa.
+ *
+ * "Update Mapping (Hybrid)" — upload terpisah utk file mapping Kode DSE Lama →
+ * Baru (format kolom: DSE Category, DSE Code(lama), DSE Code(baru), MPC Short
+ * Code(lama/baru), MPC Name(lama/baru), PT, Micro Cluster Name, Branch Name,
+ * Region Name, Circle). Kode lama TIDAK dihapus, hanya ditandai revoked dan
+ * dicatat kode penggantinya (superseded_by_code) — lihat RPC
+ * mf_dse_upload_hybrid_mapping.
  *
  * Hanya untuk role spm_sumatera (digate juga di page.jsx).
  */
@@ -20,6 +28,7 @@ import * as XLSX from "xlsx";
 import {
   Upload, FileText, X, Check, AlertTriangle, Loader2, FileDown,
   Search, RefreshCw, Trash2, ChevronDown, Database, Globe,
+  ArrowRight, History, FileSpreadsheet, Info,
 } from "lucide-react";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif`;
@@ -112,6 +121,64 @@ function parseDseFile(text) {
     dsCount: new Set(rows.map((r) => r.ds_name || "(belum ada nama)")).size,
     incompleteCount: rows.filter((r) => !r.ds_name || !r.ds_phone || !r.mc || !r.dse_phone || r.dup_code).length,
   };
+}
+
+// ── Parser: file mapping "Hybrid" (.xlsx/.xlsb/.xls/.csv) ──────────────────
+// Kolom (posisi tetap, bukan dari nama header — ada 2 kolom "DSE Code" dan
+// 2x "MPC Short Code"/"MPC Name" di file sumber, jadi harus dibaca per index):
+//   0 DSE Category · 1 DSE Code (LAMA) · 2 DSE Code (BARU) ·
+//   3 MPC Short Code (lama) · 4 MPC Name (lama) ·
+//   5 MPC Short Code (baru) · 6 MPC Name (baru) ·
+//   7 PT · 8 Micro Cluster Name · 9 Branch Name · 10 Region Name · 11 Circle
+// Sheet yang dipakai: sheet pertama bernama "Hybrid" kalau ada, selain itu
+// sheet pertama di file.
+const HYBRID_HEADER_HINTS = ["dse category", "dse code"];
+
+function parseHybridWorkbook(arrayBuffer, fileName) {
+  let wb;
+  try {
+    wb = XLSX.read(arrayBuffer, { type: "array" });
+  } catch (e) {
+    return { error: `Gagal membaca file: ${e.message || "format tidak dikenali"}.` };
+  }
+  const sheetName = wb.SheetNames.includes("Hybrid") ? "Hybrid" : wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
+  if (!ws) return { error: "Tidak ada sheet yang bisa dibaca di file ini." };
+  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", blankrows: false });
+  if (!aoa.length) return { error: "Sheet kosong." };
+
+  const header = (aoa[0] || []).map((h) => String(h || "").trim().toLowerCase());
+  const looksRight = HYBRID_HEADER_HINTS.every((hint) => header.some((h) => h.includes(hint)));
+  if (!looksRight) {
+    return { error: `Format kolom tidak dikenali di sheet "${sheetName}". Diharapkan kolom "DSE Category" dan "DSE Code" (lama & baru) di baris pertama.` };
+  }
+
+  const rows = [];
+  const skipped = [];
+  for (let i = 1; i < aoa.length; i++) {
+    const line = aoa[i];
+    if (!line || line.every((c) => c === "" || c == null)) continue;
+    const newCode = String(line[2] ?? "").trim();
+    const oldCode = String(line[1] ?? "").trim();
+    if (!newCode) { skipped.push(`Baris ${i + 1}: Kode DSE (baru) kosong.`); continue; }
+    rows.push({
+      dse_category: String(line[0] ?? "").trim() || null,
+      old_code: oldCode || null,
+      new_code: newCode,
+      old_mc_short: String(line[3] ?? "").trim() || null,
+      old_mc_name: String(line[4] ?? "").trim() || null,
+      new_mc_short: String(line[5] ?? "").trim() || null,
+      new_mc_name: String(line[6] ?? "").trim() || null,
+      pt_name: String(line[7] ?? "").trim() || null,
+      micro_cluster: String(line[8] ?? "").trim() || null,
+      branch: String(line[9] ?? "").trim() || null,
+      region: String(line[10] ?? "").trim() || null,
+      circle: String(line[11] ?? "").trim() || null,
+      changed: oldCode && oldCode !== newCode,
+    });
+  }
+  const changedCount = rows.filter((r) => r.changed).length;
+  return { fileName, sheetName, rows, skipped, changedCount, sameCount: rows.length - changedCount };
 }
 
 // Teks keterangan field mana saja yang masih kosong pada 1 baris — dipakai
@@ -240,6 +307,50 @@ export default function SDP_DseDatabase({ theme, profile }) {
   const [deleteAllLoading, setDeleteAllLoading] = useState(false);
   const [toast, setToast] = useState(null);
   const showToast = (msg, type = "ok") => setToast({ msg, type });
+  const [showRevoked, setShowRevoked] = useState(false);
+
+  // ── Update Mapping (Hybrid): Kode DSE Lama → Baru, dari file terpisah ─────
+  const [hybridStaged, setHybridStaged] = useState(null); // {fileName, sheetName, rows, skipped, changedCount, sameCount, error}
+  const [hybridUploading, setHybridUploading] = useState(false);
+  const [hybridResult, setHybridResult] = useState(null);
+  const hybridFileRef = useRef(null);
+
+  const onPickHybridFile = async (fileList) => {
+    const f = (fileList || [])[0];
+    if (!f) return;
+    const buf = await f.arrayBuffer();
+    const parsed = parseHybridWorkbook(buf, f.name);
+    setHybridStaged(parsed);
+    setHybridResult(null);
+    if (hybridFileRef.current) hybridFileRef.current.value = "";
+  };
+
+  const handleHybridUpload = async () => {
+    if (!hybridStaged || hybridStaged.error || !hybridStaged.rows?.length) return;
+    setHybridUploading(true);
+    try {
+      const { data, error } = await supabase.rpc("mf_dse_upload_hybrid_mapping", {
+        p_source_file: hybridStaged.fileName,
+        p_rows: hybridStaged.rows,
+      });
+      if (error) throw error;
+      const row = Array.isArray(data) ? data[0] : data;
+      setHybridResult({
+        ok: true,
+        newActive: row?.new_active_count ?? 0,
+        oldRevoked: row?.old_revoked_count ?? 0,
+        unchanged: row?.unchanged_count ?? 0,
+      });
+      showToast(`Mapping tersimpan — ${row?.new_active_count ?? 0} kode baru, ${row?.old_revoked_count ?? 0} kode lama direvoke.`, "ok");
+      setHybridStaged(null);
+      fetchRows(1, search, filterRegion);
+    } catch (e) {
+      setHybridResult({ ok: false });
+      showToast(e.message || "Gagal menyimpan mapping.", "error");
+    } finally {
+      setHybridUploading(false);
+    }
+  };
 
   // ── Pilih file(s) → parse di browser, tampilkan preview sebelum disimpan ──
   const onPickFiles = async (fileList) => {
@@ -306,6 +417,7 @@ export default function SDP_DseDatabase({ theme, profile }) {
         .order("ds_name", { ascending: true })
         .order("dse_code", { ascending: true });
       if (reg) q = q.eq("region", reg);
+      if (!showRevoked) q = q.eq("is_revoked", false);
       if (srch) {
         const s = srch.replace(/[%_]/g, "");
         q = q.or(`hoa_name.ilike.%${s}%,ds_name.ilike.%${s}%,dse_code.ilike.%${s}%,branch.ilike.%${s}%,mc.ilike.%${s}%`);
@@ -334,9 +446,9 @@ export default function SDP_DseDatabase({ theme, profile }) {
     } finally {
       setFetching(false);
     }
-  }, [search, filterRegion]);
+  }, [search, filterRegion, showRevoked]);
 
-  useEffect(() => { fetchRows(1, search, filterRegion); }, [filterRegion]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchRows(1, search, filterRegion); }, [filterRegion, showRevoked]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const h = setTimeout(() => { setSearch(searchInput); fetchRows(1, searchInput, filterRegion); }, 350);
     return () => clearTimeout(h);
@@ -350,10 +462,12 @@ export default function SDP_DseDatabase({ theme, profile }) {
         .order("branch", { ascending: true }).order("hoa_name", { ascending: true })
         .order("ds_name", { ascending: true }).order("dse_code", { ascending: true });
       if (filterRegion) q = q.eq("region", filterRegion);
+      if (!showRevoked) q = q.eq("is_revoked", false);
       const { data, error } = await q.limit(50000);
       if (error) throw error;
-      const head = ["REGION", "BRANCH", "HOA", "NAMA DS", "NOMOR DS", "MC", "ID DSE", "NOMOR DSE", "JUMLAH DESA", "JUMLAH OUTLET", "REMARKS", "FILE SUMBER", "DIUPLOAD"];
+      const head = ["STATUS", "DIGANTIKAN OLEH", "REGION", "BRANCH", "HOA", "NAMA DS", "NOMOR DS", "MC", "ID DSE", "NOMOR DSE", "JUMLAH DESA", "JUMLAH OUTLET", "REMARKS", "FILE SUMBER", "DIUPLOAD"];
       const body = (data || []).map((r) => [
+        r.is_revoked ? "Revoked" : "Aktif", r.superseded_by_code || "",
         r.region, r.branch, r.hoa_name, r.ds_name, r.ds_phone || "", r.mc || "",
         r.dse_code, r.dse_phone || "", r.jumlah_desa, r.jumlah_outlet, buildRemarks(r), r.source_file || "",
         r.uploaded_at ? new Date(r.uploaded_at).toLocaleString("id-ID") : "",
@@ -422,8 +536,90 @@ export default function SDP_DseDatabase({ theme, profile }) {
         <div style={{ fontSize: 19, fontWeight: 800 }}>Database DSE</div>
       </div>
       <div style={{ fontSize: 13, color: t.mid, marginBottom: 20 }}>
-        Pilih Region, lalu upload beberapa file .txt sekaligus (format HOA → DS → DSE). Upload ulang file HOA yang sama akan
-        mengganti data HOA tsb (tidak menumpuk duplikat).
+        Pilih Region, lalu upload beberapa file .txt sekaligus (format HOA → DS → DSE), atau upload file mapping Hybrid
+        (Kode DSE Lama → Baru) di bawah. Kode DSE lama tidak pernah dihapus — kalau sudah tidak dipakai lagi, hanya
+        ditandai <b style={{ color: t.amber }}>Revoked</b>, supaya histori input lama (mis. produksi DSE) tetap aman tersimpan.
+      </div>
+
+      {/* ── Update Mapping (Hybrid): Kode DSE Lama → Baru ── */}
+      <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: 20, marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+          <History size={16} color={t.teal} />
+          <div style={{ fontSize: 14.5, fontWeight: 800 }}>Update Mapping DSE (Hybrid)</div>
+        </div>
+        <div style={{ fontSize: 12, color: t.mid, marginBottom: 14, display: "flex", alignItems: "flex-start", gap: 6 }}>
+          <Info size={13} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span style={{ flex: 1, minWidth: 0, lineHeight: 1.55 }}>
+            Upload file mapping (.xlsx/.xlsb/.csv) berisi kolom <b style={{ color: t.hi }}>DSE Category</b>,{" "}
+            <b style={{ color: t.hi }}>DSE Code</b> (lama &amp; baru), MPC/PT/Micro Cluster/Branch/Region/Circle — biasanya
+            sheet bernama &ldquo;Hybrid&rdquo;. Kode DSE baru akan aktif, kode lama yang tergantikan otomatis ditandai Revoked (bukan
+            dihapus). File yang dilindungi password perlu dibuka/disimpan ulang tanpa password dulu sebelum diupload di sini.
+          </span>
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 14px", borderRadius: 9, border: `1px dashed ${t.tealBd}`, background: t.tealBg, color: t.teal, fontSize: 13, fontWeight: 700, cursor: "pointer", width: "fit-content" }}>
+          <FileSpreadsheet size={14} /> Pilih File Mapping…
+          <input ref={hybridFileRef} type="file" accept=".xlsx,.xls,.xlsb,.csv" style={{ display: "none" }} onChange={(e) => onPickHybridFile(e.target.files)} />
+        </label>
+
+        {hybridStaged && (
+          <div style={{ marginTop: 14, padding: "10px 14px", borderRadius: 10, border: `1px solid ${hybridStaged.error ? t.redBg : t.line}`, background: hybridStaged.error ? t.redBg : t.sub }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <FileSpreadsheet size={15} color={hybridStaged.error ? t.red : t.teal} style={{ flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{hybridStaged.fileName}</div>
+                {hybridStaged.error ? (
+                  <div style={{ fontSize: 12, color: t.red, marginTop: 2 }}>{hybridStaged.error}</div>
+                ) : (
+                  <div style={{ fontSize: 12, color: t.mid, marginTop: 2 }}>
+                    Sheet &ldquo;{hybridStaged.sheetName}&rdquo; · {hybridStaged.rows.length} baris ·{" "}
+                    <b style={{ color: t.hi }}>{hybridStaged.changedCount}</b> kode berubah (lama → baru) ·{" "}
+                    <b style={{ color: t.hi }}>{hybridStaged.sameCount}</b> kode tetap/baru
+                    {hybridStaged.skipped?.length > 0 && (
+                      <span style={{ color: t.amber, fontWeight: 700 }}> — {hybridStaged.skipped.length} baris dilewati</span>
+                    )}
+                  </div>
+                )}
+              </div>
+              <button onClick={() => setHybridStaged(null)} style={{ background: "none", border: "none", color: t.lo, cursor: "pointer", flexShrink: 0 }}><X size={15} /></button>
+            </div>
+
+            {!hybridStaged.error && hybridStaged.rows?.length > 0 && (
+              <div style={{ marginTop: 10, maxHeight: 220, overflowY: "auto", borderTop: `1px solid ${t.line}`, paddingTop: 8 }}>
+                {hybridStaged.rows.slice(0, 50).map((r, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, padding: "4px 0", color: t.mid }}>
+                    {r.changed ? (
+                      <>
+                        <span style={{ color: t.hi, fontWeight: 600 }}>{r.old_code}</span>
+                        <ArrowRight size={11} color={t.amber} />
+                        <span style={{ color: t.teal, fontWeight: 700 }}>{r.new_code}</span>
+                      </>
+                    ) : (
+                      <span style={{ color: t.hi, fontWeight: 600 }}>{r.new_code} <span style={{ color: t.lo, fontWeight: 400 }}>(tetap)</span></span>
+                    )}
+                    <span style={{ color: t.lo }}>· {r.micro_cluster || "-"}</span>
+                  </div>
+                ))}
+                {hybridStaged.rows.length > 50 && (
+                  <div style={{ fontSize: 11.5, color: t.lo, marginTop: 4 }}>…dan {hybridStaged.rows.length - 50} baris lainnya.</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {hybridStaged && !hybridStaged.error && hybridStaged.rows?.length > 0 && (
+          <button onClick={handleHybridUpload} disabled={hybridUploading}
+            style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 8, height: 40, padding: "0 18px", borderRadius: 10, border: "none", background: t.teal, color: "#fff", fontSize: 13.5, fontWeight: 700, cursor: hybridUploading ? "default" : "pointer", opacity: hybridUploading ? 0.6 : 1 }}>
+            {hybridUploading ? <Loader2 size={15} className="spin" /> : <Upload size={15} />}
+            {hybridUploading ? "Menyimpan…" : `Terapkan Mapping (${hybridStaged.changedCount} kode lama direvoke)`}
+          </button>
+        )}
+
+        {hybridResult?.ok && (
+          <div style={{ marginTop: 12, fontSize: 12.5, color: t.mid }}>
+            ✓ {hybridResult.newActive} kode baru ditambahkan, {hybridResult.oldRevoked} kode lama direvoke, {hybridResult.unchanged} kode diperbarui.
+          </div>
+        )}
       </div>
 
       {/* ── Step 1: Region + upload ── */}
@@ -562,27 +758,33 @@ export default function SDP_DseDatabase({ theme, profile }) {
           </button>
         </div>
 
-        <div style={{ padding: "6px 16px", fontSize: 12, color: t.mid, borderBottom: `1px solid ${t.line}` }}>
-          {total.toLocaleString("id-ID")} baris DSE{filterRegion ? ` · Region ${filterRegion}` : " · seluruh Region"}
-          {incompleteTotal > 0 && (
-            <span style={{ color: t.amber, fontWeight: 700 }}> · {incompleteTotal.toLocaleString("id-ID")} baris belum lengkap</span>
-          )}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "6px 16px", fontSize: 12, color: t.mid, borderBottom: `1px solid ${t.line}`, flexWrap: "wrap" }}>
+          <div>
+            {total.toLocaleString("id-ID")} baris DSE{filterRegion ? ` · Region ${filterRegion}` : " · seluruh Region"}
+            {incompleteTotal > 0 && (
+              <span style={{ color: t.amber, fontWeight: 700 }}> · {incompleteTotal.toLocaleString("id-ID")} baris belum lengkap</span>
+            )}
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", userSelect: "none", fontSize: 12 }}>
+            <input type="checkbox" checked={showRevoked} onChange={(e) => setShowRevoked(e.target.checked)} />
+            Tampilkan yang sudah Revoked
+          </label>
         </div>
 
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
             <thead>
               <tr style={{ background: t.sub }}>
-                {["", "REGION", "BRANCH", "HOA", "NAMA DS", "NOMOR DS", "MC", "ID DSE", "NOMOR DSE", "DESA", "OUTLET", "REMARKS"].map((h, i) => (
+                {["", "STATUS", "REGION", "BRANCH", "HOA", "NAMA DS", "NOMOR DS", "MC", "ID DSE", "NOMOR DSE", "DESA", "OUTLET", "REMARKS"].map((h, i) => (
                   <th key={i} style={{ textAlign: "left", padding: "9px 12px", color: t.mid, fontWeight: 700, whiteSpace: "nowrap", borderBottom: `1px solid ${t.line}` }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {fetching ? (
-                <tr><td colSpan={12} style={{ padding: 28, textAlign: "center", color: t.mid }}><Loader2 size={16} className="spin" /></td></tr>
+                <tr><td colSpan={13} style={{ padding: 28, textAlign: "center", color: t.mid }}><Loader2 size={16} className="spin" /></td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={12} style={{ padding: 28, textAlign: "center", color: t.mid }}>Belum ada data. Upload file di atas untuk mulai.</td></tr>
+                <tr><td colSpan={13} style={{ padding: 28, textAlign: "center", color: t.mid }}>Belum ada data. Upload file di atas untuk mulai.</td></tr>
               ) : rows.map((r) => {
                 // Baris "belum lengkap" = ada field kontak yg masih kosong
                 // (biasanya krn placeholder "VACANT" di file sumber — lihat
@@ -591,9 +793,21 @@ export default function SDP_DseDatabase({ theme, profile }) {
                 const incomplete = !r.ds_name || !r.ds_phone || !r.mc || !r.dse_phone || r.flag_duplicate_code;
                 const remarks = buildRemarks(r);
                 return (
-                  <tr key={r.id} style={{ borderBottom: `1px solid ${t.line}`, background: incomplete ? t.amberBg : "transparent" }}>
+                  <tr key={r.id} style={{ borderBottom: `1px solid ${t.line}`, background: r.is_revoked ? t.redBg : incomplete ? t.amberBg : "transparent", opacity: r.is_revoked ? 0.75 : 1 }}>
                     <td style={{ padding: "8px 10px", textAlign: "center" }} title={incomplete ? "Ada kolom yang masih kosong" : "Lengkap"}>
                       {incomplete && <AlertTriangle size={13} color={t.amber} />}
+                    </td>
+                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>
+                      {r.is_revoked ? (
+                        <span title={r.superseded_by_code ? `Digantikan kode: ${r.superseded_by_code}` : undefined}
+                          style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 999, background: t.redBg, color: t.red, fontWeight: 700, fontSize: 11 }}>
+                          Revoked{r.superseded_by_code ? ` → ${r.superseded_by_code}` : ""}
+                        </span>
+                      ) : (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 999, background: t.tealBg, color: t.teal, fontWeight: 700, fontSize: 11 }}>
+                          Aktif
+                        </span>
+                      )}
                     </td>
                     <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>{r.region}</td>
                     <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>{r.branch}</td>

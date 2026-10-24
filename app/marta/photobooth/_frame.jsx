@@ -201,8 +201,31 @@ export function PhotoFrame({ photo, ratio, crop, frame, mode, queueLabel, sessio
           apa adanya, TANPA normalisasi) - dipakai IDENTIK di preview layar,
           lembar cetak sungguhan, TV Viewer, MAUPUN di dalam editor template
           (lewat prop interaktif opsional di bawah), supaya WYSIWYG & tidak
-          ada celah drift antar tampilan. */}
-      {isCustom && (customElements || []).map((el) => {
+          ada celah drift antar tampilan. Dipecah jadi FrameOverlayElements
+          (lihat di bawah) supaya bisa dipakai ulang jg di atas <video> live
+          kamera (fitur "Frame Langsung"), bukan cuma di atas <img> statis. */}
+      {isCustom && (
+        <FrameOverlayElements customElements={customElements} customFonts={customFonts} mode={mode} ratio={ratio}
+          sessionTitle={sessionTitle} queueLabel={queueLabel}
+          interactive={interactive} onElementPointerDown={onElementPointerDown} selectedElId={selectedElId} />
+      )}
+    </div>
+  );
+}
+
+/** Overlay elemen custom (teks/gambar/lubang PNG/shape) SAJA, tanpa foto di
+ * baliknya - diekstrak dari body PhotoFrame di atas supaya SATU SUMBER
+ * KEBENARAN yang sama bisa ditumpuk di atas <img> (PhotoFrame, foto statis)
+ * MAUPUN di atas <video> (live kamera "Frame Langsung" - lihat CameraView
+ * di app/marta/photobooth/upload/[code]/page.jsx), dijamin identik posisi/
+ * ukurannya antara preview live & hasil jepretan/cetak akhir. */
+export function FrameOverlayElements({ customElements, customFonts, mode, ratio, sessionTitle, queueLabel, interactive, onElementPointerDown, selectedElId }) {
+  const resolveTemplateText = (text) => String(text || "")
+    .replaceAll("{Nama Event}", sessionTitle || "Nama Event")
+    .replaceAll("{Photo ID}", queueLabel || "00000");
+  return (
+    <>
+      {(customElements || []).map((el) => {
         const isSelected = interactive && el.id === selectedElId;
         const justify = el.align === "left" ? "flex-start" : el.align === "right" ? "flex-end" : "center";
         return (
@@ -226,8 +249,28 @@ export function PhotoFrame({ photo, ratio, crop, frame, mode, queueLabel, sessio
               pointerEvents: interactive ? "auto" : "none",
             }}>
             {el.type === "image" ? (
-              <img src={el.url} alt="" draggable={false}
-                style={{ width: "100%", height: "100%", objectFit: "contain", pointerEvents: "none", userSelect: "none" }} />
+              // UPDATE (permintaan user - "tambahkan fitur... ada tombol
+              // untuk sesuaikan posisi frame untuk memastikan di tepinya
+              // tidak ada area kosong bisa zoom juga"): elemen bingkai PNG
+              // yg diupload tamu BISA punya rasio beda dr kotak 4R - kalau
+              // dirender "contain" (default) itu nyisain area transparan/
+              // kosong di tepi (letterbox) begitu rasionya tidak pas.
+              // Elemen dgn el.fit==="cover" (semua upload BARU skrg + yg
+              // sudah di-"Zoom Otomatis"/diatur manual) dirender PERSIS spt
+              // crop foto tamu (object-fit:cover + scale/translate zoom-pan)
+              // - selalu penuh menutupi kotaknya, TIDAK PERNAH ada bolong,
+              // apa pun rasio file aslinya. Elemen LAMA tanpa `fit` tetap
+              // "contain" spy tidak berubah tampilan diam2 sampai operator/
+              // tamu sendiri yg pilih "Zoom Otomatis"/atur posisi.
+              el.fit === "cover" ? (
+                <div style={{ width: "100%", height: "100%", overflow: "hidden", pointerEvents: "none" }}>
+                  <img src={el.url} alt="" draggable={false}
+                    style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none", userSelect: "none", transform: `scale(${el.zoom || 1}) translate(${el.panX || 0}%, ${el.panY || 0}%)` }} />
+                </div>
+              ) : (
+                <img src={el.url} alt="" draggable={false}
+                  style={{ width: "100%", height: "100%", objectFit: "contain", pointerEvents: "none", userSelect: "none" }} />
+              )
             ) : el.type === "shape" ? (
               <div style={{
                 width: "100%", height: "100%", pointerEvents: "none",
@@ -253,7 +296,7 @@ export function PhotoFrame({ photo, ratio, crop, frame, mode, queueLabel, sessio
           </div>
         );
       })}
-    </div>
+    </>
   );
 }
 
@@ -263,6 +306,18 @@ export function PhotoFrame({ photo, ratio, crop, frame, mode, queueLabel, sessio
  * pilih apa2 di layar TV (tidak ada UI di TV, murni auto). */
 export function findDefaultFrameTemplate(templates) {
   return (templates || []).find((tpl) => tpl.isDefault) || null;
+}
+
+/** Template EFEKTIF yg dipakai render/cetak 1 foto - fitur "Frame Langsung":
+ * kalau foto itu punya frame_template_id SENDIRI (tamu pilih sendiri saat
+ * upload lewat alur kamera-langsung), itu yg dipakai - BUKAN lagi cuma 1
+ * default global yg sama utk semua foto. Foto lama/alur AI (frame_template_
+ * id kosong) tetap fallback ke template is_default spt sebelumnya, jadi
+ * TIDAK ADA breaking change di titik cetak manapun yg sudah ada
+ * (/print/[photoCode], /p/[photoCode], TV Viewer). */
+export function resolveEffectiveFrameTemplate(photo, templates) {
+  const own = photo?.frame_template_id ? (templates || []).find((tpl) => tpl.id === photo.frame_template_id) : null;
+  return own || findDefaultFrameTemplate(templates);
 }
 
 // ── Rasterisasi PhotoFrame ke file gambar (canvas, BUKAN html2canvas) ──────
@@ -386,10 +441,24 @@ export async function renderPhotoFrameToBlob({ photo, ratio, crop, frame, queueL
           const elImg = await loadImageEl(el.url);
           const eiw = elImg.naturalWidth || elImg.width;
           const eih = elImg.naturalHeight || elImg.height;
-          const contain = Math.min(bw / eiw, bh / eih);
-          const dw = eiw * contain;
-          const dh = eih * contain;
-          ctx.drawImage(elImg, bx + (bw - dw) / 2, by + (bh - dh) / 2, dw, dh);
+          if (el.fit === "cover") {
+            // Samakan PERSIS dgn urutan transform CSS di render layar
+            // (scale(zoom) translate(panX%,panY%) di atas object-fit:cover) -
+            // translate dihitung dulu di unit box asli, BARU dikali zoom,
+            // supaya hasil cetak/export match 1:1 dgn pratinjau WYSIWYG.
+            const zoom = el.zoom || 1;
+            const base = Math.max(bw / eiw, bh / eih);
+            const dw = eiw * base * zoom;
+            const dh = eih * base * zoom;
+            const cx = bx + bw / 2 + zoom * ((el.panX || 0) / 100) * bw;
+            const cy = by + bh / 2 + zoom * ((el.panY || 0) / 100) * bh;
+            ctx.drawImage(elImg, cx - dw / 2, cy - dh / 2, dw, dh);
+          } else {
+            const contain = Math.min(bw / eiw, bh / eih);
+            const dw = eiw * contain;
+            const dh = eih * contain;
+            ctx.drawImage(elImg, bx + (bw - dw) / 2, by + (bh - dh) / 2, dw, dh);
+          }
         } catch { /* elemen gambar gagal dimuat (mis. CORS) - lewati, jangan gagalkan semua render */ }
       } else if (el.type === "shape") {
         const radiusPct = el.radiusPct ?? 0;

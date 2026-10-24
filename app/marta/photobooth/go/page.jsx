@@ -25,6 +25,26 @@ const INK = "#F1F1F3";
 const SUB = "#84848C";
 const PAGE_LEAVE_MS = 260; // durasi fade-out sblm pindah halaman - biar transisi kepilih sesi -> halaman sesi tidak "loncat" mendadak
 
+/** 1 kartu sesi di daftar pemilihan - diekstrak dr body map() sebelumnya
+ * supaya bisa dipakai utk 2 grup (Frame Langsung / AI Prompt) tanpa
+ * duplikasi style. */
+function SessionCard({ s, leavingCode, onClick, accent }) {
+  return (
+    <button onClick={onClick} disabled={!!leavingCode}
+      className="rpv-go-card"
+      style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, textAlign: "left", background: `linear-gradient(180deg, ${CARD_HI} 0%, ${CARD} 100%)`, border: `1px solid ${LINE}`, borderRadius: 16, padding: "14px 14px", marginBottom: 10, cursor: leavingCode ? "default" : "pointer", fontFamily: FONT, opacity: leavingCode && leavingCode !== s.code ? 0.4 : 1, transition: "opacity .2s ease" }}>
+      <span style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED}22,${accent}22)`, color: accent }}>
+        <Ticket size={18} />
+      </span>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: INK, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</div>
+        <div style={{ fontSize: 11, color: SUB, marginTop: 2, fontWeight: 600 }}>{s.photo_count ?? 0} foto terunggah</div>
+      </div>
+      <ChevronRight size={17} color={SUB} />
+    </button>
+  );
+}
+
 export default function RpvGoLanding() {
   const router = useRouter();
   const [state, setState] = useState("loading"); // loading | ready | error
@@ -86,20 +106,38 @@ export default function RpvGoLanding() {
         {state === "ready" && sessions.length === 0 && (
           <div style={{ textAlign: "center", padding: "20px 14px", borderRadius: 16, background: CARD, border: `1.5px dashed ${LINE}`, color: SUB, fontSize: 12.5, fontWeight: 600 }}>Belum ada sesi aktif saat ini.</div>
         )}
-        {state === "ready" && sessions.map((s) => (
-          <button key={s.code} onClick={() => goToSession(s.code)} disabled={!!leavingCode}
-            className="rpv-go-card"
-            style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, textAlign: "left", background: `linear-gradient(180deg, ${CARD_HI} 0%, ${CARD} 100%)`, border: `1px solid ${LINE}`, borderRadius: 16, padding: "14px 14px", marginBottom: 10, cursor: leavingCode ? "default" : "pointer", fontFamily: FONT, opacity: leavingCode && leavingCode !== s.code ? 0.4 : 1, transition: "opacity .2s ease" }}>
-            <span style={{ width: 42, height: 42, borderRadius: 12, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: `linear-gradient(135deg,${RED}22,${MAGA}22)`, color: MAGA }}>
-              <Ticket size={18} />
-            </span>
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 800, color: INK, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.title}</div>
-              <div style={{ fontSize: 11, color: SUB, marginTop: 2, fontWeight: 600 }}>{s.photo_count ?? 0} foto terunggah</div>
-            </div>
-            <ChevronRight size={17} color={SUB} />
-          </button>
-        ))}
+        {/* UPDATE (permintaan user - "pisahkan sesi prompt dan sesi frame
+            langsung disini"): daftar sekarang dikelompokkan 2 bagian - sesi
+            "Frame Langsung" (mode='direct_frame', SELALU cuma 1 sesi utk
+            semua event, lihat idx_rpv_sessions_single_direct_frame di DB)
+            ditampilkan DULUAN dgn badge beda, baru sesi "AI Prompt" biasa
+            (per-event, bisa banyak) di bawahnya - spy tamu tidak bingung
+            ada 2 jenis sesi tercampur begitu saja di 1 daftar. */}
+        {state === "ready" && sessions.length > 0 && (() => {
+          const frameSessions = sessions.filter((s) => s.mode === "direct_frame");
+          const aiSessions = sessions.filter((s) => s.mode !== "direct_frame");
+          return (
+            <>
+              {frameSessions.length > 0 && (
+                <>
+                  <div style={{ fontSize: 10.5, fontWeight: 800, color: MAGA, textTransform: "uppercase", letterSpacing: "0.06em", margin: "4px 2px 8px" }}>Frame Langsung</div>
+                  {frameSessions.map((s) => (
+                    <SessionCard key={s.code} s={s} leavingCode={leavingCode} onClick={() => goToSession(s.code)} accent={MAGA} />
+                  ))}
+                  <div style={{ height: 16 }} />
+                </>
+              )}
+              {aiSessions.length > 0 && (
+                <>
+                  <div style={{ fontSize: 10.5, fontWeight: 800, color: SUB, textTransform: "uppercase", letterSpacing: "0.06em", margin: "4px 2px 8px" }}>Sesi AI Prompt</div>
+                  {aiSessions.map((s) => (
+                    <SessionCard key={s.code} s={s} leavingCode={leavingCode} onClick={() => goToSession(s.code)} accent={MAGA} />
+                  ))}
+                </>
+              )}
+            </>
+          );
+        })()}
       </div>
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }

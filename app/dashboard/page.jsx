@@ -21,7 +21,7 @@ import {
   Shield, Globe, Building2, Store, SlidersHorizontal,
   Table2, Wallet, PanelLeftClose, PanelLeftOpen,
   FileSpreadsheet, Users, Key, Briefcase, Wrench, Mail, Sparkles, Archive,
-  Database,
+  Database, TrendingUp, UserRoundCog,
 } from "lucide-react";
 
 import FormPendapatan   from "./components/PNL_FormPendapatan";
@@ -43,6 +43,8 @@ import PTS_Module        from "./components/PTS_Module";
 import ReportMerge_Module from "./components/ReportMerge_Module";
 import PNL_MPX_Menu       from "./components/PNL_MPX_Menu";
 import SDP_DseDatabase    from "./components/SDP_DseDatabase";
+import DSE_ProdAR         from "./components/DSE_ProdAR";
+import AdminMcMapping     from "./components/AdminMcMapping";
 
 // ─── Role Maps ────────────────────────────────────────────────────────────────
 const IOH_ROLE_REGION_MAP = {
@@ -122,8 +124,28 @@ const buildGlobalCSS = (d, t) => `
   @media (max-width: 640px) {
     .tab-label { display: none !important; }
     .hide-mobile { display: none !important; }
-    .header-pad { padding-left: 16px !important; padding-right: 16px !important; }
+    .header-pad { padding-left: 12px !important; padding-right: 12px !important; gap: 6px !important; overflow-x: auto !important; }
     .content-pad { padding: 20px 16px !important; }
+    /* Header mobile sering kepotong/ketutup (tombol dark mode dkk kedorong
+       keluar layar) krn date-picker (Bulan+Tahun) & grup kanan (theme/bell/
+       profil) sama2 flexShrink:0 & lebar penuh seperti di desktop, padahal
+       layar sempit — di bawah ini dirapatkan/diperkecil KHUSUS mobile
+       (desktop/tablet tetap seperti semula, aturan ini cuma aktif <=640px). */
+    .hdr-left { gap: 4px !important; }
+    .hdr-right { gap: 4px !important; }
+    .hdr-right .icon-btn { width: 32px !important; height: 32px !important; }
+    .hdr-datepicker { height: 32px !important; }
+    .hdr-datepicker select { height: 32px !important; font-size: 12px !important; padding-left: 4px !important; }
+    /* Padding-right select Bulan & Tahun DIBEDAKAN krn posisi ChevronDown-nya
+       beda jarak dari tepi (right:6 utk Bulan, right:9 utk Tahun, lihat JSX
+       di atas) — kalau disamakan rata (spt sblmnya) teks & panah jadi
+       tumpang-tindih, terutama di select Tahun yg chevron-nya lebih ke
+       dalam. Rumus: padding-right >= posisi-chevron + lebar-ikon(12) + sisa
+       jarak nafas (4px) spy teks & panah tidak pernah saling sentuh. */
+    .hdr-datepicker select:first-of-type { padding-left: 2px !important; padding-right: 22px !important; }
+    .hdr-datepicker select:last-of-type { padding-right: 25px !important; }
+    .hdr-cal-icon { margin-left: 6px !important; }
+    .hdr-profile-name { display: none !important; }
   }
   .snav {
     width: 100%; display: flex; align-items: center; gap: 10px;
@@ -816,6 +838,8 @@ export default function DashboardPage() {
                   {!isSDPMember && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
                   {canSdp       && <SNavItem icon={<Store size={14} />}       label="SDP Management"       active={view === "sdp2"}           onClick={() => navigate("sdp2")} />}
                   {isSPM        && <SNavItem icon={<Shield size={14} />}      label="Admin Panel"          active={view === "admin-panel"}    onClick={() => navigate("admin-panel")} />}
+                  {(isSPM || isMPX) && <SNavItem icon={<TrendingUp size={14} />} label="DSE Prod. & AR"     active={view === "dse-prod-ar"}    onClick={() => navigate("dse-prod-ar")} />}
+                  {isSPM        && <SNavItem icon={<UserRoundCog size={14} />}  label="Mapping Admin MC"     active={view === "admin-mc-mapping"} onClick={() => navigate("admin-mc-mapping")} />}
 
                   {/* Archive — menu lama, dipertimbangkan dihapus ke depannya;
                       code TIDAK dihapus, cuma dikumpulkan & collapsed di sini. */}
@@ -863,7 +887,7 @@ export default function DashboardPage() {
         {/* Header */}
         <header className="header-pad" style={{ height: HEADER_H, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", gap: 12, background: d ? "rgba(17,17,19,0.92)" : "rgba(255,255,255,0.92)", borderBottom: `1px solid ${t.line}`, backdropFilter: "blur(24px)", zIndex: 40, position: "relative" }}>
           <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 2, background: "linear-gradient(90deg, #ED1C24 0%, #FFCB05 33%, #32BCAD 66%, #C6168D 100%)" }} />
-          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+          <div className="hdr-left" style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
             <div className="lg-sidebar-toggle" style={{ display: "none" }}>
               <SidebarToggleBtn collapsed={sidebarCollapsed} onToggle={handleToggleSidebar} t={t} />
             </div>
@@ -871,12 +895,12 @@ export default function DashboardPage() {
               <Menu size={17} />
             </button>
             {!hideDatePicker && (
-              <div style={{ display: "flex", alignItems: "center", border: `1px solid ${t.inputBd}`, borderRadius: 8, background: t.inputBg, height: 36, overflow: "hidden", flexShrink: 0 }}>
-                <div style={{ display: "flex", alignItems: "center", borderRight: `1px solid ${t.inputBd}`, height: "100%", position: "relative" }}>
-                  <Calendar size={13} style={{ color: t.blue, marginLeft: 11 }} />
-                  <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+              <div className="hdr-datepicker" style={{ display: "flex", alignItems: "center", border: `1px solid ${t.inputBd}`, borderRadius: 8, background: t.inputBg, height: 36, overflow: "hidden", flexShrink: 0, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", borderRight: `1px solid ${t.inputBd}`, height: "100%", position: "relative", minWidth: 0 }}>
+                  <Calendar size={13} className="hdr-cal-icon" style={{ color: t.blue, marginLeft: 11, flexShrink: 0 }} />
+                  <div style={{ position: "relative", display: "flex", alignItems: "center", minWidth: 0 }}>
                     <select value={activeMonth} onChange={e => setActiveMonth(e.target.value)}
-                      style={{ appearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, cursor: "pointer", paddingLeft: 7, paddingRight: 24, height: 36, fontFamily: "inherit" }}>
+                      style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, cursor: "pointer", paddingLeft: 7, paddingRight: 24, height: 36, fontFamily: "inherit", minWidth: 0 }}>
                       {availableMonths.map(m => (
                         <option key={m} value={m} disabled={activeContextDisabledMonths.has(m)}>{m}{activeContextDisabledMonths.has(m) ? " (nonaktif)" : ""}</option>
                       ))}
@@ -884,8 +908,8 @@ export default function DashboardPage() {
                     <ChevronDown size={12} style={{ position: "absolute", right: 6, pointerEvents: "none", color: t.lo }} />
                   </div>
                 </div>
-                <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
-                  <select value={activeYear} onChange={e => setActiveYear(e.target.value)} style={{ appearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, cursor: "pointer", paddingLeft: 12, paddingRight: 28, height: 36, fontFamily: "inherit" }}>
+                <div style={{ position: "relative", display: "flex", alignItems: "center", minWidth: 0 }}>
+                  <select value={activeYear} onChange={e => setActiveYear(e.target.value)} style={{ appearance: "none", WebkitAppearance: "none", MozAppearance: "none", background: "transparent", border: "none", fontSize: 13.5, fontWeight: 500, color: t.hi, cursor: "pointer", paddingLeft: 12, paddingRight: 28, height: 36, fontFamily: "inherit", minWidth: 0 }}>
                     {availableYears.map(year => <option key={year} value={year}>{year}</option>)}
                   </select>
                   <ChevronDown size={12} style={{ position: "absolute", right: 9, pointerEvents: "none", color: t.lo }} />
@@ -894,7 +918,7 @@ export default function DashboardPage() {
             )}
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <div className="hdr-right" style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
             <button className="icon-btn" onClick={toggleTheme} style={{ width: 36, height: 36 }}>{d ? <Sun size={15} /> : <Moon size={15} />}</button>
             <NotificationBell t={t} d={d} isSPM={canMonitor} activeYear={activeYear} masterData={masterData} disabledMonthsMap={disabledMonthsMap} />
             <div style={{ position: "relative" }}>
@@ -902,7 +926,7 @@ export default function DashboardPage() {
                 <div style={{ width: 26, height: 26, borderRadius: 6, background: "linear-gradient(135deg, #ED1C24 0%, #C6168D 100%)", display: "flex", alignItems: "center", justifyContent: "center", color: "#FFFFFF", fontSize: 12, fontWeight: 700 }}>
                   {profile?.full_name?.charAt(0) || "U"}
                 </div>
-                <span style={{ fontSize: 13.5, fontWeight: 500, color: t.hi, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} className="lg-hide-text">
+                <span style={{ fontSize: 13.5, fontWeight: 500, color: t.hi, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} className="lg-hide-text hdr-profile-name">
                   {profile?.full_name?.split(" ")[0]}
                 </span>
                 <ChevronDown size={12} style={{ color: t.lo, transform: profileOpen ? "rotate(180deg)" : "rotate(0)" }} />
@@ -986,6 +1010,20 @@ export default function DashboardPage() {
                     <DashCard icon={<Shield size={20} />} title="Admin Panel"
                       desc="Kelola kode otoritas dan daftar partner branches seluruh Sumatera."
                       tag="Sistem" active={true} onClick={() => navigate("admin-panel")} t={t} d={d}
+                      accent={{ color: d ? "#A78BFA" : "#7C3AED", bg: d ? "rgba(167,139,250,0.11)" : "rgba(124,58,237,0.07)", bd: d ? "rgba(167,139,250,0.28)" : "rgba(124,58,237,0.18)", shadow: "rgba(124,58,237,0.18)" }} />
+                  )}
+
+                  {(isSPM || isMPX) && (
+                    <DashCard icon={<TrendingUp size={20} />} title="DSE Prod. & AR"
+                      desc="Upload produksi harian DSE (SP, Saldo, Voucher) dan AR/piutang outstanding, per Kode DSE."
+                      tag={isMPX ? "Admin MC" : "SPM"} active={true} onClick={() => navigate("dse-prod-ar")} t={t} d={d}
+                      accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.11)" : "rgba(26,158,144,0.07)", bd: d ? "rgba(50,188,173,0.28)" : "rgba(26,158,144,0.20)", shadow: "rgba(26,158,144,0.16)" }} />
+                  )}
+
+                  {isSPM && (
+                    <DashCard icon={<UserRoundCog size={20} />} title="Mapping Admin MC"
+                      desc="Daftarkan email Admin MC supaya bisa login via OTP (tanpa password) dan otomatis terbatas ke MC-nya."
+                      tag="SPM" active={true} onClick={() => navigate("admin-mc-mapping")} t={t} d={d}
                       accent={{ color: d ? "#A78BFA" : "#7C3AED", bg: d ? "rgba(167,139,250,0.11)" : "rgba(124,58,237,0.07)", bd: d ? "rgba(167,139,250,0.28)" : "rgba(124,58,237,0.18)", shadow: "rgba(124,58,237,0.18)" }} />
                   )}
                 </div>
@@ -1160,6 +1198,22 @@ export default function DashboardPage() {
               <motion.div key="dse-db" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
                 <SDP_DseDatabase theme={theme} profile={profile} />
+              </motion.div>
+            )}
+
+            {/* ── DSE Prod. & AR ── */}
+            {view === "dse-prod-ar" && (isSPM || isMPX) && (
+              <motion.div key="dse-prod-ar" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <DSE_ProdAR theme={theme} profile={profile} />
+              </motion.div>
+            )}
+
+            {/* ── Mapping Admin MC ── */}
+            {view === "admin-mc-mapping" && isSPM && (
+              <motion.div key="admin-mc-mapping" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <AdminMcMapping theme={theme} />
               </motion.div>
             )}
 

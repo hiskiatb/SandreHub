@@ -17,7 +17,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { AlertTriangle, Loader2, Printer } from "lucide-react";
 import { getRpvPhotoByCode, listRpvFrameTemplates, listRpvCustomFonts } from "../../../../../lib/rpv";
-import { PhotoFrame, PRINT_SIZE, TEMPLATE_GOOGLE_FONTS_HREF, customFontFaceCss, findDefaultFrameTemplate } from "../../_frame";
+import { PhotoFrame, PRINT_SIZE, TEMPLATE_GOOGLE_FONTS_HREF, customFontFaceCss, resolveEffectiveFrameTemplate } from "../../_frame";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const RED = "#ED1C24";
@@ -30,7 +30,7 @@ export default function RpvPrintPage() {
   const [photo, setPhoto] = useState(null);
   const [frameTemplates, setFrameTemplates] = useState([]);
   const [customFonts, setCustomFonts] = useState([]);
-  const defaultTemplate = useMemo(() => findDefaultFrameTemplate(frameTemplates), [frameTemplates]);
+  const defaultTemplate = useMemo(() => resolveEffectiveFrameTemplate(photo, frameTemplates), [photo, frameTemplates]);
 
   useEffect(() => {
     (async () => {

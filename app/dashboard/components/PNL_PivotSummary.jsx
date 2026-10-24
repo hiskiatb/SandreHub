@@ -14,7 +14,7 @@ import supabase from "../../../lib/supabase";
 import {
   Search, Check, ChevronDown, ChevronRight, X,
   RotateCcw, Download, Calendar, BarChart3, AlertCircle,
-  TrendingUp, TrendingDown, Wallet, Lock, FileSpreadsheet,
+  TrendingUp, TrendingDown, Wallet, Lock, FileSpreadsheet, Rows3,
 } from "lucide-react";
 
 // ─── Brand palette ───────────────────────────────────────────────────────────
@@ -28,6 +28,130 @@ const B = {
 const MONTHS_FULL  = ["JANUARI","FEBRUARI","MARET","APRIL","MEI","JUNI",
                       "JULI","AGUSTUS","SEPTEMBER","OKTOBER","NOVEMBER","DESEMBER"];
 const MONTHS_SHORT = ["Jan","Feb","Mar","Apr","Mei","Jun","Jul","Agu","Sep","Okt","Nov","Des"];
+
+// ─── Rincian kategori biaya (untuk tombol "Export Detail Form") ──────────────
+// Daftar ini SENGAJA disalin 1:1 dari definisi item di PNL_FormPengeluaran.jsx
+// (array `defaults().opex/sdm/marketing/com`) — setiap kategori di sana
+// disimpan sbg 2 kolom terpisah di tabel pnl_reports: qty_<x> (jumlah/unit)
+// & price_<x> (harga satuan); nilai Rupiah kategori itu = qty_<x> * price_<x>.
+// Kalau suatu saat ada kategori BARU ditambahkan di form pengeluaran, baris
+// yg sepadan HARUS ditambahkan juga di sini (grup + nama kolom qty/price
+// harus PERSIS sama) supaya ikut muncul di export detail ini.
+const EXPENSE_CATEGORIES = [
+  // ── OPEX (Infrastruktur & Operasional Kantor) ──
+  { group: "OPEX", label: "Infrastruktur Gedung",   qtyCol: "qty_opex_gedung",    priceCol: "price_opex_gedung" },
+  { group: "OPEX", label: "Penyewaan Kendaraan",    qtyCol: "qty_opex_kendaraan", priceCol: "price_opex_kendaraan" },
+  { group: "OPEX", label: "Listrik",                qtyCol: "qty_opex_listrik",   priceCol: "price_opex_listrik" },
+  { group: "OPEX", label: "Air",                    qtyCol: "qty_opex_air",       priceCol: "price_opex_air" },
+  { group: "OPEX", label: "Telekomunikasi & IT",    qtyCol: "qty_opex_it",        priceCol: "price_opex_it" },
+  { group: "OPEX", label: "Logistik (Gudang)",      qtyCol: "qty_opex_logistik",  priceCol: "price_opex_logistik" },
+  { group: "OPEX", label: "Asuransi Aset",          qtyCol: "qty_opex_asuransi",  priceCol: "price_opex_asuransi" },
+  { group: "OPEX", label: "Lain-lain Internal",     qtyCol: "qty_opex_lain",      priceCol: "price_opex_lain" },
+  // ── SDM ──
+  { group: "SDM", label: "Benefit BM",                  qtyCol: "qty_sdm_bm",               priceCol: "price_sdm_bm" },
+  { group: "SDM", label: "Benefit TM",                  qtyCol: "qty_sdm_tm",               priceCol: "price_sdm_tm" },
+  { group: "SDM", label: "Benefit Operational Manager", qtyCol: "qty_sdm_om",               priceCol: "price_sdm_om" },
+  { group: "SDM", label: "Benefit GM",                  qtyCol: "qty_sdm_gm",               priceCol: "price_sdm_gm" },
+  { group: "SDM", label: "Benefit HRD",                 qtyCol: "qty_sdm_hrd",              priceCol: "price_sdm_hrd" },
+  { group: "SDM", label: "Benefit MIS",                 qtyCol: "qty_sdm_mis",              priceCol: "price_sdm_mis" },
+  { group: "SDM", label: "Benefit SOM",                 qtyCol: "qty_sdm_som",              priceCol: "price_sdm_som" },
+  { group: "SDM", label: "Benefit Finance SPV",         qtyCol: "qty_sdm_finance_spv",      priceCol: "price_sdm_finance_spv" },
+  { group: "SDM", label: "Benefit Finance Staff",       qtyCol: "qty_sdm_finance_staff",    priceCol: "price_sdm_finance_staff" },
+  { group: "SDM", label: "Benefit OB",                  qtyCol: "qty_sdm_ob",               priceCol: "price_sdm_ob" },
+  { group: "SDM", label: "Territory Sales SPV",         qtyCol: "qty_sdm_tss",              priceCol: "price_sdm_tss" },
+  { group: "SDM", label: "Benefit Admin & WH",          qtyCol: "qty_sdm_admin",            priceCol: "price_sdm_admin" },
+  { group: "SDM", label: "Benefit Finance",             qtyCol: "qty_sdm_finance",          priceCol: "price_sdm_finance" },
+  { group: "SDM", label: "Benefit MD",                  qtyCol: "qty_sdm_md",               priceCol: "price_sdm_md" },
+  { group: "SDM", label: "Benefit Sales Support",       qtyCol: "qty_sdm_ss",               priceCol: "price_sdm_ss" },
+  { group: "SDM", label: "Operasional Staff",           qtyCol: "qty_sdm_ops",              priceCol: "price_sdm_ops" },
+  { group: "SDM", label: "Perjalanan Dinas",            qtyCol: "qty_sdm_dinas",            priceCol: "price_sdm_dinas" },
+  { group: "SDM", label: "Benefit Sales",               qtyCol: "qty_sdm_benefit_sales",    priceCol: "price_sdm_benefit_sales" },
+  { group: "SDM", label: "Benefit Non-Sales",           qtyCol: "qty_sdm_benefit_nonsales", priceCol: "price_sdm_benefit_nonsales" },
+  // ── MARKETING ──
+  { group: "Marketing", label: "Program Wholeseller",               qtyCol: "qty_mkt_ws",      priceCol: "price_mkt_ws" },
+  { group: "Marketing", label: "Program Retail",                    qtyCol: "qty_mkt_retail",  priceCol: "price_mkt_retail" },
+  { group: "Marketing", label: "Diskon / Subsidi Starter Pack",     qtyCol: "qty_mkt_starter", priceCol: "price_mkt_starter" },
+  { group: "Marketing", label: "Program Event",                     qtyCol: "qty_mkt_event",   priceCol: "price_mkt_event" },
+  // ── COM (Cost of Money) ──
+  { group: "COM", label: "Biaya Administrasi",  qtyCol: "qty_com_admin", priceCol: "price_com_admin" },
+  { group: "COM", label: "Bunga Pinjaman Bank", qtyCol: "qty_com_bunga", priceCol: "price_com_bunga" },
+];
+
+// Nama 4 grup di atas ("OPEX","SDM","Marketing","COM") SENGAJA disamakan
+// persis dgn label step wizard form Pengeluaran (lihat `ITEMS` &
+// `SecHero title=` di PNL_FormPengeluaran.jsx: "OPEX Branch","SDM
+// Branch","Marketing","Cost of Money"/"COM") — disingkat spy kolom "Grup"
+// tetap ringkas, tapi orang yg biasa isi form langsung kenal istilahnya.
+
+// "Mkt Lain" (label-nya sendiri dinamis, diisi user di form —
+// disimpan di label_mkt_lain_N, bukan nama tetap seperti kategori di atas).
+const MKT_LAIN_SLOTS = Array.from({ length: 10 }, (_, i) => i + 1);
+
+const EXPENSE_DETAIL_COLS = [
+  ...EXPENSE_CATEGORIES.flatMap(c => [c.qtyCol, c.priceCol]),
+  ...MKT_LAIN_SLOTS.flatMap(n => [`qty_mkt_lain_${n}`, `price_mkt_lain_${n}`, `label_mkt_lain_${n}`]),
+];
+
+// ─── Rincian sisi PENDAPATAN (produk SP/VC + Sales Fee + Rewards) ───────────
+// Disalin 1:1 dari defaults().sp/vc di PNL_FormPendapatan.jsx. Tiap produk
+// bisa py 2 "entry" harga (dbQty/dbRetail = Entry 1, dbQty2/dbRetail2 =
+// Entry 2 — form menandainya dgn label "Entry 2") — masing2 jadi 1 baris
+// terpisah di export (sama persis sptnya tampil sbg 2 baris di form).
+// CATATAN PENTING: kolom "Total" utk baris SP/VC = NILAI JUAL KOTOR
+// (qty × Retail), BUKAN margin/profit. Margin sebenarnya (yg dipakai utk
+// Grand Total Revenue sistem) = Nilai Jual − HPP, dan HPP produk disimpan
+// terpisah di tabel `pnl_hpp_prices` (bisa beda per partner/waktu, ada
+// override) — bukan kolom tetap di `pnl_reports`, jadi SENGAJA tidak dicoba
+// dihitung ulang di sini supaya tidak salah/approx. Baris "Total Pendapatan"
+// (grand_total_revenue, berbasis margin — lihat baris itu di bawah) tetap
+// jadi angka resmi; baris per-SKU di bawahnya murni utk lihat VOLUME &
+// NILAI JUAL per produk per Partner/Branch/Bulan.
+const REVENUE_PRODUCTS = [
+  { group: "SP", label: "SP 3GB IM3",  qtyCol: "qty_sp_3gb_im3",  retailCol: "retail_sp_3gb_im3",  qty2Col: "qty_sp_3gb_im3_2",  retail2Col: "retail_sp_3gb_im3_2" },
+  { group: "SP", label: "SP 0 IM3",    qtyCol: "qty_sp_0_im3",    retailCol: "retail_sp_0_im3",    qty2Col: "qty_sp_0_im3_2",    retail2Col: "retail_sp_0_im3_2" },
+  { group: "SP", label: "SP KPK 3ID",  qtyCol: "qty_sp_kpk_3id",  retailCol: "retail_sp_kpk_3id",  qty2Col: "qty_sp_kpk_3id_2",  retail2Col: "retail_sp_kpk_3id_2" },
+  { group: "SP", label: "SP 3GB 3ID",  qtyCol: "qty_sp_3gb_3id",  retailCol: "retail_sp_3gb_3id",  qty2Col: "qty_sp_3gb_3id_2",  retail2Col: "retail_sp_3gb_3id_2" },
+  { group: "VC", label: "VC 0 IM3",        qtyCol: "qty_vc_0_im3",       retailCol: "retail_vc_0_im3",       qty2Col: "qty_vc_0_im3_2",       retail2Col: "retail_vc_0_im3_2" },
+  { group: "VC", label: "VC 2.5GB",        qtyCol: "qty_vc_2_5gb",       retailCol: "retail_vc_2_5gb",       qty2Col: "qty_vc_2_5gb_2",       retail2Col: "retail_vc_2_5gb_2" },
+  { group: "VC", label: "VC 3GB/30",       qtyCol: "qty_vc_3gb_30",      retailCol: "retail_vc_3gb_30",      qty2Col: "qty_vc_3gb_30_2",      retail2Col: "retail_vc_3gb_30_2" },
+  { group: "VC", label: "VC 3.5GB/5D",     qtyCol: "qty_vc_3_5gb_5d",    retailCol: "retail_vc_3_5gb_5d",    qty2Col: "qty_vc_3_5gb_5d_2",    retail2Col: "retail_vc_3_5gb_5d_2" },
+  { group: "VC", label: "VC 5GB/5D",       qtyCol: "qty_vc_5gb_5d",      retailCol: "retail_vc_5gb_5d",      qty2Col: "qty_vc_5gb_5d_2",      retail2Col: "retail_vc_5gb_5d_2" },
+  { group: "VC", label: "VC 7GB/7D",       qtyCol: "qty_vc_7gb_7d",      retailCol: "retail_vc_7gb_7d",      qty2Col: "qty_vc_7gb_7d_2",      retail2Col: "retail_vc_7gb_7d_2" },
+  { group: "VC", label: "VC FI 4GB",       qtyCol: "qty_vc_fi_4gb",      retailCol: "retail_vc_fi_4gb",      qty2Col: "qty_vc_fi_4gb_2",      retail2Col: "retail_vc_fi_4gb_2" },
+  { group: "VC", label: "VC FI 1.5GB/1D",  qtyCol: "qty_vc_fi_1_5gb_1d", retailCol: "retail_vc_fi_1_5gb_1d", qty2Col: "qty_vc_fi_1_5gb_1d_2", retail2Col: "retail_vc_fi_1_5gb_1d_2" },
+  { group: "VC", label: "VC FI 3GB/1D",    qtyCol: "qty_vc_fi_3gb_1d",   retailCol: "retail_vc_fi_3gb_1d",   qty2Col: "qty_vc_fi_3gb_1d_2",   retail2Col: "retail_vc_fi_3gb_1d_2" },
+  { group: "VC", label: "VC FI 5GB/2D",    qtyCol: "qty_vc_fi_5gb_2d",   retailCol: "retail_vc_fi_5gb_2d",   qty2Col: "qty_vc_fi_5gb_2d_2",   retail2Col: "retail_vc_fi_5gb_2d_2" },
+  { group: "VC", label: "VC FI 3GB/3D",    qtyCol: "qty_vc_fi_3gb_3d",   retailCol: "retail_vc_fi_3gb_3d",   qty2Col: "qty_vc_fi_3gb_3d_2",   retail2Col: "retail_vc_fi_3gb_3d_2" },
+  { group: "VC", label: "VC FI 5GB/3D",    qtyCol: "qty_vc_fi_5gb_3d",   retailCol: "retail_vc_fi_5gb_3d",   qty2Col: "qty_vc_fi_5gb_3d_2",   retail2Col: "retail_vc_fi_5gb_3d_2" },
+  { group: "VC", label: "VC FI 15GB/7D",   qtyCol: "qty_vc_fi_15gb_7d",  retailCol: "retail_vc_fi_15gb_7d",  qty2Col: "qty_vc_fi_15gb_7d_2",  retail2Col: "retail_vc_fi_15gb_7d_2" },
+  { group: "VC", label: "VC 0 3ID",        qtyCol: "qty_vc_0_3id",       retailCol: "retail_vc_0_3id",       qty2Col: "qty_vc_0_3id_2",       retail2Col: "retail_vc_0_3id_2" },
+];
+
+// Komponen Pendapatan di luar produk SP/VC — nilainya LANGSUNG (bukan
+// qty × harga), disalin dari field & label PERSIS yg ada di step "Sales
+// Fee" & "Rewards" form Pendapatan (lihat RMAP/SumRow/SpmField di
+// PNL_FormPendapatan.jsx). `col` = nama kolom di pnl_reports, `derive`
+// (opsional) = transformasi sebelum ditampilkan (mis. Upfront Fee = 1.5%
+// dari mobo_jual, PERSIS rumus `stats.upfront` di form — bukan nilai
+// mentah mobo_jual-nya).
+const REVENUE_OTHER = [
+  { group: "Sales Fee", label: "Upfront Fee (1.5% × Penjualan Saldo Mobo)", col: "mobo_jual",         derive: (v) => v * 0.015 },
+  { group: "Sales Fee", label: "Realtime Margin",                          col: "realtime_margin" },
+  { group: "Sales Fee", label: "Back Margin",                              col: "back_margin" },
+  { group: "Sales Fee", label: "SLA Monthly Fee",                          col: "sla_fee" },
+  { group: "Sales Fee", label: "Tactical Program",                         col: "special_program" },
+  { group: "Rewards",   label: "Champions Reward",                         col: "rewards_champions" },
+  { group: "Rewards",   label: "Hadiah Lainnya",                           col: "rewards_lainnya" },
+  { group: "Partner Income", label: "Partner Income",                      col: "partner_income" },
+  // Info saja — TIDAK masuk ke Total Pendapatan (lihat catatan "Info saja ·
+  // tidak masuk total" di form Pendapatan persis di sebelah field ini).
+  { group: "Mobo (Info)", label: "Total Alokasi Mobo (tidak masuk total)", col: "mobo_modal" },
+];
+
+const REVENUE_DETAIL_COLS = [
+  ...REVENUE_PRODUCTS.flatMap(p => [p.qtyCol, p.retailCol, p.qty2Col, p.retail2Col]),
+  ...REVENUE_OTHER.map(r => r.col),
+];
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,system-ui,sans-serif`;
 const MONO = `ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace`;
@@ -461,7 +585,7 @@ export default function PNL_PivotSummary({ theme, activeYear, userRole, partnerN
       try {
         let query = supabase
           .from("pnl_reports")
-          .select("partner_name,branch,mpc_mp3,month,year,grand_total_revenue,grand_total_pengeluaran,is_finalized")
+          .select(`partner_name,branch,mpc_mp3,month,year,grand_total_revenue,grand_total_pengeluaran,is_finalized,expense_data,revenue_data,${EXPENSE_DETAIL_COLS.join(",")},${REVENUE_DETAIL_COLS.join(",")}`)
           .eq("year", activeYear);
         if (lockedPartner) query = query.eq("partner_name", lockedPartner);
         const { data, error: err } = await query;
@@ -481,6 +605,7 @@ export default function PNL_PivotSummary({ theme, activeYear, userRole, partnerN
       map[key].months[r.month.toUpperCase()] = {
         rev: Number(r.grand_total_revenue) || 0,
         exp: Number(r.grand_total_pengeluaran) || 0,
+        _raw: r, // baris asli (semua kolom qty_*/price_*/expense_data) — dipakai exportDetailForm
       };
     });
     return Object.values(map);
@@ -780,6 +905,165 @@ export default function PNL_PivotSummary({ theme, activeYear, userRole, partnerN
     XLSX.writeFile(wb, `${fileBaseName}.xlsx`);
   };
 
+  // ── Export Detail Form (BARU) ───────────────────────────────────────────
+  // Beda dari exportCSV/exportXLSX di atas (yg formatnya "lebar" — 1 baris
+  // per Partner/Branch, kolom per bulan, cuma total REV & EXP) — export ini
+  // "tidy"/panjang: 1 BARIS per Partner × Branch × Bulan × KATEGORI, utk
+  // KEDUA sisi Pendapatan (SP/VC per produk, Sales Fee, Rewards, Partner
+  // Income) MAUPUN Pengeluaran (semua kategori tetap form Pengeluaran +
+  // "Lain-lain" dinamis) — persis rincian yg diisi SPV di kedua form itu
+  // (lihat REVENUE_PRODUCTS/REVENUE_OTHER & EXPENSE_CATEGORIES di atas file
+  // ini). Tujuannya supaya gampang di-Pivot Table sendiri di Excel: tinggal
+  // drag "Bulan"/"Partner"/"Branch"/"Kategori" ke Rows/Columns & "Total" ke
+  // Values — mis. mau lihat "Jan, Infrastruktur Gedung, per Branch, per
+  // Partner" tinggal filter+pivot kolom2 itu, tidak perlu nulis formula.
+  // CATATAN: baris per-SKU SP/VC pakai NILAI JUAL KOTOR (qty × Retail),
+  // bukan margin/profit — margin sebenarnya butuh tabel HPP terpisah
+  // (`pnl_hpp_prices`, bisa beda per partner/waktu), jadi sengaja tidak
+  // dihitung ulang di sini spy tidak salah/approx. Baris "Total Pendapatan"
+  // (berbasis margin, angka resmi sistem) tetap disertakan apa adanya.
+  // Sheet 1 "Detail" (tidy/panjang, lihat komentar di atas) DAN Sheet 2
+  // "Flat" (BARU — 1 baris per Partner/Branch/Bulan, SEMUA kategori TETAP
+  // sudah jadi kolom sendiri2, dijejerkan ke samping — tidak perlu bikin
+  // Pivot Table lagi utk sekadar lihat semuanya sekaligus; cuma kategori yg
+  // namanya DINAMIS/bebas-isi-sendiri (SP/VC Custom, Mkt Lain, SDM Custom)
+  // yg digabung jadi 1 kolom total per baris di sini — karena tidak punya
+  // 1 nama kolom tetap yg sama di semua baris, rinciannya TETAP lengkap di
+  // sheet "Detail").
+  const DETAIL_HEADERS = ["Tahun","Bln#","Bulan","Partner","Tipe MPC","Branch","Grup","Kategori","Qty","Harga Satuan","Total"];
+  const FLAT_HEADERS = [
+    "Tahun","Bln#","Bulan","Partner","Tipe MPC","Branch",
+    "Total Pendapatan",
+    ...REVENUE_PRODUCTS.map(p => p.label),
+    "SP Custom (Total)", "VC Custom (Total)",
+    ...REVENUE_OTHER.map(r => r.label),
+    "Total Pengeluaran",
+    ...EXPENSE_CATEGORIES.map(c => c.label),
+    "Mkt Lain (Total)", "SDM Custom (Total)",
+  ];
+
+  const exportDetailForm = () => {
+    const detailAoa = [DETAIL_HEADERS];
+    const flatAoa = [FLAT_HEADERS];
+
+    filteredRows.forEach(b => {
+      activeMths.forEach(m => {
+        const md = b.months[m];
+        const raw = md?._raw;
+        const idx = MONTHS_FULL.indexOf(m);
+        const bulanShort = MONTHS_SHORT[idx];
+        const base = [activeYear, idx + 1, bulanShort, b.partner, b.mpc, b.branch];
+
+        // ── Sheet "Detail": baris Total Pendapatan (ANGKA RESMI sistem, berbasis margin — lihat REVENUE_PRODUCTS utk kenapa baris per-SKU di bawah TIDAK dijumlah jadi angka ini) ──
+        detailAoa.push([...base, "Pendapatan", "Total Pendapatan", "", "", fRaw(md?.rev)]);
+
+        if (!raw) { // bulan ini tidak ada laporan tersimpan — baris flat tetap muncul (semua 0), tapi tidak ada rincian "Detail" apa pun utk di-expand
+          flatAoa.push([...base, fRaw(md?.rev), ...FLAT_HEADERS.slice(7).map(() => 0)]);
+          return;
+        }
+
+        const flatRow = [...base, fRaw(md.rev)];
+
+        // ══ PENDAPATAN: SP/VC per produk (selalu dimunculkan di sheet Detail, termasuk yg 0; Entry 2 cuma dimunculkan kalau memang dipakai) — di sheet Flat, Entry 1+2 digabung jadi 1 kolom per produk ══
+        REVENUE_PRODUCTS.forEach(p => {
+          const qty = Number(raw[p.qtyCol]) || 0, retail = Number(raw[p.retailCol]) || 0;
+          detailAoa.push([...base, p.group, p.label, qty, fRaw(retail), fRaw(qty * retail)]);
+          const qty2 = Number(raw[p.qty2Col]) || 0, retail2 = Number(raw[p.retail2Col]) || 0;
+          let totalProduk = qty * retail;
+          if (qty2 || retail2) {
+            detailAoa.push([...base, p.group, `${p.label} (Entry 2)`, qty2, fRaw(retail2), fRaw(qty2 * retail2)]);
+            totalProduk += qty2 * retail2;
+          }
+          flatRow.push(fRaw(totalProduk));
+        });
+
+        // ── Produk SP/VC Custom (nama bebas — rinciannya di sheet Detail, totalnya digabung 1 kolom di sheet Flat) ──
+        let spCustomTotal = 0;
+        const spCustom = Array.isArray(raw.revenue_data?.sp_custom) ? raw.revenue_data.sp_custom : [];
+        spCustom.forEach(item => {
+          const qty = Number(item?.qty) || 0, retail = Number(item?.hRetail) || 0;
+          const label = (item?.name || "").trim();
+          if (!qty && !retail && !label) return;
+          detailAoa.push([...base, "SP", label ? `${label} (Custom)` : "Produk Custom", qty, fRaw(retail), fRaw(qty * retail)]);
+          spCustomTotal += qty * retail;
+          const qty2 = Number(item?.qty2) || 0, retail2 = Number(item?.hRetail2) || 0;
+          if (!qty2 && !retail2) return;
+          detailAoa.push([...base, "SP", `${label || "Produk Custom"} (Custom, Entry 2)`, qty2, fRaw(retail2), fRaw(qty2 * retail2)]);
+          spCustomTotal += qty2 * retail2;
+        });
+        flatRow.push(fRaw(spCustomTotal));
+
+        let vcCustomTotal = 0;
+        const vcCustom = Array.isArray(raw.revenue_data?.vc_custom) ? raw.revenue_data.vc_custom : [];
+        vcCustom.forEach(item => {
+          const qty = Number(item?.qty) || 0, retail = Number(item?.hRetail) || 0;
+          const label = (item?.name || "").trim();
+          if (!qty && !retail && !label) return;
+          detailAoa.push([...base, "VC", label ? `${label} (Custom)` : "Produk Custom", qty, fRaw(retail), fRaw(qty * retail)]);
+          vcCustomTotal += qty * retail;
+        });
+        flatRow.push(fRaw(vcCustomTotal));
+
+        // ── Sales Fee, Rewards, Partner Income, Mobo (nilai langsung, bukan qty × harga) ──
+        REVENUE_OTHER.forEach(r => {
+          const rawVal = Number(raw[r.col]) || 0;
+          const val = r.derive ? r.derive(rawVal) : rawVal;
+          detailAoa.push([...base, r.group, r.label, "", "", fRaw(val)]);
+          flatRow.push(fRaw(val));
+        });
+
+        // ══ PENGELUARAN: kategori tetap form Pengeluaran ══
+        flatRow.push(fRaw(md.exp)); // Total Pengeluaran (angka resmi, sejajar dgn Total Pendapatan di atas)
+        EXPENSE_CATEGORIES.forEach(c => {
+          const qty = Number(raw[c.qtyCol]) || 0, price = Number(raw[c.priceCol]) || 0;
+          detailAoa.push([...base, c.group, c.label, qty, fRaw(price), fRaw(qty * price)]);
+          flatRow.push(fRaw(qty * price));
+        });
+
+        // ── "Mkt Lain" (label dinamis, slot 1-10) ──
+        let mktLainTotal = 0;
+        MKT_LAIN_SLOTS.forEach(n => {
+          const qty = Number(raw[`qty_mkt_lain_${n}`]) || 0, price = Number(raw[`price_mkt_lain_${n}`]) || 0;
+          const label = (raw[`label_mkt_lain_${n}`] || "").trim();
+          if (!qty && !price && !label) return; // slot kosong — skip, tidak perlu baris nilai 0 tanpa nama
+          detailAoa.push([...base, "Mkt Lain", label || `Lain-lain ${n}`, qty, fRaw(price), fRaw(qty * price)]);
+          mktLainTotal += qty * price;
+        });
+        flatRow.push(fRaw(mktLainTotal));
+
+        // ── "SDM Custom" (role tambahan bebas, disimpan di expense_data.sdm_custom) ──
+        let sdmCustomTotal = 0;
+        const sdmCustom = Array.isArray(raw.expense_data?.sdm_custom) ? raw.expense_data.sdm_custom : [];
+        sdmCustom.forEach(item => {
+          const qty = Number(item?.qty) || 0, price = Number(item?.price) || 0;
+          const label = (item?.name || "").trim();
+          if (!qty && !price && !label) return;
+          detailAoa.push([...base, "SDM Custom", label || "Role Custom", qty, fRaw(price), fRaw(qty * price)]);
+          sdmCustomTotal += qty * price;
+        });
+        flatRow.push(fRaw(sdmCustomTotal));
+
+        flatAoa.push(flatRow);
+      });
+    });
+
+    const wb = XLSX.utils.book_new();
+
+    const wsDetail = XLSX.utils.aoa_to_sheet(detailAoa);
+    wsDetail["!cols"] = [{ wch: 6 }, { wch: 5 }, { wch: 6 }, { wch: 28 }, { wch: 10 }, { wch: 20 }, { wch: 14 }, { wch: 30 }, { wch: 9 }, { wch: 13 }, { wch: 14 }];
+    wsDetail["!freeze"] = { xSplit: 0, ySplit: 1 };
+    XLSX.utils.book_append_sheet(wb, wsDetail, "Detail");
+
+    const wsFlat = XLSX.utils.aoa_to_sheet(flatAoa);
+    wsFlat["!cols"] = [{ wch: 6 }, { wch: 5 }, { wch: 6 }, { wch: 28 }, { wch: 10 }, { wch: 20 }, ...FLAT_HEADERS.slice(6).map(() => ({ wch: 15 }))];
+    wsFlat["!freeze"] = { xSplit: 6, ySplit: 1 }; // freeze kolom Tahun..Branch + baris header — scroll ke kanan/bawah tetap kelihatan konteksnya
+    XLSX.utils.book_append_sheet(wb, wsFlat, "Flat (Semua Kategori)");
+
+    XLSX.writeFile(wb, `${fileBaseName}_DetailForm.xlsx`);
+
+    return detailAoa.length - 1;
+  };
+
   // ── Loading ──
   if (loading) return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 360, gap: 14, background: t.panel, borderRadius: 12, border: `1px solid ${t.line}`, fontFamily: FONT }}>
@@ -866,6 +1150,37 @@ export default function PNL_PivotSummary({ theme, activeYear, userRole, partnerN
             <FileSpreadsheet size={13} strokeWidth={2} />
             Export Excel
           </button>
+
+          <button onClick={exportDetailForm} title="File Excel 2 sheet: 'Detail' (1 baris per Partner/Branch/Bulan/Kategori, siap di-Pivot Table sendiri) dan 'Flat (Semua Kategori)' (1 baris per Partner/Branch/Bulan, SEMUA kategori sudah jadi kolom berjejer — tidak perlu pivot lagi). Mencakup semua rincian Pendapatan (SP/VC/Sales Fee/Rewards) & Pengeluaran (Infrastruktur Gedung, Benefit BM, dst)." style={{
+            display: "inline-flex", alignItems: "center", gap: 6,
+            height: 34, padding: "0 14px",
+            border: `1px solid ${B.magenta}55`,
+            background: d ? "rgba(198,22,141,0.14)" : "rgba(198,22,141,0.08)",
+            color: B.magenta,
+            borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
+            transition: "opacity .14s",
+          }}
+          onMouseEnter={e => e.currentTarget.style.opacity = "0.82"}
+          onMouseLeave={e => e.currentTarget.style.opacity = "1"}>
+            <Rows3 size={13} strokeWidth={2.2} />
+            Export Detail Form
+          </button>
+        </div>
+      </div>
+
+      {/* Keterangan singkat ttg tombol "Export Detail Form" — sengaja dibuat
+          sangat eksplisit (bukan cuma tooltip) spy tidak ada yg salah paham
+          formatnya beda dari CSV/Excel biasa di atas (yg "lebar", 1 baris per
+          Branch, kolom per bulan) */}
+      <div style={{
+        display: "flex", alignItems: "flex-start", gap: 9,
+        padding: "10px 13px", marginBottom: 18, borderRadius: 9,
+        background: d ? "rgba(198,22,141,0.09)" : "rgba(198,22,141,0.05)",
+        border: `1px solid ${B.magenta}33`,
+      }}>
+        <Rows3 size={14} color={B.magenta} style={{ flexShrink: 0, marginTop: 1 }} />
+        <div style={{ fontSize: 12, lineHeight: 1.55, color: t.mute }}>
+          <b style={{ color: t.ink2 }}>Export Detail Form</b> = file Excel dgn <b>2 sheet</b>. Sheet <b>Detail</b> = format &ldquo;panjang&rdquo; (1 baris per Partner, Branch, Bulan, <i>dan</i> Kategori — persis rincian yang diisi di form, grupnya pun pakai istilah yang sama dengan step di form: <b>SP/VC</b>, <b>Sales Fee</b>, <b>Rewards</b>, <b>Partner Income</b> dari form Pendapatan, serta <b>OPEX/SDM/Marketing/COM</b> dari form Pengeluaran) — cocok dipakai bikin Pivot Table sendiri di Excel untuk breakdown apa pun, tinggal drag <b>Bulan</b>/<b>Kategori</b> ke Rows/Filter dan <b>Total</b> ke Values. Sheet <b>Flat (Semua Kategori)</b> = sudah &ldquo;dijejerkan&rdquo; duluan — 1 baris per Partner/Branch/Bulan, semua kategori tetap sudah jadi kolom sendiri2 di sampingnya, tinggal dibaca langsung tanpa perlu pivot lagi (kategori yang namanya bebas/dinamis seperti &ldquo;Mkt Lain&rdquo; &amp; produk Custom digabung jadi 1 kolom total di sheet ini — rinciannya tetap lengkap di sheet Detail). Keduanya mencakup KEDUA sisi Pendapatan dan Pengeluaran, tidak ada yang terlewat. Satu catatan: baris/kolom SP/VC memakai nilai jual kotor (qty × Retail), bukan margin — margin produk butuh tabel HPP terpisah yang bisa berubah per waktu, jadi <b>Total Pendapatan</b> (berbasis margin, angka resmi sistem) tetap disertakan apa adanya di samping rincian per produknya.
         </div>
       </div>
 
