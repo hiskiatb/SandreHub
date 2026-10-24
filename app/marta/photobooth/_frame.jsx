@@ -179,7 +179,20 @@ export function PhotoFrame({ photo, ratio, crop, frame, mode, queueLabel, sessio
             onPointerDown={mode === "screen" ? onPointerDown : undefined}
             style={{
               width: "100%", height: "100%", objectFit: "cover", display: "block",
-              cursor: mode === "screen" && onPointerDown ? "grab" : "default", touchAction: "none",
+              cursor: mode === "screen" && onPointerDown ? "grab" : "default",
+              // FIX (permintaan user - "bagian foto tidak bisa di scroll"):
+              // touchAction:"none" SEBELUMNYA selalu dipasang begitu
+              // mode==="screen", APA PUN ada `onPointerDown` drag-crop atau
+              // tidak - akibatnya di layar yg CUMA menampilkan hasil (mis.
+              // DirectFrameSuccessScreen, tanpa drag crop sama sekali),
+              // sentuhan tepat di atas foto diblokir jadi gerakan browser
+              // bawaan (termasuk scroll vertikal halaman) sama sekali tidak
+              // jalan selama jari masih di atas gambar. Sekarang
+              // touchAction:"none" HANYA dipasang kalau `onPointerDown`
+              // beneran ada (mode drag-crop aktif, mis. operator Print
+              // Station/DirectFrameCropCard) - di luar itu default "auto"
+              // spy scroll halaman tetap tembus normal.
+              touchAction: mode === "screen" && onPointerDown ? "none" : "auto",
               // Urutan transform: rotate+flip DULU (posisi/orientasi dasar
               // foto), baru scale+translate (zoom/pan operator) - supaya
               // drag-geser & zoom tetap terasa wajar walau foto sudah

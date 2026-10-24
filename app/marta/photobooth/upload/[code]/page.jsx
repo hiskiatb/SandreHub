@@ -23,7 +23,7 @@
  */
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, Camera, Check, Clock, Download, Frame as FrameIcon, ImagePlus, Images, Loader2, Move, Pencil, QrCode, RefreshCcw, RotateCcw, Search, Sparkles, SwitchCamera, Ticket, Trash2, Upload, X, Zap } from "lucide-react";
+import { AlertTriangle, Camera, Check, Clock, Download, Frame as FrameIcon, ImagePlus, Images, Link2, Loader2, Move, Pencil, QrCode, RefreshCcw, RotateCcw, Search, Sparkles, SwitchCamera, Ticket, Trash2, Upload, X, Zap, ZoomIn } from "lucide-react";
 import Link from "next/link";
 import QRCode from "qrcode";
 import { getRpvSession, uploadRpvPhoto, rpvThroughputMbps, listRpvPhotos, listRpvFrameTemplates, listRpvCustomFonts, rpvPublicUrl, subscribeRpvPhotos, saveRpvFrameTemplate, deleteRpvFrameTemplate, uploadRpvTemplateImage, saveRpvPhotoCrop } from "../../../../../lib/rpv";
@@ -119,6 +119,18 @@ export default function RpvUploadPage() {
   const [facing, setFacing] = useState("environment");
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  // "pastikan switch camera itu bukan flip orientasi kamera, jadi jika
+  // kamera cuma satu ya tidak terjadi apa apa" - deteksi berapa KAMERA FISIK
+  // (video input device) yg device tamu punya lewat enumerateDevices().
+  // CATATAN: browser biasanya cuma expose 2 "device" (depan & belakang) utk
+  // HP modern walau belakangnya ada banyak lensa fisik (wide/ultra-wide/
+  // telephoto) - lensa2 itu disatukan di balik facingMode:"environment" oleh
+  // OS/browser, jadi tidak bisa dibedakan dari web. Yang BISA dideteksi &
+  // berguna: kalau device CUMA punya 1 kamera (mis. laptop/webcam tunggal),
+  // tombol ganti kamera di-nonaktifkan supaya tidak coba flip ke lensa yg
+  // tidak ada (yg sebelumnya bisa bikin error getUserMedia / flip ke stream
+  // identik tanpa guna).
+  const [hasMultipleCameras, setHasMultipleCameras] = useState(true); // optimis sampai terbukti sebaliknya
 
   const stopCamera = () => {
     streamRef.current?.getTracks().forEach((tr) => tr.stop());
@@ -141,6 +153,17 @@ export default function RpvUploadPage() {
         await videoRef.current.play().catch(() => {});
       }
       setCameraState("ready");
+      // Baru SETELAH izin kamera diberikan device label video input terisi
+      // (sebelum izin, enumerateDevices() cuma kasih device tanpa label &
+      // kadang cuma 1 entri generik) - makanya cek jumlah kamera di sini,
+      // bukan sebelum getUserMedia berhasil.
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cams = devices.filter((d) => d.kind === "videoinput");
+        setHasMultipleCameras(cams.length > 1);
+      } catch {
+        setHasMultipleCameras(true); // gagal deteksi -> jangan kunci tombol, biarkan seperti semula
+      }
     } catch {
       setCameraState("denied");
     }
@@ -168,7 +191,10 @@ export default function RpvUploadPage() {
     if (state === "ready" && phase === "pick" && queue.length === 0) setCameraOpen(true);
   }, [state, phase, queue.length, isDirectFrame]);
 
-  const flipCamera = () => setFacing((f) => (f === "environment" ? "user" : "environment"));
+  const flipCamera = () => {
+    if (!hasMultipleCameras) return; // kamera cuma 1 -> tidak terjadi apa apa (bukan flip orientasi)
+    setFacing((f) => (f === "environment" ? "user" : "environment"));
+  };
 
   const capturePhoto = () => {
     const video = videoRef.current;
@@ -428,6 +454,7 @@ export default function RpvUploadPage() {
         cameraState={cameraState}
         facing={facing}
         onFlip={flipCamera}
+        canFlip={hasMultipleCameras}
         onCapture={capturePhoto}
         onRetry={() => startCamera(facing)}
         onUseGallery={() => { setCameraOpen(false); fileRef.current?.click(); }}
@@ -511,7 +538,12 @@ export default function RpvUploadPage() {
         {phase === "uploading" && (
           <div style={{ marginTop: 12 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", fontSize: 10.5, fontWeight: 700, color: SUB, marginBottom: 5 }}>
-              <span>Mengunggah via 5G {doneCount + errorCount}/{queue.length}…</span>
+              {/* UPDATE (permintaan user - "jangan buat mengunggah
+                  menggunakan 5G, ini bukan lagi untuk test 5G"): label
+                  sblmnya eksplisit sebut "via 5G" (dulu dipakai utk
+                  showcase kecepatan jaringan 5G booth) - skrg generic
+                  "Mengunggah..." aja, krn acara ini bukan lagi demo 5G. */}
+              <span>Mengunggah {doneCount + errorCount}/{queue.length}…</span>
               <span style={{ color: RED }}>{Math.round(overallProgress * 100)}%</span>
             </div>
             <div style={{ width: "100%", height: 6, borderRadius: 99, background: "#EFEDF3", overflow: "hidden" }}>
@@ -686,6 +718,28 @@ function DirectFrameCropCard({ item, ratio, template, customFonts, sessionTitle,
   const imgRef = useRef(null);
   const dragRef = useRef(null);
   const crop = item.crop || DEFAULT_CROP;
+  // UPDATE (permintaan user - "dan bisa pinch to zoom juga"): sebelumnya
+  // cuma bisa zoom lewat slider di bawah kartu - skrg bisa jg cubit 2 jari
+  // LANGSUNG di atas fotonya (gesture umum di semua app kamera/galeri HP).
+  // Dipakai 1 set ref yg SAMA utk kedua gesture (geser 1 jari & cubit 2
+  // jari) krn keduanya bisa terjadi berurutan dlm 1 sesi sentuh (mis. mulai
+  // geser 1 jari, lalu jari ke-2 nempel -> otomatis pindah mode cubit, lalu
+  // angkat 1 jari -> balik geser lagi) - makanya pelacakan pointer pakai
+  // Map persisten (pointersRef), BUKAN cuma 1 pointer spt sblmnya.
+  // cropRef/itemIdRef/onCropChangeRef selalu disinkronkan render terbaru
+  // (assignment biasa, bukan baca saat render) spy listener window yg
+  // di-attach SEKALI per sesi sentuh tetap baca data TERBARU, tidak basi.
+  const pointersRef = useRef(new Map()); // pointerId -> {x, y}
+  const pinchRef = useRef(null); // {startDist, startZoom}
+  const listenersAttachedRef = useRef(false);
+  const cropRef = useRef(crop);
+  const onCropChangeRef = useRef(onCropChange);
+  // FIX (lint react-hooks/refs - "Cannot access refs during render"): tulis
+  // ref di useEffect, BUKAN langsung di body render (assignment langsung
+  // sblmnya lolos logikanya tp dilarang aturan React - efek samping di
+  // render dianggap "impure" walau cuma assignment ref, bukan baca state).
+  useEffect(() => { cropRef.current = crop; }, [crop]);
+  useEffect(() => { onCropChangeRef.current = onCropChange; }, [onCropChange]);
   // UPDATE (permintaan user - "saat digeser sampai batas maksimal, ada
   // notif atur zoom untuk geser lebih"): toast kecil muncul PERSIS saat
   // drag kena mentok batas (bukan selalu tampil) - hilang otomatis.
@@ -697,31 +751,62 @@ function DirectFrameCropCard({ item, ratio, template, customFonts, sessionTitle,
     hitLimitTimer.current = setTimeout(() => setHitLimit(false), 1100);
   };
 
-  const onCropPointerDown = (e) => {
-    if (!interactive) return;
-    e.preventDefault();
-    dragRef.current = { startX: e.clientX, startY: e.clientY, startPanX: crop.panX, startPanY: crop.panY };
-    const move = (ev) => {
-      if (!dragRef.current || !imgRef.current) return;
+  const handleGestureMove = (ev) => {
+    if (!pointersRef.current.has(ev.pointerId)) return;
+    pointersRef.current.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (pointersRef.current.size >= 2 && pinchRef.current) {
+      const pts = Array.from(pointersRef.current.values());
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+      const scale = dist / pinchRef.current.startDist;
+      const newZoom = Math.max(1, Math.min(4, pinchRef.current.startZoom * scale));
+      onCropChangeRef.current(item.id, clampCrop({ ...cropRef.current, zoom: newZoom }));
+      return;
+    }
+    if (dragRef.current && imgRef.current) {
       const w = imgRef.current.offsetWidth || 1;
       const h = imgRef.current.offsetHeight || 1;
       const dx = ((ev.clientX - dragRef.current.startX) / w) * 100;
       const dy = ((ev.clientY - dragRef.current.startY) / h) * 100;
-      const rawX = dragRef.current.startPanX + dx / crop.zoom;
-      const rawY = dragRef.current.startPanY + dy / crop.zoom;
-      const next = clampCrop({ ...crop, panX: rawX, panY: rawY });
+      const rawX = dragRef.current.startPanX + dx / cropRef.current.zoom;
+      const rawY = dragRef.current.startPanY + dy / cropRef.current.zoom;
+      const next = clampCrop({ ...cropRef.current, panX: rawX, panY: rawY });
       if (next.panX !== rawX || next.panY !== rawY) flashLimit();
-      onCropChange(item.id, next);
-    };
-    const end = () => {
+      onCropChangeRef.current(item.id, next);
+    }
+  };
+  const handleGestureEnd = (ev) => {
+    pointersRef.current.delete(ev.pointerId);
+    if (pointersRef.current.size < 2) pinchRef.current = null;
+    if (pointersRef.current.size === 0) {
       dragRef.current = null;
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", end);
-      window.removeEventListener("pointercancel", end);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", end);
-    window.addEventListener("pointercancel", end);
+      window.removeEventListener("pointermove", handleGestureMove);
+      window.removeEventListener("pointerup", handleGestureEnd);
+      window.removeEventListener("pointercancel", handleGestureEnd);
+      listenersAttachedRef.current = false;
+    } else if (pointersRef.current.size === 1) {
+      // 1 jari masih nempel stlh jari lain diangkat (keluar dari mode
+      // cubit) - lanjut geser biasa dari posisi SEKARANG, bukan loncat.
+      const [[, pos]] = pointersRef.current.entries();
+      dragRef.current = { startX: pos.x, startY: pos.y, startPanX: cropRef.current.panX, startPanY: cropRef.current.panY };
+    }
+  };
+  const onCropPointerDown = (e) => {
+    if (!interactive) return;
+    e.preventDefault();
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointersRef.current.size === 1) {
+      dragRef.current = { startX: e.clientX, startY: e.clientY, startPanX: cropRef.current.panX, startPanY: cropRef.current.panY };
+    } else if (pointersRef.current.size === 2) {
+      const pts = Array.from(pointersRef.current.values());
+      pinchRef.current = { startDist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1, startZoom: cropRef.current.zoom };
+      dragRef.current = null;
+    }
+    if (!listenersAttachedRef.current) {
+      listenersAttachedRef.current = true;
+      window.addEventListener("pointermove", handleGestureMove);
+      window.addEventListener("pointerup", handleGestureEnd);
+      window.addEventListener("pointercancel", handleGestureEnd);
+    }
   };
   const setZoom = (zoom) => onCropChange(item.id, clampCrop({ ...crop, zoom }));
 
@@ -754,7 +839,7 @@ function DirectFrameCropCard({ item, ratio, template, customFonts, sessionTitle,
               label kecil nempel di pojok foto yg bisa ketutup elemen
               bingkai) - selalu kebaca jelas apa pun desain bingkainya. */}
           <div style={{ marginTop: 10, textAlign: "center", fontSize: 11, fontWeight: 700, color: FP_SUB }}>
-            Geser foto di atas utk atur posisi
+            Geser atau cubit foto di atas utk atur posisi &amp; zoom
           </div>
           {/* UPDATE (permintaan user - "untuk tombol zoomnya sliding saja"):
               ganti tombol +/- jadi 1 slider zoom penuh, label % di
@@ -787,61 +872,94 @@ function DirectFrameReviewScreen({ queue, phase, tick, frameTemplates, customFon
   const overallProgress = queue.length ? queue.reduce((s, x) => s + (x.status === "done" || x.status === "error" ? 1 : x.progress || 0), 0) / queue.length : 0;
 
   return (
-    // FIX (permintaan user - "mengapa halaman ini tidak bisa di scroll"):
-    // root SEBELUMNYA overflow:"hidden" (dipakai hanya utk motong blob
-    // ambient di belakang) - tapi div ini adalah flex-item langsung di
-    // `body` (lihat app/layout.js: body punya class flex flex-col), & per
-    // spesifikasi flexbox, flex-item dgn overflow selain "visible" otomatis
-    // dapat min-height:0 - akibatnya begitu antrean foto/kartu hasil lebih
-    // tinggi dr layar, kelebihannya KEPOTONG bukan discroll. overflowY:
-    // "auto" (ganti "hidden") membiarkan div ini sendiri yg jadi scroll
-    // container, overflowX tetap "hidden" spy blob ambient tetap tidak
-    // bikin scroll horizontal nongol.
-    <div style={{ minHeight: "100svh", height: "100svh", background: FP_BG, fontFamily: FONT, colorScheme: "dark", position: "relative", overflowY: "auto", overflowX: "hidden", WebkitOverflowScrolling: "touch" }}>
+    // FIX (permintaan user - "mengapa halaman ini tidak bisa di scroll" ->
+    // "masih belum enak scrollnya" -> "apakah ada area yang gabisa di
+    // scroll"): 2 percobaan sebelumnya (height:100svh+overflow:auto,
+    // position:fixed+inset:0 sbg "lapisan scroll sendiri") sama2 bikin
+    // SEBAGIAN area halaman kerasa tidak respons thd scroll. Disederhanakan
+    // total skrg: TIDAK ada overflow/height fixed apa pun di div ini -
+    // cuma minHeight:100svh biasa, overflow default "visible" - `body` yg
+    // jadi scroll container-nya (scroll dokumen native bawaan browser,
+    // SELALU jalan, tidak ada "area" yg bisa ke-skip). Header progress di
+    // atas tetap position:"sticky" spt sblmnya - itu justru BUTUH `body`
+    // sbg scroll container utk nempel ke atas layar dgn benar selagi
+    // discroll (perilaku sticky paling umum & paling reliable).
+    <div style={{ minHeight: "100svh", background: FP_BG, fontFamily: FONT, colorScheme: "dark", position: "relative" }}>
       <FpAmbientBg />
-      <div style={{ padding: "20px 18px 14px", borderBottom: `1px solid ${FP_LINE}`, position: "sticky", top: 0, zIndex: 5, background: "rgba(10,10,11,0.72)", backdropFilter: "blur(10px)" }}>
-        <div style={{ fontSize: 15.5, fontWeight: 800, color: FP_INK, letterSpacing: "-0.01em" }}>
-          {uploading ? `Mengunggah via 5G ${pendingOrDoneCount}/${queue.length}…` : `Pratinjau · ${queue.length} foto`}
+      {/* UPDATE (permintaan user - "perbaiki total ui untuk upload ini buat
+          lebih besar dan lebih seamless dengan laman berhasil diunggah...
+          animasinya sangat baguss, paling bagus"): header upload skrg
+          BUKAN cuma judul kecil + bar tipis lagi - ada ring progress BESAR
+          (54px, sama komponen CircularProgress yg dipakai di overlay kartu,
+          jd satu bahasa visual yg konsisten) di samping judul yg jg
+          diperbesar, baris status kecil di bawahnya, baru bar progress
+          (lebih tebal, 9px) dgn shimmer. Begitu overallProgress capai 100%
+          ring ini jg yg "serah terima" ke checkmark besar di layar sukses -
+          ukuran & posisi senada (sama2 di kiri-atas blok konten) bikin
+          transisi kerasa 1 alur, bukan loncat ke layar lain. */}
+      <div style={{ padding: "22px 20px 16px", borderBottom: `1px solid ${FP_LINE}`, position: "sticky", top: 0, zIndex: 5, background: "rgba(10,10,11,0.78)", backdropFilter: "blur(14px)" }}>
+        <div style={{ maxWidth: 520, width: "100%", margin: "0 auto", display: "flex", alignItems: "center", gap: uploading ? 14 : 0 }}>
+          {uploading && (
+            <div className="rpv-df-header-ring-in" style={{ flexShrink: 0 }}>
+              <CircularProgress value={overallProgress} size={50} />
+            </div>
+          )}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: uploading ? 17.5 : 16.5, fontWeight: 800, color: FP_INK, letterSpacing: "-0.01em" }}>
+              {/* UPDATE (permintaan user - "jangan buat mengunggah
+                  menggunakan 5G, ini bukan lagi untuk test 5G"): label
+                  "Mengunggah via 5G" dihapus sebutan "via 5G"-nya. */}
+              {uploading ? `Mengunggah` : `Pratinjau · ${queue.length} foto`}
+            </div>
+            {uploading ? (
+              <div style={{ fontSize: 12.5, color: FP_SUB, marginTop: 1, fontWeight: 600 }}>
+                {pendingOrDoneCount}/{queue.length} foto selesai…
+              </div>
+            ) : (
+              <div style={{ fontSize: 11.5, color: FP_SUB, marginTop: 2 }}>Cek posisi fotomu, geser/zoom kalau perlu, baru unggah.</div>
+            )}
+          </div>
         </div>
-        {uploading ? (
-          // UPDATE (permintaan user - "buat loadingnya menjadi lebih bagus
-          // dan juga animasinya bagus" - saat upload foto): progress bar
-          // header skrg ada efek "shimmer" bergerak di atas gradientnya
-          // (pseudo-animasi cahaya berjalan), bukan lagi batang gradient
-          // statis - kerasa lebih "hidup" selagi unggahan berjalan.
-          <div style={{ marginTop: 10, width: "100%", height: 7, borderRadius: 99, background: "rgba(255,255,255,0.08)", overflow: "hidden", position: "relative" }}>
+        {uploading && (
+          // UPDATE: bar progress diperbesar (7px->9px) + shimmer tetap jalan
+          // di atasnya - bar ini skrg jadi elemen SEKUNDER (ring besar di
+          // atas sudah jadi fokus utama "hero"), tapi tetap kebaca jelas.
+          <div style={{ marginTop: 12, maxWidth: 520, width: "100%", margin: "12px auto 0", height: 9, borderRadius: 99, background: "rgba(255,255,255,0.08)", overflow: "hidden", position: "relative" }}>
             <div style={{ height: "100%", borderRadius: 99, width: `${overallProgress * 100}%`, background: `linear-gradient(90deg,${RED},${MAGA})`, transition: "width .25s ease", position: "relative", overflow: "hidden" }}>
               <div className="rpv-df-progress-shimmer" />
             </div>
           </div>
-        ) : (
-          <div style={{ fontSize: 11.5, color: FP_SUB, marginTop: 2 }}>Cek posisi fotomu, geser/zoom kalau perlu, baru unggah.</div>
         )}
       </div>
 
-      <div style={{ position: "relative", zIndex: 1, padding: "20px 16px 110px", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
-        <div style={{ marginTop: 0, display: "flex", flexDirection: "column", gap: 28 }}>
+      <div style={{ position: "relative", zIndex: 1, padding: "26px 16px 110px", maxWidth: 520, width: "100%", margin: "0 auto", boxSizing: "border-box" }}>
+        <div style={{ marginTop: 0, display: "flex", flexDirection: "column", gap: 32 }}>
           {queue.map((it) => {
             const template = (frameTemplates || []).find((t) => t.id === it.frameTemplateId) || null;
             const liveElapsedMs = liveElapsedMsOf(it);
             const mbps = it.status === "done" ? rpvThroughputMbps(it.fileSizeBytes, it.uploadMs) : null;
             void tick; // re-render tiap 100ms selama upload berjalan spy liveElapsedMs ikut update
             return (
-              <div key={it.id} style={{ position: "relative" }}>
+              <div key={it.id} className={uploading ? "rpv-df-upload-card" : undefined} style={{ position: "relative" }}>
                 <DirectFrameCropCard item={it} ratio={ratio} template={template} customFonts={customFonts} sessionTitle={sessionTitle}
                   queueLabel="00000" onCropChange={onCropChange} onRemove={onRemove} interactive={!uploading} />
                 {uploading && (
                   <div style={{ position: "absolute", inset: 0, borderRadius: 20, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
                     {it.status === "uploading" && (
-                      <div className="rpv-df-upload-overlay" style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg,rgba(10,10,12,0.3),rgba(10,10,12,0.6))", backdropFilter: "blur(2px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                        <CircularProgress value={it.progress || 0} />
-                        <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", fontFamily: "monospace" }}>{fmtElapsed(liveElapsedMs || 0)}</span>
+                      // UPDATE ("lebih besar"): ring progress per-kartu
+                      // diperbesar 40->84 - jadi momen visual utama di
+                      // tengah foto, bukan lingkaran kecil yg gampang
+                      // kelewat. Waktu berjalan di bawahnya jg ikut naik
+                      // ukuran fontnya.
+                      <div className="rpv-df-upload-overlay" style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg,rgba(10,10,12,0.32),rgba(10,10,12,0.64))", backdropFilter: "blur(3px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
+                        <CircularProgress value={it.progress || 0} size={84} />
+                        <span style={{ fontSize: 15, fontWeight: 800, color: "#fff", fontFamily: "monospace", letterSpacing: "0.01em" }}>{fmtElapsed(liveElapsedMs || 0)}</span>
                       </div>
                     )}
                     {it.status === "done" && (
-                      <div className="rpv-df-done-badge" style={{ position: "absolute", bottom: 14, left: "50%", display: "flex", alignItems: "center", gap: 6, background: "rgba(22,163,74,0.92)", borderRadius: 999, padding: "6px 13px", boxShadow: "0 8px 20px -6px rgba(22,163,74,0.6)" }}>
-                        <Check size={13} color="#fff" />
-                        <span style={{ fontSize: 11.5, fontWeight: 800, color: "#fff" }}>{fmtElapsed(it.uploadMs || 0)}{mbps ? ` · ${mbps.toFixed(1)} Mbps` : ""}</span>
+                      <div className="rpv-df-done-badge" style={{ position: "absolute", bottom: 16, left: "50%", display: "flex", alignItems: "center", gap: 7, background: "rgba(22,163,74,0.94)", borderRadius: 999, padding: "8px 16px", boxShadow: "0 10px 26px -8px rgba(22,163,74,0.65)" }}>
+                        <Check size={15} color="#fff" />
+                        <span style={{ fontSize: 12.5, fontWeight: 800, color: "#fff" }}>{fmtElapsed(it.uploadMs || 0)}{mbps ? ` · ${mbps.toFixed(1)} Mbps` : ""}</span>
                       </div>
                     )}
                     {it.status === "error" && (
@@ -903,6 +1021,16 @@ function DirectFrameReviewScreen({ queue, phase, tick, frameTemplates, customFon
           background: radial-gradient(circle, ${MAGA}99 0%, transparent 70%);
           animation: rpv-df-cp-glow-pulse 1.6s ease-in-out infinite;
         }
+        /* UPDATE (permintaan user - "animasinya sangat baguss, paling
+           bagus"): ring progress besar di header muncul dgn pop halus pas
+           upload mulai, & tiap kartu yg lagi diunggah dapat "napas" halus
+           (scale sangat kecil, hampir tidak kentara tapi kerasa hidup) +
+           cincin cahaya magenta tipis yg muncul-redup di tepi kartu -
+           menyatukan bahasa visual dgn glow ring progress-nya sendiri. */
+        @keyframes rpv-df-ring-in { 0% { opacity: 0; transform: scale(0.6); } 60% { opacity: 1; transform: scale(1.08); } 100% { transform: scale(1); } }
+        .rpv-df-header-ring-in { animation: rpv-df-ring-in .5s cubic-bezier(.34,1.56,.64,1) both; }
+        @keyframes rpv-df-upload-breathe { 0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(198,22,141,0); } 50% { transform: scale(1.006); box-shadow: 0 0 32px -6px rgba(198,22,141,0.35); } }
+        .rpv-df-upload-card { border-radius: 20px; animation: rpv-df-upload-breathe 2.2s ease-in-out infinite; }
         *{box-sizing:border-box}
       `}</style>
     </div>
@@ -918,6 +1046,14 @@ function DirectFrameSuccessScreen({ doneItems, errorCount, frameTemplates, custo
   const ratio = { w: PRINT_SIZE.w, h: PRINT_SIZE.h };
   const [qrByCode, setQrByCode] = useState({});
   const [checkDone, setCheckDone] = useState(false);
+  // UPDATE (permintaan user - "klik foto untuk preview"): thumbnail foto
+  // skrg bisa diketuk utk buka lightbox GEDE (pola sama persis dgn
+  // "Frame Terpilih" di FramePickScreen) - berguna krn kartu fotonya baru
+  // saja dikecilkan (220px) biar QR jadi fokus utama, jadi perlu jalan utk
+  // tetap bisa lihat detail fotonya jelas kalau mau.
+  const [zoomedId, setZoomedId] = useState(null);
+  const zoomedItem = doneItems.find((it) => it.id === zoomedId) || null;
+  const zoomedTemplate = zoomedItem ? (frameTemplates || []).find((t) => t.id === zoomedItem.frameTemplateId) || null : null;
   // UPDATE (permintaan user - "bisa langsung download foto juga disini"):
   // tamu skrg bisa langsung simpan file PNG foto+bingkainya dr layar hasil
   // ini juga (sblmnya cuma lewat scan QR/buka link /p/[photoCode] dulu) -
@@ -925,6 +1061,34 @@ function DirectFrameSuccessScreen({ doneItems, errorCount, frameTemplates, custo
   // di /p/[photoCode] (hasil foto+bingkai, resolusi penuh, tanpa kompresi),
   // jadi hasilnya identik, bukan screenshot mentah.
   const [downloadingId, setDownloadingId] = useState(null);
+  // UPDATE (permintaan user - "ganti buka di hp menjadi copy link"): tombol
+  // "Buka di HP" (Link, pindah halaman) diganti "Salin Link" - copy URL
+  // /p/[photoCode] ke clipboard langsung, feedback singkat "Tersalin!" per
+  // item (bukan cuma 1 state global) krn bisa ada >1 foto di layar ini.
+  const [copiedId, setCopiedId] = useState(null);
+  const copyTimerRef = useRef(null);
+  const handleCopyLink = async (it) => {
+    if (!it.photoCode) return;
+    const url = `${window.location.origin}/marta/photobooth/p/${it.photoCode}`;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // fallback browser lama/tanpa izin clipboard - textarea sementara + execCommand
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = url;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        ta.remove();
+      } catch { return; }
+    }
+    setCopiedId(it.id);
+    clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopiedId(null), 1800);
+  };
   const handleDownload = async (it, template) => {
     if (downloadingId) return;
     setDownloadingId(it.id);
@@ -969,76 +1133,149 @@ function DirectFrameSuccessScreen({ doneItems, errorCount, frameTemplates, custo
   }, [doneItems]);
 
   return (
-    // FIX (permintaan user - "mengapa halaman ini tidak bisa di scroll"):
-    // overflow:"hidden" bikin kelebihan tinggi (apalagi dgn >1 foto + kartu
-    // QR per foto) KEPOTONG, bukan discroll - lihat komentar sama persis di
-    // DirectFrameReviewScreen di atas (flex-item child dr body + overflow
-    // selain visible -> min-height:0 otomatis). overflowY:"auto" bikin
-    // layar ini sendiri jadi scroll container-nya.
-    <div style={{ minHeight: "100svh", height: "100svh", background: FP_BG, fontFamily: FONT, colorScheme: "dark", position: "relative", overflowY: "auto", overflowX: "hidden", WebkitOverflowScrolling: "touch" }}>
+    // FIX (permintaan user - "mengapa halaman ini tidak bisa di scroll" ->
+    // "masih belum enak scrollnya" -> "apakah ada area yang gabisa di
+    // scroll"): 2 percobaan sebelumnya (height:100svh+overflow:auto, lalu
+    // position:fixed+inset:0 sbg "lapisan scroll sendiri") sama2 masih
+    // bikin SEBAGIAN area kerasa tidak responsif thd scroll - root
+    // masalahnya: div ini dipaksa jadi scroll CONTAINER-nya sendiri, bukan
+    // ikut scroll dokumen biasa (body). SEKARANG disederhanakan total:
+    // TIDAK ada `overflow`/`height` fixed apa pun di sini lagi - div ini
+    // cuma elemen BIASA (overflow default "visible", minHeight:100svh tapi
+    // boleh lebih tinggi dr itu kalau kontennya panjang), jadi `body` yg
+    // jadi scroll container-nya (scroll dokumen native, SELALU jalan di
+    // semua browser, tidak ada "area" yg bisa ke-skip). FpAmbientBg jadi
+    // ikut membentang full tinggi KONTEN (bukan cuma 1 layar), bonus:
+    // ambient background-nya kelihatan di sepanjang scroll, bukan cuma di
+    // atas.
+    // FIX (permintaan user - "mengapa laman ini kembali tidak bisa
+    // discroll"): root sblmnya pakai display:"flex", flexDirection:"column",
+    // justifyContent:"center" utk centering vertikal otomatis - TAPI begitu
+    // konten diperbesar (checkmark, foto, QR, tombol semua naik ukuran di
+    // update sblmnya) & jadi lebih tinggi dr layar, kombinasi "flex container
+    // yg di-center" + minHeight:100svh berpotensi bikin sebagian browser
+    // tidak menghitung overflow-nya dgn benar sbg area yg bisa discroll
+    // (celah klasik flexbox "justify-content:center saat overflow"). Layar
+    // DirectFrameReviewScreen SEBELAH (fungsi di atas) TIDAK pernah kena
+    // masalah ini krn rootnya dari awal MEMANG TIDAK pakai flex/justify-
+    // content apa pun - cuma block biasa + minHeight:100svh. Disamakan ke
+    // pola yg sama di sini: flex/justifyContent DIHAPUS dr root, div anak
+    // (konten) cukup di-center HORIZONTAL via margin:"0 auto"+maxWidth spt
+    // biasa - scroll 100% balik ke `body` sbg satu2nya scroll container,
+    // konsisten dgn semua layar lain di alur ini.
+    <div style={{ minHeight: "100svh", background: FP_BG, fontFamily: FONT, colorScheme: "dark", position: "relative" }}>
       <FpAmbientBg />
-      <div style={{ position: "relative", zIndex: 1, padding: "34px 18px 90px", maxWidth: 420, width: "100%", margin: "0 auto", boxSizing: "border-box", display: "flex", flexDirection: "column", alignItems: "center" }}>
-        <div style={{ position: "relative", width: 76, height: 76, borderRadius: 999, background: "rgba(22,163,74,0.14)", display: "flex", alignItems: "center", justifyContent: "center", animation: "rpv-df-pop .42s cubic-bezier(.34,1.56,.64,1) both" }}>
-          <svg width="40" height="40" viewBox="0 0 52 52">
+      {/* UPDATE (permintaan user - "perbaiki total ui untuk upload ini buat
+          lebih besar dan lebih seamless dengan laman berhasil diunggah...
+          animasinya sangat baguss, paling bagus"): layar sukses skrg lebih
+          lega (maxWidth 380->440) & checkmark-nya BESAR (52->78px) dgn
+          cincin cahaya hijau berdenyut di belakangnya - bahasa visual yg
+          sama persis dgn ring progress magenta (.rpv-df-cp-glow) di layar
+          upload sebelumnya, cuma warnanya jadi hijau "berhasil" - jadi
+          transisi upload -> sukses kerasa SATU alur yg "serah terima",
+          bukan loncat ke desain lain. */}
+      <div style={{ position: "relative", zIndex: 1, padding: "36px 18px 28px", maxWidth: 440, width: "100%", margin: "0 auto", boxSizing: "border-box", display: "flex", flexDirection: "column", alignItems: "center" }}>
+        <div style={{ position: "relative", width: 78, height: 78, borderRadius: 999, background: "rgba(22,163,74,0.14)", display: "flex", alignItems: "center", justifyContent: "center", animation: "rpv-df-pop .48s cubic-bezier(.34,1.56,.64,1) both" }}>
+          <div className="rpv-df-success-glow" aria-hidden="true" />
+          <svg width="42" height="42" viewBox="0 0 52 52" style={{ position: "relative" }}>
             <circle cx="26" cy="26" r="23" fill="none" stroke="#22C55E" strokeWidth="2.5" strokeLinecap="round"
               style={{ strokeDasharray: 145, strokeDashoffset: checkDone ? 0 : 145, transition: "stroke-dashoffset .5s ease" }} />
             <path d="M15 27l7.5 7.5L37.5 18" fill="none" stroke="#22C55E" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round"
               style={{ strokeDasharray: 34, strokeDashoffset: checkDone ? 0 : 34, transition: "stroke-dashoffset .35s ease .25s" }} />
           </svg>
         </div>
-        <div style={{ marginTop: 16, fontSize: 17, fontWeight: 800, color: FP_INK, textAlign: "center" }}>
+        <div style={{ marginTop: 14, fontSize: 19.5, fontWeight: 800, color: FP_INK, textAlign: "center", letterSpacing: "-0.01em" }}>
           {doneItems.length > 1 ? `${doneItems.length} Foto Berhasil Diunggah!` : "Foto Berhasil Diunggah!"}
         </div>
-        <div style={{ marginTop: 4, fontSize: 12.5, color: FP_SUB, textAlign: "center" }}>Scan QR di bawah utk share/download fotomu.</div>
+        <div style={{ marginTop: 4, fontSize: 13, color: FP_SUB, textAlign: "center" }}>Scan QR di bawah utk share/download fotomu.</div>
 
         {errorCount > 0 && (
-          <div style={{ marginTop: 12, fontSize: 11.5, fontWeight: 700, color: "#FCA5A5" }}>{errorCount} foto gagal diunggah.</div>
+          <div style={{ marginTop: 8, fontSize: 11.5, fontWeight: 700, color: "#FCA5A5" }}>{errorCount} foto gagal diunggah.</div>
         )}
 
-        <div style={{ marginTop: 22, display: "flex", flexDirection: "column", gap: 24, width: "100%" }}>
+        <div style={{ marginTop: 22, display: "flex", flexDirection: "column", gap: 20, width: "100%" }}>
           {doneItems.map((it, i) => {
             const template = (frameTemplates || []).find((t) => t.id === it.frameTemplateId) || null;
             return (
               <div key={it.id} className="rpv-df-success-card" style={{ animationDelay: `${0.12 + i * 0.08}s` }}>
-                <div style={{ borderRadius: 20, overflow: "hidden", border: `1.5px solid ${FP_LINE}`, boxShadow: "0 16px 40px -16px rgba(0,0,0,0.6)" }}>
-                  <PhotoFrame photo={{ url: it.previewUrl }} ratio={ratio} crop={it.crop || DEFAULT_CROP} frame={template ? "custom" : "none"}
-                    mode="screen" queueLabel={it.photoCode || "00000"} sessionTitle={sessionTitle}
-                    customElements={template?.elements} customBaseStyle={template?.baseStyle} customFonts={customFonts} />
-                </div>
-                <div style={{ marginTop: 12, borderRadius: 16, background: FP_CARD, border: `1px solid ${FP_LINE}`, padding: 16, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-                  {qrByCode[it.photoCode] ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={qrByCode[it.photoCode]} alt={`QR ${it.photoCode}`} width={150} height={150} style={{ borderRadius: 10, background: "#fff", padding: 6 }} />
-                  ) : (
-                    <div style={{ width: 150, height: 150, borderRadius: 10, background: FP_FIELD, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                      <Loader2 size={20} color={MAGA} style={{ animation: "spin 1s linear infinite" }} />
-                    </div>
-                  )}
-                  <span style={{ fontSize: 10, fontWeight: 800, color: FP_SUB, letterSpacing: "0.06em", textTransform: "uppercase" }}>Scan utk Share &amp; Download</span>
-                  {it.photoCode && (
-                    <Link href={`/marta/photobooth/p/${it.photoCode}`} style={{ fontSize: 12.5, fontWeight: 800, color: MAGA, textDecoration: "none" }}>
-                      Buka di HP ini
-                    </Link>
-                  )}
-                  <button onClick={() => handleDownload(it, template)} disabled={downloadingId === it.id}
-                    style={{ marginTop: 6, width: "100%", height: 42, borderRadius: 12, border: "none", cursor: downloadingId === it.id ? "default" : "pointer", fontFamily: FONT, fontSize: 12.5, fontWeight: 800, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, background: `linear-gradient(135deg,${RED},${MAGA})`, opacity: downloadingId && downloadingId !== it.id ? 0.5 : 1 }}>
-                    {downloadingId === it.id ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={14} />}
-                    {downloadingId === it.id ? "Menyiapkan…" : "Download Foto"}
-                  </button>
+                {/* UPDATE ("buat lebih besar"): kartu foto diperbesar lagi
+                    (148->224px) - cukup besar utk kelihatan jelas tapi QR
+                    di bawahnya tetap jadi fokus utama scan share/download. */}
+                {/* UPDATE (permintaan user - "klik untuk pratinjau"): badge
+                    kecil ditambahkan di pojok bawah kartu foto - sblmnya
+                    foto ini SUDAH bisa diketuk (buka lightbox gede, lihat
+                    setZoomedId) tapi tidak ada petunjuk visual apa pun jadi
+                    tamu tidak sadar itu tombol - skrg ada label eksplisit
+                    + ikon kaca pembesar, muncul di atas foto spy jelas. */}
+                <button onClick={() => setZoomedId(it.id)} aria-label="Lihat foto lebih besar"
+                  style={{ display: "block", width: "100%", maxWidth: 224, margin: "0 auto", padding: 0, border: "none", background: "transparent", cursor: "zoom-in", borderRadius: 18, overflow: "hidden", boxShadow: "0 18px 46px -16px rgba(0,0,0,0.6)", position: "relative" }}>
+                  <div style={{ borderRadius: 18, overflow: "hidden", border: `1.5px solid ${FP_LINE}` }}>
+                    <PhotoFrame photo={{ url: it.previewUrl }} ratio={ratio} crop={it.crop || DEFAULT_CROP} frame={template ? "custom" : "none"}
+                      mode="screen" queueLabel={it.photoCode || "00000"} sessionTitle={sessionTitle}
+                      customElements={template?.elements} customBaseStyle={template?.baseStyle} customFonts={customFonts} />
+                  </div>
+                  <div style={{ position: "absolute", left: "50%", bottom: 10, transform: "translateX(-50%)", display: "flex", alignItems: "center", gap: 5, padding: "6px 12px", borderRadius: 999, background: "rgba(10,10,12,0.72)", backdropFilter: "blur(4px)", border: "1px solid rgba(255,255,255,0.14)", whiteSpace: "nowrap" }}>
+                    <ZoomIn size={12} color="#fff" />
+                    <span style={{ fontSize: 10.5, fontWeight: 800, color: "#fff" }}>Klik utk Pratinjau</span>
+                  </div>
+                </button>
+                {/* UPDATE (permintaan user - "perbaiki lagi uinya ini
+                    menjadi sangat baik"): kartu QR+aksi dirombak total -
+                    label kecil all-caps diganti baris ikon+teks yg lebih
+                    enak dibaca, QR dibungkus kartu putih sendiri dgn bingkai
+                    "sudut pemindai" (corner marks, kesan kamera/scanner
+                    beneran), & "Buka di HP ini"/"Download" yg SEBELUMNYA
+                    nyempil jadi link+tombol numpuk vertikal skrg jadi 2
+                    tombol SEJAJAR senada (outline + gradient solid), rapi
+                    & seimbang - bukan lagi dominan QR doang. */}
+                <div style={{ marginTop: 12, borderRadius: 20, background: `linear-gradient(180deg,${FP_CARD_HI},${FP_CARD})`, border: `1px solid ${FP_LINE}`, padding: "16px 16px 14px", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, color: FP_SUB }}>
+                    <QrCode size={13} />
+                    <span style={{ fontSize: 11.5, fontWeight: 800 }}>Pindai utk Bagikan &amp; Unduh</span>
+                  </div>
+                  <div className="rpv-df-qr-frame">
+                    {qrByCode[it.photoCode] ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={qrByCode[it.photoCode]} alt={`QR ${it.photoCode}`} width={164} height={164} style={{ display: "block", borderRadius: 10, background: "#fff" }} />
+                    ) : (
+                      <div style={{ width: 164, height: 164, borderRadius: 10, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                        <Loader2 size={20} color={MAGA} style={{ animation: "spin 1s linear infinite" }} />
+                      </div>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", gap: 9, width: "100%" }}>
+                    {/* UPDATE (permintaan user - "ganti buka di hp menjadi
+                        copy link"): link pindah-halaman diganti copy-to-
+                        clipboard - icon+label-nya berubah sekejap jadi
+                        "Tersalin!" (checkmark hijau) begitu berhasil, balik
+                        normal otomatis stlh ~1.8dtk (lihat handleCopyLink). */}
+                    {it.photoCode && (
+                      <button onClick={() => handleCopyLink(it)}
+                        style={{ flex: 1, height: 48, borderRadius: 13, border: `1.5px solid ${copiedId === it.id ? "#22C55E66" : FP_LINE}`, background: copiedId === it.id ? "rgba(34,197,94,0.12)" : FP_FIELD, color: copiedId === it.id ? "#4ADE80" : FP_INK, fontSize: 13, fontWeight: 800, fontFamily: FONT, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, transition: "all .15s ease" }}>
+                        {copiedId === it.id ? <Check size={14} /> : <Link2 size={14} color={MAGA} />}
+                        {copiedId === it.id ? "Tersalin!" : "Salin Link"}
+                      </button>
+                    )}
+                    <button onClick={() => handleDownload(it, template)} disabled={downloadingId === it.id}
+                      style={{ flex: 1, height: 48, borderRadius: 13, border: "none", cursor: downloadingId === it.id ? "default" : "pointer", fontFamily: FONT, fontSize: 13, fontWeight: 800, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", gap: 7, background: `linear-gradient(135deg,${RED},${MAGA})`, boxShadow: "0 10px 24px -10px rgba(198,22,141,0.6)", opacity: downloadingId && downloadingId !== it.id ? 0.5 : 1 }}>
+                      {downloadingId === it.id ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={14} />}
+                      {downloadingId === it.id ? "…" : "Download"}
+                    </button>
+                  </div>
                 </div>
               </div>
             );
           })}
         </div>
 
-        <div style={{ marginTop: 28, display: "flex", flexDirection: "column", gap: 10, width: "100%" }}>
+        <div style={{ marginTop: 22, display: "flex", flexDirection: "column", gap: 10, width: "100%" }}>
           <button onClick={onUploadMore}
-            style={{ width: "100%", height: 50, borderRadius: 14, border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 14, fontWeight: 800, color: "#fff", background: `linear-gradient(135deg,${RED},${MAGA})` }}>
+            style={{ width: "100%", height: 54, borderRadius: 16, border: "none", cursor: "pointer", fontFamily: FONT, fontSize: 15, fontWeight: 800, color: "#fff", background: `linear-gradient(135deg,${RED},${MAGA})`, boxShadow: "0 14px 34px -12px rgba(198,22,141,0.55)" }}>
             Ambil Foto Lagi
           </button>
           <button onClick={onDone}
-            style={{ width: "100%", height: 50, borderRadius: 14, border: `1.5px solid ${FP_LINE}`, background: "transparent", color: FP_MID, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
-            Selesai
+            style={{ width: "100%", height: 54, borderRadius: 16, border: `1.5px solid ${FP_LINE}`, background: FP_CARD_HI, color: FP_INK, fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+            Kembali
           </button>
         </div>
       </div>
@@ -1047,8 +1284,45 @@ function DirectFrameSuccessScreen({ doneItems, errorCount, frameTemplates, custo
         @keyframes rpv-df-pop { 0% { transform: scale(0.5); opacity: 0; } 60% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); } }
         @keyframes rpv-df-card-in { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
         .rpv-df-success-card { animation: rpv-df-card-in .4s ease both; }
+        @keyframes rpv-fp-sheet-backdrop { from { opacity: 0; } to { opacity: 1; } }
+        /* UPDATE (permintaan user - "hilangkan juga line pink di qr ini"):
+           "bingkai pemindai" (corner marks magenta) DIHAPUS SELURUHNYA -
+           sblmnya sudah dikurangi jd cuma 2 sudut bawah, tapi msh nabrak/
+           numpuk visual dgn 2 tombol Salin Link/Download tepat di
+           bawahnya. Kartu QR putih polos (shadow lembut) saja sudah cukup
+           rapi tanpa perlu hiasan sudut ini. */
+        .rpv-df-qr-frame {
+          padding: 14px; border-radius: 16px; background: #fff;
+          box-shadow: 0 10px 30px -14px rgba(198,22,141,0.5);
+        }
+        /* FIX: class ini sblmnya dipakai di JSX checkmark tapi belum ada
+           definisinya sama sekali (ketinggalan pas nambah elemen glow-nya)
+           - cincin cahaya HIJAU berdenyut di belakang checkmark, pola sama
+           persis dgn .rpv-df-cp-glow (magenta) di CircularProgress. */
+        @keyframes rpv-df-success-glow-pulse { 0%, 100% { opacity: 0.4; transform: scale(0.88); } 50% { opacity: 0.8; transform: scale(1.18); } }
+        .rpv-df-success-glow {
+          position: absolute; inset: -6px; border-radius: 999px; pointer-events: none;
+          background: radial-gradient(circle, #22C55E99 0%, transparent 70%);
+          animation: rpv-df-success-glow-pulse 1.8s ease-in-out infinite;
+        }
         *{box-sizing:border-box}
       `}</style>
+
+      {zoomedItem && (
+        <div onClick={() => setZoomedId(null)}
+          style={{ position: "fixed", inset: 0, zIndex: 25, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, padding: 24, background: "rgba(0,0,0,0.88)", animation: "rpv-fp-sheet-backdrop .18s ease both" }}>
+          <div onClick={(e) => e.stopPropagation()}
+            style={{ position: "relative", width: "100%", maxWidth: 340, aspectRatio: `${ratio.w} / ${ratio.h}`, borderRadius: 18, overflow: "hidden", border: `1.5px solid ${FP_LINE}`, boxShadow: "0 24px 60px -16px rgba(0,0,0,0.7)" }}>
+            <PhotoFrame photo={{ url: zoomedItem.previewUrl }} ratio={ratio} crop={zoomedItem.crop || DEFAULT_CROP} frame={zoomedTemplate ? "custom" : "none"}
+              mode="screen" queueLabel={zoomedItem.photoCode || "00000"} sessionTitle={sessionTitle}
+              customElements={zoomedTemplate?.elements} customBaseStyle={zoomedTemplate?.baseStyle} customFonts={customFonts} />
+          </div>
+          <button onClick={() => setZoomedId(null)} aria-label="Tutup"
+            style={{ width: 38, height: 38, borderRadius: 999, border: "none", background: "rgba(255,255,255,0.12)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <X size={17} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1185,25 +1459,32 @@ function UploadHistoryPanel({ history, onClose }) {
 // stroke putih polos - skrg stroke GRADIENT merah->magenta (konsisten dgn
 // warna brand di seluruh app ini) + glow lembut berdenyut pelan di
 // belakangnya, biar kerasa "hidup" selagi nunggu unggahan tiap foto.
-function CircularProgress({ value }) {
+// UPDATE (permintaan user - "perbaiki total ui untuk upload ini buat lebih
+// besar... animasinya sangat bagus"): CircularProgress skrg bisa diatur
+// ukurannya via prop `size` (default tetap 40 spy pemanggil lama tidak
+// berubah) - dipakai dgn size besar (84) di overlay upload per-kartu biar
+// jadi "hero" momen yg jelas kelihatan, bukan lingkaran kecil nyempil.
+function CircularProgress({ value, size = 40 }) {
   const pct = Math.max(0, Math.min(1, value));
-  const r = 16, c = 2 * Math.PI * r;
+  const r = size * 0.4, c = 2 * Math.PI * r;
+  const sw = Math.max(3, size * 0.088);
+  const cx = size / 2;
   const gradId = `rpv-df-cp-grad-${useId().replace(/:/g, "")}`;
   return (
-    <div style={{ position: "relative", width: 40, height: 40 }}>
+    <div style={{ position: "relative", width: size, height: size }}>
       <div className="rpv-df-cp-glow" aria-hidden="true" />
-      <svg width="40" height="40" viewBox="0 0 40 40" style={{ transform: "rotate(-90deg)", position: "relative" }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: "rotate(-90deg)", position: "relative" }}>
         <defs>
           <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stopColor={RED} />
             <stop offset="100%" stopColor={MAGA} />
           </linearGradient>
         </defs>
-        <circle cx="20" cy="20" r={r} fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth="3.5" />
-        <circle cx="20" cy="20" r={r} fill="none" stroke={`url(#${gradId})`} strokeWidth="3.5" strokeLinecap="round"
+        <circle cx={cx} cy={cx} r={r} fill="none" stroke="rgba(255,255,255,0.22)" strokeWidth={sw} />
+        <circle cx={cx} cy={cx} r={r} fill="none" stroke={`url(#${gradId})`} strokeWidth={sw} strokeLinecap="round"
           strokeDasharray={c} strokeDashoffset={c * (1 - pct)} style={{ transition: "stroke-dashoffset .2s ease" }} />
       </svg>
-      <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10.5, fontWeight: 800, color: "#fff" }}>
+      <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: size * 0.26, fontWeight: 800, color: "#fff", fontFamily: FONT }}>
         {Math.round(pct * 100)}
       </span>
     </div>
@@ -1531,7 +1812,17 @@ function FramePickScreen({ templates, loading, customFonts, sessionTitle, select
       const dy = Math.max(0, ev.clientY - startY);
       sheetDragStartY.current = null;
       setSheetDragging(false);
-      if (dy > 90) closeSheet();
+      // UPDATE (permintaan user - "ini linenya bisa diklik baru di drag
+      // untuk nutup"): sblmnya handle INI CUMA bisa nutup sheet lewat
+      // drag jauh (>90px) - sekedar TAP/KLIK singkat di line-nya (nyaris
+      // tanpa gerakan) tidak melakukan apa pun. Skrg ditambah: gerakan
+      // SANGAT kecil (<6px, berarti ini tap/klik, bukan niat drag) jg
+      // langsung nutup sheet - pola umum bottom-sheet app native (tap
+      // handle = dismiss), TANPA mengandalkan event "click" bawaan
+      // (yg di browser/touch device kadang TIDAK terpicu stlh
+      // preventDefault() di pointerdown) - makanya dideteksi lewat jarak
+      // gerak pointerup ini, bukan listener click terpisah.
+      if (dy > 90 || dy < 6) closeSheet();
       else setSheetDragY(0);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", end);
@@ -2092,7 +2383,7 @@ function UploadFrameSheet({ ratio, onClose, onCreated }) {
  * LANGSUNG di atas video live (FrameOverlayElements, sumber sama dgn
  * PhotoFrame) - jadi tamu lihat persis posisi bingkai sambil pose, bukan
  * cuma ditempel belakangan setelah jepret. */
-function CameraView({ videoRef, cameraState, facing, onFlip, onCapture, onRetry, onUseGallery, onBack, headerTitle, sessionTitle, overlayElements, overlayCustomFonts }) {
+function CameraView({ videoRef, cameraState, facing, onFlip, canFlip = true, onCapture, onRetry, onUseGallery, onBack, headerTitle, sessionTitle, overlayElements, overlayCustomFonts }) {
   const ratio = { w: PRINT_SIZE.w, h: PRINT_SIZE.h };
   return (
     <div style={{ position: "fixed", inset: 0, background: "#000", fontFamily: FONT, display: "flex", flexDirection: "column", zIndex: 50 }}>
@@ -2183,12 +2474,19 @@ function CameraView({ videoRef, cameraState, facing, onFlip, onCapture, onRetry,
         </div>
       </div>
 
-      {/* Shutter + galeri + ganti kamera - UPDATE (permintaan user): kedua
-          tombol skrg jd icon-button BULAT di KANAN shutter (bukan lagi link
-          teks di bawah shutter / icon di header kanan atas), biar satu baris
-          kontrol rapi & konsisten dgn pola icon-button lainnya di layar ini. */}
+      {/* Shutter + galeri + ganti kamera - UPDATE (permintaan user: "terbalik
+          galeri di kiri dan switch di kanan, dan jangan terlalu rapat"):
+          SEBELUMNYA ganti-kamera di KIRI / galeri di KANAN dgn
+          justify-content:"space-between" (maxWidth 360) - skrg DIBALIK jd
+          galeri DI KIRI shutter, shutter di tengah, ganti-kamera DI KANAN
+          shutter (sesuai referensi screenshot user), dan jarak antar tombol
+          diperlebar (maxWidth naik jadi 400 + gap eksplisit 24px, bukan cuma
+          space-between dlm lebar sempit) agar tidak terlalu rapat. */}
       {cameraState === "ready" && (
-        <div style={{ position: "relative", zIndex: 2, display: "flex", alignItems: "center", justifyContent: "center", gap: 22, padding: "14px 20px 30px" }}>
+        <div style={{ position: "relative", zIndex: 2, display: "flex", alignItems: "center", justifyContent: "center", gap: 28, padding: "14px 28px 30px", maxWidth: 400, margin: "0 auto" }}>
+          <button onClick={onUseGallery} aria-label="Pilih dari galeri" style={{ width: 44, height: 44, borderRadius: 999, border: "none", background: "rgba(255,255,255,0.16)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}>
+            <ImagePlus size={19} />
+          </button>
           <button onClick={onCapture} aria-label="Jepret foto"
             style={{
               width: 74, height: 74, borderRadius: 999, border: "4px solid rgba(255,255,255,0.9)",
@@ -2196,14 +2494,13 @@ function CameraView({ videoRef, cameraState, facing, onFlip, onCapture, onRetry,
             }}>
             <span style={{ width: 58, height: 58, borderRadius: 999, background: "#fff" }} />
           </button>
-          <div style={{ display: "flex", flexDirection: "row", gap: 10 }}>
-            <button onClick={onFlip} aria-label="Ganti kamera" style={{ width: 44, height: 44, borderRadius: 999, border: "none", background: "rgba(255,255,255,0.16)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-              <SwitchCamera size={19} />
-            </button>
-            <button onClick={onUseGallery} aria-label="Pilih dari galeri" style={{ width: 44, height: 44, borderRadius: 999, border: "none", background: "rgba(255,255,255,0.16)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-              <ImagePlus size={19} />
-            </button>
-          </div>
+          {/* Jika device cuma punya 1 kamera (hasil enumerateDevices), tombol
+              ini dinonaktifkan - diklik tidak terjadi apa apa, bukan flip
+              orientasi ke lensa yg tidak ada. */}
+          <button onClick={onFlip} disabled={!canFlip} aria-label="Ganti kamera" aria-disabled={!canFlip}
+            style={{ width: 44, height: 44, borderRadius: 999, border: "none", background: "rgba(255,255,255,0.16)", color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: canFlip ? "pointer" : "default", flexShrink: 0, opacity: canFlip ? 1 : 0.35 }}>
+            <SwitchCamera size={19} />
+          </button>
         </div>
       )}
       <style>{"@keyframes spin{to{transform:rotate(360deg)}}"}</style>
