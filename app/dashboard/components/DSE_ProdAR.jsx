@@ -46,7 +46,10 @@ const BRANDS = ["IM3", "3ID"];
 // "BOTH" CUMA pilihan toggle di UI (bukan nilai kolom "brand" di DB - tabel
 // mf_dse_prod_ar tetap selalu brand = "IM3" atau "3ID" per baris, lihat
 // BRANDS di atas), dipakai utk nentuin "activeBrands" yg mau dirender.
-const BRAND_TOGGLE_OPTIONS = ["IM3", "3ID", "BOTH"];
+// UPDATE (permintaan user - "ubah both menjadi IOH, dan menjadi paling
+// kiri"): label "Both" -> "IOH" (brand induk, nyatuin IM3 & 3ID), posisinya
+// plg kiri di toggle.
+const BRAND_TOGGLE_OPTIONS = ["BOTH", "IM3", "3ID"];
 // Warna identitas tiap brand (tetap sama persis dgn warna dot di toggle
 // Brand) - dipakai utk nge-tint section penjualan per brand saat mode
 // "Both" nampilin IM3 & 3ID sekaligus dalam satu kartu/baris DSE.
@@ -1442,7 +1445,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                     <button key={b} onClick={() => setBrand(b)}
                       style={{ display: "flex", alignItems: "center", gap: 6, height: "100%", padding: "0 16px", borderRadius: 7, border: "none", background: active ? brandColor : "transparent", color: active ? activeTextColor : t.mid, fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, transition: "background 0.15s" }}>
                       <span style={{ width: 7, height: 7, borderRadius: 999, background: active ? activeTextColor : brandColor, flexShrink: 0 }} />
-                      {b === "BOTH" ? "Both" : b}
+                      {b === "BOTH" ? "IOH" : b}
                     </button>
                   );
                 })}
