@@ -1138,12 +1138,23 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
           tombol Periode (trigger) yg membuka kalender 1-bulan dgn multi-
           select tanggal (klik tanggal = centang/un-centang), gantiin toggle
           Tanggal/Periode yg lama. ── */}
-      <div style={{ display: "flex", alignItems: "stretch", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+      {/* UPDATE (permintaan user - "titlenya di kiri, select periode di
+          kanan, dibungkus dalam satu container yang sama agar
+          proporsional"): judul & Periode sekarang SATU kartu yg sama
+          (justify-content space-between), bukan 2 kartu terpisah lagi. ── */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap", borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "10px 16px", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: t.tealBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Wallet size={17} color={t.teal} />
+          </div>
+          <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: -0.3 }}>DSE Prod. &amp; AR</div>
+        </div>
+
         <div ref={periodRef} style={{ position: "relative" }}>
           <button onClick={() => { setPeriodOpen((v) => !v); setCalViewMonth(rangeEnd.slice(0, 7)); }}
-            style={{ display: "flex", alignItems: "center", gap: 10, height: "100%", minHeight: 52, padding: "0 16px", borderRadius: 14, border: `1px solid ${periodOpen ? t.teal : t.line}`, background: t.card, boxShadow: t.shadowSm, cursor: "pointer", fontFamily: FONT, outline: "none" }}>
-            <div style={{ width: 32, height: 32, borderRadius: 9, background: t.tealBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-              <CalendarCheck2 size={15} color={t.teal} />
+            style={{ display: "flex", alignItems: "center", gap: 10, height: 44, padding: "0 14px", borderRadius: 11, border: `1px solid ${periodOpen ? t.teal : t.inputBd}`, background: periodOpen ? t.tealBg : t.inputBg, cursor: "pointer", fontFamily: FONT, outline: "none" }}>
+            <div style={{ width: 28, height: 28, borderRadius: 8, background: periodOpen ? "rgba(255,255,255,0.5)" : t.tealBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <CalendarCheck2 size={14} color={t.teal} />
             </div>
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", lineHeight: 1.25 }}>
               <span style={{ fontSize: 13, fontWeight: 700, color: t.hi, whiteSpace: "nowrap" }}>
@@ -1157,7 +1168,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
           </button>
 
           {periodOpen && (
-            <div style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 300, width: 300, borderRadius: 16, border: `1px solid ${t.line}`, background: t.card, boxShadow: "0 16px 40px rgba(0,0,0,0.22)", padding: 14 }}>
+            <div style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 300, width: 300, borderRadius: 16, border: `1px solid ${t.line}`, background: t.card, boxShadow: "0 16px 40px rgba(0,0,0,0.22)", padding: 14 }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                 <button onClick={() => setCalViewMonth((m) => shiftMonth(m, -1))} style={{ width: 28, height: 28, borderRadius: 8, border: "none", background: t.sub, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <ChevronDown size={14} style={{ transform: "rotate(90deg)" }} />
@@ -1218,13 +1229,6 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
               </div>
             </div>
           )}
-        </div>
-
-        <div style={{ flex: 1, minWidth: 220, display: "flex", alignItems: "center", gap: 12, borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "0 18px" }}>
-          <div style={{ width: 36, height: 36, borderRadius: 10, background: t.tealBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-            <Wallet size={17} color={t.teal} />
-          </div>
-          <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: -0.3 }}>DSE Prod. &amp; AR</div>
         </div>
       </div>
 
