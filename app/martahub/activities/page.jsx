@@ -350,15 +350,32 @@ function Body({ email }) {
       const sc = email ? await getMartaScope(email) : null;
       setScope(sc);
       prog(10, "Mengambil daftar activity plan…");
-      let query = supabaseMarta
-        .from("mh_activities")
-        .select(LIST_COLS)
-        .order("created_at", { ascending: false })
-        .limit(1000);
-      query = await applyMartaScope(query, sc);
-      const { data, error } = await query;
-      if (error) throw new Error(error.message);
-      const list = data || [];
+      // FIX (laporan user: kartu KPI "Laporan Actual" nampil "X / 1000 plan"
+      // padahal jumlah plan sebenarnya >1000, mis. 1251): SEBELUMNYA query ini
+      // dipotong `.limit(1000)` keras - begitu mh_activities lewat 1000 baris,
+      // sisanya (yg lebih lama, krn di-order created_at desc) DIAM-DIAM tidak
+      // pernah ditarik sama sekali, jadi SEMUA turunan `rows` (kartu KPI,
+      // filter, search, export) ikut meleset. PostgREST sendiri cuma balikin
+      // maks 1000 baris per request ("max rows" project setting) - fix-nya
+      // BUKAN menghapus limit itu (tidak akan lebih dari 1000 per call), tapi
+      // paging berulang pakai .range() sampai halaman terakhir habis, sama
+      // pola yg sudah dipakai di fetchDocStats() (lib/payoutPartnerDocs.js)
+      // & SITE_LOOKUP_CHUNK di bawah - supaya SELURUH activity plan tertarik,
+      // berapa pun jumlahnya.
+      const LIST_PAGE = 1000;
+      const list = [];
+      for (let from = 0; ; from += LIST_PAGE) {
+        let query = supabaseMarta
+          .from("mh_activities")
+          .select(LIST_COLS)
+          .order("created_at", { ascending: false })
+          .range(from, from + LIST_PAGE - 1);
+        query = await applyMartaScope(query, sc);
+        const { data, error } = await query;
+        if (error) throw new Error(error.message);
+        list.push(...(data || []));
+        if (!data || data.length < LIST_PAGE) break;
+      }
       setRows(list);
       prog(40, "Mengambil data pendukung…", `${list.length.toLocaleString("id-ID")} activity plan diterima`);
 

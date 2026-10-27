@@ -34,23 +34,28 @@ export function HubLogo({
 }) {
   const isMarta = variant === "marta";
   const isFitra = variant === "fitra";
+  const isWeska = variant === "weskahub";
 
-  // Square icon - Sandra always light bg; Marta respects dark prop; Fitra has one flat icon
+  // Square icon - Sandra always light bg; Marta respects dark prop; Fitra/WeskaHub have one flat icon
   const iconSrc = isFitra
     ? "/logos/fitra-icon.png"
-    : (dark && isMarta)
-      ? "/logos/marta-icon-dark.png"
-      : (isMarta ? "/logos/marta-icon.png" : "/logos/sandra-icon.png");
+    : isWeska
+      ? "/logos/weskahub-icon.png"
+      : (dark && isMarta)
+        ? "/logos/marta-icon-dark.png"
+        : (isMarta ? "/logos/marta-icon.png" : "/logos/sandra-icon.png");
 
   // Wide wordmark files (no background, used for large headers)
-  // Sandra always uses light mark; Marta respects dark prop; Fitra falls back to its icon
+  // Sandra always uses light mark; Marta respects dark prop; Fitra/WeskaHub fall back to their icon
   const markSrc = isFitra
     ? "/logos/fitra-icon.png"
-    : (dark && isMarta)
-      ? "/logos/marta-mark-dark.png"
-      : (isMarta ? "/logos/marta-mark.png" : "/logos/sandra-mark.png");
+    : isWeska
+      ? "/logos/weskahub-icon.png"
+      : (dark && isMarta)
+        ? "/logos/marta-mark-dark.png"
+        : (isMarta ? "/logos/marta-mark.png" : "/logos/sandra-mark.png");
 
-  const alt = isFitra ? "FitraHub" : (isMarta ? "MartaHub" : "SandraHub");
+  const alt = isFitra ? "FitraHub" : isWeska ? "WeskaHub" : (isMarta ? "MartaHub" : "SandraHub");
 
   /* ── Wide wordmark mode - no box ───────────────────────────────────── */
   if (markOnly) {

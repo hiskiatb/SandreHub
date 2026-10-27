@@ -21,7 +21,7 @@ import {
   Shield, Globe, Building2, Store, SlidersHorizontal,
   Table2, Wallet, PanelLeftClose, PanelLeftOpen,
   FileSpreadsheet, Users, Key, Briefcase, Wrench, Mail, Sparkles, Archive,
-  Database, TrendingUp, UserRoundCog,
+  Database, TrendingUp,
 } from "lucide-react";
 
 import FormPendapatan   from "./components/PNL_FormPendapatan";
@@ -44,7 +44,6 @@ import ReportMerge_Module from "./components/ReportMerge_Module";
 import PNL_MPX_Menu       from "./components/PNL_MPX_Menu";
 import SDP_DseDatabase    from "./components/SDP_DseDatabase";
 import DSE_ProdAR         from "./components/DSE_ProdAR";
-import AdminMcMapping     from "./components/AdminMcMapping";
 
 // ─── Role Maps ────────────────────────────────────────────────────────────────
 const IOH_ROLE_REGION_MAP = {
@@ -838,8 +837,13 @@ export default function DashboardPage() {
                   {!isSDPMember && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
                   {canSdp       && <SNavItem icon={<Store size={14} />}       label="SDP Management"       active={view === "sdp2"}           onClick={() => navigate("sdp2")} />}
                   {isSPM        && <SNavItem icon={<Shield size={14} />}      label="Admin Panel"          active={view === "admin-panel"}    onClick={() => navigate("admin-panel")} />}
+                  {/* UPDATE (permintaan user - "mapping admin mc itu
+                      seharusnya didalam dse prod, bukan menjadi menu
+                      terpisah, namanya user management"): nav item & card
+                      "Mapping Admin MC" yg terpisah DIHAPUS - fitur yg sama
+                      skrg jadi tab "User Management" DI DALAM DSE Prod. &
+                      AR itu sendiri (lihat DSE_ProdAR.jsx). */}
                   {(isSPM || isMPX) && <SNavItem icon={<TrendingUp size={14} />} label="DSE Prod. & AR"     active={view === "dse-prod-ar"}    onClick={() => navigate("dse-prod-ar")} />}
-                  {isSPM        && <SNavItem icon={<UserRoundCog size={14} />}  label="Mapping Admin MC"     active={view === "admin-mc-mapping"} onClick={() => navigate("admin-mc-mapping")} />}
 
                   {/* Archive — menu lama, dipertimbangkan dihapus ke depannya;
                       code TIDAK dihapus, cuma dikumpulkan & collapsed di sini. */}
@@ -1013,18 +1017,18 @@ export default function DashboardPage() {
                       accent={{ color: d ? "#A78BFA" : "#7C3AED", bg: d ? "rgba(167,139,250,0.11)" : "rgba(124,58,237,0.07)", bd: d ? "rgba(167,139,250,0.28)" : "rgba(124,58,237,0.18)", shadow: "rgba(124,58,237,0.18)" }} />
                   )}
 
+                  {/* UPDATE (permintaan user - "mapping admin mc itu
+                      seharusnya didalam dse prod, bukan menjadi menu
+                      terpisah, namanya user management"): DashCard
+                      "Mapping Admin MC" yg terpisah DIHAPUS - fiturnya skrg
+                      tab "User Management" di dalam kartu DSE Prod. & AR
+                      ini sendiri (lihat DSE_ProdAR.jsx), bukan tujuan
+                      navigasi sendiri lagi. */}
                   {(isSPM || isMPX) && (
                     <DashCard icon={<TrendingUp size={20} />} title="DSE Prod. & AR"
                       desc="Upload produksi harian DSE (SP, Saldo, Voucher) dan AR/piutang outstanding, per Kode DSE."
                       tag={isMPX ? "Admin MC" : "SPM"} active={true} onClick={() => navigate("dse-prod-ar")} t={t} d={d}
                       accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.11)" : "rgba(26,158,144,0.07)", bd: d ? "rgba(50,188,173,0.28)" : "rgba(26,158,144,0.20)", shadow: "rgba(26,158,144,0.16)" }} />
-                  )}
-
-                  {isSPM && (
-                    <DashCard icon={<UserRoundCog size={20} />} title="Mapping Admin MC"
-                      desc="Daftarkan email Admin MC supaya bisa login via OTP (tanpa password) dan otomatis terbatas ke MC-nya."
-                      tag="SPM" active={true} onClick={() => navigate("admin-mc-mapping")} t={t} d={d}
-                      accent={{ color: d ? "#A78BFA" : "#7C3AED", bg: d ? "rgba(167,139,250,0.11)" : "rgba(124,58,237,0.07)", bd: d ? "rgba(167,139,250,0.28)" : "rgba(124,58,237,0.18)", shadow: "rgba(124,58,237,0.18)" }} />
                   )}
                 </div>
 
@@ -1206,14 +1210,6 @@ export default function DashboardPage() {
               <motion.div key="dse-prod-ar" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
                 <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
                 <DSE_ProdAR theme={theme} profile={profile} />
-              </motion.div>
-            )}
-
-            {/* ── Mapping Admin MC ── */}
-            {view === "admin-mc-mapping" && isSPM && (
-              <motion.div key="admin-mc-mapping" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
-                <AdminMcMapping theme={theme} />
               </motion.div>
             )}
 

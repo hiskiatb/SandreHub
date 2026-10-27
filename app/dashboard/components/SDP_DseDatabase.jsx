@@ -1,198 +1,124 @@
 "use client";
 /**
- * SDP_DseDatabase.jsx
- * "Database DSE" — pilih Region (North/Central/South Sumatera), lalu upload
- * banyak file .txt sekaligus (format: header "NAMA HOA - N DS - M DSE -
- * BRANCH", lalu blok per DS "NAMA - HP - MC-<area> - K DSE", lalu baris per
- * DSE "KODE - HP - X desa - Y outlet"). Hasil parse digabung jadi satu tabel
- * (sheet "mf_dse_database" di Supabase) dan bisa di-export ke Excel.
+ * SDP_DseDatabase.jsx — tab "Database DSE" (di dalam DSE Prod. & AR)
  *
- * Dedup: upload ulang file utk HOA yang sama tidak lagi menghapus data lama —
- * kode DSE yg sudah ada di-UPDATE, kode baru di-INSERT, dan kode lama yg tidak
- * lagi muncul di upload hanya ditandai REVOKED (is_revoked/revoked_at), tidak
- * pernah dihapus — lihat RPC mf_dse_upload_hoa.
+ * UPDATE (permintaan user - "berarti kembalikan saja itu ke sdp, kita
+ * duplicate namun fitur yang disini lebih sederhana, cukup download data dan
+ * upload data dan tampilkan table" -> dikonfirmasi "Sederhanakan tab Database
+ * DSE jadi hanya Download/Upload/Tabel"): dulu tab ini punya 2 mekanisme
+ * upload terpisah — upload file .txt per-HOA (format "NAMA HOA - N DS - M
+ * DSE - BRANCH" dst) dan "Update Mapping (Hybrid)" (Excel kode DSE lama →
+ * baru) — KEDUANYA DIHAPUS. Diganti 1 alur sederhana yang sama persis dgn
+ * pola "Mapping & User Management" (AdminMcMapping.jsx): Download Data
+ * (export semua baris ke Excel, dipakai juga sbg template) -> edit di Excel
+ * -> Upload Data (import massal, UPSERT per ID DSE — kode yang sudah ada
+ * diperbarui, yang belum ada ditambahkan). Tabel tetap bisa di-cari/filter.
  *
- * "Update Mapping (Hybrid)" — upload terpisah utk file mapping Kode DSE Lama →
- * Baru (format kolom: DSE Category, DSE Code(lama), DSE Code(baru), MPC Short
- * Code(lama/baru), MPC Name(lama/baru), PT, Micro Cluster Name, Branch Name,
- * Region Name, Circle). Kode lama TIDAK dihapus, hanya ditandai revoked dan
- * dicatat kode penggantinya (superseded_by_code) — lihat RPC
- * mf_dse_upload_hybrid_mapping.
- *
- * Hanya untuk role spm_sumatera (digate juga di page.jsx).
+ * Hanya untuk role spm_sumatera (digate di DSE_ProdAR.jsx & page.jsx).
  */
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import supabase from "../../../lib/supabase";
 import * as XLSX from "xlsx";
 import {
-  Upload, FileText, X, Check, AlertTriangle, Loader2, FileDown,
-  Search, RefreshCw, Trash2, ChevronDown, Database, Globe,
-  ArrowRight, History, FileSpreadsheet, Info,
+  Upload, X, Check, AlertTriangle, Loader2, FileDown,
+  Search, RefreshCw, Trash2, ChevronDown, Database,
+  FileSpreadsheet, Info,
 } from "lucide-react";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif`;
 const REGIONS = ["NORTH SUMATERA", "CENTRAL SUMATERA", "SOUTH SUMATERA"];
 const PAGE_SIZE = 50;
 
-// "VACANT" (posisi blm terisi org) bukan nama/no.HP sungguhan — kalau nilainya
-// cuma itu (apa pun hurufnya), perlakukan sbg kosong (biarkan NULL) drpd
-// nyimpen teks "VACANT" literal ke kolom Nama DS / No. HP DS.
-const blankIfVacant = (v) => {
-  const s = (v || "").trim();
-  return (!s || s.toUpperCase() === "VACANT") ? null : s;
+// ── Kolom di file Excel (download/upload) — header baris 1, longgar (boleh
+// beda urutan/huruf besar-kecil). ID DSE wajib (kunci pencocokan utk update);
+// Region/Branch/HOA wajib khusus utk baris BARU (DSE yang belum ada).
+const COLMAP = {
+  region: ["region"],
+  branch: ["branch"],
+  hoa_name: ["hoa", "nama hoa", "hoa name"],
+  ds_name: ["nama ds", "ds name"],
+  ds_phone: ["nomor ds", "no hp ds", "no. hp ds", "ds phone"],
+  mc: ["mc"],
+  dse_code: ["id dse", "dse code", "kode dse"],
+  dse_phone: ["nomor dse", "no hp dse", "no. hp dse", "dse phone"],
+  jumlah_desa: ["jumlah desa", "desa"],
+  jumlah_outlet: ["jumlah outlet", "outlet"],
+  pt_name: ["partner name", "pt name", "partner", "nama partner"],
+  dse_category: ["dse category", "kategori dse"],
+  circle: ["circle"],
+  mpc_short_code: ["mpc short code", "mpc short"],
+  mpc_name: ["mpc name"],
 };
 
-// ── Parser: 1 file .txt → { hoaName, branch, totalDs, totalDse, rows[] } ───
-// Sama persis logikanya dgn script Python yang dipakai utk validasi contoh
-// tabel sebelumnya (parse.py) — porting 1:1 ke JS supaya hasilnya konsisten.
-function parseDseFile(text) {
-  const lines = text.replace(/\r\n/g, "\n").split("\n");
-  const header = (lines[0] || "").trim();
-  const hm = header.match(/^(.*?)\s+-\s+(\d+)\s*DS\s+-\s+(\d+)\s*DSE\s+-\s+(.*)$/i);
-  if (!hm) {
-    return { error: `Header tidak dikenali: "${header}". Format yang diharapkan: "NAMA HOA - N DS - M DSE - BRANCH".` };
-  }
-  const hoaName = hm[1].trim();
-  const headerTotalDs = parseInt(hm[2], 10);
-  const headerTotalDse = parseInt(hm[3], 10);
-  const branch = hm[4].trim();
+function normHeader(h) { return String(h || "").trim().toLowerCase(); }
+function findCol(headers, aliases) { return headers.findIndex((h) => aliases.includes(normHeader(h))); }
+function cellStr(v) { const s = String(v ?? "").trim(); return s || null; }
+function cellInt(v) { const n = parseInt(String(v ?? "").trim(), 10); return Number.isFinite(n) ? n : null; }
 
-  const rows = [];
-  let dsName = null, dsPhone = null, mc = null;
-  const unmatched = [];
-
-  for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-
-    // Field ke-2 (no. HP DS) kadang bukan angka — bisa kosong atau placeholder
-    // teks spt "VACANT" (lihat BINJAI - GUSTI MANGGALA PRASETYA.txt: "VACANT -
-    // VACANT - MC-STABAT - 6 DSE"), jadi tangkap sbg teks bebas (bukan \d*
-    // saja), lalu dikosongkan lewat blankIfVacant() di bawah.
-    //
-    // PENTING: pemisah antar kolom di file ini SELALU " - " (ada spasi di
-    // kedua sisi dash). Makanya separator di sini pakai \s+-\s+ (wajib
-    // spasi), BUKAN \s*-\s* (dash boleh nempel) — supaya dash yang kebetulan
-    // jadi BAGIAN dari Kode DSE itu sendiri (contoh nyata: "DSE-PIJAY2", dash
-    // nempel tanpa spasi) tidak ikut kesalah-baca sbg pemisah kolom.
-    const dm = line.match(/^(.*?)\s+-\s+(.*?)\s+-\s+MC-(.*?)\s+-\s+(\d+)\s*DSE$/i);
-    if (dm) {
-      dsName = blankIfVacant(dm[1]);
-      dsPhone = blankIfVacant(dm[2]);
-      mc = "MC-" + dm[3].trim();
-      continue;
-    }
-
-    const em = line.match(/^(.*?)\s+-\s+(.*?)\s+-\s+(\d+)\s*desa\s+-\s+(\d+)\s*outlet$/i);
-    if (em) {
-      rows.push({
-        ds_name: dsName,
-        ds_phone: dsPhone,
-        mc,
-        dse_code: em[1].trim(),
-        dse_phone: blankIfVacant(em[2]),
-        jumlah_desa: parseInt(em[3], 10),
-        jumlah_outlet: parseInt(em[4], 10),
-      });
-      continue;
-    }
-    unmatched.push(line);
-  }
-
-  // Kode/ID DSE kadang kebetulan ketulis sama 2x dalam 1 file sumber (human
-  // error pas input). Tidak ada baris yang dibuang — semua tetap disimpan,
-  // tapi baris2 yg ID DSE-nya dobel (termasuk kemunculan pertamanya) ditandai
-  // dup_code = true supaya kelihatan jelas di kolom Remarks & bisa dicek.
-  const codeCount = new Map();
-  for (const r of rows) {
-    const key = r.dse_code.toUpperCase();
-    codeCount.set(key, (codeCount.get(key) || 0) + 1);
-  }
-  const duplicateCodes = [];
-  for (const r of rows) {
-    const key = r.dse_code.toUpperCase();
-    r.dup_code = codeCount.get(key) > 1;
-    if (r.dup_code) duplicateCodes.push(r.dse_code);
-  }
-
-  return {
-    hoaName, branch, headerTotalDs, headerTotalDse, rows, unmatched, duplicateCodes,
-    dsCount: new Set(rows.map((r) => r.ds_name || "(belum ada nama)")).size,
-    incompleteCount: rows.filter((r) => !r.ds_name || !r.ds_phone || !r.mc || !r.dse_phone || r.dup_code).length,
-  };
+function parseDseWorkbook(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: "array", cellDates: false });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+        if (!aoa.length) { resolve({ error: "File kosong." }); return; }
+        const headers = aoa[0];
+        const col = {};
+        for (const key of Object.keys(COLMAP)) col[key] = findCol(headers, COLMAP[key]);
+        if (col.dse_code < 0) {
+          resolve({ error: `Kolom wajib tidak ditemukan. Pastikan ada kolom "ID DSE" di baris pertama.` });
+          return;
+        }
+        const rows = [];
+        const errors = [];
+        const seenInFile = new Set();
+        for (let i = 1; i < aoa.length; i++) {
+          const line = aoa[i];
+          if (!line || line.every((c) => c === "" || c == null)) continue;
+          const dse_code = cellStr(line[col.dse_code]);
+          if (!dse_code) { errors.push(`Baris ${i + 1}: ID DSE kosong.`); continue; }
+          const key = dse_code.toUpperCase();
+          if (seenInFile.has(key)) { errors.push(`Baris ${i + 1}: ID DSE ${dse_code} dobel di file ini (baris sebelumnya dipakai).`); continue; }
+          seenInFile.add(key);
+          rows.push({
+            dse_code,
+            region: col.region >= 0 ? cellStr(line[col.region]) : null,
+            branch: col.branch >= 0 ? cellStr(line[col.branch]) : null,
+            hoa_name: col.hoa_name >= 0 ? cellStr(line[col.hoa_name]) : null,
+            ds_name: col.ds_name >= 0 ? cellStr(line[col.ds_name]) : null,
+            ds_phone: col.ds_phone >= 0 ? cellStr(line[col.ds_phone]) : null,
+            mc: col.mc >= 0 ? cellStr(line[col.mc]) : null,
+            dse_phone: col.dse_phone >= 0 ? cellStr(line[col.dse_phone]) : null,
+            jumlah_desa: col.jumlah_desa >= 0 ? cellInt(line[col.jumlah_desa]) : null,
+            jumlah_outlet: col.jumlah_outlet >= 0 ? cellInt(line[col.jumlah_outlet]) : null,
+            pt_name: col.pt_name >= 0 ? cellStr(line[col.pt_name]) : null,
+            dse_category: col.dse_category >= 0 ? cellStr(line[col.dse_category]) : null,
+            circle: col.circle >= 0 ? cellStr(line[col.circle]) : null,
+            mpc_short_code: col.mpc_short_code >= 0 ? cellStr(line[col.mpc_short_code]) : null,
+            mpc_name: col.mpc_name >= 0 ? cellStr(line[col.mpc_name]) : null,
+          });
+        }
+        resolve({ rows, errors, totalRows: rows.length });
+      } catch (err) {
+        resolve({ error: err.message || "Gagal membaca file." });
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  });
 }
 
-// ── Parser: file mapping "Hybrid" (.xlsx/.xlsb/.xls/.csv) ──────────────────
-// Kolom (posisi tetap, bukan dari nama header — ada 2 kolom "DSE Code" dan
-// 2x "MPC Short Code"/"MPC Name" di file sumber, jadi harus dibaca per index):
-//   0 DSE Category · 1 DSE Code (LAMA) · 2 DSE Code (BARU) ·
-//   3 MPC Short Code (lama) · 4 MPC Name (lama) ·
-//   5 MPC Short Code (baru) · 6 MPC Name (baru) ·
-//   7 PT · 8 Micro Cluster Name · 9 Branch Name · 10 Region Name · 11 Circle
-// Sheet yang dipakai: sheet pertama bernama "Hybrid" kalau ada, selain itu
-// sheet pertama di file.
-const HYBRID_HEADER_HINTS = ["dse category", "dse code"];
-
-function parseHybridWorkbook(arrayBuffer, fileName) {
-  let wb;
-  try {
-    wb = XLSX.read(arrayBuffer, { type: "array" });
-  } catch (e) {
-    return { error: `Gagal membaca file: ${e.message || "format tidak dikenali"}.` };
-  }
-  const sheetName = wb.SheetNames.includes("Hybrid") ? "Hybrid" : wb.SheetNames[0];
-  const ws = wb.Sheets[sheetName];
-  if (!ws) return { error: "Tidak ada sheet yang bisa dibaca di file ini." };
-  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", blankrows: false });
-  if (!aoa.length) return { error: "Sheet kosong." };
-
-  const header = (aoa[0] || []).map((h) => String(h || "").trim().toLowerCase());
-  const looksRight = HYBRID_HEADER_HINTS.every((hint) => header.some((h) => h.includes(hint)));
-  if (!looksRight) {
-    return { error: `Format kolom tidak dikenali di sheet "${sheetName}". Diharapkan kolom "DSE Category" dan "DSE Code" (lama & baru) di baris pertama.` };
-  }
-
-  const rows = [];
-  const skipped = [];
-  for (let i = 1; i < aoa.length; i++) {
-    const line = aoa[i];
-    if (!line || line.every((c) => c === "" || c == null)) continue;
-    const newCode = String(line[2] ?? "").trim();
-    const oldCode = String(line[1] ?? "").trim();
-    if (!newCode) { skipped.push(`Baris ${i + 1}: Kode DSE (baru) kosong.`); continue; }
-    rows.push({
-      dse_category: String(line[0] ?? "").trim() || null,
-      old_code: oldCode || null,
-      new_code: newCode,
-      old_mc_short: String(line[3] ?? "").trim() || null,
-      old_mc_name: String(line[4] ?? "").trim() || null,
-      new_mc_short: String(line[5] ?? "").trim() || null,
-      new_mc_name: String(line[6] ?? "").trim() || null,
-      pt_name: String(line[7] ?? "").trim() || null,
-      micro_cluster: String(line[8] ?? "").trim() || null,
-      branch: String(line[9] ?? "").trim() || null,
-      region: String(line[10] ?? "").trim() || null,
-      circle: String(line[11] ?? "").trim() || null,
-      changed: oldCode && oldCode !== newCode,
-    });
-  }
-  const changedCount = rows.filter((r) => r.changed).length;
-  return { fileName, sheetName, rows, skipped, changedCount, sameCount: rows.length - changedCount };
-}
-
-// Teks keterangan field mana saja yang masih kosong pada 1 baris — dipakai
-// baik di kolom "Remarks" tabel maupun saat export Excel, supaya konsisten.
 function buildRemarks(r) {
-  const parts = [];
   const missing = [];
   if (!r.ds_name) missing.push("Nama DS");
   if (!r.ds_phone) missing.push("Nomor DS");
   if (!r.mc) missing.push("MC");
   if (!r.dse_phone) missing.push("Nomor DSE");
-  if (missing.length) parts.push(`${missing.join(", ")} kosong`);
-  if (r.dup_code || r.flag_duplicate_code) parts.push("ID DSE duplikat di file sumber");
-  return parts.length ? parts.join(" · ") : "Lengkap";
+  if (missing.length) return `${missing.join(", ")} kosong`;
+  if (r.flag_duplicate_code) return "ID DSE duplikat";
+  return "Lengkap";
 }
 
 function downloadXlsx(head, body, sheetName, filename) {
@@ -210,12 +136,12 @@ function Toast({ msg, type, onClose }) {
   const bg = type === "error" ? "#DC2626" : type === "warn" ? "#D97706" : "#16A34A";
   return (
     <div style={{
-      position: "fixed", bottom: 24, right: 24, zIndex: 9999,
+      position: "fixed", bottom: 24, right: 24, left: 24, zIndex: 9999,
       display: "flex", alignItems: "center", gap: 10,
       padding: "12px 16px", borderRadius: 10,
       background: bg, color: "#fff", fontSize: 13.5, fontWeight: 600,
       fontFamily: FONT, boxShadow: "0 8px 24px rgba(0,0,0,0.25)",
-      maxWidth: 420,
+      maxWidth: 480, marginLeft: "auto",
     }}>
       {type === "error" ? <AlertTriangle size={15} /> : <Check size={15} />}
       <span style={{ flex: 1 }}>{msg}</span>
@@ -227,9 +153,6 @@ function Toast({ msg, type, onClose }) {
 }
 
 // ── Modal konfirmasi "Hapus Semua" ──────────────────────────────────────────
-// Scope ikut filter Region yang lagi aktif di tabel (kalau "Semua Region",
-// hapus BENAR-BENAR semua baris) — dikunci di belakang ketikan konfirmasi
-// persis supaya tidak kepencet tidak sengaja.
 function DeleteAllModal({ t, scopeLabel, confirmWord, onConfirm, onCancel, loading, rowCount }) {
   const [text, setText] = useState("");
   const match = text.trim().toUpperCase() === confirmWord;
@@ -243,7 +166,7 @@ function DeleteAllModal({ t, scopeLabel, confirmWord, onConfirm, onCancel, loadi
         <div style={{ fontSize: 13, color: t.mid, lineHeight: 1.6, marginBottom: 14 }}>
           Ini akan menghapus <b style={{ color: t.hi }}>{rowCount.toLocaleString("id-ID")} baris</b> dari{" "}
           <b style={{ color: t.hi }}>{scopeLabel}</b> secara permanen. Tindakan ini tidak bisa dibatalkan — upload ulang
-          file .txt-nya kalau nanti ingin mengisi ulang dari awal.
+          data-nya kalau nanti ingin mengisi ulang dari awal.
         </div>
         <div style={{ fontSize: 12, color: t.mid, marginBottom: 6 }}>
           Ketik <b style={{ color: t.red }}>{confirmWord}</b> untuk konfirmasi:
@@ -269,31 +192,15 @@ function DeleteAllModal({ t, scopeLabel, confirmWord, onConfirm, onCancel, loadi
 export default function SDP_DseDatabase({ theme, profile }) {
   const d = theme === "dark";
   const t = {
-    bg:       d ? "#0F0F11" : "#F2F2F7",
-    card:     d ? "#1A1A1D" : "#FFFFFF",
-    sub:      d ? "#202024" : "#F5F5F7",
-    line:     d ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.09)",
-    hi:       d ? "#F2F2F3" : "#1A1A1D",
-    mid:      d ? "#8A8A96" : "#5A5A68",
-    lo:       d ? "#5A5A68" : "#8A8A96",
-    inputBg:  d ? "#1E1E22" : "#F8F8FA",
-    inputBd:  d ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.12)",
-    teal:     d ? "#32BCAD" : "#1A9E90",
-    tealBg:   d ? "rgba(50,188,173,0.10)" : "rgba(26,158,144,0.07)",
-    tealBd:   d ? "rgba(50,188,173,0.28)" : "rgba(26,158,144,0.20)",
-    red:      d ? "#F87171" : "#DC2626",
-    redBg:    d ? "rgba(248,113,113,0.10)" : "rgba(220,38,38,0.07)",
-    amber:    d ? "#FBBF24" : "#B45309",
-    amberBg:  d ? "rgba(251,191,36,0.10)" : "rgba(180,83,9,0.08)",
+    card: d ? "#1A1A1D" : "#FFFFFF", sub: d ? "#202024" : "#F5F5F7",
+    line: d ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.09)", hi: d ? "#F2F2F3" : "#1A1A1D",
+    mid: d ? "#8A8A96" : "#5A5A68", lo: d ? "#5A5A68" : "#8A8A96",
+    inputBg: d ? "#1E1E22" : "#F8F8FA", inputBd: d ? "rgba(255,255,255,0.10)" : "rgba(0,0,0,0.12)",
+    teal: d ? "#32BCAD" : "#1A9E90", tealBg: d ? "rgba(50,188,173,0.10)" : "rgba(26,158,144,0.07)", tealBd: d ? "rgba(50,188,173,0.28)" : "rgba(26,158,144,0.20)",
+    red: d ? "#F87171" : "#DC2626", redBg: d ? "rgba(248,113,113,0.10)" : "rgba(220,38,38,0.07)",
+    amber: d ? "#FBBF24" : "#B45309", amberBg: d ? "rgba(251,191,36,0.10)" : "rgba(180,83,9,0.08)",
     shadowSm: d ? "0 1px 4px rgba(0,0,0,0.4)" : "0 1px 3px rgba(0,0,0,0.07)",
-    hover:    d ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.025)",
   };
-
-  const [region, setRegion] = useState("");
-  const [staged, setStaged] = useState([]); // [{fileName, hoaName, branch, headerTotalDs, headerTotalDse, rows, unmatched, dsCount, error}]
-  const [uploading, setUploading] = useState(false);
-  const [uploadSummary, setUploadSummary] = useState(null); // [{hoaName, inserted, deleted}]
-  const fileRef = useRef(null);
 
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
@@ -308,102 +215,6 @@ export default function SDP_DseDatabase({ theme, profile }) {
   const [toast, setToast] = useState(null);
   const showToast = (msg, type = "ok") => setToast({ msg, type });
   const [showRevoked, setShowRevoked] = useState(false);
-
-  // ── Update Mapping (Hybrid): Kode DSE Lama → Baru, dari file terpisah ─────
-  const [hybridStaged, setHybridStaged] = useState(null); // {fileName, sheetName, rows, skipped, changedCount, sameCount, error}
-  const [hybridUploading, setHybridUploading] = useState(false);
-  const [hybridResult, setHybridResult] = useState(null);
-  const hybridFileRef = useRef(null);
-
-  const onPickHybridFile = async (fileList) => {
-    const f = (fileList || [])[0];
-    if (!f) return;
-    const buf = await f.arrayBuffer();
-    const parsed = parseHybridWorkbook(buf, f.name);
-    setHybridStaged(parsed);
-    setHybridResult(null);
-    if (hybridFileRef.current) hybridFileRef.current.value = "";
-  };
-
-  const handleHybridUpload = async () => {
-    if (!hybridStaged || hybridStaged.error || !hybridStaged.rows?.length) return;
-    setHybridUploading(true);
-    try {
-      const { data, error } = await supabase.rpc("mf_dse_upload_hybrid_mapping", {
-        p_source_file: hybridStaged.fileName,
-        p_rows: hybridStaged.rows,
-      });
-      if (error) throw error;
-      const row = Array.isArray(data) ? data[0] : data;
-      setHybridResult({
-        ok: true,
-        newActive: row?.new_active_count ?? 0,
-        oldRevoked: row?.old_revoked_count ?? 0,
-        unchanged: row?.unchanged_count ?? 0,
-      });
-      showToast(`Mapping tersimpan — ${row?.new_active_count ?? 0} kode baru, ${row?.old_revoked_count ?? 0} kode lama direvoke.`, "ok");
-      setHybridStaged(null);
-      fetchRows(1, search, filterRegion);
-    } catch (e) {
-      setHybridResult({ ok: false });
-      showToast(e.message || "Gagal menyimpan mapping.", "error");
-    } finally {
-      setHybridUploading(false);
-    }
-  };
-
-  // ── Pilih file(s) → parse di browser, tampilkan preview sebelum disimpan ──
-  const onPickFiles = async (fileList) => {
-    const files = Array.from(fileList || []);
-    if (!files.length) return;
-    const parsed = await Promise.all(files.map(async (f) => {
-      const text = await f.text();
-      const p = parseDseFile(text);
-      return { fileName: f.name, ...p };
-    }));
-    setStaged((prev) => [...prev, ...parsed]);
-    setUploadSummary(null);
-    if (fileRef.current) fileRef.current.value = "";
-  };
-
-  const removeStaged = (idx) => setStaged((prev) => prev.filter((_, i) => i !== idx));
-
-  const validStaged = staged.filter((s) => !s.error);
-  const totalDseStaged = validStaged.reduce((a, s) => a + s.rows.length, 0);
-
-  // ── Simpan ke Supabase — 1 RPC per HOA (replace atomic, lihat migration) ──
-  const handleUpload = async () => {
-    if (!region) { showToast("Pilih Region dulu.", "warn"); return; }
-    if (!validStaged.length) { showToast("Belum ada file valid yang diupload.", "warn"); return; }
-    setUploading(true);
-    const results = [];
-    try {
-      for (const s of validStaged) {
-        const { data, error } = await supabase.rpc("mf_dse_upload_hoa", {
-          p_region: region,
-          p_branch: s.branch,
-          p_hoa_name: s.hoaName,
-          p_source_file: s.fileName,
-          p_rows: s.rows,
-        });
-        if (error) {
-          results.push({ hoaName: s.hoaName, error: error.message });
-          continue;
-        }
-        const row = Array.isArray(data) ? data[0] : data;
-        results.push({ hoaName: s.hoaName, branch: s.branch, inserted: row?.inserted_count ?? s.rows.length, deleted: row?.deleted_count ?? 0 });
-      }
-      setUploadSummary(results);
-      const failed = results.filter((r) => r.error);
-      if (failed.length) showToast(`${failed.length} HOA gagal disimpan — cek detail di bawah.`, "error");
-      else showToast(`Berhasil disimpan: ${results.length} HOA, ${totalDseStaged} baris DSE.`, "ok");
-      setStaged([]);
-      setFilterRegion(region);
-      fetchRows(1, search, region);
-    } finally {
-      setUploading(false);
-    }
-  };
 
   // ── Fetch tabel gabungan ───────────────────────────────────────────────────
   const [incompleteTotal, setIncompleteTotal] = useState(0);
@@ -429,9 +240,6 @@ export default function SDP_DseDatabase({ theme, profile }) {
       setTotal(count || 0);
       setPage(pg);
 
-      // Jumlah baris "belum lengkap" (ada kolom kontak kosong, biasanya bekas
-      // placeholder "VACANT") utk scope filter yg sama — query count terpisah
-      // supaya tetap akurat walau lagi lihat halaman lain.
       let iq = supabase.from("mf_dse_database").select("id", { count: "exact", head: true })
         .or("ds_name.is.null,ds_phone.is.null,mc.is.null,dse_phone.is.null,flag_duplicate_code.eq.true");
       if (reg) iq = iq.eq("region", reg);
@@ -448,14 +256,16 @@ export default function SDP_DseDatabase({ theme, profile }) {
     }
   }, [search, filterRegion, showRevoked]);
 
-  useEffect(() => { fetchRows(1, search, filterRegion); }, [filterRegion, showRevoked]); // eslint-disable-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
+  useEffect(() => { fetchRows(1, search, filterRegion); }, [filterRegion, showRevoked]);
   useEffect(() => {
     const h = setTimeout(() => { setSearch(searchInput); fetchRows(1, searchInput, filterRegion); }, 350);
     return () => clearTimeout(h);
   }, [searchInput]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Export semua baris (scope filterRegion aktif, bukan cuma 1 page) ──────
-  const handleExport = async () => {
+  // ── Download Data (export semua baris, scope filterRegion aktif — dipakai
+  // juga sbg template upload) ────────────────────────────────────────────────
+  const handleDownload = async () => {
     setExportLoading(true);
     try {
       let q = supabase.from("mf_dse_database").select("*")
@@ -465,33 +275,105 @@ export default function SDP_DseDatabase({ theme, profile }) {
       if (!showRevoked) q = q.eq("is_revoked", false);
       const { data, error } = await q.limit(50000);
       if (error) throw error;
-      const head = ["STATUS", "DIGANTIKAN OLEH", "REGION", "BRANCH", "HOA", "NAMA DS", "NOMOR DS", "MC", "ID DSE", "NOMOR DSE", "JUMLAH DESA", "JUMLAH OUTLET", "REMARKS", "FILE SUMBER", "DIUPLOAD"];
+      const head = ["Region", "Branch", "HOA", "Nama DS", "Nomor DS", "MC", "ID DSE", "Nomor DSE", "Jumlah Desa", "Jumlah Outlet", "Partner Name", "DSE Category", "Circle", "MPC Short Code", "MPC Name"];
       const body = (data || []).map((r) => [
-        r.is_revoked ? "Revoked" : "Aktif", r.superseded_by_code || "",
-        r.region, r.branch, r.hoa_name, r.ds_name, r.ds_phone || "", r.mc || "",
-        r.dse_code, r.dse_phone || "", r.jumlah_desa, r.jumlah_outlet, buildRemarks(r), r.source_file || "",
-        r.uploaded_at ? new Date(r.uploaded_at).toLocaleString("id-ID") : "",
+        r.region || "", r.branch || "", r.hoa_name || "", r.ds_name || "", r.ds_phone || "", r.mc || "",
+        r.dse_code || "", r.dse_phone || "", r.jumlah_desa ?? "", r.jumlah_outlet ?? "",
+        r.pt_name || "", r.dse_category || "", r.circle || "", r.mpc_short_code || "", r.mpc_name || "",
       ]);
-      const fname = `Database_DSE_${filterRegion ? filterRegion.replace(/\s+/g, "_") : "Semua_Region"}.xlsx`;
+      const fname = `Database_DSE_${filterRegion ? filterRegion.replace(/\s+/g, "_") : "Semua_Region"}_${new Date().toISOString().slice(0, 10)}.xlsx`;
       downloadXlsx(head, body, "Database DSE", fname);
-      showToast(`Export selesai — ${body.length} baris.`, "ok");
+      showToast(`Data diunduh — ${body.length} baris. File ini juga bisa dipakai sbg template upload.`, "ok");
     } catch (e) {
-      showToast(e.message || "Gagal export.", "error");
+      showToast(e.message || "Gagal mengunduh data.", "error");
     } finally {
       setExportLoading(false);
     }
   };
 
-  // ── Hapus semua baris (scope = filterRegion aktif, atau benar2 semua kalau
-  // "Semua Region" dipilih) — utk mulai ulang dari awal. Dikunci lewat modal
-  // ketik-konfirmasi di DeleteAllModal, bukan 1x klik.
+  // ── Upload Data (import massal, upsert per ID DSE) ─────────────────────────
+  const [showUpload, setShowUpload] = useState(false);
+  const [staged, setStaged] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState(null);
+  const fileRef = useRef(null);
+
+  const onPickFile = async (fileList) => {
+    const f = (fileList || [])[0];
+    if (!f) return;
+    const p = await parseDseWorkbook(f);
+    setStaged(p ? { fileName: f.name, ...p } : null);
+    setUploadResult(null);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const handleUpload = async () => {
+    if (!staged || staged.error || !staged.rows?.length) return;
+    setUploading(true);
+    try {
+      // Cocokkan semua baris file lewat ID DSE — map { kode -> id } dari
+      // SELURUH data (bukan cuma 1 halaman tabel yang lagi tampil).
+      const { data: existing, error: selErr } = await supabase.from("mf_dse_database").select("id, dse_code").limit(100000);
+      if (selErr) throw selErr;
+      const existingByCode = new Map();
+      for (const r of existing || []) {
+        const key = String(r.dse_code || "").trim().toUpperCase();
+        if (key && !existingByCode.has(key)) existingByCode.set(key, r.id);
+      }
+
+      const toInsert = [];
+      const toUpdate = [];
+      const missingForInsert = [];
+      for (const r of staged.rows) {
+        const key = r.dse_code.toUpperCase();
+        const payload = {
+          region: r.region, branch: r.branch, hoa_name: r.hoa_name,
+          ds_name: r.ds_name, ds_phone: r.ds_phone, mc: r.mc,
+          dse_code: r.dse_code, dse_phone: r.dse_phone,
+          jumlah_desa: r.jumlah_desa ?? 0, jumlah_outlet: r.jumlah_outlet ?? 0,
+          pt_name: r.pt_name, dse_category: r.dse_category, circle: r.circle,
+          mpc_short_code: r.mpc_short_code, mpc_name: r.mpc_name,
+        };
+        const existingId = existingByCode.get(key);
+        if (existingId) {
+          toUpdate.push({ id: existingId, payload });
+        } else if (!r.region || !r.branch || !r.hoa_name) {
+          missingForInsert.push(`ID DSE ${r.dse_code}: Region/Branch/HOA wajib diisi utk ID DSE baru.`);
+        } else {
+          toInsert.push({
+            ...payload,
+            source_file: staged.fileName,
+            uploaded_by: profile?.email || null,
+            uploaded_at: new Date().toISOString(),
+          });
+        }
+      }
+
+      if (toInsert.length) {
+        const { error } = await supabase.from("mf_dse_database").insert(toInsert);
+        if (error) throw error;
+      }
+      for (const u of toUpdate) {
+        const { error } = await supabase.from("mf_dse_database").update(u.payload).eq("id", u.id); // eslint-disable-line no-await-in-loop
+        if (error) throw error;
+      }
+
+      setUploadResult({ ok: true, inserted: toInsert.length, updated: toUpdate.length, skipped: missingForInsert });
+      showToast(`Upload selesai — ${toInsert.length} baru, ${toUpdate.length} diperbarui${missingForInsert.length ? `, ${missingForInsert.length} dilewati` : ""}.`, missingForInsert.length ? "warn" : "ok");
+      setStaged(null);
+      fetchRows(1, search, filterRegion);
+    } catch (e) {
+      showToast(e.message || "Gagal upload.", "error");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // ── Hapus semua baris (scope = filterRegion aktif) ──────────────────────────
   const deleteScopeLabel = filterRegion ? `Region ${filterRegion}` : "SEMUA REGION";
   const deleteConfirmWord = filterRegion ? "HAPUS" : "HAPUS SEMUA";
   const [deleteScopeCount, setDeleteScopeCount] = useState(0);
   const openDeleteAll = async () => {
-    // Hitung ulang jumlah baris utk scope HAPUS (region saja, abaikan search
-    // box) supaya angka yg ditampilkan di modal akurat — beda dgn `total`
-    // yang ikut kefilter search.
     let cq = supabase.from("mf_dse_database").select("id", { count: "exact", head: true });
     if (filterRegion) cq = cq.eq("region", filterRegion);
     const { count } = await cq;
@@ -502,7 +384,7 @@ export default function SDP_DseDatabase({ theme, profile }) {
     setDeleteAllLoading(true);
     try {
       let q = supabase.from("mf_dse_database").delete();
-      q = filterRegion ? q.eq("region", filterRegion) : q.not("id", "is", null); // guard: delete butuh WHERE eksplisit
+      q = filterRegion ? q.eq("region", filterRegion) : q.not("id", "is", null);
       const { error } = await q;
       if (error) throw error;
       showToast(`Berhasil dihapus — ${deleteScopeLabel}.`, "ok");
@@ -536,195 +418,88 @@ export default function SDP_DseDatabase({ theme, profile }) {
         <div style={{ fontSize: 19, fontWeight: 800 }}>Database DSE</div>
       </div>
       <div style={{ fontSize: 13, color: t.mid, marginBottom: 20 }}>
-        Pilih Region, lalu upload beberapa file .txt sekaligus (format HOA → DS → DSE), atau upload file mapping Hybrid
-        (Kode DSE Lama → Baru) di bawah. Kode DSE lama tidak pernah dihapus — kalau sudah tidak dipakai lagi, hanya
-        ditandai <b style={{ color: t.amber }}>Revoked</b>, supaya histori input lama (mis. produksi DSE) tetap aman tersimpan.
+        Kelola data DSE (sales person) lewat Excel: <b style={{ color: t.hi }}>Download Data</b> dulu (dipakai juga sbg
+        template), edit/tambah baris, lalu <b style={{ color: t.hi }}>Upload Data</b> lagi. Upload otomatis UPSERT per{" "}
+        <b style={{ color: t.hi }}>ID DSE</b>: yang sudah ada diperbarui, yang belum ada ditambahkan (wajib isi Region/
+        Branch/HOA utk ID DSE baru).
       </div>
 
-      {/* ── Update Mapping (Hybrid): Kode DSE Lama → Baru ── */}
-      <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: 20, marginBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-          <History size={16} color={t.teal} />
-          <div style={{ fontSize: 14.5, fontWeight: 800 }}>Update Mapping DSE (Hybrid)</div>
+      <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 16, flexWrap: "wrap" }}>
+          <button onClick={handleDownload} disabled={exportLoading}
+            style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: exportLoading ? 0.6 : 1 }}>
+            {exportLoading ? <Loader2 size={14} className="spin" /> : <FileDown size={14} />} Download Data
+          </button>
+          <button onClick={() => setShowUpload((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+            <Upload size={14} /> Upload Data
+            {showUpload ? <ChevronDown size={14} style={{ transform: "rotate(180deg)" }} /> : <ChevronDown size={14} />}
+          </button>
         </div>
-        <div style={{ fontSize: 12, color: t.mid, marginBottom: 14, display: "flex", alignItems: "flex-start", gap: 6 }}>
-          <Info size={13} style={{ flexShrink: 0, marginTop: 1 }} />
-          <span style={{ flex: 1, minWidth: 0, lineHeight: 1.55 }}>
-            Upload file mapping (.xlsx/.xlsb/.csv) berisi kolom <b style={{ color: t.hi }}>DSE Category</b>,{" "}
-            <b style={{ color: t.hi }}>DSE Code</b> (lama &amp; baru), MPC/PT/Micro Cluster/Branch/Region/Circle — biasanya
-            sheet bernama &ldquo;Hybrid&rdquo;. Kode DSE baru akan aktif, kode lama yang tergantikan otomatis ditandai Revoked (bukan
-            dihapus). File yang dilindungi password perlu dibuka/disimpan ulang tanpa password dulu sebelum diupload di sini.
-          </span>
-        </div>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 14px", borderRadius: 9, border: `1px dashed ${t.tealBd}`, background: t.tealBg, color: t.teal, fontSize: 13, fontWeight: 700, cursor: "pointer", width: "fit-content" }}>
-          <FileSpreadsheet size={14} /> Pilih File Mapping…
-          <input ref={hybridFileRef} type="file" accept=".xlsx,.xls,.xlsb,.csv" style={{ display: "none" }} onChange={(e) => onPickHybridFile(e.target.files)} />
-        </label>
 
-        {hybridStaged && (
-          <div style={{ marginTop: 14, padding: "10px 14px", borderRadius: 10, border: `1px solid ${hybridStaged.error ? t.redBg : t.line}`, background: hybridStaged.error ? t.redBg : t.sub }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <FileSpreadsheet size={15} color={hybridStaged.error ? t.red : t.teal} style={{ flexShrink: 0 }} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{hybridStaged.fileName}</div>
-                {hybridStaged.error ? (
-                  <div style={{ fontSize: 12, color: t.red, marginTop: 2 }}>{hybridStaged.error}</div>
-                ) : (
-                  <div style={{ fontSize: 12, color: t.mid, marginTop: 2 }}>
-                    Sheet &ldquo;{hybridStaged.sheetName}&rdquo; · {hybridStaged.rows.length} baris ·{" "}
-                    <b style={{ color: t.hi }}>{hybridStaged.changedCount}</b> kode berubah (lama → baru) ·{" "}
-                    <b style={{ color: t.hi }}>{hybridStaged.sameCount}</b> kode tetap/baru
-                    {hybridStaged.skipped?.length > 0 && (
-                      <span style={{ color: t.amber, fontWeight: 700 }}> — {hybridStaged.skipped.length} baris dilewati</span>
+        {showUpload && (
+          <div style={{ padding: "0 16px 16px", borderTop: `1px solid ${t.line}` }}>
+            <div style={{ fontSize: 12, color: t.mid, margin: "14px 0 12px", display: "flex", alignItems: "flex-start", gap: 6 }}>
+              <Info size={13} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span style={{ flex: 1, minWidth: 0, lineHeight: 1.55 }}>
+                Kolom wajib: <b style={{ color: t.hi }}>ID DSE</b>. ID DSE yang sudah ada akan <b style={{ color: t.hi }}>diperbarui</b>
+                {" "}(semua kolom yang ada di file), ID DSE yang belum ada akan <b style={{ color: t.hi }}>ditambahkan</b> — tapi
+                wajib isi Region/Branch/HOA. Pakai file hasil Download Data sebagai template.
+              </span>
+            </div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 14px", borderRadius: 9, border: `1px dashed ${t.tealBd}`, background: t.tealBg, color: t.teal, fontSize: 13, fontWeight: 700, cursor: "pointer", width: "fit-content" }}>
+              <FileSpreadsheet size={14} /> Pilih File…
+              <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }} onChange={(e) => onPickFile(e.target.files)} />
+            </label>
+
+            {staged && (
+              <div style={{ marginTop: 14, padding: "10px 14px", borderRadius: 10, border: `1px solid ${staged.error ? t.redBg : t.line}`, background: staged.error ? t.redBg : t.sub }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <FileSpreadsheet size={15} color={staged.error ? t.red : t.teal} style={{ flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{staged.fileName}</div>
+                    {staged.error ? (
+                      <div style={{ fontSize: 12, color: t.red, marginTop: 2 }}>{staged.error}</div>
+                    ) : (
+                      <div style={{ fontSize: 12, color: t.mid, marginTop: 2 }}>
+                        {staged.totalRows} baris siap diupload
+                        {staged.errors?.length ? `, ${staged.errors.length} baris dilewati` : ""}.
+                      </div>
                     )}
+                  </div>
+                  {!staged.error && (
+                    <button onClick={handleUpload} disabled={uploading || !staged.totalRows}
+                      style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 14px", borderRadius: 8, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: uploading ? "default" : "pointer", opacity: uploading || !staged.totalRows ? 0.6 : 1, flexShrink: 0 }}>
+                      {uploading ? <Loader2 size={13} className="spin" /> : <Upload size={13} />}
+                      {uploading ? "Mengunggah…" : "Upload"}
+                    </button>
+                  )}
+                  <button onClick={() => setStaged(null)} style={{ background: "none", border: "none", color: t.mid, cursor: "pointer", display: "flex", flexShrink: 0 }}><X size={15} /></button>
+                </div>
+                {staged.errors?.length > 0 && (
+                  <div style={{ marginTop: 10, fontSize: 11.5, color: t.mid, maxHeight: 120, overflowY: "auto" }}>
+                    {staged.errors.slice(0, 20).map((e, i) => <div key={i}>{e}</div>)}
+                    {staged.errors.length > 20 && <div>…dan {staged.errors.length - 20} lainnya.</div>}
                   </div>
                 )}
               </div>
-              <button onClick={() => setHybridStaged(null)} style={{ background: "none", border: "none", color: t.lo, cursor: "pointer", flexShrink: 0 }}><X size={15} /></button>
-            </div>
+            )}
 
-            {!hybridStaged.error && hybridStaged.rows?.length > 0 && (
-              <div style={{ marginTop: 10, maxHeight: 220, overflowY: "auto", borderTop: `1px solid ${t.line}`, paddingTop: 8 }}>
-                {hybridStaged.rows.slice(0, 50).map((r, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, padding: "4px 0", color: t.mid }}>
-                    {r.changed ? (
-                      <>
-                        <span style={{ color: t.hi, fontWeight: 600 }}>{r.old_code}</span>
-                        <ArrowRight size={11} color={t.amber} />
-                        <span style={{ color: t.teal, fontWeight: 700 }}>{r.new_code}</span>
-                      </>
-                    ) : (
-                      <span style={{ color: t.hi, fontWeight: 600 }}>{r.new_code} <span style={{ color: t.lo, fontWeight: 400 }}>(tetap)</span></span>
-                    )}
-                    <span style={{ color: t.lo }}>· {r.micro_cluster || "-"}</span>
+            {uploadResult?.ok && (
+              <div style={{ marginTop: 12, fontSize: 12.5, color: t.mid }}>
+                ✓ {uploadResult.inserted} baris baru, {uploadResult.updated} diperbarui.
+                {uploadResult.skipped?.length > 0 && (
+                  <div style={{ marginTop: 6, color: t.amber, maxHeight: 100, overflowY: "auto" }}>
+                    {uploadResult.skipped.slice(0, 20).map((s, i) => <div key={i}>⚠ {s}</div>)}
+                    {uploadResult.skipped.length > 20 && <div>…dan {uploadResult.skipped.length - 20} lainnya.</div>}
                   </div>
-                ))}
-                {hybridStaged.rows.length > 50 && (
-                  <div style={{ fontSize: 11.5, color: t.lo, marginTop: 4 }}>…dan {hybridStaged.rows.length - 50} baris lainnya.</div>
                 )}
               </div>
             )}
           </div>
         )}
-
-        {hybridStaged && !hybridStaged.error && hybridStaged.rows?.length > 0 && (
-          <button onClick={handleHybridUpload} disabled={hybridUploading}
-            style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 8, height: 40, padding: "0 18px", borderRadius: 10, border: "none", background: t.teal, color: "#fff", fontSize: 13.5, fontWeight: 700, cursor: hybridUploading ? "default" : "pointer", opacity: hybridUploading ? 0.6 : 1 }}>
-            {hybridUploading ? <Loader2 size={15} className="spin" /> : <Upload size={15} />}
-            {hybridUploading ? "Menyimpan…" : `Terapkan Mapping (${hybridStaged.changedCount} kode lama direvoke)`}
-          </button>
-        )}
-
-        {hybridResult?.ok && (
-          <div style={{ marginTop: 12, fontSize: 12.5, color: t.mid }}>
-            ✓ {hybridResult.newActive} kode baru ditambahkan, {hybridResult.oldRevoked} kode lama direvoke, {hybridResult.unchanged} kode diperbarui.
-          </div>
-        )}
       </div>
 
-      {/* ── Step 1: Region + upload ── */}
-      <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: 20, marginBottom: 20 }}>
-        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
-          <div style={{ minWidth: 240 }}>
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>
-              Region <span style={{ color: t.red }}>*</span>
-            </div>
-            <div style={{ position: "relative" }}>
-              <select value={region} onChange={(e) => setRegion(e.target.value)}
-                style={{ ...inputStyle, appearance: "none", cursor: "pointer" }}>
-                <option value="">— pilih Region —</option>
-                {REGIONS.map((r) => <option key={r} value={r}>{r}</option>)}
-              </select>
-              <ChevronDown size={14} style={{ position: "absolute", right: 12, top: 12, color: t.lo, pointerEvents: "none" }} />
-            </div>
-          </div>
-          <div style={{ flex: 1, minWidth: 240 }}>
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>
-              Upload File (.txt) — bisa banyak sekaligus
-            </div>
-            <label style={{
-              display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 14px", borderRadius: 9,
-              border: `1px dashed ${t.tealBd}`, background: t.tealBg, color: t.teal, fontSize: 13, fontWeight: 700,
-              cursor: region ? "pointer" : "not-allowed", opacity: region ? 1 : 0.5, width: "fit-content",
-            }}>
-              <Upload size={14} />
-              Pilih File…
-              <input ref={fileRef} type="file" accept=".txt" multiple disabled={!region} style={{ display: "none" }}
-                onChange={(e) => onPickFiles(e.target.files)} />
-            </label>
-          </div>
-        </div>
-
-        {/* ── Preview file yang sudah dipilih ── */}
-        {staged.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
-            {staged.map((s, i) => (
-              <div key={i} style={{
-                display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", borderRadius: 10,
-                border: `1px solid ${s.error ? t.redBg : t.line}`, background: s.error ? t.redBg : t.sub,
-              }}>
-                <FileText size={15} color={s.error ? t.red : t.teal} style={{ flexShrink: 0 }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {s.fileName}
-                  </div>
-                  {s.error ? (
-                    <div style={{ fontSize: 12, color: t.red, marginTop: 2 }}>{s.error}</div>
-                  ) : (
-                    <div style={{ fontSize: 12, color: t.mid, marginTop: 2 }}>
-                      HOA <b style={{ color: t.hi }}>{s.hoaName}</b> · Branch <b style={{ color: t.hi }}>{s.branch}</b> ·{" "}
-                      {s.dsCount} DS (header: {s.headerTotalDs}) · {s.rows.length} DSE (header: {s.headerTotalDse})
-                      {s.rows.length !== s.headerTotalDse && (
-                        <span style={{ color: t.amber, fontWeight: 700 }}> — jumlah baris tidak cocok dgn header!</span>
-                      )}
-                      {s.incompleteCount > 0 && (
-                        <span style={{ color: t.amber, fontWeight: 700 }}> — {s.incompleteCount} baris belum lengkap (kontak kosong/VACANT)</span>
-                      )}
-                      {s.unmatched?.length > 0 && (
-                        <span style={{ color: t.amber, fontWeight: 700 }}> — {s.unmatched.length} baris tidak terbaca</span>
-                      )}
-                      {s.duplicateCodes?.length > 0 && (
-                        <span style={{ color: t.red, fontWeight: 700 }}>
-                          {" "}— {s.duplicateCodes.length} baris ID DSE duplikat di file ini (tetap disimpan semua, ditandai di Remarks): {s.duplicateCodes.join(", ")}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <button onClick={() => removeStaged(i)} style={{ background: "none", border: "none", color: t.lo, cursor: "pointer", flexShrink: 0 }}>
-                  <X size={15} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {staged.length > 0 && (
-          <button onClick={handleUpload} disabled={uploading || !validStaged.length}
-            style={{
-              display: "flex", alignItems: "center", gap: 8, height: 40, padding: "0 18px", borderRadius: 10,
-              border: "none", background: t.teal, color: "#fff", fontSize: 13.5, fontWeight: 700,
-              cursor: uploading ? "default" : "pointer", opacity: uploading || !validStaged.length ? 0.6 : 1,
-            }}>
-            {uploading ? <Loader2 size={15} className="spin" /> : <Upload size={15} />}
-            {uploading ? "Menyimpan…" : `Simpan ${validStaged.length} HOA (${totalDseStaged} DSE) ke Database`}
-          </button>
-        )}
-
-        {uploadSummary && (
-          <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 6 }}>
-            {uploadSummary.map((r, i) => (
-              <div key={i} style={{ fontSize: 12.5, color: r.error ? t.red : t.mid }}>
-                {r.error
-                  ? `✕ ${r.hoaName}: ${r.error}`
-                  : `✓ ${r.hoaName} (${r.branch}) — ${r.inserted} baris disimpan${r.deleted ? `, ${r.deleted} baris lama diganti` : ""}`}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* ── Step 2: Tabel gabungan ── */}
+      {/* ── Tabel gabungan ── */}
       <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 16, borderBottom: `1px solid ${t.line}`, flexWrap: "wrap" }}>
           <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
@@ -744,11 +519,6 @@ export default function SDP_DseDatabase({ theme, profile }) {
           <button onClick={() => fetchRows(page, search, filterRegion)} title="Refresh"
             style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
             <RefreshCw size={14} className={fetching ? "spin" : ""} />
-          </button>
-          <button onClick={handleExport} disabled={exportLoading}
-            style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 14px", borderRadius: 9, border: `1px solid ${t.tealBd}`, background: t.tealBg, color: t.teal, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: exportLoading ? 0.6 : 1 }}>
-            {exportLoading ? <Loader2 size={14} className="spin" /> : <FileDown size={14} />}
-            Export Excel
           </button>
           <button onClick={openDeleteAll} disabled={total === 0}
             title={filterRegion ? `Hapus semua data di Region ${filterRegion}` : "Hapus semua data di semua Region"}
@@ -784,12 +554,8 @@ export default function SDP_DseDatabase({ theme, profile }) {
               {fetching ? (
                 <tr><td colSpan={13} style={{ padding: 28, textAlign: "center", color: t.mid }}><Loader2 size={16} className="spin" /></td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={13} style={{ padding: 28, textAlign: "center", color: t.mid }}>Belum ada data. Upload file di atas untuk mulai.</td></tr>
+                <tr><td colSpan={13} style={{ padding: 28, textAlign: "center", color: t.mid }}>Belum ada data. Download template lalu Upload Data untuk mulai.</td></tr>
               ) : rows.map((r) => {
-                // Baris "belum lengkap" = ada field kontak yg masih kosong
-                // (biasanya krn placeholder "VACANT" di file sumber — lihat
-                // blankIfVacant() di parser). jumlah_desa/outlet selalu wajib
-                // ada dari parser jadi tidak ikut dicek di sini.
                 const incomplete = !r.ds_name || !r.ds_phone || !r.mc || !r.dse_phone || r.flag_duplicate_code;
                 const remarks = buildRemarks(r);
                 return (

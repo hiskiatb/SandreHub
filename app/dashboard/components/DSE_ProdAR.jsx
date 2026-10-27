@@ -16,15 +16,26 @@
  * Tabel: mf_dse_prod_ar (brand IM3/3ID, unique per tanggal+dse_code+brand).
  * Responsive: mobile (card), fold-screen, half-window & full-window desktop
  * — breakpoint diukur dari window.innerWidth.
+ *
+ * UPDATE (permintaan user - "mengapa belum pindah database dse ini", sama
+ * seperti "Mapping Admin MC" sebelumnya): tab ke-4 "Database DSE" ditambahkan
+ * di sini (isSPM saja) — dulu menu & DashCard TERPISAH di overview dashboard
+ * ("Database DSE", render SDP_DseDatabase.jsx lewat view === "dse-database"
+ * di page.jsx), sekarang dirender sbg tab di dalam halaman ini juga, supaya
+ * semua pengelolaan data DSE (input harian, riwayat, mapping, & database DSE
+ * itu sendiri) ada di satu tempat. Logic & tabel di database TIDAK berubah
+ * sama sekali, cuma tempatnya di UI.
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import supabase from "../../../lib/supabase";
 import * as XLSX from "xlsx";
+import AdminMcMapping from "./AdminMcMapping";
+import SDP_DseDatabase from "./SDP_DseDatabase";
 import {
   Upload, FileSpreadsheet, X, Check, AlertTriangle, Loader2, FileDown,
   Search, RefreshCw, ChevronDown, ChevronUp, Wallet, TrendingUp, Calendar, Info,
-  Pencil, Save, ListChecks, History,
+  Pencil, Save, ListChecks, History, UserRoundCog, Database,
 } from "lucide-react";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif`;
@@ -249,7 +260,24 @@ export default function DSE_ProdAR({ theme, profile }) {
 
   const isSPM = profile?.role === "spm_sumatera";
   const isMPX = profile?.role === "finance_mpx";
-  const lockedMc = isMPX ? (profile?.partner_name || "") : "";
+
+  // UPDATE (permintaan user - satu email Admin MC sekarang bisa dipasang ke
+  // lebih dari 1 MC lewat mf_dse_admin_mc_mapping): dulu lockedMc cuma 1
+  // string dari profile.partner_name (satu MC). Sekarang kita ambil daftar
+  // LENGKAP MC milik Admin MC yang login lewat RPC mf_dse_admin_mc_my_mcs()
+  // (akses datanya sendiri sudah dijamin RLS di level tabel, ini cuma utk
+  // keperluan tampilan & target MC saat import Excel).
+  const [myMcs, setMyMcs] = useState([]); // [{ mc, region, branch, full_name }]
+  useEffect(() => {
+    if (!isMPX) return;
+    (async () => {
+      const { data, error } = await supabase.rpc("mf_dse_admin_mc_my_mcs");
+      if (!error && Array.isArray(data)) setMyMcs(data);
+    })();
+  }, [isMPX]);
+  const myMcNames = useMemo(() => myMcs.map((r) => r.mc).filter(Boolean), [myMcs]);
+  const lockedMc = isMPX ? (myMcNames[0] || profile?.partner_name || "") : "";
+  const [mpxMcFilter, setMpxMcFilter] = useState(""); // Admin MC dgn >1 MC: pilih target import
 
   const [width, setWidth] = useState(() => (typeof window !== "undefined" ? window.innerWidth : 1200));
   useEffect(() => {
@@ -385,7 +413,7 @@ export default function DSE_ProdAR({ theme, profile }) {
   const onPickFile = async (fileList) => {
     const f = (fileList || [])[0];
     if (!f) return;
-    const p = await parseWorkbook(f, isMPX ? lockedMc : mcFilter);
+    const p = await parseWorkbook(f, isMPX ? (mpxMcFilter || lockedMc) : mcFilter);
     setStaged({ fileName: f.name, ...p });
     if (fileRef.current) fileRef.current.value = "";
   };
@@ -496,44 +524,47 @@ export default function DSE_ProdAR({ theme, profile }) {
   const inputStyle = { width: "100%", height: 38, padding: "0 12px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13.5, fontFamily: FONT, outline: "none", boxSizing: "border-box" };
   const dirtyCount = Object.values(dirty).filter(Boolean).length;
 
-  const NAV_ITEMS = [
-    { k: "input", label: "Input Harian", icon: ListChecks },
-    { k: "riwayat", label: "Riwayat & Laporan", icon: History },
-  ];
-
   return (
-    <div style={{ fontFamily: FONT, color: t.hi, paddingBottom: isCardView ? "calc(66px + env(safe-area-inset-bottom, 0px))" : 0 }}>
+    <div style={{ fontFamily: FONT, color: t.hi }}>
       {toast && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
 
-      <div style={{ padding: isCardView ? "0 14px" : 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
-          <TrendingUp size={20} color={t.teal} />
-          <div style={{ fontSize: 19, fontWeight: 800 }}>DSE Prod. & AR</div>
-        </div>
-        {!isCardView && (
-          <div style={{ fontSize: 13, color: t.mid, marginBottom: 16 }}>
-            Input harian produksi DSE (SP, Saldo, Voucher) per brand IM3 &amp; 3ID, plus AR/piutang — langsung per Kode DSE
-            {isMPX && lockedMc ? ` di MC ${lockedMc}` : ""}. Nama DSE dan MC bisa diperbarui langsung dari sini.
-          </div>
-        )}
-
-        {/* ── Navigasi: segmented control di desktop, bottom tab bar (fixed, dirender di bawah) di mobile ── */}
-        {isCardView ? (
-          <div style={{ height: 14 }} />
-        ) : (
-          <div style={{ display: "inline-flex", gap: 3, marginBottom: 16, padding: 4, borderRadius: 11, background: t.sub, border: `1px solid ${t.line}` }}>
-            {NAV_ITEMS.map(({ k, label, icon: Icon }) => (
-              <button key={k} onClick={() => setTab(k)}
-                style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", borderRadius: 8, border: "none", background: tab === k ? t.card : "none", boxShadow: tab === k ? t.shadowSm : "none", color: tab === k ? t.hi : t.mid, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT, transition: "background 0.15s" }}>
-                <Icon size={14} /> {label}
-              </button>
-            ))}
-          </div>
-        )}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
+        <TrendingUp size={20} color={t.teal} />
+        <div style={{ fontSize: 19, fontWeight: 800 }}>DSE Prod. & AR</div>
+      </div>
+      <div style={{ fontSize: 13, color: t.mid, marginBottom: 16 }}>
+        Input harian produksi DSE (SP, Saldo, Voucher) per brand IM3 &amp; 3ID, plus AR/piutang — langsung per Kode DSE
+        {isMPX && myMcNames.length === 1 ? ` di MC ${myMcNames[0]}` : isMPX && myMcNames.length > 1 ? ` di ${myMcNames.length} MC milik Anda (${myMcNames.join(", ")})` : ""}. Nama DSE dan MC bisa diperbarui langsung dari sini.
       </div>
 
-      <div style={{ padding: isCardView ? "0 14px" : 0 }}>
-      {tab === "input" ? (
+      {/* ── Tabs ──
+          UPDATE (permintaan user - "mapping admin mc itu seharusnya didalam
+          dse prod, bukan menjadi menu terpisah, namanya user management" ->
+          "harusnya nama sub menunya mapping dan user management"): tab
+          ke-3 "Mapping & User Management" ditambahkan di sini, isSPM saja
+          (sama spt pembatasan akses "Mapping Admin MC" sblmnya) - fitur
+          kelola email Admin MC (AdminMcMapping.jsx) skrg dirender di dalam
+          halaman DSE Prod. & AR ini, bukan menu/DashCard terpisah lagi
+          (lihat page.jsx). */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 16, borderBottom: `1px solid ${t.line}` }}>
+        {[
+          { k: "input", label: "Input Harian", icon: ListChecks },
+          { k: "riwayat", label: "Riwayat & Laporan", icon: History },
+          ...(isSPM ? [{ k: "user-mgmt", label: "Mapping & User Management", icon: UserRoundCog }] : []),
+          ...(isSPM ? [{ k: "dse-database", label: "Database DSE", icon: Database }] : []),
+        ].map(({ k, label, icon: Icon }) => (
+          <button key={k} onClick={() => setTab(k)}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", background: "none", border: "none", outline: "none", borderBottom: tab === k ? `2px solid ${t.teal}` : "2px solid transparent", color: tab === k ? t.teal : t.mid, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
+            <Icon size={14} /> {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "dse-database" ? (
+        <SDP_DseDatabase theme={theme} profile={profile} />
+      ) : tab === "user-mgmt" ? (
+        <AdminMcMapping theme={theme} />
+      ) : tab === "input" ? (
         <>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 }}>
             <div style={{ minWidth: 160 }}>
@@ -605,6 +636,14 @@ export default function DSE_ProdAR({ theme, profile }) {
                     Baris dengan tanggal+kode+brand yang sama akan menimpa data yang sudah ada (bukan menumpuk).
                   </span>
                 </div>
+                {isMPX && myMcNames.length > 1 && (
+                  <div style={{ marginBottom: 12, maxWidth: 260 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Import untuk MC</div>
+                    <select value={mpxMcFilter || myMcNames[0]} onChange={(e) => setMpxMcFilter(e.target.value)} style={{ ...inputStyle, cursor: "pointer" }}>
+                      {myMcNames.map((mc) => <option key={mc} value={mc}>{mc}</option>)}
+                    </select>
+                  </div>
+                )}
                 <label style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 14px", borderRadius: 9, border: `1px dashed ${t.tealBd}`, background: t.tealBg, color: t.teal, fontSize: 13, fontWeight: 700, cursor: "pointer", width: "fit-content" }}>
                   <Upload size={14} /> Pilih File…
                   <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }} onChange={(e) => onPickFile(e.target.files)} />
@@ -751,31 +790,6 @@ export default function DSE_ProdAR({ theme, profile }) {
             </div>
           </div>
         </>
-      )}
-      </div>
-
-      {isCardView && (
-        <nav style={{
-          position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 40,
-          display: "flex", background: t.card, borderTop: `1px solid ${t.line}`,
-          boxShadow: "0 -2px 12px rgba(0,0,0,0.12)",
-          paddingBottom: "env(safe-area-inset-bottom, 0px)",
-        }}>
-          {NAV_ITEMS.map(({ k, label, icon: Icon }) => {
-            const active = tab === k;
-            return (
-              <button key={k} onClick={() => setTab(k)}
-                style={{
-                  flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                  gap: 3, height: 58, background: "none", border: "none", cursor: "pointer", fontFamily: FONT,
-                  color: active ? t.teal : t.mid,
-                }}>
-                <Icon size={20} strokeWidth={active ? 2.4 : 1.8} />
-                <span style={{ fontSize: 10.5, fontWeight: active ? 800 : 600 }}>{label}</span>
-              </button>
-            );
-          })}
-        </nav>
       )}
 
       <style>{`.spin { animation: spin 0.8s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }`}</style>
