@@ -675,7 +675,16 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
   // filter tanggal di Excel). 1 tanggal dipilih -> mode edit harian biasa;
   // >1 tanggal -> mode akumulasi read-only (sama logicnya spt dulu, cuma
   // sumber tanggalnya sekarang array bebas, bukan cuma range awal..akhir).
-  const [selectedDates, setSelectedDates] = useState(() => [todayISO()]); // ["YYYY-MM-DD", ...], selalu >=1
+  // UPDATE (permintaan user - "secara default dia memilih bulan saat ini",
+  // nyontoh filter tanggal Excel yg defaultnya "Select All" bulan berjalan):
+  // default-nya BUKAN cuma hari ini, tapi SEMUA tanggal bulan berjalan s.d.
+  // hari ini (tanggal 1 s.d. hari ini) - otomatis masuk mode akumulasi.
+  const [selectedDates, setSelectedDates] = useState(() => {
+    const today = todayISO();
+    const ym = today.slice(0, 7);
+    const lastDay = Number(today.slice(8, 10));
+    return Array.from({ length: lastDay }, (_, i) => `${ym}-${String(i + 1).padStart(2, "0")}`);
+  }); // ["YYYY-MM-DD", ...], selalu >=1
   const [calViewMonth, setCalViewMonth] = useState(() => todayISO().slice(0, 7)); // "YYYY-MM" yg lagi dibuka di popover
   const [periodOpen, setPeriodOpen] = useState(false);
   const periodRef = useRef(null);
@@ -1190,10 +1199,18 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
               </div>
 
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 12, paddingTop: 10, borderTop: `1px solid ${t.line}` }}>
-                <button onClick={() => { setSelectedDates([todayISO()]); setCalViewMonth(todayISO().slice(0, 7)); }}
-                  style={{ fontSize: 11.5, fontWeight: 700, color: t.teal, background: "none", border: "none", cursor: "pointer", padding: "4px 2px" }}>
-                  Hari Ini
-                </button>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button onClick={() => { setSelectedDates([todayISO()]); setCalViewMonth(todayISO().slice(0, 7)); }}
+                    style={{ fontSize: 11.5, fontWeight: 700, color: t.teal, background: "none", border: "none", cursor: "pointer", padding: "4px 2px" }}>
+                    Hari Ini
+                  </button>
+                  <button onClick={() => {
+                    const lastDay = calViewMonth === todayISO().slice(0, 7) ? Number(todayISO().slice(8, 10)) : new Date(Number(calViewMonth.slice(0, 4)), Number(calViewMonth.slice(5, 7)), 0).getDate();
+                    setSelectedDates(Array.from({ length: lastDay }, (_, i) => `${calViewMonth}-${String(i + 1).padStart(2, "0")}`));
+                  }} style={{ fontSize: 11.5, fontWeight: 700, color: t.mid, background: "none", border: "none", cursor: "pointer", padding: "4px 2px" }}>
+                    Pilih Semua
+                  </button>
+                </div>
                 <button onClick={() => setPeriodOpen(false)}
                   style={{ height: 30, padding: "0 16px", borderRadius: 8, border: "none", background: t.teal, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
                   Selesai
