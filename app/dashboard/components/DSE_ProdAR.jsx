@@ -685,21 +685,36 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
     const lastDay = Number(today.slice(8, 10));
     return Array.from({ length: lastDay }, (_, i) => `${ym}-${String(i + 1).padStart(2, "0")}`);
   }); // ["YYYY-MM-DD", ...], selalu >=1
-  const [calViewMonth, setCalViewMonth] = useState(() => todayISO().slice(0, 7)); // "YYYY-MM" yg lagi dibuka di popover (stepper kiri)
-  // UPDATE (permintaan user - "di kiri itu selalu bulan, di kanan tanggal nya,
-  // default bulan berjalan + Full Month, bisa checkbox per tanggal"): dua
-  // kontrol permanen berdampingan, bukan toggle mode. Stepper bulan (kiri)
-  // pindah calViewMonth & reset selectedDates ke Full Month bulan itu;
-  // checkbox tanggal (kanan, di popover) narrow-kan dari Full Month tsb.
+  const [calViewMonth, setCalViewMonth] = useState(() => todayISO().slice(0, 7)); // "YYYY-MM" yg lagi dibuka di popover kalender Daily
+  // UPDATE (permintaan user - "di kiri ada opsi Full Month / Daily, di
+  // kanannya kalau Full Month ya dropdown bulan+tahun digabung spt
+  // 'October 2026', kalau Daily cuma bisa pilih satu tanggal (geser kiri
+  // kanan / klik tanggal buka kalender pilih 1 hari), animasi switch-nya
+  // bagus"): "periodMode" skrg toggle EKSPLISIT 2 pilihan (bukan 2 kontrol
+  // permanen lg). "bulan" -> selectedDates auto = semua tgl di calViewMonth.
+  // "tanggal" -> selectedDates auto = [entryDate] (1 tanggal saja).
   const monthDatesUpTo = (ym) => {
     const lastDay = ym === todayISO().slice(0, 7)
       ? Number(todayISO().slice(8, 10))
       : new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)), 0).getDate();
     return Array.from({ length: lastDay }, (_, i) => `${ym}-${String(i + 1).padStart(2, "0")}`);
   };
-  const jumpToMonth = (newYm) => {
-    setCalViewMonth(newYm);
-    setSelectedDates(monthDatesUpTo(newYm));
+  const shiftDay = (iso, delta) => {
+    const d = new Date(iso + "T00:00:00");
+    d.setDate(d.getDate() + delta);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  const [periodMode, setPeriodMode] = useState("bulan"); // "bulan" | "tanggal"
+  const jumpToMonth = (newYm) => { setCalViewMonth(newYm); setSelectedDates(monthDatesUpTo(newYm)); };
+  const jumpToDay = (newIso) => {
+    const capped = newIso > todayISO() ? todayISO() : newIso;
+    setCalViewMonth(capped.slice(0, 7));
+    setSelectedDates([capped]);
+  };
+  const switchPeriodMode = (mode) => {
+    setPeriodMode(mode);
+    if (mode === "bulan") setSelectedDates(monthDatesUpTo(calViewMonth));
+    else setSelectedDates((prev) => [prev[0] || todayISO()]);
   };
   const [periodOpen, setPeriodOpen] = useState(false);
   const periodRef = useRef(null);
@@ -710,11 +725,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
     return () => document.removeEventListener("mousedown", onClick);
   }, [periodOpen]);
   const sortedSelectedDates = useMemo(() => [...selectedDates].sort(), [selectedDates]);
-  const isFullMonthSelected = useMemo(() => {
-    const full = monthDatesUpTo(calViewMonth);
-    return full.length === selectedDates.length && full.every((d) => selectedDates.includes(d));
-  }, [calViewMonth, selectedDates]);
-  const entryDate = sortedSelectedDates[0] || todayISO(); // tanggal aktif (mode 1 tanggal) / tanggal paling awal (mode multi)
+  const entryDate = sortedSelectedDates[0] || todayISO(); // tanggal aktif (mode Daily) / tanggal paling awal (mode Full Month)
   const rangeStart = sortedSelectedDates[0] || todayISO();
   const rangeEnd = sortedSelectedDates[sortedSelectedDates.length - 1] || todayISO();
   const isRangeMode = sortedSelectedDates.length > 1;
@@ -1169,89 +1180,106 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
           <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: -0.3 }}>DSE Prod. &amp; AR</div>
         </div>
 
-        {/* UPDATE (permintaan user - "di kiri itu selalu Bulan, di kanan
-            tanggalnya, default-nya bulan berjalan & Full Month, tapi bisa
-            uncentang tanggal tertentu"): dipisah jadi 2 kontrol independen.
-            KIRI = stepper Bulan (selalu tampil, ganti bulan -> otomatis
-            reset ke Full Month bulan itu). KANAN = trigger Tanggal, buka
-            popover checkbox per-hari DI BULAN YANG SAMA (tanpa nav bulan lg
-            di dalam popover, krn bulan sudah ditentukan di kiri). ── */}
+        {/* UPDATE (permintaan user - "di kiri ada opsi Full Month / Daily;
+            kalau Full Month di kanan cuma dropdown bulan+tahun digabung spt
+            'October 2026'; kalau Daily cuma bisa pilih satu tanggal, geser
+            kiri-kanan atau klik tanggalnya buka kalender pilih 1 hari;
+            animasi switch-nya bagus"): KIRI = segmented toggle "Full Month"
+            / "Daily" (periodMode). KANAN = konten berubah total sesuai mode
+            -- di-key per mode supaya animasi masuk (fade+slide, lihat
+            keyframe .periodFade di <style> bawah) ter-trigger tiap ganti. */}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 2, height: 44, padding: "0 4px", borderRadius: 11, border: `1px solid ${t.inputBd}`, background: t.inputBg }}>
-            <button onClick={() => jumpToMonth(shiftMonth(calViewMonth, -1))} style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: "transparent", color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <ChevronDown size={14} style={{ transform: "rotate(90deg)" }} />
-            </button>
-            <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, minWidth: 108, textAlign: "center", whiteSpace: "nowrap" }}>
-              {MONTH_NAMES[Number(calViewMonth.slice(5, 7)) - 1]} {calViewMonth.slice(0, 4)}
+          <div style={{ display: "flex", alignItems: "center", gap: 2, height: 44, padding: 3, borderRadius: 11, background: t.sub, flexShrink: 0 }}>
+            {[{ k: "bulan", label: "Full Month" }, { k: "tanggal", label: "Daily" }].map(({ k, label }) => (
+              <button key={k} onClick={() => switchPeriodMode(k)}
+                style={{ height: 38, padding: "0 14px", borderRadius: 8, border: "none", outline: "none", background: periodMode === k ? t.card : "transparent", color: periodMode === k ? t.hi : t.mid, fontSize: 12.5, fontWeight: periodMode === k ? 700 : 600, cursor: "pointer", fontFamily: FONT, boxShadow: periodMode === k ? t.shadowSm : "none", transition: "background 0.2s, box-shadow 0.2s, color 0.2s", whiteSpace: "nowrap" }}>
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {periodMode === "bulan" ? (
+            <div key="bulan" className="periodFade" style={{ display: "flex", alignItems: "center", gap: 2, height: 44, padding: "0 4px", borderRadius: 11, border: `1px solid ${t.inputBd}`, background: t.inputBg }}>
+              <button onClick={() => jumpToMonth(shiftMonth(calViewMonth, -1))} style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: "transparent", color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <ChevronDown size={14} style={{ transform: "rotate(90deg)" }} />
+              </button>
+              <div style={{ fontSize: 13, fontWeight: 700, color: t.hi, minWidth: 128, textAlign: "center", whiteSpace: "nowrap" }}>
+                {MONTH_NAMES[Number(calViewMonth.slice(5, 7)) - 1]} {calViewMonth.slice(0, 4)}
+              </div>
+              <button onClick={() => jumpToMonth(shiftMonth(calViewMonth, 1))} disabled={calViewMonth >= todayISO().slice(0, 7)}
+                style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: "transparent", color: calViewMonth >= todayISO().slice(0, 7) ? t.line : t.mid, cursor: calViewMonth >= todayISO().slice(0, 7) ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <ChevronDown size={14} style={{ transform: "rotate(-90deg)" }} />
+              </button>
             </div>
-            <button onClick={() => jumpToMonth(shiftMonth(calViewMonth, 1))} disabled={calViewMonth >= todayISO().slice(0, 7)}
-              style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: "transparent", color: calViewMonth >= todayISO().slice(0, 7) ? t.line : t.mid, cursor: calViewMonth >= todayISO().slice(0, 7) ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <ChevronDown size={14} style={{ transform: "rotate(-90deg)" }} />
-            </button>
-          </div>
+          ) : (
+            <div key="tanggal" ref={periodRef} className="periodFade" style={{ position: "relative", display: "flex", alignItems: "center", gap: 2, height: 44, padding: "0 4px", borderRadius: 11, border: `1px solid ${periodOpen ? t.teal : t.inputBd}`, background: t.inputBg }}>
+              <button onClick={() => jumpToDay(shiftDay(entryDate, -1))} style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: "transparent", color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <ChevronDown size={14} style={{ transform: "rotate(90deg)" }} />
+              </button>
 
-          <div ref={periodRef} style={{ position: "relative" }}>
-            <button onClick={() => setPeriodOpen((v) => !v)}
-              style={{ display: "flex", alignItems: "center", gap: 10, height: 44, padding: "0 14px", borderRadius: 11, border: `1px solid ${periodOpen ? t.teal : t.inputBd}`, background: periodOpen ? t.tealBg : t.inputBg, cursor: "pointer", fontFamily: FONT, outline: "none" }}>
-              <div style={{ width: 28, height: 28, borderRadius: 8, background: periodOpen ? "rgba(255,255,255,0.5)" : t.tealBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                <CalendarCheck2 size={14} color={t.teal} />
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", lineHeight: 1.25 }}>
-                <span style={{ fontSize: 13, fontWeight: 700, color: t.hi, whiteSpace: "nowrap" }}>
-                  {isFullMonthSelected ? "Full Bulan" : isRangeMode ? `${sortedSelectedDates.length} Tanggal` : fmtLongDate(entryDate)}
-                </span>
-                <span style={{ fontSize: 11, fontWeight: 600, color: t.mid }}>
-                  {isFullMonthSelected ? `${sortedSelectedDates.length} hari` : entryDate === todayISO() ? "Hari ini" : "Tanggal dipilih"}
-                </span>
-              </div>
-              <ChevronDown size={14} color={t.lo} style={{ marginLeft: 4, transform: periodOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
-            </button>
-
-            {periodOpen && (
-              <div style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 300, width: 280, borderRadius: 16, border: `1px solid ${t.line}`, background: t.card, boxShadow: "0 16px 40px rgba(0,0,0,0.22)", padding: 14 }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 9, padding: "6px 4px 10px", marginBottom: 6, borderBottom: `1px solid ${t.line}`, cursor: "pointer" }}>
-                  <input type="checkbox" checked={isFullMonthSelected} onChange={() => setSelectedDates(isFullMonthSelected ? [entryDate] : monthDatesUpTo(calViewMonth))}
-                    style={{ width: 16, height: 16, accentColor: t.teal, cursor: "pointer" }} />
-                  <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>Full Bulan ({MONTH_NAMES[Number(calViewMonth.slice(5, 7)) - 1]})</span>
-                </label>
-
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", marginBottom: 2 }}>
-                  {DAY_NAMES_SHORT.map((lbl, i) => (
-                    <div key={i} style={{ textAlign: "center", fontSize: 10, fontWeight: 700, color: t.lo, padding: "4px 0" }}>{lbl}</div>
-                  ))}
+              <button onClick={() => setPeriodOpen((v) => !v)}
+                style={{ display: "flex", alignItems: "center", gap: 8, height: 36, padding: "0 10px", borderRadius: 8, border: "none", background: periodOpen ? t.tealBg : "transparent", cursor: "pointer", fontFamily: FONT, outline: "none" }}>
+                <CalendarCheck2 size={13} color={t.teal} />
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", lineHeight: 1.2 }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi, minWidth: 140, textAlign: "left", whiteSpace: "nowrap" }}>{fmtLongDate(entryDate)}</span>
+                  <span style={{ fontSize: 10.5, fontWeight: 600, color: t.mid }}>{entryDate === todayISO() ? "Hari ini" : "Tanggal dipilih"}</span>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
-                  {buildMonthGrid(calViewMonth).map((iso, i) => {
-                    if (!iso) return <div key={i} />;
-                    const isSelected = selectedDates.includes(iso);
-                    const isToday = iso === todayISO();
-                    const isFuture = iso > todayISO();
-                    return (
-                      <button key={iso} disabled={isFuture}
-                        onClick={() => setSelectedDates((prev) => prev.includes(iso) ? (prev.length > 1 ? prev.filter((x) => x !== iso) : prev) : [...prev, iso])}
-                        title={isFuture ? "Tanggal belum tiba" : fmtLongDate(iso)}
-                        style={{
-                          aspectRatio: "1", borderRadius: 8, border: isToday && !isSelected ? `1.5px solid ${t.teal}` : "none",
-                          background: isSelected ? t.teal : "transparent", color: isFuture ? t.line : isSelected ? "#fff" : t.hi,
-                          fontSize: 12, fontWeight: isSelected || isToday ? 700 : 500, cursor: isFuture ? "default" : "pointer",
-                          fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center",
-                        }}>
-                        {Number(iso.slice(8, 10))}
-                      </button>
-                    );
-                  })}
-                </div>
+              </button>
 
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 12, paddingTop: 10, borderTop: `1px solid ${t.line}` }}>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: t.mid }}>{sortedSelectedDates.length} tanggal dicentang</span>
-                  <button onClick={() => setPeriodOpen(false)}
-                    style={{ height: 30, padding: "0 16px", borderRadius: 8, border: "none", background: t.teal, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
-                    Selesai
-                  </button>
+              <button onClick={() => jumpToDay(shiftDay(entryDate, 1))} disabled={entryDate >= todayISO()}
+                style={{ width: 32, height: 32, borderRadius: 8, border: "none", background: "transparent", color: entryDate >= todayISO() ? t.line : t.mid, cursor: entryDate >= todayISO() ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <ChevronDown size={14} style={{ transform: "rotate(-90deg)" }} />
+              </button>
+
+              {periodOpen && (
+                <div className="periodFade" style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, zIndex: 300, width: 264, borderRadius: 16, border: `1px solid ${t.line}`, background: t.card, boxShadow: "0 16px 40px rgba(0,0,0,0.22)", padding: 14 }}>
+                  {/* nav bulan di popover Daily ini HANYA pindah tampilan kalender mini
+                      (calViewMonth) - TIDAK boleh ikut reset selectedDates spt jumpToMonth
+                      (itu khusus mode Full Month), krn di mode Daily yg dipilih harus tetap
+                      1 tanggal (entryDate) sampai user benar2 klik salah satu tanggalnya. */}
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <button onClick={() => setCalViewMonth(shiftMonth(calViewMonth, -1))} style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: t.sub, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <ChevronDown size={13} style={{ transform: "rotate(90deg)" }} />
+                    </button>
+                    <div style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>
+                      {MONTH_NAMES[Number(calViewMonth.slice(5, 7)) - 1]} {calViewMonth.slice(0, 4)}
+                    </div>
+                    <button onClick={() => setCalViewMonth(shiftMonth(calViewMonth, 1))} disabled={calViewMonth >= todayISO().slice(0, 7)}
+                      style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: t.sub, color: calViewMonth >= todayISO().slice(0, 7) ? t.line : t.mid, cursor: calViewMonth >= todayISO().slice(0, 7) ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                      <ChevronDown size={13} style={{ transform: "rotate(-90deg)" }} />
+                    </button>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", marginBottom: 2 }}>
+                    {DAY_NAMES_SHORT.map((lbl, i) => (
+                      <div key={i} style={{ textAlign: "center", fontSize: 10, fontWeight: 700, color: t.lo, padding: "4px 0" }}>{lbl}</div>
+                    ))}
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
+                    {buildMonthGrid(calViewMonth).map((iso, i) => {
+                      if (!iso) return <div key={i} />;
+                      const isSelected = iso === entryDate;
+                      const isToday = iso === todayISO();
+                      const isFuture = iso > todayISO();
+                      return (
+                        <button key={iso} disabled={isFuture}
+                          onClick={() => { jumpToDay(iso); setPeriodOpen(false); }}
+                          title={isFuture ? "Tanggal belum tiba" : fmtLongDate(iso)}
+                          style={{
+                            aspectRatio: "1", borderRadius: 8, border: isToday && !isSelected ? `1.5px solid ${t.teal}` : "none",
+                            background: isSelected ? t.teal : "transparent", color: isFuture ? t.line : isSelected ? "#fff" : t.hi,
+                            fontSize: 12, fontWeight: isSelected || isToday ? 700 : 500, cursor: isFuture ? "default" : "pointer",
+                            fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center",
+                          }}>
+                          {Number(iso.slice(8, 10))}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -1691,7 +1719,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
         </>
       )}
 
-      <style>{`.spin { animation: spin 0.8s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      <style>{`.spin { animation: spin 0.8s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } } .periodFade { animation: periodFade 0.22s cubic-bezier(0.16, 1, 0.3, 1); } @keyframes periodFade { from { opacity: 0; transform: translateY(-3px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }`}</style>
     </div>
   );
 }
