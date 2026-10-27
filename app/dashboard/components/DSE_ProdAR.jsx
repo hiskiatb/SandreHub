@@ -651,6 +651,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
   // opsi MC menyempit). Ketiganya opsional & bisa dikombinasikan bebas.
   const [regionFilter, setRegionFilter] = useState("");
   const [branchFilter, setBranchFilter] = useState("");
+  const [partnerFilter, setPartnerFilter] = useState(""); // SPM saja: filter per Partner (mdi)
   const [mcFilter, setMcFilter] = useState(""); // SPM saja: pilih MC yang mau diisi
   const [brand, setBrand] = useState("IM3"); // toggle brand aktif - menentukan kolom penjualan mana yg diedit
   const [dseMeta, setDseMeta] = useState([]); // [{region,branch,mc}] dari Database DSE - sumber opsi cascading di atas
@@ -672,7 +673,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
   useEffect(() => {
     if (!isSPM) return;
     (async () => {
-      const { data } = await supabase.from("mf_dse_database").select("region, branch, mc").eq("is_revoked", false).not("mc", "is", null);
+      const { data } = await supabase.from("mf_dse_database").select("region, branch, mdi, mc").eq("is_revoked", false).not("mc", "is", null);
       setDseMeta(data || []);
     })();
   }, [isSPM]);
@@ -681,9 +682,12 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
   const branchOptions = useMemo(() => Array.from(new Set(
     dseMeta.filter((r) => !regionFilter || r.region === regionFilter).map((r) => r.branch).filter(Boolean)
   )).sort(), [dseMeta, regionFilter]);
-  const mcOptions = useMemo(() => Array.from(new Set(
-    dseMeta.filter((r) => (!regionFilter || r.region === regionFilter) && (!branchFilter || r.branch === branchFilter)).map((r) => r.mc).filter(Boolean)
+  const partnerOptions = useMemo(() => Array.from(new Set(
+    dseMeta.filter((r) => (!regionFilter || r.region === regionFilter) && (!branchFilter || r.branch === branchFilter)).map((r) => r.mdi).filter(Boolean)
   )).sort(), [dseMeta, regionFilter, branchFilter]);
+  const mcOptions = useMemo(() => Array.from(new Set(
+    dseMeta.filter((r) => (!regionFilter || r.region === regionFilter) && (!branchFilter || r.branch === branchFilter) && (!partnerFilter || r.mdi === partnerFilter)).map((r) => r.mc).filter(Boolean)
+  )).sort(), [dseMeta, regionFilter, branchFilter, partnerFilter]);
 
   // ── Ringkasan per Region ("ALL Sumatera", tampilan default saat belum
   // pilih Region/Branch/MC sama sekali) — permintaan user: "secara default
@@ -694,7 +698,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
   // klik salah satu Region utk drill-down ke tabel input region itu. ──
   const [regionSummary, setRegionSummary] = useState([]);
   const [loadingRegionSummary, setLoadingRegionSummary] = useState(false);
-  const showAllRegions = isSPM && !regionFilter && !branchFilter && !mcFilter;
+  const showAllRegions = isSPM && !regionFilter && !branchFilter && !partnerFilter && !mcFilter;
   const loadRegionSummary = useCallback(async () => {
     setLoadingRegionSummary(true);
     try {
@@ -735,11 +739,12 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
   const loadDseAndEntries = useCallback(async () => {
     setLoadingDse(true);
     try {
-      let q = supabase.from("mf_dse_database").select("dse_code, dse_code_3id, ds_name, mc, branch, region, is_revoked, dse_status, join_date").eq("is_revoked", false).order("dse_code", { ascending: true });
+      let q = supabase.from("mf_dse_database").select("dse_code, dse_code_3id, ds_name, mc, branch, region, mdi, is_revoked, dse_status, join_date").eq("is_revoked", false).order("dse_code", { ascending: true });
       if (isSPM) {
-        if (!mcFilter && !branchFilter && !regionFilter) { setDseList([]); setLoadingDse(false); return; }
+        if (!mcFilter && !branchFilter && !regionFilter && !partnerFilter) { setDseList([]); setLoadingDse(false); return; }
         if (regionFilter) q = q.eq("region", regionFilter);
         if (branchFilter) q = q.eq("branch", branchFilter);
+        if (partnerFilter) q = q.eq("mdi", partnerFilter);
         if (mcFilter) q = q.eq("mc", mcFilter);
       }
       const { data: dses, error: e1 } = await q.limit(1000);
@@ -801,7 +806,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
     } finally {
       setLoadingDse(false);
     }
-  }, [isSPM, regionFilter, branchFilter, mcFilter, entryDate]);
+  }, [isSPM, regionFilter, branchFilter, partnerFilter, mcFilter, entryDate]);
 
   useEffect(() => { loadDseAndEntries(); }, [loadDseAndEntries]);
 
@@ -1095,7 +1100,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
               <div style={{ minWidth: 170 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Region</div>
                 <div style={{ position: "relative" }}>
-                  <select value={regionFilter} onChange={(e) => { setRegionFilter(e.target.value); setBranchFilter(""); setMcFilter(""); }} style={{ ...inputStyle, width: 170, appearance: "none", cursor: "pointer" }}>
+                  <select value={regionFilter} onChange={(e) => { setRegionFilter(e.target.value); setBranchFilter(""); setPartnerFilter(""); setMcFilter(""); }} style={{ ...inputStyle, width: 170, appearance: "none", cursor: "pointer" }}>
                     <option value="">ALL Sumatera</option>
                     {regionOptions.map((r) => <option key={r} value={r}>{r}</option>)}
                   </select>
@@ -1107,9 +1112,21 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
               <div style={{ minWidth: 190 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Branch</div>
                 <div style={{ position: "relative" }}>
-                  <select value={branchFilter} onChange={(e) => { setBranchFilter(e.target.value); setMcFilter(""); }} style={{ ...inputStyle, width: 190, appearance: "none", cursor: "pointer" }}>
+                  <select value={branchFilter} onChange={(e) => { setBranchFilter(e.target.value); setPartnerFilter(""); setMcFilter(""); }} style={{ ...inputStyle, width: 190, appearance: "none", cursor: "pointer" }}>
                     <option value="">— semua Branch —</option>
                     {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                  <ChevronDown size={14} style={{ position: "absolute", right: 10, top: 12, color: t.lo, pointerEvents: "none" }} />
+                </div>
+              </div>
+            )}
+            {isSPM && (
+              <div style={{ minWidth: 180 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Partner</div>
+                <div style={{ position: "relative" }}>
+                  <select value={partnerFilter} onChange={(e) => { setPartnerFilter(e.target.value); setMcFilter(""); }} style={{ ...inputStyle, width: 180, appearance: "none", cursor: "pointer" }}>
+                    <option value="">— semua Partner —</option>
+                    {partnerOptions.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
                   <ChevronDown size={14} style={{ position: "absolute", right: 10, top: 12, color: t.lo, pointerEvents: "none" }} />
                 </div>
@@ -1147,10 +1164,10 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
           {/* ── Ringkasan per MC yang sedang dipilih — akumulasi per Branch &
               per Partner menyusul, utk sekarang baru level MC. Ikut update
               real-time pas admin ngetik (belum tentu sudah ter-Simpan). ── */}
-          {(!isSPM || mcFilter || branchFilter || regionFilter) && !loadingDse && dseList.length > 0 && (
+          {(!isSPM || mcFilter || branchFilter || partnerFilter || regionFilter) && !loadingDse && dseList.length > 0 && (
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 8 }}>
-                Ringkasan {mcFilter ? `MC ${mcFilter}` : branchFilter ? `Branch ${branchFilter}` : regionFilter ? `Region ${regionFilter}` : ""} · {brand} · {entryDate}
+                Ringkasan {mcFilter ? `MC ${mcFilter}` : partnerFilter ? `Partner ${partnerFilter}` : branchFilter ? `Branch ${branchFilter}` : regionFilter ? `Region ${regionFilter}` : ""} · {brand} · {entryDate}
               </div>
               <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
                 <StatTile t={t} icon={<Users size={13} />} label="Total Alokasi DSE" value={fmtID(mcSummary.totalAlokasi)} />
