@@ -199,7 +199,12 @@ const CURRENT_YEAR        = CURRENT_DATE.getFullYear();
 const getCurrentMonth     = () => MONTHS[CURRENT_MONTH_INDEX];
 const getCurrentYear      = () => CURRENT_YEAR.toString();
 
-const HIDE_DATE_PICKER_VIEWS    = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","sdp2","mc-cluster","kode-otoritas","mfts","menu-access","promotor-tracking","pnl-mpx"]);
+// UPDATE (permintaan user - "perbaiki total bagian ini, sehingga tidak
+// perlu lagi pemilihan periode di kiri atas"): "dse-prod-ar" ditambahkan ke
+// sini krn halaman DSE Prod. & AR sekarang punya pemilihan Tanggal/Periode
+// sendiri (lihat DSE_ProdAR.jsx) - date picker bulan/tahun di header jadi
+// redundan & membingungkan kalau tetap tampil di halaman ini.
+const HIDE_DATE_PICKER_VIEWS    = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","sdp2","mc-cluster","kode-otoritas","mfts","menu-access","promotor-tracking","pnl-mpx","dse-prod-ar"]);
 const PNL_VIEWS = new Set(["summary","pendapatan","pengeluaran"]);
 // Filter Laporan (Region/Partner/Branch) di sidebar HANYA relevan untuk 4
 // modul di dalam menu "MPX P&L Report" — di luar situ disembunyikan
