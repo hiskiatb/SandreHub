@@ -57,6 +57,23 @@ const fmtTime = (iso) => { if (!iso) return ""; try { return new Date(iso).toLoc
 const DAY_NAMES = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
 const MONTH_NAMES = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 const fmtLongDate = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return `${DAY_NAMES[d.getDay()]}, ${d.getDate()} ${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`; };
+const DAY_NAMES_SHORT = ["M", "S", "S", "R", "K", "J", "S"];
+// Grid kalender 1 bulan (utk PeriodPicker Excel-style) — sel kosong di awal
+// diisi "" (padding sblm tanggal 1 jatuh di hari apa), total selalu kelipatan 7.
+const buildMonthGrid = (ym) => {
+  const [y, m] = ym.split("-").map(Number);
+  const first = new Date(y, m - 1, 1);
+  const numDays = new Date(y, m, 0).getDate();
+  const cells = Array(first.getDay()).fill(null);
+  for (let d = 1; d <= numDays; d++) cells.push(`${ym}-${String(d).padStart(2, "0")}`);
+  while (cells.length % 7 !== 0) cells.push(null);
+  return cells;
+};
+const shiftMonth = (ym, delta) => {
+  const [y, m] = ym.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+};
 
 // Kolom di file Excel (import massal, opsional) — header baris 1, longgar
 const COLMAP = {
@@ -650,21 +667,32 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
   const showToast = (msg, type = "ok") => setToast({ msg, type });
 
   // ── Tab "Input Harian" ────────────────────────────────────────────────────
-  const [entryDate, setEntryDate] = useState(todayISO());
-  // UPDATE (permintaan user - "tidak pilih tanggal bisa pilih periode saja"):
-  // selain 1 Tanggal spesifik (mode "single", bisa diinput/disimpan), user
-  // sekarang bisa pilih Periode (range tanggal bebas, mode "range") — pada
-  // mode ini data yang tampil adalah AKUMULASI semua tanggal di range itu,
-  // jadi read-only (tidak ada input/Simpan, karena 1 kolom tidak mewakili 1
-  // hari lagi). periodMode menentukan tanggal mana yg dipakai utk query:
-  // single -> entryDate, range -> rangeStart..rangeEnd.
-  const [periodMode, setPeriodMode] = useState("single"); // "single" | "range"
-  const [rangeStart, setRangeStart] = useState(todayISO());
-  const [rangeEnd, setRangeEnd] = useState(todayISO());
-  const isRangeMode = periodMode === "range";
+  // UPDATE (permintaan user - "konsepnya seperti di excel saja, jadi mulai
+  // dari bulan, baru di bulan nya itu bisa select multiple tanggal, jadi
+  // cukup satu [kontrol] saja"): toggle Tanggal/Periode yang lama DIGANTI
+  // satu picker "Excel-style": pilih Bulan dulu, lalu centang satu atau
+  // beberapa tanggal di bulan itu (kalender grid, klik = toggle, persis spt
+  // filter tanggal di Excel). 1 tanggal dipilih -> mode edit harian biasa;
+  // >1 tanggal -> mode akumulasi read-only (sama logicnya spt dulu, cuma
+  // sumber tanggalnya sekarang array bebas, bukan cuma range awal..akhir).
+  const [selectedDates, setSelectedDates] = useState(() => [todayISO()]); // ["YYYY-MM-DD", ...], selalu >=1
+  const [calViewMonth, setCalViewMonth] = useState(() => todayISO().slice(0, 7)); // "YYYY-MM" yg lagi dibuka di popover
+  const [periodOpen, setPeriodOpen] = useState(false);
+  const periodRef = useRef(null);
+  useEffect(() => {
+    if (!periodOpen) return;
+    const onClick = (e) => { if (periodRef.current && !periodRef.current.contains(e.target)) setPeriodOpen(false); };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [periodOpen]);
+  const sortedSelectedDates = useMemo(() => [...selectedDates].sort(), [selectedDates]);
+  const entryDate = sortedSelectedDates[0] || todayISO(); // tanggal aktif (mode 1 tanggal) / tanggal paling awal (mode multi)
+  const rangeStart = sortedSelectedDates[0] || todayISO();
+  const rangeEnd = sortedSelectedDates[sortedSelectedDates.length - 1] || todayISO();
+  const isRangeMode = sortedSelectedDates.length > 1;
   // "as of" tanggal yg dipakai Mapping & User Management utk nampilin mapping
   // yg BERLAKU pada tanggal itu (pakai riwayat kalau tanggalnya di masa
-  // lalu) — single mode: entryDate; range mode: akhir periode (rangeEnd).
+  // lalu) — single mode: entryDate; multi mode: tanggal paling akhir dipilih.
   const mappingAsOfDate = isRangeMode ? rangeEnd : entryDate;
   // UPDATE (permintaan user - "selain mc bisa pilih branch region juga di
   // input manual"): selain MC, Region & Branch sekarang juga bisa dipilih
@@ -782,13 +810,14 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
       const codes = (dses || []).map((r) => r.dse_code);
       if (codes.length) {
         if (isRangeMode) {
-          // Mode Periode: AKUMULASI semua tanggal di rangeStart..rangeEnd.
-          // Qty/Nilai SP/Voucher/Saldo -> dijumlahkan. AR/Piutang bukan nilai
-          // kumulatif (dia saldo), jadi dipakai ar_piutang pada tanggal
-          // TERAKHIR di range itu per dse_code+brand (bukan dijumlah).
+          // Mode Periode: AKUMULASI tanggal-tanggal yg DICENTANG (bisa bolong,
+          // tidak harus berurutan — spt filter tanggal di Excel). Qty/Nilai
+          // SP/Voucher/Saldo -> dijumlahkan. AR/Piutang bukan nilai kumulatif
+          // (dia saldo), jadi dipakai ar_piutang pada tanggal TERCENTANG yg
+          // paling baru per dse_code+brand (bukan dijumlah).
           const { data: prod, error: e2 } = await supabase
             .from("mf_dse_prod_ar").select("*")
-            .gte("tanggal", rangeStart).lte("tanggal", rangeEnd).in("dse_code", codes)
+            .in("tanggal", sortedSelectedDates).in("dse_code", codes)
             .order("tanggal", { ascending: true });
           if (e2) throw e2;
           const map = {};
@@ -876,7 +905,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
     } finally {
       setLoadingDse(false);
     }
-  }, [isSPM, regionFilter, branchFilter, partnerFilter, mcFilter, entryDate, isRangeMode, rangeStart, rangeEnd]);
+  }, [isSPM, regionFilter, branchFilter, partnerFilter, mcFilter, entryDate, isRangeMode, sortedSelectedDates]);
 
   useEffect(() => { loadDseAndEntries(); }, [loadDseAndEntries]);
 
@@ -1091,15 +1120,95 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
       {toast && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
       {historyFor && <DseHistoryModal t={t} dseCode={historyFor} onClose={() => setHistoryFor(null)} />}
 
-      {/* ── Header + Tabs ── satu blok tenang: judul besar tanpa kotak kartu
-          berat, badge ikon lembut, tab jadi segmented pill tipis (bukan
-          underline tebal) — permintaan user: "sebagus mungkin, serapi
-          mungkin, UI/UX sekelas Apple designer". ── */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
-        <div style={{ width: 40, height: 40, borderRadius: 11, background: t.tealBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <Wallet size={19} color={t.teal} />
+      {/* ── Header ── permintaan user: "dse prod & ar tetap dibungkus
+          container, di sebelah kirinya ada Periode — konsepnya seperti di
+          Excel: mulai dari pilih Bulan, lalu di bulan itu bisa centang satu
+          atau beberapa tanggal, jadi cukup satu kontrol saja, tapi UI-nya
+          harus sangat rapi & mudah dipahami." Judul "DSE Prod. & AR" tetap
+          dibungkus kartu (card) spt semula; di sebelah kirinya sekarang ada
+          tombol Periode (trigger) yg membuka kalender 1-bulan dgn multi-
+          select tanggal (klik tanggal = centang/un-centang), gantiin toggle
+          Tanggal/Periode yg lama. ── */}
+      <div style={{ display: "flex", alignItems: "stretch", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+        <div ref={periodRef} style={{ position: "relative" }}>
+          <button onClick={() => { setPeriodOpen((v) => !v); setCalViewMonth(rangeEnd.slice(0, 7)); }}
+            style={{ display: "flex", alignItems: "center", gap: 10, height: "100%", minHeight: 52, padding: "0 16px", borderRadius: 14, border: `1px solid ${periodOpen ? t.teal : t.line}`, background: t.card, boxShadow: t.shadowSm, cursor: "pointer", fontFamily: FONT, outline: "none" }}>
+            <div style={{ width: 32, height: 32, borderRadius: 9, background: t.tealBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <CalendarCheck2 size={15} color={t.teal} />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", lineHeight: 1.25 }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: t.hi, whiteSpace: "nowrap" }}>
+                {isRangeMode ? `${sortedSelectedDates.length} Tanggal Dipilih` : fmtLongDate(entryDate)}
+              </span>
+              <span style={{ fontSize: 11, fontWeight: 600, color: t.mid }}>
+                {isRangeMode ? `${MONTH_NAMES[Number(rangeStart.slice(5, 7)) - 1]} ${rangeStart.slice(0, 4)}` : entryDate === todayISO() ? "Hari ini" : "Periode"}
+              </span>
+            </div>
+            <ChevronDown size={14} color={t.lo} style={{ marginLeft: 4, transform: periodOpen ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
+          </button>
+
+          {periodOpen && (
+            <div style={{ position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 300, width: 300, borderRadius: 16, border: `1px solid ${t.line}`, background: t.card, boxShadow: "0 16px 40px rgba(0,0,0,0.22)", padding: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <button onClick={() => setCalViewMonth((m) => shiftMonth(m, -1))} style={{ width: 28, height: 28, borderRadius: 8, border: "none", background: t.sub, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <ChevronDown size={14} style={{ transform: "rotate(90deg)" }} />
+                </button>
+                <div style={{ fontSize: 13.5, fontWeight: 700, color: t.hi }}>
+                  {MONTH_NAMES[Number(calViewMonth.slice(5, 7)) - 1]} {calViewMonth.slice(0, 4)}
+                </div>
+                <button onClick={() => setCalViewMonth((m) => shiftMonth(m, 1))} disabled={calViewMonth >= todayISO().slice(0, 7)}
+                  style={{ width: 28, height: 28, borderRadius: 8, border: "none", background: t.sub, color: calViewMonth >= todayISO().slice(0, 7) ? t.line : t.mid, cursor: calViewMonth >= todayISO().slice(0, 7) ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <ChevronDown size={14} style={{ transform: "rotate(-90deg)" }} />
+                </button>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", marginBottom: 2 }}>
+                {DAY_NAMES_SHORT.map((lbl, i) => (
+                  <div key={i} style={{ textAlign: "center", fontSize: 10, fontWeight: 700, color: t.lo, padding: "4px 0" }}>{lbl}</div>
+                ))}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
+                {buildMonthGrid(calViewMonth).map((iso, i) => {
+                  if (!iso) return <div key={i} />;
+                  const isSelected = selectedDates.includes(iso);
+                  const isToday = iso === todayISO();
+                  const isFuture = iso > todayISO();
+                  return (
+                    <button key={iso} disabled={isFuture}
+                      onClick={() => setSelectedDates((prev) => prev.includes(iso) ? (prev.length > 1 ? prev.filter((x) => x !== iso) : prev) : [...prev, iso])}
+                      title={isFuture ? "Tanggal belum tiba" : fmtLongDate(iso)}
+                      style={{
+                        aspectRatio: "1", borderRadius: 8, border: isToday && !isSelected ? `1.5px solid ${t.teal}` : "none",
+                        background: isSelected ? t.teal : "transparent", color: isFuture ? t.line : isSelected ? "#fff" : t.hi,
+                        fontSize: 12, fontWeight: isSelected || isToday ? 700 : 500, cursor: isFuture ? "default" : "pointer",
+                        fontFamily: FONT, display: "flex", alignItems: "center", justifyContent: "center",
+                      }}>
+                      {Number(iso.slice(8, 10))}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 12, paddingTop: 10, borderTop: `1px solid ${t.line}` }}>
+                <button onClick={() => { setSelectedDates([todayISO()]); setCalViewMonth(todayISO().slice(0, 7)); }}
+                  style={{ fontSize: 11.5, fontWeight: 700, color: t.teal, background: "none", border: "none", cursor: "pointer", padding: "4px 2px" }}>
+                  Hari Ini
+                </button>
+                <button onClick={() => setPeriodOpen(false)}
+                  style={{ height: 30, padding: "0 16px", borderRadius: 8, border: "none", background: t.teal, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                  Selesai
+                </button>
+              </div>
+            </div>
+          )}
         </div>
-        <div style={{ fontSize: 21, fontWeight: 700, letterSpacing: -0.3 }}>DSE Prod. &amp; AR</div>
+
+        <div style={{ flex: 1, minWidth: 220, display: "flex", alignItems: "center", gap: 12, borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "0 18px" }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: t.tealBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Wallet size={17} color={t.teal} />
+          </div>
+          <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: -0.3 }}>DSE Prod. &amp; AR</div>
+        </div>
       </div>
 
       {/* ── Tabs ──
@@ -1152,40 +1261,6 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                   );
                 })}
               </div>
-            </div>
-            <div style={{ minWidth: periodMode === "range" ? 330 : 230 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>{periodMode === "range" ? "Periode" : "Tanggal"}</div>
-                <div style={{ display: "flex", gap: 2, background: t.inputBg, border: `1px solid ${t.inputBd}`, borderRadius: 6, padding: 2 }}>
-                  <button onClick={() => setPeriodMode("single")} style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 4, border: "none", cursor: "pointer", background: periodMode === "single" ? t.teal : "transparent", color: periodMode === "single" ? "#fff" : t.mid }}>Tanggal</button>
-                  <button onClick={() => { setPeriodMode("range"); setRangeStart(entryDate); setRangeEnd(entryDate); }} style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 4, border: "none", cursor: "pointer", background: periodMode === "range" ? t.teal : "transparent", color: periodMode === "range" ? "#fff" : t.mid }}>Periode</button>
-                </div>
-              </div>
-              {periodMode === "single" ? (
-                <div style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 10px 0 12px", borderRadius: 9, border: `1.5px solid ${entryDate === todayISO() ? t.teal : t.inputBd}`, background: entryDate === todayISO() ? t.tealBg : t.inputBg, boxSizing: "border-box" }}>
-                  <CalendarCheck2 size={15} color={entryDate === todayISO() ? t.teal : t.mid} style={{ flexShrink: 0 }} />
-                  <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15, flex: 1, minWidth: 0 }}>
-                    <span style={{ fontSize: 12.5, fontWeight: 800, color: entryDate === todayISO() ? t.teal : t.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {fmtLongDate(entryDate)}
-                    </span>
-                    {entryDate === todayISO() && (
-                      <span style={{ fontSize: 9.5, fontWeight: 700, color: t.teal, textTransform: "uppercase", letterSpacing: 0.3 }}>Hari ini</span>
-                    )}
-                  </div>
-                  <input type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} style={{ border: "none", background: "transparent", color: "transparent", width: 20, height: 20, cursor: "pointer", colorScheme: d ? "dark" : "light" }} />
-                  {entryDate !== todayISO() && (
-                    <button onClick={() => setEntryDate(todayISO())} style={{ fontSize: 10.5, fontWeight: 800, color: t.teal, background: "none", border: "none", cursor: "pointer", padding: "2px 4px", whiteSpace: "nowrap" }}>
-                      Hari Ini
-                    </button>
-                  )}
-                </div>
-              ) : (
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <input type="date" value={rangeStart} max={rangeEnd} onChange={(e) => setRangeStart(e.target.value)} style={{ ...inputStyle, width: 150, colorScheme: d ? "dark" : "light" }} />
-                  <span style={{ color: t.mid, fontSize: 12, fontWeight: 700 }}>—</span>
-                  <input type="date" value={rangeEnd} min={rangeStart} max={todayISO()} onChange={(e) => setRangeEnd(e.target.value)} style={{ ...inputStyle, width: 150, colorScheme: d ? "dark" : "light" }} />
-                </div>
-              )}
             </div>
             {isSPM && (
               <div style={{ minWidth: 180 }}>
