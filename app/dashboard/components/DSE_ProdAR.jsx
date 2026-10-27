@@ -1218,11 +1218,17 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
             </button>
 
             <button onClick={() => { if (periodMode === "tanggal") setPeriodOpen((v) => !v); }}
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: 172, height: 36, borderRadius: 10, border: `1px solid ${periodOpen && periodMode === "tanggal" ? t.teal : t.inputBd}`, background: periodOpen && periodMode === "tanggal" ? t.tealBg : t.inputBg, cursor: periodMode === "tanggal" ? "pointer" : "default", fontFamily: FONT, outline: "none", flexShrink: 0 }}>
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, width: 186, height: 36, borderRadius: 10, border: `1px solid ${periodOpen && periodMode === "tanggal" ? t.teal : t.inputBd}`, background: periodOpen && periodMode === "tanggal" ? t.tealBg : t.inputBg, cursor: periodMode === "tanggal" ? "pointer" : "default", fontFamily: FONT, outline: "none", flexShrink: 0 }}>
               <Calendar size={13} color={t.teal} style={{ flexShrink: 0 }} />
               <span key={periodMode === "bulan" ? calViewMonth : entryDate} className="periodFade" style={{ fontSize: 12.5, fontWeight: 700, color: t.hi, whiteSpace: "nowrap" }}>
                 {periodMode === "bulan" ? `${MONTH_NAMES[Number(calViewMonth.slice(5, 7)) - 1]} ${calViewMonth.slice(0, 4)}` : fmtDayMonth(entryDate)}
               </span>
+              {/* UPDATE (permintaan user - "tambahkan arrow ke bawah agar tau
+                  jika tanggalnya itu bisa di klik"): chevron kecil nunjukkin
+                  ini bisa diklik (buka kalender) - cuma relevan di mode
+                  Daily, di mode Full Month redup & ga bisa diklik (nav bulan
+                  udah cukup lewat 2 panah kiri-kanan). */}
+              <ChevronDown size={13} color={periodMode === "tanggal" ? t.lo : t.line} style={{ flexShrink: 0, transform: periodOpen && periodMode === "tanggal" ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
             </button>
 
             <button
