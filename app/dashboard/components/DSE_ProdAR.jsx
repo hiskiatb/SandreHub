@@ -43,6 +43,17 @@ const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI
 const PAGE_SIZE = 50;
 const TABLE_BP = 860; // di bawah ini → tampilan card (mobile, fold, layar sempit)
 const BRANDS = ["IM3", "3ID"];
+// "BOTH" CUMA pilihan toggle di UI (bukan nilai kolom "brand" di DB - tabel
+// mf_dse_prod_ar tetap selalu brand = "IM3" atau "3ID" per baris, lihat
+// BRANDS di atas), dipakai utk nentuin "activeBrands" yg mau dirender.
+const BRAND_TOGGLE_OPTIONS = ["IM3", "3ID", "BOTH"];
+// Warna identitas tiap brand (tetap sama persis dgn warna dot di toggle
+// Brand) - dipakai utk nge-tint section penjualan per brand saat mode
+// "Both" nampilin IM3 & 3ID sekaligus dalam satu kartu/baris DSE.
+const BRAND_META = {
+  IM3: { color: "#F5B700", bg: "rgba(245,183,0,0.09)", border: "rgba(245,183,0,0.35)" },
+  "3ID": { color: "#C2187C", bg: "rgba(194,24,124,0.08)", border: "rgba(194,24,124,0.32)" },
+};
 // Fitur "Import Massal dari Excel" di tab Input Harian disembunyikan dari UI
 // (permintaan user) tanpa menghapus kodenya — tinggal set true lagi kalau
 // suatu saat perlu dinyalakan.
@@ -422,39 +433,29 @@ function ArPiutangInput({ t, outstanding, bayar, onBayarChange, onConfirmSave, s
   );
 }
 
-// ── Satu baris DSE: identitas (Status/Nama/Join Date, editable) + penjualan
-// brand yang sedang dipilih (IM3 atau 3ID, lihat toggle Brand di atas tabel)
-// + Total Penjualan dihitung otomatis dari SP+Voucher+Saldo. Dirender sbg
-// baris <table> di desktop, kartu bertumpuk di mobile (isCardView) — satu
-// komponen, dua layout, supaya logic tetap satu sumber. ────────────────────
-function DseInputRow({ t, isCardView, dse, brand, entry, onEntryChange, onIdentityChange, identityEdit, onSave, saving, dirty, prevOutstanding, audit, onShowHistory, readOnly }) {
+// ── Satu baris DSE: identitas (Status/Nama/Join Date, editable, SELALU satu
+// per DSE) + penjualan per brand. "brands" biasanya cuma berisi 1 brand
+// (toggle IM3 / 3ID di atas tabel) -> tampilan identik spt sebelumnya; kalau
+// toggle-nya "Both", brands = ["IM3","3ID"] -> identitas tetap dirender SATU
+// KALI, lalu di bawahnya 2 section penjualan bertint warna brand masing2
+// (IM3 = emas, 3ID = magenta, lihat BRAND_META) supaya rapi & gampang
+// dibedakan (permintaan user: "menampilkan nama dse baru penjualan im3 dan
+// 3id beri warna dengan rapi"). Dirender sbg baris <table> di desktop, kartu
+// di mobile (isCardView) — satu komponen, dua layout. ──────────────────────
+function DseInputRow({ t, isCardView, dse, brands, entries, onEntryChange, onIdentityChange, identityEdit, onSave, saving, dirty, prevOutstandings, audits, onShowHistory, readOnly }) {
   const [showMore, setShowMore] = useState(false);
-  const e = entry || emptyEntry();
-  const totalPenjualan = fRaw(e.nilai_sp) + fRaw(e.nilai_voucher) + fRaw(e.nilai_saldo);
+  const isDual = brands.length > 1;
   const status = identityEdit?.dse_status ?? dse.dse_status ?? "";
   const joinDate = identityEdit?.join_date ?? dse.join_date ?? "";
-  // ID yang ditampilkan ikut brand yang sedang dipilih (IM3 -> dse_code,
-  // 3ID -> dse_code_3id) - keduanya tetap merujuk ke baris mf_dse_database
-  // yang sama, jadi Nama DSE/Status/Join Date (identity) selalu memakai key
-  // dse.dse_code (IM3) apa pun brand yang aktif -> otomatis "ngelink"/shared
-  // antara IM3 & 3ID, cuma label ID-nya yang berubah ikut brand.
-  const displayCode = brand === "3ID" ? (dse.dse_code_3id || dse.dse_code) : dse.dse_code;
   const sm = statusMetaOf(status);
-  const outstanding = fRaw(prevOutstanding);
-  const handleBayarChange = (v) => onEntryChange(dse.dse_code, brand, { ...e, ar_bayar: v, ar_piutang: Math.max(0, outstanding - fRaw(v)) });
-  // Audit trail: siapa & kapan terakhir mengisi baris INI (brand & tanggal yg
-  // sedang dibuka) - diambil dari uploaded_by (resolve ke nama lewat
-  // profilesMap) + updated_at (auto di-set DB trigger tiap kali baris
-  // di-UPDATE, lihat migration trg_mf_dse_prod_ar_updated_at).
-  const AuditLine = audit ? (
-    <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, color: t.lo }}>
-      <Clock size={10} style={{ flexShrink: 0 }} />
-      <span>Diperbarui {fmtTime(audit.updated_at || audit.uploaded_at)}{audit.by ? ` oleh ${audit.by}` : ""}</span>
-    </div>
-  ) : null;
+  // ID header: kalau Both (2 brand, 2 kemungkinan ID beda) pakai dse_code
+  // (ID "utama"/IM3) sbg penanda baris; kalau cuma 1 brand aktif, ikut
+  // brand itu spt sebelumnya (3ID -> dse_code_3id).
+  const headerCode = isDual ? dse.dse_code : (brands[0] === "3ID" ? (dse.dse_code_3id || dse.dse_code) : dse.dse_code);
 
   const textInputStyle = { width: "100%", height: 34, padding: "0 10px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontFamily: FONT, outline: "none", boxSizing: "border-box" };
   const selectStyle = { ...textInputStyle, cursor: "pointer", color: sm.color, fontWeight: 700, background: sm.bg, border: `1px solid ${sm.color}33`, appearance: "none", WebkitAppearance: "none", paddingRight: 28 };
+  const labelStyle = { fontSize: 10, color: t.lo, marginBottom: 3, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.2 };
   const StatusSelect = (
     <div style={{ position: "relative" }}>
       <select value={status} onChange={(ev) => onIdentityChange(dse.dse_code, "dse_status", ev.target.value)} style={selectStyle}>
@@ -463,26 +464,122 @@ function DseInputRow({ t, isCardView, dse, brand, entry, onEntryChange, onIdenti
       <ChevronDown size={13} style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", color: sm.color, pointerEvents: "none" }} />
     </div>
   );
-  const setE = (patch) => onEntryChange(dse.dse_code, brand, { ...e, ...patch });
+
+  // ── Derivasi per-brand (dipakai ulang di kartu & tabel) ──
+  const brandData = brands.map((b) => {
+    const e = entries?.[b] || emptyEntry();
+    const totalPenjualan = fRaw(e.nilai_sp) + fRaw(e.nilai_voucher) + fRaw(e.nilai_saldo);
+    const outstanding = fRaw(prevOutstandings?.[b]);
+    const audit = audits?.[b];
+    const displayCode = b === "3ID" ? (dse.dse_code_3id || dse.dse_code) : dse.dse_code;
+    const setE = (patch) => onEntryChange(dse.dse_code, b, { ...e, ...patch });
+    const handleBayarChange = (v) => onEntryChange(dse.dse_code, b, { ...e, ar_bayar: v, ar_piutang: Math.max(0, outstanding - fRaw(v)) });
+    const AuditLine = audit ? (
+      <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, color: t.lo }}>
+        <Clock size={10} style={{ flexShrink: 0 }} />
+        <span>Diperbarui {fmtTime(audit.updated_at || audit.uploaded_at)}{audit.by ? ` oleh ${audit.by}` : ""}</span>
+      </div>
+    ) : null;
+    return { b, e, totalPenjualan, outstanding, displayCode, setE, handleBayarChange, AuditLine, meta: BRAND_META[b] };
+  });
+
+  // Blok penjualan SP/Voucher/Saldo + Total 1 brand (dipakai di kartu MAUPUN
+  // tabel-desktop mode Both, krn mode Both desktop juga dirender sbg kartu
+  // di dalam <td colSpan> - tabel kolom-per-kolom biasa jadi tidak muat utk
+  // 2 brand sekaligus).
+  const SalesBlock = (bd) => (
+    <div key={bd.b} style={isDual ? { borderRadius: 12, border: `1px solid ${bd.meta.border}`, background: bd.meta.bg, padding: 10 } : undefined}>
+      {isDual && (
+        <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 9 }}>
+          <span style={{ width: 8, height: 8, borderRadius: 999, background: bd.meta.color, flexShrink: 0 }} />
+          <span style={{ fontSize: 12, fontWeight: 800, color: bd.meta.color, letterSpacing: 0.3 }}>{bd.b}</span>
+          <span style={{ fontSize: 10.5, color: t.lo, fontWeight: 600 }}>· ID {bd.displayCode}</span>
+        </div>
+      )}
+      <div style={{ borderRadius: 9, background: t.redBg, padding: 8, marginBottom: 8 }}>
+        <div style={{ fontSize: 10, fontWeight: 800, color: t.red, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>SP</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <div>
+            <div style={labelStyle}>Qty SP Terjual (Pcs)</div>
+            <MoneyInput t={t} disabled={readOnly} value={bd.e.qty_sp} onChange={(v) => bd.setE({ qty_sp: v })} />
+          </div>
+          <div>
+            <div style={labelStyle}>Total Penjualan SP (Rp)</div>
+            <MoneyInput t={t} disabled={readOnly} value={bd.e.nilai_sp} onChange={(v) => bd.setE({ nilai_sp: v })} />
+          </div>
+        </div>
+      </div>
+      <div style={{ borderRadius: 9, background: t.blueBg, padding: 8, marginBottom: 8 }}>
+        <div style={{ fontSize: 10, fontWeight: 800, color: t.blue, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Voucher</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <div>
+            <div style={labelStyle}>Qty Voucher Terjual (Pcs)</div>
+            <MoneyInput t={t} disabled={readOnly} value={bd.e.qty_voucher} onChange={(v) => bd.setE({ qty_voucher: v })} />
+          </div>
+          <div>
+            <div style={labelStyle}>Total Penjualan Voucher (Rp)</div>
+            <MoneyInput t={t} disabled={readOnly} value={bd.e.nilai_voucher} onChange={(v) => bd.setE({ nilai_voucher: v })} />
+          </div>
+        </div>
+      </div>
+      <div style={{ borderRadius: 9, background: t.amberBg, padding: 8, marginBottom: 8 }}>
+        <div style={{ fontSize: 10, fontWeight: 800, color: t.amber, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Saldo MOBO</div>
+        <div>
+          <div style={labelStyle}>Total Penjualan Saldo MOBO (Rp)</div>
+          <MoneyInput t={t} disabled={readOnly} value={bd.e.nilai_saldo} onChange={(v) => bd.setE({ nilai_saldo: v })} />
+        </div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: 9, background: isDual ? "rgba(255,255,255,0.5)" : t.tealBg }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: isDual ? bd.meta.color : t.teal }}>TOTAL {bd.b}</span>
+        <span style={{ fontSize: 14, fontWeight: 800, color: isDual ? bd.meta.color : t.teal }}>Rp {fmtID(bd.totalPenjualan)}</span>
+      </div>
+    </div>
+  );
+
+  // Blok AR/Piutang + Catatan 1 brand (bagian "showMore").
+  const MoreBlock = (bd) => (
+    <div key={bd.b} style={isDual ? { borderRadius: 10, border: `1px dashed ${bd.meta.border}`, padding: 9 } : { display: "flex", flexDirection: "column", gap: 8 }}>
+      {isDual && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 7 }}>
+          <span style={{ width: 7, height: 7, borderRadius: 999, background: bd.meta.color, flexShrink: 0 }} />
+          <span style={{ fontSize: 10.5, fontWeight: 800, color: bd.meta.color }}>{bd.b} — AR &amp; Catatan</span>
+        </div>
+      )}
+      <div style={{ marginBottom: 8 }}>
+        <div style={labelStyle}>AR / Piutang</div>
+        <ArPiutangInput t={t} readOnly={readOnly} outstanding={bd.outstanding} bayar={bd.e.ar_bayar} onBayarChange={bd.handleBayarChange} onConfirmSave={() => onSave(dse.dse_code)} saving={saving} />
+      </div>
+      <div>
+        <div style={labelStyle}>Catatan</div>
+        <input type="text" disabled={readOnly} value={bd.e.catatan || ""} onChange={(ev) => bd.setE({ catatan: ev.target.value })} placeholder="opsional" style={textInputStyle} />
+      </div>
+      {bd.AuditLine && <div style={{ marginTop: 6, paddingTop: 6, borderTop: isDual ? "none" : `1px dashed ${t.sub}` }}>{bd.AuditLine}</div>}
+    </div>
+  );
+
+  const anyAudit = brandData.some((bd) => bd.AuditLine);
+  // UPDATE: dipakai spt helper function biasa (bukan component JSX
+  // <SaveButton/>) supaya ga kena lint "components created during render"
+  // (react-hooks/static-components) - dipanggil sbg {renderSaveButton()}.
+  const renderSaveButton = (full) => !readOnly && (
+    <button onClick={() => onSave(dse.dse_code)} disabled={saving || !dirty}
+      style={{ display: "flex", alignItems: "center", gap: 6, height: 30, padding: "0 12px", borderRadius: 8, border: "none", background: dirty ? t.teal : t.inputBg, color: dirty ? "#fff" : t.lo, fontSize: 12, fontWeight: 700, cursor: dirty && !saving ? "pointer" : "default", opacity: saving ? 0.6 : 1, flexShrink: 0, width: full ? "100%" : undefined, justifyContent: full ? "center" : undefined }}>
+      {saving ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan
+    </button>
+  );
 
   if (isCardView) {
-    const labelStyle = { fontSize: 10, color: t.lo, marginBottom: 3, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.2 };
     return (
       <div style={{ borderRadius: 12, border: `1px solid ${dirty ? t.tealBd : t.line}`, background: t.card, padding: 14 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
             <button onClick={() => onShowHistory?.(dse.dse_code)} title="Lihat riwayat perubahan"
               style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 14, fontWeight: 800, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {displayCode}<History size={11} style={{ color: t.lo, flexShrink: 0 }} />
+              {headerCode}<History size={11} style={{ color: t.lo, flexShrink: 0 }} />
             </button>
             {dse.is_revoked && <span style={{ fontSize: 10, fontWeight: 700, color: t.red, background: t.redBg, borderRadius: 999, padding: "1px 7px", flexShrink: 0 }}>Revoked</span>}
           </div>
-          {!readOnly && (
-            <button onClick={() => onSave(dse.dse_code)} disabled={saving || !dirty}
-              style={{ display: "flex", alignItems: "center", gap: 6, height: 30, padding: "0 12px", borderRadius: 8, border: "none", background: dirty ? t.teal : t.inputBg, color: dirty ? "#fff" : t.lo, fontSize: 12, fontWeight: 700, cursor: dirty && !saving ? "pointer" : "default", opacity: saving ? 0.6 : 1, flexShrink: 0 }}>
-              {saving ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan
-            </button>
-          )}
+          {renderSaveButton()}
         </div>
 
         <div style={{ marginBottom: 8 }}>
@@ -500,69 +597,24 @@ function DseInputRow({ t, isCardView, dse, brand, entry, onEntryChange, onIdenti
           </div>
         </div>
 
-        {/* Tiap section (SP / Voucher / Saldo MOBO) dikasih label + sedikit
-            tint background supaya batasnya jelas, tidak nyambung jadi satu
-            blok input panjang. */}
-        <div style={{ borderRadius: 9, background: t.redBg, padding: 8, marginBottom: 8 }}>
-          <div style={{ fontSize: 10, fontWeight: 800, color: t.red, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>SP</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <div>
-              <div style={labelStyle}>Qty SP Terjual (Pcs)</div>
-              <MoneyInput t={t} disabled={readOnly} value={e.qty_sp} onChange={(v) => setE({ qty_sp: v })} />
-            </div>
-            <div>
-              <div style={labelStyle}>Total Penjualan SP (Rp)</div>
-              <MoneyInput t={t} disabled={readOnly} value={e.nilai_sp} onChange={(v) => setE({ nilai_sp: v })} />
-            </div>
-          </div>
-        </div>
-        <div style={{ borderRadius: 9, background: t.blueBg, padding: 8, marginBottom: 8 }}>
-          <div style={{ fontSize: 10, fontWeight: 800, color: t.blue, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Voucher</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            <div>
-              <div style={labelStyle}>Qty Voucher Terjual (Pcs)</div>
-              <MoneyInput t={t} disabled={readOnly} value={e.qty_voucher} onChange={(v) => setE({ qty_voucher: v })} />
-            </div>
-            <div>
-              <div style={labelStyle}>Total Penjualan Voucher (Rp)</div>
-              <MoneyInput t={t} disabled={readOnly} value={e.nilai_voucher} onChange={(v) => setE({ nilai_voucher: v })} />
-            </div>
-          </div>
-        </div>
-        <div style={{ borderRadius: 9, background: t.amberBg, padding: 8, marginBottom: 8 }}>
-          <div style={{ fontSize: 10, fontWeight: 800, color: t.amber, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Saldo MOBO</div>
-          <div>
-            <div style={labelStyle}>Total Penjualan Saldo MOBO (Rp)</div>
-            <MoneyInput t={t} disabled={readOnly} value={e.nilai_saldo} onChange={(v) => setE({ nilai_saldo: v })} />
-          </div>
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: 9, background: t.tealBg, marginBottom: 8 }}>
-          <span style={{ fontSize: 11.5, fontWeight: 700, color: t.teal }}>TOTAL PENJUALAN</span>
-          <span style={{ fontSize: 15, fontWeight: 800, color: t.teal }}>Rp {fmtID(totalPenjualan)}</span>
+        {/* Mode 1-brand: 1 blok penjualan polos (spt sebelumnya). Mode Both:
+            2 blok bertint warna brand, ditumpuk, masing2 berlabel IM3/3ID. */}
+        <div style={{ display: "flex", flexDirection: "column", gap: isDual ? 10 : 0, marginBottom: 8 }}>
+          {brandData.map((bd) => SalesBlock(bd))}
         </div>
 
         <button onClick={() => setShowMore((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", padding: 0 }}>
           {showMore ? <ChevronUp size={12} /> : <ChevronDown size={12} />} AR/Piutang, MC &amp; Catatan
         </button>
         {showMore && (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
-            <div style={{ gridColumn: "1 / -1" }}>
-              <div style={labelStyle}>AR / Piutang</div>
-              <ArPiutangInput t={t} readOnly={readOnly} outstanding={outstanding} bayar={e.ar_bayar} onBayarChange={handleBayarChange} onConfirmSave={() => onSave(dse.dse_code)} saving={saving} />
-            </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: isDual ? 10 : 8, marginTop: 8 }}>
+            {brandData.map((bd) => MoreBlock(bd))}
             <div>
               <div style={labelStyle}>MC</div>
               <input type="text" disabled={readOnly} value={identityEdit?.mc ?? dse.mc ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "mc", ev.target.value)} style={textInputStyle} />
             </div>
-            <div style={{ gridColumn: "1 / -1" }}>
-              <div style={labelStyle}>Catatan</div>
-              <input type="text" disabled={readOnly} value={e.catatan || ""} onChange={(ev) => setE({ catatan: ev.target.value })} placeholder="opsional" style={textInputStyle} />
-            </div>
-            {AuditLine && (
-              <div style={{ gridColumn: "1 / -1", paddingTop: 2, borderTop: `1px dashed ${t.sub}`, marginTop: 2 }}>
-                {AuditLine}
-              </div>
+            {!isDual && anyAudit && (
+              <div style={{ paddingTop: 2, borderTop: `1px dashed ${t.sub}` }}>{brandData[0].AuditLine}</div>
             )}
           </div>
         )}
@@ -570,9 +622,53 @@ function DseInputRow({ t, isCardView, dse, brand, entry, onEntryChange, onIdenti
     );
   }
 
-  // ── Desktop: baris tabel ── Dikelompokkan per section (garis pemisah lebih
-  // tebal + sedikit tint background) supaya SP / Voucher / Saldo MOBO
-  // kelihatan jelas batasnya, bukan nyambung semua jadi satu deretan angka.
+  // ── Desktop mode Both (2 brand): kolom tabel standar ga cukup lebar utk
+  // nampilin 2 set SP/Voucher/Saldo/AR sekaligus scr rapi, jadi dirender sbg
+  // 1 baris <td colSpan> berisi identitas (SEKALI) + 2 kartu brand
+  // berdampingan (grid 2 kolom) - gayanya sama persis dgn SalesBlock/
+  // MoreBlock yg dipakai kartu mobile, cuma disusun horizontal. ──
+  if (isDual) {
+    return (
+      <tr style={{ borderBottom: `1px solid ${t.line}`, background: dirty ? t.tealBg : "transparent" }}>
+        <td colSpan={13} style={{ padding: 14 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <button onClick={() => onShowHistory?.(dse.dse_code)} title="Lihat riwayat perubahan"
+                style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", padding: 0, fontWeight: 800, fontSize: 14, color: t.hi, fontFamily: "inherit" }}>
+                {headerCode}<History size={11} style={{ color: t.lo, flexShrink: 0 }} />
+              </button>
+              {dse.is_revoked && <span style={{ fontSize: 9.5, fontWeight: 700, color: t.red, background: t.redBg, borderRadius: 999, padding: "1px 6px" }}>Revoked</span>}
+              <div style={{ width: 170 }}>
+                <input type="text" disabled={readOnly} value={identityEdit?.ds_name ?? dse.ds_name ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "ds_name", ev.target.value)} placeholder="Nama DSE" style={textInputStyle} />
+              </div>
+              <div style={{ width: 128 }}>{StatusSelect}</div>
+              <div style={{ width: 150 }}>
+                <input type="date" disabled={readOnly} value={joinDate || ""} onChange={(ev) => onIdentityChange(dse.dse_code, "join_date", ev.target.value)} style={textInputStyle} />
+              </div>
+              <div style={{ width: 150 }}>
+                <input type="text" disabled={readOnly} value={identityEdit?.mc ?? dse.mc ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "mc", ev.target.value)} placeholder="MC" style={textInputStyle} />
+              </div>
+            </div>
+            {renderSaveButton()}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            {brandData.map((bd) => (
+              <div key={bd.b} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {SalesBlock(bd)}
+                {MoreBlock(bd)}
+              </div>
+            ))}
+          </div>
+        </td>
+      </tr>
+    );
+  }
+
+  // ── Desktop mode 1-brand (spt sebelumnya, tidak berubah): baris <table>
+  // dikelompokkan per section (garis pemisah lebih tebal + sedikit tint
+  // background) supaya SP / Voucher / Saldo MOBO kelihatan jelas batasnya. ──
+  const bd = brandData[0];
   const groupDivider = { borderLeft: `2px solid ${t.line}` };
   const spBg = t.redBg;
   const voucherBg = t.blueBg;
@@ -583,7 +679,7 @@ function DseInputRow({ t, isCardView, dse, brand, entry, onEntryChange, onIdenti
         <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 800 }}>
           <button onClick={() => onShowHistory?.(dse.dse_code)} title="Lihat riwayat perubahan"
             style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", padding: 0, fontWeight: 800, fontSize: "inherit", color: t.hi, fontFamily: "inherit" }}>
-            {displayCode}<History size={11} style={{ color: t.lo, flexShrink: 0 }} />
+            {headerCode}<History size={11} style={{ color: t.lo, flexShrink: 0 }} />
           </button>
           {dse.is_revoked && <span style={{ fontSize: 9.5, fontWeight: 700, color: t.red, background: t.redBg, borderRadius: 999, padding: "1px 6px" }}>Revoked</span>}
         </div>
@@ -597,26 +693,21 @@ function DseInputRow({ t, isCardView, dse, brand, entry, onEntryChange, onIdenti
       <td style={{ padding: "10px 12px", minWidth: 150 }}>
         <input type="date" disabled={readOnly} value={joinDate || ""} onChange={(ev) => onIdentityChange(dse.dse_code, "join_date", ev.target.value)} style={textInputStyle} />
       </td>
-      <td style={{ padding: "10px 12px", minWidth: 110, ...groupDivider, background: spBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={e.qty_sp} onChange={(v) => setE({ qty_sp: v })} /></td>
-      <td style={{ padding: "10px 12px", minWidth: 130, background: spBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={e.nilai_sp} onChange={(v) => setE({ nilai_sp: v })} /></td>
-      <td style={{ padding: "10px 12px", minWidth: 110, ...groupDivider, background: voucherBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={e.qty_voucher} onChange={(v) => setE({ qty_voucher: v })} /></td>
-      <td style={{ padding: "10px 12px", minWidth: 130, background: voucherBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={e.nilai_voucher} onChange={(v) => setE({ nilai_voucher: v })} /></td>
-      <td style={{ padding: "10px 12px", minWidth: 140, ...groupDivider, background: saldoBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={e.nilai_saldo} onChange={(v) => setE({ nilai_saldo: v })} /></td>
-      <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: t.teal, whiteSpace: "nowrap", ...groupDivider }}>Rp {fmtID(totalPenjualan)}</td>
+      <td style={{ padding: "10px 12px", minWidth: 110, ...groupDivider, background: spBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={bd.e.qty_sp} onChange={(v) => bd.setE({ qty_sp: v })} /></td>
+      <td style={{ padding: "10px 12px", minWidth: 130, background: spBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={bd.e.nilai_sp} onChange={(v) => bd.setE({ nilai_sp: v })} /></td>
+      <td style={{ padding: "10px 12px", minWidth: 110, ...groupDivider, background: voucherBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={bd.e.qty_voucher} onChange={(v) => bd.setE({ qty_voucher: v })} /></td>
+      <td style={{ padding: "10px 12px", minWidth: 130, background: voucherBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={bd.e.nilai_voucher} onChange={(v) => bd.setE({ nilai_voucher: v })} /></td>
+      <td style={{ padding: "10px 12px", minWidth: 140, ...groupDivider, background: saldoBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={bd.e.nilai_saldo} onChange={(v) => bd.setE({ nilai_saldo: v })} /></td>
+      <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: t.teal, whiteSpace: "nowrap", ...groupDivider }}>Rp {fmtID(bd.totalPenjualan)}</td>
       <td style={{ padding: "10px 12px", minWidth: 330, ...groupDivider }}>
-        <ArPiutangInput t={t} readOnly={readOnly} outstanding={outstanding} bayar={e.ar_bayar} onBayarChange={handleBayarChange} onConfirmSave={() => onSave(dse.dse_code)} saving={saving} />
+        <ArPiutangInput t={t} readOnly={readOnly} outstanding={bd.outstanding} bayar={bd.e.ar_bayar} onBayarChange={bd.handleBayarChange} onConfirmSave={() => onSave(dse.dse_code)} saving={saving} />
       </td>
       <td style={{ padding: "10px 12px", minWidth: 150 }}>
-        <input type="text" disabled={readOnly} value={e.catatan || ""} onChange={(ev) => setE({ catatan: ev.target.value })} placeholder="opsional" style={textInputStyle} />
-        {AuditLine && <div style={{ marginTop: 4 }}>{AuditLine}</div>}
+        <input type="text" disabled={readOnly} value={bd.e.catatan || ""} onChange={(ev) => bd.setE({ catatan: ev.target.value })} placeholder="opsional" style={textInputStyle} />
+        {bd.AuditLine && <div style={{ marginTop: 4 }}>{bd.AuditLine}</div>}
       </td>
       <td style={{ padding: "10px 12px", textAlign: "right" }}>
-        {!readOnly && (
-          <button onClick={() => onSave(dse.dse_code)} disabled={saving || !dirty}
-            style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 32, padding: "0 12px", borderRadius: 8, border: "none", background: dirty ? t.teal : t.inputBg, color: dirty ? "#fff" : t.lo, fontSize: 12, fontWeight: 700, cursor: dirty && !saving ? "pointer" : "default", opacity: saving ? 0.6 : 1 }}>
-            {saving ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan
-          </button>
-        )}
+        {renderSaveButton()}
       </td>
     </tr>
   );
@@ -752,6 +843,8 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
   const [partnerFilter, setPartnerFilter] = useState(""); // SPM saja: filter per Partner (mdi)
   const [mcFilter, setMcFilter] = useState(""); // SPM saja: pilih MC yang mau diisi
   const [brand, setBrand] = useState("IM3"); // toggle brand aktif - menentukan kolom penjualan mana yg diedit
+  // "Both" -> render 2 baris (IM3 & 3ID) per DSE; selain itu cuma 1 baris sesuai brand aktif.
+  const activeBrands = useMemo(() => (brand === "BOTH" ? BRANDS : [brand]), [brand]);
   const [dseMeta, setDseMeta] = useState([]); // [{region,branch,mc}] dari Database DSE - sumber opsi cascading di atas
   const [dseList, setDseList] = useState([]);
   const [dseSearch, setDseSearch] = useState("");
@@ -820,7 +913,11 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
       });
       const codes = (dses || []).map((r) => r.dse_code);
       if (codes.length) {
-        const { data: prod, error: e2 } = await supabase.from("mf_dse_prod_ar").select("dse_code, qty_sp, nilai_sp, qty_voucher, nilai_voucher, nilai_saldo, ar_piutang").eq("tanggal", entryDate).eq("brand", brand).in("dse_code", codes);
+        // "Both" -> jumlahkan IM3 + 3ID sekaligus (ga difilter per-brand);
+        // kalau cuma 1 brand aktif tetap difilter spt sebelumnya.
+        let prodQ = supabase.from("mf_dse_prod_ar").select("dse_code, qty_sp, nilai_sp, qty_voucher, nilai_voucher, nilai_saldo, ar_piutang").eq("tanggal", entryDate).in("dse_code", codes);
+        if (brand !== "BOTH") prodQ = prodQ.eq("brand", brand);
+        const { data: prod, error: e2 } = await prodQ;
         if (e2) throw e2;
         (prod || []).forEach((p) => {
           const b = byRegion[regionOf[p.dse_code]];
@@ -1035,16 +1132,20 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
       if (status === "Active") totalActive++;
       else if (status === "Vacant") totalVacant++;
       else if (status === "Interview") totalInterview++;
-      const e = entries[dse.dse_code]?.[brand];
-      if (e) {
-        qtySp += fRaw(e.qty_sp); nilaiSp += fRaw(e.nilai_sp);
-        qtyVoucher += fRaw(e.qty_voucher); nilaiVoucher += fRaw(e.nilai_voucher);
-        nilaiSaldo += fRaw(e.nilai_saldo);
-        tunggakan += fRaw(e.ar_piutang);
+      // "Both" -> jumlahkan entry IM3 + 3ID sekaligus (activeBrands = [IM3, 3ID]);
+      // kalau cuma 1 brand aktif, activeBrands cuma berisi brand itu spt sebelumnya.
+      for (const b of activeBrands) {
+        const e = entries[dse.dse_code]?.[b];
+        if (e) {
+          qtySp += fRaw(e.qty_sp); nilaiSp += fRaw(e.nilai_sp);
+          qtyVoucher += fRaw(e.qty_voucher); nilaiVoucher += fRaw(e.nilai_voucher);
+          nilaiSaldo += fRaw(e.nilai_saldo);
+          tunggakan += fRaw(e.ar_piutang);
+        }
       }
     }
     return { totalAlokasi: dseList.length, totalActive, totalVacant, totalInterview, qtySp, nilaiSp, qtyVoucher, nilaiVoucher, nilaiSaldo, tunggakan, totalPenjualan: nilaiSp + nilaiVoucher + nilaiSaldo };
-  }, [dseList, identity, entries, brand]);
+  }, [dseList, identity, entries, activeBrands]);
 
   // ── Import massal Excel (opsional, sekunder) ──────────────────────────────
   const [staged, setStaged] = useState(null);
@@ -1324,17 +1425,24 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
             <div>
               <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Brand</div>
+              {/* UPDATE (permintaan user - "tambahkan satu opsi lagi untuk
+                  both brand", warna opsi "Both" pakai teal spt aksen lain di
+                  halaman ini, bukan warna baru): opsi ke-3 "Both" ditambahin
+                  di samping IM3/3ID. Kalau "Both" dipilih, tiap baris DSE di
+                  tabel Input Harian dirender 2x (1 baris per brand) jadi bisa
+                  isi IM3 & 3ID sekaligus tanpa gonta-ganti toggle. Lihat
+                  "activeBrands" di bawah. */}
               <div style={{ display: "flex", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, padding: 3, height: 38, boxSizing: "border-box" }}>
-                {BRANDS.map((b) => {
+                {BRAND_TOGGLE_OPTIONS.map((b) => {
                   const active = brand === b;
-                  // Warna identitas brand: IM3 = kuning/gold, 3ID = magenta
-                  const brandColor = b === "IM3" ? "#F5B700" : "#C2187C";
+                  // Warna identitas brand: IM3 = kuning/gold, 3ID = magenta, Both = teal (aksen utama halaman)
+                  const brandColor = b === "IM3" ? "#F5B700" : b === "3ID" ? "#C2187C" : t.teal;
                   const activeTextColor = b === "IM3" ? "#3D2E00" : "#fff"; // teks gelap di atas kuning supaya tetap kontras
                   return (
                     <button key={b} onClick={() => setBrand(b)}
                       style={{ display: "flex", alignItems: "center", gap: 6, height: "100%", padding: "0 16px", borderRadius: 7, border: "none", background: active ? brandColor : "transparent", color: active ? activeTextColor : t.mid, fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, transition: "background 0.15s" }}>
                       <span style={{ width: 7, height: 7, borderRadius: 999, background: active ? activeTextColor : brandColor, flexShrink: 0 }} />
-                      {b}
+                      {b === "BOTH" ? "Both" : b}
                     </button>
                   );
                 })}
@@ -1494,19 +1602,31 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
             <div style={{ padding: 28, textAlign: "center", color: t.mid, borderRadius: 12, border: `1px dashed ${t.line}` }}>Belum ada Kode DSE terdaftar untuk MC ini. Tambahkan dulu di menu Database DSE.</div>
           ) : isCardView ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+              {/* UPDATE (permintaan user - "tambahkan satu opsi lagi untuk
+                  both brand", lalu dikoreksi - "jika dipilih both brand maka
+                  saat pengisian itu menampilkan nama dse baru [lalu] penjualan
+                  im3 dan 3id, beri warna dengan rapi"): 1 DSE = 1
+                  kartu/baris, SELALU (identitas ga diduplikat). Kalau
+                  brand === "BOTH", activeBrands = ["IM3","3ID"] diteruskan
+                  sbg prop "brands" (array) ke DseInputRow, yg lalu merender
+                  2 section penjualan bertint warna brand di DALAM kartu yg
+                  sama (lihat SalesBlock/MoreBlock di DseInputRow). */}
               {filteredDseList.map((dse) => (
-                <DseInputRow key={dse.dse_code} t={t} isCardView dse={dse} brand={brand}
-                  entry={entries[dse.dse_code]?.[brand]}
+                <DseInputRow key={dse.dse_code} t={t} isCardView dse={dse} brands={activeBrands}
+                  entries={entries[dse.dse_code] || {}}
                   onEntryChange={handleEntryChange}
                   onIdentityChange={handleIdentityChange}
                   identityEdit={identity[dse.dse_code]}
                   onSave={handleSaveDse}
                   saving={savingCode === dse.dse_code}
                   dirty={!!dirty[dse.dse_code]}
-                  prevOutstanding={prevAr[`${dse.dse_code}|${brand}`]}
+                  prevOutstandings={Object.fromEntries(activeBrands.map((b) => [b, prevAr[`${dse.dse_code}|${b}`]]))}
                   onShowHistory={setHistoryFor}
                   readOnly={isRangeMode}
-                  audit={entries[dse.dse_code]?.[brand]?.updated_at || entries[dse.dse_code]?.[brand]?.uploaded_by ? { updated_at: entries[dse.dse_code][brand].updated_at, uploaded_at: entries[dse.dse_code][brand].uploaded_at, by: profilesMap[entries[dse.dse_code][brand].uploaded_by] } : null} />
+                  audits={Object.fromEntries(activeBrands.map((b) => {
+                    const be = entries[dse.dse_code]?.[b];
+                    return [b, be?.updated_at || be?.uploaded_by ? { updated_at: be.updated_at, uploaded_at: be.uploaded_at, by: profilesMap[be.uploaded_by] } : null];
+                  }))} />
               ))}
             </div>
           ) : (
@@ -1522,18 +1642,21 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                   </thead>
                   <tbody>
                     {filteredDseList.map((dse) => (
-                      <DseInputRow key={dse.dse_code} t={t} isCardView={false} dse={dse} brand={brand}
-                        entry={entries[dse.dse_code]?.[brand]}
+                      <DseInputRow key={dse.dse_code} t={t} isCardView={false} dse={dse} brands={activeBrands}
+                        entries={entries[dse.dse_code] || {}}
                         onEntryChange={handleEntryChange}
                         onIdentityChange={handleIdentityChange}
                         identityEdit={identity[dse.dse_code]}
                         onSave={handleSaveDse}
                         saving={savingCode === dse.dse_code}
                         dirty={!!dirty[dse.dse_code]}
-                        prevOutstanding={prevAr[`${dse.dse_code}|${brand}`]}
+                        prevOutstandings={Object.fromEntries(activeBrands.map((b) => [b, prevAr[`${dse.dse_code}|${b}`]]))}
                         onShowHistory={setHistoryFor}
                         readOnly={isRangeMode}
-                        audit={entries[dse.dse_code]?.[brand]?.updated_at || entries[dse.dse_code]?.[brand]?.uploaded_by ? { updated_at: entries[dse.dse_code][brand].updated_at, uploaded_at: entries[dse.dse_code][brand].uploaded_at, by: profilesMap[entries[dse.dse_code][brand].uploaded_by] } : null} />
+                        audits={Object.fromEntries(activeBrands.map((b) => {
+                          const be = entries[dse.dse_code]?.[b];
+                          return [b, be?.updated_at || be?.uploaded_by ? { updated_at: be.updated_at, uploaded_at: be.uploaded_at, by: profilesMap[be.uploaded_by] } : null];
+                        }))} />
                     ))}
                   </tbody>
                 </table>
