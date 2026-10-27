@@ -34,7 +34,7 @@ import AdminMcMapping from "./AdminMcMapping";
 import SDP_DseDatabase from "./SDP_DseDatabase";
 import {
   Upload, FileSpreadsheet, X, Check, AlertTriangle, Loader2, FileDown,
-  Search, RefreshCw, ChevronDown, ChevronUp, ChevronLeft, Wallet, TrendingUp, Calendar, Info,
+  Search, RefreshCw, ChevronDown, ChevronUp, Wallet, TrendingUp, Calendar, Info,
   Pencil, Save, ListChecks, History, UserRoundCog, Database,
   Users, UserCheck, UserX, Ticket, CircleDollarSign, Clock, CalendarCheck2,
 } from "lucide-react";
@@ -1018,18 +1018,8 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
 
       <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: 16, marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          {onBack && (
-            <button onClick={onBack} title="Kembali ke Overview"
-              style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 30, height: 30, borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: "pointer", flexShrink: 0 }}>
-              <ChevronLeft size={15} />
-            </button>
-          )}
           <Wallet size={20} color={t.teal} style={{ flexShrink: 0 }} />
           <div style={{ fontSize: 19, fontWeight: 800 }}>DSE Prod. & AR</div>
-        </div>
-        <div style={{ fontSize: 13, color: t.mid, marginTop: 10 }}>
-          Input harian produksi DSE (SP, Saldo, Voucher) per brand IM3 &amp; 3ID, plus AR/piutang — langsung per Kode DSE
-          {isMPX && myMcNames.length === 1 ? ` di MC ${myMcNames[0]}` : isMPX && myMcNames.length > 1 ? ` di ${myMcNames.length} MC milik Anda (${myMcNames.join(", ")})` : ""}. Nama DSE dan MC bisa diperbarui langsung dari sini.
         </div>
       </div>
 
