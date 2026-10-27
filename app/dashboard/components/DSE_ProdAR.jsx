@@ -288,7 +288,7 @@ const statusMetaOf = (v) => STATUS_OPTIONS.find((s) => s.v === v) || STATUS_OPTI
 // mentah saat sedang diketik) — dipakai utk semua kolom Qty/Rp supaya mudah
 // dibaca tanpa harus menghitung nol manual, baik di tabel desktop maupun
 // kartu mobile. ────────────────────────────────────────────────────────────
-function MoneyInput({ t, value, onChange, align }) {
+function MoneyInput({ t, value, onChange, align, disabled }) {
   const [editing, setEditing] = useState(false);
   const [raw, setRaw] = useState(""); // raw = digit mentah tanpa separator (dipakai utk hitung/simpan)
   // UPDATE (permintaan user - "pada saat angka dimasukkan langsung ada
@@ -300,15 +300,15 @@ function MoneyInput({ t, value, onChange, align }) {
   return (
     <input
       type="text" inputMode="numeric" placeholder="0"
-      value={display}
-      onFocus={() => { setEditing(true); setRaw(fRaw(value) ? String(fRaw(value)) : ""); }}
-      onChange={(e) => setRaw(e.target.value.replace(/[^\d]/g, ""))}
-      onBlur={() => { setEditing(false); onChange(raw === "" ? 0 : parseInt(raw, 10) || 0); }}
+      value={display} readOnly={disabled} disabled={disabled}
+      onFocus={() => { if (disabled) return; setEditing(true); setRaw(fRaw(value) ? String(fRaw(value)) : ""); }}
+      onChange={(e) => { if (disabled) return; setRaw(e.target.value.replace(/[^\d]/g, "")); }}
+      onBlur={() => { if (disabled) return; setEditing(false); onChange(raw === "" ? 0 : parseInt(raw, 10) || 0); }}
       style={{
         width: "100%", height: 34, padding: "0 10px", borderRadius: 7,
-        border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi,
+        border: `1px solid ${t.inputBd}`, background: disabled ? t.sub : t.inputBg, color: disabled ? t.mid : t.hi,
         fontSize: 12.5, fontFamily: FONT, outline: "none", boxSizing: "border-box",
-        textAlign: align || "left",
+        textAlign: align || "left", cursor: disabled ? "default" : "text",
       }}
     />
   );
@@ -324,7 +324,7 @@ function MoneyInput({ t, value, onChange, align }) {
 // ar_piutang hari ini (ar_bayar disimpan terpisah sbg histori pembayaran,
 // jadi audit "siapa bayar berapa kapan" tetap bisa ditelusuri lewat tab
 // Riwayat, bukan cuma angka sisa akhir).
-function ArPiutangInput({ t, outstanding, bayar, onBayarChange, onConfirmSave, saving }) {
+function ArPiutangInput({ t, outstanding, bayar, onBayarChange, onConfirmSave, saving, readOnly }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(0);
   const sisaCurrent = Math.max(0, fRaw(outstanding) - fRaw(bayar));
@@ -355,12 +355,14 @@ function ArPiutangInput({ t, outstanding, bayar, onBayarChange, onConfirmSave, s
         <span style={{ fontSize: 10, fontWeight: 800, color: lunasCurrent ? t.teal : t.red, background: lunasCurrent ? t.tealBg : t.redBg, borderRadius: 6, padding: "3px 8px", display: "flex", alignItems: "center", gap: 3, whiteSpace: "nowrap", flexShrink: 0 }}>
           {lunasCurrent && <Check size={9} />} {lunasCurrent ? "LUNAS" : `Sisa Rp ${fmtID(sisaCurrent)}`}
         </span>
-        <button type="button" onClick={openModal} title="Catat AR" style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 7, border: "none", background: t.teal, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
-          <CircleDollarSign size={13} />
-        </button>
+        {!readOnly && (
+          <button type="button" onClick={openModal} title="Catat AR" style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 7, border: "none", background: t.teal, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <CircleDollarSign size={13} />
+          </button>
+        )}
       </div>
 
-      {open && (
+      {open && !readOnly && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setOpen(false)}>
           <div onClick={(ev) => ev.stopPropagation()} style={{ width: "100%", maxWidth: 360, borderRadius: 16, background: t.card, boxShadow: "0 20px 60px rgba(0,0,0,0.35)", padding: 20, fontFamily: FONT }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
@@ -405,7 +407,7 @@ function ArPiutangInput({ t, outstanding, bayar, onBayarChange, onConfirmSave, s
 // + Total Penjualan dihitung otomatis dari SP+Voucher+Saldo. Dirender sbg
 // baris <table> di desktop, kartu bertumpuk di mobile (isCardView) — satu
 // komponen, dua layout, supaya logic tetap satu sumber. ────────────────────
-function DseInputRow({ t, isCardView, dse, brand, entry, onEntryChange, onIdentityChange, identityEdit, onSave, saving, dirty, prevOutstanding, audit, onShowHistory }) {
+function DseInputRow({ t, isCardView, dse, brand, entry, onEntryChange, onIdentityChange, identityEdit, onSave, saving, dirty, prevOutstanding, audit, onShowHistory, readOnly }) {
   const [showMore, setShowMore] = useState(false);
   const e = entry || emptyEntry();
   const totalPenjualan = fRaw(e.nilai_sp) + fRaw(e.nilai_voucher) + fRaw(e.nilai_saldo);
@@ -455,15 +457,17 @@ function DseInputRow({ t, isCardView, dse, brand, entry, onEntryChange, onIdenti
             </button>
             {dse.is_revoked && <span style={{ fontSize: 10, fontWeight: 700, color: t.red, background: t.redBg, borderRadius: 999, padding: "1px 7px", flexShrink: 0 }}>Revoked</span>}
           </div>
-          <button onClick={() => onSave(dse.dse_code)} disabled={saving || !dirty}
-            style={{ display: "flex", alignItems: "center", gap: 6, height: 30, padding: "0 12px", borderRadius: 8, border: "none", background: dirty ? t.teal : t.inputBg, color: dirty ? "#fff" : t.lo, fontSize: 12, fontWeight: 700, cursor: dirty && !saving ? "pointer" : "default", opacity: saving ? 0.6 : 1, flexShrink: 0 }}>
-            {saving ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan
-          </button>
+          {!readOnly && (
+            <button onClick={() => onSave(dse.dse_code)} disabled={saving || !dirty}
+              style={{ display: "flex", alignItems: "center", gap: 6, height: 30, padding: "0 12px", borderRadius: 8, border: "none", background: dirty ? t.teal : t.inputBg, color: dirty ? "#fff" : t.lo, fontSize: 12, fontWeight: 700, cursor: dirty && !saving ? "pointer" : "default", opacity: saving ? 0.6 : 1, flexShrink: 0 }}>
+              {saving ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan
+            </button>
+          )}
         </div>
 
         <div style={{ marginBottom: 8 }}>
           <div style={labelStyle}>Nama DSE</div>
-          <input type="text" value={identityEdit?.ds_name ?? dse.ds_name ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "ds_name", ev.target.value)} style={textInputStyle} />
+          <input type="text" disabled={readOnly} value={identityEdit?.ds_name ?? dse.ds_name ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "ds_name", ev.target.value)} style={textInputStyle} />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
           <div>
@@ -472,7 +476,7 @@ function DseInputRow({ t, isCardView, dse, brand, entry, onEntryChange, onIdenti
           </div>
           <div>
             <div style={labelStyle}>Join Date</div>
-            <input type="date" value={joinDate || ""} onChange={(ev) => onIdentityChange(dse.dse_code, "join_date", ev.target.value)} style={textInputStyle} />
+            <input type="date" disabled={readOnly} value={joinDate || ""} onChange={(ev) => onIdentityChange(dse.dse_code, "join_date", ev.target.value)} style={textInputStyle} />
           </div>
         </div>
 
@@ -484,11 +488,11 @@ function DseInputRow({ t, isCardView, dse, brand, entry, onEntryChange, onIdenti
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
             <div>
               <div style={labelStyle}>Qty SP Terjual (Pcs)</div>
-              <MoneyInput t={t} value={e.qty_sp} onChange={(v) => setE({ qty_sp: v })} />
+              <MoneyInput t={t} disabled={readOnly} value={e.qty_sp} onChange={(v) => setE({ qty_sp: v })} />
             </div>
             <div>
               <div style={labelStyle}>Total Penjualan SP (Rp)</div>
-              <MoneyInput t={t} value={e.nilai_sp} onChange={(v) => setE({ nilai_sp: v })} />
+              <MoneyInput t={t} disabled={readOnly} value={e.nilai_sp} onChange={(v) => setE({ nilai_sp: v })} />
             </div>
           </div>
         </div>
@@ -497,11 +501,11 @@ function DseInputRow({ t, isCardView, dse, brand, entry, onEntryChange, onIdenti
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
             <div>
               <div style={labelStyle}>Qty Voucher Terjual (Pcs)</div>
-              <MoneyInput t={t} value={e.qty_voucher} onChange={(v) => setE({ qty_voucher: v })} />
+              <MoneyInput t={t} disabled={readOnly} value={e.qty_voucher} onChange={(v) => setE({ qty_voucher: v })} />
             </div>
             <div>
               <div style={labelStyle}>Total Penjualan Voucher (Rp)</div>
-              <MoneyInput t={t} value={e.nilai_voucher} onChange={(v) => setE({ nilai_voucher: v })} />
+              <MoneyInput t={t} disabled={readOnly} value={e.nilai_voucher} onChange={(v) => setE({ nilai_voucher: v })} />
             </div>
           </div>
         </div>
@@ -509,7 +513,7 @@ function DseInputRow({ t, isCardView, dse, brand, entry, onEntryChange, onIdenti
           <div style={{ fontSize: 10, fontWeight: 800, color: t.amber, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Saldo MOBO</div>
           <div>
             <div style={labelStyle}>Total Penjualan Saldo MOBO (Rp)</div>
-            <MoneyInput t={t} value={e.nilai_saldo} onChange={(v) => setE({ nilai_saldo: v })} />
+            <MoneyInput t={t} disabled={readOnly} value={e.nilai_saldo} onChange={(v) => setE({ nilai_saldo: v })} />
           </div>
         </div>
 
@@ -525,15 +529,15 @@ function DseInputRow({ t, isCardView, dse, brand, entry, onEntryChange, onIdenti
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
             <div style={{ gridColumn: "1 / -1" }}>
               <div style={labelStyle}>AR / Piutang</div>
-              <ArPiutangInput t={t} outstanding={outstanding} bayar={e.ar_bayar} onBayarChange={handleBayarChange} onConfirmSave={() => onSave(dse.dse_code)} saving={saving} />
+              <ArPiutangInput t={t} readOnly={readOnly} outstanding={outstanding} bayar={e.ar_bayar} onBayarChange={handleBayarChange} onConfirmSave={() => onSave(dse.dse_code)} saving={saving} />
             </div>
             <div>
               <div style={labelStyle}>MC</div>
-              <input type="text" value={identityEdit?.mc ?? dse.mc ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "mc", ev.target.value)} style={textInputStyle} />
+              <input type="text" disabled={readOnly} value={identityEdit?.mc ?? dse.mc ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "mc", ev.target.value)} style={textInputStyle} />
             </div>
             <div style={{ gridColumn: "1 / -1" }}>
               <div style={labelStyle}>Catatan</div>
-              <input type="text" value={e.catatan || ""} onChange={(ev) => setE({ catatan: ev.target.value })} placeholder="opsional" style={textInputStyle} />
+              <input type="text" disabled={readOnly} value={e.catatan || ""} onChange={(ev) => setE({ catatan: ev.target.value })} placeholder="opsional" style={textInputStyle} />
             </div>
             {AuditLine && (
               <div style={{ gridColumn: "1 / -1", paddingTop: 2, borderTop: `1px dashed ${t.sub}`, marginTop: 2 }}>
@@ -565,32 +569,34 @@ function DseInputRow({ t, isCardView, dse, brand, entry, onEntryChange, onIdenti
         </div>
       </td>
       <td style={{ padding: "10px 12px", minWidth: 160 }}>
-        <input type="text" value={identityEdit?.ds_name ?? dse.ds_name ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "ds_name", ev.target.value)} style={textInputStyle} />
+        <input type="text" disabled={readOnly} value={identityEdit?.ds_name ?? dse.ds_name ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "ds_name", ev.target.value)} style={textInputStyle} />
       </td>
       <td style={{ padding: "10px 12px", minWidth: 128 }}>
         {StatusSelect}
       </td>
       <td style={{ padding: "10px 12px", minWidth: 150 }}>
-        <input type="date" value={joinDate || ""} onChange={(ev) => onIdentityChange(dse.dse_code, "join_date", ev.target.value)} style={textInputStyle} />
+        <input type="date" disabled={readOnly} value={joinDate || ""} onChange={(ev) => onIdentityChange(dse.dse_code, "join_date", ev.target.value)} style={textInputStyle} />
       </td>
-      <td style={{ padding: "10px 12px", minWidth: 110, ...groupDivider, background: spBg }}><MoneyInput t={t} align="right" value={e.qty_sp} onChange={(v) => setE({ qty_sp: v })} /></td>
-      <td style={{ padding: "10px 12px", minWidth: 130, background: spBg }}><MoneyInput t={t} align="right" value={e.nilai_sp} onChange={(v) => setE({ nilai_sp: v })} /></td>
-      <td style={{ padding: "10px 12px", minWidth: 110, ...groupDivider, background: voucherBg }}><MoneyInput t={t} align="right" value={e.qty_voucher} onChange={(v) => setE({ qty_voucher: v })} /></td>
-      <td style={{ padding: "10px 12px", minWidth: 130, background: voucherBg }}><MoneyInput t={t} align="right" value={e.nilai_voucher} onChange={(v) => setE({ nilai_voucher: v })} /></td>
-      <td style={{ padding: "10px 12px", minWidth: 140, ...groupDivider, background: saldoBg }}><MoneyInput t={t} align="right" value={e.nilai_saldo} onChange={(v) => setE({ nilai_saldo: v })} /></td>
+      <td style={{ padding: "10px 12px", minWidth: 110, ...groupDivider, background: spBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={e.qty_sp} onChange={(v) => setE({ qty_sp: v })} /></td>
+      <td style={{ padding: "10px 12px", minWidth: 130, background: spBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={e.nilai_sp} onChange={(v) => setE({ nilai_sp: v })} /></td>
+      <td style={{ padding: "10px 12px", minWidth: 110, ...groupDivider, background: voucherBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={e.qty_voucher} onChange={(v) => setE({ qty_voucher: v })} /></td>
+      <td style={{ padding: "10px 12px", minWidth: 130, background: voucherBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={e.nilai_voucher} onChange={(v) => setE({ nilai_voucher: v })} /></td>
+      <td style={{ padding: "10px 12px", minWidth: 140, ...groupDivider, background: saldoBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={e.nilai_saldo} onChange={(v) => setE({ nilai_saldo: v })} /></td>
       <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: t.teal, whiteSpace: "nowrap", ...groupDivider }}>Rp {fmtID(totalPenjualan)}</td>
       <td style={{ padding: "10px 12px", minWidth: 330, ...groupDivider }}>
-        <ArPiutangInput t={t} outstanding={outstanding} bayar={e.ar_bayar} onBayarChange={handleBayarChange} onConfirmSave={() => onSave(dse.dse_code)} saving={saving} />
+        <ArPiutangInput t={t} readOnly={readOnly} outstanding={outstanding} bayar={e.ar_bayar} onBayarChange={handleBayarChange} onConfirmSave={() => onSave(dse.dse_code)} saving={saving} />
       </td>
       <td style={{ padding: "10px 12px", minWidth: 150 }}>
-        <input type="text" value={e.catatan || ""} onChange={(ev) => setE({ catatan: ev.target.value })} placeholder="opsional" style={textInputStyle} />
+        <input type="text" disabled={readOnly} value={e.catatan || ""} onChange={(ev) => setE({ catatan: ev.target.value })} placeholder="opsional" style={textInputStyle} />
         {AuditLine && <div style={{ marginTop: 4 }}>{AuditLine}</div>}
       </td>
       <td style={{ padding: "10px 12px", textAlign: "right" }}>
-        <button onClick={() => onSave(dse.dse_code)} disabled={saving || !dirty}
-          style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 32, padding: "0 12px", borderRadius: 8, border: "none", background: dirty ? t.teal : t.inputBg, color: dirty ? "#fff" : t.lo, fontSize: 12, fontWeight: 700, cursor: dirty && !saving ? "pointer" : "default", opacity: saving ? 0.6 : 1 }}>
-          {saving ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan
-        </button>
+        {!readOnly && (
+          <button onClick={() => onSave(dse.dse_code)} disabled={saving || !dirty}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 32, padding: "0 12px", borderRadius: 8, border: "none", background: dirty ? t.teal : t.inputBg, color: dirty ? "#fff" : t.lo, fontSize: 12, fontWeight: 700, cursor: dirty && !saving ? "pointer" : "default", opacity: saving ? 0.6 : 1 }}>
+            {saving ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan
+          </button>
+        )}
       </td>
     </tr>
   );
@@ -645,6 +651,21 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
 
   // ── Tab "Input Harian" ────────────────────────────────────────────────────
   const [entryDate, setEntryDate] = useState(todayISO());
+  // UPDATE (permintaan user - "tidak pilih tanggal bisa pilih periode saja"):
+  // selain 1 Tanggal spesifik (mode "single", bisa diinput/disimpan), user
+  // sekarang bisa pilih Periode (range tanggal bebas, mode "range") — pada
+  // mode ini data yang tampil adalah AKUMULASI semua tanggal di range itu,
+  // jadi read-only (tidak ada input/Simpan, karena 1 kolom tidak mewakili 1
+  // hari lagi). periodMode menentukan tanggal mana yg dipakai utk query:
+  // single -> entryDate, range -> rangeStart..rangeEnd.
+  const [periodMode, setPeriodMode] = useState("single"); // "single" | "range"
+  const [rangeStart, setRangeStart] = useState(todayISO());
+  const [rangeEnd, setRangeEnd] = useState(todayISO());
+  const isRangeMode = periodMode === "range";
+  // "as of" tanggal yg dipakai Mapping & User Management utk nampilin mapping
+  // yg BERLAKU pada tanggal itu (pakai riwayat kalau tanggalnya di masa
+  // lalu) — single mode: entryDate; range mode: akhir periode (rangeEnd).
+  const mappingAsOfDate = isRangeMode ? rangeEnd : entryDate;
   // UPDATE (permintaan user - "selain mc bisa pilih branch region juga di
   // input manual"): selain MC, Region & Branch sekarang juga bisa dipilih
   // sbg filter sendiri (cascading: pilih Region -> opsi Branch menyempit ->
@@ -705,7 +726,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
   // klik salah satu Region utk drill-down ke tabel input region itu. ──
   const [regionSummary, setRegionSummary] = useState([]);
   const [loadingRegionSummary, setLoadingRegionSummary] = useState(false);
-  const showAllRegions = isSPM && !regionFilter && !branchFilter && !partnerFilter && !mcFilter;
+  const showAllRegions = isSPM && !regionFilter && !branchFilter && !partnerFilter && !mcFilter && !isRangeMode;
   const loadRegionSummary = useCallback(async () => {
     setLoadingRegionSummary(true);
     try {
@@ -760,6 +781,48 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
 
       const codes = (dses || []).map((r) => r.dse_code);
       if (codes.length) {
+        if (isRangeMode) {
+          // Mode Periode: AKUMULASI semua tanggal di rangeStart..rangeEnd.
+          // Qty/Nilai SP/Voucher/Saldo -> dijumlahkan. AR/Piutang bukan nilai
+          // kumulatif (dia saldo), jadi dipakai ar_piutang pada tanggal
+          // TERAKHIR di range itu per dse_code+brand (bukan dijumlah).
+          const { data: prod, error: e2 } = await supabase
+            .from("mf_dse_prod_ar").select("*")
+            .gte("tanggal", rangeStart).lte("tanggal", rangeEnd).in("dse_code", codes)
+            .order("tanggal", { ascending: true });
+          if (e2) throw e2;
+          const map = {};
+          const uploaderIds = new Set();
+          (prod || []).forEach((r) => {
+            map[r.dse_code] = map[r.dse_code] || {};
+            const acc = map[r.dse_code][r.brand] || {
+              qty_sp: 0, nilai_sp: 0, qty_saldo: 0, nilai_saldo: 0, qty_voucher: 0, nilai_voucher: 0,
+              ar_piutang: 0, ar_bayar: 0, catatan: "", updated_at: r.updated_at, uploaded_at: r.uploaded_at, uploaded_by: r.uploaded_by,
+            };
+            acc.qty_sp += fRaw(r.qty_sp); acc.nilai_sp += fRaw(r.nilai_sp);
+            acc.qty_saldo += fRaw(r.qty_saldo); acc.nilai_saldo += fRaw(r.nilai_saldo);
+            acc.qty_voucher += fRaw(r.qty_voucher); acc.nilai_voucher += fRaw(r.nilai_voucher);
+            acc.ar_bayar += fRaw(r.ar_bayar);
+            acc.ar_piutang = r.ar_piutang; // selalu ditimpa -> baris terakhir (tanggal paling baru) yg menang
+            acc.updated_at = r.updated_at; acc.uploaded_at = r.uploaded_at; acc.uploaded_by = r.uploaded_by;
+            map[r.dse_code][r.brand] = acc;
+            if (r.uploaded_by) uploaderIds.add(r.uploaded_by);
+          });
+          setEntries(map);
+          setPrevAr({});
+          if (uploaderIds.size) {
+            const { data: profs } = await supabase.from("profiles").select("id, full_name").in("id", Array.from(uploaderIds));
+            const pm = {};
+            (profs || []).forEach((p) => { pm[p.id] = p.full_name; });
+            setProfilesMap(pm);
+          } else {
+            setProfilesMap({});
+          }
+          setIdentity({});
+          setDirty({});
+          return;
+        }
+
         const { data: prod, error: e2 } = await supabase.from("mf_dse_prod_ar").select("*").eq("tanggal", entryDate).in("dse_code", codes);
         if (e2) throw e2;
         const map = {};
@@ -813,7 +876,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
     } finally {
       setLoadingDse(false);
     }
-  }, [isSPM, regionFilter, branchFilter, partnerFilter, mcFilter, entryDate]);
+  }, [isSPM, regionFilter, branchFilter, partnerFilter, mcFilter, entryDate, isRangeMode, rangeStart, rangeEnd]);
 
   useEffect(() => { loadDseAndEntries(); }, [loadDseAndEntries]);
 
@@ -1061,7 +1124,9 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
       {tab === "dse-database" ? (
         <SDP_DseDatabase theme={theme} profile={profile} />
       ) : tab === "user-mgmt" ? (
-        <AdminMcMapping theme={theme} />
+        <AdminMcMapping theme={theme}
+          asOfDate={(isRangeMode || entryDate !== todayISO()) ? `${mappingAsOfDate}T23:59:59` : null}
+          asOfLabel={isRangeMode ? `akhir periode ${fmtLongDate(rangeEnd)}` : fmtLongDate(entryDate)} />
       ) : tab === "input" ? (
         <>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 }}>
@@ -1083,25 +1148,39 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                 })}
               </div>
             </div>
-            <div style={{ minWidth: 230 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Tanggal</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 10px 0 12px", borderRadius: 9, border: `1.5px solid ${entryDate === todayISO() ? t.teal : t.inputBd}`, background: entryDate === todayISO() ? t.tealBg : t.inputBg, boxSizing: "border-box" }}>
-                <CalendarCheck2 size={15} color={entryDate === todayISO() ? t.teal : t.mid} style={{ flexShrink: 0 }} />
-                <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15, flex: 1, minWidth: 0 }}>
-                  <span style={{ fontSize: 12.5, fontWeight: 800, color: entryDate === todayISO() ? t.teal : t.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {fmtLongDate(entryDate)}
-                  </span>
-                  {entryDate === todayISO() && (
-                    <span style={{ fontSize: 9.5, fontWeight: 700, color: t.teal, textTransform: "uppercase", letterSpacing: 0.3 }}>Hari ini</span>
+            <div style={{ minWidth: periodMode === "range" ? 330 : 230 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase" }}>{periodMode === "range" ? "Periode" : "Tanggal"}</div>
+                <div style={{ display: "flex", gap: 2, background: t.inputBg, border: `1px solid ${t.inputBd}`, borderRadius: 6, padding: 2 }}>
+                  <button onClick={() => setPeriodMode("single")} style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 4, border: "none", cursor: "pointer", background: periodMode === "single" ? t.teal : "transparent", color: periodMode === "single" ? "#fff" : t.mid }}>Tanggal</button>
+                  <button onClick={() => { setPeriodMode("range"); setRangeStart(entryDate); setRangeEnd(entryDate); }} style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 4, border: "none", cursor: "pointer", background: periodMode === "range" ? t.teal : "transparent", color: periodMode === "range" ? "#fff" : t.mid }}>Periode</button>
+                </div>
+              </div>
+              {periodMode === "single" ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 10px 0 12px", borderRadius: 9, border: `1.5px solid ${entryDate === todayISO() ? t.teal : t.inputBd}`, background: entryDate === todayISO() ? t.tealBg : t.inputBg, boxSizing: "border-box" }}>
+                  <CalendarCheck2 size={15} color={entryDate === todayISO() ? t.teal : t.mid} style={{ flexShrink: 0 }} />
+                  <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15, flex: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 800, color: entryDate === todayISO() ? t.teal : t.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {fmtLongDate(entryDate)}
+                    </span>
+                    {entryDate === todayISO() && (
+                      <span style={{ fontSize: 9.5, fontWeight: 700, color: t.teal, textTransform: "uppercase", letterSpacing: 0.3 }}>Hari ini</span>
+                    )}
+                  </div>
+                  <input type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} style={{ border: "none", background: "transparent", color: "transparent", width: 20, height: 20, cursor: "pointer", colorScheme: d ? "dark" : "light" }} />
+                  {entryDate !== todayISO() && (
+                    <button onClick={() => setEntryDate(todayISO())} style={{ fontSize: 10.5, fontWeight: 800, color: t.teal, background: "none", border: "none", cursor: "pointer", padding: "2px 4px", whiteSpace: "nowrap" }}>
+                      Hari Ini
+                    </button>
                   )}
                 </div>
-                <input type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} style={{ border: "none", background: "transparent", color: "transparent", width: 20, height: 20, cursor: "pointer", colorScheme: d ? "dark" : "light" }} />
-                {entryDate !== todayISO() && (
-                  <button onClick={() => setEntryDate(todayISO())} style={{ fontSize: 10.5, fontWeight: 800, color: t.teal, background: "none", border: "none", cursor: "pointer", padding: "2px 4px", whiteSpace: "nowrap" }}>
-                    Hari Ini
-                  </button>
-                )}
-              </div>
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <input type="date" value={rangeStart} max={rangeEnd} onChange={(e) => setRangeStart(e.target.value)} style={{ ...inputStyle, width: 150, colorScheme: d ? "dark" : "light" }} />
+                  <span style={{ color: t.mid, fontSize: 12, fontWeight: 700 }}>—</span>
+                  <input type="date" value={rangeEnd} min={rangeStart} max={todayISO()} onChange={(e) => setRangeEnd(e.target.value)} style={{ ...inputStyle, width: 150, colorScheme: d ? "dark" : "light" }} />
+                </div>
+              )}
             </div>
             {isSPM && (
               <div style={{ minWidth: 180 }}>
@@ -1161,12 +1240,33 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
             <button onClick={loadDseAndEntries} title="Refresh" style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <RefreshCw size={14} className={loadingDse ? "spin" : ""} />
             </button>
-            {dirtyCount > 0 && (
+            {!isRangeMode && dirtyCount > 0 && (
               <button onClick={handleSaveAllDirty} style={{ display: "flex", alignItems: "center", gap: 7, height: 38, padding: "0 16px", borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
                 <Save size={14} /> Simpan Semua ({dirtyCount})
               </button>
             )}
           </div>
+
+          {/* ── Banner periode besar, persis di atas tabel — permintaan user:
+              "tanggal ini seperti tidak terlihat, buat dia tepat juga diatas
+              tabel agak besar agar tidak keliru bahwasanya ini penjualan
+              periode yang dipilih". Selalu tampil (bukan cuma pas ringkasan
+              muncul) supaya jelas data di bawahnya itu utk tanggal/periode
+              apa. ── */}
+          {(!isSPM || mcFilter || branchFilter || partnerFilter || regionFilter || isRangeMode) && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderRadius: 10, marginBottom: 14, background: t.tealBg, border: `1px solid ${t.tealBd}` }}>
+              <CalendarCheck2 size={17} color={t.teal} style={{ flexShrink: 0 }} />
+              <div style={{ fontSize: 13.5, fontWeight: 800, color: t.teal }}>
+                {isRangeMode
+                  ? `Menampilkan akumulasi penjualan ${fmtLongDate(rangeStart)} — ${fmtLongDate(rangeEnd)}`
+                  : `Menampilkan penjualan ${fmtLongDate(entryDate)}${entryDate === todayISO() ? " (Hari Ini)" : ""}`}
+                {" "}· Brand {brand}
+              </div>
+              {isRangeMode && (
+                <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, marginLeft: "auto" }}>Mode baca saja — input per hari gunakan mode Tanggal</div>
+              )}
+            </div>
+          )}
 
           {/* ── Ringkasan per MC yang sedang dipilih — akumulasi per Branch &
               per Partner menyusul, utk sekarang baru level MC. Ikut update
@@ -1240,6 +1340,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                   dirty={!!dirty[dse.dse_code]}
                   prevOutstanding={prevAr[`${dse.dse_code}|${brand}`]}
                   onShowHistory={setHistoryFor}
+                  readOnly={isRangeMode}
                   audit={entries[dse.dse_code]?.[brand]?.updated_at || entries[dse.dse_code]?.[brand]?.uploaded_by ? { updated_at: entries[dse.dse_code][brand].updated_at, uploaded_at: entries[dse.dse_code][brand].uploaded_at, by: profilesMap[entries[dse.dse_code][brand].uploaded_by] } : null} />
               ))}
             </div>
@@ -1266,6 +1367,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                         dirty={!!dirty[dse.dse_code]}
                         prevOutstanding={prevAr[`${dse.dse_code}|${brand}`]}
                         onShowHistory={setHistoryFor}
+                        readOnly={isRangeMode}
                         audit={entries[dse.dse_code]?.[brand]?.updated_at || entries[dse.dse_code]?.[brand]?.uploaded_by ? { updated_at: entries[dse.dse_code][brand].updated_at, uploaded_at: entries[dse.dse_code][brand].uploaded_at, by: profilesMap[entries[dse.dse_code][brand].uploaded_by] } : null} />
                     ))}
                   </tbody>

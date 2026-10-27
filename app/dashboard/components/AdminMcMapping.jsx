@@ -75,7 +75,16 @@ function Toast({ msg, type, onClose }) {
   );
 }
 
-export default function AdminMcMapping({ theme }) {
+// UPDATE 7 (permintaan user - "jika ada periode maka untuk semua data
+// mapping & user management harus di set per periode juga"): saat Input
+// Harian sedang menampilkan tanggal/periode di MASA LALU (bukan hari ini),
+// tab ini sekarang ikut menampilkan mapping yang BERLAKU pada tanggal itu
+// (bukan selalu mapping TERKINI) — lewat RPC mf_dse_admin_mc_mapping_as_of,
+// yang baca tabel riwayat (mf_dse_admin_mc_mapping_history, diisi otomatis
+// oleh trigger tiap mapping berubah). Mode historis ini READ-ONLY (tidak
+// ada edit/upload/hapus — data masa lalu tidak boleh diubah), supaya logic
+// "lagi ngedit tanggal berapa" tidak pernah ambigu.
+export default function AdminMcMapping({ theme, asOfDate, asOfLabel }) {
   const d = theme === "dark";
   const t = {
     card: d ? "#1A1A1D" : "#FFFFFF", sub: d ? "#202024" : "#F5F5F7",
@@ -115,9 +124,18 @@ export default function AdminMcMapping({ theme }) {
     }
   }, []);
 
+  const isHistorical = !!asOfDate;
+
   const fetchRows = useCallback(async () => {
     setFetching(true);
     try {
+      if (isHistorical) {
+        const { data, error } = await supabase.rpc("mf_dse_admin_mc_mapping_as_of", { p_as_of: asOfDate });
+        if (error) throw error;
+        const sorted = (data || []).slice().sort((a, b) => (a.mc || "").localeCompare(b.mc || ""));
+        setRows(sorted);
+        return sorted;
+      }
       const { data, error } = await supabase.from("mf_dse_admin_mc_mapping").select("*").order("mc", { ascending: true });
       if (error) throw error;
       setRows(data || []);
@@ -128,12 +146,13 @@ export default function AdminMcMapping({ theme }) {
     } finally {
       setFetching(false);
     }
-  }, []);
+  }, [isHistorical, asOfDate]);
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect, react-hooks/exhaustive-deps
-  useEffect(() => { fetchRows(); fetchRefData(); }, []);
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { fetchRows(); if (!isHistorical) fetchRefData(); }, [fetchRows, fetchRefData, isHistorical]);
 
   const toggleActive = async (row) => {
+    if (isHistorical) return;
     try {
       const { error } = await supabase.from("mf_dse_admin_mc_mapping").update({ active: !row.active }).eq("id", row.id);
       if (error) throw error;
@@ -144,6 +163,7 @@ export default function AdminMcMapping({ theme }) {
   };
 
   const handleDelete = async (row) => {
+    if (isHistorical) return;
     if (!window.confirm(`Hapus mapping MC ${row.mc}?`)) return;
     try {
       const { error } = await supabase.from("mf_dse_admin_mc_mapping").delete().eq("id", row.id);
@@ -164,6 +184,7 @@ export default function AdminMcMapping({ theme }) {
   const [savingKey, setSavingKey] = useState(null);
   const EDITABLE_FIELDS = ["circle", "region", "branch", "full_name", "email_1", "email_2"];
   const handleCellBlur = async (mc, field, value) => {
+    if (isHistorical) return;
     const key = mc.toLowerCase();
     const existing = rows.find((r) => r.mc?.toLowerCase() === key);
     const trimmed = value.trim();
@@ -252,14 +273,24 @@ export default function AdminMcMapping({ theme }) {
             <button onClick={handleDownload} style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
               <Download size={14} /> Download Data
             </button>
-            <button onClick={() => setShowWizard(true)} style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-              <Upload size={14} /> Upload Mapping
-            </button>
+            {!isHistorical && (
+              <button onClick={() => setShowWizard(true)} style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+                <Upload size={14} /> Upload Mapping
+              </button>
+            )}
           </div>
         </div>
+        {isHistorical && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderTop: `1px solid ${t.line}`, background: t.amberBg }}>
+            <AlertTriangle size={15} color={t.amber} style={{ flexShrink: 0 }} />
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: t.amber }}>
+              Menampilkan mapping yang berlaku pada {asOfLabel || new Date(asOfDate).toLocaleDateString("id-ID")} (riwayat) — mode baca saja, tidak bisa diedit/diupload. Kembali ke Tanggal &ldquo;Hari Ini&rdquo; di tab Input Harian utk mengedit mapping terkini.
+            </div>
+          </div>
+        )}
       </div>
 
-      {showWizard && (
+      {showWizard && !isHistorical && (
         <div style={{ position: "fixed", inset: 0, zIndex: 9000, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "32px 16px", overflowY: "auto" }}
           onClick={(e) => { if (e.target === e.currentTarget) { setShowWizard(false); fetchRows(); } }}>
           <div style={{ width: "100%", maxWidth: 1040, background: d ? "#0E0E10" : "#F5F5F7", borderRadius: 18, boxShadow: "0 24px 60px rgba(0,0,0,0.45)", position: "relative", padding: 18 }}>
@@ -308,15 +339,15 @@ export default function AdminMcMapping({ theme }) {
                   <tr key={r.mc} style={{ borderBottom: `1px solid ${t.line}`, opacity: isVirtual ? 0.85 : 1 }}>
                     <td style={{ padding: "6px 10px", minWidth: 110 }}>
                       <input key={`${r.mc}-ci-${r.circle || ""}`} defaultValue={r.circle || ""} placeholder="-"
-                        onBlur={(e) => handleCellBlur(r.mc, "circle", e.target.value)} style={cellInputStyle} />
+                        onBlur={(e) => handleCellBlur(r.mc, "circle", e.target.value)} disabled={isHistorical} style={cellInputStyle} />
                     </td>
                     <td style={{ padding: "6px 10px", minWidth: 130 }}>
                       <input key={`${r.mc}-re-${r.region || ""}`} defaultValue={r.region || ""} placeholder="-"
-                        onBlur={(e) => handleCellBlur(r.mc, "region", e.target.value)} style={cellInputStyle} />
+                        onBlur={(e) => handleCellBlur(r.mc, "region", e.target.value)} disabled={isHistorical} style={cellInputStyle} />
                     </td>
                     <td style={{ padding: "6px 10px", minWidth: 130 }}>
                       <input key={`${r.mc}-br-${r.branch || ""}`} defaultValue={r.branch || ""} placeholder="-"
-                        onBlur={(e) => handleCellBlur(r.mc, "branch", e.target.value)} style={cellInputStyle} />
+                        onBlur={(e) => handleCellBlur(r.mc, "branch", e.target.value)} disabled={isHistorical} style={cellInputStyle} />
                     </td>
                     <td style={{ padding: "8px 12px", whiteSpace: "nowrap", fontWeight: 700 }}>
                       {r.mc}
@@ -324,21 +355,24 @@ export default function AdminMcMapping({ theme }) {
                     </td>
                     <td style={{ padding: "6px 10px", minWidth: 150 }}>
                       <input key={`${r.mc}-fn-${r.full_name || ""}`} defaultValue={r.full_name || ""} placeholder="—"
-                        onBlur={(e) => handleCellBlur(r.mc, "full_name", e.target.value)} style={cellInputStyle} />
+                        onBlur={(e) => handleCellBlur(r.mc, "full_name", e.target.value)} disabled={isHistorical} style={cellInputStyle} />
                     </td>
                     <td style={{ padding: "6px 10px", minWidth: 190 }}>
                       <input key={`${r.mc}-e1-${r.email_1 || ""}`} defaultValue={r.email_1 || ""} placeholder="Belum diisi"
-                        onBlur={(e) => handleCellBlur(r.mc, "email_1", e.target.value)} style={cellInputStyle} />
+                        onBlur={(e) => handleCellBlur(r.mc, "email_1", e.target.value)} disabled={isHistorical} style={cellInputStyle} />
                     </td>
                     <td style={{ padding: "6px 10px", minWidth: 190 }}>
                       <input key={`${r.mc}-e2-${r.email_2 || ""}`} defaultValue={r.email_2 || ""} placeholder="Belum diisi"
-                        onBlur={(e) => handleCellBlur(r.mc, "email_2", e.target.value)} style={cellInputStyle} />
+                        onBlur={(e) => handleCellBlur(r.mc, "email_2", e.target.value)} disabled={isHistorical} style={cellInputStyle} />
                     </td>
                     <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>
                       {savingKey === key ? (
                         <Loader2 size={14} className="spin" color={t.mid} />
-                      ) : isVirtual ? (
-                        <span style={{ fontSize: 11.5, color: t.lo }}>—</span>
+                      ) : isVirtual || isHistorical ? (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 700, color: r.active ? t.teal : t.lo }}>
+                          {r.active ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
+                          {isVirtual ? "—" : r.active ? "Aktif" : "Nonaktif"}
+                        </span>
                       ) : (
                         <button onClick={() => toggleActive(r)} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: r.active ? t.teal : t.lo, fontSize: 12, fontWeight: 700 }}>
                           {r.active ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
@@ -347,7 +381,7 @@ export default function AdminMcMapping({ theme }) {
                       )}
                     </td>
                     <td style={{ padding: "8px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
-                      {!isVirtual && (
+                      {!isVirtual && !isHistorical && (
                         <button onClick={() => handleDelete(r)} title="Hapus" style={{ background: "none", border: "none", color: t.red, cursor: "pointer", display: "inline-flex" }}><Trash2 size={14} /></button>
                       )}
                     </td>
