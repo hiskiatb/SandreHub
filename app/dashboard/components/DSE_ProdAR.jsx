@@ -1404,7 +1404,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
           (lihat page.jsx). */}
       <div style={{ display: "inline-flex", gap: 2, padding: 3, borderRadius: 11, background: t.sub, marginBottom: 20 }}>
         {[
-          { k: "input", label: "Input Harian", icon: ListChecks },
+          { k: "input", label: "Penjualan DSE", icon: ListChecks }, // UPDATE (permintaan user - "ubah menu Input Harian menjadi Penjualan DSE"): label tab, key "input" tetap sama (ga perlu ubah logic lain)
           { k: "riwayat", label: "Riwayat & Laporan", icon: History },
           ...(isSPM ? [{ k: "user-mgmt", label: "Mapping & User Management", icon: UserRoundCog }] : []),
           ...(isSPM ? [{ k: "dse-database", label: "Database DSE", icon: Database }] : []),
