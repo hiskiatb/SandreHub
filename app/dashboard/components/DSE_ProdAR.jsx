@@ -34,7 +34,7 @@ import AdminMcMapping from "./AdminMcMapping";
 import SDP_DseDatabase from "./SDP_DseDatabase";
 import {
   Upload, FileSpreadsheet, X, Check, AlertTriangle, Loader2, FileDown,
-  Search, RefreshCw, ChevronDown, ChevronUp, Wallet, TrendingUp, Calendar, Info,
+  Search, RefreshCw, ChevronDown, ChevronUp, ChevronRight, Wallet, TrendingUp, Calendar, Info,
   Pencil, Save, ListChecks, History, UserRoundCog, Database,
   Users, UserCheck, UserX, Ticket, CircleDollarSign, Clock, CalendarCheck2,
 } from "lucide-react";
@@ -261,12 +261,12 @@ function DseHistoryModal({ t, dseCode, onClose }) {
 
 function StatTile({ t, icon, label, value, sub }) {
   return (
-    <div style={{ flex: "1 1 160px", minWidth: 150, borderRadius: 12, border: `1px solid ${t.line}`, background: t.card, padding: "14px 16px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 7, color: t.mid, fontSize: 11.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 8 }}>
+    <div style={{ flex: "1 1 160px", minWidth: 150, borderRadius: 12, border: `1px solid ${t.line}`, background: t.sub, padding: "13px 15px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, color: t.mid, fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 7 }}>
         {icon}{label}
       </div>
-      <div style={{ fontSize: 19, fontWeight: 800, color: t.hi, lineHeight: 1.2 }}>{value}</div>
-      {sub && <div style={{ fontSize: 11.5, color: t.lo, marginTop: 2 }}>{sub}</div>}
+      <div style={{ fontSize: 18, fontWeight: 700, color: t.hi, lineHeight: 1.2, letterSpacing: -0.2, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      {sub && <div style={{ fontSize: 11.5, color: t.lo, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{sub}</div>}
     </div>
   );
 }
@@ -1091,11 +1091,15 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
       {toast && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
       {historyFor && <DseHistoryModal t={t} dseCode={historyFor} onClose={() => setHistoryFor(null)} />}
 
-      <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: 16, marginBottom: 16 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-          <Wallet size={20} color={t.teal} style={{ flexShrink: 0 }} />
-          <div style={{ fontSize: 19, fontWeight: 800 }}>DSE Prod. & AR</div>
+      {/* ── Header + Tabs ── satu blok tenang: judul besar tanpa kotak kartu
+          berat, badge ikon lembut, tab jadi segmented pill tipis (bukan
+          underline tebal) — permintaan user: "sebagus mungkin, serapi
+          mungkin, UI/UX sekelas Apple designer". ── */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+        <div style={{ width: 40, height: 40, borderRadius: 11, background: t.tealBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <Wallet size={19} color={t.teal} />
         </div>
+        <div style={{ fontSize: 21, fontWeight: 700, letterSpacing: -0.3 }}>DSE Prod. &amp; AR</div>
       </div>
 
       {/* ── Tabs ──
@@ -1107,7 +1111,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
           kelola email Admin MC (AdminMcMapping.jsx) skrg dirender di dalam
           halaman DSE Prod. & AR ini, bukan menu/DashCard terpisah lagi
           (lihat page.jsx). */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 16, borderBottom: `1px solid ${t.line}` }}>
+      <div style={{ display: "inline-flex", gap: 2, padding: 3, borderRadius: 11, background: t.sub, marginBottom: 20 }}>
         {[
           { k: "input", label: "Input Harian", icon: ListChecks },
           { k: "riwayat", label: "Riwayat & Laporan", icon: History },
@@ -1115,8 +1119,8 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
           ...(isSPM ? [{ k: "dse-database", label: "Database DSE", icon: Database }] : []),
         ].map(({ k, label, icon: Icon }) => (
           <button key={k} onClick={() => setTab(k)}
-            style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 14px", background: "none", border: "none", outline: "none", borderBottom: tab === k ? `2px solid ${t.teal}` : "2px solid transparent", color: tab === k ? t.teal : t.mid, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent" }}>
-            <Icon size={14} /> {label}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, border: "none", outline: "none", background: tab === k ? t.card : "transparent", color: tab === k ? t.hi : t.mid, fontSize: 12.5, fontWeight: tab === k ? 700 : 600, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent", boxShadow: tab === k ? t.shadowSm : "none", transition: "background 0.15s, box-shadow 0.15s", whiteSpace: "nowrap" }}>
+            <Icon size={13.5} color={tab === k ? t.teal : t.lo} /> {label}
           </button>
         ))}
       </div>
@@ -1129,9 +1133,10 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
           asOfLabel={isRangeMode ? `akhir periode ${fmtLongDate(rangeEnd)}` : fmtLongDate(entryDate)} />
       ) : tab === "input" ? (
         <>
-          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 }}>
+          <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: 16, marginBottom: 16 }}>
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end" }}>
             <div>
-              <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Brand</div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Brand</div>
               <div style={{ display: "flex", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, padding: 3, height: 38, boxSizing: "border-box" }}>
                 {BRANDS.map((b) => {
                   const active = brand === b;
@@ -1150,7 +1155,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
             </div>
             <div style={{ minWidth: periodMode === "range" ? 330 : 230 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase" }}>{periodMode === "range" ? "Periode" : "Tanggal"}</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>{periodMode === "range" ? "Periode" : "Tanggal"}</div>
                 <div style={{ display: "flex", gap: 2, background: t.inputBg, border: `1px solid ${t.inputBd}`, borderRadius: 6, padding: 2 }}>
                   <button onClick={() => setPeriodMode("single")} style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 4, border: "none", cursor: "pointer", background: periodMode === "single" ? t.teal : "transparent", color: periodMode === "single" ? "#fff" : t.mid }}>Tanggal</button>
                   <button onClick={() => { setPeriodMode("range"); setRangeStart(entryDate); setRangeEnd(entryDate); }} style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 4, border: "none", cursor: "pointer", background: periodMode === "range" ? t.teal : "transparent", color: periodMode === "range" ? "#fff" : t.mid }}>Periode</button>
@@ -1184,7 +1189,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
             </div>
             {isSPM && (
               <div style={{ minWidth: 180 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Partner</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Partner</div>
                 <div style={{ position: "relative" }}>
                   <select value={partnerFilter} onChange={(e) => { setPartnerFilter(e.target.value); setRegionFilter(""); setBranchFilter(""); setMcFilter(""); }} style={{ ...inputStyle, width: 180, appearance: "none", cursor: "pointer" }}>
                     <option value="">— semua Partner —</option>
@@ -1196,7 +1201,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
             )}
             {isSPM && (
               <div style={{ minWidth: 170 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Region</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Region</div>
                 <div style={{ position: "relative" }}>
                   <select value={regionFilter} onChange={(e) => { setRegionFilter(e.target.value); setBranchFilter(""); setMcFilter(""); }} style={{ ...inputStyle, width: 170, appearance: "none", cursor: "pointer" }}>
                     <option value="">ALL Sumatera</option>
@@ -1208,7 +1213,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
             )}
             {isSPM && (
               <div style={{ minWidth: 190 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Branch</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Branch</div>
                 <div style={{ position: "relative" }}>
                   <select value={branchFilter} onChange={(e) => { setBranchFilter(e.target.value); setMcFilter(""); }} style={{ ...inputStyle, width: 190, appearance: "none", cursor: "pointer" }}>
                     <option value="">— semua Branch —</option>
@@ -1220,7 +1225,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
             )}
             {isSPM && (
               <div style={{ minWidth: 200 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>MC</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>MC</div>
                 <div style={{ position: "relative" }}>
                   <select value={mcFilter} onChange={(e) => setMcFilter(e.target.value)} style={{ ...inputStyle, width: 220, appearance: "none", cursor: "pointer" }}>
                     <option value="">— semua MC —</option>
@@ -1231,7 +1236,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
               </div>
             )}
             <div style={{ position: "relative", flex: 1, minWidth: 180 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Cari DSE</div>
+              <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Cari DSE</div>
               <div style={{ position: "relative" }}>
                 <Search size={14} style={{ position: "absolute", left: 12, top: 12, color: t.lo }} />
                 <input value={dseSearch} onChange={(e) => setDseSearch(e.target.value)} placeholder="Kode DSE / Nama…" style={{ ...inputStyle, paddingLeft: 34 }} />
@@ -1246,6 +1251,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
               </button>
             )}
           </div>
+          </div>
 
           {/* ── Banner periode besar, persis di atas tabel — permintaan user:
               "tanggal ini seperti tidak terlihat, buat dia tepat juga diatas
@@ -1254,16 +1260,16 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
               muncul) supaya jelas data di bawahnya itu utk tanggal/periode
               apa. ── */}
           {(!isSPM || mcFilter || branchFilter || partnerFilter || regionFilter || isRangeMode) && (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderRadius: 10, marginBottom: 14, background: t.tealBg, border: `1px solid ${t.tealBd}` }}>
-              <CalendarCheck2 size={17} color={t.teal} style={{ flexShrink: 0 }} />
-              <div style={{ fontSize: 13.5, fontWeight: 800, color: t.teal }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "11px 14px", borderRadius: 10, marginBottom: 14, background: t.tealBg }}>
+              <CalendarCheck2 size={15} color={t.teal} style={{ flexShrink: 0 }} />
+              <div style={{ fontSize: 13, fontWeight: 600, color: t.teal, letterSpacing: -0.1 }}>
                 {isRangeMode
-                  ? `Menampilkan akumulasi penjualan ${fmtLongDate(rangeStart)} — ${fmtLongDate(rangeEnd)}`
-                  : `Menampilkan penjualan ${fmtLongDate(entryDate)}${entryDate === todayISO() ? " (Hari Ini)" : ""}`}
-                {" "}· Brand {brand}
+                  ? `Akumulasi penjualan ${fmtLongDate(rangeStart)} — ${fmtLongDate(rangeEnd)}`
+                  : `Penjualan ${fmtLongDate(entryDate)}${entryDate === todayISO() ? " · Hari ini" : ""}`}
+                <span style={{ opacity: 0.65 }}> · Brand {brand}</span>
               </div>
               {isRangeMode && (
-                <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, marginLeft: "auto" }}>Mode baca saja — input per hari gunakan mode Tanggal</div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, marginLeft: "auto" }}>Mode baca saja — gunakan Tanggal untuk input</div>
               )}
             </div>
           )}
@@ -1273,10 +1279,10 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
               real-time pas admin ngetik (belum tentu sudah ter-Simpan). ── */}
           {(!isSPM || mcFilter || branchFilter || partnerFilter || regionFilter) && !loadingDse && dseList.length > 0 && (
             <div style={{ marginBottom: 16 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 10 }}>
                 Ringkasan {mcFilter ? `MC ${mcFilter}` : partnerFilter ? `Partner ${partnerFilter}` : branchFilter ? `Branch ${branchFilter}` : regionFilter ? `Region ${regionFilter}` : ""} · {brand} · {entryDate}
               </div>
-              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <StatTile t={t} icon={<Users size={13} />} label="Total Alokasi DSE" value={fmtID(mcSummary.totalAlokasi)} />
                 <StatTile t={t} icon={<UserCheck size={13} color={t.teal} />} label="Total DSE Active" value={fmtID(mcSummary.totalActive)} />
                 <StatTile t={t} icon={<UserX size={13} color={t.red} />} label="Total DSE Vacant" value={fmtID(mcSummary.totalVacant)} sub={mcSummary.totalInterview ? `${fmtID(mcSummary.totalInterview)} Interview` : undefined} />
@@ -1296,28 +1302,34 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
               <div style={{ padding: 28, textAlign: "center", color: t.mid, borderRadius: 12, border: `1px dashed ${t.line}` }}>Belum ada data Region. Tambahkan dulu di menu Database DSE.</div>
             ) : (
               <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 10 }}>
                   Ringkasan per Region — ALL Sumatera · {brand} · {entryDate}
                 </div>
-                <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, overflow: "hidden" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1.1fr 1.1fr 1fr 1.1fr", gap: 0, padding: "10px 16px", background: t.inputBg, fontSize: 10.5, fontWeight: 800, color: t.mid, textTransform: "uppercase" }}>
+                <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 0.9fr 1fr 1fr 1fr 1fr", gap: 0, padding: "11px 18px", background: t.sub, fontSize: 10.5, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>
                     <div>Region</div>
-                    <div>DSE Active</div>
-                    <div>Qty SP</div>
-                    <div>Nilai SP</div>
-                    <div>Nilai Voucher</div>
-                    <div>Saldo MOBO</div>
-                    <div>Tunggakan</div>
+                    <div style={{ textAlign: "right" }}>DSE Active</div>
+                    <div style={{ textAlign: "right" }}>Qty SP</div>
+                    <div style={{ textAlign: "right" }}>Nilai SP</div>
+                    <div style={{ textAlign: "right" }}>Nilai Voucher</div>
+                    <div style={{ textAlign: "right" }}>Saldo MOBO</div>
+                    <div style={{ textAlign: "right" }}>Tunggakan</div>
                   </div>
-                  {regionSummary.map((r) => (
-                    <div key={r.region} onClick={() => setRegionFilter(r.region)} title={`Lihat detail Region ${r.region}`} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1.1fr 1.1fr 1fr 1.1fr", gap: 0, padding: "12px 16px", borderTop: `1px solid ${t.line}`, cursor: "pointer", fontSize: 12.5 }}>
-                      <div style={{ fontWeight: 700, color: t.hi }}>{r.region}</div>
-                      <div>{fmtID(r.totalActive)} / {fmtID(r.totalAlokasi)}</div>
-                      <div>{fmtID(r.qtySp)} pcs</div>
-                      <div style={{ fontWeight: 700 }}>Rp {fmtID(r.nilaiSp)}</div>
-                      <div style={{ fontWeight: 700 }}>Rp {fmtID(r.nilaiVoucher)}</div>
-                      <div style={{ fontWeight: 700 }}>Rp {fmtID(r.nilaiSaldo)}</div>
-                      <div style={{ fontWeight: 700, color: r.tunggakan > 0 ? t.amber : t.mid }}>Rp {fmtID(r.tunggakan)}</div>
+                  {regionSummary.map((r, i) => (
+                    <div key={r.region} onClick={() => setRegionFilter(r.region)} title={`Lihat detail Region ${r.region}`}
+                      style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 0.9fr 1fr 1fr 1fr 1fr", gap: 0, padding: "14px 18px", borderTop: i === 0 ? "none" : `1px solid ${t.line}`, cursor: "pointer", fontSize: 13, fontVariantNumeric: "tabular-nums", transition: "background 0.12s" }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
+                      <div style={{ fontWeight: 700, color: t.hi, display: "flex", alignItems: "center", gap: 7 }}>
+                        {r.region}
+                        <ChevronRight size={13} color={t.lo} style={{ flexShrink: 0 }} />
+                      </div>
+                      <div style={{ textAlign: "right", color: t.mid }}>{fmtID(r.totalActive)} / {fmtID(r.totalAlokasi)}</div>
+                      <div style={{ textAlign: "right", color: t.mid }}>{fmtID(r.qtySp)} pcs</div>
+                      <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiSp)}</div>
+                      <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiVoucher)}</div>
+                      <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiSaldo)}</div>
+                      <div style={{ textAlign: "right", fontWeight: 700, color: r.tunggakan > 0 ? t.amber : t.mid }}>Rp {fmtID(r.tunggakan)}</div>
                     </div>
                   ))}
                 </div>
