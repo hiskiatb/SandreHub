@@ -17,105 +17,24 @@
  * Hanya untuk role spm_sumatera (digate di DSE_ProdAR.jsx & page.jsx).
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import supabase from "../../../lib/supabase";
 import * as XLSX from "xlsx";
 import {
   Upload, X, Check, AlertTriangle, Loader2, FileDown,
   Search, RefreshCw, Trash2, ChevronDown, Database,
-  FileSpreadsheet, Info,
 } from "lucide-react";
+import PNL_ImportWizard from "./PNL_ImportWizard";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif`;
 const REGIONS = ["NORTH SUMATERA", "CENTRAL SUMATERA", "SOUTH SUMATERA"];
 const PAGE_SIZE = 50;
 
-// ── Kolom di file Excel (download/upload) — header baris 1, longgar (boleh
-// beda urutan/huruf besar-kecil). ID DSE wajib (kunci pencocokan utk update);
-// Region/Branch/HOA wajib khusus utk baris BARU (DSE yang belum ada).
-const COLMAP = {
-  region: ["region"],
-  branch: ["branch"],
-  hoa_name: ["hoa", "nama hoa", "hoa name"],
-  ds_name: ["nama ds", "ds name"],
-  ds_phone: ["nomor ds", "no hp ds", "no. hp ds", "ds phone"],
-  mc: ["mc"],
-  dse_code: ["id dse", "dse code", "kode dse"],
-  dse_phone: ["nomor dse", "no hp dse", "no. hp dse", "dse phone"],
-  jumlah_desa: ["jumlah desa", "desa"],
-  jumlah_outlet: ["jumlah outlet", "outlet"],
-  pt_name: ["partner name", "pt name", "partner", "nama partner"],
-  dse_category: ["dse category", "kategori dse"],
-  circle: ["circle"],
-  mpc_short_code: ["mpc short code", "mpc short"],
-  mpc_name: ["mpc name"],
-};
-
-function normHeader(h) { return String(h || "").trim().toLowerCase(); }
-function findCol(headers, aliases) { return headers.findIndex((h) => aliases.includes(normHeader(h))); }
-function cellStr(v) { const s = String(v ?? "").trim(); return s || null; }
-function cellInt(v) { const n = parseInt(String(v ?? "").trim(), 10); return Number.isFinite(n) ? n : null; }
-
-function parseDseWorkbook(file) {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const wb = XLSX.read(e.target.result, { type: "array", cellDates: false });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-        if (!aoa.length) { resolve({ error: "File kosong." }); return; }
-        const headers = aoa[0];
-        const col = {};
-        for (const key of Object.keys(COLMAP)) col[key] = findCol(headers, COLMAP[key]);
-        if (col.dse_code < 0) {
-          resolve({ error: `Kolom wajib tidak ditemukan. Pastikan ada kolom "ID DSE" di baris pertama.` });
-          return;
-        }
-        const rows = [];
-        const errors = [];
-        const seenInFile = new Set();
-        for (let i = 1; i < aoa.length; i++) {
-          const line = aoa[i];
-          if (!line || line.every((c) => c === "" || c == null)) continue;
-          const dse_code = cellStr(line[col.dse_code]);
-          if (!dse_code) { errors.push(`Baris ${i + 1}: ID DSE kosong.`); continue; }
-          const key = dse_code.toUpperCase();
-          if (seenInFile.has(key)) { errors.push(`Baris ${i + 1}: ID DSE ${dse_code} dobel di file ini (baris sebelumnya dipakai).`); continue; }
-          seenInFile.add(key);
-          rows.push({
-            dse_code,
-            region: col.region >= 0 ? cellStr(line[col.region]) : null,
-            branch: col.branch >= 0 ? cellStr(line[col.branch]) : null,
-            hoa_name: col.hoa_name >= 0 ? cellStr(line[col.hoa_name]) : null,
-            ds_name: col.ds_name >= 0 ? cellStr(line[col.ds_name]) : null,
-            ds_phone: col.ds_phone >= 0 ? cellStr(line[col.ds_phone]) : null,
-            mc: col.mc >= 0 ? cellStr(line[col.mc]) : null,
-            dse_phone: col.dse_phone >= 0 ? cellStr(line[col.dse_phone]) : null,
-            jumlah_desa: col.jumlah_desa >= 0 ? cellInt(line[col.jumlah_desa]) : null,
-            jumlah_outlet: col.jumlah_outlet >= 0 ? cellInt(line[col.jumlah_outlet]) : null,
-            pt_name: col.pt_name >= 0 ? cellStr(line[col.pt_name]) : null,
-            dse_category: col.dse_category >= 0 ? cellStr(line[col.dse_category]) : null,
-            circle: col.circle >= 0 ? cellStr(line[col.circle]) : null,
-            mpc_short_code: col.mpc_short_code >= 0 ? cellStr(line[col.mpc_short_code]) : null,
-            mpc_name: col.mpc_name >= 0 ? cellStr(line[col.mpc_name]) : null,
-          });
-        }
-        resolve({ rows, errors, totalRows: rows.length });
-      } catch (err) {
-        resolve({ error: err.message || "Gagal membaca file." });
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  });
-}
-
 function buildRemarks(r) {
   const missing = [];
-  if (!r.ds_name) missing.push("Nama DS");
-  if (!r.ds_phone) missing.push("Nomor DS");
-  if (!r.mc) missing.push("MC");
-  if (!r.dse_phone) missing.push("Nomor DSE");
+  if (!r.region) missing.push("Region");
+  if (!r.branch) missing.push("Branch");
+  if (!r.mc) missing.push("Micro Cluster");
   if (missing.length) return `${missing.join(", ")} kosong`;
   if (r.flag_duplicate_code) return "ID DSE duplikat";
   return "Lengkap";
@@ -231,7 +150,7 @@ export default function SDP_DseDatabase({ theme, profile }) {
       if (!showRevoked) q = q.eq("is_revoked", false);
       if (srch) {
         const s = srch.replace(/[%_]/g, "");
-        q = q.or(`hoa_name.ilike.%${s}%,ds_name.ilike.%${s}%,dse_code.ilike.%${s}%,branch.ilike.%${s}%,mc.ilike.%${s}%`);
+        q = q.or(`dse_code.ilike.%${s}%,branch.ilike.%${s}%,mc.ilike.%${s}%,pt_name.ilike.%${s}%,dse_category.ilike.%${s}%`);
       }
       const from = (pg - 1) * PAGE_SIZE;
       const { data, count, error } = await q.range(from, from + PAGE_SIZE - 1);
@@ -241,11 +160,11 @@ export default function SDP_DseDatabase({ theme, profile }) {
       setPage(pg);
 
       let iq = supabase.from("mf_dse_database").select("id", { count: "exact", head: true })
-        .or("ds_name.is.null,ds_phone.is.null,mc.is.null,dse_phone.is.null,flag_duplicate_code.eq.true");
+        .or("region.is.null,branch.is.null,mc.is.null,flag_duplicate_code.eq.true");
       if (reg) iq = iq.eq("region", reg);
       if (srch) {
         const s = srch.replace(/[%_]/g, "");
-        iq = iq.or(`hoa_name.ilike.%${s}%,ds_name.ilike.%${s}%,dse_code.ilike.%${s}%,branch.ilike.%${s}%,mc.ilike.%${s}%`);
+        iq = iq.or(`dse_code.ilike.%${s}%,branch.ilike.%${s}%,mc.ilike.%${s}%,pt_name.ilike.%${s}%,dse_category.ilike.%${s}%`);
       }
       const { count: incCount } = await iq;
       setIncompleteTotal(incCount || 0);
@@ -269,17 +188,15 @@ export default function SDP_DseDatabase({ theme, profile }) {
     setExportLoading(true);
     try {
       let q = supabase.from("mf_dse_database").select("*")
-        .order("branch", { ascending: true }).order("hoa_name", { ascending: true })
-        .order("ds_name", { ascending: true }).order("dse_code", { ascending: true });
+        .order("branch", { ascending: true }).order("dse_code", { ascending: true });
       if (filterRegion) q = q.eq("region", filterRegion);
       if (!showRevoked) q = q.eq("is_revoked", false);
       const { data, error } = await q.limit(50000);
       if (error) throw error;
-      const head = ["Region", "Branch", "HOA", "Nama DS", "Nomor DS", "MC", "ID DSE", "Nomor DSE", "Jumlah Desa", "Jumlah Outlet", "Partner Name", "DSE Category", "Circle", "MPC Short Code", "MPC Name"];
+      const head = ["DSE Category", "DSE Code IM3", "DSE Code 3ID", "MDI", "PT", "Micro Cluster", "Branch", "Region", "Circle"];
       const body = (data || []).map((r) => [
-        r.region || "", r.branch || "", r.hoa_name || "", r.ds_name || "", r.ds_phone || "", r.mc || "",
-        r.dse_code || "", r.dse_phone || "", r.jumlah_desa ?? "", r.jumlah_outlet ?? "",
-        r.pt_name || "", r.dse_category || "", r.circle || "", r.mpc_short_code || "", r.mpc_name || "",
+        r.dse_category || "", r.dse_code || "", r.dse_code_3id || "", r.mdi || "",
+        r.pt_name || "", r.mc || "", r.branch || "", r.region || "", r.circle || "",
       ]);
       const fname = `Database_DSE_${filterRegion ? filterRegion.replace(/\s+/g, "_") : "Semua_Region"}_${new Date().toISOString().slice(0, 10)}.xlsx`;
       downloadXlsx(head, body, "Database DSE", fname);
@@ -291,83 +208,14 @@ export default function SDP_DseDatabase({ theme, profile }) {
     }
   };
 
-  // ── Upload Data (import massal, upsert per ID DSE) ─────────────────────────
-  const [showUpload, setShowUpload] = useState(false);
-  const [staged, setStaged] = useState(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadResult, setUploadResult] = useState(null);
-  const fileRef = useRef(null);
-
-  const onPickFile = async (fileList) => {
-    const f = (fileList || [])[0];
-    if (!f) return;
-    const p = await parseDseWorkbook(f);
-    setStaged(p ? { fileName: f.name, ...p } : null);
-    setUploadResult(null);
-    if (fileRef.current) fileRef.current.value = "";
-  };
-
-  const handleUpload = async () => {
-    if (!staged || staged.error || !staged.rows?.length) return;
-    setUploading(true);
-    try {
-      // Cocokkan semua baris file lewat ID DSE — map { kode -> id } dari
-      // SELURUH data (bukan cuma 1 halaman tabel yang lagi tampil).
-      const { data: existing, error: selErr } = await supabase.from("mf_dse_database").select("id, dse_code").limit(100000);
-      if (selErr) throw selErr;
-      const existingByCode = new Map();
-      for (const r of existing || []) {
-        const key = String(r.dse_code || "").trim().toUpperCase();
-        if (key && !existingByCode.has(key)) existingByCode.set(key, r.id);
-      }
-
-      const toInsert = [];
-      const toUpdate = [];
-      const missingForInsert = [];
-      for (const r of staged.rows) {
-        const key = r.dse_code.toUpperCase();
-        const payload = {
-          region: r.region, branch: r.branch, hoa_name: r.hoa_name,
-          ds_name: r.ds_name, ds_phone: r.ds_phone, mc: r.mc,
-          dse_code: r.dse_code, dse_phone: r.dse_phone,
-          jumlah_desa: r.jumlah_desa ?? 0, jumlah_outlet: r.jumlah_outlet ?? 0,
-          pt_name: r.pt_name, dse_category: r.dse_category, circle: r.circle,
-          mpc_short_code: r.mpc_short_code, mpc_name: r.mpc_name,
-        };
-        const existingId = existingByCode.get(key);
-        if (existingId) {
-          toUpdate.push({ id: existingId, payload });
-        } else if (!r.region || !r.branch || !r.hoa_name) {
-          missingForInsert.push(`ID DSE ${r.dse_code}: Region/Branch/HOA wajib diisi utk ID DSE baru.`);
-        } else {
-          toInsert.push({
-            ...payload,
-            source_file: staged.fileName,
-            uploaded_by: profile?.email || null,
-            uploaded_at: new Date().toISOString(),
-          });
-        }
-      }
-
-      if (toInsert.length) {
-        const { error } = await supabase.from("mf_dse_database").insert(toInsert);
-        if (error) throw error;
-      }
-      for (const u of toUpdate) {
-        const { error } = await supabase.from("mf_dse_database").update(u.payload).eq("id", u.id); // eslint-disable-line no-await-in-loop
-        if (error) throw error;
-      }
-
-      setUploadResult({ ok: true, inserted: toInsert.length, updated: toUpdate.length, skipped: missingForInsert });
-      showToast(`Upload selesai — ${toInsert.length} baru, ${toUpdate.length} diperbarui${missingForInsert.length ? `, ${missingForInsert.length} dilewati` : ""}.`, missingForInsert.length ? "warn" : "ok");
-      setStaged(null);
-      fetchRows(1, search, filterRegion);
-    } catch (e) {
-      showToast(e.message || "Gagal upload.", "error");
-    } finally {
-      setUploading(false);
-    }
-  };
+  // ── Upload Data — sekarang lewat PNL_ImportWizard (pilih file -> preview
+  // data & pilih sheet -> set baris header -> cocokkan kolom lewat dropdown
+  // -> upsert langsung ke mf_dse_database per DSE Code IM3), bukan parse
+  // manual lagi. Lihat <PNL_ImportWizard formTypeProp="dse_database" lockTarget>
+  // di bawah; target "Database DSE" sudah didefinisikan di FORM_DEFS wizard
+  // dengan 9 kolom: DSE Category, DSE Code IM3, DSE Code 3ID, MDI, PT, Micro
+  // Cluster, Branch, Region, Circle.
+  const [showWizard, setShowWizard] = useState(false);
 
   // ── Hapus semua baris (scope = filterRegion aktif) ──────────────────────────
   const deleteScopeLabel = filterRegion ? `Region ${filterRegion}` : "SEMUA REGION";
@@ -413,91 +261,36 @@ export default function SDP_DseDatabase({ theme, profile }) {
           loading={deleteAllLoading} onConfirm={handleDeleteAll} onCancel={() => setShowDeleteAll(false)} />
       )}
 
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-        <Database size={20} color={t.teal} />
-        <div style={{ fontSize: 19, fontWeight: 800 }}>Database DSE</div>
-      </div>
-      <div style={{ fontSize: 13, color: t.mid, marginBottom: 20 }}>
-        Kelola data DSE (sales person) lewat Excel: <b style={{ color: t.hi }}>Download Data</b> dulu (dipakai juga sbg
-        template), edit/tambah baris, lalu <b style={{ color: t.hi }}>Upload Data</b> lagi. Upload otomatis UPSERT per{" "}
-        <b style={{ color: t.hi }}>ID DSE</b>: yang sudah ada diperbarui, yang belum ada ditambahkan (wajib isi Region/
-        Branch/HOA utk ID DSE baru).
-      </div>
-
       <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden", marginBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 16, flexWrap: "wrap" }}>
-          <button onClick={handleDownload} disabled={exportLoading}
-            style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: exportLoading ? 0.6 : 1 }}>
-            {exportLoading ? <Loader2 size={14} className="spin" /> : <FileDown size={14} />} Download Data
-          </button>
-          <button onClick={() => setShowUpload((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-            <Upload size={14} /> Upload Data
-            {showUpload ? <ChevronDown size={14} style={{ transform: "rotate(180deg)" }} /> : <ChevronDown size={14} />}
-          </button>
-        </div>
-
-        {showUpload && (
-          <div style={{ padding: "0 16px 16px", borderTop: `1px solid ${t.line}` }}>
-            <div style={{ fontSize: 12, color: t.mid, margin: "14px 0 12px", display: "flex", alignItems: "flex-start", gap: 6 }}>
-              <Info size={13} style={{ flexShrink: 0, marginTop: 1 }} />
-              <span style={{ flex: 1, minWidth: 0, lineHeight: 1.55 }}>
-                Kolom wajib: <b style={{ color: t.hi }}>ID DSE</b>. ID DSE yang sudah ada akan <b style={{ color: t.hi }}>diperbarui</b>
-                {" "}(semua kolom yang ada di file), ID DSE yang belum ada akan <b style={{ color: t.hi }}>ditambahkan</b> — tapi
-                wajib isi Region/Branch/HOA. Pakai file hasil Download Data sebagai template.
-              </span>
-            </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 14px", borderRadius: 9, border: `1px dashed ${t.tealBd}`, background: t.tealBg, color: t.teal, fontSize: 13, fontWeight: 700, cursor: "pointer", width: "fit-content" }}>
-              <FileSpreadsheet size={14} /> Pilih File…
-              <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }} onChange={(e) => onPickFile(e.target.files)} />
-            </label>
-
-            {staged && (
-              <div style={{ marginTop: 14, padding: "10px 14px", borderRadius: 10, border: `1px solid ${staged.error ? t.redBg : t.line}`, background: staged.error ? t.redBg : t.sub }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <FileSpreadsheet size={15} color={staged.error ? t.red : t.teal} style={{ flexShrink: 0 }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{staged.fileName}</div>
-                    {staged.error ? (
-                      <div style={{ fontSize: 12, color: t.red, marginTop: 2 }}>{staged.error}</div>
-                    ) : (
-                      <div style={{ fontSize: 12, color: t.mid, marginTop: 2 }}>
-                        {staged.totalRows} baris siap diupload
-                        {staged.errors?.length ? `, ${staged.errors.length} baris dilewati` : ""}.
-                      </div>
-                    )}
-                  </div>
-                  {!staged.error && (
-                    <button onClick={handleUpload} disabled={uploading || !staged.totalRows}
-                      style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 14px", borderRadius: 8, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: uploading ? "default" : "pointer", opacity: uploading || !staged.totalRows ? 0.6 : 1, flexShrink: 0 }}>
-                      {uploading ? <Loader2 size={13} className="spin" /> : <Upload size={13} />}
-                      {uploading ? "Mengunggah…" : "Upload"}
-                    </button>
-                  )}
-                  <button onClick={() => setStaged(null)} style={{ background: "none", border: "none", color: t.mid, cursor: "pointer", display: "flex", flexShrink: 0 }}><X size={15} /></button>
-                </div>
-                {staged.errors?.length > 0 && (
-                  <div style={{ marginTop: 10, fontSize: 11.5, color: t.mid, maxHeight: 120, overflowY: "auto" }}>
-                    {staged.errors.slice(0, 20).map((e, i) => <div key={i}>{e}</div>)}
-                    {staged.errors.length > 20 && <div>…dan {staged.errors.length - 20} lainnya.</div>}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {uploadResult?.ok && (
-              <div style={{ marginTop: 12, fontSize: 12.5, color: t.mid }}>
-                ✓ {uploadResult.inserted} baris baru, {uploadResult.updated} diperbarui.
-                {uploadResult.skipped?.length > 0 && (
-                  <div style={{ marginTop: 6, color: t.amber, maxHeight: 100, overflowY: "auto" }}>
-                    {uploadResult.skipped.slice(0, 20).map((s, i) => <div key={i}>⚠ {s}</div>)}
-                    {uploadResult.skipped.length > 20 && <div>…dan {uploadResult.skipped.length - 20} lainnya.</div>}
-                  </div>
-                )}
-              </div>
-            )}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: 16, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Database size={20} color={t.teal} />
+            <div style={{ fontSize: 19, fontWeight: 800 }}>Database DSE</div>
           </div>
-        )}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <button onClick={handleDownload} disabled={exportLoading}
+              style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontWeight: 700, cursor: "pointer", opacity: exportLoading ? 0.6 : 1 }}>
+              {exportLoading ? <Loader2 size={14} className="spin" /> : <FileDown size={14} />} Download Data
+            </button>
+            <button onClick={() => setShowWizard(true)} style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+              <Upload size={14} /> Upload Data
+            </button>
+          </div>
+        </div>
       </div>
+
+      {showWizard && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9000, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "32px 16px", overflowY: "auto" }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setShowWizard(false); fetchRows(1, search, filterRegion); } }}>
+          <div style={{ width: "100%", maxWidth: 1040, background: d ? "#0E0E10" : "#F5F5F7", borderRadius: 18, boxShadow: "0 24px 60px rgba(0,0,0,0.45)", position: "relative", padding: 18 }}>
+            <button onClick={() => { setShowWizard(false); fetchRows(1, search, filterRegion); }}
+              style={{ position: "absolute", top: 14, right: 14, zIndex: 10, width: 32, height: 32, borderRadius: 999, border: "none", background: d ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)", color: t.hi, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <X size={16} />
+            </button>
+            <PNL_ImportWizard theme={theme} supabase={supabase} formTypeProp="dse_database" lockTarget />
+          </div>
+        </div>
+      )}
 
       {/* ── Tabel gabungan ── */}
       <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden" }}>
@@ -505,7 +298,7 @@ export default function SDP_DseDatabase({ theme, profile }) {
           <div style={{ position: "relative", flex: 1, minWidth: 200 }}>
             <Search size={14} style={{ position: "absolute", left: 12, top: 12, color: t.lo }} />
             <input value={searchInput} onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="Cari HOA / DS / ID DSE / Branch / MC…"
+              placeholder="Cari ID DSE / Branch / MC / Partner…"
               style={{ ...inputStyle, paddingLeft: 34 }} />
           </div>
           <div style={{ position: "relative", minWidth: 190 }}>
@@ -545,18 +338,18 @@ export default function SDP_DseDatabase({ theme, profile }) {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
             <thead>
               <tr style={{ background: t.sub }}>
-                {["", "STATUS", "REGION", "BRANCH", "HOA", "NAMA DS", "NOMOR DS", "MC", "ID DSE", "NOMOR DSE", "DESA", "OUTLET", "REMARKS"].map((h, i) => (
+                {["", "STATUS", "KATEGORI DSE", "DSE CODE IM3", "DSE CODE 3ID", "MDI", "PT", "MICRO CLUSTER", "BRANCH", "REGION", "CIRCLE", "REMARKS"].map((h, i) => (
                   <th key={i} style={{ textAlign: "left", padding: "9px 12px", color: t.mid, fontWeight: 700, whiteSpace: "nowrap", borderBottom: `1px solid ${t.line}` }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {fetching ? (
-                <tr><td colSpan={13} style={{ padding: 28, textAlign: "center", color: t.mid }}><Loader2 size={16} className="spin" /></td></tr>
+                <tr><td colSpan={12} style={{ padding: 28, textAlign: "center", color: t.mid }}><Loader2 size={16} className="spin" /></td></tr>
               ) : rows.length === 0 ? (
-                <tr><td colSpan={13} style={{ padding: 28, textAlign: "center", color: t.mid }}>Belum ada data. Download template lalu Upload Data untuk mulai.</td></tr>
+                <tr><td colSpan={12} style={{ padding: 28, textAlign: "center", color: t.mid }}>Belum ada data. Download template lalu Upload Data untuk mulai.</td></tr>
               ) : rows.map((r) => {
-                const incomplete = !r.ds_name || !r.ds_phone || !r.mc || !r.dse_phone || r.flag_duplicate_code;
+                const incomplete = !r.region || !r.branch || !r.mc || r.flag_duplicate_code;
                 const remarks = buildRemarks(r);
                 return (
                   <tr key={r.id} style={{ borderBottom: `1px solid ${t.line}`, background: r.is_revoked ? t.redBg : incomplete ? t.amberBg : "transparent", opacity: r.is_revoked ? 0.75 : 1 }}>
@@ -575,16 +368,15 @@ export default function SDP_DseDatabase({ theme, profile }) {
                         </span>
                       )}
                     </td>
-                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>{r.region}</td>
-                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>{r.branch}</td>
-                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>{r.hoa_name}</td>
-                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap", color: r.ds_name ? t.hi : t.amber, fontStyle: r.ds_name ? "normal" : "italic" }}>{r.ds_name || "belum ada nama"}</td>
-                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap", color: r.ds_phone ? t.mid : t.amber, fontStyle: r.ds_phone ? "normal" : "italic" }}>{r.ds_phone || "kosong"}</td>
-                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap", color: r.mc ? t.hi : t.amber, fontStyle: r.mc ? "normal" : "italic" }}>{r.mc || "kosong"}</td>
+                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>{r.dse_category || "-"}</td>
                     <td style={{ padding: "8px 12px", whiteSpace: "nowrap", fontWeight: 700 }}>{r.dse_code}</td>
-                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap", color: r.dse_phone ? t.mid : t.amber, fontStyle: r.dse_phone ? "normal" : "italic" }}>{r.dse_phone || "kosong"}</td>
-                    <td style={{ padding: "8px 12px", textAlign: "right" }}>{r.jumlah_desa}</td>
-                    <td style={{ padding: "8px 12px", textAlign: "right" }}>{r.jumlah_outlet}</td>
+                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap", fontWeight: 700 }}>{r.dse_code_3id || "-"}</td>
+                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>{r.mdi || "-"}</td>
+                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>{r.pt_name || "-"}</td>
+                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap", color: r.mc ? t.hi : t.amber, fontStyle: r.mc ? "normal" : "italic" }}>{r.mc || "kosong"}</td>
+                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>{r.branch}</td>
+                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>{r.region}</td>
+                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>{r.circle || "-"}</td>
                     <td style={{ padding: "8px 12px", whiteSpace: "nowrap", color: incomplete ? t.amber : t.teal, fontWeight: 600 }}>{remarks}</td>
                   </tr>
                 );

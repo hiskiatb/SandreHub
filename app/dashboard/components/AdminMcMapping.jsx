@@ -6,23 +6,41 @@
  * prod, bukan menjadi menu terpisah, namanya user management" ->
  * "harusnya nama sub menunya mapping dan user management"): dulu ini
  * menu & DashCard TERPISAH ("Mapping Admin MC") di overview dashboard -
- * sekarang dirender sbg tab ke-3 di dalam DSE_ProdAR.jsx.
+ * sekarang dirender sbg tab di dalam DSE_ProdAR.jsx.
  *
  * UPDATE 2 (permintaan user - field: Region, Branch, MC, Nama Admin, Alamat
  * Email Admin; 1 email BOLEH dipasang ke lebih dari 1 MC, dan 1 MC BOLEH
- * punya lebih dari 1 email admin; kombinasi email+MC yang SAMA tidak boleh
- * dobel): kolom region & branch ditambahkan ke mf_dse_admin_mc_mapping,
- * unique constraint diganti dari UNIQUE(email) -> UNIQUE(email, mc).
+ * punya lebih dari 1 email admin): kolom region & branch ditambahkan ke
+ * mf_dse_admin_mc_mapping, unique constraint UNIQUE(email, mc).
  *
- * UPDATE 3 (permintaan user - "hilangkan bagian ini [form tambah manual],
- * download data, baru upload mapping"): form "Tambah Mapping Baru" manual
- * (dropdown Region/Branch/MC + input Email/Nama satu-satu) DIHAPUS. Diganti
- * alur: Download Data (export mapping yg sudah ada ke Excel, dipakai juga
- * sbg template) -> edit di Excel -> Upload Mapping (import massal). Upload
- * otomatis UPSERT per kombinasi email+MC: kombinasi yg sudah ada diperbarui,
- * yang belum ada ditambahkan. Update/tambah satu-satu tetap bisa lewat Excel
- * (download, ubah 1 baris, upload lagi) — tidak perlu form terpisah lagi.
- * Toggle status aktif/nonaktif & hapus baris tetap langsung dari tabel.
+ * UPDATE 3: form "Tambah Mapping Baru" manual DIHAPUS, diganti Download
+ * Data (template) -> edit di Excel -> Upload Mapping (import massal).
+ *
+ * UPDATE 4 (permintaan user - "mapping & user management ini akan mengambil
+ * dari data database dse yang cocok tiap bulannya"): sempat dicoba Region/
+ * Branch/Circle SELALU diambil live dari Database DSE per MC (bukan dari
+ * file) — KEMUDIAN DIBATALKAN di Update 6 di bawah.
+ *
+ * UPDATE 5 (permintaan user - error "Kolom wajib tidak ditemukan... Alamat
+ * Email Admin" + "saya akan pilih untuk kolom kolomnya, pilih header sama
+ * seperti database dse, dan juga untuk alamat email ini bisa kita put
+ * belakangan saja di webnya"): upload widget manual (COLMAP/parse sendiri)
+ * DIHAPUS, diganti PNL_ImportWizard (pilih file -> preview & pilih sheet ->
+ * set baris header -> cocokkan kolom via dropdown), sama persis dgn pola
+ * Database DSE. Skema tabel DIRESTRUKTUR dari "satu baris per email" jadi
+ * "satu baris per MC" (kolom email_1/email_2, boleh kosong) supaya:
+ *  (a) upload cukup wajib isi MC (email opsional di file), dan
+ *  (b) field lain bisa diisi/diedit langsung di tabel web ini (inline edit,
+ *      upsert per MC) tanpa perlu re-upload.
+ *
+ * UPDATE 6 (permintaan user - "jangan hanya micro cluster" / "langsung
+ * masukkan saja disini, tidak perlu otomatis, kita mapping saja nama branch
+ * region dan mc-nya"): live-lookup OTOMATIS dari Database DSE DIBATALKAN.
+ * Circle/Region/Branch sekarang kolom BIASA — dicocokkan langsung dari file
+ * upload (lewat PNL_ImportWizard, sama seperti MC/Nama Admin/Email) dan bisa
+ * diedit manual langsung di tabel ini. dseRefMap (Database DSE) cuma dipakai
+ * utk menampilkan daftar MC yang BELUM punya mapping sama sekali, supaya SPM
+ * tahu MC mana yang perlu ditambahkan — bukan utk menimpa data yang sudah ada.
  *
  * Kelola daftar email Admin MC yang boleh login via OTP (tanpa password) dan
  * MC mana saja yang terpasang ke email itu. Dipakai oleh:
@@ -31,24 +49,17 @@
  *    gabungan ke profil setelah OTP berhasil)
  *  - mf_dse_admin_mc_has_access (dipakai RLS utk cek akses per-MC)
  *
- * UPDATE 4 (permintaan user): sempat ditambahkan section kedua "Upload
- * Mapping DSE (Partner/Branch/MC)" di sini juga, tapi lalu DIKEMBALIKAN —
- * fitur upload data DSE (Partner/Branch/MC/ID DSE) kini hanya ada di satu
- * tempat: tab "Database DSE" (SDP_DseDatabase.jsx), yang disederhanakan jadi
- * Download Data / Upload Data / Tabel. Tab ini tetap murni soal mapping
- * Admin MC (siapa yang boleh login sebagai Admin MC per MC).
- *
  * Hanya untuk role spm_sumatera (digate di DSE_ProdAR.jsx & page.jsx).
  */
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import supabase from "../../../lib/supabase";
 import * as XLSX from "xlsx";
 import {
   UserRoundCog, X, Check, AlertTriangle, Loader2, Search,
-  RefreshCw, Trash2, Mail, ToggleLeft, ToggleRight, ChevronDown, ChevronUp,
-  Download, Upload, FileSpreadsheet, Info,
+  RefreshCw, Trash2, ToggleLeft, ToggleRight, Download, Upload,
 } from "lucide-react";
+import PNL_ImportWizard from "./PNL_ImportWizard";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif`;
 
@@ -62,70 +73,6 @@ function Toast({ msg, type, onClose }) {
       <button onClick={onClose} style={{ background: "none", border: "none", color: "#fff", cursor: "pointer", padding: 0, display: "flex" }}><X size={14} /></button>
     </div>
   );
-}
-
-// Kolom di file Excel (download/upload) — header baris 1, longgar (boleh beda urutan/huruf besar-kecil)
-const COLMAP = {
-  region: ["region"],
-  branch: ["branch"],
-  mc: ["mc"],
-  full_name: ["nama admin", "nama", "full name", "full_name"],
-  email: ["email admin", "alamat email admin", "email", "email_admin"],
-  active: ["status", "active", "aktif"],
-};
-
-function normHeader(h) { return String(h || "").trim().toLowerCase(); }
-function findCol(headers, aliases) { return headers.findIndex((h) => aliases.includes(normHeader(h))); }
-function parseActive(v) {
-  const s = String(v ?? "").trim().toLowerCase();
-  if (!s) return true; // default aktif kalau kolom status kosong/tidak ada
-  return !["nonaktif", "non aktif", "inactive", "false", "0", "no", "tidak"].includes(s);
-}
-
-function parseMappingWorkbook(file) {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const wb = XLSX.read(e.target.result, { type: "array", cellDates: false });
-        const ws = wb.Sheets[wb.SheetNames[0]];
-        const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
-        if (!aoa.length) { resolve({ error: "File kosong." }); return; }
-        const headers = aoa[0];
-        const col = {};
-        for (const key of Object.keys(COLMAP)) col[key] = findCol(headers, COLMAP[key]);
-        if (col.mc < 0 || col.email < 0) {
-          resolve({ error: `Kolom wajib tidak ditemukan. Pastikan ada kolom "MC" dan "Email Admin" di baris pertama.` });
-          return;
-        }
-        const rows = [];
-        const errors = [];
-        const seenInFile = new Set();
-        for (let i = 1; i < aoa.length; i++) {
-          const line = aoa[i];
-          if (!line || line.every((c) => c === "" || c == null)) continue;
-          const email = String(line[col.email] ?? "").trim().toLowerCase();
-          const mc = String(line[col.mc] ?? "").trim();
-          if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { errors.push(`Baris ${i + 1}: email tidak valid.`); continue; }
-          if (!mc) { errors.push(`Baris ${i + 1}: MC kosong.`); continue; }
-          const key = `${email}|${mc.toLowerCase()}`;
-          if (seenInFile.has(key)) { errors.push(`Baris ${i + 1}: kombinasi ${email} + ${mc} dobel di file ini (baris sebelumnya dipakai).`); continue; }
-          seenInFile.add(key);
-          rows.push({
-            email, mc,
-            region: col.region >= 0 ? (String(line[col.region] ?? "").trim() || null) : null,
-            branch: col.branch >= 0 ? (String(line[col.branch] ?? "").trim() || null) : null,
-            full_name: col.full_name >= 0 ? (String(line[col.full_name] ?? "").trim() || null) : null,
-            active: col.active >= 0 ? parseActive(line[col.active]) : true,
-          });
-        }
-        resolve({ rows, errors, totalRows: rows.length });
-      } catch (err) {
-        resolve({ error: err.message || "Gagal membaca file." });
-      }
-    };
-    reader.readAsArrayBuffer(file);
-  });
 }
 
 export default function AdminMcMapping({ theme }) {
@@ -147,27 +94,37 @@ export default function AdminMcMapping({ theme }) {
   const [toast, setToast] = useState(null);
   const showToast = (msg, type = "ok") => setToast({ msg, type });
 
-  // Referensi MC asli dari mf_dse_database — dipakai cuma utk validasi ringan
-  // (peringatan kalau MC di file upload tidak ditemukan di data DSE asli).
-  const [refMcSet, setRefMcSet] = useState(new Set());
+  // Referensi dari mf_dse_database (Database DSE) — HANYA dipakai utk
+  // menampilkan daftar MC yang BELUM punya baris mapping sama sekali
+  // (baris "baru" siap diisi), bukan utk menimpa data mapping yang sudah
+  // ada (lihat UPDATE 6 di atas). Kalau satu MC muncul di beberapa baris
+  // Database DSE, dipakai kemunculan PERTAMA.
+  const [dseRefMap, setDseRefMap] = useState(new Map());
   const fetchRefData = useCallback(async () => {
     try {
-      const { data, error } = await supabase.from("mf_dse_database").select("mc").not("mc", "is", null);
+      const { data, error } = await supabase.from("mf_dse_database").select("mc, region, branch, circle").not("mc", "is", null);
       if (error) throw error;
-      setRefMcSet(new Set((data || []).map((r) => String(r.mc).trim().toLowerCase())));
+      const map = new Map();
+      (data || []).forEach((r) => {
+        const key = String(r.mc).trim().toLowerCase();
+        if (key && !map.has(key)) map.set(key, { mc: r.mc, region: r.region, branch: r.branch, circle: r.circle });
+      });
+      setDseRefMap(map);
     } catch {
-      // referensi gagal dimuat — upload tetap jalan, cuma tanpa peringatan MC tak dikenal
+      // referensi gagal dimuat — tabel tetap jalan, cuma tanpa lookup/peringatan MC tak dikenal
     }
   }, []);
 
   const fetchRows = useCallback(async () => {
     setFetching(true);
     try {
-      const { data, error } = await supabase.from("mf_dse_admin_mc_mapping").select("*").order("created_at", { ascending: false });
+      const { data, error } = await supabase.from("mf_dse_admin_mc_mapping").select("*").order("mc", { ascending: true });
       if (error) throw error;
       setRows(data || []);
+      return data || [];
     } catch (e) {
       showToast(e.message || "Gagal memuat data.", "error");
+      return [];
     } finally {
       setFetching(false);
     }
@@ -187,7 +144,7 @@ export default function AdminMcMapping({ theme }) {
   };
 
   const handleDelete = async (row) => {
-    if (!window.confirm(`Hapus mapping ${row.email} → ${row.mc}?`)) return;
+    if (!window.confirm(`Hapus mapping MC ${row.mc}?`)) return;
     try {
       const { error } = await supabase.from("mf_dse_admin_mc_mapping").delete().eq("id", row.id);
       if (error) throw error;
@@ -198,224 +155,201 @@ export default function AdminMcMapping({ theme }) {
     }
   };
 
+  // ── Edit langsung di tabel (Circle / Region / Branch / Nama Admin / Email
+  // Admin 1 / Email Admin 2) — UPSERT per MC (onConflict "mc"): kalau baris
+  // utk MC itu belum ada (msh "virtual", dari Database DSE tapi belum ada
+  // mapping-nya), otomatis dibuat. Field yg tidak diedit tetap pakai nilai
+  // yang sudah tersimpan (tidak ada lagi override otomatis dari Database
+  // DSE — lihat UPDATE 6 di atas). ──
+  const [savingKey, setSavingKey] = useState(null);
+  const EDITABLE_FIELDS = ["circle", "region", "branch", "full_name", "email_1", "email_2"];
+  const handleCellBlur = async (mc, field, value) => {
+    const key = mc.toLowerCase();
+    const existing = rows.find((r) => r.mc?.toLowerCase() === key);
+    const trimmed = value.trim();
+    if (existing && (existing[field] || "") === trimmed) return; // tidak berubah
+    const payload = { mc, active: existing?.active ?? true };
+    EDITABLE_FIELDS.forEach((f) => {
+      payload[f] = f === field ? (trimmed || null) : (existing?.[f] || null);
+    });
+    setSavingKey(key);
+    try {
+      const { data, error } = await supabase.from("mf_dse_admin_mc_mapping").upsert(payload, { onConflict: "mc" }).select().single();
+      if (error) throw error;
+      setRows((prev) => {
+        const idx = prev.findIndex((r) => r.id === data.id);
+        if (idx >= 0) { const next = [...prev]; next[idx] = data; return next; }
+        return [...prev, data].sort((a, b) => (a.mc || "").localeCompare(b.mc || ""));
+      });
+    } catch (e) {
+      showToast(e.message || "Gagal menyimpan.", "error");
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
+  // Baris yang ditampilkan = baris mapping yg sudah ada, DIGABUNG dgn MC dari
+  // Database DSE yang BELUM punya mapping sama sekali (baris "kosong" siap
+  // diisi langsung dari tabel ini, tanpa perlu upload dulu).
+  const displayRows = useMemo(() => {
+    const byMc = new Map();
+    rows.forEach((r) => { if (r.mc) byMc.set(r.mc.toLowerCase(), r); });
+    // MC dari Database DSE yang belum punya mapping sama sekali tetap
+    // dimunculkan (baris "baru", region/branch/circle disarankan dari sana
+    // sbg titik awal) supaya gampang dilengkapi — bukan utk menimpa baris
+    // yang sudah ada.
+    dseRefMap.forEach((ref, key) => {
+      if (byMc.has(key)) return;
+      byMc.set(key, { id: null, mc: ref.mc, region: ref.region, branch: ref.branch, circle: ref.circle, full_name: "", email_1: "", email_2: "", active: true });
+    });
+    return Array.from(byMc.values()).sort((a, b) => (a.mc || "").localeCompare(b.mc || ""));
+  }, [rows, dseRefMap]);
+
+  const filtered = displayRows.filter((r) => {
+    if (!search) return true;
+    const s = search.toLowerCase();
+    return r.mc?.toLowerCase().includes(s) || r.full_name?.toLowerCase().includes(s)
+      || r.email_1?.toLowerCase().includes(s) || r.email_2?.toLowerCase().includes(s)
+      || r.region?.toLowerCase().includes(s) || r.branch?.toLowerCase().includes(s) || r.circle?.toLowerCase().includes(s);
+  });
+
   // ── Download Data (export + dipakai juga sbg template upload) ──────────────
   const handleDownload = () => {
-    const head = ["Region", "Branch", "MC", "Nama Admin", "Email Admin", "Status"];
-    const body = rows.map((r) => [r.region || "", r.branch || "", r.mc || "", r.full_name || "", r.email || "", r.active ? "Aktif" : "Nonaktif"]);
-    const ws = XLSX.utils.aoa_to_sheet([head, ...(body.length ? body : [["", "", "", "", "", ""]])]);
-    ws["!cols"] = [{ wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 20 }, { wch: 28 }, { wch: 10 }];
+    const head = ["Circle", "Region", "Branch", "Micro Cluster", "Nama Admin", "Alamat Email Admin 1", "Alamat Email Admin 2", "Status"];
+    const body = displayRows.map((m) => [m.circle || "", m.region || "", m.branch || "", m.mc || "", m.full_name || "", m.email_1 || "", m.email_2 || "", m.active === false ? "Nonaktif" : "Aktif"]);
+    const ws = XLSX.utils.aoa_to_sheet([head, ...(body.length ? body : [["", "", "", "", "", "", "", ""]])]);
+    ws["!cols"] = [{ wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 20 }, { wch: 20 }, { wch: 28 }, { wch: 28 }, { wch: 10 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Mapping Admin MC");
     XLSX.writeFile(wb, `Mapping_Admin_MC_${new Date().toISOString().slice(0, 10)}.xlsx`);
-    showToast(`Data diunduh — ${rows.length} baris. File ini juga bisa dipakai sbg template upload.`, "ok");
+    showToast(`Data diunduh — ${body.length} MC. File ini juga bisa dipakai sbg template upload.`, "ok");
   };
 
-  // ── Upload Mapping (import massal, upsert per kombinasi email+MC) ──────────
-  const [showUpload, setShowUpload] = useState(false);
-  const [staged, setStaged] = useState(null);
-  const [uploading, setUploading] = useState(false);
-  const fileRef = useRef(null);
-
-  const onPickFile = async (fileList) => {
-    const f = (fileList || [])[0];
-    if (!f) return;
-    const p = await parseMappingWorkbook(f);
-    if (!p.error && p.rows) {
-      const unknownMc = refMcSet.size ? Array.from(new Set(p.rows.filter((r) => !refMcSet.has(r.mc.toLowerCase())).map((r) => r.mc))) : [];
-      p.unknownMc = unknownMc;
-      const existingKeys = new Set(rows.map((r) => `${r.email.toLowerCase()}|${r.mc.toLowerCase()}`));
-      p.newCount = p.rows.filter((r) => !existingKeys.has(`${r.email}|${r.mc.toLowerCase()}`)).length;
-      p.updateCount = p.rows.length - p.newCount;
-    }
-    setStaged({ fileName: f.name, ...p });
-    if (fileRef.current) fileRef.current.value = "";
-  };
-
-  const handleUpload = async () => {
-    if (!staged || staged.error || !staged.rows?.length) return;
-    setUploading(true);
-    try {
-      const existingByKey = new Map(rows.map((r) => [`${r.email.toLowerCase()}|${r.mc.toLowerCase()}`, r]));
-      const toInsert = [];
-      const toUpdate = [];
-      for (const r of staged.rows) {
-        const key = `${r.email}|${r.mc.toLowerCase()}`;
-        const match = existingByKey.get(key);
-        if (match) toUpdate.push({ id: match.id, payload: { region: r.region, branch: r.branch, full_name: r.full_name, active: r.active } });
-        else toInsert.push({ email: r.email, mc: r.mc, region: r.region, branch: r.branch, full_name: r.full_name, active: r.active });
-      }
-      if (toInsert.length) {
-        const { error } = await supabase.from("mf_dse_admin_mc_mapping").insert(toInsert);
-        if (error) throw error;
-      }
-      for (const u of toUpdate) {
-        const { error } = await supabase.from("mf_dse_admin_mc_mapping").update(u.payload).eq("id", u.id); // eslint-disable-line no-await-in-loop
-        if (error) throw error;
-      }
-      showToast(`Upload selesai — ${toInsert.length} baru, ${toUpdate.length} diperbarui.`, "ok");
-      setStaged(null);
-      fetchRows();
-    } catch (e) {
-      const dupMsg = e.code === "23505" || /duplicate key/i.test(e.message || "");
-      showToast(dupMsg ? "Ada kombinasi email + MC yang sudah terdaftar — cek ulang file." : (e.message || "Gagal upload."), "error");
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const emailMcCount = useMemo(() => {
-    const m = new Map();
-    rows.forEach((r) => { const k = r.email?.toLowerCase(); if (!k) return; m.set(k, (m.get(k) || 0) + 1); });
-    return m;
-  }, [rows]);
-  const mcEmailCount = useMemo(() => {
-    const m = new Map();
-    rows.forEach((r) => { const k = r.mc?.toLowerCase(); if (!k) return; m.set(k, (m.get(k) || 0) + 1); });
-    return m;
-  }, [rows]);
-
-  const filtered = rows.filter((r) => {
-    if (!search) return true;
-    const s = search.toLowerCase();
-    return r.email?.toLowerCase().includes(s) || r.mc?.toLowerCase().includes(s) || r.full_name?.toLowerCase().includes(s)
-      || r.region?.toLowerCase().includes(s) || r.branch?.toLowerCase().includes(s);
-  });
+  // ── Upload Mapping — sekarang lewat PNL_ImportWizard (pilih file ->
+  // preview data & pilih sheet -> set baris header -> cocokkan kolom lewat
+  // dropdown -> upsert langsung ke mf_dse_admin_mc_mapping per MC), bukan
+  // parse manual lagi. Lihat <PNL_ImportWizard formTypeProp="admin_mc_mapping"
+  // lockTarget> di bawah; target sudah didefinisikan di FORM_DEFS wizard
+  // dgn kolom: Micro Cluster (wajib), Circle, Region, Branch, Nama Admin,
+  // Alamat Email Admin 1/2 (selain MC, semua opsional — bisa diisi/diedit
+  // belakangan langsung di tabel ini).
+  const [showWizard, setShowWizard] = useState(false);
 
   const inputStyle = { width: "100%", height: 38, padding: "0 12px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13.5, fontFamily: FONT, outline: "none", boxSizing: "border-box" };
+  const cellInputStyle = { width: "100%", height: 30, padding: "0 8px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontFamily: FONT, outline: "none", boxSizing: "border-box" };
 
   return (
     <div style={{ fontFamily: FONT, color: t.hi }}>
       {toast && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
 
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-        <UserRoundCog size={20} color={t.teal} />
-        <div style={{ fontSize: 19, fontWeight: 800 }}>Mapping & User Management</div>
-      </div>
-      <div style={{ fontSize: 13, color: t.mid, marginBottom: 20 }}>
-        Daftarkan email Admin MC di sini supaya mereka bisa login langsung dengan kode OTP ke email (tanpa kata sandi) di{" "}
-        <b style={{ color: t.hi }}>Login sebagai Admin MC</b>. Satu email bisa dipasang ke lebih dari satu MC (otomatis bisa akses semuanya),
-        dan satu MC bisa punya lebih dari satu admin. Kelola lewat Excel: <b style={{ color: t.hi }}>Download Data</b> dulu, edit/tambah baris, lalu <b style={{ color: t.hi }}>Upload Mapping</b> lagi.
-      </div>
-
       <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden", marginBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 16, flexWrap: "wrap" }}>
-          <button onClick={handleDownload} style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-            <Download size={14} /> Download Data
-          </button>
-          <button onClick={() => setShowUpload((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
-            <Upload size={14} /> Upload Mapping
-            {showUpload ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          </button>
-        </div>
-
-        {showUpload && (
-          <div style={{ padding: "0 16px 16px", borderTop: `1px solid ${t.line}` }}>
-            <div style={{ fontSize: 12, color: t.mid, margin: "14px 0 12px", display: "flex", alignItems: "flex-start", gap: 6 }}>
-              <Info size={13} style={{ flexShrink: 0, marginTop: 1 }} />
-              <span style={{ flex: 1, minWidth: 0, lineHeight: 1.55 }}>
-                Kolom wajib: <b style={{ color: t.hi }}>MC</b>, <b style={{ color: t.hi }}>Email Admin</b>. Kolom Region/Branch/Nama Admin/Status opsional.
-                Kombinasi email+MC yang sudah ada akan <b style={{ color: t.hi }}>diperbarui</b>, yang belum ada akan <b style={{ color: t.hi }}>ditambahkan</b> — pakai file hasil Download Data sebagai template.
-              </span>
-            </div>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 14px", borderRadius: 9, border: `1px dashed ${t.tealBd}`, background: t.tealBg, color: t.teal, fontSize: 13, fontWeight: 700, cursor: "pointer", width: "fit-content" }}>
-              <FileSpreadsheet size={14} /> Pilih File…
-              <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" style={{ display: "none" }} onChange={(e) => onPickFile(e.target.files)} />
-            </label>
-
-            {staged && (
-              <div style={{ marginTop: 14, padding: "10px 14px", borderRadius: 10, border: `1px solid ${staged.error ? t.redBg : t.line}`, background: staged.error ? t.redBg : t.sub }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <FileSpreadsheet size={15} color={staged.error ? t.red : t.teal} style={{ flexShrink: 0 }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{staged.fileName}</div>
-                    {staged.error ? (
-                      <div style={{ fontSize: 12, color: t.red, marginTop: 2 }}>{staged.error}</div>
-                    ) : (
-                      <div style={{ fontSize: 12, color: t.mid, marginTop: 2 }}>
-                        {staged.totalRows} baris valid ({staged.newCount} baru, {staged.updateCount} diperbarui)
-                        {staged.errors?.length ? `, ${staged.errors.length} baris dilewati` : ""}.
-                      </div>
-                    )}
-                  </div>
-                  {!staged.error && (
-                    <button onClick={handleUpload} disabled={uploading || !staged.totalRows}
-                      style={{ display: "flex", alignItems: "center", gap: 6, height: 34, padding: "0 14px", borderRadius: 8, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: uploading ? "default" : "pointer", opacity: uploading || !staged.totalRows ? 0.6 : 1, flexShrink: 0 }}>
-                      {uploading ? <Loader2 size={13} className="spin" /> : <Upload size={13} />}
-                      {uploading ? "Mengunggah…" : "Upload"}
-                    </button>
-                  )}
-                  <button onClick={() => setStaged(null)} style={{ background: "none", border: "none", color: t.mid, cursor: "pointer", display: "flex", flexShrink: 0 }}><X size={15} /></button>
-                </div>
-                {!staged.error && staged.unknownMc?.length > 0 && (
-                  <div style={{ marginTop: 10, fontSize: 11.5, color: t.amber, background: t.amberBg, borderRadius: 8, padding: "7px 10px" }}>
-                    MC tidak ditemukan di data DSE (tetap bisa diupload, tapi admin-nya belum akan melihat data apa pun sampai MC-nya benar): {staged.unknownMc.join(", ")}
-                  </div>
-                )}
-                {staged.errors?.length > 0 && (
-                  <div style={{ marginTop: 10, fontSize: 11.5, color: t.mid, maxHeight: 120, overflowY: "auto" }}>
-                    {staged.errors.slice(0, 20).map((e, i) => <div key={i}>{e}</div>)}
-                    {staged.errors.length > 20 && <div>…dan {staged.errors.length - 20} lainnya.</div>}
-                  </div>
-                )}
-              </div>
-            )}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: 16, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <UserRoundCog size={20} color={t.teal} />
+            <div style={{ fontSize: 19, fontWeight: 800 }}>Mapping & User Management</div>
           </div>
-        )}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <button onClick={handleDownload} style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+              <Download size={14} /> Download Data
+            </button>
+            <button onClick={() => setShowWizard(true)} style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 16px", borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
+              <Upload size={14} /> Upload Mapping
+            </button>
+          </div>
+        </div>
       </div>
+
+      {showWizard && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9000, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "32px 16px", overflowY: "auto" }}
+          onClick={(e) => { if (e.target === e.currentTarget) { setShowWizard(false); fetchRows(); } }}>
+          <div style={{ width: "100%", maxWidth: 1040, background: d ? "#0E0E10" : "#F5F5F7", borderRadius: 18, boxShadow: "0 24px 60px rgba(0,0,0,0.45)", position: "relative", padding: 18 }}>
+            <button onClick={() => { setShowWizard(false); fetchRows(); }}
+              style={{ position: "absolute", top: 14, right: 14, zIndex: 10, width: 32, height: 32, borderRadius: 999, border: "none", background: d ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)", color: t.hi, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <X size={16} />
+            </button>
+            <PNL_ImportWizard theme={theme} supabase={supabase} formTypeProp="admin_mc_mapping" lockTarget />
+          </div>
+        </div>
+      )}
 
       <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 16, borderBottom: `1px solid ${t.line}` }}>
           <div style={{ position: "relative", flex: 1 }}>
             <Search size={14} style={{ position: "absolute", left: 12, top: 12, color: t.lo }} />
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari email / MC / region / branch / nama…" style={{ ...inputStyle, paddingLeft: 34 }} />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Cari MC / circle / region / branch / nama / email…" style={{ ...inputStyle, paddingLeft: 34 }} />
           </div>
           <button onClick={fetchRows} title="Refresh" style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <RefreshCw size={14} className={fetching ? "spin" : ""} />
           </button>
         </div>
 
+        <div style={{ padding: "8px 16px", fontSize: 11.5, color: t.mid, borderBottom: `1px solid ${t.line}` }}>
+          Circle, Region, Branch, Nama Admin & Alamat Email bisa langsung diketik di tabel ini — tidak perlu upload ulang.
+        </div>
+
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
             <thead>
               <tr style={{ background: t.sub }}>
-                {["REGION", "BRANCH", "MC", "NAMA ADMIN", "EMAIL", "STATUS", ""].map((h, i) => (
+                {["CIRCLE", "REGION", "BRANCH", "MC", "NAMA ADMIN", "EMAIL ADMIN 1", "EMAIL ADMIN 2", "STATUS", ""].map((h, i) => (
                   <th key={i} style={{ textAlign: "left", padding: "9px 12px", color: t.mid, fontWeight: 700, whiteSpace: "nowrap", borderBottom: `1px solid ${t.line}` }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {fetching ? (
-                <tr><td colSpan={7} style={{ padding: 28, textAlign: "center", color: t.mid }}><Loader2 size={16} className="spin" /></td></tr>
+                <tr><td colSpan={9} style={{ padding: 28, textAlign: "center", color: t.mid }}><Loader2 size={16} className="spin" /></td></tr>
               ) : filtered.length === 0 ? (
-                <tr><td colSpan={7} style={{ padding: 28, textAlign: "center", color: t.mid }}>Belum ada mapping Admin MC. Download template lalu Upload Mapping untuk mulai.</td></tr>
+                <tr><td colSpan={9} style={{ padding: 28, textAlign: "center", color: t.mid }}>Belum ada MC. Tambahkan dulu di Database DSE, lalu isi admin-nya di sini.</td></tr>
               ) : filtered.map((r) => {
-                const mcCount = emailMcCount.get(r.email?.toLowerCase()) || 1;
-                const emailCount = mcEmailCount.get(r.mc?.toLowerCase()) || 1;
+                const key = r.mc?.toLowerCase();
+                const isVirtual = !r.id;
                 return (
-                  <tr key={r.id} style={{ borderBottom: `1px solid ${t.line}` }}>
-                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap", color: t.mid }}>{r.region || "-"}</td>
-                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap", color: t.mid }}>{r.branch || "-"}</td>
+                  <tr key={r.mc} style={{ borderBottom: `1px solid ${t.line}`, opacity: isVirtual ? 0.85 : 1 }}>
+                    <td style={{ padding: "6px 10px", minWidth: 110 }}>
+                      <input key={`${r.mc}-ci-${r.circle || ""}`} defaultValue={r.circle || ""} placeholder="-"
+                        onBlur={(e) => handleCellBlur(r.mc, "circle", e.target.value)} style={cellInputStyle} />
+                    </td>
+                    <td style={{ padding: "6px 10px", minWidth: 130 }}>
+                      <input key={`${r.mc}-re-${r.region || ""}`} defaultValue={r.region || ""} placeholder="-"
+                        onBlur={(e) => handleCellBlur(r.mc, "region", e.target.value)} style={cellInputStyle} />
+                    </td>
+                    <td style={{ padding: "6px 10px", minWidth: 130 }}>
+                      <input key={`${r.mc}-br-${r.branch || ""}`} defaultValue={r.branch || ""} placeholder="-"
+                        onBlur={(e) => handleCellBlur(r.mc, "branch", e.target.value)} style={cellInputStyle} />
+                    </td>
                     <td style={{ padding: "8px 12px", whiteSpace: "nowrap", fontWeight: 700 }}>
                       {r.mc}
-                      {emailCount > 1 && (
-                        <span title={`MC ini punya ${emailCount} admin`} style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: t.amber, background: t.amberBg, borderRadius: 6, padding: "1px 6px" }}>{emailCount} admin</span>
-                      )}
+                      {isVirtual && <span title="MC ini belum punya mapping — langsung isi di baris ini" style={{ marginLeft: 6, fontSize: 10, fontWeight: 700, color: t.amber, background: t.amberBg, borderRadius: 6, padding: "1px 6px" }}>baru</span>}
                     </td>
-                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap", color: t.mid }}>{r.full_name || "-"}</td>
-                    <td style={{ padding: "8px 12px", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6 }}>
-                      <Mail size={12} color={t.lo} />{r.email}
-                      {mcCount > 1 && (
-                        <span title={`Email ini terpasang ke ${mcCount} MC`} style={{ fontSize: 10, fontWeight: 700, color: t.teal, background: t.tealBg, borderRadius: 6, padding: "1px 6px" }}>{mcCount} MC</span>
-                      )}
+                    <td style={{ padding: "6px 10px", minWidth: 150 }}>
+                      <input key={`${r.mc}-fn-${r.full_name || ""}`} defaultValue={r.full_name || ""} placeholder="—"
+                        onBlur={(e) => handleCellBlur(r.mc, "full_name", e.target.value)} style={cellInputStyle} />
+                    </td>
+                    <td style={{ padding: "6px 10px", minWidth: 190 }}>
+                      <input key={`${r.mc}-e1-${r.email_1 || ""}`} defaultValue={r.email_1 || ""} placeholder="Belum diisi"
+                        onBlur={(e) => handleCellBlur(r.mc, "email_1", e.target.value)} style={cellInputStyle} />
+                    </td>
+                    <td style={{ padding: "6px 10px", minWidth: 190 }}>
+                      <input key={`${r.mc}-e2-${r.email_2 || ""}`} defaultValue={r.email_2 || ""} placeholder="Belum diisi"
+                        onBlur={(e) => handleCellBlur(r.mc, "email_2", e.target.value)} style={cellInputStyle} />
                     </td>
                     <td style={{ padding: "8px 12px", whiteSpace: "nowrap" }}>
-                      <button onClick={() => toggleActive(r)} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: r.active ? t.teal : t.lo, fontSize: 12, fontWeight: 700 }}>
-                        {r.active ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
-                        {r.active ? "Aktif" : "Nonaktif"}
-                      </button>
+                      {savingKey === key ? (
+                        <Loader2 size={14} className="spin" color={t.mid} />
+                      ) : isVirtual ? (
+                        <span style={{ fontSize: 11.5, color: t.lo }}>—</span>
+                      ) : (
+                        <button onClick={() => toggleActive(r)} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: "none", border: "none", cursor: "pointer", color: r.active ? t.teal : t.lo, fontSize: 12, fontWeight: 700 }}>
+                          {r.active ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
+                          {r.active ? "Aktif" : "Nonaktif"}
+                        </button>
+                      )}
                     </td>
                     <td style={{ padding: "8px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
-                      <button onClick={() => handleDelete(r)} title="Hapus" style={{ background: "none", border: "none", color: t.red, cursor: "pointer", display: "inline-flex" }}><Trash2 size={14} /></button>
+                      {!isVirtual && (
+                        <button onClick={() => handleDelete(r)} title="Hapus" style={{ background: "none", border: "none", color: t.red, cursor: "pointer", display: "inline-flex" }}><Trash2 size={14} /></button>
+                      )}
                     </td>
                   </tr>
                 );

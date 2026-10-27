@@ -3,7 +3,7 @@ import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import supabase from "../../../lib/supabase";
 import { HubLogo } from "../../../components/HubLogo";
-import { Mail, Lock, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, CheckCircle2, UserRound, ChevronRight, ShieldCheck } from "lucide-react";
+import { Mail, Lock, KeyRound, Eye, EyeOff, Loader2, AlertCircle, Sun, Moon, ArrowLeft, ArrowRight, CheckCircle2, UserRound, ChevronRight, ShieldCheck } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 const FONT  = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
@@ -11,7 +11,7 @@ const TEAL  = "#32BCAD";
 const RED   = "#ED1C24";
 const MAGA  = "#C6168D";
 
-const ROLE_LABEL = { cse_rse: "CSE / RSE", bsm: "BSM", pic_region: "PIC Region", spm_sumatera: "SPM Sumatera", internal_ioh: "Internal IOH" };
+const ROLE_LABEL = { cse_rse: "CSE / RSE", bsm: "BSM", pic_region: "PIC Region", spm_sumatera: "SPM Sumatera", internal_ioh: "Internal IOH", finance_mpx: "Admin MC" };
 
 const mk = (d) => ({
   bg:      d ? "#0A0A0B" : "#F4F4F6",
@@ -33,14 +33,15 @@ function SandraLoginInner() {
   const router       = useRouter();
   const searchParams = useSearchParams();
   const [d, setD]    = useState(true);
-  const [stage, setStage] = useState("email");   // email | password
+  const [stage, setStage] = useState("email");   // email | password | otp
   const [form,     setForm]     = useState({ email: "", password: "" });
   const [errors,   setErrors]   = useState([]);
   const [errMsg,   setErrMsg]   = useState("");
   const [loading,  setLoading]  = useState(false);
   const [checkingEmail, setCheckingEmail] = useState(false);
-  const [detected, setDetected] = useState(null);
+  const [detected, setDetected] = useState(null);   // { source:"admin_mc", role, mc } | { source:"sdp", found, role, ... }
   const [showPw,   setShowPw]   = useState(false);
+  const [otp,      setOtp]      = useState("");
   const [checking, setChecking] = useState(true);
   const t = mk(d);
 
@@ -58,17 +59,60 @@ function SandraLoginInner() {
 
   const up = (k, v) => { setForm(f => ({ ...f, [k]: v })); setErrors(e => e.filter(x => x !== k)); setErrMsg(""); };
 
-  // Langkah 1 — cek email di mapping lalu lanjut ke password.
+  // Langkah 1 — deteksi email: Admin MC (passwordless, OTP) dicek DULUAN;
+  // kalau tidak cocok, fallback ke alur password biasa (CSE/RSE, BSM, PIC
+  // Region, SPM Sumatera, internal_ioh via sdp_login_lookup, spt sebelumnya).
+  // Konsepnya sama dgn /martahub/m/login: satu kolom email, role terdeteksi
+  // otomatis, cuma mekanisme lanjutannya (OTP vs password) menyesuaikan role.
   const handleEmailNext = async () => {
     setErrMsg(""); setErrors([]);
     const email = form.email.trim().toLowerCase();
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { setErrors(["email"]); setErrMsg("Masukkan email yang valid."); return; }
     setCheckingEmail(true);
     try {
+      const { data: mcLookup } = await supabase.rpc("mf_dse_admin_mc_lookup", { p_email: email });
+      if (mcLookup?.found) {
+        setDetected({ source: "admin_mc", role: "finance_mpx", mc: mcLookup.mc || "" });
+        const { error: otpErr } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+        if (otpErr) { setErrMsg(otpErr.message || "Gagal mengirim kode OTP."); setCheckingEmail(false); return; }
+        setCheckingEmail(false);
+        setStage("otp");
+        return;
+      }
+    } catch { /* bukan Admin MC / RPC gagal — lanjut cek jalur password di bawah */ }
+    try {
       const { data } = await supabase.rpc("sdp_login_lookup", { p_email: email });
-      setDetected(data && !data.error ? data : null);
+      setDetected(data && !data.error ? { source: "sdp", ...data } : null);
     } catch { setDetected(null); }   // jangan blokir login bila cek gagal
     finally { setCheckingEmail(false); setStage("password"); }
+  };
+
+  // Verifikasi OTP utk Admin MC → terapkan role/MC lewat RPC → /dashboard.
+  const handleVerifyOtp = async () => {
+    setErrMsg("");
+    const cleanOtp = otp.trim();
+    if (!cleanOtp) { setErrMsg("Masukkan kode OTP."); return; }
+    setLoading(true);
+    try {
+      const email = form.email.trim().toLowerCase();
+      const { error: verifyErr } = await supabase.auth.verifyOtp({ email, token: cleanOtp, type: "email" });
+      if (verifyErr) {
+        setErrMsg(verifyErr.message?.toLowerCase().includes("expired") ? "Kode OTP sudah kedaluwarsa. Kirim ulang." : "Kode OTP salah atau sudah tidak berlaku.");
+        return;
+      }
+      await supabase.rpc("mf_dse_admin_mc_login_apply").catch(() => {});
+      router.refresh();
+      router.push("/dashboard");
+    } catch { setErrMsg("Terjadi gangguan pada sistem."); }
+    finally { setLoading(false); }
+  };
+
+  const handleResendOtp = async () => {
+    setErrMsg(""); setLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({ email: form.email.trim().toLowerCase(), options: { shouldCreateUser: true } });
+      if (error) setErrMsg(error.message || "Gagal mengirim ulang kode OTP.");
+    } finally { setLoading(false); }
   };
 
   // Langkah 2 — login (auth tetap password) + terapkan mapping ke profil.
@@ -169,7 +213,7 @@ function SandraLoginInner() {
                     {checkingEmail ? <Loader2 size={16} style={{animation:"spin .85s linear infinite"}}/> : <><span>Lanjutkan</span><ArrowRight size={14} strokeWidth={2.5}/></>}
                   </button>
                 </motion.div>
-              ) : (
+              ) : stage === "password" ? (
                 <motion.div key="s-pw" initial={{opacity:0, x:14}} animate={{opacity:1, x:0}} exit={{opacity:0, x:14}} transition={{duration:0.22}}>
                   {/* Email + ganti */}
                   <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, padding:"10px 12px", borderRadius:10, background:t.fieldBg, border:`1px solid ${t.line}`, marginBottom: detected?.found ? 10 : 16 }}>
@@ -206,6 +250,38 @@ function SandraLoginInner() {
                     {loading ? <Loader2 size={16} style={{animation:"spin .85s linear infinite"}}/> : <><span>Masuk ke SandraHub</span><ArrowRight size={14} strokeWidth={2.5}/></>}
                   </button>
                 </motion.div>
+              ) : (
+                <motion.div key="s-otp" initial={{opacity:0, x:14}} animate={{opacity:1, x:0}} exit={{opacity:0, x:14}} transition={{duration:0.22}}>
+                  {/* Email + ganti — Admin MC, passwordless */}
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:10, padding:"10px 12px", borderRadius:10, background:t.fieldBg, border:`1px solid ${t.line}`, marginBottom:10 }}>
+                    <span style={{ display:"flex", alignItems:"center", gap:8, minWidth:0 }}>
+                      <Mail size={14} color={t.lo} style={{flexShrink:0}}/>
+                      <span style={{ fontSize:13.5, fontWeight:600, color:t.hi, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{form.email}</span>
+                    </span>
+                    <button onClick={() => { setStage("email"); setOtp(""); setDetected(null); setErrMsg(""); }} style={{ background:"none", border:"none", cursor:"pointer", color:TEAL, fontSize:12.5, fontWeight:700, fontFamily:FONT, flexShrink:0 }}>Ganti</button>
+                  </div>
+
+                  <div style={{ display:"flex", alignItems:"center", gap:9, padding:"10px 12px", borderRadius:10, background:t.tealBg, border:`1px solid ${t.tealBd}`, marginBottom:16 }}>
+                    <ShieldCheck size={15} color={TEAL} style={{flexShrink:0}}/>
+                    <div style={{ minWidth:0 }}>
+                      <div style={{ fontSize:12.5, fontWeight:800, color:t.hi }}>Masuk sebagai {ROLE_LABEL[detected?.role] || "Admin MC"}</div>
+                      <div style={{ fontSize:11.5, color:t.mid, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{detected?.mc ? `MC: ${detected.mc}` : "Tanpa kata sandi — kode OTP sudah dikirim"}</div>
+                    </div>
+                  </div>
+
+                  <label style={{ fontSize:11, fontWeight:700, letterSpacing:"0.07em", textTransform:"uppercase", color:t.mid }}>Kode OTP (6 digit)</label>
+                  <div style={{ ...fieldStyle, marginTop:5 }}>
+                    <KeyRound size={14} color={t.lo} style={{flexShrink:0}}/>
+                    <input type="text" inputMode="numeric" maxLength={6} placeholder="••••••" value={otp} onChange={e=>setOtp(e.target.value.replace(/\D/g,""))} onKeyDown={e=>e.key==="Enter"&&handleVerifyOtp()} style={{ ...inputStyle, letterSpacing:4 }} autoFocus/>
+                  </div>
+                  <button onClick={handleVerifyOtp} disabled={loading}
+                    style={{ marginTop:20, width:"100%", height:46, borderRadius:10, border:"none", background:loading?`${TEAL}55`:`linear-gradient(135deg,${TEAL},#1A9E90)`, color:"#fff", fontSize:14, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", gap:7, boxShadow:loading?"none":`0 4px 18px rgba(50,188,173,0.25)`, cursor:loading?"not-allowed":"pointer", fontFamily:FONT }}>
+                    {loading ? <Loader2 size={16} style={{animation:"spin .85s linear infinite"}}/> : <><span>Verifikasi & Masuk</span><ArrowRight size={14} strokeWidth={2.5}/></>}
+                  </button>
+                  <button onClick={handleResendOtp} disabled={loading} style={{ marginTop:12, width:"100%", background:"none", border:"none", cursor:"pointer", color:t.mid, fontSize:12.5, fontWeight:600, fontFamily:FONT }}>
+                    Belum dapat kode? Kirim ulang
+                  </button>
+                </motion.div>
               )}
             </AnimatePresence>
           </div>
@@ -216,23 +292,8 @@ function SandraLoginInner() {
           </div>
         </div>
 
-        <button onClick={()=>router.push("/sandra/login-admin-mc")}
-          style={{ marginTop:14, width:"100%", display:"flex", alignItems:"center", gap:13, padding:"14px 16px", borderRadius:14, cursor:"pointer", textAlign:"left", fontFamily:FONT,
-            background:d?"rgba(50,188,173,0.08)":"rgba(50,188,173,0.05)", border:`1.5px solid ${d?"rgba(50,188,173,0.35)":"rgba(50,188,173,0.28)"}`, transition:"transform .12s, box-shadow .15s, border-color .15s" }}
-          onMouseEnter={(e)=>{ e.currentTarget.style.boxShadow="0 8px 26px rgba(50,188,173,0.18)"; e.currentTarget.style.transform="translateY(-1px)"; }}
-          onMouseLeave={(e)=>{ e.currentTarget.style.boxShadow="none"; e.currentTarget.style.transform="none"; }}>
-          <span style={{ width:42, height:42, borderRadius:12, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", background:`linear-gradient(135deg,${TEAL},${MAGA})`, color:"#fff", boxShadow:"0 4px 14px rgba(50,188,173,0.32)" }}>
-            <Mail size={19} strokeWidth={2.2} />
-          </span>
-          <span style={{ flex:1, minWidth:0 }}>
-            <span style={{ display:"block", fontSize:14.5, fontWeight:800, letterSpacing:"-0.02em", color:t.hi }}>Login sebagai Admin MC</span>
-            <span style={{ display:"block", fontSize:12, color:t.mid, marginTop:2 }}>Tanpa kata sandi — masuk dengan kode OTP ke email</span>
-          </span>
-          <ChevronRight size={18} style={{ color:TEAL, flexShrink:0 }} />
-        </button>
-
         <button onClick={()=>router.push("/promotor")}
-          style={{ marginTop:16, width:"100%", display:"flex", alignItems:"center", gap:13, padding:"14px 16px", borderRadius:14, cursor:"pointer", textAlign:"left", fontFamily:FONT,
+          style={{ marginTop:14, width:"100%", display:"flex", alignItems:"center", gap:13, padding:"14px 16px", borderRadius:14, cursor:"pointer", textAlign:"left", fontFamily:FONT,
             background:d?"rgba(237,28,36,0.08)":"rgba(237,28,36,0.05)", border:`1.5px solid ${d?"rgba(237,28,36,0.35)":"rgba(237,28,36,0.28)"}`, transition:"transform .12s, box-shadow .15s, border-color .15s" }}
           onMouseEnter={(e)=>{ e.currentTarget.style.boxShadow="0 8px 26px rgba(237,28,36,0.18)"; e.currentTarget.style.transform="translateY(-1px)"; }}
           onMouseLeave={(e)=>{ e.currentTarget.style.boxShadow="none"; e.currentTarget.style.transform="none"; }}>

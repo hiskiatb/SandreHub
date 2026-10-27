@@ -228,6 +228,52 @@ const FORM_DEFS={
       {key:"price_com_bunga",label:"Bunga Pinjaman Bank",group:"com",required:false,type:"numeric"},
     ],
   },
+  dse_database:{
+    id:"dse_database",label:"Database DSE",
+    description:"Populasi/roster DSE: Category, Code IM3/3ID, MDI, PT, MC, Branch, Region, Circle — UPSERT per DSE Code IM3",
+    pk:["dse_code"],
+    table:"mf_dse_database",
+    conflictKey:"dse_code",
+    notNullDefaults:{},
+    // Field dipersempit sesuai permintaan user, 9 kolom persis — mapping manual
+    // via drag & drop dari header sheet terpilih. "DSE Code IM3" dipakai sbg
+    // kunci UPSERT (dse_code); "DSE Code 3ID" & "MDI" disimpan di kolom baru
+    // (dse_code_3id, mdi) di mf_dse_database — bukan baris terpisah.
+    fields:[
+      {key:"dse_category",  label:"DSE Category",   group:"primary",required:false,type:"text"},
+      {key:"dse_code",      label:"DSE Code IM3",    group:"primary",required:true, type:"text",aliases:["DSE Code","Kode DSE","ID DSE"]},
+      {key:"dse_code_3id",  label:"DSE Code 3ID",    group:"primary",required:false,type:"text"},
+      {key:"mdi",           label:"MDI",             group:"dse_data",required:false,type:"text",aliases:["MDI Name","Nama MDI"]},
+      {key:"pt_name",       label:"PT",              group:"dse_data",required:false,type:"text",aliases:["Partner Name","Nama Partner"]},
+      {key:"mc",            label:"Micro Cluster",   group:"dse_data",required:false,type:"text",aliases:["Micro Cluster Name","MC","MC Name"]},
+      {key:"branch",        label:"Branch",          group:"dse_data",required:true, type:"text",aliases:["Branch Name","Nama Branch"]},
+      {key:"region",        label:"Region",          group:"dse_data",required:true, type:"text",aliases:["Region Name","Nama Region"]},
+      {key:"circle",        label:"Circle",          group:"dse_data",required:false,type:"text"},
+    ],
+  },
+  admin_mc_mapping:{
+    id:"admin_mc_mapping",label:"Mapping & User Management",
+    description:"Admin MC per Micro Cluster — Circle/Region/Branch, Nama Admin & Alamat Email (opsional, bisa ditambahkan belakangan langsung dari web) — UPSERT per MC",
+    pk:["mc"],
+    table:"mf_dse_admin_mc_mapping",
+    conflictKey:"mc",
+    notNullDefaults:{},
+    // UPDATE (permintaan user - "jangan hanya micro cluster" / "langsung
+    // masukkan saja disini, tidak perlu otomatis, kita mapping saja nama
+    // branch region dan mc-nya"): Circle/Region/Branch DIKEMBALIKAN jadi
+    // kolom yg dicocokkan langsung dari file upload (dropdown mapping),
+    // BUKAN lagi live-lookup otomatis dari Database DSE. Hanya MC yg wajib;
+    // sisanya opsional & tetap bisa diisi/diedit belakangan di tabel web.
+    fields:[
+      {key:"mc",        label:"Micro Cluster",      group:"primary",required:true, type:"text",aliases:["MC","MC Name","Micro Cluster Name"]},
+      {key:"circle",    label:"Circle",              group:"dse_data",required:false,type:"text"},
+      {key:"region",    label:"Region",              group:"dse_data",required:false,type:"text",aliases:["Region Name","Nama Region"]},
+      {key:"branch",    label:"Branch",              group:"dse_data",required:false,type:"text",aliases:["Branch Name","Nama Branch"]},
+      {key:"full_name", label:"Nama Admin",          group:"dse_data",required:false,type:"text",aliases:["Nama","Full Name"]},
+      {key:"email_1",   label:"Alamat Email Admin 1",group:"dse_data",required:false,type:"text",aliases:["Email Admin 1","Email 1","Email Admin","Alamat Email Admin"]},
+      {key:"email_2",   label:"Alamat Email Admin 2",group:"dse_data",required:false,type:"text",aliases:["Email Admin 2","Email 2"]},
+    ],
+  },
 };
 const GROUP_META={
   primary:{label:"🔑 Primary Key"},mobo:{label:"💰 Saldo Mobo"},
@@ -236,6 +282,7 @@ const GROUP_META={
   opex:{label:"🏢 OPEX"},sdm:{label:"👥 SDM / HR"},
   mkt:{label:"📣 Marketing"},com:{label:"💳 Cost of Money"},
   data:{label:"📋 Data SDP"},status:{label:"⚠️ Status Terminate"},
+  dse_data:{label:"🗂️ Data DSE"},
 };
 
 /* ─────────────────────────────────────────────────────────────
@@ -446,7 +493,7 @@ function Bdg({c="gray",children,small}){
 /* ═══════════════════════════════════════════════════════════════
    MAIN COMPONENT
    ═══════════════════════════════════════════════════════════════ */
-export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,formTypeProp=null}){
+export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,formTypeProp=null,lockTarget=false}){
   const d=theme==="dark",t=T(d);
   const cssVars={
     "--t1":t.t1,"--t2":t.t2,"--t3":t.t3,
@@ -470,6 +517,11 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
   const[fileRows,setFileRows]=useState([]);
   const[formType,setFormType]=useState(formTypeProp??"pendapatan");
   const[dragOver,setDragOver]=useState(false);
+  // Target yg pakai alur sederhana "pilih file -> set header -> cocokkan
+  // kolom via dropdown" (tanpa chip search, Log/Template/Ganti File, dsb)
+  // — sama persis dgn pola Database DSE, dipakai juga utk Mapping & User
+  // Management (admin_mc_mapping).
+  const simpleWizard=formType==="dse_database"||formType==="admin_mc_mapping";
 
   /* ── mapping ── */
   const[mapping,setMapping]=useState({});
@@ -1516,8 +1568,8 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
             <FileSpreadsheet size={20} strokeWidth={1.7}/>
           </div>
           <div style={{flex:1}}>
-            <div style={{fontSize:20,fontWeight:700,letterSpacing:"-.04em",color:t.t1}}>Import Data · Form Pendapatan</div>
-            <div style={{fontSize:12,color:t.t3}}>Mengisi otomatis <strong style={{color:t.t2}}>Form Pendapatan (PNL)</strong> — kolom yang diisi tim SPM Sumatera</div>
+            <div style={{fontSize:20,fontWeight:700,letterSpacing:"-.04em",color:t.t1}}>Import Data · {FORM_DEFS[formType]?.label}</div>
+            <div style={{fontSize:12,color:t.t3}}>{FORM_DEFS[formType]?.description}</div>
           </div>
           <button className="gbtn" style={{position:"relative"}} onClick={()=>setShowLog(true)}>
             <History size={12}/>Log
@@ -1558,6 +1610,7 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
           </div>
         </div>
 
+        {!simpleWizard&&(
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:12}}>
           <div className="card" style={{padding:"18px 18px 16px"}}>
             <div style={{fontSize:12,fontWeight:700,color:t.t1,marginBottom:12,
@@ -1603,6 +1656,7 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
             </div>
           </div>
         </div>
+        )}
       </div>
     </div>
   );
@@ -1659,18 +1713,27 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
               {fileCols.length} kolom &nbsp;·&nbsp;{sheets.length} sheet
             </div>
           </div>
-          <button className="gbtn" style={{position:"relative"}} onClick={()=>setShowLog(true)}>
-            <History size={11}/>Log
-            {totalPendingReverts>0&&(
-              <span style={{position:"absolute",top:-4,right:-4,width:15,height:15,borderRadius:99,
-                background:t.A,color:"#000",fontSize:9,fontWeight:700,
-                display:"flex",alignItems:"center",justifyContent:"center"}}>
-                {totalPendingReverts>9?"9+":totalPendingReverts}
-              </span>
-            )}
-          </button>
-          <button className="gbtn" onClick={()=>dlFilled(fd)}><FileDown size={11}/>{fd.id==="pendapatan"?"Data Tersimpan":"Template"}</button>
-          <button className="gbtn" onClick={reset}><X size={11}/>Ganti File</button>
+          {simpleWizard?(
+            /* Khusus Database DSE: Log/Template/Ganti File tidak perlu —
+               wizard ini dibuka dalam modal (SDP_DseDatabase.jsx) yang
+               sudah punya tombol close sendiri di pojok. */
+            null
+          ):(
+            <>
+              <button className="gbtn" style={{position:"relative"}} onClick={()=>setShowLog(true)}>
+                <History size={11}/>Log
+                {totalPendingReverts>0&&(
+                  <span style={{position:"absolute",top:-4,right:-4,width:15,height:15,borderRadius:99,
+                    background:t.A,color:"#000",fontSize:9,fontWeight:700,
+                    display:"flex",alignItems:"center",justifyContent:"center"}}>
+                    {totalPendingReverts>9?"9+":totalPendingReverts}
+                  </span>
+                )}
+              </button>
+              <button className="gbtn" onClick={()=>dlFilled(fd)}><FileDown size={11}/>{fd.id==="pendapatan"?"Data Tersimpan":"Template"}</button>
+              <button className="gbtn" onClick={reset}><X size={11}/>Ganti File</button>
+            </>
+          )}
         </div>
 
         {/* CARD 1 — Preview Excel */}
@@ -1678,17 +1741,19 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
           <div className="sh">
             <Table2 size={13} style={{color:t.t2,flexShrink:0}}/>
             <span className="sl" style={{flex:1}}>Preview Excel</span>
-            <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
-              {sheets.map(s=>(
-                <button key={s}
-                  onClick={()=>{setSheet(s);parseSheet(workbook,s);setMapping({});}}
-                  style={{height:26,padding:"0 10px",borderRadius:6,border:"none",cursor:"pointer",
-                    fontSize:11,fontWeight:600,fontFamily:FF,transition:".12s",
-                    background:sheet===s?t.acc:"transparent",color:sheet===s?"#fff":t.t2}}>
-                  {s}
-                </button>
-              ))}
-            </div>
+            {sheets.length>1&&(
+              <div style={{display:"flex",gap:3,flexWrap:"wrap"}}>
+                {sheets.map(s=>(
+                  <button key={s}
+                    onClick={()=>{setSheet(s);parseSheet(workbook,s);setMapping({});}}
+                    style={{height:26,padding:"0 10px",borderRadius:6,border:"none",cursor:"pointer",
+                      fontSize:11,fontWeight:600,fontFamily:FF,transition:".12s",
+                      background:sheet===s?t.acc:"transparent",color:sheet===s?"#fff":t.t2}}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
           <div style={{padding:"5px 16px",borderBottom:`1px solid ${t.lineS}`,fontSize:11,color:t.t3}}>
             Klik nomor baris untuk memilih sebagai header kolom
@@ -1767,8 +1832,8 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
                         <Loader2 size={10} style={{animation:"spin 1s linear infinite"}}/>Memuat DB…
                       </span>
                       :dbError
-                        ?<span style={{fontSize:11,color:t.R,display:"flex",alignItems:"center",gap:4}}>
-                          <WifiOff size={10}/>Gagal memuat DB
+                        ?<span style={{fontSize:11,color:t.A,display:"flex",alignItems:"center",gap:4}}>
+                          <WifiOff size={10}/>Data existing belum termuat (opsional)
                         </span>
                         :lastSync
                           ?<span style={{fontSize:11,color:t.G,display:"flex",alignItems:"center",gap:4}}>
@@ -1814,7 +1879,7 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
             <button className="gbtn" onClick={runAuto}><Sparkles size={11}/>Auto-match</button>
           </div>
 
-          <div className="mapping-panel" style={{display:"flex",height:560,overflow:"hidden"}}>
+          <div className="mapping-panel" style={{display:"flex",height:simpleWizard?440:560,overflow:"hidden"}}>
             <div className="left-panel" style={{width:220,flexShrink:0,
               borderRight:`1px solid ${t.line}`,display:"flex",flexDirection:"column",overflow:"hidden"}}>
               <div style={{borderBottom:`1px solid ${t.line}`,flexShrink:0}}>
@@ -1823,20 +1888,44 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
                   <span style={{fontSize:9,fontWeight:700,letterSpacing:".07em",
                     textTransform:"uppercase",color:t.t3}}>Tujuan Import</span>
                 </div>
-                {/* Dikunci ke Form Pendapatan (PNL) — tidak ada pemilihan feed lain agar tidak membingungkan. */}
-                <div className="fti act" style={{cursor:"default"}}>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:12,fontWeight:700,color:t.acc,
-                      overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-                      Form Pendapatan
+                {/* Dulu dikunci ke Form Pendapatan saja; sekarang semua target di
+                    FORM_DEFS bisa dipilih (termasuk Database DSE utk import roster
+                    DSE — Region/Branch/HOA/MC/Partner) agar wizard ini bisa dipakai
+                    utk banyak jenis file, bukan cuma PNL. lockTarget=true (dipakai
+                    saat wizard di-embed dari tab lain, mis. Database DSE) mengunci
+                    ke satu target saja — daftar lain disembunyikan. */}
+                {(lockTarget?[FORM_DEFS[formType]]:Object.values(FORM_DEFS)).filter(Boolean).map(f2=>{
+                  const active=f2.id===formType;
+                  return(
+                    <div key={f2.id}
+                      onClick={()=>{if(!lockTarget&&!active){setFormType(f2.id);setMapping({});}}}
+                      className={`fti${active?" act":""}`}
+                      style={{cursor:(!lockTarget&&!active)?"pointer":"default"}}>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,fontWeight:700,color:active?t.acc:t.t1,
+                          overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                          {f2.label}
+                        </div>
+                        <div style={{fontSize:10,color:t.t3,marginTop:1,
+                          overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                          {f2.description} · {f2.fields.filter(x=>x.required).length} kolom wajib
+                        </div>
+                      </div>
+                      {active&&<CheckCircle2 size={12} style={{color:t.acc,flexShrink:0}}/>}
                     </div>
-                    <div style={{fontSize:10,color:t.t3,marginTop:1}}>
-                      Data masuk ke PNL · {fd.fields.filter(x=>x.required).length} kolom wajib
-                    </div>
-                  </div>
-                  <CheckCircle2 size={12} style={{color:t.acc,flexShrink:0}}/>
-                </div>
+                  );
+                })}
               </div>
+              {simpleWizard?(
+                /* Mode dropdown: chip kolom file tidak dipakai lagi, cukup
+                   info ringkas — pencocokan dilakukan lewat dropdown di
+                   tiap field target (kanan). */
+                <div style={{padding:"12px 13px",fontSize:11,color:t.t3,lineHeight:1.5}}>
+                  <span style={{color:t.t2,fontWeight:600}}>{fileCols.length} kolom terdeteksi</span> di sheet ini.
+                  Cocokkan tiap field di kanan lewat dropdown — sudah auto-match, tinggal cek ulang.
+                </div>
+              ):(
+              <>
               <div style={{padding:"9px 11px",borderBottom:`1px solid ${t.lineS}`,flexShrink:0}}>
                 <div style={{position:"relative"}}>
                   <Search size={11} style={{position:"absolute",left:8,top:"50%",
@@ -1877,6 +1966,8 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
                     );
                   })}
               </div>
+              </>
+              )}
             </div>
 
             <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -1934,7 +2025,8 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
                       </div>
                       {!collapsed&&(
                         <div style={{display:"grid",
-                          gridTemplateColumns:"repeat(auto-fill,minmax(185px,1fr))",gap:5}}>
+                          gridTemplateColumns:simpleWizard?"repeat(3,1fr)":"repeat(auto-fill,minmax(185px,1fr))",
+                          gap:simpleWizard?"10px 12px":5}}>
                           {fields.map(f=>{
                             const mp=mapping[f.key];
                             const isOver=dragField===f.key;
@@ -1947,7 +2039,42 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
                                   {f.required&&<span style={{color:mp?t.G:t.R,fontSize:7}}>●</span>}
                                   <span style={{overflow:"hidden",textOverflow:"ellipsis",
                                     whiteSpace:"nowrap",flex:1,color:mp?t.t1:t.t2}}>{f.label}</span>
+                                  {mp&&<CheckCircle2 size={11} style={{color:t.G,flexShrink:0}}/>}
                                 </div>
+                                {simpleWizard?(
+                                  /* Gaya dropdown per-field (bukan drag/drop chip) — sesuai referensi
+                                     UX "Cocokkan Kolom" yang diminta user khusus utk Database DSE.
+                                     appearance:none + ChevronDown custom (bukan panah bawaan browser)
+                                     supaya ada jarak dari tepi kolom, tidak mepet. */
+                                  <div style={{position:"relative"}}>
+                                    <select
+                                      value={mp||""}
+                                      onChange={e=>{
+                                        const v=e.target.value;
+                                        if(!v){removeMp(f.key);return;}
+                                        setMapping(p=>{
+                                          const c=Object.fromEntries(Object.entries(p).filter(([,vv])=>vv!==v));
+                                          return{...c,[f.key]:v};
+                                        });
+                                      }}
+                                      className="inp"
+                                      style={{width:"100%",height:34,fontSize:12,
+                                        appearance:"none",WebkitAppearance:"none",MozAppearance:"none",
+                                        paddingRight:32,
+                                        borderColor:mp?t.GB:(f.required?t.RB:undefined),
+                                        color:mp?t.t1:t.t2}}>
+                                      <option value="">— pilih kolom —</option>
+                                      {fileCols.map(col=>(
+                                        <option key={col} value={col}
+                                          disabled={usedCols.has(col)&&mapping[f.key]!==col}>
+                                          {col}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <ChevronDown size={13} style={{position:"absolute",right:11,top:"50%",
+                                      transform:"translateY(-50%)",color:t.t3,pointerEvents:"none"}}/>
+                                  </div>
+                                ):(
                                 <div className={sc}
                                   onClick={()=>{if(canAssign)assignChip(f.key);else if(mp&&!selectedChip)removeMp(f.key);}}
                                   onDragOver={e=>{e.preventDefault();setDragField(f.key);}}
@@ -1986,6 +2113,7 @@ export default function PNL_ImportWizard({theme="dark",onImport,supabase:sb,form
                                     </span>
                                   )}
                                 </div>
+                                )}
                                 {/* Period dropdown for period_select type */}
                                 {f.type==="period_select"&&(
                                   <div style={{marginTop:4}}>

@@ -34,19 +34,29 @@ import AdminMcMapping from "./AdminMcMapping";
 import SDP_DseDatabase from "./SDP_DseDatabase";
 import {
   Upload, FileSpreadsheet, X, Check, AlertTriangle, Loader2, FileDown,
-  Search, RefreshCw, ChevronDown, ChevronUp, Wallet, TrendingUp, Calendar, Info,
+  Search, RefreshCw, ChevronDown, ChevronUp, ChevronLeft, Wallet, TrendingUp, Calendar, Info,
   Pencil, Save, ListChecks, History, UserRoundCog, Database,
+  Users, UserCheck, UserX, Ticket, CircleDollarSign, Clock, CalendarCheck2,
 } from "lucide-react";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif`;
 const PAGE_SIZE = 50;
 const TABLE_BP = 860; // di bawah ini → tampilan card (mobile, fold, layar sempit)
 const BRANDS = ["IM3", "3ID"];
+// Fitur "Import Massal dari Excel" di tab Input Harian disembunyikan dari UI
+// (permintaan user) tanpa menghapus kodenya — tinggal set true lagi kalau
+// suatu saat perlu dinyalakan.
+const SHOW_IMPORT_EXCEL = false;
 
 const fmtID = (n) => Math.round(Number(n) || 0).toLocaleString("id-ID");
 const fRaw = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const todayISO = () => new Date().toISOString().slice(0, 10);
-const emptyEntry = () => ({ qty_sp: 0, nilai_sp: 0, qty_saldo: 0, nilai_saldo: 0, qty_voucher: 0, nilai_voucher: 0, ar_piutang: 0, catatan: "" });
+const emptyEntry = () => ({ qty_sp: 0, nilai_sp: 0, qty_saldo: 0, nilai_saldo: 0, qty_voucher: 0, nilai_voucher: 0, ar_piutang: 0, ar_bayar: 0, catatan: "" });
+// Format jam:menit lokal dari timestamptz, utk audit trail "Diperbarui HH:mm" per baris
+const fmtTime = (iso) => { if (!iso) return ""; try { return new Date(iso).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
+const DAY_NAMES = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+const MONTH_NAMES = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+const fmtLongDate = (iso) => { if (!iso) return ""; const d = new Date(iso + "T00:00:00"); return `${DAY_NAMES[d.getDay()]}, ${d.getDate()} ${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`; };
 
 // Kolom di file Excel (import massal, opsional) — header baris 1, longgar
 const COLMAP = {
@@ -145,6 +155,110 @@ function Toast({ msg, type, onClose }) {
   );
 }
 
+// ── Label field yang enak dibaca utk popup Riwayat (lihat DseHistoryModal) —
+// field_name mentah dari mf_dse_database_history (nama kolom DB) dipetakan
+// ke label Indonesia yang sama dgn yang dipakai di form Upload Data/Database
+// DSE, supaya konsisten.
+const HISTORY_FIELD_LABEL = {
+  _created: "Dibuat",
+  dse_category: "DSE Category",
+  dse_code_3id: "DSE Code 3ID",
+  mdi: "MDI",
+  pt_name: "PT",
+  mc: "Micro Cluster",
+  branch: "Branch",
+  region: "Region",
+  circle: "Circle",
+  dse_status: "Status",
+  ds_name: "Nama DSE",
+  join_date: "Join Date",
+};
+
+// ── Popup Riwayat Perubahan per ID DSE — dibuka dgn klik ID DSE di tab Input
+// Harian. Data dari mf_dse_database_history, yang diisi otomatis oleh DB
+// trigger trg_mf_dse_database_log_changes tiap kali mf_dse_database
+// di-INSERT/UPDATE (baik lewat Upload Data/wizard maupun edit identitas di
+// sini) — jadi audit trail-nya menangkap SEMUA jalur perubahan, bukan cuma
+// yang lewat UI ini.
+function DseHistoryModal({ t, dseCode, onClose }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [errMsg, setErrMsg] = useState("");
+  const [names, setNames] = useState({});
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setLoading(true); setErrMsg("");
+      try {
+        const { data, error } = await supabase.from("mf_dse_database_history")
+          .select("*").eq("dse_code", dseCode).order("changed_at", { ascending: false }).limit(200);
+        if (error) throw error;
+        if (!alive) return;
+        setRows(data || []);
+        const ids = Array.from(new Set((data || []).map((r) => r.changed_by).filter(Boolean)));
+        if (ids.length) {
+          const { data: profs } = await supabase.from("profiles").select("id, full_name").in("id", ids);
+          if (alive) setNames(Object.fromEntries((profs || []).map((p) => [p.id, p.full_name])));
+        }
+      } catch (e) {
+        if (alive) setErrMsg(e.message || "Gagal memuat riwayat.");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [dseCode]);
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 9500, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "48px 16px", overflowY: "auto" }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ width: "100%", maxWidth: 520, background: t.card, borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.4)", overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 18px", borderBottom: `1px solid ${t.line}` }}>
+          <History size={16} color={t.teal} style={{ flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: t.hi }}>Riwayat Perubahan</div>
+            <div style={{ fontSize: 11.5, color: t.mid }}>{dseCode}</div>
+          </div>
+          <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 999, border: "none", background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><X size={14} /></button>
+        </div>
+        <div style={{ maxHeight: "60vh", overflowY: "auto", padding: "8px 18px 18px" }}>
+          {loading ? (
+            <div style={{ padding: 28, textAlign: "center", color: t.mid }}><Loader2 size={18} className="spin" /></div>
+          ) : errMsg ? (
+            <div style={{ padding: 20, textAlign: "center", color: t.red, fontSize: 12.5 }}>{errMsg}</div>
+          ) : rows.length === 0 ? (
+            <div style={{ padding: 20, textAlign: "center", color: t.mid, fontSize: 12.5 }}>Belum ada riwayat perubahan.</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              {rows.map((r) => (
+                <div key={r.id} style={{ padding: "10px 0", borderBottom: `1px solid ${t.line}` }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 3 }}>
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>{HISTORY_FIELD_LABEL[r.field_name] || r.field_name}</span>
+                    <span style={{ fontSize: 10.5, color: t.lo, flexShrink: 0 }}>{fmtTime(r.changed_at)}</span>
+                  </div>
+                  {r.field_name === "_created" ? (
+                    <div style={{ fontSize: 12, color: t.mid }}>{r.new_value}</div>
+                  ) : (
+                    <div style={{ fontSize: 12, color: t.mid, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                      <span style={{ color: t.red, textDecoration: "line-through" }}>{r.old_value || "(kosong)"}</span>
+                      <span style={{ color: t.lo }}>→</span>
+                      <span style={{ color: t.teal, fontWeight: 600 }}>{r.new_value || "(kosong)"}</span>
+                    </div>
+                  )}
+                  {r.changed_by && (
+                    <div style={{ fontSize: 10.5, color: t.lo, marginTop: 2 }}>oleh {names[r.changed_by] || "—"}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StatTile({ t, icon, label, value, sub }) {
   return (
     <div style={{ flex: "1 1 160px", minWidth: 150, borderRadius: 12, border: `1px solid ${t.line}`, background: t.card, padding: "14px 16px" }}>
@@ -157,94 +271,332 @@ function StatTile({ t, icon, label, value, sub }) {
   );
 }
 
-// ── Satu panel input brand (IM3 / 3ID) di dalam kartu DSE ───────────────────
-function BrandPanel({ t, brand, value, onChange, isCardView }) {
-  const set = (k, v) => onChange({ ...value, [k]: v });
-  const numStyle = { width: "100%", height: 32, padding: "0 8px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontFamily: FONT, outline: "none", boxSizing: "border-box" };
-  const brandColor = brand === "IM3" ? "#ED1C24" : "#FDB813";
+// ── Status DSE (Vacant / Interview / Active) ────────────────────────────────
+// "" (Belum diisi) dipakai utk ID DSE baru hasil Upload Data yang belum
+// pernah diisi status-nya manual (lihat migration mf_dse_database_status_no_default
+// — kolom dse_status tidak lagi default "Active" supaya ID baru kelihatan
+// kosong dulu, bukan sok-tahu dianggap Active).
+const STATUS_OPTIONS = [
+  { v: "", label: "— Belum diisi —", color: "#8A8A96", bg: "rgba(138,138,150,0.10)" },
+  { v: "Active", label: "Active", color: "#16A34A", bg: "rgba(22,163,74,0.10)" },
+  { v: "Interview", label: "Interview", color: "#D97706", bg: "rgba(217,119,6,0.10)" },
+  { v: "Vacant", label: "Vacant", color: "#DC2626", bg: "rgba(220,38,38,0.10)" },
+];
+const statusMetaOf = (v) => STATUS_OPTIONS.find((s) => s.v === v) || STATUS_OPTIONS[0];
+
+// ── Input angka dgn pemisah ribuan ("1.234.567" saat tidak fokus, angka
+// mentah saat sedang diketik) — dipakai utk semua kolom Qty/Rp supaya mudah
+// dibaca tanpa harus menghitung nol manual, baik di tabel desktop maupun
+// kartu mobile. ────────────────────────────────────────────────────────────
+function MoneyInput({ t, value, onChange, align }) {
+  const [editing, setEditing] = useState(false);
+  const [raw, setRaw] = useState(""); // raw = digit mentah tanpa separator (dipakai utk hitung/simpan)
+  // UPDATE (permintaan user - "pada saat angka dimasukkan langsung ada
+  // decimal seperator"): dulu separator ribuan cuma muncul setelah blur,
+  // sekarang langsung live saat mengetik juga (format raw dgn fmtID tiap
+  // onChange, bukan cuma pas blur) - value yg disimpan/dikirim tetap angka
+  // mentah (raw), cuma tampilannya yg diberi titik ribuan.
+  const display = editing ? (raw === "" ? "" : fmtID(raw)) : (fRaw(value) ? fmtID(value) : "");
   return (
-    <div style={{ flex: "1 1 240px", minWidth: isCardView ? "100%" : 240, borderRadius: 10, border: `1px solid ${t.line}`, background: t.sub, padding: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-        <span style={{ width: 8, height: 8, borderRadius: 999, background: brandColor, flexShrink: 0 }} />
-        <span style={{ fontSize: 12, fontWeight: 800, color: t.hi }}>{brand}</span>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 7, marginBottom: 7 }}>
-        <div>
-          <div style={{ fontSize: 10, color: t.lo, marginBottom: 3 }}>Qty SP</div>
-          <input type="number" value={value.qty_sp} onChange={(e) => set("qty_sp", e.target.value)} style={numStyle} />
-        </div>
-        <div>
-          <div style={{ fontSize: 10, color: t.lo, marginBottom: 3 }}>Nilai SP</div>
-          <input type="number" value={value.nilai_sp} onChange={(e) => set("nilai_sp", e.target.value)} style={numStyle} />
-        </div>
-        <div>
-          <div style={{ fontSize: 10, color: t.lo, marginBottom: 3 }}>Qty Saldo</div>
-          <input type="number" value={value.qty_saldo} onChange={(e) => set("qty_saldo", e.target.value)} style={numStyle} />
-        </div>
-        <div>
-          <div style={{ fontSize: 10, color: t.lo, marginBottom: 3 }}>Nilai Saldo</div>
-          <input type="number" value={value.nilai_saldo} onChange={(e) => set("nilai_saldo", e.target.value)} style={numStyle} />
-        </div>
-        <div>
-          <div style={{ fontSize: 10, color: t.lo, marginBottom: 3 }}>Qty Voucher</div>
-          <input type="number" value={value.qty_voucher} onChange={(e) => set("qty_voucher", e.target.value)} style={numStyle} />
-        </div>
-        <div>
-          <div style={{ fontSize: 10, color: t.lo, marginBottom: 3 }}>Nilai Voucher</div>
-          <input type="number" value={value.nilai_voucher} onChange={(e) => set("nilai_voucher", e.target.value)} style={numStyle} />
-        </div>
-      </div>
-      <div style={{ marginBottom: 7 }}>
-        <div style={{ fontSize: 10, color: t.lo, marginBottom: 3 }}>AR / Piutang</div>
-        <input type="number" value={value.ar_piutang} onChange={(e) => set("ar_piutang", e.target.value)} style={numStyle} />
-      </div>
-      <div>
-        <div style={{ fontSize: 10, color: t.lo, marginBottom: 3 }}>Catatan</div>
-        <input type="text" value={value.catatan || ""} onChange={(e) => set("catatan", e.target.value)} placeholder="opsional" style={numStyle} />
-      </div>
-    </div>
+    <input
+      type="text" inputMode="numeric" placeholder="0"
+      value={display}
+      onFocus={() => { setEditing(true); setRaw(fRaw(value) ? String(fRaw(value)) : ""); }}
+      onChange={(e) => setRaw(e.target.value.replace(/[^\d]/g, ""))}
+      onBlur={() => { setEditing(false); onChange(raw === "" ? 0 : parseInt(raw, 10) || 0); }}
+      style={{
+        width: "100%", height: 34, padding: "0 10px", borderRadius: 7,
+        border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi,
+        fontSize: 12.5, fontFamily: FONT, outline: "none", boxSizing: "border-box",
+        textAlign: align || "left",
+      }}
+    />
   );
 }
 
-// ── Satu kartu per Kode DSE: identitas (editable) + 2 panel brand ──────────
-function DseEntryCard({ t, isCardView, dse, entries, onEntryChange, onIdentityChange, onSave, saving, dirty }) {
+// ── AR/Piutang — "masukkan nilai bayar, sisa dihitung otomatis" ────────────
+// UPDATE (permintaan user - "agar simple dia bisa masukkan nilai bayar jadi
+// berkurang aja utang saat ini"): Admin MC TIDAK lagi mengetik ulang angka
+// tunggakan manual tiap hari. "Utang Saat Ini" ditampilkan read-only (hasil
+// SISA tunggakan dari entry terakhir SEBELUM tanggal ini — lihat `prevAr` di
+// loadDseAndEntries), lalu admin tinggal masukkan "Bayar". "Sisa Tunggakan"
+// dihitung live = max(0, Utang Saat Ini − Bayar), itu yg tersimpan sbg
+// ar_piutang hari ini (ar_bayar disimpan terpisah sbg histori pembayaran,
+// jadi audit "siapa bayar berapa kapan" tetap bisa ditelusuri lewat tab
+// Riwayat, bukan cuma angka sisa akhir).
+function ArPiutangInput({ t, outstanding, bayar, onBayarChange, onConfirmSave, saving }) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(0);
+  const sisaCurrent = Math.max(0, fRaw(outstanding) - fRaw(bayar));
+  const lunasCurrent = sisaCurrent === 0;
+  const sisaDraft = Math.max(0, fRaw(outstanding) - fRaw(draft));
+  const lunasDraft = sisaDraft === 0;
+  const labelStyle = { fontSize: 9.5, color: t.lo, marginBottom: 2, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.2 };
+
+  const openModal = () => { setDraft(bayar || 0); setOpen(true); };
+  const confirm = () => {
+    onBayarChange(draft);
+    setOpen(false);
+    if (onConfirmSave) onConfirmSave();
+  };
+
+  // UPDATE (permintaan user - "perbaiki agar setiap row tidak terlalu tinggi
+  // untuk masing masing dse agar lebih compact"): dulu 3 elemen (AR Saat Ini
+  // + badge Lunas/Sisa + tombol Catat AR) wrap jadi 3 baris krn masing2
+  // dikasih flex basis lebar sendiri → baris tabel jadi tinggi. Sekarang satu
+  // baris horizontal ringkas: angka AR polos (bukan dlm kotak terpisah) +
+  // badge kecil + tombol ikon-saja (judul via title, bukan teks "Catat AR").
   return (
-    <div style={{ borderRadius: 12, border: `1px solid ${dirty ? t.tealBd : t.line}`, background: t.card, padding: 14 }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, flex: 1, minWidth: 220 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 13.5, fontWeight: 800, color: t.hi }}>{dse.dse_code}</span>
-            {dse.is_revoked && <span style={{ fontSize: 10, fontWeight: 700, color: t.red, background: t.redBg, borderRadius: 999, padding: "1px 7px" }}>Revoked</span>}
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <div style={{ flex: "1 1 160px", minWidth: 140 }}>
-              <div style={{ fontSize: 10, color: t.lo, marginBottom: 3 }}>Nama DSE</div>
-              <input type="text" value={dse._ds_name ?? dse.ds_name ?? ""} onChange={(e) => onIdentityChange(dse.dse_code, "ds_name", e.target.value)}
-                style={{ width: "100%", height: 30, padding: "0 8px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12, fontFamily: FONT, outline: "none", boxSizing: "border-box" }} />
-            </div>
-            <div style={{ flex: "1 1 120px", minWidth: 110 }}>
-              <div style={{ fontSize: 10, color: t.lo, marginBottom: 3 }}>MC</div>
-              <input type="text" value={dse._mc ?? dse.mc ?? ""} onChange={(e) => onIdentityChange(dse.dse_code, "mc", e.target.value)}
-                style={{ width: "100%", height: 30, padding: "0 8px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12, fontFamily: FONT, outline: "none", boxSizing: "border-box" }} />
-            </div>
-          </div>
-        </div>
-        <button onClick={() => onSave(dse.dse_code)} disabled={saving || !dirty}
-          style={{ display: "flex", alignItems: "center", gap: 6, height: 32, padding: "0 12px", borderRadius: 8, border: "none", background: dirty ? t.teal : t.inputBg, color: dirty ? "#fff" : t.lo, fontSize: 12, fontWeight: 700, cursor: dirty && !saving ? "pointer" : "default", opacity: saving ? 0.6 : 1, flexShrink: 0 }}>
-          {saving ? <Loader2 size={13} className="spin" /> : <Save size={13} />}
-          Simpan
+    <>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap" }}>
+        <span title="AR Saat Ini" style={{ fontSize: 11.5, fontWeight: 600, color: t.mid, whiteSpace: "nowrap", flexShrink: 0 }}>
+          Rp {fmtID(outstanding)}
+        </span>
+        <span style={{ fontSize: 10, fontWeight: 800, color: lunasCurrent ? t.teal : t.red, background: lunasCurrent ? t.tealBg : t.redBg, borderRadius: 6, padding: "3px 8px", display: "flex", alignItems: "center", gap: 3, whiteSpace: "nowrap", flexShrink: 0 }}>
+          {lunasCurrent && <Check size={9} />} {lunasCurrent ? "LUNAS" : `Sisa Rp ${fmtID(sisaCurrent)}`}
+        </span>
+        <button type="button" onClick={openModal} title="Catat AR" style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 7, border: "none", background: t.teal, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+          <CircleDollarSign size={13} />
         </button>
       </div>
-      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-        {BRANDS.map((b) => (
-          <BrandPanel key={b} t={t} brand={b} isCardView={isCardView} value={entries[b] || emptyEntry()} onChange={(v) => onEntryChange(dse.dse_code, b, v)} />
-        ))}
-      </div>
-    </div>
+
+      {open && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }} onClick={() => setOpen(false)}>
+          <div onClick={(ev) => ev.stopPropagation()} style={{ width: "100%", maxWidth: 360, borderRadius: 16, background: t.card, boxShadow: "0 20px 60px rgba(0,0,0,0.35)", padding: 20, fontFamily: FONT }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: t.hi, display: "flex", alignItems: "center", gap: 7 }}>
+                <CircleDollarSign size={16} color={t.teal} /> Catat Pembayaran AR
+              </div>
+              <button type="button" onClick={() => setOpen(false)} style={{ background: "none", border: "none", color: t.lo, cursor: "pointer", display: "flex" }}><X size={16} /></button>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", borderRadius: 10, background: t.sub, marginBottom: 12 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: t.mid }}>AR Saat Ini</span>
+              <span style={{ fontSize: 14, fontWeight: 800, color: t.hi }}>Rp {fmtID(outstanding)}</span>
+            </div>
+
+            <div style={labelStyle}>Jumlah Bayar</div>
+            <MoneyInput t={t} value={draft} onChange={setDraft} />
+
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", borderRadius: 10, background: lunasDraft ? t.tealBg : t.redBg, marginTop: 12 }}>
+              <span style={{ fontSize: 11.5, fontWeight: 800, color: lunasDraft ? t.teal : t.red, display: "flex", alignItems: "center", gap: 4 }}>
+                {lunasDraft && <Check size={12} />} {lunasDraft ? "LUNAS" : "SISA SETELAH BAYAR"}
+              </span>
+              <span style={{ fontSize: 15, fontWeight: 800, color: lunasDraft ? t.teal : t.red }}>Rp {fmtID(sisaDraft)}</span>
+            </div>
+
+            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+              <button type="button" onClick={() => setOpen(false)} style={{ flex: 1, height: 38, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>
+                Batal
+              </button>
+              <button type="button" onClick={confirm} disabled={saving} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6, height: 38, borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontSize: 12.5, fontWeight: 700, cursor: saving ? "default" : "pointer", opacity: saving ? 0.6 : 1 }}>
+                {saving ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
-export default function DSE_ProdAR({ theme, profile }) {
+// ── Satu baris DSE: identitas (Status/Nama/Join Date, editable) + penjualan
+// brand yang sedang dipilih (IM3 atau 3ID, lihat toggle Brand di atas tabel)
+// + Total Penjualan dihitung otomatis dari SP+Voucher+Saldo. Dirender sbg
+// baris <table> di desktop, kartu bertumpuk di mobile (isCardView) — satu
+// komponen, dua layout, supaya logic tetap satu sumber. ────────────────────
+function DseInputRow({ t, isCardView, dse, brand, entry, onEntryChange, onIdentityChange, identityEdit, onSave, saving, dirty, prevOutstanding, audit, onShowHistory }) {
+  const [showMore, setShowMore] = useState(false);
+  const e = entry || emptyEntry();
+  const totalPenjualan = fRaw(e.nilai_sp) + fRaw(e.nilai_voucher) + fRaw(e.nilai_saldo);
+  const status = identityEdit?.dse_status ?? dse.dse_status ?? "";
+  const joinDate = identityEdit?.join_date ?? dse.join_date ?? "";
+  // ID yang ditampilkan ikut brand yang sedang dipilih (IM3 -> dse_code,
+  // 3ID -> dse_code_3id) - keduanya tetap merujuk ke baris mf_dse_database
+  // yang sama, jadi Nama DSE/Status/Join Date (identity) selalu memakai key
+  // dse.dse_code (IM3) apa pun brand yang aktif -> otomatis "ngelink"/shared
+  // antara IM3 & 3ID, cuma label ID-nya yang berubah ikut brand.
+  const displayCode = brand === "3ID" ? (dse.dse_code_3id || dse.dse_code) : dse.dse_code;
+  const sm = statusMetaOf(status);
+  const outstanding = fRaw(prevOutstanding);
+  const handleBayarChange = (v) => onEntryChange(dse.dse_code, brand, { ...e, ar_bayar: v, ar_piutang: Math.max(0, outstanding - fRaw(v)) });
+  // Audit trail: siapa & kapan terakhir mengisi baris INI (brand & tanggal yg
+  // sedang dibuka) - diambil dari uploaded_by (resolve ke nama lewat
+  // profilesMap) + updated_at (auto di-set DB trigger tiap kali baris
+  // di-UPDATE, lihat migration trg_mf_dse_prod_ar_updated_at).
+  const AuditLine = audit ? (
+    <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10.5, color: t.lo }}>
+      <Clock size={10} style={{ flexShrink: 0 }} />
+      <span>Diperbarui {fmtTime(audit.updated_at || audit.uploaded_at)}{audit.by ? ` oleh ${audit.by}` : ""}</span>
+    </div>
+  ) : null;
+
+  const textInputStyle = { width: "100%", height: 34, padding: "0 10px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontFamily: FONT, outline: "none", boxSizing: "border-box" };
+  const selectStyle = { ...textInputStyle, cursor: "pointer", color: sm.color, fontWeight: 700, background: sm.bg, border: `1px solid ${sm.color}33`, appearance: "none", WebkitAppearance: "none", paddingRight: 28 };
+  const StatusSelect = (
+    <div style={{ position: "relative" }}>
+      <select value={status} onChange={(ev) => onIdentityChange(dse.dse_code, "dse_status", ev.target.value)} style={selectStyle}>
+        {STATUS_OPTIONS.map((s) => <option key={s.v} value={s.v}>{s.label}</option>)}
+      </select>
+      <ChevronDown size={13} style={{ position: "absolute", right: 9, top: "50%", transform: "translateY(-50%)", color: sm.color, pointerEvents: "none" }} />
+    </div>
+  );
+  const setE = (patch) => onEntryChange(dse.dse_code, brand, { ...e, ...patch });
+
+  if (isCardView) {
+    const labelStyle = { fontSize: 10, color: t.lo, marginBottom: 3, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.2 };
+    return (
+      <div style={{ borderRadius: 12, border: `1px solid ${dirty ? t.tealBd : t.line}`, background: t.card, padding: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <button onClick={() => onShowHistory?.(dse.dse_code)} title="Lihat riwayat perubahan"
+              style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 14, fontWeight: 800, color: t.hi, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {displayCode}<History size={11} style={{ color: t.lo, flexShrink: 0 }} />
+            </button>
+            {dse.is_revoked && <span style={{ fontSize: 10, fontWeight: 700, color: t.red, background: t.redBg, borderRadius: 999, padding: "1px 7px", flexShrink: 0 }}>Revoked</span>}
+          </div>
+          <button onClick={() => onSave(dse.dse_code)} disabled={saving || !dirty}
+            style={{ display: "flex", alignItems: "center", gap: 6, height: 30, padding: "0 12px", borderRadius: 8, border: "none", background: dirty ? t.teal : t.inputBg, color: dirty ? "#fff" : t.lo, fontSize: 12, fontWeight: 700, cursor: dirty && !saving ? "pointer" : "default", opacity: saving ? 0.6 : 1, flexShrink: 0 }}>
+            {saving ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan
+          </button>
+        </div>
+
+        <div style={{ marginBottom: 8 }}>
+          <div style={labelStyle}>Nama DSE</div>
+          <input type="text" value={identityEdit?.ds_name ?? dse.ds_name ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "ds_name", ev.target.value)} style={textInputStyle} />
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+          <div>
+            <div style={labelStyle}>Status</div>
+            {StatusSelect}
+          </div>
+          <div>
+            <div style={labelStyle}>Join Date</div>
+            <input type="date" value={joinDate || ""} onChange={(ev) => onIdentityChange(dse.dse_code, "join_date", ev.target.value)} style={textInputStyle} />
+          </div>
+        </div>
+
+        {/* Tiap section (SP / Voucher / Saldo MOBO) dikasih label + sedikit
+            tint background supaya batasnya jelas, tidak nyambung jadi satu
+            blok input panjang. */}
+        <div style={{ borderRadius: 9, background: t.redBg, padding: 8, marginBottom: 8 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: t.red, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>SP</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <div>
+              <div style={labelStyle}>Qty SP Terjual (Pcs)</div>
+              <MoneyInput t={t} value={e.qty_sp} onChange={(v) => setE({ qty_sp: v })} />
+            </div>
+            <div>
+              <div style={labelStyle}>Total Penjualan SP (Rp)</div>
+              <MoneyInput t={t} value={e.nilai_sp} onChange={(v) => setE({ nilai_sp: v })} />
+            </div>
+          </div>
+        </div>
+        <div style={{ borderRadius: 9, background: t.blueBg, padding: 8, marginBottom: 8 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: t.blue, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Voucher</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+            <div>
+              <div style={labelStyle}>Qty Voucher Terjual (Pcs)</div>
+              <MoneyInput t={t} value={e.qty_voucher} onChange={(v) => setE({ qty_voucher: v })} />
+            </div>
+            <div>
+              <div style={labelStyle}>Total Penjualan Voucher (Rp)</div>
+              <MoneyInput t={t} value={e.nilai_voucher} onChange={(v) => setE({ nilai_voucher: v })} />
+            </div>
+          </div>
+        </div>
+        <div style={{ borderRadius: 9, background: t.amberBg, padding: 8, marginBottom: 8 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: t.amber, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Saldo MOBO</div>
+          <div>
+            <div style={labelStyle}>Total Penjualan Saldo MOBO (Rp)</div>
+            <MoneyInput t={t} value={e.nilai_saldo} onChange={(v) => setE({ nilai_saldo: v })} />
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", borderRadius: 9, background: t.tealBg, marginBottom: 8 }}>
+          <span style={{ fontSize: 11.5, fontWeight: 700, color: t.teal }}>TOTAL PENJUALAN</span>
+          <span style={{ fontSize: 15, fontWeight: 800, color: t.teal }}>Rp {fmtID(totalPenjualan)}</span>
+        </div>
+
+        <button onClick={() => setShowMore((v) => !v)} style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", padding: 0 }}>
+          {showMore ? <ChevronUp size={12} /> : <ChevronDown size={12} />} AR/Piutang, MC &amp; Catatan
+        </button>
+        {showMore && (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <div style={labelStyle}>AR / Piutang</div>
+              <ArPiutangInput t={t} outstanding={outstanding} bayar={e.ar_bayar} onBayarChange={handleBayarChange} onConfirmSave={() => onSave(dse.dse_code)} saving={saving} />
+            </div>
+            <div>
+              <div style={labelStyle}>MC</div>
+              <input type="text" value={identityEdit?.mc ?? dse.mc ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "mc", ev.target.value)} style={textInputStyle} />
+            </div>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <div style={labelStyle}>Catatan</div>
+              <input type="text" value={e.catatan || ""} onChange={(ev) => setE({ catatan: ev.target.value })} placeholder="opsional" style={textInputStyle} />
+            </div>
+            {AuditLine && (
+              <div style={{ gridColumn: "1 / -1", paddingTop: 2, borderTop: `1px dashed ${t.sub}`, marginTop: 2 }}>
+                {AuditLine}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Desktop: baris tabel ── Dikelompokkan per section (garis pemisah lebih
+  // tebal + sedikit tint background) supaya SP / Voucher / Saldo MOBO
+  // kelihatan jelas batasnya, bukan nyambung semua jadi satu deretan angka.
+  const groupDivider = { borderLeft: `2px solid ${t.line}` };
+  const spBg = t.redBg;
+  const voucherBg = t.blueBg;
+  const saldoBg = t.amberBg;
+  return (
+    <tr style={{ borderBottom: `1px solid ${t.line}`, background: dirty ? t.tealBg : "transparent" }}>
+      <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 800 }}>
+          <button onClick={() => onShowHistory?.(dse.dse_code)} title="Lihat riwayat perubahan"
+            style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", padding: 0, fontWeight: 800, fontSize: "inherit", color: t.hi, fontFamily: "inherit" }}>
+            {displayCode}<History size={11} style={{ color: t.lo, flexShrink: 0 }} />
+          </button>
+          {dse.is_revoked && <span style={{ fontSize: 9.5, fontWeight: 700, color: t.red, background: t.redBg, borderRadius: 999, padding: "1px 6px" }}>Revoked</span>}
+        </div>
+      </td>
+      <td style={{ padding: "10px 12px", minWidth: 160 }}>
+        <input type="text" value={identityEdit?.ds_name ?? dse.ds_name ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "ds_name", ev.target.value)} style={textInputStyle} />
+      </td>
+      <td style={{ padding: "10px 12px", minWidth: 128 }}>
+        {StatusSelect}
+      </td>
+      <td style={{ padding: "10px 12px", minWidth: 150 }}>
+        <input type="date" value={joinDate || ""} onChange={(ev) => onIdentityChange(dse.dse_code, "join_date", ev.target.value)} style={textInputStyle} />
+      </td>
+      <td style={{ padding: "10px 12px", minWidth: 110, ...groupDivider, background: spBg }}><MoneyInput t={t} align="right" value={e.qty_sp} onChange={(v) => setE({ qty_sp: v })} /></td>
+      <td style={{ padding: "10px 12px", minWidth: 130, background: spBg }}><MoneyInput t={t} align="right" value={e.nilai_sp} onChange={(v) => setE({ nilai_sp: v })} /></td>
+      <td style={{ padding: "10px 12px", minWidth: 110, ...groupDivider, background: voucherBg }}><MoneyInput t={t} align="right" value={e.qty_voucher} onChange={(v) => setE({ qty_voucher: v })} /></td>
+      <td style={{ padding: "10px 12px", minWidth: 130, background: voucherBg }}><MoneyInput t={t} align="right" value={e.nilai_voucher} onChange={(v) => setE({ nilai_voucher: v })} /></td>
+      <td style={{ padding: "10px 12px", minWidth: 140, ...groupDivider, background: saldoBg }}><MoneyInput t={t} align="right" value={e.nilai_saldo} onChange={(v) => setE({ nilai_saldo: v })} /></td>
+      <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: t.teal, whiteSpace: "nowrap", ...groupDivider }}>Rp {fmtID(totalPenjualan)}</td>
+      <td style={{ padding: "10px 12px", minWidth: 330, ...groupDivider }}>
+        <ArPiutangInput t={t} outstanding={outstanding} bayar={e.ar_bayar} onBayarChange={handleBayarChange} onConfirmSave={() => onSave(dse.dse_code)} saving={saving} />
+      </td>
+      <td style={{ padding: "10px 12px", minWidth: 150 }}>
+        <input type="text" value={e.catatan || ""} onChange={(ev) => setE({ catatan: ev.target.value })} placeholder="opsional" style={textInputStyle} />
+        {AuditLine && <div style={{ marginTop: 4 }}>{AuditLine}</div>}
+      </td>
+      <td style={{ padding: "10px 12px", textAlign: "right" }}>
+        <button onClick={() => onSave(dse.dse_code)} disabled={saving || !dirty}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, height: 32, padding: "0 12px", borderRadius: 8, border: "none", background: dirty ? t.teal : t.inputBg, color: dirty ? "#fff" : t.lo, fontSize: 12, fontWeight: 700, cursor: dirty && !saving ? "pointer" : "default", opacity: saving ? 0.6 : 1 }}>
+          {saving ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+export default function DSE_ProdAR({ theme, profile, onBack }) {
   const d = theme === "dark";
   const t = {
     bg: d ? "#0F0F11" : "#F2F2F7", card: d ? "#1A1A1D" : "#FFFFFF", sub: d ? "#202024" : "#F5F5F7",
@@ -293,8 +645,15 @@ export default function DSE_ProdAR({ theme, profile }) {
 
   // ── Tab "Input Harian" ────────────────────────────────────────────────────
   const [entryDate, setEntryDate] = useState(todayISO());
+  // UPDATE (permintaan user - "selain mc bisa pilih branch region juga di
+  // input manual"): selain MC, Region & Branch sekarang juga bisa dipilih
+  // sbg filter sendiri (cascading: pilih Region -> opsi Branch menyempit ->
+  // opsi MC menyempit). Ketiganya opsional & bisa dikombinasikan bebas.
+  const [regionFilter, setRegionFilter] = useState("");
+  const [branchFilter, setBranchFilter] = useState("");
   const [mcFilter, setMcFilter] = useState(""); // SPM saja: pilih MC yang mau diisi
-  const [mcOptions, setMcOptions] = useState([]);
+  const [brand, setBrand] = useState("IM3"); // toggle brand aktif - menentukan kolom penjualan mana yg diedit
+  const [dseMeta, setDseMeta] = useState([]); // [{region,branch,mc}] dari Database DSE - sumber opsi cascading di atas
   const [dseList, setDseList] = useState([]);
   const [dseSearch, setDseSearch] = useState("");
   const [loadingDse, setLoadingDse] = useState(false);
@@ -303,23 +662,39 @@ export default function DSE_ProdAR({ theme, profile }) {
   const [dirty, setDirty] = useState({});         // { [dse_code]: true }
   const [savingCode, setSavingCode] = useState(null);
   const [showImport, setShowImport] = useState(false);
+  const [prevAr, setPrevAr] = useState({});       // { "dse_code|brand": lastOutstandingAmount }
+  const [profilesMap, setProfilesMap] = useState({}); // { [uuid]: full_name }
+  const [historyFor, setHistoryFor] = useState(null); // dse_code lagi dibuka popup riwayatnya, atau null
 
-  // SPM perlu pilih MC dulu (tidak otomatis dibatasi RLS); Admin MC langsung
-  // terbatas lewat RLS jadi tidak perlu pilih.
+  // SPM perlu pilih Region/Branch/MC dulu (tidak otomatis dibatasi RLS);
+  // Admin MC langsung terbatas lewat RLS jadi tidak perlu pilih. dseMeta
+  // dipakai utk membangun opsi cascading Region -> Branch -> MC di bawah.
   useEffect(() => {
     if (!isSPM) return;
     (async () => {
-      const { data } = await supabase.from("mf_dse_database").select("mc").eq("is_revoked", false).not("mc", "is", null);
-      const uniq = Array.from(new Set((data || []).map((r) => r.mc).filter(Boolean))).sort();
-      setMcOptions(uniq);
+      const { data } = await supabase.from("mf_dse_database").select("region, branch, mc").eq("is_revoked", false).not("mc", "is", null);
+      setDseMeta(data || []);
     })();
   }, [isSPM]);
+
+  const regionOptions = useMemo(() => Array.from(new Set(dseMeta.map((r) => r.region).filter(Boolean))).sort(), [dseMeta]);
+  const branchOptions = useMemo(() => Array.from(new Set(
+    dseMeta.filter((r) => !regionFilter || r.region === regionFilter).map((r) => r.branch).filter(Boolean)
+  )).sort(), [dseMeta, regionFilter]);
+  const mcOptions = useMemo(() => Array.from(new Set(
+    dseMeta.filter((r) => (!regionFilter || r.region === regionFilter) && (!branchFilter || r.branch === branchFilter)).map((r) => r.mc).filter(Boolean)
+  )).sort(), [dseMeta, regionFilter, branchFilter]);
 
   const loadDseAndEntries = useCallback(async () => {
     setLoadingDse(true);
     try {
-      let q = supabase.from("mf_dse_database").select("dse_code, ds_name, mc, branch, region, is_revoked").eq("is_revoked", false).order("dse_code", { ascending: true });
-      if (isSPM) { if (!mcFilter) { setDseList([]); setLoadingDse(false); return; } q = q.eq("mc", mcFilter); }
+      let q = supabase.from("mf_dse_database").select("dse_code, dse_code_3id, ds_name, mc, branch, region, is_revoked, dse_status, join_date").eq("is_revoked", false).order("dse_code", { ascending: true });
+      if (isSPM) {
+        if (!mcFilter && !branchFilter && !regionFilter) { setDseList([]); setLoadingDse(false); return; }
+        if (regionFilter) q = q.eq("region", regionFilter);
+        if (branchFilter) q = q.eq("branch", branchFilter);
+        if (mcFilter) q = q.eq("mc", mcFilter);
+      }
       const { data: dses, error: e1 } = await q.limit(1000);
       if (e1) throw e1;
       setDseList(dses || []);
@@ -329,13 +704,48 @@ export default function DSE_ProdAR({ theme, profile }) {
         const { data: prod, error: e2 } = await supabase.from("mf_dse_prod_ar").select("*").eq("tanggal", entryDate).in("dse_code", codes);
         if (e2) throw e2;
         const map = {};
+        const uploaderIds = new Set();
         (prod || []).forEach((r) => {
           map[r.dse_code] = map[r.dse_code] || {};
-          map[r.dse_code][r.brand] = { qty_sp: r.qty_sp, nilai_sp: r.nilai_sp, qty_saldo: r.qty_saldo, nilai_saldo: r.nilai_saldo, qty_voucher: r.qty_voucher, nilai_voucher: r.nilai_voucher, ar_piutang: r.ar_piutang, catatan: r.catatan || "" };
+          map[r.dse_code][r.brand] = {
+            qty_sp: r.qty_sp, nilai_sp: r.nilai_sp, qty_saldo: r.qty_saldo, nilai_saldo: r.nilai_saldo,
+            qty_voucher: r.qty_voucher, nilai_voucher: r.nilai_voucher,
+            ar_piutang: r.ar_piutang, ar_bayar: r.ar_bayar || 0, catatan: r.catatan || "",
+            updated_at: r.updated_at, uploaded_at: r.uploaded_at, uploaded_by: r.uploaded_by,
+          };
+          if (r.uploaded_by) uploaderIds.add(r.uploaded_by);
         });
         setEntries(map);
+
+        // Carry-forward: ambil ar_piutang terakhir SEBELUM entryDate per dse_code+brand,
+        // untuk ditampilkan sebagai "Utang Saat Ini" (read-only) pada ArPiutangInput.
+        const { data: prev, error: e3 } = await supabase
+          .from("mf_dse_prod_ar")
+          .select("dse_code, brand, ar_piutang, tanggal")
+          .lt("tanggal", entryDate)
+          .in("dse_code", codes)
+          .order("tanggal", { ascending: false })
+          .limit(5000);
+        if (e3) throw e3;
+        const prevMap = {};
+        (prev || []).forEach((r) => {
+          const key = `${r.dse_code}|${r.brand}`;
+          if (!(key in prevMap)) prevMap[key] = fRaw(r.ar_piutang);
+        });
+        setPrevAr(prevMap);
+
+        if (uploaderIds.size) {
+          const { data: profs } = await supabase.from("profiles").select("id, full_name").in("id", Array.from(uploaderIds));
+          const pm = {};
+          (profs || []).forEach((p) => { pm[p.id] = p.full_name; });
+          setProfilesMap(pm);
+        } else {
+          setProfilesMap({});
+        }
       } else {
         setEntries({});
+        setPrevAr({});
+        setProfilesMap({});
       }
       setIdentity({});
       setDirty({});
@@ -344,7 +754,7 @@ export default function DSE_ProdAR({ theme, profile }) {
     } finally {
       setLoadingDse(false);
     }
-  }, [isSPM, mcFilter, entryDate]);
+  }, [isSPM, regionFilter, branchFilter, mcFilter, entryDate]);
 
   useEffect(() => { loadDseAndEntries(); }, [loadDseAndEntries]);
 
@@ -362,10 +772,12 @@ export default function DSE_ProdAR({ theme, profile }) {
     try {
       const dse = dseList.find((x) => x.dse_code === code);
       const idEdit = identity[code];
-      if (idEdit && (idEdit.ds_name !== undefined || idEdit.mc !== undefined)) {
+      if (idEdit && (idEdit.ds_name !== undefined || idEdit.mc !== undefined || idEdit.dse_status !== undefined || idEdit.join_date !== undefined)) {
         const payload = {};
         if (idEdit.ds_name !== undefined && idEdit.ds_name !== dse?.ds_name) payload.ds_name = idEdit.ds_name;
         if (idEdit.mc !== undefined && idEdit.mc !== dse?.mc) payload.mc = idEdit.mc;
+        if (idEdit.dse_status !== undefined && idEdit.dse_status !== dse?.dse_status) payload.dse_status = idEdit.dse_status || null;
+        if (idEdit.join_date !== undefined && idEdit.join_date !== dse?.join_date) payload.join_date = idEdit.join_date || null;
         if (Object.keys(payload).length) {
           const { error } = await supabase.from("mf_dse_database").update(payload).eq("dse_code", code);
           if (error) throw error;
@@ -379,7 +791,7 @@ export default function DSE_ProdAR({ theme, profile }) {
         qty_sp: fRaw(brandEntries[b].qty_sp), nilai_sp: fRaw(brandEntries[b].nilai_sp),
         qty_saldo: fRaw(brandEntries[b].qty_saldo), nilai_saldo: fRaw(brandEntries[b].nilai_saldo),
         qty_voucher: fRaw(brandEntries[b].qty_voucher), nilai_voucher: fRaw(brandEntries[b].nilai_voucher),
-        ar_piutang: fRaw(brandEntries[b].ar_piutang), catatan: brandEntries[b].catatan || null,
+        ar_piutang: fRaw(brandEntries[b].ar_piutang), ar_bayar: fRaw(brandEntries[b].ar_bayar), catatan: brandEntries[b].catatan || null,
         uploaded_by: profile?.id || null,
       }));
       if (rowsToSave.length) {
@@ -403,8 +815,36 @@ export default function DSE_ProdAR({ theme, profile }) {
   const filteredDseList = dseList.filter((r) => {
     if (!dseSearch) return true;
     const s = dseSearch.toLowerCase();
-    return r.dse_code?.toLowerCase().includes(s) || r.ds_name?.toLowerCase().includes(s);
+    return r.dse_code?.toLowerCase().includes(s) || r.dse_code_3id?.toLowerCase().includes(s) || r.ds_name?.toLowerCase().includes(s);
   });
+
+  // ── Ringkasan (summary cards) — di-scope ke MC yang sedang dipilih (lihat
+  // `dseList`, bukan filteredDseList, supaya tetap utuh walau sedang mengetik
+  // di kotak "Cari DSE") + brand & tanggal yang aktif saat ini. Status DSE
+  // dan angka yg BARU DIEDIT (belum disimpan ke server) ikut dihitung di sini
+  // juga - pakai `identity`/`entries` override yg sama dgn yg dipakai baris
+  // tabel, supaya kartu ini langsung update real-time saat admin mengetik,
+  // bukan baru berubah setelah tombol Simpan ditekan.
+  // UPDATE (permintaan user): akumulasi per Branch & per Partner MENYUSUL -
+  // utk sekarang summary-nya cuma per MC yg sedang dipilih di filter atas.
+  const mcSummary = useMemo(() => {
+    let totalActive = 0, totalVacant = 0, totalInterview = 0;
+    let qtySp = 0, nilaiSp = 0, qtyVoucher = 0, nilaiVoucher = 0, nilaiSaldo = 0, tunggakan = 0;
+    for (const dse of dseList) {
+      const status = identity[dse.dse_code]?.dse_status ?? dse.dse_status ?? "";
+      if (status === "Active") totalActive++;
+      else if (status === "Vacant") totalVacant++;
+      else if (status === "Interview") totalInterview++;
+      const e = entries[dse.dse_code]?.[brand];
+      if (e) {
+        qtySp += fRaw(e.qty_sp); nilaiSp += fRaw(e.nilai_sp);
+        qtyVoucher += fRaw(e.qty_voucher); nilaiVoucher += fRaw(e.nilai_voucher);
+        nilaiSaldo += fRaw(e.nilai_saldo);
+        tunggakan += fRaw(e.ar_piutang);
+      }
+    }
+    return { totalAlokasi: dseList.length, totalActive, totalVacant, totalInterview, qtySp, nilaiSp, qtyVoucher, nilaiVoucher, nilaiSaldo, tunggakan, totalPenjualan: nilaiSp + nilaiVoucher + nilaiSaldo };
+  }, [dseList, identity, entries, brand]);
 
   // ── Import massal Excel (opsional, sekunder) ──────────────────────────────
   const [staged, setStaged] = useState(null);
@@ -444,7 +884,7 @@ export default function DSE_ProdAR({ theme, profile }) {
   const [searchInput, setSearchInput] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
-  const [totals, setTotals] = useState({ qty_sp: 0, nilai_sp: 0, qty_saldo: 0, nilai_saldo: 0, qty_voucher: 0, nilai_voucher: 0, ar_piutang: 0 });
+  const [totals, setTotals] = useState({ qty_sp: 0, nilai_sp: 0, qty_saldo: 0, nilai_saldo: 0, qty_voucher: 0, nilai_voucher: 0, ar_piutang: 0, ar_bayar: 0 });
   const [exportLoading, setExportLoading] = useState(false);
 
   const fetchRiwayat = useCallback(async (pg = 1, srch = search) => {
@@ -465,7 +905,7 @@ export default function DSE_ProdAR({ theme, profile }) {
       setTotal(count || 0);
       setPage(pg);
 
-      let tq = supabase.from("mf_dse_prod_ar").select("qty_sp,nilai_sp,qty_saldo,nilai_saldo,qty_voucher,nilai_voucher,ar_piutang");
+      let tq = supabase.from("mf_dse_prod_ar").select("qty_sp,nilai_sp,qty_saldo,nilai_saldo,qty_voucher,nilai_voucher,ar_piutang,ar_bayar");
       if (dateFrom) tq = tq.gte("tanggal", dateFrom);
       if (dateTo) tq = tq.lte("tanggal", dateTo);
       if (srch) {
@@ -477,8 +917,8 @@ export default function DSE_ProdAR({ theme, profile }) {
         qty_sp: a.qty_sp + fRaw(r.qty_sp), nilai_sp: a.nilai_sp + fRaw(r.nilai_sp),
         qty_saldo: a.qty_saldo + fRaw(r.qty_saldo), nilai_saldo: a.nilai_saldo + fRaw(r.nilai_saldo),
         qty_voucher: a.qty_voucher + fRaw(r.qty_voucher), nilai_voucher: a.nilai_voucher + fRaw(r.nilai_voucher),
-        ar_piutang: a.ar_piutang + fRaw(r.ar_piutang),
-      }), { qty_sp: 0, nilai_sp: 0, qty_saldo: 0, nilai_saldo: 0, qty_voucher: 0, nilai_voucher: 0, ar_piutang: 0 });
+        ar_piutang: a.ar_piutang + fRaw(r.ar_piutang), ar_bayar: a.ar_bayar + fRaw(r.ar_bayar),
+      }), { qty_sp: 0, nilai_sp: 0, qty_saldo: 0, nilai_saldo: 0, qty_voucher: 0, nilai_voucher: 0, ar_piutang: 0, ar_bayar: 0 });
       setTotals(sum);
     } catch (e) {
       showToast(e.message || "Gagal memuat data.", "error");
@@ -501,11 +941,11 @@ export default function DSE_ProdAR({ theme, profile }) {
       if (dateTo) q = q.lte("tanggal", dateTo);
       const { data, error } = await q.limit(50000);
       if (error) throw error;
-      const head = ["Tanggal", "Kode DSE", "Brand", "MC", "Branch", "Nama DS", "Nama DSE", "Qty SP", "Nilai SP", "Qty Saldo", "Nilai Saldo", "Qty Voucher", "Nilai Voucher", "AR/Piutang", "Catatan"];
+      const head = ["Tanggal", "Kode DSE", "Brand", "MC", "Branch", "Nama DS", "Nama DSE", "Qty SP", "Nilai SP", "Qty Saldo", "Nilai Saldo", "Qty Voucher", "Nilai Voucher", "Bayar AR", "Sisa AR/Piutang", "Catatan", "Terakhir Diperbarui"];
       const body = (data || []).map((r) => [
         r.tanggal, r.dse_code, r.brand || "IM3", r.mc || "", r.branch || "", r.ds_name || "", r.dse_name || "",
         fRaw(r.qty_sp), fRaw(r.nilai_sp), fRaw(r.qty_saldo), fRaw(r.nilai_saldo), fRaw(r.qty_voucher), fRaw(r.nilai_voucher),
-        fRaw(r.ar_piutang), r.catatan || "",
+        fRaw(r.ar_bayar), fRaw(r.ar_piutang), r.catatan || "", r.updated_at || "",
       ]);
       const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
       ws["!freeze"] = { xSplit: 0, ySplit: 1 };
@@ -527,14 +967,23 @@ export default function DSE_ProdAR({ theme, profile }) {
   return (
     <div style={{ fontFamily: FONT, color: t.hi }}>
       {toast && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
+      {historyFor && <DseHistoryModal t={t} dseCode={historyFor} onClose={() => setHistoryFor(null)} />}
 
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4, flexWrap: "wrap" }}>
-        <TrendingUp size={20} color={t.teal} />
-        <div style={{ fontSize: 19, fontWeight: 800 }}>DSE Prod. & AR</div>
-      </div>
-      <div style={{ fontSize: 13, color: t.mid, marginBottom: 16 }}>
-        Input harian produksi DSE (SP, Saldo, Voucher) per brand IM3 &amp; 3ID, plus AR/piutang — langsung per Kode DSE
-        {isMPX && myMcNames.length === 1 ? ` di MC ${myMcNames[0]}` : isMPX && myMcNames.length > 1 ? ` di ${myMcNames.length} MC milik Anda (${myMcNames.join(", ")})` : ""}. Nama DSE dan MC bisa diperbarui langsung dari sini.
+      <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: 16, marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          {onBack && (
+            <button onClick={onBack} title="Kembali ke Overview"
+              style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 30, height: 30, borderRadius: 8, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: "pointer", flexShrink: 0 }}>
+              <ChevronLeft size={15} />
+            </button>
+          )}
+          <Wallet size={20} color={t.teal} style={{ flexShrink: 0 }} />
+          <div style={{ fontSize: 19, fontWeight: 800 }}>DSE Prod. & AR</div>
+        </div>
+        <div style={{ fontSize: 13, color: t.mid, marginTop: 10 }}>
+          Input harian produksi DSE (SP, Saldo, Voucher) per brand IM3 &amp; 3ID, plus AR/piutang — langsung per Kode DSE
+          {isMPX && myMcNames.length === 1 ? ` di MC ${myMcNames[0]}` : isMPX && myMcNames.length > 1 ? ` di ${myMcNames.length} MC milik Anda (${myMcNames.join(", ")})` : ""}. Nama DSE dan MC bisa diperbarui langsung dari sini.
+        </div>
       </div>
 
       {/* ── Tabs ──
@@ -567,16 +1016,74 @@ export default function DSE_ProdAR({ theme, profile }) {
       ) : tab === "input" ? (
         <>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 }}>
-            <div style={{ minWidth: 160 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Tanggal</div>
-              <input type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} style={{ ...inputStyle, width: 170 }} />
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Brand</div>
+              <div style={{ display: "flex", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, padding: 3, height: 38, boxSizing: "border-box" }}>
+                {BRANDS.map((b) => {
+                  const active = brand === b;
+                  // Warna identitas brand: IM3 = kuning/gold, 3ID = magenta
+                  const brandColor = b === "IM3" ? "#F5B700" : "#C2187C";
+                  const activeTextColor = b === "IM3" ? "#3D2E00" : "#fff"; // teks gelap di atas kuning supaya tetap kontras
+                  return (
+                    <button key={b} onClick={() => setBrand(b)}
+                      style={{ display: "flex", alignItems: "center", gap: 6, height: "100%", padding: "0 16px", borderRadius: 7, border: "none", background: active ? brandColor : "transparent", color: active ? activeTextColor : t.mid, fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, transition: "background 0.15s" }}>
+                      <span style={{ width: 7, height: 7, borderRadius: 999, background: active ? activeTextColor : brandColor, flexShrink: 0 }} />
+                      {b}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
+            <div style={{ minWidth: 230 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Tanggal</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, height: 38, padding: "0 10px 0 12px", borderRadius: 9, border: `1.5px solid ${entryDate === todayISO() ? t.teal : t.inputBd}`, background: entryDate === todayISO() ? t.tealBg : t.inputBg, boxSizing: "border-box" }}>
+                <CalendarCheck2 size={15} color={entryDate === todayISO() ? t.teal : t.mid} style={{ flexShrink: 0 }} />
+                <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.15, flex: 1, minWidth: 0 }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 800, color: entryDate === todayISO() ? t.teal : t.hi, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {fmtLongDate(entryDate)}
+                  </span>
+                  {entryDate === todayISO() && (
+                    <span style={{ fontSize: 9.5, fontWeight: 700, color: t.teal, textTransform: "uppercase", letterSpacing: 0.3 }}>Hari ini</span>
+                  )}
+                </div>
+                <input type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} style={{ border: "none", background: "transparent", color: "transparent", width: 20, height: 20, cursor: "pointer", colorScheme: d ? "dark" : "light" }} />
+                {entryDate !== todayISO() && (
+                  <button onClick={() => setEntryDate(todayISO())} style={{ fontSize: 10.5, fontWeight: 800, color: t.teal, background: "none", border: "none", cursor: "pointer", padding: "2px 4px", whiteSpace: "nowrap" }}>
+                    Hari Ini
+                  </button>
+                )}
+              </div>
+            </div>
+            {isSPM && (
+              <div style={{ minWidth: 170 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Region</div>
+                <div style={{ position: "relative" }}>
+                  <select value={regionFilter} onChange={(e) => { setRegionFilter(e.target.value); setBranchFilter(""); setMcFilter(""); }} style={{ ...inputStyle, width: 170, appearance: "none", cursor: "pointer" }}>
+                    <option value="">— semua Region —</option>
+                    {regionOptions.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                  <ChevronDown size={14} style={{ position: "absolute", right: 10, top: 12, color: t.lo, pointerEvents: "none" }} />
+                </div>
+              </div>
+            )}
+            {isSPM && (
+              <div style={{ minWidth: 190 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Branch</div>
+                <div style={{ position: "relative" }}>
+                  <select value={branchFilter} onChange={(e) => { setBranchFilter(e.target.value); setMcFilter(""); }} style={{ ...inputStyle, width: 190, appearance: "none", cursor: "pointer" }}>
+                    <option value="">— semua Branch —</option>
+                    {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                  <ChevronDown size={14} style={{ position: "absolute", right: 10, top: 12, color: t.lo, pointerEvents: "none" }} />
+                </div>
+              </div>
+            )}
             {isSPM && (
               <div style={{ minWidth: 200 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>MC</div>
                 <div style={{ position: "relative" }}>
                   <select value={mcFilter} onChange={(e) => setMcFilter(e.target.value)} style={{ ...inputStyle, width: 220, appearance: "none", cursor: "pointer" }}>
-                    <option value="">— pilih MC —</option>
+                    <option value="">— semua MC —</option>
                     {mcOptions.map((mc) => <option key={mc} value={mc}>{mc}</option>)}
                   </select>
                   <ChevronDown size={14} style={{ position: "absolute", right: 10, top: 12, color: t.lo, pointerEvents: "none" }} />
@@ -600,27 +1107,87 @@ export default function DSE_ProdAR({ theme, profile }) {
             )}
           </div>
 
-          {isSPM && !mcFilter ? (
-            <div style={{ padding: 28, textAlign: "center", color: t.mid, borderRadius: 12, border: `1px dashed ${t.line}` }}>Pilih MC dulu untuk mulai input.</div>
+          {/* ── Ringkasan per MC yang sedang dipilih — akumulasi per Branch &
+              per Partner menyusul, utk sekarang baru level MC. Ikut update
+              real-time pas admin ngetik (belum tentu sudah ter-Simpan). ── */}
+          {(!isSPM || mcFilter || branchFilter || regionFilter) && !loadingDse && dseList.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 8 }}>
+                Ringkasan {mcFilter ? `MC ${mcFilter}` : branchFilter ? `Branch ${branchFilter}` : regionFilter ? `Region ${regionFilter}` : ""} · {brand} · {entryDate}
+              </div>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <StatTile t={t} icon={<Users size={13} />} label="Total Alokasi DSE" value={fmtID(mcSummary.totalAlokasi)} />
+                <StatTile t={t} icon={<UserCheck size={13} color={t.teal} />} label="Total DSE Active" value={fmtID(mcSummary.totalActive)} />
+                <StatTile t={t} icon={<UserX size={13} color={t.red} />} label="Total DSE Vacant" value={fmtID(mcSummary.totalVacant)} sub={mcSummary.totalInterview ? `${fmtID(mcSummary.totalInterview)} Interview` : undefined} />
+                <StatTile t={t} icon={<TrendingUp size={13} />} label="Penjualan SP" value={`${fmtID(mcSummary.qtySp)} pcs`} sub={`Rp ${fmtID(mcSummary.nilaiSp)}`} />
+                <StatTile t={t} icon={<Ticket size={13} />} label="Penjualan Voucher" value={`${fmtID(mcSummary.qtyVoucher)} pcs`} sub={`Rp ${fmtID(mcSummary.nilaiVoucher)}`} />
+                <StatTile t={t} icon={<Wallet size={13} />} label="Saldo MOBO" value={`Rp ${fmtID(mcSummary.nilaiSaldo)}`} />
+                <StatTile t={t} icon={<CircleDollarSign size={13} color={t.teal} />} label="Total Penjualan" value={`Rp ${fmtID(mcSummary.totalPenjualan)}`} sub="SP + Voucher + Saldo" />
+                <StatTile t={t} icon={<AlertTriangle size={13} color={t.amber} />} label="Total Tunggakan" value={`Rp ${fmtID(mcSummary.tunggakan)}`} sub="AR / Piutang" />
+              </div>
+            </div>
+          )}
+
+          {isSPM && !mcFilter && !branchFilter && !regionFilter ? (
+            <div style={{ padding: 28, textAlign: "center", color: t.mid, borderRadius: 12, border: `1px dashed ${t.line}` }}>Pilih Region, Branch, atau MC dulu untuk mulai input.</div>
           ) : loadingDse ? (
             <div style={{ padding: 28, textAlign: "center", color: t.mid }}><Loader2 size={18} className="spin" /></div>
           ) : filteredDseList.length === 0 ? (
             <div style={{ padding: 28, textAlign: "center", color: t.mid, borderRadius: 12, border: `1px dashed ${t.line}` }}>Belum ada Kode DSE terdaftar untuk MC ini. Tambahkan dulu di menu Database DSE.</div>
-          ) : (
+          ) : isCardView ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
               {filteredDseList.map((dse) => (
-                <DseEntryCard key={dse.dse_code} t={t} isCardView={isCardView} dse={dse}
-                  entries={entries[dse.dse_code] || {}}
+                <DseInputRow key={dse.dse_code} t={t} isCardView dse={dse} brand={brand}
+                  entry={entries[dse.dse_code]?.[brand]}
                   onEntryChange={handleEntryChange}
                   onIdentityChange={handleIdentityChange}
+                  identityEdit={identity[dse.dse_code]}
                   onSave={handleSaveDse}
                   saving={savingCode === dse.dse_code}
-                  dirty={!!dirty[dse.dse_code]} />
+                  dirty={!!dirty[dse.dse_code]}
+                  prevOutstanding={prevAr[`${dse.dse_code}|${brand}`]}
+                  onShowHistory={setHistoryFor}
+                  audit={entries[dse.dse_code]?.[brand]?.updated_at || entries[dse.dse_code]?.[brand]?.uploaded_by ? { updated_at: entries[dse.dse_code][brand].updated_at, uploaded_at: entries[dse.dse_code][brand].uploaded_at, by: profilesMap[entries[dse.dse_code][brand].uploaded_by] } : null} />
               ))}
+            </div>
+          ) : (
+            <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden", marginBottom: 20 }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                  <thead>
+                    <tr style={{ background: t.sub }}>
+                      {["ID DSE", "Nama DSE", "Status", "Join Date", "Qty SP (Pcs)", "Total SP (Rp)", "Qty Voucher (Pcs)", "Total Voucher (Rp)", "Total Saldo MOBO (Rp)", "Total Penjualan (Rp)", "AR / Piutang (Utang · Bayar · Sisa)", "Catatan", ""].map((h, i) => (
+                        <th key={i} style={{ textAlign: "left", padding: "10px 12px", color: t.mid, fontWeight: 700, whiteSpace: "nowrap", borderBottom: `1px solid ${t.line}`, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.2, borderLeft: [4, 6, 8, 9, 10].includes(i) ? `2px solid ${t.line}` : "none" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredDseList.map((dse) => (
+                      <DseInputRow key={dse.dse_code} t={t} isCardView={false} dse={dse} brand={brand}
+                        entry={entries[dse.dse_code]?.[brand]}
+                        onEntryChange={handleEntryChange}
+                        onIdentityChange={handleIdentityChange}
+                        identityEdit={identity[dse.dse_code]}
+                        onSave={handleSaveDse}
+                        saving={savingCode === dse.dse_code}
+                        dirty={!!dirty[dse.dse_code]}
+                        prevOutstanding={prevAr[`${dse.dse_code}|${brand}`]}
+                        onShowHistory={setHistoryFor}
+                        audit={entries[dse.dse_code]?.[brand]?.updated_at || entries[dse.dse_code]?.[brand]?.uploaded_by ? { updated_at: entries[dse.dse_code][brand].updated_at, uploaded_at: entries[dse.dse_code][brand].uploaded_at, by: profilesMap[entries[dse.dse_code][brand].uploaded_by] } : null} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 
-          {/* ── Import massal Excel (opsional, sekunder) ── */}
+          {/* ── Import massal Excel (opsional, sekunder) ──
+              UPDATE (permintaan user - "import massal juga dihilangkan saja"
+              -> dikoreksi "sembunyikan fitur ini"): fitur ini DISEMBUNYIKAN
+              dari UI (bukan dihapus kodenya) lewat SHOW_IMPORT_EXCEL = false
+              di bawah, supaya gampang dinyalakan lagi nanti kalau perlu -
+              semua state/handler/parser-nya tetap ada, cuma tidak dirender. */}
+          {SHOW_IMPORT_EXCEL && (
           <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden" }}>
             <button onClick={() => setShowImport((v) => !v)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: 16, background: "none", border: "none", cursor: "pointer", color: t.mid, fontFamily: FONT }}>
               <FileSpreadsheet size={15} />
@@ -677,6 +1244,7 @@ export default function DSE_ProdAR({ theme, profile }) {
               </div>
             )}
           </div>
+          )}
         </>
       ) : (
         <>
@@ -738,11 +1306,16 @@ export default function DSE_ProdAR({ theme, profile }) {
                       <div><div style={{ color: t.lo, fontSize: 10.5 }}>SALDO</div><div style={{ fontWeight: 700 }}>{fmtID(r.qty_saldo)}</div><div style={{ color: t.mid }}>Rp {fmtID(r.nilai_saldo)}</div></div>
                       <div><div style={{ color: t.lo, fontSize: 10.5 }}>VOUCHER</div><div style={{ fontWeight: 700 }}>{fmtID(r.qty_voucher)}</div><div style={{ color: t.mid }}>Rp {fmtID(r.nilai_voucher)}</div></div>
                     </div>
-                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${t.line}`, display: "flex", justifyContent: "space-between" }}>
-                      <span style={{ fontSize: 11.5, color: t.mid }}>AR / Piutang</span>
+                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${t.line}`, display: "flex", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ fontSize: 11.5, color: t.mid }}>Bayar AR</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: t.teal }}>Rp {fmtID(r.ar_bayar || 0)}</span>
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ fontSize: 11.5, color: t.mid }}>Sisa AR / Piutang</span>
                       <span style={{ fontSize: 12.5, fontWeight: 800, color: fRaw(r.ar_piutang) > 0 ? t.amber : t.hi }}>Rp {fmtID(r.ar_piutang)}</span>
                     </div>
                     {r.catatan && <div style={{ marginTop: 6, fontSize: 11.5, color: t.mid, fontStyle: "italic" }}>{r.catatan}</div>}
+                    {r.updated_at && <div style={{ marginTop: 4, fontSize: 10.5, color: t.lo, display: "flex", alignItems: "center", gap: 4 }}><Clock size={9} />Diperbarui {fmtTime(r.updated_at)}</div>}
                   </div>
                 ))}
               </div>

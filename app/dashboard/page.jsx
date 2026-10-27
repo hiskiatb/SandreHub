@@ -1208,8 +1208,7 @@ export default function DashboardPage() {
             {/* ── DSE Prod. & AR ── */}
             {view === "dse-prod-ar" && (isSPM || isMPX) && (
               <motion.div key="dse-prod-ar" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
-                <DSE_ProdAR theme={theme} profile={profile} />
+                <DSE_ProdAR theme={theme} profile={profile} onBack={() => navigate("overview")} />
               </motion.div>
             )}
 
