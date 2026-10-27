@@ -685,6 +685,53 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
     dseMeta.filter((r) => (!regionFilter || r.region === regionFilter) && (!branchFilter || r.branch === branchFilter)).map((r) => r.mc).filter(Boolean)
   )).sort(), [dseMeta, regionFilter, branchFilter]);
 
+  // ── Ringkasan per Region ("ALL Sumatera", tampilan default saat belum
+  // pilih Region/Branch/MC sama sekali) — permintaan user: "secara default
+  // pada region ALL sumatera, sehingga menampilkan angka per masing masing
+  // region". Beda dgn tabel input (yg butuh Region/Branch/MC dipilih dulu
+  // spy tidak menarik SELURUH roster DSE sekaligus utk diedit), ringkasan
+  // ini cuma menjumlahkan angka — aman dimuat tanpa filter apa pun, lalu
+  // klik salah satu Region utk drill-down ke tabel input region itu. ──
+  const [regionSummary, setRegionSummary] = useState([]);
+  const [loadingRegionSummary, setLoadingRegionSummary] = useState(false);
+  const showAllRegions = isSPM && !regionFilter && !branchFilter && !mcFilter;
+  const loadRegionSummary = useCallback(async () => {
+    setLoadingRegionSummary(true);
+    try {
+      const { data: dses, error: e1 } = await supabase.from("mf_dse_database").select("dse_code, region, dse_status").eq("is_revoked", false);
+      if (e1) throw e1;
+      const regionOf = {};
+      const byRegion = {};
+      (dses || []).forEach((r) => {
+        const key = r.region || "Belum Ada Region";
+        regionOf[r.dse_code] = key;
+        if (!byRegion[key]) byRegion[key] = { region: key, totalAlokasi: 0, totalActive: 0, qtySp: 0, nilaiSp: 0, qtyVoucher: 0, nilaiVoucher: 0, nilaiSaldo: 0, tunggakan: 0 };
+        byRegion[key].totalAlokasi += 1;
+        if (r.dse_status === "Active") byRegion[key].totalActive += 1;
+      });
+      const codes = (dses || []).map((r) => r.dse_code);
+      if (codes.length) {
+        const { data: prod, error: e2 } = await supabase.from("mf_dse_prod_ar").select("dse_code, qty_sp, nilai_sp, qty_voucher, nilai_voucher, nilai_saldo, ar_piutang").eq("tanggal", entryDate).eq("brand", brand).in("dse_code", codes);
+        if (e2) throw e2;
+        (prod || []).forEach((p) => {
+          const b = byRegion[regionOf[p.dse_code]];
+          if (!b) return;
+          b.qtySp += fRaw(p.qty_sp); b.nilaiSp += fRaw(p.nilai_sp);
+          b.qtyVoucher += fRaw(p.qty_voucher); b.nilaiVoucher += fRaw(p.nilai_voucher);
+          b.nilaiSaldo += fRaw(p.nilai_saldo); b.tunggakan += fRaw(p.ar_piutang);
+        });
+      }
+      setRegionSummary(Object.values(byRegion).sort((a, b) => a.region.localeCompare(b.region)));
+    } catch (e) {
+      showToast(e.message || "Gagal memuat ringkasan per region.", "error");
+    } finally {
+      setLoadingRegionSummary(false);
+    }
+  }, [entryDate, brand]);
+
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { if (showAllRegions) loadRegionSummary(); }, [showAllRegions, loadRegionSummary]);
+
   const loadDseAndEntries = useCallback(async () => {
     setLoadingDse(true);
     try {
@@ -1059,7 +1106,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                 <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Region</div>
                 <div style={{ position: "relative" }}>
                   <select value={regionFilter} onChange={(e) => { setRegionFilter(e.target.value); setBranchFilter(""); setMcFilter(""); }} style={{ ...inputStyle, width: 170, appearance: "none", cursor: "pointer" }}>
-                    <option value="">— semua Region —</option>
+                    <option value="">ALL Sumatera</option>
                     {regionOptions.map((r) => <option key={r} value={r}>{r}</option>)}
                   </select>
                   <ChevronDown size={14} style={{ position: "absolute", right: 10, top: 12, color: t.lo, pointerEvents: "none" }} />
@@ -1128,8 +1175,40 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
             </div>
           )}
 
-          {isSPM && !mcFilter && !branchFilter && !regionFilter ? (
-            <div style={{ padding: 28, textAlign: "center", color: t.mid, borderRadius: 12, border: `1px dashed ${t.line}` }}>Pilih Region, Branch, atau MC dulu untuk mulai input.</div>
+          {showAllRegions ? (
+            loadingRegionSummary ? (
+              <div style={{ padding: 28, textAlign: "center", color: t.mid }}><Loader2 size={18} className="spin" /></div>
+            ) : regionSummary.length === 0 ? (
+              <div style={{ padding: 28, textAlign: "center", color: t.mid, borderRadius: 12, border: `1px dashed ${t.line}` }}>Belum ada data Region. Tambahkan dulu di menu Database DSE.</div>
+            ) : (
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 8 }}>
+                  Ringkasan per Region — ALL Sumatera · {brand} · {entryDate}
+                </div>
+                <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, overflow: "hidden" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1.1fr 1.1fr 1fr 1.1fr", gap: 0, padding: "10px 16px", background: t.inputBg, fontSize: 10.5, fontWeight: 800, color: t.mid, textTransform: "uppercase" }}>
+                    <div>Region</div>
+                    <div>DSE Active</div>
+                    <div>Qty SP</div>
+                    <div>Nilai SP</div>
+                    <div>Nilai Voucher</div>
+                    <div>Saldo MOBO</div>
+                    <div>Tunggakan</div>
+                  </div>
+                  {regionSummary.map((r) => (
+                    <div key={r.region} onClick={() => setRegionFilter(r.region)} title={`Lihat detail Region ${r.region}`} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr 1.1fr 1.1fr 1fr 1.1fr", gap: 0, padding: "12px 16px", borderTop: `1px solid ${t.line}`, cursor: "pointer", fontSize: 12.5 }}>
+                      <div style={{ fontWeight: 700, color: t.hi }}>{r.region}</div>
+                      <div>{fmtID(r.totalActive)} / {fmtID(r.totalAlokasi)}</div>
+                      <div>{fmtID(r.qtySp)} pcs</div>
+                      <div style={{ fontWeight: 700 }}>Rp {fmtID(r.nilaiSp)}</div>
+                      <div style={{ fontWeight: 700 }}>Rp {fmtID(r.nilaiVoucher)}</div>
+                      <div style={{ fontWeight: 700 }}>Rp {fmtID(r.nilaiSaldo)}</div>
+                      <div style={{ fontWeight: 700, color: r.tunggakan > 0 ? t.amber : t.mid }}>Rp {fmtID(r.tunggakan)}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
           ) : loadingDse ? (
             <div style={{ padding: 28, textAlign: "center", color: t.mid }}><Loader2 size={18} className="spin" /></div>
           ) : filteredDseList.length === 0 ? (
