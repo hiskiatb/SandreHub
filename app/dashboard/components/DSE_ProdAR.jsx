@@ -678,16 +678,23 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
     })();
   }, [isSPM]);
 
-  const regionOptions = useMemo(() => Array.from(new Set(dseMeta.map((r) => r.region).filter(Boolean))).sort(), [dseMeta]);
+  // Urutan hierarki cascading: Partner -> Region -> Branch -> MC. Partner
+  // DI ATAS Region (bukan di bawah) karena 1 Partner (mdi) bisa beroperasi
+  // di beberapa Region sekaligus (cek data: "PT MARI KERJA BERSAMA" & "PT
+  // SARANA PUTRA CEMERLANG" ada di NORTH + SOUTH SUMATERA, "PT TRIMINDO JAYA
+  // MANDIRI" ada di CENTRAL + NORTH SUMATERA) — jadi opsi Partner TIDAK
+  // boleh difilter oleh Region/Branch yang sedang dipilih, sementara opsi
+  // Region/Branch/MC di bawahnya ikut menyempit kalau Partner dipilih.
+  const partnerOptions = useMemo(() => Array.from(new Set(dseMeta.map((r) => r.mdi).filter(Boolean))).sort(), [dseMeta]);
+  const regionOptions = useMemo(() => Array.from(new Set(
+    dseMeta.filter((r) => !partnerFilter || r.mdi === partnerFilter).map((r) => r.region).filter(Boolean)
+  )).sort(), [dseMeta, partnerFilter]);
   const branchOptions = useMemo(() => Array.from(new Set(
-    dseMeta.filter((r) => !regionFilter || r.region === regionFilter).map((r) => r.branch).filter(Boolean)
-  )).sort(), [dseMeta, regionFilter]);
-  const partnerOptions = useMemo(() => Array.from(new Set(
-    dseMeta.filter((r) => (!regionFilter || r.region === regionFilter) && (!branchFilter || r.branch === branchFilter)).map((r) => r.mdi).filter(Boolean)
-  )).sort(), [dseMeta, regionFilter, branchFilter]);
+    dseMeta.filter((r) => (!partnerFilter || r.mdi === partnerFilter) && (!regionFilter || r.region === regionFilter)).map((r) => r.branch).filter(Boolean)
+  )).sort(), [dseMeta, partnerFilter, regionFilter]);
   const mcOptions = useMemo(() => Array.from(new Set(
-    dseMeta.filter((r) => (!regionFilter || r.region === regionFilter) && (!branchFilter || r.branch === branchFilter) && (!partnerFilter || r.mdi === partnerFilter)).map((r) => r.mc).filter(Boolean)
-  )).sort(), [dseMeta, regionFilter, branchFilter, partnerFilter]);
+    dseMeta.filter((r) => (!partnerFilter || r.mdi === partnerFilter) && (!regionFilter || r.region === regionFilter) && (!branchFilter || r.branch === branchFilter)).map((r) => r.mc).filter(Boolean)
+  )).sort(), [dseMeta, partnerFilter, regionFilter, branchFilter]);
 
   // ── Ringkasan per Region ("ALL Sumatera", tampilan default saat belum
   // pilih Region/Branch/MC sama sekali) — permintaan user: "secara default
@@ -1097,10 +1104,22 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
               </div>
             </div>
             {isSPM && (
+              <div style={{ minWidth: 180 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Partner</div>
+                <div style={{ position: "relative" }}>
+                  <select value={partnerFilter} onChange={(e) => { setPartnerFilter(e.target.value); setRegionFilter(""); setBranchFilter(""); setMcFilter(""); }} style={{ ...inputStyle, width: 180, appearance: "none", cursor: "pointer" }}>
+                    <option value="">— semua Partner —</option>
+                    {partnerOptions.map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                  <ChevronDown size={14} style={{ position: "absolute", right: 10, top: 12, color: t.lo, pointerEvents: "none" }} />
+                </div>
+              </div>
+            )}
+            {isSPM && (
               <div style={{ minWidth: 170 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Region</div>
                 <div style={{ position: "relative" }}>
-                  <select value={regionFilter} onChange={(e) => { setRegionFilter(e.target.value); setBranchFilter(""); setPartnerFilter(""); setMcFilter(""); }} style={{ ...inputStyle, width: 170, appearance: "none", cursor: "pointer" }}>
+                  <select value={regionFilter} onChange={(e) => { setRegionFilter(e.target.value); setBranchFilter(""); setMcFilter(""); }} style={{ ...inputStyle, width: 170, appearance: "none", cursor: "pointer" }}>
                     <option value="">ALL Sumatera</option>
                     {regionOptions.map((r) => <option key={r} value={r}>{r}</option>)}
                   </select>
@@ -1112,21 +1131,9 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
               <div style={{ minWidth: 190 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Branch</div>
                 <div style={{ position: "relative" }}>
-                  <select value={branchFilter} onChange={(e) => { setBranchFilter(e.target.value); setPartnerFilter(""); setMcFilter(""); }} style={{ ...inputStyle, width: 190, appearance: "none", cursor: "pointer" }}>
+                  <select value={branchFilter} onChange={(e) => { setBranchFilter(e.target.value); setMcFilter(""); }} style={{ ...inputStyle, width: 190, appearance: "none", cursor: "pointer" }}>
                     <option value="">— semua Branch —</option>
                     {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
-                  </select>
-                  <ChevronDown size={14} style={{ position: "absolute", right: 10, top: 12, color: t.lo, pointerEvents: "none" }} />
-                </div>
-              </div>
-            )}
-            {isSPM && (
-              <div style={{ minWidth: 180 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, color: t.mid, textTransform: "uppercase", marginBottom: 6 }}>Partner</div>
-                <div style={{ position: "relative" }}>
-                  <select value={partnerFilter} onChange={(e) => { setPartnerFilter(e.target.value); setMcFilter(""); }} style={{ ...inputStyle, width: 180, appearance: "none", cursor: "pointer" }}>
-                    <option value="">— semua Partner —</option>
-                    {partnerOptions.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
                   <ChevronDown size={14} style={{ position: "absolute", right: 10, top: 12, color: t.lo, pointerEvents: "none" }} />
                 </div>
