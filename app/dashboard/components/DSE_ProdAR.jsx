@@ -686,6 +686,13 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
     return Array.from({ length: lastDay }, (_, i) => `${ym}-${String(i + 1).padStart(2, "0")}`);
   }); // ["YYYY-MM-DD", ...], selalu >=1
   const [calViewMonth, setCalViewMonth] = useState(() => todayISO().slice(0, 7)); // "YYYY-MM" yg lagi dibuka di popover
+  // UPDATE (permintaan user - "di sebelah kiri tambahkan opsi Bulan atau
+  // Tanggal"): toggle mode di sebelah kiri trigger Periode. "Bulan" = pilih
+  // semua tanggal sebulan sekaligus (default, read-only akumulasi, boleh
+  // dicentang/hapus per tanggal spt Excel); "Tanggal" = pilih SATU tanggal
+  // spesifik (klik 1 hari langsung ganti pilihan & tutup popover, mode
+  // input harian biasa).
+  const [pickMode, setPickMode] = useState("bulan"); // "bulan" | "tanggal"
   const [periodOpen, setPeriodOpen] = useState(false);
   const periodRef = useRef(null);
   useEffect(() => {
@@ -1150,7 +1157,26 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
           <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: -0.3 }}>DSE Prod. &amp; AR</div>
         </div>
 
-        <div ref={periodRef} style={{ position: "relative" }}>
+        <div ref={periodRef} style={{ position: "relative", display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", gap: 2, background: t.sub, borderRadius: 9, padding: 3 }}>
+            {[{ k: "tanggal", label: "Tanggal" }, { k: "bulan", label: "Bulan" }].map(({ k, label }) => (
+              <button key={k} onClick={() => {
+                setPickMode(k);
+                if (k === "tanggal") {
+                  const only = sortedSelectedDates[sortedSelectedDates.length - 1] || todayISO();
+                  setSelectedDates([only]);
+                  setCalViewMonth(only.slice(0, 7));
+                } else {
+                  const ym = calViewMonth;
+                  const lastDay = ym === todayISO().slice(0, 7) ? Number(todayISO().slice(8, 10)) : new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)), 0).getDate();
+                  setSelectedDates(Array.from({ length: lastDay }, (_, i) => `${ym}-${String(i + 1).padStart(2, "0")}`));
+                }
+              }} style={{ fontSize: 11, fontWeight: 700, padding: "6px 11px", borderRadius: 7, border: "none", cursor: "pointer", background: pickMode === k ? t.card : "transparent", color: pickMode === k ? t.teal : t.mid, boxShadow: pickMode === k ? t.shadowSm : "none", fontFamily: FONT }}>
+                {label}
+              </button>
+            ))}
+          </div>
+
           <button onClick={() => { setPeriodOpen((v) => !v); setCalViewMonth(rangeEnd.slice(0, 7)); }}
             style={{ display: "flex", alignItems: "center", gap: 10, height: 44, padding: "0 14px", borderRadius: 11, border: `1px solid ${periodOpen ? t.teal : t.inputBd}`, background: periodOpen ? t.tealBg : t.inputBg, cursor: "pointer", fontFamily: FONT, outline: "none" }}>
             <div style={{ width: 28, height: 28, borderRadius: 8, background: periodOpen ? "rgba(255,255,255,0.5)" : t.tealBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -1195,7 +1221,10 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                   const isFuture = iso > todayISO();
                   return (
                     <button key={iso} disabled={isFuture}
-                      onClick={() => setSelectedDates((prev) => prev.includes(iso) ? (prev.length > 1 ? prev.filter((x) => x !== iso) : prev) : [...prev, iso])}
+                      onClick={() => {
+                        if (pickMode === "tanggal") { setSelectedDates([iso]); setPeriodOpen(false); return; }
+                        setSelectedDates((prev) => prev.includes(iso) ? (prev.length > 1 ? prev.filter((x) => x !== iso) : prev) : [...prev, iso]);
+                      }}
                       title={isFuture ? "Tanggal belum tiba" : fmtLongDate(iso)}
                       style={{
                         aspectRatio: "1", borderRadius: 8, border: isToday && !isSelected ? `1.5px solid ${t.teal}` : "none",
@@ -1211,11 +1240,12 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
 
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 12, paddingTop: 10, borderTop: `1px solid ${t.line}` }}>
                 <div style={{ display: "flex", gap: 10 }}>
-                  <button onClick={() => { setSelectedDates([todayISO()]); setCalViewMonth(todayISO().slice(0, 7)); }}
+                  <button onClick={() => { setPickMode("tanggal"); setSelectedDates([todayISO()]); setCalViewMonth(todayISO().slice(0, 7)); }}
                     style={{ fontSize: 11.5, fontWeight: 700, color: t.teal, background: "none", border: "none", cursor: "pointer", padding: "4px 2px" }}>
                     Hari Ini
                   </button>
                   <button onClick={() => {
+                    setPickMode("bulan");
                     const lastDay = calViewMonth === todayISO().slice(0, 7) ? Number(todayISO().slice(8, 10)) : new Date(Number(calViewMonth.slice(0, 4)), Number(calViewMonth.slice(5, 7)), 0).getDate();
                     setSelectedDates(Array.from({ length: lastDay }, (_, i) => `${calViewMonth}-${String(i + 1).padStart(2, "0")}`));
                   }} style={{ fontSize: 11.5, fontWeight: 700, color: t.mid, background: "none", border: "none", cursor: "pointer", padding: "4px 2px" }}>
