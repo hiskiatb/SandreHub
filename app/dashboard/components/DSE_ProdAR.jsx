@@ -631,66 +631,37 @@ function DseInputRow({ t, isCardView, dse, brands, entries, onEntryChange, onIde
     );
   }
 
-  // ── Desktop mode Both (2 brand): kolom tabel standar ga cukup lebar utk
-  // nampilin 2 set SP/Voucher/Saldo/AR sekaligus scr rapi, jadi dirender sbg
-  // 1 baris <td colSpan> berisi identitas (SEKALI) + 2 kartu brand
-  // berdampingan (grid 2 kolom) - gayanya sama persis dgn SalesBlock/
-  // MoreBlock yg dipakai kartu mobile, cuma disusun horizontal. ──
-  if (isDual) {
-    return (
-      <tr style={{ borderBottom: `1px solid ${t.line}`, background: dirty ? t.tealBg : "transparent" }}>
-        <td colSpan={13} style={{ padding: 14 }}>
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <button onClick={() => onShowHistory?.(dse.dse_code)} title="Lihat riwayat perubahan"
-                style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", padding: 0, fontWeight: 800, fontSize: 14, color: t.hi, fontFamily: "inherit" }}>
-                {headerCode}<History size={11} style={{ color: t.lo, flexShrink: 0 }} />
-              </button>
-              {dse.is_revoked && <span style={{ fontSize: 9.5, fontWeight: 700, color: t.red, background: t.redBg, borderRadius: 999, padding: "1px 6px" }}>Revoked</span>}
-              <div style={{ width: 170 }}>
-                <input type="text" disabled={readOnly} value={identityEdit?.ds_name ?? dse.ds_name ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "ds_name", ev.target.value)} placeholder="Nama DSE" style={textInputStyle} />
-              </div>
-              <div style={{ width: 128 }}>{StatusSelect}</div>
-              <div style={{ width: 150 }}>
-                <input type="date" disabled={readOnly} value={joinDate || ""} onChange={(ev) => onIdentityChange(dse.dse_code, "join_date", ev.target.value)} style={textInputStyle} />
-              </div>
-              <div style={{ width: 150 }}>
-                <input type="text" disabled={readOnly} value={identityEdit?.mc ?? dse.mc ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "mc", ev.target.value)} placeholder="MC" style={textInputStyle} />
-              </div>
-            </div>
-            {renderSaveButton()}
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-            {brandData.map((bd) => (
-              <div key={bd.b} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                {SalesBlock(bd)}
-                {MoreBlock(bd)}
-              </div>
-            ))}
-          </div>
-        </td>
-      </tr>
-    );
-  }
-
-  // ── Desktop mode 1-brand (spt sebelumnya, tidak berubah): baris <table>
-  // dikelompokkan per section (garis pemisah lebih tebal + sedikit tint
-  // background) supaya SP / Voucher / Saldo MOBO kelihatan jelas batasnya. ──
-  const bd = brandData[0];
+  // ── Desktop: SELALU baris <table> biasa (permintaan user - "jangan buat
+  // seperti ini terkesan terlalu banyak, tetap buat dalam bentuk tabel
+  // saja" - nolak layout kartu lebar/colSpan yg dipakai sebelumnya utk mode
+  // "IOH"/Both di desktop). Mode 1-brand = 1 baris spt biasa. Mode IOH/Both
+  // (2 brand) = 2 baris tabel biasa bertumpuk per DSE (IM3 lalu 3ID), masih
+  // dikelompokkan per section (tint SP/Voucher/Saldo) spt sebelumnya, cuma
+  // kolom ID-nya dikasih titik warna brand biar gampang dibedakan baris mana
+  // punya brand apa, & baris ke-2 (3ID) dikasih garis atas putus2 tipis spy
+  // 2 baris yg sama DSE-nya tetap kebaca sbg 1 grup. ──
   const groupDivider = { borderLeft: `2px solid ${t.line}` };
   const spBg = t.redBg;
   const voucherBg = t.blueBg;
   const saldoBg = t.amberBg;
-  return (
-    <tr style={{ borderBottom: `1px solid ${t.line}`, background: dirty ? t.tealBg : "transparent" }}>
+  const renderDesktopRow = (bd, i) => (
+    <tr key={bd.b} style={{
+      borderBottom: i === brandData.length - 1 ? `1px solid ${t.line}` : "none",
+      borderTop: isDual && i > 0 ? `1px dashed ${t.line}` : "none",
+      background: dirty ? t.tealBg : "transparent",
+    }}>
       <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 800 }}>
-          <button onClick={() => onShowHistory?.(dse.dse_code)} title="Lihat riwayat perubahan"
-            style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", padding: 0, fontWeight: 800, fontSize: "inherit", color: t.hi, fontFamily: "inherit" }}>
-            {headerCode}<History size={11} style={{ color: t.lo, flexShrink: 0 }} />
-          </button>
-          {dse.is_revoked && <span style={{ fontSize: 9.5, fontWeight: 700, color: t.red, background: t.redBg, borderRadius: 999, padding: "1px 6px" }}>Revoked</span>}
+          {isDual && <span style={{ width: 7, height: 7, borderRadius: 999, background: bd.meta.color, flexShrink: 0 }} />}
+          {i === 0 ? (
+            <button onClick={() => onShowHistory?.(dse.dse_code)} title="Lihat riwayat perubahan"
+              style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", padding: 0, fontWeight: 800, fontSize: "inherit", color: t.hi, fontFamily: "inherit" }}>
+              {headerCode}<History size={11} style={{ color: t.lo, flexShrink: 0 }} />
+            </button>
+          ) : (
+            <span style={{ color: t.mid, fontWeight: 700 }}>{bd.displayCode}</span>
+          )}
+          {i === 0 && dse.is_revoked && <span style={{ fontSize: 9.5, fontWeight: 700, color: t.red, background: t.redBg, borderRadius: 999, padding: "1px 6px" }}>Revoked</span>}
         </div>
       </td>
       <td style={{ padding: "10px 12px", minWidth: 160 }}>
@@ -707,7 +678,7 @@ function DseInputRow({ t, isCardView, dse, brands, entries, onEntryChange, onIde
       <td style={{ padding: "10px 12px", minWidth: 110, ...groupDivider, background: voucherBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={bd.e.qty_voucher} onChange={(v) => bd.setE({ qty_voucher: v })} /></td>
       <td style={{ padding: "10px 12px", minWidth: 130, background: voucherBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={bd.e.nilai_voucher} onChange={(v) => bd.setE({ nilai_voucher: v })} /></td>
       <td style={{ padding: "10px 12px", minWidth: 140, ...groupDivider, background: saldoBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={bd.e.nilai_saldo} onChange={(v) => bd.setE({ nilai_saldo: v })} /></td>
-      <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: t.teal, whiteSpace: "nowrap", ...groupDivider }}>Rp {fmtID(bd.totalPenjualan)}</td>
+      <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: isDual ? bd.meta.color : t.teal, whiteSpace: "nowrap", ...groupDivider }}>Rp {fmtID(bd.totalPenjualan)}</td>
       <td style={{ padding: "10px 12px", minWidth: 330, ...groupDivider }}>
         <ArPiutangInput t={t} readOnly={readOnly} outstanding={bd.outstanding} bayar={bd.e.ar_bayar} onBayarChange={bd.handleBayarChange} onConfirmSave={() => onSave(dse.dse_code)} saving={saving} />
       </td>
@@ -716,10 +687,12 @@ function DseInputRow({ t, isCardView, dse, brands, entries, onEntryChange, onIde
         {bd.AuditLine && <div style={{ marginTop: 4 }}>{bd.AuditLine}</div>}
       </td>
       <td style={{ padding: "10px 12px", textAlign: "right" }}>
-        {renderSaveButton()}
+        {i === 0 && renderSaveButton()}
       </td>
     </tr>
   );
+
+  return brandData.map((bd, i) => renderDesktopRow(bd, i));
 }
 
 export default function DSE_ProdAR({ theme, profile, onBack }) {
