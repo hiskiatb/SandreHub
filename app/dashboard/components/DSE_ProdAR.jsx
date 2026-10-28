@@ -1053,7 +1053,8 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
     try {
       let q = supabase.from("mf_dse_database").select("dse_code, dse_code_3id, ds_name, mc, branch, region, mdi, is_revoked, dse_status, join_date").eq("is_revoked", false).order("dse_code", { ascending: true });
       if (isSPM) {
-        if (!mcFilter && !branchFilter && !regionFilter && !partnerFilter) { setDseList([]); setLoadingDse(false); return; }
+        // Tanpa filter apa pun -> tampilkan akumulasi dari level tertinggi
+        // (semua Partner/Region/Branch/MC), bukan kosong.
         if (regionFilter) q = q.eq("region", regionFilter);
         if (branchFilter) q = q.eq("branch", branchFilter);
         if (partnerFilter) q = q.eq("mdi", partnerFilter);
@@ -1165,6 +1166,15 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
 
   useEffect(() => { loadDseAndEntries(); }, [loadDseAndEntries]);
 
+  // Warn before closing/reloading the tab while there are unsaved edits.
+  useEffect(() => {
+    const anyDirty = Object.values(dirty).some(Boolean);
+    if (!anyDirty) return;
+    const handler = (e) => { e.preventDefault(); e.returnValue = ""; return ""; };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
+
   const handleEntryChange = (code, brand, val) => {
     setEntries((prev) => ({ ...prev, [code]: { ...prev[code], [brand]: val } }));
     setDirty((prev) => ({ ...prev, [code]: true }));
@@ -1207,8 +1217,10 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
       }
       setDirty((prev) => ({ ...prev, [code]: false }));
       showToast(`Data ${code} tersimpan.`, "ok");
+      return true;
     } catch (e) {
       showToast(e.message || "Gagal menyimpan.", "error");
+      return false;
     } finally {
       setSavingCode(null);
     }
@@ -1216,7 +1228,47 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
 
   const handleSaveAllDirty = async () => {
     const codes = Object.keys(dirty).filter((c) => dirty[c]);
-    for (const c of codes) await handleSaveDse(c); // eslint-disable-line no-await-in-loop
+    const results = [];
+    for (const c of codes) results.push(await handleSaveDse(c)); // eslint-disable-line no-await-in-loop
+    const failCount = results.filter((r) => r === false).length;
+    if (failCount === 0 && codes.length > 0) {
+      showToast(`Semua perubahan tersimpan dengan aman (${codes.length} DSE).`, "ok");
+    } else if (failCount > 0) {
+      showToast(`${codes.length - failCount} dari ${codes.length} DSE tersimpan. ${failCount} gagal, silakan coba lagi.`, "error");
+    }
+    return failCount === 0;
+  };
+
+  // --- Unsaved-changes guard: any action that would discard in-progress edits
+  // (switching tab, changing region/branch/partner/MC/brand filters, or
+  // changing the period) must first confirm Save or Discard with the user.
+  const [pendingGuardedAction, setPendingGuardedAction] = useState(null); // () => void
+  const runGuarded = (action) => {
+    if (Object.values(dirty).some(Boolean)) {
+      setPendingGuardedAction(() => action);
+    } else {
+      action();
+    }
+  };
+  const discardAllDirty = () => {
+    setDirty({});
+    setEntries({});
+    setIdentity({});
+    loadDseAndEntries();
+  };
+  const handleConfirmSave = async () => {
+    const action = pendingGuardedAction;
+    const ok = await handleSaveAllDirty();
+    if (ok) {
+      setPendingGuardedAction(null);
+      if (action) action();
+    }
+  };
+  const handleConfirmDiscard = () => {
+    const action = pendingGuardedAction;
+    discardAllDirty();
+    setPendingGuardedAction(null);
+    if (action) action();
   };
 
   const filteredDseList = useMemo(() => {
@@ -1432,6 +1484,27 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
   return (
     <div style={{ fontFamily: FONT, color: t.hi }}>
       {toast && <Toast msg={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
+      {pendingGuardedAction && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ width: 380, maxWidth: "90vw", background: t.card, border: `1px solid ${t.line}`, borderRadius: 14, padding: 22, boxShadow: "0 12px 40px rgba(0,0,0,0.35)" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: t.hi, marginBottom: 6 }}>Ada perubahan belum disimpan</div>
+            <div style={{ fontSize: 13, color: t.mid, lineHeight: 1.5, marginBottom: 18 }}>
+              Kamu punya {dirtyCount} DSE dengan perubahan yang belum disimpan. Simpan dulu sebelum lanjut, atau buang perubahannya?
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <button onClick={handleConfirmSave} style={{ height: 40, borderRadius: 9, border: "none", background: t.teal, color: "#fff", fontWeight: 700, fontSize: 13.5, cursor: "pointer" }}>
+                Simpan &amp; Lanjutkan
+              </button>
+              <button onClick={handleConfirmDiscard} style={{ height: 40, borderRadius: 9, border: `1px solid ${t.line}`, background: "transparent", color: "#d14343", fontWeight: 700, fontSize: 13.5, cursor: "pointer" }}>
+                Buang Perubahan &amp; Lanjutkan
+              </button>
+              <button onClick={() => setPendingGuardedAction(null)} style={{ height: 40, borderRadius: 9, border: "none", background: "transparent", color: t.mid, fontWeight: 600, fontSize: 13.5, cursor: "pointer" }}>
+                Batal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {historyFor && <DseHistoryModal t={t} dseCode={historyFor} onClose={() => setHistoryFor(null)} />}
 
       {/* ── Header ── permintaan user: "dse prod & ar tetap dibungkus
@@ -1468,7 +1541,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 2, height: 44, padding: 3, borderRadius: 11, background: t.sub, flexShrink: 0 }}>
             {[{ k: "bulan", label: "Full Month" }, { k: "tanggal", label: "Daily" }].map(({ k, label }) => (
-              <button key={k} onClick={() => switchPeriodMode(k)}
+              <button key={k} onClick={() => runGuarded(() => switchPeriodMode(k))}
                 style={{ height: 38, padding: "0 14px", borderRadius: 8, border: "none", outline: "none", background: periodMode === k ? t.card : "transparent", color: periodMode === k ? t.hi : t.mid, fontSize: 12.5, fontWeight: periodMode === k ? 700 : 600, cursor: "pointer", fontFamily: FONT, boxShadow: periodMode === k ? t.shadowSm : "none", transition: "background 0.2s, box-shadow 0.2s, color 0.2s", whiteSpace: "nowrap" }}>
                 {label}
               </button>
@@ -1477,7 +1550,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
 
           <div ref={periodRef} style={{ position: "relative", display: "flex", alignItems: "center", gap: 6 }}>
             <button
-              onClick={() => (periodMode === "bulan" ? jumpToMonth(shiftMonth(calViewMonth, -1)) : jumpToDay(shiftDay(entryDate, -1)))}
+              onClick={() => runGuarded(() => (periodMode === "bulan" ? jumpToMonth(shiftMonth(calViewMonth, -1)) : jumpToDay(shiftDay(entryDate, -1))))}
               style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
               <ChevronDown size={14} style={{ transform: "rotate(90deg)" }} />
             </button>
@@ -1497,7 +1570,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
             </button>
 
             <button
-              onClick={() => (periodMode === "bulan" ? jumpToMonth(shiftMonth(calViewMonth, 1)) : jumpToDay(shiftDay(entryDate, 1)))}
+              onClick={() => runGuarded(() => (periodMode === "bulan" ? jumpToMonth(shiftMonth(calViewMonth, 1)) : jumpToDay(shiftDay(entryDate, 1))))}
               disabled={periodMode === "bulan" ? calViewMonth >= todayISO().slice(0, 7) : entryDate >= todayISO()}
               style={{ width: 36, height: 36, borderRadius: 10, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: (periodMode === "bulan" ? calViewMonth >= todayISO().slice(0, 7) : entryDate >= todayISO()) ? t.line : t.mid, cursor: (periodMode === "bulan" ? calViewMonth >= todayISO().slice(0, 7) : entryDate >= todayISO()) ? "default" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
               <ChevronDown size={14} style={{ transform: "rotate(-90deg)" }} />
@@ -1535,7 +1608,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                     const isFuture = iso > todayISO();
                     return (
                       <button key={iso} disabled={isFuture}
-                        onClick={() => { jumpToDay(iso); setPeriodOpen(false); }}
+                        onClick={() => runGuarded(() => { jumpToDay(iso); setPeriodOpen(false); })}
                         title={isFuture ? "Tanggal belum tiba" : fmtLongDate(iso)}
                         style={{
                           aspectRatio: "1", borderRadius: 8, border: isToday && !isSelected ? `1.5px solid ${t.teal}` : "none",
@@ -1570,7 +1643,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
           ...(isSPM ? [{ k: "user-mgmt", label: "Mapping & User Management", icon: UserRoundCog }] : []),
           ...(isSPM ? [{ k: "dse-database", label: "Database DSE", icon: Database }] : []),
         ].map(({ k, label, icon: Icon }) => (
-          <button key={k} onClick={() => setTab(k)}
+          <button key={k} onClick={() => runGuarded(() => setTab(k))}
             style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 8, border: "none", outline: "none", background: tab === k ? t.card : "transparent", color: tab === k ? t.hi : t.mid, fontSize: 12.5, fontWeight: tab === k ? 700 : 600, cursor: "pointer", fontFamily: FONT, WebkitTapHighlightColor: "transparent", boxShadow: tab === k ? t.shadowSm : "none", transition: "background 0.15s, box-shadow 0.15s", whiteSpace: "nowrap" }}>
             <Icon size={13.5} color={tab === k ? t.teal : t.lo} /> {label}
           </button>
@@ -1603,7 +1676,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                   const brandColor = b === "IM3" ? "#F5B700" : b === "3ID" ? "#C2187C" : t.teal;
                   const activeTextColor = b === "IM3" ? "#3D2E00" : "#fff"; // teks gelap di atas kuning supaya tetap kontras
                   return (
-                    <button key={b} onClick={() => setBrand(b)}
+                    <button key={b} onClick={() => runGuarded(() => setBrand(b))}
                       style={{ display: "flex", alignItems: "center", gap: 6, height: "100%", padding: "0 16px", borderRadius: 7, border: "none", background: active ? brandColor : "transparent", color: active ? activeTextColor : t.mid, fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, transition: "background 0.15s" }}>
                       <span style={{ width: 7, height: 7, borderRadius: 999, background: active ? activeTextColor : brandColor, flexShrink: 0 }} />
                       {b === "BOTH" ? "IOH" : b}
@@ -1616,7 +1689,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
               <div style={{ minWidth: 180 }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Partner</div>
                 <div style={{ position: "relative" }}>
-                  <select value={partnerFilter} onChange={(e) => { setPartnerFilter(e.target.value); setRegionFilter(""); setBranchFilter(""); setMcFilter(""); }} style={{ ...inputStyle, width: 180, appearance: "none", cursor: "pointer" }}>
+                  <select value={partnerFilter} onChange={(e) => { const v = e.target.value; runGuarded(() => { setPartnerFilter(v); setRegionFilter(""); setBranchFilter(""); setMcFilter(""); }); }} style={{ ...inputStyle, width: 180, appearance: "none", cursor: "pointer" }}>
                     <option value="">— semua Partner —</option>
                     {partnerOptions.map((p) => <option key={p} value={p}>{p}</option>)}
                   </select>
@@ -1628,7 +1701,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
               <div style={{ minWidth: 170 }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Region</div>
                 <div style={{ position: "relative" }}>
-                  <select value={regionFilter} onChange={(e) => { setRegionFilter(e.target.value); setBranchFilter(""); setMcFilter(""); }} style={{ ...inputStyle, width: 170, appearance: "none", cursor: "pointer" }}>
+                  <select value={regionFilter} onChange={(e) => { const v = e.target.value; runGuarded(() => { setRegionFilter(v); setBranchFilter(""); setMcFilter(""); }); }} style={{ ...inputStyle, width: 170, appearance: "none", cursor: "pointer" }}>
                     <option value="">ALL Sumatera</option>
                     {regionOptions.map((r) => <option key={r} value={r}>{r}</option>)}
                   </select>
@@ -1640,7 +1713,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
               <div style={{ minWidth: 190 }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Branch</div>
                 <div style={{ position: "relative" }}>
-                  <select value={branchFilter} onChange={(e) => { setBranchFilter(e.target.value); setMcFilter(""); }} style={{ ...inputStyle, width: 190, appearance: "none", cursor: "pointer" }}>
+                  <select value={branchFilter} onChange={(e) => { const v = e.target.value; runGuarded(() => { setBranchFilter(v); setMcFilter(""); }); }} style={{ ...inputStyle, width: 190, appearance: "none", cursor: "pointer" }}>
                     <option value="">— semua Branch —</option>
                     {branchOptions.map((b) => <option key={b} value={b}>{b}</option>)}
                   </select>
@@ -1652,7 +1725,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
               <div style={{ minWidth: 200 }}>
                 <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>MC</div>
                 <div style={{ position: "relative" }}>
-                  <select value={mcFilter} onChange={(e) => setMcFilter(e.target.value)} style={{ ...inputStyle, width: 220, appearance: "none", cursor: "pointer" }}>
+                  <select value={mcFilter} onChange={(e) => { const v = e.target.value; runGuarded(() => setMcFilter(v)); }} style={{ ...inputStyle, width: 220, appearance: "none", cursor: "pointer" }}>
                     <option value="">— semua MC —</option>
                     {mcOptions.map((mc) => <option key={mc} value={mc}>{mc}</option>)}
                   </select>
@@ -1667,7 +1740,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                 <input value={dseSearch} onChange={(e) => setDseSearch(e.target.value)} placeholder="Kode DSE / Nama…" style={{ ...inputStyle, paddingLeft: 34 }} />
               </div>
             </div>
-            <button onClick={loadDseAndEntries} title="Refresh" style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <button onClick={() => runGuarded(loadDseAndEntries)} title="Refresh" style={{ width: 38, height: 38, borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <RefreshCw size={14} className={loadingDse ? "spin" : ""} />
             </button>
             {!isRangeMode && dirtyCount > 0 && (
@@ -1684,7 +1757,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
               periode yang dipilih". Selalu tampil (bukan cuma pas ringkasan
               muncul) supaya jelas data di bawahnya itu utk tanggal/periode
               apa. ── */}
-          {(!isSPM || mcFilter || branchFilter || partnerFilter || regionFilter || isRangeMode) && (
+          {!showAllRegions && (
             <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "11px 14px", borderRadius: 10, marginBottom: 14, background: t.tealBg }}>
               <CalendarCheck2 size={15} color={t.teal} style={{ flexShrink: 0 }} />
               <div style={{ fontSize: 13, fontWeight: 600, color: t.teal, letterSpacing: -0.1 }}>
@@ -1702,10 +1775,10 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
           {/* ── Ringkasan per MC yang sedang dipilih — akumulasi per Branch &
               per Partner menyusul, utk sekarang baru level MC. Ikut update
               real-time pas admin ngetik (belum tentu sudah ter-Simpan). ── */}
-          {(!isSPM || mcFilter || branchFilter || partnerFilter || regionFilter) && !loadingDse && dseList.length > 0 && (
+          {!showAllRegions && !loadingDse && dseList.length > 0 && (
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 10 }}>
-                Ringkasan {mcFilter ? `MC ${mcFilter}` : partnerFilter ? `Partner ${partnerFilter}` : branchFilter ? `Branch ${branchFilter}` : regionFilter ? `Region ${regionFilter}` : ""} · {brand} · {entryDate}
+                Ringkasan {mcFilter ? `MC ${mcFilter}` : partnerFilter ? `Partner ${partnerFilter}` : branchFilter ? `Branch ${branchFilter}` : regionFilter ? `Region ${regionFilter}` : "Semua Partner (ALL Sumatera)"} · {brand} · {entryDate}
               </div>
               <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                 <StatTile t={t} icon={<Users size={13} />} label="Total Alokasi DSE" value={fmtID(mcSummary.totalAlokasi)} />
