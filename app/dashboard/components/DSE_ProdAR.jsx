@@ -589,30 +589,24 @@ function DseInputRow({ t, isCardView, dse, brands, showBrandCol, entries, onEntr
           <span style={{ fontSize: 10.5, color: t.lo, fontWeight: 600 }}>· ID {bd.displayCode}</span>
         </div>
       )}
+      {/* UPDATE (permintaan user - "pencatatan cukup amount saja tidak perlu
+          qty, baik untuk SP dan Voucher"): Qty SP/Qty Voucher DIHAPUS dari
+          form pencatatan - sekarang cuma nilai Rp yg diinput utk SP &
+          Voucher (qty_sp/qty_voucher di DB tetap ada, cuma ga diminta lagi
+          dari sini - lihat juga handleSaveDse yg udah ga ngirim qty_sp/
+          qty_voucher lagi). */}
       <div style={{ borderRadius: 9, background: t.redBg, padding: 8, marginBottom: 8 }}>
         <div style={{ fontSize: 10, fontWeight: 800, color: t.red, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>SP</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          <div>
-            <div style={labelStyle}>Qty SP Terjual (Pcs)</div>
-            <MoneyInput t={t} disabled={readOnly} value={bd.e.qty_sp} onChange={(v) => bd.setE({ qty_sp: v })} />
-          </div>
-          <div>
-            <div style={labelStyle}>Total Penjualan SP (Rp)</div>
-            <MoneyInput t={t} disabled={readOnly} value={bd.e.nilai_sp} onChange={(v) => bd.setE({ nilai_sp: v })} />
-          </div>
+        <div>
+          <div style={labelStyle}>Total Penjualan SP (Rp)</div>
+          <MoneyInput t={t} disabled={readOnly} value={bd.e.nilai_sp} onChange={(v) => bd.setE({ nilai_sp: v })} />
         </div>
       </div>
       <div style={{ borderRadius: 9, background: t.blueBg, padding: 8, marginBottom: 8 }}>
         <div style={{ fontSize: 10, fontWeight: 800, color: t.blue, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 6 }}>Voucher</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-          <div>
-            <div style={labelStyle}>Qty Voucher Terjual (Pcs)</div>
-            <MoneyInput t={t} disabled={readOnly} value={bd.e.qty_voucher} onChange={(v) => bd.setE({ qty_voucher: v })} />
-          </div>
-          <div>
-            <div style={labelStyle}>Total Penjualan Voucher (Rp)</div>
-            <MoneyInput t={t} disabled={readOnly} value={bd.e.nilai_voucher} onChange={(v) => bd.setE({ nilai_voucher: v })} />
-          </div>
+        <div>
+          <div style={labelStyle}>Total Penjualan Voucher (Rp)</div>
+          <MoneyInput t={t} disabled={readOnly} value={bd.e.nilai_voucher} onChange={(v) => bd.setE({ nilai_voucher: v })} />
         </div>
       </div>
       <div style={{ borderRadius: 9, background: t.amberBg, padding: 8, marginBottom: 8 }}>
@@ -818,10 +812,11 @@ function DseInputRow({ t, isCardView, dse, brands, showBrandCol, entries, onEntr
           <input type="date" disabled={readOnly} value={joinDate || ""} onChange={(ev) => onIdentityChange(dse.dse_code, "join_date", ev.target.value)} style={textInputStyle} />
         </td>
       )}
-      <td style={{ padding: "10px 12px", minWidth: 110, ...groupDivider, background: spBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={bd.e.qty_sp} onChange={(v) => bd.setE({ qty_sp: v })} /></td>
-      <td style={{ padding: "10px 12px", minWidth: 130, background: spBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={bd.e.nilai_sp} onChange={(v) => bd.setE({ nilai_sp: v })} /></td>
-      <td style={{ padding: "10px 12px", minWidth: 110, ...groupDivider, background: voucherBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={bd.e.qty_voucher} onChange={(v) => bd.setE({ qty_voucher: v })} /></td>
-      <td style={{ padding: "10px 12px", minWidth: 130, background: voucherBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={bd.e.nilai_voucher} onChange={(v) => bd.setE({ nilai_voucher: v })} /></td>
+      {/* UPDATE (permintaan user - "pencatatan cukup amount saja tidak perlu
+          qty, baik untuk SP dan Voucher"): kolom Qty SP & Qty Voucher
+          DIHAPUS dari tabel - cuma nilai Rp yg diinput/ditampilkan. */}
+      <td style={{ padding: "10px 12px", minWidth: 130, ...groupDivider, background: spBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={bd.e.nilai_sp} onChange={(v) => bd.setE({ nilai_sp: v })} /></td>
+      <td style={{ padding: "10px 12px", minWidth: 130, ...groupDivider, background: voucherBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={bd.e.nilai_voucher} onChange={(v) => bd.setE({ nilai_voucher: v })} /></td>
       <td style={{ padding: "10px 12px", minWidth: 140, ...groupDivider, background: saldoBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={bd.e.nilai_saldo} onChange={(v) => bd.setE({ nilai_saldo: v })} /></td>
       <td style={{ padding: "10px 12px", minWidth: 130, textAlign: "right", fontWeight: 800, color: isDual ? bd.meta.color : t.teal, whiteSpace: "nowrap", ...groupDivider }}>Rp {fmtID(bd.totalPenjualan)}</td>
       <td style={{ padding: "10px 12px", minWidth: 330, ...groupDivider }}>
@@ -987,14 +982,14 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
   // linked ke toggle Brand di atas (lihat "brand" case khusus di bawah).
   const [colFilters, setColFilters] = useState({
     id: [], brand: "", partner: [], region: [], branch: [], nama: [], status: [], join: [],
-    qtySp: [], totalSp: [], qtyVoucher: [], totalVoucher: [],
+    totalSp: [], totalVoucher: [],
     saldo: [], totalPenjualan: [], ar: [], catatan: [],
   });
   const setColFilter = (k, v) => setColFilters((prev) => ({ ...prev, [k]: v }));
   const resetOneFilter = (k) => setColFilter(k, k === "brand" ? "" : []);
   const resetColFilters = () => setColFilters({
     id: [], brand: "", partner: [], region: [], branch: [], nama: [], status: [], join: [],
-    qtySp: [], totalSp: [], qtyVoucher: [], totalVoucher: [],
+    totalSp: [], totalVoucher: [],
     saldo: [], totalPenjualan: [], ar: [], catatan: [],
   });
   const anyColFilterActive = Object.values(colFilters).some((v) => (Array.isArray(v) ? v.length > 0 : v !== ""));
@@ -1339,12 +1334,12 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
     const partnerVal = r.mdi ?? "";
     const regionVal = r.region ?? "";
     const branchVal = r.branch ?? "";
-    let qtySp = 0, nilaiSp = 0, qtyVoucher = 0, nilaiVoucher = 0, nilaiSaldo = 0, ar = 0, catatanAll = "";
+    let nilaiSp = 0, nilaiVoucher = 0, nilaiSaldo = 0, ar = 0, catatanAll = "";
     for (const b of activeBrands) {
       const e = entries[r.dse_code]?.[b];
       if (e) {
-        qtySp += fRaw(e.qty_sp); nilaiSp += fRaw(e.nilai_sp);
-        qtyVoucher += fRaw(e.qty_voucher); nilaiVoucher += fRaw(e.nilai_voucher);
+        nilaiSp += fRaw(e.nilai_sp);
+        nilaiVoucher += fRaw(e.nilai_voucher);
         nilaiSaldo += fRaw(e.nilai_saldo);
         if (e.catatan) catatanAll += ` ${e.catatan}`;
       }
@@ -1352,7 +1347,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
     }
     catatanAll = catatanAll.trim();
     const totalPenjualan = nilaiSp + nilaiVoucher + nilaiSaldo;
-    return { r, namaVal, statusVal, joinVal, partnerVal, regionVal, branchVal, qtySp, nilaiSp, qtyVoucher, nilaiVoucher, nilaiSaldo, totalPenjualan, ar, catatanAll };
+    return { r, namaVal, statusVal, joinVal, partnerVal, regionVal, branchVal, nilaiSp, nilaiVoucher, nilaiSaldo, totalPenjualan, ar, catatanAll };
   }), [dseList, identity, entries, prevAr, activeBrands]);
 
   // Opsi checklist tiap kolom (distinct values dari enrichedDse saat ini).
@@ -1367,9 +1362,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
       nama: uniq(enrichedDse.map((x) => x.namaVal)),
       status: STATUS_OPTIONS.map((s) => ({ value: s.v, label: s.label })),
       join: uniq(enrichedDse.map((x) => x.joinVal), (v) => (v ? fmtLongDate(v) : "— Kosong —")),
-      qtySp: uniq(enrichedDse.map((x) => x.qtySp), (v) => fmtID(v)),
       totalSp: uniq(enrichedDse.map((x) => x.nilaiSp), (v) => `Rp ${fmtID(v)}`),
-      qtyVoucher: uniq(enrichedDse.map((x) => x.qtyVoucher), (v) => fmtID(v)),
       totalVoucher: uniq(enrichedDse.map((x) => x.nilaiVoucher), (v) => `Rp ${fmtID(v)}`),
       saldo: uniq(enrichedDse.map((x) => x.nilaiSaldo), (v) => `Rp ${fmtID(v)}`),
       totalPenjualan: uniq(enrichedDse.map((x) => x.totalPenjualan), (v) => `Rp ${fmtID(v)}`),
@@ -1392,9 +1385,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
       if (colFilters.nama.length && !colFilters.nama.includes(x.namaVal)) return false;
       if (colFilters.status.length && !colFilters.status.includes(x.statusVal)) return false;
       if (colFilters.join.length && !colFilters.join.includes(x.joinVal)) return false;
-      if (colFilters.qtySp.length && !colFilters.qtySp.includes(x.qtySp)) return false;
       if (colFilters.totalSp.length && !colFilters.totalSp.includes(x.nilaiSp)) return false;
-      if (colFilters.qtyVoucher.length && !colFilters.qtyVoucher.includes(x.qtyVoucher)) return false;
       if (colFilters.totalVoucher.length && !colFilters.totalVoucher.includes(x.nilaiVoucher)) return false;
       if (colFilters.saldo.length && !colFilters.saldo.includes(x.nilaiSaldo)) return false;
       if (colFilters.totalPenjualan.length && !colFilters.totalPenjualan.includes(x.totalPenjualan)) return false;
@@ -1414,9 +1405,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
           case "nama": return x.namaVal || "";
           case "status": return x.statusVal || "";
           case "join": return x.joinVal || "";
-          case "qtySp": return x.qtySp;
           case "totalSp": return x.nilaiSp;
-          case "qtyVoucher": return x.qtyVoucher;
           case "totalVoucher": return x.nilaiVoucher;
           case "saldo": return x.nilaiSaldo;
           case "totalPenjualan": return x.totalPenjualan;
@@ -1892,8 +1881,8 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                 <StatTile t={t} icon={<Users size={13} />} label="Total Alokasi DSE" value={fmtID(mcSummary.totalAlokasi)} />
                 <StatTile t={t} icon={<UserCheck size={13} color={t.teal} />} label="Total DSE Active" value={fmtID(mcSummary.totalActive)} />
                 <StatTile t={t} icon={<UserX size={13} color={t.red} />} label="Total DSE Vacant" value={fmtID(mcSummary.totalVacant)} sub={mcSummary.totalInterview ? `${fmtID(mcSummary.totalInterview)} Interview` : undefined} />
-                <StatTile t={t} icon={<TrendingUp size={13} />} label="Penjualan SP" value={`${fmtID(mcSummary.qtySp)} pcs`} sub={`Rp ${fmtID(mcSummary.nilaiSp)}`} />
-                <StatTile t={t} icon={<Ticket size={13} />} label="Penjualan Voucher" value={`${fmtID(mcSummary.qtyVoucher)} pcs`} sub={`Rp ${fmtID(mcSummary.nilaiVoucher)}`} />
+                <StatTile t={t} icon={<TrendingUp size={13} />} label="Penjualan SP" value={`Rp ${fmtID(mcSummary.nilaiSp)}`} />
+                <StatTile t={t} icon={<Ticket size={13} />} label="Penjualan Voucher" value={`Rp ${fmtID(mcSummary.nilaiVoucher)}`} />
                 <StatTile t={t} icon={<Wallet size={13} />} label="Saldo MOBO" value={`Rp ${fmtID(mcSummary.nilaiSaldo)}`} />
                 <StatTile t={t} icon={<CircleDollarSign size={13} color={t.teal} />} label="Total Penjualan" value={`Rp ${fmtID(mcSummary.totalPenjualan)}`} sub="SP + Voucher + Saldo" />
                 <StatTile t={t} icon={<AlertTriangle size={13} color={t.amber} />} label="Total Tunggakan" value={`Rp ${fmtID(mcSummary.tunggakan)}`} sub="AR / Piutang" />
@@ -1928,10 +1917,9 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                   </div>
                 ) : (
                 <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 0.9fr 1fr 1fr 1fr 1fr", gap: 0, padding: "11px 18px", background: t.sub, fontSize: 10.5, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr 1fr 1fr", gap: 0, padding: "11px 18px", background: t.sub, fontSize: 10.5, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>
                     <div>{summaryGroupBy === "partner" ? "Partner" : "Region"}</div>
                     <div style={{ textAlign: "right" }}>DSE Active</div>
-                    <div style={{ textAlign: "right" }}>Qty SP</div>
                     <div style={{ textAlign: "right" }}>Nilai SP</div>
                     <div style={{ textAlign: "right" }}>Nilai Voucher</div>
                     <div style={{ textAlign: "right" }}>Saldo MOBO</div>
@@ -1939,7 +1927,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                   </div>
                   {regionSummary.map((r, i) => (
                     <div key={r.label} onClick={() => runGuarded(() => (summaryGroupBy === "partner" ? setPartnerFilter(r.label) : setRegionFilter(r.label)))} title={`Lihat detail ${summaryGroupBy === "partner" ? "Partner" : "Region"} ${r.label}`}
-                      style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 0.9fr 1fr 1fr 1fr 1fr", gap: 0, padding: "14px 18px", borderTop: i === 0 ? "none" : `1px solid ${t.line}`, cursor: "pointer", fontSize: 13, fontVariantNumeric: "tabular-nums", transition: "background 0.12s" }}
+                      style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 1fr 1fr 1fr 1fr", gap: 0, padding: "14px 18px", borderTop: i === 0 ? "none" : `1px solid ${t.line}`, cursor: "pointer", fontSize: 13, fontVariantNumeric: "tabular-nums", transition: "background 0.12s" }}
                       onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
                       <div style={{ fontWeight: 700, color: t.hi, display: "flex", alignItems: "center", gap: 7 }}>
@@ -1947,7 +1935,6 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                         <ChevronRight size={13} color={t.lo} style={{ flexShrink: 0 }} />
                       </div>
                       <div style={{ textAlign: "right", color: t.mid }}>{fmtID(r.totalActive)} / {fmtID(r.totalAlokasi)}</div>
-                      <div style={{ textAlign: "right", color: t.mid }}>{fmtID(r.qtySp)} pcs</div>
                       <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiSp)}</div>
                       <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiVoucher)}</div>
                       <div style={{ textAlign: "right", fontWeight: 700 }}>Rp {fmtID(r.nilaiSaldo)}</div>
@@ -2014,9 +2001,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                         { key: "nama", label: "Nama DSE" },
                         { key: "status", label: "Status" },
                         { key: "join", label: "Join Date" },
-                        { key: "qtySp", label: "Qty SP (Pcs)" },
                         { key: "totalSp", label: "Total SP (Rp)" },
-                        { key: "qtyVoucher", label: "Qty Voucher (Pcs)" },
                         { key: "totalVoucher", label: "Total Voucher (Rp)" },
                         { key: "saldo", label: "Total Saldo MOBO (Rp)" },
                         { key: "totalPenjualan", label: "Total Penjualan (Rp)" },
@@ -2024,7 +2009,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                         { key: "catatan", label: "Catatan" },
                         { key: null, label: "" },
                       ].map((col, i) => {
-                        const groupCols = [8, 10, 12, 13, 14];
+                        const groupCols = [8, 9, 10, 11, 12];
                         return (
                           <th key={col.key || i} style={{ textAlign: "left", padding: "10px 12px", color: t.mid, fontWeight: 700, whiteSpace: "nowrap", borderBottom: `1px solid ${t.line}`, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.2, borderLeft: groupCols.includes(i) ? `2px solid ${t.line}` : "none", overflow: "visible" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
