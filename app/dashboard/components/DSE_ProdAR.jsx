@@ -652,7 +652,6 @@ function DseInputRow({ t, isCardView, dse, brands, entries, onEntryChange, onIde
     }}>
       <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 800 }}>
-          {isDual && <span style={{ width: 7, height: 7, borderRadius: 999, background: bd.meta.color, flexShrink: 0 }} />}
           {i === 0 ? (
             <button onClick={() => onShowHistory?.(dse.dse_code)} title="Lihat riwayat perubahan"
               style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", padding: 0, fontWeight: 800, fontSize: "inherit", color: t.hi, fontFamily: "inherit" }}>
@@ -664,15 +663,42 @@ function DseInputRow({ t, isCardView, dse, brands, entries, onEntryChange, onIde
           {i === 0 && dse.is_revoked && <span style={{ fontSize: 9.5, fontWeight: 700, color: t.red, background: t.redBg, borderRadius: 999, padding: "1px 6px" }}>Revoked</span>}
         </div>
       </td>
-      <td style={{ padding: "10px 12px", minWidth: 160 }}>
-        <input type="text" disabled={readOnly} value={identityEdit?.ds_name ?? dse.ds_name ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "ds_name", ev.target.value)} style={textInputStyle} />
-      </td>
-      <td style={{ padding: "10px 12px", minWidth: 128 }}>
-        {StatusSelect}
-      </td>
-      <td style={{ padding: "10px 12px", minWidth: 150 }}>
-        <input type="date" disabled={readOnly} value={joinDate || ""} onChange={(ev) => onIdentityChange(dse.dse_code, "join_date", ev.target.value)} style={textInputStyle} />
-      </td>
+      {/* UPDATE (permintaan user - "tambahkan kolom brand juga di atas, lalu
+          kolomnya merge kalau pairingan, yg di-merge cuma Nama DSE/Status/
+          Join Date, penjualan tetap dipisah per brand, khusus tampilan
+          IOH"): kolom Brand (badge warna per baris) CUMA muncul di mode
+          IOH/Both - di mode 1-brand kolom ini sama sekali ga dirender
+          (match header yg jg ga nampilin "Brand" di mode itu). */}
+      {isDual && (
+        <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "3px 9px", borderRadius: 999, background: bd.meta.bg, border: `1px solid ${bd.meta.border}`, fontSize: 11, fontWeight: 800, color: bd.meta.color }}>
+            <span style={{ width: 6, height: 6, borderRadius: 999, background: bd.meta.color, flexShrink: 0 }} />
+            {bd.b}
+          </span>
+        </td>
+      )}
+      {/* Nama DSE / Status / Join Date SELALU sama antar brand (satu DSE =
+          satu identitas) - di mode IOH DIGABUNG (rowSpan = jumlah brand) jadi
+          cuma dirender SEKALI di baris pertama (i===0); baris brand
+          berikutnya ga punya <td> ini sama sekali (dilewatin browser krn
+          udah ketutup rowSpan dari baris atasnya). Di mode 1-brand,
+          rowSpan={1} = perilaku lama persis (tiap baris render sendiri,
+          toh cuma ada 1 baris). */}
+      {i === 0 && (
+        <td rowSpan={isDual ? brandData.length : 1} style={{ padding: "10px 12px", minWidth: 160, verticalAlign: "top" }}>
+          <input type="text" disabled={readOnly} value={identityEdit?.ds_name ?? dse.ds_name ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "ds_name", ev.target.value)} style={textInputStyle} />
+        </td>
+      )}
+      {i === 0 && (
+        <td rowSpan={isDual ? brandData.length : 1} style={{ padding: "10px 12px", minWidth: 128, verticalAlign: "top" }}>
+          {StatusSelect}
+        </td>
+      )}
+      {i === 0 && (
+        <td rowSpan={isDual ? brandData.length : 1} style={{ padding: "10px 12px", minWidth: 150, verticalAlign: "top" }}>
+          <input type="date" disabled={readOnly} value={joinDate || ""} onChange={(ev) => onIdentityChange(dse.dse_code, "join_date", ev.target.value)} style={textInputStyle} />
+        </td>
+      )}
       <td style={{ padding: "10px 12px", minWidth: 110, ...groupDivider, background: spBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={bd.e.qty_sp} onChange={(v) => bd.setE({ qty_sp: v })} /></td>
       <td style={{ padding: "10px 12px", minWidth: 130, background: spBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={bd.e.nilai_sp} onChange={(v) => bd.setE({ nilai_sp: v })} /></td>
       <td style={{ padding: "10px 12px", minWidth: 110, ...groupDivider, background: voucherBg }}><MoneyInput t={t} disabled={readOnly} align="right" value={bd.e.qty_voucher} onChange={(v) => bd.setE({ qty_voucher: v })} /></td>
@@ -1617,9 +1643,19 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                   <thead>
                     <tr style={{ background: t.sub }}>
-                      {["ID DSE", "Nama DSE", "Status", "Join Date", "Qty SP (Pcs)", "Total SP (Rp)", "Qty Voucher (Pcs)", "Total Voucher (Rp)", "Total Saldo MOBO (Rp)", "Total Penjualan (Rp)", "AR / Piutang (Utang · Bayar · Sisa)", "Catatan", ""].map((h, i) => (
-                        <th key={i} style={{ textAlign: "left", padding: "10px 12px", color: t.mid, fontWeight: 700, whiteSpace: "nowrap", borderBottom: `1px solid ${t.line}`, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.2, borderLeft: [4, 6, 8, 9, 10].includes(i) ? `2px solid ${t.line}` : "none" }}>{h}</th>
-                      ))}
+                      {/* UPDATE (permintaan user - "tambahkan kolom brand
+                          juga di atas, lalu kolomnya itu merge [rowSpan] kalau
+                          memang pairingan, yg di-merge cuma Nama DSE/Status/
+                          Join Date, penjualan tetap dipisah per brand, khusus
+                          tampilan IOH"): kolom "Brand" cuma muncul di mode
+                          IOH/Both (activeBrands.length > 1); mode 1-brand
+                          header-nya tetap persis spt sebelumnya. */}
+                      {(activeBrands.length > 1 ? ["ID DSE", "Brand", "Nama DSE", "Status", "Join Date", "Qty SP (Pcs)", "Total SP (Rp)", "Qty Voucher (Pcs)", "Total Voucher (Rp)", "Total Saldo MOBO (Rp)", "Total Penjualan (Rp)", "AR / Piutang (Utang · Bayar · Sisa)", "Catatan", ""] : ["ID DSE", "Nama DSE", "Status", "Join Date", "Qty SP (Pcs)", "Total SP (Rp)", "Qty Voucher (Pcs)", "Total Voucher (Rp)", "Total Saldo MOBO (Rp)", "Total Penjualan (Rp)", "AR / Piutang (Utang · Bayar · Sisa)", "Catatan", ""]).map((h, i) => {
+                        const groupCols = activeBrands.length > 1 ? [5, 7, 9, 10, 11] : [4, 6, 8, 9, 10];
+                        return (
+                          <th key={i} style={{ textAlign: "left", padding: "10px 12px", color: t.mid, fontWeight: 700, whiteSpace: "nowrap", borderBottom: `1px solid ${t.line}`, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.2, borderLeft: groupCols.includes(i) ? `2px solid ${t.line}` : "none" }}>{h}</th>
+                        );
+                      })}
                     </tr>
                   </thead>
                   <tbody>
