@@ -8,15 +8,16 @@ import { Search, Check, Filter, SortAsc, SortDesc, X } from "lucide-react";
  * ExcelFilter - Apple Standard Edition
  * Logic: Chained Faceted Filtering
  */
-export default function ExcelFilter({ 
-  options = [], 
-  selected = [], 
-  onApply, 
-  onClear, 
-  sortDir, 
-  onSort, 
-  t, 
-  d 
+export default function ExcelFilter({
+  options = [],
+  selected = [],
+  onApply,
+  onClear,
+  sortDir,
+  onSort,
+  label,
+  t,
+  d
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -156,95 +157,101 @@ export default function ExcelFilter({
       }}
     >
       {/* Header / Grab Handle */}
-      <div 
+      <div
         onMouseDown={(e) => onMouseDown(e, "drag")}
         style={{
-          padding: "10px 12px",
+          padding: "11px 14px",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
+          gap: 8,
           cursor: interaction.type === "drag" ? "grabbing" : "default",
-          background: d ? "rgba(255,255,255,0.02)" : "rgba(0,0,0,0.02)"
+          background: d ? "rgba(255,255,255,0.045)" : "rgba(0,0,0,0.035)",
+          borderBottom: `1px solid ${d ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.07)"}`,
         }}
       >
-        <button 
+        <button
           onClick={() => setIsOpen(false)}
           className="mac-close"
           style={{
             width: 11, height: 11, borderRadius: "50%",
-            background: "#FF5F57", border: "none",
+            background: "#FF5F57", border: "none", flexShrink: 0,
             display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer"
           }}
         >
           <X size={7} color="rgba(0,0,0,0.6)" className="mac-icon" />
         </button>
-        <span style={{ fontSize: 10, fontWeight: 700, color: t.lo, opacity: 0.6 }}>Filter</span>
-        <div style={{ width: 11 }} />
+        <span style={{ fontSize: 12, fontWeight: 800, color: t.hi, letterSpacing: -0.1, flex: 1, textAlign: "center", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label || "Filter"}</span>
+        <div style={{ width: 11, flexShrink: 0 }} />
       </div>
 
-      <div style={{ padding: 12, flex: 1, display: "flex", flexDirection: "column", gap: 12, overflow: "hidden" }}>
-        
+      <div style={{ padding: 12, flex: 1, display: "flex", flexDirection: "column", gap: 10, overflow: "hidden" }}>
+
         {/* Sort */}
-        <div style={{ display: "flex", gap: 5 }}>
+        <div style={{ display: "flex", gap: 6 }}>
           <button onClick={() => onSort("asc")} style={{
-            flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
-            padding: "6px", borderRadius: 6, border: "none", fontSize: 10, fontWeight: 600,
-            background: sortDir === "asc" ? t.blue : d ? "rgba(255,255,255,0.1)" : "#E9E9EB",
+            flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+            padding: "7px", borderRadius: 7, border: `1px solid ${sortDir === "asc" ? t.blue : d ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.12)"}`, fontSize: 11, fontWeight: 700,
+            background: sortDir === "asc" ? t.blue : d ? "rgba(255,255,255,0.06)" : "#F2F2F4",
             color: sortDir === "asc" ? "#fff" : t.hi, cursor: "pointer"
           }}>
-            <SortAsc size={12}/> Asc
+            <SortAsc size={13}/> Asc
           </button>
           <button onClick={() => onSort("desc")} style={{
-            flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
-            padding: "6px", borderRadius: 6, border: "none", fontSize: 10, fontWeight: 600,
-            background: sortDir === "desc" ? t.blue : d ? "rgba(255,255,255,0.1)" : "#E9E9EB",
+            flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+            padding: "7px", borderRadius: 7, border: `1px solid ${sortDir === "desc" ? t.blue : d ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.12)"}`, fontSize: 11, fontWeight: 700,
+            background: sortDir === "desc" ? t.blue : d ? "rgba(255,255,255,0.06)" : "#F2F2F4",
             color: sortDir === "desc" ? "#fff" : t.hi, cursor: "pointer"
           }}>
-            <SortDesc size={12}/> Desc
+            <SortDesc size={13}/> Desc
           </button>
         </div>
 
         {/* Search */}
         <div style={{
-          display: "flex", alignItems: "center", gap: 6, padding: "0 8px",
-          height: 26, background: d ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)", 
-          borderRadius: 5, border: "0.5px solid rgba(0,0,0,0.05)"
+          display: "flex", alignItems: "center", gap: 7, padding: "0 9px",
+          height: 29, background: d ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.045)",
+          borderRadius: 7, border: `1px solid ${d ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.09)"}`
         }}>
-          <Search size={11} style={{ opacity: 0.4 }} />
-          <input 
-            placeholder="Search" value={searchTerm}
+          <Search size={12} style={{ color: t.mid, flexShrink: 0 }} />
+          <input
+            placeholder="Cari…" value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
-            style={{ background: "transparent", border: "none", outline: "none", color: t.hi, fontSize: 11, width: "100%" }}
+            style={{ background: "transparent", border: "none", outline: "none", color: t.hi, fontSize: 12, fontWeight: 500, width: "100%" }}
           />
         </div>
 
         {/* Options List */}
         <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
-          <label className="apple-item" style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderRadius: 4, cursor: "pointer" }}>
+          <label className="apple-item" style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 5, cursor: "pointer" }}>
             <input type="checkbox" checked={isAllSelected} onChange={handleSelectAll} style={{ display: "none" }} />
             <div style={{
-              width: 14, height: 14, borderRadius: 3, 
-              border: `1px solid ${isAllSelected ? t.blue : d ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.2)"}`,
+              width: 15, height: 15, borderRadius: 4, flexShrink: 0,
+              border: `1.5px solid ${isAllSelected ? t.blue : d ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.32)"}`,
               background: isAllSelected ? t.blue : "transparent", display: "flex", alignItems: "center", justifyContent: "center"
             }}>
               {isAllSelected && <Check size={10} color="#fff" strokeWidth={4} />}
             </div>
-            <span style={{ fontSize: 11, color: t.hi, fontWeight: 600 }}>Select All</span>
+            <span style={{ fontSize: 12, color: t.hi, fontWeight: 700 }}>Pilih Semua</span>
           </label>
+
+          {filteredOptions.length === 0 && (
+            <div style={{ padding: "14px 8px", textAlign: "center", fontSize: 11.5, color: t.mid }}>Tidak ada hasil</div>
+          )}
 
           {filteredOptions.map(opt => {
             const isSelected = tempSelected.includes(opt.value);
             return (
-              <label key={opt.value} className="apple-item" style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderRadius: 4, cursor: "pointer" }}>
+              <label key={opt.value} className="apple-item" style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 5, cursor: "pointer" }}>
                 <input type="checkbox" checked={isSelected} onChange={() => setTempSelected(prev => isSelected ? prev.filter(v => v !== opt.value) : [...prev, opt.value])} style={{ display: "none" }} />
                 <div style={{
-                  width: 14, height: 14, borderRadius: 3, 
-                  border: `1px solid ${isSelected ? t.blue : d ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.2)"}`,
+                  width: 15, height: 15, borderRadius: 4, flexShrink: 0,
+                  border: `1.5px solid ${isSelected ? t.blue : d ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.32)"}`,
                   background: isSelected ? t.blue : "transparent", display: "flex", alignItems: "center", justifyContent: "center"
                 }}>
                   {isSelected && <Check size={10} color="#fff" strokeWidth={4} />}
                 </div>
-                <span style={{ fontSize: 11, color: t.hi }}>{opt.label}</span>
+                <span style={{ fontSize: 12, color: t.hi, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{opt.label}</span>
               </label>
             );
           })}
@@ -253,12 +260,12 @@ export default function ExcelFilter({
         {/* Buttons */}
         <div style={{ display: "flex", gap: 8, paddingTop: 4 }}>
           <button onClick={() => { onClear(); setIsOpen(false); }} style={{
-            flex: 1, padding: "7px", borderRadius: 6, border: "none",
-            background: d ? "rgba(255,255,255,0.1)" : "#E5E5EA", color: t.hi, fontSize: 11, fontWeight: 600, cursor: "pointer"
+            flex: 1, padding: "8px", borderRadius: 7, border: `1px solid ${d ? "rgba(255,255,255,0.14)" : "rgba(0,0,0,0.12)"}`,
+            background: d ? "rgba(255,255,255,0.07)" : "#EFEFF1", color: t.hi, fontSize: 11.5, fontWeight: 700, cursor: "pointer"
           }}>Reset</button>
           <button onClick={() => { onApply(tempSelected); setIsOpen(false); }} style={{
-            flex: 1.8, padding: "7px", borderRadius: 6, border: "none",
-            background: t.blue, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer"
+            flex: 1.8, padding: "8px", borderRadius: 7, border: "none",
+            background: t.blue, color: "#fff", fontSize: 11.5, fontWeight: 700, cursor: "pointer"
           }}>Apply</button>
         </div>
       </div>

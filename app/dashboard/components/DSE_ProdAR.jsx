@@ -1948,14 +1948,14 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                               <span>{col.label}</span>
                               {col.key === "brand" ? (
-                                <ExcelFilter t={t} d={d}
+                                <ExcelFilter t={t} d={d} label={col.label}
                                   options={[{ value: "IM3", label: "IM3" }, { value: "3ID", label: "3ID" }]}
                                   selected={colFilters.brand ? [colFilters.brand] : []}
                                   onApply={(vals) => { const v = vals.length === 1 ? vals[0] : ""; runGuarded(() => { setColFilter("brand", v); setBrand(v || "BOTH"); }); }}
                                   onClear={() => runGuarded(() => { setColFilter("brand", ""); setBrand("BOTH"); })}
                                   sortDir={null} onSort={() => {}} />
                               ) : col.key ? (
-                                <ExcelFilter t={t} d={d}
+                                <ExcelFilter t={t} d={d} label={col.label}
                                   options={colOptions[col.key]}
                                   selected={colFilters[col.key]}
                                   onApply={(vals) => setColFilter(col.key, vals)}
