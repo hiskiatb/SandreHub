@@ -32,6 +32,7 @@ import supabase from "../../../lib/supabase";
 import * as XLSX from "xlsx";
 import AdminMcMapping from "./AdminMcMapping";
 import SDP_DseDatabase from "./SDP_DseDatabase";
+import ExcelFilter from "./ExcelFilter";
 import {
   Upload, FileSpreadsheet, X, Check, AlertTriangle, Loader2, FileDown,
   Search, RefreshCw, ChevronDown, ChevronUp, ChevronRight, Wallet, TrendingUp, Calendar, Info,
@@ -384,7 +385,6 @@ const STATUS_OPTIONS = [
   { v: "Vacant", label: "Vacant", color: "#DC2626", bg: "rgba(220,38,38,0.10)" },
 ];
 const statusMetaOf = (v) => STATUS_OPTIONS.find((s) => s.v === v) || STATUS_OPTIONS[0];
-
 // ── Input angka dgn pemisah ribuan ("1.234.567" saat tidak fokus, angka
 // mentah saat sedang diketik) — dipakai utk semua kolom Qty/Rp supaya mudah
 // dibaca tanpa harus menghitung nol manual, baik di tabel desktop maupun
@@ -932,32 +932,29 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
   const [dseList, setDseList] = useState([]);
   const [dseSearch, setDseSearch] = useState("");
   // UPDATE (permintaan user - "tambahkan pemfilteran untuk setiap kolom
-  // tanpa terkecuali"): filter PER KOLOM di tabel Input Harian desktop (baris
-  // kedua di <thead>, di bawah label kolom) - terpisah dari kotak "Cari DSE"
-  // yg sudah ada (dseSearch, cuma cari ID/Nama). Teks -> contains
-  // case-insensitive. Status -> exact match (dropdown). Join Date -> rentang
-  // dari/sampai. Kolom angka (Qty/Total SP, Voucher, Saldo, Total Penjualan,
-  // AR) -> rentang min/max, dihitung dari NILAI YG SEDANG TAMPIL (termasuk
-  // editan yg belum disimpan, & dijumlahkan lintas brand kalau mode IOH -
-  // sama persis logic penjumlahan yg dipakai mcSummary/stat tile di atas).
-  // Brand -> dropdown khusus mode IOH, narrow-in row set per DSE jadi cuma
-  // nampilin 1 brand tertentu tanpa keluar dari mode IOH.
+  // tanpa terkecuali", lalu dikoreksi - "pemfilteran seperti ini" [contoh:
+  // ExcelFilter.jsx, komponen yg sama persis dipakai di PNL Control Center &
+  // MartaHub]): dari baris filter permanen di bawah header -> jadi tombol
+  // ikon Filter di tiap header kolom yg buka popover draggable/resizable ala
+  // Excel (Asc/Desc, Search, checklist Select-All dari NILAI YG SEDANG
+  // TAMPIL termasuk editan blm tersimpan - dijumlahkan lintas brand kalau
+  // mode IOH, sama persis logic mcSummary/stat tile - Reset & Apply), pakai
+  // ulang komponen ExcelFilter yg sama persis dgn punya user. Brand -> tetap
+  // linked ke toggle Brand di atas (lihat "brand" case khusus di bawah).
   const [colFilters, setColFilters] = useState({
-    id: "", brand: "", nama: "", status: "", joinFrom: "", joinTo: "",
-    qtySpMin: "", qtySpMax: "", totalSpMin: "", totalSpMax: "",
-    qtyVoucherMin: "", qtyVoucherMax: "", totalVoucherMin: "", totalVoucherMax: "",
-    saldoMin: "", saldoMax: "", totalPenjualanMin: "", totalPenjualanMax: "",
-    arMin: "", arMax: "", catatan: "",
+    id: [], brand: "", nama: [], status: [], join: [],
+    qtySp: [], totalSp: [], qtyVoucher: [], totalVoucher: [],
+    saldo: [], totalPenjualan: [], ar: [], catatan: [],
   });
   const setColFilter = (k, v) => setColFilters((prev) => ({ ...prev, [k]: v }));
+  const resetOneFilter = (k) => setColFilter(k, k === "brand" ? "" : []);
   const resetColFilters = () => setColFilters({
-    id: "", brand: "", nama: "", status: "", joinFrom: "", joinTo: "",
-    qtySpMin: "", qtySpMax: "", totalSpMin: "", totalSpMax: "",
-    qtyVoucherMin: "", qtyVoucherMax: "", totalVoucherMin: "", totalVoucherMax: "",
-    saldoMin: "", saldoMax: "", totalPenjualanMin: "", totalPenjualanMax: "",
-    arMin: "", arMax: "", catatan: "",
+    id: [], brand: "", nama: [], status: [], join: [],
+    qtySp: [], totalSp: [], qtyVoucher: [], totalVoucher: [],
+    saldo: [], totalPenjualan: [], ar: [], catatan: [],
   });
-  const anyColFilterActive = Object.values(colFilters).some((v) => v !== "");
+  const anyColFilterActive = Object.values(colFilters).some((v) => (Array.isArray(v) ? v.length > 0 : v !== ""));
+  const [sortConfig, setSortConfig] = useState({ key: null, dir: null }); // { key, dir: "asc"|"desc" }
   const [loadingDse, setLoadingDse] = useState(false);
   const [entries, setEntries] = useState({});     // { [dse_code]: { IM3: {...}, "3ID": {...} } }
   const [identity, setIdentity] = useState({});   // { [dse_code]: { ds_name, mc } }
@@ -1280,61 +1277,101 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
     if (action) action();
   };
 
-  const filteredDseList = useMemo(() => {
-    const toNum = (v) => (v === "" || v === undefined || v === null ? null : Number(v));
-    const inRange = (val, minRaw, maxRaw) => {
-      const min = toNum(minRaw), max = toNum(maxRaw);
-      if (min !== null && val < min) return false;
-      if (max !== null && val > max) return false;
-      return true;
+  // Enrich dulu (nilai yg LAGI TAMPIL, termasuk editan blm tersimpan,
+  // dijumlahkan lintas activeBrands kalau mode IOH - match persis logic
+  // mcSummary/stat tile) - dipakai bareng utk bangun opsi checklist tiap
+  // ExcelFilter (Select All dari nilai yg BENERAN ada di data) & utk filter
+  // + sort (Asc/Desc) itu sendiri.
+  const enrichedDse = useMemo(() => dseList.map((r) => {
+    const namaVal = identity[r.dse_code]?.ds_name ?? r.ds_name ?? "";
+    const statusVal = identity[r.dse_code]?.dse_status ?? r.dse_status ?? "";
+    const joinVal = identity[r.dse_code]?.join_date ?? r.join_date ?? "";
+    let qtySp = 0, nilaiSp = 0, qtyVoucher = 0, nilaiVoucher = 0, nilaiSaldo = 0, ar = 0, catatanAll = "";
+    for (const b of activeBrands) {
+      const e = entries[r.dse_code]?.[b];
+      if (e) {
+        qtySp += fRaw(e.qty_sp); nilaiSp += fRaw(e.nilai_sp);
+        qtyVoucher += fRaw(e.qty_voucher); nilaiVoucher += fRaw(e.nilai_voucher);
+        nilaiSaldo += fRaw(e.nilai_saldo);
+        if (e.catatan) catatanAll += ` ${e.catatan}`;
+      }
+      ar += fRaw(prevAr[`${r.dse_code}|${b}`]);
+    }
+    catatanAll = catatanAll.trim();
+    const totalPenjualan = nilaiSp + nilaiVoucher + nilaiSaldo;
+    return { r, namaVal, statusVal, joinVal, qtySp, nilaiSp, qtyVoucher, nilaiVoucher, nilaiSaldo, totalPenjualan, ar, catatanAll };
+  }), [dseList, identity, entries, prevAr, activeBrands]);
+
+  // Opsi checklist tiap kolom (distinct values dari enrichedDse saat ini).
+  const colOptions = useMemo(() => {
+    const uniq = (vals, fmt) => [...new Set(vals)].sort((a, b) => (a > b ? 1 : a < b ? -1 : 0))
+      .map((v) => ({ value: v, label: fmt ? fmt(v) : (v === "" ? "— Kosong —" : String(v)) }));
+    return {
+      id: uniq(enrichedDse.map((x) => x.r.dse_code)),
+      nama: uniq(enrichedDse.map((x) => x.namaVal)),
+      status: STATUS_OPTIONS.map((s) => ({ value: s.v, label: s.label })),
+      join: uniq(enrichedDse.map((x) => x.joinVal), (v) => (v ? fmtLongDate(v) : "— Kosong —")),
+      qtySp: uniq(enrichedDse.map((x) => x.qtySp), (v) => fmtID(v)),
+      totalSp: uniq(enrichedDse.map((x) => x.nilaiSp), (v) => `Rp ${fmtID(v)}`),
+      qtyVoucher: uniq(enrichedDse.map((x) => x.qtyVoucher), (v) => fmtID(v)),
+      totalVoucher: uniq(enrichedDse.map((x) => x.nilaiVoucher), (v) => `Rp ${fmtID(v)}`),
+      saldo: uniq(enrichedDse.map((x) => x.nilaiSaldo), (v) => `Rp ${fmtID(v)}`),
+      totalPenjualan: uniq(enrichedDse.map((x) => x.totalPenjualan), (v) => `Rp ${fmtID(v)}`),
+      ar: uniq(enrichedDse.map((x) => x.ar), (v) => `Rp ${fmtID(v)}`),
+      catatan: uniq(enrichedDse.map((x) => x.catatanAll)),
     };
-    return dseList.filter((r) => {
+  }, [enrichedDse]);
+
+  const filteredDseList = useMemo(() => {
+    let out = enrichedDse.filter((x) => {
+      const { r } = x;
       if (dseSearch) {
         const s = dseSearch.toLowerCase();
         if (!(r.dse_code?.toLowerCase().includes(s) || r.dse_code_3id?.toLowerCase().includes(s) || r.ds_name?.toLowerCase().includes(s))) return false;
       }
-      const idF = colFilters.id.trim().toLowerCase();
-      if (idF && !(r.dse_code?.toLowerCase().includes(idF) || r.dse_code_3id?.toLowerCase().includes(idF))) return false;
-
-      const namaF = colFilters.nama.trim().toLowerCase();
-      if (namaF && !(identity[r.dse_code]?.ds_name ?? r.ds_name ?? "").toLowerCase().includes(namaF)) return false;
-
-      const statusVal = identity[r.dse_code]?.dse_status ?? r.dse_status ?? "";
-      if (colFilters.status && statusVal !== colFilters.status) return false;
-
-      const joinVal = identity[r.dse_code]?.join_date ?? r.join_date ?? "";
-      if (colFilters.joinFrom && (!joinVal || joinVal < colFilters.joinFrom)) return false;
-      if (colFilters.joinTo && (!joinVal || joinVal > colFilters.joinTo)) return false;
-
-      // Angka & Catatan: dihitung dari nilai yg LAGI TAMPIL (termasuk editan
-      // belum tersimpan), dijumlahkan lintas activeBrands kalau mode IOH -
-      // match persis logic di mcSummary/stat tile.
-      let qtySp = 0, nilaiSp = 0, qtyVoucher = 0, nilaiVoucher = 0, nilaiSaldo = 0, ar = 0;
-      let catatanMatch = !colFilters.catatan.trim();
-      const catatanF = colFilters.catatan.trim().toLowerCase();
-      for (const b of activeBrands) {
-        const e = entries[r.dse_code]?.[b];
-        if (e) {
-          qtySp += fRaw(e.qty_sp); nilaiSp += fRaw(e.nilai_sp);
-          qtyVoucher += fRaw(e.qty_voucher); nilaiVoucher += fRaw(e.nilai_voucher);
-          nilaiSaldo += fRaw(e.nilai_saldo);
-          if (catatanF && (e.catatan || "").toLowerCase().includes(catatanF)) catatanMatch = true;
-        }
-        ar += fRaw(prevAr[`${r.dse_code}|${b}`]);
-      }
-      const totalPenjualan = nilaiSp + nilaiVoucher + nilaiSaldo;
-      if (!catatanMatch) return false;
-      if (!inRange(qtySp, colFilters.qtySpMin, colFilters.qtySpMax)) return false;
-      if (!inRange(nilaiSp, colFilters.totalSpMin, colFilters.totalSpMax)) return false;
-      if (!inRange(qtyVoucher, colFilters.qtyVoucherMin, colFilters.qtyVoucherMax)) return false;
-      if (!inRange(nilaiVoucher, colFilters.totalVoucherMin, colFilters.totalVoucherMax)) return false;
-      if (!inRange(nilaiSaldo, colFilters.saldoMin, colFilters.saldoMax)) return false;
-      if (!inRange(totalPenjualan, colFilters.totalPenjualanMin, colFilters.totalPenjualanMax)) return false;
-      if (!inRange(ar, colFilters.arMin, colFilters.arMax)) return false;
-
+      if (colFilters.id.length && !colFilters.id.includes(r.dse_code)) return false;
+      if (colFilters.nama.length && !colFilters.nama.includes(x.namaVal)) return false;
+      if (colFilters.status.length && !colFilters.status.includes(x.statusVal)) return false;
+      if (colFilters.join.length && !colFilters.join.includes(x.joinVal)) return false;
+      if (colFilters.qtySp.length && !colFilters.qtySp.includes(x.qtySp)) return false;
+      if (colFilters.totalSp.length && !colFilters.totalSp.includes(x.nilaiSp)) return false;
+      if (colFilters.qtyVoucher.length && !colFilters.qtyVoucher.includes(x.qtyVoucher)) return false;
+      if (colFilters.totalVoucher.length && !colFilters.totalVoucher.includes(x.nilaiVoucher)) return false;
+      if (colFilters.saldo.length && !colFilters.saldo.includes(x.nilaiSaldo)) return false;
+      if (colFilters.totalPenjualan.length && !colFilters.totalPenjualan.includes(x.totalPenjualan)) return false;
+      if (colFilters.ar.length && !colFilters.ar.includes(x.ar)) return false;
+      if (colFilters.catatan.length && !colFilters.catatan.includes(x.catatanAll)) return false;
       return true;
     });
-  }, [dseList, dseSearch, colFilters, identity, entries, prevAr, activeBrands]);
+
+    if (sortConfig.key && sortConfig.dir) {
+      const dir = sortConfig.dir === "asc" ? 1 : -1;
+      const valueOf = (x) => {
+        switch (sortConfig.key) {
+          case "id": return x.r.dse_code || "";
+          case "nama": return x.namaVal || "";
+          case "status": return x.statusVal || "";
+          case "join": return x.joinVal || "";
+          case "qtySp": return x.qtySp;
+          case "totalSp": return x.nilaiSp;
+          case "qtyVoucher": return x.qtyVoucher;
+          case "totalVoucher": return x.nilaiVoucher;
+          case "saldo": return x.nilaiSaldo;
+          case "totalPenjualan": return x.totalPenjualan;
+          case "ar": return x.ar;
+          case "catatan": return x.catatanAll || "";
+          default: return "";
+        }
+      };
+      out = [...out].sort((a, b) => {
+        const va = valueOf(a), vb = valueOf(b);
+        if (typeof va === "string" || typeof vb === "string") return String(va).localeCompare(String(vb)) * dir;
+        return (va - vb) * dir;
+      });
+    }
+
+    return out.map((x) => x.r);
+  }, [enrichedDse, dseSearch, colFilters, sortConfig]);
   // Brand-column filter (mode IOH saja): narrow baris brand mana yg DIRENDER
   // per DSE tanpa keluar dari mode IOH (tabel tetap nampilin kolom Brand &
   // sel identitas yg di-rowSpan, cuma row IM3/3ID yg lain disembunyikan).
@@ -1881,84 +1918,59 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                   <thead>
                     <tr style={{ background: t.sub }}>
-                      {/* UPDATE (permintaan user - "tambahkan kolom brand
-                          juga di atas, lalu kolomnya itu merge [rowSpan] kalau
-                          memang pairingan, yg di-merge cuma Nama DSE/Status/
-                          Join Date, penjualan tetap dipisah per brand, khusus
-                          tampilan IOH"): kolom "Brand" cuma muncul di mode
-                          IOH/Both (activeBrands.length > 1); mode 1-brand
-                          header-nya tetap persis spt sebelumnya. */}
-                      {["ID DSE", "Brand", "Nama DSE", "Status", "Join Date", "Qty SP (Pcs)", "Total SP (Rp)", "Qty Voucher (Pcs)", "Total Voucher (Rp)", "Total Saldo MOBO (Rp)", "Total Penjualan (Rp)", "AR / Piutang (Utang · Bayar · Sisa)", "Catatan", ""].map((h, i) => {
+                      {/* UPDATE (permintaan user - "pemfilteran seperti ini"
+                          [contoh screenshot: popover Excel-style Asc/Desc +
+                          Search + checklist Select-All + Reset/Apply]): pakai
+                          ulang komponen ExcelFilter yg sama persis dgn yg
+                          sudah dipakai di PNL Control Center & MartaHub -
+                          tombol ikon Filter nempel di tiap header kolom,
+                          ga ada baris filter permanen lagi di bawahnya. Kolom
+                          "Brand" tetap linked ke toggle Brand di atas. */}
+                      {[
+                        { key: "id", label: "ID DSE" },
+                        { key: "brand", label: "Brand" },
+                        { key: "nama", label: "Nama DSE" },
+                        { key: "status", label: "Status" },
+                        { key: "join", label: "Join Date" },
+                        { key: "qtySp", label: "Qty SP (Pcs)" },
+                        { key: "totalSp", label: "Total SP (Rp)" },
+                        { key: "qtyVoucher", label: "Qty Voucher (Pcs)" },
+                        { key: "totalVoucher", label: "Total Voucher (Rp)" },
+                        { key: "saldo", label: "Total Saldo MOBO (Rp)" },
+                        { key: "totalPenjualan", label: "Total Penjualan (Rp)" },
+                        { key: "ar", label: "AR / Piutang (Utang · Bayar · Sisa)" },
+                        { key: "catatan", label: "Catatan" },
+                        { key: null, label: "" },
+                      ].map((col, i) => {
                         const groupCols = [5, 7, 9, 10, 11];
                         return (
-                          <th key={i} style={{ textAlign: "left", padding: "10px 12px", color: t.mid, fontWeight: 700, whiteSpace: "nowrap", borderBottom: `1px solid ${t.line}`, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.2, borderLeft: groupCols.includes(i) ? `2px solid ${t.line}` : "none" }}>{h}</th>
-                        );
-                      })}
-                    </tr>
-                    {/* UPDATE (permintaan user - "tambahkan pemfilteran untuk
-                        setiap kolom tanpa terkecuali"): baris filter kedua di
-                        bawah label kolom. 1 filter per kolom, ga ada yg
-                        dilewatin (ID/Nama/Catatan = teks, Status = dropdown,
-                        Join Date = rentang dari-sampai, kolom angka =
-                        rentang min-max, Brand = dropdown khusus mode IOH,
-                        kolom save (kolom plg kanan) dikasih tombol "Reset"
-                        buat ngosongin semua filter kolom sekaligus). */}
-                    <tr style={{ background: t.card }}>
-                      {["id", "brand", "nama", "status", "join", "qtySp", "totalSp", "qtyVoucher", "totalVoucher", "saldo", "totalPenjualan", "ar", "catatan", "reset"].map((key, i) => {
-                        const groupCols = [5, 7, 9, 10, 11];
-                        const filterInputStyle = { width: "100%", height: 26, padding: "0 6px", borderRadius: 6, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 11, fontFamily: FONT, outline: "none", boxSizing: "border-box" };
-                        const numPairStyle = { display: "flex", alignItems: "center", gap: 3 };
-                        let content = null;
-                        if (key === "id") {
-                          content = <input value={colFilters.id} onChange={(e) => setColFilter("id", e.target.value)} placeholder="cari…" style={filterInputStyle} />;
-                        } else if (key === "brand") {
-                          // Linked ke toggle Brand di atas (IOH/IM3/3ID): pilih
-                          // brand di sini = sama dgn klik toggle di atas, biar
-                          // ga ada 2 kontrol brand yg nyimpang satu sama lain.
-                          content = (
-                            <select value={colFilters.brand} onChange={(e) => { const v = e.target.value; runGuarded(() => { setColFilter("brand", v); setBrand(v || "BOTH"); }); }} style={{ ...filterInputStyle, cursor: "pointer" }}>
-                              <option value="">Semua</option>
-                              {BRANDS.map((b) => <option key={b} value={b}>{b}</option>)}
-                            </select>
-                          );
-                        } else if (key === "nama") {
-                          content = <input value={colFilters.nama} onChange={(e) => setColFilter("nama", e.target.value)} placeholder="cari…" style={filterInputStyle} />;
-                        } else if (key === "status") {
-                          content = (
-                            <select value={colFilters.status} onChange={(e) => setColFilter("status", e.target.value)} style={{ ...filterInputStyle, cursor: "pointer" }}>
-                              <option value="">Semua</option>
-                              {STATUS_OPTIONS.map((s) => <option key={s.v} value={s.v}>{s.label}</option>)}
-                            </select>
-                          );
-                        } else if (key === "join") {
-                          content = (
-                            <div style={numPairStyle}>
-                              <input type="date" value={colFilters.joinFrom} onChange={(e) => setColFilter("joinFrom", e.target.value)} style={filterInputStyle} />
-                              <input type="date" value={colFilters.joinTo} onChange={(e) => setColFilter("joinTo", e.target.value)} style={filterInputStyle} />
+                          <th key={col.key || i} style={{ textAlign: "left", padding: "10px 12px", color: t.mid, fontWeight: 700, whiteSpace: "nowrap", borderBottom: `1px solid ${t.line}`, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.2, borderLeft: groupCols.includes(i) ? `2px solid ${t.line}` : "none", overflow: "visible" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <span>{col.label}</span>
+                              {col.key === "brand" ? (
+                                <ExcelFilter t={t} d={d}
+                                  options={[{ value: "IM3", label: "IM3" }, { value: "3ID", label: "3ID" }]}
+                                  selected={colFilters.brand ? [colFilters.brand] : []}
+                                  onApply={(vals) => { const v = vals.length === 1 ? vals[0] : ""; runGuarded(() => { setColFilter("brand", v); setBrand(v || "BOTH"); }); }}
+                                  onClear={() => runGuarded(() => { setColFilter("brand", ""); setBrand("BOTH"); })}
+                                  sortDir={null} onSort={() => {}} />
+                              ) : col.key ? (
+                                <ExcelFilter t={t} d={d}
+                                  options={colOptions[col.key]}
+                                  selected={colFilters[col.key]}
+                                  onApply={(vals) => setColFilter(col.key, vals)}
+                                  onClear={() => resetOneFilter(col.key)}
+                                  sortDir={sortConfig.key === col.key ? sortConfig.dir : null}
+                                  onSort={(dir) => setSortConfig({ key: col.key, dir })} />
+                              ) : (
+                                anyColFilterActive && (
+                                  <button onClick={resetColFilters} title="Hapus semua filter & urutan"
+                                    style={{ display: "flex", alignItems: "center", gap: 4, height: 22, padding: "0 7px", borderRadius: 6, border: "none", background: t.redBg, color: t.red, fontSize: 10, fontWeight: 700, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap" }}>
+                                    <X size={10} /> Reset
+                                  </button>
+                                )
+                              )}
                             </div>
-                          );
-                        } else if (key === "catatan") {
-                          content = <input value={colFilters.catatan} onChange={(e) => setColFilter("catatan", e.target.value)} placeholder="cari…" style={filterInputStyle} />;
-                        } else if (key === "reset") {
-                          content = anyColFilterActive ? (
-                            <button onClick={resetColFilters} title="Hapus semua filter kolom"
-                              style={{ display: "flex", alignItems: "center", gap: 4, height: 26, padding: "0 10px", borderRadius: 6, border: "none", background: t.redBg, color: t.red, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap" }}>
-                              <X size={11} /> Reset
-                            </button>
-                          ) : null;
-                        } else {
-                          // Kolom angka: qtySp, totalSp, qtyVoucher, totalVoucher, saldo, totalPenjualan, ar
-                          const minK = `${key}Min`, maxK = `${key}Max`;
-                          content = (
-                            <div style={numPairStyle}>
-                              <input type="number" inputMode="decimal" value={colFilters[minK]} onChange={(e) => setColFilter(minK, e.target.value)} placeholder="min" style={filterInputStyle} />
-                              <input type="number" inputMode="decimal" value={colFilters[maxK]} onChange={(e) => setColFilter(maxK, e.target.value)} placeholder="max" style={filterInputStyle} />
-                            </div>
-                          );
-                        }
-                        return (
-                          <th key={i} style={{ padding: "6px 12px 10px", borderBottom: `1px solid ${t.line}`, borderLeft: groupCols.includes(i) ? `2px solid ${t.line}` : "none", minWidth: key === "join" || key.endsWith("totalVoucher") || key === "qtyVoucher" || key === "totalPenjualan" || key === "ar" || key === "saldo" || key === "qtySp" || key === "totalSp" ? 140 : undefined }}>
-                            {content}
                           </th>
                         );
                       })}
