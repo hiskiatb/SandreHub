@@ -361,14 +361,23 @@ function DseHistoryModal({ t, dseCode, onClose }) {
   );
 }
 
+// UPDATE (permintaan user - "perbaikin cardnya, warna putih saja, modern
+// minimalist"): dari kartu flat abu-abu (background t.sub = sama persis
+// warna background halaman, jadi ga "kelihatan" sbg kartu) -> kartu PUTIH
+// (t.card) + shadow tipis (t.shadowSm, konsisten dgn kartu tabel di bawahnya)
+// + ikon dibungkus chip bulat kecil biar lebih "modern", bukan nempel polos
+// di sebelah label.
 function StatTile({ t, icon, label, value, sub }) {
   return (
-    <div style={{ flex: "1 1 160px", minWidth: 150, borderRadius: 12, border: `1px solid ${t.line}`, background: t.sub, padding: "13px 15px" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, color: t.mid, fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 7 }}>
-        {icon}{label}
+    <div style={{ flex: "1 1 170px", minWidth: 160, borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "16px 17px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 11 }}>
+        <div style={{ width: 27, height: 27, borderRadius: 8, background: t.sub, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          {icon}
+        </div>
+        <span style={{ color: t.mid, fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</span>
       </div>
-      <div style={{ fontSize: 18, fontWeight: 700, color: t.hi, lineHeight: 1.2, letterSpacing: -0.2, fontVariantNumeric: "tabular-nums" }}>{value}</div>
-      {sub && <div style={{ fontSize: 11.5, color: t.lo, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>{sub}</div>}
+      <div style={{ fontSize: 20, fontWeight: 800, color: t.hi, lineHeight: 1.15, letterSpacing: -0.3, fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      {sub && <div style={{ fontSize: 11.5, color: t.lo, marginTop: 3, fontWeight: 500, fontVariantNumeric: "tabular-nums" }}>{sub}</div>}
     </div>
   );
 }
