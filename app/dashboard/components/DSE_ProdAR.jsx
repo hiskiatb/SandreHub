@@ -1048,19 +1048,25 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
   const [regionSummary, setRegionSummary] = useState([]);
   const [loadingRegionSummary, setLoadingRegionSummary] = useState(false);
   const showAllRegions = isSPM && !regionFilter && !branchFilter && !partnerFilter && !mcFilter && !isRangeMode;
+  // UPDATE (permintaan user - "harusnya ada opsi untuk partner view dan
+  // region view"): ringkasan tanpa filter apa pun sekarang bisa
+  // dikelompokkan per Region (default, spt sebelumnya) ATAU per Partner,
+  // dipilih lewat toggle "Region/Partner" di atas tabelnya.
+  const [summaryGroupBy, setSummaryGroupBy] = useState("region"); // "region" | "partner"
   const loadRegionSummary = useCallback(async () => {
     setLoadingRegionSummary(true);
     try {
-      const { data: dses, error: e1 } = await supabase.from("mf_dse_database").select("dse_code, region, dse_status").eq("is_revoked", false);
+      const { data: dses, error: e1 } = await supabase.from("mf_dse_database").select("dse_code, region, mdi, dse_status").eq("is_revoked", false);
       if (e1) throw e1;
-      const regionOf = {};
-      const byRegion = {};
+      const emptyLabel = summaryGroupBy === "partner" ? "Belum Ada Partner" : "Belum Ada Region";
+      const groupOf = {};
+      const byGroup = {};
       (dses || []).forEach((r) => {
-        const key = r.region || "Belum Ada Region";
-        regionOf[r.dse_code] = key;
-        if (!byRegion[key]) byRegion[key] = { region: key, totalAlokasi: 0, totalActive: 0, qtySp: 0, nilaiSp: 0, qtyVoucher: 0, nilaiVoucher: 0, nilaiSaldo: 0, tunggakan: 0 };
-        byRegion[key].totalAlokasi += 1;
-        if (r.dse_status === "Active") byRegion[key].totalActive += 1;
+        const key = (summaryGroupBy === "partner" ? r.mdi : r.region) || emptyLabel;
+        groupOf[r.dse_code] = key;
+        if (!byGroup[key]) byGroup[key] = { label: key, totalAlokasi: 0, totalActive: 0, qtySp: 0, nilaiSp: 0, qtyVoucher: 0, nilaiVoucher: 0, nilaiSaldo: 0, tunggakan: 0 };
+        byGroup[key].totalAlokasi += 1;
+        if (r.dse_status === "Active") byGroup[key].totalActive += 1;
       });
       const codes = (dses || []).map((r) => r.dse_code);
       if (codes.length) {
@@ -1071,20 +1077,20 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
         const { data: prod, error: e2 } = await prodQ;
         if (e2) throw e2;
         (prod || []).forEach((p) => {
-          const b = byRegion[regionOf[p.dse_code]];
-          if (!b) return;
-          b.qtySp += fRaw(p.qty_sp); b.nilaiSp += fRaw(p.nilai_sp);
-          b.qtyVoucher += fRaw(p.qty_voucher); b.nilaiVoucher += fRaw(p.nilai_voucher);
-          b.nilaiSaldo += fRaw(p.nilai_saldo); b.tunggakan += fRaw(p.ar_piutang);
+          const g = byGroup[groupOf[p.dse_code]];
+          if (!g) return;
+          g.qtySp += fRaw(p.qty_sp); g.nilaiSp += fRaw(p.nilai_sp);
+          g.qtyVoucher += fRaw(p.qty_voucher); g.nilaiVoucher += fRaw(p.nilai_voucher);
+          g.nilaiSaldo += fRaw(p.nilai_saldo); g.tunggakan += fRaw(p.ar_piutang);
         });
       }
-      setRegionSummary(Object.values(byRegion).sort((a, b) => a.region.localeCompare(b.region)));
+      setRegionSummary(Object.values(byGroup).sort((a, b) => a.label.localeCompare(b.label)));
     } catch (e) {
-      showToast(e.message || "Gagal memuat ringkasan per region.", "error");
+      showToast(e.message || "Gagal memuat ringkasan.", "error");
     } finally {
       setLoadingRegionSummary(false);
     }
-  }, [entryDate, brand]);
+  }, [entryDate, brand, summaryGroupBy]);
 
   // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { if (showAllRegions) loadRegionSummary(); }, [showAllRegions, loadRegionSummary]);
@@ -1898,16 +1904,32 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
           {showAllRegions ? (
             loadingRegionSummary ? (
               <div style={{ padding: 28, textAlign: "center", color: t.mid }}><Loader2 size={18} className="spin" /></div>
-            ) : regionSummary.length === 0 ? (
-              <div style={{ padding: 28, textAlign: "center", color: t.mid, borderRadius: 12, border: `1px dashed ${t.line}` }}>Belum ada data Region. Tambahkan dulu di menu Database DSE.</div>
             ) : (
               <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 10 }}>
-                  Ringkasan per Region — ALL Sumatera · {brand} · {entryDate}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>
+                    Ringkasan per {summaryGroupBy === "partner" ? "Partner" : "Region"} — ALL Sumatera · {brand} · {entryDate}
+                  </div>
+                  {/* UPDATE (permintaan user - "harusnya ada opsi untuk
+                      partner view, dan region view"): toggle kelompokkan
+                      ringkasan per Region (default) atau per Partner. */}
+                  <div style={{ display: "flex", gap: 3, padding: 3, borderRadius: 9, background: t.sub, border: `1px solid ${t.line}` }}>
+                    {[{ v: "region", label: "Region" }, { v: "partner", label: "Partner" }].map((o) => (
+                      <button key={o.v} onClick={() => runGuarded(() => setSummaryGroupBy(o.v))}
+                        style={{ padding: "6px 14px", borderRadius: 7, border: "none", background: summaryGroupBy === o.v ? t.card : "transparent", color: summaryGroupBy === o.v ? t.hi : t.mid, fontSize: 12, fontWeight: 700, cursor: "pointer", boxShadow: summaryGroupBy === o.v ? t.shadowSm : "none" }}>
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
+                {regionSummary.length === 0 ? (
+                  <div style={{ padding: 28, textAlign: "center", color: t.mid, borderRadius: 12, border: `1px dashed ${t.line}` }}>
+                    Belum ada data {summaryGroupBy === "partner" ? "Partner" : "Region"}. Tambahkan dulu di menu Database DSE.
+                  </div>
+                ) : (
                 <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, overflow: "hidden" }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 0.9fr 1fr 1fr 1fr 1fr", gap: 0, padding: "11px 18px", background: t.sub, fontSize: 10.5, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                    <div>Region</div>
+                    <div>{summaryGroupBy === "partner" ? "Partner" : "Region"}</div>
                     <div style={{ textAlign: "right" }}>DSE Active</div>
                     <div style={{ textAlign: "right" }}>Qty SP</div>
                     <div style={{ textAlign: "right" }}>Nilai SP</div>
@@ -1916,12 +1938,12 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                     <div style={{ textAlign: "right" }}>Tunggakan</div>
                   </div>
                   {regionSummary.map((r, i) => (
-                    <div key={r.region} onClick={() => setRegionFilter(r.region)} title={`Lihat detail Region ${r.region}`}
+                    <div key={r.label} onClick={() => runGuarded(() => (summaryGroupBy === "partner" ? setPartnerFilter(r.label) : setRegionFilter(r.label)))} title={`Lihat detail ${summaryGroupBy === "partner" ? "Partner" : "Region"} ${r.label}`}
                       style={{ display: "grid", gridTemplateColumns: "1.5fr 1fr 0.9fr 1fr 1fr 1fr 1fr", gap: 0, padding: "14px 18px", borderTop: i === 0 ? "none" : `1px solid ${t.line}`, cursor: "pointer", fontSize: 13, fontVariantNumeric: "tabular-nums", transition: "background 0.12s" }}
                       onMouseEnter={(e) => { e.currentTarget.style.background = t.sub; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}>
                       <div style={{ fontWeight: 700, color: t.hi, display: "flex", alignItems: "center", gap: 7 }}>
-                        {r.region}
+                        {r.label}
                         <ChevronRight size={13} color={t.lo} style={{ flexShrink: 0 }} />
                       </div>
                       <div style={{ textAlign: "right", color: t.mid }}>{fmtID(r.totalActive)} / {fmtID(r.totalAlokasi)}</div>
@@ -1933,6 +1955,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                     </div>
                   ))}
                 </div>
+                )}
               </div>
             )
           ) : loadingDse ? (
