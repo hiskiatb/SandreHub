@@ -781,9 +781,22 @@ function DseInputRow({ t, isCardView, dse, brands, showBrandCol, entries, onEntr
           udah ketutup rowSpan dari baris atasnya). Di mode 1-brand,
           rowSpan={1} = perilaku lama persis (tiap baris render sendiri,
           toh cuma ada 1 baris). */}
+      {/* UPDATE (permintaan user - "khusus untuk tampilan IOH nama dse dibuat
+          2 kolom [baris] wrap text biar lebih proporsional, tapi mode 1
+          brand tetap 1 baris"): di mode IOH (isDual) pakai <textarea rows=2>
+          yg boleh wrap 2 baris & kolomnya dilebarin dikit (220 vs 160) -
+          nama DSE Indonesia pada umumnya ga sampai 2 baris 2 kolom biasa
+          (standar KTP max 60 karakter, nama lengkap rata-rata ~25-35
+          karakter -> cukup muat di 2 baris lebar 220px). Mode 1 brand tetap
+          <input> satu baris spt sebelumnya (lebih ringkas, ga perlu wrap). */}
       {i === 0 && (
-        <td rowSpan={brandData.length} style={{ padding: "10px 12px", minWidth: 160, verticalAlign: "top" }}>
-          <input type="text" disabled={readOnly} value={identityEdit?.ds_name ?? dse.ds_name ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "ds_name", ev.target.value)} style={textInputStyle} />
+        <td rowSpan={brandData.length} style={{ padding: "10px 12px", minWidth: isDual ? 220 : 160, verticalAlign: "top" }}>
+          {isDual ? (
+            <textarea rows={2} disabled={readOnly} value={identityEdit?.ds_name ?? dse.ds_name ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "ds_name", ev.target.value)}
+              style={{ ...textInputStyle, height: "auto", minHeight: 56, paddingTop: 8, paddingBottom: 8, resize: "none", whiteSpace: "normal", wordBreak: "break-word", lineHeight: 1.35, fontFamily: FONT }} />
+          ) : (
+            <input type="text" disabled={readOnly} value={identityEdit?.ds_name ?? dse.ds_name ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "ds_name", ev.target.value)} style={textInputStyle} />
+          )}
         </td>
       )}
       {i === 0 && (
