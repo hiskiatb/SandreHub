@@ -752,6 +752,28 @@ function DseInputRow({ t, isCardView, dse, brands, showBrandCol, entries, onEntr
           </span>
         </td>
       )}
+      {/* UPDATE (permintaan user - "tambahkan kolom Partner, Region, Branch"):
+          3 kolom organisasi (Partner/Agency, Region, Branch) - read-only di
+          sini (pengelolaannya di Database DSE/Mapping Admin MC), SELALU sama
+          antar brand spt Nama/Status/Join Date -> ikut di-rowSpan jg di mode
+          IOH. CATATAN: "MDI" (nama kolom DB) ditampilkan sbg "Partner" di UI
+          (permintaan user sebelumnya - MDI & Agency itu 2 hal beda di IOH,
+          jgn tampilkan kata "MDI" ke user). */}
+      {i === 0 && (
+        <td rowSpan={brandData.length} style={{ padding: "10px 12px", minWidth: 130, verticalAlign: "top", color: t.mid, fontWeight: 600 }}>
+          {dse.mdi || "—"}
+        </td>
+      )}
+      {i === 0 && (
+        <td rowSpan={brandData.length} style={{ padding: "10px 12px", minWidth: 120, verticalAlign: "top", color: t.mid, fontWeight: 600 }}>
+          {dse.region || "—"}
+        </td>
+      )}
+      {i === 0 && (
+        <td rowSpan={brandData.length} style={{ padding: "10px 12px", minWidth: 130, verticalAlign: "top", color: t.mid, fontWeight: 600 }}>
+          {dse.branch || "—"}
+        </td>
+      )}
       {/* Nama DSE / Status / Join Date SELALU sama antar brand (satu DSE =
           satu identitas) - di mode IOH DIGABUNG (rowSpan = jumlah brand) jadi
           cuma dirender SEKALI di baris pertama (i===0); baris brand
@@ -942,14 +964,14 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
   // ulang komponen ExcelFilter yg sama persis dgn punya user. Brand -> tetap
   // linked ke toggle Brand di atas (lihat "brand" case khusus di bawah).
   const [colFilters, setColFilters] = useState({
-    id: [], brand: "", nama: [], status: [], join: [],
+    id: [], brand: "", partner: [], region: [], branch: [], nama: [], status: [], join: [],
     qtySp: [], totalSp: [], qtyVoucher: [], totalVoucher: [],
     saldo: [], totalPenjualan: [], ar: [], catatan: [],
   });
   const setColFilter = (k, v) => setColFilters((prev) => ({ ...prev, [k]: v }));
   const resetOneFilter = (k) => setColFilter(k, k === "brand" ? "" : []);
   const resetColFilters = () => setColFilters({
-    id: [], brand: "", nama: [], status: [], join: [],
+    id: [], brand: "", partner: [], region: [], branch: [], nama: [], status: [], join: [],
     qtySp: [], totalSp: [], qtyVoucher: [], totalVoucher: [],
     saldo: [], totalPenjualan: [], ar: [], catatan: [],
   });
@@ -1286,6 +1308,9 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
     const namaVal = identity[r.dse_code]?.ds_name ?? r.ds_name ?? "";
     const statusVal = identity[r.dse_code]?.dse_status ?? r.dse_status ?? "";
     const joinVal = identity[r.dse_code]?.join_date ?? r.join_date ?? "";
+    const partnerVal = r.mdi ?? "";
+    const regionVal = r.region ?? "";
+    const branchVal = r.branch ?? "";
     let qtySp = 0, nilaiSp = 0, qtyVoucher = 0, nilaiVoucher = 0, nilaiSaldo = 0, ar = 0, catatanAll = "";
     for (const b of activeBrands) {
       const e = entries[r.dse_code]?.[b];
@@ -1299,7 +1324,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
     }
     catatanAll = catatanAll.trim();
     const totalPenjualan = nilaiSp + nilaiVoucher + nilaiSaldo;
-    return { r, namaVal, statusVal, joinVal, qtySp, nilaiSp, qtyVoucher, nilaiVoucher, nilaiSaldo, totalPenjualan, ar, catatanAll };
+    return { r, namaVal, statusVal, joinVal, partnerVal, regionVal, branchVal, qtySp, nilaiSp, qtyVoucher, nilaiVoucher, nilaiSaldo, totalPenjualan, ar, catatanAll };
   }), [dseList, identity, entries, prevAr, activeBrands]);
 
   // Opsi checklist tiap kolom (distinct values dari enrichedDse saat ini).
@@ -1308,6 +1333,9 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
       .map((v) => ({ value: v, label: fmt ? fmt(v) : (v === "" ? "— Kosong —" : String(v)) }));
     return {
       id: uniq(enrichedDse.map((x) => x.r.dse_code)),
+      partner: uniq(enrichedDse.map((x) => x.partnerVal)),
+      region: uniq(enrichedDse.map((x) => x.regionVal)),
+      branch: uniq(enrichedDse.map((x) => x.branchVal)),
       nama: uniq(enrichedDse.map((x) => x.namaVal)),
       status: STATUS_OPTIONS.map((s) => ({ value: s.v, label: s.label })),
       join: uniq(enrichedDse.map((x) => x.joinVal), (v) => (v ? fmtLongDate(v) : "— Kosong —")),
@@ -1330,6 +1358,9 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
         if (!(r.dse_code?.toLowerCase().includes(s) || r.dse_code_3id?.toLowerCase().includes(s) || r.ds_name?.toLowerCase().includes(s))) return false;
       }
       if (colFilters.id.length && !colFilters.id.includes(r.dse_code)) return false;
+      if (colFilters.partner.length && !colFilters.partner.includes(x.partnerVal)) return false;
+      if (colFilters.region.length && !colFilters.region.includes(x.regionVal)) return false;
+      if (colFilters.branch.length && !colFilters.branch.includes(x.branchVal)) return false;
       if (colFilters.nama.length && !colFilters.nama.includes(x.namaVal)) return false;
       if (colFilters.status.length && !colFilters.status.includes(x.statusVal)) return false;
       if (colFilters.join.length && !colFilters.join.includes(x.joinVal)) return false;
@@ -1349,6 +1380,9 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
       const valueOf = (x) => {
         switch (sortConfig.key) {
           case "id": return x.r.dse_code || "";
+          case "partner": return x.partnerVal || "";
+          case "region": return x.regionVal || "";
+          case "branch": return x.branchVal || "";
           case "nama": return x.namaVal || "";
           case "status": return x.statusVal || "";
           case "join": return x.joinVal || "";
@@ -1929,6 +1963,9 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                       {[
                         { key: "id", label: "ID DSE" },
                         { key: "brand", label: "Brand" },
+                        { key: "partner", label: "Partner" },
+                        { key: "region", label: "Region" },
+                        { key: "branch", label: "Branch" },
                         { key: "nama", label: "Nama DSE" },
                         { key: "status", label: "Status" },
                         { key: "join", label: "Join Date" },
@@ -1942,7 +1979,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                         { key: "catatan", label: "Catatan" },
                         { key: null, label: "" },
                       ].map((col, i) => {
-                        const groupCols = [5, 7, 9, 10, 11];
+                        const groupCols = [8, 10, 12, 13, 14];
                         return (
                           <th key={col.key || i} style={{ textAlign: "left", padding: "10px 12px", color: t.mid, fontWeight: 700, whiteSpace: "nowrap", borderBottom: `1px solid ${t.line}`, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.2, borderLeft: groupCols.includes(i) ? `2px solid ${t.line}` : "none", overflow: "visible" }}>
                             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
