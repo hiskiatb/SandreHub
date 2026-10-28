@@ -490,8 +490,14 @@ function DseInputRow({ t, isCardView, dse, brands, entries, onEntryChange, onIde
   // tabel-desktop mode Both, krn mode Both desktop juga dirender sbg kartu
   // di dalam <td colSpan> - tabel kolom-per-kolom biasa jadi tidak muat utk
   // 2 brand sekaligus).
+  // UPDATE (fix bug - "Encountered two children with the same key"):
+  // SalesBlock & MoreBlock dipanggil berdampingan sbg SIBLING di dalam 1
+  // wrapper yg sama di mode Both desktop (lihat di bawah: {SalesBlock(bd)}
+  // lalu {MoreBlock(bd)}) - kalau dua2nya pakai key={bd.b} yg SAMA PERSIS,
+  // React nganggep itu 2 key kembar. Dikasih suffix beda (-sales/-more)
+  // supaya tetap unik di konteks manapun fungsi ini dipanggil.
   const SalesBlock = (bd) => (
-    <div key={bd.b} style={isDual ? { borderRadius: 12, border: `1px solid ${bd.meta.border}`, background: bd.meta.bg, padding: 10 } : undefined}>
+    <div key={`${bd.b}-sales`} style={isDual ? { borderRadius: 12, border: `1px solid ${bd.meta.border}`, background: bd.meta.bg, padding: 10 } : undefined}>
       {isDual && (
         <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 9 }}>
           <span style={{ width: 8, height: 8, borderRadius: 999, background: bd.meta.color, flexShrink: 0 }} />
@@ -541,7 +547,7 @@ function DseInputRow({ t, isCardView, dse, brands, entries, onEntryChange, onIde
 
   // Blok AR/Piutang + Catatan 1 brand (bagian "showMore").
   const MoreBlock = (bd) => (
-    <div key={bd.b} style={isDual ? { borderRadius: 10, border: `1px dashed ${bd.meta.border}`, padding: 9 } : { display: "flex", flexDirection: "column", gap: 8 }}>
+    <div key={`${bd.b}-more`} style={isDual ? { borderRadius: 10, border: `1px dashed ${bd.meta.border}`, padding: 9 } : { display: "flex", flexDirection: "column", gap: 8 }}>
       {isDual && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 7 }}>
           <span style={{ width: 7, height: 7, borderRadius: 999, background: bd.meta.color, flexShrink: 0 }} />
