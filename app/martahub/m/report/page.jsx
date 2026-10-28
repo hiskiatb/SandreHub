@@ -2037,7 +2037,8 @@ function SiteRow({ k, cfg, showKecamatan }) {
             <RadioTower size={13} color={cfg.dotSite} strokeWidth={2.4} />
           </div>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 700, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{k.site_name || k.site_id || "-"}</div>
+            <div style={{ fontSize: 12.5, fontWeight: 700, color: "#17181C", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{k.site_id || "-"}</div>
+            {k.mc && <div style={{ fontSize: 10.5, color: "#8A8A96", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{k.mc}</div>}
             <div style={{ fontSize: 10.5, color: "#8A8A96", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {showKecamatan ? `${k.kecamatan_name || "-"} · ` : ""}{fmtInt(k.aktivitas_plan)} aktivitas · {fmtInt(k.plan_sp)} Plan SP
             </div>
