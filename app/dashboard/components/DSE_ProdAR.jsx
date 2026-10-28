@@ -529,7 +529,7 @@ function DseInputRow({ t, isCardView, dse, brands, showBrandCol, entries, onEntr
   // ID header: kalau tabel mode IOH (2 kemungkinan ID beda) pakai dse_code
   // (ID "utama"/IM3) sbg penanda baris; kalau cuma 1 brand aktif, ikut
   // brand itu spt sebelumnya (3ID -> dse_code_3id).
-  const headerCode = isDual ? dse.dse_code : (brands[0] === "3ID" ? (dse.dse_code_3id || dse.dse_code) : dse.dse_code);
+  const headerCode = brands.length > 1 ? dse.dse_code : (brands[0] === "3ID" ? (dse.dse_code_3id || dse.dse_code) : dse.dse_code);
 
   const textInputStyle = { width: "100%", height: 34, padding: "0 10px", borderRadius: 7, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 12.5, fontFamily: FONT, outline: "none", boxSizing: "border-box" };
   const selectStyle = { ...textInputStyle, cursor: "pointer", color: sm.color, fontWeight: 700, background: sm.bg, border: `1px solid ${sm.color}33`, appearance: "none", WebkitAppearance: "none", paddingRight: 28 };
@@ -1888,8 +1888,8 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                           tampilan IOH"): kolom "Brand" cuma muncul di mode
                           IOH/Both (activeBrands.length > 1); mode 1-brand
                           header-nya tetap persis spt sebelumnya. */}
-                      {(activeBrands.length > 1 ? ["ID DSE", "Brand", "Nama DSE", "Status", "Join Date", "Qty SP (Pcs)", "Total SP (Rp)", "Qty Voucher (Pcs)", "Total Voucher (Rp)", "Total Saldo MOBO (Rp)", "Total Penjualan (Rp)", "AR / Piutang (Utang · Bayar · Sisa)", "Catatan", ""] : ["ID DSE", "Nama DSE", "Status", "Join Date", "Qty SP (Pcs)", "Total SP (Rp)", "Qty Voucher (Pcs)", "Total Voucher (Rp)", "Total Saldo MOBO (Rp)", "Total Penjualan (Rp)", "AR / Piutang (Utang · Bayar · Sisa)", "Catatan", ""]).map((h, i) => {
-                        const groupCols = activeBrands.length > 1 ? [5, 7, 9, 10, 11] : [4, 6, 8, 9, 10];
+                      {["ID DSE", "Brand", "Nama DSE", "Status", "Join Date", "Qty SP (Pcs)", "Total SP (Rp)", "Qty Voucher (Pcs)", "Total Voucher (Rp)", "Total Saldo MOBO (Rp)", "Total Penjualan (Rp)", "AR / Piutang (Utang · Bayar · Sisa)", "Catatan", ""].map((h, i) => {
+                        const groupCols = [5, 7, 9, 10, 11];
                         return (
                           <th key={i} style={{ textAlign: "left", padding: "10px 12px", color: t.mid, fontWeight: 700, whiteSpace: "nowrap", borderBottom: `1px solid ${t.line}`, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.2, borderLeft: groupCols.includes(i) ? `2px solid ${t.line}` : "none" }}>{h}</th>
                         );
@@ -1904,11 +1904,8 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                         kolom save (kolom plg kanan) dikasih tombol "Reset"
                         buat ngosongin semua filter kolom sekaligus). */}
                     <tr style={{ background: t.card }}>
-                      {(activeBrands.length > 1
-                        ? ["id", "brand", "nama", "status", "join", "qtySp", "totalSp", "qtyVoucher", "totalVoucher", "saldo", "totalPenjualan", "ar", "catatan", "reset"]
-                        : ["id", "nama", "status", "join", "qtySp", "totalSp", "qtyVoucher", "totalVoucher", "saldo", "totalPenjualan", "ar", "catatan", "reset"]
-                      ).map((key, i) => {
-                        const groupCols = activeBrands.length > 1 ? [5, 7, 9, 10, 11] : [4, 6, 8, 9, 10];
+                      {["id", "brand", "nama", "status", "join", "qtySp", "totalSp", "qtyVoucher", "totalVoucher", "saldo", "totalPenjualan", "ar", "catatan", "reset"].map((key, i) => {
+                        const groupCols = [5, 7, 9, 10, 11];
                         const filterInputStyle = { width: "100%", height: 26, padding: "0 6px", borderRadius: 6, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 11, fontFamily: FONT, outline: "none", boxSizing: "border-box" };
                         const numPairStyle = { display: "flex", alignItems: "center", gap: 3 };
                         let content = null;
@@ -1969,7 +1966,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                   </thead>
                   <tbody>
                     {filteredDseList.map((dse) => (
-                      <DseInputRow key={dse.dse_code} t={t} isCardView={false} dse={dse} brands={rowBrands} showBrandCol={activeBrands.length > 1}
+                      <DseInputRow key={dse.dse_code} t={t} isCardView={false} dse={dse} brands={rowBrands} showBrandCol
                         entries={entries[dse.dse_code] || {}}
                         onEntryChange={handleEntryChange}
                         onIdentityChange={handleIdentityChange}
