@@ -214,8 +214,22 @@ const HISTORY_FIELD_LABEL = {
 // di-INSERT/UPDATE (baik lewat Upload Data/wizard maupun edit identitas di
 // sini) — jadi audit trail-nya menangkap SEMUA jalur perubahan, bukan cuma
 // yang lewat UI ini.
+// UPDATE (permintaan user - "pastikan semua perubahan tersimpan dengan aman
+// dan setiap id memiliki log tersendiri" -> "log nya mulai dari perubahan
+// identitas, penjualan masing2, dan juga AR, agar sangat jelas"): popup
+// Riwayat skrg gabungin 2 sumber log per dse_code jadi SATU timeline,
+// masing2 ditandain badge kategori yg jelas:
+//  - IDENTITAS (teal)   <- mf_dse_database_history (udah ada dari dulu, per
+//    field diff Nama/Status/Join Date/dll, trigger trg_mf_dse_database_log_changes)
+//  - PENJUALAN <brand> (warna brand, lihat BRAND_META) <- mf_dse_prod_ar_history
+//    (BARU, trigger trg_mf_dse_prod_ar_log_history di migration
+//    "mf_dse_prod_ar_history" - mencatat snapshot nilai SEBELUM tiap kali
+//    baris mf_dse_prod_ar di-UPDATE/DELETE: SP/Voucher/Saldo dipisah jelas
+//    dari AR/Piutang & Catatan di card yg sama, biar gampang dibaca mana yg
+//    penjualan mana yg piutang).
 function DseHistoryModal({ t, dseCode, onClose }) {
-  const [rows, setRows] = useState([]);
+  const [identityRows, setIdentityRows] = useState([]);
+  const [salesRows, setSalesRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errMsg, setErrMsg] = useState("");
   const [names, setNames] = useState({});
@@ -225,12 +239,16 @@ function DseHistoryModal({ t, dseCode, onClose }) {
     (async () => {
       setLoading(true); setErrMsg("");
       try {
-        const { data, error } = await supabase.from("mf_dse_database_history")
-          .select("*").eq("dse_code", dseCode).order("changed_at", { ascending: false }).limit(200);
-        if (error) throw error;
+        const [{ data: idData, error: idErr }, { data: salesData, error: salesErr }] = await Promise.all([
+          supabase.from("mf_dse_database_history").select("*").eq("dse_code", dseCode).order("changed_at", { ascending: false }).limit(150),
+          supabase.from("mf_dse_prod_ar_history").select("*").eq("dse_code", dseCode).order("changed_at", { ascending: false }).limit(150),
+        ]);
+        if (idErr) throw idErr;
+        if (salesErr) throw salesErr;
         if (!alive) return;
-        setRows(data || []);
-        const ids = Array.from(new Set((data || []).map((r) => r.changed_by).filter(Boolean)));
+        setIdentityRows(idData || []);
+        setSalesRows(salesData || []);
+        const ids = Array.from(new Set([...(idData || []).map((r) => r.changed_by), ...(salesData || []).map((r) => r.changed_by)].filter(Boolean)));
         if (ids.length) {
           const { data: profs } = await supabase.from("profiles").select("id, full_name").in("id", ids);
           if (alive) setNames(Object.fromEntries((profs || []).map((p) => [p.id, p.full_name])));
@@ -244,47 +262,96 @@ function DseHistoryModal({ t, dseCode, onClose }) {
     return () => { alive = false; };
   }, [dseCode]);
 
+  // Gabung 2 sumber jadi 1 timeline terurut terbaru dulu, masing2 dikasih
+  // tag `kind` ("identitas" | "sales") biar renderer tau cara nampilinnya.
+  const timeline = useMemo(() => {
+    const a = identityRows.map((r) => ({ kind: "identitas", key: `id-${r.id}`, changed_at: r.changed_at, changed_by: r.changed_by, r }));
+    const b = salesRows.map((r) => ({ kind: "sales", key: `sales-${r.id}`, changed_at: r.changed_at, changed_by: r.changed_by, r }));
+    return [...a, ...b].sort((x, y) => new Date(y.changed_at) - new Date(x.changed_at));
+  }, [identityRows, salesRows]);
+
+  const CategoryBadge = ({ label, color, bg }) => (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "2px 8px", borderRadius: 999, background: bg, fontSize: 10, fontWeight: 800, color, textTransform: "uppercase", letterSpacing: 0.3, flexShrink: 0 }}>
+      <span style={{ width: 5, height: 5, borderRadius: 999, background: color, flexShrink: 0 }} />
+      {label}
+    </span>
+  );
+
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 9500, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "48px 16px", overflowY: "auto" }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div style={{ width: "100%", maxWidth: 520, background: t.card, borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.4)", overflow: "hidden" }}>
+      <div style={{ width: "100%", maxWidth: 560, background: t.card, borderRadius: 16, boxShadow: "0 24px 60px rgba(0,0,0,0.4)", overflow: "hidden" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "16px 18px", borderBottom: `1px solid ${t.line}` }}>
           <History size={16} color={t.teal} style={{ flexShrink: 0 }} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 14, fontWeight: 800, color: t.hi }}>Riwayat Perubahan</div>
-            <div style={{ fontSize: 11.5, color: t.mid }}>{dseCode}</div>
+            <div style={{ fontSize: 11.5, color: t.mid }}>{dseCode} · identitas, penjualan &amp; AR</div>
           </div>
           <button onClick={onClose} style={{ width: 28, height: 28, borderRadius: 999, border: "none", background: t.inputBg, color: t.mid, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><X size={14} /></button>
         </div>
-        <div style={{ maxHeight: "60vh", overflowY: "auto", padding: "8px 18px 18px" }}>
+        <div style={{ maxHeight: "65vh", overflowY: "auto", padding: "8px 18px 18px" }}>
           {loading ? (
             <div style={{ padding: 28, textAlign: "center", color: t.mid }}><Loader2 size={18} className="spin" /></div>
           ) : errMsg ? (
             <div style={{ padding: 20, textAlign: "center", color: t.red, fontSize: 12.5 }}>{errMsg}</div>
-          ) : rows.length === 0 ? (
+          ) : timeline.length === 0 ? (
             <div style={{ padding: 20, textAlign: "center", color: t.mid, fontSize: 12.5 }}>Belum ada riwayat perubahan.</div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column" }}>
-              {rows.map((r) => (
-                <div key={r.id} style={{ padding: "10px 0", borderBottom: `1px solid ${t.line}` }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 3 }}>
-                    <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>{HISTORY_FIELD_LABEL[r.field_name] || r.field_name}</span>
-                    <span style={{ fontSize: 10.5, color: t.lo, flexShrink: 0 }}>{fmtTime(r.changed_at)}</span>
-                  </div>
-                  {r.field_name === "_created" ? (
-                    <div style={{ fontSize: 12, color: t.mid }}>{r.new_value}</div>
-                  ) : (
-                    <div style={{ fontSize: 12, color: t.mid, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                      <span style={{ color: t.red, textDecoration: "line-through" }}>{r.old_value || "(kosong)"}</span>
-                      <span style={{ color: t.lo }}>→</span>
-                      <span style={{ color: t.teal, fontWeight: 600 }}>{r.new_value || "(kosong)"}</span>
+              {timeline.map((item) => {
+                const r = item.r;
+                if (item.kind === "identitas") {
+                  return (
+                    <div key={item.key} style={{ padding: "10px 0", borderBottom: `1px solid ${t.line}` }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 5 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+                          <CategoryBadge label="Identitas" color={t.teal} bg={t.tealBg} />
+                          <span style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>{HISTORY_FIELD_LABEL[r.field_name] || r.field_name}</span>
+                        </div>
+                        <span style={{ fontSize: 10.5, color: t.lo, flexShrink: 0, whiteSpace: "nowrap" }}>{fmtTime(r.changed_at)}</span>
+                      </div>
+                      {r.field_name === "_created" ? (
+                        <div style={{ fontSize: 12, color: t.mid }}>{r.new_value}</div>
+                      ) : (
+                        <div style={{ fontSize: 12, color: t.mid, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                          <span style={{ color: t.red, textDecoration: "line-through" }}>{r.old_value || "(kosong)"}</span>
+                          <span style={{ color: t.lo }}>→</span>
+                          <span style={{ color: t.teal, fontWeight: 600 }}>{r.new_value || "(kosong)"}</span>
+                        </div>
+                      )}
+                      {r.changed_by && <div style={{ fontSize: 10.5, color: t.lo, marginTop: 3 }}>oleh {names[r.changed_by] || "—"}</div>}
                     </div>
-                  )}
-                  {r.changed_by && (
-                    <div style={{ fontSize: 10.5, color: t.lo, marginTop: 2 }}>oleh {names[r.changed_by] || "—"}</div>
-                  )}
-                </div>
-              ))}
+                  );
+                }
+                // kind === "sales": snapshot NILAI SEBELUM baris mf_dse_prod_ar
+                // ini di-update/dihapus - Penjualan (SP/Voucher/Saldo) & AR/
+                // Piutang dipisah jelas jadi 2 sub-blok dlm 1 kartu yg sama,
+                // krn user minta "penjualan masing2, dan juga AR" dibedain.
+                const meta = BRAND_META[r.brand] || { color: t.teal, bg: t.tealBg };
+                return (
+                  <div key={item.key} style={{ padding: "10px 0", borderBottom: `1px solid ${t.line}` }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0, flexWrap: "wrap" }}>
+                        <CategoryBadge label={`Penjualan · ${r.brand}`} color={meta.color} bg={meta.bg} />
+                        <span style={{ fontSize: 11.5, fontWeight: 700, color: t.hi }}>{fmtLongDate(r.tanggal)}</span>
+                      </div>
+                      <span style={{ fontSize: 10.5, color: t.lo, flexShrink: 0, whiteSpace: "nowrap" }}>{r.change_type === "delete" ? "Dihapus" : "Diubah"} {fmtTime(r.changed_at)}</span>
+                    </div>
+                    <div style={{ fontSize: 10.5, fontWeight: 700, color: t.lo, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 3 }}>Nilai sebelum perubahan — Penjualan</div>
+                    <div style={{ fontSize: 12, color: t.mid, marginBottom: 7 }}>
+                      SP: {fmtID(r.qty_sp || 0)} pcs · Rp {fmtID(r.nilai_sp || 0)} &nbsp;·&nbsp;
+                      Voucher: {fmtID(r.qty_voucher || 0)} pcs · Rp {fmtID(r.nilai_voucher || 0)} &nbsp;·&nbsp;
+                      Saldo: Rp {fmtID(r.nilai_saldo || 0)}
+                    </div>
+                    <div style={{ fontSize: 10.5, fontWeight: 700, color: t.lo, textTransform: "uppercase", letterSpacing: 0.3, marginBottom: 3 }}>Nilai sebelum perubahan — AR / Piutang</div>
+                    <div style={{ fontSize: 12, color: t.mid }}>
+                      Piutang: Rp {fmtID(r.ar_piutang || 0)} &nbsp;·&nbsp; Bayar: Rp {fmtID(r.ar_bayar || 0)}
+                      {r.catatan ? <> &nbsp;·&nbsp; Catatan: &ldquo;{r.catatan}&rdquo;</> : null}
+                    </div>
+                    {r.changed_by && <div style={{ fontSize: 10.5, color: t.lo, marginTop: 5 }}>oleh {names[r.changed_by] || "—"}</div>}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
