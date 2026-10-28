@@ -1685,7 +1685,7 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                   const brandColor = b === "IM3" ? "#F5B700" : b === "3ID" ? "#C2187C" : t.teal;
                   const activeTextColor = b === "IM3" ? "#3D2E00" : "#fff"; // teks gelap di atas kuning supaya tetap kontras
                   return (
-                    <button key={b} onClick={() => runGuarded(() => setBrand(b))}
+                    <button key={b} onClick={() => runGuarded(() => { setBrand(b); setColFilter("brand", b === "BOTH" ? "" : b); })}
                       style={{ display: "flex", alignItems: "center", gap: 6, height: "100%", padding: "0 16px", borderRadius: 7, border: "none", background: active ? brandColor : "transparent", color: active ? activeTextColor : t.mid, fontSize: 12.5, fontWeight: 800, cursor: "pointer", fontFamily: FONT, transition: "background 0.15s" }}>
                       <span style={{ width: 7, height: 7, borderRadius: 999, background: active ? activeTextColor : brandColor, flexShrink: 0 }} />
                       {b === "BOTH" ? "IOH" : b}
@@ -1915,8 +1915,11 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                         if (key === "id") {
                           content = <input value={colFilters.id} onChange={(e) => setColFilter("id", e.target.value)} placeholder="cari…" style={filterInputStyle} />;
                         } else if (key === "brand") {
+                          // Linked ke toggle Brand di atas (IOH/IM3/3ID): pilih
+                          // brand di sini = sama dgn klik toggle di atas, biar
+                          // ga ada 2 kontrol brand yg nyimpang satu sama lain.
                           content = (
-                            <select value={colFilters.brand} onChange={(e) => setColFilter("brand", e.target.value)} style={{ ...filterInputStyle, cursor: "pointer" }}>
+                            <select value={colFilters.brand} onChange={(e) => { const v = e.target.value; runGuarded(() => { setColFilter("brand", v); setBrand(v || "BOTH"); }); }} style={{ ...filterInputStyle, cursor: "pointer" }}>
                               <option value="">Semua</option>
                               {BRANDS.map((b) => <option key={b} value={b}>{b}</option>)}
                             </select>
