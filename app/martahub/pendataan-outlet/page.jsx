@@ -289,8 +289,18 @@ function SubmissionBody() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const list = await aoListSubmissions({ dateFrom: dateFrom || null, dateTo: dateTo || null });
-      setRawRows(list.map((s) => {
+      const PAGE = 1000;
+      const seen = new Set();
+      let all = [];
+      for (let off = 0; off < 200000; off += PAGE) {
+        const list = await aoListSubmissions({ dateFrom: dateFrom || null, dateTo: dateTo || null, limit: PAGE, offset: off });
+        // Dedupe by id - jaga2 kalau ordering RPC-nya (created_at + id
+        // tie-breaker) suatu saat tidak stabil lagi, baris yg ke-load
+        // dobel di 2 halaman bikin React "duplicate key".
+        for (const s of list) { if (!seen.has(s.id)) { seen.add(s.id); all.push(s); } }
+        if (list.length < PAGE) break;
+      }
+      setRawRows(all.map((s) => {
         const d = new Date(s.created_at);
         return {
           ...s,
