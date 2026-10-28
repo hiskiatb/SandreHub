@@ -445,13 +445,21 @@ function ArPiutangInput({ t, outstanding, bayar, onBayarChange, onConfirmSave, s
 // dibedakan (permintaan user: "menampilkan nama dse baru penjualan im3 dan
 // 3id beri warna dengan rapi"). Dirender sbg baris <table> di desktop, kartu
 // di mobile (isCardView) — satu komponen, dua layout. ──────────────────────
-function DseInputRow({ t, isCardView, dse, brands, entries, onEntryChange, onIdentityChange, identityEdit, onSave, saving, dirty, prevOutstandings, audits, onShowHistory, readOnly }) {
+function DseInputRow({ t, isCardView, dse, brands, showBrandCol, entries, onEntryChange, onIdentityChange, identityEdit, onSave, saving, dirty, prevOutstandings, audits, onShowHistory, readOnly }) {
   const [showMore, setShowMore] = useState(false);
-  const isDual = brands.length > 1;
+  // UPDATE (permintaan user - filter per kolom termasuk kolom Brand): di
+  // desktop, "brands" yg diterusin ke sini bisa DINARROW ke 1 brand doang
+  // oleh filter kolom Brand, TAPI tabelnya tetap harus kebentuk sbg tabel
+  // mode IOH (kolom Brand tetap ada, sel Nama/Status/Join Date tetap
+  // rowSpan-style) - makanya "apakah ini tabel mode IOH" (showBrandCol)
+  // dipisah dari "berapa baris brand yg BENERAN dirender" (brands.length).
+  // showBrandCol default ke brands.length>1 kalau prop-nya ga dikirim
+  // (dipakai kartu mobile, yg emang ga kena narrow filter Brand).
+  const isDual = showBrandCol ?? (brands.length > 1);
   const status = identityEdit?.dse_status ?? dse.dse_status ?? "";
   const joinDate = identityEdit?.join_date ?? dse.join_date ?? "";
   const sm = statusMetaOf(status);
-  // ID header: kalau Both (2 brand, 2 kemungkinan ID beda) pakai dse_code
+  // ID header: kalau tabel mode IOH (2 kemungkinan ID beda) pakai dse_code
   // (ID "utama"/IM3) sbg penanda baris; kalau cuma 1 brand aktif, ikut
   // brand itu spt sebelumnya (3ID -> dse_code_3id).
   const headerCode = isDual ? dse.dse_code : (brands[0] === "3ID" ? (dse.dse_code_3id || dse.dse_code) : dse.dse_code);
@@ -647,7 +655,7 @@ function DseInputRow({ t, isCardView, dse, brands, entries, onEntryChange, onIde
   const renderDesktopRow = (bd, i) => (
     <tr key={bd.b} style={{
       borderBottom: i === brandData.length - 1 ? `1px solid ${t.line}` : "none",
-      borderTop: isDual && i > 0 ? `1px dashed ${t.line}` : "none",
+      borderTop: i > 0 ? `1px dashed ${t.line}` : "none",
       background: dirty ? t.tealBg : "transparent",
     }}>
       <td style={{ padding: "10px 12px", whiteSpace: "nowrap" }}>
@@ -685,17 +693,17 @@ function DseInputRow({ t, isCardView, dse, brands, entries, onEntryChange, onIde
           rowSpan={1} = perilaku lama persis (tiap baris render sendiri,
           toh cuma ada 1 baris). */}
       {i === 0 && (
-        <td rowSpan={isDual ? brandData.length : 1} style={{ padding: "10px 12px", minWidth: 160, verticalAlign: "top" }}>
+        <td rowSpan={brandData.length} style={{ padding: "10px 12px", minWidth: 160, verticalAlign: "top" }}>
           <input type="text" disabled={readOnly} value={identityEdit?.ds_name ?? dse.ds_name ?? ""} onChange={(ev) => onIdentityChange(dse.dse_code, "ds_name", ev.target.value)} style={textInputStyle} />
         </td>
       )}
       {i === 0 && (
-        <td rowSpan={isDual ? brandData.length : 1} style={{ padding: "10px 12px", minWidth: 128, verticalAlign: "top" }}>
+        <td rowSpan={brandData.length} style={{ padding: "10px 12px", minWidth: 128, verticalAlign: "top" }}>
           {StatusSelect}
         </td>
       )}
       {i === 0 && (
-        <td rowSpan={isDual ? brandData.length : 1} style={{ padding: "10px 12px", minWidth: 150, verticalAlign: "top" }}>
+        <td rowSpan={brandData.length} style={{ padding: "10px 12px", minWidth: 150, verticalAlign: "top" }}>
           <input type="date" disabled={readOnly} value={joinDate || ""} onChange={(ev) => onIdentityChange(dse.dse_code, "join_date", ev.target.value)} style={textInputStyle} />
         </td>
       )}
@@ -856,6 +864,33 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
   const [dseMeta, setDseMeta] = useState([]); // [{region,branch,mc}] dari Database DSE - sumber opsi cascading di atas
   const [dseList, setDseList] = useState([]);
   const [dseSearch, setDseSearch] = useState("");
+  // UPDATE (permintaan user - "tambahkan pemfilteran untuk setiap kolom
+  // tanpa terkecuali"): filter PER KOLOM di tabel Input Harian desktop (baris
+  // kedua di <thead>, di bawah label kolom) - terpisah dari kotak "Cari DSE"
+  // yg sudah ada (dseSearch, cuma cari ID/Nama). Teks -> contains
+  // case-insensitive. Status -> exact match (dropdown). Join Date -> rentang
+  // dari/sampai. Kolom angka (Qty/Total SP, Voucher, Saldo, Total Penjualan,
+  // AR) -> rentang min/max, dihitung dari NILAI YG SEDANG TAMPIL (termasuk
+  // editan yg belum disimpan, & dijumlahkan lintas brand kalau mode IOH -
+  // sama persis logic penjumlahan yg dipakai mcSummary/stat tile di atas).
+  // Brand -> dropdown khusus mode IOH, narrow-in row set per DSE jadi cuma
+  // nampilin 1 brand tertentu tanpa keluar dari mode IOH.
+  const [colFilters, setColFilters] = useState({
+    id: "", brand: "", nama: "", status: "", joinFrom: "", joinTo: "",
+    qtySpMin: "", qtySpMax: "", totalSpMin: "", totalSpMax: "",
+    qtyVoucherMin: "", qtyVoucherMax: "", totalVoucherMin: "", totalVoucherMax: "",
+    saldoMin: "", saldoMax: "", totalPenjualanMin: "", totalPenjualanMax: "",
+    arMin: "", arMax: "", catatan: "",
+  });
+  const setColFilter = (k, v) => setColFilters((prev) => ({ ...prev, [k]: v }));
+  const resetColFilters = () => setColFilters({
+    id: "", brand: "", nama: "", status: "", joinFrom: "", joinTo: "",
+    qtySpMin: "", qtySpMax: "", totalSpMin: "", totalSpMax: "",
+    qtyVoucherMin: "", qtyVoucherMax: "", totalVoucherMin: "", totalVoucherMax: "",
+    saldoMin: "", saldoMax: "", totalPenjualanMin: "", totalPenjualanMax: "",
+    arMin: "", arMax: "", catatan: "",
+  });
+  const anyColFilterActive = Object.values(colFilters).some((v) => v !== "");
   const [loadingDse, setLoadingDse] = useState(false);
   const [entries, setEntries] = useState({});     // { [dse_code]: { IM3: {...}, "3ID": {...} } }
   const [identity, setIdentity] = useState({});   // { [dse_code]: { ds_name, mc } }
@@ -1117,11 +1152,65 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
     for (const c of codes) await handleSaveDse(c); // eslint-disable-line no-await-in-loop
   };
 
-  const filteredDseList = dseList.filter((r) => {
-    if (!dseSearch) return true;
-    const s = dseSearch.toLowerCase();
-    return r.dse_code?.toLowerCase().includes(s) || r.dse_code_3id?.toLowerCase().includes(s) || r.ds_name?.toLowerCase().includes(s);
-  });
+  const filteredDseList = useMemo(() => {
+    const toNum = (v) => (v === "" || v === undefined || v === null ? null : Number(v));
+    const inRange = (val, minRaw, maxRaw) => {
+      const min = toNum(minRaw), max = toNum(maxRaw);
+      if (min !== null && val < min) return false;
+      if (max !== null && val > max) return false;
+      return true;
+    };
+    return dseList.filter((r) => {
+      if (dseSearch) {
+        const s = dseSearch.toLowerCase();
+        if (!(r.dse_code?.toLowerCase().includes(s) || r.dse_code_3id?.toLowerCase().includes(s) || r.ds_name?.toLowerCase().includes(s))) return false;
+      }
+      const idF = colFilters.id.trim().toLowerCase();
+      if (idF && !(r.dse_code?.toLowerCase().includes(idF) || r.dse_code_3id?.toLowerCase().includes(idF))) return false;
+
+      const namaF = colFilters.nama.trim().toLowerCase();
+      if (namaF && !(identity[r.dse_code]?.ds_name ?? r.ds_name ?? "").toLowerCase().includes(namaF)) return false;
+
+      const statusVal = identity[r.dse_code]?.dse_status ?? r.dse_status ?? "";
+      if (colFilters.status && statusVal !== colFilters.status) return false;
+
+      const joinVal = identity[r.dse_code]?.join_date ?? r.join_date ?? "";
+      if (colFilters.joinFrom && (!joinVal || joinVal < colFilters.joinFrom)) return false;
+      if (colFilters.joinTo && (!joinVal || joinVal > colFilters.joinTo)) return false;
+
+      // Angka & Catatan: dihitung dari nilai yg LAGI TAMPIL (termasuk editan
+      // belum tersimpan), dijumlahkan lintas activeBrands kalau mode IOH -
+      // match persis logic di mcSummary/stat tile.
+      let qtySp = 0, nilaiSp = 0, qtyVoucher = 0, nilaiVoucher = 0, nilaiSaldo = 0, ar = 0;
+      let catatanMatch = !colFilters.catatan.trim();
+      const catatanF = colFilters.catatan.trim().toLowerCase();
+      for (const b of activeBrands) {
+        const e = entries[r.dse_code]?.[b];
+        if (e) {
+          qtySp += fRaw(e.qty_sp); nilaiSp += fRaw(e.nilai_sp);
+          qtyVoucher += fRaw(e.qty_voucher); nilaiVoucher += fRaw(e.nilai_voucher);
+          nilaiSaldo += fRaw(e.nilai_saldo);
+          if (catatanF && (e.catatan || "").toLowerCase().includes(catatanF)) catatanMatch = true;
+        }
+        ar += fRaw(prevAr[`${r.dse_code}|${b}`]);
+      }
+      const totalPenjualan = nilaiSp + nilaiVoucher + nilaiSaldo;
+      if (!catatanMatch) return false;
+      if (!inRange(qtySp, colFilters.qtySpMin, colFilters.qtySpMax)) return false;
+      if (!inRange(nilaiSp, colFilters.totalSpMin, colFilters.totalSpMax)) return false;
+      if (!inRange(qtyVoucher, colFilters.qtyVoucherMin, colFilters.qtyVoucherMax)) return false;
+      if (!inRange(nilaiVoucher, colFilters.totalVoucherMin, colFilters.totalVoucherMax)) return false;
+      if (!inRange(nilaiSaldo, colFilters.saldoMin, colFilters.saldoMax)) return false;
+      if (!inRange(totalPenjualan, colFilters.totalPenjualanMin, colFilters.totalPenjualanMax)) return false;
+      if (!inRange(ar, colFilters.arMin, colFilters.arMax)) return false;
+
+      return true;
+    });
+  }, [dseList, dseSearch, colFilters, identity, entries, prevAr, activeBrands]);
+  // Brand-column filter (mode IOH saja): narrow baris brand mana yg DIRENDER
+  // per DSE tanpa keluar dari mode IOH (tabel tetap nampilin kolom Brand &
+  // sel identitas yg di-rowSpan, cuma row IM3/3ID yg lain disembunyikan).
+  const rowBrands = colFilters.brand && activeBrands.length > 1 ? [colFilters.brand] : activeBrands;
 
   // ── Ringkasan (summary cards) — di-scope ke MC yang sedang dipilih (lihat
   // `dseList`, bukan filteredDseList, supaya tetap utuh walau sedang mengetik
@@ -1657,10 +1746,78 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
                         );
                       })}
                     </tr>
+                    {/* UPDATE (permintaan user - "tambahkan pemfilteran untuk
+                        setiap kolom tanpa terkecuali"): baris filter kedua di
+                        bawah label kolom. 1 filter per kolom, ga ada yg
+                        dilewatin (ID/Nama/Catatan = teks, Status = dropdown,
+                        Join Date = rentang dari-sampai, kolom angka =
+                        rentang min-max, Brand = dropdown khusus mode IOH,
+                        kolom save (kolom plg kanan) dikasih tombol "Reset"
+                        buat ngosongin semua filter kolom sekaligus). */}
+                    <tr style={{ background: t.card }}>
+                      {(activeBrands.length > 1
+                        ? ["id", "brand", "nama", "status", "join", "qtySp", "totalSp", "qtyVoucher", "totalVoucher", "saldo", "totalPenjualan", "ar", "catatan", "reset"]
+                        : ["id", "nama", "status", "join", "qtySp", "totalSp", "qtyVoucher", "totalVoucher", "saldo", "totalPenjualan", "ar", "catatan", "reset"]
+                      ).map((key, i) => {
+                        const groupCols = activeBrands.length > 1 ? [5, 7, 9, 10, 11] : [4, 6, 8, 9, 10];
+                        const filterInputStyle = { width: "100%", height: 26, padding: "0 6px", borderRadius: 6, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 11, fontFamily: FONT, outline: "none", boxSizing: "border-box" };
+                        const numPairStyle = { display: "flex", alignItems: "center", gap: 3 };
+                        let content = null;
+                        if (key === "id") {
+                          content = <input value={colFilters.id} onChange={(e) => setColFilter("id", e.target.value)} placeholder="cari…" style={filterInputStyle} />;
+                        } else if (key === "brand") {
+                          content = (
+                            <select value={colFilters.brand} onChange={(e) => setColFilter("brand", e.target.value)} style={{ ...filterInputStyle, cursor: "pointer" }}>
+                              <option value="">Semua</option>
+                              {BRANDS.map((b) => <option key={b} value={b}>{b}</option>)}
+                            </select>
+                          );
+                        } else if (key === "nama") {
+                          content = <input value={colFilters.nama} onChange={(e) => setColFilter("nama", e.target.value)} placeholder="cari…" style={filterInputStyle} />;
+                        } else if (key === "status") {
+                          content = (
+                            <select value={colFilters.status} onChange={(e) => setColFilter("status", e.target.value)} style={{ ...filterInputStyle, cursor: "pointer" }}>
+                              <option value="">Semua</option>
+                              {STATUS_OPTIONS.map((s) => <option key={s.v} value={s.v}>{s.label}</option>)}
+                            </select>
+                          );
+                        } else if (key === "join") {
+                          content = (
+                            <div style={numPairStyle}>
+                              <input type="date" value={colFilters.joinFrom} onChange={(e) => setColFilter("joinFrom", e.target.value)} style={filterInputStyle} />
+                              <input type="date" value={colFilters.joinTo} onChange={(e) => setColFilter("joinTo", e.target.value)} style={filterInputStyle} />
+                            </div>
+                          );
+                        } else if (key === "catatan") {
+                          content = <input value={colFilters.catatan} onChange={(e) => setColFilter("catatan", e.target.value)} placeholder="cari…" style={filterInputStyle} />;
+                        } else if (key === "reset") {
+                          content = anyColFilterActive ? (
+                            <button onClick={resetColFilters} title="Hapus semua filter kolom"
+                              style={{ display: "flex", alignItems: "center", gap: 4, height: 26, padding: "0 10px", borderRadius: 6, border: "none", background: t.redBg, color: t.red, fontSize: 10.5, fontWeight: 700, cursor: "pointer", fontFamily: FONT, whiteSpace: "nowrap" }}>
+                              <X size={11} /> Reset
+                            </button>
+                          ) : null;
+                        } else {
+                          // Kolom angka: qtySp, totalSp, qtyVoucher, totalVoucher, saldo, totalPenjualan, ar
+                          const minK = `${key}Min`, maxK = `${key}Max`;
+                          content = (
+                            <div style={numPairStyle}>
+                              <input type="number" inputMode="decimal" value={colFilters[minK]} onChange={(e) => setColFilter(minK, e.target.value)} placeholder="min" style={filterInputStyle} />
+                              <input type="number" inputMode="decimal" value={colFilters[maxK]} onChange={(e) => setColFilter(maxK, e.target.value)} placeholder="max" style={filterInputStyle} />
+                            </div>
+                          );
+                        }
+                        return (
+                          <th key={i} style={{ padding: "6px 12px 10px", borderBottom: `1px solid ${t.line}`, borderLeft: groupCols.includes(i) ? `2px solid ${t.line}` : "none", minWidth: key === "join" || key.endsWith("totalVoucher") || key === "qtyVoucher" || key === "totalPenjualan" || key === "ar" || key === "saldo" || key === "qtySp" || key === "totalSp" ? 140 : undefined }}>
+                            {content}
+                          </th>
+                        );
+                      })}
+                    </tr>
                   </thead>
                   <tbody>
                     {filteredDseList.map((dse) => (
-                      <DseInputRow key={dse.dse_code} t={t} isCardView={false} dse={dse} brands={activeBrands}
+                      <DseInputRow key={dse.dse_code} t={t} isCardView={false} dse={dse} brands={rowBrands} showBrandCol={activeBrands.length > 1}
                         entries={entries[dse.dse_code] || {}}
                         onEntryChange={handleEntryChange}
                         onIdentityChange={handleIdentityChange}
