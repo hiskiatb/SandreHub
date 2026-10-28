@@ -1060,9 +1060,18 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
         if (partnerFilter) q = q.eq("mdi", partnerFilter);
         if (mcFilter) q = q.eq("mc", mcFilter);
       }
-      const { data: dses, error: e1 } = await q.limit(1000);
-      if (e1) throw e1;
-      setDseList(dses || []);
+      // Supabase caps a single request at 1000 rows -> paginate with
+      // .range() so DSE lists past 1000 (ALL Sumatera akumulasi) aren't
+      // silently truncated.
+      const dses = [];
+      const PAGE = 1000;
+      for (let from = 0; ; from += PAGE) {
+        const { data: pageData, error: eP } = await q.range(from, from + PAGE - 1);
+        if (eP) throw eP;
+        dses.push(...(pageData || []));
+        if (!pageData || pageData.length < PAGE) break;
+      }
+      setDseList(dses);
 
       const codes = (dses || []).map((r) => r.dse_code);
       if (codes.length) {
