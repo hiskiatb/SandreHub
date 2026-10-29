@@ -25,18 +25,17 @@ import { readWorkbook, deriveTable } from "../../../lib/martaSiteImport";
 import { passesRow, optionsFor, FilterTh, FilterMenu } from "../../dashboard/components/MFTS_TableFilter";
 import {
   aoCreateExportJob, aoDeleteSubmissions, aoExportList, aoGetExportDownloadUrl, aoGetExportJob,
-  aoGetRadiusSetting, aoImportOutletMaster, aoInvokeExportJob, aoListOutlets, aoListPhotos,
-  aoListReferencePhotos, aoListSubmissions, aoPublicUrl, aoSetRadiusSetting,
+  aoGetExportPartUrls, aoGetRadiusSetting, aoImportOutletMaster, aoInvokeExportJob, aoListOutlets,
+  aoListPhotos, aoListReferencePhotos, aoListSubmissions, aoPublicUrl, aoSetRadiusSetting,
   aoUpdateReferencePhotoLabel, aoUploadReferencePhoto,
 } from "../../../lib/ao";
 
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const BORDER = "#E4E2EA";
 const MAX_OUTLET_ROWS = 1000; // batasi render tabel Data Outlet - export tetap full dari `filtered`
-// HARUS sinkron dgn MAX_ROWS_WITH_PHOTOS di edge function `ao-export-xlsx`
-// (lihat komentar panjang di source function-nya) - batasan memori server
-// saat menyematkan foto resolusi penuh ke 1 workbook ExcelJS.
-const AO_MAX_ROWS_WITH_PHOTOS = 60;
+// Mode "Dengan foto di Excel" sekarang menulis rumus =IMAGE(url) per cell di
+// edge function `ao-export-xlsx` (bukan menyematkan byte foto) - tidak ada
+// lagi beban memori server per foto, jadi tidak ada cap jumlah baris.
 
 // Field target yang disimpan ke ao_outlets. Konsep pairing-nya SAMA PERSIS
 // dgn "Upload Data Site" di Master Data (lihat lib/martaSiteImport.js +
@@ -240,7 +239,7 @@ function SubmissionBody() {
   // Job background (mode "Dengan foto di Excel" - lihat exportXlsxWithPhotosJob)
   // - diisi id job + signed URL download setelah status 'done'. null berarti
   // tidak ada job background yg sedang berjalan/baru selesai.
-  const [exportJob, setExportJob] = useState(null); // { id, status, downloadUrl } | null
+  const [exportJob, setExportJob] = useState(null); // { id, status, parts: [{path,size_bytes,rows,row_from,row_to,url}] } | null - 1 job bisa punya banyak "parts" (lihat file_parts di ao_export_jobs)
   const exportJobBusy = !!exportJob && exportJob.status !== "done" && exportJob.status !== "error";
   // Menu pilihan Export Data (foto di dalam Excel / link foto saja)
   const [exportMenu, setExportMenu] = useState(false);
@@ -579,23 +578,12 @@ function SubmissionBody() {
   // sudah ada di RPC ao_list_submissions (rentang tanggal + search teks),
   // sama spt query yg dipakai utk mengisi tabel itu sendiri.
   const exportXlsxJob = useCallback(async () => {
-    // Guard cepat di client - cermin dari MAX_ROWS_WITH_PHOTOS di edge
-    // function `ao-export-xlsx` (batasan memori: menyematkan ribuan foto
-    // resolusi penuh ke 1 workbook ExcelJS di memori server bisa bikin job
-    // itu di-OOM-kill, sudah dikonfirmasi lewat testing nyata - lihat
-    // komentar panjang di source function-nya). Dicek di sini dulu supaya
-    // user tidak nunggu job yg pasti gagal.
-    if (filtered.length > AO_MAX_ROWS_WITH_PHOTOS) {
-      alert(
-        `Baris yg mau diexport (${filtered.length.toLocaleString("id-ID")}) melebihi batas mode "Dengan foto di Excel" ` +
-        `(maks ${AO_MAX_ROWS_WITH_PHOTOS} baris sekali export - batasan memori server). ` +
-        `Persempit rentang tanggal/filter dulu, atau pakai mode "Link foto saja" (cepat, tanpa batas baris) / tombol "Download Foto (ZIP)".`
-      );
-      return;
-    }
+    // Tidak ada lagi guard baris di sini - mode "Dengan foto di Excel" skrg
+    // cuma menulis rumus =IMAGE(url) per cell (lihat komentar di atas file
+    // & di edge function `ao-export-xlsx`), jadi aman utk berapapun baris.
     try {
       const jobId = await aoCreateExportJob({ dateFrom: dateFrom || null, dateTo: dateTo || null, search: search || null, includePhotos: true });
-      setExportJob({ id: jobId, status: "pending", downloadUrl: null });
+      setExportJob({ id: jobId, status: "pending", parts: [] });
       setJob({ kind: "xlsx-job", label: "Menyiapkan job export...", pct: 0 });
       // Fire-and-forget - sengaja tidak di-await (polling di bawah yg akan
       // memantau progress baris, bukan response invoke ini).
@@ -616,21 +604,27 @@ function SubmissionBody() {
       try {
         const row = await aoGetExportJob(exportJob.id);
         if (cancelled) return;
+        // Bagian2 (file_parts) diisi INKREMENTAL oleh edge function - begitu
+        // ada bagian baru yg siap (walau job masih "processing"), ambil
+        // signed URL-nya skrg juga supaya user bisa mulai download bagian
+        // itu tanpa nunggu bagian2 selanjutnya kelar.
+        const parts = await aoGetExportPartUrls(row.file_parts);
+        if (cancelled) return;
         if (row.status === "done") {
-          const downloadUrl = await aoGetExportDownloadUrl(row.file_path);
-          if (cancelled) return;
-          setExportJob({ id: row.id, status: "done", downloadUrl, totalRows: row.total_rows });
+          setExportJob({ id: row.id, status: "done", parts, totalRows: row.total_rows });
           setJob(null);
         } else if (row.status === "error") {
-          setExportJob({ id: row.id, status: "error", errorMessage: row.error_message, downloadUrl: null });
+          setExportJob({ id: row.id, status: "error", errorMessage: row.error_message, parts });
           setJob(null);
         } else {
           const total = row.total_rows || 0;
           const pct = total > 0 ? Math.round((row.processed_rows / total) * 95) : 0;
-          setExportJob({ id: row.id, status: row.status, downloadUrl: null, totalRows: total });
+          setExportJob({ id: row.id, status: row.status, parts, totalRows: total });
           setJob({
             kind: "xlsx-job",
-            label: total > 0 ? `Memproses baris ${row.processed_rows}/${total} (server)...` : "Menghitung jumlah baris...",
+            label: total > 0
+              ? `Memproses baris ${row.processed_rows}/${total} (server)${parts.length ? ` - ${parts.length} bagian siap` : ""}...`
+              : "Menghitung jumlah baris...",
             pct,
           });
         }
@@ -722,7 +716,7 @@ function SubmissionBody() {
                 </div>
                 <ExportOption
                   icon={<Images size={18} />} badge="Lengkap" title="Dengan foto di Excel"
-                  desc={`Foto ditampilkan langsung di dalam cell. Diproses di server (bukan di browser) - maks ${AO_MAX_ROWS_WITH_PHOTOS} baris sekali export.`}
+                  desc="Foto ASLI (resolusi penuh) ditempel langsung ke file - bisa dibuka offline. Diproses di server & otomatis dipecah jadi beberapa file sesuai ukuran total foto, tanpa batas baris."
                   onClick={() => exportXlsx(true)}
                 />
                 <ExportOption
@@ -758,22 +752,39 @@ function SubmissionBody() {
       {/* Job export (dgn foto) selesai di server - tombol Download muncul di
           sini (bukan auto-download) krn job bisa selesai lama setelah user
           pindah tab/halaman; link-nya signed URL (bucket privat), berlaku 1 jam. */}
-      {exportJob?.status === "done" && (
-        <div style={{ padding: "10px 16px", borderBottom: `1px solid ${BORDER}`, background: "#F0FDF4", display: "flex", alignItems: "center", gap: 10 }}>
-          <CheckCircle2 size={16} color="#16A34A" style={{ flex: "none" }} />
-          <span style={{ fontSize: 12.5, fontWeight: 700, color: T.hi, flex: 1 }}>
-            File .xlsx ({(exportJob.totalRows || 0).toLocaleString("id-ID")} baris, dengan foto) sudah siap.
-          </span>
-          <a
-            href={exportJob.downloadUrl} download
-            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 8, background: T.primary, color: "#fff", fontSize: 12, fontWeight: 800, fontFamily: FONT, textDecoration: "none" }}
-          >
-            <Download size={13} /> Download
-          </a>
-          <button onClick={() => setExportJob(null)} aria-label="Tutup" style={{ border: "none", background: "transparent", cursor: "pointer", color: T.lo, padding: 4, display: "inline-flex" }}><X size={15} /></button>
+      {/* Bagian2 (file_parts) muncul progresif selagi job jalan (lihat
+          tick() di atas) - bukan cuma begitu status "done". Export besar
+          dgn foto resolusi penuh dipecah jadi banyak file (ukurannya
+          adaptif, bukan jumlah baris tetap - lihat edge function
+          ao-export-xlsx), jadi tombol Download di sini bisa banyak. */}
+      {exportJob && exportJob.parts?.length > 0 && (exportJob.status === "done" || exportJob.status === "error" || exportJob.status === "processing") && (
+        <div style={{ padding: "10px 16px", borderBottom: `1px solid ${BORDER}`, background: exportJob.status === "error" ? "#FEF2F2" : "#F0FDF4" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: exportJob.parts.length ? 8 : 0 }}>
+            {exportJob.status === "error" ? <XCircle size={16} color="#DC2626" style={{ flex: "none" }} /> : <CheckCircle2 size={16} color="#16A34A" style={{ flex: "none" }} />}
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: T.hi, flex: 1 }}>
+              {exportJob.status === "done" && `${exportJob.parts.length} file .xlsx (${(exportJob.totalRows || 0).toLocaleString("id-ID")} baris, dengan foto asli) sudah siap.`}
+              {exportJob.status === "processing" && `${exportJob.parts.length} bagian sudah siap didownload - sisanya masih diproses di server...`}
+              {exportJob.status === "error" && `Export gagal: ${exportJob.errorMessage || "unknown error"}. ${exportJob.parts.length} bagian sebelum error tetap bisa didownload.`}
+            </span>
+            {(exportJob.status === "done" || exportJob.status === "error") && (
+              <button onClick={() => setExportJob(null)} aria-label="Tutup" style={{ border: "none", background: "transparent", cursor: "pointer", color: T.lo, padding: 4, display: "inline-flex" }}><X size={15} /></button>
+            )}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {exportJob.parts.map((part, idx) => (
+              <a
+                key={part.path}
+                href={part.url} download
+                title={`Baris ${part.row_from}-${part.row_to} - ${(part.size_bytes / (1024 * 1024)).toFixed(1)} MB`}
+                style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 8, background: T.primary, color: "#fff", fontSize: 11.5, fontWeight: 800, fontFamily: FONT, textDecoration: "none" }}
+              >
+                <Download size={12} /> Bagian {idx + 1} ({(part.size_bytes / (1024 * 1024)).toFixed(1)} MB)
+              </a>
+            ))}
+          </div>
         </div>
       )}
-      {exportJob?.status === "error" && (
+      {exportJob?.status === "error" && !exportJob.parts?.length && (
         <div style={{ padding: "10px 16px", borderBottom: `1px solid ${BORDER}`, background: "#FEF2F2", display: "flex", alignItems: "center", gap: 10 }}>
           <XCircle size={16} color="#DC2626" style={{ flex: "none" }} />
           <span style={{ fontSize: 12.5, fontWeight: 700, color: T.hi, flex: 1 }}>

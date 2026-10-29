@@ -3,10 +3,10 @@
 // Builds the "Export Data" .xlsx for MartaHub's Pendataan Outlet CMS,
 // server-side, so it no longer freezes the browser and is not bound to
 // Vercel's serverless timeout. Triggered fire-and-forget from the Next.js
-// client with { job_id }; writes progress + the final file to the
+// client with { job_id }; writes progress + the final file(s) to the
 // `ao_export_jobs` row / `ao-exports` storage bucket, which the client polls.
 //
-// HISTORY - read before changing the photo-column logic below:
+// HISTORY - read before touching the photo-column logic below:
 //
 // 1) Embedded-bytes approach (original): downloaded each photo from
 //    `ao-photos` storage and embedded the full-resolution JPEG bytes
@@ -15,46 +15,44 @@
 //    buffer) must be resident in memory for the single final
 //    `wb.xlsx.writeBuffer()` call. On a real 289-row / ~900-photo job the
 //    isolate was killed by its MEMORY limit ("Memory limit exceeded"),
-//    dying ~41s in - full-res camera photos are several MB each, so a few
-//    hundred of them is a GB+ of image bytes. This capped the feature at a
-//    small number of rows (MAX_ROWS_WITH_PHOTOS).
+//    dying ~41s in. This capped the feature at a small number of rows
+//    (MAX_ROWS_WITH_PHOTOS) in one file.
 //
-// 2) Thumbnail approach (2026-10-29, briefly tried, never deployed): resize
-//    + re-encode every photo as a small JPEG thumbnail (ImageScript, pure
-//    WASM, Deno-native) BEFORE embedding, so each embedded image was ~10-30KB
-//    instead of multi-MB. This fixed the memory ceiling but was rejected by
-//    the user - they want full, original photo quality in the export, not a
-//    downscaled thumbnail, so trading quality for memory headroom was not
-//    acceptable.
+// 2) Thumbnail approach (briefly tried, never deployed): resize + re-encode
+//    every photo as a small JPEG thumbnail before embedding. Fixed the
+//    memory ceiling but was rejected by the user - they want the ORIGINAL
+//    full-resolution photo bytes in the export, not a downscaled copy.
 //
-// 3) Formula-based approach (CURRENT, 2026-10-29): don't touch photo bytes
-//    server-side AT ALL. Instead of embedding an image, write a live
-//    `=IMAGE("https://...")` formula into the photo cell, pointing at the
-//    photo's public Supabase Storage URL (same URL already used by the
-//    "Link foto saja" mode's hyperlink cells). The spreadsheet application
-//    itself (Excel or Google Sheets) fetches and renders the image when the
-//    file is opened - this function never downloads, decodes, resizes or
-//    embeds anything, so there is no per-photo memory cost and therefore no
-//    row cap (MAX_ROWS_WITH_PHOTOS removed entirely). This is the approach
-//    the user explicitly asked for after rejecting (2) above.
+// 3) Formula-based approach (briefly live): wrote a live `=IMAGE("https://
+//    ...")` formula into the photo cell instead of embedding anything -
+//    zero per-photo memory cost, no row cap, but requires Excel 365 (online)
+//    or Google Sheets to render, and needs internet access when the file is
+//    opened. Rejected by the user - they want the real photo bytes sitting
+//    inside the file itself, downloadable and viewable offline.
 //
-//    COMPATIBILITY CAVEAT (important, flagged to the user, not silently
-//    assumed away): `=IMAGE(url)` is a native Google Sheets function and
-//    has been supported there for years. Microsoft Excel only added an
-//    equivalent `=IMAGE(source)` function to Excel for Microsoft 365
-//    (subscription, auto-updating channel), rolled out starting ~2024. It
-//    is NOT available in perpetual-license/non-subscription Excel (Excel
-//    2019, Excel 2016, etc.), in fully offline installs that haven't
-//    received that update, or in any non-Microsoft/non-Google tool that
-//    opens .xlsx (LibreOffice Calc, Numbers, etc.) unless that tool
-//    specifically implements the same function - none are known to as of
-//    this writing. Opening this file in an unsupported app shows the
-//    literal formula text or a #NAME? error instead of a photo. This also
-//    requires the `ao-photos` storage bucket to be PUBLIC (confirmed true
-//    for this project - see `select public from storage.buckets where
-//    id='ao-photos'`) since Excel/Sheets' own fetcher cannot send a
-//    Supabase auth header; if the bucket were ever made private, every
-//    `=IMAGE()` cell would fail to load the photo (403).
+// 4) CURRENT (2026-10-29): embed the ORIGINAL full-resolution photo bytes
+//    again (approach 1), but split the output across MULTIPLE .xlsx files
+//    instead of one, so no single file's in-memory construction ever gets
+//    close to the isolate's memory ceiling. This project's photos
+//    aren't uniform in size (confirmed via storage.objects: ~861KB average,
+//    up to 4.6MB, and that can drift as new photos are captured), so parts
+//    are flushed by ACTUAL ACCUMULATED BYTES downloaded so far
+//    (PART_BYTES_LIMIT), not by a guessed row count - this is what keeps it
+//    safe regardless of how large any given batch of real photos turns out
+//    to be. A secondary PART_ROWS_SAFETY_CAP also flushes a part if it has
+//    accumulated a lot of rows with little/no photos (so a single part
+//    can't grow unbounded just because its rows happen to have few images).
+//    Supabase Edge Functions have a documented 256MB memory ceiling
+//    (https://supabase.com/docs/guides/functions/limits) - PART_BYTES_LIMIT
+//    is set far below that (see constant below) to leave headroom for
+//    ExcelJS's own object graph, the zip/deflate buffers `writeBuffer()`
+//    needs simultaneously, and photos already in flight (downloaded but not
+//    yet embedded) when the limit is checked. Each finished part is
+//    uploaded to storage and appended to `ao_export_jobs.file_parts`
+//    IMMEDIATELY (not just at the very end), so the client can start
+//    downloading earlier parts while later ones are still being built -
+//    important since a large export can now legitimately produce several
+//    GB across its parts and take a while.
 //
 // CORS FIX (2026-10-29): this function had no OPTIONS preflight handling and
 // no Access-Control-Allow-* headers on any response, so the browser's CORS
@@ -74,10 +72,22 @@ const BUCKET_PHOTOS = "ao-photos";
 const BUCKET_EXPORTS = "ao-exports";
 const PAGE_SIZE = 500; // halaman saat menarik baris dari ao_list_submissions
 
-// Lebar kolom & tinggi baris foto - dipakai baik utk mode embed lama maupun
-// sbg ukuran render utk cell berisi formula =IMAGE() (Excel/Sheets me-render
-// gambar hasil IMAGE() di dalam batas cell, jadi ukuran cell msh relevan).
+// Lebar kolom & tinggi baris foto.
 const PHOTO_ROW_PT = 86;
+const PHOTO_CELL_PX = 110; // ukuran TAMPIL di cell - independen dari resolusi asli file yg di-embed
+
+// Ambang batas BYTE (bukan jumlah baris) utk memutuskan kapan 1 file .xlsx
+// "bagian" ditutup & diupload, lalu mulai file baru. Lihat komentar
+// "CURRENT" panjang di atas file utk kenapa ini byte-based, bukan row-based.
+// Supabase Edge Functions punya limit memori 256MB (dokumentasi resmi) -
+// 50MB foto mentah per bagian menyisakan margin besar (~5x) utk overhead
+// ExcelJS, buffer kompresi zip `writeBuffer()`, dan foto yg sedang
+// didownload (in-flight) saat ambang ini dicek.
+const PART_BYTES_LIMIT = 50 * 1024 * 1024;
+// Jaring pengaman sekunder: kalau baris2-nya kebetulan sedikit/tanpa foto,
+// 1 bagian tetap ditutup setelah sekian baris supaya file tidak membesar
+// tanpa batas (bukan soal memori, cuma kerapihan ukuran per file).
+const PART_ROWS_SAFETY_CAP = 300;
 
 // Sama persis dgn pola CORS yg dipakai `locationiq` di project ini.
 const CORS = {
@@ -120,17 +130,21 @@ function findPhoto(photos: any[], jenis: string, urutan?: number) {
   );
 }
 
-// Escape sebuah URL supaya aman disisipkan di dalam string literal rumus
-// Excel (cuma tanda kutip ganda yg perlu di-escape, dengan menggandakannya -
-// sama spt aturan escaping string literal di formula Excel/Sheets).
-function escapeForFormulaString(url: string): string {
-  return url.replace(/"/g, '""');
+// ExcelJS `addImage` butuh salah satu dari 'jpeg' | 'png' | 'gif' - ditebak
+// dari ekstensi storage_path, default ke 'jpeg' (mayoritas foto kamera di
+// project ini) kalau ekstensinya tak dikenali / tak ada.
+function guessImageExtension(storagePath: string): "jpeg" | "png" | "gif" {
+  const m = /\.([a-z0-9]+)$/i.exec(storagePath || "");
+  const ext = (m?.[1] || "").toLowerCase();
+  if (ext === "png") return "png";
+  if (ext === "gif") return "gif";
+  return "jpeg"; // termasuk "jpg"
 }
 
 // Kolom teks - urutan & label HARUS sinkron dgn TEXT_COLS_BEFORE_PHOTO /
 // TEXT_COLS_AFTER_PHOTO di page.jsx.
 const TEXT_COLS_BEFORE_PHOTO: [string, (r: any, extra: any) => any][] = [
-  ["Submission ID",  (r) => r.id],
+  ["Submission ID", (r) => r.id],
   ["Tanggal", (_r, extra) => extra.tanggal],
   ["Waktu", (_r, extra) => extra.jam],
   ["Nama Sender", (r) => r.nama_sender || ""],
@@ -168,11 +182,33 @@ const TEXT_COLS_AFTER_PHOTO: [string, (r: any) => any][] = [
   ["GPS Longitude", (r) => r.longitude ?? ""],
   [
     "Jarak ke Outlet (m)",
-     (r) => (r.distance_to_outlet_m == null ? "" : Math.round(r.distance_to_outlet_m)),
+    (r) => (r.distance_to_outlet_m == null ? "" : Math.round(r.distance_to_outlet_m)),
   ],
   ["Radius Score", (r) => (r.radius_score == null ? "" : r.radius_score)],
   ["Submitted At", (r) => r.created_at],
 ];
+
+const HEADERS = [
+  ...TEXT_COLS_BEFORE_PHOTO.map(([label]) => label),
+  ...PHOTO_COLS.map(([label]) => label),
+  ...TEXT_COLS_AFTER_PHOTO.map(([label]) => label),
+];
+const PHOTO_COL_START = TEXT_COLS_BEFORE_PHOTO.length;
+
+// Bikin 1 workbook/worksheet "bagian" baru (header + lebar kolom) - dipakai
+// di awal export & setiap kali bagian sebelumnya ditutup/diupload.
+function newPartWorkbook(includePhotos: boolean) {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Data Submission");
+  ws.addRow(HEADERS).font = { bold: true };
+  ws.views = [{ state: "frozen", ySplit: 1 }];
+  ws.columns = HEADERS.map((h) => ({
+    width: PHOTO_COLS.some(([label]) => label === h)
+      ? includePhotos ? 18 : 16
+      : Math.max(12, Math.min(28, h.length + 4)),
+  }));
+  return { wb, ws };
+}
 
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
@@ -204,6 +240,7 @@ Deno.serve(async (req: Request) => {
   const includePhotos = params.include_photos !== false; // default true
 
   const work = (async () => {
+    const fileParts: { path: string; size_bytes: number; rows: number; row_from: number; row_to: number }[] = [];
     try {
       await supabase
         .from("ao_export_jobs")
@@ -235,34 +272,60 @@ Deno.serve(async (req: Request) => {
         .update({ total_rows: allRows.length, updated_at: new Date().toISOString() })
         .eq("id", job_id);
 
-      // Tidak ada lagi cap jumlah baris: mode "dengan foto" sekarang hanya
-      // menulis rumus =IMAGE(url) teks per cell (lihat komentar "Formula-
-      // based approach" di atas file) - tidak ada download/decode/embed
-      // byte gambar sama sekali, jadi tidak ada beban memori per foto.
-      // ~1046+ baris x 4 kolom foto = ribuan cell rumus kecil, jauh di bawah
-      // limit praktis worksheet xlsx (1,048,576 baris / 16,384 kolom) dan
-      // tidak membebani memori isolate (cuma string, bukan byte gambar).
+      const stamp = new Date().toISOString().slice(0, 10);
 
-      const wb = new ExcelJS.Workbook();
-      const ws = wb.addWorksheet("Data Submission");
+      // Tidak ada lagi cap jumlah baris: mode "dengan foto" skrg embed byte
+      // foto ASLI (resolusi penuh) lagi, tapi dipecah otomatis jadi
+      // beberapa file .xlsx berbasis AKUMULASI BYTE foto yg sudah
+      // didownload (PART_BYTES_LIMIT) - lihat komentar panjang "CURRENT" di
+      // atas file. Mode "Link foto saja" (includePhotos=false) tidak
+      // berubah - tetap 1 file, cuma hyperlink teks, tanpa download apa pun.
+      let { wb, ws } = newPartWorkbook(includePhotos);
+      let partIndex = 1;
+      let partBytes = 0;
+      let partRows = 0;
+      let partRowFrom = 1; // 1-based index ke allRows utk baris pertama di bagian ini (belum di-flush)
+      let lastReportedRows = -1; // throttle update processed_rows - jangan tulis DB di SETIAP baris (2000 baris = 2000 round-trip, bisa kena wall-clock limit)
 
-      const headers = [
-        ...TEXT_COLS_BEFORE_PHOTO.map(([label]) => label),
-        ...PHOTO_COLS.map(([label]) => label),
-        ...TEXT_COLS_AFTER_PHOTO.map(([label]) => label),
-      ];
-      ws.addRow(headers).font = { bold: true };
-      ws.views = [{ state: "frozen", ySplit: 1 }];
-      ws.columns = headers.map((h) => ({
-        width: PHOTO_COLS.some(([label]) => label === h)
-          ? includePhotos
-            ? 18
-            : 16
-          : Math.max(12, Math.min(28, h.length + 4)),
-      }));
+      // Menutup bagian yg sedang dibangun: upload ke storage, catat
+      // metadata-nya ke fileParts + update job row (inkremental - klien
+      // bisa mulai download bagian ini begitu siap, walau bagian2
+      // berikutnya masih diproses), lalu kembalikan jumlah baris yg baru
+      // ditutup supaya caller bisa menghitung partRowFrom bagian berikutnya
+      // sendiri (fungsi ini TIDAK menyentuh partRowFrom/partRows/partBytes
+      // milik caller - caller yg reset setelah memanggil ini).
+      async function flushPart(): Promise<number> {
+        const rowsInThisPart = partRows;
+        if (rowsInThisPart === 0) return 0; // tidak ada apa2 utk ditutup (misal allRows kosong)
+        const buf = await wb.xlsx.writeBuffer();
+        const suffix = includePhotos ? `_bagian${String(partIndex).padStart(3, "0")}` : "";
+        const filePath = `${job_id}/MartaHub_DataSubmission${suffix}_${stamp}.xlsx`;
+        const { error: upErr } = await supabase.storage.from(BUCKET_EXPORTS).upload(filePath, buf, {
+          contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          upsert: true,
+        });
+        if (upErr) throw new Error(`upload exports (bagian ${partIndex}): ${upErr.message}`);
 
-      const photoColStart = TEXT_COLS_BEFORE_PHOTO.length;
-      let lastReportedPct = -1;
+        fileParts.push({
+          path: filePath,
+          size_bytes: buf.byteLength,
+          rows: rowsInThisPart,
+          row_from: partRowFrom,
+          row_to: partRowFrom + rowsInThisPart - 1,
+        });
+
+        await supabase
+          .from("ao_export_jobs")
+          .update({
+            file_parts: fileParts,
+            processed_rows: partRowFrom + rowsInThisPart - 1,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", job_id);
+
+        partIndex += 1;
+        return rowsInThisPart;
+      }
 
       for (let i = 0; i < allRows.length; i++) {
         const r = allRows[i];
@@ -276,55 +339,95 @@ Deno.serve(async (req: Request) => {
         const row = ws.addRow(rowVals);
         if (includePhotos) row.height = PHOTO_ROW_PT;
         const rowNumber = row.number;
-        void rowNumber; // tidak dipakai lagi (dulu dibutuhkan utk ws.addImage posisi tl/ext)
 
         PHOTO_COLS.forEach(([, getPhoto], colOffset) => {
           const p = getPhoto(r.photos);
           if (!p) return;
           const { data: pub } = supabase.storage.from(BUCKET_PHOTOS).getPublicUrl(p.storage_path);
           if (!pub?.publicUrl) return;
-          const cell = row.getCell(photoColStart + colOffset + 1);
-
+          const cell = row.getCell(PHOTO_COL_START + colOffset + 1);
           if (!includePhotos) {
             cell.value = { text: pub.publicUrl, hyperlink: pub.publicUrl };
             cell.font = { color: { argb: "FF1D4ED8" }, underline: true };
             cell.alignment = { vertical: "middle" };
-          } else {
-            // Rumus live =IMAGE(url) - lihat komentar "Formula-based
-            // approach" di atas file utk alasan & caveat kompatibilitas
-            // Excel vs Google Sheets.
-            cell.value = {
-              formula: `=IMAGE("${escapeForFormulaString(pub.publicUrl)}")`,
-            };
-            cell.alignment = { vertical: "middle", horizontal: "center" };
           }
         });
 
-        const pct = Math.round(((i + 1) / allRows.length) * 95);
-        if (pct !== lastReportedPct) {
-          lastReportedPct = pct;
+        if (includePhotos) {
+          // Download + embed foto ASLI (resolusi penuh, tanpa resize) utk
+          // baris ini. Max 4 foto/baris, didownload paralel (Promise.all) -
+          // ini sudah dites aman: 1 baris sekaligus, bukan semua baris.
+          await Promise.all(
+            PHOTO_COLS.map(async ([, getPhoto], colOffset) => {
+              const p = getPhoto(r.photos);
+              if (!p) return;
+              try {
+                const { data: blob, error: dlErr } = await supabase.storage
+                  .from(BUCKET_PHOTOS)
+                  .download(p.storage_path);
+                if (dlErr || !blob) return;
+                const buf = await blob.arrayBuffer();
+                partBytes += buf.byteLength;
+                const imageId = wb.addImage({ buffer: buf, extension: guessImageExtension(p.storage_path) });
+                const col0 = PHOTO_COL_START + colOffset;
+                ws.addImage(imageId, {
+                  tl: { col: col0 + 0.06, row: rowNumber - 1 + 0.06 },
+                  ext: { width: PHOTO_CELL_PX, height: PHOTO_CELL_PX },
+                  editAs: "oneCell",
+                });
+              } catch {
+                // 1 foto gagal (download/decoding) jangan sampai gagalkan
+                // baris/export lainnya - sama spt perilaku lama.
+              }
+            })
+          );
+        }
+
+        partRows += 1;
+
+        // Throttle: cuma tulis processed_rows ke DB kalau berubah >=1% dari
+        // total, atau ini baris terakhir - bukan di setiap baris (lihat
+        // komentar lastReportedRows di atas). flushPart() di bawah tetap
+        // selalu menulis processed_rows yg akurat sendiri, jadi progress
+        // yg ditampilkan ke user tidak pernah telat lebih dari 1 bagian.
+        const sofar = partRowFrom - 1 + partRows;
+        const step = Math.max(1, Math.floor(allRows.length / 100));
+        if (sofar - lastReportedRows >= step || sofar === allRows.length) {
+          lastReportedRows = sofar;
           await supabase
             .from("ao_export_jobs")
-            .update({ processed_rows: i + 1, updated_at: new Date().toISOString() })
+            .update({ processed_rows: sofar, updated_at: new Date().toISOString() })
             .eq("id", job_id);
         }
+
+        // Ambang batas BYTE (bukan jumlah baris) - lihat komentar
+        // PART_BYTES_LIMIT di atas file. Dicek SETELAH baris ini selesai
+        // (tidak memotong baris di tengah foto-fotonya). Mode "Link foto
+        // saja" (includePhotos=false) tidak men-download apa pun jadi
+        // partBytes selalu 0 di sana - praktis cuma akan di-flush 1x di
+        // akhir (baris terakhir), yaitu 1 file spt perilaku lama.
+        const isLastRow = i === allRows.length - 1;
+        const shouldFlush = isLastRow || (includePhotos && (partBytes >= PART_BYTES_LIMIT || partRows >= PART_ROWS_SAFETY_CAP));
+        if (shouldFlush) {
+          const flushedRows = await flushPart();
+          partRowFrom += flushedRows;
+          partBytes = 0;
+          partRows = 0;
+          if (!isLastRow) {
+            // Bagian berikutnya butuh workbook baru - yg lama (dgn semua
+            // buffer foto yg sudah ditulis) dibuang begitu variabel wb/ws
+            // di-reassign, sehingga GC bisa membebaskan memorinya sebelum
+            // bagian berikutnya mulai menumpuk foto baru.
+            ({ wb, ws } = newPartWorkbook(includePhotos));
+          }
+        }
       }
-
-      const buf = await wb.xlsx.writeBuffer();
-      const stamp = new Date().toISOString().slice(0, 10);
-      const filePath = `${job_id}/MartaHub_DataSubmission${includePhotos ? "" : "_LinkFoto"}_${stamp}.xlsx`;
-
-      const { error: upErr } = await supabase.storage.from(BUCKET_EXPORTS).upload(filePath, buf, {
-        contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        upsert: true,
-      });
-      if (upErr) throw new Error(`upload exports: ${upErr.message}`);
 
       await supabase
         .from("ao_export_jobs")
         .update({
           status: "done",
-          file_path: filePath,
+          file_parts: fileParts,
           processed_rows: allRows.length,
           updated_at: new Date().toISOString(),
         })
@@ -335,6 +438,7 @@ Deno.serve(async (req: Request) => {
         .update({
           status: "error",
           error_message: String(e?.message || e),
+          file_parts: fileParts,
           updated_at: new Date().toISOString(),
         })
         .eq("id", job_id);
