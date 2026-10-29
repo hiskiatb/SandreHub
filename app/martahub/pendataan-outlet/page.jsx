@@ -24,7 +24,8 @@ import MartaShell, { T } from "../components/MartaShell";
 import { readWorkbook, deriveTable } from "../../../lib/martaSiteImport";
 import { passesRow, optionsFor, FilterTh, FilterMenu } from "../../dashboard/components/MFTS_TableFilter";
 import {
-  aoDeleteSubmissions, aoExportList, aoGetRadiusSetting, aoImportOutletMaster, aoListOutlets, aoListPhotos,
+  aoCreateExportJob, aoDeleteSubmissions, aoExportList, aoGetExportDownloadUrl, aoGetExportJob,
+  aoGetRadiusSetting, aoImportOutletMaster, aoInvokeExportJob, aoListOutlets, aoListPhotos,
   aoListReferencePhotos, aoListSubmissions, aoPublicUrl, aoSetRadiusSetting,
   aoUpdateReferencePhotoLabel, aoUploadReferencePhoto,
 } from "../../../lib/ao";
@@ -32,6 +33,10 @@ import {
 const FONT = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif`;
 const BORDER = "#E4E2EA";
 const MAX_OUTLET_ROWS = 1000; // batasi render tabel Data Outlet - export tetap full dari `filtered`
+// HARUS sinkron dgn MAX_ROWS_WITH_PHOTOS di edge function `ao-export-xlsx`
+// (lihat komentar panjang di source function-nya) - batasan memori server
+// saat menyematkan foto resolusi penuh ke 1 workbook ExcelJS.
+const AO_MAX_ROWS_WITH_PHOTOS = 60;
 
 // Field target yang disimpan ke ao_outlets. Konsep pairing-nya SAMA PERSIS
 // dgn "Upload Data Site" di Master Data (lihat lib/martaSiteImport.js +
@@ -232,6 +237,11 @@ function SubmissionBody() {
   const [exporting, setExporting] = useState(false);
   // Progress nyata utk Export .xlsx & Download ZIP: {kind, label, pct}
   const [job, setJob] = useState(null);
+  // Job background (mode "Dengan foto di Excel" - lihat exportXlsxWithPhotosJob)
+  // - diisi id job + signed URL download setelah status 'done'. null berarti
+  // tidak ada job background yg sedang berjalan/baru selesai.
+  const [exportJob, setExportJob] = useState(null); // { id, status, downloadUrl } | null
+  const exportJobBusy = !!exportJob && exportJob.status !== "done" && exportJob.status !== "error";
   // Menu pilihan Export Data (foto di dalam Excel / link foto saja)
   const [exportMenu, setExportMenu] = useState(false);
   const exportMenuRef = useRef(null);
@@ -488,10 +498,17 @@ function SubmissionBody() {
   const PHOTO_CELL_PX = 110; // sisi kotak thumbnail (persegi) di dalam cell
   const PHOTO_ROW_PT = 86;   // tinggi baris (point) - kira2 pas utk thumbnail 110px
 
-  // withPhotos=true  -> foto disematkan sbg gambar di dalam cell (lengkap, lebih lambat & file besar)
-  // withPhotos=false -> kolom foto berisi hyperlink "Lihat foto" saja (cepat & file ringan)
+  // withPhotos=true  -> foto disematkan sbg gambar di dalam cell. Dataset
+  //   ~1000+ submission (~3500 foto) bikin ini lama & berat kalau dibangun
+  //   full di browser - sejak 2026-10-29 mode ini dipindah jadi BACKGROUND
+  //   JOB di Supabase Edge Function `ao-export-xlsx` (lihat exportXlsxJob
+  //   & pollExportJob di bawah), bukan lagi dibangun di sini.
+  // withPhotos=false -> kolom foto berisi hyperlink "Lihat foto" saja (cepat
+  //   & file ringan) - TETAP dibangun di browser spt semula, krn memang
+  //   sudah cepat (tidak nge-fetch byte foto sama sekali).
   const exportXlsx = useCallback(async (withPhotos = true) => {
     setExportMenu(false);
+    if (withPhotos) { exportXlsxJob(); return; }
     setExporting(true);
     setJob({ kind: "xlsx", label: "Menyiapkan file...", pct: 0 });
     try {
@@ -507,59 +524,32 @@ function SubmissionBody() {
       ws.addRow(headers).font = { bold: true };
       ws.views = [{ state: "frozen", ySplit: 1 }];
       ws.columns = headers.map((h) => ({
-        width: PHOTO_COLS.some(([label]) => label === h) ? (withPhotos ? 18 : 16) : Math.max(12, Math.min(28, h.length + 4)),
+        width: PHOTO_COLS.some(([label]) => label === h) ? 16 : Math.max(12, Math.min(28, h.length + 4)),
       }));
 
-      // Isi baris teks dulu (foto disisipkan belakangan per baris, setelah
-      // byte-nya selesai di-fetch) - index kolom foto (0-based) dihitung
-      // dari posisi TEXT_COLS_BEFORE_PHOTO.
       const photoColStart = TEXT_COLS_BEFORE_PHOTO.length; // 0-based index kolom foto pertama
 
       for (let i = 0; i < filtered.length; i++) {
         const r = filtered[i];
         const rowVals = [
           ...TEXT_COLS_BEFORE_PHOTO.map(([, get]) => get(r)),
-          ...PHOTO_COLS.map(() => ""), // placeholder - diisi gambar, bukan teks
+          ...PHOTO_COLS.map(() => ""), // placeholder - diisi hyperlink
           ...TEXT_COLS_AFTER_PHOTO.map(([, get]) => get(r)),
         ];
         const row = ws.addRow(rowVals);
-        if (withPhotos) row.height = PHOTO_ROW_PT;
-        const rowNumber = row.number; // 1-based (header = baris 1)
 
-        if (!withPhotos) {
-          // Mode link: tidak ada fetch foto sama sekali - cukup hyperlink ke URL publik.
-          PHOTO_COLS.forEach(([, getPhoto], colOffset) => {
-            const p = getPhoto(r);
-            if (!p) return;
-            const url = aoPublicUrl(p.storage_path);
-            if (!url) return;
-            const cell = row.getCell(photoColStart + colOffset + 1);
-            cell.value = { text: "Lihat foto", hyperlink: url };
-            cell.font = { color: { argb: "FF1D4ED8" }, underline: true };
-            cell.alignment = { vertical: "middle" };
-          });
-        } else
-        // Download + tempel tiap foto yg ada di baris ini secara paralel.
-        await Promise.all(PHOTO_COLS.map(async ([, getPhoto], colOffset) => {
+        // Mode link: tidak ada fetch foto sama sekali - cukup hyperlink ke URL publik.
+        PHOTO_COLS.forEach(([, getPhoto], colOffset) => {
           const p = getPhoto(r);
           if (!p) return;
           const url = aoPublicUrl(p.storage_path);
           if (!url) return;
-          try {
-            const res = await fetch(url);
-            if (!res.ok) return;
-            const buf = await res.arrayBuffer();
-            const ext = /\.png($|\?)/i.test(p.storage_path) ? "png" : "jpeg";
-            const imageId = wb.addImage({ buffer: buf, extension: ext });
-            const col0 = photoColStart + colOffset; // 0-based kolom
-            ws.addImage(imageId, {
-              tl: { col: col0 + 0.06, row: (rowNumber - 1) + 0.06 },
-              ext: { width: PHOTO_CELL_PX, height: PHOTO_CELL_PX },
-              editAs: "oneCell",
-            });
-          } catch { /* 1 foto gagal di-fetch jangan sampai gagalkan export semua baris */ }
-        }));
-        // 0-95% = memproses baris + foto, 95-100% = menyusun file .xlsx
+          const cell = row.getCell(photoColStart + colOffset + 1);
+          cell.value = { text: "Lihat foto", hyperlink: url };
+          cell.font = { color: { argb: "FF1D4ED8" }, underline: true };
+          cell.alignment = { vertical: "middle" };
+        });
+        // 0-95% = memproses baris, 95-100% = menyusun file .xlsx
         setJob({ kind: "xlsx", label: `Memproses baris ${i + 1}/${filtered.length}`, pct: Math.round(((i + 1) / filtered.length) * 95) });
       }
 
@@ -570,11 +560,88 @@ function SubmissionBody() {
       const a = document.createElement("a");
       a.href = url;
       const stamp = new Date().toISOString().slice(0, 10);
-      a.download = `MartaHub_DataSubmission${withPhotos ? "" : "_LinkFoto"}_${stamp}.xlsx`;
+      a.download = `MartaHub_DataSubmission_LinkFoto_${stamp}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
     } finally { setExporting(false); setJob(null); }
   }, [filtered]);
+
+  // Mode "Dengan foto di Excel" - job berat dikerjakan server-side
+  // (Supabase Edge Function `ao-export-xlsx`), supaya tidak freeze browser
+  // ataupun kena timeout serverless Vercel. Alur: (1) insert baris job ke
+  // `ao_export_jobs` dgn filter saat ini sbg params, (2) invoke edge
+  // function-nya - TIDAK di-await sampai selesai (fire-and-forget, function
+  // lanjut jalan di background lewat EdgeRuntime.waitUntil di sisi server),
+  // (3) polling baris job itu tiap 2.5s (lihat useEffect di bawah) sampai
+  // status 'done'/'error' utk update progress bar & munculkan tombol
+  // Download. Catatan: filter kolom tambahan (dari `filters`/passesRow di
+  // tabel) TIDAK ikut dikirim ke job ini - server cuma mendukung filter yg
+  // sudah ada di RPC ao_list_submissions (rentang tanggal + search teks),
+  // sama spt query yg dipakai utk mengisi tabel itu sendiri.
+  const exportXlsxJob = useCallback(async () => {
+    // Guard cepat di client - cermin dari MAX_ROWS_WITH_PHOTOS di edge
+    // function `ao-export-xlsx` (batasan memori: menyematkan ribuan foto
+    // resolusi penuh ke 1 workbook ExcelJS di memori server bisa bikin job
+    // itu di-OOM-kill, sudah dikonfirmasi lewat testing nyata - lihat
+    // komentar panjang di source function-nya). Dicek di sini dulu supaya
+    // user tidak nunggu job yg pasti gagal.
+    if (filtered.length > AO_MAX_ROWS_WITH_PHOTOS) {
+      alert(
+        `Baris yg mau diexport (${filtered.length.toLocaleString("id-ID")}) melebihi batas mode "Dengan foto di Excel" ` +
+        `(maks ${AO_MAX_ROWS_WITH_PHOTOS} baris sekali export - batasan memori server). ` +
+        `Persempit rentang tanggal/filter dulu, atau pakai mode "Link foto saja" (cepat, tanpa batas baris) / tombol "Download Foto (ZIP)".`
+      );
+      return;
+    }
+    try {
+      const jobId = await aoCreateExportJob({ dateFrom: dateFrom || null, dateTo: dateTo || null, search: search || null, includePhotos: true });
+      setExportJob({ id: jobId, status: "pending", downloadUrl: null });
+      setJob({ kind: "xlsx-job", label: "Menyiapkan job export...", pct: 0 });
+      // Fire-and-forget - sengaja tidak di-await (polling di bawah yg akan
+      // memantau progress baris, bukan response invoke ini).
+      aoInvokeExportJob(jobId).catch((e) => {
+        setExportJob((cur) => (cur && cur.id === jobId ? { ...cur, status: "error", errorMessage: String(e?.message || e) } : cur));
+      });
+    } catch (e) {
+      alert(`Gagal membuat job export: ${e?.message || e}`);
+    }
+  }, [dateFrom, dateTo, search]);
+
+  // Polling job export background (tiap 2.5s) - berhenti otomatis begitu
+  // status 'done'/'error', atau kalau exportJob dikosongkan (user tutup).
+  useEffect(() => {
+    if (!exportJob?.id || exportJob.status === "done" || exportJob.status === "error") return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const row = await aoGetExportJob(exportJob.id);
+        if (cancelled) return;
+        if (row.status === "done") {
+          const downloadUrl = await aoGetExportDownloadUrl(row.file_path);
+          if (cancelled) return;
+          setExportJob({ id: row.id, status: "done", downloadUrl, totalRows: row.total_rows });
+          setJob(null);
+        } else if (row.status === "error") {
+          setExportJob({ id: row.id, status: "error", errorMessage: row.error_message, downloadUrl: null });
+          setJob(null);
+        } else {
+          const total = row.total_rows || 0;
+          const pct = total > 0 ? Math.round((row.processed_rows / total) * 95) : 0;
+          setExportJob({ id: row.id, status: row.status, downloadUrl: null, totalRows: total });
+          setJob({
+            kind: "xlsx-job",
+            label: total > 0 ? `Memproses baris ${row.processed_rows}/${total} (server)...` : "Menghitung jumlah baris...",
+            pct,
+          });
+        }
+      } catch {
+        // koneksi gagal sesaat - dicoba lagi di tick berikutnya, jangan hentikan polling
+      }
+    };
+    tick();
+    const id = setInterval(tick, 2500);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [exportJob?.id, exportJob?.status]);
 
   return (
     <div style={{ background: "#fff", border: `1px solid ${BORDER}`, borderRadius: 14, overflow: "hidden" }}>
@@ -641,12 +708,12 @@ function SubmissionBody() {
           )}
           <Btn compact variant="ghost" onClick={load} title="Muat ulang" aria-label="Muat ulang"><RefreshCw size={13} /></Btn>
 
-          {/* Export Data - pilih: foto di dalam Excel atau cukup link foto */}
+          {/* Export Data - pilih: foto di dalam Excel (job background) atau cukup link foto (di browser) */}
           <div ref={exportMenuRef} style={{ position: "relative" }}>
-            <Btn compact variant="ghost" onClick={() => setExportMenu((v) => !v)} disabled={filtered.length === 0 || exporting} aria-haspopup="menu" aria-expanded={exportMenu}>
-              {exporting ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={14} />}
-              Export Data{exporting && job?.kind === "xlsx" ? ` ${job.pct}%` : ""}
-              {!exporting && <ChevronDown size={13} style={{ transition: "transform .15s", transform: exportMenu ? "rotate(180deg)" : "none" }} />}
+            <Btn compact variant="ghost" onClick={() => setExportMenu((v) => !v)} disabled={filtered.length === 0 || exporting || exportJobBusy} aria-haspopup="menu" aria-expanded={exportMenu}>
+              {(exporting || exportJobBusy) ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Download size={14} />}
+              Export Data{job && (job.kind === "xlsx" || job.kind === "xlsx-job") ? ` ${job.pct}%` : ""}
+              {!exporting && !exportJobBusy && <ChevronDown size={13} style={{ transition: "transform .15s", transform: exportMenu ? "rotate(180deg)" : "none" }} />}
             </Btn>
             {exportMenu && (
               <div className="ao-exp-menu" role="menu">
@@ -655,7 +722,7 @@ function SubmissionBody() {
                 </div>
                 <ExportOption
                   icon={<Images size={18} />} badge="Lengkap" title="Dengan foto di Excel"
-                  desc="Foto ditampilkan langsung di dalam cell. Proses lebih lama dan ukuran file lebih besar."
+                  desc={`Foto ditampilkan langsung di dalam cell. Diproses di server (bukan di browser) - maks ${AO_MAX_ROWS_WITH_PHOTOS} baris sekali export.`}
                   onClick={() => exportXlsx(true)}
                 />
                 <ExportOption
@@ -675,7 +742,7 @@ function SubmissionBody() {
       </div>
       </div>
 
-      {/* Bar progress nyata utk Export .xlsx / Download ZIP */}
+      {/* Bar progress nyata utk Export .xlsx (browser ATAU job server) / Download ZIP */}
       {job && (
         <div style={{ padding: "10px 16px", borderBottom: `1px solid ${BORDER}`, background: T.sub }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700, color: T.mid, marginBottom: 6 }}>
@@ -685,6 +752,34 @@ function SubmissionBody() {
           <div style={{ height: 6, borderRadius: 99, background: BORDER, overflow: "hidden" }}>
             <div style={{ width: `${job.pct}%`, height: "100%", background: T.primary, transition: "width .2s" }} />
           </div>
+        </div>
+      )}
+
+      {/* Job export (dgn foto) selesai di server - tombol Download muncul di
+          sini (bukan auto-download) krn job bisa selesai lama setelah user
+          pindah tab/halaman; link-nya signed URL (bucket privat), berlaku 1 jam. */}
+      {exportJob?.status === "done" && (
+        <div style={{ padding: "10px 16px", borderBottom: `1px solid ${BORDER}`, background: "#F0FDF4", display: "flex", alignItems: "center", gap: 10 }}>
+          <CheckCircle2 size={16} color="#16A34A" style={{ flex: "none" }} />
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: T.hi, flex: 1 }}>
+            File .xlsx ({(exportJob.totalRows || 0).toLocaleString("id-ID")} baris, dengan foto) sudah siap.
+          </span>
+          <a
+            href={exportJob.downloadUrl} download
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 12px", borderRadius: 8, background: T.primary, color: "#fff", fontSize: 12, fontWeight: 800, fontFamily: FONT, textDecoration: "none" }}
+          >
+            <Download size={13} /> Download
+          </a>
+          <button onClick={() => setExportJob(null)} aria-label="Tutup" style={{ border: "none", background: "transparent", cursor: "pointer", color: T.lo, padding: 4, display: "inline-flex" }}><X size={15} /></button>
+        </div>
+      )}
+      {exportJob?.status === "error" && (
+        <div style={{ padding: "10px 16px", borderBottom: `1px solid ${BORDER}`, background: "#FEF2F2", display: "flex", alignItems: "center", gap: 10 }}>
+          <XCircle size={16} color="#DC2626" style={{ flex: "none" }} />
+          <span style={{ fontSize: 12.5, fontWeight: 700, color: T.hi, flex: 1 }}>
+            Export .xlsx (dengan foto) gagal: {exportJob.errorMessage || "unknown error"}
+          </span>
+          <button onClick={() => setExportJob(null)} aria-label="Tutup" style={{ border: "none", background: "transparent", cursor: "pointer", color: T.lo, padding: 4, display: "inline-flex" }}><X size={15} /></button>
         </div>
       )}
 

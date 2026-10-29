@@ -1765,7 +1765,7 @@ function FocusSiteReport({ mode, period, periodLabel }) {
       list = branches
         .map((b) => {
           const branchHit = b.branch.toLowerCase().includes(q);
-          const siteList = branchHit ? b.siteList : b.siteList.filter((k) => (k.site_name || "").toLowerCase().includes(q) || (k.kecamatan_name || "").toLowerCase().includes(q));
+          const siteList = branchHit ? b.siteList : b.siteList.filter((k) => (k.site_name || "").toLowerCase().includes(q) || (k.kecamatan_name || "").toLowerCase().includes(q) || (k.site_id || "").toLowerCase().includes(q) || (k.mc || "").toLowerCase().includes(q));
           return siteList.length ? { ...b, siteList } : null;
         })
         .filter(Boolean);
@@ -1854,7 +1854,7 @@ function FocusSiteReport({ mode, period, periodLabel }) {
           <div style={{ marginTop: 16, display: "flex", gap: 8, flexWrap: "wrap" }}>
             <div style={{ flex: "1 1 140px", position: "relative", display: "flex", alignItems: "center" }}>
               <Search size={14} color="#B0B0BA" style={{ position: "absolute", left: 12, pointerEvents: "none" }} />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari branch atau site..."
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Cari Site / MC"
                 style={{
                   width: "100%", background: "#F6F7F9", border: "1px solid #ECEDF0", borderRadius: 12,
                   padding: "9px 30px 9px 32px", fontSize: 12.5, color: "#17181C", fontFamily: FF, boxSizing: "border-box",
