@@ -286,7 +286,7 @@ Deno.serve(async (req: Request) => {
           const cell = row.getCell(photoColStart + colOffset + 1);
 
           if (!includePhotos) {
-            cell.value = { text: "Lihat foto", hyperlink: pub.publicUrl };
+            cell.value = { text: pub.publicUrl, hyperlink: pub.publicUrl };
             cell.font = { color: { argb: "FF1D4ED8" }, underline: true };
             cell.alignment = { vertical: "middle" };
           } else {
