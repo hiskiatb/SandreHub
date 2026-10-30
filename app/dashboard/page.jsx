@@ -21,7 +21,7 @@ import {
   Shield, Globe, Building2, Store, SlidersHorizontal,
   Table2, Wallet, PanelLeftClose, PanelLeftOpen,
   FileSpreadsheet, Users, Key, Briefcase, Wrench, Mail, Sparkles, Archive,
-  Database, TrendingUp,
+  Database, TrendingUp, UserRoundCog,
 } from "lucide-react";
 
 import FormPendapatan   from "./components/PNL_FormPendapatan";
@@ -43,6 +43,7 @@ import PTS_Module        from "./components/PTS_Module";
 import ReportMerge_Module from "./components/ReportMerge_Module";
 import PNL_MPX_Menu       from "./components/PNL_MPX_Menu";
 import SDP_DseDatabase    from "./components/SDP_DseDatabase";
+import AdminMcMapping     from "./components/AdminMcMapping";
 import DSE_ProdAR         from "./components/DSE_ProdAR";
 
 // ─── Role Maps ────────────────────────────────────────────────────────────────
@@ -204,7 +205,22 @@ const getCurrentYear      = () => CURRENT_YEAR.toString();
 // sini krn halaman DSE Prod. & AR sekarang punya pemilihan Tanggal/Periode
 // sendiri (lihat DSE_ProdAR.jsx) - date picker bulan/tahun di header jadi
 // redundan & membingungkan kalau tetap tampil di halaman ini.
-const HIDE_DATE_PICKER_VIEWS    = new Set(["control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","sdp2","mc-cluster","kode-otoritas","mfts","menu-access","promotor-tracking","pnl-mpx","dse-prod-ar"]);
+const HIDE_DATE_PICKER_VIEWS    = new Set(["overview","control-center","pivot-summary","payout-tracker","admin-panel","import-wizard","sdp-status","sdp2","mc-cluster","kode-otoritas","mfts","menu-access","promotor-tracking","pnl-mpx","dse-prod-ar","user-management"]);
+
+// Daftar role di tabel profiles, dipakai dropdown "Pilih Role" di menu
+// User Management (permintaan user - "beda beda untuk detailnya"). ready:
+// false = belum ada UI kelolanya, tampil placeholder "Segera hadir".
+const USER_MGMT_ROLES = [
+  { k: "finance_mpx",                 label: "Finance MPX",                   ready: true },
+  { k: "spm_sumatera",                label: "SPM Sumatera",                  ready: false },
+  { k: "marketing_sumatera_program",  label: "Marketing Sumatera Program",    ready: false },
+  { k: "ioh_north_sumatera",          label: "IOH North Sumatera",            ready: false },
+  { k: "ioh_central_sumatera",        label: "IOH Central Sumatera",          ready: false },
+  { k: "ioh_south_sumatera",          label: "IOH South Sumatera",            ready: false },
+  { k: "internal_ioh",                label: "Internal IOH",                  ready: false },
+  { k: "martahub_super_user",         label: "MartaHub Super User",           ready: false },
+  { k: "agency",                      label: "Agency",                        ready: false },
+];
 const PNL_VIEWS = new Set(["summary","pendapatan","pengeluaran"]);
 // Filter Laporan (Region/Partner/Branch) di sidebar HANYA relevan untuk 4
 // modul di dalam menu "MPX P&L Report" — di luar situ disembunyikan
@@ -278,7 +294,7 @@ function MaintenanceView({ t, label, note, onBack }) {
         </div>
       )}
       <button className="back-btn" onClick={onBack} style={{ marginTop: 24, display: "inline-flex" }}>
-        <ChevronLeft size={15} /> Kembali ke Overview
+        <ChevronLeft size={15} /> Kembali ke Daftar Menu
       </button>
     </div>
   );
@@ -318,13 +334,9 @@ function DashCard({ icon, title, desc, tag, active, onClick, t, d, accent = {} }
           border: `1px solid ${hov && active ? ac.color : ac.bd}`,
           transition: "background .16s, color .16s, border-color .16s",
         }}>{icon}</div>
-        {tag && (
-          <span style={{
-            fontSize: 10, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase",
-            padding: "3px 8px", borderRadius: 5,
-            background: ac.bg, color: ac.color, border: `1px solid ${ac.bd}`, whiteSpace: "nowrap",
-          }}>{tag}</span>
-        )}
+        {/* badge "tag" dihapus dari tampilan (permintaan user - "hilangkan
+            semua badge nya") - prop `tag` masih diterima/dilewatkan di
+            tiap pemanggilan DashCard, cuma ga dirender lagi di sini. */}
       </div>
       <div>
         <h3 style={{ fontSize: 16, fontWeight: 700, letterSpacing: "-0.015em", color: t.hi, marginBottom: 6, lineHeight: 1.3 }}>{title}</h3>
@@ -437,7 +449,7 @@ function PnlPickerPrompt({
         </FilterSelect>
       </div>
       <div style={{ marginTop: 18, display: "flex", justifyContent: "center" }}>
-        <button onClick={onBack} className="back-btn"><ChevronLeft size={15} /> Kembali ke Overview</button>
+        <button onClick={onBack} className="back-btn"><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
       </div>
     </div>
   );
@@ -476,6 +488,13 @@ export default function DashboardPage() {
   // penuh; tidak mengubah role gating/akses sama sekali.
   const [archiveOpen,       setArchiveOpen]      = useState(false);
   const [sidebarArchiveOpen, setSidebarArchiveOpen] = useState(false);
+  // "User Management" bisa kelola beberapa role berbeda, tapi detail
+  // tiap role beda-beda (permintaan user - "ada button Pilih Role, karena
+  // beda beda untuk detailnya") - umRole nyimpen role yg sedang dipilih,
+  // defaultnya finance_mpx karena itu yg udah ada implementasinya (bukan
+  // "Admin MC" - itu istilah beda, permintaan user: "admin MC itu bukan
+  // finance mpx").
+  const [umRole,            setUmRole]             = useState("finance_mpx");
   // Sub-menu langsung ke 4 modul di dalam "MPX P&L Report" — collapsed
   // default; klik label menu tetap buka layar PNL_MPX_Menu, chevron ini
   // cuma pintasan sidebar.
@@ -803,7 +822,7 @@ export default function DashboardPage() {
           <div style={{ display: "flex", alignItems: "center", gap: 2, marginBottom: 2 }}>
             <button onClick={() => { navigate("overview"); setNavOpen(true); }} className={`snav${view === "overview" ? " active" : ""}`} style={{ flex: 1 }}>
               <span style={{ display: "flex", opacity: view === "overview" ? 1 : 0.7 }}><LayoutGrid size={15} /></span>
-              <span style={{ flex: 1 }}>Overview</span>
+              <span style={{ flex: 1 }}>Daftar Menu</span>
             </button>
             <button onClick={() => setNavOpen(!navOpen)} title={navOpen ? "Sembunyikan navigasi" : "Tampilkan navigasi"}
               style={{ flexShrink: 0, width: 26, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", cursor: "pointer", color: t.lo, borderRadius: 6, fontFamily: "inherit" }}>
@@ -841,14 +860,14 @@ export default function DashboardPage() {
                   )}
                   {!isSDPMember && <SNavItem icon={<Wallet size={14} />}      label="Payout Tracker"       active={view === "payout-tracker"} maint={menuMaint("payout-tracker")} onClick={() => navigate("payout-tracker")} />}
                   {canSdp       && <SNavItem icon={<Store size={14} />}       label="SDP Management"       active={view === "sdp2"}           onClick={() => navigate("sdp2")} />}
-                  {isSPM        && <SNavItem icon={<Shield size={14} />}      label="Admin Panel"          active={view === "admin-panel"}    onClick={() => navigate("admin-panel")} />}
                   {/* UPDATE (permintaan user - "mapping admin mc itu
                       seharusnya didalam dse prod, bukan menjadi menu
                       terpisah, namanya user management"): nav item & card
                       "Mapping Admin MC" yg terpisah DIHAPUS - fitur yg sama
                       skrg jadi tab "User Management" DI DALAM DSE Prod. &
                       AR itu sendiri (lihat DSE_ProdAR.jsx). */}
-                  {(isSPM || isMPX) && <SNavItem icon={<TrendingUp size={14} />} label="DSE Prod. & AR"     active={view === "dse-prod-ar"}    onClick={() => navigate("dse-prod-ar")} />}
+                  {(isSPM || isMPX) && <SNavItem icon={<Wallet size={14} />}     label="DSE Prod. & AR"     active={view === "dse-prod-ar"}    onClick={() => navigate("dse-prod-ar")} />}
+                  {isSPM        && <SNavItem icon={<UserRoundCog size={14} />}   label="User Management"   active={view === "user-management"} onClick={() => navigate("user-management")} />}
 
                   {/* Archive — menu lama, dipertimbangkan dihapus ke depannya;
                       code TIDAK dihapus, cuma dikumpulkan & collapsed di sini. */}
@@ -869,6 +888,7 @@ export default function DashboardPage() {
                           {isSPM        && <SNavItem icon={<MapPin size={14} />}           label="MC/Cluster Mapping" active={view === "mc-cluster"}       onClick={() => navigate("mc-cluster")} />}
                           {isSPM        && <SNavItem icon={<Database size={14} />}         label="Database DSE"      active={view === "dse-database"}     onClick={() => navigate("dse-database")} />}
                           {isSPM        && <SNavItem icon={<Key size={14} />}              label="Kode Otoritas"      active={view === "kode-otoritas"}    onClick={() => navigate("kode-otoritas")} />}
+                          {isSPM        && <SNavItem icon={<Shield size={14} />}            label="Kode Otoritas MPX"  active={view === "admin-panel"}      onClick={() => navigate("admin-panel")} />}
                           {canReportMerge && <SNavItem icon={<Mail size={14} />}         label="Report Merge"       active={view === "report-merge"}     onClick={() => navigate("report-merge")} />}
                         </>
                       )}
@@ -971,10 +991,18 @@ export default function DashboardPage() {
             {/* ── Overview ── */}
             {view === "overview" && (
               <motion.div key="ov" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} style={{ maxWidth: 980, margin: "0 auto" }}>
-                <div style={{ marginBottom: 26 }}>
-                  <h1 style={{ fontSize: 27, fontWeight: 800, letterSpacing: "-0.03em", color: t.hi, marginBottom: 6 }}>Daftar Menu</h1>
-                  <p style={{ fontSize: 14, color: t.mid }}>Semua modul yang bisa Anda kelola, dalam satu tempat.</p>
-                  <div style={{ width: 40, height: 3, borderRadius: 2, marginTop: 12, background: "linear-gradient(90deg, #ED1C24, #C6168D)" }} />
+                {/* UPDATE (permintaan user - "daftar menu ini redesign...
+                    maksud saya title daftar menunya" + contoh gambar header
+                    DSE Prod. & AR "seperti ini dengan icon namun tidak
+                    perlu pemilihan periode"): judul "Daftar Menu" diganti
+                    pola card-bar yg sama kayak header modul lain (icon box
+                    + title, dibungkus 1 card), cuma TANPA bagian
+                    Periode/Full Month-Daily (ga relevan di overview). */}
+                <div style={{ display: "flex", alignItems: "center", gap: 12, borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "10px 16px", marginBottom: 20 }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 10, background: t.blueBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <LayoutGrid size={17} color={t.blue} />
+                  </div>
+                  <div style={{ fontSize: 19, fontWeight: 700, letterSpacing: -0.3 }}>Daftar Menu</div>
                 </div>
 
                 {/* Partner/branch yang sedang aktif (kalau ada) tetap ditampilkan
@@ -1015,13 +1043,6 @@ export default function DashboardPage() {
                       accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.12)" : "rgba(26,158,144,0.08)", bd: d ? "rgba(50,188,173,0.3)" : "rgba(26,158,144,0.2)", shadow: "rgba(50,188,173,0.16)" }} />
                   )}
 
-                  {isSPM && (
-                    <DashCard icon={<Shield size={20} />} title="Admin Panel"
-                      desc="Kelola kode otoritas dan daftar partner branches seluruh Sumatera."
-                      tag="Sistem" active={true} onClick={() => navigate("admin-panel")} t={t} d={d}
-                      accent={{ color: d ? "#A78BFA" : "#7C3AED", bg: d ? "rgba(167,139,250,0.11)" : "rgba(124,58,237,0.07)", bd: d ? "rgba(167,139,250,0.28)" : "rgba(124,58,237,0.18)", shadow: "rgba(124,58,237,0.18)" }} />
-                  )}
-
                   {/* UPDATE (permintaan user - "mapping admin mc itu
                       seharusnya didalam dse prod, bukan menjadi menu
                       terpisah, namanya user management"): DashCard
@@ -1034,6 +1055,15 @@ export default function DashboardPage() {
                       desc="Upload produksi harian DSE (SP, Saldo, Voucher) dan AR/piutang outstanding, per Kode DSE."
                       tag={isMPX ? "Admin MC" : "SPM"} active={true} onClick={() => navigate("dse-prod-ar")} t={t} d={d}
                       accent={{ color: d ? "#32BCAD" : "#1A9E90", bg: d ? "rgba(50,188,173,0.11)" : "rgba(26,158,144,0.07)", bd: d ? "rgba(50,188,173,0.28)" : "rgba(26,158,144,0.20)", shadow: "rgba(26,158,144,0.16)" }} />
+                  )}
+
+                  {/* User Management diletakkan paling akhir (permintaan
+                      user - "user management paling akhir") */}
+                  {isSPM && (
+                    <DashCard icon={<UserRoundCog size={20} />} title="User Management"
+                      desc="Kelola user & role untuk setiap modul, dalam satu tempat."
+                      tag="Sistem" active={true} onClick={() => navigate("user-management")} t={t} d={d}
+                      accent={{ color: d ? "#A78BFA" : "#7C3AED", bg: d ? "rgba(167,139,250,0.11)" : "rgba(124,58,237,0.07)", bd: d ? "rgba(167,139,250,0.28)" : "rgba(124,58,237,0.18)", shadow: "rgba(124,58,237,0.18)" }} />
                   )}
                 </div>
 
@@ -1112,6 +1142,13 @@ export default function DashboardPage() {
                             accent={{ color: "#C6168D", bg: d ? "rgba(198,22,141,0.11)" : "rgba(198,22,141,0.07)", bd: d ? "rgba(198,22,141,0.28)" : "rgba(198,22,141,0.16)", shadow: "rgba(198,22,141,0.16)" }} />
                         )}
 
+                        {isSPM && (
+                          <DashCard icon={<Shield size={20} />} title="Kode Otoritas MPX"
+                            desc="Kelola kode otoritas dan daftar partner branches seluruh Sumatera."
+                            tag="Sistem" active={true} onClick={() => navigate("admin-panel")} t={t} d={d}
+                            accent={{ color: d ? "#A78BFA" : "#7C3AED", bg: d ? "rgba(167,139,250,0.11)" : "rgba(124,58,237,0.07)", bd: d ? "rgba(167,139,250,0.28)" : "rgba(124,58,237,0.18)", shadow: "rgba(124,58,237,0.18)" }} />
+                        )}
+
                         {canReportMerge && (
                           <DashCard icon={<Mail size={20} />} title="Report Merge"
                             desc="Mail-merge email & pembuatan surat PDF dengan alur approval."
@@ -1128,7 +1165,7 @@ export default function DashboardPage() {
             {/* ── PNL Control Center ── */}
             {view === "control-center" && canMonitor && !viewUnderMaint && (
               <motion.div key="cc" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <PNLControlCenter
                   theme={theme} masterData={masterData} activeYear={activeYear} activeMonth={activeMonth}
                   disabledMonthsMap={disabledMonthsMap} userRole={profile?.role}
@@ -1141,7 +1178,7 @@ export default function DashboardPage() {
             {/* ── Pivot P&L Summary ── */}
             {view === "pivot-summary" && canMonitor && !viewUnderMaint && (
               <motion.div key="ps" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <PNLPivotSummary theme={theme} activeYear={activeYear} userRole={profile?.role} partnerName={isMPX ? profile?.partner_name : null} />
               </motion.div>
             )}
@@ -1149,7 +1186,7 @@ export default function DashboardPage() {
             {/* ── Payout Tracker ── */}
             {view === "payout-tracker" && !isSDPMember && !viewUnderMaint && (
               <motion.div key="pt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <PayoutTracker theme={theme} profile={profile} regionFilter={iohRegionView} partnerName={isMPX ? (profile?.partner_name || null) : (activePartner || null)} filterType={activeType !== "ALL" ? activeType : null} readOnly={isReadOnly} masterData={masterData} />
               </motion.div>
             )}
@@ -1157,7 +1194,7 @@ export default function DashboardPage() {
             {/* ── MFTS — Pemenuhan Manpower ── */}
             {view === "mfts" && canMfts && !viewUnderMaint && (
               <motion.div key="mfts" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <MFTS_Module supabase={supabase} theme={theme} profile={profile} scopeRegion={iohRegionView} />
               </motion.div>
             )}
@@ -1165,7 +1202,7 @@ export default function DashboardPage() {
             {/* ── Promotor Tracking System ── */}
             {view === "promotor-tracking" && (isSPM || isPICRegion || isSFM || isCSE) && (
               <motion.div key="pts" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
                   <div style={{ padding: "24px 28px" }}>
                     <PTS_Module supabase={supabase} theme={theme} profile={profile} />
@@ -1177,7 +1214,7 @@ export default function DashboardPage() {
             {/* ── Admin Panel ── */}
             {view === "admin-panel" && isSPM && (
               <motion.div key="ap" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <AdminPanel theme={theme} profile={profile} onBranchesChanged={refreshBranches} />
               </motion.div>
             )}
@@ -1185,7 +1222,7 @@ export default function DashboardPage() {
             {/* ── Import Data Otomatis ── */}
             {view === "import-wizard" && isSPM && (
               <motion.div key="iw" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
                   <div style={{ padding: "28px 32px" }}>
                     <PNL_ImportWizard theme={theme} supabase={supabase} />
@@ -1197,7 +1234,7 @@ export default function DashboardPage() {
             {/* ── MC / Cluster Mapping ── */}
             {view === "mc-cluster" && isSPM && (
               <motion.div key="mc" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <MC_ClusterMapping theme={theme} profile={profile} />
               </motion.div>
             )}
@@ -1205,7 +1242,7 @@ export default function DashboardPage() {
             {/* ── Database DSE ── */}
             {view === "dse-database" && isSPM && (
               <motion.div key="dse-db" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <SDP_DseDatabase theme={theme} profile={profile} />
               </motion.div>
             )}
@@ -1217,10 +1254,47 @@ export default function DashboardPage() {
               </motion.div>
             )}
 
+            {/* ── User Management (migrasi dari tab "Mapping & User
+                Management" di dalam DSE Prod. & AR - permintaan user:
+                "mulai dari migrasi user management untuk Admin Micro
+                Cluster" - jadi menu sidebar sendiri, isSPM saja).
+                UPDATE (permintaan user - "ada button Pilih Role, karena
+                beda beda untuk detailnya"): dropdown "Pilih Role"
+                ditambahkan karena tiap role di tabel profiles punya
+                detail/cara kelola yg beda-beda. Baru role finance_mpx
+                yg ada implementasinya (AdminMcMapping, migrasi dari DSE
+                Prod & AR) - role lain tampil "Segera hadir" dulu. */}
+            {view === "user-management" && isSPM && (
+              <motion.div key="user-mgmt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
+
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20, flexWrap: "wrap" }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: t.mid, textTransform: "uppercase", letterSpacing: 0.3 }}>Pilih Role</div>
+                  <div style={{ position: "relative" }}>
+                    <select value={umRole} onChange={(e) => setUmRole(e.target.value)}
+                      style={{ appearance: "none", WebkitAppearance: "none", height: 38, padding: "0 32px 0 14px", borderRadius: 9, border: `1px solid ${t.inputBd}`, background: t.inputBg, color: t.hi, fontSize: 13, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
+                      {USER_MGMT_ROLES.map((r) => (
+                        <option key={r.k} value={r.k}>{r.label}{r.ready ? "" : " (Segera hadir)"}</option>
+                      ))}
+                    </select>
+                    <ChevronDown size={14} color={t.lo} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }} />
+                  </div>
+                </div>
+
+                {umRole === "finance_mpx" ? (
+                  <AdminMcMapping theme={theme} />
+                ) : (
+                  <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: "40px 24px", textAlign: "center", color: t.mid, fontSize: 13 }}>
+                    Pengelolaan user untuk role &ldquo;{USER_MGMT_ROLES.find((r) => r.k === umRole)?.label}&rdquo; belum tersedia — segera hadir.
+                  </div>
+                )}
+              </motion.div>
+            )}
+
             {/* ── Kode Otoritas ── */}
             {view === "kode-otoritas" && isSPM && (
               <motion.div key="ko" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <KodeOtoritas theme={theme} profile={profile} />
               </motion.div>
             )}
@@ -1270,7 +1344,7 @@ export default function DashboardPage() {
 
             {view === "sdp-status" && canSdp && !viewUnderMaint && (
               <motion.div key="sdp" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                {/* Tombol "Kembali ke Overview" ditangani DI DALAM SDP_StatusForm
+                {/* Tombol "Kembali ke Daftar Menu" ditangani DI DALAM SDP_StatusForm
                     (hanya tampil di landing SDP) agar tidak menumpuk dengan tombol
                     kembali sub-view. */}
                 <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
@@ -1292,7 +1366,7 @@ export default function DashboardPage() {
             {/* ── Kelola Menu (SPM) ── */}
             {view === "menu-access" && isSPM && (
               <motion.div key="ma" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <div style={{ borderRadius: 12, border: `1px solid ${t.line}`, background: t.surface, boxShadow: t.shadowSm, overflow: "hidden" }}>
                   <div style={{ padding: "24px 28px" }}>
                     <MenuAccessManager supabase={supabase} theme={theme} profile={profile} />
@@ -1304,7 +1378,7 @@ export default function DashboardPage() {
             {/* ── Pemberitahuan menu sedang dipelihara ── */}
             {viewUnderMaint && (
               <motion.div key="maint" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }}>
-                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 22 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 <MaintenanceView t={t} label={CONTROLLABLE_MENUS[viewMenuKey]} note={menuStatus.get(viewMenuKey)?.note} onBack={() => navigate("overview")} />
               </motion.div>
             )}
@@ -1312,7 +1386,7 @@ export default function DashboardPage() {
             {/* ── Laporan P&L (Summary / Pendapatan / Pengeluaran) ── */}
             {PNL_VIEWS.has(view) && !viewUnderMaint && (
               <motion.div key="fv" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.18 }} style={{ maxWidth: 920, margin: "0 auto" }}>
-                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 20 }}><ChevronLeft size={15} /> Kembali ke Overview</button>
+                <button className="back-btn" onClick={() => navigate("overview")} style={{ marginBottom: 20 }}><ChevronLeft size={15} /> Kembali ke Daftar Menu</button>
                 {!canPnl ? (
                   <PnlPickerPrompt t={t} d={d} isSPM={isSPM} isMPX={isMPX} isIOHAny={isIOHAny} iohLockedRegion={iohLockedRegion}
                     regions={regions} filteredPartners={filteredPartners} availableTypes={availableTypes} availableBranches={availableBranches}

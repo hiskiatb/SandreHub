@@ -30,13 +30,12 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import supabase from "../../../lib/supabase";
 import * as XLSX from "xlsx";
-import AdminMcMapping from "./AdminMcMapping";
 import SDP_DseDatabase from "./SDP_DseDatabase";
 import ExcelFilter from "./ExcelFilter";
 import {
   Upload, FileSpreadsheet, X, Check, AlertTriangle, Loader2, FileDown,
   Search, RefreshCw, ChevronDown, ChevronUp, ChevronRight, Wallet, TrendingUp, Calendar, Info,
-  Pencil, Save, ListChecks, History, UserRoundCog, Database,
+  Pencil, Save, ListChecks, History, Database,
   Users, UserCheck, UserX, Ticket, CircleDollarSign, Clock, CalendarCheck2,
 } from "lucide-react";
 
@@ -955,7 +954,6 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
   // "as of" tanggal yg dipakai Mapping & User Management utk nampilin mapping
   // yg BERLAKU pada tanggal itu (pakai riwayat kalau tanggalnya di masa
   // lalu) — single mode: entryDate; multi mode: tanggal paling akhir dipilih.
-  const mappingAsOfDate = isRangeMode ? rangeEnd : entryDate;
   // UPDATE (permintaan user - "selain mc bisa pilih branch region juga di
   // input manual"): selain MC, Region & Branch sekarang juga bisa dipilih
   // sbg filter sendiri (cascading: pilih Region -> opsi Branch menyempit ->
@@ -1737,7 +1735,6 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
         {[
           { k: "input", label: "Penjualan DSE", icon: ListChecks }, // UPDATE (permintaan user - "ubah menu Input Harian menjadi Penjualan DSE"): label tab, key "input" tetap sama (ga perlu ubah logic lain)
           { k: "riwayat", label: "Riwayat & Laporan", icon: History },
-          ...(isSPM ? [{ k: "user-mgmt", label: "Mapping & User Management", icon: UserRoundCog }] : []),
           ...(isSPM ? [{ k: "dse-database", label: "Database DSE", icon: Database }] : []),
         ].map(({ k, label, icon: Icon }) => (
           <button key={k} onClick={() => runGuarded(() => setTab(k))}
@@ -1749,10 +1746,6 @@ export default function DSE_ProdAR({ theme, profile, onBack }) {
 
       {tab === "dse-database" ? (
         <SDP_DseDatabase theme={theme} profile={profile} />
-      ) : tab === "user-mgmt" ? (
-        <AdminMcMapping theme={theme}
-          asOfDate={(isRangeMode || entryDate !== todayISO()) ? `${mappingAsOfDate}T23:59:59` : null}
-          asOfLabel={isRangeMode ? `akhir periode ${fmtLongDate(rangeEnd)}` : fmtLongDate(entryDate)} />
       ) : tab === "input" ? (
         <>
           <div style={{ borderRadius: 14, border: `1px solid ${t.line}`, background: t.card, boxShadow: t.shadowSm, padding: 16, marginBottom: 16 }}>

@@ -15,9 +15,10 @@
  *   dengan Update/Terminate/Remapping/Hybrid Pairing yang membingungkan di
  *   sana. Form induk (Archive) tetap memanggil tanpa prop ini → tak berubah.
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
-  ArrowLeft, Check, Loader2, AlertCircle, MapPin, CalendarDays,
+  ArrowLeft, Check, Loader2, AlertCircle, MapPin,
   Building2, Users, ClipboardCheck, Sparkles, Info, ChevronDown, ChevronRight, ChevronLeft, Save, AlertTriangle, Store, Truck, Home, Link2,
 } from "lucide-react";
 import {
@@ -31,24 +32,39 @@ import { UploadCloud, FileText, X as XIcon, FileCheck2, ShieldCheck } from "luci
 import { uploadSdpDocument, sdpDriveFolderUrl } from "../../../lib/sdp/driveRelay";
 import { supabaseMarta } from "../../../lib/supabaseMarta";
 
-// Dokumen wajib mengikuti SDP Operation SOP (Section 3: Document Fulfillment
-// & Foldering) — diunggah LANGSUNG ke database kita (Storage bucket `sdp-docs`
-// + tabel `sdp_documents`), BUKAN lagi berupa link folder eksternal. Kategori
+// Dokumen wajib mengikuti tabel requirement resmi SDP Operation SOP —
+// diunggah LANGSUNG ke database kita (Storage bucket `sdp-docs` + tabel
+// `sdp_documents`), BUKAN lagi berupa link folder eksternal. Kategori
 // disisipkan di nama file supaya tetap bisa dibedakan tanpa kolom skema baru.
-//   • Akta Pendirian: wajib khusus badan usaha (PT/CV/Other Business Entity),
-//     tidak wajib untuk partner perorangan (Individual).
-//   • NIB adalah pengganti SIUP+SKDP+TDP (either/or, bukan dua-duanya wajib) —
-//     SOP: "SIUP + SKDP + TDP — Pengganti NIB jika NIB tidak tersedia".
+//
+//   Dokumen                                            Requirement
+//   ───────────────────────────────────────────────── ──────────────────────
+//   KTP                                                 Mandatory
+//   NPWP                                                Mandatory
+//   Akta Pendirian                                       Mandatory untuk badan usaha
+//   NIB                                                  Mandatory jika tersedia
+//   SIUP + SKDP + TDP                                    Pengganti NIB jika NIB tidak tersedia
+//   Bank Account Number & Name                           Mandatory
+//   SPPKP                                                Mandatory
+//   PKS                                                  Mandatory
+//   Supplier Form / ABAC / LOI / Authorized Personnel    Jika diperlukan (opsional - section terpisah di bawah)
+//
+// `req` & `reqTone` = label badge + warna yang dipakai DocumentChecklist agar
+// setiap baris menampilkan requirement-nya persis seperti tabel di atas.
 const DOC_SLOTS = [
-  { key: "ktp", label: "KTP Penanggung Jawab" },
-  { key: "npwp", label: "NPWP Perusahaan" },
-  { key: "akta", label: "Akta Pendirian", conditional: "badan_usaha" },
-  { key: "legalitas", label: "NIB", either: "SIUP + SKDP + TDP (jika tidak punya NIB)" },
-  { key: "rekening", label: "Buku Tabungan / No. Rekening" },
-  { key: "sppkp", label: "SPPKP" },
-  { key: "pks", label: "PKS (Perjanjian Kerja Sama)" },
+  { key: "ktp", label: "KTP", sub: "Penanggung Jawab", req: "Mandatory", reqTone: "acc" },
+  { key: "npwp", label: "NPWP", sub: "Perusahaan", req: "Mandatory", reqTone: "acc" },
+  { key: "akta", label: "Akta Pendirian", conditional: "badan_usaha", req: "Mandatory · Badan Usaha", reqTone: "amber" },
+  { key: "legalitas", label: "NIB", req: "Mandatory jika tersedia", reqTone: "acc",
+    either: { key: "siup", label: "SIUP + SKDP + TDP", req: "Pengganti NIB jika NIB tidak tersedia", reqTone: "blue" } },
+  { key: "rekening", label: "Bank Account Number & Name", sub: "Buku Tabungan / No. Rekening", req: "Mandatory", reqTone: "acc" },
+  { key: "sppkp", label: "SPPKP", req: "Mandatory", reqTone: "acc" },
+  { key: "pks", label: "PKS", sub: "Perjanjian Kerja Sama", req: "Mandatory", reqTone: "acc" },
 ];
-// Slot aktif tergantung jenis partner — badan usaha vs perorangan.
+// Slot aktif tergantung jenis partner — badan usaha vs perorangan. Dokumen
+// "Jika diperlukan" (Supplier Form/ABAC/LOI/Authorized Personnel) BUKAN slot
+// wajib di sini — itu ditampilkan terpisah sbg upload opsional bebas di
+// DocumentChecklist (section "Dokumen Pendukung Lainnya").
 const activeDocSlots = (val) => DOC_SLOTS.filter((s) =>
   s.conditional !== "badan_usaha" || (val.company_type && val.company_type !== "Individual"));
 
@@ -84,12 +100,21 @@ const DB_COLS = [
 // Wizard bertahap — tiap langkah berisi sekelompok field. Kolom auto/HQ disembunyikan.
 const STEPS = [
   { id: "jenis", title: "Jenis Pengajuan", icon: ClipboardCheck, intro: true, hint: "Pilih jenis pengajuan dulu — ini menentukan apakah perlu memilih SDP existing.",
-    fields: [["request_type","Request Type","enum:request_type"],["registration_scope","Registration Scope","enum:registration_scope"],
-             ["cycle_month","Bulan Siklus (target live)","month"],["submission_date","Tanggal Submit","date"],
-             ["pairing_id","Pairing ID (auto jika Hybrid)"],["hybrid_type","Hybrid Type","enum:hybrid_type"]] },
+    // Urutan field persis mengikuti kolom template Excel: Pairing ID(1) →
+    // Submission Date(4) → Request Type(5) → Registration Scope(6) →
+    // Hybrid Type(27). "Bulan Siklus" (cycle_month) BUKAN kolom Excel —
+    // ditaruh berdekatan dgn Submission Date karena sama-sama field periode.
+    fields: [["pairing_id","Pairing ID (auto jika Hybrid)"],["submission_date","Tanggal Submit","date"],
+             ["cycle_month","Bulan Siklus (target live)","month"],
+             ["request_type","Request Type","enum:request_type"],["registration_scope","Registration Scope","enum:registration_scope"],
+             ["hybrid_type","Hybrid Type","enum:hybrid_type"]] },
   { id: "wilayah", title: "Wilayah & Brand", icon: MapPin, hint: "Scope wilayah & brand — dasar pembentukan SDP ID.",
+    // Urutan Excel: Brand(2) → Circle(7) → Region(8) → Branch(9) → SDP
+    // Name(10) → Kab/Kota(22) → Kecamatan Coverage(23). Micro Cluster &
+    // Partner Territory BUKAN kolom Excel — ditaruh berdekatan dgn
+    // Branch/Kecamatan karena sama-sama scope wilayah.
     fields: [["brand","Brand","enum:brand"],["circle","Circle","geo"],["region","Region","geo"],["branch","Branch","geo"],["micro_cluster","Micro Cluster","geo"],
-             ["kabupaten","Kab/Kota"],["kecamatan_coverage","Kecamatan Coverage"],["partner_territory","Partner Territory"],["sdp_name","SDP Name"]] },
+             ["sdp_name","SDP Name"],["kabupaten","Kab/Kota"],["kecamatan_coverage","Kecamatan Coverage"],["partner_territory","Partner Territory"]] },
   { id: "partner", title: "Data Partner", icon: Building2, hint: "Identitas & legalitas partner.",
     fields: [["partner_company_name","Partner / Company Name"],["customer_legal_name","Customer Legal Name"],
              ["company_type","Company Type","enum:company_type"],["status_company","Status Company","enum:status_company"],
@@ -97,8 +122,16 @@ const STEPS = [
   { id: "lokasi", title: "Lokasi & Alamat", icon: MapPin, hint: "Alamat & titik lokasi SDP di peta.", custom: true,
     fields: [["bill_to_address"],["ship_to_address"],["kode_pos"]] },
   { id: "kontak", title: "Kontak & Bank", icon: Users, hint: "PIC, CSE, dan rekening bank.",
+    // Urutan Excel: PIC Name(18) → PIC Phone(19) → MSISDN(20) → PIC
+    // Email(21) → Email PIC IOH(22) → CSE Name(31) → CSE Partner ID(32) →
+    // CSE Number(33) → Bank Name(34) → Bank Branch/KCP(35) → Bank Account
+    // Number(36) → Bank Account Name(37) → Commitment Fee Status(38).
+    // CATATAN: "CSE Partner ID" ADALAH kolom resmi Excel/DB (cse_partner_id)
+    // tapi SEBELUMNYA tidak pernah punya field input di form ini — jadi tak
+    // bisa diisi lewat Registrasi SDP sama sekali. Ditambahkan di sini.
     fields: [["pic_name_partner","PIC Name Partner"],["pic_phone_number","PIC Phone"],["msisdn_master_trx","MSISDN Master TRX"],
-             ["pic_email_partner","Email PIC Partner"],["email_pic_ioh","Email PIC IOH"],["cse_name","CSE Name"],["cse_number","CSE Number"],
+             ["pic_email_partner","Email PIC Partner"],["email_pic_ioh","Email PIC IOH"],["cse_name","CSE Name"],
+             ["cse_partner_id","CSE Partner ID"],["cse_number","CSE Number"],
              ["bank_name","Bank Name"],["bank_branch_kcp","Bank Branch / KCP"],["bank_account_number","No. Rekening"],
              ["bank_account_name","Nama Rekening"],["commitment_fee_status","Commitment Fee Status","enum:commitment_fee_status"]] },
   { id: "review", title: "Dokumen & Kirim", icon: ClipboardCheck, hint: "Lampirkan dokumen wajib, tinjau ringkasan, lalu kirim.", review: true,
@@ -138,6 +171,18 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
   const [step, setStep] = useState(0);
   const [dirty, setDirty] = useState(false);
   const [confirmLeave, setConfirmLeave] = useState(false);
+  // Footer navigasi (Kembali/Simpan Draft/Lanjut) di-portal keluar dari area
+  // scroll ".content-pad" (lihat app/dashboard/page.jsx) ke dalam <main> yang
+  // sama tempat <header> dirender — supaya PERSIS seperti header: nempel
+  // full-width di tepi (atas utk header, bawah utk footer ini), TIDAK ikut
+  // ter-scroll, dan TIDAK tertutup padding ".content-pad". Kalau elemen
+  // target belum ketemu (SSR / render pertama), fallback render inline biasa
+  // di posisi lama supaya tidak pernah hilang sama sekali.
+  const [footerPortalEl, setFooterPortalEl] = useState(null);
+  useEffect(() => {
+    const mainEl = document.querySelector(".content-pad")?.parentElement || null;
+    setFooterPortalEl(mainEl);
+  }, []);
   const draftKey = `sdp_quickform_draft_${profile?.id || "anon"}`;
   // Draft server + berbagi link
   const [serverDraftId, setServerDraftId] = useState(initialDraft?.id || null);
@@ -576,6 +621,24 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
   const renderField = ([k, label, type]) => {
     const full = type === "area" || type === "link";
     const wrap = (node) => <div key={k} style={{ gridColumn: full ? "1 / -1" : "auto", minWidth: 0 }}>{node}</div>;
+    // "SDP ID" otomatis — ukuran/style box disamakan persis dgn Field lain
+    // (base style: w-100%, padding 11px 12px, radius 10, border, border-box)
+    // tapi non-interaktif (readonly, bukan <input>/<select>) krn nilainya
+    // cuma preview hasil generate_sdp_id, ga boleh diedit manual.
+    if (k === "sdp_id_preview") return wrap(
+      <label style={{ display: "block" }}>
+        <div style={lblStyle}>{label}</div>
+        <div style={{
+          width: "100%", boxSizing: "border-box", padding: "11px 12px", borderRadius: 10,
+          border: `1px solid ${t.line}`, background: t.sub, color: idPreview ? t.hi : t.lo,
+          fontSize: 14, fontFamily: FF, fontWeight: idPreview ? 700 : 500, display: "flex", alignItems: "center", gap: 6, minHeight: 42,
+        }}>
+          <Sparkles size={13} color={t.tealD} style={{ flexShrink: 0 }} />
+          <span style={{ fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {idPreview || "—"}{willGenerate && isHybridScope(val.registration_scope) && idPreview ? " +KSK" : ""}
+          </span>
+        </div>
+      </label>);
     if (k === "kabupaten") return wrap(
       <label style={{ display: "block" }}>
         <div style={lblStyle}>{label}</div>
@@ -620,9 +683,18 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
         if (i === 0) {
           return {
             ...s, title: "Scope & Brand", hint: "Isi ini dulu — begitu lengkap, SDP ID langsung dibuatkan otomatis di bawah.",
+            // Urutan Excel: Brand(2) → Registration Scope(6) → Circle(7) →
+            // Hybrid Type(27). cycle_month = extra (bukan kolom Excel).
+            // UPDATE (permintaan user - "id jangan buat disini, tapi
+            // sejajar dengan kolom brand ... ukurannya sama dengan kolom
+            // brand dan lainnya"): field semu "sdp_id_preview" disisipkan
+            // tepat setelah brand, jadi di grid 2-kolom dia SATU BARIS
+            // dengan Brand (bukan lagi chip terpisah di header). Field ini
+            // readonly (auto-generated), ditangani khusus di renderField().
             fields: [
-              ["registration_scope","Registration Scope","enum:registration_scope"],
               ["brand","Brand","enum:brand"],
+              ["sdp_id_preview","SDP ID","readonly"],
+              ["registration_scope","Registration Scope","enum:registration_scope"],
               ["circle","Circle","geo"],
               ["cycle_month","Bulan Siklus (target live)","month"],
               ["hybrid_type","Hybrid Type","enum:hybrid_type"],
@@ -632,8 +704,11 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
         if (i === 1) {
           return {
             ...s, title: "Wilayah Operasional", hint: "Detail wilayah & nama SDP — Brand dan Circle sudah diisi di langkah sebelumnya.",
+            // Urutan Excel: Region(8) → Branch(9) → SDP Name(10) →
+            // Kab/Kota(22) → Kecamatan Coverage(23). Micro Cluster & Partner
+            // Territory = extra (bukan kolom Excel).
             fields: [["region","Region","geo"],["branch","Branch","geo"],["micro_cluster","Micro Cluster","geo"],
-                     ["kabupaten","Kab/Kota"],["kecamatan_coverage","Kecamatan Coverage"],["partner_territory","Partner Territory"],["sdp_name","SDP Name"]],
+                     ["sdp_name","SDP Name"],["kabupaten","Kab/Kota"],["kecamatan_coverage","Kecamatan Coverage"],["partner_territory","Partner Territory"]],
           };
         }
         return s;
@@ -644,18 +719,35 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
 
   return (
     <div style={{ fontFamily: FF, color: t.hi, maxWidth: 880, margin: "0 auto", paddingBottom: 8 }}>
-      {/* Header + SDP ID chip */}
-      <button onClick={handleLeave} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: t.mid, fontFamily: FF, fontSize: 13, fontWeight: 600, padding: 0, marginBottom: 14 }}>
-        <ArrowLeft size={15} /> Kembali
-      </button>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
-        <div>
-          <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: -0.4 }}>{lockRequestType ? "Registrasi SDP Baru" : "Registrasi & Perubahan SDP"}</div>
-          <div style={{ fontSize: 12.5, color: t.mid, marginTop: 2 }}>Isi bertahap{profile?.cluster ? ` · cluster ${profile.cluster}` : profile?.region ? ` · region ${profile.region}` : ""}.</div>
-        </div>
-        <div style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "8px 12px", borderRadius: 10, background: t.tealBg, border: `1px solid ${t.tealBd}`, color: t.tealD, fontSize: 12.5, fontWeight: 800 }}>
-          <Sparkles size={14} /> {willGenerate ? "SDP ID" : "SDP ID (existing)"}: <span style={{ fontFamily: "monospace" }}>{idPreview || "—"}</span>{willGenerate && isHybridScope(val.registration_scope) && idPreview ? " +KSK" : ""}
-        </div>
+      {/* Header + SDP ID chip.
+          UPDATE (permintaan user - "tombol simpan draft diatas sejajar
+          tombol kembali yang di atas"): tombol "Simpan Draft" (sama fungsi
+          persis spt yg di footer - saveDraftEverywhere) sekarang juga
+          muncul di sini, SEJAJAR (satu baris, kiri-kanan) dgn tombol
+          Kembali paling atas. */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        <button onClick={handleLeave}
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, background: t.card, border: `1px solid ${t.line}`, borderRadius: 10,
+            cursor: "pointer", color: t.mid, fontFamily: FF, fontSize: 12.5, fontWeight: 700, padding: "8px 14px", boxShadow: t.sm,
+            transition: "border-color .15s ease, color .15s ease" }}
+          onMouseEnter={(e) => { e.currentTarget.style.borderColor = t.acc; e.currentTarget.style.color = t.acc; }}
+          onMouseLeave={(e) => { e.currentTarget.style.borderColor = t.line; e.currentTarget.style.color = t.mid; }}>
+          <ArrowLeft size={14} /> Kembali
+        </button>
+        <button onClick={saveDraftEverywhere} disabled={savingDraft} title="Simpan draft ke server — bisa dilanjutkan dari perangkat lain"
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 13px", borderRadius: 10, border: `1px solid ${dirty ? t.acc : t.line}`, background: dirty ? t.accBg : t.card, color: dirty ? t.acc : t.mid, fontFamily: FF, fontSize: 12.5, fontWeight: 700, cursor: savingDraft ? "default" : "pointer", boxShadow: t.sm }}>
+          {savingDraft ? <Loader2 size={13} className="spin" /> : <Save size={13} />} Simpan Draft{dirty ? <span style={{ width: 5, height: 5, borderRadius: 99, background: t.acc, display: "inline-block", marginLeft: 1 }} /> : null}
+        </button>
+      </div>
+      {/* UPDATE (permintaan user - "id jangan buat disini, tapi sejajar
+          dengan kolom brand"): chip SDP ID di header DIHAPUS - sekarang
+          jadi field readonly di dalam grid step "Scope & Brand", sebaris
+          dgn Brand (lihat renderField -> k === "sdp_id_preview"). */}
+      <div style={{ marginBottom: 16 }}>
+        {/* UPDATE (permintaan user - "ubah menu registrasi SDP menjadi
+            Form SDP, nanti tidak hanya registrasi"): judul form disamakan
+            dgn nama menunya. */}
+        <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: -0.4 }}>{lockRequestType ? "Form SDP" : "Registrasi & Perubahan SDP"}</div>
       </div>
 
       {/* Toolbar: simpan ke server & bagikan link (expiring) — fitur untuk
@@ -720,7 +812,6 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
           <span style={{ width: 34, height: 34, borderRadius: 10, background: t.tealBg, border: `1px solid ${t.tealBd}`, color: t.tealD, display: "flex", alignItems: "center", justifyContent: "center" }}><cur.icon size={17} /></span>
           <div>
             <div style={{ fontSize: 15.5, fontWeight: 800 }}>{cur.title}</div>
-            <div style={{ fontSize: 12, color: t.mid, marginTop: 1 }}>{cur.hint}</div>
           </div>
         </div>
 
@@ -803,8 +894,8 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
               </div>
               <div>
                 <div style={lblStyle}>Cari alamat / tempat</div>
-                <SDP_AddressSearch t={t} supabase={supabase} onSelect={(r) => {
-                  setVal((p) => ({ ...p, bill_to_address: r.display || p.bill_to_address, kode_pos: (r.address && r.address.postcode) || p.kode_pos, latitude: r.lat, longitude: r.lon }));
+                <SDP_AddressSearch t={t} supabase={supabase} nearLat={val.latitude ?? null} nearLng={val.longitude ?? null} onSelect={(r) => {
+                  setVal((p) => ({ ...p, bill_to_address: r.displayFull || r.display || p.bill_to_address, kode_pos: (r.address && r.address.postcode) || p.kode_pos, latitude: r.lat, longitude: r.lon }));
                   setDirty(true);
                 }} />
               </div>
@@ -839,8 +930,8 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
                 <>
                   <div>
                     <div style={lblStyle}>Cari alamat pengiriman</div>
-                    <SDP_AddressSearch t={t} supabase={supabase} onSelect={(r) => {
-                      setVal((p) => ({ ...p, ship_to_address: r.display || p.ship_to_address, latitude_gudang: r.lat, longitude_gudang: r.lon }));
+                    <SDP_AddressSearch t={t} supabase={supabase} nearLat={val.latitude_gudang ?? null} nearLng={val.longitude_gudang ?? null} onSelect={(r) => {
+                      setVal((p) => ({ ...p, ship_to_address: r.displayFull || r.display || p.ship_to_address, latitude_gudang: r.lat, longitude_gudang: r.lon }));
                       setDirty(true);
                     }} />
                   </div>
@@ -898,29 +989,68 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
         </div>
       )}
 
-      {/* Footer navigasi */}
-      <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${t.line}`, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <button onClick={() => (step === 0 ? handleLeave() : setStep(step - 1))}
-          style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "11px 18px", borderRadius: 11, border: `1px solid ${t.line}`, background: t.card, color: t.hi, fontFamily: FF, fontSize: 13.5, fontWeight: 700, cursor: "pointer" }}>
-          <ChevronLeft size={16} /> {step === 0 ? "Batal" : "Kembali"}
-        </button>
-        <button onClick={saveDraftEverywhere} disabled={savingDraft} title="Simpan draft ke server — bisa dilanjutkan dari perangkat lain"
-          style={{ display: "inline-flex", alignItems: "center", gap: 7, padding: "11px 16px", borderRadius: 11, border: `1px solid ${dirty ? t.acc : t.line}`, background: t.card, color: dirty ? t.acc : t.mid, fontFamily: FF, fontSize: 13, fontWeight: 700, cursor: savingDraft ? "default" : "pointer" }}>
-          {savingDraft ? <Loader2 size={15} className="spin" /> : <Save size={15} />} Simpan Draft{dirty ? <span style={{ width: 6, height: 6, borderRadius: 99, background: t.acc, display: "inline-block", marginLeft: 1 }} /> : null}
-        </button>
-        <div style={{ flex: 1, minWidth: 60, textAlign: "center", fontSize: 12, color: t.mid }}>Langkah {step + 1} dari {STEPS.length}{dirty ? " · belum disimpan" : ""}</div>
-        {isLast ? (
-          <button onClick={submit} disabled={saving} data-primary
-            style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "11px 22px", borderRadius: 11, border: "none", cursor: saving ? "default" : "pointer", fontFamily: FF, fontSize: 14, fontWeight: 800, color: "#fff", background: `linear-gradient(135deg, ${t.acc} 0%, ${t.mag} 100%)`, opacity: saving ? 0.7 : 1 }}>
-            {saving ? <Loader2 size={16} className="spin" /> : <Check size={16} />} {saving ? "Menyimpan…" : "Kirim Registrasi"}
-          </button>
-        ) : (
-          <button onClick={() => setStep(step + 1)}
-            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "11px 22px", borderRadius: 11, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 14, fontWeight: 800, color: "#fff", background: t.acc }}>
-            Lanjut <ChevronRight size={16} />
-          </button>
-        )}
-      </div>
+      {/* Footer navigasi (Kembali/Simpan Draft/Lanjut) — DI-PORTAL ke luar
+          area scroll, dirender ke dalam <main> yang sama dengan <header>
+          (lihat footerPortalEl di atas). Hasilnya: bar putih full-width yang
+          nempel rata di TEPI BAWAH layar — PERSIS seperti header yg nempel
+          di tepi atas — bukan cuma "sticky" di dalam kolom form yang sempit.
+          footerBar didefinisikan sebagai variabel supaya bisa dipakai dua
+          cara: lewat portal (kalau target ketemu) atau fallback inline biasa
+          di bawah form (kalau portal target belum/tidak ketemu). */}
+      {(() => {
+        // UPDATE (permintaan user - "redesign total" footer navigasi form,
+        // arah "minimalis & subtle"): progress bar lebih tipis & warna
+        // netral (bukan gradient teal->ok mencolok), tombol "Lanjut"/"Kirim
+        // Registrasi" ga lagi solid besar + glow shadow - sekarang border
+        // tipis + bg soft (accBg), font weight dikurangi, shadow dihapus.
+        // Tombol Kembali/Simpan Draft juga dikecilkan biar proporsional.
+        // UPDATE (permintaan user - "hilangkan saja progress bar, dan satu
+        // line saja simpan draft, kembali, lanjutkan"): progress bar
+        // dihapus total, footer sekarang cuma 1 baris flex berisi
+        // Kembali/Batal (kiri), Langkah X/6 + Simpan Draft (tengah), dan
+        // Lanjut/Kirim Registrasi (kanan) — label section tujuan tetap
+        // dipertahankan sbg sub-teks kecil di tombol Kembali/Lanjut.
+        // UPDATE (permintaan user - screenshot nunjukin footer sebelumnya
+        // "berantakan" di mobile, 1-baris-semua bikin tombol Kembali/Lanjut
+        // numpuk sama floating chat widget; dikasih contoh referensi:
+        // tombol "Lanjut" full-width solid gradient besar, simple, ga ada
+        // sub-label/teks tambahan nempel di tombolnya): footer sekarang 2
+        // baris - baris atas kecil & ringkas (Kembali, Langkah X/6, Simpan
+        // Draft), baris bawah tombol Lanjut/Kirim Registrasi FULL WIDTH
+        // gradient persis gaya referensi. Sub-label nama section DIHAPUS
+        // dari tombol (balik ke permintaan sebelum ini) karena itu yg bikin
+        // tombol melebar & overlap di layar sempit.
+        const footerBar = (
+          <div style={{
+            flexShrink: 0, width: "100%", boxSizing: "border-box",
+            padding: "10px 20px calc(10px + env(safe-area-inset-bottom, 0px))",
+            background: d ? "rgba(17,17,19,0.92)" : "rgba(255,255,255,0.92)",
+            borderTop: `1px solid ${t.line}`, backdropFilter: "blur(24px)", zIndex: 40, position: "relative",
+            display: "flex", flexDirection: "column", gap: 10,
+          }}>
+            <div style={{ maxWidth: 880, margin: "0 auto", width: "100%", boxSizing: "border-box", display: "flex", flexDirection: "column", gap: 10 }}>
+
+              {/* UPDATE (permintaan user - "hilangkan bagian ini", nunjuk
+                  baris Batal/Langkah X/6/Simpan Draft di footer): baris itu
+                  DIHAPUS - sudah redundan krn "Kembali" & "Simpan Draft"
+                  sekarang ada di header atas form (sejajar). Footer tinggal
+                  tombol utama full width di bawah ini saja. */}
+              {isLast ? (
+                <button onClick={submit} disabled={saving} data-primary
+                  style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", boxSizing: "border-box", padding: "15px 22px", borderRadius: 13, border: "none", cursor: saving ? "default" : "pointer", fontFamily: FF, fontSize: 15, fontWeight: 800, color: "#fff", background: `linear-gradient(135deg, ${t.acc} 0%, ${t.mag} 100%)`, opacity: saving ? 0.7 : 1, boxShadow: `0 8px 18px ${t.acc}33` }}>
+                  {saving ? <Loader2 size={18} className="spin" /> : <Check size={18} />} {saving ? "Menyimpan…" : "Kirim Registrasi"}
+                </button>
+              ) : (
+                <button onClick={() => setStep(step + 1)}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", boxSizing: "border-box", padding: "15px 22px", borderRadius: 13, border: "none", cursor: "pointer", fontFamily: FF, fontSize: 15, fontWeight: 800, color: "#fff", background: `linear-gradient(135deg, ${t.acc} 0%, ${t.mag} 100%)`, boxShadow: `0 8px 18px ${t.acc}33` }}>
+                  Lanjut <ChevronRight size={18} />
+                </button>
+              )}
+            </div>
+          </div>
+        );
+        return footerPortalEl ? createPortal(footerBar, footerPortalEl) : footerBar;
+      })()}
 
       {/* Konfirmasi keluar bila ada perubahan belum tersimpan */}
       {confirmLeave && (
@@ -967,6 +1097,83 @@ export default function SDP_QuickForm({ supabase, theme = "dark", profile, onExi
   );
 }
 
+// ── Bulan Siklus (month+year) — native <input type="month"> seringkali
+// render aneh (format tanggal OS/browser, placeholder "----"), jadi diganti
+// picker custom: geser ← → utk ganti bulan cepat, atau klik buat buka
+// popover grid 12 bulan + navigasi tahun (bulan & tahun digabung jadi satu
+// kontrol, bukan dua field terpisah). Value tetap string "YYYY-MM" (sama
+// persis format native month input) supaya toYYMM()/validasi lain di
+// lib/sdp tidak perlu diubah sama sekali.
+const MONTH_LABELS = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+const parseYM = (v) => {
+  const m = String(v || "").match(/^(\d{4})-(\d{2})$/);
+  return m ? { y: parseInt(m[1], 10), m: parseInt(m[2], 10) } : null;
+};
+const fmtYM = (y, m) => `${y}-${String(m).padStart(2, "0")}`;
+
+// UPDATE (permintaan user - "ini tidak perlu uitambahn gunakan sistem
+// bulan dan tahun"): popover kalender custom (grid 12 bulan + navigasi
+// tahun) DIHAPUS. Diganti 2 <select> NATIVE biasa — Bulan & Tahun — sama
+// kayak <select> field lain di form ini (appearance:none + chevron
+// custom). Value tetap string "YYYY-MM" jadi toYYMM()/validasi lain di
+// lib/sdp tidak perlu diubah sama sekali.
+const YEAR_RANGE = (() => {
+  const now = new Date().getFullYear();
+  const years = [];
+  for (let y = now - 1; y <= now + 3; y++) years.push(y);
+  return years;
+})();
+
+function MonthPicker({ value, onChange, t, err }) {
+  const parsed = parseYM(value);
+  // UPDATE (permintaan user - "setelah di klik, muncul bekas outline" di
+  // select Bulan/Tahun): outline default browser dimatikan (outline:none),
+  // diganti border lebih tegas pas focus (pakai warna acc) supaya tetap
+  // ada penanda fokus tapi rapi, bukan kotak outline bawaan OS.
+  // UPDATE (permintaan user - "arrow ke bawah itu di dalam box masing
+  // masing jangan terlalu rapat sisi"): paddingRight select diperbesar
+  // (34px, sama kayak <select> lain di Field component) & posisi chevron
+  // digeser dari right:10 -> right:12, jadi ada jarak yg cukup dari tepi
+  // kanan box, ga nempel sisi lagi.
+  // UPDATE (permintaan user, ronde 2 - "masih terlalu rapat ke kanan"):
+  // akar masalahnya boxSizing ga di-set (default content-box), jadi lebar
+  // select BENERAN lebih lebar drpd div pembungkusnya (flex:1) karena
+  // padding+border nambah di LUAR itu - bikin chevron (absolute, relatif
+  // ke div pembungkus) ketutup/kepepet oleh tepi select yg sebenarnya
+  // meluber. Field lain (base style, lihat Field component di bawah) UDAH
+  // pakai boxSizing:"border-box" - di sini disamakan.
+  const selStyle = {
+    flex: 1, minWidth: 0, boxSizing: "border-box", width: "100%",
+    appearance: "none", WebkitAppearance: "none", MozAppearance: "none",
+    padding: "0 34px 0 12px", height: 42, borderRadius: 10, border: `1px solid ${err ? t.acc : t.line}`,
+    background: t.inp, color: parsed ? t.hi : t.lo, fontFamily: FF, fontSize: 14, fontWeight: parsed ? 700 : 500, cursor: "pointer",
+    outline: "none", WebkitTapHighlightColor: "transparent",
+  };
+  const wrap = (sel) => (
+    <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
+      {sel}
+      <ChevronDown size={15} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: t.mid, pointerEvents: "none" }} />
+    </div>
+  );
+
+  return (
+    <div style={{ display: "flex", alignItems: "stretch", gap: 6 }}>
+      {wrap(
+        <select value={parsed?.m || ""} onChange={(e) => onChange(fmtYM(parsed?.y || new Date().getFullYear(), parseInt(e.target.value, 10)))} style={selStyle}>
+          <option value="" disabled>— bulan —</option>
+          {MONTH_LABELS.map((lab, i) => <option key={lab} value={i + 1}>{lab}</option>)}
+        </select>
+      )}
+      {wrap(
+        <select value={parsed?.y || ""} onChange={(e) => onChange(fmtYM(parseInt(e.target.value, 10), parsed?.m || new Date().getMonth() + 1))} style={selStyle}>
+          <option value="" disabled>— tahun —</option>
+          {YEAR_RANGE.map((y) => <option key={y} value={y}>{y}</option>)}
+        </select>
+      )}
+    </div>
+  );
+}
+
 // ── Satu input (mobile, full width) ────────────────────────────────────────────
 function Field({ k, label, type, t, value, err, onChange, geoOpts, options, brandLock }) {
   const base = {
@@ -976,10 +1183,10 @@ function Field({ k, label, type, t, value, err, onChange, geoOpts, options, bran
   // Semua <select> pakai appearance:none + chevron kustom di posisi yang sama
   // agar konsisten (panah native berbeda posisi antar-browser/OS).
   const selStyle = { ...base, appearance: "none", WebkitAppearance: "none", MozAppearance: "none", paddingRight: 34, cursor: "pointer" };
-  const wrapSel = (sel) => (
+  const wrapSel = (sel, hideArrow = false) => (
     <div style={{ position: "relative" }}>
       {sel}
-      <ChevronDown size={15} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: t.mid, pointerEvents: "none" }} />
+      {!hideArrow && <ChevronDown size={15} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", color: t.mid, pointerEvents: "none" }} />}
     </div>
   );
   let control;
@@ -992,12 +1199,20 @@ function Field({ k, label, type, t, value, err, onChange, geoOpts, options, bran
     );
   } else if (type === "geo") {
     const opts = geoOpts || [];
-    const locked = opts.length <= 1 && opts.length > 0;
+    // "Circle" SELALU dikunci ke "Sumatera" — seluruh sistem ini memang
+    // khusus operasional Sumatera, jadi field ini tak perlu (dan tak boleh)
+    // bisa dipilih/diubah sama sekali, berapa pun jumlah opsi yg kebetulan
+    // ada di master data. Field geo lain tetap auto-lock hanya saat opsinya
+    // memang cuma 1 (perilaku lama, tidak berubah).
+    const circleForced = k === "circle";
+    const locked = circleForced || (opts.length <= 1 && opts.length > 0);
+    const shownValue = circleForced ? "Sumatera" : value;
     control = wrapSel(
-      <select value={value} disabled={locked} onChange={(e) => onChange(e.target.value)} style={{ ...selStyle, cursor: locked ? "default" : "pointer", opacity: locked ? 0.85 : 1 }}>
-        <option value="">{opts.length === 0 ? "— tidak ada data —" : "— pilih —"}</option>
-        {opts.map((o) => <option key={o} value={o}>{o}</option>)}
-      </select>
+      <select value={shownValue} disabled={locked} onChange={(e) => onChange(e.target.value)} style={{ ...selStyle, cursor: locked ? "not-allowed" : "pointer", opacity: locked ? 0.7 : 1, background: locked ? t.sub : t.inp, paddingRight: circleForced ? 12 : selStyle.paddingRight }}>
+        <option value="">{opts.length === 0 && !circleForced ? "— tidak ada data —" : "— pilih —"}</option>
+        {(circleForced ? ["Sumatera"] : opts).map((o) => <option key={o} value={o}>{o}</option>)}
+      </select>,
+      circleForced
     );
   } else if (type && type.startsWith("enum:")) {
     const listKey = type.split(":")[1];
@@ -1011,6 +1226,8 @@ function Field({ k, label, type, t, value, err, onChange, geoOpts, options, bran
     );
   } else if (type === "area") {
     control = <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={2} style={{ ...base, resize: "vertical" }} />;
+  } else if (type === "month") {
+    control = <MonthPicker value={value} onChange={onChange} t={t} err={err} />;
   } else if (type === "link") {
     control = (
       <>
@@ -1022,7 +1239,7 @@ function Field({ k, label, type, t, value, err, onChange, geoOpts, options, bran
       </>
     );
   } else {
-    const inpType = type === "date" ? "date" : type === "month" ? "month" : "text";
+    const inpType = type === "date" ? "date" : "text";
     control = <input type={inpType} value={value} onChange={(e) => onChange(e.target.value)} style={base} />;
   }
   return (
@@ -1034,29 +1251,64 @@ function Field({ k, label, type, t, value, err, onChange, geoOpts, options, bran
   );
 }
 
-// ── Checklist dokumen wajib — upload langsung ke database (bukan link) ─────────
-// Tiap dokumen wajib punya slot sendiri: kosong → tombol pilih file; terisi →
-// nama file + centang hijau + tombol ganti/hapus. Progress bar menunjukkan
-// berapa dari 7 dokumen sudah dilampirkan. File sungguhan baru dikirim ke
-// Storage/tabel sdp_documents saat "Kirim Registrasi" ditekan (submit()),
-// setelah SDP ID final tersedia.
+// ── Checklist dokumen wajib — upload langsung ke database (bukan link) ─────
+// Didesain ulang supaya requirement tiap dokumen (Mandatory / Mandatory utk
+// badan usaha / Mandatory jika tersedia / Pengganti NIB) kelihatan jelas
+// sebagai badge warna, dengan progress ring + status per baris yang rapi.
+// File sungguhan baru dikirim ke Storage/tabel sdp_documents saat "Kirim
+// Registrasi" ditekan (submit()), setelah SDP ID final tersedia.
+// Badge warna requirement per baris — pakai warna mentah (bukan t.d/dark-mode
+// aware) supaya tetap kebaca jelas di kedua tema tanpa perlu prop tambahan.
+const REQ_TONE = (t) => ({
+  acc: { fg: t.acc, bg: t.accBg, bd: `${t.acc}44` },
+  amber: { fg: "#FFB020", bg: "rgba(255,176,32,.12)", bd: "#FFB02055" },
+  blue: { fg: "#0A84FF", bg: "rgba(10,132,255,.13)", bd: "#0A84FF55" },
+  mid: { fg: t.mid, bg: t.sub, bd: t.line },
+});
+function ReqBadge({ t, tone, children }) {
+  const c = REQ_TONE(t)[tone] || REQ_TONE(t).mid;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", padding: "2px 8px", borderRadius: 99, fontSize: 10, fontWeight: 800, letterSpacing: "0.02em", color: c.fg, background: c.bg, border: `1px solid ${c.bd}`, whiteSpace: "nowrap" }}>
+      {children}
+    </span>
+  );
+}
 function DocumentChecklist({ t, slots, required, setRequired, extra, setExtra, filled, complete, enforce, docUploadMsg }) {
   const total = slots.length;
   const pct = total ? Math.round((filled / total) * 100) : 100;
+  const r = 20, circumference = 2 * Math.PI * r;
   return (
-    <div style={{ background: t.sub, border: `1px solid ${t.line}`, borderRadius: 12, padding: 14, marginBottom: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, flexWrap: "wrap", gap: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <ShieldCheck size={15} color={complete ? t.ok : t.mid} />
-          <div style={{ fontSize: 11.5, fontWeight: 800, color: t.mid, textTransform: "uppercase", letterSpacing: "0.05em" }}>Dokumen Wajib — langsung ke database</div>
+    <div style={{ background: t.sub, border: `1px solid ${t.line}`, borderRadius: 14, padding: 16, marginBottom: 16 }}>
+      {/* Header — progress ring + judul + counter, bukan cuma bar tipis */}
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ position: "relative", width: 48, height: 48, flexShrink: 0 }}>
+          <svg width="48" height="48" viewBox="0 0 48 48" style={{ transform: "rotate(-90deg)" }}>
+            <circle cx="24" cy="24" r={r} fill="none" stroke={t.line} strokeWidth="5" />
+            <circle cx="24" cy="24" r={r} fill="none" stroke={complete ? t.ok : t.acc} strokeWidth="5" strokeLinecap="round"
+              strokeDasharray={circumference} strokeDashoffset={circumference - (pct / 100) * circumference}
+              style={{ transition: "stroke-dashoffset .4s ease" }} />
+          </svg>
+          <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: complete ? t.ok : t.hi }}>
+            {pct}%
+          </div>
         </div>
-        <div style={{ fontSize: 12, fontWeight: 800, color: complete ? t.ok : t.hi }}>{filled}/{total} lengkap</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <ShieldCheck size={15} color={complete ? t.ok : t.mid} />
+            <div style={{ fontSize: 13, fontWeight: 800, color: t.hi }}>Dokumen Wajib</div>
+            <span style={{ fontSize: 12, fontWeight: 800, color: complete ? t.ok : t.mid }}>· {filled}/{total} lengkap</span>
+          </div>
+          <div style={{ fontSize: 11.5, color: t.lo, marginTop: 2, lineHeight: 1.5 }}>
+            Unggah file aslinya di sini — tersimpan langsung ke database{enforce ? ", wajib lengkap untuk SDP baru" : ""}.
+          </div>
+        </div>
       </div>
-      <div style={{ fontSize: 11.5, color: t.lo, marginBottom: 10, lineHeight: 1.5 }}>
-        Unggah file dokumen aslinya di sini — <b>tidak perlu lagi tempel link folder</b>. File tersimpan aman di database kita begitu registrasi dikirim{enforce ? " (wajib lengkap untuk SDP baru)" : ""}.
-      </div>
-      <div style={{ height: 6, borderRadius: 99, background: t.line, overflow: "hidden", marginBottom: 14 }}>
-        <div style={{ height: "100%", width: `${pct}%`, borderRadius: 99, background: complete ? t.ok : t.acc, transition: "width .35s ease" }} />
+
+      {/* Header kolom ala tabel — "Dokumen" | "Requirement", biar jelas ini
+          mengikuti tabel requirement resmi. */}
+      <div style={{ display: "flex", padding: "0 12px 6px", fontSize: 10, fontWeight: 800, color: t.lo, textTransform: "uppercase", letterSpacing: "0.05em" }}>
+        <span style={{ flex: 1 }}>Dokumen</span>
+        <span>Requirement</span>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -1064,45 +1316,61 @@ function DocumentChecklist({ t, slots, required, setRequired, extra, setExtra, f
           const entry = required[s.key]; // { file, label }
           const setFile = (file, label) => setRequired((p) => ({ ...p, [s.key]: { file, label } }));
           const clear = () => setRequired((p) => { const n = { ...p }; delete n[s.key]; return n; });
+          const done = !!entry;
           return (
-            <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", borderRadius: 10, background: t.card, border: `1px solid ${entry ? (t.tealBd || t.line) : t.line}` }}>
-              <span style={{ width: 26, height: 26, borderRadius: 8, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: entry ? t.okBg : t.sub, color: entry ? t.ok : t.lo, border: `1px solid ${entry ? t.ok : t.line}` }}>
-                {entry ? <Check size={14} strokeWidth={3} /> : <FileText size={13} />}
+            <div key={s.key} style={{
+              display: "flex", alignItems: "center", gap: 11, padding: "11px 12px", borderRadius: 11, background: t.card,
+              border: `1px solid ${done ? (t.tealBd || t.tealD) : t.line}`, boxShadow: done ? `0 0 0 1px ${t.tealBd || "transparent"} inset` : "none",
+              transition: "border-color .15s ease",
+            }}>
+              <span style={{ width: 30, height: 30, borderRadius: 9, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                background: done ? t.okBg : t.sub, color: done ? t.ok : t.lo, border: `1px solid ${done ? t.ok : t.line}` }}>
+                {done ? <Check size={15} strokeWidth={3} /> : <FileText size={14} />}
               </span>
+
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 12.5, fontWeight: 700, color: t.hi }}>{entry ? entry.label : s.label}</div>
-                {entry ? (
-                  <div style={{ fontSize: 11, color: t.mid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.file.name}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: t.hi }}>{done ? entry.label : s.label}</span>
+                  {!done && <ReqBadge t={t} tone={s.reqTone}>{s.req}</ReqBadge>}
+                </div>
+                {done ? (
+                  <div style={{ fontSize: 11, color: t.mid, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.file.name}</div>
+                ) : s.sub ? (
+                  <div style={{ fontSize: 11, color: t.lo, marginTop: 2 }}>{s.sub}</div>
                 ) : s.either ? (
-                  <div style={{ fontSize: 10.5, color: t.lo }}>atau {s.either}</div>
+                  <div style={{ fontSize: 11, color: t.lo, marginTop: 2 }}>atau unggah <b style={{ color: t.mid }}>{s.either.label}</b></div>
                 ) : null}
               </div>
-              {entry ? (
-                <>
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 11px", borderRadius: 8, border: `1px dashed ${t.line}`, background: t.sub, color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+
+              {done ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                  <label style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 11px", borderRadius: 8, border: `1px dashed ${t.line}`, background: t.sub, color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
                     <FileCheck2 size={13} /> Ganti
                     <input type="file" style={{ display: "none" }}
                       onChange={(e) => { const f = e.target.files?.[0]; if (f) setFile(f, entry.label); e.target.value = ""; }} />
                   </label>
                   <button type="button" onClick={clear}
                     style={{ display: "inline-flex", border: "none", background: "transparent", color: t.mid, cursor: "pointer", padding: 2, flexShrink: 0 }}><XIcon size={14} /></button>
-                </>
+                </div>
               ) : s.either ? (
-                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 8, border: `1px dashed ${t.line}`, background: t.sub, color: t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                    <UploadCloud size={13} /> NIB
-                    <input type="file" style={{ display: "none" }}
-                      onChange={(e) => { const f = e.target.files?.[0]; if (f) setFile(f, s.label); e.target.value = ""; }} />
-                  </label>
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 8, border: `1px dashed ${t.line}`, background: t.sub, color: t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
-                    <UploadCloud size={13} /> SIUP+SKDP+TDP
-                    <input type="file" style={{ display: "none" }}
-                      onChange={(e) => { const f = e.target.files?.[0]; if (f) setFile(f, "SIUP + SKDP + TDP"); e.target.value = ""; }} />
-                  </label>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5, flexShrink: 0 }}>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 8, border: `1px dashed ${t.acc}66`, background: t.accBg, color: t.acc, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      <UploadCloud size={13} /> {s.label}
+                      <input type="file" style={{ display: "none" }}
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) setFile(f, s.label); e.target.value = ""; }} />
+                    </label>
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 8, border: `1px dashed ${t.line}`, background: t.sub, color: t.mid, fontSize: 11, fontWeight: 700, cursor: "pointer" }}>
+                      <UploadCloud size={13} /> {s.either.label}
+                      <input type="file" style={{ display: "none" }}
+                        onChange={(e) => { const f = e.target.files?.[0]; if (f) setFile(f, s.either.label); e.target.value = ""; }} />
+                    </label>
+                  </div>
+                  <ReqBadge t={t} tone={s.either.reqTone}>{s.either.req}</ReqBadge>
                 </div>
               ) : (
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 11px", borderRadius: 8, border: `1px dashed ${t.line}`, background: t.sub, color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
-                  <UploadCloud size={13} /> Pilih
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "7px 12px", borderRadius: 8, border: `1px dashed ${t.acc}66`, background: t.accBg, color: t.acc, fontSize: 11.5, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
+                  <UploadCloud size={13} /> Pilih File
                   <input type="file" style={{ display: "none" }}
                     onChange={(e) => { const f = e.target.files?.[0]; if (f) setFile(f, s.label); e.target.value = ""; }} />
                 </label>
@@ -1112,13 +1380,23 @@ function DocumentChecklist({ t, slots, required, setRequired, extra, setExtra, f
         })}
       </div>
 
-      <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px dashed ${t.line}` }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
-          <div>
-            <div style={{ fontSize: 11.5, fontWeight: 700, color: t.mid }}>Dokumen Pendukung Lainnya (opsional)</div>
-            <div style={{ fontSize: 10.5, color: t.lo, marginTop: 1 }}>Supplier Form / ABAC / LOI / Authorized Personnel — bila diminta finance/procurement/compliance.</div>
+      {/* Dokumen pendukung "jika diperlukan" — opsional, section visual
+          terpisah & lebih lembut (bukan merah) supaya jelas tidak wajib. */}
+      <div style={{ marginTop: 16, paddingTop: 14, borderTop: `1px dashed ${t.line}` }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <span style={{ width: 26, height: 26, borderRadius: 8, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", background: t.card, color: t.lo, border: `1px solid ${t.line}` }}>
+              <FileText size={13} />
+            </span>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12.5, fontWeight: 800, color: t.hi }}>Supplier Form / ABAC / LOI / Authorized Personnel</span>
+                <ReqBadge t={t} tone="mid">Jika diperlukan</ReqBadge>
+              </div>
+              <div style={{ fontSize: 10.5, color: t.lo, marginTop: 1 }}>Opsional — hanya bila diminta finance/procurement/compliance.</div>
+            </div>
           </div>
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 8, border: `1px dashed ${t.line}`, background: t.card, color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer" }}>
+          <label style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 11px", borderRadius: 8, border: `1px dashed ${t.line}`, background: t.card, color: t.mid, fontSize: 11.5, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>
             <UploadCloud size={13} /> Tambah File
             <input type="file" multiple style={{ display: "none" }}
               onChange={(e) => { setExtra((p) => [...p, ...Array.from(e.target.files || [])]); e.target.value = ""; }} />
@@ -1127,7 +1405,7 @@ function DocumentChecklist({ t, slots, required, setRequired, extra, setExtra, f
         {extra.length > 0 && (
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {extra.map((file, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: t.hi }}>
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: t.hi, padding: "7px 10px", borderRadius: 8, background: t.card, border: `1px solid ${t.line}` }}>
                 <FileText size={13} color={t.mid} />
                 <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{file.name}</span>
                 <button type="button" onClick={() => setExtra((p) => p.filter((_, idx) => idx !== i))}

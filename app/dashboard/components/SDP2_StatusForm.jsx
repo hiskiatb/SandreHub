@@ -12,9 +12,17 @@
  *
  * Props: { supabase, theme = "dark", profile, onExit }
  */
-import React, { useState } from "react";
-import { ArrowLeft, ChevronRight, Sparkles, Lock } from "lucide-react";
+import React, { useMemo, useState } from "react";
+import { ArrowLeft, ChevronRight, Sparkles, Lock, LayoutGrid } from "lucide-react";
 import SDP2_Home from "./SDP2_Home";
+import SDP2_CMS from "./SDP2_CMS";
+
+// Role yang boleh buka "CMS Registrasi SDP" (lihat SEMUA pengajuan, bukan
+// cuma milik sendiri) - sama persis dgn audiens SDP_Export.jsx: SPM Sumatera,
+// PIC Region, dan IOH (lihat saja). CSE/RSE & BSM tetap cuma punya "Registrasi
+// SDP" (scope ke pengajuan mereka sendiri via SDP2_Home).
+const IOH_ROLES = new Set(["internal_ioh", "ioh_north_sumatera", "ioh_central_sumatera", "ioh_south_sumatera"]);
+const canOpenCms = (role) => role === "spm_sumatera" || role === "pic_region" || IOH_ROLES.has(role);
 
 const mk = (d) => ({
   card: d ? "#17171B" : "#FFFFFF",
@@ -34,18 +42,27 @@ const FF = `"DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif`;
 // Archive — urutannya menentukan urutan tampil di menu.
 const MENU_ITEMS = [
   {
+    // UPDATE (permintaan user - "ubah menu registrasi SDP menjadi Form
+    // SDP, nanti tidak hanya registrasi"): label & desc diganti supaya
+    // ga "dipagari" cuma utk registrasi - ke depannya kartu ini (atau
+    // tab2 di dalamnya) juga akan menangani alur SDP lain, bukan cuma
+    // pendaftaran baru. id/route internal ("registrasi") TIDAK diubah.
     id: "registrasi",
     icon: Sparkles,
-    label: "Registrasi SDP",
-    desc: "Daftarkan SDP baru dan pantau progres registrasi yang sudah diajukan, dari satu layar.",
+    label: "Form SDP",
+    desc: "Daftarkan SDP baru, pantau progres registrasi, dan ke depannya alur SDP lainnya — dari satu layar.",
+  },
+  {
+    id: "cms",
+    icon: LayoutGrid,
+    label: "Data SDP",
+    desc: "Lihat seluruh kolom yang diisi pada Registrasi SDP, untuk semua pengajuan - bukan cuma milik sendiri.",
+    roleGate: canOpenCms,
   },
 ];
 
 // Kartu bayangan untuk modul yang belum dirapikan dari Archive.
-const UPCOMING_ITEMS = [
-  { id: "hq", label: "Validasi HQ & Status" },
-  { id: "term", label: "Terminate & Rebordering" },
-];
+const UPCOMING_ITEMS = [];
 
 function MenuCard({ item, t, onClick }) {
   const [hover, setHover] = useState(false);
@@ -97,9 +114,23 @@ export default function SDP2_StatusForm({ supabase, theme = "dark", profile, onE
   const t = mk(d);
   const [activeMenu, setActiveMenu] = useState(null);
 
+  // Kartu "roleGate"-nya difilter di sini (bukan dihapus dari MENU_ITEMS)
+  // supaya kalau nanti ada kartu lain dgn gate berbeda, pola ini tetap bisa
+  // dipakai tanpa mengubah MENU_ITEMS lagi.
+  const visibleItems = useMemo(
+    () => MENU_ITEMS.filter((item) => !item.roleGate || item.roleGate(profile?.role)),
+    [profile?.role]
+  );
+
   if (activeMenu === "registrasi") {
     return (
       <SDP2_Home supabase={supabase} theme={theme} profile={profile}
+        onExit={() => setActiveMenu(null)} />
+    );
+  }
+  if (activeMenu === "cms") {
+    return (
+      <SDP2_CMS supabase={supabase} theme={theme} profile={profile}
         onExit={() => setActiveMenu(null)} />
     );
   }
@@ -119,7 +150,7 @@ export default function SDP2_StatusForm({ supabase, theme = "dark", profile, onE
       <div style={{
         display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 14,
       }} className="sdp2-menu-grid">
-        {MENU_ITEMS.map((item) => (
+        {visibleItems.map((item) => (
           <MenuCard key={item.id} item={item} t={t} onClick={() => setActiveMenu(item.id)} />
         ))}
         {UPCOMING_ITEMS.map((item) => (
